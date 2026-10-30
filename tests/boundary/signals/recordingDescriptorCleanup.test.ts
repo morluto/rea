@@ -3,7 +3,7 @@ import {
   expectRetainedDescriptor,
 } from "../../fixtures/descriptorCloseFailure.js";
 import { expect, it, onTestFinished, vi } from "vitest";
-import { writeFile } from "node:fs/promises";
+import { lstat, writeFile } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import { SigrokRecordingProvider } from "../../../src/signals/SigrokRecordingProvider.js";
@@ -49,6 +49,7 @@ it
       { mode: 0o700 },
     );
     let launches = 0;
+    let runtimeRoot: PrivateRuntimeRoot | undefined;
     const provider = new SigrokRecordingProvider(
       {
         ...process.env,
@@ -64,7 +65,10 @@ it
           expectedCommand: process.execPath,
         });
       },
-      () => PrivateRuntimeRoot.create({ parent: directory }),
+      async () => {
+        runtimeRoot = await PrivateRuntimeRoot.create({ parent: directory });
+        return runtimeRoot;
+      },
     );
     const discovery = member.startsWith("field-");
     const resource = discovery ? member.slice(6) : member;
@@ -88,7 +92,18 @@ it
     const first = discovery
       ? await service.inspectDecoders({ query: "uart" })
       : await service.decode({ path, decoders: "uart" });
-    expectRetainedDescriptor(first, cleanup, operation);
+    expectRetainedDescriptor(
+      first,
+      cleanup,
+      operation,
+      runtimeRoot === undefined ? [] : [runtimeRoot.path],
+    );
+    if (first.ok) throw new Error("Expected retained descriptor cleanup");
+    const originatingCause = first.error.cause;
+    if (resource === "capture") {
+      expect(runtimeRoot).toBeDefined();
+      await expect(lstat(runtimeRoot!.path)).resolves.toBeDefined();
+    }
     const launchCount = launches;
     expect(await service.decode({ path, decoders: "uart" })).toMatchObject({
       ok: false,
@@ -102,6 +117,12 @@ it
     });
     cleanup.denied = false;
     await provider.close();
+    expect(first.error.cleanupIncomplete).toBe(false);
+    expect(first.error.cause).toBe(originatingCause);
+    if (runtimeRoot !== undefined)
+      await expect(lstat(runtimeRoot.path)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
     expect(cleanup.handles[0]?.fd).toBe(-1);
   },
 );

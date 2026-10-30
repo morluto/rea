@@ -18,8 +18,8 @@ import {
 } from "../tests/conformance/ghidra/ppc-checks.mjs";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { parseAnalysisSnapshot } from "../dist/domain/analysisSnapshot.js";
-import { functionDossierSchema } from "../dist/domain/hopperValues.js";
-import { inspectGhidraInstallation } from "../dist/ghidra/GhidraInstallation.js";
+import { functionDossierSchema } from "../dist/domain/native/functionDossier.js";
+import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
 import { buildPowerPcFixture } from "../tests/conformance/ghidra/ppc-fixture.mjs";
 import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
@@ -33,7 +33,7 @@ if (!["linux", "darwin"].includes(process.platform))
   );
 if (process.env.GHIDRA_INSTALL_DIR === undefined)
   throw new Error("Missing prerequisite: caller-supplied GHIDRA_INSTALL_DIR");
-const installation = inspectGhidraInstallation({
+const installation = await inspectVerifierGhidraInstallation({
   environment: process.env,
   installDir: process.env.GHIDRA_INSTALL_DIR,
   ...(process.env.JAVA_HOME === undefined
@@ -161,7 +161,10 @@ try {
       });
       assert.ok(assembly.trim().length > 0);
       const dossier = functionDossierSchema.parse(
-        await call("analyze_function", { procedure: entry.address }),
+        await call("analyze_function", {
+          procedure: entry.address,
+          detail: "complete",
+        }),
       );
       assert.ok(dossier.pseudocode.trim().length > 0);
       const mapping = await call("address_to_file_offset", {

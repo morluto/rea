@@ -2,8 +2,7 @@ import type { ManagedTypeReferenceLookup } from "./ManagedTypeReferences.js";
 import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
 import {
   fullName,
-  readCompressed,
-  specSignature,
+  specSignatureFacts,
   type TypeRange,
 } from "./ManagedMemberInspectorCore.js";
 import {
@@ -12,10 +11,11 @@ import {
 } from "./ManagedMetadataLayout.js";
 import {
   metadataRowCursor,
+  type MetadataTokenFact,
   metadataToken,
   readMetadataBlob,
 } from "./ManagedMetadataHeaps.js";
-import { managedFailure, readManagedValue } from "./ManagedReaderFailure.js";
+import { readManagedValue } from "./ManagedReaderFailure.js";
 
 /**
  * Name the type a TypeDef, TypeRef, or generic-instantiation TypeSpec token
@@ -30,7 +30,9 @@ export const typeNameLookup = (
   ranges: readonly TypeRange[],
   issues: ManagedParseIssue[],
   references: ManagedTypeReferenceLookup,
-): ((token: string | null) => string | null) => {
+): ((
+  reference: Pick<MetadataTokenFact, "table" | "row" | "token"> | null,
+) => string | null) => {
   const names = new Map<string, string | null>();
   const definitionName = (table: 1 | 2, row: number): string | null => {
     if (table === 2) {
@@ -48,33 +50,22 @@ export const typeNameLookup = (
       bytes,
       layout,
       cursor.readIndex(layout.blobIndexSize),
-      layout.blob.size,
+      layout.blob?.size ?? 0,
     );
     const owner = {
       form: "type",
       scope: `metadata.TypeSpec:${metadataToken(27, row)}`,
       offset: cursor.start,
     } as const;
-    specSignature(layout, spec, owner);
-    if (spec[0] !== 0x15) return null;
-    // GENERICINST (CLASS | VALUETYPE) TypeDefOrRefEncoded: never a TypeSpec,
-    // so naming never recurses.
-    const encoded = readCompressed(spec, 2).value;
-    const table = ([2, 1] as const)[encoded & 3];
-    if (table === undefined)
-      throw managedFailure(
-        "invalid-blob",
-        owner.scope,
-        "Generic instantiation does not name a TypeDef or TypeRef",
-        owner.offset,
-      );
-    return definitionName(table, Math.floor(encoded / 4));
+    const { nominalGenericType } = specSignatureFacts(layout, spec, owner);
+    return nominalGenericType === null
+      ? null
+      : definitionName(nominalGenericType.table, nominalGenericType.row);
   };
-  return (token) => {
-    if (token === null) return null;
+  return (reference) => {
+    if (reference === null) return null;
+    const { token, table, row } = reference;
     if (names.has(token)) return names.get(token) ?? null;
-    const table = Number.parseInt(token.slice(2, 4), 16);
-    const row = Number.parseInt(token.slice(4), 16);
     const name =
       readManagedValue(
         () =>

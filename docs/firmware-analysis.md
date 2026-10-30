@@ -27,7 +27,10 @@ checks the tool's `--version` banner when executing a request. Binwalk must
 print `binwalk <version>` and Unblob must print the version alone. Inspection and
 extraction have independent prerequisites; one does not require the other.
 Both require util-linux `prlimit`, normally `/usr/bin/prlimit`; override its
-absolute path with `REA_FIRMWARE_PRLIMIT_COMMAND` if needed.
+absolute path with `REA_FIRMWARE_PRLIMIT_COMMAND` if needed. `rea doctor` does
+not currently inspect firmware readiness. Engine selection/version checks run
+when the firmware operation is requested; successful general doctor checks do
+not establish firmware tool or external-extractor availability.
 
 REA retains at most 8 MiB of combined stdout and stderr per command. Exceeding
 that diagnostic budget stops analysis with an explicit truncated-output error;
@@ -49,6 +52,41 @@ git submodule update --init third_party/binwalk third_party/unblob
 
 Normal REA builds and npm packages do not include or build these sources or
 engine binaries. See [upstream provenance](https://github.com/morluto/rea/blob/main/third_party/README.md).
+
+### Windows submodule checkout
+
+On Windows, the Unblob checkout stops with `error: invalid path`. Several
+upstream test fixture names under `tests/integration/` contain characters,
+trailing dots, or trailing spaces that NTFS does not allow; REA does not use
+those fixtures. Keep the clone, exclude that directory, and retry from the
+repository root in PowerShell:
+
+```powershell
+git -C third_party/unblob config core.protectNTFS false
+git -C third_party/unblob sparse-checkout set --no-cone '/*' '!/tests/integration/'
+git submodule update third_party/unblob
+```
+
+Both settings are required. While `core.protectNTFS` is enabled, Git for
+Windows also rejects index paths that the sparse pattern excludes; the pattern
+keeps the invalid names out of the worktree. The setting applies only to the
+Unblob submodule. In Git Bash, prefix the `sparse-checkout` command with
+`MSYS_NO_PATHCONV=1`; otherwise `!/tests/integration/` is rewritten as a
+Windows path.
+
+The extraction destination must be absent with an existing writable parent.
+REA checks that selection before starting an engine and still acquires it
+exclusively during publication. Invalid sources and destinations identify the
+caller argument; failures inside an acquired workspace keep their own cause.
+Published file `relative_path` preserves producer spelling for lineage; `path`
+uses the writer's actual normalized filename. An extracted filename that cannot
+be represented losslessly as UTF-8 fails publication explicitly with its raw
+name bytes in hexadecimal instead of silently omitting the entry.
+Unpublished symlinks retain the extracted tree's target bytes in lowercase
+`link_target_hex`; `link_target` is null when those bytes are not valid UTF-8.
+Older retained Evidence may omit the hexadecimal field. Unblob may have rewritten
+the target before REA observed it, so these bytes are not necessarily those stored
+in the firmware image.
 
 ## CLI and MCP
 
@@ -102,14 +140,19 @@ build's source revision, so that field remains unknown.
   selected input have a known `root_file_range`, adjusted by the selected offset.
 - Decompressed children have unknown original byte ranges and runtime addresses.
   Task lineage does not establish a byte-for-byte mapping through decompression.
-- `partial` marks unknown/encrypted chunks, reported extraction problems,
+- `partial` marks unknown/encrypted chunks, selected input bytes outside all
+  reported chunk intervals, reported extraction problems,
   unpublished links/special files or reached depth limits. `complete` means the
-  engine finished its configured extraction without those reported conditions;
+  selected input is covered by reported chunk intervals and the engine finished
+  its configured extraction without those reported conditions;
   default skip rules and format coverage still apply. It does not establish
   complete firmware reconstruction.
 - `extraction_gaps` makes those conditions recoverable: a row identifies an
   unextracted region or a failed task/stage. A chunk retains its identity and
   byte range, plus its original-file range when it belongs to the selected input.
+  `unclassified-range` rows identify selected input intervals with no reported
+  chunk; their provider identity and handler stay null. An empty chunk inventory
+  therefore cannot establish complete extraction of a nonempty selected input.
   A multi-file stage retains its reported ID and handler with unknown byte ranges;
   a standalone task failure keeps unavailable stage identity null. Rows retain exact dependency names from
   the producer's missing-dependency reports; an accepted report with no names
@@ -118,6 +161,11 @@ build's source revision, so that field remains unknown.
   share recovery prose without losing any region identity. Instructions use
   already configured capabilities where one exists. Every extraction rerun
   requires a fresh absent `output_directory`, preserving the prior evidence.
+  Unblob's declared `ERROR` severity establishes an extraction failure,
+  including standalone `UnknownError` task exceptions. Warnings and resolved
+  extraction problems remain diagnostics with partial coverage; they do not
+  establish failed extractor stages. Standalone errors do not acquire a nearby
+  chunk's handler or byte range.
   Nested unknown chunks use `inspect_firmware_regions` on the actual published
   child rather than repeating the same extraction with unchanged handlers.
   Inspection requires separately configured Binwalk (`REA_BINWALK_COMMAND`);
@@ -153,20 +201,51 @@ tree semantics, vulnerability scanning, emulation or hardware runtime capture.
 ## Resource and lifecycle policy
 
 - Nonempty regular firmware inputs: at most **128 MiB**, copied and hashed into
-  a private workspace before analysis. No in-place source modification.
+  a private workspace before analysis. Growth beyond that allowance during
+  copying receives the same typed input refusal as an already oversized file.
+  Supply a stable copy within the allowance. No in-place source modification.
 - One queued heavy operation per provider instance; Binwalk one thread and
   Unblob one worker. No automatic parallel extraction engines.
-- **120-second** deadline; inherited **1 GiB per-process address-space** limit,
+- Analysis defaults to **120 seconds**, from tool resolution and input snapshot
+  through inspection and its final private-workspace cleanup, or extraction
+  through report consumption and inventory, excluding queue waiting and retained
+  cleanup admission. Inspection has no publication phase. Select `analysis_timeout_ms` in either MCP operation or
+  `--analysis-timeout-ms` in either CLI command for slower analysis. Current
+  results retain the actual budget; an absent historical value means unknown.
+  Extraction publication and its final
+  cleanup start a separate **120-second** budget; select
+  `publication_timeout_ms` in MCP or `--publication-timeout-ms` in CLI for a slow
+  destination. Valid budgets are integers from 1 through 2,147,483,647 ms (the
+  timer representation limit). Publication timeouts identify their phase and
+  verified file progress; verified writes before atomic commit are not a claim
+  that output remains published after rollback. Caller cancellation applies to
+  both phases and final cleanup. Phase handoff, publication commit and final
+  completion also check monotonic elapsed time, so delayed timer callbacks
+  cannot revive an expired budget.
+- Analysis timeout recovery names the selected budget and the analysis control,
+  not the later publication control. Keep the client call timeout above analysis,
+  publication and cleanup headroom; keep the input/range/question unchanged.
+  Resolve any reported incomplete cleanup before retrying. Raising wall time
+  does not raise fixed CPU, memory, report, diagnostic or input limits.
+- Inherited **1 GiB per-process address-space** limit,
   120 CPU seconds and zero core-dump allowance through `prlimit`.
 - JSON reports: at most **8 MiB** and valid UTF-8; malformed encoding and
   oversized reports fail without repairing or truncating producer data.
+  Exit status 0 is not an empty result: a missing, empty, malformed or
+  oversized report fails with `unreadable_output`, its `report_state`, the
+  command, exit status and captured output. REA does not retry automatically.
   Diagnostic output is bounded with exact captured byte counts.
 - Default staging budget: **256 MiB** and **10,000 entries**, configurable using
   `max_output_bytes` / `max_output_files` (CLI `--max-output-bytes` /
-  `--max-output-files`). Depth defaults to 3, allowed range 1–10.
+  `--max-output-files`). Exceeding either selected staging budget returns a
+  nonretryable resource constraint naming the selected limit. Depth defaults to
+  3, allowed range 1–10.
 
 Staging budgets are polled and rechecked after exit; short-lived overshoot is
-possible. The inherited file-size limit bounds each file, not total storage;
+possible. The per-file process limit is the larger of the selected payload budget
+and the fixed report/diagnostic file allowances, so a small payload selection
+still permits the mandatory report. A tighter inherited host limit still applies.
+The inherited file-size limit bounds each file, not total storage;
 address-space limits are per process, not an aggregate memory quota. Worker
 count is not CPU affinity for every external extractor. These limits do not
 claim cgroup/container containment. Cancellation cleans the owned process group
@@ -201,7 +280,7 @@ Additional lanes are explicit, so the base lane stays small:
 REA_FIRMWARE_VERIFY_EXT4=1 npm run fixtures:firmware
 REA_FIRMWARE_VERIFY_EXT4=1 npm run verify:firmware
 
-# Existing Ghidra 12.1.x and its declared JDK required.
+# Existing Ghidra 12.x (>=12.1) and its declared JDK required.
 REA_FIRMWARE_VERIFY_GHIDRA=1 npm run verify:firmware
 ```
 
@@ -211,3 +290,49 @@ REA_FIRMWARE_VERIFY_GHIDRA=1 npm run verify:firmware
 `scripts/rea.mjs` to verify the packaged CLI/MCP workflow. Real coverage here is
 generated gzip/USTAR/ext4 with a Linux x64 ELF child; SquashFS, UBIFS, proprietary
 firmware, other hosts and architectures remain unverified.
+
+## Inspect ESP images
+
+Use `inspect-artifact` / `inspect_artifact` on an ESP32-family app or
+bootloader image, such as an OTA download or app partition, for its chip,
+classified segments, checksum and SHA-256 results, descriptor and Secure Boot
+v2 signature blocks. `extract-artifact` / `extract_artifact` writes one file
+per segment and signature block. Reading is portable and needs no external
+tool. See [ESP images](esp-image.md).
+
+## Inspect extracted devicetrees
+
+Use [`inspect_devicetree`](devicetree.md) / `rea inspect-devicetree` on an
+extracted DTB for its node/property tree, reservations, hardware summary and
+selected phandle relationships. FDT v16/v17 inspection is portable and requires
+no external tool or disassembler.
+
+## Inspect Intel HEX and S-record images
+
+Use `inspect-artifact` / `inspect_artifact` on an Intel HEX or Motorola S-record
+file for its address regions, declared start address and record facts, then
+`extract-artifact` / `extract_artifact` for one raw file per region. Decoding is
+portable and requires no external tool. See
+[Intel HEX and S-record images](hex-records.md).
+
+## Inspect U-Boot legacy uImages
+
+`inspect-artifact` / `extract-artifact` recognize a legacy uImage by its
+`0x27051956` magic and inventory it without running or decompressing it.
+The root facts record the 64-byte header (architecture, OS, type, and
+compression as raw values and names, load and entry addresses, image name,
+and timestamp) with the header and data CRC32 verified; the stored payload
+is extractable as `payload.bin`, and multi-file and script images additionally
+expose each sub-image as `image-<n>.bin` from the stored size table. Declared
+addresses are facts from the header, not proven entry points, and compressed
+payloads stay as stored. Intel HEX/S-record and FIT images are separate
+readers and are not covered here. See [U-Boot legacy uImage](uimage.md) for
+component padding, preserved names, resource policies and verification scope.
+
+## Inspect U-Boot FIT images
+
+Use `inspect-artifact` / `inspect_artifact` on a U-Boot FIT (`.itb`) for its
+images, declared load and entry addresses, configurations and verified hashes,
+then `extract-artifact` / `extract_artifact` for one raw file per image.
+Decoding is portable and requires no external tool. See
+[U-Boot FIT images](fit-images.md).

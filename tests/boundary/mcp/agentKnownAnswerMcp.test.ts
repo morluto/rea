@@ -5,12 +5,12 @@ import { describe, expect, it } from "vitest";
 import { createPackage } from "@electron/asar";
 
 import { parseEvidence, type Evidence } from "../../../src/domain/evidence.js";
-import { evaluateCodexEvents } from "../../../src/evaluation/CodexAgentEval.js";
+import { evaluateCodexEvents } from "../../evaluation/model-evals/CodexAgentEval.js";
 import {
   createAgentEvaluationFixtures,
   agentFixtureClaims,
-} from "../../../src/evaluation/AgentEvaluationFixtures.js";
-import type { FixtureClaimExpectation } from "../../../src/evaluation/KnownAnswerEvaluation.js";
+} from "../../evaluation/model-evals/AgentEvaluationFixtures.js";
+import type { FixtureClaimExpectation } from "../../evaluation/model-evals/KnownAnswerEvaluation.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -347,7 +347,16 @@ const assertNotesAnswerFailures = (
   const assess = (answer: unknown, events = workflow.events) =>
     grade(events, answer, "analyze_javascript_application", claims)
       .factualAssessment;
-  expect(assess(manifest).status).toBe("passed");
+  const baseline = assess(manifest);
+  expect(
+    baseline.status,
+    JSON.stringify({
+      manifestFailures: baseline.manifestFailures,
+      failedClaims: baseline.claims
+        .filter((claim) => claim.status !== "passed")
+        .map(({ id, failures }) => ({ id, failures })),
+    }),
+  ).toBe("passed");
   const cases = [
     {
       id: "renderer_ipc",
@@ -364,6 +373,16 @@ const assertNotesAnswerFailures = (
       id: "semantic_boundary",
       patch: {
         value: { status: "found", coverage: "complete", relevant_unknowns: 0 },
+      },
+      failure: "value_mismatch",
+    },
+    {
+      id: "feature_modules",
+      patch: {
+        value: {
+          paths: ["csv.js", "main.js", "preload.js", "renderer.js"],
+          coverage: "complete-within-source",
+        },
       },
       failure: "value_mismatch",
     },

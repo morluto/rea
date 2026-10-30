@@ -99,12 +99,20 @@ const writeScenario = async (
 
 const runCaptureCli = async (
   scenarioPath: string,
-  options: { readonly stopOnRunning?: boolean } = {},
+  options: {
+    readonly stopOnRunning?: boolean;
+    readonly env?: NodeJS.ProcessEnv;
+  } = {},
 ): Promise<CliCapture> => {
   const child = spawn(
     process.execPath,
     ["scripts/rea.mjs", "capture-process", scenarioPath, "--json"],
-    { stdio: ["ignore", "pipe", "pipe"] },
+    {
+      stdio: ["ignore", "pipe", "pipe"],
+      ...(options.env === undefined
+        ? {}
+        : { env: { ...process.env, ...options.env } }),
+    },
   );
   let stdout = "";
   let stderr = "";
@@ -198,6 +206,7 @@ const connectProgressClient = async (
 ): Promise<{
   readonly client: Client;
   readonly notifications: string[];
+  readonly cleanupProgress: Promise<void>;
 }> => {
   const session = createTestBinarySession(() => {
     throw new Error("Process capture must not launch a binary provider");
@@ -211,9 +220,14 @@ const connectProgressClient = async (
     version: "1",
   });
   const notifications: string[] = [];
+  let sawCleanup: (() => void) | undefined;
+  const cleanupProgress = new Promise<void>((resolve) => {
+    sawCleanup = resolve;
+  });
   if (recordNotifications) {
     client.setNotificationHandler("notifications/progress", (notification) => {
       notifications.push(JSON.stringify(notification));
+      if (notification.params.message?.startsWith("cleanup:")) sawCleanup?.();
     });
   }
   const [clientTransport, serverTransport] =
@@ -223,7 +237,7 @@ const connectProgressClient = async (
   onTestFinished(async () => {
     await Promise.allSettled([client.close(), server.close(), session.close()]);
   });
-  return { client, notifications };
+  return { client, notifications, cleanupProgress };
 };
 
 itWithCaptureCapability(
@@ -246,9 +260,9 @@ itWithCaptureCapability(
       operation: "capture_process_scenario",
       predicate_type: "rea.process-capture",
     });
-    expect(recorded.frames.map(({ data }) => data).join("")).toContain(
-      "SPARSE_CHILD_STARTED",
-    );
+    const terminalText = recorded.frames.map(({ data }) => data).join("");
+    expect(terminalText).toContain("SPARSE_CHILD_STARTED");
+    expect(terminalText).toContain("SPARSE_CHILD_DONE");
     expect(capture.stderr).not.toContain("SPARSE_CHILD_STARTED");
     expect(capture.stderr).not.toContain("SPARSE_CHILD_DONE");
     const updates = capture.lines.map(({ update }) => update);
@@ -259,15 +273,79 @@ itWithCaptureCapability(
     expect(Math.max(...elapsed) - Math.min(...elapsed)).toBeGreaterThanOrEqual(
       1_000,
     );
-    expect(running.every(({ details }) => details.frames <= 2)).toBe(true);
+    // Frames count retained PTY chunks; child writes may be split or coalesced.
+    for (const [index, update] of running.entries()) {
+      expect(update.details.frames).toBeLessThanOrEqual(recorded.frames.length);
+      const previous = running[index - 1];
+      if (previous !== undefined)
+        expect(update.details.frames).toBeGreaterThanOrEqual(
+          previous.details.frames,
+        );
+    }
+    assertRateBound(
+      updates.filter(({ terminal }) => terminal !== true).length,
+      updates.at(-1)?.details.elapsed_ms ?? 0,
+    );
     expect(updates.at(-1)).toMatchObject({
       phase: "cleanup",
       terminal: true,
       details: {
         disposition: "exited",
+        frames: recorded.frames.length,
+        samples: recorded.process_samples.length,
+        interactions: recorded.interaction_events.length,
         owned_process_group: "cleaned",
         terminal_renderer: "cleaned",
         temporary_root: "cleaned",
+      },
+    });
+  },
+  30_000,
+);
+
+itWithCaptureCapability(
+  "reports startup cleanup coverage when temporary storage is unavailable",
+  async () => {
+    const scenario = await writeScenario(
+      "rea-process-progress-prepare-failed-",
+      {
+        executable: process.execPath,
+        arguments: childScript("process.stdout.write('ready\\n')"),
+        timeout_ms: 5_000,
+      },
+    );
+    const missingTempRoot = join(
+      await createTestTempDirectory("rea-process-progress-missing-tmpdir-"),
+      "missing",
+    );
+    const capture = await runCaptureCli(scenario, {
+      env: {
+        TMPDIR: missingTempRoot,
+        TMP: missingTempRoot,
+        TEMP: missingTempRoot,
+      },
+    });
+
+    expect(capture.exitCode).toBe(1);
+    const error = analysisCliErrorEnvelopeSchema.parse(
+      JSON.parse(capture.stdout),
+    );
+    expect(error).toMatchObject({
+      code: "process_capture_failed",
+      details: { execution_failure: expect.stringContaining(missingTempRoot) },
+    });
+    // Darwin prepares its native inspector before acquiring capture resources.
+    // Other hosts reach the capture root allocation, whose failure is accounted.
+    const cleanupState =
+      process.platform === "darwin" ? "unverified" : "not_required";
+    expect(capture.lines.at(-1)?.update).toMatchObject({
+      phase: "cleanup",
+      terminal: true,
+      details: {
+        disposition: "failed",
+        owned_process_group: cleanupState,
+        terminal_renderer: cleanupState,
+        temporary_root: cleanupState,
       },
     });
   },
@@ -544,9 +622,13 @@ itWithCaptureCapability(
       controller.abort();
       await completion;
     }
-    await expect
-      .poll(() => cancelling.notifications.join("\n"))
-      .toContain("disposition=cancelled");
+    // Client cancellation ends its wait before the server has released its
+    // process tree. Wait for the actual terminal notification under the test's
+    // existing deadline instead of giving cleanup a separate polling deadline.
+    await cancelling.cleanupProgress;
+    expect(cancelling.notifications.join("\n")).toContain(
+      "disposition=cancelled",
+    );
     expect(cancelling.notifications.join("\n")).toContain(
       "owned_process_group=cleaned",
     );

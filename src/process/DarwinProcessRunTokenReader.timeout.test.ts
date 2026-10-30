@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveSwiftcCompileTimeoutMs } from "./DarwinProcessRunTokenReader.js";
+import {
+  resolveSwiftcCompileTimeoutMs,
+  swiftcCompileTimeoutRecovery,
+} from "./DarwinProcessRunTokenReader.js";
+import { MAX_PROVIDER_STARTUP_TIMEOUT_MS } from "../domain/analysisResourceLimits.js";
 
 describe("resolveSwiftcCompileTimeoutMs", () => {
   it("keeps the historical default when unset", () => {
@@ -30,5 +34,15 @@ describe("resolveSwiftcCompileTimeoutMs", () => {
         environment: { REA_SWIFTC_COMPILE_TIMEOUT_MS: "loud" },
       }),
     ).toBe(120_000);
+  });
+
+  it("names the launch-environment deadline, range, and restart on a timeout", () => {
+    const recovery = swiftcCompileTimeoutRecovery(300_000);
+    expect(recovery).toContain("REA_SWIFTC_COMPILE_TIMEOUT_MS");
+    expect(recovery).toContain("300000 ms");
+    expect(recovery).toContain(`1..${String(MAX_PROVIDER_STARTUP_TIMEOUT_MS)}`);
+    expect(recovery).toContain("120000 ms");
+    expect(recovery).toContain("restart REA");
+    expect(recovery).toContain("next ownership-helper compile");
   });
 });

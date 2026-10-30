@@ -240,7 +240,7 @@ cliTest(
         const path = join(root, `${label}.pri`);
         await writeFile(path, fixture.bytes);
         await expectSelectionParity(cli, client, path, fixture.bytes);
-        expect(await readFile(path)).toEqual(fixture.bytes);
+        expect((await readFile(path)).equals(fixture.bytes)).toBe(true);
       }
       await expectRejections(cli, client, root, join(root, "windows10.pri"));
       await client.ping();

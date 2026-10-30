@@ -132,7 +132,21 @@ describe("runtime fatal protocol stream", () => {
       expect(result.error).toMatchObject({
         cleanupIncomplete: true,
         diagnostics: {
-          previous_error: expect.stringMatching(/protocol|malformed/iu),
+          primary_error: {
+            details: {
+              reason: expect.stringMatching(/protocol|malformed/iu),
+            },
+          },
+          cleanup_error: {
+            details: {
+              diagnostics: {
+                previous_error: expect.stringMatching(/protocol|malformed/iu),
+                cleanup_failures: expect.arrayContaining([
+                  expect.stringMatching(/protocol|malformed/iu),
+                ]),
+              },
+            },
+          },
         },
       });
     },

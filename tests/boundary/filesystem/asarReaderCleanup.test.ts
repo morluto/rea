@@ -248,7 +248,7 @@ describe("ASAR preparation cleanup", () => {
     try {
       await expect(packedMember(reader)).rejects.toMatchObject({
         reason: "format",
-        message: "Truncated or invalid ASAR size pickle",
+        message: "ASAR header has invalid Pickle extents",
         cleanup: {
           reason: closeFailure.message,
           resources: [expect.any(String)],
@@ -264,3 +264,72 @@ describe("ASAR preparation cleanup", () => {
     }
   });
 });
+
+it("forwards cancellation of an unconsumed packed member and closes its exact descriptor", async () => {
+  const { archive } = await createArchive();
+  const { reader, opened } = createTrackedReader(archive);
+  try {
+    const entry = await packedMember(reader);
+    const controller = new AbortController();
+    const output = await reader.open(entry, controller.signal);
+    const descriptor = latestHandle(opened);
+    const failed = new Promise<Error>((resolve) =>
+      output.once("error", resolve),
+    );
+    controller.abort(null);
+    await expect(failed).resolves.toMatchObject({
+      reason: "cancelled",
+      cancellation: { reason: null },
+    });
+    await reader.close();
+    expectDescriptorClosed(descriptor.fd);
+  } finally {
+    await reader.close();
+  }
+});
+
+it.each(["snapshot", "member"])(
+  "preserves %s read failure when caller cancellation arrives during that read",
+  async (stage) => {
+    const { archive } = await createArchive();
+    const controller = new AbortController();
+    const failure = Object.assign(
+      new Error("controlled ASAR native read failure"),
+      { code: "EIO", errno: -5, syscall: "read" },
+    );
+    let active = stage === "snapshot";
+    const { reader, opened } = createTrackedReader(archive, {
+      beforeAdoption: async (_path, handle) => {
+        if (active)
+          handle.read = (async () => {
+            controller.abort(null);
+            throw failure;
+          }) as FileHandle["read"];
+      },
+    });
+    try {
+      const consume = async () => {
+        if (stage === "snapshot") {
+          for await (const _entry of reader.entries(controller.signal)) {
+            /* failure precedes admission */
+          }
+        } else {
+          const entry = await packedMember(reader);
+          active = true;
+          const source = await reader.open(entry, controller.signal);
+          for await (const _chunk of source) {
+            /* failure precedes bytes */
+          }
+        }
+      };
+      await expect(consume()).rejects.toMatchObject({
+        reason: "io",
+        cause: failure,
+      });
+      await reader.close();
+      for (const handle of opened) expectDescriptorClosed(handle.fd);
+    } finally {
+      await reader.close();
+    }
+  },
+);

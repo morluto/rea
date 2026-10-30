@@ -8,10 +8,26 @@ on:
         required: false
         type: string
         default: ""
+      remote_cache_write:
+        description: Trusted release qualification may publish the remote cache.
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      TURBO_TOKEN:
+        description: Remote cache token. Only trusted callers pass it.
+        required: false
   workflow_dispatch:
 
 env:
   HUSKY: "0"
+  # A called workflow sees the caller event, so workflow_call is not an event
+  # name here. Writes when remote_cache_write is set, or on the default branch
+  # for push, schedule, and manual dispatch. Open pull requests stay empty-token
+  # and use the local cache only.
+  TURBO_TOKEN: "${{ (inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'))) && secrets.TURBO_TOKEN || '' }}"
+  TURBO_TEAM: ${{ vars.TURBO_TEAM }}
+  TURBO_CACHE: "${{ (inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'))) && 'local:rw,remote:rw' || 'local:rw' }}"
 
 permissions:
   contents: read
@@ -32,7 +48,8 @@ jobs:
       - uses: ./.github/actions/portable-build-cache
         with:
           build_cache_artifact: ${{ inputs.build_cache_artifact }}
-      - run: npm run verify:browser
+      # Own a fresh bus so Chromium never depends on an inherited session address.
+      - run: dbus-run-session -- npm run verify:browser
         env:
           REA_BROWSER_EXECUTABLE: /usr/bin/google-chrome
           REA_BROWSER_NO_SANDBOX: "true"

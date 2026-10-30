@@ -1,5 +1,12 @@
 import { createHash } from "node:crypto";
-import { chmod, mkdir, readdir, truncate, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  readdir,
+  readFile,
+  truncate,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 
 import { build } from "plist";
@@ -10,6 +17,7 @@ import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js"
 import { inspectBundleKeyedArchive } from "../../../src/artifacts/apple/KeyedArchiveReader.js";
 import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import {
+  AnalysisAccessDeniedError,
   AnalysisInputError,
   AnalysisUnsupportedTargetError,
 } from "../../../src/domain/analysisErrorCore.js";
@@ -159,6 +167,32 @@ it("reports an absent named root with the archive's available roots", async () =
   });
 });
 
+it.each(["UID", "CF$UID"])(
+  "keeps a sole scalar %s root free of false references through the file reader",
+  async (rootName) => {
+    const root = await bundle();
+    await writeFile(
+      join(root, "Contents", "Resources", "Scalar.plist"),
+      Buffer.from(
+        build({
+          $archiver: "NSKeyedArchiver",
+          $version: 100000,
+          $objects: ["$null"],
+          $top: { [rootName]: 1 },
+        }),
+      ),
+    );
+
+    const result = await inspect(root, {
+      path: "Contents/Resources/Scalar.plist",
+    });
+
+    expect(result.roots).toEqual({ [rootName]: 1 });
+    expect(result.references).toEqual([]);
+    expect(result.total_references).toBe(0);
+  },
+);
+
 it.each([
   [
     "plain plist",
@@ -210,11 +244,12 @@ it.each([
   async (platform, action) => {
     const root = await createTestTempDirectory("rea-keyed-kind-");
     const path = join(root, "Defaults.plist");
-    await writeFile(path, Buffer.from(build({ plain: true })));
+    const bytes = Buffer.from(build({ plain: true }));
+    await writeFile(path, bytes);
     const result = await new ArtifactProvider(process.env, platform)
       .createClient({
         path,
-        sha256: "0".repeat(64),
+        sha256: createHash("sha256").update(bytes).digest("hex"),
         kind: "artifact",
         format: "plist",
       })
@@ -292,7 +327,46 @@ it.skipIf(process.platform === "darwin" || process.platform === "win32")(
   },
 );
 
-it("keeps an archive readable when a non-finite real is an explicit unknown", async () => {
+it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "reports a read-denied selected archive as host access denial",
+  async () => {
+    const root = await bundle();
+    const selected = join(root, "Contents", "Resources", "Model.plist");
+    await chmod(selected, 0);
+    try {
+      await expect(readFile(selected)).rejects.toMatchObject({
+        code: "EACCES",
+      });
+      const rejected = await inspect(root, {
+        path: "Contents/Resources/Model.plist",
+      }).catch((cause: unknown) => cause);
+      expect(rejected).toBeInstanceOf(AnalysisAccessDeniedError);
+      expect(rejected).toMatchObject({
+        operation: "inspect_keyed_archive",
+        path: selected,
+        systemCode: "EACCES",
+      });
+      const projected = projectAnalysisError(
+        rejected as AnalysisAccessDeniedError,
+      );
+      expect(projected).toMatchObject({
+        code: "access_denied",
+        category: "unavailable",
+        retryable: false,
+        details: {
+          path: selected,
+          system_code: "EACCES",
+          boundary: "filesystem-read",
+        },
+      });
+      expect(projected.remediation.action).toContain("read access");
+    } finally {
+      await chmod(selected, 0o700);
+    }
+  },
+);
+
+it("keeps an archive readable while preserving a known non-finite real", async () => {
   const root = await bundle();
   const bytes = Buffer.from(
     build({
@@ -314,11 +388,13 @@ it("keeps an archive readable when a non-finite real is an explicit unknown", as
   expect(result.objects).toContainEqual(
     expect.objectContaining({
       id: 1,
-      value: { $plist_type: "real", value: null },
+      kind: "scalar",
+      status: "observed",
+      value: { $plist_type: "real", value: "nan" },
     }),
   );
   expect(result.limitations).toContain(
-    '1 non-finite real value(s) are reported as { "$plist_type": "real", "value": null } because JSON evidence cannot preserve NaN vs infinity.',
+    '1 non-finite real value(s) are reported as { "$plist_type": "real", "value": "<spelling>" } using canonical numeric labels nan, +infinity or -infinity because a JSON number cannot carry them.',
   );
 });
 

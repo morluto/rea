@@ -1,12 +1,22 @@
-import { digestCanonicalValue } from "../domain/canonicalDigest.js";
+import {
+  artifactGraphDigest,
+  artifactIdForContent,
+  artifactManifestId,
+  occurrenceIdForLocation,
+} from "../domain/artifactIdentity.js";
+import type {
+  ArtifactEdge,
+  ArtifactNode,
+  ArtifactOccurrence,
+  IntegrityContradiction,
+} from "../domain/artifactGraph.js";
 import { createEvidence } from "../domain/evidence.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 
 const inventory = (digit: string) => {
   const sha = digit.repeat(64);
-  const artifactId = `art_${digestCanonicalValue({ sha256: sha }, "Artifact example")}`;
-  const occurrenceId = `occ_${digestCanonicalValue({ root: artifactId }, "Artifact example")}`;
-  const nodes = [
+  const artifactId = artifactIdForContent(sha);
+  const nodes: ArtifactNode[] = [
     {
       artifact_id: artifactId,
       format: "file",
@@ -18,9 +28,13 @@ const inventory = (digit: string) => {
       limitations: [],
     },
   ];
-  const occurrences = [
+  const occurrences: ArtifactOccurrence[] = [
     {
-      occurrence_id: occurrenceId,
+      occurrence_id: occurrenceIdForLocation({
+        rootArtifactId: artifactId,
+        logicalPath: ".",
+        entryKind: "file",
+      }),
       artifact_id: artifactId,
       parent_occurrence_id: null,
       logical_path: ".",
@@ -36,36 +50,31 @@ const inventory = (digit: string) => {
       limitations: [],
     },
   ];
-  const graphSha256 = digestCanonicalValue(
-    {
-      nodes,
-      occurrences,
-      edges: [],
-      integrity_contradictions: [],
-    },
-    "Artifact example",
-  );
+  const edges: ArtifactEdge[] = [];
+  const integrityContradictions: IntegrityContradiction[] = [];
+  const graphSha256 = artifactGraphDigest({
+    nodes,
+    occurrences,
+    edges,
+    contradictions: integrityContradictions,
+  });
   return jsonValueSchema.parse({
     manifest: {
-      manifest_id: `agm_${digestCanonicalValue(
-        {
-          root_artifact_id: artifactId,
-          graph_sha256: graphSha256,
-        },
-        "Artifact example",
-      )}`,
+      manifest_id: artifactManifestId(artifactId, graphSha256),
       root_artifact_id: artifactId,
       root_sha256: sha,
       root_format: "file",
       graph_sha256: graphSha256,
       node_count: nodes.length,
       occurrence_count: occurrences.length,
-      edge_count: 0,
+      edge_count: edges.length,
     },
     nodes,
     occurrences,
-    edges: [],
+    edges,
     provenance: [],
+    integrity_contradictions: integrityContradictions,
+    coverage: { scope: "root", status: "complete" },
     limitations: [],
   });
 };

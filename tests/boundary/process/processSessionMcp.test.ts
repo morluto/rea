@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import { access } from "node:fs/promises";
+import { access, chmod, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -145,7 +145,12 @@ itWithCaptureCapability(
     });
 
     const equalSize = await capture("b");
-    expect(equalSize.truncated).toBe(false);
+    // This short-lived target can exit before process sampling finishes.
+    // Assert the terminal coverage that this normalization control exercises.
+    expect(equalSize.truncation_details.raw_terminal).toMatchObject({
+      observed_bytes: Buffer.byteLength(`${"a".repeat(100)}\r\n`),
+      retained_bytes: Buffer.byteLength(`${"a".repeat(100)}\r\n`),
+    });
     expect(equalSize.frames.map(({ data }) => data).join("")).toBe(
       `${"b".repeat(100)}\r\n`,
     );
@@ -199,9 +204,7 @@ itWithCaptureCapability(
         captured.structuredContent,
       ),
     ).toBe(true);
-    expect(
-      contract.outputSchema.safeParse(captured.structuredContent).success,
-    ).toBe(true);
+    const evidence = contract.outputSchema.parse(captured.structuredContent);
     const listedUnknowns = await mcp.callTool({
       name: "list_unknowns",
       arguments: {},
@@ -224,9 +227,61 @@ itWithCaptureCapability(
       .parse(listedUnknowns.structuredContent).result.items;
     expect(listed).toContainEqual(
       expect.objectContaining({
-        question: "Was network behavior fully observed during capture?",
+        question: `Was network behavior fully observed during capture? (Evidence ${evidence.evidence_id})`,
         domain: "process-network",
       }),
+    );
+  },
+);
+
+itWithCaptureCapability(
+  "resolves and inherits the server's selected environment through MCP",
+  async () => {
+    const root = await createTestTempDirectory("rea-process-mcp-env-");
+    const bin = join(root, "bin");
+    const executable = join(bin, "rea-injected-process-probe");
+    await mkdir(bin);
+    await writeFile(
+      executable,
+      [
+        "#!/bin/sh",
+        'printf "%s|%s\\n" "$REA_CAPTURE_INJECTED_MARKER" "$REA_CAPTURE_SCENARIO_OVERRIDE"',
+      ].join("\n"),
+    );
+    await chmod(executable, 0o755);
+    const session = createTestBinarySession(createCacheProvider([]));
+    const server = createServer(
+      { kind: "session", session },
+      {
+        logger: silentLogger,
+        environment: {
+          PATH: bin,
+          REA_CAPTURE_INJECTED_MARKER: "injected-value",
+          REA_CAPTURE_SCENARIO_OVERRIDE: "host-value",
+        },
+      },
+    );
+    const client = new Client({ name: "process-mcp-env", version: "1" });
+    resources.push(client, server, session);
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    const result = await client.callTool({
+      name: "capture_process_scenario",
+      arguments: {
+        executable: "rea-injected-process-probe",
+        working_directory: root,
+        environment: { REA_CAPTURE_SCENARIO_OVERRIDE: "scenario-value" },
+      },
+    });
+    expect(result.isError, JSON.stringify(result.content)).not.toBe(true);
+    const capture = toolContract("capture_process_scenario").outputSchema.parse(
+      result.structuredContent,
+    ).normalized_result;
+    expect(capture.frames.map(({ data }) => data).join("")).toContain(
+      "injected-value|scenario-value",
     );
   },
 );

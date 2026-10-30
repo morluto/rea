@@ -1,8 +1,12 @@
+import { cdpFrameRecordFacts } from "./CdpFrameIdentity.js";
 import type { InspectWebPageInput } from "../domain/browserObservation.js";
+import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
 import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
 import {
   allowedSanitizedUrl,
+  admitRecords,
   numberValue,
+  resourceContentSize,
   recordValue,
   recordsValue,
   requiredRecord,
@@ -10,18 +14,23 @@ import {
   type UnknownRecord,
 } from "./CdpCaptureValues.js";
 import {
-  cdpSnapshotAttributesResolve,
   cdpSnapshotString,
   cdpSnapshotValueString,
 } from "./CdpSnapshotStrings.js";
+import {
+  snapshotDocumentNodes,
+  snapshotNodeAt,
+  type SnapshotAttributes,
+} from "./CdpSnapshotNodes.js";
 import type { BrowserExclusionReason } from "../domain/browserCompleteness.js";
 import { exclusionReasonForUrl } from "./CdpCaptureEventHelpers.js";
 import type { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
 import {
-  createDocumentSvgAncestry,
-  domSvgLink,
+  createDocumentNamespaceAncestry,
+  domXmlElement,
   type DomSvgNodeQuery,
-} from "./CdpCaptureDomSvg.js";
+  XHTML_NAMESPACE,
+} from "./CdpCaptureDomNamespaces.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 
 export type CapturedResource = Omit<
@@ -29,7 +38,7 @@ export type CapturedResource = Omit<
   "resource_key"
 > & { readonly rawUrl: string };
 
-/** Normalize every allowed frame, optionally selecting a leading frame. */
+/** Normalize allowed frames and retain the enclosing tree's root identity. */
 export const captureFrames = (
   result: unknown,
   allowedOrigins: ReadonlySet<string>,
@@ -37,53 +46,131 @@ export const captureFrames = (
   completeness?: CdpCaptureCompleteness,
 ): {
   readonly items: WebPageInspection["frames"];
+  readonly root: WebPageInspection["frames"][number] | undefined;
 } => {
   const root = recordValue(recordValue(result)?.frameTree);
   if (root === undefined) {
     completeness?.exclude("frames", "invalid_protocol_value");
-    return { items: [] };
+    return { items: [], root: undefined };
   }
   const items: WebPageInspection["frames"] = [];
+  let rootFrame: WebPageInspection["frames"][number] | undefined;
   for (const tree of walkFrameTrees(root, (omittedCount) =>
     completeness?.exclude("frames", "invalid_protocol_value", omittedCount),
   )) {
     const frame = recordValue(tree.frame);
-    const frameId = cdpStringValue(frame?.id);
-    const sanitized = allowedSanitizedUrl(frame?.url, allowedOrigins);
-    if (frame === undefined || frameId === undefined) {
+    const identity = cdpFrameRecordFacts(frame);
+    const frameId = identity.frameId;
+    const observation = observeCdpFrameUrl(frame);
+    const scopeUrl =
+      observation.kind === "missing" ? undefined : observation.scopeUrl;
+    const facts = classifyCdpFrameUrl(observation, allowedOrigins);
+    if (frameId === null) {
       completeness?.exclude("frames", "invalid_protocol_value");
       continue;
     }
-    if (sanitized === undefined || sanitized.origin === null) {
-      completeness?.exclude(
-        "frames",
-        exclusionReasonForUrl(cdpStringValue(frame.url)),
-      );
+    if (observation.kind === "invalid_fragment") {
+      completeness?.exclude("frames", "invalid_protocol_value");
+      if (facts.scope !== "approved")
+        completeness?.exclude("frames", exclusionReasonForUrl(scopeUrl));
+      continue;
+    }
+    if (facts.url === undefined || facts.origin === null) {
+      completeness?.exclude("frames", exclusionReasonForUrl(scopeUrl));
       continue;
     }
     if (maximum !== undefined && items.length >= maximum) continue;
-    const parentFrameId = cdpStringValue(frame.parentId);
     // Only the enclosing tree's root may legitimately omit parent evidence.
     if (
-      (tree !== root || Object.hasOwn(frame, "parentId")) &&
-      (parentFrameId === undefined || parentFrameId.length === 0)
+      identity.parentIssue !== null ||
+      (tree !== root && identity.parentRelation === "root")
     )
       completeness?.exclude("frames", "invalid_protocol_value");
-    items.push({
+    const captured = {
       frame_id: frameId,
-      parent_frame_id: parentFrameId ?? null,
-      url: sanitized.url,
-      origin: sanitized.origin,
-    });
+      parent_frame_id: identity.parentId,
+      url: facts.url,
+      origin: facts.origin,
+    };
+    items.push(captured);
+    if (tree === root && identity.parentRelation === "root")
+      rootFrame = captured;
   }
-  return { items };
+  return { items, root: rootFrame };
 };
 
-/** Read the current main-frame URL from an untrusted Page.getFrameTree result. */
-export const mainFrameUrl = (result: unknown): string | undefined =>
-  cdpStringValue(
-    recordValue(recordValue(requiredRecord(result).frameTree)?.frame)?.url,
+export type CdpFrameUrlObservation =
+  | {
+      readonly kind: "observed";
+      readonly url: string;
+      readonly scopeUrl: string;
+    }
+  | { readonly kind: "invalid_fragment"; readonly scopeUrl: string }
+  | { readonly kind: "missing" };
+
+/** Parse identity and scope facts once; an invalid fragment cannot erase its base origin. */
+export const observeCdpFrameUrl = (
+  frame: UnknownRecord | undefined,
+): CdpFrameUrlObservation => {
+  const url = cdpStringValue(frame?.url);
+  if (url === undefined) return { kind: "missing" };
+  if (frame?.urlFragment === undefined)
+    return { kind: "observed", url, scopeUrl: url };
+  const fragment = cdpStringValue(frame.urlFragment);
+  if (fragment === undefined || (fragment !== "" && !fragment.startsWith("#")))
+    return { kind: "invalid_fragment", scopeUrl: url };
+  return {
+    kind: "observed",
+    url: `${url.split("#", 1)[0] ?? ""}${fragment}`,
+    scopeUrl: url,
+  };
+};
+
+export const observeMainFrameUrl = (result: unknown): CdpFrameUrlObservation =>
+  observeCdpFrameUrl(
+    recordValue(recordValue(requiredRecord(result).frameTree)?.frame),
   );
+
+/** Policy and readable identity are independent facts, including on malformed frames. */
+export const classifyCdpFrameUrl = (
+  observation: CdpFrameUrlObservation,
+  allowedOrigins: ReadonlySet<string>,
+): {
+  readonly scope: "approved" | "outside_policy" | "unsupported" | "unknown";
+  readonly origin: string | null;
+  readonly url: string | undefined;
+} => {
+  if (observation.kind === "missing")
+    return { scope: "unknown", origin: null, url: undefined };
+  const base = sanitizeBrowserUrl(observation.scopeUrl);
+  const scope =
+    base.origin === null
+      ? "unsupported"
+      : allowedOrigins.has(base.origin)
+        ? "approved"
+        : "outside_policy";
+  return {
+    scope,
+    origin: base.origin,
+    url:
+      observation.kind === "observed" && scope === "approved"
+        ? sanitizeBrowserUrl(observation.url).url
+        : undefined,
+  };
+};
+
+/** Read the complete identity only when the protocol established it. */
+export const cdpFrameUrl = (
+  frame: UnknownRecord | undefined,
+): string | undefined => {
+  const observed = observeCdpFrameUrl(frame);
+  return observed.kind === "observed" ? observed.url : undefined;
+};
+
+export const mainFrameUrl = (result: unknown): string | undefined => {
+  const observed = observeMainFrameUrl(result);
+  return observed.kind === "observed" ? observed.url : undefined;
+};
 
 /** Normalize every allowed resource. */
 export const captureResources = (
@@ -99,51 +186,58 @@ export const captureResources = (
     return { items: [] };
   }
   const items: CapturedResource[] = [];
-  for (const tree of walkFrameTrees(root, (omittedCount) =>
-    completeness?.exclude("resources", "invalid_protocol_value", omittedCount),
+  for (const resource of frameTreeResources(root, (count) =>
+    completeness?.exclude("resources", "invalid_protocol_value", count),
   )) {
+    const url = allowedSanitizedUrl(resource.url, allowedOrigins);
+    if (url === undefined || url.origin === null) {
+      completeness?.exclude(
+        "resources",
+        exclusionReasonForUrl(cdpStringValue(resource.url)),
+      );
+      continue;
+    }
+    const type = cdpStringValue(resource.type);
+    const mimeType = cdpStringValue(resource.mimeType);
+    if (type === undefined || type.length === 0 || mimeType === undefined) {
+      completeness?.exclude("resources", "invalid_protocol_value");
+      continue;
+    }
+    const contentSize = resourceContentSize(resource.contentSize);
+    if (!contentSize.ok)
+      completeness?.exclude("resources", "invalid_protocol_value");
+    items.push({
+      rawUrl: cdpStringValue(resource.url) ?? "",
+      url: url.url,
+      origin: url.origin,
+      type,
+      mime_type: mimeType,
+      content_size: contentSize.ok ? contentSize.value : null,
+    });
+  }
+  return { items };
+};
+
+/**
+ * Yield resource records from every frame of a resource tree. A missing or
+ * non-array `resources` list, or a non-record entry, is reported as invalid
+ * rather than read as an empty frame.
+ */
+export const frameTreeResources = function* (
+  root: UnknownRecord,
+  onInvalid: (count: number | null) => void,
+): Generator<UnknownRecord> {
+  for (const tree of walkFrameTrees(root, onInvalid)) {
     if (!Array.isArray(tree.resources)) {
-      completeness?.exclude("resources", "invalid_protocol_value", null);
+      onInvalid(null);
       continue;
     }
     for (const entry of tree.resources) {
       const resource = recordValue(entry);
-      if (resource === undefined) {
-        completeness?.exclude("resources", "invalid_protocol_value");
-        continue;
-      }
-      const url = allowedSanitizedUrl(resource.url, allowedOrigins);
-      if (url === undefined || url.origin === null) {
-        completeness?.exclude(
-          "resources",
-          exclusionReasonForUrl(cdpStringValue(resource.url)),
-        );
-        continue;
-      }
-      const type = cdpStringValue(resource.type);
-      const mimeType = cdpStringValue(resource.mimeType);
-      if (type === undefined || type.length === 0 || mimeType === undefined) {
-        completeness?.exclude("resources", "invalid_protocol_value");
-        continue;
-      }
-      const rawContentSize = numberValue(resource.contentSize);
-      const contentSize =
-        rawContentSize !== undefined && rawContentSize >= 0
-          ? rawContentSize
-          : null;
-      if (resource.contentSize !== undefined && contentSize === null)
-        completeness?.exclude("resources", "invalid_protocol_value");
-      items.push({
-        rawUrl: cdpStringValue(resource.url) ?? "",
-        url: url.url,
-        origin: url.origin,
-        type,
-        mime_type: mimeType,
-        content_size: contentSize,
-      });
+      if (resource === undefined) onInvalid(1);
+      else yield resource;
     }
   }
-  return { items };
 };
 
 export const walkFrameTrees = function* (
@@ -181,6 +275,7 @@ interface DomMetadataCapture {
 
 export interface DomCapture extends DomMetadataCapture {
   readonly total: number;
+  readonly nodeValueLengthUnit: "utf16-code-units";
   readonly nodes: WebPageInspection["dom"]["nodes"];
 }
 
@@ -217,7 +312,9 @@ export function* captureDom(
   let unresolvedSvgNodes = 0;
   if (!Array.isArray(root.strings))
     excludeDocumentEvidence(completeness, "invalid_protocol_value", null);
-  for (const document of snapshotDocuments(root.documents, completeness)) {
+  for (const document of snapshotDocuments(root.documents, (count) =>
+    excludeDocumentEvidence(completeness, "invalid_protocol_value", count),
+  )) {
     const documentUrl = cdpSnapshotString(strings, document.documentURL);
     if (documentUrl === undefined) {
       excludeDocumentEvidence(completeness, "invalid_protocol_value");
@@ -236,92 +333,46 @@ export function* captureDom(
       continue;
     }
     const baseUrl = baseUrlValue || documentUrl;
-    const documentNodes = recordValue(document.nodes);
+    const documentNodes = snapshotDocumentNodes(document.nodes, strings);
     if (documentNodes === undefined) {
       excludeDocumentEvidence(completeness, "invalid_protocol_value");
       continue;
     }
-    const rawNodeTypes = numberArray(documentNodes.nodeType);
-    const rawNodeNames = numberArray(documentNodes.nodeName);
-    const rawNodeValues = numberArray(documentNodes.nodeValue);
-    const rawParents = numberArray(documentNodes.parentIndex);
-    const rawAttributes = Array.isArray(documentNodes.attributes)
-      ? documentNodes.attributes
-      : undefined;
-    if (
-      rawNodeTypes === undefined ||
-      rawNodeNames === undefined ||
-      rawNodeValues === undefined ||
-      rawParents === undefined ||
-      rawAttributes === undefined ||
-      rawNodeNames.length !== rawNodeTypes.length ||
-      rawNodeValues.length !== rawNodeTypes.length ||
-      rawParents.length !== rawNodeTypes.length
-    ) {
-      excludeDocumentEvidence(completeness, "invalid_protocol_value");
-      continue;
-    }
-    if (rawAttributes.length > rawNodeTypes.length)
+    const { nodeTypes, backendNodeIds } = documentNodes;
+    if (documentNodes.excessAttributes > 0)
       excludeDocumentEvidence(
         completeness,
         "invalid_protocol_value",
-        rawAttributes.length - rawNodeTypes.length,
+        documentNodes.excessAttributes,
       );
-    const backendNodeIds = Array.isArray(documentNodes.backendNodeId)
-      ? documentNodes.backendNodeId
-      : [];
     const baseIndex = total;
-    total += rawNodeTypes.length;
-    const ancestry = createDocumentSvgAncestry({
-      nodeTypes: rawNodeTypes,
-      nodeNames: rawNodeNames,
-      parents: rawParents,
-      strings,
-      attributes: rawAttributes,
-    });
+    total += nodeTypes.length;
+    const ancestry = createDocumentNamespaceAncestry(documentNodes);
     const pendingMetadata: PendingDomMetadata[] = [];
-    for (let index = 0; index < rawNodeTypes.length; index += 1) {
-      const nodeType = rawNodeTypes[index];
-      const nodeNameIndex = rawNodeNames[index];
-      const nodeValueIndex = rawNodeValues[index];
-      const parent = rawParents[index];
-      const attributeIndexes = numberArray(rawAttributes[index]);
-      const nodeName = cdpSnapshotString(strings, nodeNameIndex);
-      const nodeValue = cdpSnapshotValueString(strings, nodeValueIndex);
-      if (
-        nodeType === undefined ||
-        nodeName === undefined ||
-        nodeValue === undefined ||
-        parent === undefined ||
-        parent < -1 ||
-        parent === index ||
-        parent >= rawNodeTypes.length ||
-        attributeIndexes === undefined ||
-        !cdpSnapshotAttributesResolve(strings, attributeIndexes)
-      ) {
+    for (let index = 0; index < nodeTypes.length; index += 1) {
+      const admitted = snapshotNodeAt(documentNodes, index);
+      if (!admitted.ok) {
         excludeDocumentEvidence(completeness, "invalid_protocol_value");
         continue;
       }
-      const attributes = attributeIndexes as readonly number[];
+      const { nodeType, nodeName, nodeValue, parent, attributes } =
+        admitted.value;
       const nodeIndex = baseIndex + index;
-      const attributeNames = uniqueAttributeNames(attributes, strings);
-      const svgLink = domSvgLink(ancestry, index);
-      if (svgLink.xmlDocument === undefined)
+      const attributeNames = [...new Set(attributes.map(([name]) => name))];
+      const domElement = domXmlElement(ancestry, index);
+      const htmlTagName = domHtmlTagName(nodeName, domElement);
+      if (domElement.xmlDocument === undefined)
         completeness?.exclude("metadata", "invalid_protocol_value");
       let svgQuery: DomSvgNodeQuery | null | undefined;
       if (
-        svgLink.xmlDocument === false &&
+        domElement.xmlDocument === false &&
         nodeType === 1 &&
         attributeNames.includes("xlink:href") &&
         !attributeNames.includes("href")
       ) {
-        const backendNodeId = numberValue(backendNodeIds[index]);
+        const backendNodeId = backendNodeIds[index];
         svgQuery =
-          backendNodeId !== undefined &&
-          Number.isSafeInteger(backendNodeId) &&
-          backendNodeId > 0
-            ? { backendNodeId, nodeName }
-            : null;
+          backendNodeId !== undefined ? { backendNodeId, nodeName } : null;
       }
       nodes.push({
         index: nodeIndex,
@@ -334,20 +385,19 @@ export function* captureDom(
       pendingMetadata.push({
         svgQuery,
         options: {
-          strings,
           attributes,
           // The BASE element itself resolves against the document fallback URL.
-          baseUrl: nodeName.toLowerCase() === "base" ? documentUrl : baseUrl,
+          baseUrl: htmlTagName === "base" ? documentUrl : baseUrl,
           documentUrl,
           nodeIndex,
-          nodeName,
+          htmlTagName,
           allowedOrigins,
-          ...svgLink,
+          ...domElement,
         },
       });
       if (
         pendingMetadata.length === DOM_METADATA_BATCH_SIZE ||
-        index === rawNodeTypes.length - 1
+        index === nodeTypes.length - 1
       ) {
         const metadata = yield* captureDomMetadata(
           pendingMetadata,
@@ -371,6 +421,7 @@ export function* captureDom(
   }
   return {
     total,
+    nodeValueLengthUnit: "utf16-code-units",
     nodes,
     urls,
     agentHints,
@@ -389,18 +440,21 @@ const excludeDocumentEvidence = (
   completeness?.exclude("metadata", reason, count);
 };
 
-const snapshotDocuments = (
+/**
+ * Read DOMSnapshot documents. A snapshot always describes at least one
+ * document, so a missing or empty list is invalid rather than an empty DOM.
+ */
+export const snapshotDocuments = (
   value: unknown,
-  completeness: CdpCaptureCompleteness | undefined,
+  onInvalid: (count: number | null) => void,
 ): readonly UnknownRecord[] => {
   if (!Array.isArray(value) || value.length === 0) {
-    excludeDocumentEvidence(completeness, "invalid_protocol_value", null);
+    onInvalid(null);
     return [];
   }
   return value.flatMap((item) => {
     const document = recordValue(item);
-    if (document === undefined)
-      excludeDocumentEvidence(completeness, "invalid_protocol_value");
+    if (document === undefined) onInvalid(1);
     return document === undefined ? [] : [document];
   });
 };
@@ -455,22 +509,88 @@ export const captureAccessibility = (
   options: {
     readonly includeText: boolean;
     readonly unavailable?: boolean;
+    readonly completeness?: CdpCaptureCompleteness;
   },
 ): {
   readonly total: number;
   readonly nodes: WebPageInspection["accessibility"]["nodes"];
   readonly textCapture: WebPageInspection["accessibility"]["text_capture"];
-  readonly treeIncomplete: boolean;
+  readonly hasUnobservedChildren: boolean;
 } => {
-  const all = results.flatMap((result) =>
-    recordsValue(requiredRecord(result).nodes),
-  );
-  const nodeIds = new Set(
-    all.flatMap((node) => {
-      const nodeId = cdpStringValue(node.nodeId);
-      return nodeId === undefined ? [] : [nodeId];
-    }),
-  );
+  const all = results.flatMap((result) => {
+    const inventory = admitRecords(requiredRecord(result).nodes);
+    if (inventory === undefined) {
+      options.completeness?.exclude(
+        "accessibility",
+        "invalid_protocol_value",
+        null,
+      );
+      return [];
+    }
+    const nodes: {
+      readonly nodeId: string;
+      readonly parentId: string | null;
+      readonly childIds: readonly string[];
+      readonly ignored: boolean;
+      readonly role: unknown;
+      readonly name: unknown;
+      readonly description: unknown;
+      readonly properties: unknown;
+    }[] = [];
+    let malformedCount = 0;
+    for (const entry of inventory) {
+      const node = recordValue(entry);
+      const nodeId = cdpStringValue(node?.nodeId);
+      if (
+        node === undefined ||
+        nodeId === undefined ||
+        nodeId.length === 0 ||
+        typeof node.ignored !== "boolean"
+      ) {
+        malformedCount += 1;
+        continue;
+      }
+      const parentId = cdpStringValue(node.parentId);
+      if (
+        node.parentId !== undefined &&
+        (parentId === undefined || parentId.length === 0)
+      )
+        malformedCount += 1;
+      const childIds = Array.isArray(node.childIds)
+        ? node.childIds.filter(
+            (childId): childId is string =>
+              typeof childId === "string" && childId.length > 0,
+          )
+        : [];
+      if (
+        node.childIds !== undefined &&
+        (!Array.isArray(node.childIds) ||
+          childIds.length !== node.childIds.length)
+      )
+        malformedCount += 1;
+      // Identity admission owns these facts. Projection and coverage consume
+      // the same parsed IDs, including usable siblings of malformed fields.
+      nodes.push({
+        nodeId,
+        parentId:
+          parentId === undefined || parentId.length === 0 ? null : parentId,
+        childIds,
+        ignored: node.ignored,
+        role: node.role,
+        name: node.name,
+        description: node.description,
+        properties: node.properties,
+      });
+    }
+    if (malformedCount > 0)
+      options.completeness?.exclude(
+        "accessibility",
+        "invalid_protocol_value",
+        malformedCount,
+      );
+    return nodes;
+  });
+  const nodeIds = new Set(all.map((node) => node.nodeId));
   let excludedFields = 0;
   const nodes = all.map((node) => {
     const captureText = (value: unknown): string | null => {
@@ -483,25 +603,20 @@ export const captureAccessibility = (
       return raw;
     };
     return {
-      node_id: cdpStringValue(node.nodeId) ?? "",
-      parent_id: cdpStringValue(node.parentId) ?? null,
+      node_id: node.nodeId,
+      parent_id: node.parentId,
       role: axText(node.role),
       name: captureText(node.name),
       description: captureText(node.description),
-      ignored: node.ignored === true,
+      ignored: node.ignored,
       states: accessibilityStates(node.properties),
     };
   });
   return {
     total: all.length,
     nodes,
-    treeIncomplete: all.some(
-      (node) =>
-        Array.isArray(node.childIds) &&
-        node.childIds.some((childId) => {
-          const id = cdpStringValue(childId);
-          return id !== undefined && !nodeIds.has(id);
-        }),
+    hasUnobservedChildren: all.some((node) =>
+      node.childIds.some((childId) => !nodeIds.has(childId)),
     ),
     textCapture: {
       status: options.unavailable
@@ -574,46 +689,34 @@ const accessibilityStates = (
 const axText = (value: unknown): string | null =>
   cdpStringValue(recordValue(value)?.value) ?? null;
 
-const uniqueAttributeNames = (
-  attributeIndexes: readonly number[],
-  strings: readonly (string | undefined)[],
-): string[] => {
-  const names: string[] = [];
-  const seen = new Set<string>();
-  for (let index = 0; index < attributeIndexes.length; index += 2) {
-    const name = cdpSnapshotString(strings, attributeIndexes[index]);
-    if (name === undefined) continue;
-    if (seen.has(name)) continue;
-    seen.add(name);
-    names.push(name);
-  }
-  return names;
-};
-
-const numberArray = (
-  value: unknown,
-): readonly (number | undefined)[] | undefined => {
-  if (!Array.isArray(value)) return undefined;
-  return value.map((item) => {
-    const number = numberValue(item);
-    return number !== undefined && Number.isSafeInteger(number)
-      ? number
-      : undefined;
-  });
-};
-
 interface DomMetadataOptions {
-  readonly strings: readonly (string | undefined)[];
-  readonly attributes: readonly number[];
+  readonly attributes: SnapshotAttributes;
   readonly baseUrl: string;
   readonly documentUrl: string;
   readonly nodeIndex: number;
-  readonly nodeName: string;
+  readonly htmlTagName: string;
   readonly allowedOrigins: ReadonlySet<string>;
   readonly svgElement: boolean;
   readonly xmlDocument: boolean | undefined;
+  readonly elementNamespace: string | undefined;
+  readonly localName: string | undefined;
   readonly xlinkHref: string | undefined;
 }
+
+/** Interpret the element once using its resolved namespace, not its raw prefix. */
+const domHtmlTagName = (
+  nodeName: string,
+  element: Pick<
+    DomMetadataOptions,
+    "xmlDocument" | "elementNamespace" | "localName"
+  >,
+): string =>
+  element.xmlDocument === false
+    ? nodeName.toLowerCase()
+    : element.xmlDocument === true &&
+        element.elementNamespace === XHTML_NAMESPACE
+      ? (element.localName ?? "")
+      : "";
 
 // Chrome reads an SVG XLink href only when href itself is absent, and an
 // empty href still wins. HTML keeps the literal attribute name `xlink:href`.
@@ -636,28 +739,23 @@ const domMetadata = (
   readonly agentHints: WebPageInspection["metadata"]["agent_hints"];
 } => {
   const {
-    strings,
     attributes,
     baseUrl,
     documentUrl,
     nodeIndex,
-    nodeName,
+    htmlTagName,
     allowedOrigins,
   } = options;
   const pairs = new Map<string, string>();
-  for (let index = 0; index + 1 < attributes.length; index += 2) {
-    // Chrome already folds HTML names; SVG/XML names remain case-sensitive.
-    const name = cdpSnapshotString(strings, attributes[index]);
-    const value = cdpSnapshotValueString(strings, attributes[index + 1]);
-    if (name === undefined || value === undefined) continue;
-    // HTML keeps the first declaration. A later repeat must not move dom_urls.
+  for (const [name, value] of attributes) {
+    // HTML keeps the first declaration; SVG/XML spelling stays case-sensitive.
     if (!pairs.has(name)) pairs.set(name, value);
   }
+  const tagName = htmlTagName;
   const urls: WebPageInspection["metadata"]["dom_urls"] = [];
   for (const attribute of domUrlAttributes) {
     const value = hrefAttributeValue(pairs, attribute, options);
     if (value === undefined) continue;
-    const tagName = nodeName.toLowerCase();
     // Chrome strips HTML whitespace for FORM.action, while submit controls
     // use the document URL only for an exactly empty formaction attribute.
     const usesDocumentUrl =
@@ -686,7 +784,7 @@ const domMetadata = (
     .filter((value) => agentRelValues.includes(value));
   const href = urls.find(({ attribute }) => attribute === "href")?.url ?? null;
   const agentHints =
-    nodeName.toLowerCase() === "link" && rel.length > 0
+    tagName === "link" && rel.length > 0
       ? rel.map((declaration) => ({
           mechanism: "dom_link_rel" as const,
           declaration,

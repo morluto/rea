@@ -1,12 +1,11 @@
-import { readFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
 
-import { parse } from "@babel/parser";
 import { describe, expect, it } from "vitest";
 
 import {
   agentEvaluationPassed,
   summarizeFactualCorrectness,
-} from "../../../src/evaluation/AgentEvaluationReport.js";
+} from "./AgentEvaluationReport.js";
 
 const routingSuccess = {
   exitCode: 0,
@@ -21,59 +20,40 @@ const routingSuccess = {
 };
 
 describe("agent evaluation release gate", () => {
-  it("rejects incorrect fixture claims even when every text heuristic passes", async () => {
-    const predicate = await runnerFailurePredicate();
-    expect(
-      predicate({
-        exitCode: 0,
-        naturalUse: true,
-        correctFirstTool: true,
-        repeatedCallCount: 0,
-        inputValidationFailureCount: 0,
-        requiredToolSubsequenceMet: true,
-        inputTokens: 100,
-        answerHeuristicsMet: true,
-        epistemicCuePresent: true,
-        factualCorrectness: "failed",
-      }),
-    ).toBe(true);
+  it("exits unsuccessfully for a rejected report after accepting a passing report", () => {
+    const passing = {
+      id: "passing-fixture",
+      ...routingSuccess,
+      factualCorrectness: "passed",
+    };
+    const accepted = runReportGate([passing]);
+    expect(accepted.status).toBe(0);
+    const rejected = runReportGate([
+      passing,
+      { ...passing, id: "incorrect-fixture", factualCorrectness: "failed" },
+    ]);
+    // Negative control: a runner that lets the failed report pass exits zero.
+    expect(rejected.status).toBe(1);
+    expect(rejected.stderr).toContain(
+      "Agent routing/workflow/answer checks failed: incorrect-fixture",
+    );
   });
 });
 
-async function runnerFailurePredicate(): Promise<(item: unknown) => unknown> {
-  const source = await readFile("scripts/verify-agent-experience.mjs", "utf8");
-  const program = parse(source, { sourceType: "module" }).program;
-  for (const top of program.body) {
-    if (top.type !== "TryStatement") continue;
-    for (const statement of top.block.body) {
-      if (statement.type !== "VariableDeclaration") continue;
-      for (const declaration of statement.declarations) {
-        if (
-          declaration.id.type !== "Identifier" ||
-          declaration.id.name !== "failed"
-        )
-          continue;
-        const initializer = declaration.init;
-        if (initializer?.type !== "CallExpression") continue;
-        const argument = initializer.arguments[0];
-        if (
-          argument?.type !== "ArrowFunctionExpression" ||
-          typeof argument.start !== "number" ||
-          typeof argument.end !== "number"
-        )
-          continue;
-        const factory = new Function(
-          "agentEvaluationPassed",
-          `return (${source.slice(argument.start, argument.end)});`,
-        );
-        const result: unknown = factory(agentEvaluationPassed);
-        if (typeof result !== "function")
-          throw new Error("Runner gate is not callable");
-        return (item) => result(item);
-      }
-    }
-  }
-  throw new Error("Runner failure gate missing");
+function runReportGate(results: readonly object[]) {
+  const gateUrl = new URL(
+    "../../../scripts/lib/agent-evaluation-report-gate.mjs",
+    import.meta.url,
+  );
+  const script = `
+    const { assertAgentEvaluationReportPassed } = await import(${JSON.stringify(gateUrl.href)});
+    assertAgentEvaluationReportPassed(JSON.parse(process.argv[1]));
+  `;
+  return spawnSync(
+    process.execPath,
+    ["--input-type=module", "-e", script, JSON.stringify(results)],
+    { encoding: "utf8", timeout: 15_000 },
+  );
 }
 
 describe("scoped factual report", () => {

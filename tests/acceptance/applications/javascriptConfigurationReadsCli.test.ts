@@ -76,3 +76,24 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     }
   },
 );
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "does not claim an argv value after an unknown object selection escapes through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-config-escape-");
+    await writeFixtureFiles(root, {
+      "entry.mjs": [
+        'throw new Error("static fixture must never execute");',
+        "export function run(key) { patch(process.argv[key]); return process.argv[3]; }",
+        "export function independent() { return process.env.PORT; }",
+      ].join("\n"),
+    });
+    const graph = (await analyzeJavaScriptDirectory(surface, cli, root))
+      .semantic_graph;
+    const reads = graph.nodes
+      .filter((node) => node.kind === "config-source")
+      .map((node) => [node.properties.source_kind, node.properties.key]);
+    expect(reads).not.toContainEqual(["argv", "3"]);
+    expect(reads).toContainEqual(["environment", "PORT"]);
+  },
+);

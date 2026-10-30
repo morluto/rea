@@ -10,6 +10,10 @@ import { GHIDRA_FUNCTION_OPERATIONS } from "./GhidraFunctionValues.js";
 import { GHIDRA_INVENTORY_OPERATIONS } from "./GhidraInventoryValues.js";
 import { GHIDRA_MUTATING_OPERATIONS } from "./GhidraSessionValues.js";
 
+/** Target architectures admitted by the Windows P0 native PE boundary. */
+export const WINDOWS_P0_NATIVE_PE_ARCHITECTURES: readonly string[] =
+  Object.freeze(["x86", "x86_64", "arm", "arm64"]);
+
 /** Public identity committed by every Ghidra-backed observation. */
 export const GHIDRA_PROVIDER_IDENTITY: ProviderIdentity = Object.freeze({
   id: "ghidra",
@@ -17,11 +21,20 @@ export const GHIDRA_PROVIDER_IDENTITY: ProviderIdentity = Object.freeze({
   version: null,
 });
 
-/** Analyst operations implemented by the Ghidra inventory and function adapters. */
-export const GHIDRA_OPERATIONS = Object.freeze([
+/** Provider observations, including internal aggregates consumed by workflows. */
+const providerOperations = Object.freeze([
   ...GHIDRA_INVENTORY_OPERATIONS,
   ...GHIDRA_FUNCTION_OPERATIONS,
 ]);
+
+/** Public analyst tools backed by these observations; aggregates stay internal. */
+export const GHIDRA_OPERATIONS = Object.freeze(
+  providerOperations.map((operation) =>
+    operation === "read_binary_inventory_summary"
+      ? "binary_overview"
+      : operation,
+  ),
+);
 
 /** Health limitations shared by every Ghidra-backed capability. */
 export const healthLimitations = Object.freeze([
@@ -32,10 +45,22 @@ export const healthLimitations = Object.freeze([
 
 /** Additional limitations applied to the experimental Windows x64 P0 boundary. */
 export const windowsP0Limitations = Object.freeze([
-  "Windows Ghidra P0 accepts native x86 and x86-64 PE applications and DLLs, and explicitly selected raw 6502 images; managed, hostile, sensitive, and mutable-path targets are unsupported.",
+  "Windows Ghidra P0 accepts native x86, x86-64, ARMNT (Thumb-2) and ARM64 PE applications and DLLs, and explicitly selected raw 6502 images; managed, hostile, sensitive, and mutable-path targets are unsupported.",
   "The Windows bridge uses authenticated IPv4 loopback because Node path-based IPC does not expose Java AF_UNIX sockets; the endpoint file contains no bearer token.",
   "Windows sessions require the matching packaged Windows x64 native addon, local NTFS targets and runtimes, and Windows 10 or later. Native handles enforce path admission, private DACLs, and Job Object ownership automatically.",
 ]);
+
+/** Existing databases have their own unknown analysis history; reopening does not complete it. */
+export const ghidraHealthLimitations = (
+  existingProject = false,
+): readonly string[] =>
+  existingProject
+    ? [
+        "This session opens a caller-selected existing Ghidra project through a private copy, without import, auto-analysis or repair scripts. Original analysis completeness and settings are unknown.",
+        "The original project is never opened by Ghidra or modified. The private copy is read-only to bridge operations and deleted on close; original executable bytes are never written.",
+        "The analysis profile records the selected project content fingerprint and program name. The imported program SHA-256 must match the admitted target; the project may contain caller annotations or earlier edits, which are not fresh REA discoveries.",
+      ]
+    : healthLimitations;
 
 const stringInventoryLimitation =
   "Only Ghidra-defined string Data is observed; packed or undefined string bytes may be absent. Completeness applies to that inventory, and an empty search does not establish that text is absent from the artifact. If an address is known, use read_bytes and xrefs to inspect bytes and references.";
@@ -44,12 +69,22 @@ const searchLimitation =
   "Regex mode uses Java Pattern semantics. Matcher or compiler stack exhaustion returns a resource constraint without closing the session; literal mode avoids regex recursion and returns complete matching values.";
 
 /** Limitation text for one admitted operation, including the common base. */
-export const limitationsFor = (operation: string): readonly string[] => {
+export const limitationsFor = (
+  operation: string,
+  existingProject = false,
+): readonly string[] => {
   const common = [
-    ...healthLimitations,
+    ...ghidraHealthLimitations(existingProject),
     "Default-space addresses use lowercase 0x-prefixed hexadecimal; other address spaces use <percent-encoded-space>:0x<hex>.",
   ];
   switch (operation) {
+    case "read_binary_inventory_summary":
+      return [
+        ...common,
+        stringInventoryLimitation,
+        "Counts use the complete defined-string inventory and the same local/external function inventory as list_strings and list_procedures. They do not establish discovery of undefined strings or unidentified functions.",
+        "Memory-block end addresses are exclusive; segment lengths use those observed address coordinates.",
+      ];
     case "annotate_native_function":
       return [
         ...common,
@@ -161,7 +196,7 @@ export const limitationsFor = (operation: string): readonly string[] => {
         "The dossier combines Ghidra FunctionManager, Listing, ReferenceManager, BasicBlockModel, and decompiler observations; provider-specific pseudocode and assembly are not cross-provider text invariants.",
         "Resolved reference metadata identifies computed, indirect, external, call, jump, and data edges; unresolved targetless flows remain unknown, and function classifications distinguish thunks and externals.",
         "Synthetic Ghidra entry-point references without actionable memory sources are omitted.",
-        "The Java bridge serializes one function request per Program and lets each decompilation run until it completes or the caller cancels.",
+        "The Java bridge serializes one function request per Program. Decompilation runs until completion or caller cancellation unless REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS sets a per-function limit. That limit stops the requested decompile without requesting session closure; caller cancellation requests session closure.",
       ];
     default:
       return common;
@@ -170,7 +205,7 @@ export const limitationsFor = (operation: string): readonly string[] => {
 
 /** Provider-neutral capabilities advertised by every non-Windows Ghidra session. */
 export const CAPABILITIES: readonly CapabilityDescriptor[] = Object.freeze(
-  GHIDRA_OPERATIONS.map((operation) => {
+  providerOperations.map((operation) => {
     return Object.freeze({
       provider: GHIDRA_PROVIDER_IDENTITY,
       operation,
@@ -196,6 +231,39 @@ export const CAPABILITIES: readonly CapabilityDescriptor[] = Object.freeze(
   }),
 );
 
+/** The selected database mode is not part of Windows P0 authority. */
+export const EXISTING_PROJECT_WINDOWS_UNAVAILABLE =
+  "An existing Ghidra project cannot be opened on the Windows launch path.";
+
+/** Read-only project mode retains precise unavailable mutation capabilities. */
+export const existingProjectCapabilities = (
+  platform: NodeJS.Platform,
+): readonly CapabilityDescriptor[] =>
+  CAPABILITIES.map((capability): CapabilityDescriptor => {
+    const limitations = limitationsFor(
+      capability.operation === "binary_overview"
+        ? "read_binary_inventory_summary"
+        : capability.operation,
+      true,
+    );
+    if (platform === "win32")
+      return {
+        ...capability,
+        limitations,
+        available: false,
+        reason: EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
+        availabilityCode: "unsupported_host",
+      };
+    if (capability.effects.mutatesArtifact)
+      return {
+        ...capability,
+        limitations,
+        available: false,
+        reason: "Existing Ghidra project sessions are read-only.",
+        availabilityCode: "open_options_invalid",
+      };
+    return { ...capability, limitations };
+  });
 /** Capabilities advertised for the experimental Windows x64 P0 boundary. */
 export const windowsP0Capabilities = (
   readiness: WindowsNativeReadiness = inspectWindowsNativeReadiness("win32"),

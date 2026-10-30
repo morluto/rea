@@ -2,6 +2,10 @@ import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
 
+import {
+  AnalysisCleanupLease,
+  AnalysisCleanupLeaseGroup,
+} from "../../../src/artifacts/AnalysisCleanupLease.js";
 import type { AnalysisClient } from "../../../src/application/AnalysisProvider.js";
 import { HopperStartError } from "../../../src/domain/hopperErrors.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
@@ -17,6 +21,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const retryFixture = async (
   execute: AnalysisClient["execute"] = () => Promise.resolve(ok(null)),
+  onClose?: () => void,
 ) => {
   const parent = await createTestTempDirectory("rea-session-cleanup-retry-");
   const runtime = join(parent, "owned-runtime");
@@ -27,23 +32,58 @@ const retryFixture = async (
   const targets = await createBinarySessionTargets();
   let allowed = false;
   let created = 0;
+  const runIds: string[] = [];
   const cleanupError = new ProviderCleanupError("fixture", [runtime], {
     reason: "owned runtime removal denied",
     leftover_paths: [runtime],
   });
+  const cleanupLease = new AnalysisCleanupLease(
+    () => rm(runtime, { recursive: true, force: true }),
+    [runtime],
+  );
+  new AnalysisCleanupLeaseGroup(cleanupError, [cleanupLease]);
   const client: AnalysisClient = {
     execute,
+    operationHealthSnapshot: () => ({
+      state: "unreachable",
+      stage: "connection",
+      retryAction: "restart_provider",
+      exitCode: null,
+      requests: [],
+    }),
     close: async (options) => {
+      onClose?.();
       if (!allowed) return err(cleanupError);
-      await rm(runtime, { recursive: true, force: true });
+      await cleanupLease.release();
       if (options?.retainDocument !== true) await rm(document, { force: true });
       return resultOk(null);
     },
   };
-  const session = createTestBinarySession(() => {
+  const session = createTestBinarySession((_target, _profile, context) => {
+    if (context === undefined) throw new Error("missing analysis run context");
+    runIds.push(context.runId);
     created += 1;
     return created === 1
-      ? client
+      ? {
+          ...client,
+          runtimeLineageSnapshots: () => [
+            {
+              provider: {
+                id: "fixture",
+                name: "Fixture analysis provider",
+                version: "1",
+              },
+              observation: {
+                status: "unavailable" as const,
+                observedAt: "2026-10-16T00:00:00Z",
+                runId: context.runId,
+                launcherPid: 123,
+                processGroupId: 123,
+                reason: "fixture lineage unavailable",
+              },
+            },
+          ],
+        }
       : {
           execute: () => Promise.resolve(ok(null)),
           close: () => Promise.resolve(resultOk(null)),
@@ -59,6 +99,7 @@ const retryFixture = async (
     runtime,
     document,
     cleanupError,
+    runIds,
     allowCleanup: () => {
       allowed = true;
     },
@@ -83,19 +124,47 @@ it.each(["close", "switch", "open after close"] as const)(
       transition === "switch" ? await attempt() : await session.close();
     expect(initial).toEqual(err(cleanupError));
     expect(session.activeTarget()).toBeUndefined();
+    expect(await session.status()).toMatchObject({
+      open: false,
+      cleanup_pending: true,
+      analysis_run: {
+        run_id: fixture.runIds[0],
+        process_lineage: {
+          status: "snapshots",
+          snapshots: [
+            { observation: { reason: "fixture lineage unavailable" } },
+          ],
+        },
+      },
+      provider_operation_health: { state: "unreachable", stage: "connection" },
+    });
     expect(await session.execute("address_name", {})).toMatchObject({
       ok: false,
     });
     await access(runtime);
 
     expect(await attempt()).toEqual(err(cleanupError));
+    expect(await session.status()).toMatchObject({
+      analysis_run: { run_id: fixture.runIds[0] },
+    });
     expect(fixture.created()).toBe(1);
     await access(runtime);
 
     fixture.allowCleanup();
     expect((await attempt()).ok).toBe(true);
+    expect(await session.status()).toMatchObject({ cleanup_pending: false });
     await expect(access(runtime)).rejects.toMatchObject({ code: "ENOENT" });
     expect(fixture.created()).toBe(transition === "close" ? 1 : 2);
+    expect(await session.status()).toMatchObject({
+      analysis_run:
+        transition === "close"
+          ? null
+          : {
+              run_id: fixture.runIds[1],
+              process_lineage: { status: "not_observed" },
+            },
+    });
+    expect(new Set(fixture.runIds).size).toBe(fixture.created());
   },
 );
 
@@ -115,6 +184,14 @@ it("keeps a failed candidate for cleanup and preserves its startup failure", asy
     },
   });
   expect(fixture.session.activeTarget()).toBeUndefined();
+  expect(await fixture.session.status()).toMatchObject({
+    open: false,
+    cleanup_pending: true,
+    analysis_run: {
+      run_id: fixture.runIds[0],
+      process_lineage: { status: "snapshots" },
+    },
+  });
   fixture.allowCleanup();
   expect((await fixture.session.close()).ok).toBe(true);
   await expect(access(fixture.runtime)).rejects.toMatchObject({
@@ -140,11 +217,47 @@ it("retains cancelled startup cleanup and the cancellation reason", async () => 
       diagnostics: { primary_error: { code: "cancelled" } },
     },
   });
+  expect(await fixture.session.status()).toMatchObject({
+    open: false,
+    cleanup_pending: true,
+    analysis_run: {
+      run_id: fixture.runIds[0],
+      process_lineage: { status: "snapshots" },
+    },
+  });
   fixture.allowCleanup();
   expect((await fixture.session.close()).ok).toBe(true);
   await expect(access(fixture.runtime)).rejects.toMatchObject({
     code: "ENOENT",
   });
+});
+
+it("keeps cancellation as the primary when previous-client retirement fails after abort", async () => {
+  const controller = new AbortController();
+  const reason = { phase: "binary-retirement" };
+  const fixture = await retryFixture(undefined, () => controller.abort(reason));
+  expect((await fixture.session.open(fixture.targets[0])).ok).toBe(true);
+  const result = await fixture.session.open(fixture.targets[1], {
+    signal: controller.signal,
+  });
+  if (result.ok) throw new Error("Expected cancelled retirement");
+  expect(result.error.cleanupIncomplete).toBe(true);
+  expect(result.error.cleanupPrimary).toMatchObject({
+    _tag: "AnalysisCancelledError",
+  });
+  expect(result.error.cleanupPrimary?.cause).toBe(reason);
+  expect(await fixture.session.status()).toMatchObject({
+    open: false,
+    cleanup_pending: true,
+  });
+  fixture.allowCleanup();
+  expect((await fixture.session.close()).ok).toBe(true);
+  expect(fixture.cleanupError.cleanupIncomplete).toBe(false);
+  expect(result.error.cleanupIncomplete).toBe(false);
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "cancelled",
+  });
+  expect(result.error.cleanupPrimary?.cause).toBe(reason);
 });
 
 it("preserves caller-selected document retention when retrying cleanup", async () => {
@@ -187,7 +300,10 @@ it("keeps failed restoration resources available for a close retry", async () =>
   const [first, second] = await createBinarySessionTargets();
   let created = 0;
   let allowed = false;
-  const session = createTestBinarySession(() => {
+  const runIds: string[] = [];
+  const session = createTestBinarySession((_target, _profile, context) => {
+    if (context === undefined) throw new Error("missing analysis run context");
+    runIds.push(context.runId);
     const index = ++created;
     return {
       execute: () =>
@@ -213,6 +329,12 @@ it("keeps failed restoration resources available for a close retry", async () =>
     error: { cleanupIncomplete: true, cleanupResources: [runtime] },
   });
   expect(session.activeTarget()).toBeUndefined();
+  expect(await session.status()).toMatchObject({
+    open: false,
+    cleanup_pending: true,
+    analysis_run: { run_id: runIds[2] },
+  });
+  expect(new Set(runIds).size).toBe(3);
   allowed = true;
   expect((await session.close()).ok).toBe(true);
   await expect(access(runtime)).rejects.toMatchObject({ code: "ENOENT" });

@@ -1,8 +1,21 @@
+import type { WebArtifactAcquisition as Acquisition } from "../../domain/webArtifactAcquisition.js";
 import { z } from "zod";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import {
+  artifactFileCancellationCause,
+  artifactFilePrimaryFacts,
+  bindArtifactFileCleanup,
+  type ArtifactFilePrimaryFacts,
+} from "../../artifacts/ArtifactFileOperation.js";
 import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
-import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import {
+  completedStableArtifact,
+  readStableArtifact,
+} from "../../artifacts/readStableArtifact.js";
+import {
+  AnalysisError,
+  primaryAnalysisError,
+} from "../../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisCancelledError,
@@ -40,24 +53,83 @@ export const decodeWebArtifact = (bytes: Buffer): string => {
   }
 };
 
-/** Read one stable JSON artifact with a documented byte budget. */
-export const readWebArtifactJson = async (
-  path: string,
-  maximumBytes: number,
-  signal?: AbortSignal,
-  resourceScope?: ArtifactResourceScope,
-) => {
-  const data = await readStableArtifact(
-    path,
-    maximumBytes,
-    signal,
-    undefined,
-    resourceScope,
-  );
-  const value = safeParseJson(decodeWebArtifact(data.bytes));
-  if (!value.ok) throw new WebArtifactFormatFailure(value.error);
-  return { ...data, value: value.value };
-};
+/** Own the independently completed physical reads throughout web acquisition. */
+export class WebArtifactAcquisition {
+  readonly files: Acquisition["files"] = [];
+
+  record(
+    role: Acquisition["files"][number]["role"],
+    file: Acquisition["files"][number]["file"],
+    admission: Acquisition["files"][number]["admission"] = "read",
+  ): void {
+    const previous = this.files.findIndex((entry) => entry.role === role);
+    const receipt = { role, file, admission };
+    if (previous < 0) this.files.push(receipt);
+    else this.files[previous] = receipt;
+  }
+
+  async read(
+    role: Acquisition["files"][number]["role"],
+    path: string,
+    maximumBytes: number,
+    signal?: AbortSignal,
+    scope?: ArtifactResourceScope,
+  ) {
+    try {
+      const data = await readStableArtifact(
+        path,
+        maximumBytes,
+        signal,
+        undefined,
+        scope,
+      );
+      this.record(role, {
+        path,
+        sha256: data.sha256,
+        bytes: data.bytes.length,
+      });
+      return data;
+    } catch (cause: unknown) {
+      const completed = completedStableArtifact(cause);
+      if (completed !== undefined)
+        this.record(role, {
+          path,
+          sha256: completed.sha256,
+          bytes: completed.bytes.length,
+        });
+      throw cause;
+    }
+  }
+
+  async readJson(
+    role: Acquisition["files"][number]["role"],
+    path: string,
+    maximumBytes: number,
+    signal?: AbortSignal,
+    scope?: ArtifactResourceScope,
+  ) {
+    const data = await this.read(role, path, maximumBytes, signal, scope);
+    const value = safeParseJson(decodeWebArtifact(data.bytes));
+    if (!value.ok) throw new WebArtifactFormatFailure(value.error);
+    return { ...data, value: value.value };
+  }
+
+  retain(error: AnalysisError): AnalysisError {
+    if (this.files.length > 0) {
+      const observation: Acquisition = {
+        kind: "web-artifact-acquisition",
+        analysis: "not-performed",
+        files: this.files.map((entry) => ({
+          ...entry,
+          file: { ...entry.file },
+        })),
+      };
+      error.partialObservation = observation;
+      primaryAnalysisError(error).partialObservation = observation;
+    }
+    return error;
+  }
+}
 
 /** Preserve artifact format, integrity, OS I/O, and cancellation reasons. */
 export const webArtifactReadError = (
@@ -65,40 +137,69 @@ export const webArtifactReadError = (
   context: WebArtifactReadContext,
   signal?: AbortSignal,
 ): AnalysisError => {
+  const primary = webArtifactPrimaryError(
+    artifactFilePrimaryFacts(cause),
+    context,
+    signal,
+  );
   if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined) {
-    const primary =
-      signal?.aborted === true
-        ? new AnalysisCancelledError(context.operation, { cause })
-        : new ArtifactOperationError(
-            context.operation,
-            cause.reason,
-            cause.details,
-            cause.message,
-            { cause },
-          );
+    const cleanup = new ProviderCleanupError(
+      "captured-web-artifacts",
+      cause.cleanup.resources,
+      { reason: cause.cleanup.reason },
+      { cause, operation: context.operation },
+    );
+    bindArtifactFileCleanup(cause, cleanup);
     return analysisErrorWithCleanupFailure(
       primary,
-      new ProviderCleanupError(
-        "captured-web-artifacts",
-        cause.cleanup.resources,
-        { reason: cause.cleanup.reason },
-        { cause, operation: context.operation },
-      ),
+      cleanup,
       context.operation,
-    );
+    ).bindCleanupDependencies([primary, cleanup]);
   }
-  if (signal?.aborted === true)
-    return new AnalysisCancelledError(context.operation, { cause });
+  return primary;
+};
+
+const webArtifactPrimaryError = (
+  { cause, origin }: ArtifactFilePrimaryFacts,
+  context: WebArtifactReadContext,
+  signal?: AbortSignal,
+): AnalysisError => {
+  if (origin === "owned-or-classified" && cause instanceof AnalysisError)
+    return cause;
+  if (
+    origin === "owned-or-classified" &&
+    cause instanceof ArtifactReaderFailure &&
+    cause.reason === "cancelled"
+  )
+    return new AnalysisCancelledError(context.operation, {
+      cause: artifactFileCancellationCause(cause),
+    });
+  if (
+    origin === "owned-or-classified" &&
+    signal?.aborted === true &&
+    (cause === signal.reason ||
+      (cause instanceof Error &&
+        cause.name === "AbortError" &&
+        "code" in cause &&
+        cause.code === "ABORT_ERR"))
+  )
+    return new AnalysisCancelledError(context.operation, {
+      cause: signal.reason,
+    });
   const selection = context.callerSelected
-    ? selectedFileError(cause, context)
+    ? selectedFileError({ cause, origin }, context)
     : undefined;
   if (selection !== undefined) return selection;
-  if (cause instanceof ArtifactReaderFailure)
+  if (
+    origin === "owned-or-classified" &&
+    cause instanceof ArtifactReaderFailure
+  )
     return new ArtifactOperationError(
       context.operation,
       cause.reason,
       cause.details,
       cause.message,
+      { cause },
     );
   if (
     cause instanceof Error &&
@@ -111,7 +212,16 @@ export const webArtifactReadError = (
       context.operation,
       "io",
       undefined,
-      `${context.field.join(".")}: ${cause.code}: ${cause.message}`,
+      `${context.targetPath}: ${cause.code}: ${cause.message}`,
+      { cause },
+    );
+  if (!context.callerSelected && cause instanceof WebArtifactFormatFailure)
+    return new ArtifactOperationError(
+      context.operation,
+      "format",
+      undefined,
+      `${context.targetPath}: ${cause.message}`,
+      { cause },
     );
   if (cause instanceof WebArtifactFormatFailure || cause instanceof z.ZodError)
     return new AnalysisInputError(context.operation, { cause }, [
@@ -136,14 +246,17 @@ export const webArtifactReadError = (
  * caller's selection or a host permission denial, not an artifact fault.
  */
 const selectedFileError = (
-  cause: unknown,
+  { cause, origin }: ArtifactFilePrimaryFacts,
   context: WebArtifactReadContext,
 ): AnalysisError | undefined => {
   const selected = (message: string) =>
     new AnalysisInputError(context.operation, { cause }, [
       { path: context.field, reason: "invalid_value", message },
     ]);
-  if (cause instanceof ArtifactReaderFailure)
+  if (
+    origin === "owned-or-classified" &&
+    cause instanceof ArtifactReaderFailure
+  )
     return cause.reason === "path" ? selected(cause.message) : undefined;
   const code =
     cause instanceof Error && "code" in cause ? String(cause.code) : "";

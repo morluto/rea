@@ -5,14 +5,15 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import { CATALOG_IDENTITY } from "../../../src/catalogIdentity.js";
+import { FULL_CATALOG_IDENTITY } from "../../../src/catalogIdentity.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
 import {
   evidenceResultOf,
   expandToolAvailability,
-  toolAvailabilityInventory,
+  toolAvailabilitySummaryInventory,
 } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 
 const mainPath = fileURLToPath(
   new URL("../../../dist/main.js", import.meta.url),
@@ -38,7 +39,7 @@ const expectAvailableToolInventory = async (
   const inventory = z
     .object({
       result: z.object({
-        tool_availability: toolAvailabilityInventory,
+        tool_availability: toolAvailabilitySummaryInventory,
       }),
     })
     .parse(status.structuredContent).result.tool_availability;
@@ -50,7 +51,7 @@ const expectAvailableToolInventory = async (
   expect(
     availability.length,
     "compiled tool inventory is stale; run npm run build:cached",
-  ).toBe(CATALOG_IDENTITY.counts.mcp_tools);
+  ).toBe(FULL_CATALOG_IDENTITY.counts.mcp_tools);
   expect(new Set(listed.tools.map(({ name }) => name))).toEqual(
     new Set(TOOL_CONTRACTS.map(({ name }) => name)),
   );
@@ -69,10 +70,13 @@ const completeStderrRecords = (stderr: string): unknown[] =>
     .filter((line) => line.length > 0)
     .map((line): unknown => JSON.parse(line));
 
-const callCurrentDocument = async (target?: {
-  readonly path: string;
-  readonly kind?: "database";
-}) => {
+const callCurrentDocument = async (
+  target?: {
+    readonly path: string;
+    readonly kind?: "database";
+  },
+  inspectSession?: (client: Client) => Promise<void>,
+) => {
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [mainPath],
@@ -105,6 +109,7 @@ const callCurrentDocument = async (target?: {
       name: "current_document",
       arguments: {},
     });
+    await inspectSession?.(client);
   } finally {
     await client.close();
     await transport.close();
@@ -240,18 +245,62 @@ describe("production stdio runtime", () => {
     );
     expect(fatal).toEqual([]);
   });
+});
 
+describe("production stdio saved-database admission", () => {
   it.runIf(process.platform === "darwin")(
-    "serves a database-kind initial target without a fatal record on macOS",
+    "refuses database analysis on macOS while keeping the session usable without a fatal record",
     async () => {
-      const { result, records } = await callCurrentDocument({
-        path: fileURLToPath(import.meta.url),
-        kind: "database",
+      const path = fileURLToPath(import.meta.url);
+      const { result, records } = await callCurrentDocument(
+        { path, kind: "database" },
+        async (client) => {
+          const status = await expectAvailableToolInventory(
+            client,
+            await client.listTools(),
+          );
+          expect(status.structuredContent).toMatchObject({
+            result: {
+              open: true,
+              path,
+              kind: "database",
+              format: "analysis-database",
+              analysis_provider_binding: null,
+            },
+          });
+        },
+      );
+      expect(parseMcpToolError(result)).toMatchObject({
+        error: {
+          code: "capability_unavailable",
+          category: "unsupported_provider",
+          retryable: false,
+          details: {
+            operation: "current_document",
+            selection_reason: "target_unsupported",
+            rejections: expect.arrayContaining([
+              expect.objectContaining({
+                provider_id: "hopper",
+                code: "target_kind_unsupported",
+                reason: expect.stringContaining(
+                  "cannot start REA's analysis bridge",
+                ),
+                diagnostics: {
+                  target_kind: "database",
+                  target_format: "analysis-database",
+                  architecture: null,
+                },
+              }),
+            ]),
+          },
+        },
       });
-      expect(result.isError).not.toBe(true);
-      evidenceResultOf(z.literal("fixture")).parse(result.structuredContent);
       expect(records).toContainEqual(
-        expect.objectContaining({ tool: "current_document", status: "ok" }),
+        expect.objectContaining({
+          tool: "current_document",
+          status: "error",
+          level: 40,
+        }),
       );
       expect(
         records.some(

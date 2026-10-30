@@ -1,8 +1,11 @@
 import type {
+  RetainedResourceScope,
+  ProviderAvailability,
+} from "../application/AnalysisProvider.js";
+import type {
   DoctorProviderCheck,
   DoctorProviderInspection,
 } from "../application/Doctor.js";
-import type { ProviderAvailability } from "../application/AnalysisProvider.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import {
   inspectJadxAvailability,
@@ -14,9 +17,14 @@ import {
 /** Project the validated JADX configuration into the doctor contract. */
 export const inspectJadxProvider = async (
   environment: Readonly<Record<string, string | undefined>>,
+  resourceOwner: RetainedResourceScope,
+  signal?: AbortSignal,
 ): Promise<DoctorProviderInspection> => {
   const configured = environment.REA_JADX_MCP_JAR !== undefined;
-  const availability = await inspectJadxAvailability(environment);
+  const availability = await inspectJadxAvailability(environment, {
+    resourceOwner,
+    signal,
+  });
   // diagnostics is a loosely-typed JsonValue map; guard the published path
   // even though the success path always sets jar_path today.
   const jarPath =
@@ -49,6 +57,10 @@ export const inspectJadxProvider = async (
               "REA_JADX_ACTIVE_PROCESSOR_COUNT",
               environment.REA_JADX_ACTIVE_PROCESSOR_COUNT,
             ),
+            ...optionalEntry(
+              "REA_JADX_OPERATION_TIMEOUT_MS",
+              environment.REA_JADX_OPERATION_TIMEOUT_MS,
+            ),
           },
     checks: [configurationCheck(configured, availability, jarPath)],
   };
@@ -70,13 +82,17 @@ const configurationCheck = (
 ): DoctorProviderCheck => {
   const code = availability.status === "unavailable" ? availability.code : null;
   if (availability.status === "available" && jarPath !== undefined) {
+    const operationTimeout = availability.diagnostics["operation_timeout_ms"];
     return {
       name: "configuration",
       ok: true,
       code: null,
-      detail: `JADX MCP bridge JAR validated at ${jarPath}; its path is recorded for agent registrations.`,
+      detail: `JADX MCP bridge JAR validated at ${jarPath}; its path is recorded for agent registrations. This checks configuration, not whether a selected APK fits in the worker's memory.`,
       remediation: null,
       classification: "config_drift",
+      ...(typeof operationTimeout === "number"
+        ? { details: { operation_timeout_ms: operationTimeout } }
+        : {}),
     };
   }
   // The failure kind is tagged at the configuration boundary; project its

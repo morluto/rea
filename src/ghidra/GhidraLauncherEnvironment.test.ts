@@ -46,6 +46,7 @@ it("uses selected mixed-case Windows PATH and ComSpec through direct launch boun
     environment,
     platform: "win32",
     analyzeHeadlessPath: "C:\\ghidra\\support\\analyzeHeadless.bat",
+    configurationDirectoryName: "ghidra_12.1.4_PUBLIC",
     bridgeScriptPath: "C:\\rea\\bridge.py",
   });
   environment.ComSpec = "C:\\changed\\cmd.exe";

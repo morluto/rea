@@ -31,7 +31,9 @@ import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { readJsonObjectFile } from "../../../src/application/JsonInputFile.js";
 import { RegularFileChangedError } from "../../../src/filesystem/RegularFile.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
-import { RegularFileCleanupFailure } from "../../../src/application/RegularFileRead.js";
+import { RegularFileCleanupFailure } from "../../../src/filesystem/OwnedRegularFile.js";
+import { OwnedStagedOutput } from "../../../src/filesystem/OwnedStagedOutput.js";
+import { createTestBinarySession } from "../../fixtures/binarySession.js";
 
 const snapshotFixture = (): AnalysisSnapshot => {
   const target = snapshotTarget(TARGET);
@@ -76,6 +78,50 @@ const snapshotFixture = (): AnalysisSnapshot => {
 };
 
 describe("analysis snapshots: persistence", () => {
+  it("reports retained snapshot staging without an active provider and clears it after retry", async () => {
+    const directory = await createTestTempDirectory(
+      "rea-snapshot-cleanup-status-",
+    );
+    const path = join(directory, "analysis.json");
+    const session = createTestBinarySession(() => {
+      throw new Error("Snapshot persistence must not create a provider client");
+    });
+    const close = vi
+      .spyOn(OwnedStagedOutput.prototype, "close")
+      .mockRejectedValue(new Error("Controlled staging cleanup failure"));
+    onTestFinished(async () => {
+      close.mockRestore();
+      const closed = await session.close();
+      if (!closed.ok) throw closed.error;
+    });
+
+    const written = await session.writeAnalysisSnapshot(
+      snapshotFixture(),
+      path,
+      false,
+    );
+    expect(written).toMatchObject({
+      ok: false,
+      error: { cleanupIncomplete: true, published: { path } },
+    });
+    expect(
+      parseAnalysisSnapshot(JSON.parse(await readFile(path, "utf8"))),
+    ).toEqual(snapshotFixture());
+    expect(await session.status()).toMatchObject({
+      open: false,
+      cleanup_pending: true,
+    });
+    expect(await session.close()).toMatchObject({
+      ok: false,
+      error: { cleanupIncomplete: true },
+    });
+    expect(await session.status()).toMatchObject({ cleanup_pending: true });
+
+    close.mockRestore();
+    expect(await session.close()).toEqual({ ok: true, value: null });
+    expect(await session.status()).toMatchObject({ cleanup_pending: false });
+  });
+
   it("writes canonical private v2 JSON and rejects changed query identity", async () => {
     const directory = await createTestTempDirectory("rea-snapshot-");
     const path = join(directory, "analysis.json");
@@ -230,6 +276,7 @@ describe("analysis snapshot member decoding", () => {
       `${" ".repeat(9 * 1024 * 1024)}${JSON.stringify(snapshot)}`,
     );
     const controller = new AbortController();
+    const reason = { request: "cancel snapshot import" };
     const reads = await holdFirstFileRead(path);
     onTestFinished(() => {
       controller.abort();
@@ -237,12 +284,16 @@ describe("analysis snapshot member decoding", () => {
     });
     const pending = readAnalysisSnapshot(path, controller.signal);
     await reads.firstRead;
-    controller.abort();
+    controller.abort(reason);
     reads.release();
     try {
       expect(await pending).toMatchObject({
         ok: false,
-        error: { _tag: "AnalysisCancelledError" },
+        error: {
+          _tag: "AnalysisCancelledError",
+          operation: "open_binary",
+          cause: reason,
+        },
       });
       expect(reads.readCount).toBe(1);
     } finally {
@@ -271,14 +322,17 @@ describe("analysis snapshot file ownership", () => {
         });
       let failure: unknown;
       try {
-        try {
-          await readAnalysisSnapshot(
-            path,
-            cancelDuringClose ? controller.signal : undefined,
-          );
-        } catch (cause: unknown) {
-          failure = cause;
-        }
+        const result = await readAnalysisSnapshot(
+          path,
+          cancelDuringClose ? controller.signal : undefined,
+        );
+        if (result.ok)
+          throw new Error("Expected typed snapshot cleanup failure");
+        expect(result.error.cleanupIncomplete).toBe(true);
+        failure =
+          cancelDuringClose && result.error.cause instanceof AggregateError
+            ? result.error.cause.errors[1].cause
+            : result.error.cause;
         expect(failure).toBeInstanceOf(RegularFileCleanupFailure);
         if (!(failure instanceof RegularFileCleanupFailure))
           throw new Error("Expected the retained snapshot file handle owner");
@@ -337,3 +391,40 @@ it("rejects copied preparation handles and prevents mutable caller values from c
     /not parsed in this realm/u,
   );
 });
+
+it.each([
+  new Error("Parser callback state is unavailable"),
+  new SyntaxError("selected member consumer failure"),
+  Object.assign(new TypeError("consumer text decoder failure"), {
+    code: "ERR_ENCODING_INVALID_ENCODED_DATA",
+  }),
+])(
+  "preserves a selected-member callback failure instead of blaming JSON: %s",
+  async (failure) => {
+    const directory = await createTestTempDirectory("rea-json-member-failure-");
+    const path = join(directory, "input.json");
+    const members = new Map([
+      [
+        "value",
+        {
+          mode: "value" as const,
+          begin: () => {
+            throw failure;
+          },
+          accept: () => {
+            throw new Error("Unexpected member acceptance");
+          },
+          reject: () => {
+            throw new Error("Unexpected member rejection");
+          },
+        },
+      ],
+    ]);
+    for (const padding of ["", " ".repeat(9 * 1024 * 1024)]) {
+      await writeFile(path, `${padding}{"value":1}`);
+      await expect(
+        readJsonObjectFile(path, "test-input", [members]),
+      ).rejects.toBe(failure);
+    }
+  },
+);

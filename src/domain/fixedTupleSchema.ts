@@ -5,10 +5,10 @@ export const fixedTupleSchema = <
   const Items extends readonly [z.ZodType, ...z.ZodType[]],
 >(
   items: Items,
-): z.ZodTuple<Items, z.ZodNever> =>
-  // Zod's tuple projection omits implicit arity and, without a rest schema,
-  // `items` in Draft 2020-12. Spell out both at the canonical boundary so
-  // consumers agree with the parser and clients accept the declaration.
+): z.ZodTuple<Items, z.ZodUnion<Items>> =>
+  // Keep the positional schemas and lengths explicit. The union rest schema
+  // gives clients that only understand `items` useful element guidance; the
+  // exact maximum length means no rest element can be accepted.
   z
-    .tuple(items, z.never())
+    .tuple(items, z.union(items))
     .check(z.minLength(items.length), z.maxLength(items.length));

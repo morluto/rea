@@ -11,8 +11,17 @@ export interface DirectAnalysisDependencies {
     config: AppConfig,
     logger: Logger,
   ) => BinarySession | Promise<BinarySession>;
+  /** Prefer byte-backed dispatch inspection while preserving explicit selection. */
+  readonly createNativeDispatchBinarySession: (
+    config: AppConfig,
+    logger: Logger,
+  ) => BinarySession | Promise<BinarySession>;
   /** Create an artifact-only session without selecting native analysis engines. */
   readonly createArtifactBinarySession: () =>
+    | BinarySession
+    | Promise<BinarySession>;
+  /** Create a native utility session without selecting deep analysis engines. */
+  readonly createNativeBinarySession: () =>
     | BinarySession
     | Promise<BinarySession>;
   readonly createManagedBinarySession: () =>

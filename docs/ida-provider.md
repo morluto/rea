@@ -8,6 +8,8 @@ Choose one lifecycle mode in an upstream MCP JSON registration. Set `REA_IDA_MCP
 
 Each mode accepts one upstream tool profile, checked against `tools/list` before any analysis runs. The attached profile requires the legacy GUI tool names; upstream 2.0.0 renamed those tools, and REA has not established an equivalent attached-mode lifecycle and ownership contract for that catalog. It therefore fails closed with the missing tool names in the error diagnostics.
 
+Startup failures identify the accepted REA analysis operation. Missing-profile and typed startup transport failures retain the original stage in `details.diagnostics.startup_operation`; existing diagnostics, timeout budgets and resource limits remain available. Startup remains shared within a session; each caller receives its own operation attribution. Cancellation retains live cleanup ownership, so a successful retry releases the originating cancellation outcome as well.
+
 The headless profile is defined by the database-supervisor API, not by an upstream version string. The upstream source snapshot [`c133c385`](https://github.com/mrexodia/ida-pro-mcp/tree/c133c3853faa111a9b00ee615c013b720d0c4acd) includes `idb_close` (introduced by [upstream PR #495](https://github.com/mrexodia/ida-pro-mcp/pull/495)) alongside `idb_open` and `idb_list`. Earlier builds may report the same `2.0.0` version while lacking that tool, so REA checks the live catalog rather than treating a version number or branch name as a compatibility guarantee.
 
 | Mode     | Upstream profile    | Known working                                          |
@@ -39,7 +41,16 @@ rea function /absolute/path/to/program main --json
 rea decompile /absolute/path/to/program main --json
 ```
 
-Open the **original input binary** in REA, not an `.idb` or `.i64` database. Its SHA-256 must match IDA's recorded input hash. REA checks the attached identity and image base around each analysis request. A mismatch or target switch fails with recovery guidance. The original input must remain readable by REA; WSL can use its mounted alias while the GUI runs on Windows.
+If the registration cannot be read or validated, provider diagnostics retain its
+selected `registration_path` and the configuration owner's setting/constraint
+facts in `configuration_details.settings`, plus `configuration_remediation`.
+`configured` means a path was selected, not that it is valid or an IDA connection
+was established; failed registrations remain unavailable. Correct
+`REA_IDA_MCP_CONFIG` in the next CLI invocation's environment or the MCP server's
+launch environment. Restart/reconnect that server after changing its environment;
+an export in another shell does not update a running server.
+
+Open the **original input binary** in REA, not an `.idb` or `.i64` database. Its SHA-256 must match IDA's recorded input hash. REA checks the attached identity and image base around each analysis request. A mismatch or target switch fails with recovery guidance. The original input must remain readable by REA; WSL can use its mounted alias while the GUI runs on Windows. Attached profiles, including native mode, refuse universal Mach-O inputs at admission: every slice shares the recorded whole-file hash, so REA cannot verify which slice the GUI loaded. Open a thin file extracted with `lipo -thin` in both IDA and REA, or use headless mode, which analyzes the selected slice.
 
 REA's close operation releases its MCP connection or proxy. It never saves or closes the existing GUI database. External edits remain visible because results are live and are not replayed from snapshots. These checks do not lock the GUI or prove that the database is unpatched.
 
@@ -69,6 +80,71 @@ Native MCP 1.1.2 can navigate in the previously focused pseudocode tab when swit
 
 Native tool observations retain actual tool names and complete JSON text. Upstream `structuredContent` can be a shortened preview even while text contains the full result. REA reads the full native representation and rejects missing/malformed text instead of treating previews as complete observations.
 
+### Migrate a legacy attached registration
+
+Both attached profiles remain supported. Migrating replaces the upstream server;
+adding `"protocol": "native"` to a legacy Python proxy registration is insufficient.
+The native plugin is separate from mrexodia/ida-pro-mcp, and upgrading mrexodia to
+its modern tool catalog does not select this profile.
+
+1. Back up the working registration file. Install and start the native plugin
+   using its [upstream instructions](https://github.com/0xshlomil/ida-free-mcp).
+   IDA and the plugin are bring-your-own; REA does not install or build them.
+   Use a build with the navigation correction described above, and restrict its
+   listener to loopback or apply the documented host firewall restriction.
+   Stop the legacy endpoint first if both servers would use the same port.
+2. Open the same original input binary in IDA and wait for analysis. Keep that
+   file readable by REA. The native metadata resource must report its recorded
+   input SHA-256; the resource's `path` identifies the database, not an input
+   file to substitute. Universal Mach-O inputs still require a thin extraction.
+3. Replace the registration, using the native plugin's actual local endpoint.
+   For example, this legacy registration:
+
+   ```json
+   {
+     "mode": "attached",
+     "command": "python",
+     "args": [
+       "/absolute/path/to/ida_pro_mcp/server.py",
+       "--ida-rpc",
+       "http://127.0.0.1:13337"
+     ]
+   }
+   ```
+
+   becomes:
+
+   ```json
+   {
+     "mode": "attached",
+     "protocol": "native",
+     "url": "http://127.0.0.1:13337/mcp"
+   }
+   ```
+
+   Keep `REA_IDA_MCP_CONFIG` pointing at the replacement file and close/reopen
+   the REA binary session to connect with it. If changing the environment's
+   configuration path, restart the MCP server as described above. Do not reuse
+   the legacy RPC URL as an MCP HTTP endpoint.
+
+4. Check `binary_session` availability before resuming workflows. Direct
+   `procedure_callers` becomes unavailable and dossier callers remain unknown;
+   incoming address xrefs do not establish direct call edges. Native strings
+   use C-string rendering. Assembly and instruction reads no longer navigate
+   the GUI; native pseudocode still changes focus and closes existing
+   pseudocode tabs. IDA Free decompilation may require cloud access and consent.
+5. Run the [real-provider verification](#verification) with two distinct
+   functions and the required second-function marker. Supply independently
+   known string and xref oracles for those checks. Existing Windows evidence
+   covers IDA Pro 9.3 with the documented source build and listener change;
+   it does not establish stock-plugin, Windows Free, or native macOS behavior.
+   A valid registration or successful doctor check alone does not verify the
+   connection, target identity, or function switching.
+
+REA continues to verify identity and image base around requests and closes only
+its connection, preserving the attached database. Restore the backed-up legacy
+registration and its upstream endpoint to return to the legacy profile.
+
 The legacy producer moves the active GUI as a side effect: assembly and raw function instructions jump to the function, and successful pseudocode opens or reuses a pseudocode view. A function dossier does both. Native GUI decompilation also changes the active view. `binary_session` reports these operations with `effects.may_show_ui: true`; headless operations and the other attached operations report `false`.
 
 ## Give REA a target for headless analysis
@@ -97,7 +173,14 @@ Headless REA and the configured supervisor must share the host filesystem and na
 
 REA copies the admitted binary into a private temporary directory, checks its digest, and requests an owned worker with `force_headless`. POSIX workspaces are created atomically with owner-only permissions, respecting the process umask; Windows uses the matching package's native private-DACL boundary on a local NTFS temporary directory. It injects the returned database ID into analysis requests. It verifies the active owned worker and input path rather than adopting a user database. On close or failed startup, it releases its session with `save: false`, verifies that it is absent from upstream session discovery, and removes its private input and sidecars. An unverified release retains the workspace and reports incomplete cleanup.
 
-One REA session owns one database. Stdio registrations default `IDA_MCP_MAX_WORKERS` to `1`; the explicit upstream `--max-workers 1` also bounds a supervisor. Database size and engine memory depend on the target and upstream; REA does not impose an engine memory limit. The original binary is never executed or overwritten. Optional `workspaceRoot` selects an existing absolute temporary-directory parent on the REA host. Ensure it has space for the input copy and IDA working files.
+One REA session owns one database. Stdio registrations default `IDA_MCP_MAX_WORKERS` to `1`; the explicit upstream `--max-workers 1` also bounds a supervisor. Database size and engine memory depend on the target and upstream; REA does not impose an engine memory limit. The original binary is never executed or overwritten. Optional `workspaceRoot` selects an existing absolute temporary-directory parent on the REA host. The selected parent is resolved by the filesystem before deriving its canonical identity, including POSIX symlink/parent components. Ensure it has space for the input copy and IDA working files.
+
+Readiness and allocation check the selected spelling with native
+[`stat`](https://github.com/nodejs/node/blob/v24.22.1/doc/api/fs.md#fspromisesstatpath-options)
+before canonicalizing it. This retains missing and non-directory intermediate
+lookup failures: [macOS `realpath`](https://github.com/apple-oss-distributions/Libc/blob/71bbe350ab79eef58113991d817ccc6165061a64/stdlib/FreeBSD/realpath.c)
+alone can collapse `file/..`. Diagnostics retain the selected spelling; private
+input paths use the canonical parent for upstream identity checks.
 
 When a completed `idb_open` response reports success or is otherwise ambiguous, but no active owned private worker can be verified, REA retains the private workspace even if `idb_list` appears empty. A later close can retry verification if the original owned worker becomes discoverable. A completed explicit `idb_open` rejection retains the existing no-worker cleanup path. This is a local admission/ownership safeguard and **does not** provide a process-termination receipt or change the legacy reaped-worker protocol.
 
@@ -122,7 +205,7 @@ Add the registration path to the **REA** MCP entry's environment, keeping the up
 }
 ```
 
-Use a package version that actually includes this adapter; repository main can be ahead of the npm release. After reconnecting, call:
+Use a package version that actually includes this adapter; repository main can be ahead of the npm release. After reconnecting, call the sequence below; the default `analyze_function` reply is a summary that retains the dossier, so add `"detail":"complete"` when the dossier itself must come back inline:
 
 ```json
 {"name":"open_binary","arguments":{"path":"/absolute/path/to/program","provider_id":"ida"}}
@@ -131,9 +214,9 @@ Use a package version that actually includes this adapter; repository main can b
 {"name":"close_binary","arguments":{}}
 ```
 
-Opening an MCP target starts its selected provider session; headless opening waits for auto-analysis. Set the agent's MCP request deadline long enough for the target. The registration's optional `timeoutMs` defaults to 300000 for upstream requests. A freshly opened headless worker can briefly report `status: "busy"` from `server_health`; REA re-reads the health every 100 ms until the worker answers, the caller cancels, or `timeoutMs` has elapsed since the first read. Only expiry while the worker is still busy produces a retryable `provider_timeout`; no further read is started once the deadline has passed. That error names the busy tool of the last observation, or `unknown` when the worker reported none or a value that is not tool-name-shaped. Cancellation during the wait produces `cancelled`. Any other unexpected health payload, including a busy payload with an invalid shape, remains `unreadable_output`. Cancellation drains the current upstream request before cleanup; it does not force-stop GUI analysis. An open request that times out without a completed response retains the private workspace because worker inventory alone cannot prove the request has stopped. `binary_session` reports actual tool availability. Repeated doctor/setup calls are unnecessary when the registration already works.
+Opening an MCP target starts its selected provider session; headless opening waits for auto-analysis. Set the agent's MCP request deadline long enough for the target. The registration JSON named by `REA_IDA_MCP_CONFIG` has an optional `timeoutMs` integer from 1 to 2147483647. Omitted means 300000. REA applies an edited value on the next IDA connection after it re-reads that file; an already open session keeps the timeout it connected with. Changing the `REA_IDA_MCP_CONFIG` path itself is read at process start. An upstream SDK request that reaches this limit returns `provider_timeout` naming the effective milliseconds and `timeoutMs`. A shorter inner request is the time remaining inside that ceiling, and the error names both when they differ. A freshly opened headless worker can briefly report `status: "busy"` from `server_health`; REA re-reads health every 100 ms until the worker answers, the caller cancels, or `timeoutMs` has elapsed since the first read. Each health request is capped by the time remaining in that overall wait, so a stalled read cannot extend the readiness deadline by another full request timeout. Expiry while the worker is still busy produces a retryable `provider_timeout`; no further read is started after the deadline. That error names the busy tool from the last observation, or `unknown` when the worker reported none or a value that is not tool-name-shaped. If a health request itself consumes the remaining wait budget, the same last-busy timeout is returned with the stalled request's captured output. Cancellation during the wait produces `cancelled`. Any other unexpected health payload, including a busy payload with an invalid shape, remains `unreadable_output`. Cancellation drains the current upstream request before cleanup; it does not force-stop GUI analysis. An open request that times out without a completed response retains the private workspace because worker inventory alone cannot prove the request has stopped. `binary_session` reports actual tool availability. Repeated doctor/setup calls are unnecessary when the registration already works.
 
-For guided registration, set `REA_IDA_MCP_CONFIG` before `rea setup --client <client>`. Setup includes that file reference in its reviewed plan and preserves it after approval; it does not copy upstream credentials into the agent configuration. `rea doctor --provider ida --json` validates the registration without starting IDA and explicitly leaves runtime compatibility and target binding for analysis.
+For guided registration, set `REA_IDA_MCP_CONFIG` before `rea setup --client <client>`. Setup includes that file reference in its reviewed plan and preserves it after approval; it does not copy upstream credentials into the agent configuration. For `ida` or `auto` selection, Codex/Kimi setup and doctor use the effective client registration's parsed `timeoutMs` (default 300000 ms) when recommending the agent's per-tool deadline. Existing positive client deadlines remain caller choices. `rea doctor --provider ida --json` validates the registration without starting IDA and explicitly leaves runtime compatibility and target binding for analysis.
 
 ## Coverage and evidence
 
@@ -157,4 +240,38 @@ The verifier requires the resolved procedure in both inventory and procedure sea
 
 The initial real workflows use stdio registrations for the legacy Windows GUI profile and a Windows x64 headless supervisor with IDA 9.3. The headless workflow has also passed on macOS arm64 with IDA Professional 9.1 (build 9.1.250226) against the same upstream commit `c133c3853faa111a9b00ee615c013b720d0c4acd`, using a source-built arm64 Mach-O fixture; Mach-O C symbols carry a leading underscore, so the procedure name is `_rea_fixture_add`. Streamable HTTP is tested against a loopback MCP fixture with the pinned client SDK; a real IDA HTTP-supervisor workflow remains unverified. Linux headless engine operation, other IDA releases, architectures, and modern attached GUI tools require their corresponding real workflows before support is claimed.
 
-Native Windows verification uses IDA Pro 9.3 with the public two-function fixture and Windows `whoami.exe`, using upstream `c9d15d98e8a143fc74f6e14037c48f63889b6d6c` with a loopback-listener change. It covers production CLI/MCP parity, distinct-function switching, identity and connection cleanup. See the [correctness and performance measurements](https://github.com/morluto/rea/blob/main/experiments/analysis-efficiency/ida-native-windows.md). This follow-up did not run Windows IDA Free or native macOS.
+Native Windows verification uses IDA Pro 9.3 with the public two-function fixture and Windows `whoami.exe`, using upstream `c9d15d98e8a143fc74f6e14037c48f63889b6d6c` with a loopback-listener change. It covers production CLI/MCP parity, distinct-function switching, identity and connection cleanup. See the [correctness and performance measurements](https://github.com/morluto/rea/blob/a2e2c29b59e8775b0e6aedb09a9eb16adf32646b/experiments/analysis-efficiency/ida-native-windows.md). This follow-up did not run Windows IDA Free or native macOS.
+
+Headless readiness distinguishes an explicit `auto_analysis_ready: false` from
+unknown readiness (`null`). The former returns a retryable capability refusal
+with wait-and-retry guidance; the latter asks for upstream readiness inspection
+without claiming that analysis is running. Neither is malformed protocol output.
+An unusable `workspaceRoot` reports its directory constraint as a configuration
+error before opening an IDA worker. Native JSON metadata resources accept omitted
+media types and normal case/parameter variants of `application/json`; their
+resource URI, JSON structure and recorded target identity remain checked.
+
+The public profile's registration digest excludes HTTP authentication header
+values (`Authorization`, `Proxy-Authorization`, and `Cookie`). Mark any other
+credential fields explicitly with `"sensitive": { "headers": ["X-Api-Key"],
+"env": ["PRIVATE_VALUE"] }` in the registration. Header names match without
+case; environment names match exactly. These values are also redacted from IDA
+diagnostics. Ordinary fields such as `IDADIR` and noncredential headers remain
+part of analysis identity. Credential rotation does not change that public
+identity; each newly resolved client factory still captures its own complete
+transport registration and creates a fresh connection.
+
+Caller cancellation is classified at the MCP request boundary using the installed
+SDK's exact abort outcome. A later abort during error unwinding does not replace
+an established provider failure. Cancellation retains the caller's original reason
+and collected diagnostics; metadata timeouts name the requested analysis operation
+while retaining the resource-read failure as their cause. This request cancellation
+does not authorize saving or closing an attached GUI database.
+
+Registration refusals retain schema-authored constraints, including the
+native/attached lifecycle requirement, local credential-free endpoint requirement
+and absolute workspace root. Configuration diagnostics omit registration values.
+Target and private-worker identity refusals retain the failed check, its reason
+and recovery guidance in the public error before any analysis replies exist.
+These diagnostics do not relax identity admission or authorize closing an attached
+GUI database.

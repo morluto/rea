@@ -1,4 +1,6 @@
-import { resolve } from "node:path";
+import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
+import { join, resolve } from "node:path";
+import { tmpdir } from "node:os";
 
 import { describe, expect, it } from "vitest";
 
@@ -57,6 +59,50 @@ describe("CLI JSON path normalization", () => {
     expect(input.browser.executable_path).toBe(" browser ");
   });
 
+  it.skipIf(process.platform === "win32")(
+    "keeps POSIX symlink-parent traversal for each selected JSON path",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "rea-json-caller-path-"));
+      const originalCwd = process.cwd();
+      try {
+        await mkdir(join(root, "real/inner"), { recursive: true });
+        await symlink(join(root, "real/inner"), join(root, "link"));
+        process.chdir(root);
+        const electronInput = {
+          executable_path: "link/../tool",
+          application_path: "link/../app",
+          application_root: "link/../root",
+        };
+        const normalizedElectron = resolveCliJsonPaths(electronInput, paths);
+        expect(normalizedElectron).toEqual({
+          executable_path: `${root}/link/../tool`,
+          application_path: `${root}/link/../app`,
+          application_root: `${root}/link/../root`,
+        });
+        expect(electronInput.executable_path).toBe("link/../tool");
+        expect(
+          electronActiveObservationInputSchema.safeParse(normalizedElectron)
+            .success,
+        ).toBe(true);
+        const browserInput = {
+          browser: { executable_path: "link/../browser", label: "keep" },
+        };
+        expect(
+          resolveCliJsonPaths(browserInput, [["browser", "executable_path"]]),
+        ).toEqual({
+          browser: {
+            executable_path: `${root}/link/../browser`,
+            label: "keep",
+          },
+        });
+        expect(browserInput.browser.executable_path).toBe("link/../browser");
+      } finally {
+        process.chdir(originalCwd);
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+  );
+
   it.each([
     "file:///opt/electron",
     "FILE:electron",
@@ -74,9 +120,8 @@ describe("CLI JSON path normalization", () => {
     expect(parsed.error.issues).toEqual([
       expect.objectContaining({
         path: ["executable_path"],
-        message: expect.stringContaining(
-          "must be absolute local filesystem paths",
-        ),
+        code: "invalid_format",
+        message: expect.stringContaining("absolute local filesystem path"),
       }),
     ]);
   });

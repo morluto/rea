@@ -64,7 +64,7 @@ if len(sys.argv) > 3:
         )
         return child, ":123", directory / "Xauthority", helper.CapturedStderr(child.stderr)
 
-    helper.digest = lambda _: next(iter(helper.SUPPORTED_HOPPER_SHA256))
+    helper.digest = lambda _: "0" * 64
     helper.start_xvfb = start_xvfb
     helper.ctypes.CDLL = lambda _: X11()
     helper.configure_x11 = lambda *_: None
@@ -75,6 +75,7 @@ if len(sys.argv) > 3:
     raise SystemExit(helper.run_launch(argparse.Namespace(
         owner_stdin=True,
         hopper=sys.executable,
+        expected_launcher_sha256="0" * 64,
         socket=str(socket),
         command=child_command(directory / "hopper.pid"),
     )))

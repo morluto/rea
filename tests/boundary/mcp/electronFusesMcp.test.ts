@@ -11,6 +11,9 @@ import { createServer } from "../../../src/server/createServer.js";
 import { ELECTRON_FUSE_STATE_BYTES } from "../../../src/domain/electron/electronFuses.js";
 import {
   elfFuseImage,
+  elfHeaderFuseImage,
+  peHeaderFuseImage,
+  OBSIDIAN_FUSE_BYTES,
   truncatedFuseImage,
   twoSentinelElf,
 } from "../../fixtures/electron/fuseImage.js";
@@ -176,5 +179,51 @@ fuseMcpTest(
     } finally {
       await session.close();
     }
+  },
+);
+
+fuseMcpTest.for([
+  { format: "elf", machine: 3, architecture: "x86" },
+  { format: "elf", machine: 62, architecture: "x86_64" },
+  { format: "elf", machine: 183, architecture: "arm64" },
+  { format: "elf", machine: 0xfffe, architecture: null },
+  { format: "pe", machine: 0x14c, architecture: "x86" },
+  { format: "pe", machine: 0x8664, architecture: "x86_64" },
+  { format: "pe", machine: 0xaa64, architecture: "arm64" },
+  { format: "pe", machine: 0x01f0, architecture: null },
+] as const)(
+  "preserves $format machine $machine architecture in MCP Evidence",
+  async ({ format, machine, architecture }, { fuse: { client } }) => {
+    const root = await createTestTempDirectory("rea-fuse-mcp-architecture-");
+    const path = join(root, "selected");
+    const image =
+      format === "elf"
+        ? elfHeaderFuseImage(machine, OBSIDIAN_FUSE_BYTES, {
+            bits: architecture === "x86" ? 32 : 64,
+            byteOrder: "little",
+          })
+        : peHeaderFuseImage(machine, OBSIDIAN_FUSE_BYTES);
+    await writeFile(path, image.bytes);
+    const response = await client.callTool({
+      name: "inspect_electron_fuses",
+      arguments: { path },
+    });
+    expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
+    const evidence = toolContract("inspect_electron_fuses").outputSchema.parse(
+      response.structuredContent,
+    );
+    expect(evidence.subject?.architecture).toBe(architecture);
+    expect(evidence.normalized_result.slices).toMatchObject([
+      {
+        architecture,
+        sentinel_count: 1,
+        sentinels: [{ sentinel_offset: image.sentinelOffset, complete: true }],
+      },
+    ]);
+    expect(
+      evidence.normalized_result.slices[0]?.sentinels[0]?.fuses.map(
+        (fuse) => fuse.raw_byte,
+      ),
+    ).toEqual(OBSIDIAN_FUSE_BYTES);
   },
 );

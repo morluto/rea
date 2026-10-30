@@ -54,8 +54,10 @@ const graphIdentities = async (source: string) => {
 // source locations and every derived identity stay comparable.
 it.each([
   "fetch('https://api.example.com/v1/users');",
+  "client['get']('/api/items');",
+  "navigator['sendBeacon']('/api/events', payload);",
   "localStorage.setItem('token', 1);",
-  "new Worker('./worker.js');",
+  "new Worker(new URL('./worker.js', import.meta.url));",
   "const dep = require('./dep.js'); dep();",
   "import('./dep.js');",
 ])(

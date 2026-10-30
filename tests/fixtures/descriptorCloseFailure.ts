@@ -14,12 +14,13 @@ export const expectRetainedDescriptor = (
   result: Result<unknown, AnalysisError>,
   cleanup: DescriptorCloseFailure,
   operation: string,
+  additionalResources: readonly string[] = [],
 ): void => {
   expect(result).toMatchObject({
     ok: false,
     error: {
       cleanupIncomplete: true,
-      cleanupResources: [cleanup.path],
+      cleanupResources: [cleanup.path, ...additionalResources],
       operation,
     },
   });

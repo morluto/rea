@@ -7,7 +7,7 @@ import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js
 
 import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
 import {
-  destinationCaseCollisionMessage,
+  destinationCaseCollision,
   ENGLISH_UNICODE_CASE_INVENTORY_LIMITATION,
 } from "../../../../src/artifacts/ArtifactPaths.js";
 import { ArtifactProvider } from "../../../../src/artifacts/ArtifactProvider.js";
@@ -85,9 +85,10 @@ it("reports an unsafe path as a hostile artifact path", async () => {
 });
 
 it("returns a destination case collision as the user-facing path message", () => {
-  const detail = destinationCaseCollisionMessage("res/2f.xml", ["2F.xml"]);
-  expect(detail).toEqual(expect.any(String));
-  if (detail === undefined) return;
+  const collision = destinationCaseCollision("res/2f.xml", ["2F.xml"]);
+  if (collision === undefined)
+    throw new Error("Expected destination collision");
+  const detail = collision.message;
   expect(
     projectAnalysisError(
       new ArtifactOperationError("extract_artifact", "path", undefined, detail),

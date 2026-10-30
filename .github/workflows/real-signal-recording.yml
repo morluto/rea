@@ -13,21 +13,17 @@ on:
       - "src/composition/signals.ts"
       - "src/cli/signalCommands.ts"
       - "src/server/registerSignalTools.ts"
-      - "src/server/createServer.ts"
-      - "src/server/sessionAvailabilityPolicy.ts"
-      - "src/application/CapabilityInventory.ts"
-      - "src/contracts/toolContracts.ts"
-      - "src/contracts/toolEffects.ts"
-      - "src/cli.ts"
-      - "src/cliCommandNames.ts"
-      - "src/process/**"
-      - "src/artifacts/readStableArtifact.ts"
       - "scripts/verify-signal-recording.mjs"
       - ".github/workflows/real-signal-recording.yml"
-      - "package*.json"
-      - ".nvmrc"
 permissions:
   contents: read
+env:
+  HUSKY: "0"
+  # Writes only on the default branch for push, schedule, manual dispatch,
+  # and workflow_call. Pull requests get an empty token and remote read-only mode.
+  TURBO_TOKEN: "${{ (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call')) && secrets.TURBO_TOKEN || '' }}"
+  TURBO_TEAM: ${{ vars.TURBO_TEAM }}
+  TURBO_CACHE: "${{ (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call')) && 'local:rw,remote:rw' || 'local:rw,remote:r' }}"
 concurrency:
   group: real-signal-recording-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true

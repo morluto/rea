@@ -1,11 +1,15 @@
+import { snapshotEnvironment } from "../../process/snapshotEnvironment.js";
 import { isAbsolute } from "node:path";
 import { z } from "zod";
-import type { Browser, LaunchOptions } from "playwright-core";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
 import type {
-  WebModuleResolutionPort,
-  WebModuleResolutionBatch,
-} from "../../application/WebModulePorts.js";
+  Browser,
+  BrowserContext,
+  Page,
+  ConsoleMessage,
+  LaunchOptions,
+} from "playwright-core";
+import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+import type { WebModuleResolutionPort } from "../../application/WebModulePorts.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import {
@@ -19,6 +23,14 @@ import { jsonObjectSchema } from "../../domain/jsonValue.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../../domain/result.js";
+import {
+  AnalysisCleanupLease,
+  AnalysisCleanupLeaseGroup,
+} from "../../artifacts/AnalysisCleanupLease.js";
+import type {
+  WebModuleResolutionBatch,
+  WebModuleResolutionObservation,
+} from "../../domain/webModuleTrace.js";
 import { webModuleResolutionSchema } from "../../domain/webModuleTrace.js";
 import { ProviderStartupDeadline } from "../../process/ProviderDeadline.js";
 
@@ -34,7 +46,25 @@ const reportSchema = z.strictObject({
   ),
 });
 
-type ModuleResolverBrowser = Pick<Browser, "newContext" | "version" | "close">;
+type ObserveResolverCall = <T>(call: () => Promise<T>) => Promise<T>;
+
+interface ModuleResolverPage {
+  on(event: "console", listener: (message: ConsoleMessage) => void): unknown;
+  goto: Page["goto"];
+  evaluate(expression: string | (() => unknown)): Promise<unknown>;
+  waitForFunction(
+    expression: () => unknown,
+    argument: undefined,
+    options: { timeout: number },
+  ): Promise<unknown>;
+}
+interface ModuleResolverBrowser extends Pick<Browser, "version" | "close"> {
+  newContext(
+    options: Parameters<Browser["newContext"]>[0],
+  ): Promise<
+    Pick<BrowserContext, "route"> & { newPage(): Promise<ModuleResolverPage> }
+  >;
+}
 /** Production launch seam: only the adapter knows the browser API. */
 export type ModuleResolverLauncher = (
   options: LaunchOptions,
@@ -47,12 +77,16 @@ export class NativeModuleResolver implements WebModuleResolutionPort {
   #tail: Promise<void> = Promise.resolve();
   #closing = false;
   #closePromise: Promise<void> | undefined;
-  #pendingBrowser: ModuleResolverBrowser | undefined;
+  #pendingCleanup: AnalysisCleanupLease | undefined;
+
+  readonly environment: Readonly<Record<string, string | undefined>>;
 
   constructor(
-    readonly environment: Readonly<Record<string, string | undefined>>,
+    environment: Readonly<Record<string, string | undefined>>,
     readonly launcher: ModuleResolverLauncher = launch,
-  ) {}
+  ) {
+    this.environment = snapshotEnvironment(environment);
+  }
 
   resolve(
     input: Parameters<WebModuleResolutionPort["resolve"]>[0],
@@ -74,7 +108,9 @@ export class NativeModuleResolver implements WebModuleResolutionPort {
     options?: ExecutionOptions,
   ): ReturnType<WebModuleResolutionPort["resolve"]> {
     if (options?.signal?.aborted === true)
-      return err(new AnalysisCancelledError(OPERATION));
+      return err(
+        new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
+      );
     const pending = await this.#retryCleanup();
     if (pending !== undefined) return err(pending);
     const executable = this.environment.REA_BROWSER_EXECUTABLE;
@@ -83,94 +119,167 @@ export class NativeModuleResolver implements WebModuleResolutionPort {
         new AnalysisCapabilityUnavailableError(
           "native-module-resolver",
           OPERATION,
-          "missing_browser_executable",
+          executable === undefined
+            ? "missing_browser_executable"
+            : "invalid_browser_executable",
           {
             userMessage:
               "Provide an absolute REA_BROWSER_EXECUTABLE for a caller-supplied Chromium browser supporting import.meta.resolve. REA installs no browser.",
+            ...(executable === undefined
+              ? {}
+              : { diagnostics: { executable } }),
           },
         ),
       );
     const deadline = new ProviderStartupDeadline(TIMEOUT_MS, options?.signal);
-    let browser: ModuleResolverBrowser | undefined;
+    let activeCall:
+      | { settled: boolean; interruption?: AnalysisError }
+      | undefined;
+    let interruption: AnalysisError | undefined;
+    const interrupted = (): AnalysisError =>
+      deadline.interruption === "cancelled"
+        ? new AnalysisCancelledError(OPERATION, {
+            cause: deadline.signal.reason,
+          })
+        : new AnalysisTimeoutError(OPERATION, TIMEOUT_MS);
+    const assertActive = (): void => {
+      if (!deadline.signal.aborted) return;
+      interruption = interrupted();
+      throw interruption;
+    };
+    const observe: ObserveResolverCall = (call) => {
+      assertActive();
+      const observed: NonNullable<typeof activeCall> = { settled: false };
+      activeCall = observed;
+      return call().then(
+        (value) => {
+          observed.settled = true;
+          return value;
+        },
+        (cause: unknown) => {
+          observed.settled = true;
+          throw observed.interruption === undefined
+            ? cause
+            : observed.interruption;
+        },
+      );
+    };
+    let lease: AnalysisCleanupLease | undefined;
     let cleanup: Promise<void> | undefined;
     const close = (): Promise<void> => {
-      if (cleanup === undefined && browser !== undefined) {
-        const owned = browser;
+      if (cleanup === undefined && lease !== undefined) {
+        const owned = lease;
         cleanup = Promise.resolve().then(async () => {
-          await owned.close();
-          this.#pendingBrowser = undefined;
+          await owned.release();
+          this.#pendingCleanup = undefined;
         });
       }
       return cleanup ?? Promise.resolve();
     };
     const onAbort = (): void => {
-      if (browser !== undefined) {
+      if (lease !== undefined) {
         const pending = close();
         void pending.catch(() => undefined);
       }
     };
     deadline.signal.addEventListener("abort", onAbort, { once: true });
+
     let result: Result<WebModuleResolutionBatch, AnalysisError>;
     try {
-      deadline.signal.throwIfAborted();
-      browser = await this.launcher({
-        executablePath: executable,
-        headless: true,
-        timeout: Math.max(1, deadline.remainingMs()),
-        handleSIGINT: false,
-        handleSIGTERM: false,
-        handleSIGHUP: false,
-        args: [
-          "--disable-dev-shm-usage",
-          "--disable-background-networking",
-          "--renderer-process-limit=1",
-          "--js-flags=--max-old-space-size=128",
-          ...(this.environment.REA_BROWSER_NO_SANDBOX === "true"
-            ? ["--no-sandbox"]
-            : []),
-        ],
-      });
-      this.#pendingBrowser = browser;
-      deadline.signal.throwIfAborted();
-      result = ok(await resolveInBrowser(browser, input, deadline, executable));
+      assertActive();
+      const browser = await observe(() =>
+        this.launcher({
+          executablePath: executable,
+          env: this.environment,
+          headless: true,
+          timeout: Math.max(1, deadline.remainingMs()),
+          handleSIGINT: false,
+          handleSIGTERM: false,
+          handleSIGHUP: false,
+          args: [
+            "--disable-dev-shm-usage",
+            "--disable-background-networking",
+            "--renderer-process-limit=1",
+            "--js-flags=--max-old-space-size=128",
+            ...(this.environment.REA_BROWSER_NO_SANDBOX === "true"
+              ? ["--no-sandbox"]
+              : []),
+          ],
+        }),
+      );
+      lease = new AnalysisCleanupLease(async () => {
+        if (
+          deadline.signal.aborted &&
+          activeCall !== undefined &&
+          !activeCall.settled
+        ) {
+          interruption = interrupted();
+          activeCall.interruption = interruption;
+        }
+        await browser.close();
+      }, ["chromium-browser"]);
+      this.#pendingCleanup = lease;
+      assertActive();
+      result = ok(
+        await resolveInBrowser(
+          browser,
+          input,
+          deadline,
+          executable,
+          assertActive,
+          observe,
+        ),
+      );
     } catch (cause: unknown) {
       result = err(
-        deadline.interruption === "cancelled"
-          ? new AnalysisCancelledError(OPERATION)
-          : deadline.interruption === "timeout"
-            ? new AnalysisTimeoutError(OPERATION, TIMEOUT_MS)
-            : cause instanceof AnalysisOutputError ||
-                cause instanceof AnalysisCapabilityUnavailableError ||
-                cause instanceof BrowserObservationError
-              ? cause
-              : new ProviderAdapterError("native-module-resolver", OPERATION, {
-                  cause,
-                  diagnostics: {
-                    executable,
-                    error_message:
-                      cause instanceof Error ? cause.message : String(cause),
-                  },
-                }),
+        cause === interruption && interruption !== undefined
+          ? interruption
+          : cause instanceof AnalysisOutputError ||
+              cause instanceof AnalysisCapabilityUnavailableError ||
+              cause instanceof BrowserObservationError
+            ? cause
+            : new ProviderAdapterError("native-module-resolver", OPERATION, {
+                cause,
+                diagnostics: {
+                  executable,
+                  error_message:
+                    cause instanceof Error ? cause.message : String(cause),
+                },
+              }),
       );
     } finally {
       deadline.signal.removeEventListener("abort", onAbort);
       deadline.dispose();
     }
+    let cleanupError: AnalysisError | undefined;
     try {
       await close();
     } catch (cause: unknown) {
-      const failure = cleanupFailure(
+      cleanupError = cleanupFailure(
         cause,
-        result.ok ? result.value.rawResult : undefined,
+        result.ok ? completedObservation(input, result.value) : undefined,
       );
-      return err(
-        result.ok
-          ? failure
-          : analysisErrorWithCleanupFailure(result.error, failure, OPERATION),
-      );
+      if (lease !== undefined)
+        new AnalysisCleanupLeaseGroup(cleanupError, [lease]);
     }
     if (result.ok && options?.signal?.aborted)
-      return err(new AnalysisCancelledError(OPERATION));
+      result = err(
+        new AnalysisCancelledError(OPERATION, {
+          cause: options.signal.reason,
+          partialObservation: completedObservation(input, result.value),
+        }),
+      );
+    if (cleanupError !== undefined)
+      return err(
+        result.ok
+          ? cleanupError
+          : analysisErrorWithCleanupFailure(
+              result.error,
+              cleanupError,
+              OPERATION,
+            ).bindCleanupDependencies([result.error, cleanupError]),
+      );
+
     return result;
   }
 
@@ -195,14 +304,16 @@ export class NativeModuleResolver implements WebModuleResolutionPort {
   }
 
   async #retryCleanup(): Promise<AnalysisError | undefined> {
-    const browser = this.#pendingBrowser;
-    if (browser === undefined) return undefined;
+    const lease = this.#pendingCleanup;
+    if (lease === undefined) return undefined;
     try {
-      await browser.close();
-      this.#pendingBrowser = undefined;
+      await lease.release();
+      this.#pendingCleanup = undefined;
       return undefined;
     } catch (cause: unknown) {
-      return cleanupFailure(cause);
+      const failure = cleanupFailure(cause);
+      new AnalysisCleanupLeaseGroup(failure, [lease]);
+      return failure;
     }
   }
 }
@@ -212,12 +323,16 @@ const resolveInBrowser = async (
   input: Parameters<WebModuleResolutionPort["resolve"]>[0],
   deadline: ProviderStartupDeadline,
   executable: string,
+  assertActive: () => void,
+  observe: ObserveResolverCall,
 ): Promise<WebModuleResolutionBatch> => {
-  const context = await browser.newContext({
-    serviceWorkers: "block",
-    acceptDownloads: false,
-  });
-  const page = await context.newPage();
+  const context = await observe(() =>
+    browser.newContext({
+      serviceWorkers: "block",
+      acceptDownloads: false,
+    }),
+  );
+  const page = await observe(() => context.newPage());
   const diagnostics: string[] = [];
   let diagnosticBytes = 0;
   page.on("console", (message) => {
@@ -237,64 +352,74 @@ const resolveInBrowser = async (
   const transportUrl = new URL(importerUrl);
   transportUrl.hash = "";
   let stubSent = false;
-  await context.route("**/*", async (route) => {
-    const request = route.request();
-    if (
-      request.resourceType() === "document" &&
-      request.url() === documentUrl.split("#")[0]
-    ) {
-      requests.push({
-        url: request.url(),
-        resource_type: "document",
-        effect: "fulfilled",
-      });
-      await route.fulfill({
-        status: 200,
-        contentType: "text/html",
-        body: `<!doctype html>${input.importMap === null ? "" : `<base href="${htmlAttribute(new URL(input.importMap.baseUrl).href)}"><script type="importmap">${scriptJson(input.importMap.value)}</script>`}`,
-      });
-    } else if (
-      !stubSent &&
-      request.resourceType() === "script" &&
-      request.url() === transportUrl.href
-    ) {
-      stubSent = true;
-      requests.push({
-        url: request.url(),
-        resource_type: "script",
-        effect: "fulfilled",
-      });
-      await route.fulfill({
-        status: 200,
-        contentType: "text/javascript",
-        headers: { "Access-Control-Allow-Origin": "*" },
-        body: `if (typeof import.meta.resolve !== "function") {globalThis.__reaModuleUnsupported = true;} else {globalThis.__reaModuleResult = {importer_url: import.meta.url, entries: ${scriptJson(input.specifiers)}.map(specifier => {try {return {specifier, resolution: {state: "resolved", url: import.meta.resolve(specifier)}}} catch (error) {return {specifier, resolution: {state: "rejected", message: String(error)}}}})};}`,
-      });
-    } else {
-      requests.push({
-        url: request.url(),
-        resource_type: request.resourceType(),
-        effect: "blocked",
-      });
-      await route.abort();
-    }
-  });
-  await page.goto(documentUrl, {
-    timeout: Math.max(1, deadline.remainingMs()),
-  });
-  await page.evaluate(
-    `{const script = document.createElement("script"); script.type = "module"; script.src = ${scriptJson(importerUrl)}; script.onerror = () => {globalThis.__reaModuleFailure = "Trusted resolver stub could not be loaded in the selected context.";}; document.head.append(script);}`,
+  await observe(() =>
+    context.route("**/*", async (route) => {
+      const request = route.request();
+      if (
+        request.resourceType() === "document" &&
+        request.url() === documentUrl.split("#")[0]
+      ) {
+        requests.push({
+          url: request.url(),
+          resource_type: "document",
+          effect: "fulfilled",
+        });
+        await route.fulfill({
+          status: 200,
+          contentType: "text/html",
+          body: `<!doctype html>${input.importMap === null ? "" : `<base href="${htmlAttribute(new URL(input.importMap.baseUrl).href)}"><script type="importmap">${scriptJson(input.importMap.value)}</script>`}`,
+        });
+      } else if (
+        !stubSent &&
+        request.resourceType() === "script" &&
+        request.url() === transportUrl.href
+      ) {
+        stubSent = true;
+        requests.push({
+          url: request.url(),
+          resource_type: "script",
+          effect: "fulfilled",
+        });
+        await route.fulfill({
+          status: 200,
+          contentType: "text/javascript",
+          headers: { "Access-Control-Allow-Origin": "*" },
+          body: `if (typeof import.meta.resolve !== "function") {globalThis.__reaModuleUnsupported = true;} else {globalThis.__reaModuleResult = {importer_url: import.meta.url, entries: ${scriptJson(input.specifiers)}.map(specifier => {try {return {specifier, resolution: {state: "resolved", url: import.meta.resolve(specifier)}}} catch (error) {return {specifier, resolution: {state: "rejected", message: String(error)}}}})};}`,
+        });
+      } else {
+        requests.push({
+          url: request.url(),
+          resource_type: request.resourceType(),
+          effect: "blocked",
+        });
+        await route.abort();
+      }
+    }),
   );
-  await page.waitForFunction(
-    () =>
-      Reflect.has(globalThis, "__reaModuleResult") ||
-      Reflect.has(globalThis, "__reaModuleUnsupported") ||
-      Reflect.has(globalThis, "__reaModuleFailure"),
-    undefined,
-    { timeout: Math.max(1, deadline.remainingMs()) },
+  await observe(() =>
+    page.goto(documentUrl, {
+      timeout: Math.max(1, deadline.remainingMs()),
+    }),
   );
-  const unsupported: unknown = await page.evaluate(
-    () => Reflect.get(globalThis, "__reaModuleUnsupported") as unknown,
+  await observe(() =>
+    page.evaluate(
+      `{const script = document.createElement("script"); script.type = "module"; script.src = ${scriptJson(importerUrl)}; script.onerror = () => {globalThis.__reaModuleFailure = "Trusted resolver stub could not be loaded in the selected context.";}; document.head.append(script);}`,
+    ),
+  );
+  await observe(() =>
+    page.waitForFunction(
+      () =>
+        Reflect.has(globalThis, "__reaModuleResult") ||
+        Reflect.has(globalThis, "__reaModuleUnsupported") ||
+        Reflect.has(globalThis, "__reaModuleFailure"),
+      undefined,
+      { timeout: Math.max(1, deadline.remainingMs()) },
+    ),
+  );
+  const unsupported: unknown = await observe(() =>
+    page.evaluate(
+      () => Reflect.get(globalThis, "__reaModuleUnsupported") as unknown,
+    ),
   );
   if (unsupported === true)
     throw new AnalysisCapabilityUnavailableError(
@@ -305,11 +430,15 @@ const resolveInBrowser = async (
         userMessage: `Configured Chromium ${browser.version()} does not supply import.meta.resolve; use a browser supporting native module resolution.`,
       },
     );
-  const raw: unknown = await page.evaluate(
-    () => Reflect.get(globalThis, "__reaModuleResult") as unknown,
+  const raw: unknown = await observe(() =>
+    page.evaluate(
+      () => Reflect.get(globalThis, "__reaModuleResult") as unknown,
+    ),
   );
-  const failure: unknown = await page.evaluate(
-    () => Reflect.get(globalThis, "__reaModuleFailure") as unknown,
+  const failure: unknown = await observe(() =>
+    page.evaluate(
+      () => Reflect.get(globalThis, "__reaModuleFailure") as unknown,
+    ),
   );
   if (typeof failure === "string")
     throw new AnalysisOutputError(
@@ -331,7 +460,7 @@ const resolveInBrowser = async (
     );
   if (diagnosticBytes > 1024 * 1024)
     throw new BrowserObservationError(OPERATION, "payload_limit");
-  deadline.signal.throwIfAborted();
+  assertActive();
   const engine = {
     id: "chromium-native-module-resolver",
     version: browser.version(),
@@ -350,20 +479,30 @@ const resolveInBrowser = async (
   };
 };
 
+const completedObservation = (
+  input: Parameters<WebModuleResolutionPort["resolve"]>[0],
+  batch: WebModuleResolutionBatch,
+): WebModuleResolutionObservation => ({
+  kind: "web-module-resolution",
+  request: input,
+  batch,
+});
+
 const cleanupFailure = (
   cause: unknown,
-  observation?: WebModuleResolutionBatch["rawResult"],
+  observation?: WebModuleResolutionObservation,
 ): ProviderCleanupError =>
   new ProviderCleanupError(
     "native-module-resolver",
     ["chromium-browser"],
     {
       reason: cause instanceof Error ? cause.message : String(cause),
-      ...(observation === undefined
-        ? {}
-        : { partial_observation: observation }),
     },
-    { cause, operation: OPERATION },
+    {
+      cause,
+      operation: OPERATION,
+      ...(observation === undefined ? {} : { partialObservation: observation }),
+    },
   );
 
 const scriptJson = (value: unknown): string =>

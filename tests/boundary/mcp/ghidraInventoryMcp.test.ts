@@ -25,6 +25,35 @@ import { createServer } from "../../../src/server/createServer.js";
 import { waitForExit } from "../../support/process/processFixture.js";
 import { GhidraSessionError } from "../../../src/ghidra/GhidraSessionError.js";
 
+it("delivers a complete Ghidra inventory within the existing MCP response budget", async () => {
+  const items = Array.from({ length: 30_000 }, (_, index) => ({
+    address: `0x${(0x1000 + index).toString(16)}`,
+    value: `procedure_${String(index).padStart(6, "0")}`,
+    procedure: { external: false, thunk: false, thunk_target: null },
+  }));
+  const harness = await connectGhidraMcp(
+    "inventory-response-budget",
+    (operation) => {
+      if (operation !== "list_procedures")
+        throw new Error(`Unexpected operation: ${operation}`);
+      return Promise.resolve(ok(items));
+    },
+  );
+  try {
+    const reply = await harness.mcp.callTool({
+      name: "list_procedures",
+      arguments: {},
+    });
+    if (reply.isError) throw new Error(JSON.stringify(reply));
+    const evidence = sessionEvidence(harness.session, reply.structuredContent);
+    expect(evidence.raw_result).toBeNull();
+    expect(evidence.normalized_result).toEqual(items);
+    expect(harness.calls).toEqual(["list_procedures"]);
+  } finally {
+    await harness.close();
+  }
+});
+
 it("retains byte-search coverage and rejects malformed pages before creating Evidence", async () => {
   const page = {
     matches: [
@@ -106,6 +135,24 @@ it("retains byte-search coverage and rejects malformed pages before creating Evi
       });
       expect(invalidCoverage.structuredContent).toBeUndefined();
     }
+    for (const [address, segment] of [
+      ["0x402000", ".bss"],
+      ["overlay:0x401000", ".text"],
+      ["invalid", ".text"],
+    ]) {
+      output = jsonValueSchema.parse({
+        ...page,
+        matches: [{ ...page.matches[0], address, segment }],
+      });
+      const outsideCoverage = await harness.mcp.callTool({
+        name: "search_bytes",
+        arguments: { pattern: "48 ??" },
+      });
+      expect(parseMcpToolError(outsideCoverage)).toMatchObject({
+        error: { code: "unreadable_output" },
+      });
+      expect(outsideCoverage.structuredContent).toBeUndefined();
+    }
     const calls = harness.calls.length;
     for (const args of [{ pattern: "??" }, { pattern: "48", mask: "ffff" }]) {
       const invalid = await harness.mcp.callTool({
@@ -113,9 +160,15 @@ it("retains byte-search coverage and rejects malformed pages before creating Evi
         arguments: args,
       });
       expect(invalid.isError).toBe(true);
-      expect(JSON.stringify(invalid.content)).toContain(
-        "Input validation error",
-      );
+      expect(parseMcpToolError(invalid)).toMatchObject({
+        error: {
+          code: "invalid_request",
+          recovery: {
+            kind: "inspect_input_contract",
+            operation: "search_bytes",
+          },
+        },
+      });
     }
     expect(harness.calls).toHaveLength(calls);
   } finally {
@@ -227,6 +280,7 @@ it("searches bytes through MCP and the socket bridge with pagination and skipped
     });
     expect(first.isError, JSON.stringify(first)).not.toBe(true);
     const firstEvidence = sessionEvidence(session, first.structuredContent);
+    expect(firstEvidence.raw_result).toBeNull();
     expect(firstEvidence.normalized_result).toMatchObject({
       matches: [
         {

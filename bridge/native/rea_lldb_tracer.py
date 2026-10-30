@@ -555,6 +555,38 @@ def _failed_launch_description(process):
     return None
 
 
+def _retire_failed_launch(process, config, listener, stdout, stderr):
+    """Reconcile an SBProcess returned alongside a failed Launch error."""
+    if not process.IsValid():
+        stdout.close()
+        stderr.close()
+        return False
+
+    pid = process.GetProcessID()
+    if pid > 0:
+        # Even an already-exited process needs its PID published so the host
+        # can distinguish a completed launch failure from an unknown target.
+        with open(config["pid_path"], "w") as handle:
+            handle.write(str(pid))
+
+    if process.GetState() != lldb.eStateExited:
+        stdout.mark_launched()
+        stderr.mark_launched()
+        if pid > 0:
+            # Hold a surviving target until the host has captured its start
+            # identity. If that proof is unavailable, Kill still addresses
+            # this exact SBProcess created by the current launch request.
+            _wait_for_identity_ack(config)
+        process.Kill()
+        _wait_for_exit(listener, process, 5)
+
+    exit_observed = process.GetState() == lldb.eStateExited
+    expected_exit = exit_observed
+    stdout.close(expected_exit=expected_exit)
+    stderr.close(expected_exit=expected_exit)
+    return exit_observed
+
+
 def trace(debugger, config):
     global _TRACE_CONTEXT
     debugger.SetAsync(True)
@@ -629,26 +661,35 @@ def trace(debugger, config):
                 open(observation_path, "wb")
             )
         process = target.Launch(_launch_info(target, config, listener), error)
-        if not error.Success() or not process.IsValid():
-            stdout.close()
-            stderr.close()
+        process_created = process.IsValid()
+        if not error.Success() or not process_created:
+            exit_observed = _retire_failed_launch(
+                process, config, listener, stdout, stderr
+            )
             return {
                 "status": "launch-error",
                 "error": error.GetCString(),
+                "target_process_created": process_created,
                 **(
-                    {"target_process_created": True}
-                    if process.IsValid()
+                    {"target_process_exit_observed": True}
+                    if exit_observed
                     else {}
                 ),
             }
         launch_failure = _failed_launch_description(process)
         if launch_failure is not None:
-            stdout.close(expected_exit=True)
-            stderr.close(expected_exit=True)
+            exit_observed = _retire_failed_launch(
+                process, config, listener, stdout, stderr
+            )
             return {
                 "status": "launch-error",
                 "error": launch_failure,
                 "target_process_created": True,
+                **(
+                    {"target_process_exit_observed": True}
+                    if exit_observed
+                    else {}
+                ),
             }
         stdout.mark_launched()
         stderr.mark_launched()

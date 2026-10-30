@@ -16,6 +16,7 @@ export const removeOwnedTree = async (input: {
   readonly rootIdentity: DirectoryIdentity;
   readonly directories: Map<string, DirectoryIdentity>;
   readonly files: Map<string, FileIdentity>;
+  readonly preserveRoot?: boolean;
 }): Promise<void> => {
   const { outputRoot, rootIdentity, directories, files } = input;
   const filesByDirectory = new Map<string, [string, FileIdentity][]>();
@@ -50,7 +51,7 @@ export const removeOwnedTree = async (input: {
   );
   await assertPathIdentity(outputRoot, rootIdentity);
   await requireEmpty(outputRoot);
-  await rmdir(outputRoot);
+  if (!input.preserveRoot) await rmdir(outputRoot);
 };
 
 const removeFiles = async (

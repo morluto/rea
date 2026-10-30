@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
 import { PriResourcesService } from "./PriResourcesService.js";
-import { PRI_RESOURCES_PROVIDER } from "../InvestigationProviders.js";
+import { PRI_RESOURCES_PROVIDER } from "../../domain/investigationProviders.js";
 import {
   inspectPriResourcesInputSchema,
   type PriResources,

@@ -71,6 +71,7 @@ const statistics = {
   text_bytes_read: 60,
   invalid_utf8_files: 0,
   parsed_javascript_files: 1,
+  skipped_javascript_files: 0,
   visited_ast_nodes: 12,
   findings: 1,
   modules: 0,

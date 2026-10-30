@@ -79,3 +79,39 @@ export const webModuleResolverFixture: WebModuleResolutionPort = {
       }),
     ),
 };
+
+/** Controlled SDK seam for provider finalization, not real Chromium qualification. */
+export const completedModuleResolverLauncher =
+  (
+    request: Parameters<WebModuleResolutionPort["resolve"]>[0],
+    close: () => Promise<void>,
+  ): import("../../src/browser/modules/NativeModuleResolver.js").ModuleResolverLauncher =>
+  async () => {
+    const report = {
+      importer_url: request.importerUrl,
+      entries: request.specifiers.map((specifier) => ({
+        specifier,
+        resolution: {
+          state: "resolved",
+          url: new URL(specifier, request.importerUrl).href,
+        },
+      })),
+    };
+    const evaluations: unknown[] = [undefined, false, report, undefined];
+    return {
+      version: () => "controlled-browser",
+      newContext: async () => ({
+        route: async () => ({
+          dispose: async () => undefined,
+          [Symbol.asyncDispose]: async () => undefined,
+        }),
+        newPage: async () => ({
+          on: () => {},
+          goto: async () => null,
+          evaluate: async () => evaluations.shift(),
+          waitForFunction: async () => {},
+        }),
+      }),
+      close,
+    };
+  };

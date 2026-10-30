@@ -1,3 +1,4 @@
+import { javascriptSourceRangeKey } from "./javascriptSourceCoordinates.js";
 import * as t from "@babel/types";
 
 import type {
@@ -12,11 +13,12 @@ import {
 } from "./javascriptAstValues.js";
 import {
   resolveSemanticBindingState,
-  semanticResolutionBlocked,
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
-import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
+import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
+import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
+import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import {
   assignedSemanticResultBindings,
@@ -109,7 +111,7 @@ const collectCandidates = (
   );
   const callableStack = createSemanticCallableIdStack(admittedCallables);
   const ancestors: t.Node[] = [];
-  traverseJavaScriptAst(program, {
+  traverseJavaScriptValueAst(program, state.erasedSyntaxNodes, {
     enter: (node, parent) => {
       callableStack.enter(node, parent);
       const details = promiseCandidateDetails(node, state);
@@ -139,7 +141,7 @@ const promiseCandidateDetails = (
   if (
     t.isNewExpression(node) &&
     t.isIdentifier(node.callee, { name: "Promise" }) &&
-    isUnshadowedGlobalPromise(node.callee, state)
+    isUnmodifiedGlobalReference(node.callee, state, "Promise")
   )
     return { kind: "constructor", method: "new" };
   if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
@@ -148,7 +150,7 @@ const promiseCandidateDetails = (
     const method = semanticStaticPropertyName(member.property, member.computed);
     if (
       t.isIdentifier(member.object, { name: "Promise" }) &&
-      isUnshadowedGlobalPromise(member.object, state)
+      isUnmodifiedGlobalReference(node.callee, state, ["Promise", method ?? ""])
     ) {
       if (method === "all" || method === "allSettled")
         return { kind: "aggregate", method };
@@ -162,13 +164,6 @@ const promiseCandidateDetails = (
     return { kind: "awaited-expression", method: "await" };
   return null;
 };
-
-const isUnshadowedGlobalPromise = (
-  node: t.Identifier,
-  state: JavaScriptSemanticAnalysisState,
-): boolean =>
-  resolveSemanticBindingState(state, node, "Promise") === undefined &&
-  !semanticResolutionBlocked(state, node, "Promise");
 
 const isPromiseProducer = (
   node: t.Node,
@@ -340,7 +335,7 @@ const indexReturnSites = (
 ): ReadonlyMap<string, string> => {
   const output = new Map<string, string>();
   for (const site of callable.returnSites) {
-    const key = returnSiteKey(site.location);
+    const key = javascriptSourceRangeKey(site.location);
     if (!output.has(key)) output.set(key, site.returnSiteId);
   }
   return output;
@@ -366,7 +361,7 @@ const createReturnSiteLookup = (
       returnSiteIds = indexReturnSites(callable);
       returnSiteIdsByCallable.set(callableId, returnSiteIds);
     }
-    return returnSiteIds.get(returnSiteKey(location)) ?? null;
+    return returnSiteIds.get(javascriptSourceRangeKey(location)) ?? null;
   };
 };
 
@@ -380,11 +375,6 @@ const indexCallablesById = (
   }
   return output;
 };
-
-const returnSiteKey = (
-  location: JavaScriptSemanticPromiseOperation["location"],
-): string =>
-  `${location.start.line}:${location.start.column}:${location.end.line}:${location.end.column}`;
 
 const promiseSources = (
   candidate: PromiseCandidate,
@@ -451,14 +441,16 @@ const resolvePromiseExpression = (
     return { promiseIds: [direct.promiseId], status: "complete" };
   if (!t.isIdentifier(node)) return unresolvedPromise();
   const binding = resolveSemanticBindingState(state, node, node.name);
+  if (binding === undefined || seenBindings.has(binding.bindingId))
+    return unresolvedPromise();
+  const read = semanticBindingAtRead(binding, node, state.parentsByNode);
   if (
-    binding === undefined ||
-    binding.mutable ||
-    binding.initializers.length !== 1 ||
-    seenBindings.has(binding.bindingId)
+    read.status !== "ordered" ||
+    !read.hasDefiniteInitializer ||
+    read.binding.initializers.length !== 1
   )
     return unresolvedPromise();
-  const initializer = binding.initializers[0];
+  const initializer = read.binding.initializers[0];
   if (initializer === undefined || initializer.projection.length > 0)
     return unresolvedPromise();
   const nestedSeen = new Set(seenBindings);

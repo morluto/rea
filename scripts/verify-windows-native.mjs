@@ -22,6 +22,8 @@ import { dirname, join, parse, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { verifyWindowsProtocolInput } from "./lib/windows-protocol-input.mjs";
 import { verifyWindowsJobMemoryLimit } from "./lib/windows-job-memory-limit.mjs";
+import { verifyVolumeRootAppendLease } from "./lib/windows-volume-root-append-lease.mjs";
+import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 
 if (process.platform !== "win32")
   throw new Error(
@@ -47,6 +49,88 @@ const { PrivateRuntimeRootUnavailableError } = await import(
   )
 );
 const workspace = await mkdtemp(join(tmpdir(), "rea-native-conformance-"));
+// A pwsh caller can supply module paths incompatible with Windows PowerShell.
+// Each independent observer must discover its own module path.
+const windowsPowerShellEnvironment = Object.fromEntries(
+  Object.entries(process.env).filter(
+    ([name]) => name.toLowerCase() !== "psmodulepath",
+  ),
+);
+// Windows PowerShell observers call .NET members directly: no cmdlets,
+// pipelines, module autoloading, type-table updates or JSON serializer, which
+// made up most of the earlier ACL observer's 1.2-2.9s in-script time on hosted
+// runners. The deadline bounds a hung observer rather than the observation. It
+// must also cover a cold powershell.exe start on a starved runner: one run
+// printed nothing within 15s, and another ran the same phases ~20x slower.
+const windowsPowerShellObserverTimeoutMs = 60_000;
+const windowsPowerShellArguments = (script) => [
+  "-NoProfile",
+  "-NonInteractive",
+  "-Command",
+  script,
+];
+// Shared prelude: fail on the first error and emit JSON booleans without
+// loading ConvertTo-Json.
+const windowsPowerShellObserverPrelude = String.raw`
+  $ErrorActionPreference = 'Stop'
+  function Format-JsonBoolean([bool]$value) { if ($value) { 'true' } else { 'false' } }
+`;
+const observeWithWindowsPowerShell = (script, observerEnvironment) =>
+  execFileSync(
+    "powershell.exe",
+    windowsPowerShellArguments(windowsPowerShellObserverPrelude + script),
+    {
+      encoding: "utf8",
+      timeout: windowsPowerShellObserverTimeoutMs,
+      windowsHide: true,
+      env: { ...windowsPowerShellEnvironment, ...observerEnvironment },
+    },
+  );
+// Independent private-runtime DACL observer. Every identity it reads is
+// requested and checked in SID form; it never resolves account names. Get-Acl
+// and the ETS Access property are avoided: Access requests NTAccount rules.
+const privateRuntimeAclObserver = String.raw`
+  $clock = [Diagnostics.Stopwatch]::StartNew()
+  function Trace-AclPhase([string]$phase) {
+    [Console]::Error.WriteLine('private-runtime-acl: ' + $phase + ' ' + $clock.ElapsedMilliseconds + 'ms')
+  }
+  Trace-AclPhase 'started'
+  # Separates powershell.exe startup from the observation itself.
+  [Console]::Error.WriteLine('private-runtime-acl: process-uptime ' + [int]([DateTime]::Now - [Diagnostics.Process]::GetCurrentProcess().StartTime).TotalMilliseconds + 'ms')
+  $p = $env:REA_TEST_PRIVATE_RUNTIME_PATH
+  $sid = [Security.Principal.SecurityIdentifier]
+  $a = [Security.AccessControl.DirectorySecurity]::new($p, [Security.AccessControl.AccessControlSections]'Access, Owner')
+  Trace-AclPhase 'acl-read'
+  $u = [Security.Principal.WindowsIdentity]::GetCurrent().User
+  $owner = $a.GetOwner($sid)
+  if ($owner -isnot $sid) { throw 'ACL owner observation must stay in SID form' }
+  Trace-AclPhase 'owner-sid-read'
+  $rules = $a.GetAccessRules($true, $true, $sid)
+  $trusteesOnlyUserAndSystem = $true
+  foreach ($rule in $rules) {
+    $trustee = $rule.IdentityReference
+    if ($trustee -isnot $sid) { throw 'ACL rule observation must stay in SID form' }
+    if ($trustee.Value -ne $u.Value -and $trustee.Value -ne 'S-1-5-18') { $trusteesOnlyUserAndSystem = $false }
+  }
+  Trace-AclPhase 'rule-sids-read'
+  [IO.File]::SetAttributes($p, [IO.FileAttributes]([int][IO.File]::GetAttributes($p) -bor 1))
+  Trace-AclPhase 'readonly-set'
+  [Console]::Out.Write(
+    '{"protected":' + (Format-JsonBoolean $a.AreAccessRulesProtected) +
+    ',"ownerMatchesUser":' + (Format-JsonBoolean ($owner.Value -eq $u.Value)) +
+    ',"trusteesOnlyUserAndSystem":' + (Format-JsonBoolean $trusteesOnlyUserAndSystem) +
+    ',"count":' + $rules.Count +
+    ',"rootReadonly":' + (Format-JsonBoolean (([int][IO.File]::GetAttributes($p) -band 1) -ne 0)) + '}')
+  Trace-AclPhase 'complete'
+`;
+// Keep account-name resolution out of the observer statically. The former
+// Update-TypeData guard reloaded PowerShell's type data at runtime; its phase
+// took 0.3-9.5s on hosted runners.
+assert.doesNotMatch(
+  privateRuntimeAclObserver,
+  /Get-Acl|\.Access\b|NTAccount|\.Translate\b/u,
+  "The private-runtime ACL observer must read only SID forms.",
+);
 const environment = Object.entries(process.env)
   .filter(([, value]) => value !== undefined)
   .map(([key, value]) => `${key}=${value}`);
@@ -58,6 +142,47 @@ const exists = (path) =>
     () => true,
     () => false,
   );
+const startDeleteSharingDeniedReader = async (path) => {
+  const child = spawn(
+    "powershell.exe",
+    windowsPowerShellArguments(
+      "$ErrorActionPreference = 'Stop'; " +
+        "$stream = [IO.File]::Open($env:REA_CLEANUP_HELD_PATH, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite); " +
+        "try { [Console]::WriteLine('ready'); [void][Console]::In.ReadLine() } " +
+        "finally { $stream.Dispose() }",
+    ),
+    {
+      env: { ...windowsPowerShellEnvironment, REA_CLEANUP_HELD_PATH: path },
+      stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
+    },
+  );
+  const closed = once(child, "close");
+  void closed.catch(() => undefined);
+  try {
+    const [ready] = await once(child.stdout, "data", {
+      signal: AbortSignal.timeout(windowsPowerShellObserverTimeoutMs),
+    });
+    assert.equal(String(ready).trim(), "ready");
+  } catch (cause) {
+    try {
+      child.kill();
+      await closed;
+    } catch (cleanupCause) {
+      throw new AggregateError(
+        [cause, cleanupCause],
+        "Reader startup and child cleanup failed",
+        { cause },
+      );
+    }
+    throw cause;
+  }
+  return { child, closed };
+};
+const stopDeleteSharingDeniedReader = async ({ child, closed }) => {
+  child.kill();
+  await closed;
+};
 const live = (pid) => {
   try {
     process.kill(pid, 0);
@@ -251,6 +376,17 @@ process.stdout.write(JSON.stringify({executable:basename(process.execPath),abiVe
   }
   const unrelatedFile = join(workspace, "unrelated-file");
   await writeFile(unrelatedFile, "preserve unrelated writes");
+  if (process.argv[3] !== undefined) {
+    await verifyVolumeRootAppendLease({
+      fixturePath: process.argv[3],
+      volumeRoot: parse(source).root,
+      verifyAdmission: () => {
+        const rootGuard = native.call("open", [source]);
+        native.call("close", [rootGuard.handle]);
+      },
+    });
+    report.controls.volumeRootAdmissionWithAppendHandle = true;
+  }
   const admitted = native.call("open", [source]);
   try {
     await assert.rejects(
@@ -297,36 +433,19 @@ process.stdout.write(JSON.stringify({executable:basename(process.execPath),abiVe
   ]);
   const sentinel = join(sourceDirectory, "sentinel");
   await writeFile(sentinel, "preserve");
+  const runtimeVerificationErrors = [];
   try {
     const acl = JSON.parse(
-      execFileSync(
-        "powershell.exe",
-        [
-          "-NoProfile",
-          "-NonInteractive",
-          "-Command",
-          "$a=Get-Acl -LiteralPath $env:REA_TEST_PRIVATE_RUNTIME_PATH; $u=[Security.Principal.WindowsIdentity]::GetCurrent().User; @{protected=$a.AreAccessRulesProtected; ownerMatchesUser=($a.GetOwner([Security.Principal.SecurityIdentifier]).Value -eq $u.Value); trusteesOnlyUserAndSystem=(@($a.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier]) | Where-Object {$_.IdentityReference.Value -ne $u.Value -and $_.IdentityReference.Value -ne 'S-1-5-18'}).Count -eq 0); count=@($a.Access).Count} | ConvertTo-Json -Compress",
-        ],
-        {
-          encoding: "utf8",
-          // A pwsh caller can supply module paths incompatible with the
-          // Windows PowerShell observer. Let that observer build its own path.
-          env: {
-            ...Object.fromEntries(
-              Object.entries(process.env).filter(
-                ([name]) => name.toLowerCase() !== "psmodulepath",
-              ),
-            ),
-            REA_TEST_PRIVATE_RUNTIME_PATH: runtime.path,
-          },
-        },
-      ),
+      observeWithWindowsPowerShell(privateRuntimeAclObserver, {
+        REA_TEST_PRIVATE_RUNTIME_PATH: runtime.path,
+      }),
     );
     assert.deepEqual(acl, {
       protected: true,
       ownerMatchesUser: true,
       trusteesOnlyUserAndSystem: true,
       count: 2,
+      rootReadonly: true,
     });
     native.call("runtime_mkdir", [runtime.handle, "inputs"]);
     native.call("runtime_write", [
@@ -457,24 +576,15 @@ process.stdout.write(JSON.stringify({executable:basename(process.execPath),abiVe
       );
       // Java RandomAccessFile uses read/write sharing without delete sharing.
       // Exercise that independent Win32 reader contract without requiring Java.
-      const readerDigest = execFileSync(
-        "powershell.exe",
-        [
-          "-NoProfile",
-          "-NonInteractive",
-          "-Command",
-          "$ErrorActionPreference = 'Stop'; " +
-            "$stream = [IO.File]::Open($env:REA_SNAPSHOT_READER_PATH, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite); " +
-            "$hash = [Security.Cryptography.SHA256]::Create(); " +
-            "try { [BitConverter]::ToString($hash.ComputeHash($stream)).Replace('-', '').ToLowerInvariant() } " +
-            "finally { $hash.Dispose(); $stream.Dispose() }",
-        ],
-        {
-          encoding: "utf8",
-          timeout: 15_000,
-          env: { ...process.env, REA_SNAPSHOT_READER_PATH: snapshotPath },
-        },
-      ).trim();
+      const readerDigest = observeWithWindowsPowerShell(
+        String.raw`
+          $stream = [IO.File]::Open($env:REA_SNAPSHOT_READER_PATH, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+          $hash = [Security.Cryptography.SHA256]::Create()
+          try { [Console]::Out.Write([BitConverter]::ToString($hash.ComputeHash($stream)).Replace('-', '').ToLowerInvariant()) }
+          finally { $hash.Dispose(); $stream.Dispose() }
+        `,
+        { REA_SNAPSHOT_READER_PATH: snapshotPath },
+      );
       assert.equal(readerDigest, readbackSnapshot.sha256);
       await assert.rejects(writeFile(snapshotPath, "replace"));
       await assert.rejects(rename(snapshotPath, `${snapshotPath}.renamed`));
@@ -497,32 +607,13 @@ process.stdout.write(JSON.stringify({executable:basename(process.execPath),abiVe
       "cleanup-retry-",
     );
     const heldPath = join(retryRuntime.observation.path, "snapshot.bin");
-    await retryRuntime.snapshot(source, "snapshot.bin");
-    const holder = spawn(
-      "powershell.exe",
-      [
-        "-NoProfile",
-        "-NonInteractive",
-        "-Command",
-        "$ErrorActionPreference = 'Stop'; " +
-          "$stream = [IO.File]::Open($env:REA_CLEANUP_HELD_PATH, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite); " +
-          "try { [Console]::WriteLine('ready'); [Console]::In.ReadLine() | Out-Null } " +
-          "finally { $stream.Dispose() }",
-      ],
-      {
-        env: { ...process.env, REA_CLEANUP_HELD_PATH: heldPath },
-        stdio: ["pipe", "pipe", "pipe"],
-      },
-    );
-    const holderClosed = once(holder, "close");
-    void holderClosed.catch(() => undefined);
-    try {
-      const [ready] = await once(holder.stdout, "data", {
-        signal: AbortSignal.timeout(15_000),
-      });
-      assert.equal(String(ready).trim(), "ready");
+    let holder;
+    await withVerifierCleanup(async () => {
+      await retryRuntime.snapshot(source, "snapshot.bin");
+      holder = await startDeleteSharingDeniedReader(heldPath);
       // The reader denies delete sharing. Cleanup must retain ownership when
-      // its handle-relative open receives ERROR_SHARING_VIOLATION (32).
+      // its handle-relative open receives ERROR_SHARING_VIOLATION (32) through
+      // the bounded automatic retries; a later explicit close must succeed.
       await assert.rejects(retryRuntime.close(), { win32Code: 32 });
       assert.equal(
         windowsPrivateRuntime(retryRuntime.observation.path),
@@ -533,8 +624,8 @@ process.stdout.write(JSON.stringify({executable:basename(process.execPath),abiVe
         () => retryRuntime.writeFile("after-close.txt", "forbidden"),
         /cleanup is pending/u,
       );
-      holder.stdin.end("\n");
-      const [exitCode] = await holderClosed;
+      holder.child.stdin.end("\n");
+      const [exitCode] = await holder.closed;
       assert.equal(exitCode, 0);
       await retryRuntime.close();
       await retryRuntime.close();
@@ -544,11 +635,58 @@ process.stdout.write(JSON.stringify({executable:basename(process.execPath),abiVe
         /No native private runtime/u,
       );
       report.controls.cleanupFailureRetainsOwnershipForRetry = true;
-    } finally {
-      holder.kill();
-      await holderClosed.catch(() => undefined);
-      await retryRuntime.close();
-    }
+    }, [
+      async () => {
+        if (holder !== undefined) await stopDeleteSharingDeniedReader(holder);
+      },
+      () => retryRuntime.close(),
+    ]);
+    const transientRuntime = WindowsPrivateRuntime.create(
+      workspace,
+      "cleanup-transient-",
+    );
+    const transientHeldPath = join(
+      transientRuntime.observation.path,
+      "snapshot.bin",
+    );
+    let transientHolder;
+    await withVerifierCleanup(async () => {
+      await transientRuntime.snapshot(source, "snapshot.bin");
+      transientHolder = await startDeleteSharingDeniedReader(transientHeldPath);
+      // Keep the reader held through the first close attempt. Without retries,
+      // close rejects before the next event-loop turn; with retries, it remains
+      // pending until the caller releases this sharing conflict.
+      let closeSettled = false;
+      const closing = transientRuntime.close();
+      void closing.then(
+        () => {
+          closeSettled = true;
+        },
+        () => {
+          closeSettled = true;
+        },
+      );
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(closeSettled, false);
+      transientHolder.child.stdin.end("\n");
+      const [, [exitCode]] = await Promise.all([
+        closing,
+        transientHolder.closed,
+      ]);
+      assert.equal(exitCode, 0);
+      assert.equal(await exists(transientRuntime.observation.path), false);
+      assert.throws(
+        () => windowsPrivateRuntime(transientRuntime.observation.path),
+        /No native private runtime/u,
+      );
+      report.controls.cleanupTransientConflictRetries = true;
+    }, [
+      async () => {
+        if (transientHolder !== undefined)
+          await stopDeleteSharingDeniedReader(transientHolder);
+      },
+      () => transientRuntime.close(),
+    ]);
     report.controls = {
       ...report.controls,
       protectedDaclReadback: true,
@@ -562,12 +700,54 @@ process.stdout.write(JSON.stringify({executable:basename(process.execPath),abiVe
       asynchronousSnapshot: true,
       snapshotCancellation: true,
     };
-  } finally {
-    native.call("runtime_close", [runtime.handle]);
+    // Paths are newline-separated: Windows file names cannot contain control
+    // characters, and the observer then needs no JSON parser.
+    const readonlyChildren = JSON.parse(
+      observeWithWindowsPowerShell(
+        String.raw`
+          $observations = foreach ($item in $env:REA_TEST_READONLY_CHILDREN.Split([char]10)) {
+            $current = [int][IO.File]::GetAttributes($item)
+            $next = if (($current -band 16) -ne 0) { $current -bor 1 } else { 1 }
+            [IO.File]::SetAttributes($item, [IO.FileAttributes]$next)
+            $a = [int][IO.File]::GetAttributes($item)
+            '{"readonly":' + (Format-JsonBoolean (($a -band 1) -ne 0)) +
+              ',"directory":' + (Format-JsonBoolean (($a -band 16) -ne 0)) +
+              ',"onlyReadonly":' + (Format-JsonBoolean ($a -eq 1)) + '}'
+          }
+          [Console]::Out.Write('[' + ($observations -join ',') + ']')
+        `,
+        {
+          REA_TEST_READONLY_CHILDREN: [
+            join(runtime.path, "inputs"),
+            join(runtime.path, "inputs", "target.bin"),
+          ].join("\n"),
+        },
+      ),
+    );
+    assert.deepEqual(readonlyChildren, [
+      { readonly: true, directory: true, onlyReadonly: false },
+      { readonly: true, directory: false, onlyReadonly: true },
+    ]);
+  } catch (failure) {
+    runtimeVerificationErrors.push(failure);
   }
+  try {
+    native.call("runtime_close", [runtime.handle]);
+  } catch (cleanupFailure) {
+    runtimeVerificationErrors.push(cleanupFailure);
+  }
+  if (runtimeVerificationErrors.length === 1)
+    throw runtimeVerificationErrors[0];
+  if (runtimeVerificationErrors.length > 1)
+    throw new AggregateError(
+      runtimeVerificationErrors,
+      "Native runtime verification and cleanup failed",
+    );
   assert.equal(await exists(runtime.path), false);
   assert.equal(await readFile(sentinel, "utf8"), "preserve");
   report.controls.cleanupDoesNotTraverseJunctions = true;
+  report.controls.readonlyRootAndChildrenRemoved = true;
+  report.controls.readonlyFileWithoutArchiveAttributeRemoved = true;
   const fixture = join(workspace, "tree.mjs");
   await writeFile(
     fixture,

@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisResult.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -89,7 +90,9 @@ cliTest(
           await writer.add(name, new Uint8ArrayReader(fixture.nativeBytes));
         await writeFile(path, await writer.close());
         const inventory = parseEvidence(
-          await runProviderAnalysis(path, "inventory_artifact", {}),
+          await runProviderAnalysis(path, "inventory_artifact", {}).then(
+            projectCliAnalysisResult,
+          ),
         );
         const input = { inventory_evidence: [inventory] };
         const result = await cli.run({

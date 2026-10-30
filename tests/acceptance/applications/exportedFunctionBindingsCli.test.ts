@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../../scripts/lib/mcp-verification-environment.mjs";
 import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -10,9 +11,14 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { afterAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 
+import { closeVerifierResources } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { javaScriptExportShapeComparisonResultSchema } from "../../../src/domain/javascript/javascriptExportShapeComparisonSchemas.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import {
+  createCliCommandSession,
+  type CliCommandSession,
+} from "../../support/cli/cliCommandSession.js";
 
 const execute = promisify(execFile);
 const requireFixture = createRequire(import.meta.url);
@@ -22,8 +28,10 @@ const comparisonEnvelope = z.object({
 const applicationEnvelope = z.object({
   normalized_result: javascriptApplicationAnalysisResultSchema,
 });
-// Source semantics use the real stdio workflow throughout the matrix. The
-// missing-export and count-change cases also check compiled CLI adapter parity.
+let cliSession: CliCommandSession | undefined;
+
+// Source semantics use one real stdio MCP session. CLI parity uses the shared
+// file-scoped session, including its worker rotation and cleanup policy.
 let mcpConnection:
   | {
       readonly client: Client;
@@ -33,17 +41,24 @@ let mcpConnection:
   | undefined;
 
 afterAll(async () => {
-  if (mcpConnection === undefined) return;
-  try {
-    await mcpConnection.ready;
-  } catch {
-    // Keep the failed connection owned until both resources are closed below.
+  if (mcpConnection !== undefined) {
+    try {
+      await mcpConnection.ready;
+    } catch {
+      // Keep the failed connection owned until both resources are closed below.
+    }
   }
-  try {
-    await mcpConnection.client.close();
-  } finally {
-    await mcpConnection.transport.close();
-  }
+  await closeVerifierResources([
+    async () => {
+      await mcpConnection?.client.close();
+    },
+    async () => {
+      await mcpConnection?.transport.close();
+    },
+    async () => {
+      await cliSession?.close();
+    },
+  ]);
 });
 
 describe("exported function binding resolution through stdio MCP and CLI", () => {
@@ -191,6 +206,121 @@ describe("exported function binding resolution through stdio MCP and CLI", () =>
         await expectCliAnalysisParity(fixture);
         expect(await compareThroughCli(fixture)).toEqual(comparison);
       }
+    },
+  );
+});
+
+describe("CommonJS receiver lifetimes through stdio MCP and CLI", () => {
+  it.each([
+    "module.exports = {}; exports.parse = VALUE;",
+    "exports = {}; exports.parse = VALUE;",
+    "exports.parse = VALUE; module.exports = {};",
+    "module.exports.parse = VALUE; module.exports = {};",
+    "module.exports = {}; exports = module.exports; module.exports = {}; exports.parse = VALUE;",
+    'module.exports = {}; exports.parse = "enabled";',
+    'module.exports = {}; Reflect.set(module, "other", exports); exports.parse = VALUE;',
+    "module.exports = {}; let wrapper = module; wrapper = {}; Object.assign(wrapper, { exports }); exports.parse = VALUE;",
+  ])("excludes detached public export receivers: %s", async (source) => {
+    const fixture = await analyzeVersions(
+      (count) =>
+        source.replace(
+          "VALUE",
+          `() => ({ kind: "result", count: ${String(count)} })`,
+        ),
+      "parse",
+      "app.cjs",
+    );
+    for (const path of [fixture.leftPath, fixture.rightPath]) {
+      const value = requireFixture(path);
+      expect(Object.hasOwn(value, "parse")).toBe(false);
+      expect(value.parse).toBeUndefined();
+    }
+    for (const evidence of [fixture.input.left, fixture.input.right]) {
+      const { graph } = applicationEnvelope.parse(evidence).normalized_result;
+      expect(
+        graph.nodes
+          .flatMap(({ observations }) => observations)
+          .filter(
+            ({ properties }) =>
+              properties.exported_name === "parse" &&
+              ["export-binding", "export-return-shapes"].includes(
+                String(properties.semantic_role),
+              ),
+          ),
+      ).toEqual([]);
+    }
+    await expectCliAnalysisParity(fixture);
+    const comparison = await compareThroughMcp(fixture.input);
+    expect(comparison).toMatchObject({
+      left: { status: "missing" },
+      right: { status: "missing" },
+      summary: { added: 0, removed: 0, changed: 0 },
+    });
+    expect(await compareThroughCli(fixture)).toEqual(comparison);
+  });
+
+  it.each([
+    "exports.parse = VALUE;",
+    "module.exports = {}; module.exports.parse = VALUE;",
+    "module.exports = {}; exports = module.exports; exports.parse = VALUE;",
+    "exports.parse = VALUE; Object.assign(module.exports, { other: exports });",
+  ])("retains connected public export receivers: %s", async (source) => {
+    const fixture = await analyzeVersions(
+      (count) =>
+        source.replace(
+          "VALUE",
+          `() => ({ kind: "result", count: ${String(count)} })`,
+        ),
+      "parse",
+      "app.cjs",
+    );
+    for (const [path, count] of [
+      [fixture.leftPath, 1],
+      [fixture.rightPath, 2],
+    ] as const)
+      expect(requireFixture(path).parse()).toEqual({ kind: "result", count });
+    await expectCliAnalysisParity(fixture);
+    const comparison = await compareThroughMcp(fixture.input);
+    expectCountChange(comparison);
+    expect(await compareThroughCli(fixture)).toEqual(comparison);
+  });
+
+  it.each([
+    "if (false) module.exports = {}; exports.parse = VALUE;",
+    "exports.parse = VALUE; if (false) module.exports = {};",
+    "function replace() { module.exports = {}; } exports.parse = VALUE;",
+    "function replace() { exports = {}; } exports.parse = VALUE;",
+    'const holder = {}; ({ [(module.exports = exports, "x")]: holder.x } = (module.exports = {})); exports.parse = VALUE;',
+    'const { [(module.exports = exports, "x")]: value } = (module.exports = {}); exports.parse = VALUE;',
+    "const [value = (module.exports = exports)] = (module.exports = []); exports.parse = VALUE;",
+    "module.exports = {}; Object.assign(module, { exports }); exports.parse = VALUE;",
+    'module.exports = {}; Object.defineProperty(module, "exports", { value: exports }); exports.parse = VALUE;',
+    'module.exports = {}; Reflect.set(module, "exports", exports); exports.parse = VALUE;',
+    "module.exports = {}; const assign = Object.assign; assign.call(null, module, { exports }); exports.parse = VALUE;",
+    "module.exports = {}; const wrapper = module; Object.assign(wrapper, { exports }); exports.parse = VALUE;",
+  ])(
+    "keeps execution-dependent receiver identity uncertain: %s",
+    async (source) => {
+      const fixture = await analyzeVersions(
+        (count) =>
+          source.replace(
+            "VALUE",
+            `() => ({ kind: "result", count: ${String(count)} })`,
+          ),
+        "parse",
+        "app.cjs",
+      );
+      for (const [path, count] of [
+        [fixture.leftPath, 1],
+        [fixture.rightPath, 2],
+      ] as const)
+        expect(requireFixture(path).parse()).toEqual({ kind: "result", count });
+      for (const evidence of [fixture.input.left, fixture.input.right])
+        expectUnresolvedExportBinding(evidence, "parse");
+      await expectCliAnalysisParity(fixture);
+      const comparison = await compareThroughMcp(fixture.input);
+      expectUncertainComparison(comparison);
+      expect(await compareThroughCli(fixture)).toEqual(comparison);
     },
   );
 });
@@ -1077,15 +1207,22 @@ const expectCountChange = (
 };
 
 const runCli = async (args: readonly string[]): Promise<unknown> => {
-  const { stdout } = await execute(
-    process.execPath,
-    [resolve("scripts/rea.mjs"), ...args],
-    {
-      maxBuffer: 16 * 1024 * 1024,
-      env: { ...process.env, REA_LOG_LEVEL: "silent" },
-    },
+  cliSession ??= createCliCommandSession({
+    startTimeoutMs: 20_000,
+    requestTimeoutMs: 20_000,
+  });
+  const environment = Object.fromEntries(
+    Object.entries({ ...process.env, REA_LOG_LEVEL: "silent" }).filter(
+      (entry): entry is [string, string] => entry[1] !== undefined,
+    ),
   );
-  return JSON.parse(stdout);
+  const result = await cliSession.run({
+    arguments: args,
+    cwd: process.cwd(),
+    environment,
+  });
+  expect(result.exitCode, result.stderr || result.stdout).toBe(0);
+  return result.json;
 };
 
 const analyzeVersions = async (
@@ -1174,7 +1311,11 @@ const getMcpClient = async (): Promise<Client> => {
       command: process.execPath,
       args: [resolve("scripts/rea.mjs"), "mcp"],
       cwd: process.cwd(),
-      env: { PATH: process.env.PATH ?? "", REA_LOG_LEVEL: "silent" },
+      env: {
+        PATH: process.env.PATH ?? "",
+        REA_LOG_LEVEL: "silent",
+        ...INLINE_EVIDENCE_MCP_ENVIRONMENT,
+      },
       stderr: "pipe",
     });
     transport.stderr?.on("data", () => undefined);

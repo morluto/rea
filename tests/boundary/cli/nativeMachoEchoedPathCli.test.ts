@@ -16,7 +16,7 @@ const environment = {
   REA_ANALYSIS_PROVIDER: "auto",
 } as const;
 
-// otool and dyld_info echo the operand path before their records.
+// dyld_info echoes the operand path before its records.
 const FORGED_NAME = [
   "tool",
   "Load command 99",

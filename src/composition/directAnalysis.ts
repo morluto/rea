@@ -7,10 +7,13 @@ type DirectAnalysisStatusRuntime =
   typeof import("../application/DirectAnalysisStatus.js");
 
 type BoundOperation<Operation> = Operation extends (
-  dependencies: infer _Dependencies,
   ...args: infer Arguments
 ) => infer Result
-  ? (...args: Arguments) => Result
+  ? (
+      ...args: Arguments extends [unknown, ...infer BoundArguments]
+        ? BoundArguments
+        : never
+    ) => Result
   : never;
 
 /** Bind one-shot analysis and status commands to one caller-selected environment. */
@@ -27,6 +30,14 @@ export const createDirectAnalysis = (
     createManagedBinarySession: async () => {
       const { createManagedBinarySession } = await import("./binary.js");
       return createManagedBinarySession();
+    },
+    createNativeDispatchBinarySession: async (config, logger) => {
+      const { createNativeDispatchBinarySession } = await import("./binary.js");
+      return createNativeDispatchBinarySession(config, logger, environment);
+    },
+    createNativeBinarySession: async () => {
+      const { createNativeBinarySession } = await import("./binary.js");
+      return createNativeBinarySession(environment);
     },
     createArtifactBinarySession: async () => {
       const { createArtifactBinarySession } = await import("./binary.js");

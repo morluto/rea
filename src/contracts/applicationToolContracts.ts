@@ -1,3 +1,9 @@
+import { applicationInventoryProjectionInputSchema } from "../domain/mobileApplicationGraphProjection.js";
+import { z } from "zod";
+import {
+  sourceToBundleSummaryViewResultSchema,
+  sourceToBundlePageViewResultSchema,
+} from "../domain/analysisView/analysisView.js";
 import { applicationVersionComparisonResultSchema } from "../domain/javascript/javascriptApplicationVersionComparisonSchemas.js";
 import { applicationFeatureTraceResultSchema } from "../domain/javascript/javascriptFeatureTraceSchemas.js";
 import { javaScriptSemanticTraceResultSchema } from "../domain/javascript/javascriptSemanticTraceSchemas.js";
@@ -16,20 +22,21 @@ import {
   reconstructionObligationLedgerInputSchema,
   reconstructionObligationLedgerSchema,
 } from "../domain/reconstructionObligationLedgerSchemas.js";
-import {
-  androidApplicationProjectionInputSchema,
-  androidApplicationProjectionResultSchema,
-} from "../domain/android/androidApplication.js";
-import {
-  appleApplicationProjectionInputSchema,
-  appleApplicationProjectionResultSchema,
-} from "../domain/apple/appleApplication.js";
-import {
-  harmonyApplicationProjectionInputSchema,
-  harmonyApplicationProjectionResultSchema,
-} from "../domain/harmony/harmonyApplication.js";
+import { androidApplicationProjectionResultSchema } from "../domain/android/androidApplication.js";
+import { appleApplicationProjectionResultSchema } from "../domain/apple/appleApplication.js";
+import { harmonyApplicationProjectionResultSchema } from "../domain/harmony/harmonyApplication.js";
 import type { ToolContract } from "./toolContractTypes.js";
 import { toolContractMetadata } from "./toolEffects.js";
+import {
+  readGuidanceSectionInputSchema,
+  readGuidanceSectionOutputSchema,
+  searchGuidanceInputSchema,
+  searchGuidanceOutputSchema,
+} from "./guidanceContracts.js";
+import {
+  guidedWorkflowsInputSchema,
+  guidedWorkflowsOutputSchema,
+} from "./guidedWorkflowSchemas.js";
 import { evidenceResultOf } from "./toolOutputSchemaPrimitives.js";
 import {
   JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE,
@@ -52,7 +59,11 @@ const comparisonOutputSchema = evidenceResultOf(
   applicationVersionComparisonResultSchema,
 );
 const sourceToBundleOutputSchema = evidenceResultOf(
-  sourceToBundleComparisonResultSchema,
+  z.union([
+    sourceToBundleComparisonResultSchema,
+    sourceToBundleSummaryViewResultSchema,
+    sourceToBundlePageViewResultSchema,
+  ]),
 );
 const exportShapeComparisonOutputSchema = evidenceResultOf(
   javaScriptExportShapeComparisonResultSchema,
@@ -68,6 +79,54 @@ const retained = (evidence_id: string) => ({
 
 /** Provider-neutral graph workflow contracts shared by MCP and CLI adapters. */
 export const APPLICATION_TOOL_CONTRACTS = [
+  {
+    name: "search_guidance",
+    ...toolContractMetadata("search_guidance"),
+    description:
+      "Search only the installed REA workflow guidance. Every non-generic query word must occur in a section. Returns ranked sections, bounded pages, and locators for read_guidance_section. No target or provider is accessed.",
+    kind: "application",
+    inputSchema: searchGuidanceInputSchema,
+    outputSchema: searchGuidanceOutputSchema,
+    examples: [
+      {
+        title: "Find exact JavaScript module guidance",
+        input: { query: "exact JavaScript module" },
+      },
+    ],
+  },
+  {
+    name: "guided_workflows",
+    ...toolContractMetadata("guided_workflows"),
+    description:
+      "List or render REA's existing guided workflows. Rendering returns guidance only; it does not inspect targets, start analysis, or change session state.",
+    kind: "application",
+    inputSchema: guidedWorkflowsInputSchema,
+    outputSchema: guidedWorkflowsOutputSchema,
+    examples: [
+      {
+        title: "List the available guided workflows",
+        input: { action: "list" },
+      },
+      {
+        title: "Render feature investigation guidance",
+        input: {
+          action: "render",
+          workflow_id: "investigate_feature",
+          arguments: { feature: "offline search" },
+        },
+      },
+    ],
+  },
+  {
+    name: "read_guidance_section",
+    ...toolContractMetadata("read_guidance_section"),
+    description:
+      "Retrieve a section selected by search_guidance from the installed REA guidance bundle. Reports stale locators and unavailable bundles explicitly. Returns documentation, not target observations or Evidence.",
+    kind: "application",
+    inputSchema: readGuidanceSectionInputSchema,
+    outputSchema: readGuidanceSectionOutputSchema,
+    examples: [],
+  },
   {
     name: "trace_application_feature",
     ...toolContractMetadata("trace_application_feature"),
@@ -144,7 +203,7 @@ export const APPLICATION_TOOL_CONTRACTS = [
     name: "compare_source_to_bundle",
     ...toolContractMetadata("compare_source_to_bundle"),
     description:
-      "Compare a cryptographically committed HistoricalSourceGraph with authenticated JavaScript Application Graph Evidence supplied inline or by exact same-session retained reference. Uses explicit exact-digest, source-map path, current-path, suffix, and basename signals with stable weights. Classifies unchanged, modified, removed, split, merged, duplicated, and unknown; incomplete coverage and ambiguous weak signals never become absence or forced matches.",
+      "Compare a cryptographically committed HistoricalSourceGraph supplied inline or as reference {kind:file,path:absolute-local-JSON-path} with authenticated JavaScript Application Graph Evidence supplied inline or by exact same-session retained reference. Omitted view preserves the full report. Optional view {kind:summary} or {kind:source-to-bundle,collection:mappings|candidates,source_paths?,mapping_ids?,statuses?,fields?,offset?,limit?} retains the full parent and returns selected facts. Query it again using inspect_analysis_view. Empty filters select none; identity fields always remain. Candidate signals are opt-in; classifications use the full comparison. Page coverage never upgrades source coverage. Uses explicit exact-digest, source-map path, current-path, suffix, and basename signals with stable weights. Classifies unchanged, modified, removed, split, merged, duplicated, and unknown; incomplete coverage and ambiguous weak signals never become absence or forced matches.",
     kind: "application",
     inputSchema: compareSourceToBundleRequestSchema,
     outputSchema: sourceToBundleOutputSchema,
@@ -271,7 +330,7 @@ export const APPLICATION_TOOL_CONTRACTS = [
     description:
       "Project authenticated APK inventory_artifact Evidence into an execution-free Android application inventory. Reports exact component paths and hashes, runtime-family hints, and path-based bridge hypotheses without decoding DEX, executing the APK, or claiming observed runtime calls.",
     kind: "application",
-    inputSchema: androidApplicationProjectionInputSchema,
+    inputSchema: applicationInventoryProjectionInputSchema,
     outputSchema: evidenceResultOf(androidApplicationProjectionResultSchema),
     examples: [
       {
@@ -287,7 +346,7 @@ export const APPLICATION_TOOL_CONTRACTS = [
     description:
       "Project authenticated IPA, macOS .app directory, ZIP, or DMG inventory Evidence into an execution-free Apple application inventory. Reports application roots, nested bundles with path-convention roles (app extensions, XPC services, login items, privileged helpers, system extensions, frameworks), launchd plists, exact component paths and hashes, runtime-family hints, and path-based bridge hypotheses without parsing plist/CMS semantics or claiming observed runtime calls.",
     kind: "application",
-    inputSchema: appleApplicationProjectionInputSchema,
+    inputSchema: applicationInventoryProjectionInputSchema,
     outputSchema: evidenceResultOf(appleApplicationProjectionResultSchema),
     examples: [
       {
@@ -307,7 +366,7 @@ export const APPLICATION_TOOL_CONTRACTS = [
     description:
       "Project authenticated HarmonyOS HAP, HSP, or App Pack inventory Evidence into an execution-free application inventory. Reports packaging-model hints (Stage module.json versus FA config.json), exact component paths and hashes (manifests, Ark bytecode, resources, native libraries, JavaScript, signing), App Pack child packages, runtime-family hints, and path-based N-API bridge hypotheses without decoding Ark bytecode, parsing manifest semantics, or claiming observed runtime calls.",
     kind: "application",
-    inputSchema: harmonyApplicationProjectionInputSchema,
+    inputSchema: applicationInventoryProjectionInputSchema,
     outputSchema: evidenceResultOf(harmonyApplicationProjectionResultSchema),
     examples: [
       {
@@ -318,45 +377,3 @@ export const APPLICATION_TOOL_CONTRACTS = [
     ],
   },
 ] as const satisfies readonly ToolContract[];
-
-/** Resolve one named application contract without relying on array position. */
-export function applicationToolContract(
-  name: "trace_application_feature",
-): (typeof APPLICATION_TOOL_CONTRACTS)[0];
-export function applicationToolContract(
-  name: "trace_javascript_semantics",
-): (typeof APPLICATION_TOOL_CONTRACTS)[1];
-export function applicationToolContract(
-  name: "compare_application_versions",
-): (typeof APPLICATION_TOOL_CONTRACTS)[2];
-export function applicationToolContract(
-  name: "compare_source_to_bundle",
-): (typeof APPLICATION_TOOL_CONTRACTS)[3];
-export function applicationToolContract(
-  name: "compare_javascript_export_shapes",
-): (typeof APPLICATION_TOOL_CONTRACTS)[4];
-export function applicationToolContract(
-  name: "build_reconstruction_obligation_ledger",
-): (typeof APPLICATION_TOOL_CONTRACTS)[5];
-export function applicationToolContract(
-  name: "evaluate_reconstruction_coverage",
-): (typeof APPLICATION_TOOL_CONTRACTS)[6];
-export function applicationToolContract(
-  name: "project_android_application_graph",
-): (typeof APPLICATION_TOOL_CONTRACTS)[7];
-export function applicationToolContract(
-  name: "project_apple_application_graph",
-): (typeof APPLICATION_TOOL_CONTRACTS)[8];
-export function applicationToolContract(
-  name: "project_harmony_application_graph",
-): (typeof APPLICATION_TOOL_CONTRACTS)[9];
-export function applicationToolContract(
-  name: (typeof APPLICATION_TOOL_CONTRACTS)[number]["name"],
-): (typeof APPLICATION_TOOL_CONTRACTS)[number] {
-  const contract = APPLICATION_TOOL_CONTRACTS.find(
-    ({ name: candidate }) => candidate === name,
-  );
-  if (contract === undefined)
-    throw new Error(`Missing application tool contract: ${name}`);
-  return contract;
-}

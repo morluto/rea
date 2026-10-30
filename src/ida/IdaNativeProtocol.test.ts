@@ -1,3 +1,7 @@
+import {
+  IDA_COMPATIBILITY_PROFILES,
+  readIdaConfiguration,
+} from "./IdaConfiguration.js";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -10,7 +14,6 @@ import {
   AnalysisInputError,
   AnalysisProtocolError,
 } from "../domain/analysisErrorCore.js";
-import { readIdaConfiguration } from "./IdaConfiguration.js";
 import {
   decodeIdaToolResult,
   type IdaMcpConnection,
@@ -19,6 +22,17 @@ import { parseConfig } from "../config/parseConfig.js";
 import { IdaProvider } from "./IdaProvider.js";
 import { idaCapabilities } from "./IdaProviderCapabilities.js";
 import { IdaSessionClient } from "./IdaSessionClient.js";
+import type {
+  RetainedResourceScope,
+  AnalysisProfileResolution,
+} from "../application/AnalysisProvider.js";
+import { ProviderInspectionScope } from "../application/ProviderInspectionScope.js";
+import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
+
+const resourceScope: RetainedResourceScope = {
+  retain: () => undefined,
+  run: (operation) => operation(),
+};
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -107,6 +121,160 @@ const fixture = async () => {
 };
 
 describe("native IDA attached protocol", () => {
+  it("keeps the exact registration fact selected at readiness if the path changes before profile resolution", async () => {
+    const { root, target, producer } = await fixture();
+    const path = join(root, "mutable-registration.json");
+    await writeFile(
+      path,
+      JSON.stringify({ command: "first-server", mode: "attached" }),
+    );
+    const config = parseConfig({ REA_IDA_MCP_CONFIG: path });
+    if (!config.ok) throw config.error;
+    const factoryRegistrations: string[] = [];
+    const provider = new IdaProvider(config.value, {}, (registration) => {
+      factoryRegistrations.push(
+        "command" in registration ? registration.command : registration.url,
+      );
+      return producer;
+    });
+    const controller = new AbortController();
+    const scope = new ProviderInspectionScope();
+    const options = { signal: controller.signal, scope, resourceScope };
+    const readiness = await provider.inspectReadinessSnapshot(options);
+    expect(readiness.availability).toMatchObject({
+      status: "available",
+      diagnostics: { mode: "attached" },
+    });
+    await writeFile(
+      path,
+      JSON.stringify({ command: "replacement-server", mode: "headless" }),
+    );
+    const profile = await provider.resolveAnalysisProfile(target, options);
+    if (!profile.ok) throw profile.error;
+    expect(profile.value.profile.parameters).toMatchObject({
+      mode: "attached",
+    });
+    const createBoundClient = profile.value.createClient;
+    if (createBoundClient === undefined)
+      throw new Error("IDA profile did not retain its client factory");
+    const client = createBoundClient(target, profile.value.profile);
+    const restoredClient = createBoundClient(target, profile.value.profile);
+    expect(factoryRegistrations).toEqual(["first-server", "first-server"]);
+    await client.close();
+    await restoredClient.close();
+    scope.close();
+  });
+
+  it("does not reuse a registration across independent scopes sharing one signal", async () => {
+    const { root, target } = await fixture();
+    const path = join(root, "independent-registration.json");
+    await writeFile(path, JSON.stringify({ command: "first-server" }));
+    const config = parseConfig({ REA_IDA_MCP_CONFIG: path });
+    if (!config.ok) throw config.error;
+    const provider = new IdaProvider(config.value, {});
+    const controller = new AbortController();
+    const firstScope = new ProviderInspectionScope();
+    const first = await provider.inspectReadinessSnapshot({
+      signal: controller.signal,
+      scope: firstScope,
+      resourceScope,
+    });
+    expect(first.availability.status).toBe("available");
+    const firstProfile = await provider.resolveAnalysisProfile(target, {
+      signal: controller.signal,
+      scope: firstScope,
+      resourceScope,
+    });
+    if (!firstProfile.ok) throw firstProfile.error;
+    await writeFile(path, JSON.stringify({ command: "second-server" }));
+    const secondScope = new ProviderInspectionScope();
+    const second = await provider.inspectReadinessSnapshot({
+      signal: controller.signal,
+      scope: secondScope,
+      resourceScope,
+    });
+    expect(second.availability.status).toBe("available");
+    const profile = await provider.resolveAnalysisProfile(target, {
+      signal: controller.signal,
+      scope: secondScope,
+      resourceScope,
+    });
+    if (!profile.ok) throw profile.error;
+    expect(profile.value.profile.parameters.mode).toBe("attached");
+    expect(profile.value.profile.digest).not.toBe(
+      firstProfile.value.profile?.digest,
+    );
+    firstScope.close();
+    secondScope.close();
+  });
+});
+
+describe("IDA selected registration factories", () => {
+  it("retains every concurrently resolved registration factory without eviction", async () => {
+    const { root, target } = await fixture();
+    const path = join(root, "many-registrations.json");
+    const config = parseConfig({ REA_IDA_MCP_CONFIG: path });
+    if (!config.ok) throw config.error;
+    const observed: string[] = [];
+    const producer = new RecordingIdaMcp(target);
+    const provider = new IdaProvider(config.value, {}, (registration) => {
+      observed.push(
+        "command" in registration ? registration.command : registration.url,
+      );
+      return producer;
+    });
+    const bindings: {
+      readonly createClient: NonNullable<
+        AnalysisProfileResolution["createClient"]
+      >;
+      readonly profile: AnalysisProfileCommitment;
+    }[] = [];
+    const signal = new AbortController().signal;
+    for (let index = 0; index < 40; index += 1) {
+      await writeFile(path, JSON.stringify({ command: `server-${index}` }));
+      const scope = new ProviderInspectionScope();
+      const resolution = await provider.resolveAnalysisProfile(target, {
+        signal,
+        scope,
+        resourceScope,
+      });
+      if (!resolution.ok) throw resolution.error;
+      if (
+        resolution.value.profile === null ||
+        resolution.value.createClient === undefined
+      )
+        throw new Error(
+          "IDA profile resolution omitted its bound client factory",
+        );
+      bindings.push({
+        createClient: resolution.value.createClient,
+        profile: resolution.value.profile,
+      });
+      scope.close();
+    }
+    const clients = bindings.map(({ createClient, profile }) =>
+      createClient(target, profile),
+    );
+    expect(observed).toEqual(
+      Array.from({ length: 40 }, (_, index) => `server-${index}`),
+    );
+    const mismatchedTargetClient = bindings[0]!.createClient(
+      { ...target, path: `${target.path}.different` },
+      bindings[0]!.profile,
+    );
+    const mismatchedProfileClient = bindings[0]!.createClient(
+      target,
+      bindings[1]!.profile,
+    );
+    expect((await mismatchedTargetClient.execute("health", {})).ok).toBe(false);
+    expect((await mismatchedProfileClient.execute("health", {})).ok).toBe(
+      false,
+    );
+    await mismatchedTargetClient.close();
+    await mismatchedProfileClient.close();
+    for (const client of clients) await client.close();
+  });
+
   it("requires explicit opt-in and rejects native headless registrations", async () => {
     const { root } = await fixture();
     const path = join(root, "native.json");
@@ -114,7 +282,7 @@ describe("native IDA attached protocol", () => {
       path,
       JSON.stringify({ url: "http://127.0.0.1:13337/mcp", protocol: "native" }),
     );
-    expect(readIdaConfiguration(path)).toMatchObject({
+    expect(await readIdaConfiguration(path, { resourceScope })).toMatchObject({
       ok: true,
       value: { mode: "attached", protocol: "native" },
     });
@@ -126,9 +294,11 @@ describe("native IDA attached protocol", () => {
         mode: "headless",
       }),
     );
-    expect(readIdaConfiguration(path).ok).toBe(false);
+    expect((await readIdaConfiguration(path, { resourceScope })).ok).toBe(
+      false,
+    );
     await writeFile(path, JSON.stringify({ command: "python" }));
-    const old = readIdaConfiguration(path);
+    const old = await readIdaConfiguration(path, { resourceScope });
     expect(old.ok && old.value.protocol).toBeUndefined();
   });
 
@@ -144,7 +314,7 @@ describe("native IDA attached protocol", () => {
     const provider = new IdaProvider(config.value, {}, () => {
       throw new Error("Unexpected discovery startup");
     });
-    expect(provider.inspectAvailability().status).toBe("available");
+    expect((await provider.inspectAvailability()).status).toBe("available");
     const profile = await provider.resolveAnalysisProfile(target);
     if (!profile.ok) throw profile.error;
     expect(profile.value.profile.provider.name).toBe("IDA MCP adapter");
@@ -154,21 +324,17 @@ describe("native IDA attached protocol", () => {
       cache_policy: "live",
       engine_version: null,
     });
+    const readiness = await provider.inspectReadinessSnapshot();
     expect(
-      provider
-        .capabilities()
-        .find(({ operation }) => operation === "procedure_pseudo_code")?.effects
-        .mayShowUi,
-    ).toBe(true);
-    expect(
-      provider
-        .capabilities()
-        .find(({ operation }) => operation === "procedure_assembly")?.effects
-        .mayShowUi,
+      readiness.capabilities.find(
+        ({ operation }) => operation === "procedure_assembly",
+      )?.effects.mayShowUi,
     ).toBe(false);
     expect(producer.connects).toBe(0);
   });
+});
 
+describe("native IDA complete result decoding", () => {
   it("uses complete native JSON text instead of a shortened structured preview", () => {
     const complete = [
       {
@@ -316,18 +482,17 @@ describe("native IDA provider observations", () => {
     expect(producer.calls.some(({ name }) => name.startsWith("idb_"))).toBe(
       false,
     );
-    const capabilities = idaCapabilities("attached", false, true);
+    const declared = idaCapabilities(IDA_COMPATIBILITY_PROFILES.native, false);
     expect(
-      capabilities.find(({ operation }) => operation === "procedure_callers")
+      declared.find(({ operation }) => operation === "procedure_callers")
         ?.available,
     ).toBe(false);
     expect(
-      capabilities.find(
-        ({ operation }) => operation === "procedure_pseudo_code",
-      )?.effects,
+      declared.find(({ operation }) => operation === "procedure_pseudo_code")
+        ?.effects,
     ).toMatchObject({ mayShowUi: true, mayAccessNetwork: true });
     expect(
-      idaCapabilities("attached", false).find(
+      idaCapabilities(IDA_COMPATIBILITY_PROFILES.legacy, false).find(
         ({ operation }) => operation === "procedure_callers",
       )?.available,
     ).toBe(true);
@@ -541,20 +706,28 @@ describe("native IDA callee lookup batches", () => {
   });
 });
 
+const nativeLiteralValues = [
+  "A.B",
+  "axb",
+  "Kelvin",
+  "İstanbul",
+  "σ",
+  "ς",
+  "literal[bracket",
+  "a\\b",
+  "🧪",
+  "Σ",
+  "ΟΣ",
+  "ος",
+  "S",
+  "s",
+  "ſ",
+];
+
 describe("native IDA literal matching", () => {
   it("retains literal, Unicode, case, and regex semantics while narrowing native candidates", async () => {
     const { client, producer } = await fixture();
-    const values = [
-      "A.B",
-      "axb",
-      "Kelvin",
-      "İstanbul",
-      "σ",
-      "ς",
-      "literal[bracket",
-      "a\\b",
-      "🧪",
-    ];
+    const values = nativeLiteralValues;
     producer.overrideCall = (name, args) => {
       if (name !== "find_regex") return undefined;
       if (typeof args.pattern !== "string")
@@ -576,6 +749,12 @@ describe("native IDA literal matching", () => {
     };
     const cases = [
       {
+        pattern: "ſ",
+        mode: "literal",
+        case_sensitive: false,
+        expected: ["İstanbul", "S", "s", "ſ"],
+      },
+      {
         pattern: "a.b",
         mode: "literal",
         case_sensitive: false,
@@ -594,12 +773,36 @@ describe("native IDA literal matching", () => {
         case_sensitive: false,
         expected: ["İstanbul"],
       },
-      { pattern: "σ", mode: "literal", case_sensitive: false, expected: ["σ"] },
+      // Match the shared Unicode contract after the byte-oriented producer has
+      // returned candidates, including final sigma inside a word.
+      ...["σ", "ς", "Σ"].map((pattern) => ({
+        pattern,
+        mode: "literal",
+        case_sensitive: false,
+        expected: ["σ", "ς", "Σ", "ΟΣ", "ος"],
+      })),
+      ...["ΟΣ", "ος"].map((pattern) => ({
+        pattern,
+        mode: "literal",
+        case_sensitive: false,
+        expected: ["ΟΣ", "ος"],
+      })),
+      ...[
+        { pattern: "σ", expected: ["σ"] },
+        { pattern: "ς", expected: ["ς", "ος"] },
+        { pattern: "Σ", expected: ["Σ", "ΟΣ"] },
+        { pattern: "ΟΣ", expected: ["ΟΣ"] },
+        { pattern: "ος", expected: ["ος"] },
+      ].map((query) => ({
+        ...query,
+        mode: "literal",
+        case_sensitive: true,
+      })),
       {
         pattern: "σ",
         mode: "regex",
         case_sensitive: false,
-        expected: ["σ", "ς"],
+        expected: ["σ", "ς", "Σ", "ΟΣ", "ος"],
       },
       {
         pattern: "[",
@@ -631,7 +834,7 @@ describe("native IDA literal matching", () => {
         const before = producer.calls.length;
         const result = await client.execute("search_strings", query);
         if (!result.ok) throw result.error;
-        expect(result.value.result).toEqual(
+        expect(result.value.result, JSON.stringify(query)).toEqual(
           expected.map((value) => ({
             address: `0x${(0x3000 + values.indexOf(value)).toString(16)}`,
             value,
@@ -641,7 +844,10 @@ describe("native IDA literal matching", () => {
           .slice(before)
           .filter(({ name }) => name === "find_regex");
         expect(reads).toHaveLength(1);
-        if (query.mode === "regex" || query.pattern === "\ud800")
+        const unfiltered = query.mode === "regex" || query.pattern === "\ud800";
+        const unicodeFold =
+          !query.case_sensitive && /[\u0080-\u{10ffff}]/u.test(query.pattern);
+        if (unfiltered || unicodeFold)
           expect(reads[0]?.args.pattern).toBe("[\\s\\S]*");
         else expect(reads[0]?.args.pattern).not.toBe("[\\s\\S]*");
       }

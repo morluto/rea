@@ -24,6 +24,13 @@ type PinvokeImport = ManagedNativeBoundaryInspection["pinvoke_imports"][number];
 type NativeImplementation =
   ManagedNativeBoundaryInspection["native_implementations"][number];
 
+/**
+ * Display label for a metadata name. Metadata may hold an empty name; the
+ * graph then has no label, while the node's properties keep the source value.
+ */
+const metadataLabel = (name: string): string | null =>
+  name === "" ? null : name;
+
 /** Options for a managed contains relationship edge. */
 export interface ContainsEdgeOptions {
   readonly kind: string;
@@ -77,7 +84,7 @@ export const addArtifactIdentityNodes = (
       ),
       observations: [
         {
-          label: assemblyFacts.name,
+          label: metadataLabel(assemblyFacts.name),
           properties: {
             name: assemblyFacts.name,
             version: assemblyFacts.version,
@@ -111,7 +118,7 @@ export const addArtifactIdentityNodes = (
       ),
       observations: [
         {
-          label: module.name,
+          label: metadataLabel(module.name),
           properties: {
             name: module.name,
             mvid: module.mvid,
@@ -237,7 +244,7 @@ const typeNode = (
     ),
     observations: [
       {
-        label: type.full_name,
+        label: metadataLabel(type.full_name),
         properties: {
           token: type.token,
           namespace: type.namespace,
@@ -266,10 +273,11 @@ const methodNode = (
     ),
     observations: [
       {
-        label:
+        label: metadataLabel(
           method.declaring_type === null
             ? method.name
             : `${method.declaring_type}.${method.name}`,
+        ),
         properties: {
           token: method.token,
           declaring_type_token: method.declaring_type_token,
@@ -302,10 +310,11 @@ const fieldNode = (
     ),
     observations: [
       {
-        label:
+        label: metadataLabel(
           field.declaring_type === null
             ? field.name
             : `${field.declaring_type}.${field.name}`,
+        ),
         properties: {
           token: field.token,
           declaring_type_token: field.declaring_type_token,
@@ -410,7 +419,7 @@ const pinvokeNode = (
     ),
     observations: [
       {
-        label: pinvoke.import_name,
+        label: metadataLabel(pinvoke.import_name),
         properties: {
           token: pinvoke.token,
           member_token: pinvoke.member_token,
@@ -441,7 +450,7 @@ const nativeImplementationNode = (
     ),
     observations: [
       {
-        label: implementation.name,
+        label: metadataLabel(implementation.name),
         properties: {
           token: implementation.token,
           name: implementation.name,
@@ -493,7 +502,7 @@ const artifactLocalIdentity = (
 });
 
 /** Build managed static-analysis evidence for a graph observation. */
-const sourceManagedEvidence = (
+export const sourceManagedEvidence = (
   state: GraphBuildState,
   source: Evidence,
   coverageState: ManagedArtifactInspection["coverage"]["state"],

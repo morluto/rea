@@ -3,6 +3,8 @@ import { createHash } from "node:crypto";
 import canonicalize from "canonicalize";
 import { z } from "zod";
 
+import { withEvidenceSubjectDeclaration } from "./evidenceSubject.js";
+
 import {
   compareUnicodeCodePoints,
   compositeKey,
@@ -13,10 +15,12 @@ import {
   analysisProfileSchema,
   analysisProfilesEqual,
   committedProviderSchema,
+  committedProvidersEqual,
   type AnalysisProfileCommitment,
 } from "./analysisProfile.js";
 import {
   BINARY_ARCHITECTURES,
+  RAW_ONLY_ARCHITECTURES,
   type BinaryTarget,
 } from "./binaryTargetTypes.js";
 import {
@@ -37,8 +41,7 @@ import {
   jsonValueSchema,
   type JsonValue,
 } from "./jsonValue.js";
-import { digestSchema } from "./../domain/digests.js";
-import { prefixedDigestSchema } from "./../domain/digests.js";
+import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
 import { canonicalJsonDigestSteps } from "./canonicalJsonDigestSteps.js";
 import { freezeJsonSnapshot } from "./immutableJson.js";
 import {
@@ -60,6 +63,7 @@ const formatSchema = z.enum([
   "dos-mz",
   "dos-com",
   "raw-binary",
+  "gamecube-dol",
   "zip",
   "ipa",
   "apk",
@@ -69,37 +73,25 @@ const formatSchema = z.enum([
   "hsp",
   "app-pack",
   "asar",
+  "godot-pck",
+  "unityfs",
   "dmg",
   "pkg",
+  "intel-hex",
+  "srec",
+  "esp-image",
+  "fit",
   "plist",
   "javascript",
   "source-map",
+  "uimage",
 ]);
 const kindSchema = z.enum(["executable", "database", "archive", "artifact"]);
 const subjectBaseSchema = z.object({
   path: localPathStringSchema,
   sha256: digestSchema,
 });
-const subjectFormatSchema = z.enum([
-  ...formatSchema.options,
-  "hopper",
-  "directory",
-  "file",
-  "unknown",
-  "javascript-bundle",
-  "entitlements",
-]);
-// Snapshot entries retain the same raw-only architecture boundary as targets.
-const subjectSchema = z.discriminatedUnion("format", [
-  subjectBaseSchema.extend({
-    format: subjectFormatSchema.exclude(["raw-binary"]),
-    architecture: architectureSchema.exclude(["6502"]).nullable(),
-  }),
-  subjectBaseSchema.extend({
-    format: z.literal("raw-binary"),
-    architecture: architectureSchema.nullable(),
-  }),
-]);
+const subjectSchema = withEvidenceSubjectDeclaration(subjectBaseSchema);
 const targetIdentitySchema = z.object({
   sha256: digestSchema,
   kind: kindSchema,
@@ -108,14 +100,24 @@ const targetIdentitySchema = z.object({
 const targetSchema = z.discriminatedUnion("format", [
   targetIdentitySchema.extend({
     format: z.enum(
-      formatSchema.options.filter((format) => format !== "raw-binary"),
+      formatSchema.options.filter(
+        (format) => format !== "raw-binary" && format !== "gamecube-dol",
+      ),
     ),
-    architecture: architectureSchema.exclude(["6502"]).nullable(),
+    architecture: architectureSchema
+      .exclude([...RAW_ONLY_ARCHITECTURES])
+      .nullable(),
   }),
   targetIdentitySchema.extend({
     format: z.literal("raw-binary"),
     kind: z.literal("executable"),
     architecture: binaryArchitectureSchema,
+    entry_point: rawBinaryEntryPointSchema,
+  }),
+  targetIdentitySchema.extend({
+    format: z.literal("gamecube-dol"),
+    kind: z.literal("executable"),
+    architecture: z.literal("powerpc"),
     entry_point: rawBinaryEntryPointSchema,
   }),
 ]);
@@ -126,9 +128,10 @@ const bindingSchema = z
   })
   .superRefine((binding, context) => {
     if (
-      binding.provider.id !== binding.analysis_profile.provider.id ||
-      binding.provider.name !== binding.analysis_profile.provider.name ||
-      binding.provider.version !== binding.analysis_profile.provider.version
+      !committedProvidersEqual(
+        binding.provider,
+        binding.analysis_profile.provider,
+      )
     )
       context.addIssue({
         code: "custom",
@@ -145,24 +148,14 @@ const entrySchema = z.object({
     raw_result: jsonValueSchema.nullable(),
     provider: committedProviderSchema,
     limitations: z.array(z.string()),
-    relationship_coverage: relationshipCoverageSchema.nullable().default(null),
+    relationship_coverage: relationshipCoverageSchema.nullable(),
     locations: z.array(evidenceLocationSchema),
     subject: subjectSchema.nullable(),
   }),
 });
-const workflowEntrySchema = z.object({
-  query_id: prefixedDigestSchema("query"),
-  operation: z.string().min(1),
-  parameters: jsonObjectSchema,
-  execution: z.object({
-    result: jsonValueSchema,
-    raw_result: jsonValueSchema.nullable(),
-    provider: committedProviderSchema,
+const workflowEntrySchema = entrySchema.extend({
+  execution: entrySchema.shape.execution.extend({
     analysis_profile: analysisProfileSchema,
-    limitations: z.array(z.string()),
-    relationship_coverage: relationshipCoverageSchema.nullable().default(null),
-    locations: z.array(evidenceLocationSchema),
-    subject: subjectSchema.nullable(),
   }),
 });
 
@@ -305,9 +298,7 @@ const snapshotContentDigest = (
             format: execution.subject.format,
             architecture: execution.subject.architecture,
           },
-    ...(execution.relationship_coverage === null
-      ? {}
-      : { relationship_coverage: execution.relationship_coverage }),
+    relationship_coverage: execution.relationship_coverage,
   });
   return contentDigest({
     ...metadata,
@@ -339,6 +330,38 @@ interface SnapshotExecution {
   readonly subject: EvidenceSubjectTarget | null;
 }
 
+type SnapshotExecutionProjection = Pick<
+  AnalysisSnapshotEntry["execution"],
+  | "result"
+  | "raw_result"
+  | "provider"
+  | "limitations"
+  | "relationship_coverage"
+  | "locations"
+  | "subject"
+>;
+
+/** Own one execution's snapshot data independently of its caller-visible result. */
+const snapshotExecutionProjection = (
+  execution: SnapshotExecution,
+  provider: AnalysisSnapshotEntry["execution"]["provider"],
+): SnapshotExecutionProjection =>
+  entrySchema.shape.execution.parse({
+    result: execution.result,
+    raw_result: execution.rawResult,
+    provider,
+    limitations: execution.limitations,
+    relationship_coverage: execution.relationshipCoverage ?? null,
+    locations: execution.locations,
+    subject:
+      execution.subject === null
+        ? null
+        : {
+            ...execution.subject,
+            architecture: execution.subject.architecture ?? null,
+          },
+  });
+
 const canonicalJson = (value: unknown): string => {
   const json = jsonValueSchema.parse(value);
   const encoded = canonicalize(json);
@@ -357,12 +380,20 @@ export const snapshotTarget = (target: BinaryTarget): AnalysisSnapshotTarget =>
         format: target.format,
         entry_point: target.entryPoint,
       }
-    : {
-        sha256: target.sha256,
-        kind: target.kind,
-        architecture: target.architecture ?? null,
-        format: target.format,
-      };
+    : target.format === "gamecube-dol"
+      ? {
+          sha256: target.sha256,
+          kind: target.kind,
+          architecture: target.architecture,
+          format: target.format,
+          entry_point: target.entryPoint,
+        }
+      : {
+          sha256: target.sha256,
+          kind: target.kind,
+          architecture: target.architecture ?? null,
+          format: target.format,
+        };
 
 /** Build the immutable provider/profile binding used by a cached snapshot. */
 export const snapshotBinding = (
@@ -384,6 +415,9 @@ export const snapshotMatchesTarget = (
   snapshot.architecture === (target.architecture ?? null) &&
   (snapshot.format !== "raw-binary" ||
     (target.format === "raw-binary" &&
+      snapshot.entry_point === target.entryPoint)) &&
+  (snapshot.format !== "gamecube-dol" ||
+    (target.format === "gamecube-dol" &&
       snapshot.entry_point === target.entryPoint));
 
 /** Compare a snapshot binding with the selected concrete analysis profile. */
@@ -391,9 +425,7 @@ export const snapshotMatchesProfile = (
   binding: AnalysisSnapshotBinding,
   profile: AnalysisProfileCommitment,
 ): boolean =>
-  binding.provider.id === profile.provider.id &&
-  binding.provider.name === profile.provider.name &&
-  binding.provider.version === profile.provider.version &&
+  committedProvidersEqual(binding.provider, profile.provider) &&
   analysisProfilesEqual(binding.analysis_profile, profile);
 
 /** Require an exact target and selected provider/profile cache partition. */
@@ -441,20 +473,29 @@ export const snapshotEvidenceForQuery = (
     (candidate) => candidate.query_id === queryId,
   );
   if (entry === undefined && workflowEntry === undefined) return undefined;
-  const evidence = snapshot.evidence_bundle.records.find(
-    (record) =>
-      record.subject?.digest.sha256 === target.sha256 &&
-      record.operation === operation &&
-      record.provider.id === provider.id &&
-      record.provider.name === provider.name &&
-      record.provider.version === provider.version &&
-      record.analysis_profile !== null &&
-      analysisProfilesEqual(record.analysis_profile, evidenceProfile) &&
-      canonicalJson(record.parameters) === encodedParameters &&
-      ((entry !== undefined && evidenceMatchesEntry(record, entry, snapshot)) ||
-        (workflowEntry !== undefined &&
-          evidenceMatchesWorkflowEntry(record, workflowEntry, snapshot))),
-  );
+  let evidence: Evidence | undefined;
+  for (const record of snapshot.evidence_bundle.records) {
+    if (
+      !(
+        record.subject?.digest.sha256 === target.sha256 &&
+        record.operation === operation &&
+        committedProvidersEqual(record.provider, provider) &&
+        record.analysis_profile !== null &&
+        analysisProfilesEqual(record.analysis_profile, evidenceProfile) &&
+        canonicalJson(record.parameters) === encodedParameters &&
+        ((entry !== undefined &&
+          evidenceMatchesEntry(record, entry, snapshot)) ||
+          (workflowEntry !== undefined &&
+            evidenceMatchesWorkflowEntry(record, workflowEntry, snapshot)))
+      )
+    )
+      continue;
+    // Entries bind the result, not every part of the Evidence commitment
+    // (for example, upstream links). Do not choose provenance by ID sort order.
+    if (evidence !== undefined && evidence.evidence_id !== record.evidence_id)
+      return undefined;
+    evidence = record;
+  }
   return evidence === undefined
     ? undefined
     : rebindEvidenceToTargetPath(evidence, target);
@@ -472,9 +513,10 @@ export const createAnalysisSnapshotWorkflowEntry = (input: {
 }): AnalysisSnapshotWorkflowEntry => {
   const { target, binding, operation, parameters, execution } = input;
   if (
-    execution.provider.id !== execution.analysisProfile.provider.id ||
-    execution.provider.name !== execution.analysisProfile.provider.name ||
-    execution.provider.version !== execution.analysisProfile.provider.version
+    !committedProvidersEqual(
+      execution.provider,
+      execution.analysisProfile.provider,
+    )
   )
     throw new TypeError(
       "Workflow snapshot execution provider does not match its profile",
@@ -484,25 +526,17 @@ export const createAnalysisSnapshotWorkflowEntry = (input: {
     operation,
     parameters: jsonObjectSchema.parse(parameters),
     execution: {
-      result: execution.result,
-      raw_result: execution.rawResult,
-      provider: execution.analysisProfile.provider,
-      analysis_profile: execution.analysisProfile,
-      limitations: [...execution.limitations],
-      relationship_coverage: execution.relationshipCoverage ?? null,
-      locations: [...execution.locations],
-      subject:
-        execution.subject === null
-          ? null
-          : subjectSchema.parse({
-              ...execution.subject,
-              architecture: execution.subject.architecture ?? null,
-            }),
+      ...snapshotExecutionProjection(
+        execution,
+        execution.analysisProfile.provider,
+      ),
+      analysis_profile: analysisProfileSchema.parse(execution.analysisProfile),
     },
   };
 };
 
-const evidenceMatchesEntry = (
+/** Match an authenticated Evidence record to one exact provider cache binding. */
+export const evidenceMatchesEntry = (
   evidence: Evidence,
   entry: AnalysisSnapshotEntry,
   snapshot: Pick<AnalysisSnapshot, "target" | "binding">,
@@ -536,9 +570,7 @@ export const createAnalysisSnapshotEntry = (input: {
   if (
     execution.analysisProfile === undefined ||
     !snapshotMatchesProfile(binding, execution.analysisProfile) ||
-    execution.provider.id !== binding.provider.id ||
-    execution.provider.name !== binding.provider.name ||
-    execution.provider.version !== binding.provider.version
+    !committedProvidersEqual(execution.provider, binding.provider)
   )
     throw new TypeError(
       "Snapshot execution does not match its provider/profile binding",
@@ -547,34 +579,28 @@ export const createAnalysisSnapshotEntry = (input: {
     query_id: analysisQueryId(target, binding, operation, parameters),
     operation,
     parameters: jsonObjectSchema.parse(parameters),
-    execution: {
-      result: execution.result,
-      raw_result: execution.rawResult,
-      provider: binding.provider,
-      limitations: [...execution.limitations],
-      relationship_coverage: execution.relationshipCoverage ?? null,
-      locations: [...execution.locations],
-      subject:
-        execution.subject === null
-          ? null
-          : subjectSchema.parse({
-              ...execution.subject,
-              architecture: execution.subject.architecture ?? null,
-            }),
-    },
+    execution: snapshotExecutionProjection(execution, binding.provider),
   };
 };
 
 const validatedSnapshots = new WeakMap<object, AnalysisSnapshot>();
 
 /** Parse a provider/profile-exact snapshot and verify its entries and evidence. */
-export const parseAnalysisSnapshot = (input: unknown): AnalysisSnapshot => {
+export const parseAnalysisSnapshot = (input: unknown): AnalysisSnapshot =>
+  authenticateSnapshot(input).parsed;
+
+const authenticateSnapshot = (
+  input: unknown,
+): {
+  readonly parsed: AnalysisSnapshot;
+  readonly restored: AnalysisSnapshot;
+} => {
   if (typeof input === "object" && input !== null) {
     const owned = validatedSnapshots.get(input);
-    if (owned !== undefined) return owned;
+    if (owned !== undefined) return { parsed: owned, restored: owned };
   }
   const parsed = analysisSnapshotSchema.parse(input);
-  restoreSnapshot(
+  const restored = restoreSnapshot(
     parsed,
     parseEvidenceBundle(parsed.evidence_bundle),
     parsed.entries.map((entry) => ({
@@ -596,12 +622,12 @@ export const parseAnalysisSnapshot = (input: unknown): AnalysisSnapshot => {
       ),
     })),
   );
-  return parsed;
+  return { parsed, restored };
 };
 
 /** Own an authenticated immutable cache while preserving mutable caller exports. */
 export const immutableAnalysisSnapshot = (input: unknown): AnalysisSnapshot =>
-  sealSnapshot(parseAnalysisSnapshot(input));
+  sealSnapshot(authenticateSnapshot(input).restored);
 
 const sealSnapshot = (snapshot: AnalysisSnapshot): AnalysisSnapshot => {
   for (const entry of [...snapshot.entries, ...snapshot.workflow_entries]) {
@@ -694,9 +720,10 @@ const restoreSnapshot = (
   };
   const entries = providerRows.map(({ entry, digest }) => {
     if (
-      entry.execution.provider.id !== header.binding.provider.id ||
-      entry.execution.provider.name !== header.binding.provider.name ||
-      entry.execution.provider.version !== header.binding.provider.version
+      !committedProvidersEqual(
+        entry.execution.provider,
+        header.binding.provider,
+      )
     )
       throw new TypeError("Analysis snapshot entry provider does not match");
     checkId(entry, false);
@@ -717,11 +744,7 @@ const restoreSnapshot = (
   });
   const workflow_entries = workflowRows.map(({ entry, digest }) => {
     const provider = entry.execution.analysis_profile.provider;
-    if (
-      entry.execution.provider.id !== provider.id ||
-      entry.execution.provider.name !== provider.name ||
-      entry.execution.provider.version !== provider.version
-    )
+    if (!committedProvidersEqual(entry.execution.provider, provider))
       throw new TypeError(
         "Analysis snapshot workflow entry provider does not match its profile",
       );
@@ -854,11 +877,10 @@ const isWorkflowEvidence = (
     evidence.analysis_profile,
     entry.execution.analysis_profile,
   ) &&
-  evidence.provider.id === entry.execution.provider.id &&
-  evidence.provider.name === entry.execution.provider.name &&
-  evidence.provider.version === entry.execution.provider.version;
+  committedProvidersEqual(evidence.provider, entry.execution.provider);
 
-const evidenceMatchesWorkflowEntry = (
+/** Match an authenticated Evidence record to one exact composed cache binding. */
+export const evidenceMatchesWorkflowEntry = (
   evidence: Evidence,
   entry: AnalysisSnapshotWorkflowEntry,
   snapshot: Pick<AnalysisSnapshot, "target">,
@@ -872,9 +894,7 @@ const evidenceMatchesWorkflowEntry = (
 const evidenceContentMetadata = (evidence: Evidence) => {
   return {
     limitations: evidence.limitations,
-    ...(evidence.relationship_coverage === null
-      ? {}
-      : { relationship_coverage: evidence.relationship_coverage }),
+    relationship_coverage: evidence.relationship_coverage,
     locations: evidence.locations,
     subject:
       evidence.subject === null

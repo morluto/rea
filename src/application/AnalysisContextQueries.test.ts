@@ -13,11 +13,12 @@ import {
   AnalysisOutputError,
   AnalysisProtocolError,
 } from "../domain/analysisErrorCore.js";
+import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok } from "../domain/result.js";
 
 const provider = { id: "fixture", name: "Fixture", version: "1" };
 
-describe("analysis context queries: navigation", () => {
+const registerNavigationSelectionValidationTests = (): void => {
   it.each([
     [null, "0x401000", "current_document"],
     ["fixture", null, "current_address"],
@@ -46,6 +47,10 @@ describe("analysis context queries: navigation", () => {
       );
     },
   );
+};
+
+describe("analysis context queries: navigation", () => {
+  registerNavigationSelectionValidationTests();
 
   it("aggregates volatile navigation and treats a missing procedure as null", async () => {
     const calls: {
@@ -106,7 +111,12 @@ describe("analysis context queries: navigation", () => {
         ok(
           createAnalysisExecution(
             operation === "resolve_containing_procedure"
-              ? { found: false, procedure: null, reason: "not_in_procedure" }
+              ? {
+                  query_address: "",
+                  found: false,
+                  procedure: null,
+                  reason: "not_in_procedure",
+                }
               : "",
             provider,
           ),
@@ -115,6 +125,52 @@ describe("analysis context queries: navigation", () => {
     await expect(getNavigationContext(analysis, {})).resolves.toEqual(
       ok({ document: "", address: "", procedure: null }),
     );
+  });
+
+  it.each<JsonValue>([
+    null,
+    {},
+    { found: false, procedure: null },
+    { query_address: "0x401000", found: true, procedure: null },
+  ])(
+    "keeps malformed containing-procedure output unknown: %j",
+    async (value) => {
+      const analysis: AnalysisOperationPort = {
+        execute: async (operation) =>
+          ok(
+            createAnalysisExecution(
+              operation === "resolve_containing_procedure"
+                ? value
+                : operation === "current_document"
+                  ? "fixture"
+                  : "0x401000",
+              provider,
+            ),
+          ),
+      };
+      expect(await getNavigationContext(analysis, {})).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "AnalysisOutputError",
+          operation: "resolve_containing_procedure",
+        },
+      });
+    },
+  );
+
+  it("does not infer procedure absence from a provider error message", async () => {
+    const failure = new AnalysisProtocolError(
+      "not in a procedure: malformed reply",
+    );
+    const analysis: AnalysisOperationPort = {
+      execute: async (operation) =>
+        operation === "resolve_containing_procedure"
+          ? err(failure)
+          : ok(createAnalysisExecution("0x401000", provider)),
+    };
+    expect(
+      await getNavigationContext(analysis, { document: "fixture" }),
+    ).toEqual(err(failure));
   });
 
   it("uses an explicit document without passing it to current_document and preserves procedure failures", async () => {
@@ -136,6 +192,99 @@ describe("analysis context queries: navigation", () => {
     ).resolves.toEqual(err(failure));
     expect(calls).not.toContain("current_document");
     expect(calls).toContain("resolve_containing_procedure");
+  });
+});
+
+describe("navigation procedure admission", () => {
+  it.each([
+    { condition: "missing result", value: null },
+    { condition: "missing discriminator", value: {} },
+    {
+      condition: "missing query identity",
+      value: { found: false, procedure: null, reason: "not_in_procedure" },
+    },
+    {
+      condition: "missing procedure facts",
+      value: {
+        query_address: "0x401000",
+        found: true,
+        procedure: { address: "0x401000", name: "main" },
+      },
+    },
+  ])(
+    "rejects $condition instead of reporting no procedure",
+    async ({ value }) => {
+      const result = await getNavigationContext(
+        {
+          execute: async (operation) =>
+            ok(
+              createAnalysisExecution(
+                operation === "current_address" ? "0x401000" : value,
+                provider,
+              ),
+            ),
+        },
+        { document: "fixture" },
+      );
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "AnalysisOutputError",
+          operation: "resolve_containing_procedure",
+        },
+      });
+    },
+  );
+
+  it.each(["no procedure exists", "not in a procedure"])(
+    "preserves a provider failure containing %s",
+    async (message) => {
+      const failure = new AnalysisProtocolError(`Provider failed: ${message}`);
+      const result = await getNavigationContext(
+        {
+          execute: async (operation) =>
+            operation === "current_address"
+              ? ok(createAnalysisExecution("0x401000", provider))
+              : err(failure),
+        },
+        { document: "fixture" },
+      );
+      expect(result).toEqual(err(failure));
+      if (result.ok) throw new Error("expected original provider failure");
+      expect(result.error).toBe(failure);
+    },
+  );
+
+  it("returns a validated containing procedure name", async () => {
+    const result = await getNavigationContext(
+      {
+        execute: async (operation) =>
+          ok(
+            createAnalysisExecution(
+              operation === "current_address"
+                ? "0x401000"
+                : {
+                    query_address: "0x401000",
+                    found: true,
+                    procedure: {
+                      address: "0x401000",
+                      name: "main",
+                      classification: null,
+                      body: {
+                        available: false,
+                        reason: "Fixture has no body ranges",
+                      },
+                    },
+                  },
+              provider,
+            ),
+          ),
+      },
+      { document: "fixture" },
+    );
+    expect(result).toEqual(
+      ok({ document: "fixture", address: "0x401000", procedure: "main" }),
+    );
   });
 });
 
@@ -164,7 +313,15 @@ describe("analysis context queries: address facets", () => {
                   {
                     query_address: "0x401000",
                     found: true,
-                    procedure: { address: "0x401000", name: "main" },
+                    procedure: {
+                      address: "0x401000",
+                      name: "main",
+                      classification: null,
+                      body: {
+                        available: false,
+                        reason: "Fixture omits body ranges.",
+                      },
+                    },
                   },
                   provider,
                 ),
@@ -258,4 +415,25 @@ describe("analysis context queries: address facets", () => {
       },
     });
   });
+});
+
+it("does not start address facets after document selection completes under cancellation", async () => {
+  const controller = new AbortController();
+  const reason = { request: "cancelled after document selection" };
+  const calls: string[] = [];
+  const result = await inspectAddressContext(
+    {
+      execute: async (operation) => {
+        calls.push(operation);
+        controller.abort(reason);
+        return ok(createAnalysisExecution("fixture", provider));
+      },
+    },
+    { address: "0x401000" },
+    controller.signal,
+  );
+  if (result.ok) throw new Error("expected cancelled selection");
+  expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+  expect(result.error.cause).toBe(reason);
+  expect(calls).toEqual(["current_document"]);
 });

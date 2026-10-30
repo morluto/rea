@@ -85,6 +85,11 @@ publication. REA writes verified bytes to an exclusively owned output tree and
 rolls it back on failure. It also checks that the original source and engine
 bytes remain unchanged before committing. The existing output is never overwritten.
 
+A denied selected-input read reports `access_denied` with the observed OS code
+and path. A source or engine identity change reports `artifact_changed`;
+neither failure is a malformed recovery request. Cancellation retains the
+caller's reason through admission, command launch and completion.
+
 Multi-input relative filenames must be representable unchanged as artifact paths:
 NFC Unicode spelling and no literal backslashes. Unsupported layouts fail before
 invoking the engine rather than silently renaming inputs referenced by source maps.
@@ -129,12 +134,20 @@ equivalence remain unknown. No network fetching occurs.
 
 ## Resource policy and verification
 
-Each operation uses one worker, a 1 GiB address-space ceiling and a 120-second
-deadline; it accepts up to 64 MiB of total input across all selected files and
-128 MiB/10000 entries of staged
-output, with 8 MiB per diagnostic/report stream. Exceeding a limit is an explicit
-failure with rollback. These limits apply per operation and do not claim aggregate
-host containment across concurrent callers.
+Each operation uses one worker, a 1 GiB address-space ceiling and a 120000 ms
+deadline. That deadline has no runtime override: raising `analysis_timeout_ms`
+or `max_heap_mb` does not raise it. An unchanged retry may hit the deadline
+again. The operation accepts up to 64 MiB of total
+input across all selected files and 128 MiB/10000 entries of staged output,
+with 8 MiB per diagnostic/report stream. A `provenance.json` over that report
+allowance names the fixed limit: this release has no runtime override, and
+raising `max_heap_mb` or `analysis_timeout_ms` does not raise it. Malformed
+reports stay distinct from that size refusal. Exceeding a limit is an explicit
+failure with rollback. Selected inputs beyond the total input allowance return a
+non-retryable `resource_constraint` with `resource: "file-size"` and
+`reported_limits.maximum_input_bytes`/`remaining_input_bytes`; input that is not
+valid UTF-8 is an `invalid_format` request issue. These limits apply per
+operation and do not claim aggregate host containment across concurrent callers.
 
 See [testing.md](testing.md#javascript-source-recovery) for the focused real
 Wakaru CLI/MCP lane and its source-owned compiler fixtures. Other host platforms

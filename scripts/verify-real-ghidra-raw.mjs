@@ -11,8 +11,11 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
 import { parseEvidence } from "../dist/domain/evidence.js";
-import { inspectGhidraInstallation } from "../dist/ghidra/GhidraInstallation.js";
-import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
+import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
+import {
+  requireMcpLifecycleResult,
+  requireMcpOutput,
+} from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 
 if (process.argv.length !== 2)
@@ -25,7 +28,7 @@ if (process.env.GHIDRA_INSTALL_DIR === undefined)
   throw new Error(
     "Set GHIDRA_INSTALL_DIR to a bring-your-own Ghidra installation.",
   );
-const installation = inspectGhidraInstallation({
+const installation = await inspectVerifierGhidraInstallation({
   environment: process.env,
   installDir: process.env.GHIDRA_INSTALL_DIR,
   ...(process.env.JAVA_HOME === undefined
@@ -140,6 +143,13 @@ try {
       address: entry,
     });
     assert.equal(instruction.normalized_result.address, entry);
+    assert.ok(Array.isArray(instruction.normalized_result.decoder_context));
+    const tmodeContext = instruction.normalized_result.decoder_context.find(
+      (ctx) => ctx.register === "TMode",
+    );
+    assert.ok(tmodeContext !== undefined);
+    assert.equal(tmodeContext.source, "ghidra-program-context");
+    assert.ok([null, "0", "1"].includes(tmodeContext.value));
   }
   assert.equal(profiles[0], profiles[1]);
   assert.notEqual(profiles[1], profiles[2]);
@@ -344,15 +354,9 @@ async function call(name, args = {}, targetSha256 = sha256) {
     { name, arguments: args },
     { timeout: 240000 },
   );
-  assert.notEqual(result.isError, true, JSON.stringify(result));
-  const projected = requireMcpOperationResult(result, name);
-  if (
-    name === "open_binary" ||
-    name === "close_binary" ||
-    name === "binary_session"
-  )
-    return projected;
-  const evidence = parseEvidence(result.structuredContent);
+  if (["open_binary", "close_binary", "binary_session"].includes(name))
+    return requireMcpLifecycleResult(result, name);
+  const evidence = parseEvidence(requireMcpOutput(result, name));
   assert.equal(evidence.subject.digest.sha256, targetSha256);
   assert.equal(evidence.subject.format, "raw-binary");
   return evidence;

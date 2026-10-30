@@ -3,6 +3,7 @@ import { availableParallelism, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { defineConfig } from "vitest/config";
+import { parseCLI } from "vitest/node";
 import {
   BUILT_TEST_PROJECTS,
   SOURCE_TEST_PROJECTS,
@@ -23,12 +24,14 @@ if (
 }
 
 const CANONICAL_TEMPORARY_DIRECTORY = realpathSync(tmpdir());
-const COVERAGE_ENABLED = process.argv.some((argument) =>
-  argument.startsWith("--coverage"),
+// Use Vitest's option parser so explicit false and spaced shard values retain
+// their meaning. Unknown worker/embedding arguments are not Vitest options.
+const { options: testOptions } = parseCLI(
+  ["vitest", ...process.argv.slice(2)],
+  { allowUnknownOptions: true },
 );
-const COVERAGE_SHARD = process.argv.some((argument) =>
-  argument.startsWith("--shard="),
-);
+const COVERAGE_ENABLED = testOptions.coverage?.enabled === true;
+const COVERAGE_SHARD = testOptions.shard !== undefined;
 // Keep local and CI concurrency bounded by the runner rather than command locks.
 const MAX_TEST_WORKERS = Math.min(2, availableParallelism());
 
@@ -39,14 +42,12 @@ const PROJECT_POLICIES = {
     maxWorkers: MAX_TEST_WORKERS,
     // Domain and contract modules are pure and own no process-global state, so
     // per-file module isolation adds startup cost without protecting a seam.
-    isolate: false,
   },
   services: {
     pool: "threads" as const,
     maxWorkers: MAX_TEST_WORKERS,
     // Service tests use recording ports and own no process-global state. Share
     // their module graph so file startup does not dominate the lane.
-    isolate: false,
   },
   adapters: { pool: "forks" as const, maxWorkers: MAX_TEST_WORKERS },
   composition: {
@@ -54,7 +55,6 @@ const PROJECT_POLICIES = {
     maxWorkers: MAX_TEST_WORKERS,
     // Composition tests use provider-neutral sessions and test-scoped cleanup;
     // sharing their immutable module graph avoids per-file startup work.
-    isolate: false,
   },
   boundary: { pool: "forks" as const, maxWorkers: MAX_TEST_WORKERS },
   "cli-boundary": {
@@ -62,10 +62,10 @@ const PROJECT_POLICIES = {
     maxWorkers: MAX_TEST_WORKERS,
     // CLI tests create fresh command instances or subprocesses and own their
     // cleanup. Reuse the immutable graph; module mocks belong in process-global.
-    isolate: false,
-    // Long-lived workers should collect temporary command/schema allocations
-    // before their two heaps compete with the real CLI child processes.
-    execArgv: ["--max-old-space-size=384"],
+    // The shared source/contract graph also needs transient schema/help space.
+    // Ordinary CI exhausted 384 MiB after earlier files warmed that graph.
+    // Use the measured 512 MiB budget with the same bounded concurrency.
+    execArgv: ["--max-old-space-size=512"],
   },
   "process-boundary": {
     pool: "forks" as const,
@@ -80,7 +80,6 @@ const PROJECT_POLICIES = {
     maxWorkers: MAX_TEST_WORKERS,
     // Each file creates and closes an explicit in-memory MCP session. Reuse the
     // immutable server graph so module startup does not outweigh transport work.
-    isolate: false,
   },
   acceptance: { pool: "forks" as const, maxWorkers: MAX_TEST_WORKERS },
   "process-global": { pool: "forks" as const, maxWorkers: MAX_TEST_WORKERS },
@@ -88,13 +87,11 @@ const PROJECT_POLICIES = {
     pool: "threads" as const,
     maxWorkers: MAX_TEST_WORKERS,
     // Contract cases use recording providers and own no process-global state.
-    isolate: false,
   },
   evaluation: {
     pool: "threads" as const,
     maxWorkers: MAX_TEST_WORKERS,
     // Evaluator tests inspect deterministic inputs without mutating shared state.
-    isolate: false,
   },
 };
 
@@ -128,6 +125,7 @@ const projects = TEST_PROJECTS.map((project) => {
       name: project.name,
       include: [...project.include],
       ...(project.exclude ? { exclude: [...project.exclude] } : {}),
+      isolate: project.isolate !== false,
       ...policy,
     },
   };

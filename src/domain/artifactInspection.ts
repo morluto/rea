@@ -1,11 +1,24 @@
+import { readEvidencePayload } from "./evidenceValidation.js";
+import type { EvidenceIntegrityError } from "./evidenceErrors.js";
+import { ok, type Result } from "./result.js";
+import {
+  canBorrowParsedJsonSnapshot,
+  immutableJsonSnapshotMember,
+} from "./immutableJson.js";
+import {
+  artifactIntegrityPairOf,
+  artifactSha256PairSchema,
+  artifactMd5PairSchema,
+} from "./artifactIntegrity.js";
 import { z } from "zod";
 
 import {
-  artifactInventoryOutputSchema,
   artifactInventoryResultSchema,
   type ArtifactInventoryResult,
 } from "./artifactGraph.js";
 import { digestCanonicalValue } from "./canonicalDigest.js";
+import { isJavaScriptSourcePath } from "./javascript/javascriptArtifactFiles.js";
+import { admitRawBinary } from "./rawBinary.js";
 import { uniqueSorted } from "./canonicalOrdering.js";
 import { evidenceSchema, parseEvidence, type Evidence } from "./evidence.js";
 import { jsonValueSchema } from "./jsonValue.js";
@@ -31,14 +44,18 @@ const inspectionHypothesisSchema = z.strictObject({
   limitation: textSchema,
 });
 
-const inspectionContradictionSchema = z.strictObject({
+const inspectionContradictionBaseSchema = z.strictObject({
   contradiction_id: prefixedDigestSchema("aic"),
   statement: textSchema,
   occurrence_id: prefixedDigestSchema("occ"),
-  declared_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-  observed_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+
   evidence_id: evidenceIdSchema,
 });
+
+const inspectionContradictionSchema = z.union([
+  inspectionContradictionBaseSchema.extend(artifactSha256PairSchema.shape),
+  inspectionContradictionBaseSchema.extend(artifactMd5PairSchema.shape),
+]);
 
 const nextProbeSchema = z.strictObject({
   operation: textSchema,
@@ -75,7 +92,10 @@ export const artifactInspectionResultSchema = z.strictObject({
         operation: z.literal("inventory_artifact"),
         status: z.literal("completed"),
         evidence_id: evidenceIdSchema,
-        evidence: evidenceSchema,
+        evidence: evidenceSchema.safeExtend({
+          operation: z.literal("inventory_artifact"),
+          normalized_result: artifactInventoryResultSchema,
+        }),
       }),
     )
     .min(1),
@@ -86,15 +106,15 @@ export const artifactInspectionResultSchema = z.strictObject({
   next_probes: z.array(nextProbeSchema),
   coverage: z.strictObject({
     status: z.enum(["complete-within-substeps", "partial", "truncated"]),
-    substeps_completed: z.literal(1),
-    observations_retained: z.number().int().min(0),
-    observations_omitted: z.number().int().min(0),
-    hypotheses_retained: z.number().int().min(0),
-    hypotheses_omitted: z.number().int().min(0),
-    unexplored_branches_retained: z.number().int().min(0),
-    unexplored_branches_omitted: z.number().int().min(0),
-    next_probes_retained: z.number().int().min(0),
-    next_probes_omitted: z.number().int().min(0),
+    substeps_completed: z.int().min(1),
+    observations_retained: z.int().min(0),
+    observations_omitted: z.int().min(0),
+    hypotheses_retained: z.int().min(0),
+    hypotheses_omitted: z.int().min(0),
+    unexplored_branches_retained: z.int().min(0),
+    unexplored_branches_omitted: z.int().min(0),
+    next_probes_retained: z.int().min(0),
+    next_probes_omitted: z.int().min(0),
   }),
   evidence_links: z.array(evidenceIdSchema).min(1),
   limitations: z.array(textSchema),
@@ -103,24 +123,6 @@ export const artifactInspectionResultSchema = z.strictObject({
 export type ArtifactInspectionResult = z.infer<
   typeof artifactInspectionResultSchema
 >;
-
-/**
- * The current producer guarantees a concrete inventory payload. Specialize
- * its output without narrowing the historical inspection/Evidence input
- * parser or applying inventory defaults inside an authenticated imported record.
- */
-export const artifactInspectionOutputSchema =
-  artifactInspectionResultSchema.safeExtend({
-    substeps: z
-      .array(
-        artifactInspectionResultSchema.shape.substeps.element.safeExtend({
-          evidence: evidenceSchema.safeExtend({
-            normalized_result: artifactInventoryOutputSchema,
-          }),
-        }),
-      )
-      .min(1),
-  });
 
 /** Project one successful inventory Evidence record into an inspection report. */
 export const createArtifactInspection = (
@@ -285,8 +287,7 @@ const contradictions = (
     const semantic = {
       statement: `Declared integrity for ${value.logical_path} contradicts observed bytes.`,
       occurrence_id: value.occurrence_id,
-      declared_sha256: value.declared_sha256,
-      observed_sha256: value.observed_sha256,
+      ...artifactIntegrityPairOf(value),
       evidence_id: evidenceId,
     };
     return {
@@ -299,9 +300,86 @@ const probesFor = (
   inventory: ArtifactInventoryResult,
 ): ArtifactInspectionResult["next_probes"] => {
   const format = inventory.manifest.root_format;
+  // The JavaScript analyzer selects extracted files by source suffix, so a
+  // main script such as `main` has no follow-up it can read.
+  if (format === "node-sea")
+    return inventory.occurrences.some(
+      (row) =>
+        row.format_metadata?.kind === "node-sea-entry" &&
+        row.format_metadata.role === "main-script" &&
+        isJavaScriptSourcePath(row.logical_path),
+    )
+      ? [
+          {
+            operation: "analyze_javascript_application",
+            rationale:
+              "Extract the SEA main script with extract_artifact, then analyze the extracted JavaScript application.",
+            authority: "ast-static-analysis",
+          },
+        ]
+      : [];
+  if (format === "intel-hex" || format === "srec")
+    return inventory.occurrences.some(
+      (row) => row.format_metadata?.kind === "hex-record-region",
+    )
+      ? [
+          {
+            operation: "open_binary",
+            rationale:
+              "Extract regions with extract_artifact, then open one with format raw-binary, a caller-chosen architecture, and entry_point set to the region start address (raw-binary maps file offset 0 at entry_point).",
+            authority: "native-analysis-provider",
+          },
+        ]
+      : [];
+  if (format === "fit") return fitProbes(inventory);
   return format === "directory"
     ? directoryProbes(inventory)
     : probesForFormat(format);
+};
+
+const fitProbes = (
+  inventory: ArtifactInventoryResult,
+): ArtifactInspectionResult["next_probes"] => {
+  // Extraction keeps stored bytes, so only plain images are directly analyzable.
+  const images = inventory.occurrences.flatMap((row) =>
+    row.format_metadata?.kind === "fit-image" &&
+    row.format_metadata.compression === "none" &&
+    row.format_metadata.cipher_present === false
+      ? [{ row, image: row.format_metadata }]
+      : [],
+  );
+  let rawProbe: ArtifactInspectionResult["next_probes"][number] | undefined;
+  for (const { row, image } of images) {
+    if (row.declared_size === null) continue;
+    if (image.entry !== null && image.entry !== image.load) continue;
+    // An unavailable entry is not proof that the declaration was absent.
+    if (image.unreadable_fields.includes("entry")) continue;
+    const admitted = admitRawBinary({
+      architecture: image.arch,
+      entryPoint: image.load,
+      fileBytes: row.declared_size,
+    });
+    if (!admitted.ok) continue;
+    rawProbe = {
+      operation: "open_binary",
+      rationale: `Extract ${JSON.stringify(row.logical_path)} with extract_artifact, then open those uncompressed, unciphered bytes with format raw-binary, architecture ${admitted.value.architecture} and entry_point ${admitted.value.entryPoint}. This maps offset 0 and seeds analysis at that address; the declared entry is absent or equal to load.`,
+      authority: "native-analysis-provider",
+    };
+    break;
+  }
+  return [
+    ...(images.some(({ image }) => image.type === "flat_dt")
+      ? [
+          {
+            operation: "inspect_devicetree",
+            rationale:
+              "Extract images with extract_artifact, then inspect uncompressed, unciphered flat_dt images with inspect_devicetree.",
+            authority: "artifact-bytes" as const,
+          },
+        ]
+      : []),
+    ...(rawProbe === undefined ? [] : [rawProbe]),
+  ];
 };
 
 // An application bundle directory is only a container, so its probes follow
@@ -345,6 +423,24 @@ const directoryProbes = (
 const probesForFormat = (
   format: ArtifactInventoryResult["manifest"]["root_format"],
 ): ArtifactInspectionResult["next_probes"] => {
+  if (format === "bun-standalone")
+    return [
+      {
+        operation: "extract_artifact",
+        authority: "artifact-bytes",
+        rationale:
+          "Extract the stored module regions into a fresh owned directory, then inspect compatible source separately. Bytecode and source-map regions remain stored evidence; they are not decoded or executed.",
+      },
+    ];
+  if (format === "dotnet-bundle")
+    return [
+      {
+        operation: "extract_artifact",
+        rationale:
+          "Extract members into a fresh owned directory, then inspect candidate files separately; bundle declarations do not establish their format.",
+        authority: "artifact-bytes",
+      },
+    ];
   if (["asar", "javascript-bundle"].includes(format))
     return [
       {
@@ -435,10 +531,39 @@ const branch = (
   };
 };
 
+// A completed substep establishes only the coverage its producer examined, so
+// unknown inventory traversal keeps the inspection partial, never complete.
 const inspectionCoverage = (
-  _inventory: ArtifactInventoryResult,
+  inventory: ArtifactInventoryResult,
   omissions: Readonly<Record<string, number>>,
 ): ArtifactInspectionResult["coverage"]["status"] => {
   if (Object.values(omissions).some((count) => count > 0)) return "truncated";
+  if (inventory.coverage.status !== "complete") return "partial";
   return "complete-within-substeps";
+};
+
+/** Select source records from a typed inspection, preserving sealed child ownership. */
+export const artifactInspectionSources = (
+  inspection: ArtifactInspectionResult,
+): readonly Evidence[] => {
+  const substeps = immutableJsonSnapshotMember(inspection, "substeps");
+  return Object.freeze(
+    inspection.substeps.map((step, index) => {
+      const ownedStep = immutableJsonSnapshotMember(substeps, String(index));
+      immutableJsonSnapshotMember(ownedStep, "evidence");
+      return step.evidence;
+    }),
+  );
+};
+
+/** Validate an unknown inspection before selecting its atomic source closure. */
+export const readArtifactInspectionSources = (
+  result: unknown,
+): Result<readonly Evidence[], EvidenceIntegrityError> => {
+  const parsed = readEvidencePayload(artifactInspectionResultSchema, result);
+  if (!parsed.ok) return parsed;
+  const inspection = canBorrowParsedJsonSnapshot(result, parsed.value)
+    ? result
+    : parsed.value;
+  return ok(artifactInspectionSources(inspection));
 };

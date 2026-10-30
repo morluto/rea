@@ -1,6 +1,6 @@
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
-import { parseEvidence, type Evidence } from "../evidence.js";
+import type { Evidence } from "../evidence.js";
 import {
   javascriptApplicationAnalysisResultSchema,
   type JavaScriptApplicationAnalysisResult,
@@ -9,8 +9,9 @@ import type { JavaScriptApplicationGraph } from "./javascriptApplicationGraph.js
 import type { ReconcileJavaScriptRuntimeInput } from "./javascriptRuntimeReconciliationSchemas.js";
 import {
   assertEvidenceIdentity,
+  authenticateRuntimeEvidence,
   invalidInput,
-  parseAtPath,
+  parseInputAtPath,
 } from "./javascriptRuntimeReconciliationInputValidation.js";
 
 type StaticLayerInput =
@@ -43,9 +44,9 @@ const parseStaticLayer = (
   layer: StaticLayerInput,
   evidencePath: readonly (string | number)[],
 ): ParsedStaticLayer => {
-  const evidence = parseAtPath(parseEvidence, layer.analysis, evidencePath);
-  const result = parseAtPath(
-    (value) => javascriptApplicationAnalysisResultSchema.parse(value),
+  const evidence = authenticateRuntimeEvidence(layer.analysis, evidencePath);
+  const result = parseInputAtPath(
+    javascriptApplicationAnalysisResultSchema,
     evidence.normalized_result,
     [...evidencePath, "normalized_result"],
   );

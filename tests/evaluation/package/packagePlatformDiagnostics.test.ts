@@ -54,8 +54,13 @@ const verifyMacOS = async (
     cli: "fixture-cli",
     environment: {},
     platform: "darwin",
-    runCommand: async (_cli, arguments_) =>
-      JSON.stringify(outputs[arguments_[0]!]) ?? "",
+    commands: {
+      run: async (_cli, arguments_) =>
+        JSON.stringify(outputs[arguments_[0]!]) ?? "",
+      runWithStatus: async () => {
+        throw new Error("Unexpected status command in macOS fixture");
+      },
+    },
   });
 };
 
@@ -72,9 +77,54 @@ describe("packaged Linux failure verification", () => {
         }),
       ),
     ).not.toThrow();
+    expect(() =>
+      assertLinuxPackageProviderFailure(
+        execution({
+          code: "provider_unavailable",
+          details: {
+            stage: "launch",
+            launch_rejection: {
+              boundary: "publisher_verification",
+              reason: "unsupported_hopper_build",
+            },
+          },
+        }),
+      ),
+    ).not.toThrow();
   });
 
   it.each([
+    execution({
+      code: "provider_unavailable",
+      details: {
+        stage: "launch",
+        launch_rejection: {
+          boundary: "publisher_verification",
+          reason: "download",
+        },
+      },
+    }),
+    execution({
+      code: "provider_unavailable",
+      details: {
+        stage: "analysis",
+        launch_rejection: {
+          boundary: "publisher_verification",
+          reason: "unsupported_hopper_build",
+        },
+      },
+    }),
+    execution({
+      code: "provider_unavailable",
+      details: {
+        stage: "launch",
+        launch_rejection: {
+          boundary: "publisher_verification",
+          reason: "unsupported_hopper_build",
+        },
+        exit_code: 72,
+      },
+    }),
     execution(missingDisplay, 0),
     execution({ code: "provider_unavailable" }),
     execution({

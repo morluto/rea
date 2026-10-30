@@ -1,689 +1,219 @@
-import { z } from "zod";
-import { javaScriptSourceSelectionSchema } from "../javascript/javascriptSourceSelection.js";
-
+import { NATIVE_OBSERVATION_OPERATIONS } from "../native/nativeObservation.js";
+import { projectNativeObservationView } from "./nativeObservationView.js";
+import { projectDevicetreeView } from "./devicetreeView.js";
+import { projectApkSignatureView } from "./apkSignatureView.js";
+import { byteEntropySchema } from "../native/byteEntropy.js";
+import { projectErlangBeamView } from "./erlangBeamView.js";
+import { projectPythonPycView } from "./pythonPycView.js";
+import { projectNativeExportsView } from "./nativeExportsView.js";
+import { projectByteEntropyView } from "./byteEntropyView.js";
 import {
-  AnalysisInputError,
-  AnalysisUnsupportedTargetError,
-} from "../analysisErrorCore.js";
+  parseAnalysisViewResult,
+  analysisViewResultInputError,
+} from "./analysisViewParent.js";
+import { projectJavaScriptRoutesView } from "./javascriptRoutesView.js";
+import { projectWebBundleView } from "./webBundleView.js";
+import { projectSourceToBundleView } from "./sourceToBundleView.js";
+import { projectGpuCodeObjectsView } from "./gpuCodeObjectsView.js";
+import { projectModelArtifactView } from "./modelArtifactView.js";
+import { projectCommandObservationView } from "./commandObservationView.js";
+import { projectFridaSessionStatusView } from "./fridaSessionStatusView.js";
+import { projectGoBinaryView } from "./goBinaryView.js";
+import { projectRustBinaryView } from "./rustBinaryView.js";
+import { projectNativeFunctionMatchingView } from "./nativeFunctionMatchingView.js";
+import { projectNativeInventoryView } from "./nativeInventoryView.js";
+import { NATIVE_INVENTORY_OPERATIONS } from "../native/nativeInventory.js";
+import { z } from "zod";
+import { projectBrowserScenarioView } from "./browserScenarioView.js";
+import { projectNativeLoadImageView } from "./nativeLoadImageView.js";
+import { projectDesktopApplicationView } from "./desktopApplicationView.js";
+
+import { AnalysisUnsupportedTargetError } from "../analysisErrorCore.js";
 import {
   INSPECT_ANALYSIS_VIEW_OPERATION,
   analysisViewInputError,
 } from "./analysisViewErrors.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
-import { digestSchema, prefixedDigestSchema } from "../digests.js";
-import { evidenceSchema, type Evidence } from "../evidence.js";
-import { jsonObjectSchema, jsonValueSchema } from "../jsonValue.js";
+import { digestSchema } from "../digests.js";
 import { err, ok, type Result } from "../result.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
-import { binaryLayoutSchema } from "../native/binaryLayout.js";
-import { functionDossierSchema } from "../hopperValues.js";
-import {
-  artifactGraphManifestSchema,
-  artifactNodeSchema,
-  artifactOccurrenceSchema,
-  artifactEdgeSchema,
-  integrityContradictionSchema,
-} from "../artifactGraph.js";
-import { artifactInspectionResultSchema } from "../artifactInspection.js";
+import { safeParseOwnedBinaryLayout } from "../native/binaryLayout.js";
+import { functionDossierSchema } from "../native/functionDossier.js";
 import {
   parseOwnedJavaScriptApplicationAnalysisSteps,
   type JavaScriptApplicationAnalysisResult,
 } from "../javascript/javascriptApplicationAnalysis.js";
-import { analysisInputErrorFromIssues } from "../inputIssueProjection.js";
 import { projectBinaryLayoutView } from "./binaryLayoutView.js";
 import { projectJavaScriptApplicationView } from "./javascriptApplicationView.js";
 import {
+  createApiSurfaceAccumulator,
   projectWebNetworkApiSurfaceView,
-  apiSurfaceFields,
-  apiSurfaceViewSchema,
 } from "./webNetworkApiSurfaceView.js";
 import { projectNativeFunctionView } from "./nativeFunctionView.js";
-import {
-  projectEvmInterfaceView,
-  evmViewRequestSchema,
-  evmViewItemSchema,
-  evmSummarySchema,
-} from "./evmInterfaceView.js";
+import { projectEvmInterfaceView } from "./evmInterfaceView.js";
 import { projectArtifactInventoryView } from "./artifactInventoryView.js";
-import {
-  projectManagedArtifactView,
-  managedViewRequestSchema,
-  managedViewItemSchema,
-  managedSummarySchema,
-  managedViewContextSchema,
-} from "./managedArtifactView.js";
-import {
-  projectManagedMemberView,
-  managedMembersViewRequestSchema,
-  managedMembersViewPageSchema,
-  managedMemberSummarySchema,
-  managedMembersViewContextSchema,
-} from "./managedMemberView.js";
-import {
-  projectWasmArtifactView,
-  wasmViewRequestSchema,
-  wasmViewItemSchema,
-  wasmSummarySchema,
-} from "./wasmArtifactView.js";
-import {
-  machoSummarySchema,
-  machoViewContextSchema,
-  machoViewItemSchema,
-  machoViewRequestSchema,
-  projectMachoView,
-} from "./machoView.js";
-import {
-  interfaceBuilderSummarySchema,
-  interfaceBuilderViewContextSchema,
-  interfaceBuilderViewItemsSchema,
-  interfaceBuilderViewRequestSchema,
-  projectInterfaceBuilderView,
-} from "./interfaceBuilderView.js";
-import {
-  projectWebNetworkCaptureView,
-  captureViewRequestSchema,
-  captureViewItemsSchema,
-  captureSummarySchema,
-} from "./webNetworkCaptureView.js";
+import { projectManagedArtifactView } from "./managedArtifactView.js";
+import { projectManagedMemberView } from "./managedMemberView.js";
+import { projectWasmArtifactView } from "./wasmArtifactView.js";
+import { projectMachoView } from "./machoView.js";
+import { projectInterfaceBuilderView } from "./interfaceBuilderView.js";
+import { projectWebNetworkCaptureView } from "./webNetworkCaptureView.js";
 import type { WebNetworkApiSurfaceAccumulator } from "./WebNetworkApiSurfaceAccumulator.js";
+import type { EnvironmentManifestAccumulator } from "./EnvironmentManifestAccumulator.js";
+import type { EnvironmentStateAccumulator } from "./EnvironmentStateAccumulator.js";
+import { admitAnalysisViewData } from "./analysisViewDataAdmission.js";
 import {
-  pcapViewRequestSchema,
-  pcapViewPageSchema,
-  pcapSummarySchema,
-  projectPcapCaptureView,
-} from "./pcapCaptureView.js";
+  createEnvironmentManifestAccumulator,
+  projectEnvironmentManifestView,
+} from "./environmentManifestView.js";
 import {
-  qlogViewRequestSchema,
-  qlogViewPageSchema,
-  qlogViewContextSchema,
-} from "./qlogCaptureView.js";
+  createEnvironmentStateAccumulator,
+  projectEnvironmentStateView,
+} from "./environmentStateView.js";
+import { projectEnvironmentCoverageView } from "./environmentCoverageView.js";
+import { projectPcapCaptureView } from "./pcapCaptureView.js";
+import { projectAndroidPackageView } from "./androidPackageView.js";
+import { projectAndroidSymbolSummary } from "./androidSymbolView.js";
+import { projectAndroidJniView } from "./androidJniView.js";
+import { projectDartAotView } from "./dartAotView.js";
+import { projectIl2cppMetadataView } from "./il2cppMetadataView.js";
+
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import type { GroupingViewKind } from "./analysisViewShape.js";
 import {
-  projectAndroidPackageView,
-  androidPackageSummarySchema,
-  androidViewRequestSchema,
-  androidManifestViewItemSchema,
-} from "./androidPackageView.js";
+  analysisViewRequestSchema,
+  analysisViewSourceSchema,
+  inspectAnalysisViewInputSchema,
+  type AnalysisViewRequest,
+  type InspectAnalysisViewInput,
+} from "./analysisViewRequest.js";
 import {
-  projectDartAotView,
-  dartAotSummarySchema,
-  dartAotViewRequestSchema,
-  dartAotViewContextSchema,
-} from "./dartAotView.js";
-
-const summaryViewSchema = z.strictObject({ kind: z.literal("summary") });
-const facetViewSchema = z.strictObject({
-  kind: z.literal("facet"),
-  facet: z.enum(["mitigations", "linkage"]),
-});
-const indexSelectorSchema = z.strictObject({
-  index: z.number().int().nonnegative(),
-});
-const nameSelectorSchema = z.strictObject({ name: z.string() });
-const pathSelectorSchema = z.strictObject({
-  path: z
-    .string()
-    .describe(
-      "Exact observed module path or original source-map reference from a module page; an empty reference is valid.",
-    ),
-});
-const nodeIdSelectorSchema = z.strictObject({
-  node_id: prefixedDigestSchema("jag_node"),
-});
-const moduleItemViewSchema = z.strictObject({
-  kind: z.literal("item"),
-  collection: z.literal("modules"),
-  selector: z.union([pathSelectorSchema, nodeIdSelectorSchema]),
-});
-const sectionOrSymbolItemViewSchema = z.strictObject({
-  kind: z.literal("item"),
-  collection: z.enum(["sections", "symbols"]),
-  selector: z.union([indexSelectorSchema, nameSelectorSchema]),
-});
-/**
- * The collection-specific selector alternatives are expressed in the owning
- * contract so the advertised JSON Schema preserves them: modules accept
- * path/node_id, sections and symbols accept index/name. Refinement-only
- * constraints do not survive JSON Schema conversion, so the advertised
- * schema previously accepted combinations that runtime input validation
- * rejects.
- */
-const itemViewSchema = z.discriminatedUnion("collection", [
-  moduleItemViewSchema,
-  sectionOrSymbolItemViewSchema,
-]);
-const pageViewSchema = z.strictObject({
-  kind: z.literal("page"),
-  collection: z.enum(["sections", "symbols", "modules"]),
-  offset: z.number().int().nonnegative(),
-  limit: z.number().int().positive(),
-});
-
-/** Bounded native function facets of already authenticated analyze_function Evidence. */
-const nativeViewSchema = z.strictObject({
-  kind: z.literal("native"),
-  facet: z.enum([
-    "procedure",
-    "pseudocode",
-    "assembly",
-    "basic_blocks",
-    "comments",
-    "callers",
-    "callees",
-    "incoming_references",
-    "outgoing_references",
-    "unresolved_calls",
-    "referenced_strings",
-    "referenced_names",
-    "swift_string_literals",
-    "swift_string_literal_omissions",
-    "native_api",
-    "value_flow_summary",
-    "value_flow_operations",
-    "value_flow_def_use",
-    "value_flow_effects",
-    "value_flow_parameters",
-    "value_flow_parameter_uses",
-  ]),
-  offset: z.number().int().nonnegative().default(0),
-  limit: z.number().int().positive().default(64),
-});
-
-/** Original inventory records in stable order, optionally matching exact paths. */
-const inventoryViewSchema = z.discriminatedUnion("collection", [
-  z.strictObject({
-    kind: z.literal("inventory"),
-    collection: z.literal("occurrences"),
-    logical_paths: z
-      .array(z.string())
-      .optional()
-      .describe(
-        "Exact recorded logical paths. Omitted selects all available occurrences; an empty array selects none. This does not resolve filesystem paths.",
-      ),
-    offset: z.number().int().nonnegative().default(0),
-    limit: z.number().int().positive().default(64),
-  }),
-  z.strictObject({
-    kind: z.literal("inventory"),
-    collection: z.enum(["nodes", "edges", "integrity_contradictions"]),
-    offset: z.number().int().nonnegative().default(0),
-    limit: z.number().int().positive().default(64),
-  }),
-]);
-
-/** Caller-selected projection of already completed analysis Evidence. */
-export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
-  summaryViewSchema,
-  facetViewSchema,
-  itemViewSchema,
-  pageViewSchema,
-  nativeViewSchema,
-  inventoryViewSchema,
-  wasmViewRequestSchema,
-  machoViewRequestSchema,
-  interfaceBuilderViewRequestSchema,
-  evmViewRequestSchema,
-  managedViewRequestSchema,
-  managedMembersViewRequestSchema,
-  androidViewRequestSchema,
-  apiSurfaceViewSchema,
-  captureViewRequestSchema,
-  qlogViewRequestSchema,
-  pcapViewRequestSchema,
-  dartAotViewRequestSchema,
-]);
-
-// The application owns admission and authenticated Evidence parsing. SDK and
-// CLI envelope parsing must borrow this unknown value rather than clone it
-// before admission. Advertise the owning Evidence contract in both dialects.
-const inlineEvidenceInputSchema = z.unknown().nonoptional();
-inlineEvidenceInputSchema._zod.processJSONSchema =
-  evidenceSchema._zod.processJSONSchema;
-
-/** Unauthenticated inline input or an exact same-session retained reference. */
-export const analysisViewSourceSchema = z.discriminatedUnion("kind", [
-  z.strictObject({
-    kind: z.literal("retained-evidence"),
-    evidence_id: prefixedDigestSchema("ev"),
-  }),
-  z.strictObject({
-    kind: z.literal("inline"),
-    evidence: inlineEvidenceInputSchema,
-  }),
-]);
-
-/** Public inspect_analysis_view input. */
-export const inspectAnalysisViewInputSchema = z.strictObject({
-  source: analysisViewSourceSchema,
-  view: analysisViewRequestSchema,
-});
-
-const coverageSchema = z.strictObject({
-  status: z.enum(["complete-within-view", "page", "empty"]),
-  examined: z.number().int().nonnegative(),
-  total: z.number().int().nonnegative(),
-  next_offset: z.number().int().nonnegative().nullable(),
-  exhausted: z.boolean(),
-});
-
-const artifactSchema = z.strictObject({
-  path: z
-    .string()
-    .describe("Exact recorded artifact path, including an empty string."),
-  sha256: digestSchema.nullable(),
-});
-
-const layoutSummarySchema = z.strictObject({
-  bytes: z.number().int().nonnegative(),
-  format: z.literal("elf"),
-  architecture: z.strictObject({
-    machine: z.literal("EM_X86_64"),
-    bits: z.literal(64),
-    byte_order: z.literal("little"),
-  }),
-  image_type: z.enum(["ET_EXEC", "ET_DYN", "ET_REL"]),
-  entry: z.strictObject({
-    reported_value: z.string().min(1),
-    meaning: z.enum(["linked-virtual-address", "not-applicable", "absent"]),
-    execution_status: z.literal("unknown"),
-  }),
-  counts: z.strictObject({
-    sections: z.number().int().nonnegative(),
-    segments: z.number().int().nonnegative(),
-    symbols: z.number().int().nonnegative(),
-    relocations: z.number().int().nonnegative(),
-  }),
-  limitation_count: z.number().int().nonnegative(),
-});
-
-const javascriptSummarySchema = z.strictObject({
-  input_path: z.string().min(1),
-  format: z.enum(["asar", "directory"]),
-  root_artifact_sha256: digestSchema,
-  source_selection: javaScriptSourceSelectionSchema.exactOptional(),
-  statistics: jsonObjectSchema,
-  electron: jsonObjectSchema,
-  coverage: jsonObjectSchema,
-  limitation_count: z.number().int().nonnegative(),
-});
-
-const inventorySummarySchema = z.strictObject({
-  manifest: artifactGraphManifestSchema,
-  available_counts: z.strictObject({
-    nodes: z.number().int().nonnegative(),
-    occurrences: z.number().int().nonnegative(),
-    edges: z.number().int().nonnegative(),
-    integrity_contradictions: z.number().int().nonnegative(),
-  }),
-  observed_entry_kind_counts: z.strictObject({
-    file: z.number().int().nonnegative(),
-    directory: z.number().int().nonnegative(),
-    symlink: z.number().int().nonnegative(),
-    slice: z.number().int().nonnegative(),
-  }),
-  source_complete: z.boolean(),
-  inventory_evidence_ids: z.array(prefixedDigestSchema("ev")).min(1),
-  inspection: z
-    .strictObject({
-      coverage: artifactInspectionResultSchema.shape.coverage,
-      unexplored_branches:
-        artifactInspectionResultSchema.shape.unexplored_branches,
-    })
-    .nullable(),
-  limitation_count: z.number().int().nonnegative(),
-});
-
-const viewResultBase = {
-  parent_evidence_id: prefixedDigestSchema("ev"),
-  parent_operation: z.enum([
-    "inspect_binary_layout",
-    "analyze_javascript_application",
-    "analyze_function",
-    "inspect_artifact",
-    "inventory_artifact",
-    "inspect_wasm_artifact",
-    "inspect_macho",
-    "decode_interface_builder",
-    "inspect_evm_interface",
-    "inspect_managed_artifact",
-    "inspect_managed_members",
-    "inspect_web_network_capture",
-    "inspect_android_package",
-    "inspect_pcap_capture",
-    "inspect_dart_aot",
-  ]),
-  parent_digest: digestSchema,
-  view_digest: digestSchema,
-  artifact: artifactSchema,
-  coverage: coverageSchema,
-  limitations: z.array(z.string()),
-  unknowns: z.array(z.string()),
-} as const;
-
-const summaryViewResultBase = {
-  kind: z.literal("summary"),
-  view: summaryViewSchema,
-  ...viewResultBase,
-} as const;
-
-/** Summary `inspect_binary_layout` detail returns; no other view kind. */
-export const binaryLayoutSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  summary: layoutSummarySchema,
-  parent_operation: z.literal("inspect_binary_layout"),
-});
-
-/** Summary `analyze_javascript_application` detail returns; no other view kind. */
-export const javascriptApplicationSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  summary: javascriptSummarySchema,
-  parent_operation: z.literal("analyze_javascript_application"),
-});
-
-/** Exact summary carrier for artifact inspection's optional delivery contract. */
-export const artifactInventorySummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  parent_operation: z.enum(["inspect_artifact", "inventory_artifact"]),
-  summary: inventorySummarySchema,
-});
-
-/** Exact summary carrier for WASM inspection's optional delivery contract. */
-export const wasmArtifactSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  parent_operation: z.literal("inspect_wasm_artifact"),
-  summary: wasmSummarySchema,
-});
-
-/** Exact slice identity and collection counts for Mach-O's selected delivery. */
-export const machoSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  parent_operation: z.literal("inspect_macho"),
-  summary: machoSummarySchema,
-});
-
-/** Decoded documents and graph counts for Interface Builder's selected delivery. */
-export const interfaceBuilderSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  parent_operation: z.literal("decode_interface_builder"),
-  summary: interfaceBuilderSummarySchema,
-});
-
-/** Exact inferred-interface summary for EVM's caller-selected delivery. */
-export const evmInterfaceSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  parent_operation: z.literal("inspect_evm_interface"),
-  summary: evmSummarySchema,
-});
-
-/** Exact metadata overview for the managed artifact's selected delivery. */
-export const managedArtifactSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  parent_operation: z.literal("inspect_managed_artifact"),
-  summary: managedSummarySchema,
-});
-
-/** Exact member selection, coverage and counts for the selected delivery. */
-export const managedMemberSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  parent_operation: z.literal("inspect_managed_members"),
-  summary: managedMemberSummarySchema,
-});
-
-/** Exact historical capture summary, with no body or member-inventory payload. */
-export const webNetworkCaptureSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  parent_operation: z.literal("inspect_web_network_capture"),
-  summary: captureSummarySchema,
-});
-
-/** Exact package declarations with retained decoded manifest text. */
-export const androidPackageSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  parent_operation: z.literal("inspect_android_package"),
-  summary: androidPackageSummarySchema,
-});
-
-export const pcapCaptureSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  parent_operation: z.literal("inspect_pcap_capture"),
-  summary: pcapSummarySchema,
-});
-
-/** Exact snapshot and pool-coverage carrier for selected AOT delivery. */
-export const dartAotSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  parent_operation: z.literal("inspect_dart_aot"),
-  summary: dartAotSummarySchema,
-});
-
-/** Projected facts for one selected view of retained analysis Evidence. */
-export const analysisViewResultSchema = z.discriminatedUnion("kind", [
-  z.strictObject({
-    ...viewResultBase,
-    ...apiSurfaceFields,
-    kind: z.literal("api-surface"),
-    parent_operation: z.literal("inspect_web_network_capture"),
-    view: apiSurfaceViewSchema,
-    artifact: z.strictObject({
-      path: z.string(),
-      sha256: digestSchema.nullable(),
-    }),
-  }),
-  z.strictObject({
-    ...summaryViewResultBase,
-    summary: z.union([
-      layoutSummarySchema,
-      javascriptSummarySchema,
-      inventorySummarySchema,
-      wasmSummarySchema,
-      machoSummarySchema,
-      interfaceBuilderSummarySchema,
-      evmSummarySchema,
-      managedSummarySchema,
-      managedMemberSummarySchema,
-      captureSummarySchema,
-      androidPackageSummarySchema,
-      pcapSummarySchema,
-      dartAotSummarySchema,
-    ]),
-  }),
-  z.strictObject({
-    kind: z.literal("capture"),
-    view: captureViewRequestSchema,
-    items: captureViewItemsSchema,
-    ...viewResultBase,
-    parent_operation: z.literal("inspect_web_network_capture"),
-  }),
-  z.strictObject({
-    kind: z.literal("qlog"),
-    view: qlogViewRequestSchema,
-    page: qlogViewPageSchema,
-    context: qlogViewContextSchema,
-    ...viewResultBase,
-    parent_operation: z.literal("inspect_web_network_capture"),
-  }),
-  z.strictObject({
-    kind: z.literal("pcap"),
-    view: pcapViewRequestSchema,
-    page: pcapViewPageSchema,
-    source_coverage: z.enum(["complete", "partial"]),
-    ...viewResultBase,
-    parent_operation: z.literal("inspect_pcap_capture"),
-  }),
-  z.strictObject({
-    kind: z.literal("facet"),
-    view: facetViewSchema,
-    facet: jsonValueSchema,
-    ...viewResultBase,
-  }),
-  z.strictObject({
-    kind: z.literal("item"),
-    view: itemViewSchema,
-    item: jsonValueSchema,
-    ...viewResultBase,
-  }),
-  z.strictObject({
-    kind: z.literal("page"),
-    view: pageViewSchema,
-    items: z.array(jsonValueSchema),
-    ...viewResultBase,
-  }),
-  z.strictObject({
-    kind: z.literal("native"),
-    view: nativeViewSchema,
-    procedure_address: z.string().nullable(),
-    item: jsonValueSchema,
-    ...viewResultBase,
-  }),
-  z.strictObject({
-    kind: z.literal("wasm"),
-    view: wasmViewRequestSchema,
-    item: wasmViewItemSchema,
-    ...viewResultBase,
-  }),
-  z.strictObject({
-    kind: z.literal("macho"),
-    view: machoViewRequestSchema,
-    item: machoViewItemSchema,
-    ...viewResultBase,
-    ...machoViewContextSchema.shape,
-    parent_operation: z.literal("inspect_macho"),
-  }),
-  z.strictObject({
-    kind: z.literal("interface-builder"),
-    view: interfaceBuilderViewRequestSchema,
-    items: interfaceBuilderViewItemsSchema,
-    ...viewResultBase,
-    ...interfaceBuilderViewContextSchema.shape,
-    parent_operation: z.literal("decode_interface_builder"),
-  }),
-  z.strictObject({
-    kind: z.literal("evm"),
-    view: evmViewRequestSchema,
-    item: evmViewItemSchema,
-    ...viewResultBase,
-    parent_operation: z.literal("inspect_evm_interface"),
-  }),
-  z.strictObject({
-    kind: z.literal("managed"),
-    view: managedViewRequestSchema,
-    item: managedViewItemSchema,
-    ...viewResultBase,
-    ...managedViewContextSchema.shape,
-    parent_operation: z.literal("inspect_managed_artifact"),
-  }),
-  z.strictObject({
-    kind: z.literal("managed-members"),
-    view: managedMembersViewRequestSchema,
-    page: managedMembersViewPageSchema,
-    ...viewResultBase,
-    ...managedMembersViewContextSchema.shape,
-    parent_operation: z.literal("inspect_managed_members"),
-  }),
-  z.strictObject({
-    kind: z.literal("android"),
-    view: androidViewRequestSchema,
-    item: androidManifestViewItemSchema,
-    ...viewResultBase,
-    parent_operation: z.literal("inspect_android_package"),
-  }),
-  z.strictObject({
-    kind: z.literal("dart-aot"),
-    view: dartAotViewRequestSchema,
-    items: z.array(z.string()),
-    ...viewResultBase,
-    ...dartAotViewContextSchema.shape,
-    parent_operation: z.literal("inspect_dart_aot"),
-  }),
-  z.strictObject({
-    kind: z.literal("inventory"),
-    view: inventoryViewSchema,
-    manifest: artifactGraphManifestSchema,
-    inventory_evidence_ids: z.array(prefixedDigestSchema("ev")).min(1),
-    source_complete: z.boolean(),
-    items: z.array(
-      z.union([
-        artifactNodeSchema,
-        artifactOccurrenceSchema,
-        artifactEdgeSchema,
-        integrityContradictionSchema,
-      ]),
-    ),
-    ...viewResultBase,
-  }),
-]);
-
-export type AnalysisViewRequest = z.output<typeof analysisViewRequestSchema>;
-export type InspectAnalysisViewInput = z.output<
-  typeof inspectAnalysisViewInputSchema
->;
-export type AnalysisViewResult = z.output<typeof analysisViewResultSchema>;
-export type AnalysisViewCoverage = z.output<typeof coverageSchema>;
-
-/** Parent record already resolved from inline Evidence or a session reference. */
-export interface AnalysisViewParent {
-  readonly evidenceId: string;
-  readonly operation: string;
-  readonly normalizedResult: unknown;
-  /** The owner proved normalizedResult belongs to a sealed, deep-frozen Evidence snapshot. */
-  readonly sealedResult?: boolean;
-  /** Preserve the authenticated source identity, including explicit absence. */
-  readonly subject?: Evidence["subject"];
-  readonly limitations: readonly string[];
-  readonly artifact?: { readonly path: string; readonly sha256: string } | null;
-  /** Parent Evidence parameters, when the parent operation records them. */
-  readonly parameters?: unknown;
-}
-
-/** View payload before the content digest is attached. */
-export type UnsignedAnalysisView =
-  | Omit<
-      Extract<AnalysisViewResult, { readonly kind: "api-surface" }>,
-      "view_digest"
-    >
-  | Omit<
-      Extract<AnalysisViewResult, { readonly kind: "summary" }>,
-      "view_digest"
-    >
-  | Omit<Extract<AnalysisViewResult, { readonly kind: "facet" }>, "view_digest">
-  | Omit<Extract<AnalysisViewResult, { readonly kind: "item" }>, "view_digest">
-  | Omit<Extract<AnalysisViewResult, { readonly kind: "page" }>, "view_digest">
-  | Omit<
-      Extract<AnalysisViewResult, { readonly kind: "native" }>,
-      "view_digest"
-    >
-  | Omit<
-      Extract<AnalysisViewResult, { readonly kind: "inventory" }>,
-      "view_digest"
-    >
-  | Omit<Extract<AnalysisViewResult, { readonly kind: "wasm" }>, "view_digest">
-  | Omit<Extract<AnalysisViewResult, { readonly kind: "macho" }>, "view_digest">
-  | Omit<
-      Extract<AnalysisViewResult, { readonly kind: "interface-builder" }>,
-      "view_digest"
-    >
-  | Omit<Extract<AnalysisViewResult, { readonly kind: "evm" }>, "view_digest">
-  | Omit<Extract<AnalysisViewResult, { readonly kind: "qlog" }>, "view_digest">
-  | Omit<Extract<AnalysisViewResult, { readonly kind: "pcap" }>, "view_digest">
-  | Omit<
-      Extract<AnalysisViewResult, { readonly kind: "capture" }>,
-      "view_digest"
-    >
-  | Omit<
-      Extract<AnalysisViewResult, { readonly kind: "managed" }>,
-      "view_digest"
-    >
-  | Omit<
-      Extract<AnalysisViewResult, { readonly kind: "managed-members" }>,
-      "view_digest"
-    >
-  | Omit<
-      Extract<AnalysisViewResult, { readonly kind: "android" }>,
-      "view_digest"
-    >
-  | Omit<
-      Extract<AnalysisViewResult, { readonly kind: "dart-aot" }>,
-      "view_digest"
-    >;
+  nativeObservationSummaryViewResultSchemas,
+  byteEntropySummaryViewResultSchema,
+  nativeExportsSummaryViewResultSchema,
+  devicetreeSummaryViewResultSchema,
+  erlangBeamSummaryViewResultSchema,
+  erlangBeamTableViewResultSchema,
+  pythonPycSummaryViewResultSchema,
+  pythonPycCodeObjectsViewResultSchema,
+  gdbCommandSummaryViewResultSchema,
+  objdumpSummaryViewResultSchema,
+  fridaSessionStatusSummaryViewResultSchema,
+  goBinarySummaryViewResultSchema,
+  rustBinarySummaryViewResultSchema,
+  rustBinaryPageViewResultSchema,
+  binaryLayoutSummaryViewResultSchema,
+  javascriptApplicationSummaryViewResultSchema,
+  javascriptModuleReferencesViewResultSchema,
+  artifactInventorySummaryViewResultSchema,
+  desktopApplicationSummaryViewResultSchema,
+  wasmArtifactSummaryViewResultSchema,
+  machoSummaryViewResultSchema,
+  interfaceBuilderSummaryViewResultSchema,
+  evmInterfaceSummaryViewResultSchema,
+  managedArtifactSummaryViewResultSchema,
+  managedMemberSummaryViewResultSchema,
+  webNetworkCaptureSummaryViewResultSchema,
+  browserScenarioSummaryViewResultSchema,
+  androidPackageSummaryViewResultSchema,
+  androidJniSummaryViewResultSchema,
+  androidJniPageViewResultSchema,
+  androidClassSummaryViewResultSchema,
+  androidMethodSummaryViewResultSchema,
+  androidManifestViewResultSchema,
+  androidComponentsViewResultSchema,
+  androidComponentSummaryViewResultSchema,
+  pcapCaptureSummaryViewResultSchema,
+  dartAotSummaryViewResultSchema,
+  javaScriptRoutesViewResultSchema,
+  webBundleSummaryViewResultSchema,
+  webBundlePageViewResultSchema,
+  gpuCodeObjectsSummaryViewResultSchema,
+  gpuCodeObjectsPageViewResultSchema,
+  apkSignatureSummaryViewResultSchema,
+  apkSignaturePageViewResultSchema,
+  modelArtifactSummaryViewResultSchema,
+  modelArtifactPageViewResultSchema,
+  il2cppMetadataSummaryViewResultSchema,
+  nativeInventorySummaryViewResultSchema,
+  nativeLoadImageSummaryViewResultSchema,
+  nativeFunctionMatchingSummaryViewResultSchema,
+  nativeFunctionSummarySchema,
+  nativeFunctionSummaryViewResultSchema,
+  sourceToBundleSummaryViewResultSchema,
+  sourceToBundlePageViewResultSchema,
+  analysisViewResultSchema,
+  type AnalysisViewResult,
+  type UnsignedAnalysisView,
+} from "./analysisViewResult.js";
+export {
+  analysisViewRequestSchema,
+  analysisViewSourceSchema,
+  inspectAnalysisViewInputSchema,
+  type AnalysisViewRequest,
+  type InspectAnalysisViewInput,
+  type AnalysisViewParent,
+};
+export { type GroupingViewKind };
+export {
+  nativeObservationSummaryViewResultSchemas,
+  byteEntropySummaryViewResultSchema,
+  nativeExportsSummaryViewResultSchema,
+  devicetreeSummaryViewResultSchema,
+  erlangBeamSummaryViewResultSchema,
+  erlangBeamTableViewResultSchema,
+  pythonPycSummaryViewResultSchema,
+  pythonPycCodeObjectsViewResultSchema,
+  gdbCommandSummaryViewResultSchema,
+  objdumpSummaryViewResultSchema,
+  fridaSessionStatusSummaryViewResultSchema,
+  goBinarySummaryViewResultSchema,
+  rustBinarySummaryViewResultSchema,
+  rustBinaryPageViewResultSchema,
+  binaryLayoutSummaryViewResultSchema,
+  javascriptApplicationSummaryViewResultSchema,
+  javascriptModuleReferencesViewResultSchema,
+  artifactInventorySummaryViewResultSchema,
+  desktopApplicationSummaryViewResultSchema,
+  wasmArtifactSummaryViewResultSchema,
+  machoSummaryViewResultSchema,
+  interfaceBuilderSummaryViewResultSchema,
+  evmInterfaceSummaryViewResultSchema,
+  managedArtifactSummaryViewResultSchema,
+  managedMemberSummaryViewResultSchema,
+  webNetworkCaptureSummaryViewResultSchema,
+  browserScenarioSummaryViewResultSchema,
+  androidPackageSummaryViewResultSchema,
+  androidJniSummaryViewResultSchema,
+  androidJniPageViewResultSchema,
+  androidClassSummaryViewResultSchema,
+  androidMethodSummaryViewResultSchema,
+  androidManifestViewResultSchema,
+  androidComponentsViewResultSchema,
+  androidComponentSummaryViewResultSchema,
+  pcapCaptureSummaryViewResultSchema,
+  dartAotSummaryViewResultSchema,
+  javaScriptRoutesViewResultSchema,
+  webBundleSummaryViewResultSchema,
+  webBundlePageViewResultSchema,
+  gpuCodeObjectsSummaryViewResultSchema,
+  gpuCodeObjectsPageViewResultSchema,
+  apkSignatureSummaryViewResultSchema,
+  apkSignaturePageViewResultSchema,
+  modelArtifactSummaryViewResultSchema,
+  modelArtifactPageViewResultSchema,
+  il2cppMetadataSummaryViewResultSchema,
+  nativeInventorySummaryViewResultSchema,
+  nativeLoadImageSummaryViewResultSchema,
+  nativeFunctionMatchingSummaryViewResultSchema,
+  nativeFunctionSummarySchema,
+  nativeFunctionSummaryViewResultSchema,
+  sourceToBundleSummaryViewResultSchema,
+  sourceToBundlePageViewResultSchema,
+  analysisViewResultSchema,
+  type AnalysisViewResult,
+  type UnsignedAnalysisView,
+};
 
 /** Attach the content digest that must change when projected bytes change. */
 export const sealAnalysisView = (
@@ -700,25 +230,15 @@ const parseJavaScriptParent = (
   input: unknown,
 ): Result<JavaScriptApplicationAnalysisResult, AnalysisError> => {
   try {
-    // Only the existing realm-private graph proofs permit reuse. Imported or
-    // merely frozen graphs still receive full canonical validation.
+    // The format owner authenticates imported results completely before reuse;
+    // mutable or merely frozen inputs still receive canonical validation.
     const steps = parseOwnedJavaScriptApplicationAnalysisSteps(input);
     let step = steps.next();
     while (!step.done) step = steps.next();
     return ok(step.value);
   } catch (cause: unknown) {
     if (!(cause instanceof z.ZodError)) throw cause;
-    return err(
-      analysisInputErrorFromIssues(
-        INSPECT_ANALYSIS_VIEW_OPERATION,
-        cause.issues.map((issue) => ({
-          ...issue,
-          path: ["source", "normalized_result", ...issue.path],
-        })),
-        { source: { normalized_result: input } },
-        { cause },
-      ),
-    );
+    return err(analysisViewResultInputError(input, cause));
   }
 };
 
@@ -728,7 +248,7 @@ const unsupportedParent = (
   new AnalysisUnsupportedTargetError(
     INSPECT_ANALYSIS_VIEW_OPERATION,
     parentArtifactPath(parent),
-    `Parent Evidence operation ${JSON.stringify(parent.operation)} does not support analysis views. Use completed binary layout, JavaScript application, native function, artifact inventory/inspection, WASM, Mach-O, Interface Builder, EVM, managed artifact or member, Android package, Dart AOT, or web network capture Evidence.`,
+    `Parent Evidence operation ${JSON.stringify(parent.operation)} does not support analysis views. Use completed Evidence from a supported parent operation with a compatible view. For a summary receipt, use its normalized_result.parent_evidence_id rather than the receipt's own evidence_id.`,
   );
 
 const parentArtifactPath = (parent: AnalysisViewParent): string => {
@@ -752,25 +272,143 @@ const parentArtifactPath = (parent: AnalysisViewParent): string => {
   return parent.evidenceId;
 };
 
+/** Check a projector result against the result union before sealing it. */
+const sealProjected = (
+  projected: Result<UnsignedAnalysisView, AnalysisError>,
+): Result<AnalysisViewResult, AnalysisError> =>
+  projected.ok ? ok(sealAnalysisView(projected.value)) : projected;
+
 /** Named source owners for views that need no extra decoder or accumulator. */
-const retainedViewProjectors = new Map<string, typeof projectWasmArtifactView>([
-  ["inspect_wasm_artifact", projectWasmArtifactView],
-  ["inspect_macho", projectMachoView],
-  ["decode_interface_builder", projectInterfaceBuilderView],
-  ["inspect_evm_interface", projectEvmInterfaceView],
-  ["inspect_managed_artifact", projectManagedArtifactView],
-  ["inspect_managed_members", projectManagedMemberView],
-  ["inspect_android_package", projectAndroidPackageView],
-  ["inspect_dart_aot", projectDartAotView],
-  ["inspect_artifact", projectArtifactInventoryView],
-  ["inventory_artifact", projectArtifactInventoryView],
+type RetainedViewProjector = (
+  parent: AnalysisViewParent,
+  view: AnalysisViewRequest,
+) => Result<UnsignedAnalysisView, AnalysisError>;
+
+/** Register a projector whose inferred result must be in the result union. */
+const retain = (
+  operation: string,
+  project: RetainedViewProjector,
+): readonly [string, RetainedViewProjector] => [operation, project];
+
+const retainedViewProjectors = new Map<string, RetainedViewProjector>([
+  ...NATIVE_OBSERVATION_OPERATIONS.map((operation) =>
+    retain(operation, projectNativeObservationView),
+  ),
+  retain("inspect_erlang_beam", projectErlangBeamView),
+  retain("inspect_devicetree", projectDevicetreeView),
+  retain("inspect_native_exports", projectNativeExportsView),
+  retain("inspect_native_load_image", projectNativeLoadImageView),
+  retain("inspect_python_pyc", projectPythonPycView),
+  retain("frida_session_status", projectFridaSessionStatusView),
+  retain("gdb_console", projectCommandObservationView),
+  retain("inspect_with_objdump", projectCommandObservationView),
+  retain("inspect_go_binary", projectGoBinaryView),
+  retain("inspect_rust_binary", projectRustBinaryView),
+  ...NATIVE_INVENTORY_OPERATIONS.map((operation) =>
+    retain(operation, projectNativeInventoryView),
+  ),
+  retain("inspect_desktop_application", projectDesktopApplicationView),
+  retain("inspect_wasm_artifact", projectWasmArtifactView),
+  retain("inspect_macho", projectMachoView),
+  retain("decode_interface_builder", projectInterfaceBuilderView),
+  retain("inspect_evm_interface", projectEvmInterfaceView),
+  retain("inspect_managed_artifact", projectManagedArtifactView),
+  retain("inspect_managed_members", projectManagedMemberView),
+  retain("inspect_android_package", projectAndroidPackageView),
+  retain("inspect_android_class", projectAndroidSymbolSummary),
+  retain("inspect_android_method", projectAndroidSymbolSummary),
+  retain("inspect_android_jni_bindings", projectAndroidJniView),
+  retain("capture_browser_scenario", projectBrowserScenarioView),
+  retain("inspect_dart_aot", projectDartAotView),
+  retain("inspect_il2cpp_metadata", projectIl2cppMetadataView),
+  retain("inspect_apk_signature", projectApkSignatureView),
+  retain("inspect_model_artifact", projectModelArtifactView),
+  retain("inspect_gpu_code_objects", projectGpuCodeObjectsView),
+  retain("match_native_functions", projectNativeFunctionMatchingView),
+  retain("compare_source_to_bundle", projectSourceToBundleView),
+  retain("inspect_artifact", projectArtifactInventoryView),
+  retain("inventory_artifact", projectArtifactInventoryView),
+  retain("analyze_web_bundle", projectWebBundleView),
 ]);
+
+/** Budgets retained across source admission and the selected grouping projection. */
+export interface AnalysisViewAccumulators {
+  readonly apiSurface?: WebNetworkApiSurfaceAccumulator | undefined;
+  readonly manifest?: EnvironmentManifestAccumulator | undefined;
+  readonly state?: EnvironmentStateAccumulator | undefined;
+}
+
+/** Prepare one view's source admission and projection under the same owned budget. */
+export const prepareAnalysisViewProjection = (
+  view: AnalysisViewRequest,
+): {
+  admitInlineEvidence(value: unknown): Result<void, AnalysisError>;
+  project(
+    parent: AnalysisViewParent,
+  ): Result<AnalysisViewResult, AnalysisError>;
+} => {
+  const accumulators: AnalysisViewAccumulators = {
+    apiSurface:
+      view.kind === "api-surface"
+        ? createApiSurfaceAccumulator(view)
+        : undefined,
+    manifest:
+      view.kind === "environment-manifest"
+        ? createEnvironmentManifestAccumulator(view)
+        : undefined,
+    state:
+      view.kind === "environment-state" || view.kind === "environment-coverage"
+        ? createEnvironmentStateAccumulator(view)
+        : undefined,
+  };
+  const accumulator =
+    accumulators.apiSurface ?? accumulators.manifest ?? accumulators.state;
+  return {
+    admitInlineEvidence: (value) =>
+      accumulator === undefined
+        ? admitAnalysisViewData(value, true)
+        : accumulator.admitInlineEvidence(value),
+    project: (parent) => projectAnalysisView(parent, view, accumulators),
+  };
+};
+
+type GroupingViewRequest = Extract<
+  AnalysisViewRequest,
+  { kind: GroupingViewKind }
+>;
+
+const isGroupingView = (
+  view: AnalysisViewRequest,
+): view is GroupingViewRequest =>
+  view.kind === "api-surface" ||
+  view.kind === "environment-manifest" ||
+  view.kind === "environment-state" ||
+  view.kind === "environment-coverage";
+
+/** Views that group a capture's records, each under the budget its caller created. */
+const projectGroupingView = (
+  parent: AnalysisViewParent,
+  view: GroupingViewRequest,
+  accumulators: AnalysisViewAccumulators,
+) => {
+  if (view.kind === "api-surface")
+    return projectWebNetworkApiSurfaceView(
+      parent,
+      view,
+      accumulators.apiSurface,
+    );
+  if (view.kind === "environment-manifest")
+    return projectEnvironmentManifestView(parent, view, accumulators.manifest);
+  if (view.kind === "environment-coverage")
+    return projectEnvironmentCoverageView(parent, view, accumulators.state);
+  return projectEnvironmentStateView(parent, view, accumulators.state);
+};
 
 /** Project one selected view from authenticated parent analysis Evidence. */
 export const projectAnalysisView = (
   parent: AnalysisViewParent,
   view: AnalysisViewRequest,
-  apiSurfaceAccumulator?: WebNetworkApiSurfaceAccumulator,
+  accumulators: AnalysisViewAccumulators = {},
 ): Result<AnalysisViewResult, AnalysisError> => {
   const digest = parentDigest(parent.evidenceId);
   if (!digestSchema.safeParse(digest).success)
@@ -783,37 +421,40 @@ export const projectAnalysisView = (
         },
       ]),
     );
-  if (view.kind === "api-surface") {
-    const projected = projectWebNetworkApiSurfaceView(
-      parent,
-      view,
-      apiSurfaceAccumulator,
-    );
-    return projected.ok ? ok(sealAnalysisView(projected.value)) : projected;
+  if (view.kind === "javascript-routes") {
+    const projected = projectJavaScriptRoutesView(parent, view);
+    return sealProjected(projected);
+  }
+  if (view.kind === "web-bundle") {
+    const projected = projectWebBundleView(parent, view);
+    return sealProjected(projected);
+  }
+  if (isGroupingView(view)) {
+    const grouped = projectGroupingView(parent, view, accumulators);
+    return sealProjected(grouped);
   }
   if (parent.operation === "inspect_web_network_capture") {
     const projected = projectWebNetworkCaptureView(parent, view);
-    return projected.ok ? ok(sealAnalysisView(projected.value)) : projected;
+    return sealProjected(projected);
   }
   if (parent.operation === "inspect_pcap_capture") {
     const projected = projectPcapCaptureView(parent, view);
-    return projected.ok ? ok(sealAnalysisView(projected.value)) : projected;
+    return sealProjected(projected);
+  }
+  if (parent.operation === "inspect_byte_entropy") {
+    const report = parseAnalysisViewResult(byteEntropySchema, parent);
+    if (!report.ok) return report;
+    const projected = projectByteEntropyView(parent, report.value, view);
+    return sealProjected(projected);
   }
   if (parent.operation === "inspect_binary_layout") {
-    const layout = binaryLayoutSchema.safeParse(parent.normalizedResult);
-    if (!layout.success)
-      return err(
-        analysisViewInputError([
-          {
-            path: ["source"],
-            reason: "invalid_value",
-            message:
-              "Parent Evidence result does not match inspect_binary_layout.",
-          },
-        ]),
-      );
-    const projected = projectBinaryLayoutView(parent, layout.data, view);
-    return projected.ok ? ok(sealAnalysisView(projected.value)) : projected;
+    const layout = parseAnalysisViewResult(
+      { safeParse: safeParseOwnedBinaryLayout },
+      parent,
+    );
+    if (!layout.ok) return layout;
+    const projected = projectBinaryLayoutView(parent, layout.value, view);
+    return sealProjected(projected);
   }
   if (parent.operation === "analyze_javascript_application") {
     const analysis = parseJavaScriptParent(parent.normalizedResult);
@@ -823,29 +464,18 @@ export const projectAnalysisView = (
       analysis.value,
       view,
     );
-    return projected.ok ? ok(sealAnalysisView(projected.value)) : projected;
+    return sealProjected(projected);
   }
   if (parent.operation === "analyze_function") {
-    const native = functionDossierSchema.safeParse(parent.normalizedResult);
-    if (!native.success)
-      return err(
-        analysisInputErrorFromIssues(
-          INSPECT_ANALYSIS_VIEW_OPERATION,
-          native.error.issues.map((issue) => ({
-            ...issue,
-            path: ["source", "normalized_result", ...issue.path],
-          })),
-          { source: { normalized_result: parent.normalizedResult } },
-          { cause: native.error },
-        ),
-      );
-    const projected = projectNativeFunctionView(parent, native.data, view);
-    return projected.ok ? ok(sealAnalysisView(projected.value)) : projected;
+    const native = parseAnalysisViewResult(functionDossierSchema, parent);
+    if (!native.ok) return native;
+    const projected = projectNativeFunctionView(parent, native.value, view);
+    return sealProjected(projected);
   }
   const project = retainedViewProjectors.get(parent.operation);
   if (project !== undefined) {
     const projected = project(parent, view);
-    return projected.ok ? ok(sealAnalysisView(projected.value)) : projected;
+    return sealProjected(projected);
   }
   return err(unsupportedParent(parent));
 };

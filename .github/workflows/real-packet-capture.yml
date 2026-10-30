@@ -20,21 +20,17 @@ on:
       - "src/composition/captures.ts"
       - "src/cli/captureCommands.ts"
       - "src/server/registerCaptureTools.ts"
-      - "src/server/createServer.ts"
-      - "src/server/sessionAvailabilityPolicy.ts"
-      - "src/application/CapabilityInventory.ts"
-      - "src/contracts/toolContracts.ts"
-      - "src/contracts/toolEffects.ts"
-      - "src/cli.ts"
-      - "src/cliCommandNames.ts"
-      - "src/process/**"
-      - "src/artifacts/readStableArtifact.ts"
       - "scripts/verify-packet-capture.mjs"
       - ".github/workflows/real-packet-capture.yml"
-      - "package*.json"
-      - ".nvmrc"
 permissions:
   contents: read
+env:
+  HUSKY: "0"
+  # Writes only on the default branch for push, schedule, manual dispatch,
+  # and workflow_call. Pull requests get an empty token and remote read-only mode.
+  TURBO_TOKEN: "${{ (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call')) && secrets.TURBO_TOKEN || '' }}"
+  TURBO_TEAM: ${{ vars.TURBO_TEAM }}
+  TURBO_CACHE: "${{ (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call')) && 'local:rw,remote:rw' || 'local:rw,remote:r' }}"
 concurrency:
   group: real-packet-capture-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
@@ -53,7 +49,7 @@ jobs:
       - run: sudo apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y tshark util-linux python3
       - run: npm ci
       - run: npm run build:cached
-      - run: npm run test:focused -- tests/boundary/captures/fieldDiscovery.test.ts src/process/LinuxResourceLimits.test.ts tests/boundary/captures/captureProvider.test.ts tests/boundary/captures/captureDescriptorCleanup.test.ts tests/boundary/captures/resourceLimits.test.ts tests/boundary/captures/packetOutput.test.ts tests/boundary/mcp/packetCaptureMcp.test.ts tests/boundary/cli/captureCleanup.test.ts
+      - run: npm run test:focused -- tests/boundary/captures/fieldDiscovery.test.ts src/process/LinuxResourceLimits.test.ts tests/boundary/captures/captureProvider.test.ts tests/boundary/captures/captureDescriptorCleanup.test.ts tests/boundary/pcap/pcapProvider.test.ts tests/boundary/pcap/pcapProviderCrossPlatform.test.ts tests/boundary/captures/resourceLimits.test.ts tests/boundary/captures/packetOutput.test.ts tests/boundary/mcp/packetCaptureMcp.test.ts tests/boundary/cli/captureCleanup.test.ts
       - run: node scripts/verify-packet-capture.mjs
         env:
           REA_TSHARK_COMMAND: /usr/bin/tshark

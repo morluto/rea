@@ -1,19 +1,15 @@
+import { workflowUnknownInput } from "../../application/investigation/WorkflowUnknown.js";
 import type { EvidenceMcpServer } from "../EvidenceMcpServer.js";
 import { runAdmittedToolOperation } from "../admittedToolOperation.js";
-import { recordSessionEvidenceSources } from "../sessionEvidence.js";
+import { recordEvidenceSources } from "../../application/investigation/recordEvidenceSources.js";
 
-import { verifyManagedNativeBoundariesEvidence } from "../../application/managed/ManagedNativeVerificationService.js";
-import { managedNativeVerificationResultSchema } from "../../domain/managed/managedNativeVerificationSchemas.js";
+import { executeManagedNativeBoundaries } from "../../application/managed/ManagedNativeVerificationService.js";
 import { logToolExecution } from "../toolLogging.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
-import { managedWorkflowContract } from "./contract.js";
-import {
-  resolveManagedBoundaryEvidence,
-  resolveNativeEvidence,
-} from "./evidence.js";
+import { toolContract } from "../../contracts/toolContracts.js";
 import type { ManagedWorkflowToolRegistration } from "./types.js";
 
-const nativeVerificationContract = managedWorkflowContract(
+const nativeVerificationContract = toolContract(
   "verify_managed_native_boundaries",
 );
 
@@ -32,65 +28,32 @@ export const registerVerifyManagedNativeBoundaries = (
         nativeVerificationContract.name,
         context.mcpReq.signal,
         async () => {
-          const managedBoundaries = resolveManagedBoundaryEvidence(
-            input.managed_boundaries,
-          );
-          if (!managedBoundaries.ok)
-            return server.delivery.toCallToolResult(
-              managedBoundaries,
-              nativeVerificationContract,
-            );
-          const nativeObservations = resolveNativeEvidence(
-            input.native_observations,
-          );
-          if (!nativeObservations.ok)
-            return server.delivery.toCallToolResult(
-              nativeObservations,
-              nativeVerificationContract,
-            );
-          const managedBoundary = managedBoundaries.value[0];
-          if (managedBoundary === undefined)
-            throw new TypeError("Managed boundary Evidence resolution failed");
-          const parsed = {
-            ...input,
-            managed_boundaries: managedBoundary,
-            native_observations: nativeObservations.value,
-          };
           const result = await logToolExecution(
             options.logger,
             nativeVerificationContract.name,
-            () =>
-              Promise.resolve(verifyManagedNativeBoundariesEvidence(parsed)),
+            () => Promise.resolve(executeManagedNativeBoundaries(input)),
           );
           if (!result.ok)
             return server.delivery.toCallToolResult(
               result,
               nativeVerificationContract,
             );
-          const recordedSources = recordSessionEvidenceSources(
+          const execution = result.value;
+          const recordedSources = recordEvidenceSources(
             options.recordEvidence,
-            [parsed.managed_boundaries, ...parsed.native_observations],
+            execution.sourceEvidence,
           );
           if (!recordedSources.ok)
             return server.delivery.toCallToolResult(
               recordedSources,
               nativeVerificationContract,
             );
-          const verification = managedNativeVerificationResultSchema.parse(
-            result.value.normalized_result,
-          );
-          const unknown =
-            verification.summary.unresolved > 0 ||
-            verification.summary.contradicted > 0 ||
-            verification.summary.native_body_unresolved > 0;
-          const output = unknown
-            ? options.recordEvidenceWithUnknown?.(result.value, {
+          const unknownInput = execution.hasUnknowns
+            ? workflowUnknownInput(execution.evidence.evidence_id, {
                 question:
                   "Which managed/native boundaries remain unresolved or contradicted by the supplied native Evidence?",
                 severity: "medium",
                 domain: "managed-native-verification",
-                supporting_evidence_ids: [result.value.evidence_id],
-                contradicting_evidence_ids: [],
                 required_authority: "shipped-artifact",
                 required_confidence: "observed",
                 required_environment: null,
@@ -108,9 +71,18 @@ export const registerVerifyManagedNativeBoundaries = (
                 ],
                 relationships: [],
               })
-            : options.recordEvidence?.(result.value);
+            : undefined;
+          const output =
+            unknownInput === undefined
+              ? options.recordEvidence?.(execution.evidence)
+              : unknownInput.ok
+                ? options.recordEvidenceWithUnknown?.(
+                    execution.evidence,
+                    unknownInput.value,
+                  )
+                : unknownInput;
           return server.delivery.toEvidenceToolResult(
-            result.value,
+            execution.evidence,
             nativeVerificationContract,
             output,
           );

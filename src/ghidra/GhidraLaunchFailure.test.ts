@@ -42,6 +42,7 @@ const probeLauncher = (javaHome: string, runtimeRoot: string) =>
     environment: {},
     platform: "darwin",
     analyzeHeadlessPath: join(runtimeRoot, "support", "analyzeHeadless"),
+    configurationDirectoryName: "ghidra_test_PUBLIC",
     javaHome,
     bridgeScriptPath: join(runtimeRoot, "bridge", "ReaGhidraBridge.java"),
   });
@@ -135,10 +136,11 @@ describe("Ghidra launch failure diagnostics", () => {
       expect(outcome?.["stderrTruncated"]).toBe(true);
       expect(outcome?.["outputTruncated"]).toBe(false);
       expect(outcome?.["stderrBytes"]).toBe(oversized.length);
-      expect((outcome?.["stderr"] as string).length).toBeLessThanOrEqual(
-        EXPECTED_OUTPUT_BOUND_BYTES,
-      );
-      expect(outcome?.["stderr"] as string).not.toContain("UNRETAINED-TAIL");
+      const stderr = outcome?.["stderr"];
+      if (typeof stderr !== "string")
+        throw new Error("Expected launcher stderr");
+      expect(stderr.length).toBeLessThanOrEqual(EXPECTED_OUTPUT_BOUND_BYTES);
+      expect(stderr).not.toContain("UNRETAINED-TAIL");
     } finally {
       await rm(javaHome, { recursive: true, force: true });
       await rm(runtimeRoot, { recursive: true, force: true });
@@ -152,6 +154,7 @@ describe("Ghidra launch failure diagnostics", () => {
         environment: {},
         platform: "darwin",
         analyzeHeadlessPath: join(runtimeRoot, "support", "analyzeHeadless"),
+        configurationDirectoryName: "ghidra_test_PUBLIC",
         bridgeScriptPath: join(runtimeRoot, "bridge", "ReaGhidraBridge.java"),
       });
       const launched = await launcher.launch(launchSession(runtimeRoot));

@@ -15,6 +15,15 @@ on:
         description: Exact qualification source; must match the caller revision.
         required: true
         type: string
+      remote_cache_write:
+        description: Trusted release qualification may publish the remote cache.
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      TURBO_TOKEN:
+        description: Remote cache token. Only trusted release qualification passes it.
+        required: false
 
 permissions:
   contents: read
@@ -29,6 +38,15 @@ concurrency:
 
 env:
   HUSKY: "0"
+  # Set Actions secret TURBO_TOKEN and variable TURBO_TEAM. OIDC can mint
+  # TURBO_TOKEN via vercel/setup-turborepo-remote-cache-action; do not commit a token.
+  # A called workflow sees the caller event, so workflow_call is not an event
+  # name here. Release qualification sets remote_cache_write and passes the
+  # token. Open pull requests get an empty token and the local cache only.
+  # Remote reads need a credential, and pull requests do not receive one.
+  TURBO_TOKEN: "${{ (inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'))) && secrets.TURBO_TOKEN || '' }}"
+  TURBO_TEAM: ${{ vars.TURBO_TEAM }}
+  TURBO_CACHE: "${{ (inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'))) && 'local:rw,remote:rw' || 'local:rw' }}"
 
 jobs:
   changes:
@@ -54,12 +72,15 @@ jobs:
       browser: ${{ steps.plan.outputs.browser }}
       binary_layout: ${{ steps.plan.outputs.binary_layout }}
       evm: ${{ steps.plan.outputs.evm }}
+      apk_signature: ${{ steps.plan.outputs.apk_signature }}
       javascript_recovery: ${{ steps.plan.outputs.javascript_recovery }}
       recorded_crash: ${{ steps.plan.outputs.recorded_crash }}
       web_network: ${{ steps.plan.outputs.web_network }}
       web_runtime: ${{ steps.plan.outputs.web_runtime }}
       web_source_map: ${{ steps.plan.outputs.web_source_map }}
+      agentenv: ${{ steps.plan.outputs.agentenv }}
       nativeaot: ${{ steps.plan.outputs.nativeaot }}
+      ghidra_bridge: ${{ steps.plan.outputs.ghidra_bridge }}
       website: ${{ steps.plan.outputs.website }}
       matrix: ${{ steps.plan.outputs.matrix }}
       test_selection: ${{ steps.plan.outputs.test_selection }}
@@ -123,9 +144,15 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc
+      - name: Validate source architecture before dependency installation
+        if: needs.changes.outputs.code == 'true'
+        run: node scripts/verify/architecture-guards.mjs
       - name: Cache npm package downloads
         id: npm-cache
         uses: ./.github/actions/npm-cache
+        with:
+          # Linux x64 writer. Parallel Linux jobs restore this key.
+          save: "true"
       - run: npm ci
       - name: Restore static task cache
         if: needs.changes.outputs.code == 'true'
@@ -139,19 +166,20 @@ jobs:
       - name: Validate workflow syntax and expressions
         if: needs.changes.outputs.workflows == 'true'
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -shellcheck= -pyflakes=
+      # Code tiers run this source-only policy test in their existing shards.
+      # Workflow-only changes need the guard, without preparing runtime artifacts.
+      - name: Check action pins for workflow-only changes
+        if: needs.changes.outputs.workflows == 'true' && needs.changes.outputs.code != 'true'
+        run: node scripts/run-exact-tests.mjs run tests/boundary/filesystem/workflowActionPinning.test.ts
       - name: Record static task source and execution identity
         continue-on-error: true
         if: needs.changes.outputs.code == 'true'
         env:
           CI_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          CI_STATIC_CONTEXT_SCRIPT: check:ci:fast:tasks
         run: npm run ci:static-context
       - if: needs.changes.outputs.code == 'true'
-        run: npm run check:ci
-      - if: needs.changes.outputs.code == 'true'
-        run: npm run verify:test-discovery
-      - name: Check LLDB producer retention and launch contracts
-        if: needs.changes.outputs.code == 'true'
-        run: npm run test:python
+        run: npm run check:ci:fast
       - if: needs.changes.outputs.code != 'true'
         run: npm run format:check
       - name: Save validated static task cache
@@ -168,6 +196,72 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: static-check-reports
+          path: .cache/static-checks/
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 7
+
+  static-deep:
+    name: Deep static checks
+    needs: changes
+    # Full qualification only. Provider lanes wait on fast static, not this job.
+    if: needs.changes.outputs.tier == 'full' && needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+      - name: Cache npm package downloads
+        id: npm-cache
+        uses: ./.github/actions/npm-cache
+      - run: npm ci
+      - name: Restore deep static task cache
+        id: static-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .turbo/cache/
+          key: rea-static-deep-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', '.npmrc', 'package-lock.json') }}-${{ github.sha }}
+          restore-keys: rea-static-deep-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', '.npmrc', 'package-lock.json') }}-
+      - name: Restore Knip analysis cache
+        id: knip-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: node_modules/.cache/knip
+          # Each trusted commit publishes a new entry. Restore still matches the
+          # configuration prefix from the previous successful full run.
+          key: knip-meta-v1-${{ runner.os }}-${{ hashFiles('knip.json', 'tsconfig.json', 'package.json', 'package-lock.json') }}-${{ github.sha }}
+          restore-keys: knip-meta-v1-${{ runner.os }}-${{ hashFiles('knip.json', 'tsconfig.json', 'package.json', 'package-lock.json') }}-
+      - name: Record deep static task source and execution identity
+        continue-on-error: true
+        env:
+          CI_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          CI_STATIC_CONTEXT_SCRIPT: check:ci:deep:tasks
+        run: npm run ci:static-context
+      - name: Run deep static checks
+        run: npm run check:ci:deep
+      - name: Save validated deep static task cache
+        if: >-
+          success() && steps.npm-cache.outputs.can-save == 'true' &&
+          steps.static-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .turbo/cache/
+          key: ${{ steps.static-cache.outputs.cache-primary-key }}
+      - name: Save Knip analysis cache
+        if: >-
+          success() && steps.npm-cache.outputs.can-save == 'true' &&
+          steps.knip-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: node_modules/.cache/knip
+          key: ${{ steps.knip-cache.outputs.cache-primary-key }}
+      - name: Upload complete deep static diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: static-deep-check-reports
           path: .cache/static-checks/
           include-hidden-files: true
           if-no-files-found: ignore
@@ -212,9 +306,11 @@ jobs:
       # every shard's diagnostics and coverage. Passing PRs run the full suite.
       fail-fast: ${{ github.event_name == 'pull_request' && needs.changes.outputs.tier == 'fast' }}
       matrix:
-        # Fast feedback spends the same six test jobs on one source group and
-        # five built groups; full qualification retains six complete shards.
-        shard: ${{ fromJSON(needs.changes.outputs.tier == 'fast' && '["1/5","2/5","3/5","4/5","5/5"]' || '["1/6","2/6","3/6","4/6","5/6","6/6"]') }}
+        # Fast feedback uses one source group and eight built groups so the
+        # slowest built shard job stays inside a ten-minute execution budget.
+        # Classification, build, and report merge sit outside that job.
+        # Full qualification retains six complete shards with coverage.
+        shard: ${{ fromJSON(needs.changes.outputs.tier == 'fast' && '["1/8","2/8","3/8","4/8","5/8","6/8","7/8","8/8"]' || '["1/6","2/6","3/6","4/6","5/6","6/6"]') }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -292,11 +388,13 @@ jobs:
       needs.changes.outputs.browser == 'true' ||
       needs.changes.outputs.binary_layout == 'true' ||
       needs.changes.outputs.evm == 'true' ||
+      needs.changes.outputs.apk_signature == 'true' ||
       needs.changes.outputs.javascript_recovery == 'true' ||
       needs.changes.outputs.recorded_crash == 'true' ||
       needs.changes.outputs.web_network == 'true' ||
       needs.changes.outputs.web_runtime == 'true' ||
-      needs.changes.outputs.web_source_map == 'true'
+      needs.changes.outputs.web_source_map == 'true' ||
+      needs.changes.outputs.agentenv == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -316,7 +414,9 @@ jobs:
         with:
           save: ${{ github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
       - run: npm run test:prepare
-      - name: Find available trusted full-suite timing history
+      # Fast and full shards measure different file costs. Download only the
+      # matching history so one tier cannot pack the other with its weights.
+      - name: Find available trusted timing history
         id: history
         continue-on-error: true
         env:
@@ -324,13 +424,14 @@ jobs:
           CI_REPOSITORY: ${{ github.repository }}
           CI_REPOSITORY_ID: ${{ github.repository_id }}
           CI_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          CI_TIMING_TIER: ${{ needs.changes.outputs.tier }}
         run: node scripts/ci/test-history.mjs
       - name: Download previous timing report
         if: steps.history.outputs.run-id != ''
         continue-on-error: true
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: test-timings
+          name: ${{ steps.history.outputs.artifact-name }}
           run-id: ${{ steps.history.outputs.run-id }}
           github-token: ${{ github.token }}
           path: .cache/ci-test-history
@@ -351,17 +452,23 @@ jobs:
       # test:prepare caches only portable JS, skill, and catalog outputs.
       # Native package jobs still run their build and prepack checks; Turbo
       # restores matching outputs or rebuilds when their inputs differ.
+      - name: Stage current portable build task cache
+        shell: bash
+        run: |
+          # A new Turbo dry run can evict the entries this build just used.
+          node scripts/ci/portable-build-cache.mjs snapshot < .cache/ci-build-plan.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: rea-build-cache
-          path: .turbo/cache/
+          path: .cache/ci-build-cache/
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 7
 
   sqlite-runtime:
-    # Preserve all selected coverage, but admit expensive host/provider work
-    # only after static validation. Portable tests still provide early feedback.
+    # Admit expensive host/provider work after fast static validation
+    # (typecheck, lint, format). Deep static does not gate these lanes.
+    # Portable tests still provide early feedback.
     needs: [changes, static, build]
     if: needs.changes.outputs.sqlite == 'true'
     uses: ./.github/workflows/sqlite-runtime.yml
@@ -456,11 +563,22 @@ jobs:
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 30
+      # Default-branch runs only. Pull-request artifacts share this name and
+      # the lookup reads one page, so publishing them would hide main.
       - name: Publish successful timing history
-        if: needs.changes.outputs.code == 'true' && needs.changes.outputs.tier == 'full' && success() && needs.test-shard.result == 'success'
+        if: >-
+          success() &&
+          needs.changes.outputs.code == 'true' &&
+          needs.test-shard.result == 'success' &&
+          (
+            needs.changes.outputs.tier == 'full' ||
+            (needs.changes.outputs.tier == 'fast' && needs.test-source.result == 'success')
+          ) &&
+          github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
+          (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: test-timings
+          name: test-timings-${{ needs.changes.outputs.tier }}
           path: .cache/ci-test-history/test-results.json
           include-hidden-files: true
           if-no-files-found: error
@@ -564,6 +682,9 @@ jobs:
       - name: Cache npm package downloads
         id: npm-cache
         uses: ./.github/actions/npm-cache
+        with:
+          # ubuntu-latest is the Linux x64 writer above. Other hosts save their own key.
+          save: ${{ matrix.os != 'ubuntu-latest' }}
       - name: Verify native runtime identity
         env:
           EXPECTED_CI_PLATFORM: ${{ matrix.platform }}
@@ -635,6 +756,14 @@ jobs:
       - name: Run native Apple and process boundary regressions
         run: >-
           npm run test:focused --
+          tests/boundary/providers/hopper/hopperMacLaunchArguments.test.ts
+          tests/acceptance/providers/hopperStartupRecovery.test.ts
+          tests/boundary/providers/hopper/hopperClient.helperFailure.test.ts
+          tests/boundary/providers/hopper/bridgeBootstrapCleanup.test.ts
+          tests/boundary/providers/hopper/bridgeTargetLease.integration.test.ts
+          tests/acceptance/artifactDmgAttachmentRecoveryCli.test.ts
+          tests/boundary/providers/native/nativeDmgArtifactReader.test.ts
+          tests/process-global/dmgCancellationReason.test.ts
           tests/boundary/filesystem/installScript.test.ts
           tests/boundary/filesystem/nibNativeHierarchy.test.ts
           tests/boundary/filesystem/interfaceBuilderBundle.test.ts
@@ -642,9 +771,12 @@ jobs:
           tests/boundary/cli/nativePlistPrototypeKeyCli.test.ts
           tests/boundary/cli/nativePlistSelectionFailureCli.test.ts
           tests/boundary/cli/nativeDemangleCli.test.ts
+          tests/boundary/cli/nativeDispatchPropertyAttributes.test.ts
           tests/boundary/mcp/nativeDemangleMcp.test.ts
           tests/boundary/providers/native/nativeSignatureTargetBinding.test.ts
           tests/boundary/cli/nativeSignatureCli.test.ts
+          tests/boundary/cli/nativeMachoArm64_32Cli.test.ts
+          tests/boundary/cli/nativeMachoEncryptionCli.test.ts
           tests/boundary/mcp/nativeSignatureTargetBindingMcp.test.ts
           src/process/capture/FilesystemSnapshot.test.ts
           tests/process-global/filesystemSnapshotFallbackCancellation.test.ts
@@ -669,7 +801,7 @@ jobs:
         id: npm-cache
         uses: ./.github/actions/npm-cache
       - run: npm ci
-      - name: Run the public CLI/MCP reconstruction journey
+      - name: Verify static CLI/MCP journeys and synthetic report conformance
         env:
           REA_READINESS_REPORT_PATH: readiness-report.json
         run: |
@@ -699,17 +831,24 @@ jobs:
       - name: Cache npm package downloads
         id: npm-cache
         uses: ./.github/actions/npm-cache
+        with:
+          save: "true"
       - run: npm ci
+      - name: Typecheck with the official Windows compiler
+        env:
+          GOMAXPROCS: "2"
+          GOMEMLIMIT: "3GiB"
+        run: npm run typecheck -- --checkers 2
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: rea-build-cache
           path: .turbo/cache/
-      - run: npm run build:cached
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: windows-native-controls
           path: native/windows/build/
       - run: npm run verify:windows-native:artifact
+      - run: npm run build:cached
       - name: Record named Windows host capabilities
         run: node scripts/windows-capabilities.mjs | Out-File -Encoding utf8NoBOM windows-capabilities.json
       - name: Validate Windows host capability report
@@ -725,22 +864,53 @@ jobs:
       # The matching native artifact establishes real Job Object and private
       # runtime boundaries for these fixtures. Ghidra and Java are not needed;
       # real engine claims remain in the separate controlled-provider workflow.
+      # Run native proofs before the broad curated suite so an unrelated
+      # fixture failure cannot hide the real control and recovery checks.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: windows-process-boundary-fixture
+          path: .cache/windows-process-boundary/
+      # Passing the fixture adds the breakaway, caller/child token, environment
+      # semantics and ancestor reparse observations, which the lane skips
+      # entirely when it is absent.
+      - run: >-
+          npm run verify:windows-native -- .
+          "${{ github.workspace }}\.cache\windows-process-boundary\process-boundary.exe"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: windows-native-inspection-fixture
+          path: .cache/windows-native-inspection-fixture/
+      - name: Verify native inspection failure ownership and recovery
+        run: node scripts/verify-windows-native-inspection.mjs
       - name: Run curated Windows capability tests
         run: >-
           npx vitest run --coverage.enabled=false
           src/process/capture/FilesystemSnapshot.test.ts
           tests/process-global/filesystemSnapshotFallbackCancellation.test.ts
+          tests/boundary/filesystem/typescriptCompiler.test.ts
+          tests/boundary/filesystem/releaseProposal.test.ts
           tests/boundary/filesystem/binaryTarget.test.ts
+          src/contracts/sessionPathInputs.test.ts
+          tests/boundary/filesystem/directAnalysisSnapshotReplay.test.ts
+          tests/boundary/mcp/rawBinaryMcp.test.ts
           tests/boundary/filesystem/safeOutputTree.test.ts
           tests/boundary/providers/native/artifactProvider.archiveSafety.test.ts
           tests/boundary/providers/native/artifactProvider.extractionCompleteness.test.ts
           tests/boundary/filesystem/setupUnavailableProvider.test.ts
           tests/boundary/filesystem/windowsNpxRegistration.test.ts
+          tests/boundary/filesystem/claudeDesktopSkillUninstallWindows.test.ts
+          tests/boundary/filesystem/clientConfigurationEnvironment.test.ts
+          tests/boundary/filesystem/clientConfigurationLayeredEnvironment.test.ts
+          tests/acceptance/setup/registrationRuntimeEnvironmentCli.test.ts
           tests/boundary/android/workspaceGuardianRetry.test.ts
           tests/acceptance/setup/homeDirectoryFallback.test.ts
           tests/boundary/filesystem/javascriptApplicationWorkflows.test.ts
           tests/boundary/filesystem/webScriptManifestPaths.test.ts
           tests/boundary/process/ProcessEvidence.host.test.ts
+          tests/boundary/process/packageNpmInvocation.test.ts
+          tests/boundary/process/packedBridgeVerification.test.ts
+          tests/boundary/process/windowsOutputCapture.test.ts
+          tests/boundary/process/windowsExecutableSelection.test.ts
           tests/acceptance/webModuleCli.test.ts
           tests/acceptance/webSourceLocationCli.test.ts
           tests/boundary/cli/referenceSourceImportStatus.test.ts
@@ -762,23 +932,9 @@ jobs:
           src/process/ProcessOwnership.validation.test.ts
           src/application/Update.test.ts
           tests/process-global/updateMaintenance.test.ts
+          tests/process-global/runnerCancellation.test.ts
+          tests/process-global/windowsOwnedCommand.test.ts
           tests/conformance/providers/ghidra/realGhidraWindowsWorkflow.test.ts
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: windows-process-boundary-fixture
-          path: .cache/windows-process-boundary/
-      # Passing the fixture adds the breakaway, caller/child token, environment
-      # semantics and ancestor reparse observations, which the lane skips
-      # entirely when it is absent.
-      - run: >-
-          npm run verify:windows-native -- .
-          "${{ github.workspace }}\.cache\windows-process-boundary\process-boundary.exe"
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: windows-native-inspection-fixture
-          path: .cache/windows-native-inspection-fixture/
-      - name: Verify native inspection failure ownership and recovery
-        run: node scripts/verify-windows-native-inspection.mjs
       - name: Verify real Node Inspector discovery and observation
         timeout-minutes: 10
         env:
@@ -794,7 +950,7 @@ jobs:
           tests/boundary/filesystem/javascriptArtifactContentIdentity.test.ts
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 22.19.0
+          node-version: 22.23.4
       - name: Verify native path boundaries on Node 22
         run: >-
           npx vitest run --coverage.enabled=false
@@ -810,7 +966,7 @@ jobs:
           retention-days: 30
 
   docs:
-    name: Docs Generation
+    name: Documentation
     needs: changes
     if: needs.changes.outputs.docs == 'true'
     runs-on: ubuntu-latest
@@ -825,6 +981,8 @@ jobs:
         uses: ./.github/actions/npm-cache
       - run: npm ci
       - run: npm run docs:check
+      - name: Render documentation and validate page links
+        run: npm run docs:build
       - name: Generation leaves authored files unchanged
         run: git diff --exit-code
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -836,66 +994,116 @@ jobs:
             skills/reverse-engineer-anything
           if-no-files-found: error
 
+  # Provider lanes wait for fast static and the portable build, not deep static.
   browser:
     needs: [changes, static, build]
     if: needs.changes.outputs.browser == 'true'
+    secrets:
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
     uses: ./.github/workflows/real-browser.yml
     with:
       build_cache_artifact: rea-build-cache
+      remote_cache_write: ${{ inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')) }}
 
   binary_layout:
     needs: [changes, static, build]
     if: needs.changes.outputs.binary_layout == 'true'
+    secrets:
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
     uses: ./.github/workflows/real-binary-layout.yml
     with:
       build_cache_artifact: rea-build-cache
+      remote_cache_write: ${{ inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')) }}
 
   evm:
     needs: [changes, static, build]
     if: needs.changes.outputs.evm == 'true'
+    secrets:
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
     uses: ./.github/workflows/real-evm-interface.yml
     with:
       build_cache_artifact: rea-build-cache
+      remote_cache_write: ${{ inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')) }}
+
+  apk_signature:
+    needs: [changes, static, build]
+    if: needs.changes.outputs.apk_signature == 'true'
+    secrets:
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+    uses: ./.github/workflows/real-apk-signature.yml
+    with:
+      build_cache_artifact: rea-build-cache
+      remote_cache_write: ${{ inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')) }}
 
   javascript_recovery:
     needs: [changes, static, build]
     if: needs.changes.outputs.javascript_recovery == 'true'
+    secrets:
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
     uses: ./.github/workflows/real-javascript-recovery.yml
     with:
       build_cache_artifact: rea-build-cache
+      remote_cache_write: ${{ inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')) }}
 
   recorded_crash:
     needs: [changes, static, build]
     if: needs.changes.outputs.recorded_crash == 'true'
+    secrets:
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
     uses: ./.github/workflows/real-recorded-crash.yml
     with:
       build_cache_artifact: rea-build-cache
+      remote_cache_write: ${{ inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')) }}
 
   web_network:
     needs: [changes, static, build]
     if: needs.changes.outputs.web_network == 'true'
+    secrets:
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
     uses: ./.github/workflows/real-web-network-captures.yml
     with:
       build_cache_artifact: rea-build-cache
+      remote_cache_write: ${{ inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')) }}
 
   web_runtime:
     needs: [changes, static, build]
     if: needs.changes.outputs.web_runtime == 'true'
+    secrets:
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
     uses: ./.github/workflows/real-web-runtime.yml
     with:
       build_cache_artifact: rea-build-cache
+      remote_cache_write: ${{ inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')) }}
 
   web_source_map:
     needs: [changes, static, build]
     if: needs.changes.outputs.web_source_map == 'true'
+    secrets:
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
     uses: ./.github/workflows/real-web-source-map.yml
     with:
       build_cache_artifact: rea-build-cache
+      remote_cache_write: ${{ inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')) }}
+
+  agentenv:
+    needs: [changes, static, build]
+    if: needs.changes.outputs.agentenv == 'true'
+    secrets:
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+    uses: ./.github/workflows/real-agentenv.yml
+    with:
+      build_cache_artifact: rea-build-cache
+      remote_cache_write: ${{ inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')) }}
 
   nativeaot:
     needs: [changes, static]
     if: needs.changes.outputs.nativeaot == 'true'
     uses: ./.github/workflows/nativeaot-fixtures.yml
+
+  ghidra_bridge:
+    needs: [changes, static]
+    if: needs.changes.outputs.ghidra_bridge == 'true'
+    uses: ./.github/workflows/ghidra-bridge-sources.yml
 
   website:
     needs: [changes, static]
@@ -910,6 +1118,7 @@ jobs:
       [
         changes,
         static,
+        static-deep,
         build,
         reverse-tools-quality,
         test-shard,
@@ -926,12 +1135,15 @@ jobs:
         browser,
         binary_layout,
         evm,
+        apk_signature,
         javascript_recovery,
         recorded_crash,
         web_network,
         web_runtime,
         web_source_map,
+        agentenv,
         nativeaot,
+        ghidra_bridge,
         website,
       ]
     runs-on: ubuntu-24.04

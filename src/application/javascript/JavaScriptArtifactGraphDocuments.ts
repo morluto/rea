@@ -19,6 +19,8 @@ export const addJavaScriptHtmlRoles = (
 ): void => {
   const byHtml = new Map<string, typeof context.analysis.html_scripts>();
   for (const script of context.analysis.html_scripts) {
+    if (script.script_type !== "classic" && script.script_type !== "module")
+      continue;
     const existing = byHtml.get(script.html_path);
     byHtml.set(
       script.html_path,
@@ -58,6 +60,7 @@ export const addJavaScriptHtmlRoles = (
         sourcePath: html.path,
         context: "html-reference",
         files: context.filesByPath,
+        jsonDocuments: context.analysis.jsonDocuments,
         directoryPaths: context.directoryPaths,
         unanalyzedFiles: context.unanalyzedFiles,
         htmlBaseHref: script.base_href,
@@ -144,6 +147,7 @@ export const addJavaScriptSourceMapOriginals = (
             label: reference?.source_name || null,
             source_map_reference: reference,
             properties: {
+              section_path: [...original.section_path],
               source_index: original.source_index,
               declaration_index: original.declaration_index,
               source_name_available: reference !== null,
@@ -166,6 +170,7 @@ export const addJavaScriptSourceMapOriginals = (
         target_node_id: node.node_id,
         relation: "contains",
         properties: {
+          section_path: [...original.section_path],
           source_index: original.source_index,
           declaration_index: original.declaration_index,
           original_source: reference?.source_name ?? null,

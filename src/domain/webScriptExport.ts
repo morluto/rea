@@ -30,8 +30,8 @@ const sourceSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     kind: z.literal("scenario-response"),
     transaction_id: z.string().min(1),
-    request_sequence: z.number().int().min(1),
-    response_sequence: z.number().int().min(1).nullable(),
+    request_sequence: z.int().min(1),
+    response_sequence: z.int().min(1).nullable(),
     status: z.number().nullable(),
   }),
 ]);
@@ -47,7 +47,7 @@ export const exportedWebScriptSchema = z.strictObject({
       layout: z.enum(["url-path", "isolated"]),
       layout_reason: z.string().nullable(),
       sha256: digestSchema,
-      bytes: z.number().int().min(0),
+      bytes: z.int().min(0),
       media_type: z.string().nullable(),
       redacted: z.boolean().nullable(),
       representation: z.enum([
@@ -94,7 +94,7 @@ export const webScriptExportResultSchema = webScriptExportManifestSchema.extend(
     manifest: z.strictObject({
       path: z.string().min(1),
       sha256: digestSchema,
-      bytes: z.number().int().min(0),
+      bytes: z.int().min(0),
     }),
   },
 );

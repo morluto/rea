@@ -1,10 +1,133 @@
+import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import { access, mkdir, readFile, writeFile, rm } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { expect } from "vitest";
 import { parse } from "jsonc-parser";
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+
+cliTest(
+  "Claude Code routes an empty config directory to its home registration",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-claude-empty-config-dir-");
+    const home = join(root, "home");
+    const cwd = join(root, "work");
+    const config = join(home, ".claude.json");
+    const backup = `${config}.rea.backup`;
+    const skill = join(home, ".claude", "skills", PRODUCT_IDENTITY.skillName);
+    const cwdSkill = join(cwd, "skills", PRODUCT_IDENTITY.skillName);
+    const original = JSON.stringify({
+      theme: "dark",
+      mcpServers: { other: { command: "other" } },
+    });
+    await mkdir(home, { recursive: true });
+    await mkdir(cwd, { recursive: true });
+    await writeFile(config, original);
+    const run = (arguments_: readonly string[]) =>
+      cli.run({
+        arguments: arguments_,
+        cwd,
+        environment: {
+          HOME: home,
+          USERPROFILE: home,
+          CLAUDE_CONFIG_DIR: "",
+        },
+        timeoutMs: 20_000,
+      });
+    const setup = (flags: readonly string[] = []) =>
+      run(["setup", "--client", "claude_code", ...flags, "--json"]);
+
+    const planned = await setup(["--dry-run"]);
+    expect(planned.exitCode, planned.stderr).toBe(0);
+    expect(planned.json).toMatchObject({
+      status: "planned",
+      plannedActions: expect.arrayContaining([
+        expect.objectContaining({
+          id: "configure_client:claude_code",
+          target: config,
+          backupPath: backup,
+        }),
+        expect.objectContaining({
+          id: "install_skill:claude_code",
+          target: skill,
+        }),
+      ]),
+    });
+    expect(await readFile(config, "utf8")).toBe(original);
+    await expect(access(join(cwd, ".claude.json"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(access(join(skill, "SKILL.md"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(access(join(cwdSkill, "SKILL.md"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(access(backup)).rejects.toMatchObject({ code: "ENOENT" });
+
+    const applied = await setup(["--yes"]);
+    expect(applied.exitCode, applied.stderr).toBe(0);
+    expect(applied.json).toMatchObject({ status: "ready" });
+    expect(await readFile(backup, "utf8")).toBe(original);
+    expect(parse(await readFile(config, "utf8"))).toMatchObject({
+      theme: "dark",
+      mcpServers: {
+        other: { command: "other" },
+        rea: expect.any(Object),
+      },
+    });
+    await expect(access(join(skill, "SKILL.md"))).resolves.toBeUndefined();
+    await expect(access(join(cwd, ".claude.json"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(access(join(cwdSkill, "SKILL.md"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+
+    const repeat = await setup(["--yes"]);
+    expect(repeat.exitCode, repeat.stderr).toBe(0);
+    expect(repeat.json).toMatchObject({
+      status: "ready",
+      appliedActions: [],
+    });
+    expect(await readFile(backup, "utf8")).toBe(original);
+    const doctor = await run([
+      "doctor",
+      "--client",
+      "claude_code",
+      "--skill",
+      "--json",
+    ]);
+    expect(doctor.exitCode, doctor.stderr).toBe(0);
+    expect(doctor.json).toMatchObject({
+      healthy: true,
+      identity: {
+        skill: { state: "aligned" },
+        registrations: expect.arrayContaining([
+          expect.objectContaining({ client: "claude_code", state: "aligned" }),
+        ]),
+      },
+    });
+
+    const uninstall = await run(["uninstall", "--json"]);
+    expect(uninstall.exitCode, uninstall.stderr).toBe(0);
+    expect(uninstall.json).toMatchObject({ status: "complete" });
+    expect(parse(await readFile(config, "utf8"))).toEqual({
+      theme: "dark",
+      mcpServers: { other: { command: "other" } },
+    });
+    await expect(access(join(skill, "SKILL.md"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(access(join(cwd, ".claude.json"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(access(join(cwdSkill, "SKILL.md"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  },
+);
 
 for (const policy of [{ excluded: ["rea"] }, { allowed: ["other"] }]) {
   cliTest(
@@ -360,12 +483,9 @@ cliTest(
         mcp: {
           rea: {
             type: "local",
-            command: [
-              "npx",
-              "-y",
-              PRODUCT_IDENTITY.registrationPackageSpecifier,
-              "mcp",
-            ],
+            command: currentClientRegistrationCommand({
+              entrypointPath: resolve("scripts/rea.mjs"),
+            }),
             enabled: true,
           },
         },
@@ -419,12 +539,9 @@ cliTest(
     await mkdir(dirname(custom), { recursive: true });
     const owned = {
       type: "local",
-      command: [
-        "npx",
-        "-y",
-        PRODUCT_IDENTITY.registrationPackageSpecifier,
-        "mcp",
-      ],
+      command: currentClientRegistrationCommand({
+        entrypointPath: resolve("scripts/rea.mjs"),
+      }),
       enabled: true,
     };
     const original = JSON.stringify({

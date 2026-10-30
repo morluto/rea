@@ -7,13 +7,17 @@ import {
 } from "@modelcontextprotocol/server";
 
 import { ProcessCaptureError } from "../../../src/process/capture/ProcessCaptureError.js";
-import { resolveProcessResult } from "../../../src/process/capture/ProcessCaptureLifecycle.js";
+import {
+  resolveProcessResult,
+  type ProcessCaptureCleanupOutcome,
+} from "../../../src/process/capture/ProcessCaptureLifecycle.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import type { ToolContract } from "../../../src/contracts/toolContractTypes.js";
 import { err } from "../../../src/domain/result.js";
+import { EvidenceIntegrityError } from "../../../src/domain/evidenceErrors.js";
 import { HopperProcessError } from "../../../src/domain/hopperErrors.js";
 import { processScenarioSchema } from "../../../src/domain/process/processScenario.js";
-import { ToolResultDelivery } from "../../../src/server/toolResult.js";
+import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import {
   accountFullyObservedProcessCapture,
@@ -23,13 +27,19 @@ import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import { evidenceResultOf } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 
-import type { IncompleteProcessCaptureObservations } from "../../../src/domain/process/processCapture.js";
-const delivery = new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
+import type {
+  IncompleteProcessCaptureObservations,
+  ProcessCaptureCleanupReport,
+} from "../../../src/domain/process/processCapture.js";
+const delivery = createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
 const UNTRUSTED_TARGET_CONTENT = {
   provenance: { untrusted_content: true, source: "analysis_target" },
 };
 const emptyFilesystemCoverage =
   emptyProcessCapture().truncation_details.filesystem_before;
+const historicalCleanupOutcome = (
+  report: ProcessCaptureCleanupReport,
+): ProcessCaptureCleanupOutcome => ({ report, cleanupLease: undefined });
 
 const captureWithObservedOutput = () =>
   accountFullyObservedProcessCapture({
@@ -80,7 +90,7 @@ describe("completed partial process capture MCP projection", () => {
       resolveProcessResult(
         capture,
         new Error("final filesystem snapshot failed"),
-        cleanup,
+        historicalCleanupOutcome(cleanup),
       );
     } catch (cause: unknown) {
       if (!(cause instanceof ProcessCaptureError)) throw cause;
@@ -128,7 +138,11 @@ describe("completed partial process capture MCP projection", () => {
 
     let failure: ProcessCaptureError | undefined;
     try {
-      resolveProcessResult(capture, executionFailure, cleanup);
+      resolveProcessResult(
+        capture,
+        executionFailure,
+        historicalCleanupOutcome(cleanup),
+      );
     } catch (cause: unknown) {
       if (!(cause instanceof ProcessCaptureError)) throw cause;
       failure = cause;
@@ -267,7 +281,7 @@ describe("incomplete partial process observations MCP projection", () => {
       resolveProcessResult(
         undefined,
         new Error("capture failed before completion"),
-        cleanup,
+        historicalCleanupOutcome(cleanup),
         observations,
         { scenario, rootPid },
       );
@@ -469,34 +483,39 @@ describe("untrusted provenance on failed tool results", () => {
   });
 
   it("marks a recorded partial-observation error and its retention fallback", () => {
-    const recorded = delivery.toRecordedPartialErrorToolResult(
-      failure(),
-      "evidence-1",
-      { ok: true, value: "added" },
-      true,
+    const evidence = createEvidence(
+      undefined,
+      { id: "fixture", name: "Partial observation fixture", version: "1" },
+      { operation: "fixture", parameters: {}, result: { observed: true } },
     );
+    const original = failure().retainPartialObservation(evidence);
+    const recorded = delivery.toPartialErrorToolResult(original, true, () => ({
+      ok: true,
+      value: "added",
+    }));
     expect(recorded.structuredContent).toMatchObject({
       error: {
         details: {
           partial_observation: {
             kind: "retained-evidence",
-            evidence_id: "evidence-1",
+            evidence_id: evidence.evidence_id,
           },
         },
       },
     });
     expect(recorded._meta).toEqual(UNTRUSTED_TARGET_CONTENT);
-    const unrecorded = delivery.toRecordedPartialErrorToolResult(
-      failure(),
-      "evidence-1",
-      err(failure()),
-      true,
+    const unrecorded = delivery.toPartialErrorToolResult(original, true, () =>
+      err(new EvidenceIntegrityError("fixture rejects partial")),
     );
+    expect(unrecorded.structuredContent).toMatchObject({
+      error: { details: { partial_observation: evidence } },
+    });
     expect(unrecorded._meta).toEqual(UNTRUSTED_TARGET_CONTENT);
+    expect(original.partialObservation).toBe(evidence);
   });
 
   it("marks the response-budget error that replaces an oversized target-content result", () => {
-    const small = new ToolResultDelivery(4096);
+    const small = createToolResultDelivery(4096);
     const result = small.toCallToolResult(
       { ok: true, value: { text: "x".repeat(8192) } },
       toolContract("procedure_pseudo_code"),

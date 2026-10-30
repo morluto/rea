@@ -7,9 +7,6 @@ import type {
 
 /** Immutable inventory produced by one complete artifact scan. */
 export interface ArtifactInventorySnapshot {
-  readonly coverage_status: NonNullable<
-    ArtifactInventoryResult["coverage_status"]
-  >;
   readonly manifest: ArtifactInventoryResult["manifest"];
   readonly nodes: readonly ArtifactNode[];
   readonly occurrences: ArtifactInventoryResult["occurrences"];
@@ -18,6 +15,6 @@ export interface ArtifactInventorySnapshot {
     ArtifactInventoryResult["provenance"][number]
   >;
   readonly integrity_contradictions: readonly IntegrityContradiction[];
-  readonly coverage?: ArtifactInventoryCoverage;
+  readonly coverage: ArtifactInventoryCoverage;
   readonly limitations: readonly string[];
 }

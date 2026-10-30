@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  assessFunctionCallCoverage,
   combineFunctionRelationshipCoverage,
   isCallerOnlyIncompleteCoverage,
 } from "./functionCallCoverage.js";
@@ -86,5 +87,29 @@ describe("isCallerOnlyIncompleteCoverage", () => {
         limited_directions: ["callees"],
       }),
     ).toBe(false);
+  });
+});
+
+describe("assessFunctionCallCoverage", () => {
+  it("keeps incomplete coverage and unresolved calls as equality blockers", () => {
+    expect(
+      assessFunctionCallCoverage(
+        {
+          status: "partial",
+          limitations: ["Read limit reached."],
+          diagnostics: ["Indirect calls are unresolved."],
+        },
+        {
+          unresolved_calls: [{ address: "0x1004", reason: "Computed target." }],
+        },
+      ),
+    ).toEqual({
+      blockers: [
+        "Read limit reached.",
+        "Unresolved call at 0x1004: Computed target.",
+      ],
+      unresolvedCallCaveats: ["Unresolved call at 0x1004: Computed target."],
+      diagnostics: ["Indirect calls are unresolved."],
+    });
   });
 });

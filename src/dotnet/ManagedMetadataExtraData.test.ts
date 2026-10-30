@@ -153,7 +153,8 @@ describe("CLR ExtraData index widths and boundaries", () => {
 
   it("reports a truncated row count before interpreting ExtraData", () => {
     const bytes = buildManagedPeFixture({ metadataExtraData: 0x1234_5678 });
-    const { streamHeader, extraDataOffset } = fixtureTablesStream(bytes);
+    const { streamHeader, tablesOffset, extraDataOffset } =
+      fixtureTablesStream(bytes);
     bytes.writeUInt32LE(extraDataOffset - 1, streamHeader + 4);
     const result = inspectManagedMembersBytes(
       bytes,
@@ -166,11 +167,31 @@ describe("CLR ExtraData index widths and boundaries", () => {
         expect.objectContaining({
           code: "invalid-metadata-root",
           scope: "metadata.table-row-count",
+          // The last row count's artifact file offset, not its stream offset.
+          offset: tablesOffset + extraDataOffset - 4,
         }),
       ],
     });
     expect(result.types).toEqual([]);
     expect(result.methods).toEqual([]);
+  });
+
+  it("reports a stream extent beyond the metadata root at its file offset", () => {
+    const bytes = buildManagedPeFixture();
+    const { streamHeader, tablesOffset } = fixtureTablesStream(bytes);
+    bytes.writeUInt32LE(0xffff_ffff, streamHeader + 4);
+    const result = inspectManagedMembersBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+
+    expect(result.coverage.issues).toEqual([
+      expect.objectContaining({
+        code: "invalid-metadata-root",
+        scope: "metadata.#~",
+        offset: tablesOffset,
+      }),
+    ]);
   });
 
   it.each([0, 1, 3])(

@@ -4,6 +4,7 @@ import {
   compositeKey,
 } from "./unicodeCodePointOrder.js";
 import type { WebPageInspection } from "./browserObservationSchemas.js";
+import { webResourceComparisonIdentity } from "./webInventory.js";
 import {
   webCaptureDiffSchema,
   type CompareWebCapturesInput,
@@ -41,9 +42,14 @@ export const compareWebCaptures = (
     },
     dimensions,
     limitations: [
-      "A changed status proves an observed difference; an unknown status means absence could not be established from capture completeness.",
+      "A changed status proves an observed difference; an unknown status means necessary comparison facts or coverage were unavailable.",
+      ...(!domValueLengthsComparable(before.dom, after.dom)
+        ? [
+            "DOM value-length comparison is unknown because units are missing or different; independent structural differences can still establish a change.",
+          ]
+        : []),
       "Network comparison covers only activity observed after each CDP attachment. WebSocket connections with the same URL are compared as an unordered collection of ordered frame streams, retaining connection counts; their individual identities are not stable across captures.",
-      "Accessibility roles, ignored state, text, and hierarchy are compared only when the accessibility tree was fully captured and text capture was selected and not truncated.",
+      "Accessibility structure is compared when the tree is complete; text additionally requires complete selected text capture. A missing role leaves that node's role comparison unknown; independently observed differences can still establish a change.",
       "Storage key inventories are compared only when selected and complete; usage and quota are compared only when reported. Redacted content is compared through complete SHA-256 fingerprints.",
     ],
   });
@@ -74,11 +80,15 @@ const compareDimension = (
   after: ReadonlyMap<string, string>,
   complete: boolean,
   reason: string,
-  inventoryComplete = complete,
+  inventoryComplete: boolean | ((identity: string) => boolean) = complete,
 ): Dimension => {
   // Membership evidence can be complete even when selected content is unknown.
   const all = compareIdentities(before, after).filter(
-    ({ change }) => inventoryComplete || change === "modified",
+    ({ identity, change }) =>
+      change === "modified" ||
+      (typeof inventoryComplete === "boolean"
+        ? inventoryComplete
+        : inventoryComplete(identity)),
   );
   if (all.length > 0)
     return {
@@ -110,14 +120,26 @@ const accessibilityDimension = (
   const afterAccess = accessibilityComparable(after);
   const textComparable = beforeAccess.text && afterAccess.text;
   const nodesComparable = beforeAccess.nodes && afterAccess.nodes;
+  const rolesComplete =
+    before.accessibility.nodes.every((node) => node.role !== null) &&
+    after.accessibility.nodes.every((node) => node.role !== null);
+  const reason =
+    "Accessibility tree, role, or text capture was incomplete in at least one observation.";
+  if (!nodesComparable)
+    return {
+      status: "unknown",
+      total_changes: 0,
+      changes: [],
+      reason,
+    };
   return compareDimension(
     singleton(
       "accessibility_tree",
       digestCanonicalValue(
         accessibilityProjection(
           before.accessibility,
+          after.accessibility,
           textComparable,
-          nodesComparable,
         ),
       ),
     ),
@@ -126,13 +148,13 @@ const accessibilityDimension = (
       digestCanonicalValue(
         accessibilityProjection(
           after.accessibility,
+          before.accessibility,
           textComparable,
-          nodesComparable,
         ),
       ),
     ),
-    beforeAccess.complete && afterAccess.complete,
-    "Accessibility tree or text capture was incomplete in at least one observation.",
+    beforeAccess.complete && afterAccess.complete && rolesComplete,
+    reason,
   );
 };
 
@@ -151,6 +173,12 @@ const storageDimension = (
     before.storage,
     after.storage,
   );
+  const indexedDbVersionCovered = [before.storage, after.storage].every(
+    (storage) =>
+      storage.content_fingerprints
+        .filter(({ scope }) => scope === "indexed_db_schema")
+        .every(({ projection_version }) => projection_version === 2),
+  );
   return compareDimension(
     storageMap(
       before.storage,
@@ -164,8 +192,12 @@ const storageDimension = (
       usageComplete,
       comparableFingerprints,
     ),
-    storageComparable(before, after, keysComplete, usageComplete),
-    "Storage fingerprints, inventories, usage, or quota were unavailable or truncated in at least one observation.",
+    keysComplete &&
+      usageComplete &&
+      indexedDbVersionCovered &&
+      before.storage.fingerprints_complete &&
+      after.storage.fingerprints_complete,
+    "Storage fingerprints, inventories, usage, quota, or IndexedDB schema version coverage were unavailable or truncated in at least one observation.",
     keysComplete,
   );
 };
@@ -177,25 +209,13 @@ const compareWebCaptureDimensions = (
   const after = input.after.inspection;
   return {
     dom_structure: domDimension(before, after),
-    scripts: compareDimension(
-      keyed(
-        before.scripts.items.map(scriptProjection),
-        (item) => item.script_key,
-      ),
-      keyed(
-        after.scripts.items.map(scriptProjection),
-        (item) => item.script_key,
-      ),
-      sectionsComplete(before, ["scripts"]) &&
-        sectionsComplete(after, ["scripts"]),
-      "Script inventory was incomplete in at least one observation.",
-    ),
-    resources: compareDimension(
-      keyed(before.resources, (item) => item.resource_key),
-      keyed(after.resources, (item) => item.resource_key),
+    scripts: scriptsDimension(before, after),
+    resources: compareResources(
+      before.resources,
+      after.resources,
       sectionsComplete(before, ["resources"]) &&
         sectionsComplete(after, ["resources"]),
-      "Resource inventory was incomplete in at least one observation.",
+      "Resource inventory or content-size evidence was incomplete in at least one observation.",
     ),
     network: networkDimension(before, after),
     metadata: compareAggregate(
@@ -212,13 +232,71 @@ const compareWebCaptureDimensions = (
   };
 };
 
-const keyed = <T>(
-  values: readonly T[],
-  identity: (value: T) => string,
-): ReadonlyMap<string, string> =>
-  new Map(
-    values.map((value) => [identity(value), digestCanonicalValue(value)]),
-  );
+const compareResources = (
+  before: WebPageInspection["resources"],
+  after: WebPageInspection["resources"],
+  complete: boolean,
+  reason: string,
+): Dimension => {
+  const left = resourceGroups(before);
+  const right = resourceGroups(after);
+  const changes: Change[] = [];
+  let unresolved = false;
+  for (const identity of new Set([...left.keys(), ...right.keys()])) {
+    const leftSizes = left.get(identity);
+    const rightSizes = right.get(identity);
+    if (leftSizes === undefined || rightSizes === undefined) {
+      if (!complete) unresolved = true;
+      else
+        changes.push({
+          identity,
+          change: leftSizes === undefined ? "added" : "removed",
+        });
+      continue;
+    }
+    // Stable inventories deduplicate identical observations. A null size also
+    // loses multiplicity, so do not infer modifications from the remaining
+    // known sizes in a group that contains unknown size evidence.
+    if (leftSizes.has(null) || rightSizes.has(null)) {
+      unresolved = true;
+      continue;
+    }
+    if (!sameResourceSizes(leftSizes, rightSizes))
+      changes.push({ identity, change: "modified" });
+  }
+  if (changes.length > 0)
+    return {
+      status: "changed",
+      total_changes: changes.length,
+      changes: changes.sort((leftChange, rightChange) =>
+        compareUnicodeCodePoints(leftChange.identity, rightChange.identity),
+      ),
+      reason: null,
+    };
+  if (!complete || unresolved)
+    return { status: "unknown", total_changes: 0, changes: [], reason };
+  return { status: "unchanged", total_changes: 0, changes: [], reason: null };
+};
+
+const resourceGroups = (
+  resources: WebPageInspection["resources"],
+): Map<string, Set<number | null>> => {
+  const groups = new Map<string, Set<number | null>>();
+  for (const resource of resources) {
+    const identity = webResourceComparisonIdentity(resource);
+    const sizes = groups.get(identity);
+    if (sizes === undefined)
+      groups.set(identity, new Set([resource.content_size]));
+    else sizes.add(resource.content_size);
+  }
+  return groups;
+};
+
+const sameResourceSizes = (
+  left: ReadonlySet<number | null>,
+  right: ReadonlySet<number | null>,
+): boolean =>
+  left.size === right.size && [...left].every((size) => right.has(size));
 
 type BodyShapeSources = {
   readonly request: boolean;
@@ -246,60 +324,174 @@ const networkIdentity = (
 ): string =>
   `net_${digestCanonicalValue({ method: request.method, url: request.url, resource_type: request.resource_type })}`;
 
+/** An unknown request type can match any observed type at the same method/URL. */
+const networkIdentityCoverage = (
+  before: WebPageInspection,
+  after: WebPageInspection,
+): {
+  readonly complete: boolean;
+  readonly ambiguousIdentities: ReadonlySet<string>;
+} => {
+  const complete = [before, after].every((inspection) =>
+    inspection.network.requests.every(
+      ({ resource_type }) => resource_type !== null,
+    ),
+  );
+  const ambiguousIdentities = new Set<string>();
+  if (complete) return { complete, ambiguousIdentities };
+  type Request = WebPageInspection["network"]["requests"][number];
+  const matchKey = (request: Request): string =>
+    JSON.stringify([request.method, request.url]);
+  const unknownTypes = (
+    inspection: WebPageInspection,
+  ): ReadonlyMap<string, boolean> => {
+    const groups = new Map<string, boolean>();
+    for (const request of inspection.network.requests) {
+      const key = matchKey(request);
+      groups.set(
+        key,
+        groups.get(key) === true || request.resource_type === null,
+      );
+    }
+    return groups;
+  };
+  const retainPotentialMatches = (
+    inspection: WebPageInspection,
+    peer: ReadonlyMap<string, boolean>,
+  ): void => {
+    for (const request of inspection.network.requests) {
+      const peerUnknown = peer.get(matchKey(request));
+      if (
+        peerUnknown === true ||
+        (peerUnknown === false && request.resource_type === null)
+      )
+        ambiguousIdentities.add(networkIdentity(request));
+    }
+  };
+  retainPotentialMatches(before, unknownTypes(after));
+  retainPotentialMatches(after, unknownTypes(before));
+  return { complete, ambiguousIdentities };
+};
+
 const networkResponseFields = [
   "status",
   "mime_type",
   "encoded_data_length",
 ] as const;
-type NetworkResponseField = (typeof networkResponseFields)[number];
+const redirectMetadataFields = [
+  ...networkResponseFields,
+  "resource_type",
+] as const;
+type NetworkMetadataField = (typeof redirectMetadataFields)[number];
 
-const sharedNetworkResponseFields = (
+/** Own both comparable fields and completeness instead of deriving it from set sizes. */
+const sharedNetworkMetadata = (
   before: WebPageInspection,
   after: WebPageInspection,
-): ReadonlyMap<string, ReadonlySet<NetworkResponseField>> => {
-  const shared = new Map<string, Set<NetworkResponseField>>();
+): {
+  readonly fields: ReadonlyMap<string, ReadonlySet<NetworkMetadataField>>;
+  readonly complete: boolean;
+} => {
+  const shared = new Map<string, Set<NetworkMetadataField>>();
+  let complete = true;
+  const retainKnownFields = (
+    identity: string,
+    metadata: Pick<
+      WebPageInspection["network"]["requests"][number],
+      NetworkMetadataField
+    >,
+    required: readonly NetworkMetadataField[],
+  ): void => {
+    const fields = shared.get(identity) ?? new Set(required);
+    for (const field of required)
+      if (metadata[field] === null) {
+        fields.delete(field);
+        complete = false;
+      }
+    shared.set(identity, fields);
+  };
   for (const inspection of [before, after])
     for (const request of inspection.network.requests) {
       const identity = networkIdentity(request);
-      retainSharedResponseFields(shared, identity, request);
+      retainKnownFields(identity, request, networkResponseFields);
       for (const [index, redirect] of (request.redirects ?? []).entries())
-        retainSharedResponseFields(
-          shared,
+        retainKnownFields(
           redirectNetworkIdentity(identity, index),
           redirect,
+          redirectMetadataFields,
         );
     }
-  return shared;
-};
-
-const retainSharedResponseFields = (
-  shared: Map<string, Set<NetworkResponseField>>,
-  identity: string,
-  response: Pick<
-    WebPageInspection["network"]["requests"][number],
-    NetworkResponseField
-  >,
-): void => {
-  const fields = shared.get(identity) ?? new Set(networkResponseFields);
-  for (const field of networkResponseFields)
-    if (response[field] === null) fields.delete(field);
-  shared.set(identity, fields);
+  return { fields: shared, complete };
 };
 
 const redirectNetworkIdentity = (identity: string, index: number): string =>
   compositeKey([identity, "redirect", index]);
+/** Section lists and per-kind dropped counts independently limit absence evidence. */
+const networkInventoryComplete = (
+  inspection: WebPageInspection,
+  sections: readonly (
+    | "network_requests"
+    | "websocket_connections"
+    | "websocket_frames"
+  )[],
+): boolean =>
+  sectionsComplete(inspection, sections) &&
+  sections.every(
+    (section) => inspection.completeness.dropped_events[section] === 0,
+  );
+
+type WebSocketEvent =
+  WebPageInspection["network"]["websocket_connections"][number]["events"][number];
+
+const webSocketEventHasOpcode = (
+  event: WebSocketEvent | undefined,
+): event is WebSocketEvent => event !== undefined && event.opcode !== null;
+
+const webSocketEventHasPayloadBytes = (
+  event: WebSocketEvent | undefined,
+): boolean => webSocketEventHasOpcode(event) && event.payload_bytes !== null;
+
+const webSocketEventHasPayloadShape = (
+  event: WebSocketEvent | undefined,
+): boolean => webSocketEventHasOpcode(event) && event.payload_shape !== null;
+
+const webSocketOpcodesKnown = (inspection: WebPageInspection): boolean =>
+  inspection.network.websocket_connections.every((connection) =>
+    connection.events.every(webSocketEventHasOpcode),
+  );
 
 const networkDimension = (
   before: WebPageInspection,
   after: WebPageInspection,
 ): Dimension => {
-  const responseFields = sharedNetworkResponseFields(before, after);
-  const responseFieldsComplete = [...responseFields.values()].every(
-    (fields) => fields.size === networkResponseFields.length,
+  const requestsComplete = [before, after].every((inspection) =>
+    networkInventoryComplete(inspection, ["network_requests"]),
   );
+  const webSocketFramesComplete = [before, after].every((inspection) =>
+    networkInventoryComplete(inspection, [
+      "websocket_connections",
+      "websocket_frames",
+    ]),
+  );
+  const webSocketInventoryComplete = [before, after].every(
+    (inspection) =>
+      networkInventoryComplete(inspection, [
+        "websocket_connections",
+        "websocket_frames",
+      ]) && webSocketOpcodesKnown(inspection),
+  );
+  const requestIdentities = networkIdentityCoverage(before, after);
+  const metadata = sharedNetworkMetadata(before, after);
   const selected = bodyShapesSelected(before) && bodyShapesSelected(after);
   const webSocketShapes =
     webSocketShapesSelected(before) && webSocketShapesSelected(after);
+  const projection = {
+    metadataFields: metadata.fields,
+    ambiguousIdentities: requestIdentities.ambiguousIdentities,
+    initiatorsComplete: [before, after].every((inspection) =>
+      sectionsComplete(inspection, ["network_initiators"]),
+    ),
+  };
   const sources = new Map<string, BodyShapeSources>();
   if (selected) {
     const observedSources = (inspection: WebPageInspection) => {
@@ -342,49 +534,63 @@ const networkDimension = (
       (inspection) =>
         sectionsComplete(inspection, ["websocket_shapes"]) &&
         inspection.network.websocket_connections.every((connection) =>
-          connection.events.every((event) => event.payload_shape !== null),
+          connection.events.every(webSocketEventHasPayloadShape),
         ),
     );
   const webSocketPayloadBytesComplete = [before, after].every((inspection) =>
     inspection.network.websocket_connections.every((connection) =>
-      connection.events.every((event) => event.payload_bytes !== null),
+      connection.events.every(webSocketEventHasPayloadBytes),
     ),
   );
   const beforeWebSockets = webSocketGroups(before);
   const afterWebSockets = webSocketGroups(after);
-  const inventoryComplete = [before, after].every((inspection) =>
-    sectionsComplete(inspection, [
-      "network_requests",
-      "websocket_connections",
-      "websocket_frames",
-    ]),
-  );
   const [beforeWebSocketPayload, afterWebSocketPayload] = webSocketPayloadMaps(
     beforeWebSockets,
     afterWebSockets,
     webSocketShapes,
+    webSocketFramesComplete,
+  );
+  const [beforeRequests, afterRequests] = networkComparisonMaps(
+    networkMap(before, sources, projection),
+    networkMap(after, sources, projection),
+    networkInventoryComplete(before, ["network_requests"]),
+    networkInventoryComplete(after, ["network_requests"]),
   );
   const compared = compareDimension(
     new Map([
-      ...networkMap(before, sources, responseFields),
-      ...webSocketMetadataMap(beforeWebSockets),
+      ...beforeRequests,
+      ...(webSocketInventoryComplete
+        ? webSocketMetadataMap(beforeWebSockets)
+        : []),
       ...beforeWebSocketPayload,
     ]),
     new Map([
-      ...networkMap(after, sources, responseFields),
-      ...webSocketMetadataMap(afterWebSockets),
+      ...afterRequests,
+      ...(webSocketInventoryComplete
+        ? webSocketMetadataMap(afterWebSockets)
+        : []),
       ...afterWebSocketPayload,
     ]),
-    inventoryComplete &&
+    requestsComplete &&
+      requestIdentities.complete &&
+      projection.initiatorsComplete &&
+      webSocketInventoryComplete &&
       shapesComplete &&
       webSocketPayloadBytesComplete &&
       webSocketShapesComplete,
-    "Network capture or selected HTTP/WebSocket payload-shape coverage is attach-window limited, unavailable, or incomplete.",
-    inventoryComplete,
+    requestIdentities.complete
+      ? "Network capture or selected HTTP/WebSocket payload-shape coverage is limited, unavailable, incomplete, or includes dropped network events."
+      : "HTTP request identity is incomplete because a resource type is unavailable; potentially matching type groups cannot establish membership/content changes or complete network equality.",
+    // HTTP maps already retain only directionally proven membership/content
+    // changes. WebSocket inventory uses its own coverage independently.
+    (identity) =>
+      identity.startsWith("net_")
+        ? true
+        : identity.startsWith("ws_") && webSocketInventoryComplete,
   );
-  if (responseFieldsComplete) return compared;
+  if (metadata.complete) return compared;
   const responseEvidenceReason =
-    "HTTP response or redirect status, MIME type, or byte-count evidence is incomplete.";
+    "HTTP response or redirect status, MIME type, byte count, or resource-type evidence is incomplete.";
   if (compared.status === "changed") return compared;
   return {
     status: "unknown",
@@ -400,61 +606,108 @@ const networkDimension = (
 const networkMap = (
   inspection: WebPageInspection,
   sources: ReadonlyMap<string, BodyShapeSources>,
-  responseFields: ReadonlyMap<string, ReadonlySet<NetworkResponseField>>,
-): ReadonlyMap<string, string> => {
-  const grouped = new Map<string, unknown[]>();
+  projection: {
+    readonly metadataFields: ReadonlyMap<
+      string,
+      ReadonlySet<NetworkMetadataField>
+    >;
+    readonly ambiguousIdentities: ReadonlySet<string>;
+    readonly initiatorsComplete: boolean;
+  },
+): ReadonlyMap<string, readonly string[]> => {
+  const grouped = new Map<string, string[]>();
   for (const request of inspection.network.requests) {
     const identity = networkIdentity(request);
+    // A missing type can move repeated requests between these buckets. Neither
+    // their counts nor fingerprints establish a change to that typed group.
+    if (projection.ambiguousIdentities.has(identity)) continue;
     const shapes = sources.get(identity);
     const values = grouped.get(identity) ?? [];
     const response: Record<string, unknown> = {};
-    for (const field of responseFields.get(identity) ?? [])
+    for (const field of projection.metadataFields.get(identity) ?? [])
       response[field] = request[field];
-    values.push({
-      ...response,
-      redirects: (request.redirects ?? []).map(
-        (
-          {
-            request_timestamp: _requestTimestamp,
-            redirect_event_timestamp: _redirectEventTimestamp,
-            ...redirect
+    values.push(
+      digestCanonicalValue({
+        ...response,
+        redirects: (request.redirects ?? []).map(
+          (
+            {
+              request_timestamp: _requestTimestamp,
+              redirect_event_timestamp: _redirectEventTimestamp,
+              ...redirect
+            },
+            index,
+          ) => {
+            const response: Partial<
+              Record<NetworkMetadataField, number | string>
+            > = {};
+            for (const field of projection.metadataFields.get(
+              redirectNetworkIdentity(identity, index),
+            ) ?? [])
+              if (redirect[field] !== null) response[field] = redirect[field];
+            return {
+              url: redirect.url,
+              response_url: redirect.response_url,
+              method: redirect.method,
+              ...response,
+            };
           },
-          index,
-        ) => {
-          const response: Partial<
-            Record<NetworkResponseField, number | string>
-          > = {};
-          for (const field of responseFields.get(
-            redirectNetworkIdentity(identity, index),
-          ) ?? [])
-            if (redirect[field] !== null) response[field] = redirect[field];
-          return {
-            url: redirect.url,
-            response_url: redirect.response_url,
-            method: redirect.method,
-            resource_type: redirect.resource_type,
-            ...response,
-          };
-        },
-      ),
-      initiator: request.initiator,
-      ...(shapes?.request === true
-        ? { request_shape: request.body_shapes.request }
-        : {}),
-      ...(shapes?.response === true
-        ? { response_shape: request.body_shapes.response }
-        : {}),
-    });
+        ),
+        ...(projection.initiatorsComplete
+          ? { initiator: request.initiator }
+          : {}),
+        ...(shapes?.request === true
+          ? { request_shape: request.body_shapes.request }
+          : {}),
+        ...(shapes?.response === true
+          ? { response_shape: request.body_shapes.response }
+          : {}),
+      }),
+    );
     grouped.set(identity, values);
   }
-  return new Map(
-    [...grouped].map(([identity, values]) => [
-      identity,
-      digestCanonicalValue(
-        values.map((value) => digestCanonicalValue(value)).sort(),
-      ),
-    ]),
-  );
+  return grouped;
+};
+
+/** A partial multiset may omit any sample, including a distinct response. */
+const networkComparisonMaps = (
+  before: ReadonlyMap<string, readonly string[]>,
+  after: ReadonlyMap<string, readonly string[]>,
+  beforeComplete: boolean,
+  afterComplete: boolean,
+): readonly [ReadonlyMap<string, string>, ReadonlyMap<string, string>] => {
+  const left = new Map<string, string>();
+  const right = new Map<string, string>();
+  for (const identity of new Set([...before.keys(), ...after.keys()])) {
+    const previous = before.get(identity) ?? [];
+    const next = after.get(identity) ?? [];
+    if (
+      !(beforeComplete && afterComplete) &&
+      !(beforeComplete && !samplesContained(next, previous)) &&
+      !(afterComplete && !samplesContained(previous, next))
+    )
+      continue;
+    if (before.has(identity))
+      left.set(identity, digestCanonicalValue([...previous].sort()));
+    if (after.has(identity))
+      right.set(identity, digestCanonicalValue([...next].sort()));
+  }
+  return [left, right];
+};
+
+const samplesContained = (
+  samples: readonly string[],
+  complete: readonly string[],
+): boolean => {
+  const counts = new Map<string, number>();
+  for (const sample of complete)
+    counts.set(sample, (counts.get(sample) ?? 0) + 1);
+  for (const sample of samples) {
+    const count = counts.get(sample) ?? 0;
+    if (count === 0) return false;
+    counts.set(sample, count - 1);
+  }
+  return true;
 };
 
 type WebSocketGroup = {
@@ -509,9 +762,13 @@ const webSocketPayloadMaps = (
   beforeGroups: ReadonlyMap<string, WebSocketGroup>,
   afterGroups: ReadonlyMap<string, WebSocketGroup>,
   selected: boolean,
+  inventoryComplete: boolean,
 ): readonly [ReadonlyMap<string, string>, ReadonlyMap<string, string>] => {
   const left = new Map<string, string>();
   const right = new Map<string, string>();
+  // Retained positions cannot identify frames after any frame or connection
+  // omission. A matching direction/opcode sequence does not prove alignment.
+  if (!inventoryComplete) return [left, right];
   for (const [groupKey, beforeGroup] of beforeGroups) {
     const afterGroup = afterGroups.get(groupKey);
     if (
@@ -524,11 +781,11 @@ const webSocketPayloadMaps = (
     const comparableShapes = new Set<number>();
     for (let index = 0; index < eventCount; index += 1) {
       if (
-        beforeGroup.connections.every(
-          (connection) => connection.events[index]?.payload_bytes !== null,
+        beforeGroup.connections.every((connection) =>
+          webSocketEventHasPayloadBytes(connection.events[index]),
         ) &&
-        afterGroup.connections.every(
-          (connection) => connection.events[index]?.payload_bytes !== null,
+        afterGroup.connections.every((connection) =>
+          webSocketEventHasPayloadBytes(connection.events[index]),
         )
       )
         comparableBytes.add(index);
@@ -536,11 +793,11 @@ const webSocketPayloadMaps = (
       // on both sides; this avoids assigning an unknown shape to a known one.
       if (
         selected &&
-        beforeGroup.connections.every(
-          (connection) => connection.events[index]?.payload_shape !== null,
+        beforeGroup.connections.every((connection) =>
+          webSocketEventHasPayloadShape(connection.events[index]),
         ) &&
-        afterGroup.connections.every(
-          (connection) => connection.events[index]?.payload_shape !== null,
+        afterGroup.connections.every((connection) =>
+          webSocketEventHasPayloadShape(connection.events[index]),
         )
       )
         comparableShapes.add(index);
@@ -575,51 +832,193 @@ const webMcpDimension = (
   before: WebMcpDiscovery | null,
   after: WebMcpDiscovery | null,
 ): Dimension => {
-  const afterTools = new Map(
-    after?.tools.items.map((tool) => [tool.tool_key, tool]),
-  );
-  const unknownHints = new Set(
-    (before?.tools.items ?? [])
-      .filter((tool) => {
-        const other = afterTools.get(tool.tool_key);
-        return (
-          other !== undefined &&
-          (tool.annotations.consequential === undefined ||
-            other.annotations.consequential === undefined)
-        );
-      })
-      .map((tool) => tool.tool_key),
-  );
-  const project = (
-    discovery: WebMcpDiscovery | null,
-  ): ReadonlyMap<string, string> =>
-    keyed(
-      (discovery?.tools.items ?? []).map((tool) => {
-        if (!unknownHints.has(tool.tool_key)) return tool;
-        const { consequential: _unknown, ...annotations } = tool.annotations;
-        return { ...tool, annotations };
-      }),
-      (tool) => tool.tool_key,
-    );
-  const result = compareDimension(
-    project(before),
-    project(after),
-    webMcpComplete(before) && webMcpComplete(after),
-    "WebMCP discovery was unavailable or incomplete in at least one capture.",
-  );
-  return result.status === "unchanged" && unknownHints.size > 0
-    ? {
-        ...result,
-        status: "unknown",
-        reason:
-          "Consequential annotations were not recorded or were invalid in at least one capture.",
+  const groups = (discovery: WebMcpDiscovery | null) => {
+    const result = new Map<string, Tool[]>();
+    for (const tool of discovery?.tools.items ?? []) {
+      const identity = `webmcp_${digestCanonicalValue({
+        name: tool.name,
+        frame_url: tool.frame_url,
+        owner_origin: tool.owner_origin,
+      })}`;
+      const tools = result.get(identity) ?? [];
+      tools.push(tool);
+      result.set(identity, tools);
+    }
+    return result;
+  };
+  const previous = groups(before);
+  const next = groups(after);
+  const beforeComplete = webMcpComplete(before);
+  const afterComplete = webMcpComplete(after);
+  const inventoryComplete = beforeComplete && afterComplete;
+  const left = new Map<string, string>();
+  const right = new Map<string, string>();
+  let valuesComplete = true;
+  for (const identity of new Set([...previous.keys(), ...next.keys()])) {
+    const beforeTools = previous.get(identity) ?? [];
+    const afterTools = next.get(identity) ?? [];
+    if (!beforeComplete && !afterComplete) {
+      valuesComplete = false;
+      continue;
+    }
+    // Multiple same-name owners at the same URL cannot be paired by frame ID.
+    // Keep this uncertainty rather than selecting a duplicate by capture order.
+    if (beforeTools.length > 1 || afterTools.length > 1) {
+      valuesComplete = false;
+      // Complete counts can contradict one another even when individual
+      // owners cannot be paired. Do not discard that independent proof.
+      if (
+        inventoryComplete ||
+        (beforeComplete && afterTools.length > beforeTools.length) ||
+        (afterComplete && beforeTools.length > afterTools.length)
+      ) {
+        if (beforeTools.length > 0)
+          left.set(identity, String(beforeTools.length));
+        if (afterTools.length > 0)
+          right.set(identity, String(afterTools.length));
       }
-    : result;
+      continue;
+    }
+    const projection = projectWebMcpTools(
+      beforeTools[0],
+      afterTools[0],
+      beforeComplete,
+      afterComplete,
+    );
+    if (!projection.complete) valuesComplete = false;
+    if (projection.before !== undefined) left.set(identity, projection.before);
+    if (projection.after !== undefined) right.set(identity, projection.after);
+  }
+  return compareDimension(
+    left,
+    right,
+    inventoryComplete && valuesComplete,
+    "WebMCP discovery, owner correspondence, or declaration evidence was unavailable or incomplete in at least one capture.",
+    (identity) =>
+      !previous.has(identity)
+        ? beforeComplete
+        : !next.has(identity)
+          ? afterComplete
+          : inventoryComplete,
+  );
+};
+
+type Tool = WebMcpDiscovery["tools"]["items"][number];
+
+/** Compare only declaration facts retained by both captures. */
+const projectWebMcpTools = (
+  beforeTool: Tool | undefined,
+  afterTool: Tool | undefined,
+  beforeComplete: boolean,
+  afterComplete: boolean,
+): {
+  before: string | undefined;
+  after: string | undefined;
+  complete: boolean;
+} => {
+  let valuesComplete = true;
+  const inventoryComplete = beforeComplete && afterComplete;
+  const paired = beforeTool !== undefined && afterTool !== undefined;
+  const consequentialKnown =
+    beforeTool?.annotations.consequential !== undefined &&
+    afterTool?.annotations.consequential !== undefined;
+  if (
+    beforeTool !== undefined &&
+    afterTool !== undefined &&
+    !consequentialKnown
+  )
+    valuesComplete = false;
+  // A missing stack or malformed coordinate is not a different source.
+  // Compare only jointly observed components, but retain unknown coverage.
+  const beforeSource = beforeTool?.registration_source;
+  const afterSource = afterTool?.registration_source;
+  const sourcePresent = beforeSource != null && afterSource != null;
+  const bothAbsent =
+    beforeSource === null && afterSource === null && inventoryComplete;
+  const sourceKnown = sourcePresent || bothAbsent;
+  const lineKnown =
+    sourcePresent && beforeSource.line !== null && afterSource.line !== null;
+  const columnKnown =
+    sourcePresent &&
+    beforeSource.column !== null &&
+    afterSource.column !== null;
+  if (
+    paired &&
+    (!sourceKnown || (sourcePresent && (!lineKnown || !columnKnown)))
+  )
+    valuesComplete = false;
+  const schemaKnown =
+    !paired ||
+    ((beforeComplete || beforeTool.input_schema_sha256 !== null) &&
+      (afterComplete || afterTool.input_schema_sha256 !== null));
+  const annotationKeys = [
+    "read_only",
+    "untrusted_content",
+    "autosubmit",
+  ] as const;
+  const knownAnnotations = new Set(
+    annotationKeys.filter(
+      (key) =>
+        !paired ||
+        ((beforeComplete || beforeTool.annotations[key] !== null) &&
+          (afterComplete || afterTool.annotations[key] !== null)),
+    ),
+  );
+  if (
+    paired &&
+    (!schemaKnown || knownAnnotations.size !== annotationKeys.length)
+  )
+    valuesComplete = false;
+  const project = (tool: Tool) => {
+    const {
+      tool_key: _key,
+      frame_id: _frameId,
+      annotations,
+      registration_source: source,
+      input_schema: schema,
+      input_schema_sha256: schemaDigest,
+      ...content
+    } = tool;
+    return digestCanonicalValue({
+      ...content,
+      ...(schemaKnown
+        ? { input_schema: schema, input_schema_sha256: schemaDigest }
+        : {}),
+      ...(sourceKnown
+        ? {
+            registration_source:
+              source === null
+                ? null
+                : {
+                    url: source.url,
+                    ...(lineKnown ? { line: source.line } : {}),
+                    ...(columnKnown ? { column: source.column } : {}),
+                  },
+          }
+        : {}),
+      annotations: {
+        ...Object.fromEntries(
+          annotationKeys
+            .filter((key) => knownAnnotations.has(key))
+            .map((key) => [key, annotations[key]]),
+        ),
+        ...(consequentialKnown
+          ? { consequential: annotations.consequential }
+          : {}),
+      },
+    });
+  };
+  return {
+    before: beforeTool === undefined ? undefined : project(beforeTool),
+    after: afterTool === undefined ? undefined : project(afterTool),
+    complete: valuesComplete,
+  };
 };
 
 const webMcpComplete = (discovery: WebMcpDiscovery | null): boolean =>
   discovery !== null &&
   discovery.status === "available" &&
+  discovery.completeness.dropped_events.webmcp_tools === 0 &&
   !incompleteSections(discovery.completeness).has("webmcp_tools");
 
 const sectionsComplete = (
@@ -658,6 +1057,37 @@ const compareAggregate = (
     reason,
   );
 
+const domValueLengthsComparable = (
+  before: WebPageInspection["dom"],
+  after: WebPageInspection["dom"],
+): boolean =>
+  (before.nodes.length === 0 && after.nodes.length === 0) ||
+  (before.node_value_length_unit !== undefined &&
+    before.node_value_length_unit === after.node_value_length_unit);
+
+/** Compare parsed node facts without serializing or copying the inventories. */
+const domNodesDiffer = (
+  before: WebPageInspection["dom"]["nodes"],
+  after: WebPageInspection["dom"]["nodes"],
+  compareLengths: boolean,
+): boolean =>
+  before.length !== after.length ||
+  before.some((node, index) => {
+    const next = after[index];
+    return (
+      next === undefined ||
+      node.index !== next.index ||
+      node.parent_index !== next.parent_index ||
+      node.node_type !== next.node_type ||
+      node.node_name !== next.node_name ||
+      (compareLengths && node.node_value_length !== next.node_value_length) ||
+      node.attribute_names.length !== next.attribute_names.length ||
+      node.attribute_names.some(
+        (name, position) => name !== next.attribute_names[position],
+      )
+    );
+  });
+
 const domDimension = (
   before: WebPageInspection,
   after: WebPageInspection,
@@ -676,10 +1106,10 @@ const domDimension = (
       sectionsComplete(inspection, ["frames"]),
     );
   const changes: Change[] = [];
+  const lengthsComparable = domValueLengthsComparable(before.dom, after.dom);
   if (
     nodesComplete &&
-    digestCanonicalValue(before.dom.nodes) !==
-      digestCanonicalValue(after.dom.nodes)
+    domNodesDiffer(before.dom.nodes, after.dom.nodes, lengthsComparable)
   )
     changes.push({ identity: "document", change: "modified" });
   if (framesComplete && beforeFrames !== afterFrames)
@@ -691,28 +1121,393 @@ const domDimension = (
       changes,
       reason: null,
     };
-  return nodesComplete && framesComplete
+  return nodesComplete && framesComplete && lengthsComparable
     ? { status: "unchanged", total_changes: 0, changes: [], reason: null }
     : {
         status: "unknown",
         total_changes: 0,
         changes: [],
         reason:
-          "DOM or frame capture was incomplete, or frame ancestry was unresolved in at least one observation.",
+          "DOM or frame capture was incomplete, frame ancestry was unresolved, or DOM value-length units were missing or different in at least one observation.",
       };
 };
 
-const scriptProjection = (
-  script: WebPageInspection["scripts"]["items"][number],
-) => ({
-  script_key: script.script_key,
-  url: script.url,
-  cdp_hash: script.cdp_hash,
-  length: script.length,
-  is_module: script.is_module,
-  language: script.language,
-  source_map_url: script.source_map_url,
-});
+type ScriptMapCandidate<Metadata> = {
+  readonly metadata: Metadata;
+  readonly declaration: string | null;
+};
+type ScriptMapSlot<Metadata> = ScriptMapCandidate<Metadata> & {
+  readonly unknown: boolean;
+};
+
+/** A declaration needs more placements than its exact slots plus every unknown. */
+const declarationCountsExceed = <Metadata>(
+  needed: readonly ScriptMapCandidate<Metadata>[],
+  slots: readonly ScriptMapSlot<Metadata>[],
+): boolean => {
+  if (needed.length > slots.length) return true;
+  let unknown = 0;
+  const exact = new Map<string | null, number>();
+  for (const slot of slots) {
+    if (slot.unknown) {
+      unknown += 1;
+      continue;
+    }
+    exact.set(slot.declaration, (exact.get(slot.declaration) ?? 0) + 1);
+  }
+  const required = new Map<string | null, number>();
+  for (const item of needed)
+    required.set(item.declaration, (required.get(item.declaration) ?? 0) + 1);
+  let surplus = 0;
+  for (const [declaration, count] of required) {
+    const available = exact.get(declaration) ?? 0;
+    if (count > available + unknown) return true;
+    if (count > available) surplus += count - available;
+  }
+  return surplus > unknown;
+};
+
+const metadataEntries = <Metadata>(metadata: Metadata) => {
+  const record = metadata as Record<
+    string,
+    string | number | boolean | undefined
+  >;
+  return Object.keys(record)
+    .sort()
+    .map((key) => [key, record[key]] as const);
+};
+
+type CountedScriptMapGroup<Metadata> = ScriptMapCandidate<Metadata> & {
+  count: number;
+};
+type CountedScriptMapSlot<Metadata> = ScriptMapSlot<Metadata> & {
+  count: number;
+};
+
+const groupScriptMapFacts = <
+  Metadata,
+  Item extends ScriptMapCandidate<Metadata>,
+>(
+  items: readonly Item[],
+  keyFor: (item: Item) => string,
+): Array<Item & { count: number }> => {
+  const groups = new Map<string, Item & { count: number }>();
+  for (const item of items) {
+    const key = keyFor(item);
+    const existing = groups.get(key);
+    if (existing === undefined) groups.set(key, { ...item, count: 1 });
+    else existing.count += 1;
+  }
+  return [...groups.values()];
+};
+
+/** Every declaration can use every slot, so counts already decide the result. */
+const scriptMapMetadataFitsAll = <Metadata>(
+  needed: readonly CountedScriptMapGroup<Metadata>[],
+  slots: readonly CountedScriptMapSlot<Metadata>[],
+  metadataCompatible: (left: Metadata, right: Metadata) => boolean,
+): boolean =>
+  needed.every((item) =>
+    slots.every((slot) => metadataCompatible(item.metadata, slot.metadata)),
+  );
+
+/**
+ * True when identical groups cannot be placed. Flow moves whole counts, so
+ * repeated scripts do not become a dense assignment graph.
+ */
+const scriptMapGroupAssignmentExceeds = <Metadata>(
+  needed: readonly CountedScriptMapGroup<Metadata>[],
+  slots: readonly CountedScriptMapSlot<Metadata>[],
+  metadataCompatible: (left: Metadata, right: Metadata) => boolean,
+): boolean => {
+  const residual = slots.map((slot) => slot.count);
+  const demand = needed.map((item) => item.count);
+  const edges = needed.map((item) =>
+    slots.flatMap((slot, index) =>
+      metadataCompatible(item.metadata, slot.metadata) &&
+      (slot.unknown || slot.declaration === item.declaration)
+        ? [index]
+        : [],
+    ),
+  );
+  const flow = new Map<string, number>();
+  const flowKey = (needIndex: number, slotIndex: number): string =>
+    `${String(needIndex)}:${String(slotIndex)}`;
+  const send = (needIndex: number, seen: Set<number>, cap: number): number => {
+    for (const slotIndex of edges[needIndex] ?? []) {
+      if (seen.has(slotIndex)) continue;
+      const free = residual[slotIndex] ?? 0;
+      if (free <= 0) continue;
+      seen.add(slotIndex);
+      const pushed = Math.min(cap, free);
+      residual[slotIndex] = free - pushed;
+      flow.set(
+        flowKey(needIndex, slotIndex),
+        (flow.get(flowKey(needIndex, slotIndex)) ?? 0) + pushed,
+      );
+      return pushed;
+    }
+    for (const slotIndex of edges[needIndex] ?? []) {
+      if (seen.has(slotIndex)) continue;
+      seen.add(slotIndex);
+      for (let other = 0; other < needed.length; other += 1) {
+        if (other === needIndex) continue;
+        const moved = flow.get(flowKey(other, slotIndex)) ?? 0;
+        if (moved <= 0) continue;
+        const rerouted = send(other, seen, Math.min(cap, moved));
+        if (rerouted <= 0) continue;
+        flow.set(flowKey(other, slotIndex), moved - rerouted);
+        flow.set(
+          flowKey(needIndex, slotIndex),
+          (flow.get(flowKey(needIndex, slotIndex)) ?? 0) + rerouted,
+        );
+        return rerouted;
+      }
+    }
+    return 0;
+  };
+  for (let index = 0; index < needed.length; index += 1)
+    while ((demand[index] ?? 0) > 0) {
+      const pushed = send(index, new Set(), demand[index] ?? 0);
+      if (pushed === 0) return true;
+      demand[index] = (demand[index] ?? 0) - pushed;
+    }
+  return false;
+};
+
+/**
+ * True when observed declarations cannot be placed on the other capture.
+ * Identical scripts share one count, so repeated declarations are not retried
+ * as separate permutations.
+ */
+const scriptMapFactsExceed = <Metadata>(
+  needed: readonly ScriptMapCandidate<Metadata>[],
+  slots: readonly ScriptMapSlot<Metadata>[],
+  metadataCompatible: (left: Metadata, right: Metadata) => boolean,
+): boolean => {
+  if (needed.length === 0) return false;
+  if (declarationCountsExceed(needed, slots)) return true;
+  const needGroups = groupScriptMapFacts(needed, (item) =>
+    compositeKey([metadataEntries(item.metadata), item.declaration]),
+  );
+  const slotGroups = groupScriptMapFacts(slots, (slot) =>
+    compositeKey([
+      metadataEntries(slot.metadata),
+      slot.declaration,
+      slot.unknown,
+    ]),
+  );
+  if (scriptMapMetadataFitsAll(needGroups, slotGroups, metadataCompatible))
+    return false;
+  return scriptMapGroupAssignmentExceeds(
+    needGroups,
+    slotGroups,
+    metadataCompatible,
+  );
+};
+
+const scriptsDimension = (
+  before: WebPageInspection,
+  after: WebPageInspection,
+): Dimension => {
+  type Script = WebPageInspection["scripts"]["items"][number];
+  const groups = (inspection: WebPageInspection) => {
+    const result = new Map<string, Script[]>();
+    for (const script of inspection.scripts.items) {
+      // Inventory keys include optional metadata. Their spelling cannot prove
+      // semantic identity when that metadata is missing in another capture.
+      const identity = `scrg_${digestCanonicalValue(script.url)}`;
+      const items = result.get(identity) ?? [];
+      items.push(script);
+      result.set(identity, items);
+    }
+    return result;
+  };
+  const previous = groups(before);
+  const next = groups(after);
+  const beforeComplete =
+    sectionsComplete(before, ["scripts"]) &&
+    before.completeness.dropped_events.scripts === 0;
+  const afterComplete =
+    sectionsComplete(after, ["scripts"]) &&
+    after.completeness.dropped_events.scripts === 0;
+  // A null declaration may represent an omitted URL. The capture ledger is
+  // section-wide, so it cannot identify which null script was affected.
+  // Unavailable map bodies alone do not erase an observed declaration.
+  const declarationMayBeOmitted = (inspection: WebPageInspection) =>
+    inspection.completeness.policy_filtered_sections.includes("source_maps") ||
+    inspection.completeness.truncated_sections.includes("source_maps") ||
+    inspection.completeness.excluded.some(
+      (item) =>
+        item.section === "source_maps" &&
+        item.count !== 0 &&
+        [
+          "disallowed_origin",
+          "unsupported_url",
+          "resource_budget_exhausted",
+          "invalid_protocol_value",
+        ].includes(item.reason),
+    );
+  const beforeMayOmitDeclaration = declarationMayBeOmitted(before);
+  const afterMayOmitDeclaration = declarationMayBeOmitted(after);
+  const left = new Map<string, string>();
+  const right = new Map<string, string>();
+  let valuesComplete = true;
+  for (const identity of new Set([...previous.keys(), ...next.keys()])) {
+    const prior = previous.get(identity) ?? [];
+    const later = next.get(identity) ?? [];
+    const all = [...prior, ...later];
+    const fields = (
+      ["cdp_hash", "length", "is_module", "language"] as const
+    ).filter((field) => all.every((script) => script[field] !== null));
+    const sourceComparable =
+      prior.length > 0 &&
+      later.length > 0 &&
+      all.every((script) => script.source.included);
+    const mapComparable =
+      prior.every(
+        (script) => script.source_map_url !== null || !beforeMayOmitDeclaration,
+      ) &&
+      later.every(
+        (script) => script.source_map_url !== null || !afterMayOmitDeclaration,
+      );
+    // Match declarations only within the same fully observed metadata group.
+    // An omitted declaration can explain one value in its own group, not a
+    // declaration associated with a different observed script hash.
+    const metadataFields = [
+      "cdp_hash",
+      "length",
+      "is_module",
+      "language",
+    ] as const;
+    type ScriptMetadata = Partial<
+      Record<
+        (typeof metadataFields)[number] | "source_sha256",
+        string | number | boolean
+      >
+    >;
+    const scriptMetadata = (script: Script): ScriptMetadata => {
+      const metadata: ScriptMetadata = {};
+      for (const field of metadataFields) {
+        const value = script[field];
+        if (value !== null) metadata[field] = value;
+      }
+      if (sourceComparable && script.source.included)
+        metadata.source_sha256 = script.source.artifact.sha256;
+      return metadata;
+    };
+    const metadataCompatible = (
+      left: ScriptMetadata,
+      right: ScriptMetadata,
+    ): boolean =>
+      [...metadataFields, "source_sha256" as const].every(
+        (field) =>
+          left[field] === undefined ||
+          right[field] === undefined ||
+          left[field] === right[field],
+      );
+    // Each script keeps the metadata it actually observed. A null field does
+    // not erase that field for the rest of the URL group, and an omitted
+    // declaration can explain only one compatible script.
+    const mapFactsExceed = (
+      observed: readonly Script[],
+      observedMayOmit: boolean,
+      complete: readonly Script[],
+      completeMayOmit: boolean,
+    ): boolean => {
+      const needed = observed.flatMap((script) =>
+        script.source_map_url === null && observedMayOmit
+          ? []
+          : [
+              {
+                metadata: scriptMetadata(script),
+                declaration: script.source_map_url,
+              },
+            ],
+      );
+      const slots = complete.map((script) => ({
+        metadata: scriptMetadata(script),
+        declaration: script.source_map_url,
+        unknown: script.source_map_url === null && completeMayOmit,
+      }));
+      return scriptMapFactsExceed(needed, slots, metadataCompatible);
+    };
+    const provenMapDifference =
+      !mapComparable &&
+      prior.length > 0 &&
+      later.length > 0 &&
+      ((afterComplete &&
+        mapFactsExceed(
+          prior,
+          beforeMayOmitDeclaration,
+          later,
+          afterMayOmitDeclaration,
+        )) ||
+        (beforeComplete &&
+          mapFactsExceed(
+            later,
+            afterMayOmitDeclaration,
+            prior,
+            beforeMayOmitDeclaration,
+          )));
+    if (prior.length > 0 && later.length > 0 && !mapComparable)
+      valuesComplete = false;
+    if (
+      prior.length > 0 &&
+      later.length > 0 &&
+      (!fields.includes("length") ||
+        !fields.includes("is_module") ||
+        !fields.includes("language") ||
+        (!sourceComparable &&
+          (!fields.includes("cdp_hash") ||
+            all.some((script) => script.source.included))))
+    )
+      valuesComplete = false;
+    const project = (items: readonly Script[]) =>
+      items.map((script) =>
+        digestCanonicalValue({
+          url: script.url,
+          ...(mapComparable ? { source_map_url: script.source_map_url } : {}),
+          ...Object.fromEntries(fields.map((field) => [field, script[field]])),
+          ...(sourceComparable && script.source.included
+            ? { source_sha256: script.source.artifact.sha256 }
+            : {}),
+        }),
+      );
+    const priorSamples = project(prior);
+    const laterSamples = project(later);
+    if (
+      !provenMapDifference &&
+      !(beforeComplete && afterComplete) &&
+      !(beforeComplete && !samplesContained(laterSamples, priorSamples)) &&
+      !(afterComplete && !samplesContained(priorSamples, laterSamples))
+    )
+      continue;
+    if (prior.length > 0)
+      left.set(
+        identity,
+        digestCanonicalValue({
+          samples: priorSamples.sort(),
+          proof: provenMapDifference ? "before" : null,
+        }),
+      );
+    if (later.length > 0)
+      right.set(
+        identity,
+        digestCanonicalValue({
+          samples: laterSamples.sort(),
+          proof: provenMapDifference ? "after" : null,
+        }),
+      );
+  }
+  return compareDimension(
+    left,
+    right,
+    beforeComplete && afterComplete && valuesComplete,
+    "Script inventory, source-map declarations, or corresponding source/metadata evidence was incomplete in at least one observation.",
+    true, // Selected map entries already carry their directional absence proof.
+  );
+};
 
 const metadataProjection = (inspection: WebPageInspection) => ({
   responses: inspection.metadata.responses
@@ -742,31 +1537,47 @@ const accessibilityComparable = (
   const text =
     inspection.accessibility.text_capture.status === "included" &&
     inspection.accessibility.text_capture.excluded_fields === 0;
+  const { completeness } = inspection;
+  const exclusions = completeness.excluded.filter(
+    ({ section }) => section === "accessibility",
+  );
+  const textOnlyPolicyFilter =
+    inspection.accessibility.text_capture.status === "not_approved" &&
+    exclusions.length > 0 &&
+    exclusions.every(({ reason }) => reason === "not_approved");
   const nodes =
+    [
+      completeness.truncated_sections,
+      completeness.unavailable_sections,
+      completeness.attach_limited_sections,
+    ].every((sections) => !sections.includes("accessibility")) &&
+    (!completeness.policy_filtered_sections.includes("accessibility") ||
+      textOnlyPolicyFilter) &&
     inspection.accessibility.total_nodes ===
-    inspection.accessibility.nodes.length;
-  const complete =
-    text && nodes && sectionsComplete(inspection, ["accessibility"]);
+      inspection.accessibility.nodes.length;
+  const complete = text && nodes;
   return { text, nodes, complete };
 };
 
 const accessibilityProjection = (
   accessibility: WebPageInspection["accessibility"],
+  other: WebPageInspection["accessibility"],
   includeText: boolean,
-  includeNodes: boolean,
 ): unknown => {
-  if (!includeNodes) return { total_nodes: accessibility.total_nodes };
   const nodeIndexes = new Map(
     accessibility.nodes.map((node, index) => [node.node_id, index]),
   );
   return {
     total_nodes: accessibility.total_nodes,
-    nodes: accessibility.nodes.map((node) => ({
+    nodes: accessibility.nodes.map((node, index) => ({
       parent_index:
         node.parent_id === null
           ? null
           : (nodeIndexes.get(node.parent_id) ?? -1),
-      role: node.role,
+      role:
+        node.role === null || other.nodes[index]?.role === null
+          ? null
+          : node.role,
       ignored: node.ignored,
       states: node.states,
       ...(includeText
@@ -778,17 +1589,6 @@ const accessibilityProjection = (
 
 const storageKeysComparable = (inspection: WebPageInspection): boolean =>
   sectionsComplete(inspection, ["storage_keys"]);
-
-const storageComparable = (
-  before: WebPageInspection,
-  after: WebPageInspection,
-  keysComplete: boolean,
-  usageComplete: boolean,
-): boolean =>
-  keysComplete &&
-  usageComplete &&
-  before.storage.fingerprints_complete &&
-  after.storage.fingerprints_complete;
 
 const storageMap = (
   storage: WebPageInspection["storage"],
@@ -839,23 +1639,41 @@ const storageFingerprintIdentities = (
 ): ReadonlySet<string> => {
   const beforeComplete = completeStorageFingerprints(before);
   const afterComplete = completeStorageFingerprints(after);
-  if (before.fingerprints_complete && after.fingerprints_complete)
-    return new Set([...beforeComplete.keys(), ...afterComplete.keys()]);
+  const bothComplete =
+    before.fingerprints_complete && after.fingerprints_complete;
+  const candidates = bothComplete
+    ? new Set([...beforeComplete.keys(), ...afterComplete.keys()])
+    : new Set(
+        [...beforeComplete.keys()].filter((identity) =>
+          afterComplete.has(identity),
+        ),
+      );
   return new Set(
-    [...beforeComplete.keys()].filter((identity) =>
-      afterComplete.has(identity),
-    ),
+    [...candidates].filter((identity) => {
+      const beforeSchema = beforeComplete.get(identity);
+      const afterSchema = afterComplete.get(identity);
+      if ((beforeSchema ?? afterSchema)?.scope !== "indexed_db_schema")
+        return true;
+      return (
+        beforeSchema === undefined ||
+        afterSchema === undefined ||
+        beforeSchema.projection_version === afterSchema.projection_version
+      );
+    }),
   );
 };
 
 const completeStorageFingerprints = (
   storage: WebPageInspection["storage"],
-): ReadonlyMap<string, string | null> =>
+): ReadonlyMap<
+  string,
+  WebPageInspection["storage"]["content_fingerprints"][number]
+> =>
   new Map(
     storage.content_fingerprints
       .filter(({ complete }) => complete)
-      .map(({ scope, identity_sha256, value_sha256 }) => [
-        `${scope}:${identity_sha256}`,
-        value_sha256,
+      .map((fingerprint) => [
+        `${fingerprint.scope}:${fingerprint.identity_sha256}`,
+        fingerprint,
       ]),
   );

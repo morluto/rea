@@ -1,11 +1,14 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { expect, it } from "vitest";
 import { JavaScriptAnalysisWorker } from "../../../src/javascript/analysis/JavaScriptAnalysisWorker.js";
+import { createJavaScriptSourceAnalysis } from "../../../src/artifacts/javascript/JavaScriptSourceAnalysis.js";
+import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
 import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
+import { ProcessOwnershipEvidenceOwner } from "../../../src/process/ProcessOwnershipEvidence.js";
 import type { OwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
@@ -30,9 +33,11 @@ const processLimit = javaScriptWorkerMemoryLimitBytes(128);
 
 it("reuses one real owned analyzer while retaining distinct source identities and exported returns", async () => {
   const launches: number[] = [];
+  let runtimeRoot: string | undefined;
   const worker = new JavaScriptAnalysisWorker(
     { heapMb: 128, timeoutMs: 30_000 },
     async (request) => {
+      runtimeRoot = request.cwd;
       const spawned = await spawnOwnedProviderProcess(request);
       const pid = spawned.process.pid;
       if (pid === undefined)
@@ -51,8 +56,23 @@ it("reuses one real owned analyzer while retaining distinct source identities an
       "export function next() { return { observed: 8 }; }",
     );
     for (const [index, file] of [first, second].entries()) {
-      const result = await worker.analyze(file, 100);
+      const phases: string[] = [];
+      const result = await worker.analyze(
+        file,
+        { nodes: 100, unknowns: 100 },
+        undefined,
+        async (phase) => {
+          phases.push(phase);
+        },
+      );
       if (!result.ok) throw result.error.error;
+      expect(phases).toEqual([
+        "parse",
+        "static",
+        "semantic",
+        "projection",
+        "transfer",
+      ]);
       expect(result.value.javascript.parse_status).toBe("complete");
       expect(
         result.value.module?.callables[0]?.returnSites[0]?.value,
@@ -74,8 +94,289 @@ it("reuses one real owned analyzer while retaining distinct source identities an
       ).toBe(true);
     }
     expect(launches).toHaveLength(1);
+    if (runtimeRoot === undefined)
+      throw new Error(
+        "Owned analyzer did not expose its runtime root to launcher",
+      );
+    expect(
+      (await readdir(runtimeRoot)).filter((name) =>
+        /\.(?:source|static\.json|records)$/u.test(name),
+      ),
+    ).toEqual([]);
   } finally {
     await worker.close();
+  }
+});
+
+it("reuses one owned worker across analyses on the same resource scope", async () => {
+  const scope = new ArtifactResourceScope();
+  const launches: number[] = [];
+  const exits = new Map<number, Promise<void>>();
+  const launcher: typeof spawnOwnedProviderProcess = async (request) => {
+    const previous = launches.at(-1);
+    if (previous !== undefined) await exits.get(previous);
+    const spawned = await spawnOwnedProviderProcess(request);
+    const pid = spawned.process.pid;
+    if (pid === undefined)
+      throw new Error("Owned analyzer has no observed PID");
+    exits.set(
+      pid,
+      new Promise((resolve) => {
+        spawned.process.once("exit", () => {
+          resolve();
+        });
+      }),
+    );
+    launches.push(pid);
+    return spawned;
+  };
+  const limits = { heapMb: 128, timeoutMs: 30_000 };
+  const first = source("first.mjs", "export const observed = 1;");
+  const second = source("second.mjs", "export const observed = 2;");
+  const files = [first, second];
+  try {
+    for (const file of files) {
+      const worker = await createJavaScriptSourceAnalysis(limits, 1, {
+        scope,
+        launcher,
+      });
+      try {
+        const result = await worker.analyze(file, {
+          nodes: 100,
+          unknowns: 100,
+        });
+        if (!result.ok) throw result.error.error;
+        expect(result.value.javascript.parse_status).toBe("complete");
+      } finally {
+        await worker.close();
+      }
+    }
+    expect(launches).toHaveLength(1);
+    const replaced = await createJavaScriptSourceAnalysis(
+      { heapMb: 256, timeoutMs: 30_000 },
+      1,
+      { scope, launcher },
+    );
+    try {
+      const result = await replaced.analyze(first, {
+        nodes: 100,
+        unknowns: 100,
+      });
+      if (!result.ok) throw result.error.error;
+      expect(result.value.javascript.parse_status).toBe("complete");
+    } finally {
+      await replaced.close();
+    }
+    expect(launches).toHaveLength(2);
+    await scope.close();
+    const reopened = await createJavaScriptSourceAnalysis(limits, 1, {
+      scope,
+      launcher,
+    });
+    try {
+      const result = await reopened.analyze(first, {
+        nodes: 100,
+        unknowns: 100,
+      });
+      if (!result.ok) throw result.error.error;
+    } finally {
+      await reopened.close();
+    }
+    expect(launches).toHaveLength(3);
+  } finally {
+    await scope.close();
+  }
+});
+
+it("keeps a worker parked while a limit change closes the previous process", async () => {
+  const scope = new ArtifactResourceScope();
+  const launches: number[] = [];
+  const exited = new Set<number>();
+  const exits = new Map<number, Promise<void>>();
+  const launcher: typeof spawnOwnedProviderProcess = async (request) => {
+    const spawned = await spawnOwnedProviderProcess(request);
+    const pid = spawned.process.pid;
+    if (pid === undefined)
+      throw new Error("Owned analyzer has no observed PID");
+    exits.set(
+      pid,
+      new Promise((resolve) => {
+        spawned.process.once("exit", () => {
+          exited.add(pid);
+          resolve();
+        });
+      }),
+    );
+    launches.push(pid);
+    return spawned;
+  };
+  const limits = { heapMb: 128, timeoutMs: 30_000 };
+  const file = source("parked.mjs", "export const observed = 1;");
+  const originalClose = JavaScriptAnalysisWorker.prototype.close;
+  let releaseClose = (): void => {};
+  const gate = new Promise<void>((resolve) => {
+    releaseClose = resolve;
+  });
+  let closeCalls = 0;
+  let markCloseStarted = (): void => {};
+  const closeStarted = new Promise<void>((resolve) => {
+    markCloseStarted = resolve;
+  });
+  let replacement:
+    | ReturnType<typeof createJavaScriptSourceAnalysis>
+    | undefined;
+  try {
+    const initial = await createJavaScriptSourceAnalysis(limits, 1, {
+      scope,
+      launcher,
+    });
+    const first = await initial.analyze(file, { nodes: 100, unknowns: 100 });
+    if (!first.ok) throw first.error.error;
+    await initial.close();
+    const replacedPid = launches[0];
+    if (replacedPid === undefined)
+      throw new Error("Replaced analyzer has no observed PID");
+
+    JavaScriptAnalysisWorker.prototype.close = async function (
+      this: JavaScriptAnalysisWorker,
+    ) {
+      closeCalls += 1;
+      if (closeCalls === 1) {
+        markCloseStarted();
+        await gate;
+      }
+      return originalClose.call(this);
+    };
+    replacement = createJavaScriptSourceAnalysis(
+      { heapMb: 256, timeoutMs: 30_000 },
+      1,
+      { scope, launcher },
+    );
+    await closeStarted;
+
+    const concurrent = await createJavaScriptSourceAnalysis(limits, 1, {
+      scope,
+      launcher,
+    });
+    const concurrentResult = await concurrent.analyze(file, {
+      nodes: 100,
+      unknowns: 100,
+    });
+    if (!concurrentResult.ok) throw concurrentResult.error.error;
+    await concurrent.close();
+    const parkedPid = launches[1];
+    if (parkedPid === undefined)
+      throw new Error("Parked analyzer has no observed PID");
+
+    releaseClose();
+    const extra = await replacement;
+    const extraResult = await extra.analyze(file, {
+      nodes: 100,
+      unknowns: 100,
+    });
+    if (!extraResult.ok) throw extraResult.error.error;
+    const extraPid = launches[2];
+    if (extraPid === undefined)
+      throw new Error("Replacement analyzer has no observed PID");
+    await extra.close();
+    await exits.get(replacedPid);
+    await exits.get(extraPid);
+    expect(exited.has(replacedPid)).toBe(true);
+    expect(exited.has(extraPid)).toBe(true);
+    expect(exited.has(parkedPid)).toBe(false);
+
+    await scope.close();
+    await exits.get(parkedPid);
+    expect(exited.has(parkedPid)).toBe(true);
+  } finally {
+    JavaScriptAnalysisWorker.prototype.close = originalClose;
+    releaseClose();
+    const port = await replacement?.catch(() => undefined);
+    await port?.close().catch(() => undefined);
+    await scope.close();
+  }
+});
+
+it("does not start a replacement when closing the previous worker fails", async () => {
+  const scope = new ArtifactResourceScope();
+  const launches: number[] = [];
+  const exited = new Set<number>();
+  const exits = new Map<number, Promise<void>>();
+  const launcher: typeof spawnOwnedProviderProcess = async (request) => {
+    const previous = launches.at(-1);
+    if (previous !== undefined) await exits.get(previous);
+    const spawned = await spawnOwnedProviderProcess(request);
+    const pid = spawned.process.pid;
+    if (pid === undefined)
+      throw new Error("Owned analyzer has no observed PID");
+    exits.set(
+      pid,
+      new Promise((resolve) => {
+        spawned.process.once("exit", () => {
+          exited.add(pid);
+          resolve();
+        });
+      }),
+    );
+    launches.push(pid);
+    return spawned;
+  };
+  const limits = { heapMb: 128, timeoutMs: 30_000 };
+  const file = source("replaced.mjs", "export const observed = 1;");
+  const originalClose = JavaScriptAnalysisWorker.prototype.close;
+  let closeCalls = 0;
+  try {
+    const initial = await createJavaScriptSourceAnalysis(limits, 1, {
+      scope,
+      launcher,
+    });
+    const first = await initial.analyze(file, { nodes: 100, unknowns: 100 });
+    if (!first.ok) throw first.error.error;
+    await initial.close();
+    const replacedPid = launches[0];
+    if (replacedPid === undefined)
+      throw new Error("Replaced analyzer has no observed PID");
+
+    JavaScriptAnalysisWorker.prototype.close = async function (
+      this: JavaScriptAnalysisWorker,
+    ) {
+      closeCalls += 1;
+      if (closeCalls === 1) throw new Error("worker still owned");
+      return originalClose.call(this);
+    };
+    await expect(
+      createJavaScriptSourceAnalysis({ heapMb: 256, timeoutMs: 30_000 }, 1, {
+        scope,
+        launcher,
+      }),
+    ).rejects.toThrow("worker still owned");
+    expect(launches).toEqual([replacedPid]);
+    expect(exited.has(replacedPid)).toBe(false);
+
+    JavaScriptAnalysisWorker.prototype.close = originalClose;
+    const replacement = await createJavaScriptSourceAnalysis(
+      { heapMb: 256, timeoutMs: 30_000 },
+      1,
+      { scope, launcher },
+    );
+    try {
+      const result = await replacement.analyze(file, {
+        nodes: 100,
+        unknowns: 100,
+      });
+      if (!result.ok) throw result.error.error;
+    } finally {
+      await replacement.close();
+    }
+    expect(launches).toHaveLength(2);
+    expect(exited.has(replacedPid)).toBe(true);
+    const replacementPid = launches[1];
+    if (replacementPid === undefined)
+      throw new Error("Replacement analyzer has no observed PID");
+    expect(exited.has(replacementPid)).toBe(false);
+  } finally {
+    JavaScriptAnalysisWorker.prototype.close = originalClose;
+    await scope.close();
   }
 });
 
@@ -83,7 +384,7 @@ it("reports an actual startup deadline and closes its owned resources before sub
   const file = source("app.mjs", "export const observed = 7;");
   const expired = new JavaScriptAnalysisWorker({ heapMb: 128, timeoutMs: 1 });
   try {
-    const result = await expired.analyze(file, 100);
+    const result = await expired.analyze(file, { nodes: 100, unknowns: 100 });
     if (result.ok)
       throw new Error(
         "A one-millisecond fresh process deadline unexpectedly completed",
@@ -97,7 +398,7 @@ it("reports an actual startup deadline and closes its owned resources before sub
   }
   const next = new JavaScriptAnalysisWorker({ heapMb: 128, timeoutMs: 30_000 });
   try {
-    const result = await next.analyze(file, 100);
+    const result = await next.analyze(file, { nodes: 100, unknowns: 100 });
     if (!result.ok) throw result.error.error;
     expect(result.value.javascript.parse_status).toBe("complete");
   } finally {
@@ -131,14 +432,18 @@ it("preserves a failed owned cleanup retry when the next caller cancels before a
   const next = new JavaScriptAnalysisWorker({ heapMb: 128, timeoutMs: 30_000 });
   try {
     const file = source("app.mjs", "export const observed = 7;");
-    const first = await worker.analyze(file, 100);
+    const first = await worker.analyze(file, { nodes: 100, unknowns: 100 });
     if (!first.ok) throw first.error.error;
     const closing = worker.close();
     await expect(closing).rejects.toBeInstanceOf(ProviderCleanupError);
     await expect(closing).rejects.toMatchObject({
       cause: { message: "Fixture owned cleanup is unavailable" },
     });
-    const interrupted = await next.analyze(file, 100, controller.signal);
+    const interrupted = await next.analyze(
+      file,
+      { nodes: 100, unknowns: 100 },
+      controller.signal,
+    );
     if (interrupted.ok)
       throw new Error("Unreleased ownership must block subsequent analysis");
     expect(controller.signal.aborted).toBe(true);
@@ -147,7 +452,7 @@ it("preserves a failed owned cleanup retry when the next caller cancels before a
     });
     releaseAllowed = true;
     await worker.close();
-    const recovered = await next.analyze(file, 100);
+    const recovered = await next.analyze(file, { nodes: 100, unknowns: 100 });
     if (!recovered.ok) throw recovered.error.error;
     expect(recovered.value.javascript.parse_status).toBe("complete");
   } finally {
@@ -195,7 +500,7 @@ it("ends worker stdin and unreferences process handles when cleanup reports insp
   );
   try {
     const file = source("app.mjs", "export const observed = 7;");
-    const result = await worker.analyze(file, 100);
+    const result = await worker.analyze(file, { nodes: 100, unknowns: 100 });
     if (!result.ok) throw result.error.error;
     const closing = worker.close();
     await expect(closing).rejects.toBeInstanceOf(ProviderCleanupError);
@@ -245,11 +550,13 @@ const worker = new JavaScriptAnalysisWorker({ heapMb: 128, timeoutMs: 10000 }, a
   ] });
   // The launcher is deliberately orphaned when this host exits; cleanup still
   // requires its run token and executable identity, rather than its old parent.
-  const { expectedParentPid, ...ownership } = launched.ownership;
+  // The live ledger belongs to this host and cannot be serialized. Transfer
+  // only the process facts needed for the independent fixture cleanup.
+  const { expectedParentPid, evidenceOwner, ...ownership } = launched.ownership;
   await writeFile(${JSON.stringify(ownershipPath)}, JSON.stringify(ownership));
   return { ...launched, cleanup: async () => ({ cleaned: false, reason: "fixture inspection unavailable" }) };
 });
-const analyzed = await worker.analyze(${JSON.stringify(source("app.mjs", "export const value = 1;"))}, 100);
+const analyzed = await worker.analyze(${JSON.stringify(source("app.mjs", "export const value = 1;"))}, { nodes: 100, unknowns: 100 });
 if (!analyzed.ok) throw analyzed.error.error;
 try { await worker.close(); throw new Error("cleanup unexpectedly completed"); }
 catch (error) {
@@ -271,9 +578,12 @@ catch (error) {
     const ownership = JSON.parse(
       await readFile(ownershipPath, "utf8"),
     ) as OwnedProcessGroup;
-    expect(await cleanupOwnedProcessGroup(ownership)).toMatchObject({
-      cleaned: true,
-    });
+    expect(
+      await cleanupOwnedProcessGroup({
+        ...ownership,
+        evidenceOwner: new ProcessOwnershipEvidenceOwner(),
+      }),
+    ).toMatchObject({ cleaned: true });
   }
 });
 
@@ -308,7 +618,7 @@ it("formats a real worker's declined semantic budget once", async () => {
   try {
     const result = await worker.analyze(
       source("main.js", "export const observed = 7;"),
-      100,
+      { nodes: 100, unknowns: 100 },
     );
     if (result.ok) throw new Error("expected a declined semantic budget");
     const { error } = result.error;
@@ -350,7 +660,7 @@ it("reports the worker heap limit only when the runtime enforces V8 heap flags",
   try {
     const result = await worker.analyze(
       source("app.mjs", "export const observed = 7;"),
-      100,
+      { nodes: 100, unknowns: 100 },
     );
     if (result.ok) throw new Error("expected a reported resource failure");
     expect(result.error.error).toMatchObject({
@@ -382,7 +692,7 @@ it("rejects a worker heap report that contradicts the launching runtime", async 
   try {
     const result = await worker.analyze(
       source("app.mjs", "export const observed = 7;"),
-      100,
+      { nodes: 100, unknowns: 100 },
     );
     if (result.ok) throw new Error("expected a handshake failure");
     expect(result.error.error._tag).toBe("AnalysisOutputError");
@@ -426,7 +736,7 @@ require("node:readline").createInterface({ input: process.stdin }).once("line", 
     try {
       const result = await worker.analyze(
         source("app.mjs", "export const observed = 7;"),
-        100,
+        { nodes: 100, unknowns: 100 },
       );
       if (result.ok) throw new Error("expected the worker to fail");
       expect(result.error.error).toMatchObject(
@@ -453,3 +763,69 @@ require("node:readline").createInterface({ input: process.stdin }).once("line", 
     }
   },
 );
+
+it("retains legacy routes and a bounded route-fact prefix inside one checkpoint budget", async () => {
+  const count = 12000;
+  const text = Array.from(
+    { length: count },
+    (_, index) => `route('/reports/${index}/${"x".repeat(96)}');`,
+  ).join("\n");
+  const worker = new JavaScriptAnalysisWorker({
+    heapMb: 512,
+    timeoutMs: 30000,
+  });
+  try {
+    const analyzed = await worker.analyze(source("routes.js", text), {
+      nodes: 1,
+      unknowns: 8,
+    });
+    const facts = analyzed.ok
+      ? analyzed.value.javascript
+      : analyzed.error.javascript;
+    expect(
+      facts,
+      analyzed.ok ? undefined : analyzed.error.error.message,
+    ).not.toBeNull();
+    expect(facts!.endpoints).toHaveLength(count);
+    expect(facts!.routes!.candidates.length).toBeGreaterThan(0);
+    expect(facts!.routes!.candidates.length).toBeLessThan(count);
+    expect(facts!.routes!.capacity).toMatchObject({ kind: "result-bytes" });
+    expect(Buffer.byteLength(JSON.stringify(facts))).toBeLessThanOrEqual(
+      8 * 1024 * 1024,
+    );
+  } finally {
+    await worker.close();
+  }
+}, 60000);
+
+it("keeps wrapped route ancestry, navigation and unknown named parents in the real worker", async () => {
+  const worker = new JavaScriptAnalysisWorker({
+    heapMb: 128,
+    timeoutMs: 30000,
+  });
+  try {
+    const analyzed = await worker.analyze(
+      source(
+        "routes.ts",
+        "const detail={_$:'detail'};defineRoutes({reports:{_$:'reports',detail:(detail as typeof detail)}});router.push(({pathname:'/users'} as const));router.push(({pathname:'/settings'} satisfies {pathname:string}));router.addRoute('admin',({path:'settings',component:View} as const));router.addRoute('admin',{path:'relative',children:[{path:'/public',component:View},{path:'relative'}]});defineRoutes({generated:buildRoutes()});",
+      ),
+      { nodes: 1, unknowns: 8 },
+    );
+    if (!analyzed.ok) throw analyzed.error.error;
+    expect(
+      analyzed.value.javascript.routes!.candidates.map(({ path }) => path),
+    ).toEqual([
+      "/users",
+      "/settings",
+      "/reports",
+      "/reports/detail",
+      "/public",
+    ]);
+    expect(analyzed.value.javascript.routes!.unresolved).toHaveLength(3);
+    expect(analyzed.value.javascript.routes!.unresolved[0]!.reason).toContain(
+      "parent",
+    );
+  } finally {
+    await worker.close();
+  }
+});

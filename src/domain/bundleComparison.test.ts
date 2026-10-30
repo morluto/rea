@@ -5,6 +5,7 @@ import {
   bundleComparisonResultSchema,
   compareBundles,
 } from "./bundleComparison.js";
+import { AnalysisInputError } from "./analysisErrorCore.js";
 import { createEvidence } from "./evidence.js";
 import { createEvidenceBundle } from "./evidenceBundle.js";
 import {
@@ -202,7 +203,7 @@ describe("bundle comparison", () => {
           right_evidence_id: rightRecord.evidence_id,
         },
       ]),
-    ).toThrow(/missing left evidence/u);
+    ).toThrow(AnalysisInputError);
     expect(() =>
       compareBundles(left, right, [
         {
@@ -214,7 +215,7 @@ describe("bundle comparison", () => {
           right_evidence_id: rightRecord.evidence_id,
         },
       ]),
-    ).toThrow(/one-to-one/u);
+    ).toThrow(AnalysisInputError);
     expect(() =>
       compareBundles({ ...left, records: [leftRecord, leftRecord] }, right),
     ).toThrow(/duplicate record IDs/u);

@@ -1,6 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -12,6 +11,7 @@ import {
   type ProviderProcessHandle,
 } from "../../../src/process/ProviderProcess.js";
 import { evidenceSchema } from "../../../src/domain/evidence.js";
+import { absoluteCallerPath } from "../../../src/filesystem/callerPath.js";
 import {
   createRizinTestManager,
   rizinTestInferiorTty,
@@ -422,7 +422,7 @@ process.stdin.on("data", (chunk) => {
     const manager = createRizinTestManager({ REA_RIZIN_COMMAND: provider });
     managers.push(manager);
     const callerSelectedPath = "./relative/../fixture.bin";
-    const resolvedPath = resolve(callerSelectedPath);
+    const resolvedPath = absoluteCallerPath(callerSelectedPath);
     const started = await manager.start({
       path: callerSelectedPath,
       inferior_tty: inferiorTty,
@@ -670,7 +670,7 @@ process.stdin.on("data", (chunk) => {
     );
     managers.push(manager);
     const callerSelectedPath = "./cancelled/../fixture.bin";
-    const resolvedPath = resolve(callerSelectedPath);
+    const resolvedPath = absoluteCallerPath(callerSelectedPath);
     const started = await manager.start({
       path: callerSelectedPath,
       inferior_tty: await rizinTestInferiorTty(),
@@ -849,7 +849,7 @@ process.stdin.on("data", (chunk) => {
     );
     managers.push(manager);
     const callerSelectedPath = "./exit/../fixture.bin";
-    const resolvedPath = resolve(callerSelectedPath);
+    const resolvedPath = absoluteCallerPath(callerSelectedPath);
     const started = await manager.start({
       path: callerSelectedPath,
       inferior_tty: await rizinTestInferiorTty(),

@@ -1,17 +1,15 @@
 import { z } from "zod";
+import { AnalysisInputError } from "../analysisErrorCore.js";
 
 import {
   anatomyNameIs,
   anatomyTailMatches,
   appleBundleSchema,
-  appleComponentSchema,
-  applicationRoots,
-  detectBundles,
+  projectAppleBundleAnatomy,
   isMachOFormat,
   isSidecar,
   isWithin,
   platformsOf,
-  type AppleInventoryEntry,
 } from "./appleBundleAnatomy.js";
 import {
   isSwiftRuntimeLibrary,
@@ -19,27 +17,28 @@ import {
 } from "../nativeConvention.js";
 import {
   hasCompleteInventoryCoverage,
-  parseArtifactInventoryEvidence,
+  type ParsedInventorySet,
 } from "../artifactInventoryEvidence.js";
-import { evidenceSchema } from "../evidence.js";
-import { digestSchema } from "../digests.js";
-import { prefixedDigestSchema } from "../digests.js";
+import { digestSchema, prefixedDigestSchema } from "../digests.js";
+import { digestCanonicalValue } from "../canonicalDigest.js";
 import {
   bridgeCandidateCoverageSchema,
   projectCartesianCandidates,
 } from "../bridgeCandidateProjection.js";
-import { projectionDigest } from "../mobileApplicationGraphProjection.js";
+import {
+  projectedComponentSchema,
+  projectionEvidenceIdSchema,
+  projectionPathSchema,
+  projectedInventoryEntries,
+  projectedFileComponents,
+  unavailableComponentSchema,
+  type ProjectedInventoryEntry,
+} from "../mobileApplicationGraphProjection.js";
+import { uniqueSortedBy } from "../canonicalOrdering.js";
 import { compareUnicodeCodePoints as compare } from "../unicodeCodePointOrder.js";
-
-const evidenceIdSchema = prefixedDigestSchema("ev");
-const pathSchema = z.string().min(1);
+import { err, ok, type Result } from "../result.js";
 
 const APPLE_ROOT_FORMATS = ["ipa", "directory", "zip", "dmg"] as const;
-
-/** Authenticated artifact inventory pages projected as one Apple application. */
-export const appleApplicationProjectionInputSchema = z.strictObject({
-  inventory_evidence: z.array(evidenceSchema).min(1),
-});
 
 /** Deterministic, execution-free Apple application inventory projection. */
 export const appleApplicationProjectionResultSchema = z.strictObject({
@@ -47,23 +46,24 @@ export const appleApplicationProjectionResultSchema = z.strictObject({
   root_sha256: digestSchema,
   root_format: z.enum(APPLE_ROOT_FORMATS),
   platforms: z.array(z.enum(["ios", "macos"])),
-  source_evidence_ids: z.array(evidenceIdSchema).min(1),
-  application_roots: z.array(pathSchema),
+  source_evidence_ids: z.array(projectionEvidenceIdSchema).min(1),
+  application_roots: z.array(projectionPathSchema),
   bundles: z.array(appleBundleSchema),
   components: z.strictObject({
-    bundle_metadata: z.array(appleComponentSchema),
-    executables: z.array(appleComponentSchema),
-    frameworks: z.array(appleComponentSchema),
-    native_libraries: z.array(appleComponentSchema),
-    javascript: z.array(appleComponentSchema),
-    signing: z.array(appleComponentSchema),
-    privileged_helpers: z.array(appleComponentSchema),
+    bundle_metadata: z.array(projectedComponentSchema),
+    executables: z.array(projectedComponentSchema),
+    frameworks: z.array(projectedComponentSchema),
+    native_libraries: z.array(projectedComponentSchema),
+    javascript: z.array(projectedComponentSchema),
+    signing: z.array(projectedComponentSchema),
+    privileged_helpers: z.array(projectedComponentSchema),
     launchd_plists: z.array(
-      appleComponentSchema.extend({ domain: z.enum(["agent", "daemon"]) }),
+      projectedComponentSchema.extend({ domain: z.enum(["agent", "daemon"]) }),
     ),
-    helpers: z.array(appleComponentSchema),
+    helpers: z.array(projectedComponentSchema),
   }),
-  symlinks: z.array(pathSchema),
+  unavailable_components: z.array(unavailableComponentSchema),
+  symlinks: z.array(projectionPathSchema),
   runtime_families: z.array(
     z.enum([
       "native",
@@ -76,8 +76,8 @@ export const appleApplicationProjectionResultSchema = z.strictObject({
   ),
   bridge_candidates: z.array(
     z.strictObject({
-      source_path: pathSchema,
-      native_path: pathSchema,
+      source_path: projectionPathSchema,
+      native_path: projectionPathSchema,
       basis: z.enum([
         "javascript-and-native-content",
         "react-native-convention",
@@ -95,57 +95,25 @@ export const appleApplicationProjectionResultSchema = z.strictObject({
   limitations: z.array(z.string()),
 });
 
-export type AppleApplicationProjectionInput = z.infer<
-  typeof appleApplicationProjectionInputSchema
->;
 export type AppleApplicationProjectionResult = z.infer<
   typeof appleApplicationProjectionResultSchema
 >;
 
-type Component = z.infer<typeof appleComponentSchema>;
+type Component = z.infer<typeof projectedComponentSchema>;
 type RootFormat = (typeof APPLE_ROOT_FORMATS)[number];
 
-/** Project exact Apple application paths and hashes without parsing or executing target code. */
-export const projectAppleApplication = (
-  input: AppleApplicationProjectionInput,
-): AppleApplicationProjectionResult => {
-  const parsed = appleApplicationProjectionInputSchema.parse(input);
-  const { evidence, inventory } = parseArtifactInventoryEvidence(
-    parsed.inventory_evidence,
-  );
-  const rootFormat = appleRootFormat(inventory.manifest.root_format);
-  const nodes = new Map(
-    inventory.nodes.map((node) => [node.artifact_id, node]),
-  );
-  const entries: AppleInventoryEntry[] = inventory.occurrences
-    .filter(({ logical_path: path }) => path !== ".")
-    .map((occurrence) => {
-      if (occurrence.artifact_id === null)
-        return {
-          path: occurrence.logical_path,
-          kind: occurrence.entry_kind,
-          component: undefined,
-        };
-      const node = nodes.get(occurrence.artifact_id);
-      if (node === undefined)
-        throw new TypeError(
-          "Apple application occurrence has no artifact node",
-        );
-      return {
-        path: occurrence.logical_path,
-        kind: occurrence.entry_kind,
-        component: {
-          path: occurrence.logical_path,
-          artifact_id: node.artifact_id,
-          sha256: node.sha256,
-          format: occurrence.artifact_format,
-        },
-      };
-    });
-  const inventoried = entries.flatMap(({ component }) =>
-    component === undefined ? [] : [component],
-  );
-  const roots = applicationRoots(entries, {
+/** Project an already authenticated inventory without reparsing its source. */
+export const projectAppleInventory = (
+  source: ParsedInventorySet,
+): Result<AppleApplicationProjectionResult, AnalysisInputError> => {
+  const { evidence, inventory } = source;
+  const rootFormatResult = appleRootFormat(inventory.manifest.root_format);
+  if (!rootFormatResult.ok) return rootFormatResult;
+  const rootFormat = rootFormatResult.value;
+  const { entries, limitations: unresolved } =
+    projectedInventoryEntries(inventory);
+  const inventoried = projectedFileComponents(entries);
+  const { roots, bundles } = projectAppleBundleAnatomy(entries, {
     name: evidence[0]?.subject?.name ?? "",
     format: rootFormat,
   });
@@ -154,15 +122,24 @@ export const projectAppleApplication = (
     roots,
     rootFormat,
   );
-  const bundles = detectBundles(entries, roots);
-  const classified = classifyComponents(entries, all, roots);
+  // Directories have no file bytes; symlinks already have their own path-only output.
+  const unavailable = attributeComponents(
+    entries.flatMap(({ kind, unavailable }) =>
+      (kind === "file" || kind === "slice") && unavailable !== undefined
+        ? [unavailable]
+        : [],
+    ),
+    roots,
+    rootFormat,
+  );
+  const classified = classifyComponents(entries, all, roots, bundles);
   const runtimeFamilies = identifyRuntimeFamilies(all);
   const bridgeProjection = identifyBridgeCandidates(
     classified.javascript,
-    deduplicateComponents([
-      ...classified.executables,
-      ...classified.native_libraries,
-    ]),
+    uniqueSortedBy(
+      [...classified.executables, ...classified.native_libraries],
+      (component) => component.path,
+    ),
     roots,
   );
   const uninventoriedImage =
@@ -173,6 +150,7 @@ export const projectAppleApplication = (
   );
   const complete = inventoryComplete && !uninventoriedImage;
   const limitations = [
+    ...unresolved,
     ...inventory.limitations,
     ...projectionLimitations({
       complete: inventoryComplete,
@@ -181,7 +159,8 @@ export const projectAppleApplication = (
       bundles,
       sidecars: entries.some(({ path }) => isSidecar(path)),
       symlinks: entries.some(({ kind }) => kind === "symlink"),
-      unattributed,
+      unattributed: unattributed + unavailable.unattributed,
+      unavailable: unavailable.all.length > 0,
       bridgeCandidateCoverage: bridgeProjection.coverage,
     }),
   ];
@@ -195,6 +174,7 @@ export const projectAppleApplication = (
     application_roots: roots,
     bundles,
     components: classified,
+    unavailable_components: unavailable.all,
     symlinks: entries
       .filter(({ kind }) => kind === "symlink")
       .map(({ path }) => path)
@@ -204,22 +184,26 @@ export const projectAppleApplication = (
     bridge_candidate_coverage: bridgeProjection.coverage,
     coverage: {
       status:
-        complete && bridgeProjection.coverage.status === "complete"
+        complete &&
+        unavailable.all.length === 0 &&
+        bridgeProjection.coverage.status === "complete"
           ? ("complete-within-inventory" as const)
           : ("partial" as const),
       inventory_complete: inventory.complete,
     },
     limitations,
   };
-  return appleApplicationProjectionResultSchema.parse({
-    ...withoutId,
-    projection_id: appleProjectionId(withoutId),
-  });
+  return ok(
+    appleApplicationProjectionResultSchema.parse({
+      ...withoutId,
+      projection_id: appleProjectionId(withoutId),
+    }),
+  );
 };
 
 /** Identify the complete projection, including source Evidence provenance. */
 export const appleProjectionId = (projection: unknown): string =>
-  `aap_${digest(projection)}`;
+  `aap_${digestCanonicalValue(projection, "Apple application projection")}`;
 
 /**
  * AppleDouble sidecars describe neighbouring files and are never components.
@@ -227,11 +211,11 @@ export const appleProjectionId = (projection: unknown): string =>
  * ZIP, and DMG inventories can hold installers and other siblings, so only
  * components inside an application root are attributed to it.
  */
-const attributeComponents = (
-  inventoried: readonly Component[],
+const attributeComponents = <Entry extends { readonly path: string }>(
+  inventoried: readonly Entry[],
   roots: readonly string[],
   rootFormat: RootFormat,
-): { readonly all: Component[]; readonly unattributed: number } => {
+): { readonly all: Entry[]; readonly unattributed: number } => {
   const visible = inventoried.filter(({ path }) => !isSidecar(path));
   if (rootFormat === "ipa") return { all: visible, unattributed: 0 };
   const all = visible.filter(({ path }) =>
@@ -240,23 +224,49 @@ const attributeComponents = (
   return { all, unattributed: visible.length - all.length };
 };
 
-const appleRootFormat = (format: string): RootFormat => {
+const appleRootFormat = (
+  format: string,
+): Result<RootFormat, AnalysisInputError> => {
   const root = APPLE_ROOT_FORMATS.find((candidate) => candidate === format);
   if (root === undefined)
-    throw new TypeError(
-      `Apple application projection requires IPA, directory, ZIP, or DMG inventory Evidence (got ${format})`,
+    return err(
+      new AnalysisInputError("project_apple_application_graph", {}, [
+        {
+          path: [
+            "inventory_evidence",
+            0,
+            "normalized_result",
+            "manifest",
+            "root_format",
+          ],
+          reason: "invalid_value",
+          message: `Apple application projection requires IPA, directory, ZIP, or DMG inventory Evidence (got ${format})`,
+        },
+      ]),
     );
-  return root;
+  return ok(root);
 };
 
 const isNativeLibrary = (path: string): boolean =>
   /\.(?:dylib|so)$/iu.test(path);
 
+const launchdDomain = (path: string): "agent" | "daemon" | undefined => {
+  if (anatomyTailMatches(path, ["Contents", "Library", "LaunchAgents", "*"]))
+    return "agent";
+  if (anatomyTailMatches(path, ["Contents", "Library", "LaunchDaemons", "*"]))
+    return "daemon";
+  return undefined;
+};
+
 const classifyComponents = (
-  entries: readonly AppleInventoryEntry[],
+  entries: readonly ProjectedInventoryEntry[],
   all: readonly Component[],
   roots: readonly string[],
+  bundles: readonly z.infer<typeof appleBundleSchema>[],
 ) => {
+  const frameworkRoots = bundles
+    .filter(({ role }) => role === "framework")
+    .map(({ path }) => path);
   const withinApp = (path: string): boolean =>
     roots.some((root) => isWithin(path, root));
   const matching = (predicate: (path: string) => boolean): Component[] =>
@@ -279,7 +289,9 @@ const classifyComponents = (
       ({ path, format }) =>
         isMachOFormat(format) && (withinApp(path) || !isNativeLibrary(path)),
     ),
-    frameworks: all.filter(({ path }) => /\.framework\//u.test(path)),
+    frameworks: all.filter(({ path }) =>
+      frameworkRoots.some((root) => isWithin(path, root)),
+    ),
     native_libraries: all.filter(({ path }) => isNativeLibrary(path)),
     javascript: all.filter(({ format }) => format === "javascript-bundle"),
     signing: all.filter(
@@ -291,39 +303,17 @@ const classifyComponents = (
     privileged_helpers: matching((path) =>
       anatomyTailMatches(path, ["Contents", "Library", "LaunchServices", "*"]),
     ),
-    launchd_plists: matching(
-      (path) =>
-        path.endsWith(".plist") &&
-        (anatomyTailMatches(path, [
-          "Contents",
-          "Library",
-          "LaunchAgents",
-          "*",
-        ]) ||
-          anatomyTailMatches(path, [
-            "Contents",
-            "Library",
-            "LaunchDaemons",
-            "*",
-          ])),
-    ).map((component) => ({
-      ...component,
-      domain: component.path
-        .split("/")
-        .some((segment) => anatomyNameIs(segment, "LaunchDaemons"))
-        ? ("daemon" as const)
-        : ("agent" as const),
-    })),
+    launchd_plists: matching((path) => path.endsWith(".plist")).flatMap(
+      (component) => {
+        const domain = launchdDomain(component.path);
+        return domain === undefined ? [] : [{ ...component, domain }];
+      },
+    ),
     helpers: matching((path) =>
       anatomyTailMatches(path, ["Contents", "Helpers", "*"]),
     ),
   };
 };
-
-const deduplicateComponents = (values: readonly Component[]): Component[] =>
-  [...new Map(values.map((value) => [value.path, value])).values()].sort(
-    (left, right) => compare(left.path, right.path),
-  );
 
 const identifyRuntimeFamilies = (all: readonly Component[]) => {
   const families = new Set<
@@ -402,6 +392,7 @@ const projectionLimitations = (facts: {
   readonly sidecars: boolean;
   readonly symlinks: boolean;
   readonly unattributed: number;
+  readonly unavailable: boolean;
   readonly bridgeCandidateCoverage: AppleApplicationProjectionResult["bridge_candidate_coverage"];
 }): string[] => [
   ...(!facts.complete
@@ -445,6 +436,11 @@ const projectionLimitations = (facts: {
         `Bridge candidate pairs exceeded the projection safety budget; ${facts.bridgeCandidateCoverage.omitted_candidates} hypotheses are omitted. Component arrays still include every component from the supplied inventory pages.`,
       ]
     : []),
+  ...(facts.unavailable
+    ? [
+        "Some inventoried files have no authenticated content identity. Their paths and limitations are retained in unavailable_components; component absence is unknown.",
+      ]
+    : []),
   "Bundle roles follow path conventions. Read each info_plist_path with inspect_plist for CFBundleExecutable, identifiers, and declared services.",
   "Bundle identifiers and signing claims require dedicated plist and CMS parsing; this projection reports only exact paths and hashes.",
   "Runtime families are inferred from inventory formats and bounded framework path conventions, not observed runtime loading.",
@@ -452,6 +448,3 @@ const projectionLimitations = (facts: {
   "Bridge candidates are path-based hypotheses, not observed runtime calls.",
   "A bridge basis is inferred from the native path and is repeated for every managed component.",
 ];
-
-const digest = (value: unknown): string =>
-  projectionDigest(value, "Apple application projection");

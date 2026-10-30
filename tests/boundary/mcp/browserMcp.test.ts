@@ -3,6 +3,7 @@ import { crc32, deflateSync } from "node:zlib";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import { Ajv2020 } from "ajv/dist/2020.js";
 import { afterEach, expect, it } from "vitest";
 
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
@@ -17,7 +18,7 @@ import {
 import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { observed } from "../../fixtures/analysisExecution.js";
-import { runCliJson } from "../../fixtures/cliJsonProcess.js";
+import { cliTest } from "../../support/cli/cliFixture.js";
 import {
   startFakeCdpBrowser,
   type FakeCdpBrowser,
@@ -26,6 +27,245 @@ import {
 const resources: Array<{ close(): Promise<unknown> }> = [];
 const browsers: FakeCdpBrowser[] = [];
 const INTEGRATION_TEST_TIMEOUT_MS = 20_000;
+
+it("preserves Link parameter order and context through the advertised MCP contract", async () => {
+  const links = [
+    '</duplicate-first>; rel="mcp"; rel="preload"; type="application/mcp"; type="application/preload"',
+    '</duplicate-last>; rel="preload"; rel="mcp"',
+    String.raw`</escaped-rel>; rel="m\cp"`,
+    '</other-context>; rel="mcp"; anchor="/other-document"; anchor="/page"',
+    '</default-context>; rel="mcp"',
+    '</same-context>; rel="mcp"; anchor="/page"',
+  ];
+  const browser = await startFakeCdpBrowser({
+    eventsBeforeReply: ["Network.enable"],
+    commandEvents(command, origin) {
+      if (command.method !== "Network.enable") return undefined;
+      const session =
+        command.sessionId === undefined ? {} : { sessionId: command.sessionId };
+      return [
+        {
+          ...session,
+          method: "Network.requestWillBeSent",
+          params: {
+            requestId: "link-metadata",
+            type: "Document",
+            request: { url: `${origin}/page`, method: "GET" },
+            initiator: { type: "parser" },
+          },
+        },
+        {
+          ...session,
+          method: "Network.responseReceived",
+          params: {
+            requestId: "link-metadata",
+            type: "Document",
+            response: {
+              url: `${origin}/page`,
+              status: 200,
+              mimeType: "text/html",
+              headers: {
+                Link: [
+                  ...links,
+                  `</credential-context>; rel="mcp"; anchor="${new URL(origin).protocol}//other-user:other-pass@${new URL(origin).host}/page"`,
+                ].join(", "),
+              },
+            },
+          },
+        },
+      ];
+    },
+  });
+  browsers.push(browser);
+  const connected = await connectBrowser();
+  const advertised = (await connected.client.listTools()).tools.find(
+    ({ name }) => name === "inspect_web_page",
+  );
+  if (advertised?.outputSchema === undefined)
+    throw new Error("inspect_web_page must advertise its output schema");
+
+  const inspected = await connected.client.callTool({
+    name: "inspect_web_page",
+    arguments: {
+      cdp_endpoint: browser.endpoint,
+      target_id: "allowed-page",
+      observation_ms: 0,
+    },
+  });
+  expect(inspected.isError).not.toBe(true);
+  const ajv = new Ajv2020({ strict: false, validateFormats: false });
+  const outputSchema: Record<string, unknown> = advertised.outputSchema;
+  expect(
+    ajv.validate(outputSchema, inspected.structuredContent),
+    JSON.stringify(ajv.errors),
+  ).toBe(true);
+
+  const normalized = webPageInspectionSchema.parse(
+    normalizedResultOf(inspected.structuredContent),
+  );
+  expect(normalized.metadata.responses).toContainEqual(
+    expect.objectContaining({
+      request_id: "link-metadata",
+      links: [
+        expect.objectContaining({
+          href: `${browser.allowedOrigin}/duplicate-first`,
+          rel: ["mcp"],
+          type: "application/mcp",
+          context_url: `${browser.allowedOrigin}/page`,
+          context_scope: "approved",
+        }),
+        expect.objectContaining({
+          href: `${browser.allowedOrigin}/duplicate-last`,
+          rel: ["preload"],
+          context_url: `${browser.allowedOrigin}/page`,
+        }),
+        expect.objectContaining({
+          href: `${browser.allowedOrigin}/escaped-rel`,
+          rel: ["mcp"],
+          context_url: `${browser.allowedOrigin}/page`,
+        }),
+        expect.objectContaining({
+          href: `${browser.allowedOrigin}/other-context`,
+          rel: ["mcp"],
+          context_url: `${browser.allowedOrigin}/other-document`,
+          context_scope: "approved",
+        }),
+        expect.objectContaining({
+          href: `${browser.allowedOrigin}/default-context`,
+          rel: ["mcp"],
+          context_url: `${browser.allowedOrigin}/page`,
+        }),
+        expect.objectContaining({
+          href: `${browser.allowedOrigin}/same-context`,
+          rel: ["mcp"],
+          context_url: `${browser.allowedOrigin}/page`,
+        }),
+        expect.objectContaining({
+          href: `${browser.allowedOrigin}/credential-context`,
+          rel: ["mcp"],
+          context_url: `${browser.allowedOrigin}/page`,
+        }),
+      ],
+    }),
+  );
+  const linkHints = normalized.metadata.agent_hints.filter(
+    ({ mechanism }) => mechanism === "link_rel",
+  );
+  expect(linkHints.map(({ url }) => url)).toEqual([
+    `${browser.allowedOrigin}/duplicate-first`,
+    `${browser.allowedOrigin}/escaped-rel`,
+    `${browser.allowedOrigin}/default-context`,
+    `${browser.allowedOrigin}/same-context`,
+  ]);
+
+  const legacy = structuredClone(normalized);
+  for (const response of legacy.metadata.responses)
+    for (const projectedLink of response.links) {
+      delete projectedLink.context_url;
+      delete projectedLink.context_scope;
+    }
+  expect(webPageInspectionSchema.safeParse(legacy).success).toBe(true);
+  const legacyStructuredContent = {
+    ...(inspected.structuredContent as Record<string, unknown>),
+    normalized_result: legacy,
+  };
+  expect(
+    ajv.validate(outputSchema, legacyStructuredContent),
+    JSON.stringify(ajv.errors),
+  ).toBe(true);
+});
+
+cliTest(
+  "preserves full document URL identity through CLI and MCP",
+  async ({ cli }) => {
+    const source =
+      'document.modelContext.registerTool({name:"catalog",[``]:0,inputSchema:{properties:{"":{},ordinary:{}}}});';
+    const browser = await startFakeCdpBrowser({
+      commandResult: ({ method }, origin) =>
+        method === "Debugger.getScriptSource"
+          ? { scriptSource: source }
+          : method === "Page.getFrameTree"
+            ? {
+                frameTree: {
+                  frame: {
+                    id: "frame-main",
+                    loaderId: "loader-main",
+                    url: `${origin}/app?token=frame-secret`,
+                    urlFragment: "#details",
+                  },
+                },
+              }
+            : undefined,
+      commandEvents: ({ method, sessionId }, origin) =>
+        method === "Page.captureScreenshot"
+          ? [
+              {
+                method: "Page.frameRequestedNavigation",
+                ...(sessionId === undefined ? {} : { sessionId }),
+                params: {
+                  frameId: "frame-main",
+                  url: `${origin}/not-committed`,
+                  reason: "scriptInitiated",
+                  disposition: "currentTab",
+                },
+              },
+            ]
+          : undefined,
+    });
+    browsers.push(browser);
+    const { client, session } = await connectBrowser();
+    const args = {
+      cdp_endpoint: browser.endpoint,
+      allowed_origins: [browser.allowedOrigin],
+      target_id: "allowed-page",
+    };
+    const cliResult = await cli.run({
+      arguments: [
+        "analyze-web-bundle",
+        browser.endpoint,
+        "allowed-page",
+        "--allowed-origins",
+        browser.allowedOrigin,
+        "--observation-ms",
+        "0",
+        "--json",
+      ],
+      environment: process.env,
+    });
+    expect(cliResult.exitCode).toBe(0);
+    expect(cliResult.signal).toBeNull();
+    const mcp = await client.callTool({
+      name: "analyze_web_bundle",
+      arguments: { ...args, observation_ms: 0 },
+    });
+    for (const result of [cliResult.json, mcp.structuredContent])
+      expect(result).toMatchObject({
+        normalized_result: {
+          capture: {
+            target_url: `${browser.allowedOrigin}/app?token=frame-secret#details`,
+          },
+        },
+      });
+    expect(
+      session.evidenceById(parseEvidence(mcp.structuredContent).evidence_id),
+    ).toEqual(parseEvidence(mcp.structuredContent));
+    const screenshot = await client.callTool({
+      name: "capture_web_screenshot",
+      arguments: args,
+    });
+    expect(screenshot).toMatchObject({
+      structuredContent: {
+        normalized_result: {
+          target: {
+            url: `${browser.allowedOrigin}/app?token=frame-secret#details`,
+          },
+          artifact: { media_type: "image/png" },
+        },
+      },
+    });
+  },
+  INTEGRATION_TEST_TIMEOUT_MS,
+);
 
 afterEach(async () => {
   await Promise.all(
@@ -41,6 +281,7 @@ it(
       sessionTimeline: "same_origin",
       webMcpTools: true,
       sensitiveShapes: true,
+      eventsBeforeReply: ["Network.enable"],
     });
     browsers.push(browser);
     const connected = await connectBrowser();
@@ -244,6 +485,16 @@ const verifySessionAndComparisonTools = async (
     },
   });
   expect(malformedComparison.isError).toBe(true);
+  expect(parseMcpToolError(malformedComparison)).toMatchObject({
+    error: {
+      code: "invalid_request",
+      recovery: {
+        kind: "inspect_input_contract",
+        operation: "compare_web_captures",
+      },
+      details: { operation: "compare_web_captures" },
+    },
+  });
   expect(JSON.stringify(malformedComparison.content)).toContain("types");
   const incompleteComparison = await connected.client.callTool({
     name: "compare_web_captures",
@@ -343,127 +594,191 @@ const assertScreenshotPngFailures = async (client: Client): Promise<void> => {
   });
 };
 
-it("delivers the source-map response URL through authenticated MCP Evidence", async () => {
-  const terminalPath = "/maps/v1/app.js.map?revision=2&token=source-value";
-  const browser = await startFakeCdpBrowser({
-    sourceMapRedirect: terminalPath,
-    sourceMapBody: JSON.stringify({
-      version: 3,
-      names: [],
-      sources: ["../src/original.js"],
-      sourcesContent: ["export const value = 1;"],
-      mappings: "AAAA",
-    }),
-  });
-  browsers.push(browser);
-  const connected = await connectBrowser();
-  const result = await connected.client.callTool({
-    name: "analyze_web_bundle",
-    arguments: {
-      cdp_endpoint: browser.endpoint,
-      target_id: "allowed-page",
-      allowed_origins: [browser.allowedOrigin],
-      observation_ms: 0,
-      fetch_source_maps: true,
-    },
-  });
-  expect(result.isError).not.toBe(true);
-  const evidence = parseEvidence(result.structuredContent);
-  const expectedResult = {
-    observations: {
-      source_maps: {
-        status: "included",
-        items: [
-          {
-            declared_url: `${browser.allowedOrigin}/app.js.map?token=map-secret`,
-            effective_url: `${browser.allowedOrigin}${terminalPath}`,
-            original_sources: [
-              { source: `${browser.allowedOrigin}/maps/src/original.js` },
-            ],
-          },
-        ],
+cliTest(
+  "delivers the source-map response URL through authenticated MCP Evidence",
+  async ({ cli }) => {
+    const terminalPath = "/maps/v1/app.js.map?revision=2&token=source-value";
+    const sources = [
+      ["../src/original.js", "text/javascript"],
+      ["../src/plain.ts", "text/typescript"],
+      ["../src/main.ts?revision=2", "text/typescript"],
+      ["../src/main.tsx?revision=2", "text/typescript"],
+      ["../src/main.mts?revision=2", "text/typescript"],
+      ["../src/main.cts?revision=2", "text/typescript"],
+      ["../src/fragment.ts#original", "text/typescript"],
+      ["../src/control.js?filename=main.ts", "text/javascript"],
+      ["../src/extensionless?revision=2", "text/javascript"],
+    ] as const;
+    const sourceText = "export const value = 1;";
+    const browser = await startFakeCdpBrowser({
+      sourceMapRedirect: terminalPath,
+      sourceMapBody: JSON.stringify({
+        version: 3,
+        names: [],
+        sources: sources.map(([source]) => source),
+        sourcesContent: sources.map(() => sourceText),
+        mappings: "AAAA",
+      }),
+    });
+    browsers.push(browser);
+    const connected = await connectBrowser();
+    const result = await connected.client.callTool({
+      name: "analyze_web_bundle",
+      arguments: {
+        cdp_endpoint: browser.endpoint,
+        target_id: "allowed-page",
+        allowed_origins: [browser.allowedOrigin],
+        observation_ms: 0,
+        fetch_source_maps: true,
       },
-    },
-  };
-  expect(evidence.normalized_result).toMatchObject(expectedResult);
-  expect(result.content).toHaveLength(1);
-  expect(result.content[0]).toMatchObject({
-    type: "text",
-    text: JSON.stringify(evidence),
-  });
-  const cliEvidence = parseEvidence(
-    await runCliJson([
-      "analyze-web-bundle",
-      browser.endpoint,
-      "allowed-page",
-      "--allowed-origins",
-      browser.allowedOrigin,
-      "--observation-ms",
-      "0",
-      "--fetch-source-maps",
-      "--json",
-    ]),
-  );
-  expect(cliEvidence.normalized_result).toMatchObject(expectedResult);
-  const mapRequests = browser.httpRequests.filter(({ url }) =>
-    url.includes(".map"),
-  );
-  expect(mapRequests.map(({ url }) => url)).toEqual([
-    "/app.js.map?token=map-secret",
-    terminalPath,
-    "/app.js.map?token=map-secret",
-    terminalPath,
-  ]);
-  expect(
-    mapRequests.every(
-      ({ authorization, cookie, referer }) =>
-        authorization === undefined &&
-        cookie === undefined &&
-        referer === undefined,
-    ),
-  ).toBe(true);
-});
+    });
+    expect(result.isError).not.toBe(true);
+    const evidence = parseEvidence(result.structuredContent);
+    const expectedResult = {
+      observations: {
+        source_maps: {
+          status: "included",
+          items: [
+            {
+              declared_url: `${browser.allowedOrigin}/app.js.map?token=map-secret`,
+              effective_url: `${browser.allowedOrigin}${terminalPath}`,
+              original_sources: sources.map(([source, mediaType]) => ({
+                source: new URL(
+                  source,
+                  `${browser.allowedOrigin}${terminalPath}`,
+                ).href,
+                artifact: { media_type: mediaType, text: sourceText },
+              })),
+            },
+          ],
+        },
+      },
+    };
+    expect(evidence.normalized_result).toMatchObject(expectedResult);
+    expect(result.content).toHaveLength(1);
+    expect(result.content[0]).toMatchObject({
+      type: "text",
+      text: JSON.stringify(evidence),
+    });
+    const cliResult = await cli.run({
+      arguments: [
+        "analyze-web-bundle",
+        browser.endpoint,
+        "allowed-page",
+        "--allowed-origins",
+        browser.allowedOrigin,
+        "--observation-ms",
+        "0",
+        "--fetch-source-maps",
+        "--json",
+      ],
+      environment: process.env,
+    });
+    expect(cliResult.exitCode).toBe(0);
+    expect(cliResult.signal).toBeNull();
+    const cliEvidence = parseEvidence(cliResult.json);
+    expect(cliEvidence.normalized_result).toMatchObject(expectedResult);
+    const mapRequests = browser.httpRequests.filter(({ url }) =>
+      url.includes(".map"),
+    );
+    expect(mapRequests.map(({ url }) => url)).toEqual([
+      "/app.js.map?token=map-secret",
+      terminalPath,
+      "/app.js.map?token=map-secret",
+      terminalPath,
+    ]);
+    expect(
+      mapRequests.every(
+        ({ authorization, cookie, referer }) =>
+          authorization === undefined &&
+          cookie === undefined &&
+          referer === undefined,
+      ),
+    ).toBe(true);
+  },
+);
 
-it("records a browser-socket endpoint redacted and reconciles its Evidence", async () => {
-  const browser = await startFakeCdpBrowser();
-  browsers.push(browser);
-  const connected = await connectBrowser();
-  const tool = (await connected.client.listTools()).tools.find(
-    ({ name }) => name === "inspect_web_page",
-  );
-  expect(tool?.inputSchema.properties?.cdp_endpoint).toMatchObject({
-    description: expect.stringContaining("/devtools/browser/ID"),
-  });
-  const inspected = await connected.client.callTool({
-    name: "inspect_web_page",
-    arguments: {
-      cdp_endpoint: browser.browserWebSocketUrl,
-      target_id: "allowed-page",
-      observation_ms: 0,
-      include_script_sources: true,
-    },
-  });
-  expect(inspected.isError).not.toBe(true);
-  expect(inspected.structuredContent).toMatchObject({
-    parameters: {
-      cdp_endpoint: browser.browserWebSocketUrl.replace(/fake$/u, "[REDACTED]"),
-    },
-  });
-  expect(JSON.stringify(inspected.structuredContent)).not.toContain(
-    "/devtools/browser/fake",
-  );
-  const reconciled = await connected.client.callTool({
-    name: "reconcile_javascript_runtime",
-    arguments: {
-      static_layers: JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE.static_layers,
-      runtime_observations: [evidenceFor(inspected.structuredContent)],
-    },
-  });
-  expect(reconciled.isError).not.toBe(true);
-  expect(reconciled.structuredContent).toMatchObject({
-    normalized_result: { summary: { runtime_scripts: 1 } },
-  });
-});
+it.each(["full", "compact"] as const)(
+  "records a browser-socket endpoint redacted and reconciles its Evidence (%s)",
+  async (profile) => {
+    const browser = await startFakeCdpBrowser();
+    browsers.push(browser);
+    const connected = await connectBrowser(profile);
+    const tool = (await connected.client.listTools()).tools.find(
+      ({ name }) => name === "inspect_web_page",
+    );
+    if (profile === "full")
+      expect(tool?.inputSchema.properties?.cdp_endpoint).toMatchObject({
+        description: expect.stringContaining("/devtools/browser/ID"),
+      });
+    const inspected = await connected.client.callTool({
+      name: "inspect_web_page",
+      arguments: {
+        cdp_endpoint: browser.browserWebSocketUrl,
+        target_id: "allowed-page",
+        observation_ms: 0,
+        include_script_sources: true,
+      },
+    });
+    expect(inspected.isError).not.toBe(true);
+    expect(inspected.structuredContent).toMatchObject({
+      parameters: {
+        cdp_endpoint: browser.browserWebSocketUrl.replace(
+          /fake$/u,
+          "[REDACTED]",
+        ),
+      },
+    });
+    expect(JSON.stringify(inspected.structuredContent)).not.toContain(
+      "/devtools/browser/fake",
+    );
+    const reconciled = await connected.client.callTool({
+      name: "reconcile_javascript_runtime",
+      arguments: {
+        static_layers: JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE.static_layers,
+        runtime_observations: [evidenceFor(inspected.structuredContent)],
+      },
+    });
+    expect(reconciled.isError).not.toBe(true);
+    expect(reconciled.structuredContent).toMatchObject({
+      normalized_result: { summary: { runtime_scripts: 1 } },
+    });
+  },
+);
+
+it.each([
+  ["inspect_web_page", 0],
+  ["analyze_web_bundle", 0],
+  ["observe_web_session", 1],
+  ["discover_webmcp_tools", 0],
+  ["capture_web_screenshot", undefined],
+] as const)(
+  "selects the exact opaque target ID through %s",
+  async (name, observationMs) => {
+    const browser = await startFakeCdpBrowser();
+    browsers.push(browser);
+    const { client } = await connectBrowser();
+    const args = {
+      cdp_endpoint: browser.endpoint,
+      allowed_origins: [browser.allowedOrigin],
+      ...(observationMs === undefined ? {} : { observation_ms: observationMs }),
+    };
+    const rejected = await client.callTool({
+      name,
+      arguments: { ...args, target_id: " allowed-page " },
+    });
+    expect(parseMcpToolError(rejected)).toMatchObject({
+      error: { details: { reason: "target_not_found" } },
+    });
+    expect(browser.commands).toHaveLength(0);
+    const accepted = await client.callTool({
+      name,
+      arguments: { ...args, target_id: "allowed-page" },
+    });
+    expect(accepted.isError).not.toBe(true);
+    expect(browser.commands.length).toBeGreaterThan(0);
+  },
+);
 
 it("does not attach to a target outside the request's allowed origin scope", async () => {
   const browser = await startFakeCdpBrowser();
@@ -527,7 +842,7 @@ it("projects legal oversized PNG dimensions as a memory constraint", async () =>
   });
 });
 
-const connectBrowser = async () => {
+const connectBrowser = async (profile?: "full" | "compact") => {
   const session = createTestBinarySession(() => ({
     execute: () => Promise.resolve(observed(null)),
     close: () => Promise.resolve(resultOk(null)),
@@ -535,6 +850,7 @@ const connectBrowser = async () => {
   const server = createServer(
     { kind: "session", session },
     {
+      environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: profile },
       browserObservation: new CdpBrowserProvider(),
       availabilityPolicy: () => ({
         processCaptureEnabled: false,
@@ -575,3 +891,37 @@ const artifactOf = (value: unknown): unknown => {
     throw new TypeError("Missing screenshot artifact");
   return normalized.artifact;
 };
+
+it.each([24, 32, "crc"])(
+  "rejects corrupt captured PNG through MCP: %s",
+  async (kind) => {
+    const bytes = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jv4sAAAAASUVORK5CYII=",
+      "base64",
+    );
+    if (kind === "crc") bytes[29] = (bytes[29] ?? 0) ^ 1;
+    const data = (
+      typeof kind === "number" ? bytes.subarray(0, kind) : bytes
+    ).toString("base64");
+    const browser = await startFakeCdpBrowser({
+      commandResult: ({ method }) =>
+        method === "Page.captureScreenshot" ? { data } : undefined,
+    });
+    browsers.push(browser);
+    const { client } = await connectBrowser();
+    const result = await client.callTool({
+      name: "capture_web_screenshot",
+      arguments: {
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+      },
+    });
+    expect(parseMcpToolError(result)).toMatchObject({
+      error: {
+        code: "unreadable_output",
+        details: { reason: "protocol_error" },
+      },
+    });
+  },
+);

@@ -27,8 +27,8 @@ export const writeJavaScriptArtifactFixture = async (
     writeFile(
       join(root, "main.js"),
       `
-        import { BrowserWindow } from "electron";
-        import path from "node:path";
+        const { BrowserWindow } = require("electron");
+        const path = require("node:path");
         const window = new BrowserWindow({
           webPreferences: { preload: path.join(__dirname, "preload.js") }
         });

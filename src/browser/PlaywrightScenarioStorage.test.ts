@@ -3,12 +3,15 @@ import { EventEmitter } from "node:events";
 import { expect, it } from "vitest";
 
 import { browserScenarioSchema } from "../domain/browserScenario.js";
-import { BrowserScenarioSecrets } from "./BrowserScenarioSecrets.js";
+import { resolveScenarioSecrets } from "../../tests/fixtures/browserScenarioSecrets.js";
 import { PlaywrightScenarioStorage } from "./PlaywrightScenarioStorage.js";
 
 class FakeCdp extends EventEmitter {
   readonly calls: { readonly method: string; readonly params?: unknown }[] = [];
   storageKey = "https://storage.example.test";
+  frameTree: unknown = {
+    frame: { id: "root-frame", securityOrigin: "https://storage.example.test" },
+  };
   failDetachCount = 0;
   holdDetach = false;
   resolveDetach: (() => void) | undefined;
@@ -25,13 +28,15 @@ class FakeCdp extends EventEmitter {
     this.calls.push({ method, params });
     if (method === this.holdMethod) {
       const response =
-        method === "Page.addScriptToEvaluateOnNewDocument"
-          ? { identifier: "late-script" }
-          : method === "Debugger.setBreakpointByUrl"
-            ? { breakpointId: "late-breakpoint" }
-            : method === "Storage.getStorageKey"
-              ? { storageKey: this.storageKey }
-              : {};
+        method === "Target.getTargetInfo"
+          ? { targetInfo: { targetId: "root-target" } }
+          : method === "Page.addScriptToEvaluateOnNewDocument"
+            ? { identifier: "late-script" }
+            : method === "Debugger.setBreakpointByUrl"
+              ? { breakpointId: "late-breakpoint" }
+              : method === "Storage.getStorageKey"
+                ? { storageKey: this.storageKey }
+                : {};
       return new Promise((resolve) => {
         this.heldReply = () => resolve(response);
       });
@@ -53,6 +58,7 @@ class FakeCdp extends EventEmitter {
       return { identifier: "script" };
     if (method === "Storage.getStorageKey")
       return { storageKey: this.storageKey };
+    if (method === "Page.getFrameTree") return { frameTree: this.frameTree };
     if (method === "Debugger.evaluateOnCallFrame") return {};
     return {};
   }
@@ -154,14 +160,17 @@ const createInitializedStorage = async (
   const owner = await PlaywrightScenarioStorage.create(
     { context: context as never, page: page as never },
     input,
-    BrowserScenarioSecrets.resolve(input, {})!,
+    resolveScenarioSecrets(input, {}),
     options,
   );
   await owner?.initialize(page as never, context as never);
   return owner;
 };
 
-const emitSeedPause = (cdp: FakeCdp): void => {
+const emitSeedPause = (
+  cdp: FakeCdp,
+  origin = "https://storage.example.test",
+): void => {
   const addScript = cdp.calls.find(
     ({ method }) => method === "Page.addScriptToEvaluateOnNewDocument",
   );
@@ -172,7 +181,7 @@ const emitSeedPause = (cdp: FakeCdp): void => {
   cdp.emit("Runtime.executionContextCreated", {
     context: {
       id: 4,
-      origin: "https://storage.example.test",
+      origin,
       name: sourceUrl,
       auxData: { frameId: "root-frame" },
     },
@@ -240,6 +249,126 @@ it("seeds a browser storage area once before the document script resumes", async
   await owner?.close();
 });
 
+it("seeds an empty isolated-world origin using the exact frame security origin", async () => {
+  const cdp = new FakeCdp();
+  cdp.frameTree = {
+    frame: { id: "other-frame", securityOrigin: "https://other.example.test" },
+    childFrames: [
+      {
+        frame: {
+          id: "root-frame",
+          url: "about:blank",
+          securityOrigin: "https://storage.example.test",
+        },
+      },
+    ],
+  };
+  const { page, contextApi } = fixture(cdp);
+  const owner = await createInitializedStorage(contextApi, page);
+  emitSeedPause(cdp, "");
+  await owner?.settle();
+  expect(
+    cdp.calls.filter(({ method }) => method === "Debugger.evaluateOnCallFrame"),
+  ).toHaveLength(1);
+  expect(
+    cdp.calls.findIndex(({ method }) => method === "Page.getFrameTree"),
+  ).toBeLessThan(
+    cdp.calls.findIndex(
+      ({ method }) => method === "Debugger.evaluateOnCallFrame",
+    ),
+  );
+  await owner?.close();
+});
+
+it.each([
+  {
+    frame: {
+      id: "other-frame",
+      securityOrigin: "https://storage.example.test",
+    },
+  },
+  { frame: { id: "root-frame", url: "https://storage.example.test/" } },
+  { frame: { id: "root-frame", securityOrigin: "" } },
+])(
+  "refuses unknown seed applicability instead of inferring origin from a URL",
+  async (frameTree) => {
+    const cdp = new FakeCdp();
+    cdp.frameTree = frameTree;
+    const { page, contextApi } = fixture(cdp);
+    const owner = await createInitializedStorage(contextApi, page);
+    emitSeedPause(cdp, "");
+    await expect(owner?.settle()).rejects.toMatchObject({
+      reason: "protocol_error",
+    });
+    expect(
+      cdp.calls.filter(
+        ({ method }) => method === "Debugger.evaluateOnCallFrame",
+      ),
+    ).toHaveLength(0);
+    expect(
+      cdp.calls.filter(({ method }) => method === "Debugger.resume"),
+    ).toHaveLength(1);
+    await owner?.close();
+  },
+);
+
+it("leaves a known unseeded frame origin unchanged", async () => {
+  const cdp = new FakeCdp();
+  const { page, contextApi } = fixture(cdp);
+  const owner = await createInitializedStorage(contextApi, page);
+  emitSeedPause(cdp, "https://unseeded.example.test");
+  await owner?.settle();
+  expect(cdp.calls.some(({ method }) => method === "Page.getFrameTree")).toBe(
+    false,
+  );
+  expect(
+    cdp.calls.some(({ method }) => method === "Debugger.evaluateOnCallFrame"),
+  ).toBe(false);
+  await owner?.close();
+});
+
+it.each(["launch", "connect"] as const)(
+  "retains unknown popup seed coverage in %s mode without claiming root failure",
+  async (mode) => {
+    const cdp = new FakeCdp();
+    const { page, contextApi } = fixture(cdp);
+    const input = browserScenarioSchema.parse({
+      ...scenario(),
+      ...(mode === "connect"
+        ? {
+            browser: {
+              mode: "connect",
+              cdp_endpoint: "http://127.0.0.1:9222",
+              target_id: "root-target",
+            },
+          }
+        : {}),
+    });
+    const owner = await createInitializedStorage(contextApi, page, input);
+    emitSeedPause(cdp);
+    await owner?.settle();
+    expect(owner?.limitations()).toEqual([]);
+    if (mode === "connect") {
+      contextApi.emit("page", new EventEmitter());
+      expect(owner?.limitations()).toEqual([]);
+      page.emit("popup", new EventEmitter());
+    } else {
+      contextApi.emit("page", page);
+      expect(owner?.limitations()).toEqual([]);
+      contextApi.emit("page", new EventEmitter());
+    }
+    expect(owner?.limitations()).toEqual([
+      expect.stringContaining(
+        "unknown for discovered popup top-level contexts",
+      ),
+    ]);
+    await owner?.close();
+    expect(owner?.limitations()).toHaveLength(1);
+    expect(contextApi.listenerCount("page")).toBe(0);
+    expect(page.listenerCount("popup")).toBe(0);
+  },
+);
+
 it("seeds session storage once per namespace and StorageKey", async () => {
   const cdp = new FakeCdp();
   const { page, contextApi } = fixture(cdp);
@@ -273,16 +402,61 @@ it("retries the owning CDP detach after a failed attempt", async () => {
   const owner = await createInitializedStorage(contextApi, page);
   cdp.failDetachCount = 1;
 
-  await expect(owner?.close()).rejects.toMatchObject({
+  await expect(owner?.close(true)).rejects.toMatchObject({
     _tag: "BrowserObservationError",
     reason: "cleanup_failed",
   });
   expect(cdp.detachCalls).toBe(1);
   expect(cdp.listenerCount("Debugger.paused")).toBe(1);
 
-  await owner?.close();
+  await expect(owner?.close(true)).resolves.toEqual({
+    loadingStopped: true,
+  });
   expect(cdp.detachCalls).toBe(2);
   expect(cdp.listenerCount("Debugger.paused")).toBe(0);
+  expect(
+    cdp.calls.filter(({ method }) => method === "Page.stopLoading"),
+  ).toHaveLength(1);
+});
+
+it("reports an unconfirmed stop when root initialization is still pending", async () => {
+  const cdp = new FakeCdp();
+  cdp.holdMethod = "Target.getTargetInfo";
+  const { page, contextApi } = fixture(cdp);
+  const input = scenario();
+  const owner = await PlaywrightScenarioStorage.create(
+    { context: contextApi as never, page: page as never },
+    input,
+    resolveScenarioSecrets(input, {}),
+  );
+  expect(owner).toBeDefined();
+  const initialization = owner?.initialize(page as never, contextApi as never);
+  await waitForCall(cdp, "Target.getTargetInfo");
+
+  const closing = owner?.close(true);
+  cdp.releaseHeldReply();
+  await expect(initialization).resolves.toBeUndefined();
+  await expect(closing).resolves.toEqual({ loadingStopped: false });
+  expect(
+    cdp.calls.filter(({ method }) => method === "Page.stopLoading"),
+  ).toHaveLength(0);
+  expect(cdp.detachCalls).toBe(1);
+});
+
+it("reports and retains a confirmed navigation stop", async () => {
+  const cdp = new FakeCdp();
+  const { page, contextApi } = fixture(cdp);
+  const owner = await createInitializedStorage(contextApi, page);
+
+  await expect(owner?.close(true)).resolves.toEqual({
+    loadingStopped: true,
+  });
+  await expect(owner?.close(true)).resolves.toEqual({
+    loadingStopped: true,
+  });
+  expect(
+    cdp.calls.filter(({ method }) => method === "Page.stopLoading"),
+  ).toHaveLength(1);
 });
 
 it("does not create storage instrumentation when there are no storage seeds", async () => {
@@ -297,7 +471,7 @@ it("does not create storage instrumentation when there are no storage seeds", as
     await PlaywrightScenarioStorage.create(
       { context: contextApi as never, page: page as never },
       empty,
-      BrowserScenarioSecrets.resolve(empty, {})!,
+      resolveScenarioSecrets(empty, {}),
     ),
   ).toBeUndefined();
   expect(cdp.calls).toEqual([]);
@@ -312,7 +486,7 @@ it("detaches after setup cancellation even while script installation is pending"
   const owner = await PlaywrightScenarioStorage.create(
     { context: contextApi as never, page: page as never },
     input,
-    BrowserScenarioSecrets.resolve(input, {})!,
+    resolveScenarioSecrets(input, {}),
     { signal: controller.signal },
   );
   expect(owner).toBeDefined();
@@ -354,6 +528,35 @@ it("cancels a pending storage-key reply and still releases its CDP owner", async
   cdp.releaseHeldReply();
   await owner?.close();
   expect(cdp.detachCalls).toBe(1);
+});
+
+it("bounds a stalled child CDP reply by command_timeout_ms", async () => {
+  const cdp = new FakeCdp();
+  const { page, contextApi } = fixture(cdp);
+  const input = browserScenarioSchema.parse({
+    ...scenario(),
+    command_timeout_ms: 40,
+  });
+  const started = performance.now();
+  const owner = await createInitializedStorage(contextApi, page, input);
+  expect(owner).toBeDefined();
+  cdp.emit("Target.attachedToTarget", {
+    sessionId: "iframe-session",
+    targetInfo: { type: "iframe", targetId: "iframe-target" },
+  });
+  await expect(owner?.settle()).rejects.toMatchObject({
+    _tag: "BrowserObservationError",
+    operation: "capture_browser_scenario",
+    reason: "timeout",
+    userMessage: expect.stringContaining(
+      "CDP command Page.enable exceeded its 40 ms command_timeout_ms",
+    ),
+    remediationAction: expect.stringContaining(
+      "Set command_timeout_ms in the capture-browser-scenario JSON above 40",
+    ),
+  });
+  expect(performance.now() - started).toBeLessThan(4_000);
+  await owner?.close();
 });
 
 it("releases the CDP owner when an attached target reply remains pending", async () => {

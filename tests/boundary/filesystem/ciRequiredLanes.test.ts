@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
+import { minVersion, subset } from "semver";
 import { parse } from "yaml";
 import { z } from "zod";
 import { executeWorkflowFixture } from "../../support/workflowGit.js";
@@ -34,6 +35,34 @@ const scopeFlags = async () =>
         new URL("../../../scripts/ci/scopes.mjs", import.meta.url).href
       ),
     ).CI_FLAGS;
+
+it("keeps every SQLite runtime selector inside the published package engine range", async () => {
+  const { engines } = z
+    .object({ engines: z.object({ node: z.string() }) })
+    .parse(
+      JSON.parse(
+        await readFile(
+          new URL("../../../package.json", import.meta.url),
+          "utf8",
+        ),
+      ),
+    );
+  const { strategy } = z
+    .object({
+      strategy: z.object({ matrix: z.object({ node: z.array(z.string()) }) }),
+    })
+    .parse((await workflow("sqlite-runtime.yml")).jobs.sqlite);
+  const selectors = strategy.matrix.node;
+  const pinned = (
+    await readFile(new URL("../../../.nvmrc", import.meta.url), "utf8")
+  ).trim();
+  expect(selectors).toContain(pinned);
+  expect(
+    new Set(selectors.map((selector) => minVersion(selector)?.major)),
+  ).toEqual(new Set([22, 24, 26]));
+  for (const selector of selectors)
+    expect(subset(selector, engines.node), selector).toBe(true);
+});
 
 it("binds SQLite compatibility jobs to the build's prepared runtime artifact and root layout", async () => {
   expect((await workflow()).jobs["sqlite-runtime"]?.if).toBe(
@@ -151,11 +180,39 @@ it("makes the required gate wait for every CI lane, including future additions",
   );
 });
 
+it("runs architecture guards for fast code feedback before installing dependencies", async () => {
+  const steps = z
+    .array(
+      z
+        .object({
+          run: z.string().optional(),
+          uses: z.string().optional(),
+          if: z.string().optional(),
+        })
+        .passthrough(),
+    )
+    .parse((await workflow()).jobs.static?.steps);
+  const guard = steps.findIndex(
+    (step) => step.run === "node scripts/verify/architecture-guards.mjs",
+  );
+  const setup = steps.findIndex((step) =>
+    step.uses?.startsWith("actions/setup-node@"),
+  );
+  const install = steps.findIndex((step) => step.run === "npm ci");
+  expect(guard).toBeGreaterThanOrEqual(0);
+  expect(setup).toBeGreaterThanOrEqual(0);
+  expect(install).toBeGreaterThan(guard);
+  expect(guard).toBeGreaterThan(setup);
+  expect(steps[guard]?.if).toBe("needs.changes.outputs.code == 'true'");
+  expect(steps[guard]?.["continue-on-error"]).toBeUndefined();
+});
+
 it("holds native and provider fan-out behind static validation while portable feedback stays independent", async () => {
   const { jobs } = await workflow();
   const earlyJobs = new Set([
     "changes",
     "static",
+    "static-deep",
     "build",
     "test-shard",
     "test-source",
@@ -171,45 +228,64 @@ it("holds native and provider fan-out behind static validation while portable fe
     expect(job.if).not.toMatch(/always\(|cancelled\(/u);
   }
   expect(jobs["test-shard"]?.needs).not.toContain("static");
+  const stepRuns = z.array(z.object({ run: z.string().optional() }));
+  expect(jobs["static-deep"]?.needs).toBe("changes");
+  expect(String(jobs["static-deep"]?.if)).toContain("tier == 'full'");
+  expect(String(jobs["static-deep"]?.if)).toContain("code == 'true'");
+  const staticRuns = stepRuns.parse(jobs.static?.steps);
+  const deepRuns = stepRuns.parse(jobs["static-deep"]?.steps);
+  expect(staticRuns.some((step) => step.run === "npm run check:ci:fast")).toBe(
+    true,
+  );
+  expect(
+    staticRuns.some(
+      (step) =>
+        step.run === "npm run check:ci:deep" ||
+        step.run === "npm run test:python",
+    ),
+  ).toBe(false);
+  expect(deepRuns.some((step) => step.run === "npm run check:ci:deep")).toBe(
+    true,
+  );
+  for (const [name, job] of Object.entries(jobs)) {
+    if (
+      name === "required" ||
+      name === "static-deep" ||
+      job.needs === undefined
+    )
+      continue;
+    expect(job.needs, `${name} must not wait for deep static`).not.toContain(
+      "static-deep",
+    );
+  }
 });
 
-it("binds provider build reuse to the current run while keeping standalone dispatches independent", async () => {
-  const { jobs } = await workflow();
-  const consumers = [
-    "browser",
-    "binary_layout",
-    "evm",
-    "javascript_recovery",
-    "recorded_crash",
-    "web_network",
-    "web_runtime",
-    "web_source_map",
-  ];
-  const buildTerms = z
-    .string()
-    .parse(jobs.build?.if)
-    .split("||")
-    .map((term) => term.trim());
-  // Provider workflow edits select their lane without code=true. The build
-  // producer must still run, without selecting the portable test shards.
-  expect(new Set(buildTerms)).toEqual(
-    new Set(
-      ["code", ...consumers].map(
-        (scope) => `needs.changes.outputs.${scope} == 'true'`,
-      ),
-    ),
-  );
-  expect(jobs["test-shard"]?.if).toBe("needs.changes.outputs.code == 'true'");
+const trustedRemoteCacheWrite =
+  "${{ inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')) }}";
+
+async function assertProviderCacheCallers(
+  jobs: Awaited<ReturnType<typeof workflow>>["jobs"],
+  consumers: readonly string[],
+) {
   for (const name of consumers) {
     const caller = jobs[name];
     expect(caller?.needs).toContain("build");
-    expect(caller?.with).toEqual({ build_cache_artifact: "rea-build-cache" });
+    expect(caller?.secrets).toEqual({
+      TURBO_TOKEN: "${{ secrets.TURBO_TOKEN }}",
+    });
+    expect(caller?.with).toEqual({
+      build_cache_artifact: "rea-build-cache",
+      remote_cache_write: trustedRemoteCacheWrite,
+    });
     const path = z.string().parse(caller?.uses);
     const called = z
       .object({
         on: z.object({
           workflow_call: z.object({
             inputs: z.record(z.string(), z.unknown()),
+            secrets: z.object({
+              TURBO_TOKEN: z.object({ required: z.literal(false) }),
+            }),
           }),
           workflow_dispatch: z.unknown(),
         }),
@@ -234,14 +310,95 @@ it("binds provider build reuse to the current run while keeping standalone dispa
       type: "string",
       default: "",
     });
+    expect(called.on.workflow_call.inputs.remote_cache_write).toMatchObject({
+      type: "boolean",
+      required: false,
+      default: false,
+    });
     expect(Object.hasOwn(called.on, "workflow_dispatch")).toBe(true);
     for (const job of Object.values(called.jobs))
       expect(
         job.steps.find(
           (step) => step.uses === "./.github/actions/portable-build-cache",
         )?.with,
-      ).toEqual({ build_cache_artifact: "${{ inputs.build_cache_artifact }}" });
+      ).toEqual({
+        build_cache_artifact: "${{ inputs.build_cache_artifact }}",
+      });
   }
+  for (const name of [
+    "sqlite-runtime",
+    "nativeaot",
+    "ghidra_bridge",
+    "website",
+  ])
+    expect(jobs[name]?.secrets, name).toBeUndefined();
+}
+
+it("binds provider build reuse to the current run while keeping standalone dispatches independent", async () => {
+  const { jobs } = await workflow();
+  const buildSteps = z
+    .array(
+      z.object({
+        run: z.string().optional(),
+        uses: z.string().optional(),
+        shell: z.string().optional(),
+        if: z.string().optional(),
+        with: z.record(z.string(), z.unknown()).optional(),
+        "continue-on-error": z.boolean().optional(),
+      }),
+    )
+    .parse(jobs.build?.steps);
+  const prepare = buildSteps.findIndex(
+    (step) => step.run === "npm run test:prepare",
+  );
+  const stage = buildSteps.findIndex((step) =>
+    step.run?.includes("portable-build-cache.mjs snapshot"),
+  );
+  const upload = buildSteps.findIndex(
+    (step) => step.with?.name === "rea-build-cache",
+  );
+  expect(prepare).toBeGreaterThanOrEqual(0);
+  expect(stage).toBeGreaterThan(prepare);
+  expect(upload).toBeGreaterThan(stage);
+  expect(buildSteps[stage]?.run).toContain(
+    "node scripts/ci/portable-build-cache.mjs snapshot < .cache/ci-build-plan.json",
+  );
+  expect(buildSteps[stage]?.if).toBeUndefined();
+  expect(buildSteps[stage]?.shell).toBe("bash");
+  expect(buildSteps[stage]?.["continue-on-error"]).not.toBe(true);
+  expect(buildSteps[upload]?.if).toBeUndefined();
+  expect(buildSteps[upload]?.with).toMatchObject({
+    path: ".cache/ci-build-cache/",
+    "if-no-files-found": "error",
+  });
+  const consumers = [
+    "browser",
+    "binary_layout",
+    "evm",
+    "apk_signature",
+    "javascript_recovery",
+    "recorded_crash",
+    "web_network",
+    "web_runtime",
+    "web_source_map",
+    "agentenv",
+  ];
+  const buildTerms = z
+    .string()
+    .parse(jobs.build?.if)
+    .split("||")
+    .map((term) => term.trim());
+  // Provider workflow edits select their lane without code=true. The build
+  // producer must still run, without selecting the portable test shards.
+  expect(new Set(buildTerms)).toEqual(
+    new Set(
+      ["code", ...consumers].map(
+        (scope) => `needs.changes.outputs.${scope} == 'true'`,
+      ),
+    ),
+  );
+  expect(jobs["test-shard"]?.if).toBe("needs.changes.outputs.code == 'true'");
+  await assertProviderCacheCallers(jobs, consumers);
   const action = z
     .object({
       runs: z.object({
@@ -252,6 +409,7 @@ it("binds provider build reuse to the current run while keeping standalone dispa
             if: z.string().optional(),
             with: z.record(z.string(), z.unknown()).optional(),
             "continue-on-error": z.boolean().optional(),
+            run: z.string().optional(),
           }),
         ),
       }),
@@ -276,6 +434,9 @@ it("binds provider build reuse to the current run while keeping standalone dispa
   });
   expect(download?.if).toBe("inputs.build_cache_artifact != ''");
   expect(download?.["continue-on-error"]).not.toBe(true);
+  expect(action.runs.steps.find((step) => step.id === "plan")?.run).toContain(
+    'node scripts/ci/portable-build-cache.mjs key >> "$GITHUB_OUTPUT"',
+  );
   for (const step of action.runs.steps.filter(
     (step) => step.id === "plan" || step.uses?.startsWith("actions/cache"),
   ))
@@ -329,6 +490,14 @@ it("keeps fast feedback separate from complete qualification and release proof",
               required: z.literal(true),
               type: z.literal("string"),
             }),
+            remote_cache_write: z.object({
+              required: z.literal(false),
+              type: z.literal("boolean"),
+              default: z.literal(false),
+            }),
+          }),
+          secrets: z.object({
+            TURBO_TOKEN: z.object({ required: z.literal(false) }),
           }),
         }),
       }),
@@ -403,6 +572,8 @@ it.each([
     for (const [scope, lane] of [
       ["sqlite", "sqlite-runtime"],
       ["workflows", "static"],
+      ["ghidra_bridge", "ghidra_bridge"],
+      ["agentenv", "agentenv"],
     ] as const) {
       // GitHub exposes only direct dependencies in the required job's needs context.
       const needs: Record<

@@ -3,12 +3,17 @@ import * as t from "@babel/types";
 import {
   BUILTIN_RESOURCE_SPECIFIERS,
   BUILTIN_RESOURCE_METHODS,
+  BUILTIN_RESOURCE_RELEASE_METHODS,
 } from "./javascriptBuiltinResourceMethods.js";
 import type {
   JavaScriptSemanticCallable,
   JavaScriptSemanticResourceOperation,
 } from "./javascriptSemanticIr.js";
-import { semanticStaticPropertyName } from "./javascriptAstValues.js";
+import {
+  semanticStaticPropertyName,
+  unwrapJavaScriptExpression,
+} from "./javascriptAstValues.js";
+import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
 import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
@@ -25,8 +30,23 @@ import { range } from "./javascriptStaticAnalysisHelpers.js";
 
 const RELEASE_METHODS = ["close", "destroy", "end"] as const;
 
+/**
+ * Release methods the value from this acquisition actually has. An unlisted
+ * specifier/method pair admits none, so a call to it emits no release fact.
+ */
+const releaseMethodsFor = (
+  acquisition: ResourceCandidate,
+): readonly ("close" | "destroy" | "end")[] => {
+  const key = `${acquisition.specifier}:${acquisition.method}`;
+  const table: Readonly<
+    Record<string, readonly ("close" | "destroy" | "end")[]>
+  > = BUILTIN_RESOURCE_RELEASE_METHODS;
+  return table[key] ?? [];
+};
+
 interface ResourceCandidate {
   readonly node: t.CallExpression | t.OptionalCallExpression;
+  readonly specifier: string;
   readonly method: JavaScriptSemanticResourceOperation["method"];
   readonly ownerCallableId: string | null;
   readonly resultBindingId: string | null;
@@ -58,11 +78,12 @@ const collectAcquisitions = (
   const output: ResourceCandidate[] = [];
   traverseDataEffects(program, context, (node) => {
     if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node)) return;
-    const method = acquisitionMethod(node.callee, context.state);
-    if (method === null) return;
+    const reference = acquisitionMethod(node.callee, context.state);
+    if (reference === null) return;
     output.push({
       node,
-      method,
+      specifier: reference.specifier,
+      method: reference.method,
       ownerCallableId: context.callableStack.at(-1) ?? null,
       resultBindingId: outerDataEffectBinding(node, context),
     });
@@ -98,8 +119,14 @@ const collectReleases = (
       member.object,
       member.object.name,
     );
-    const linked =
+    const candidates =
       binding === undefined ? [] : (byBinding.get(binding.bindingId) ?? []);
+    if (binding === undefined || candidates.length === 0) return;
+    const linked = candidates.filter((acquisition) =>
+      releaseMethodsFor(acquisition).includes(method),
+    );
+    // No linked acquisition exposes this release method, so the call is not a
+    // release of it at all: Node throws at the call site instead.
     if (linked.length === 0) return;
     output.push({
       resourceId: `resource:release:${String(node.start ?? -1)}:${String(node.end ?? -1)}`,
@@ -107,13 +134,50 @@ const collectReleases = (
       method,
       location: range(node),
       ownerCallableId: context.callableStack.at(-1) ?? null,
-      resultBindingId: binding?.bindingId ?? null,
+      resultBindingId: binding.bindingId,
       linkedResourceIds: linked.map(resourceCandidateId).sort(),
-      resolution: linked.length === 1 ? "complete" : "partial",
+      resolution:
+        linked.length === 1 &&
+        holdsOnlyAcquisitions(binding, linked, context.state)
+          ? "complete"
+          : "partial",
     });
   });
   return output;
 };
+
+/**
+ * A lexical handle identifies its acquisition only while every value written
+ * to the binding is that acquisition itself. Any replacement, even a
+ * conditional or later one, leaves the released resource a candidate. A
+ * nullish placeholder, as in `let h = null; try { h = open() } finally {
+ * h?.close() }`, releases nothing else: the call is skipped or throws.
+ */
+const holdsOnlyAcquisitions = (
+  binding: JavaScriptSemanticBindingState,
+  linked: readonly ResourceCandidate[],
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  [...binding.initializers, ...binding.referenceInitializers].every(
+    ({ node, projection }) => {
+      if (projection.length > 0) return false;
+      let value = unwrapJavaScriptExpression(node).node;
+      if (t.isAwaitExpression(value))
+        value = unwrapJavaScriptExpression(value.argument).node;
+      return (
+        isNullishPlaceholder(value, state) ||
+        linked.some((acquisition) => acquisition.node === value)
+      );
+    },
+  );
+
+const isNullishPlaceholder = (
+  value: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  t.isNullLiteral(value) ||
+  t.isUnaryExpression(value, { operator: "void" }) ||
+  isUnmodifiedGlobalReference(value, state, "undefined");
 
 const immutableAcquisition = (
   candidate: ResourceCandidate,
@@ -128,10 +192,15 @@ const immutableAcquisition = (
   resolution: "complete",
 });
 
+interface AcquisitionReference {
+  readonly specifier: string;
+  readonly method: JavaScriptSemanticResourceOperation["method"];
+}
+
 const acquisitionMethod = (
   callee: t.Node,
   state: JavaScriptSemanticAnalysisState,
-): JavaScriptSemanticResourceOperation["method"] | null => {
+): AcquisitionReference | null => {
   for (const specifier of BUILTIN_RESOURCE_SPECIFIERS) {
     const method = builtinDataEffectMethod(callee, state, [specifier]);
     if (
@@ -142,7 +211,10 @@ const acquisitionMethod = (
         ] as readonly string[]
       ).includes(method)
     )
-      return method as JavaScriptSemanticResourceOperation["method"];
+      return {
+        specifier,
+        method: method as JavaScriptSemanticResourceOperation["method"],
+      };
   }
   return null;
 };

@@ -12,6 +12,7 @@ import {
 import {
   classifyBrowserCompleteness,
   type BrowserCompleteness,
+  type BrowserExclusion,
 } from "../browserCompleteness.js";
 import {
   electronPageInspectionSchema,
@@ -25,18 +26,20 @@ import {
 } from "./javascriptRuntimeObservation.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
-import { parseEvidence, type Evidence } from "../evidence.js";
+import type { Evidence } from "../evidence.js";
 import { parseActiveElectronCapture } from "./javascriptRuntimeReconciliationActive.js";
 import {
   assertEvidenceIdentity,
+  authenticateRuntimeEvidence,
   invalidInput,
-  parseAtPath,
+  parseInputAtPath,
 } from "./javascriptRuntimeReconciliationInputValidation.js";
 
 interface RuntimeCaptureBase {
   readonly evidence: Evidence;
   readonly captureSha256: string;
   readonly scriptsCompleteWithinScope: boolean;
+  readonly codeInventoryCompleteWithinScope: boolean;
 }
 
 interface NormalizedV8Inspection {
@@ -77,7 +80,7 @@ interface NormalizedV8Inspection {
       source: { readonly included: false; readonly reason: string };
     }> &
       (
-        | { readonly file_path: string }
+        | { readonly file_path: string; readonly reported_url?: string }
         | { readonly url: string }
         | {
             readonly unresolved_location: Extract<
@@ -141,7 +144,7 @@ const parseRuntimeCapture = (
   input: Evidence,
   evidencePath: readonly (string | number)[],
 ): ParsedRuntimeCapture => {
-  const evidence = parseAtPath(parseEvidence, input, evidencePath);
+  const evidence = authenticateRuntimeEvidence(input, evidencePath);
   if (evidence.operation === "inspect_web_page")
     return parseBrowserCapture(evidence, evidencePath);
   if (evidence.operation === "inspect_electron_page")
@@ -149,11 +152,7 @@ const parseRuntimeCapture = (
   if (evidence.operation === "observe_javascript_runtime")
     return parseV8Capture(evidence, evidencePath);
   if (evidence.operation === "capture_electron_scenario") {
-    return parseAtPath(
-      () => parseActiveElectronCapture(evidence),
-      evidence,
-      evidencePath,
-    );
+    return parseActiveElectronCapture(evidence, evidencePath);
   }
   throw invalidInput(
     evidencePath,
@@ -178,8 +177,8 @@ const parseBrowserCapture = (
     },
     path,
   );
-  const inspection = parseAtPath(
-    (value) => webPageInspectionSchema.parse(value),
+  const inspection = parseInputAtPath(
+    webPageInspectionSchema,
     evidence.normalized_result,
     [...path, "normalized_result"],
   );
@@ -201,6 +200,9 @@ const parseBrowserCapture = (
     inspection,
     captureSha256: digestCanonicalValue(inspection, "Runtime reconciliation"),
     scriptsCompleteWithinScope: scriptsComplete(inspection.completeness),
+    codeInventoryCompleteWithinScope: codeInventoryComplete(
+      inspection.completeness,
+    ),
   };
 };
 
@@ -221,8 +223,8 @@ const parseElectronCapture = (
     },
     path,
   );
-  const inspection = parseAtPath(
-    (value) => electronPageInspectionSchema.parse(value),
+  const inspection = parseInputAtPath(
+    electronPageInspectionSchema,
     evidence.normalized_result,
     [...path, "normalized_result"],
   );
@@ -243,6 +245,9 @@ const parseElectronCapture = (
     inspection,
     captureSha256: digestCanonicalValue(inspection, "Runtime reconciliation"),
     scriptsCompleteWithinScope: scriptsComplete(inspection.completeness),
+    codeInventoryCompleteWithinScope: codeInventoryComplete(
+      inspection.completeness,
+    ),
   };
 };
 
@@ -263,8 +268,8 @@ const parseV8Capture = (
     },
     path,
   );
-  const result = parseAtPath(
-    (value) => javascriptRuntimeObservationSchema.parse(value),
+  const result = parseInputAtPath(
+    javascriptRuntimeObservationSchema,
     evidence.normalized_result,
     [...path, "normalized_result"],
   );
@@ -275,6 +280,7 @@ const parseV8Capture = (
     inspection: normalizeV8Inspection(result),
     captureSha256: digestCanonicalValue(result, "Runtime reconciliation"),
     scriptsCompleteWithinScope: false,
+    codeInventoryCompleteWithinScope: false,
   };
 };
 
@@ -283,27 +289,29 @@ const assertV8RuntimeParameters = (
   result: JavaScriptRuntimeObservation,
   path: readonly (string | number)[],
 ): void => {
-  const parameters = parseAtPath(
-    (value) =>
-      z
-        .object({
-          inspector_endpoint: browserEndpointSchema,
-          target_id: z.string().trim().min(1),
-          runtime_kind: javascriptRuntimeKindSchema.optional(),
-        })
-        .passthrough()
-        .parse(value),
+  const parameters = parseInputAtPath(
+    z
+      .object({
+        inspector_endpoint: browserEndpointSchema,
+        target_id: z.string().min(1),
+        runtime_kind: javascriptRuntimeKindSchema.optional(),
+      })
+      .passthrough(),
     evidence.parameters,
     [...path, "parameters"],
   );
-  if (
-    parameters.target_id !== result.target.target_id ||
-    (parameters.runtime_kind !== undefined &&
-      parameters.runtime_kind !== result.target.runtime_kind)
-  )
+  if (parameters.target_id !== result.target.target_id)
     throw invalidInput(
       [...path, "parameters", "target_id"],
-      "Runtime Evidence target or declared role disagrees with its result",
+      "Runtime Evidence target disagrees with its result",
+    );
+  if (
+    parameters.runtime_kind !== undefined &&
+    parameters.runtime_kind !== result.target.runtime_kind
+  )
+    throw invalidInput(
+      [...path, "parameters", "runtime_kind"],
+      "Runtime Evidence declared role disagrees with its result",
     );
   if (
     result.target.location.kind === "builtin" &&
@@ -339,6 +347,9 @@ const normalizeV8Inspection = (
       script_key: script.script_key,
       frame_id: script.execution_context_key,
       ...runtimeLocation(script.location),
+      ...("reported_url" in script && script.reported_url !== undefined
+        ? { reported_url: script.reported_url }
+        : {}),
       cdp_hash: script.cdp_hash,
       length: script.length,
       is_module: script.is_module,
@@ -350,9 +361,11 @@ const normalizeV8Inspection = (
     })),
   },
   workers: [],
+  // Route exclusions as CdpCaptureCompleteness does: denied locations are
+  // policy filtered, while invalid protocol values leave scripts unavailable.
   completeness: classifyBrowserCompleteness({
     policyFilteredSections: new Set(
-      excludedV8Scripts(result) > 0 ? ["scripts"] : [],
+      result.scripts.excluded.unsupported_location > 0 ? ["scripts"] : [],
     ),
     attachLimitedSections: new Set([
       "frames",
@@ -361,17 +374,15 @@ const normalizeV8Inspection = (
       "workers",
     ]),
     truncatedSections: new Set(result.capture.truncated ? ["scripts"] : []),
-    unavailableSections: new Set(["frames", "script_sources", "workers"]),
-    excluded:
-      excludedV8Scripts(result) === 0
-        ? []
-        : [
-            {
-              section: "scripts",
-              reason: "out_of_target_scope",
-              count: excludedV8Scripts(result),
-            },
-          ],
+    unavailableSections: new Set([
+      "frames",
+      "script_sources",
+      "workers",
+      ...(result.scripts.excluded.invalid_protocol_value > 0
+        ? (["scripts"] as const)
+        : []),
+    ]),
+    excluded: v8ScriptExclusions(result),
     droppedEvents: {
       scripts: result.capture.events_dropped,
       network_requests: 0,
@@ -401,11 +412,32 @@ const runtimeLocation = (
   return { url: location.specifier };
 };
 
-const excludedV8Scripts = (result: JavaScriptRuntimeObservation): number =>
-  Object.values(result.scripts.excluded).reduce(
-    (total, count) => total + count,
-    0,
-  );
+const v8ScriptExclusions = (
+  result: JavaScriptRuntimeObservation,
+): BrowserExclusion[] => {
+  const { unsupported_location, invalid_protocol_value } =
+    result.scripts.excluded;
+  return [
+    ...(unsupported_location > 0
+      ? [
+          {
+            section: "scripts",
+            reason: "out_of_target_scope",
+            count: unsupported_location,
+          } as const,
+        ]
+      : []),
+    ...(invalid_protocol_value > 0
+      ? [
+          {
+            section: "scripts",
+            reason: "invalid_protocol_value",
+            count: invalid_protocol_value,
+          } as const,
+        ]
+      : []),
+  ];
+};
 
 const assertRuntimeParameters = (
   evidence: Evidence,
@@ -424,20 +456,18 @@ const assertRuntimeParameters = (
   path: readonly (string | number)[],
 ): void => {
   const common = {
-    target_id: z.string().trim().min(1),
+    target_id: z.string().min(1),
     include_script_sources: z.boolean(),
   };
   if (expected.kind === "browser") {
-    const parameters = parseAtPath(
-      (value) =>
-        z
-          .object({
-            ...common,
-            cdp_endpoint: recordedBrowserObservationEndpointSchema,
-            allowed_origins: browserAllowedOriginsSchema,
-          })
-          .passthrough()
-          .parse(value),
+    const parameters = parseInputAtPath(
+      z
+        .object({
+          ...common,
+          cdp_endpoint: recordedBrowserObservationEndpointSchema,
+          allowed_origins: browserAllowedOriginsSchema,
+        })
+        .passthrough(),
       evidence.parameters,
       [...path, "parameters"],
     );
@@ -458,12 +488,8 @@ const assertRuntimeParameters = (
       );
     return;
   }
-  const parameters = parseAtPath(
-    (value) =>
-      z
-        .object({ ...common, cdp_endpoint: browserEndpointSchema })
-        .passthrough()
-        .parse(value),
+  const parameters = parseInputAtPath(
+    z.object({ ...common, cdp_endpoint: browserEndpointSchema }).passthrough(),
     evidence.parameters,
     [...path, "parameters"],
   );
@@ -480,10 +506,20 @@ const assertRuntimeParameters = (
 };
 
 const scriptsComplete = (completeness: {
+  readonly attach_limited_sections: readonly string[];
   readonly truncated_sections: readonly string[];
   readonly unavailable_sections: readonly string[];
   readonly dropped_events: { readonly scripts: number };
 }): boolean =>
+  !completeness.attach_limited_sections.includes("scripts") &&
   !completeness.truncated_sections.includes("scripts") &&
   !completeness.unavailable_sections.includes("scripts") &&
   completeness.dropped_events.scripts === 0;
+
+// Missing worker inventory cannot establish absence of a worker code asset,
+// even when the selected page's own script inventory is complete.
+const codeInventoryComplete = (completeness: BrowserCompleteness): boolean =>
+  scriptsComplete(completeness) &&
+  !completeness.unavailable_sections.includes("workers") &&
+  !completeness.truncated_sections.includes("workers") &&
+  !completeness.attach_limited_sections.includes("workers");

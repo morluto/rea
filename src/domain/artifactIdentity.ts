@@ -1,3 +1,7 @@
+import {
+  artifactIntegrityPairOf,
+  type ArtifactIntegrityPair,
+} from "./artifactIntegrity.js";
 import { posix } from "node:path";
 
 import { digestCanonicalValue } from "./canonicalDigest.js";
@@ -85,15 +89,13 @@ export const artifactManifestId = (
 export const artifactContradictionId = (input: {
   readonly rootArtifactId: string;
   readonly logicalPath: string;
-  readonly declaredSha256: string;
-  readonly observedSha256: string;
+  readonly integrity: ArtifactIntegrityPair;
 }): string =>
   `ic_${digestCanonicalValue(
     {
       root_artifact_id: input.rootArtifactId,
       logical_path: input.logicalPath,
-      declared_sha256: input.declaredSha256,
-      observed_sha256: input.observedSha256,
+      ...artifactIntegrityPairOf(input.integrity),
     },
     "Artifact",
   )}`;

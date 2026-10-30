@@ -44,6 +44,49 @@ const oracleSchema = z.strictObject({
 });
 type Oracle = z.infer<typeof oracleSchema>;
 
+interface NativeEncodingFixtures {
+  readonly archives: ReadonlyMap<Encoding, Buffer>;
+  readonly oracle: Oracle;
+}
+
+// Retain only native-produced data in this worker, never paths owned by a test.
+// Consumers copy buffers and the oracle so one case cannot alter later inputs.
+let nativeEncodingFixtures: Promise<NativeEncodingFixtures> | undefined;
+
+const produceNativeEncodingFixtures =
+  async (): Promise<NativeEncodingFixtures> => {
+    const directory = await createTestTempDirectory("rea-ib-native-encodings-");
+    await promisify(execFile)("/usr/bin/xcrun", [
+      "swift",
+      "tests/conformance/native/interface-builder-encoding.swift",
+      directory,
+    ]);
+    const oracle = oracleSchema.parse(
+      JSON.parse(await readFile(join(directory, "oracle.json"), "utf8")),
+    );
+    const archives = new Map(
+      await Promise.all(
+        [...interfaceBuilderEncodings, ...invalidInterfaceBuilderEncodings].map(
+          async (encoding) =>
+            [
+              encoding,
+              await readFile(join(directory, `${encoding}.nib`)),
+            ] as const,
+        ),
+      ),
+    );
+    return { archives, oracle };
+  };
+
+const readNativeEncodingFixtures = (): Promise<NativeEncodingFixtures> =>
+  (nativeEncodingFixtures ??= produceNativeEncodingFixtures().catch(
+    (cause: unknown) => {
+      // A failed or partial native run cannot serve another case.
+      nativeEncodingFixtures = undefined;
+      throw cause;
+    },
+  ));
+
 /** Check actual NSView identities and links from the independent Foundation oracle. */
 const expectNativeViewHierarchy = (result: Analysis, oracle: Oracle) => {
   for (const { uid, identifier } of oracle.views) {
@@ -68,10 +111,8 @@ const expectNativeViewHierarchy = (result: Analysis, oracle: Oracle) => {
     return node.id;
   };
   const children = result.graph.edges.filter(
-    ({ id, from, relation }) =>
-      from === nodeId(oracle.rootUID) &&
-      relation === "contains" &&
-      id.includes(":hierarchy:"),
+    ({ from, relation }) =>
+      from === nodeId(oracle.rootUID) && relation === "contains",
   );
   expect(children.map(({ to }) => to)).toEqual(oracle.childUIDs.map(nodeId));
   expect(children).toHaveLength(2);
@@ -84,21 +125,15 @@ const expectNativeViewHierarchy = (result: Analysis, oracle: Oracle) => {
 export const createInterfaceBuilderEncodingFixture = async (
   encoding: Encoding,
 ) => {
+  const native = await readNativeEncodingFixtures();
   const directory = await createTestTempDirectory("rea-ib-encoding-");
-  await promisify(execFile)("/usr/bin/xcrun", [
-    "swift",
-    "tests/conformance/native/interface-builder-encoding.swift",
-    directory,
-  ]);
-  const oracle = oracleSchema.parse(
-    JSON.parse(await readFile(join(directory, "oracle.json"), "utf8")),
-  );
+  const oracle = structuredClone(native.oracle);
   expect(oracle.views.map(({ identifier }) => identifier)).toEqual([
     "Café",
     "Left",
     "Right",
   ]);
-  const createBundle = async (name: string, selected: string) => {
+  const createBundle = async (name: string, selected: Encoding) => {
     const app = join(directory, `${name}.app`);
     const contents = join(app, "Contents");
     await mkdir(join(contents, "Resources"), { recursive: true });
@@ -112,7 +147,10 @@ export const createInterfaceBuilderEncodingFixture = async (
       join(contents, "Info.plist"),
       "<plist><dict><key>CFBundleExecutable</key><string>App</string><key>CFBundleIdentifier</key><string>com.example.encoding</string></dict></plist>",
     );
-    const bytes = await readFile(join(directory, `${selected}.nib`));
+    const retained = native.archives.get(selected);
+    if (retained === undefined)
+      throw new Error(`Native fixture omitted the ${selected} archive.`);
+    const bytes = Buffer.from(retained);
     await writeFile(join(contents, "Resources", "Panel.nib"), bytes);
     return { app, bytes };
   };

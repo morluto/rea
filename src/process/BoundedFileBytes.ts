@@ -1,12 +1,37 @@
 import type { FileHandle } from "node:fs/promises";
 
+export interface BoundedFileReadOptions {
+  readonly signal?: AbortSignal | undefined;
+  readonly expectedSize?: number | undefined;
+  readonly cancellationFailure?: ((reason: unknown) => Error) | undefined;
+  readonly operationFailure?: ((cause: unknown) => Error) | undefined;
+}
+
 /** Read through EOF, returning undefined on overflow; leave the handle open. */
 export const readBoundedFileBytes = async (
   handle: FileHandle,
   maxBytes: number,
-  signal?: AbortSignal,
-  expectedSize?: number,
+  options: BoundedFileReadOptions = {},
 ): Promise<Buffer | undefined> => {
+  const { signal, expectedSize, cancellationFailure, operationFailure } =
+    options;
+  const read = async (
+    buffer: Buffer,
+    offset: number,
+    length: number,
+  ): Promise<{ readonly bytesRead: number }> => {
+    try {
+      return await handle.read(buffer, offset, length, null);
+    } catch (cause: unknown) {
+      if (operationFailure !== undefined) throw operationFailure(cause);
+      throw cause;
+    }
+  };
+  const assertActive = (): void => {
+    if (signal?.aborted && cancellationFailure !== undefined)
+      throw cancellationFailure(signal.reason);
+    signal?.throwIfAborted();
+  };
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 0)
     throw new RangeError("File byte limit must be a nonnegative safe integer");
   if (
@@ -21,12 +46,11 @@ export const readBoundedFileBytes = async (
     const buffer = Buffer.allocUnsafe(Math.min(64 * 1_024, maxBytes + 1));
     let total = 0;
     for (;;) {
-      signal?.throwIfAborted();
-      const { bytesRead } = await handle.read(
+      assertActive();
+      const { bytesRead } = await read(
         buffer,
         0,
         Math.min(buffer.length, maxBytes - total + 1),
-        null,
       );
       if (bytesRead === 0) return Buffer.concat(chunks, total);
       total += bytesRead;
@@ -38,13 +62,8 @@ export const readBoundedFileBytes = async (
   if (expectedSize === 0) return buffer;
   let total = 0;
   for (;;) {
-    signal?.throwIfAborted();
-    const { bytesRead } = await handle.read(
-      buffer,
-      total,
-      expectedSize - total,
-      null,
-    );
+    assertActive();
+    const { bytesRead } = await read(buffer, total, expectedSize - total);
     if (bytesRead === 0) return buffer.subarray(0, total);
     total += bytesRead;
     if (total > maxBytes) return undefined;

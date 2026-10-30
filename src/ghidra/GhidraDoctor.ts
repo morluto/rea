@@ -1,3 +1,6 @@
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
+import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
 import type {
   DoctorProviderCheck,
   DoctorProviderInspection,
@@ -33,7 +36,12 @@ export const projectGhidraDoctorInspection = (
         : {},
     checks: [
       ...selectedChecks(inspection).map((check) =>
-        projectCheck(check, inspection.installDir !== null),
+        projectCheck(
+          check,
+          inspection.installDir !== null,
+          inspection.javaProbeFailure,
+          inspection.nativeDecompilerHeaderFailure,
+        ),
       ),
       ...(readiness !== undefined
         ? [
@@ -59,13 +67,17 @@ export const projectGhidraDoctorInspection = (
 };
 
 /** Inspect the process-configured BYO Ghidra installation for `rea doctor`. */
-export const inspectSystemGhidraProvider = (
+export const inspectSystemGhidraProvider = async (
   environment: Readonly<NodeJS.ProcessEnv>,
-): Promise<DoctorProviderInspection> =>
-  Promise.resolve(
-    projectGhidraDoctorInspection(
-      inspectGhidraInstallation({
+  resourceOwner: RetainedResourceScope,
+  signal?: AbortSignal,
+): Promise<DoctorProviderInspection> => {
+  try {
+    return projectGhidraDoctorInspection(
+      await inspectGhidraInstallation({
         environment,
+        resourceOwner,
+        ...(signal === undefined ? {} : { signal }),
         ...(environment.GHIDRA_INSTALL_DIR === undefined
           ? {}
           : { installDir: environment.GHIDRA_INSTALL_DIR }),
@@ -73,8 +85,11 @@ export const inspectSystemGhidraProvider = (
           ? {}
           : { javaHome: environment.JAVA_HOME }),
       }),
-    ),
-  );
+    );
+  } catch (cause: unknown) {
+    throw analysisClientFailureForOperation(cause, "ghidra", "doctor");
+  }
+};
 
 const selectedChecks = (
   inspection: GhidraInstallationInspection,
@@ -107,11 +122,29 @@ const selectedChecks = (
 const projectCheck = (
   check: GhidraInstallationCheck,
   configured: boolean,
+  javaFailure: GhidraInstallationInspection["javaProbeFailure"],
+  headerFailure: GhidraInstallationInspection["nativeDecompilerHeaderFailure"],
 ): DoctorProviderCheck => ({
   name: check.name,
   ok: check.status === "passed",
   code: check.status === "failed" ? check.code : null,
   detail: check.detail,
+  ...(check.name === "java" && javaFailure?.output !== undefined
+    ? {
+        details: {
+          output: { ...javaFailure.output },
+          ...(javaFailure.processErrorCode === undefined
+            ? {}
+            : { process_error_code: javaFailure.processErrorCode }),
+          ...(javaFailure.properties === undefined
+            ? {}
+            : { properties: { ...javaFailure.properties } }),
+        },
+      }
+    : {}),
+  ...(check.name === "native_decompiler" && headerFailure !== undefined
+    ? { details: { header_failure: projectAnalysisError(headerFailure) } }
+    : {}),
   remediation: check.status === "failed" ? check.remediation : null,
   classification:
     check.name === "platform" || check.name === "architecture"
@@ -120,7 +153,11 @@ const projectCheck = (
           check.status === "failed" &&
           check.code === "runtime_missing"
         ? "missing_dependency"
-        : configured
-          ? "config_drift"
-          : "missing_analysis_engine",
+        : check.name === "java" &&
+            check.status === "failed" &&
+            check.code === "runtime_unavailable"
+          ? "runtime_failure"
+          : configured
+            ? "config_drift"
+            : "missing_analysis_engine",
 });

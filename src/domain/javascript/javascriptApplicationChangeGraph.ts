@@ -1,7 +1,7 @@
 import {
   createJavaScriptApplicationEdge,
   createImmutableJavaScriptApplicationGraphSteps,
-  createJavaScriptApplicationNode,
+  mergeJavaScriptApplicationNodes,
   type JavaScriptApplicationGraph,
 } from "./javascriptApplicationGraph.js";
 import type {
@@ -30,22 +30,16 @@ export interface ApplicationChangeGraphProjection {
 export const buildJavaScriptApplicationChangeGraph = (
   input: ChangeGraphInput,
 ): ApplicationChangeGraphProjection => {
-  const allNodes = nodeCandidates(input);
+  const mergedNodes = mergeJavaScriptApplicationNodes(
+    nodeCandidates(input),
+  ).sort((left, right) =>
+    compareUnicodeCodePoints(left.node_id, right.node_id),
+  );
+  const retained = new Set(mergedNodes.map(({ node_id }) => node_id));
   const preferredRoots = uniqueSorted([
     ...input.right.root_node_ids,
     ...input.left.root_node_ids,
-  ]).filter((nodeId) => allNodes.has(nodeId));
-  const orderedNodeIds = uniqueSorted([
-    ...preferredRoots,
-    ...input.items.flatMap(({ left_node_id: left, right_node_id: right }) => [
-      ...(right === null ? [] : [right]),
-      ...(left === null ? [] : [left]),
-    ]),
-  ]);
-  const retained = new Set(orderedNodeIds);
-  const mergedNodes = mergeNodes(
-    orderedNodeIds.flatMap((nodeId) => allNodes.get(nodeId) ?? []),
-  );
+  ]).filter((nodeId) => retained.has(nodeId));
   const sourceEdges = uniqueEdges([
     ...input.left.edges,
     ...input.right.edges,
@@ -88,9 +82,7 @@ export const buildJavaScriptApplicationChangeGraph = (
   return { graph: next.value };
 };
 
-const nodeCandidates = (
-  input: ChangeGraphInput,
-): Map<string, ApplicationNode[]> => {
+const nodeCandidates = (input: ChangeGraphInput): ApplicationNode[] => {
   const required = new Set([
     ...input.left.root_node_ids,
     ...input.right.root_node_ids,
@@ -99,11 +91,9 @@ const nodeCandidates = (
       ...(right === null ? [] : [right]),
     ]),
   ]);
-  const output = new Map<string, ApplicationNode[]>();
-  for (const node of [...input.left.nodes, ...input.right.nodes])
-    if (required.has(node.node_id))
-      output.set(node.node_id, [...(output.get(node.node_id) ?? []), node]);
-  return output;
+  return [...input.left.nodes, ...input.right.nodes].filter((node) =>
+    required.has(node.node_id),
+  );
 };
 
 const changedFromEdge = (
@@ -118,6 +108,11 @@ const changedFromEdge = (
   if (
     item.match.status !== "matched" ||
     item.status === "unchanged" ||
+    // Pairing and uncertainty remain in the item; neither establishes a change.
+    (item.status === "unknown" &&
+      !item.dimensions.some(
+        (dimension) => dimension !== "location" && dimension !== "coverage",
+      )) ||
     left === null ||
     right === null ||
     left === right ||
@@ -239,37 +234,6 @@ const sourceCoverageLimits = (input: ChangeGraphInput) =>
 
 const combineOmittedCounts = (left: number | null, right: number | null) =>
   left === null || right === null ? null : left + right;
-
-const mergeNodes = (nodes: readonly ApplicationNode[]): ApplicationNode[] => {
-  const groups = new Map<string, ApplicationNode[]>();
-  for (const node of nodes)
-    groups.set(node.node_id, [...(groups.get(node.node_id) ?? []), node]);
-  const merged = [...groups.values()].map((group) => {
-    const first = group[0];
-    if (first === undefined)
-      throw new TypeError("Empty change-graph node group");
-    const observations = [
-      ...new Map(
-        group
-          .flatMap(({ observations: values }) => values)
-          .map((observation) => [observation.observation_id, observation]),
-      ).values(),
-    ].sort((left, right) =>
-      compareUnicodeCodePoints(left.observation_id, right.observation_id),
-    );
-    return createJavaScriptApplicationNode({
-      kind: first.kind,
-      identity: first.identity,
-      observations: observations.map(
-        ({ observation_id: _id, identifier_strategy: _strategy, ...value }) =>
-          value,
-      ),
-    });
-  });
-  return merged.sort((left, right) =>
-    compareUnicodeCodePoints(left.node_id, right.node_id),
-  );
-};
 
 const uniqueEdges = (edges: readonly ApplicationEdge[]): ApplicationEdge[] =>
   [...new Map(edges.map((edge) => [edge.edge_id, edge])).values()].sort(

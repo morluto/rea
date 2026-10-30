@@ -1,17 +1,45 @@
+import {
+  absoluteCallerPath,
+  appendCallerPath,
+} from "../filesystem/callerPath.js";
+import { DEFAULT_JADX_OPERATION_TIMEOUT_MS } from "../domain/analysisResourceLimits.js";
+import {
+  jadxOperationTimeoutGuidance,
+  JADX_OPERATION_TIMEOUT_REMEDIATION,
+} from "./JadxOperationTimeout.js";
+import { inspectJadxJava, type JadxJavaProbeOptions } from "./JadxJavaProbe.js";
+import {
+  JadxInterruption,
+  throwIfJadxInterrupted,
+} from "./JadxInterruption.js";
 import { constants } from "node:fs";
 import { access, realpath, stat } from "node:fs/promises";
-import { delimiter, isAbsolute, join, resolve } from "node:path";
+import { delimiter, isAbsolute, resolve } from "node:path";
 import { inspectWindowsNativeReadiness } from "../process/WindowsAuthority.js";
 import { systemWindowsNativeAuthority } from "../windows/WindowsNativeLoader.js";
-import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
+import { providerStartupTimeoutSchema } from "../config/providerStartupTimeout.js";
+import {
+  AnalysisCancelledError,
+  AnalysisTimeoutError,
+  AnalysisCapabilityUnavailableError,
+} from "../domain/analysisErrorCore.js";
 import type { AndroidOperation } from "../domain/android/androidAnalysis.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import { err, ok, type Result } from "../domain/result.js";
 import type { ProviderAvailability } from "../application/AnalysisProvider.js";
-import { ZipArtifactReader } from "../artifacts/ZipArtifactReader.js";
+import { ownedProcessPrerequisiteAvailability } from "../application/ownedProcessAvailability.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
-  execFileOutput,
-  execFileOutputFailure,
-} from "../process/ExecFileOutput.js";
+  ArtifactFileCancelled,
+  ArtifactFileCleanupFailure,
+  bindArtifactFileCleanup,
+  withArtifactRegularFile,
+} from "../artifacts/ArtifactFileOperation.js";
+import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
+import { ZipArtifactReader } from "../artifacts/ZipArtifactReader.js";
 import type { DoctorProviderCheck } from "../application/Doctor.js";
 import {
   JADX_JAR_CONFIGURATION_REMEDIATION,
@@ -22,8 +50,6 @@ import {
   JADX_WINDOWS_NATIVE_REMEDIATION,
 } from "./JadxRelease.js";
 
-const JAVA_MODULE_LISTING_TIMEOUT_MS = 10_000;
-const JAVA_MODULE_LISTING_MAX_OUTPUT_BYTES = 1024 * 1024;
 // Bound ZIP metadata allocation during discovery. The audited 0.7.1 JAR's
 // central directory occupies 2,294,350 bytes; class bodies are not read here.
 const JAR_METADATA_READ_MAX_BYTES = 8 * 1024 * 1024;
@@ -57,6 +83,7 @@ export type JadxFailureKind =
   | "java_runtime"
   | "java_home"
   | "jvm_options"
+  | "operation_timeout"
   | "jar"
   | "java_probe"
   | "unsupported_host";
@@ -68,6 +95,7 @@ export const JADX_FAILURE_KINDS: readonly JadxFailureKind[] = [
   "java_runtime",
   "java_home",
   "jvm_options",
+  "operation_timeout",
   "jar",
   "java_probe",
   "unsupported_host",
@@ -114,6 +142,11 @@ export const projectJadxFailureOutcome = (
         remediation: JADX_JVM_OPTIONS_REMEDIATION,
         classification: drift,
       };
+    case "operation_timeout":
+      return {
+        remediation: JADX_OPERATION_TIMEOUT_REMEDIATION,
+        classification: drift,
+      };
     case "jar":
       return {
         remediation: JADX_JAR_CONFIGURATION_REMEDIATION,
@@ -152,14 +185,25 @@ class JadxConfigurationFailure extends Error {
 /** Inspect the same JAR and Java prerequisites that gate actual execution. */
 export const inspectJadxAvailability = async (
   environment: Readonly<Record<string, string | undefined>>,
-  signal?: AbortSignal,
+  options: JadxJavaProbeOptions & {
+    /** Admitted runtime override; omission retains launch configuration. */
+    readonly operationTimeoutMs?: number | undefined;
+  },
 ): Promise<ProviderAvailability> => {
   try {
+    const operationTimeoutMs = readOperationTimeout(
+      environment,
+      options.operationTimeoutMs,
+    );
     const configuration = await readJadxConfigurationInputs(
       environment,
-      signal,
+      options.signal,
     );
-    await validateJadxConfigurationContents(configuration, environment, signal);
+    await validateJadxConfigurationContents(
+      configuration,
+      environment,
+      options,
+    );
     return {
       status: "available",
       code: null,
@@ -169,10 +213,15 @@ export const inspectJadxAvailability = async (
         java_executable: configuration.java,
         jdk_compiler: true,
         jar_path: configuration.jar,
+        operation_timeout_ms: operationTimeoutMs,
       },
     };
   } catch (cause) {
-    if (signal?.aborted === true) throw cause;
+    if (cause instanceof JadxInterruption)
+      throw new AnalysisCancelledError(
+        options.operation ?? "inspect_jadx_configuration",
+        { cause: cause.reason },
+      );
     if (cause instanceof JadxConfigurationFailure)
       return {
         status: "unavailable",
@@ -180,7 +229,26 @@ export const inspectJadxAvailability = async (
         reason: cause.message,
         diagnostics: { ...cause.diagnostics, failure_kind: cause.kind },
       };
+    const prerequisite = ownedProcessPrerequisiteAvailability(cause);
+    if (prerequisite !== undefined) return prerequisite;
     throw cause;
+  }
+};
+
+/**
+ * Resolve the whole-operation deadline before any admission work starts, so
+ * one value bounds the provider operation and each upstream call.
+ */
+export const resolveJadxOperationTimeout = (
+  environment: Readonly<Record<string, string | undefined>>,
+  operation: AndroidOperation,
+  runtimeTimeoutMs?: number,
+): Result<number, AnalysisCapabilityUnavailableError> => {
+  try {
+    return ok(readOperationTimeout(environment, runtimeTimeoutMs));
+  } catch (cause) {
+    if (!(cause instanceof JadxConfigurationFailure)) throw cause;
+    return err(projectConfigurationFailure(operation, cause));
   }
 };
 
@@ -193,7 +261,6 @@ export const resolveJadxConfigurationInputs = async (
   try {
     return await readJadxConfigurationInputs(environment, signal);
   } catch (cause) {
-    if (signal?.aborted === true) throw cause;
     if (!(cause instanceof JadxConfigurationFailure)) throw cause;
     throw projectConfigurationFailure(operation, cause);
   }
@@ -204,12 +271,14 @@ export const validateJadxConfiguration = async (
   configuration: JadxConfiguration,
   environment: Readonly<Record<string, string | undefined>>,
   operation: AndroidOperation,
-  signal?: AbortSignal,
+  options: JadxJavaProbeOptions,
 ): Promise<void> => {
   try {
-    await validateJadxConfigurationContents(configuration, environment, signal);
+    await validateJadxConfigurationContents(configuration, environment, {
+      ...options,
+      operation,
+    });
   } catch (cause) {
-    if (signal?.aborted === true) throw cause;
     if (!(cause instanceof JadxConfigurationFailure)) throw cause;
     throw projectConfigurationFailure(operation, cause);
   }
@@ -219,30 +288,31 @@ const readJadxConfigurationInputs = async (
   environment: Readonly<Record<string, string | undefined>>,
   signal?: AbortSignal,
 ): Promise<JadxConfiguration> => {
-  signal?.throwIfAborted();
+  throwIfJadxInterrupted(signal);
   requireSupportedHost();
   const jar = await resolveJar(environment);
   const java = await resolveJava(environment, signal);
   await requireJavaHomeExecutable(environment.JAVA_HOME, java);
-  signal?.throwIfAborted();
+  throwIfJadxInterrupted(signal);
   return { jar, java, jvmArguments: resolveJvmArguments(environment) };
 };
 
 const validateJadxConfigurationContents = async (
   configuration: JadxConfiguration,
   environment: Readonly<Record<string, string | undefined>>,
-  signal?: AbortSignal,
+  options: JadxJavaProbeOptions,
 ): Promise<void> => {
-  signal?.throwIfAborted();
-  await inspectJavaRuntime(configuration.java, environment, signal);
-  await requireEngineArchive(configuration.jar, signal);
+  throwIfJadxInterrupted(options.signal);
+  await inspectJavaRuntime(configuration.java, environment, options);
+  await requireEngineArchive(configuration.jar, options);
 };
 
 const projectConfigurationFailure = (
-  operation: AndroidOperation,
+  operation: string,
   cause: JadxConfigurationFailure,
 ): AnalysisCapabilityUnavailableError => {
   const output = cause.diagnostics;
+  const { stdout: _stdout, stderr: _stderr, ...facts } = output;
   return new AnalysisCapabilityUnavailableError(
     "jadx",
     operation,
@@ -250,6 +320,11 @@ const projectConfigurationFailure = (
     {
       cause,
       userMessage: cause.message,
+      diagnostics: {
+        ...facts,
+        failure_kind: cause.kind,
+        failure_code: cause.code,
+      },
       ...(typeof output.stdout === "string" && typeof output.stderr === "string"
         ? {
             capturedOutput: {
@@ -265,47 +340,169 @@ const projectConfigurationFailure = (
 
 const requireEngineArchive = async (
   jar: string,
-  signal?: AbortSignal,
+  options: JadxJavaProbeOptions,
 ): Promise<void> => {
-  // These classes are consumed directly by ReaJadxBridge.java. This checks the
-  // classpath inventory without loading engine code or starting a JADX session.
-  const missing = new Set([
-    "com/atxx/jhmcp/JadxSession.class",
-    "com/atxx/jhmcp/SessionHolder.class",
-    "jadx/api/JadxDecompiler.class",
-    "com/google/gson/Gson.class",
-    "io/modelcontextprotocol/kotlin/sdk/server/Server.class",
-  ]);
-  const reader = new ZipArtifactReader(jar, "zip", JAR_METADATA_READ_MAX_BYTES);
+  const operation = options.operation ?? "inspect_jadx_configuration";
   try {
-    for await (const entry of reader.entries(signal)) {
-      if (entry.kind === "file" && !entry.encrypted) missing.delete(entry.path);
-      if (missing.size === 0) return;
-    }
-  } catch (cause) {
-    if (signal?.aborted === true) throw cause;
-    const reason = cause instanceof Error ? cause.message : String(cause);
-    throw configurationFailure(
-      "version_unresolved",
-      `Cannot inspect REA_JADX_MCP_JAR ${jar} as a Java archive: ${reason}. ${JADX_JAR_CONFIGURATION_REMEDIATION}`,
-      {
-        jar_path: jar,
-        phase: "jar-inspection",
-        archive_error: reason,
-        maximum_metadata_read_bytes: JAR_METADATA_READ_MAX_BYTES,
-      },
-      "jar",
-      cause,
+    await options.resourceOwner.run(() =>
+      withArtifactRegularFile(
+        jar,
+        {
+          retain: ({ lease, resource }) =>
+            options.resourceOwner.retain(
+              {
+                close: () => lease.release(),
+              },
+              resource,
+            ),
+        },
+        options.signal,
+        async ({ handle, initial }) => {
+          try {
+            // Metadata enumeration borrows this descriptor. The file workflow
+            // alone owns admission, final close, cancellation and failed retry.
+            const reader = new ZipArtifactReader(
+              jar,
+              "zip",
+              JAR_METADATA_READ_MAX_BYTES,
+              { handle, initial },
+            );
+            const missing = new Set([
+              "com/atxx/jhmcp/JadxSession.class",
+              "com/atxx/jhmcp/SessionHolder.class",
+              "jadx/api/JadxDecompiler.class",
+              "com/google/gson/Gson.class",
+              "io/modelcontextprotocol/kotlin/sdk/server/Server.class",
+            ]);
+            for await (const entry of reader.entries(options.signal)) {
+              if (entry.kind === "file" && !entry.encrypted)
+                missing.delete(entry.path);
+              if (missing.size === 0) return;
+            }
+            throw configurationFailure(
+              "unsupported_version",
+              `REA_JADX_MCP_JAR ${jar} does not contain the required metadata bridge classes: ${[...missing].join(", ")}. ${JADX_JAR_CONFIGURATION_REMEDIATION}`,
+              {
+                jar_path: jar,
+                phase: "jar-inspection",
+                missing_classes: [...missing],
+              },
+              "jar",
+            );
+          } catch (cause: unknown) {
+            if (
+              cause instanceof JadxConfigurationFailure ||
+              (cause instanceof ArtifactReaderFailure &&
+                cause.reason === "cancelled")
+            )
+              throw cause;
+            throw archiveInspectionFailure(jar, cause);
+          }
+        },
+      ),
     );
-  } finally {
-    await reader.close();
+  } catch (cause: unknown) {
+    if (cause instanceof ArtifactFileCleanupFailure) {
+      const physical = cause.fileCleanupFailure;
+      const cleanup = new ProviderCleanupError(
+        "jadx",
+        [jar],
+        {
+          phase: "jar-inspection",
+          ...(physical.outcome.kind === "completed"
+            ? { archive_observation: { jar_path: jar, required_classes: true } }
+            : {}),
+        },
+        { operation, cause: physical.cleanupCause },
+      );
+      bindArtifactFileCleanup(cause, cleanup);
+      const primary =
+        physical.outcome.kind === "failed"
+          ? archiveAnalysisFailure(jar, physical.outcome.cause, options)
+          : physical.completionCancellation === undefined
+            ? undefined
+            : archiveCancellation(
+                physical.completionCancellation.reason,
+                options,
+                {
+                  archive_observation: {
+                    jar_path: jar,
+                    required_classes: true,
+                  },
+                },
+              );
+      if (primary === undefined) throw cleanup;
+      throw analysisErrorWithCleanupFailure(
+        primary,
+        cleanup,
+        operation,
+      ).bindCleanupDependencies([primary, cleanup]);
+    }
+    if (cause instanceof ArtifactFileCancelled) {
+      throw archiveCancellation(cause.fileCancellation.reason, options, {
+        archive_observation: { jar_path: jar, required_classes: true },
+      });
+    }
+    if (cause instanceof ArtifactReaderFailure) {
+      if (cause.reason === "cancelled")
+        throw archiveCancellation(cause.cancellation?.reason, options);
+      throw analysisClientFailureForOperation(cause, "jadx", operation);
+    }
+    if (
+      cause instanceof AnalysisError ||
+      cause instanceof JadxConfigurationFailure
+    )
+      throw cause;
+    throw archiveInspectionFailure(jar, cause);
   }
-  throw configurationFailure(
-    "unsupported_version",
-    `REA_JADX_MCP_JAR ${jar} does not contain the required metadata bridge classes: ${[...missing].join(", ")}. ${JADX_JAR_CONFIGURATION_REMEDIATION}`,
-    { jar_path: jar, phase: "jar-inspection", missing_classes: [...missing] },
+};
+
+const archiveInspectionFailure = (jar: string, cause: unknown) => {
+  const reason = cause instanceof Error ? cause.message : String(cause);
+  return configurationFailure(
+    "version_unresolved",
+    `Cannot inspect REA_JADX_MCP_JAR ${jar} as a Java archive: ${reason}. ${JADX_JAR_CONFIGURATION_REMEDIATION}`,
+    {
+      jar_path: jar,
+      phase: "jar-inspection",
+      archive_error: reason,
+      maximum_metadata_read_bytes: JAR_METADATA_READ_MAX_BYTES,
+    },
     "jar",
+    cause,
   );
+};
+
+const archiveAnalysisFailure = (
+  jar: string,
+  cause: unknown,
+  options: JadxJavaProbeOptions,
+): AnalysisError => {
+  if (cause instanceof AnalysisError) return cause;
+  if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
+    return archiveCancellation(cause.cancellation?.reason, options);
+  return projectConfigurationFailure(
+    options.operation ?? "inspect_jadx_configuration",
+    cause instanceof JadxConfigurationFailure
+      ? cause
+      : archiveInspectionFailure(jar, cause),
+  );
+};
+
+const archiveCancellation = (
+  reason: unknown,
+  options: JadxJavaProbeOptions,
+  diagnostics?: Readonly<Record<string, JsonValue>>,
+) => {
+  const operation = options.operation ?? "inspect_jadx_configuration";
+  return options.operationDeadline?.signal.aborted === true &&
+    reason === options.operationDeadline.signal.reason
+    ? new AnalysisTimeoutError(operation, options.operationDeadline.timeoutMs, {
+        cause: reason,
+        diagnostics,
+        ...jadxOperationTimeoutGuidance(options.operationDeadline.timeoutMs),
+      })
+    : new AnalysisCancelledError(operation, { cause: reason, diagnostics });
 };
 
 const requireSupportedHost = (): void => {
@@ -365,11 +562,20 @@ const resolveJar = async (
   environment: Readonly<Record<string, string | undefined>>,
 ): Promise<string> => {
   const jar = environment.REA_JADX_MCP_JAR;
-  if (jar === undefined || !isAbsolute(jar))
+  if (jar === undefined)
     throw configurationFailure(
       "not_configured",
       JADX_JAR_CONFIGURATION_REMEDIATION,
       { jar_configured: false },
+      "jar",
+    );
+  // A supplied selection stays configured even when rejected, so callers can
+  // tell it from an omitted setting and see the exact value REA refused.
+  if (!isAbsolute(jar))
+    throw configurationFailure(
+      "open_options_invalid",
+      `REA_JADX_MCP_JAR must be an absolute path; received ${JSON.stringify(jar)}. ${JADX_JAR_CONFIGURATION_REMEDIATION}`,
+      { jar_configured: true, jar_path: jar, path_requirement: "absolute" },
       "jar",
     );
   try {
@@ -400,28 +606,43 @@ const resolveJava = async (
 ): Promise<string> => {
   const executable = process.platform === "win32" ? "java.exe" : "java";
   if (environment.JAVA_HOME === undefined) {
-    if (process.platform !== "win32") return executable;
-    const path =
-      Object.entries(environment).find(
-        ([key]) => key.toLowerCase() === "path",
-      )?.[1] ?? "";
-    for (const directory of [process.cwd(), ...path.split(delimiter)]) {
-      signal?.throwIfAborted();
+    const windows = process.platform === "win32";
+    const path = windows
+      ? (Object.entries(environment).find(
+          ([key]) => key.toLowerCase() === "path",
+        )?.[1] ?? "")
+      : (environment.PATH ?? "/usr/bin:/bin");
+    // Resolve in the caller's directory once. The module probe and the engine
+    // run in different directories, and the selected executable also owns the
+    // retained session's cache identity. Empty POSIX PATH components select cwd.
+    const directories = path.split(delimiter);
+    for (const directory of windows
+      ? directories.filter((entry) => entry !== "")
+      : directories) {
+      throwIfJadxInterrupted(signal);
       // Windows PATH commonly quotes individual entries containing spaces.
       const selected =
-        directory.startsWith('"') && directory.endsWith('"')
+        windows && directory.startsWith('"') && directory.endsWith('"')
           ? directory.slice(1, -1)
           : directory;
-      const candidate = resolve(selected, executable);
+      const candidate = windows
+        ? resolve(selected, executable)
+        : absoluteCallerPath(appendCallerPath(selected, executable));
       try {
-        await access(candidate, constants.R_OK | constants.X_OK);
-        if ((await stat(candidate)).isFile()) return await realpath(candidate);
+        await access(
+          candidate,
+          windows ? constants.R_OK | constants.X_OK : constants.X_OK,
+        );
+        if ((await stat(candidate)).isFile())
+          return windows ? await realpath(candidate) : candidate;
       } catch (cause: unknown) {
         if (
           typeof cause === "object" &&
           cause !== null &&
           "code" in cause &&
-          (cause.code === "ENOENT" || cause.code === "ENOTDIR")
+          (cause.code === "ENOENT" ||
+            cause.code === "ENOTDIR" ||
+            (!windows && (cause.code === "EACCES" || cause.code === "EPERM")))
         )
           continue;
         throw configurationFailure(
@@ -435,13 +656,13 @@ const resolveJava = async (
     }
     throw configurationFailure(
       "runtime_missing",
-      "Cannot find java.exe on the selected Windows PATH. Select a full JDK with JAVA_HOME or PATH, then verify it with java --list-modules. REA does not install Java.",
-      { java_executable: executable },
+      `Cannot find an executable ${executable} on the selected ${windows ? "Windows " : ""}PATH. Select a full JDK with JAVA_HOME or PATH, then verify it with java --list-modules. REA does not install Java.`,
+      { java_executable: executable, phase: "path-lookup" },
       "java_runtime",
     );
   }
   if (isAbsolute(environment.JAVA_HOME))
-    return join(environment.JAVA_HOME, "bin", executable);
+    return appendCallerPath(environment.JAVA_HOME, `bin/${executable}`);
   throw configurationFailure(
     "open_options_invalid",
     "JAVA_HOME must select an existing JDK by absolute path; omit it to use java on PATH.",
@@ -508,114 +729,38 @@ const resolveJvmArguments = (
   return result;
 };
 
+const readOperationTimeout = (
+  environment: Readonly<Record<string, string | undefined>>,
+  runtimeTimeoutMs?: number,
+): number => {
+  if (runtimeTimeoutMs !== undefined) return runtimeTimeoutMs;
+  const value = environment.REA_JADX_OPERATION_TIMEOUT_MS;
+  if (value === undefined) return DEFAULT_JADX_OPERATION_TIMEOUT_MS;
+  const parsed = providerStartupTimeoutSchema.safeParse(value);
+  if (parsed.success) return parsed.data;
+  throw configurationFailure(
+    "open_options_invalid",
+    `REA_JADX_OPERATION_TIMEOUT_MS must be a decimal millisecond count from 1 to 2147483647; received ${value}.`,
+    { setting: "REA_JADX_OPERATION_TIMEOUT_MS", value },
+    "operation_timeout",
+  );
+};
+
 const inspectJavaRuntime = async (
   java: string,
   environment: Readonly<Record<string, string | undefined>>,
-  signal?: AbortSignal,
+  options: JadxJavaProbeOptions,
 ): Promise<void> => {
-  let stdout: string;
-  let stderr: string;
-  try {
-    ({ stdout, stderr } = await execFileOutput(java, ["--list-modules"], {
-      env: { ...environment },
-      timeout: JAVA_MODULE_LISTING_TIMEOUT_MS,
-      maxBuffer: JAVA_MODULE_LISTING_MAX_OUTPUT_BYTES,
-      ...(signal === undefined ? {} : { signal }),
-    }));
-  } catch (cause) {
-    if (signal?.aborted === true) throw cause;
-    const output = execFileOutputFailure(cause);
-    if (output === undefined) throw cause;
-    const diagnostics = {
-      java_executable: java,
-      phase: "module-inspection",
-      exit_code: typeof output.code === "number" ? output.code : null,
-      process_error_code: typeof output.code === "string" ? output.code : null,
-      signal: output.signal,
-      killed: output.killed,
-      stdout: output.stdout,
-      stderr: output.stderr,
-      output_truncated: output.outputTruncated,
-    } satisfies Readonly<Record<string, JsonValue>>;
-    if (output.outputTruncated)
-      throw configurationFailure(
-        "version_unresolved",
-        `The selected Java launcher ${java} exceeded the ${JAVA_MODULE_LISTING_MAX_OUTPUT_BYTES / (1024 * 1024)} MiB output budget while listing modules. REA retained partial output but could not establish compiler or version availability. Inspect the selected launcher for verbose or unbounded output; ` +
-          "java --list-modules should return a concise module listing.",
-        {
-          ...diagnostics,
-          failure: "output_limit",
-          output_limit_bytes: JAVA_MODULE_LISTING_MAX_OUTPUT_BYTES,
-        },
-        "java_probe",
-        cause,
-      );
-    if (output.killed)
-      throw configurationFailure(
-        "version_unresolved",
-        `The selected Java launcher ${java} was terminated or did not finish the module-listing probe within ${JAVA_MODULE_LISTING_TIMEOUT_MS / 1000} seconds. Inspect the launcher and its startup responsiveness, then verify it returns compiler and version modules with java --list-modules.`,
-        {
-          ...diagnostics,
-          failure: "probe_terminated",
-          deadline_ms: JAVA_MODULE_LISTING_TIMEOUT_MS,
-        },
-        "java_probe",
-        cause,
-      );
+  const result = await inspectJadxJava(java, environment, options);
+  if (!result.ok) {
+    const failure = result.error;
     throw configurationFailure(
-      "runtime_missing",
-      `Cannot inspect selected Java runtime ${java}: ${output.stderr.trim() || errorText(cause)}. Select a full JDK including jdk.compiler via JAVA_HOME or PATH; verify it with java --list-modules.`,
-      diagnostics,
-      "java_runtime",
-      cause,
+      failure.code,
+      failure.message,
+      failure.diagnostics,
+      failure.kind,
     );
   }
-  const compiler = /^jdk\.compiler(?:@|$)/mu.test(stdout);
-  if (!compiler)
-    throw configurationFailure(
-      "runtime_missing",
-      `Selected Java runtime ${java} does not provide jdk.compiler. Select a full JDK including jdk.compiler via JAVA_HOME or PATH; verify it with java --list-modules. A JRE cannot compile REA's source bridge.`,
-      {
-        java_executable: java,
-        phase: "module-inspection",
-        jdk_compiler: false,
-        stdout,
-        stderr,
-        output_truncated: false,
-      },
-      "java_runtime",
-    );
-  const major = /^java\.base@(\d+)(?:[.+_-]|$)/mu.exec(stdout)?.[1];
-  if (major === undefined)
-    throw configurationFailure(
-      "version_unresolved",
-      `The selected Java launcher ${java} did not report a parseable java.base version in its module listing. Inspect the launcher output and verify it with java --list-modules.`,
-      {
-        java_executable: java,
-        phase: "module-inspection",
-        jdk_compiler: true,
-        java_major: null,
-        stdout,
-        stderr,
-        output_truncated: false,
-      },
-      "java_probe",
-    );
-  if (Number(major) < 17)
-    throw configurationFailure(
-      "unsupported_version",
-      `Selected Java runtime ${java} must be JDK 17 or newer and include jdk.compiler; verify it with java --list-modules.`,
-      {
-        java_executable: java,
-        phase: "module-inspection",
-        jdk_compiler: true,
-        java_major: major ?? null,
-        stdout,
-        stderr,
-        output_truncated: false,
-      },
-      "java_runtime",
-    );
 };
 
 const configurationFailure = (

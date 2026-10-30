@@ -88,16 +88,18 @@ def inspect_core(path, cache):
         segments, notes, padding, threads, signals = [], [], [], [], []
         for segment_index, segment in enumerate(image.iter_segments()):
             h = segment.header
-            backing = h.p_type != "PT_NULL" and h.p_filesz > 0
+            header_offset = header.e_phoff + segment_index * header.e_phentsize
+            type_id = int.from_bytes(content[header_offset:header_offset + 4], "little")
+            backing = type_id != 0 and h.p_filesz > 0
             if backing:
                 location(h.p_offset, h.p_filesz, len(content))
-            if h.p_type == "PT_LOAD" and h.p_filesz > h.p_memsz:
+            if type_id == 1 and h.p_filesz > h.p_memsz:
                 raise CoreFailure("format", "Recorded PT_LOAD file bytes exceed memory size.")
-            segments.append({"index": segment_index, "type": h.p_type,
-                             "header_location": location(header.e_phoff + segment_index * header.e_phentsize, header.e_phentsize, len(content)),
+            segments.append({"index": segment_index, "type": h.p_type, "type_id": type_id,
+                             "header_location": location(header_offset, header.e_phentsize, len(content)),
                              "offset": hex(h.p_offset), "file_size": hex(h.p_filesz), "memory_size": hex(h.p_memsz),
                              "virtual_address": hex(h.p_vaddr), "physical_address": hex(h.p_paddr), "alignment": hex(h.p_align), "flags": hex(h.p_flags), "file_backing": "file" if backing else "none"})
-            if h.p_type != "PT_NOTE" or h.p_filesz == 0:
+            if type_id != 4 or h.p_filesz == 0:
                 continue
             position, end = h.p_offset, h.p_offset + h.p_filesz
             header_size = image.structs.Elf_Nhdr.sizeof()
@@ -109,6 +111,7 @@ def inspect_core(path, cache):
                     padding.append({"segment_index": segment_index, "location": location(position, len(raw), end), "bytes_base64": encoded(raw)})
                     break
                 note = struct_parse(image.structs.Elf_Nhdr, image.stream, stream_pos=position)
+                note_type_id = int.from_bytes(content[position + 8:position + 12], "little")
                 owner_start = position + header_size
                 descriptor_start = owner_start + ((note.n_namesz + 3) // 4) * 4
                 note_end = descriptor_start + ((note.n_descsz + 3) // 4) * 4
@@ -119,7 +122,10 @@ def inspect_core(path, cache):
                 display = owner.split(b"\0", 1)[0].decode("utf-8", "replace") if owner else None
                 descriptor = content[descriptor_start:descriptor_start + note.n_descsz]
                 note_index = len(notes)
-                notes.append({"index": note_index, "segment_index": segment_index, "type": note.n_type,
+                # pyelftools selects ET_CORE labels without owner context. Keep
+                # those labels only for exact CORE owners; other kinds are opaque.
+                note_type = note.n_type if owner == b"CORE\0" else note_type_id
+                notes.append({"index": note_index, "segment_index": segment_index, "type": note_type, "type_id": note_type_id,
                               "location": location(position, note_end - position, end),
                               "owner_location": location(owner_start, len(owner), end), "owner_bytes_base64": encoded(owner), "owner_display": display,
                               "descriptor_location": location(descriptor_start, len(descriptor), end), "descriptor_bytes_base64": encoded(descriptor)})
@@ -127,7 +133,7 @@ def inspect_core(path, cache):
                 # Only the initial Linux CORE ABI is interpreted. Other owners retain exact bytes.
                 if owner != b"CORE\0":
                     continue
-                if note.n_type == "NT_PRSTATUS":
+                if note_type_id == 1:
                     if len(descriptor) < ctypes.sizeof(prstatus_type):
                         raise CoreFailure("format", "Linux " + profile_label + " NT_PRSTATUS descriptor is truncated.")
                     status = prstatus_type.from_buffer_copy(descriptor)
@@ -136,7 +142,7 @@ def inspect_core(path, cache):
                         relative = prstatus_type.pr_reg.offset + getattr(registers_type, name).offset
                         registers.append({"name": name, "value": hex(getattr(status.pr_reg, name)), "location": location(descriptor_start + relative, ctypes.sizeof(kind), end)})
                     threads.append({"note_index": note_index, "historical_pid": ctypes.c_int32(status.pr_pid).value, "recorded_current_signal": status.pr_cursig, "registers": registers})
-                elif note.n_type == "NT_SIGINFO":
+                elif note_type_id == 0x53494749:
                     if len(descriptor) < ctypes.sizeof(elf_siginfo_64):
                         raise CoreFailure("format", "Linux " + profile_label + " NT_SIGINFO descriptor is truncated.")
                     signal = elf_siginfo_64.from_buffer_copy(descriptor)

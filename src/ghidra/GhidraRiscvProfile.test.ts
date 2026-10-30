@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { parseConfig } from "../config/parseConfig.js";
 import type {
   BinaryTarget,
-  RiscvElfMetadata,
+  ElfFamilyMetadata,
 } from "../domain/binaryTargetTypes.js";
 import { silentLogger } from "../logger.js";
 import { HopperProvider } from "../hopper/HopperProvider.js";
@@ -60,7 +60,7 @@ const configOf = (
   if (!parsed.ok) throw parsed.error;
   return parsed.value;
 };
-const target = (change: Partial<RiscvElfMetadata> = {}): BinaryTarget => ({
+const target = (change: Partial<ElfFamilyMetadata> = {}): BinaryTarget => ({
   path: "/fixture.elf",
   sha256: "a".repeat(64),
   kind: "executable",
@@ -97,7 +97,7 @@ afterAll(async () => {
 const ghidra = (environment: Record<string, string> = {}) =>
   new GhidraProvider(configOf(installDir, environment), silentLogger, {}, host);
 
-describe("bounded Ghidra RISC-V admission", () => {
+const registerRiscvLanguageCommitmentCases = () => {
   it("pins the generic language per width instead of accepting the header guess", async () => {
     const provider = ghidra();
     const rv64 = target();
@@ -155,7 +155,9 @@ describe("bounded Ghidra RISC-V admission", () => {
       ).toBe(true);
     }
   });
+};
 
+const registerRiscvAdmissionAndCapabilityCases = () => {
   it.each([
     [{ byteOrder: "big" }, "little-endian"],
     [{ type: 3 }, "fixed-address ET_EXEC only"],
@@ -168,7 +170,7 @@ describe("bounded Ghidra RISC-V admission", () => {
     [{ flags: 0x7 }, "quad-float"],
     [{ flags: 0x8000_0005 }, "(0x80000000)"],
     [{ flags: 0x24 }, "bits outside the verified lane"],
-  ] satisfies [Partial<RiscvElfMetadata>, string][])(
+  ] satisfies [Partial<ElfFamilyMetadata>, string][])(
     "refuses an unverified RISC-V interpretation %j",
     async (change, reason) => {
       const provider = ghidra();
@@ -192,6 +194,22 @@ describe("bounded Ghidra RISC-V admission", () => {
     expect(resolved.ok).toBe(false);
     if (resolved.ok) throw new Error("expected a refusal");
     expect(resolved.error.message).toContain("generic little-endian RISC-V");
+    expect(resolved.error).toMatchObject({
+      _tag: "ConfigurationError",
+      settings: [{ setting: "REA_GHIDRA_LANGUAGE_ID" }],
+    });
+  });
+
+  it("attributes a compiler-only pin conflict to its setting", async () => {
+    const resolved = await ghidra({
+      REA_GHIDRA_LANGUAGE_ID: "RISCV:LE:64:default",
+      REA_GHIDRA_COMPILER_SPEC_ID: "windows",
+    }).resolveAnalysisProfile(target());
+    if (resolved.ok) throw new Error("expected a configuration conflict");
+    expect(resolved.error).toMatchObject({
+      _tag: "ConfigurationError",
+      settings: [{ setting: "REA_GHIDRA_COMPILER_SPEC_ID" }],
+    });
   });
 
   it("keeps a caller-selected language that matches the pin as configured", async () => {
@@ -246,4 +264,9 @@ describe("bounded Ghidra RISC-V admission", () => {
     const ida = new IdaProvider(configOf("/ida"), {});
     expect(ida.inspectTargetSupport(target()).status).toBe("unsupported");
   });
+};
+
+describe("bounded Ghidra RISC-V admission", () => {
+  registerRiscvLanguageCommitmentCases();
+  registerRiscvAdmissionAndCapabilityCases();
 });

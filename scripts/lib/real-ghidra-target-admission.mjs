@@ -88,7 +88,10 @@ export async function verifyGhidraTargetAdmission({
       (await call("binary_session")).analysis_run.run_id,
       before.analysis_run.run_id,
     );
-    const dossier = await call("analyze_function", { procedure: entry });
+    const dossier = await call("analyze_function", {
+      procedure: entry,
+      detail: "complete",
+    });
     const instruction = await call("inspect_native_instruction", {
       address: entry,
     });
@@ -114,7 +117,7 @@ export async function verifyGhidraTargetAdmission({
     // Imported facts belong to the captured bytes even if the caller's path disappears.
     await rm(source);
     assert.deepEqual(
-      await call("analyze_function", { procedure: entry }),
+      await call("analyze_function", { procedure: entry, detail: "complete" }),
       dossier,
     );
     assert.deepEqual(
@@ -146,6 +149,9 @@ async function verifySourceReadFailures({
     ...(permissionDenied ? ["permission"] : []),
   ];
   for (const scenario of scenarios) {
+    // Same-target reopen may admit restored bytes through retained-client health.
+    // Each rejection needs a cold client, without an existing private snapshot.
+    await call("close_binary");
     await call("open_binary", { path: source, provider_id: "ghidra" });
     const before = await call("binary_session");
     if (scenario === "permission") await chmod(source, 0);

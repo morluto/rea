@@ -10,6 +10,10 @@ import {
   rizinTestInferiorTty,
 } from "./RizinTestInferiorTty.js";
 import { stopOwnedDebuggerProcess } from "../../../src/process/ownedDebuggerSession.js";
+import {
+  ProviderProcessSupervisor,
+  spawnOwnedProviderProcess,
+} from "../../../src/process/ProviderProcess.js";
 import type {
   ProviderProcessHandle,
   SpawnedOwnedProviderProcess,
@@ -24,10 +28,11 @@ interface InjectedProcessControl {
   exit(signal?: NodeJS.Signals): void;
 }
 
+type RizinTestManagerOptions = NonNullable<
+  ConstructorParameters<typeof RizinDebugSessionManager>[1]
+>;
 type InjectedSpawnProcess = NonNullable<
-  NonNullable<
-    ConstructorParameters<typeof RizinDebugSessionManager>[1]
-  >["spawnProcess"]
+  RizinTestManagerOptions["spawnProcess"]
 >;
 
 export const incompleteStop: typeof stopOwnedDebuggerProcess = async (
@@ -176,17 +181,47 @@ export const createInjectedProcess = (
   return { spawnProcess, control };
 };
 
-export const createRizinCoverageHarness = () => {
-  let directory: string | undefined;
+export const createRizinCoverageHarness = (
+  controls: {
+    readonly stopOwnedProcess?: (
+      supervisor: ProviderProcessSupervisor,
+    ) => ReturnType<ProviderProcessSupervisor["stop"]>;
+  } = {},
+) => {
+  let latestDirectory: string | undefined;
+  const directories = new Set<string>();
   const managers: RizinDebugSessionManager[] = [];
-  const track = (manager: RizinDebugSessionManager): void => {
+  const ownedProcesses = new Set<ProviderProcessSupervisor>();
+  const spawnOwnedProcess: InjectedSpawnProcess = async (options) => {
+    const launched = await spawnOwnedProviderProcess(options);
+    // The fixture owns these fake children independently of the manager's
+    // intentionally uncertain debugger/inferior lifecycle.
+    ownedProcesses.add(
+      new ProviderProcessSupervisor(
+        { ...launched, ownsProcessLifetime: true },
+        { captureStdout: false, maxDiagnosticBytes: 0 },
+      ),
+    );
+    return launched;
+  };
+  const createManager: typeof createRizinTestManager = (
+    environment = process.env,
+    options = {},
+  ) => {
+    const manager = createRizinTestManager(environment, {
+      ...options,
+      spawnProcess: options.spawnProcess ?? spawnOwnedProcess,
+    });
     managers.push(manager);
+    return manager;
   };
   const makeProvider = async (
     body: string,
     shebang = "#!/usr/bin/env node",
   ): Promise<string> => {
-    directory = await mkdtemp(join(tmpdir(), "rea-rizin-coverage-"));
+    const directory = await mkdtemp(join(tmpdir(), "rea-rizin-coverage-"));
+    directories.add(directory);
+    latestDirectory = directory;
     const provider = join(directory, "fake-rizin.mjs");
     await writeFile(provider, `${shebang}\n${body}\n`);
     await chmod(provider, 0o700);
@@ -194,13 +229,9 @@ export const createRizinCoverageHarness = () => {
   };
   const start = async (
     provider: string,
-    options: ConstructorParameters<typeof RizinDebugSessionManager>[1] = {},
+    options: RizinTestManagerOptions = {},
   ): Promise<{ manager: RizinDebugSessionManager; sessionId: string }> => {
-    const manager = createRizinTestManager(
-      { REA_RIZIN_COMMAND: provider },
-      options,
-    );
-    track(manager);
+    const manager = createManager({ REA_RIZIN_COMMAND: provider }, options);
     const result = await manager.start({
       path: "/tmp/coverage-target",
       inferior_tty: await rizinTestInferiorTty(),
@@ -210,13 +241,12 @@ export const createRizinCoverageHarness = () => {
   };
   const startInjected = async (
     spawnProcess: InjectedSpawnProcess,
-    options: ConstructorParameters<typeof RizinDebugSessionManager>[1] = {},
+    options: RizinTestManagerOptions = {},
   ) => {
-    const manager = createRizinTestManager(
+    const manager = createManager(
       { REA_RIZIN_COMMAND: "injected-rizin" },
       { ...options, spawnProcess },
     );
-    track(manager);
     const started = await manager.start({
       path: "/tmp/injected",
       inferior_tty: await rizinTestInferiorTty(),
@@ -229,17 +259,42 @@ export const createRizinCoverageHarness = () => {
         .splice(0)
         .map((manager) => manager.closeAll().catch(() => undefined)),
     );
-    if (directory !== undefined)
+    const failures: Error[] = [];
+    for (const supervisor of ownedProcesses) {
+      const stopped =
+        controls.stopOwnedProcess === undefined
+          ? await supervisor.stop()
+          : await controls.stopOwnedProcess(supervisor);
+      if (stopped.status === "incomplete") {
+        failures.push(
+          new Error(`Fake Rizin cleanup incomplete: ${stopped.reason}`),
+        );
+      } else if (supervisor.observedExit() === undefined) {
+        failures.push(
+          new Error("Fake Rizin cleanup did not observe child exit"),
+        );
+      } else {
+        ownedProcesses.delete(supervisor);
+      }
+    }
+    // Keep ownership and fixture files available when cleanup needs a retry.
+    if (failures.length > 0)
+      throw new AggregateError(failures, "Fake Rizin fixture cleanup failed");
+    for (const directory of directories) {
       await rm(directory, { recursive: true, force: true });
-    directory = undefined;
+      directories.delete(directory);
+    }
+    latestDirectory = undefined;
   };
-  const missingProviderPath = (): string => join(directory!, "does-not-exist");
+  const missingProviderPath = (): string =>
+    join(latestDirectory!, "does-not-exist");
   return {
     cleanup,
     makeProvider,
     missingProviderPath,
     start,
     startInjected,
-    track,
+    createManager,
+    spawnOwnedProcess,
   };
 };

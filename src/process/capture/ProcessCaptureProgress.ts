@@ -53,9 +53,11 @@ const formatProgressMessage = (
   const dispositionText =
     disposition === undefined ? "" : ` disposition=${disposition}`;
   const cleanupText =
-    cleanup === undefined
-      ? ""
-      : ` owned_process_group=${cleanup.owned_process_group.state} terminal_renderer=${cleanup.terminal_renderer.state} temporary_root=${cleanup.temporary_root.state}`;
+    cleanup !== undefined
+      ? ` owned_process_group=${cleanup.owned_process_group.state} terminal_renderer=${cleanup.terminal_renderer.state} temporary_root=${cleanup.temporary_root.state}`
+      : disposition === undefined
+        ? ""
+        : " owned_process_group=unverified terminal_renderer=unverified temporary_root=unverified";
   return `${status}${dispositionText}${cleanupText}`;
 };
 

@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { writeOrderedZip } from "../../../fixtures/artifactEntryOrder.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
+import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
 import { ArtifactProvider } from "../../../../src/artifacts/ArtifactProvider.js";
 import { artifactExtractionExecutionSchema } from "../../../../src/contracts/artifactToolContracts.js";
 import { artifactExtractionResultSchema } from "../../../../src/domain/artifactGraph.js";
@@ -16,7 +17,7 @@ describe("artifact extraction identity", () => {
     const source = join(root, "source.zip");
     await writeOrderedZip(source, ["ä.js", "a.js", "Z.js"]);
     const result = await new ArtifactProvider(process.env)
-      .createClient(archiveTarget(source))
+      .createClient(await archiveTarget(source))
       .execute(
         "extract_artifact",
         artifactExtractionExecutionSchema.parse({
@@ -34,10 +35,8 @@ describe("artifact extraction identity", () => {
   });
 });
 
-const archiveTarget = (path: string): BinaryTarget => ({
-  path,
-  sourcePath: path,
-  sha256: "0".repeat(64),
-  kind: "archive",
-  format: "zip",
-});
+const archiveTarget = async (path: string): Promise<BinaryTarget> => {
+  const parsed = await parseBinaryTarget(path);
+  if (!parsed.ok) throw parsed.error;
+  return parsed.value;
+};

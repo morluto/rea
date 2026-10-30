@@ -144,14 +144,19 @@ export async function verifyScenarioServiceWorkers(endpoint, targetId) {
         true,
       );
     };
-    const assertRejected = async (scenario) => {
+    const assertRejected = async (scenario, expectedReason) => {
       const result = await provider.captureScenario(scenario);
       assert.equal(
         result.ok,
         false,
         "Worker-influenced capture unexpectedly succeeded",
       );
-      assert.equal(result.error.reason, "target_not_allowed");
+      assert.equal(result.error.reason, expectedReason);
+      if (expectedReason === "service_worker_blocked")
+        assert.match(
+          result.error.userMessage,
+          /environment\.service_workers to allow/,
+        );
       assert.equal(
         result.error.partialObservation.capture.browser.cleanup,
         "disconnected-external",
@@ -229,7 +234,7 @@ export async function verifyScenarioServiceWorkers(endpoint, targetId) {
       "worker",
     );
     await page.goto("about:blank");
-    await assertRejected(scenarioFor(second.origin));
+    await assertRejected(scenarioFor(second.origin), "service_worker_blocked");
     await page.goto("about:blank");
     await assertRejected(
       scenarioFor(first.origin, [
@@ -240,6 +245,7 @@ export async function verifyScenarioServiceWorkers(endpoint, targetId) {
           wait_until: "load",
         },
       ]),
+      "service_worker_blocked",
     );
     await page.goto("about:blank");
     await assertRejected(
@@ -251,9 +257,13 @@ export async function verifyScenarioServiceWorkers(endpoint, targetId) {
         },
         { step_id: "loaded", action: "wait_for_timeout", duration_ms: 100 },
       ]),
+      "service_worker_blocked",
     );
     await page.goto("about:blank");
-    await assertRejected(scenarioFor(`${first.origin}/frame`));
+    await assertRejected(
+      scenarioFor(`${first.origin}/frame`),
+      "service_worker_blocked",
+    );
 
     const allowed = await provider.captureScenario(
       scenarioFor(second.origin, [], "allow"),

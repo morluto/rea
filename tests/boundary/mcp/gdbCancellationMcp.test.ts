@@ -18,6 +18,7 @@ import { thinMach } from "../../../src/domain/binaryTarget.fixture.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { GdbSessionManager } from "../../../src/gdb/GdbSessionManager.js";
 import { silentLogger } from "../../../src/logger.js";
+import { stopOwnedDebuggerProcess } from "../../../src/process/ownedDebuggerSession.js";
 import { registerGdbTools } from "../../../src/server/registerGdbTools.js";
 import type { GdbToolManager } from "../../../src/server/registerGdbTools.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
@@ -30,6 +31,106 @@ import {
   validateDebuggerStatusResponse,
   waitForStartedFile,
 } from "../../support/reverseDebuggerMcpTestHelpers.js";
+
+it.skipIf(process.platform === "win32")(
+  "keeps a failed GDB startup closed through MCP and retries its retained owner before console admission",
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), "rea-gdb-mcp-startup-"));
+    const provider = join(directory, "fake-gdb.mjs");
+    await writeFile(
+      provider,
+      `#!${process.execPath}
+process.stdout.write("(gdb)\\n");
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  for (const line of chunk.split("\\n")) {
+    const match = /^(\\d+)/.exec(line);
+    if (!match) continue;
+    process.stdout.write(match[1] + (line.includes("auto-load off")
+      ? "^error,msg=\\"setting rejected\\"\\n"
+      : "^done\\n"));
+  }
+});
+`,
+    );
+    await chmod(provider, 0o700);
+    let stopCalls = 0;
+    let exitedDuringRetry = false;
+    const manager = new GdbSessionManager({
+      platform: "linux",
+      environment: { REA_GDB_COMMAND: provider },
+      stopProcess: async (session, name) => {
+        stopCalls += 1;
+        if (stopCalls === 1)
+          return {
+            status: "incomplete",
+            reason: "simulated startup stop uncertainty",
+          };
+        const stopped = await stopOwnedDebuggerProcess(session, name);
+        exitedDuringRetry = session.exited;
+        return stopped;
+      },
+    });
+    const server = new McpServer({
+      name: "gdb-startup-readiness",
+      version: "1",
+    });
+    registerGdbTools(
+      server,
+      manager,
+      silentLogger,
+      createToolResultDelivery(undefined),
+    );
+    const client = new Client({ name: "gdb-startup-readiness", version: "1" });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const started = await client.callTool({
+        name: "start_gdb_session",
+        arguments: {},
+      });
+      expect(started.isError).toBe(true);
+      expect(started.structuredContent).toMatchObject({
+        error: {
+          code: "cleanup_incomplete",
+          details: {
+            cleanup_reason: "simulated startup stop uncertainty",
+            resources: [expect.stringMatching(/^[0-9a-f-]{36}$/u)],
+          },
+        },
+      });
+      const failure = z
+        .object({
+          error: z.object({
+            details: z.object({ resources: z.tuple([z.string().uuid()]) }),
+          }),
+        })
+        .parse(started.structuredContent);
+      const sessionId = failure.error.details.resources[0];
+      expect(stopCalls).toBe(1);
+      expect(manager.status(sessionId)?.state).toBe("closed");
+      expect(exitedDuringRetry).toBe(false);
+
+      const command = await client.callTool({
+        name: "gdb_console",
+        arguments: { session_id: sessionId, command: "show version" },
+      });
+      expect(command.isError).toBe(true);
+      expect(command.structuredContent).toMatchObject({
+        error: { code: "invalid_request" },
+      });
+      expect(stopCalls).toBe(2);
+      expect(exitedDuringRetry).toBe(true);
+      expect(manager.status(sessionId)).toBeUndefined();
+    } finally {
+      await Promise.allSettled([client.close(), server.close()]);
+      await manager.closeAll().catch(() => undefined);
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
 
 it.skipIf(process.platform === "win32")(
   "propagates MCP cancellation into a running GDB command",

@@ -1,3 +1,4 @@
+import { goBinarySchema } from "../../../src/domain/go/goBinary.js";
 import type { Client } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { writeFile } from "node:fs/promises";
@@ -6,7 +7,10 @@ import { expect } from "vitest";
 import { readAnalysisSnapshot } from "../../../src/application/binary/AnalysisSnapshotFiles.js";
 import { GoBinaryService } from "../../../src/application/go/GoBinaryService.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
-import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
+import {
+  evidenceResultOf,
+  expandToolAvailability,
+} from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { GoBinaryProvider } from "../../../src/go/GoBinaryProvider.js";
 import { createServer } from "../../../src/server/createServer.js";
@@ -61,6 +65,7 @@ mcpTest(
     const provider = new GoBinaryProvider();
     const session = createTestBinarySession(createCacheProvider([]));
     const service = new GoBinaryService({
+      close: () => provider.close(),
       identity: provider.identity,
       inspect: async (input, options) => {
         const result = await provider.inspect(input, options);
@@ -97,7 +102,7 @@ mcpTest(
       expect(inspected.isError, JSON.stringify(inspected.content)).not.toBe(
         true,
       );
-      const evidence = toolContract("inspect_go_binary").outputSchema.parse(
+      const evidence = evidenceResultOf(goBinarySchema).parse(
         inspected.structuredContent,
       );
       expect(evidence.subject?.architecture).toBe("mips");
@@ -165,7 +170,7 @@ goMcpTest(
       arguments: { path },
     });
     expect(response.isError).not.toBe(true);
-    const evidence = toolContract("inspect_go_binary").outputSchema.parse(
+    const evidence = evidenceResultOf(goBinarySchema).parse(
       response.structuredContent,
     );
     expect(evidence.normalized_result.build_info).toEqual(
@@ -186,7 +191,6 @@ goMcpTest(
         name: "inspect_go_binary",
         arguments: { path },
       });
-      expect(response.isError).toBe(true);
       expect(parseMcpToolError(response)).toMatchObject({
         error: {
           code: fixture.code,
@@ -232,14 +236,21 @@ goMcpTest(
     expect(
       ajv.validate(inputSchema, { path: "/artifacts/program", execute: true }),
     ).toBe(false);
-    expect(ajv.validate(inputSchema, { path: "/artifacts/\0program" })).toBe(
-      false,
-    );
     expect(advertised.annotations).toMatchObject({
       readOnlyHint: false,
       destructiveHint: false,
       idempotentHint: true,
       openWorldHint: false,
+    });
+    const nulPath = await client.callTool({
+      name: "inspect_go_binary",
+      arguments: { path: "/artifacts/\0program" },
+    });
+    expect(parseMcpToolError(nulPath)).toMatchObject({
+      error: {
+        code: "invalid_request",
+        details: { issues: [{ path: ["path"], reason: "invalid_format" }] },
+      },
     });
     const root = await createTestTempDirectory("rea-go-mcp-");
     const path = join(root, "application");
@@ -256,7 +267,7 @@ goMcpTest(
       ajv.validate(outputSchema, response.structuredContent),
       JSON.stringify(ajv.errors),
     ).toBe(true);
-    const parsed = toolContract("inspect_go_binary").outputSchema.parse(
+    const parsed = evidenceResultOf(goBinarySchema).parse(
       response.structuredContent,
     );
     const evidence = parseEvidence(parsed);
@@ -274,7 +285,6 @@ goMcpTest(
       name: "inspect_go_binary",
       arguments: { path: "relative.bin" },
     });
-    expect(invalid.isError).toBe(true);
     expect(parseMcpToolError(invalid)).toMatchObject({
       error: {
         code: "invalid_request",

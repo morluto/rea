@@ -4,6 +4,7 @@ import { observeSelectedExecutable } from "../../../src/process/capture/ProcessC
 
 it("cancels after real metadata IO without creating an already-aborted stream or leaking the file handle", async () => {
   const controller = new AbortController();
+  const reason = new Error("cancel after executable path metadata");
   let opened: FileHandle | undefined;
   await expect(
     observeSelectedExecutable(process.execPath, controller.signal, {
@@ -13,10 +14,10 @@ it("cancels after real metadata IO without creating an already-aborted stream or
       },
       async stat(path) {
         const metadata = await stat(path, { bigint: true });
-        controller.abort();
+        controller.abort(reason);
         return metadata;
       },
     }),
-  ).rejects.toMatchObject({ reason: "cancelled" });
+  ).rejects.toMatchObject({ reason: "cancelled", cause: reason });
   expect(opened?.fd).toBe(-1);
 });

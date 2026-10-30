@@ -4,6 +4,7 @@ import {
   mkdir,
   readFile,
   realpath,
+  rm,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -12,6 +13,190 @@ import { expect } from "vitest";
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+
+cliTest(
+  "uninstall refuses a foreign OpenCode fallback across configuration layers",
+  async ({ cli }) => {
+    const home = await createTestTempDirectory(
+      "rea-uninstall-layered-fallback-cli-",
+    );
+    const directory = join(home, "opencode");
+    await mkdir(directory, { recursive: true });
+    const lower = join(directory, "opencode.json");
+    const upper = join(directory, "opencode.jsonc");
+    const claude = join(home, ".claude.json");
+    const legacy = JSON.stringify({
+      mcp: {
+        rea: { type: "local", command: ["/usr/bin/false"], enabled: true },
+      },
+    });
+    const native = JSON.stringify({
+      mcp: {
+        servers: {
+          rea: {
+            type: "local",
+            command: [PRODUCT_IDENTITY.cliBinary, "mcp"],
+            disabled: false,
+          },
+        },
+      },
+    });
+    await writeFile(lower, legacy);
+    await writeFile(upper, native);
+    const claudeOriginal = JSON.stringify({
+      mcpServers: {
+        rea: { command: PRODUCT_IDENTITY.cliBinary, args: ["mcp"] },
+      },
+    });
+    await writeFile(claude, claudeOriginal);
+    const run = () =>
+      cli.run({
+        arguments: ["uninstall", "--json"],
+        cwd: home,
+        environment: {
+          HOME: home,
+          USERPROFILE: home,
+          OPENCODE_CONFIG_DIR: directory,
+        },
+      });
+    const refused = await run();
+    expect(refused.exitCode, refused.stderr).toBe(1);
+    expect(refused.json).toMatchObject({
+      status: "failed",
+      items: expect.arrayContaining([
+        expect.objectContaining({
+          name: "opencode",
+          status: "failed",
+          detail: expect.stringContaining("V1"),
+        }),
+      ]),
+    });
+    expect(await readFile(lower, "utf8")).toBe(legacy);
+    expect(await readFile(upper, "utf8")).toBe(native);
+    expect(await readFile(claude, "utf8")).toBe(claudeOriginal);
+    await expect(access(`${claude}.rea.backup`)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(access(`${upper}.rea.backup`)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    // A foreign later fragment can inherit fields from an owned V1 entry.
+    const ownedLegacy = JSON.stringify({
+      mcp: {
+        servers: {},
+        rea: {
+          type: "local",
+          command: [PRODUCT_IDENTITY.cliBinary, "mcp"],
+          enabled: true,
+        },
+      },
+    });
+    const foreignPartial = JSON.stringify({
+      mcp: { servers: { rea: { command: ["/usr/bin/false"] } } },
+    });
+    await writeFile(lower, ownedLegacy);
+    await writeFile(upper, foreignPartial);
+    const legacyRefusal = await run();
+    expect(legacyRefusal.exitCode, legacyRefusal.stderr).toBe(1);
+    expect(legacyRefusal.json).toMatchObject({ status: "failed" });
+    expect(await readFile(lower, "utf8")).toBe(ownedLegacy);
+    expect(await readFile(upper, "utf8")).toBe(foreignPartial);
+    expect(await readFile(claude, "utf8")).toBe(claudeOriginal);
+    await expect(access(`${lower}.rea.backup`)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+
+    await writeFile(lower, "{}\n");
+    await writeFile(upper, native);
+    const removed = await run();
+    expect(removed.exitCode, removed.stderr).toBe(0);
+    expect(removed.json).toMatchObject({ status: "complete" });
+    expect(await readFile(upper, "utf8")).not.toContain('"rea"');
+  },
+);
+
+cliTest(
+  "uninstall reports completed file removals beside a later OpenCode failure and recovers",
+  async ({ cli }) => {
+    const home = await createTestTempDirectory(
+      "rea-uninstall-layered-failure-",
+    );
+    const directory = join(home, "opencode");
+    await mkdir(directory, { recursive: true });
+    const first = join(directory, "opencode.json");
+    const second = join(directory, "opencode.jsonc");
+    const original = JSON.stringify({
+      mcp: {
+        rea: {
+          type: "local",
+          command: ["npx", "-y", "rea-agents@6.7.0", "mcp"],
+        },
+      },
+      unrelated: "keep",
+    });
+    await writeFile(first, original);
+    await writeFile(second, original);
+    await mkdir(`${second}.rea.backup`);
+    const run = () =>
+      cli.run({
+        arguments: ["uninstall", "--json"],
+        cwd: home,
+        environment: {
+          HOME: home,
+          USERPROFILE: home,
+          OPENCODE_CONFIG_DIR: directory,
+        },
+      });
+
+    const failed = await run();
+    expect(failed.exitCode, failed.stderr).toBe(1);
+    expect(failed.json).toMatchObject({
+      status: "failed",
+      items: expect.arrayContaining([
+        expect.objectContaining({
+          name: "opencode",
+          status: "failed",
+          detail: expect.stringContaining("Removed registration"),
+          actions: expect.arrayContaining([
+            expect.objectContaining({
+              configuration_path: first,
+              status: "removed",
+            }),
+            expect.objectContaining({
+              configuration_path: second,
+              status: "failed",
+            }),
+          ]),
+        }),
+      ]),
+    });
+    expect(failed.json).toMatchObject({
+      items: expect.arrayContaining([
+        expect.objectContaining({
+          name: "opencode",
+          detail: expect.stringContaining("could not be backed up"),
+        }),
+      ]),
+    });
+    expect(JSON.parse(await readFile(first, "utf8"))).toEqual({
+      mcp: {},
+      unrelated: "keep",
+    });
+    expect(await readFile(`${first}.rea.backup`, "utf8")).toBe(original);
+    expect(await readFile(second, "utf8")).toBe(original);
+
+    await rm(`${second}.rea.backup`, { recursive: true });
+    const recovered = await run();
+    expect(recovered.exitCode, recovered.stderr).toBe(0);
+    expect(recovered.json).toMatchObject({ status: "complete" });
+    expect(JSON.parse(await readFile(second, "utf8"))).toEqual({
+      mcp: {},
+      unrelated: "keep",
+    });
+    expect(await readFile(`${first}.rea.backup`, "utf8")).toBe(original);
+    expect(await readFile(`${second}.rea.backup`, "utf8")).toBe(original);
+  },
+);
 
 const cases = [
   {
@@ -36,6 +221,12 @@ const cases = [
     client: "grok_build",
     env: { GROK_HOME: "" },
     config: ".grok/config.toml",
+    skill: ".agents/skills",
+  },
+  {
+    client: "copilot_cli",
+    env: { COPILOT_HOME: "" },
+    config: ".copilot/mcp-config.json",
     skill: ".agents/skills",
   },
   {
@@ -163,31 +354,33 @@ for (const group of groups) {
           environment,
           timeoutMs: 20_000,
         });
-      for (const { client, config, skillDirectory } of profiles) {
-        const planned = await run([
-          "setup",
-          "--client",
-          client,
-          "--dry-run",
-          "--json",
-        ]);
-        expect(planned.exitCode, client).toBe(0);
-        expect(planned.json, client).toMatchObject({
-          status: "planned",
-          plannedActions: expect.arrayContaining([
+      const planned = await run([
+        "setup",
+        ...clientArguments,
+        "--dry-run",
+        "--json",
+      ]);
+      expect(planned.exitCode, planned.stderr).toBe(0);
+      expect(planned.json).toMatchObject({
+        status: "planned",
+        plannedActions: expect.arrayContaining([
+          ...profiles.map(({ client, config }) =>
             expect.objectContaining({
               id: `configure_client:${client}`,
               target: config,
             }),
-            expect.objectContaining({ target: skillDirectory }),
-          ]),
-        });
+          ),
+          ...[
+            ...new Set(profiles.map(({ skillDirectory }) => skillDirectory)),
+          ].map((target) => expect.objectContaining({ target })),
+        ]),
+      });
+      for (const { config, skillDirectory } of profiles) {
+        await expect(access(config)).rejects.toMatchObject({ code: "ENOENT" });
         await expect(access(skillDirectory)).rejects.toMatchObject({
           code: "ENOENT",
         });
       }
-      for (const { config } of profiles)
-        await expect(access(config)).rejects.toMatchObject({ code: "ENOENT" });
       const setup = await run(["setup", ...clientArguments, "--yes", "--json"]);
       expect(setup.exitCode).toBe(0);
       expect(setup.json).toMatchObject({ status: "ready" });

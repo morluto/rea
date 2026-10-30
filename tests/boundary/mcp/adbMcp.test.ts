@@ -7,6 +7,7 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { ok } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { assertAdvertisedMcpContracts } from "./mcpContractHarness.js";
 
 const identity = { id: "adb", name: "Android Debug Bridge", version: null };
@@ -94,13 +95,14 @@ const results: Readonly<Record<string, unknown>> = {
     serial: "emulator-5554",
     package_name: "com.example",
     version_name: "1.2.3",
-    version_code: 45,
+    version_code: "45",
     first_install_time: "2026-01-02 03:04:05",
     last_update_time: "2026-02-03 04:05:06",
     installer_package_name: null,
     user_id: 10234,
     pkg_flags: "[ HAS_CODE ]",
     requested_permissions_count: 2,
+    numeric_issues: { sample: [], total: 0 },
     coverage: "complete",
   },
   pull_adb_file: {
@@ -190,13 +192,31 @@ const results: Readonly<Record<string, unknown>> = {
     override_size: null,
     physical_density: 420,
     override_density: null,
+    numeric_issues: { sample: [], total: 0 },
+    coverage: "complete",
   },
   inspect_adb_window: {
     client: clientIdentity,
     serial: "emulator-5554",
+    source_section: "windows",
+    focus_summary: "single_context",
+    focus_contexts: [
+      {
+        scope: "unscoped",
+        display_id: null,
+        header_line: null,
+        declarations: [
+          {
+            field: "mCurrentFocus",
+            value: "Window{abcdef u0 com.example.app/Main}",
+            raw_line: "mCurrentFocus=Window{abcdef u0 com.example.app/Main}",
+          },
+        ],
+      },
+    ],
     focused_window: "Window{abcdef u0 com.example.app/Main}",
     focused_app: null,
-    observed_lines: ["Window{abcdef u0 com.example.app/Main}"],
+    observed_lines: ["mCurrentFocus=Window{abcdef u0 com.example.app/Main}"],
   },
   read_adb_setting: {
     client: clientIdentity,
@@ -225,6 +245,7 @@ const results: Readonly<Record<string, unknown>> = {
       },
     ],
     exact_match: true,
+    unparsed_lines: [],
     coverage: "complete",
   },
   install_adb_package: {
@@ -375,8 +396,23 @@ it("rejects invalid tool input before reaching the provider", async () => {
     arguments: { serial: "bad serial" },
   });
   expect(rejected.isError).toBe(true);
-  const text = (rejected.content as { readonly text?: string }[])
-    .map((part) => part.text ?? "")
-    .join("");
-  expect(text).toContain("Invalid arguments for tool inspect_adb_device");
+  expect(parseMcpToolError(rejected)).toMatchObject({
+    error: {
+      code: "invalid_request",
+      recovery: {
+        kind: "inspect_input_contract",
+        operation: "inspect_adb_device",
+      },
+      details: {
+        operation: "inspect_adb_device",
+        issues: [
+          {
+            path: ["serial"],
+            reason: "invalid_format",
+            expected: "regex",
+          },
+        ],
+      },
+    },
+  });
 });

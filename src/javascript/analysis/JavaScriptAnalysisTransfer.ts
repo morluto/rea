@@ -3,10 +3,19 @@ import { createReadStream } from "node:fs";
 import { open, stat } from "node:fs/promises";
 import { z } from "zod";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
+import type { JsonValue } from "../../domain/jsonValue.js";
 
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import type { JavaScriptModuleSemanticIr } from "../../domain/javascript/javascriptModuleSemanticIr.js";
-import type { JavaScriptSemanticFileProjection } from "../../domain/javascript/javascriptSemanticFileProjection.js";
+import {
+  JAVASCRIPT_PARENT_HEAP_NODE_OPTIONS,
+  JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES,
+  JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM,
+} from "../../domain/javascript/javascriptAnalysisResourceControls.js";
+import type {
+  JavaScriptSemanticFileProjection,
+  JavaScriptSemanticProjectionCapacity,
+} from "../../domain/javascript/javascriptSemanticFileProjection.js";
 import { digestSchema } from "../../domain/digests.js";
 import {
   javaScriptWorkerGraphRecordSchema,
@@ -16,8 +25,7 @@ import {
 } from "./JavaScriptAnalysisWorkerSchemas.js";
 
 // Budgets bound transfer representation, independently of source length.
-/** Record bound whose transient decoding expansion is reserved by the consumer. */
-export const JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES = 8 * 1024 * 1024;
+export { JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES } from "../../domain/javascript/javascriptAnalysisResourceControls.js";
 const FRAME_BYTES = JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES;
 const TRANSFER_BYTES = 512 * 1024 * 1024;
 const MAX_TRANSFER_BYTES = 2 * 1024 * 1024 * 1024;
@@ -37,13 +45,13 @@ const recordSchema = z.discriminatedUnion("kind", [
 
 /** Complete-file coordinates authenticated before adopting any worker facts. */
 export const javaScriptAnalysisTransferDescriptorSchema = z.strictObject({
-  bytes: z.number().int().nonnegative().max(MAX_TRANSFER_BYTES),
+  bytes: z.int().nonnegative().max(MAX_TRANSFER_BYTES),
   sha256: digestSchema,
-  records: z.number().int().nonnegative(),
-  module_bytes: z.number().int().nonnegative(),
-  module_records: z.number().int().nonnegative(),
-  graph_bytes: z.number().int().nonnegative(),
-  graph_records: z.number().int().nonnegative(),
+  records: z.int().nonnegative(),
+  module_bytes: z.int().nonnegative(),
+  module_records: z.int().nonnegative(),
+  graph_bytes: z.int().nonnegative(),
+  graph_records: z.int().nonnegative(),
 });
 type Descriptor = z.output<typeof javaScriptAnalysisTransferDescriptorSchema>;
 
@@ -61,6 +69,54 @@ export const javaScriptTransferByteBudget = (
     MAX_TRANSFER_BYTES,
     Math.max(TRANSFER_BYTES, Math.floor(resultBudgetBytes / 8)),
   );
+
+/**
+ * The record ceiling and the 2 GiB file maximum are fixed. The effective file
+ * ceiling follows the parent offered result budget and can rise until that maximum.
+ */
+export const javaScriptTransferCeilingRemediation = (
+  transferFileBytes: number | undefined,
+): string => {
+  const recordBytes = String(JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES);
+  const maximumBytes = String(MAX_TRANSFER_BYTES);
+  const fixed = `The ${recordBytes}-byte transfer record ceiling and the ${maximumBytes}-byte transfer file maximum have no runtime override. Raising max_heap_mb does not raise either fixed ceiling. A request that exceeds the record ceiling or that maximum fails the same way when repeated unchanged.`;
+  const adjustable = `${JAVASCRIPT_PARENT_HEAP_NODE_OPTIONS} to raise the effective file ceiling up to ${maximumBytes} bytes. Selecting fewer source_paths can also raise this effective file allowance, because earlier retained results and the reserve for remaining sources reduce the offered budget. Neither change raises the record ceiling or the maximum.`;
+  if (
+    transferFileBytes !== undefined &&
+    transferFileBytes >= MAX_TRANSFER_BYTES
+  )
+    return `${fixed} The effective transfer file ceiling is the ${maximumBytes}-byte maximum. Selecting fewer source_paths does not raise the record ceiling or that maximum.`;
+  const effective =
+    transferFileBytes === undefined
+      ? "The effective transfer file ceiling follows the parent offered result budget, which follows the CLI/MCP process heap, and can be lower than the maximum."
+      : `The effective transfer file ceiling is ${String(transferFileBytes)} bytes. It follows the parent offered result budget, which follows the CLI/MCP process heap.`;
+  return `${fixed} ${effective} ${adjustable}`;
+};
+
+/** Reattach transfer recovery after a worker protocol frame drops remediation. */
+export const javaScriptForwardedTransferRemediation = (
+  limits: Readonly<Record<string, JsonValue>> | null,
+): string | undefined => {
+  const transferFileBytes = limits?.transfer_file_bytes;
+  if (
+    typeof limits?.transfer_record_bytes !== "number" &&
+    typeof transferFileBytes !== "number"
+  )
+    return undefined;
+  return javaScriptTransferCeilingRemediation(
+    typeof transferFileBytes === "number" ? transferFileBytes : undefined,
+  );
+};
+
+const javaScriptTransferCeilingReason = (
+  recordBytes: number,
+  transferFileBytes: number,
+): string =>
+  recordBytes > FRAME_BYTES
+    ? `A complete JavaScript fact exceeds the ${String(FRAME_BYTES)}-byte transfer record ceiling. This release has no runtime override.`
+    : transferFileBytes >= MAX_TRANSFER_BYTES
+      ? `Complete JavaScript file facts exceed the ${String(MAX_TRANSFER_BYTES)}-byte transfer file maximum. This release has no runtime override.`
+      : `Complete JavaScript file facts exceed the effective transfer file ceiling of ${String(transferFileBytes)} bytes (maximum ${String(MAX_TRANSFER_BYTES)} bytes). That effective ceiling follows the parent offered result budget and can rise until the maximum. The record ceiling and that maximum have no runtime override.`;
 
 const assertTransferByteBudget = (transferBytes: number): void => {
   if (
@@ -85,14 +141,15 @@ const encodeTransferRecord = (
     throw new AnalysisResourceConstraintError(
       "analyze_javascript_application",
       "transport",
-      size > FRAME_BYTES
-        ? "A complete JavaScript fact exceeds the transfer record byte budget"
-        : "Complete JavaScript file facts exceed the transfer byte budget",
+      javaScriptTransferCeilingReason(size, transferBytes),
       {
         transfer_record_bytes: FRAME_BYTES,
         transfer_file_bytes: transferBytes,
         record_bytes: size,
         transfer_bytes_at_least: previousBytes + size,
+      },
+      {
+        remediationAction: javaScriptTransferCeilingRemediation(transferBytes),
       },
     );
   return { line, size, kind: record.kind };
@@ -183,7 +240,15 @@ export const writeJavaScriptAnalysisTransfer = async (
   try {
     await append({
       kind: "projection-header",
-      value: { roots: projection.roots, truncated: projection.truncated },
+      value: {
+        roots: projection.roots,
+        nodesTruncated: projection.nodesTruncated,
+        ...(projection.omittedUnknownOccurrences === undefined
+          ? {}
+          : {
+              omittedUnknownOccurrences: projection.omittedUnknownOccurrences,
+            }),
+      },
     });
     for (const record of moduleTransferRecords(module)) await append(record);
     for (const value of projection.evidenceContexts)
@@ -226,7 +291,7 @@ export function readJavaScriptAnalysisTransfer(
   descriptor: Descriptor,
   source: Pick<JavaScriptArtifactFile, "path" | "sha256">,
   signal: AbortSignal | undefined,
-  retainGraph: boolean,
+  capacity: JavaScriptSemanticProjectionCapacity | null,
 ): Promise<{
   readonly module: JavaScriptModuleSemanticIr;
   readonly projection: JavaScriptSemanticFileProjection | null;
@@ -236,11 +301,26 @@ export async function readJavaScriptAnalysisTransfer(
   descriptor: Descriptor,
   source: Pick<JavaScriptArtifactFile, "path" | "sha256">,
   signal?: AbortSignal,
-  retainGraph = true,
+  capacity: JavaScriptSemanticProjectionCapacity | null = {
+    nodes: JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM,
+    unknowns: JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM,
+  },
 ): Promise<{
   readonly module: JavaScriptModuleSemanticIr;
   readonly projection: JavaScriptSemanticFileProjection | null;
 }> {
+  if (
+    capacity !== null &&
+    [capacity.nodes, capacity.unknowns].some(
+      (value) =>
+        !Number.isSafeInteger(value) ||
+        value < 0 ||
+        value > JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM,
+    )
+  )
+    throw new RangeError(
+      "JavaScript transfer requires valid retained capacities",
+    );
   const expected = javaScriptAnalysisTransferDescriptorSchema.parse(descriptor);
   if ((await stat(path)).size !== expected.bytes)
     throw new TypeError(
@@ -340,7 +420,7 @@ export async function readJavaScriptAnalysisTransfer(
               "JavaScript transfer facts precede their headers",
             );
           if (
-            !retainGraph &&
+            capacity === null &&
             [
               "evidence-context",
               "node",
@@ -389,6 +469,10 @@ export async function readJavaScriptAnalysisTransfer(
                 throw new TypeError(
                   "JavaScript transfer node belongs to a different artifact source",
                 );
+              if (capacity !== null && nodes.length >= capacity.nodes)
+                throw new TypeError(
+                  "JavaScript transfer nodes exceed the offered capacity",
+                );
               nodes.push(record.value);
               break;
             }
@@ -398,6 +482,10 @@ export async function readJavaScriptAnalysisTransfer(
               break;
             case "unknown":
               retainIdentity(record.kind, record.value.unknown_id);
+              if (capacity !== null && unknowns.length >= capacity.unknowns)
+                throw new TypeError(
+                  "JavaScript transfer unknowns exceed the offered capacity",
+                );
               unknowns.push(record.value);
               break;
             case "fingerprint":
@@ -433,15 +521,16 @@ export async function readJavaScriptAnalysisTransfer(
     throw new TypeError("JavaScript analysis transfer is missing its headers");
   return {
     module: { ...moduleHeader, scopes, bindings, callables, moduleLinks },
-    projection: retainGraph
-      ? {
-          ...projectionHeader,
-          evidenceContexts,
-          nodes,
-          relations,
-          unknowns,
-          fingerprints,
-        }
-      : null,
+    projection:
+      capacity !== null
+        ? {
+            ...projectionHeader,
+            evidenceContexts,
+            nodes,
+            relations,
+            unknowns,
+            fingerprints,
+          }
+        : null,
   };
 }

@@ -222,12 +222,19 @@ it("preserves a provider lane when a portable CI reporter changes with provider 
   });
 });
 
-it("keeps unknown CI scripts on complete qualification", async () => {
+it("keeps unknown CI scripts on the fast Linux baseline", async () => {
   const { directory, base } = await fixture();
   const head = await change(directory, ["scripts/ci/new-qualification.mjs"]);
   const plan = await classify(directory, base, head);
   const { CI_FLAGS } = await loadScopes();
-  for (const flag of CI_FLAGS) expect(plan[flag]).toBe(true);
+  expect(plan).toMatchObject({ tier: "fast", code: true, runtime: true });
+  for (const flag of CI_FLAGS)
+    if (flag !== "code" && flag !== "runtime") expect(plan[flag]).toBe(false);
+  expect(plan.matrix).toEqual({
+    include: [{ os: "ubuntu-latest", platform: "linux", architecture: "x64" }],
+  });
+  const full = await classify(directory, base, head, "pull_request", true);
+  for (const flag of CI_FLAGS) expect(full[flag]).toBe(true);
 });
 
 it("emits an observational owner proposal without changing ordinary or full portable execution", async () => {
@@ -275,6 +282,7 @@ it.each([
   "tests/boundary/providers/RizinDebugSessionReviewRegressions.test.ts",
   "tests/boundary/mcp/gdbCancellationMcp.test.ts",
   "tests/boundary/mcp/rizinDebuggerCancellationMcp.test.ts",
+  "tests/boundary/mcp/rizinPendingOutput.test.ts",
   "tests/composition/reverseEngineeringAdmission.test.ts",
   "tests/support/reverseEngineeringMcpHarness.ts",
   "tests/support/reverseEngineeringCompositionEdgeCases.ts",
@@ -398,7 +406,7 @@ it("includes changes from earlier cancelled pushes since the last successful bas
 });
 
 it.each(["", "not-a-commit"])(
-  "fails closed to all lanes for a missing or invalid push baseline (%s)",
+  "fails closed to the fast Linux baseline for a missing or invalid push baseline (%s)",
   async (base) => {
     const { directory } = await fixture();
     const head = await change(directory, ["README.md"]);
@@ -406,17 +414,27 @@ it.each(["", "not-a-commit"])(
     expect(plan).toMatchObject({
       tier: "fast",
       code: true,
-      package: true,
-      evm: true,
-      browser: true,
+      runtime: true,
+      package: false,
+      evm: false,
+      browser: false,
       reasons: expect.arrayContaining([expect.stringContaining("baseline")]),
     });
     const { CI_FLAGS } = await loadScopes();
-    for (const flag of CI_FLAGS) expect(plan[flag]).toBe(true);
+    for (const flag of CI_FLAGS)
+      if (flag !== "code" && flag !== "runtime") expect(plan[flag]).toBe(false);
+    expect(plan.matrix).toEqual({
+      include: [
+        { os: "ubuntu-latest", platform: "linux", architecture: "x64" },
+      ],
+    });
   },
 );
 
-it("selects only a trusted successful ancestor from recent CI push runs", async () => {
+it("selects only a trusted successful ancestor from recent CI push runs", async ({
+  skip,
+}) => {
+  skip(process.platform === "win32", "the fake gh is a POSIX shell script");
   const { directory, base } = await fixture();
   const head = await change(directory, ["src/evm/client.ts"]);
   const bin = join(directory, "fake-bin");
@@ -449,7 +467,11 @@ it("selects only a trusted successful ancestor from recent CI push runs", async 
   const output = join(directory, "baseline-output");
   const result = await execFileAsync(
     process.execPath,
-    [new URL("../../../scripts/ci/baseline.mjs", import.meta.url).pathname],
+    [
+      fileURLToPath(
+        new URL("../../../scripts/ci/baseline.mjs", import.meta.url),
+      ),
+    ],
     {
       cwd: directory,
       env: {
@@ -467,7 +489,8 @@ it("selects only a trusted successful ancestor from recent CI push runs", async 
   expect(await readFile(output, "utf8")).toBe(`base=${base}\nreason=\n`);
 });
 
-it("returns an empty baseline when GitHub lookup fails", async () => {
+it("returns an empty baseline when GitHub lookup fails", async ({ skip }) => {
+  skip(process.platform === "win32", "the fake gh is a POSIX shell script");
   const { directory, base } = await fixture();
   const head = await change(directory, ["src/evm/client.ts"]);
   const bin = join(directory, "fake-bin");
@@ -477,7 +500,11 @@ it("returns an empty baseline when GitHub lookup fails", async () => {
   await chmod(gh, 0o755);
   const result = await execFileAsync(
     process.execPath,
-    [new URL("../../../scripts/ci/baseline.mjs", import.meta.url).pathname],
+    [
+      fileURLToPath(
+        new URL("../../../scripts/ci/baseline.mjs", import.meta.url),
+      ),
+    ],
     {
       cwd: directory,
       env: {
@@ -505,9 +532,10 @@ it("fails closed when the successful push baseline is not an ancestor", async ()
   expect(await classify(directory, unrelated, head, "push")).toMatchObject({
     tier: "fast",
     code: true,
-    package: true,
-    evm: true,
-    browser: true,
+    runtime: true,
+    package: false,
+    evm: false,
+    browser: false,
   });
   expect(head).not.toBe(base);
 });
@@ -598,6 +626,12 @@ it.each([
     "tests/module/example.test.ts",
     { code: true, runtime: false, browser: false, package: false },
   ],
+  ["scripts/lib/release-proposal.mjs", { code: true, package: true }],
+  ["patches/release-please+17.3.0.patch", { code: true, package: true }],
+  [
+    "tests/boundary/filesystem/releaseProposal.test.ts",
+    { code: true, package: true },
+  ],
   ["website/src/index.ts", { code: false, website: true, package: false }],
   [
     "website/public/examples/notes-electron/preload.js",
@@ -618,17 +652,39 @@ it.each([
   ],
   [
     "src/process/ProviderProcess.ts",
-    { code: true, package: true, evm: true, browser: true },
+    {
+      code: true,
+      runtime: true,
+      package: false,
+      evm: false,
+      browser: false,
+      sqlite: false,
+    },
   ],
   [
     "package-lock.json",
-    { code: true, package: true, evm: true, browser: true },
+    {
+      code: true,
+      runtime: true,
+      package: true,
+      evm: false,
+      browser: false,
+    },
   ],
   [
     ".github/workflows/real-evm-interface.yml",
     { code: false, evm: true, browser: false, package: false },
   ],
-  ["unknown-input", { code: true, package: true, evm: true, browser: true }],
+  [
+    "unknown-input",
+    {
+      code: true,
+      runtime: true,
+      package: false,
+      evm: false,
+      browser: false,
+    },
+  ],
   [
     "src/application/Example.ts",
     {
@@ -641,20 +697,115 @@ it.each([
     },
   ],
   [
+    "scripts/verify-ghidra-bridge-sources.mjs",
+    { code: true, ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
+    "src/ghidra/GhidraBridgeSources.ts",
+    { code: true, ghidra_bridge: true, runtime: true, package: true },
+  ],
+  [
+    "src/ghidra/GhidraJavaProperties.ts",
+    { code: true, ghidra_bridge: true, runtime: true, package: false },
+  ],
+  [
+    "src/ghidra/GhidraReleasePolicy.ts",
+    { code: true, ghidra_bridge: true, runtime: true },
+  ],
+  [
+    ".github/workflows/ghidra-bridge-sources.yml",
+    { code: false, ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
     "bridge/ghidra/Example.java",
-    { code: true, runtime: true, package: false, apple: false },
+    {
+      code: true,
+      runtime: true,
+      ghidra_bridge: true,
+      package: false,
+      apple: false,
+    },
   ],
   [
     "src/native/AppleExample.ts",
     { code: true, runtime: true, apple: true, package: false, evm: false },
   ],
   [
+    "src/artifacts/NativeDmgArtifactReader.ts",
+    { code: true, runtime: true, apple: true, package: false, evm: false },
+  ],
+  [
+    "tests/acceptance/artifactDmgAttachmentRecoveryCli.test.ts",
+    { code: true, apple: true, package: false, runtime: false },
+  ],
+  [
+    "tests/process-global/dmgCancellationReason.test.ts",
+    { code: true, apple: true, package: false, runtime: false },
+  ],
+  [
+    "tests/boundary/providers/native/nativeDmgArtifactReader.test.ts",
+    { code: true, apple: true, package: false, runtime: false },
+  ],
+  [
     "scripts/verify/apple/example.mjs",
     { code: true, apple: true, package: false, runtime: false },
   ],
   [
+    "src/process/WindowsExecutable.ts",
+    { code: true, runtime: true, package: true },
+  ],
+  [
+    "src/process/WindowsExecutable.test.ts",
+    { code: true, runtime: true, package: true },
+  ],
+  ["src/adb/AdbConfiguration.ts", { code: true, runtime: true, package: true }],
+  [
+    "src/apktool/ApktoolConfiguration.ts",
+    { code: true, runtime: true, package: true },
+  ],
+  [
+    "src/application/UpdateCommandRunner.ts",
+    { code: true, runtime: true, package: true },
+  ],
+  [
+    "tests/boundary/process/windowsExecutableSelection.test.ts",
+    { code: true, runtime: true, package: true },
+  ],
+  ["src/hopper/BridgeLauncher.ts", { code: true, apple: true }],
+  ["src/domain/hopperErrors.ts", { code: true, apple: true }],
+  [
+    "tests/boundary/providers/hopper/hopperMacLaunchArguments.test.ts",
+    { code: true, apple: true },
+  ],
+  [
+    "tests/boundary/providers/hopper/hopperClient.helperFailure.test.ts",
+    { code: true, apple: true },
+  ],
+  [
     "src/windows/Example.ts",
     { code: true, runtime: true, package: true, apple: false, evm: false },
+  ],
+  [
+    "src/domain/windowsNativeArtifact.ts",
+    { code: true, runtime: true, package: true },
+  ],
+  ["src/domain/peCoffHeader.ts", { code: true, runtime: true, package: true }],
+  ["src/domain/dosMz.ts", { code: true, runtime: true, package: true }],
+  [
+    "scripts/lib/verifier-source-loader.mjs",
+    { code: true, runtime: true, package: true },
+  ],
+  [
+    "tests/boundary/process/windowsNativeArtifactVerifier.test.ts",
+    { code: true, package: true },
+  ],
+  [
+    "scripts/lib/windows-native-inspection-workspace.mjs",
+    { code: true, package: true },
+  ],
+  [
+    "tests/boundary/process/windowsNativeInspectionWorkspace.test.ts",
+    { code: true, package: true },
   ],
   [
     "src/domain/javascript/javascriptRuntimeStaticCandidates.ts",
@@ -682,8 +833,101 @@ it.each([
     { code: true, apple: true, package: false, runtime: false },
   ],
   [
+    "scripts/ci/qualified-package-envelope.mjs",
+    { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
+    "scripts/ci/prepare-npm-publication.mjs",
+    { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
+    "scripts/ci/npm-release-state.mjs",
+    { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
     "tests/boundary/filesystem/windowsNpxRegistration.test.ts",
     { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
+    "tests/boundary/filesystem/clientConfigurationEnvironment.test.ts",
+    { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
+    "tests/boundary/filesystem/clientConfigurationLayeredEnvironment.test.ts",
+    { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
+    "tests/acceptance/setup/registrationRuntimeEnvironmentCli.test.ts",
+    { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
+    "src/application/ClientRegistrationEnvironment.ts",
+    { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
+    "src/application/ClientRegistrationStatus.ts",
+    { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
+    "src/application/ClientRegistrationIdentity.ts",
+    { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
+    "src/application/ClientConfigurationDocument.ts",
+    { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
+    "src/application/ClientConfigurationFiles.ts",
+    { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
+    "src/application/ClientConfigurationPublication.ts",
+    { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
+    "src/application/ClientConfigurationCleanup.ts",
+    { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
+    "src/application/DshCordisPatch.ts",
+    { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
+    "src/application/DshCordisYaml.ts",
+    { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
+    "scripts/verify-packed-bridge.mjs",
+    {
+      code: true,
+      package: true,
+      runtime: true,
+      apple: false,
+      evm: false,
+      browser: false,
+    },
+  ],
+  [
+    "scripts/verify-packed-bridge.d.mts",
+    {
+      code: true,
+      package: true,
+      runtime: true,
+      apple: false,
+      evm: false,
+      browser: false,
+    },
+  ],
+  [
+    "tests/boundary/process/packedBridgeVerification.test.ts",
+    {
+      code: true,
+      package: true,
+      runtime: true,
+      apple: false,
+      evm: false,
+      browser: false,
+    },
   ],
   [
     "src/process/ProcessOwnership.test.ts",
@@ -710,17 +954,90 @@ it.each([
     "tests/boundary/mcp/serverLifecycleMcp.test.ts",
     { code: true, sqlite: true },
   ],
-  ["src/process/OwnedCommand.ts", { code: true, sqlite: true, runtime: true }],
-  ["src/server/createServer.ts", { code: true, sqlite: true, runtime: true }],
+  [
+    "src/process/OwnedCommand.ts",
+    {
+      code: true,
+      sqlite: false,
+      runtime: true,
+      package: false,
+      browser: false,
+    },
+  ],
+  [
+    "src/server/createServer.ts",
+    {
+      code: true,
+      sqlite: false,
+      runtime: true,
+      package: false,
+      browser: false,
+    },
+  ],
   [
     "src/contracts/toolContracts.ts",
-    { code: true, sqlite: true, runtime: true },
+    {
+      code: true,
+      sqlite: false,
+      runtime: true,
+      package: false,
+      browser: false,
+    },
   ],
   [
     "src/domain/analysisErrorProjection.ts",
     { code: true, sqlite: true, runtime: true },
   ],
-  ["src/domain/javascript/example.ts", { code: true, sqlite: false }],
+  [
+    "src/application/environment/environmentExport.ts",
+    {
+      code: true,
+      runtime: true,
+      agentenv: true,
+      browser: false,
+      package: false,
+    },
+  ],
+  [
+    "scripts/verify-agentenv-environment.mjs",
+    { code: true, agentenv: true, runtime: false, package: false },
+  ],
+  [
+    "src/domain/analysisView/scenarioCaptureRecords.ts",
+    { code: true, agentenv: true, runtime: true, package: false },
+  ],
+  [
+    "src/domain/analysisView/WebNetworkProjectionAccumulator.ts",
+    { code: true, agentenv: true, runtime: true, package: false },
+  ],
+  [
+    "src/domain/analysisView/analysisViewDataAdmission.ts",
+    { code: true, agentenv: true, runtime: true, package: false },
+  ],
+  [
+    "src/application/OwnedJsonInput.ts",
+    { code: true, agentenv: true, runtime: true, package: false },
+  ],
+  [
+    "src/artifacts/SafeOutputTree.ts",
+    { code: true, agentenv: true, runtime: true },
+  ],
+  [
+    "src/cliJsonInput.ts",
+    { code: true, agentenv: true, runtime: true, package: false },
+  ],
+  [
+    "tests/boundary/process/agentenvVerifierIdentity.test.ts",
+    { code: true, agentenv: false, runtime: false, package: false },
+  ],
+  [
+    ".github/workflows/real-agentenv.yml",
+    { code: false, agentenv: true, workflows: true, package: false },
+  ],
+  [
+    "src/domain/javascript/example.ts",
+    { code: true, sqlite: false, ghidra_bridge: false, agentenv: false },
+  ],
 ])("selects the appropriate lanes for %s", async (path, expected) => {
   const { directory, base } = await fixture();
   const head = await change(directory, [path]);
@@ -758,8 +1075,10 @@ it("scopes package script edits while retaining broad dependency checks", async 
   );
   expect(await classify(directory, head, dependency)).toMatchObject({
     code: true,
-    browser: true,
-    package: true,
+    runtime: true,
+    browser: false,
+    package: false,
+    evm: false,
   });
 });
 
@@ -810,15 +1129,30 @@ it("keeps unrelated test script changes off the SQLite runtime matrix", async ()
 });
 
 it.each([
+  "src/apkSignature/ApkSignatureProvider.ts",
+  "src/domain/apkSignature/apkSignatureSchemes.ts",
+  "scripts/verify-apk-signature.mjs",
+])("selects the real APK signing lane for %s", async (path) => {
+  const { directory, base } = await fixture();
+  const head = await change(directory, [path]);
+  expect(await classify(directory, base, head)).toMatchObject({
+    apk_signature: true,
+  });
+});
+
+it.each([
   ["browser", "real-browser"],
   ["binary_layout", "real-binary-layout"],
   ["evm", "real-evm-interface"],
+  ["apk_signature", "real-apk-signature"],
   ["javascript_recovery", "real-javascript-recovery"],
   ["recorded_crash", "real-recorded-crash"],
   ["web_network", "real-web-network-captures"],
   ["web_runtime", "real-web-runtime"],
   ["web_source_map", "real-web-source-map"],
+  ["agentenv", "real-agentenv"],
   ["nativeaot", "nativeaot-fixtures"],
+  ["ghidra_bridge", "ghidra-bridge-sources"],
   ["website", "website-check"],
 ])(
   "routes %s through the selector without a duplicate PR trigger",
@@ -918,11 +1252,24 @@ it.each([
   ],
   [
     ".nvmrc",
-    { code: true, package: true, browser: true, evm: true, sqlite: true },
+    {
+      code: true,
+      runtime: true,
+      package: true,
+      browser: false,
+      evm: false,
+      sqlite: false,
+    },
   ],
   [
     "tsconfig.build.json",
-    { code: true, package: true, browser: true, evm: true },
+    {
+      code: true,
+      runtime: true,
+      package: true,
+      browser: false,
+      evm: false,
+    },
   ],
   ["docs/.vitepress/config.ts", { code: true, docs: true, package: false }],
   [
@@ -946,7 +1293,10 @@ it.each([
     "src/contracts/evm/tools.ts",
     { code: true, docs: true, evm: true, package: false },
   ],
-  ["scripts/unknown-website-helper.mjs", { code: true, package: true }],
+  [
+    "scripts/unknown-website-helper.mjs",
+    { code: true, runtime: true, package: false, browser: false },
+  ],
   [
     ".github/workflows/release.yml",
     { workflows: true, code: true, package: false, website: false },
@@ -964,12 +1314,68 @@ it.each([
     { code: true, fixtures: true, readiness: true, package: false },
   ],
   [
+    "scripts/lib/conformance-fixtures.mjs",
+    { code: true, fixtures: true, readiness: true, package: false },
+  ],
+  [
+    "scripts/build-conformance-fixtures.mjs",
+    { code: true, fixtures: true, readiness: true, package: false },
+  ],
+  [
+    "scripts/verify-conformance-fixtures.mjs",
+    { code: true, fixtures: true, readiness: true, package: false },
+  ],
+  [
     "tests/conformance/swift/fixture.swift",
     { code: true, fixtures: true, readiness: true, package: false },
   ],
   [
     "tests/conformance/readiness/javascript-cli/package.json",
     { code: true, fixtures: false, readiness: true, package: false },
+  ],
+  [
+    "scripts/verify-reconstruction-readiness.mjs",
+    {
+      code: true,
+      readiness: true,
+      fixtures: false,
+      runtime: false,
+      package: false,
+    },
+  ],
+  [
+    "scripts/lib/cli-process-environment.mjs",
+    {
+      code: true,
+      package: true,
+      runtime: true,
+      javascript_recovery: true,
+      readiness: false,
+    },
+  ],
+  [
+    "tests/conformance/readiness/report/reconstructionReadiness.ts",
+    {
+      code: true,
+      readiness: true,
+      fixtures: false,
+      runtime: false,
+      package: false,
+    },
+  ],
+  [
+    "tests/conformance/readiness/report/reconstructionReadinessExample.ts",
+    {
+      code: true,
+      readiness: true,
+      fixtures: false,
+      runtime: false,
+      package: false,
+    },
+  ],
+  [
+    "tests/conformance/readiness/report/reconstructionReadiness.test.ts",
+    { code: true, readiness: false, runtime: false, package: false },
   ],
   [
     "tests/conformance/ghidra/no-return.c",
@@ -1041,6 +1447,30 @@ it.each([
   },
 );
 
+it.each(["knip:production", "lint:typed"])(
+  "keeps the %s analysis command within static checks",
+  async (script) => {
+    const { directory } = await fixture();
+    const base = await change(
+      directory,
+      ["package.json"],
+      JSON.stringify({ scripts: { [script]: "node scripts/old.mjs" } }),
+    );
+    const head = await change(
+      directory,
+      ["package.json"],
+      JSON.stringify({ scripts: { [script]: "node scripts/new.mjs" } }),
+    );
+    expect(await classify(directory, base, head)).toMatchObject({
+      code: true,
+      runtime: false,
+      package: false,
+      evm: false,
+      browser: false,
+    });
+  },
+);
+
 it("retains a broad fallback when a provider script adds shared shell work", async () => {
   const { directory } = await fixture();
   const before = {
@@ -1058,9 +1488,11 @@ it("retains a broad fallback when a provider script adds shared shell work", asy
   };
   const head = await change(directory, ["package.json"], JSON.stringify(after));
   expect(await classify(directory, base, head)).toMatchObject({
-    evm: true,
-    browser: true,
-    package: true,
+    code: true,
+    runtime: true,
+    evm: false,
+    browser: false,
+    package: false,
   });
 });
 
@@ -1244,3 +1676,89 @@ it("never runs a manual-only verifier from an automatic workflow", async () => {
     ),
   ).toEqual([]);
 });
+
+it.each([
+  "scripts/run-typescript.mjs",
+  "scripts/run-typescript.d.mts",
+  "scripts/run-turbo.mjs",
+  "turbo.json",
+  "tsconfig.json",
+  "tsconfig.build.json",
+  "tsconfig.frida-verification.json",
+  "package-lock.json",
+  ".nvmrc",
+  ".npmrc",
+])("selects package hosts for compiler input %s", async (path) => {
+  const { directory, base } = await fixture();
+  const head = await change(directory, [path]);
+  const plan = await classify(directory, base, head);
+  expect(plan).toMatchObject({
+    tier: "fast",
+    code: true,
+    runtime: true,
+    package: true,
+  });
+  expect(plan.matrix).toEqual({
+    include: [
+      { os: "ubuntu-latest", platform: "linux", architecture: "x64" },
+      { os: "ubuntu-24.04-arm", platform: "linux", architecture: "arm64" },
+      { os: "macos-15", platform: "darwin", architecture: "arm64" },
+    ],
+  });
+});
+
+it.each(["typescript", "tsrs"])(
+  "selects fallback host checks when compiler dependency %s changes",
+  async (name) => {
+    const { directory } = await fixture();
+    const before = { name: "fixture", devDependencies: { [name]: "1.0.0" } };
+    const base = await change(
+      directory,
+      ["package.json"],
+      JSON.stringify(before),
+    );
+    const head = await change(
+      directory,
+      ["package.json"],
+      JSON.stringify({ ...before, devDependencies: { [name]: "2.0.0" } }),
+    );
+    expect(await classify(directory, base, head)).toMatchObject({
+      code: true,
+      runtime: true,
+      package: true,
+    });
+  },
+);
+
+it.each([
+  "compile",
+  "typecheck",
+  "build",
+  "build:cached",
+  "test:prepare",
+  "docs:prepare",
+  "verify:frida:bindings",
+  "prebuild:cached",
+  "postcompile",
+  "pretypecheck",
+])(
+  "selects fallback host checks when compiler command %s changes",
+  async (name) => {
+    const { directory } = await fixture();
+    const base = await change(
+      directory,
+      ["package.json"],
+      JSON.stringify({ scripts: { [name]: "node scripts/old.mjs" } }),
+    );
+    const head = await change(
+      directory,
+      ["package.json"],
+      JSON.stringify({ scripts: { [name]: "node scripts/new.mjs" } }),
+    );
+    expect(await classify(directory, base, head)).toMatchObject({
+      code: true,
+      runtime: true,
+      package: true,
+    });
+  },
+);

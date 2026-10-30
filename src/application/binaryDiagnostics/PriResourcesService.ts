@@ -35,7 +35,9 @@ export class PriResourcesService {
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
     if (options?.signal?.aborted)
-      return err(new AnalysisCancelledError(OPERATION));
+      return err(
+        new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
+      );
     const input = inspectPriResourcesInputSchema.safeParse(rawInput);
     if (!input.success)
       return err(
@@ -56,7 +58,9 @@ export class PriResourcesService {
     const result = await this.provider.inspect(input.data, options);
     if (!result.ok) return result;
     if (options?.signal?.aborted)
-      return err(new AnalysisCancelledError(OPERATION));
+      return err(
+        new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
+      );
     const report = priResourcesSchema.safeParse(result.value);
     if (!report.success || !validReport(report.data, input.data))
       return err(

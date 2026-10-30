@@ -9,7 +9,10 @@ import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../dist/domain/evidence.js";
-import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
+import {
+  requireMcpOperationResult,
+  requireMcpOutput,
+} from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 
 if (process.argv.length !== 2 || process.platform !== "linux")
@@ -90,6 +93,20 @@ try {
     ),
   );
   const procedures = parseEvidence(await call("list_procedures"));
+  const strings = parseEvidence(await call("list_strings"));
+  assert.equal(
+    overview.normalized_result.procedure_count,
+    procedures.normalized_result.length,
+  );
+  assert.equal(
+    overview.normalized_result.string_count,
+    strings.normalized_result.length,
+  );
+  assert.ok(
+    overview.limitations.some((text) =>
+      text.includes("Ghidra-defined string Data"),
+    ),
+  );
   const entry = procedures.normalized_result.find(
     (item) => item.value === "rea_pie_entry",
   );
@@ -306,8 +323,7 @@ async function call(name, args = {}) {
     { name, arguments: args },
     { timeout: 240000 },
   );
-  assert.notEqual(result.isError, true, JSON.stringify(result));
   return ["open_binary", "binary_session", "close_binary"].includes(name)
     ? requireMcpOperationResult(result, name)
-    : result.structuredContent;
+    : requireMcpOutput(result, name);
 }

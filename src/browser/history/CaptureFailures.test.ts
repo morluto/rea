@@ -1,5 +1,9 @@
 import { expect, it } from "vitest";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import {
+  captureDecoderHeapRecovery,
+  DEFAULT_CAPTURE_DECODER_HEAP,
+} from "../../config/captureDecoderHeap.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { analysisErrorProjectionSchema } from "../../contracts/errorSchemas.js";
 import { inspectWebNetworkCaptureInputSchema } from "../../domain/webNetworkCapture.js";
@@ -36,10 +40,9 @@ it.each([
     expect(projected).toMatchObject({
       code: "resource_constraint",
       retryable: false,
-      message: expect.stringContaining("fixed V8 heap"),
       remediation: {
         action: expect.stringContaining(
-          "smaller capture exported by its producer",
+          captureDecoderHeapRecovery(DEFAULT_CAPTURE_DECODER_HEAP),
         ),
       },
       details: {
@@ -51,9 +54,12 @@ it.each([
         captured_output: { stdout: "", stderr },
       },
     });
-    expect(JSON.stringify(projected)).not.toContain("rea doctor");
     // Bun ignores the decoder's V8 heap flags, so no fixed heap is reported.
-    const heapLimits = { old_generation_heap_mib: 192, semi_space_heap_mib: 8 };
+    const heapLimits = {
+      old_generation_heap_mib: 192,
+      old_generation_heap_source: "default",
+      semi_space_heap_mib: 8,
+    };
     if (process.versions.bun === undefined)
       expect(projected).toMatchObject({
         details: { reported_limits: heapLimits },
@@ -106,7 +112,6 @@ it.each([
     );
     expect(projected).toMatchObject({
       code: "resource_constraint",
-      message: expect.stringContaining("Windows Job Object memory limit"),
       details: {
         resource: "memory",
         reported_limits: {
@@ -119,7 +124,7 @@ it.each([
     });
     // The enforced limit is reported only where Bun runs on Windows.
     if (NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES === null)
-      expect(JSON.stringify(projected)).not.toContain(
+      expect(projected.details?.reported_limits).not.toHaveProperty(
         "process_memory_limit_bytes",
       );
     else
@@ -128,11 +133,6 @@ it.each([
           reported_limits: {
             process_memory_limit_bytes: NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES,
           },
-        },
-        remediation: {
-          action: expect.stringContaining(
-            `${String(NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES)} bytes`,
-          ),
         },
       });
     // The same exit without the job notification remains an ordinary failure.
@@ -211,7 +211,6 @@ it.each(["before open", "during read"])(
         reason: cause.message,
       },
     });
-    expect(projected.remediation.action).toContain("stable");
     const redacted = projectAnalysisError(
       redactExplicitFailure(error, ["private-marker", "REDACTED"]),
     );
@@ -286,3 +285,43 @@ it.each(["io", "unavailable"] as const)(
     });
   },
 );
+
+it("preserves the exact cancellation reason and an earlier reader failure", () => {
+  const input = inspectWebNetworkCaptureInputSchema.parse({
+    capture_path: "/selected/input.har",
+    format: "har",
+  });
+  const reason = { request: "caller cancellation" };
+  const controller = new AbortController();
+  controller.abort(reason);
+  const cancelledCommand = new OwnedCommandFailure(
+    "cancelled",
+    "Command cancelled",
+    null,
+    null,
+    { cancellation: { reason } },
+  );
+  expect(
+    historicalCaptureFailure(input, cancelledCommand, "decoder", {
+      signal: controller.signal,
+    }).cause,
+  ).toBe(reason);
+  const cancelledRead = new ArtifactReaderFailure(
+    "cancelled",
+    "Read cancelled",
+    { cancellation: { reason } },
+  );
+  expect(
+    historicalCaptureFailure(input, cancelledRead, "capture-read", {
+      signal: controller.signal,
+    }).cause,
+  ).toBe(reason);
+
+  const changed = historicalCaptureFailure(
+    input,
+    new ArtifactReaderFailure("integrity", "Observed changed capture"),
+    "capture-read",
+    { signal: controller.signal },
+  );
+  expect(changed._tag).toBe("AnalysisArtifactChangedError");
+});

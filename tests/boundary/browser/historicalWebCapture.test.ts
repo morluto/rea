@@ -42,7 +42,68 @@ const cli = async (
     throw cause;
   }
 };
-import { historicalHar } from "../../fixtures/historicalHar.js";
+import {
+  historicalHar,
+  harWithContainerLookalikes,
+} from "../../fixtures/historicalHar.js";
+
+it("preserves opaque HAR container fields through CLI and MCP", async () => {
+  const root = await createTestTempDirectory("rea-har-container-fields-");
+  const path = join(root, "capture.har");
+  const fixture = harWithContainerLookalikes();
+  const original = JSON.stringify(fixture);
+  await writeFile(path, original);
+  const { call } = await connectLocalToolsMcp();
+  for (const marked of [false, true]) {
+    const sensitive = marked ? ["ordinary-root-evidence"] : [];
+    const fromCli = await cli(
+      path,
+      "har",
+      marked ? ["--sensitive-value", sensitive[0]!] : [],
+    );
+    expect(fromCli.ok, fromCli.stdout).toBe(true);
+    const cliEvidence = parseEvidence(JSON.parse(fromCli.stdout));
+    const response = await call("inspect_web_network_capture", {
+      capture_path: path,
+      format: "har",
+      sensitive_values: sensitive,
+    });
+    expect(response.isError, JSON.stringify(response)).not.toBe(true);
+    const evidence = parseEvidence(response.structuredContent);
+    expect(evidence.evidence_id).toBe(cliEvidence.evidence_id);
+    expect(evidence.normalized_result).toEqual(cliEvidence.normalized_result);
+    const capture = webNetworkCaptureSchema.parse(evidence.normalized_result);
+    expect(capture.container.reported).toMatchObject({
+      request: {
+        url: fixture.request.url,
+        headers: [{ value: marked ? null : "ordinary-root-evidence" }],
+        cookies: [{ value: marked ? null : "ordinary-root-evidence" }],
+      },
+      response: {
+        redirectURL: fixture.response.redirectURL,
+        headers: [{ value: marked ? null : "ordinary-root-evidence" }],
+        content: { text: marked ? null : "ordinary-root-evidence" },
+      },
+    });
+    expect(capture.records[0]).toMatchObject({
+      reported: {
+        request: {
+          url: "https://example.test/opaque",
+          headers: [{ value: null }],
+          cookies: [{ value: null }],
+        },
+        response: {
+          redirectURL: "https://example.test/redirect",
+          headers: [{ value: null }],
+        },
+      },
+      binary_fields: [
+        { pointer: "/response/content/text", content_base64: "QUJD", bytes: 3 },
+      ],
+    });
+  }
+  expect(await readFile(path, "utf8")).toBe(original);
+});
 
 it.each([
   { encoded: "1e3", literal: "1000" },

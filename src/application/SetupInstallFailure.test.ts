@@ -69,3 +69,11 @@ describe("Linux package-manager setup failure projection", () => {
     expect(excerpt?.length).toBeLessThanOrEqual(400);
   });
 });
+
+it.each([
+  ["destination_inspection", "destination_inspection_failed"],
+  ["archive_write", "archive_write_failed"],
+  ["launcher_inspection", "launcher_inspection_failed"],
+] as const)("retains %s as a distinct setup failure", (reason, code) => {
+  expect(setupInstallFailure(reason).code).toBe(code);
+});

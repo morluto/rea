@@ -1,11 +1,11 @@
-import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import { describe, expect, it } from "vitest";
-import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, parse, relative } from "node:path";
+import { describe, expect, it, onTestFinished } from "vitest";
 import { parseConfig } from "../config/parseConfig.js";
 import type {
   BinaryTarget,
-  PowerPcElfMetadata,
+  ElfFamilyMetadata,
 } from "../domain/binaryTargetTypes.js";
 import { silentLogger } from "../logger.js";
 import { HopperProvider } from "../hopper/HopperProvider.js";
@@ -38,7 +38,7 @@ const configFor = (environment: NodeJS.ProcessEnv) => {
   return parsed.value;
 };
 const config = configFor({});
-const target = (change: Partial<PowerPcElfMetadata> = {}): BinaryTarget => ({
+const target = (change: Partial<ElfFamilyMetadata> = {}): BinaryTarget => ({
   path: "/fixture.elf",
   sha256: "a".repeat(64),
   kind: "executable",
@@ -51,7 +51,9 @@ const target = (change: Partial<PowerPcElfMetadata> = {}): BinaryTarget => ({
 describe("bounded Ghidra PowerPC admission", () => {
   it("binds the generic language instead of the loader's e500 choice", async () => {
     const ghidra = new GhidraProvider(config, silentLogger, {}, host);
-    expect(ghidra.inspectAvailability()).toMatchObject({ status: "available" });
+    expect(await ghidra.inspectAvailability()).toMatchObject({
+      status: "available",
+    });
     expect(ghidra.inspectTargetSupport(target()).status).toBe("supported");
     const resolved = await ghidra.resolveAnalysisProfile(target());
     if (!resolved.ok) throw resolved.error;
@@ -74,7 +76,19 @@ describe("bounded Ghidra PowerPC admission", () => {
   });
 
   it("lets a configured language replace the lane default", async () => {
-    const installDir = await createTestTempDirectory("rea-ghidra-ppc-");
+    const root =
+      process.platform === "win32" ? join(process.cwd(), "build") : tmpdir();
+    await mkdir(root, { recursive: true });
+    const ownedInstallDir = await mkdtemp(join(root, "rea-ghidra-ppc-"));
+    onTestFinished(async () => {
+      await rm(ownedInstallDir, { recursive: true, force: true });
+    });
+    // The simulated Linux host needs a POSIX absolute path. Keep the owned
+    // native path for cleanup and derive the simulated path on the same drive.
+    const installDir =
+      process.platform === "win32"
+        ? `/${relative(parse(ownedInstallDir).root, ownedInstallDir).replaceAll("\\", "/")}`
+        : ownedInstallDir;
     const languages = join(
       installDir,
       "Ghidra/Processors/PowerPC/data/languages",
@@ -129,7 +143,7 @@ describe("bounded Ghidra PowerPC admission", () => {
     [{ type: 1 }, "ET_EXEC"],
     [{ type: 3 }, "ET_EXEC"],
     [{ flags: 0x80000000 }, "EF_PPC_EMB"],
-  ] satisfies [Partial<PowerPcElfMetadata>, string][])(
+  ] satisfies [Partial<ElfFamilyMetadata>, string][])(
     "refuses an unverified PowerPC interpretation %j",
     async (change, reason) => {
       const ghidra = new GhidraProvider(config, silentLogger, {}, host);

@@ -28,7 +28,16 @@ describe("beacon endpoints", () => {
     ]);
   });
 
-  it("keeps a dynamic beacon URL unreported", () => {
-    expect(endpoints("navigator.sendBeacon(url, payload);")).toEqual([]);
+  it("retains a dynamic beacon target as partial source evidence", () => {
+    expect(
+      analyzeJavaScriptStaticSource("navigator.sendBeacon(url, payload);")
+        .endpoints,
+    ).toEqual([
+      expect.objectContaining({
+        value: "url",
+        mechanism: "call:navigator.sendBeacon",
+        resolution: "partial",
+      }),
+    ]);
   });
 });

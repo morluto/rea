@@ -1,8 +1,9 @@
 import type { JebAnalysisPort } from "../application/jeb/JebAnalysisPort.js";
+import { parseJebMcpTimeoutMs } from "../config/environment.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
+import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { err } from "../domain/result.js";
 import type { JebMcpConnectionFactory } from "../jeb/JebMcpConnection.js";
-import { parseJebMcpEndpoint } from "../jeb/JebMcpEndpoint.js";
 import { JebProvider } from "../jeb/JebProvider.js";
 
 /**
@@ -14,35 +15,47 @@ export const createJebAnalysisProvider = (
   environment: Readonly<Record<string, string | undefined>> = process.env,
   connectionFactory?: JebMcpConnectionFactory,
 ): JebAnalysisPort => {
-  const endpoint = parseJebMcpEndpoint(environment.REA_JEB_MCP_URL);
-  if (!endpoint.ok) {
+  const requestTimeout = parseJebMcpTimeoutMs(
+    environment.REA_JEB_MCP_TIMEOUT_MS,
+  );
+  if (!requestTimeout.ok) return unconfiguredJebProvider(requestTimeout.error);
+  try {
+    return new JebProvider({
+      environment,
+      ...(requestTimeout.value === undefined
+        ? {}
+        : {
+            requestTimeoutMs: requestTimeout.value,
+            discoveryTimeoutMs: requestTimeout.value,
+          }),
+      ...(connectionFactory === undefined ? {} : { connectionFactory }),
+    });
+  } catch (cause: unknown) {
+    if (!(cause instanceof AnalysisInputError)) throw cause;
     const constraint =
-      typeof endpoint.error.cause === "string"
-        ? endpoint.error.cause
-        : endpoint.error.message;
+      typeof cause.cause === "string" ? cause.cause : cause.message;
     return unconfiguredJebProvider(
       new ConfigurationError("Invalid REA environment configuration", {
-        cause: endpoint.error,
+        cause,
         settings: [{ setting: "REA_JEB_MCP_URL", constraint }],
       }),
     );
   }
-  return new JebProvider({
-    environment,
-    ...(connectionFactory === undefined ? {} : { connectionFactory }),
-  });
 };
 
 const unconfiguredJebProvider = (
   error: ConfigurationError,
-): JebAnalysisPort => ({
-  inspectAvailability: () =>
-    Promise.resolve({
-      status: "unavailable",
-      code: "not_configured",
-      reason: `REA_JEB_MCP_URL is invalid: ${error.settings[0]?.constraint ?? error.message}`,
-      diagnostics: { setting: "REA_JEB_MCP_URL" },
-    }),
-  close: () => Promise.resolve(),
-  execute: () => Promise.resolve(err(error)),
-});
+): JebAnalysisPort => {
+  const setting = error.settings[0]?.setting ?? "REA_JEB_MCP_URL";
+  return {
+    inspectAvailability: () =>
+      Promise.resolve({
+        status: "unavailable",
+        code: "not_configured",
+        reason: `${setting} is invalid: ${error.settings[0]?.constraint ?? error.message}`,
+        diagnostics: { setting },
+      }),
+    close: () => Promise.resolve(),
+    execute: () => Promise.resolve(err(error)),
+  };
+};

@@ -15,7 +15,7 @@ import {
 import type { InspectPriResourcesInput } from "../../domain/native/priResources.js";
 import { err, ok } from "../../domain/result.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
-import { PRI_RESOURCES_PROVIDER } from "../../application/InvestigationProviders.js";
+import { PRI_RESOURCES_PROVIDER } from "../../domain/investigationProviders.js";
 import { parsePriResources } from "./PriResourceParser.js";
 
 const OPERATION = "inspect_pri_resources";

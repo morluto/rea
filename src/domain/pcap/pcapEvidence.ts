@@ -1,10 +1,10 @@
 import { createEvidence } from "../evidence.js";
-import { jsonObjectSchema, type JsonValue } from "../jsonValue.js";
+import type { JsonValue } from "../jsonValue.js";
 import type { PcapRequest } from "./pcapAnalysis.js";
 
 /** Domain facts needed by both successful and retained partial observations. */
 interface PcapObservation {
-  readonly subject: Parameters<typeof createEvidence>[0] | null;
+  readonly subject?: Parameters<typeof createEvidence>[0] | null;
   readonly provider: Parameters<typeof createEvidence>[1];
   readonly result: JsonValue;
   readonly rawResult: JsonValue | null;
@@ -21,7 +21,7 @@ export const createPcapEvidence = (
 ) =>
   createEvidence(observation.subject ?? undefined, observation.provider, {
     operation: request.operation,
-    parameters: jsonObjectSchema.parse(request.input),
+    parameters: request.input,
     result: observation.result,
     rawResult: observation.rawResult,
     limitations: observation.limitations,

@@ -1,5 +1,6 @@
 import type { ApplicationGraphEvidence } from "../../domain/javascript/javascriptApplicationEvidenceSchemas.js";
 import type { JavaScriptSourceRange } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
+import type { JavaScriptArtifactAnalysisScope } from "./JavaScriptArtifactAnalysisTypes.js";
 
 const EXTRACTOR = {
   name: "rea-javascript-artifact-reconstruction",
@@ -93,11 +94,14 @@ export const staticInferenceEvidence = (
   evidence_ids: [],
 });
 
-/** Unavailable AST fact that preserves a parse, approval, or limit gap. */
-export const unavailableAstEvidence = (
-  input: EvidenceInput & { readonly limitation: string },
+/** Unavailable static fact with the authority of its applicable processing phase. */
+export const unavailableStaticEvidence = (
+  input: EvidenceInput & {
+    readonly authority: JavaScriptArtifactAnalysisScope["authority"];
+    readonly limitation: string;
+  },
 ): ApplicationGraphEvidence => ({
-  authority: "ast-static-analysis",
+  authority: input.authority,
   state: "unavailable",
   confidence: "unknown",
   artifact: artifactReference(input.sha256),

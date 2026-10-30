@@ -1,7 +1,11 @@
+import { createHash } from "node:crypto";
+
 import { describe, expect, it } from "vitest";
 
 import { BrowserScenarioSecrets } from "./BrowserScenarioSecrets.js";
+import { resolveScenarioSecrets } from "../../tests/fixtures/browserScenarioSecrets.js";
 import { browserScenarioSchema } from "../domain/browserScenario.js";
+import { DEFAULT_BROWSER_SCENARIO_CAPTURE_LIMITS } from "../domain/browserScenarioCaptureLimits.js";
 
 const secret = (secret_id: string) => ({ source: "secret", secret_id });
 const literal = (value: string) => ({
@@ -82,7 +86,7 @@ const baseScenario = () => ({
 
 describe("browser scenario secret redaction", () => {
   it("matches percent-escape hex case without case-folding raw secrets", () => {
-    const secrets = BrowserScenarioSecrets.resolve(
+    const secrets = resolveScenarioSecrets(
       browserScenarioSchema.parse(baseScenario()),
       {
         REA_TEST_SESSION: "a/b?",
@@ -90,7 +94,6 @@ describe("browser scenario secret redaction", () => {
         REA_TEST_COOKIE: "cookie",
       },
     );
-    if (secrets === undefined) throw new Error("Expected resolved secrets");
 
     expect(secrets.redact("logged a%2fb%3f, a%2Fb%3F and a%2fb%3F")).toBe(
       "logged [REDACTED:session], [REDACTED:session] and [REDACTED:session]",
@@ -99,24 +102,102 @@ describe("browser scenario secret redaction", () => {
       "raw A/B? remains case-sensitive",
     );
     expect(
-      secrets.redactBytes(
+      Buffer.compare(
+        secrets.redactBytes(
+          Buffer.concat([
+            Buffer.from([0xff, 0]),
+            Buffer.from("a%2fb%3F"),
+            Buffer.from([0x80]),
+          ]),
+        ),
         Buffer.concat([
           Buffer.from([0xff, 0]),
-          Buffer.from("a%2fb%3F"),
+          Buffer.from("[REDACTED:session]"),
           Buffer.from([0x80]),
         ]),
       ),
-    ).toEqual(
-      Buffer.concat([
-        Buffer.from([0xff, 0]),
-        Buffer.from("[REDACTED:session]"),
-        Buffer.from([0x80]),
-      ]),
-    );
+    ).toBe(0);
     expect(
       secrets.sanitizeUrl("https://app.example.test/?token=a%2fb%3F").url,
     ).toBe("https://app.example.test/?token=[REDACTED:session]");
     expect(secrets.fingerprint("stored a%2fb%3F")).toEqual({
+      value_state: "redacted-secret",
+      value_sha256: null,
+    });
+  });
+  it("does not resolve inherited environment properties as secret values", () => {
+    const scenario = browserScenarioSchema.parse(baseScenario());
+    const environment = Object.assign(
+      { REA_TEST_PASSWORD: "password", REA_TEST_COOKIE: "cookie" },
+      Object.create({ REA_TEST_SESSION: "session" }) as object,
+    );
+    expect(BrowserScenarioSecrets.resolve(scenario, environment)).toMatchObject(
+      {
+        ok: false,
+        error: {
+          _tag: "AnalysisInputError",
+          issues: [
+            {
+              path: ["secrets", 0, "environment_variable"],
+              expected: {
+                environment_variable: "REA_TEST_SESSION",
+                secret_id: "session",
+              },
+            },
+          ],
+        },
+      },
+    );
+  });
+});
+
+describe("storage value fingerprint encoding", () => {
+  const secrets = resolveScenarioSecrets(
+    browserScenarioSchema.parse(baseScenario()),
+    {
+      REA_TEST_SESSION: "declared-session",
+      REA_TEST_PASSWORD: "declared-password",
+      REA_TEST_COOKIE: "declared-cookie",
+    },
+  );
+
+  it.each(["", "ordinary", "\u0000", "\u0620", "\ufffd", "\ud83d\ude00"])(
+    "preserves the UTF-8 digest of well-formed %j",
+    (value) => {
+      expect(secrets.fingerprint(value)).toEqual({
+        value_state: "hashed",
+        value_sha256: createHash("sha256").update(value).digest("hex"),
+      });
+    },
+  );
+
+  it.each([
+    ["\ud800", "\ud801"],
+    ["\ud800", "\ufffd"],
+    ["\ud801", "\ufffd"],
+    ["\udc00", "\ufffd"],
+    ["prefix\ud800suffix", "prefix\ud801suffix"],
+    ["\ud800\ud801", "\ud801\ud800"],
+    ["\udc00\ud800", "\ud800\udc00"],
+    // Bare UTF-16LE fallback would alias the UTF-8 bytes 00 d8 a0 00.
+    ["\ud800\u00a0", "\u0000\u0620\u0000"],
+  ])("distinguishes code-unit values %j and %j", (left, right) => {
+    expect(secrets.fingerprint(left).value_sha256).not.toBe(
+      secrets.fingerprint(right).value_sha256,
+    );
+  });
+
+  it("fixes the v2 fallback byte contract to raw FF followed by UTF-16LE", () => {
+    expect(secrets.fingerprint(String.fromCharCode(0xd800, 0x00a0))).toEqual({
+      value_state: "hashed",
+      value_sha256: createHash("sha256")
+        .update(Buffer.from([0xff, 0x00, 0xd8, 0xa0, 0x00]))
+        .digest("hex"),
+    });
+  });
+
+  it("redacts a declared secret before encoding an unpaired suffix", () => {
+    expect(secrets.fingerprint("declared-session\ud800")).toEqual({
       value_state: "redacted-secret",
       value_sha256: null,
     });
@@ -136,6 +217,7 @@ describe("browserScenarioSchema", () => {
       service_workers: "block",
     });
     expect(parsed.capture).toEqual({
+      limits: DEFAULT_BROWSER_SCENARIO_CAPTURE_LIMITS,
       network: {
         request_body: false,
         response_body: false,
@@ -145,7 +227,9 @@ describe("browserScenarioSchema", () => {
       at_end: ["dom", "storage"],
       events: ["console", "page-errors", "network", "websockets"],
     });
-    expect(parsed).not.toHaveProperty("limits");
+    expect(parsed.capture.limits).toEqual(
+      DEFAULT_BROWSER_SCENARIO_CAPTURE_LIMITS,
+    );
   });
 
   it("allows callers to choose visible browsers and service workers", () => {
@@ -182,16 +266,16 @@ describe("browserScenarioSchema", () => {
 
   it("redacts overlapping secrets longest-first", () => {
     const scenario = browserScenarioSchema.parse(baseScenario());
-    const secrets = BrowserScenarioSecrets.resolve(scenario, {
+    const secrets = resolveScenarioSecrets(scenario, {
       REA_TEST_SESSION: "prefix",
       REA_TEST_PASSWORD: "prefix-suffix",
       REA_TEST_COOKIE: "cookie",
     });
-    expect(secrets?.redact("prefix-suffix")).toBe("[REDACTED:login_input]");
+    expect(secrets.redact("prefix-suffix")).toBe("[REDACTED:login_input]");
   });
 
   it("does not leave a declared secret inside its redaction marker", () => {
-    const secrets = BrowserScenarioSecrets.resolve(
+    const secrets = resolveScenarioSecrets(
       browserScenarioSchema.parse({
         ...baseScenario(),
         secrets: [
@@ -209,11 +293,11 @@ describe("browserScenarioSchema", () => {
         REA_TEST_SHORT_PASSWORD: "pass",
       },
     );
-    expect(secrets?.redact("seen pass in the page")).toBe(
+    expect(secrets.redact("seen pass in the page")).toBe(
       "seen [REDACTED] in the page",
     );
 
-    const bytes = BrowserScenarioSecrets.resolve(
+    const bytes = resolveScenarioSecrets(
       browserScenarioSchema.parse({
         ...baseScenario(),
         secrets: [
@@ -232,20 +316,9 @@ describe("browserScenarioSchema", () => {
         REA_TEST_LONG_SECRET: "session-secret-value",
         REA_TEST_PIN: "pass",
       },
-    )?.redactBytes(Buffer.from("body session-secret-value tail"));
-    expect(bytes?.toString("utf8")).toBe("body [REDACTED] tail");
-    expect(bytes?.includes(Buffer.from("pass"))).toBe(false);
-  });
-
-  it("does not resolve inherited environment properties as secret values", () => {
-    const scenario = browserScenarioSchema.parse(baseScenario());
-    const environment = Object.assign(
-      { REA_TEST_PASSWORD: "password", REA_TEST_COOKIE: "cookie" },
-      Object.create({ REA_TEST_SESSION: "session" }) as object,
-    );
-    expect(
-      BrowserScenarioSecrets.resolve(scenario, environment),
-    ).toBeUndefined();
+    ).redactBytes(Buffer.from("body session-secret-value tail"));
+    expect(bytes.toString("utf8")).toBe("body [REDACTED] tail");
+    expect(bytes.includes(Buffer.from("pass"))).toBe(false);
   });
 
   it("rejects unsupported actions", () => {

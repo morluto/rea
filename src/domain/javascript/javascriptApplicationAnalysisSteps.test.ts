@@ -56,6 +56,101 @@ const issuesFrom = (action: () => unknown) => {
   throw new Error("Expected complete result validation to reject the input");
 };
 
+describe("immutable JavaScript result reuse", () => {
+  it("preserves parser copies shared across owned graphs and result metadata", () => {
+    const owned = ownedExample();
+    const input = freezeJsonSnapshot({
+      ...owned,
+      limitations: owned.graph.limitations,
+    });
+    for (let repeat = 0; repeat < 2; repeat += 1) {
+      const parsed = complete(
+        parseOwnedJavaScriptApplicationAnalysisSteps(input),
+      );
+      expect(parsed).not.toBe(input);
+      expect(parsed.graph).toBe(input.graph);
+      expect(parsed.limitations).toEqual(input.graph.limitations);
+      expect(parsed.limitations).not.toBe(parsed.graph.limitations);
+    }
+  });
+
+  it.each(["hidden-extra", "changed-enumerability"])(
+    "preserves parsed results when the source has %s normalization",
+    (kind) => {
+      const input = example();
+      if (kind === "hidden-extra")
+        Object.defineProperty(input, "not_in_parsed_result", {
+          value: { unvalidated: true },
+          enumerable: false,
+        });
+      else Object.defineProperty(input, "input_path", { enumerable: false });
+      freezeJsonSnapshot(input);
+      const expected = javascriptApplicationAnalysisResultSchema.parse(input);
+      for (let repeat = 0; repeat < 2; repeat += 1) {
+        const parsed = complete(
+          parseOwnedJavaScriptApplicationAnalysisSteps(input),
+        );
+        expect(parsed).not.toBe(input);
+        expect(Object.hasOwn(parsed, "not_in_parsed_result")).toBe(false);
+        expect(
+          Object.getOwnPropertyDescriptor(parsed, "input_path")?.enumerable,
+        ).toBe(
+          Object.getOwnPropertyDescriptor(expected, "input_path")?.enumerable,
+        );
+      }
+    },
+  );
+
+  it("borrows imported immutable results only after complete format validation", () => {
+    const input = example();
+    delete input.statistics.skipped_javascript_files;
+    freezeJsonSnapshot(input);
+    const result = complete(
+      parseOwnedJavaScriptApplicationAnalysisSteps(input),
+    );
+    expect(result).toBe(input);
+    expect(result).toEqual(
+      javascriptApplicationAnalysisResultSchema.parse(input),
+    );
+    expect(result.statistics).not.toHaveProperty("skipped_javascript_files");
+    expect(complete(parseOwnedJavaScriptApplicationAnalysisSteps(input))).toBe(
+      input,
+    );
+    expect(Reflect.set(input.statistics, "findings", -1)).toBe(false);
+  });
+
+  it("preserves a normalized representation instead of borrowing changed input", () => {
+    const input = example();
+    Object.setPrototypeOf(input, null);
+    freezeJsonSnapshot(input);
+    for (let repeat = 0; repeat < 2; repeat += 1) {
+      const result = complete(
+        parseOwnedJavaScriptApplicationAnalysisSteps(input),
+      );
+      expect(result).not.toBe(input);
+      expect(Object.getPrototypeOf(result)).toBe(Object.prototype);
+      expect(result).toEqual(
+        javascriptApplicationAnalysisResultSchema.parse(input),
+      );
+    }
+  });
+
+  it.each(["mutable", "shallow-frozen"])(
+    "rechecks changed %s metadata despite authenticated nested graphs",
+    (kind) => {
+      const input = ownedExample();
+      if (kind === "shallow-frozen") Object.freeze(input);
+      expect(
+        complete(parseOwnedJavaScriptApplicationAnalysisSteps(input)),
+      ).not.toBe(input);
+      input.statistics.findings = -1;
+      expect(() =>
+        complete(parseOwnedJavaScriptApplicationAnalysisSteps(input)),
+      ).toThrow(z.ZodError);
+    },
+  );
+});
+
 describe("owned JavaScript graph validation", () => {
   it("reuses exact sealed graphs and preserves all public result fields", () => {
     const input = ownedExample();
@@ -239,6 +334,7 @@ describe("owned JavaScript result bindings", () => {
     input.semantic_graph = complete(
       createImmutableJavaScriptSemanticGraphSteps(semantic),
     );
+    freezeJsonSnapshot(input);
     const steps = parseOwnedJavaScriptApplicationAnalysisSteps(input);
     expect(steps.next().done).toBe(false);
     steps.return(input);
@@ -322,5 +418,31 @@ describe("graphs transferred to their sealing steps", () => {
         complete(sealTransferredJavaScriptApplicationGraphSteps(stale)),
       ),
     ).toEqual(issuesFrom(() => createJavaScriptApplicationGraph(stale)));
+  });
+});
+
+describe("skipped_javascript_files backward compatibility", () => {
+  it("preserves omission for saved evidence that predates the skipped counter", () => {
+    const legacy = structuredClone(
+      JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE.normalized_result,
+    ) as Record<string, unknown>;
+    const statistics = legacy.statistics as Record<string, unknown>;
+    delete statistics.skipped_javascript_files;
+    const result = javascriptApplicationAnalysisResultSchema.parse(legacy);
+    // A pre-change result can contain the very resource-skipped files this
+    // field reports, but it has no counter: unknown must not become a
+    // measured zero that comparisons would treat as "nothing skipped".
+    expect("skipped_javascript_files" in result.statistics).toBe(false);
+    expect(result.statistics.skipped_javascript_files).toBeUndefined();
+  });
+
+  it("keeps the producer-written skipped count in current evidence", () => {
+    const current = structuredClone(
+      JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE.normalized_result,
+    ) as Record<string, unknown>;
+    const statistics = current.statistics as Record<string, unknown>;
+    statistics.skipped_javascript_files = 3;
+    const result = javascriptApplicationAnalysisResultSchema.parse(current);
+    expect(result.statistics.skipped_javascript_files).toBe(3);
   });
 });

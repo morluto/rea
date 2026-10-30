@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   mkdir,
   open as fsOpen,
@@ -11,16 +12,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 import { createDoctorHostFixture } from "../../../src/application/Doctor.fixture.js";
-import {
-  runDoctorOwned,
-  type DoctorHost,
-} from "../../../src/application/Doctor.js";
+import { runDoctorOwned } from "../../../src/application/Doctor.js";
 import {
   readSkillFile,
   skillDestinations,
 } from "../../../src/application/SetupSkill.js";
-import { RegularFileCleanupFailure } from "../../../src/application/RegularFileRead.js";
+import { RegularFileCleanupFailure } from "../../../src/filesystem/OwnedRegularFile.js";
 import { systemSetupHost } from "../../../src/application/SetupHost.js";
+import { runSetup } from "../../../src/application/Setup.js";
+import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import { ConfigurationError } from "../../../src/domain/configurationErrors.js";
 import {
   runUninstall,
   systemUninstallHost,
@@ -67,6 +69,113 @@ const failFirstCloses = (path: string) => {
   };
 };
 
+describe("setup skill backup cleanup ownership", () => {
+  it.each(["first", "recovery", "verification"] as const)(
+    "retains a failed %s backup read until setup host disposal",
+    async (stage) => {
+      const home = await createTestTempDirectory(
+        "rea-setup-skill-backup-close-",
+      );
+      const [destination] = skillDestinations(home, [], {}, "linux");
+      if (destination === undefined)
+        throw new Error("Shared skill root missing");
+      const manifest = join(destination.path, "SKILL.md");
+      const original = "stale managed skill\n";
+      const firstBackup = `${manifest}.rea.backup`;
+      const backup =
+        stage === "recovery"
+          ? `${firstBackup}.${createHash("sha256").update(original).digest("hex")}.recovery`
+          : firstBackup;
+      await mkdir(dirname(manifest), { recursive: true });
+      await writeFile(manifest, original);
+      if (stage === "recovery")
+        await writeFile(firstBackup, "historical skill\n");
+      if (stage !== "verification") await writeFile(backup, original);
+      const close = failFirstCloses(backup);
+      const host = systemSetupHost(
+        createDoctorHostFixture({ platform: "linux", homeDirectory: home }),
+        { HOME: home },
+      );
+
+      try {
+        const result = await host.installSkill([]);
+        expect(result).toMatchObject({ ok: false, error: { stage: "backup" } });
+        expect(close.attempts.length).toBeGreaterThan(0);
+        expect(new Set(close.attempts).size).toBe(1);
+        const opensBeforeAdmission = openMock.mock.calls.length;
+        expect((await host.installSkill([])).ok).toBe(false);
+        expect(openMock).toHaveBeenCalledTimes(opensBeforeAdmission);
+        expect(new Set(close.attempts).size).toBe(1);
+        expect(await actualFs.readFile(manifest, "utf8")).toBe(original);
+        const report = await host.close?.();
+        expect(report?.cleanup?.reason).toBe(
+          "test holds the skill handle open",
+        );
+        expect(report?.cleanupResources).toEqual([backup]);
+        const primary = new ConfigurationError(
+          "Controlled setup state failure",
+          {
+            settings: [
+              { setting: "fixture", constraint: "Controlled primary failure" },
+            ],
+          },
+        );
+        const failure = await runSetup(
+          { approved: true, installHopper: false, structured: true },
+          {
+            ...host,
+            nodeVersion: "24.22.1",
+            initialSetupState: async () => {
+              throw primary;
+            },
+          },
+        ).then(
+          () => undefined,
+          (cause: unknown) => cause,
+        );
+        expect(failure).toBeInstanceOf(AnalysisError);
+        if (!(failure instanceof AnalysisError))
+          throw new Error("Expected the typed setup and host cleanup failure");
+        expect(projectAnalysisError(failure)).toMatchObject({
+          code: "cleanup_incomplete",
+          details: {
+            resources: [backup],
+            diagnostics: {
+              cleanup_error: { details: { resources: [backup] } },
+            },
+          },
+        });
+        expect(failure.diagnostics?.primary_error).toEqual(
+          projectAnalysisError(primary),
+        );
+        const attemptsBeforeClose = close.attempts.length;
+        close.release();
+        expect(await host.close?.()).toBeUndefined();
+        expect(failure.cleanupIncomplete).toBe(false);
+        expect(projectAnalysisError(failure)).toMatchObject(
+          projectAnalysisError(primary),
+        );
+        expect(projectAnalysisError(failure).details).not.toHaveProperty(
+          "cleanup",
+        );
+        expect(projectAnalysisError(failure).details).not.toHaveProperty(
+          "resources",
+        );
+        expect(projectAnalysisError(failure).details).toHaveProperty(
+          "cleanup_history",
+        );
+        expect(close.attempts.length).toBeGreaterThan(attemptsBeforeClose);
+        expect(close.attempts[0]?.fd).toBe(-1);
+      } finally {
+        close.release();
+        await host.close?.();
+        // Reclaim the real test descriptor even when the retention regression fails.
+        for (const handle of new Set(close.attempts)) await handle.close();
+      }
+    },
+  );
+});
+
 describe("skill regular-file cleanup ownership", () => {
   it("retains a failed setup skill read until setup host disposal", async () => {
     const home = await createTestTempDirectory("rea-setup-skill-close-");
@@ -77,7 +186,7 @@ describe("skill regular-file cleanup ownership", () => {
     await writeFile(manifest, "stale managed skill\n");
     const close = failFirstCloses(manifest);
     const host = systemSetupHost(
-      { platform: "linux", homeDirectory: home } as DoctorHost,
+      createDoctorHostFixture({ platform: "linux", homeDirectory: home }),
       { HOME: home },
     );
 

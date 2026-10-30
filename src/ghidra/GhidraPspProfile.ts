@@ -1,6 +1,7 @@
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import {
   ghidraMipsGnuAttributesUnsupportedReason,
+  ghidraMipsIncompleteDeclarationsReason,
   ghidraMipsUnsupportedReason,
 } from "./GhidraMipsProfile.js";
 import { ghidraPowerPcUnsupportedReason } from "./GhidraPowerPcProfile.js";
@@ -18,6 +19,9 @@ export const isGhidraPspTarget = (target: BinaryTarget): boolean =>
 export const ghidraProcessorUnsupportedReason = (
   target: BinaryTarget,
 ): string | null => {
+  // DOL admission establishes its processor from the caller-selected format; the ELF PowerPC gate does not apply.
+  if (target.kind === "executable" && target.format === "gamecube-dol")
+    return null;
   if (target.kind === "executable" && target.architecture === "powerpc")
     return ghidraPowerPcUnsupportedReason(target);
   if (target.kind === "executable" && target.architecture === "riscv")
@@ -33,6 +37,8 @@ export const ghidraProcessorUnsupportedReason = (
   const gnuAttributesReason =
     ghidraMipsGnuAttributesUnsupportedReason(metadata);
   if (gnuAttributesReason !== null) return gnuAttributesReason;
+  const incomplete = ghidraMipsIncompleteDeclarationsReason(metadata);
+  if (incomplete !== null) return incomplete;
   if (metadata.elfClass !== 32 || metadata.byteOrder !== "little")
     return "The PSP Allegrex profile requires little-endian ELF32.";
   if (metadata.type !== 2)

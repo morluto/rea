@@ -15,9 +15,15 @@ const clientIdentity = {
   tshark_command: "/usr/bin/tshark",
   tshark_source: "path",
   tshark_version: "TShark (Wireshark) 4.6.6",
+  tshark_resolved_path: null,
+  tshark_sha256: null,
+  tshark_identity_status: "unresolved",
   capinfos_command: "/usr/bin/capinfos",
   capinfos_source: "path",
   capinfos_version: "Capinfos (Wireshark) 4.6.6",
+  capinfos_resolved_path: null,
+  capinfos_sha256: null,
+  capinfos_identity_status: "unresolved",
 };
 
 it("advertises exact valid pcap schemas and records inline evidence through MCP", async () => {
@@ -43,8 +49,8 @@ it("advertises exact valid pcap schemas and records inline evidence through MCP"
             file_type: "Wireshark/tcpdump/... - pcap",
             encapsulation: "Linux cooked-mode capture v2",
             packet_count: 50,
-            capture_start: "2026-10-11 14:13:40.608505",
-            capture_end: "2026-10-11 14:13:40.981978",
+            capture_start: "2026-10-11T14:13:40.608505Z",
+            capture_end: "2026-10-11T14:13:40.981978Z",
             capture_duration_seconds: 0.373473,
             snapshot_length: 262144,
             endpoints: [
@@ -112,6 +118,8 @@ it("advertises exact valid pcap schemas and records inline evidence through MCP"
   const evidence = parseEvidence(JSON.parse(text));
   expect(evidence.normalized_result).toMatchObject({
     packet_count: 50,
+    capture_start: "2026-10-11T14:13:40.608505Z",
+    capture_end: "2026-10-11T14:13:40.981978Z",
     tls_sni_values: ["example.com"],
     coverage: "complete",
   });

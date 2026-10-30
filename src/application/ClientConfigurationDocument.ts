@@ -14,21 +14,25 @@ import {
 } from "./HermesConfigurationYaml.js";
 import {
   applyEdits,
-  findNodeAtLocation,
-  modify,
-  parse as parseJsonc,
+  createScanner,
+  format as formatJson,
+  getNodeValue,
   parseTree,
   printParseErrorCode,
+  type Edit,
+  type Node,
   type ParseError,
+  type SyntaxKind,
 } from "jsonc-parser";
 import { z } from "zod";
 
+import { err, ok, type Result } from "../domain/result.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import type { SetupClient } from "./SupportedClients.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 
 export type ClientConfigurationFormat = NonNullable<SetupClient["format"]>;
-export type ClientServersKey = "mcp_servers" | "mcpServers" | "mcp" | "servers";
+type ClientServersKey = "mcp_servers" | "mcpServers" | "mcp" | "servers";
 
 /**
  * Registration entry dialect. OpenCode V2 reads V1 `mcp.<name>` entries, but a
@@ -46,6 +50,8 @@ export interface ClientConfigurationDocument {
   /** Key path of `servers` in `document`. */
   readonly serversPath: readonly string[];
   readonly dialect: ClientRegistrationDialect;
+  /** Member holding explicit environment overrides in a server registration. */
+  readonly environmentKey: "env" | "environment";
   /**
    * OpenCode V1 server members beside a native V2 `mcp.servers` table. OpenCode
    * still loads them, and a native entry with the same name takes precedence.
@@ -53,7 +59,14 @@ export interface ClientConfigurationDocument {
   readonly legacyServers: Record<string, unknown>;
 }
 
-const objectSchema = z.record(z.string(), z.unknown());
+/** Admit source mappings without Zod's record clone dropping caller keys. */
+export const clientConfigurationRecordSchema = z
+  .custom<Record<string, unknown>>((value) => {
+    if (typeof value !== "object" || value === null) return false;
+    const prototype: unknown = Object.getPrototypeOf(value);
+    return prototype === null || prototype === Object.prototype;
+  })
+  .transform((value) => Object.fromEntries(Object.entries(value)));
 
 /** Compare parsed configuration values without depending on parser prototypes. */
 export const clientConfigurationValuesEqual = (
@@ -102,12 +115,40 @@ export const clientConfigurationServersKey = (
 const isEmptyClientConfigurationText = (text: string): boolean =>
   text.replace(/^\uFEFF/, "").trim() === "";
 
+const INT64_MIN = -(2n ** 63n);
+const INT64_MAX = 2n ** 63n - 1n;
+
+/**
+ * Parse client TOML with TOML 1.0's signed 64-bit integer contract. Integers
+ * beyond JavaScript's safe range stay exact as bigint; values outside Int64,
+ * which Codex rejects, are malformed.
+ */
+const parseClientToml = (text: string): Record<string, unknown> => {
+  const parsed = parseToml(text, { integersAsBigInt: "asNeeded" });
+  const pending: unknown[] = [parsed];
+  for (let value = pending.pop(); value !== undefined; value = pending.pop()) {
+    if (typeof value === "bigint") {
+      if (value < INT64_MIN || value > INT64_MAX)
+        throw new SyntaxError(
+          `Invalid TOML document: integer ${String(value)} is outside the signed 64-bit range`,
+        );
+    } else if (
+      typeof value === "object" &&
+      value !== null &&
+      !(value instanceof Date)
+    )
+      // Large documents can exceed argument limits, so do not spread.
+      for (const nested of Object.values(value)) pending.push(nested);
+  }
+  return parsed;
+};
+
 const parseDocument = (
   text: string,
   format: ClientConfigurationFormat,
 ): Record<string, unknown> => {
   if (format === "toml" || format === "grok")
-    return requireObject(parseToml(text), "The configuration root");
+    return requireObject(parseClientToml(text), "The configuration root");
   // Pi loads `mcp.json` with a strict `JSON.parse` and no BOM tolerance, so
   // comments, trailing commas, a BOM, or an empty existing file must be
   // rejected instead of registering into a document the client cannot load.
@@ -128,27 +169,37 @@ const parseDocument = (
   // ZCode loads nonempty native files with strict JSON.parse.
   if (format === "zcode")
     return requireObject(JSON.parse(text), "The configuration root");
+  // Claude Code loads `.claude.json` with strict JSON.parse after a UTF-8 BOM,
+  // so comments and trailing commas it rejects must not be admitted as JSONC.
+  if (format === "claude_code")
+    return requireObject(
+      JSON.parse(text.replace(/^\uFEFF/, "")),
+      "The configuration root",
+    );
   const errors: ParseError[] = [];
   // Accept a UTF-8 BOM without shifting diagnostics or editing the original text.
   const jsonText = text.startsWith("\uFEFF") ? ` ${text.slice(1)}` : text;
-  const document = parseJsonc(jsonText, errors, { allowTrailingComma: true });
+  const root = parseTree(jsonText, errors, { allowTrailingComma: true });
   const firstError = errors[0];
   if (firstError !== undefined)
     throw new SyntaxError(
       `Invalid JSON/JSONC at offset ${firstError.offset}: ${printParseErrorCode(firstError.error)}`,
     );
-  return requireObject(document, "The configuration root");
+  return requireObject(
+    root === undefined ? undefined : getNodeValue(root),
+    "The configuration root",
+  );
 };
 
 /** A parsed configuration whose structure, not its syntax, cannot hold MCP servers. */
 export class ClientConfigurationShapeError extends TypeError {}
 
-/** Validate and copy own properties, excluding non-record YAML values and parser-injected prototypes. */
+/** Validate source mappings and copy their own properties without rewriting values. */
 const requireObject = (
   value: unknown,
   description: string,
 ): Record<string, unknown> => {
-  const parsed = objectSchema.safeParse(value);
+  const parsed = clientConfigurationRecordSchema.safeParse(value);
   if (parsed.success) return parsed.data;
   throw new ClientConfigurationShapeError(`${description} must be an object`, {
     cause: parsed.error,
@@ -168,6 +219,7 @@ export const parseZcodeFallbackConfiguration = (
         : requireObject(document.mcpServers, "ZCode fallback mcpServers"),
     serversPath: ["mcpServers"],
     dialect: "zcode_fallback",
+    environmentKey: "env",
     legacyServers: {},
   };
 };
@@ -186,6 +238,7 @@ export const parseClientConfiguration = (
   if (format === "zcode_fallback") return parseZcodeFallbackConfiguration(text);
   if (format === "dsh") return parseDshCordisDocument(text);
   const document = parseDocument(text, format);
+  const environmentKey = format === "opencode" ? "environment" : "env";
   const serversKey = clientConfigurationServersKey(format);
   const value = document[serversKey];
   const servers =
@@ -202,6 +255,7 @@ export const parseClientConfiguration = (
           : requireObject(nested, `"${serversKey}.servers"`),
       serversPath: [serversKey, "servers"],
       dialect: format,
+      environmentKey,
       legacyServers: {},
     };
   }
@@ -221,6 +275,7 @@ export const parseClientConfiguration = (
       servers,
       serversPath: [serversKey],
       dialect: format,
+      environmentKey,
       legacyServers: {},
     };
   return {
@@ -228,6 +283,7 @@ export const parseClientConfiguration = (
     servers: requireObject(native, `"${serversKey}.servers"`),
     serversPath: [serversKey, "servers"],
     dialect: "opencode_v2",
+    environmentKey,
     legacyServers: Object.fromEntries(
       Object.entries(servers).filter(
         ([name]) => !OPENCODE_V2_MCP_SETTINGS.has(name),
@@ -240,10 +296,28 @@ export const parseClientConfiguration = (
 export const effectiveClientServer = (
   parsed: ClientConfigurationDocument,
   name: string,
-): unknown =>
-  Object.hasOwn(parsed.servers, name)
+): unknown => {
+  const native = Object.hasOwn(parsed.servers, name);
+  const value = native
     ? parsed.servers[name]
-    : parsed.legacyServers[name];
+    : Object.hasOwn(parsed.legacyServers, name)
+      ? parsed.legacyServers[name]
+      : undefined;
+  if (
+    (parsed.dialect !== "opencode" && parsed.dialect !== "opencode_v2") ||
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value)
+  )
+    return value;
+  const { enabled, ...registration } = value as Record<string, unknown>;
+  // OpenCode migrates legacy activation before merging layers. An enabled V1
+  // fragment must override inherited disabled:true; native V2 ignores enabled.
+  return (parsed.dialect === "opencode" || !native) &&
+    typeof enabled === "boolean"
+    ? { ...registration, disabled: !enabled }
+    : registration;
+};
 
 /**
  * Return `parsed.document` with `servers` at its server table. A legacy OpenCode
@@ -259,7 +333,9 @@ export const withClientServers = (
     return Object.hasOwn(servers, PRODUCT_IDENTITY.mcpServerKey)
       ? editDshDocument(
           parsed,
-          objectSchema.parse(servers[PRODUCT_IDENTITY.mcpServerKey]),
+          clientConfigurationRecordSchema.parse(
+            servers[PRODUCT_IDENTITY.mcpServerKey],
+          ),
         )
       : editDshDocument(parsed);
   const [key = "", nested] = parsed.serversPath;
@@ -268,7 +344,9 @@ export const withClientServers = (
   // ZCode `config.json` without an `mcp` object), so treat absence as empty.
   const outerValue = parsed.document[key];
   const outer =
-    outerValue === undefined ? {} : { ...objectSchema.parse(outerValue) };
+    outerValue === undefined
+      ? {}
+      : clientConfigurationRecordSchema.parse(outerValue);
   if (
     parsed.dialect === "opencode_v2" &&
     removeLegacy !== undefined &&
@@ -285,7 +363,7 @@ const valueAt = (
 ): unknown => {
   let current: unknown = document;
   for (const key of path) {
-    const object = objectSchema.safeParse(current);
+    const object = clientConfigurationRecordSchema.safeParse(current);
     if (!object.success || !Object.hasOwn(object.data, key)) return undefined;
     current = object.data[key];
   }
@@ -644,6 +722,7 @@ const tomlInlineValue = (value: unknown): string => {
   if (typeof value === "string") return tomlBasicString(value);
   if (typeof value === "boolean") return value ? "true" : "false";
   if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  if (typeof value === "bigint") return String(value);
   if (Array.isArray(value))
     return `[${value.map((item) => tomlInlineValue(item)).join(", ")}]`;
   if (typeof value === "object" && value !== null) {
@@ -715,11 +794,14 @@ const editInlineServerTable = (
   table: string,
   serverKey: string,
   entry: unknown,
-): string | undefined => {
+):
+  | { readonly text: string; readonly comments: readonly string[] }
+  | undefined => {
   if (!table.startsWith("{")) return undefined;
   const end = endOfContainer(table, 0);
   if (table[end - 1] !== "}") return undefined;
   const pairs: InlinePair[] = [];
+  const comments: string[] = [];
   let index = 1;
   let trailing = "";
   while (index < end - 1) {
@@ -734,10 +816,14 @@ const editInlineServerTable = (
     if (table[equals] !== "=") return undefined;
     const valueEnd = endOfTomlValue(table, equals + 1);
     if (valueEnd > end - 1) return undefined;
+    const pairText = table.slice(trivia.next, valueEnd);
+    const drop = key.segments[0] === serverKey;
+    if (drop)
+      for (const comment of tomlCommentLines(pairText)) comments.push(comment);
     pairs.push({
       leading: trivia.text,
-      text: table.slice(trivia.next, valueEnd),
-      drop: key.segments[0] === serverKey,
+      text: pairText,
+      drop,
     });
     index = valueEnd;
   }
@@ -746,8 +832,8 @@ const editInlineServerTable = (
       ? undefined
       : `${tomlInlineKey(serverKey)} = ${tomlInlineValue(entry)}`;
   if (insertion === undefined && pairs.every((pair) => !pair.drop))
-    return table;
-  return rebuildInlineTable(pairs, trailing, insertion);
+    return { text: table, comments };
+  return { text: rebuildInlineTable(pairs, trailing, insertion), comments };
 };
 
 const rebuildInlineTable = (
@@ -815,7 +901,7 @@ const rebuildDelimitedEntries = (
  */
 const tomlStringValue = (text: string): string | undefined => {
   try {
-    const value = parseToml(`value = ${text}`)["value"];
+    const value = parseClientToml(`value = ${text}`)["value"];
     return typeof value === "string" ? value : undefined;
   } catch (cause: unknown) {
     void cause;
@@ -929,11 +1015,41 @@ const disabledServerListLines = (
   }
 };
 
+/** Strip terminal LF without rescanning internal blank-line runs. */
+const withoutTrailingLineFeeds = (text: string): string => {
+  let end = text.length;
+  while (end > 0 && text.charCodeAt(end - 1) === 10) end -= 1;
+  return text.slice(0, end);
+};
+
+/** Retain comment trivia from removed code without promoting string contents. */
+const tomlCommentLines = (text: string): readonly string[] => {
+  const comments: string[] = [];
+  let index = 0;
+  while (index < text.length) {
+    if (text.startsWith('"""', index) || text.startsWith("'''", index)) {
+      const basic = text[index] === '"';
+      index =
+        closeMultiline(text, index + 3, basic ? '"""' : "'''", basic) ??
+        text.length;
+    } else if (text[index] === '"' || text[index] === "'") {
+      index = parseQuotedKey(text, index)?.next ?? text.length;
+    } else if (text[index] === "#") {
+      const end = text.indexOf("\n", index);
+      comments.push(text.slice(index, end < 0 ? text.length : end));
+      index = end < 0 ? text.length : end + 1;
+    } else index += 1;
+  }
+  return comments;
+};
+
 /**
- * Replace REA's TOML server tables and assignments. Comments that introduce a
- * following table stay. Codex also retains comments around REA's own table.
- * Text inside strings is not treated as a header. Only Grok Build reads the
- * root `disabled_mcp_servers` list that registration also edits.
+ * Replace REA's TOML server tables and assignments. Every comment line stays
+ * where it was, including comments before, inside, and after REA's own table;
+ * inline comments on replaced code become standalone comment lines.
+ * Only blank lines that separated a removed table go with it. Text inside
+ * strings is not treated as a header. Only Grok Build reads the root
+ * `disabled_mcp_servers` list that registration also edits.
  */
 const upsertTomlServerSection = (
   originalText: string,
@@ -957,6 +1073,8 @@ const upsertTomlServerSection = (
     cursor += line.length + 1;
   }
   const kept: string[] = [];
+  // Blank lines held until the next statement shows whether they belong to a
+  // removed REA table. Comments are user text and are never held.
   const pending: string[] = [];
   let skipping = false;
   let inlineServerTable = false;
@@ -965,15 +1083,13 @@ const upsertTomlServerSection = (
   const discardPending = (): void => {
     pending.length = 0;
   };
-  const flushPending = (): void => {
-    kept.push(...pending);
-    pending.length = 0;
+  // Document line counts must not become engine-limited argument counts.
+  const appendLines = (lines: readonly string[]): void => {
+    for (const line of lines) kept.push(line);
   };
-  const lineIndexAt = (offset: number): number => {
-    let line = 0;
-    for (let index = 0; index < lineStarts.length; index += 1)
-      if ((lineStarts[index] ?? 0) <= offset) line = index;
-    return line;
+  const flushPending = (): void => {
+    appendLines(pending);
+    pending.length = 0;
   };
   let lineIndex = 0;
   while (lineIndex < lines.length) {
@@ -991,6 +1107,7 @@ const upsertTomlServerSection = (
       tablePath = header.path;
       if (isTomlServerTable(header.path, serverKey)) {
         discardPending();
+        appendLines(tomlCommentLines(physical));
         skipping = true;
         lineIndex += 1;
         continue;
@@ -1009,9 +1126,17 @@ const upsertTomlServerSection = (
       let statementEnd = valueEnd;
       while (statementEnd < text.length && text[statementEnd] !== "\n")
         statementEnd += 1;
-      const endLine = lineIndexAt(Math.max(statementEnd - 1, lineStart));
+      const lastOffset = Math.max(statementEnd - 1, lineStart);
+      let endLine = lineIndex;
+      // Statements advance through the source; only inspect their own lines.
+      while (
+        endLine + 1 < lineStarts.length &&
+        (lineStarts[endLine + 1] ?? 0) <= lastOffset
+      )
+        endLine += 1;
       if (skipping) {
         discardPending();
+        appendLines(tomlCommentLines(text.slice(lineStart, statementEnd)));
         lineIndex = endLine + 1;
         mode = "none";
         continue;
@@ -1037,7 +1162,7 @@ const upsertTomlServerSection = (
           : undefined;
       if (disabledLines !== undefined) {
         flushPending();
-        kept.push(...disabledLines);
+        appendLines(disabledLines);
         lineIndex = endLine + 1;
         mode = "none";
         continue;
@@ -1061,10 +1186,16 @@ const upsertTomlServerSection = (
           const replacement =
             edited === undefined
               ? text.slice(lineStart, statementEnd)
-              : `${prefix}${edited}${suffix}`;
-          kept.push(...replacement.split("\n"));
+              : `${prefix}${edited.text}${suffix}`;
+          appendLines(replacement.split("\n"));
+          // TOML 1.0 inline tables cannot gain standalone comments between
+          // their fields. Retain removed value comments after the assignment.
+          if (edited !== undefined) appendLines(edited.comments);
           inlineServerTable = true;
-        } else discardPending();
+        } else {
+          discardPending();
+          appendLines(tomlCommentLines(text.slice(lineStart, statementEnd)));
+        }
       } else {
         flushPending();
         for (let index = lineIndex; index <= endLine; index += 1)
@@ -1075,7 +1206,7 @@ const upsertTomlServerSection = (
       continue;
     }
     if (isBlankOrComment(line)) {
-      if (format === "toml" && line.trimStart().startsWith("#")) {
+      if (line.trimStart().startsWith("#")) {
         flushPending();
         kept.push(physical);
       } else pending.push(physical);
@@ -1101,13 +1232,13 @@ const upsertTomlServerSection = (
   // The last kept CRLF line has no following LF from the join.
   if (body.endsWith("\r")) body += "\n";
   if (entry !== undefined && !inlineServerTable) {
-    let fragment = stringifyToml({
-      mcp_servers: { [serverKey]: entry },
-    }).replace(/\n+$/u, "");
+    let fragment = withoutTrailingLineFeeds(
+      stringifyToml({ mcp_servers: { [serverKey]: entry } }),
+    );
     if (crlf) fragment = fragment.replaceAll("\n", "\r\n");
     const nl = crlf ? "\r\n" : "\n";
     const endedWithNewline = body.endsWith("\n");
-    const base = body.replace(/\n+$/u, "");
+    const base = withoutTrailingLineFeeds(body);
     const trimmed =
       endedWithNewline && base.endsWith("\r") ? base.slice(0, -1) : base;
     body =
@@ -1115,6 +1246,9 @@ const upsertTomlServerSection = (
         ? `${fragment}${nl}`
         : `${trimmed}${nl}${nl}${fragment}${nl}`;
   }
+  // Removing a final table also drops the file's last line break.
+  if (originalText.endsWith("\n") && !body.endsWith("\n"))
+    body += originalText.endsWith("\r\n") ? "\r\n" : "\n";
   return bom ? `\uFEFF${body}` : body;
 };
 
@@ -1122,14 +1256,16 @@ const tomlServerEntry = (
   document: Record<string, unknown>,
   serverKey: string,
 ): unknown => {
-  const servers = objectSchema.safeParse(document.mcp_servers);
+  const servers = clientConfigurationRecordSchema.safeParse(
+    document.mcp_servers,
+  );
   if (!servers.success || !Object.hasOwn(servers.data, serverKey))
     return undefined;
   return servers.data[serverKey];
 };
 
 /** Whether Grok Build's root disable list names `serverKey`. */
-export const grokServerListedDisabled = (
+const grokServerListedDisabled = (
   document: Record<string, unknown>,
   serverKey: string,
 ): boolean =>
@@ -1143,7 +1279,7 @@ export const grokServerListedDisabled = (
 export const OMP_DISABLED_SERVERS_KEY = "disabledServers";
 
 /** Whether OMP's root `disabledServers` denylist names `serverKey`. */
-export const ompServerListedDisabled = (
+const ompServerListedDisabled = (
   document: Record<string, unknown>,
   serverKey: string,
 ): boolean => {
@@ -1196,7 +1332,9 @@ const serializeGrokConfiguration = (
 const withoutEmptyServerTable = (
   document: Record<string, unknown>,
 ): Record<string, unknown> => {
-  const servers = objectSchema.safeParse(document.mcp_servers);
+  const servers = clientConfigurationRecordSchema.safeParse(
+    document.mcp_servers,
+  );
   if (!servers.success || Object.keys(servers.data).length > 0) return document;
   const { mcp_servers: empty, ...rest } = document;
   void empty;
@@ -1217,17 +1355,12 @@ const serializeCodexConfiguration = (
     isEmptyClientConfigurationText(originalText)
   )
     return stringifyToml(document);
-  const upserted = upsertTomlServerSection(
+  const edited = upsertTomlServerSection(
     originalText,
     PRODUCT_IDENTITY.mcpServerKey,
     tomlServerEntry(document, PRODUCT_IDENTITY.mcpServerKey),
     "toml",
   );
-  // Removing a final table also drops the file's last line break.
-  const edited =
-    originalText.endsWith("\n") && !upserted.endsWith("\n")
-      ? `${upserted}${originalText.endsWith("\r\n") ? "\r\n" : "\n"}`
-      : upserted;
   return tomlTextHolds(edited, document) ? edited : stringifyToml(document);
 };
 
@@ -1237,7 +1370,9 @@ const tomlTextHolds = (
 ): boolean => {
   try {
     return clientConfigurationValuesEqual(
-      withoutEmptyServerTable(objectSchema.parse(parseToml(text))),
+      withoutEmptyServerTable(
+        clientConfigurationRecordSchema.parse(parseClientToml(text)),
+      ),
       withoutEmptyServerTable(document),
     );
   } catch (cause: unknown) {
@@ -1247,147 +1382,309 @@ const tomlTextHolds = (
   }
 };
 
-/** Comments in the trivia between two properties. `undefined` when there are none. */
-const commentsBetweenProperties = (gap: string): string | undefined => {
-  const pieces: string[] = [];
-  let index = 0;
-  while (index < gap.length) {
-    const line = gap.indexOf("//", index);
-    const block = gap.indexOf("/*", index);
-    if (line < 0 && block < 0) break;
-    const start = line < 0 ? block : block < 0 ? line : Math.min(line, block);
-    const lineComment = start === line;
-    const close = lineComment
-      ? gap.indexOf("\n", start)
-      : gap.indexOf("*/", start + 2);
-    if (!lineComment && close < 0) return undefined;
-    const end = lineComment ? (close < 0 ? gap.length : close) : close + 2;
-    const comment = gap.slice(start, end);
-    const lineBreak = gap.lastIndexOf("\n", start - 1);
-    if (lineBreak < 0) pieces.push(` ${comment}`);
-    else {
-      const prefix = gap.slice(lineBreak + 1, start);
-      let indentEnd = 0;
-      while (prefix[indentEnd] === " " || prefix[indentEnd] === "\t")
-        indentEnd += 1;
-      const newline =
-        lineBreak > 0 && gap[lineBreak - 1] === "\r" ? "\r\n" : "\n";
-      pieces.push(`${newline}${prefix.slice(0, indentEnd)}${comment}`);
-    }
-    index = end;
+// jsonc-parser declares SyntaxKind as an ambient const enum, so keep its token
+// code local and type-checked as in the JSON scanner used by IDA diagnostics.
+const JSON_COMMA = 5 satisfies SyntaxKind;
+
+/** Find the next non-trivia JSONC token at or after `offset`. */
+const nextJsoncToken = (
+  text: string,
+  offset: number,
+): { readonly kind: SyntaxKind; readonly offset: number } => {
+  const scanner = createScanner(text, true);
+  scanner.setPosition(offset);
+  const kind = scanner.scan();
+  return { kind, offset: scanner.getTokenOffset() };
+};
+
+const isJsonMember = (property: Node, key: string): boolean =>
+  property.children?.length === 2 && property.children[0]?.value === key;
+
+/**
+ * The property a client reads for `key`. `JSON.parse` and JSONC `parse` keep
+ * the last duplicate member, while jsonc-parser's `findNodeAtLocation` and
+ * `modify` select the first, so JSON text edits locate members only here.
+ */
+const effectiveJsonProperty = (object: Node, key: string): Node | undefined =>
+  object.children?.findLast((property) => isJsonMember(property, key));
+
+/** The object a client reads at `path`, following the effective members. */
+const effectiveJsonObject = (
+  root: Node | undefined,
+  path: readonly string[],
+): Node | undefined => {
+  let node = root;
+  for (const key of path) {
+    if (node?.type !== "object") return undefined;
+    node = effectiveJsonProperty(node, key)?.children?.[1];
   }
-  return pieces.length === 0 ? undefined : pieces.join("");
+  return node?.type === "object" ? node : undefined;
 };
 
 /**
- * Delete an object property without taking a comment from the gap before it.
- * jsonc-parser's removal span includes that gap, so a trailing comment on the
- * previous property would disappear. Returns `undefined` to keep the stock edit.
+ * Earlier members of one server name repeated in the tables a client reads,
+ * in document order. Parsing keeps only the last member, as clients do.
  */
-const deleteJsonPropertyPreservingComments = (
-  text: string,
-  path: readonly string[],
-): string | undefined => {
-  const root = parseTree(text, [], { allowTrailingComma: true });
-  const value =
-    root === undefined ? undefined : findNodeAtLocation(root, [...path]);
-  const property = value?.parent;
-  const parent = property?.parent;
-  if (
-    property === undefined ||
-    parent?.type !== "object" ||
-    property.type !== "property" ||
-    parent.children === undefined
-  )
-    return undefined;
-  const propertyIndex = parent.children.indexOf(property);
-  const previous = parent.children[propertyIndex - 1];
-  if (propertyIndex <= 0 || previous === undefined) return undefined;
-  const comments = commentsBetweenProperties(
-    text.slice(previous.offset + previous.length, property.offset),
-  );
-  if (comments === undefined) return undefined;
-  let removeEnd = property.offset + property.length;
-  const hasNext = parent.children[propertyIndex + 1] !== undefined;
-  if (hasNext) {
-    let comma = removeEnd;
-    while (comma < text.length) {
-      const char = text[comma];
-      if (char === " " || char === "\t" || char === "\r" || char === "\n") {
-        comma += 1;
-        continue;
-      }
-      if (text.startsWith("/*", comma)) {
-        const close = text.indexOf("*/", comma + 2);
-        if (close < 0) return undefined;
-        comma = close + 2;
-        continue;
-      }
-      if (text.startsWith("//", comma)) {
-        while (
-          comma < text.length &&
-          text[comma] !== "\n" &&
-          text[comma] !== "\r"
-        )
-          comma += 1;
-        continue;
-      }
-      break;
+export interface ShadowedClientServers {
+  readonly servers: readonly unknown[];
+  /** Repeats among OpenCode V1 members beside a native V2 table. */
+  readonly legacyServers: readonly unknown[];
+}
+
+const NO_SHADOWED_SERVERS: ShadowedClientServers = Object.freeze({
+  servers: [],
+  legacyServers: [],
+});
+
+// Token codes follow the pinned jsonc-parser scanner, as JSON_COMMA does.
+const JSON_STRING = 10 satisfies SyntaxKind;
+const JSON_EOF = 17 satisfies SyntaxKind;
+
+/** A conservative duplicate check using the parser's own string decoder. */
+const hasRepeatedJsonString = (text: string, name: string): boolean => {
+  const scanner = createScanner(text, true);
+  let matches = 0;
+  for (let token = scanner.scan(); token !== JSON_EOF; token = scanner.scan()) {
+    if (token === JSON_STRING && scanner.getTokenValue() === name) {
+      matches += 1;
+      if (matches === 2) return true;
     }
-    if (text[comma] !== ",") return undefined;
-    removeEnd = comma + 1;
   }
-  // A line comment runs to the next break. Keep the following token outside it.
-  const remainder = text.slice(removeEnd);
-  let suffix = `${hasNext ? "," : ""}${comments}`;
-  if (
-    suffix.includes("//") &&
-    !suffix.endsWith("\n") &&
-    !suffix.endsWith("\r") &&
-    !remainder.startsWith("\n") &&
-    !remainder.startsWith("\r")
-  )
-    suffix += "\n";
-  return `${text.slice(0, previous.offset + previous.length)}${suffix}${remainder}`;
+  return false;
 };
 
-/** Serialize a validated client document, retaining JSONC and TOML comments. */
+/** Values of the earlier members named `name` in `object`. */
+const shadowedJsonMembers = (
+  object: Node | undefined,
+  name: string,
+): readonly unknown[] =>
+  (object?.children ?? [])
+    .filter((property) => isJsonMember(property, name))
+    .slice(0, -1)
+    .map((property): unknown => {
+      const value = property.children?.[1];
+      return value === undefined ? undefined : getNodeValue(value);
+    });
+
+/**
+ * Earlier members of `name` that removing its effective entry would make
+ * effective, so a removal decision must cover them too. Locating them needs a
+ * syntax tree of the whole document, which is built only when the name's
+ * string token occurs more than once.
+ */
+export const shadowedClientServers = (
+  text: string,
+  parsed: ClientConfigurationDocument,
+  name: string,
+): ShadowedClientServers => {
+  // TOML rejects repeated keys, Hermes parses YAML with unique keys, and the
+  // Harness owner edits REA's entry by id rather than through a server table.
+  if (
+    parsed.dialect === "toml" ||
+    parsed.dialect === "grok" ||
+    parsed.dialect === "hermes" ||
+    parsed.dialect === "dsh" ||
+    !hasRepeatedJsonString(text, name)
+  )
+    return NO_SHADOWED_SERVERS;
+  const root = parseTree(text, [], { allowTrailingComma: true });
+  return {
+    servers: shadowedJsonMembers(
+      effectiveJsonObject(root, parsed.serversPath),
+      name,
+    ),
+    legacyServers:
+      parsed.dialect === "opencode_v2" && !OPENCODE_V2_MCP_SETTINGS.has(name)
+        ? shadowedJsonMembers(
+            effectiveJsonObject(root, parsed.serversPath.slice(0, 1)),
+            name,
+          )
+        : [],
+  };
+};
+
+/** Apply one edit and format the lines it touched, as `modify` does. */
+const applyFormattedJsonEdit = (text: string, edit: Edit): string => {
+  const edited = applyEdits(text, [edit]);
+  let begin = edit.offset;
+  let end = edit.offset + edit.content.length;
+  if (edit.length === 0) {
+    while (begin > 0 && !"\r\n".includes(edited.charAt(begin - 1))) begin -= 1;
+    while (end < edited.length && !"\r\n".includes(edited.charAt(end)))
+      end += 1;
+  }
+  return applyEdits(
+    edited,
+    formatJson(
+      edited,
+      { offset: begin, length: end - begin },
+      { insertSpaces: true, tabSize: 2, eol: "\n", keepLines: false },
+    ),
+  );
+};
+
+/** Remove selected member spans and only the separators needed by kept members. */
+const deleteJsonMembers = (
+  text: string,
+  object: Node,
+  properties: readonly Node[],
+): string => {
+  const siblings = object.children ?? [];
+  const removed = new Set(properties);
+  const anyKept = siblings.some((member) => !removed.has(member));
+  const edits: Edit[] = [];
+  let earlierKept = false;
+  for (const [index, member] of siblings.entries()) {
+    if (removed.has(member))
+      edits.push({ offset: member.offset, length: member.length, content: "" });
+    else earlierKept = true;
+    const separator = nextJsoncToken(text, member.offset + member.length);
+    const next = siblings[index + 1];
+    if (separator.kind !== JSON_COMMA && next !== undefined)
+      throw new TypeError("JSON property separator was not found");
+    // Keep the separator before the next retained member, matching the
+    // existing single-member deletion rule. JSONC may retain a trailing comma.
+    const keepSeparator =
+      next === undefined ? anyKept : earlierKept && !removed.has(next);
+    if (separator.kind === JSON_COMMA && !keepSeparator)
+      edits.push({ offset: separator.offset, length: 1, content: "" });
+  }
+  return applyEdits(text, edits);
+};
+
+/** A JSON edit refused because it would activate a shadowed duplicate member. */
+export interface ClientConfigurationShadowedMember {
+  readonly kind: "shadowed_member";
+  /** Key path of the effective member whose removal was refused. */
+  readonly path: readonly string[];
+}
+
+/**
+ * Set or delete the member a client reads at `path`, keeping every byte
+ * outside that member. Shadowed duplicates stay in place, and deleting a
+ * member that shadows one is refused so the earlier member never becomes
+ * active, unless the caller has established removal authority for that path.
+ */
+const editJsonMember = (
+  text: string,
+  path: readonly string[],
+  value: unknown,
+  removeShadowedMembers: boolean,
+): Result<string, ClientConfigurationShadowedMember> => {
+  let object = parseTree(text, [], { allowTrailingComma: true });
+  for (const [index, key] of path.entries()) {
+    if (object?.type !== "object")
+      throw new TypeError("JSON edit parent is not an object");
+    const property = effectiveJsonProperty(object, key);
+    const member = property?.children?.[1];
+    if (property === undefined || member === undefined) {
+      if (value === undefined) return ok(text);
+      const content = `${JSON.stringify(key)}: ${JSON.stringify(
+        path
+          .slice(index + 1)
+          .reduceRight<unknown>((nested, name) => ({ [name]: nested }), value),
+      )}`;
+      const previous = object.children?.at(-1);
+      return ok(
+        applyFormattedJsonEdit(
+          text,
+          previous === undefined
+            ? { offset: object.offset + 1, length: 0, content }
+            : {
+                offset: previous.offset + previous.length,
+                length: 0,
+                content: `,${content}`,
+              },
+        ),
+      );
+    }
+    if (index < path.length - 1) {
+      object = member;
+      continue;
+    }
+    if (value !== undefined)
+      return ok(
+        applyFormattedJsonEdit(text, {
+          offset: member.offset,
+          length: member.length,
+          content: JSON.stringify(value),
+        }),
+      );
+    if (
+      object.children?.some(
+        (sibling) => sibling !== property && isJsonMember(sibling, key),
+      )
+    )
+      return removeShadowedMembers
+        ? ok(
+            deleteJsonMembers(
+              text,
+              object,
+              (object.children ?? []).filter((sibling) =>
+                isJsonMember(sibling, key),
+              ),
+            ),
+          )
+        : err({ kind: "shadowed_member", path });
+    return ok(deleteJsonMembers(text, object, [property]));
+  }
+  throw new TypeError("JSON edit path is empty");
+};
+
+/** Edit authority beyond the members a client reads. */
+export interface ClientConfigurationEditOptions {
+  /**
+   * Exact deleted paths whose repeated members the caller may remove.
+   * Uninstall must establish ownership of every shadowed member; setup may
+   * grant replacement authority for an explicitly superseded registration.
+   */
+  readonly removeShadowedMembersAt?: readonly (readonly string[])[];
+}
+
+/**
+ * Serialize a validated client document, retaining JSONC and TOML comments.
+ * JSON edits fail only when they would activate a shadowed duplicate member.
+ */
 export const serializeClientConfiguration = (
   document: Record<string, unknown>,
   format: ClientConfigurationFormat | undefined,
   originalText?: string,
   editedPaths?: readonly (readonly string[])[],
-): string => {
+  options: ClientConfigurationEditOptions = {},
+): Result<string, ClientConfigurationShadowedMember> => {
   if (format === undefined || format === "unsupported")
     throw new TypeError("client does not have a supported MCP config format");
   if (format === "toml")
-    return serializeCodexConfiguration(document, originalText);
+    return ok(serializeCodexConfiguration(document, originalText));
   if (format === "grok")
-    return serializeGrokConfiguration(document, originalText);
+    return ok(serializeGrokConfiguration(document, originalText));
   if (format === "hermes")
-    return serializeHermesConfiguration(document, originalText);
-  if (format === "dsh") return serializeDshDocument(document);
+    return ok(serializeHermesConfiguration(document, originalText));
+  if (format === "dsh") return ok(serializeDshDocument(document));
   // An empty original holds no comments or settings to preserve. Writing a
   // fresh document also keeps a lone BOM from shifting past the closing brace.
   if (
-    originalText !== undefined &&
-    !isEmptyClientConfigurationText(originalText) &&
-    editedPaths !== undefined
+    originalText === undefined ||
+    isEmptyClientConfigurationText(originalText) ||
+    editedPaths === undefined
   )
-    return editedPaths.reduce((text, path) => {
-      const value = valueAt(document, path);
-      if (value === undefined) {
-        const preserved = deleteJsonPropertyPreservingComments(text, path);
-        if (preserved !== undefined) return preserved;
-      }
-      return applyEdits(
-        text,
-        modify(text, [...path], value, {
-          formattingOptions: { insertSpaces: true, tabSize: 2, eol: "\n" },
-        }),
-      );
-    }, originalText);
-  return `${JSON.stringify(document, null, 2)}\n`;
+    return ok(`${JSON.stringify(document, null, 2)}\n`);
+  let text = originalText;
+  for (const path of editedPaths) {
+    const edited = editJsonMember(
+      text,
+      path,
+      valueAt(document, path),
+      options.removeShadowedMembersAt?.some(
+        (allowed) =>
+          allowed.length === path.length &&
+          allowed.every((key, index) => key === path[index]),
+      ) ?? false,
+    );
+    if (!edited.ok) return edited;
+    text = edited.value;
+  }
+  return ok(text);
 };
 
 /** Key path of a named registration in the server table. */
@@ -1458,10 +1755,11 @@ export const clientRegistrationEntry = (
         ...(Object.keys(environment).length === 0 ? {} : { env: environment }),
       };
     case "opencode_v2":
-      // V2 connects servers unless `disabled` is true.
+      // Override lower-priority disabled flags when refreshing a V2 registration.
       return {
         type: "local",
         command: [...command],
+        disabled: false,
         ...(Object.keys(environment).length === 0
           ? {}
           : { environment: { ...environment } }),

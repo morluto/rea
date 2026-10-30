@@ -1,3 +1,4 @@
+// Imported directly by pre-install fixture scripts; keep this module dependency-free.
 /** Audited upstream release; source remains unmodified in the Git submodule. */
 export const JADX_RELEASE = Object.freeze({
   version: "0.7.1",
@@ -9,7 +10,7 @@ export const JADX_RELEASE = Object.freeze({
 /** Identity of REA's metadata bridge, distinct from the producing engine. */
 export const JADX_BRIDGE_IDENTITY = Object.freeze({
   name: "rea-jadx-bridge",
-  version: "1",
+  version: "9",
 });
 
 /** Remediation when `REA_JADX_MCP_JAR` is missing or not an absolute path. */
@@ -48,5 +49,5 @@ export const JADX_LIMITATIONS = [
   "Method signatures use provider display types; DEX prototypes come from frozen JADX metadata. Display names may be aliases, and overload indices are local to this engine and artifact.",
   "Class inventories use parsed metadata before code generation, including synthetic members that may be omitted from decompiled source. Source positions remain unknown.",
   "Incoming reference totals count JADX using nodes. Direct invoke entries within a using method report raw DEX code-unit offsets and method indexes, but coverage is limited to those nodes and directly matched invokes; it does not establish every possible dynamic or reflective call site.",
-  "Manifest summary fields are extracted by the upstream engine; decoded XML is retained for verification. APK signatures, split APKs, native libraries and Android runtime capture are not verified by this provider.",
+  "Manifest summaries are parsed once by REA's bridge from the exact root AndroidManifest.xml resource, using namespace-aware XML attributes; decoded XML is retained. These summaries do not verify APK signatures, split APKs or Android runtime capture.",
 ] as const;

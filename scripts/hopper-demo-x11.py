@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Inspect or activate Hopper's version-pinned demo dialog on a private X display."""
+"""Inspect or activate Hopper's authenticated demo dialog on a private X display."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import ctypes
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import secrets
 import select
@@ -18,12 +19,6 @@ import threading
 import time
 
 
-# Keep this digest aligned with LinuxHopper.ts and rerun real-Hopper verification
-# before accepting another vendor build.
-SUPPORTED_HOPPER_SHA256 = {
-    "0294ced141cc373468ee22d8343e7dac41980cb05a937994ca81c9f09afe7ded",
-    "1339f9e58377442b0c6fcb0dfc3cec20d593cc557408521fad9a00dbc6b8da13",
-}
 EXPECTED_SCREEN = (1280, 1024)
 DIALOG_TITLES = {"Registration", "Registration — Hopper Disassembler"}
 HOPPER_WINDOW_TITLE = "Hopper Disassembler"
@@ -121,6 +116,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--probe", action="store_true")
     parser.add_argument("--owner-stdin", action="store_true")
     parser.add_argument("--hopper")
+    parser.add_argument("--expected-launcher-sha256")
     parser.add_argument("--socket")
     parser.add_argument(
         "--strategy",
@@ -483,13 +479,13 @@ def authorize_display(
         authorized = subprocess.run(
             [
                 xauth_path,
+                "-q",
                 "-f",
                 str(authority),
-                "add",
-                display_name,
-                ".",
-                secrets.token_hex(16),
+                "source",
+                "-",
             ],
+            input=("add %s . %s\n" % (display_name, secrets.token_hex(16))).encode("ascii"),
             check=False,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
@@ -584,7 +580,11 @@ def start_xvfb(
     authority = session / "Xauthority"
     collision: AdapterFailure | None = None
     for _ in range(3):
-        display_number = args.display_number or (100 + secrets.randbelow(900))
+        display_number = (
+            args.display_number
+            if args.display_number is not None
+            else 100 + secrets.randbelow(900)
+        )
         display_name = f":{display_number}"
         if Path(f"/tmp/.X11-unix/X{display_number}").exists() or Path(
             f"/tmp/.X{display_number}-lock"
@@ -661,7 +661,11 @@ def run_probe(args: argparse.Namespace) -> dict[str, object]:
 
 
 def run_launch(args: argparse.Namespace) -> int:
-    if args.hopper is None or args.socket is None:
+    if (
+        args.hopper is None or args.socket is None
+        or args.expected_launcher_sha256 is None
+        or re.fullmatch(r"[a-f0-9]{64}", args.expected_launcher_sha256) is None
+    ):
         raise AdapterFailure(
             INVALID_LAUNCH_COMMAND,
             "invalid_launch_command",
@@ -673,7 +677,9 @@ def run_launch(args: argparse.Namespace) -> int:
     hopper = Path(args.hopper)
     socket = Path(args.socket)
     try:
-        supported = digest(hopper) in SUPPORTED_HOPPER_SHA256
+        # The parent owns publisher/package interpretation. Recheck its admitted
+        # launcher bytes immediately before execution, preserving all X11 guards.
+        supported = digest(hopper) == args.expected_launcher_sha256
     except OSError as error:
         raise AdapterFailure(
             INVALID_LAUNCH_COMMAND,
@@ -684,7 +690,7 @@ def run_launch(args: argparse.Namespace) -> int:
         raise AdapterFailure(
             UNSUPPORTED_HOPPER_BUILD,
             "unsupported_hopper_build",
-            "unsupported Hopper binary",
+            "Hopper binary differs from the authenticated release",
         )
     command = args.command[1:] if args.command[:1] == ["--"] else args.command
     if not command or Path(command[0]).resolve() != hopper.resolve():

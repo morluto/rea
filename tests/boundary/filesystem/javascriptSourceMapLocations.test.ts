@@ -168,13 +168,13 @@ it("associates each source-map URL with its edge when aliases share one physical
   });
 });
 
-it("resolves a bare source-map file name and worker URL next to the script", async () => {
+it("resolves a bare source-map file name and module worker URL next to the script", async () => {
   const root = await createTestTempDirectory("rea-source-map-relative-");
   await mkdir(join(root, "dist"));
   await writeFile(
     join(root, "dist", "app.js"),
     [
-      'new Worker("worker.js");',
+      'new Worker(new URL("worker.js", import.meta.url));',
       'navigator.serviceWorker.register("sw.js");',
       "//# sourceMappingURL=app.js.map",
     ].join("\n"),
@@ -228,12 +228,12 @@ it("resolves a bare source-map file name and worker URL next to the script", asy
   expect(workerEdge?.properties).toMatchObject({
     resolved_path: "dist/worker.js",
   });
-  const serviceWorkerEdge = result.graph.edges.find(
-    ({ relation, source_node_id }) =>
-      relation === "maps_to" &&
-      nodes.get(source_node_id)?.kind === "service-worker",
-  );
-  expect(serviceWorkerEdge?.properties).toMatchObject({
-    resolved_path: "dist/sw.js",
-  });
+  // A service worker URL is relative to the unestablished document base.
+  expect(
+    result.graph.edges.some(
+      ({ relation, source_node_id }) =>
+        relation === "maps_to" &&
+        nodes.get(source_node_id)?.kind === "service-worker",
+    ),
+  ).toBe(false);
 });

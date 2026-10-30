@@ -1,170 +1,128 @@
 import type { ExecutionOptions } from "../application/AnalysisProvider.js";
 import type { ElectronFusePort } from "../application/electron/ElectronFusePort.js";
-import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { createElectronFuseEvidence } from "../domain/electron/electronFuseEvidence.js";
+import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import {
-  AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
-  AnalysisCancelledError,
-  AnalysisInputError,
-  AnalysisOutputError,
-  AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
-} from "../domain/analysisErrorCore.js";
+  assertArtifactReadActive,
+  artifactFileCompletion,
+} from "../artifacts/ArtifactFileOperation.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import {
   describeElectronFuseFindings,
   electronFuseReportSchema,
   type ElectronFuseReport,
   type InspectElectronFusesInput,
 } from "../domain/electron/electronFuses.js";
-import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { ZodError } from "zod";
-import { RegularFileChangedError } from "../filesystem/RegularFile.js";
-import { NonRegularFileReadError } from "../filesystem/RegularFile.js";
-import {
-  ElectronFusePathFailure,
-  resolveElectronFuseTarget,
-} from "./ElectronFusePath.js";
+import { resolveElectronFuseTarget } from "./ElectronFusePath.js";
 import {
   electronFuseReadLimitation,
-  ElectronFuseFormatFailure,
-  ElectronFuseResourceFailure,
   readElectronFuseImage,
+  type ElectronFuseImage,
 } from "./ElectronFuseReader.js";
+import {
+  ELECTRON_FUSE_PROVIDER_IDENTITY,
+  electronFuseFailure,
+} from "./ElectronFuseFailures.js";
 
-/** Bundled fuse-wire reader. It does not flip fuses or launch the application. */
-export const ELECTRON_FUSE_PROVIDER_IDENTITY = {
-  id: "electron-fuses",
-  name: "REA Electron fuse reader",
-  version: "1",
-} as const;
+export { ELECTRON_FUSE_PROVIDER_IDENTITY };
 
 const OPERATION = "inspect_electron_fuses";
 
 /** Read packaged Electron fuse wires from one selected local file or app bundle. */
 export class ElectronFuseProvider implements ElectronFusePort {
   readonly identity = ELECTRON_FUSE_PROVIDER_IDENTITY;
+  readonly #resources = new ArtifactResourceScope();
+
+  /** Retry the same failed descriptor owners, awaiting active reads first. */
+  async close(): Promise<void> {
+    try {
+      await this.#resources.close();
+    } catch (cause: unknown) {
+      throw electronFuseFailure(cause, "artifact-resources");
+    }
+  }
 
   async inspect(
     input: InspectElectronFusesInput,
     options?: ExecutionOptions,
   ): Promise<Result<ElectronFuseReport, AnalysisError>> {
     try {
-      options?.signal?.throwIfAborted();
+      return await this.#resources.run(() => this.#inspectFile(input, options));
+    } catch (cause: unknown) {
+      return err(electronFuseFailure(cause, input.path));
+    }
+  }
+
+  async #inspectFile(
+    input: InspectElectronFusesInput,
+    options?: ExecutionOptions,
+  ): Promise<Result<ElectronFuseReport, AnalysisError>> {
+    let resolvedPath = input.path;
+    let completed: ElectronFuseReport | undefined;
+    try {
+      assertArtifactReadActive(options?.signal);
       const located = await resolveElectronFuseTarget(
         input.path,
         options?.signal,
       );
-      options?.signal?.throwIfAborted();
+      assertArtifactReadActive(options?.signal);
+      resolvedPath = located.file.path;
       const image = await readElectronFuseImage(located.file.path, {
+        resources: this.#resources,
         selection: located.file,
         ...(options?.signal === undefined ? {} : { signal: options.signal }),
       });
-      const findings = describeElectronFuseFindings(image.slices, image.format);
-      const parsed = electronFuseReportSchema.safeParse({
-        artifact: {
-          selected_path: located.selectedPath,
-          resolved_path: located.file.path,
-          sha256: image.sha256,
-          bytes: image.bytes,
-          format: image.format,
-        },
-        slices: image.slices,
-        runtime_implications: findings.runtime_implications,
-        limitations: [...findings.limitations, electronFuseReadLimitation()],
-      });
-      if (!parsed.success)
-        throw new AnalysisOutputError(
-          OPERATION,
-          "Electron fuse reader produced a report outside its schema.",
-          { cause: parsed.error },
-        );
-      options?.signal?.throwIfAborted();
-      return ok(parsed.data);
+      completed = reportFor(image, located.selectedPath, resolvedPath);
+      assertArtifactReadActive(options?.signal);
+      return ok(completed);
     } catch (cause: unknown) {
-      return err(failureFor(cause, input.path, options?.signal));
+      const failure = electronFuseFailure(cause, input.path);
+      // Only this reader's completed physical outcome supplies partial fuse facts.
+      const completion = artifactFileCompletion(cause);
+      const report =
+        completed ??
+        (completion === undefined
+          ? undefined
+          : reportFor(
+              completion.value as ElectronFuseImage,
+              input.path,
+              resolvedPath,
+            ));
+      if (report !== undefined) {
+        failure.retainPartialObservation(
+          createElectronFuseEvidence(input, report, this.identity),
+        );
+      }
+      return err(failure);
     }
   }
 }
 
-const failureFor = (
-  cause: unknown,
-  path: string,
-  signal?: AbortSignal,
-): AnalysisError => {
-  if (cause instanceof AnalysisError) return cause;
-  if (signal?.aborted) return new AnalysisCancelledError(OPERATION);
-  if (cause instanceof ElectronFusePathFailure)
-    return new AnalysisInputError(OPERATION, { cause }, [
-      { path: ["path"], reason: cause.reason, message: cause.message },
-    ]);
-  if (cause instanceof ElectronFuseResourceFailure)
-    return new AnalysisResourceConstraintError(
-      OPERATION,
-      cause.boundary === "file-size" ? "file-size" : "capacity",
-      cause.message,
-      cause.boundary === "file-size"
-        ? { maximum_input_bytes: 1024 * 1024 * 1024 }
-        : { maximum_sentinels_per_slice: 32 },
-      { cause },
-    );
-  if (cause instanceof ElectronFuseFormatFailure)
-    return cause.kind === "unsupported"
-      ? new AnalysisUnsupportedTargetError(OPERATION, path, cause.message, {
-          cause,
-        })
-      : new AnalysisInputError(OPERATION, { cause }, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: `Selected artifact ${path}: ${cause.message}`,
-          },
-        ]);
-  if (cause instanceof RegularFileChangedError)
-    return new AnalysisArtifactChangedError(OPERATION, path, cause.message, {
-      cause,
-    });
-  if (cause instanceof NonRegularFileReadError)
-    return new AnalysisInputError(OPERATION, { cause }, [
-      {
-        path: ["path"],
-        reason: "invalid_format",
-        message: cause.message,
-      },
-    ]);
-  if (cause instanceof ZodError)
-    return new AnalysisOutputError(
+const reportFor = (
+  image: ElectronFuseImage,
+  selectedPath: string,
+  resolvedPath: string,
+): ElectronFuseReport => {
+  const findings = describeElectronFuseFindings(image.slices, image.format);
+  const parsed = electronFuseReportSchema.safeParse({
+    artifact: {
+      selected_path: selectedPath,
+      resolved_path: resolvedPath,
+      sha256: image.sha256,
+      bytes: image.bytes,
+      format: image.format,
+    },
+    slices: image.slices,
+    runtime_implications: findings.runtime_implications,
+    limitations: [...findings.limitations, electronFuseReadLimitation()],
+  });
+  if (!parsed.success)
+    throw new AnalysisOutputError(
       OPERATION,
       "Electron fuse reader produced a report outside its schema.",
-      { cause },
+      { cause: parsed.error },
     );
-  if (cause instanceof Error && "code" in cause) {
-    if (cause.code === "EACCES" || cause.code === "EPERM")
-      return new AnalysisAccessDeniedError(OPERATION, path, cause.code, {
-        cause,
-      });
-    if (
-      ["ENOENT", "ENOTDIR", "ELOOP", "ENAMETOOLONG"].includes(
-        String(cause.code),
-      )
-    )
-      return new AnalysisInputError(OPERATION, { cause }, [
-        {
-          path: ["path"],
-          reason: "invalid_value",
-          message: `Selected artifact could not be read (${String(cause.code)}): ${path}.`,
-        },
-      ]);
-  }
-  return new ProviderAdapterError(
-    ELECTRON_FUSE_PROVIDER_IDENTITY.id,
-    OPERATION,
-    {
-      cause,
-      diagnostics: {
-        path,
-        reason: cause instanceof Error ? cause.message : String(cause),
-      },
-    },
-  );
+  return parsed.data;
 };

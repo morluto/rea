@@ -1,10 +1,7 @@
 import { moduleResolutionModeForJavaScriptReference } from "../domain/javascript/javascriptModuleResolutionMode.js";
 import { parseJavaScriptSource } from "../domain/javascript/javascriptSourceParser.js";
 import { analyzeParsedJavaScriptStaticSourceSteps } from "../domain/javascript/javascriptStaticAnalysis.js";
-import {
-  analyzeParsedJavaScriptSemanticsSteps,
-  classifyParsedJavaScriptOpenReceiversSteps,
-} from "../domain/javascript/javascriptSemanticAnalysis.js";
+import { analyzeParsedJavaScriptSemanticsSteps } from "../domain/javascript/javascriptSemanticAnalysis.js";
 import { failedJavaScriptStaticAnalysis } from "../domain/javascript/javascriptStaticAnalysisHelpers.js";
 import { projectJavaScriptModuleSemantics } from "../domain/javascript/javascriptModuleSemanticIr.js";
 import {
@@ -21,7 +18,7 @@ import {
 
 const analyze: JavaScriptSourceWorkerAnalyzer = async (
   file,
-  nodeBudget,
+  capacity,
   callbacks,
 ) => {
   if (!file.text.included)
@@ -33,15 +30,8 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
     return null;
   }
   await callbacks.phase("static");
-  const receivers = await completeJavaScriptAnalysisSteps(
-    classifyParsedJavaScriptOpenReceiversSteps(parsed),
-  );
   const facts = await completeJavaScriptAnalysisSteps(
-    analyzeParsedJavaScriptStaticSourceSteps(
-      file.text.value,
-      parsed,
-      receivers,
-    ),
+    analyzeParsedJavaScriptStaticSourceSteps(file.text.value, parsed),
   );
   const resultBudgetBytes = await callbacks.checkpoint(facts);
   if (facts.parse_status === "failed") return null;
@@ -57,6 +47,7 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
     analyzeParsedJavaScriptSemanticsSteps(
       parsed,
       moduleResolutionModeForJavaScriptReference(file.path, "static-import"),
+      capacity.nodes,
     ),
   );
   parsed = null;
@@ -80,7 +71,7 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
     projectJavaScriptSemanticFileSteps(
       file,
       ir,
-      nodeBudget,
+      capacity,
       facts.electron.call_paths,
     ),
   );

@@ -58,13 +58,39 @@ it.skipIf(process.platform === "win32").each([
     parsedFiles: 1,
   },
 ])(
-  "returns typed cancellation and exit 130 after SIGINT through $command during $phase",
+  "returns typed cancellation and exit 130 through $command during $phase",
   async ({ command, phase, parsedFiles }) => {
     const root = await createTestTempDirectory("rea-cli-js-cancellation-");
     await writeFile(join(root, "main.js"), "export const observed = 1;\n");
+    const nodeArguments: string[] = [];
+    if (parsedFiles !== null) {
+      // A tiny graph/hash phase may finish before the parent receives stderr.
+      // Invoke the real signal handler synchronously in the owned CLI child at
+      // that progress boundary; the two early-phase cases still use OS SIGINT.
+      const controls = await createTestTempDirectory("rea-cli-cancel-control-");
+      const preload = join(controls, "cancel-at-phase.mjs");
+      await writeFile(
+        preload,
+        `
+        const write = process.stderr.write.bind(process.stderr);
+        let requested = false;
+        process.stderr.write = function(chunk, ...args) {
+          const written = write(chunk, ...args);
+          let update;
+          try { update = JSON.parse(String(chunk)); } catch {}
+          if (!requested && update?.rea_progress?.phase === ${JSON.stringify(phase)}) {
+            requested = true;
+            process.emit("SIGINT");
+          }
+          return written;
+        };
+      `,
+      );
+      nodeArguments.push("--import", preload);
+    }
     const child = spawn(
       process.execPath,
-      ["scripts/rea.mjs", command, root, "--json"],
+      [...nodeArguments, "scripts/rea.mjs", command, root, "--json"],
       {
         stdio: ["ignore", "pipe", "pipe"],
       },
@@ -95,7 +121,7 @@ it.skipIf(process.platform === "win32").each([
           !requested
         ) {
           requested = true;
-          child.kill("SIGINT");
+          if (parsedFiles === null) child.kill("SIGINT");
         }
       }
     });

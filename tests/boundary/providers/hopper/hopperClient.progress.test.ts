@@ -82,6 +82,14 @@ describe("HopperClient progress", () => {
         providerId: "hopper",
         operation: "capability_unavailable",
         reason: "fixture API is unavailable",
+        diagnostics: {
+          provider_request: {
+            operation: "capability_unavailable",
+            provider_code: -32000,
+            diagnostic_type: "capability_unavailable",
+            request_id: expect.any(Number),
+          },
+        },
       });
   });
 

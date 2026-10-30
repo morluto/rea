@@ -1,4 +1,3 @@
-import { createJavaScriptSemanticGraphUnknown } from "../../domain/javascript/javascriptSemanticGraph.js";
 import type { JavaScriptSemanticGraphNode } from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
 import type { JavaScriptSemanticResourceOperation } from "../../domain/javascript/javascriptSemanticIr.js";
 import {
@@ -67,21 +66,13 @@ const projectRelease = (
         operation.resolution === "complete" ? "resolved" : "candidate",
     });
   if (operation.resolution === "complete") return;
-  addSemanticGraphUnknown(
-    context.state,
-    createJavaScriptSemanticGraphUnknown(
-      {
-        node_id: callSite?.node_id ?? null,
-        family: "resource-lifecycle",
-        relation_kinds: ["releases"],
-        reason: "ambiguous-target",
-        detail: `Static ${operation.method} resource ownership is ambiguous.`,
-        candidate_node_ids: resources.map(
-          ({ node_id: identifier }) => identifier,
-        ),
-        evidence: unknownSemanticEvidence(context.file, operation.location),
-      },
-      context.state.evidenceContexts,
-    ),
-  );
+  addSemanticGraphUnknown(context.state, {
+    node_id: callSite?.node_id ?? null,
+    family: "resource-lifecycle",
+    relation_kinds: ["releases"],
+    reason: "ambiguous-target",
+    detail: `Static ${operation.method} resource ownership is ambiguous.`,
+    candidate_node_ids: resources.map(({ node_id: identifier }) => identifier),
+    evidence: unknownSemanticEvidence(context.file, operation.location),
+  });
 };

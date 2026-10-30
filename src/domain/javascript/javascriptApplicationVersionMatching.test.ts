@@ -14,7 +14,12 @@ import { compareJavaScriptApplicationVersions } from "./javascriptApplicationVer
 
 const ARTIFACT_SHA = "a".repeat(64);
 
-const moduleNode = (name: string, source: string, structure?: string) =>
+const moduleNode = (
+  name: string,
+  source: string,
+  structure?: string,
+  algorithm = "fixture",
+) =>
   fixtureNode(
     "javascript-module",
     {
@@ -30,7 +35,7 @@ const moduleNode = (name: string, source: string, structure?: string) =>
         ? {}
         : {
             structural_fingerprint_sha256: structure.repeat(64),
-            structural_fingerprint_algorithm: "fixture",
+            structural_fingerprint_algorithm: algorithm,
           }),
     },
     artifactEvidence(ARTIFACT_SHA, `${name}.js`),
@@ -66,6 +71,27 @@ const compare = (
   });
 
 describe("application version matching", () => {
+  it.each([
+    ["babel-ast-v1", "babel-ast-v1"],
+    ["babel-ast-v2", "babel-ast-v2"],
+    ["babel-ast-v3", "babel-ast-v3"],
+    ["babel-ast-v1", "babel-ast-v2"],
+    ["babel-ast-v1", "babel-ast-v3"],
+    ["babel-ast-v2", "babel-ast-v3"],
+  ])(
+    "compares %s with %s without mixing fingerprint algorithms",
+    (leftAlgorithm, rightAlgorithm) => {
+      const left = moduleNode("before", "1", "a", leftAlgorithm);
+      const right = moduleNode("after", "2", "a", rightAlgorithm);
+      const result = compare(graph([left]), graph([right]));
+      const sameAlgorithm = leftAlgorithm === rightAlgorithm;
+      expect(result.matching.structural_fingerprint).toBe(
+        sameAlgorithm ? 1 : 0,
+      );
+      expect(result.matching.unmatched).toBe(sameAlgorithm ? 0 : 2);
+    },
+  );
+
   it("does not revisit a source group that becomes unique after identity matching", () => {
     const shared = moduleNode("shared", "1");
     const leftOnly = moduleNode("left", "1");

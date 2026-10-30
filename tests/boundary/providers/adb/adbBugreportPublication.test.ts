@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import {
   copyFile,
   mkdtemp,
+  open,
   readFile,
   readdir,
   rm,
@@ -35,6 +36,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     ...actual,
     copyFile: vi.fn(actual.copyFile),
     mkdtemp: vi.fn(actual.mkdtemp),
+    open: vi.fn(actual.open),
     rm: vi.fn(actual.rm),
   };
 });
@@ -222,8 +224,121 @@ test("retains published evidence and retries failed staging cleanup", async () =
       sha256: createHash("sha256").update("bugreport-bytes").digest("hex"),
     },
   });
+  expect(result.error.cleanupIncomplete).toBe(true);
+  const originatingError = result.error;
   await f.provider.close();
+  expect(originatingError.cleanupIncomplete).toBe(false);
   expect(await readdir(f.root)).toEqual(["bugreport test.zip"]);
+});
+
+test("provider close resolves the exact bugreport digest cleanup error", async () => {
+  const f = await fixture();
+  let allowClose = false;
+  let closeAttempts = 0;
+  const actualFs =
+    await vi.importActual<typeof import("node:fs/promises")>(
+      "node:fs/promises",
+    );
+  vi.mocked(open).mockImplementation(async (path, ...args) => {
+    const handle = await actualFs.open(path, ...args);
+    if (String(path) !== join(f.root, "bugreport test.zip")) return handle;
+    const close = handle.close.bind(handle);
+    handle.close = async () => {
+      closeAttempts += 1;
+      if (!allowClose) throw new Error("controlled digest close fault");
+      await close();
+    };
+    return handle;
+  });
+
+  const result = await f.provider.execute(f.request);
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("expected retained digest close failure");
+  expect(result.error.cleanupIncomplete).toBe(true);
+  expect(result.error.partialObservation).toMatchObject({
+    operation: f.request.operation,
+    result: {
+      local_path: join(f.root, "bugreport test.zip"),
+      bytes: 15,
+      sha256: createHash("sha256").update("bugreport-bytes").digest("hex"),
+    },
+  });
+  const originatingError = result.error;
+  expect(closeAttempts).toBe(1);
+  allowClose = true;
+  await f.provider.close();
+  expect(closeAttempts).toBe(2);
+  expect(originatingError.cleanupIncomplete).toBe(false);
+});
+
+test("keeps a bugreport error unresolved until digest and staging owners recover", async () => {
+  const f = await fixture();
+  const actualFs =
+    await vi.importActual<typeof import("node:fs/promises")>(
+      "node:fs/promises",
+    );
+  let allowDigestClose = false;
+  let digestCloseAttempts = 0;
+  let stagingRemovalAttempts = 0;
+  vi.mocked(open).mockImplementation(async (path, ...args) => {
+    const handle = await actualFs.open(path, ...args);
+    if (String(path) !== join(f.root, "bugreport test.zip")) return handle;
+    const close = handle.close.bind(handle);
+    handle.close = async () => {
+      digestCloseAttempts += 1;
+      if (!allowDigestClose) throw new Error("controlled digest close fault");
+      await close();
+    };
+    return handle;
+  });
+  vi.mocked(rm).mockImplementation(async (path, options) => {
+    if (
+      basename(String(path)).startsWith(".rea-bugreport-") &&
+      ++stagingRemovalAttempts === 1
+    )
+      throw new Error("controlled staging removal fault");
+    return actualFs.rm(path, options);
+  });
+
+  const result = await f.provider.execute(f.request);
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("expected digest and staging cleanup failure");
+  const originatingError = result.error;
+  const stagingDirectory = dirname(f.reportedPath());
+  expect(result.error.cleanupIncomplete).toBe(true);
+  expect(result.error.cleanupResources).toContain(stagingDirectory);
+  expect(result.error.cleanupResources).toContain(
+    `${join(f.root, "bugreport test.zip")} (ADB digest handle)`,
+  );
+  expect(result.error.partialObservation).toMatchObject({
+    operation: f.request.operation,
+    result: {
+      local_path: join(f.root, "bugreport test.zip"),
+      bytes: 15,
+      sha256: createHash("sha256").update("bugreport-bytes").digest("hex"),
+    },
+  });
+  expect(digestCloseAttempts).toBe(1);
+  expect(stagingRemovalAttempts).toBe(1);
+
+  const closeError = await f.provider.close().catch((cause: unknown) => cause);
+  expect(closeError).toMatchObject({ cleanupIncomplete: true });
+  expect(digestCloseAttempts).toBe(2);
+  expect(stagingRemovalAttempts).toBe(2);
+  expect(originatingError.cleanupIncomplete).toBe(true);
+  await expect(readFile(stagingDirectory)).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+  expect(await readFile(join(f.root, "bugreport test.zip"), "utf8")).toBe(
+    "bugreport-bytes",
+  );
+
+  allowDigestClose = true;
+  await f.provider.close();
+  expect(digestCloseAttempts).toBe(3);
+  expect(stagingRemovalAttempts).toBe(2);
+  expect(originatingError.cleanupIncomplete).toBe(false);
+  expect(closeError).toMatchObject({ cleanupIncomplete: false });
 });
 
 test("refuses an archive reported outside the owned staging directory", async () => {
@@ -266,4 +381,25 @@ test("preserves the primary protocol failure when staging cleanup also fails", a
   expect(result.error.cleanupResources).toHaveLength(1);
   await f.provider.close();
   expect(await readdir(f.root)).toEqual([]);
+});
+
+test("reports caller cancellation when staging removal fails after the archive is published", async () => {
+  const controller = new AbortController();
+  const reason = { request: "stop bugreport" };
+  const f = await fixture();
+  vi.mocked(rm).mockImplementationOnce(async () => {
+    controller.abort(reason);
+    throw new Error("cleanup denied");
+  });
+  const result = await f.provider.execute(f.request, {
+    signal: controller.signal,
+  });
+  if (result.ok) throw new Error("expected cancellation");
+  expect(result.error.cleanupIncomplete).toBe(true);
+  expect(result.error.cleanupPrimary).toMatchObject({
+    _tag: "AnalysisCancelledError",
+  });
+  expect(result.error.cleanupPrimary?.cause).toBe(reason);
+  await f.provider.close();
+  expect(projectAnalysisError(result.error).code).toBe("cancelled");
 });

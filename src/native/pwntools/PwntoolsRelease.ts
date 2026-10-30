@@ -1,3 +1,5 @@
+import { DEFAULT_PWNTOOLS_TIMEOUT_MS } from "../../domain/native/nativeDeadlines.js";
+
 /** Verified unchanged upstream profile for the Linux ELF adapter. */
 export const PWNTOOLS_PROVIDER_IDENTITY = {
   id: "pwntools-elf",
@@ -8,12 +10,17 @@ export const PWNTOOLS_PROVIDER_IDENTITY = {
 export const PWNTOOLS_MEMORY_FAILURE_EXIT = 75;
 /** Bridge-reserved status for an observed EFBIG failure without a complete reply. */
 export const PWNTOOLS_FILE_SIZE_FAILURE_EXIT = 76;
-/** Complete evidence budgets; address-space is separate from resident memory. */
+
+/**
+ * Complete evidence budgets; address-space is separate from resident memory.
+ * `timeoutMs` is the omitted `pwntools_timeout_ms`. cpuSeconds and the byte
+ * allowances stay fixed.
+ */
 export const PWNTOOLS_LIMITS = {
   inputBytes: 32 * 1024 * 1024,
   outputBytes: 64 * 1024 * 1024,
   diagnosticBytes: 1024 * 1024,
-  timeoutMs: 30_000,
+  timeoutMs: DEFAULT_PWNTOOLS_TIMEOUT_MS,
   addressSpaceBytes: 3 * 1024 * 1024 * 1024,
   cpuSeconds: 30,
 } as const;

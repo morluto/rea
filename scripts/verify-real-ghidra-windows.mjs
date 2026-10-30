@@ -1,9 +1,11 @@
 #!/usr/bin/env node
+import { windowsGhidraFixtureOptions } from "./lib/ghidra-windows-fixture-options.mjs";
 
 import { access, readFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { parseConfig } from "../dist/config/parseConfig.js";
 import { resolveGhidraAnalysisProfile } from "../dist/ghidra/GhidraAnalysisProfile.js";
 import { GhidraClient } from "../dist/ghidra/GhidraClient.js";
 import {
@@ -16,18 +18,23 @@ import {
   parseGhidraInventoryInput,
   parseGhidraInventoryResult,
 } from "../dist/ghidra/GhidraInventoryValues.js";
-import { inspectGhidraInstallation } from "../dist/ghidra/GhidraInstallation.js";
-import { SUPPORTED_GHIDRA_VERSION } from "../dist/ghidra/GhidraInstallationPolicy.js";
+import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
+import { SUPPORTED_GHIDRA_VERSION } from "../dist/ghidra/GhidraReleasePolicy.js";
 import { GhidraHeadlessLauncher } from "../dist/ghidra/GhidraLauncher.js";
-import { GHIDRA_PROVIDER_IDENTITY } from "../dist/ghidra/GhidraProviderCapabilities.js";
-import { windowsP0Capabilities } from "../dist/ghidra/GhidraProviderCapabilities.js";
+import {
+  GHIDRA_PROVIDER_IDENTITY,
+  WINDOWS_P0_NATIVE_PE_ARCHITECTURES,
+  windowsP0Capabilities,
+} from "../dist/ghidra/GhidraProviderCapabilities.js";
 import {
   GHIDRA_MUTATING_OPERATIONS,
   GHIDRA_SESSION_CAPABILITIES,
 } from "../dist/ghidra/GhidraSessionValues.js";
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
 import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
+import { resolveGhidraVerifierTimeouts } from "./lib/ghidra-verifier-timeouts.mjs";
 import { verifyGhidraCompactReferences } from "./lib/real-ghidra-compact-references.mjs";
+import { verifyGhidraBorlandSeh } from "./lib/real-ghidra-borland-seh.mjs";
 import { verifyGhidraFileOffsets } from "./lib/real-ghidra-file-offsets.mjs";
 import { verifyWindowsGhidraByteSearch } from "./lib/ghidra-windows-byte-search.mjs";
 
@@ -47,11 +54,12 @@ if (
 )
   throw new Error("Windows Ghidra must not advertise database mutation");
 const installDir = process.env.GHIDRA_INSTALL_DIR;
+const { clientOptions } = resolveGhidraVerifierTimeouts(process.env);
 if (installDir === undefined || !isAbsolute(installDir))
   throw new Error(
     "Set GHIDRA_INSTALL_DIR to the absolute root of Ghidra 12.1.4.",
   );
-const installation = inspectGhidraInstallation({
+const installation = await inspectVerifierGhidraInstallation({
   environment: process.env,
   installDir,
   ...(process.env.JAVA_HOME === undefined
@@ -68,15 +76,11 @@ if (
   );
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
-const architecture = process.argv.includes("--x86") ? "x86" : "x86_64";
-const dllFixture = process.argv.includes("--dll");
+const fixture = windowsGhidraFixtureOptions(process.argv.slice(2));
+const architecture = fixture.architecture;
+const dllFixture = fixture.dll;
 const role = dllFixture ? "shared-library" : "application";
-const targetPath = resolve(
-  root,
-  "build",
-  "fixtures",
-  `rea-ghidra-windows${architecture === "x86" ? "-x86" : ""}.${dllFixture ? "dll" : "exe"}`,
-);
+const targetPath = resolve(root, "build", "fixtures", fixture.filename);
 const target = await parseBinaryTarget(targetPath);
 if (
   !target.ok ||
@@ -88,10 +92,15 @@ if (
   throw new Error(
     `Controlled Windows fixture failed admission: ${JSON.stringify(target)}`,
   );
+const configuration = parseConfig(process.env);
+if (!configuration.ok) throw configuration.error;
 const profile = await resolveGhidraAnalysisProfile(
   target.value,
   GHIDRA_PROVIDER_IDENTITY,
   installation,
+  undefined,
+  undefined,
+  configuration.value.ghidraDisabledAnalyzers,
 );
 if (!profile.ok || profile.value.profile === null)
   throw new Error("Windows Ghidra profile could not be committed");
@@ -101,6 +110,7 @@ if (profile.value.profile.parameters.executable_role !== role)
 const client = new GhidraClient({
   platform: installation.platform,
   launcher: new GhidraHeadlessLauncher({
+    configurationDirectoryName: installation.configurationDirectoryName,
     environment: process.env,
     analyzeHeadlessPath: installation.analyzeHeadlessPath,
     ...(process.env.JAVA_HOME === undefined
@@ -110,12 +120,16 @@ const client = new GhidraClient({
       new URL("../bridge/ghidra/ReaGhidraBridge.java", import.meta.url),
     ),
     platform: "win32",
+    ...(configuration.value.ghidraDisabledAnalyzers === undefined
+      ? {}
+      : { disabledAnalyzers: configuration.value.ghidraDisabledAnalyzers }),
   }),
   targetPath: target.value.path,
   targetSha256: target.value.sha256,
   transport: "authenticated-loopback-tcp",
   providerVersion: SUPPORTED_GHIDRA_VERSION,
   profileDigest: profile.value.profile.digest,
+  ...clientOptions,
 });
 
 let coordinates;
@@ -130,8 +144,8 @@ try {
     target.value.sha256,
     profile.value.profile.digest,
   );
-  const languagePrefix = architecture === "x86" ? "x86:LE:32:" : "x86:LE:64:";
-  if (!started.value.target.language_id.startsWith(languagePrefix))
+  const languageId = fixture.languageId;
+  if (started.value.target.language_id !== languageId)
     throw new Error("Windows fixture imported with the wrong Ghidra language");
   coordinates = client.diagnostics();
   assertRuntimeCoordinates(coordinates, target.value.sha256);
@@ -152,12 +166,22 @@ try {
     !Array.isArray(strings)
   )
     throw new Error("Windows Ghidra inventory proof was incomplete");
+  const overview = await inventory("read_binary_inventory_summary", {});
+  if (
+    overview.document !== documents[0] ||
+    overview.procedure_count !== procedures.length ||
+    overview.string_count !== strings.length ||
+    overview.segment_count !== segments.length
+  )
+    throw new Error(
+      "Windows Ghidra overview aggregates disagree with inventories",
+    );
   const procedure = procedures.find(
     (item) => item.procedure?.external === false,
   );
   if (procedure === undefined)
     throw new Error("Windows Ghidra fixture exposed no local procedure");
-  const calleeAddress = architecture === "x86" ? 0x401010n : 0x140001010n;
+  const calleeAddress = BigInt(fixture.calleeAddress);
   const callee = procedures.find(
     (item) => BigInt(item.address) === calleeAddress,
   );
@@ -171,7 +195,7 @@ try {
       "Windows fixture decompilation lost its known return value",
     );
   if (dllFixture) {
-    const callerAddress = architecture === "x86" ? "0x401000" : "0x140001000";
+    const callerAddress = fixture.callerAddress;
     const callees = await functionOperation("procedure_callees", {
       procedure: callerAddress,
     });
@@ -219,7 +243,7 @@ try {
   const byteSearch = await verifyWindowsGhidraByteSearch({
     invoke: inventory,
     sourceBytes,
-    architecture,
+    imageBase: fixture.imageBase,
   });
 
   for (const operation of [
@@ -264,12 +288,20 @@ try {
 
   // The reference controls occupy the EXE fixture's additional function.
   // DLL fixtures retain their independent exported-caller/return controls.
-  const compactReferences = dllFixture
-    ? null
-    : await verifyGhidraCompactReferences(
-        functionOperation,
-        architecture === "x86",
-      );
+  // ARM/ARM64 fixtures verify function entry, decompiler readback and the
+  // exported caller/callee relationship; the x86/x64 compact-reference
+  // value-flow battery has no ARM/ARM64 instruction encoding in this fixture.
+  const compactReferences =
+    dllFixture || architecture === "arm" || architecture === "arm64"
+      ? null
+      : await verifyGhidraCompactReferences(
+          functionOperation,
+          architecture === "x86",
+        );
+  const borlandSeh =
+    architecture === "x86" && !dllFixture
+      ? await verifyGhidraBorlandSeh(functionObservationOperation, true)
+      : null;
   report = {
     ok: true,
     provider: { id: "ghidra", version: SUPPORTED_GHIDRA_VERSION },
@@ -286,15 +318,17 @@ try {
     byte_search: byteSearch,
     cleanup: "complete",
     compact_references: compactReferences,
+    borland_seh: borlandSeh,
     native_controls: {
       job_object: true,
       protected_dacl: true,
       handle_admission: true,
     },
+    supported_target_architectures: [...WINDOWS_P0_NATIVE_PE_ARCHITECTURES],
     limitations: [
       "approved-non-sensitive-fixtures-only",
       "windows-x64-local-ntfs-only",
-      "native-x86-and-x86-64-pe-applications-and-dlls-only",
+      "native-pe-applications-and-dlls-only",
       "no-gui-or-mutation-authority",
     ],
   };
@@ -314,11 +348,24 @@ try {
 }
 if (report === undefined)
   throw new Error("Windows Ghidra report was not produced");
-report.file_offsets = await verifyGhidraFileOffsets(
-  targetPath,
-  resolve(root, "scripts", "rea.mjs"),
-  architecture === "x86" ? "0x401010" : "0x140001010",
-);
+try {
+  report.file_offsets = await verifyGhidraFileOffsets(
+    targetPath,
+    resolve(root, "scripts", "rea.mjs"),
+    fixture.calleeAddress,
+  );
+} catch (cause) {
+  // Preserve completed real-provider facts if a separate adapter proof fails.
+  process.stdout.write(
+    `${JSON.stringify({
+      ...report,
+      ok: false,
+      primary_verification: "complete",
+      file_offsets: { status: "incomplete", failure_code: cause.code ?? null },
+    })}\n`,
+  );
+  throw cause;
+}
 process.stdout.write(
   `${JSON.stringify({ verifier_run: await completeVerifierRun(verifierRun), ...report })}\n`,
 );
@@ -331,10 +378,15 @@ async function inventory(operation, parameters) {
   const result = parseGhidraInventoryResult(operation, called.value);
   if (!result.ok) throw result.error;
   observed.add(operation);
-  return result.value;
+  return result.value.value;
 }
 
 async function functionOperation(operation, parameters) {
+  const observation = await functionObservationOperation(operation, parameters);
+  return observation.value;
+}
+
+async function functionObservationOperation(operation, parameters) {
   const input = parseGhidraFunctionInput(operation, parameters);
   if (!input.ok) throw input.error;
   const called = await client.callTool(operation, input.value);
@@ -342,7 +394,7 @@ async function functionOperation(operation, parameters) {
   const result = parseGhidraFunctionResult(operation, called.value);
   if (!result.ok) throw result.error;
   observed.add(operation);
-  return result.value.value;
+  return result.value;
 }
 
 function assertSession(session, targetSha256, profileDigest) {

@@ -1,16 +1,17 @@
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { z } from "incur";
-import { resolve } from "node:path";
 import { FirmwareAnalysisService } from "../application/firmware/FirmwareAnalysisService.js";
 import { createFirmwareAnalysisProvider } from "../composition/firmware.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import { firmwareInputSchemas } from "../domain/firmware/firmwareAnalysis.js";
 import { localPathStringSchema } from "../domain/localPath.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { FirmwareOperation } from "../domain/firmware/firmwareAnalysis.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
+import { absoluteCallerPath } from "../filesystem/callerPath.js";
+import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
 
 /** One-shot firmware CLI commands backed by the same workflows as MCP. */
 export const registerFirmwareCommands = (
@@ -27,16 +28,19 @@ export const registerFirmwareCommands = (
     name: string,
     operation: FirmwareOperation,
     input: unknown,
+    callerPath: string,
   ) =>
     withCommandCancellation((signal) =>
-      logCliCommand(logger, name, async () => {
-        try {
-          const result = await service.execute(operation, input, { signal });
-          return result.ok ? result.value : projectAnalysisError(result.error);
-        } finally {
-          await service.close();
-        }
-      }),
+      logCliCommand(logger, name, () =>
+        finishCliEvidenceCommand(
+          callerPath,
+          () => service.execute(operation, input, { signal }),
+          service,
+          operation === "inspect_firmware_regions" ? "binwalk" : "unblob",
+          operation,
+          signal,
+        ).then(projectCliAnalysisResult),
+      ),
     );
   const path = localPathStringSchema.describe(
     "Local firmware path; never executed",
@@ -45,12 +49,19 @@ export const registerFirmwareCommands = (
     description:
       "Inspect firmware signature candidates without extracting them",
     args: z.object({ path }),
-    run: ({ args }) =>
+    options: z.object({ analysisTimeoutMs: extractInput.analysis_timeout_ms }),
+    run: ({ args, options }) =>
       execute(
         CLI_COMMANDS.inspectFirmwareRegions,
         "inspect_firmware_regions",
         // CLI paths are operator-relative; resolve before shared validation.
-        { path: resolve(args.path) },
+        {
+          path: absoluteCallerPath(args.path),
+          ...(options.analysisTimeoutMs === undefined
+            ? {}
+            : { analysis_timeout_ms: options.analysisTimeoutMs }),
+        },
+        args.path,
       ),
   });
   cli.command(CLI_COMMANDS.extractFirmware, {
@@ -72,17 +83,28 @@ export const registerFirmwareCommands = (
       maxDepth: extractInput.max_depth,
       maxOutputBytes: extractInput.max_output_bytes,
       maxOutputFiles: extractInput.max_output_files,
+      publicationTimeoutMs: extractInput.publication_timeout_ms,
+      analysisTimeoutMs: extractInput.analysis_timeout_ms,
     }),
     run: ({ args, options }) =>
-      execute(CLI_COMMANDS.extractFirmware, "extract_firmware", {
-        path: resolve(args.path),
-        output_directory: resolve(args.outputDirectory),
-        ...(options.offset === undefined && options.length === undefined
-          ? {}
-          : { range: { offset: options.offset, length: options.length } }),
-        max_depth: options.maxDepth,
-        max_output_bytes: options.maxOutputBytes,
-        max_output_files: options.maxOutputFiles,
-      }),
+      execute(
+        CLI_COMMANDS.extractFirmware,
+        "extract_firmware",
+        {
+          path: absoluteCallerPath(args.path),
+          output_directory: absoluteCallerPath(args.outputDirectory),
+          ...(options.offset === undefined && options.length === undefined
+            ? {}
+            : { range: { offset: options.offset, length: options.length } }),
+          max_depth: options.maxDepth,
+          max_output_bytes: options.maxOutputBytes,
+          max_output_files: options.maxOutputFiles,
+          publication_timeout_ms: options.publicationTimeoutMs,
+          ...(options.analysisTimeoutMs === undefined
+            ? {}
+            : { analysis_timeout_ms: options.analysisTimeoutMs }),
+        },
+        args.path,
+      ),
   });
 };

@@ -89,18 +89,21 @@ describe("external Hopper process exit confirmation", () => {
     expect(released).toEqual([undefined]);
   });
 
-  it("retains cleanup when process identity cannot be verified", async () => {
-    const resources = externalApplicationResources();
-    const releaseTransport = vi.fn();
-    await confirmExternalApplicationExit(
-      resources,
-      undefined,
-      releaseTransport,
-      async () => "unverified",
-    );
-    expect(resources.shutdownConfirmed).toBe(false);
-    expect(releaseTransport).not.toHaveBeenCalled();
-  });
+  it.each(["present", "unverified"] as const)(
+    "does not confirm an external application while its exact identity is %s",
+    async (observation) => {
+      const resources = externalApplicationResources();
+      const releaseTransport = vi.fn();
+      await confirmExternalApplicationExit(
+        resources,
+        undefined,
+        releaseTransport,
+        async () => observation,
+      );
+      expect(resources.shutdownConfirmed).toBe(false);
+      expect(releaseTransport).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe("Hopper shutdown rejection diagnostics", () => {

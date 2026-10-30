@@ -1,11 +1,13 @@
 import { expect, it } from "vitest";
 import { GoBinaryService } from "./GoBinaryService.js";
 import {
+  AnalysisCapabilityUnavailableError,
   AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
 import type { GoBinary } from "../../domain/go/goBinary.js";
+import { parseEvidence } from "../../domain/evidence.js";
 import { ok } from "../../domain/result.js";
 
 const identity = {
@@ -26,6 +28,7 @@ const report: GoBinary = {
 it("rejects invalid paths and extra caller arguments before invoking the reader", async () => {
   let calls = 0;
   const service = new GoBinaryService({
+    close: async () => {},
     identity,
     inspect: () => {
       calls += 1;
@@ -44,8 +47,29 @@ it("rejects invalid paths and extra caller arguments before invoking the reader"
   expect(calls).toBe(0);
 });
 
+it("requires a complete Evidence retention path before starting summary inspection", async () => {
+  let calls = 0;
+  const service = new GoBinaryService({
+    close: async () => {},
+    identity,
+    inspect: async () => {
+      calls++;
+      return ok(report);
+    },
+  });
+  const result = await service.inspect({
+    path: report.artifact.path,
+    detail: "summary",
+  });
+  expect(result.ok).toBe(false);
+  if (!result.ok)
+    expect(result.error).toBeInstanceOf(AnalysisCapabilityUnavailableError);
+  expect(calls).toBe(0);
+});
+
 it("preserves unsupported subject architectures and does not duplicate metadata", async () => {
   const service = new GoBinaryService({
+    close: async () => {},
     identity,
     inspect: () => Promise.resolve(ok(report)),
   });
@@ -92,6 +116,7 @@ it("preserves byte-valued build metadata and validates compiler source lengths",
     limitations: ["Some embedded strings contain non-UTF-8 bytes."],
   };
   const result = await new GoBinaryService({
+    close: async () => {},
     identity,
     inspect: () => Promise.resolve(ok(partial)),
   }).inspect({ path: report.artifact.path });
@@ -107,6 +132,7 @@ it("preserves byte-valued build metadata and validates compiler source lengths",
     },
   };
   const invalid = await new GoBinaryService({
+    close: async () => {},
     identity,
     inspect: () => Promise.resolve(ok(mismatched)),
   }).inspect({ path: report.artifact.path });
@@ -142,6 +168,7 @@ it("refuses reader identity changes and invalid original source ranges", async (
     outside,
   ]) {
     const result = await new GoBinaryService({
+      close: async () => {},
       identity,
       inspect: () => Promise.resolve(ok(value)),
     }).inspect({ path: report.artifact.path });
@@ -152,12 +179,14 @@ it("refuses reader identity changes and invalid original source ranges", async (
 
 it("honors cancellation before reading and after a completed observation", async () => {
   const controller = new AbortController();
+  const reason = { request: "late Go cancellation" };
   let calls = 0;
   const service = new GoBinaryService({
+    close: async () => {},
     identity,
     inspect: () => {
       calls += 1;
-      controller.abort();
+      controller.abort(reason);
       return Promise.resolve(ok(report));
     },
   });
@@ -166,8 +195,14 @@ it("honors cancellation before reading and after a completed observation", async
     { signal: controller.signal },
   );
   expect(completed.ok).toBe(false);
-  if (!completed.ok)
+  if (!completed.ok) {
     expect(completed.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(completed.error.cause).toBe(reason);
+    expect(parseEvidence(completed.error.partialObservation)).toMatchObject({
+      operation: "inspect_go_binary",
+      normalized_result: report,
+    });
+  }
   const before = await service.inspect(
     { path: report.artifact.path },
     { signal: controller.signal },
@@ -176,3 +211,59 @@ it("honors cancellation before reading and after a completed observation", async
   if (!before.ok) expect(before.error).toBeInstanceOf(AnalysisCancelledError);
   expect(calls).toBe(1);
 });
+
+it("keeps malformed provider output ahead of a late cancellation", async () => {
+  const controller = new AbortController();
+  const malformed = {
+    ...report,
+    artifact: { ...report.artifact, path: "/other" },
+  };
+  const result = await new GoBinaryService({
+    close: async () => {},
+    identity,
+    inspect: () => {
+      controller.abort();
+      return Promise.resolve(ok(malformed));
+    },
+  }).inspect({ path: report.artifact.path }, { signal: controller.signal });
+  expect(result.ok).toBe(false);
+  if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisOutputError);
+});
+
+it.each([
+  null,
+  "caller cancellation",
+  { request: "opaque caller value" },
+  new Error("caller failure"),
+  new AnalysisOutputError("caller_operation", "caller-owned cleanup", {
+    cleanup: {
+      reason: "unresolved caller resource",
+      resources: ["caller resource"],
+    },
+  }),
+])(
+  "preserves an opaque admission cancellation reason without invoking the reader: %j",
+  async (reason) => {
+    const controller = new AbortController();
+    controller.abort(reason);
+    let calls = 0;
+    const service = new GoBinaryService({
+      close: async () => {},
+      identity,
+      inspect: async () => {
+        calls += 1;
+        throw new Error("cancelled admission must not invoke the reader");
+      },
+    });
+    const result = await service.inspect(null, { signal: controller.signal });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected cancelled admission");
+    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(result.error.cause).toBe(reason);
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(result.error.partialObservation).toBeUndefined();
+    expect(calls).toBe(0);
+    if (reason instanceof AnalysisOutputError)
+      expect(reason.cleanupIncomplete).toBe(true);
+  },
+);

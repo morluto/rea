@@ -107,8 +107,8 @@ it("keeps valid JVM classes from being classified as Mach-O while identifying FA
     },
     {
       logical_path: "pkg/Big.class",
-      artifact_kind: "unknown",
-      artifact_format: "unknown",
+      artifact_kind: "resource",
+      artifact_format: "file",
     },
   ]);
   const jarClassIds = new Set(
@@ -121,7 +121,7 @@ it("keeps valid JVM classes from being classified as Mach-O while identifying FA
       .filter(({ artifact_id }) => jarClassIds.has(artifact_id))
       .map(({ format }) => format)
       .sort(),
-  ).toEqual(["file", "unknown"]);
+  ).toEqual(["file", "file"]);
 
   const mixedPath = join(directory, "mixed.zip");
   await writeFile(mixedPath, await archive([...javaEntries, ...fatControls]));
@@ -135,11 +135,10 @@ it("keeps valid JVM classes from being classified as Mach-O while identifying FA
     ),
   );
   for (const [name] of javaEntries)
-    expect(formatsByPath.get(name)).toEqual(
-      name === "Hello.class"
-        ? { artifact_kind: "resource", artifact_format: "file" }
-        : { artifact_kind: "unknown", artifact_format: "unknown" },
-    );
+    expect(formatsByPath.get(name)).toEqual({
+      artifact_kind: "resource",
+      artifact_format: "file",
+    });
   for (const [name] of fatControls)
     expect(formatsByPath.get(name)).toEqual({
       artifact_kind: "executable",

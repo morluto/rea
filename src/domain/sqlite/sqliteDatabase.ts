@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { localPathStringSchema } from "../localPath.js";
+import { absoluteLocalPathStringSchema } from "../localPath.js";
 import type { JsonValue } from "../jsonValue.js";
 
 /** Format identity is shared by discovery, catalog, and observed SQLite results. */
@@ -9,10 +9,19 @@ export const SQLITE_PROVIDER_IDENTITY = {
   version: null,
 } as const;
 
+/** SQLite exposes this table as a row source but omits its own catalog entry. */
+export const SQLITE_SCHEMA_TABLE_NAME = "sqlite_schema";
+export const sqliteSchemaHasObjectDeclaration = (name: string): boolean =>
+  name !== SQLITE_SCHEMA_TABLE_NAME;
+
 /** Default ordinary-table sample size when the caller selects a table. */
 export const SQLITE_ROW_LIMIT_DEFAULT = 20;
+/** Execution budget, bounded by the runtime's signed 32-bit timer range. */
+export const DEFAULT_SQLITE_WORKER_TIMEOUT_MS = 30_000;
+export const MAX_SQLITE_WORKER_TIMEOUT_MS = 2_147_483_647;
+const workerTimeout = z.number().int().min(1).max(MAX_SQLITE_WORKER_TIMEOUT_MS);
 
-const nonnegative = z.number().int().nonnegative();
+const nonnegative = z.int().nonnegative();
 const hex = z.string().regex(/^(?:[0-9a-f]{2})*$/);
 const encoding = z.enum(["UTF-8", "UTF-16le", "UTF-16be"]);
 const artifactSchema = z.strictObject({
@@ -24,9 +33,14 @@ const artifactSchema = z.strictObject({
 /** Inspect one frozen database and its sibling WAL, with optional ordinary-table rows. */
 export const inspectSqliteDatabaseInputSchema = z
   .strictObject({
-    path: localPathStringSchema.describe(
+    path: absoluteLocalPathStringSchema.describe(
       "Absolute path to an offline SQLite database snapshot",
     ),
+    worker_timeout_ms: workerTimeout
+      .optional()
+      .describe(
+        `Deadline in milliseconds for worker startup, queries and reply writing (default ${String(DEFAULT_SQLITE_WORKER_TIMEOUT_MS)}), not snapshot acquisition or the whole call. Allow client headroom for acquisition, reply reads, cleanup and delivery. Fixed byte/heap limits do not change.`,
+      ),
     table: z
       .string()
       .optional()
@@ -44,10 +58,9 @@ export const inspectSqliteDatabaseInputSchema = z
       .enum(["inventory", "selected_table", "database"])
       .optional()
       .describe(
-        "Default: compact inventory without a table, or detailed selected-table schema with a table. Database explicitly expands all stored declarations and supported columns.",
+        "Default: compact inventory without a table, or detailed selected-table schema with a table. selected_table requires table. Database explicitly expands all stored declarations and supported columns.",
       ),
     row_limit: z
-      .number()
       .int()
       .min(1)
       .optional()
@@ -55,6 +68,7 @@ export const inspectSqliteDatabaseInputSchema = z
         "Selected-table sample size, default 20; subject to byte and worker resource limits",
       ),
   })
+  .describe("When schema_scope is selected_table, also provide table.")
   .superRefine((input, context) => {
     if (input.row_limit !== undefined && input.table === undefined)
       context.addIssue({
@@ -113,6 +127,11 @@ export const sqliteDatabaseSchema = z
       name: z.literal("SQLite"),
       version: z.string().min(1),
     }),
+    worker_timeout_ms: workerTimeout
+      .exactOptional()
+      .describe(
+        "Actual parent-supervised worker deadline in milliseconds; absent in historical Evidence means unknown, not the default.",
+      ),
     database_encoding: encoding,
     schema: z.strictObject({
       scope: z.enum(["inventory", "selected_table", "database"]),
@@ -184,7 +203,7 @@ export const sqliteDatabaseSchema = z
         table: z.string(),
         columns: z.array(z.string()),
         values: z.array(z.array(sqliteValueSchema)),
-        row_limit: z.number().int().min(1),
+        row_limit: z.int().min(1),
         returned_rows: nonnegative,
         truncated: z.boolean(),
         order: z.literal("unspecified"),
@@ -219,6 +238,9 @@ export const sqliteInspectionParameters = (
   input: InspectSqliteDatabaseInput,
 ): Readonly<Record<string, JsonValue>> => ({
   path: input.path,
+  ...(input.worker_timeout_ms === undefined
+    ? {}
+    : { worker_timeout_ms: input.worker_timeout_ms }),
   ...(input.table === undefined ? {} : { table: input.table }),
   ...(input.columns === undefined ? {} : { columns: input.columns }),
   ...(input.schema_scope === undefined

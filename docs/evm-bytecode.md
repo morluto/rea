@@ -19,8 +19,10 @@ rea inspect-evm-interface ./runtime.bin raw --json
 
 Initial real verification covers flat legacy bytecode on Linux x64 and unchanged
 bundled EVMole 0.9.3. EOF-style EF00 containers return `unsupported_target`,
-with the selected path and format reason. Provider/configuration failures retain
-their distinct unavailable-provider or capability classification.
+with the selected path and format reason. Selected-path resolution errors
+`ENOENT`, `ENOTDIR`, `ELOOP`, and `ENAMETOOLONG` are `invalid_request` path
+issues. Permission, resource, cancellation, provider, and cleanup failures retain
+their distinct classifications.
 The host must already provide util-linux `prlimit`, normally `/usr/bin/prlimit`;
 `REA_EVM_PRLIMIT_COMMAND` can select another absolute executable. REA installs
 no system tools and changes no user configuration. [Upstream provenance and
@@ -43,7 +45,8 @@ license](https://github.com/morluto/rea/blob/main/third_party/evmole/README.md) 
   map from the selected bytes. Integers use decimal strings; byte strings use hex,
   and scalar keys retain their types. The recorded offset/length addresses the
   original bytecode, so summary delivery does not copy an opaque CBOR payload.
-  Nested containers have partial scalar coverage; unsupported or malformed
+  Nested containers have partial scalar coverage; map keys are still checked for
+  duplicates throughout nested maps and arrays. Unsupported or malformed
   candidates report `not-decoded` with a diagnostic. Decoding is bounded to 64
   container levels and the terminal payload's encoded size.
 - An unavailable trailer does not prove metadata absence or Solidity origin.
@@ -105,9 +108,19 @@ CLI keeps its existing complete result.
 ## Resource and lifecycle limits
 
 Inputs are limited to 4 MiB, complete replies to 16 MiB and combined diagnostic
-output to 1 MiB. An owned worker has a 256 MiB JavaScript heap, 3 GiB virtual
-address-space limit, 30 CPU seconds and a 30-second command deadline. Virtual
-address space differs from resident memory. The worker retains inherited tighter
+output to 1 MiB. An owned worker has a 256 MiB JavaScript heap; its profile
+maxima are 3 GiB virtual address space and 30 CPU seconds, with tighter inherited
+limits retained. The worker command deadline is
+`timeout_ms` (default 30000 ms, integer 1 through 2147483647) on the next call,
+or `--timeout-ms` on `rea inspect-evm-interface`. Omission keeps 30000 ms.
+Those byte, address-space, and CPU ceilings have no runtime override, and
+`timeout_ms` does not raise them. An oversized selected carrier returns a
+non-retryable `resource_constraint` with resource `file-size` and its fixed
+input allowance in `reported_limits.maximum_input_bytes`.
+Complete-reply allowance refusals use the same non-retryable resource family,
+with `reported_limits.maximum_reply_bytes`; malformed JSON remains unreadable
+output. This refusal leaves no complete report to retrieve through another
+delivery channel. Virtual address space differs from resident memory. The worker retains inherited tighter
 soft/hard limits, reports its configured soft limits inline and leaves hard limits
 unchanged. WASM trap reservations are disabled
 so the engine can run within that virtual limit; actual memory is not equated to

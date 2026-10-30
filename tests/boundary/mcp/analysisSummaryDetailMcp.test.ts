@@ -1,3 +1,6 @@
+import { cliTest } from "../../support/cli/cliFixture.js";
+import { parseEvidence } from "../../../src/domain/evidence.js";
+import { byteEntropySummaryViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -171,3 +174,96 @@ it("returns the summary of retained binary layout Evidence", async () => {
     normalized_result: { kind: "page", parent_evidence_id: parentId },
   });
 });
+
+cliTest(
+  "retains complete entropy Evidence, summarizes runs and matches CLI JSON",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-entropy-summary-");
+    const path = join(root, "bytes");
+    await writeFile(path, Buffer.alloc(65536));
+    const client = await connect(true);
+    const input = { path, block_size: 256, offset: 7, length: 32769 };
+    const complete = await client.callTool({
+      name: "inspect_byte_entropy",
+      arguments: input,
+    });
+    expect(complete.isError).not.toBe(true);
+    const evidence = parseEvidence(complete.structuredContent);
+    const cliResult = await cli.run({
+      arguments: [
+        "inspect-byte-entropy",
+        path,
+        "--block-size",
+        "256",
+        "--offset",
+        "7",
+        "--length",
+        "32769",
+        "--json",
+      ],
+      environment: process.env,
+    });
+    expect(cliResult.exitCode).toBe(0);
+    expect(cliResult.signal).toBeNull();
+    const cliEvidence = parseEvidence(cliResult.json);
+    expect(cliEvidence.normalized_result).toEqual(evidence.normalized_result);
+    expect(cliEvidence.evidence_id).toBe(evidence.evidence_id);
+    const summary = await client.callTool({
+      name: "inspect_byte_entropy",
+      arguments: { ...input, detail: "summary" },
+    });
+    expect(summary.isError).not.toBe(true);
+    const view = byteEntropySummaryViewResultSchema.parse(
+      parseEvidence(summary.structuredContent).normalized_result,
+    );
+    expect(view).toMatchObject({
+      parent_evidence_id: evidence.evidence_id,
+      summary: {
+        file_entropy: 0,
+        block_count: 129,
+        run_count: 1,
+        top_runs: [{ offset: 7, length: 32769, classification: "low" }],
+      },
+    });
+    const retained = await client.callTool({
+      name: "inspect_analysis_view",
+      arguments: {
+        source: {
+          kind: "retained-evidence",
+          evidence_id: view.parent_evidence_id,
+        },
+        view: { kind: "summary" },
+      },
+    });
+    expect(retained.isError).not.toBe(true);
+    expect(parseEvidence(retained.structuredContent).normalized_result).toEqual(
+      view,
+    );
+    expect(textBytes(summary.content)).toBeLessThan(
+      textBytes(complete.content),
+    );
+    expect(
+      (
+        await client.callTool({
+          name: "inspect_analysis_view",
+          arguments: {
+            source: {
+              kind: "retained-evidence",
+              evidence_id: view.parent_evidence_id,
+            },
+            view: { kind: "page", collection: "sections", offset: 0, limit: 1 },
+          },
+        })
+      ).isError,
+    ).toBe(true);
+    const fixed = await connect(false);
+    expect(
+      (
+        await fixed.callTool({
+          name: "inspect_byte_entropy",
+          arguments: { path, detail: "summary" },
+        })
+      ).isError,
+    ).toBe(true);
+  },
+);

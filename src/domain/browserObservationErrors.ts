@@ -24,7 +24,9 @@ export type BrowserObservationFailureReason =
   | "invalid_endpoint_response"
   | "target_not_found"
   | "target_not_allowed"
+  | "service_worker_blocked"
   | "target_changed"
+  | "target_session_detached"
   | "protocol_error"
   | "disconnected"
   | "payload_limit"
@@ -33,5 +35,4 @@ export type BrowserObservationFailureReason =
   | "process_ownership_unavailable"
   | "cleanup_failed"
   | "cancelled"
-  | "timeout"
-  | "secret_unavailable";
+  | "timeout";

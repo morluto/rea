@@ -9,7 +9,7 @@ import type {
   BridgeSession,
 } from "../../../src/hopper/BridgeLauncher.js";
 import { HopperClient } from "../../../src/hopper/HopperClient.js";
-import { acquireHopperTargetLease } from "../../../src/hopper/HopperTargetLease.js";
+import { acquireHopperTargetLease } from "../../../src/process/HopperLease.js";
 import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
 import { hopperFixturePath } from "../providers/hopper/hopperClient.fixture.js";
@@ -129,7 +129,12 @@ it("retains Hopper process handles, private files, and lease until an actual ses
   if (runtime === undefined)
     throw new Error("Fixture did not capture its runtime");
   await access(runtime);
-  expect(launcher.cleanupAttempts).toBe(1);
+  // The fixture exits after its shutdown acknowledgement. When the supervisor
+  // observes that exit only after a failed verification began, it verifies
+  // once more; a failed stop never runs more than two verifications.
+  const firstCloseAttempts = launcher.cleanupAttempts;
+  expect(firstCloseAttempts).toBeGreaterThanOrEqual(1);
+  expect(firstCloseAttempts).toBeLessThanOrEqual(2);
   expect(await launcher.acquire("other-owner")).toMatchObject({
     acquired: false,
   });
@@ -138,10 +143,11 @@ it("retains Hopper process handles, private files, and lease until an actual ses
     error: { cleanupIncomplete: true },
   });
   expect(clientsCreated).toBe(1);
-  expect(launcher.cleanupAttempts).toBe(2);
+  // The launcher exit was already observed, so the retry has no new evidence.
+  expect(launcher.cleanupAttempts).toBe(firstCloseAttempts + 1);
   launcher.cleanupAllowed = true;
   expect(await session.close()).toEqual(resultOk(null));
-  expect(launcher.cleanupAttempts).toBe(3);
+  expect(launcher.cleanupAttempts).toBe(firstCloseAttempts + 2);
   await expect(access(runtime)).rejects.toMatchObject({ code: "ENOENT" });
   const replacement = await launcher.acquire("replacement-owner");
   expect(replacement.acquired).toBe(true);

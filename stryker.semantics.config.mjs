@@ -42,7 +42,8 @@ export default {
       },
       {
         kind: "declaration",
-        name: "createRizinCommandTimeoutError",
+        name: "snapshot",
+        withinBlockWithBinding: "output",
       },
       {
         kind: "declaration",

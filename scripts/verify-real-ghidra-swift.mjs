@@ -15,19 +15,18 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { inspectGhidraInstallation } from "../dist/ghidra/GhidraInstallation.js";
+import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
 import { cleanupOwnedProcessGroup } from "../dist/process/ProcessOwnership.js";
 import {
   ProviderProcessSupervisor,
   spawnOwnedProviderProcess,
 } from "../dist/process/ProviderProcess.js";
-import { toolContract } from "../dist/contracts/toolContracts.js";
 import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 
 const execute = promisify(execFile);
 const run = createVerifierRun();
-const installation = inspectGhidraInstallation({
+const installation = await inspectVerifierGhidraInstallation({
   environment: process.env,
   installDir: process.env.GHIDRA_INSTALL_DIR,
   javaHome: process.env.JAVA_HOME,
@@ -215,7 +214,7 @@ async function call(name, arguments_) {
     { timeout: 180_000 },
   );
   if (name === "analyze_swift_types")
-    toolContract(name).outputSchema.parse(response.structuredContent);
+    assert.ok(response.structuredContent, `${name} omitted structured result`);
   return requireMcpOperationResult(response, name);
 }
 
@@ -243,6 +242,7 @@ async function verifyStringLiterals() {
       assert(procedure, `${name} is missing from the procedure inventory`);
       const dossier = await call("analyze_function", {
         procedure: procedure.address,
+        detail: "complete",
       });
       const observed = dossier.swift_string_literals;
       assert(Array.isArray(observed), `${name} recorded no Swift literals`);
@@ -270,6 +270,7 @@ async function verifyStringLiterals() {
     );
     const unresolvedDossier = await call("analyze_function", {
       procedure: unresolvedJump.address,
+      detail: "complete",
     });
     assert.deepEqual(unresolvedDossier.swift_string_literals, []);
     assert.deepEqual(

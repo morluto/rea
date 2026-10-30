@@ -14,7 +14,7 @@ import {
 export const semanticPrimitiveSet = (
   values: readonly JavaScriptSemanticPrimitive[],
 ): JavaScriptSemanticValue => {
-  const uniqueValues = new Set<JavaScriptSemanticPrimitive>();
+  let uniqueValues: Set<JavaScriptSemanticPrimitive> | undefined;
   for (const value of values) {
     if (typeof value === "number" && !Number.isFinite(value))
       return {
@@ -26,10 +26,19 @@ export const semanticPrimitiveSet = (
         status: "unknown",
         reason: "Negative zero cannot be preserved by JSON primitive evidence.",
       };
+    // The common literal path needs validation, but no deduplication, sorting
+    // or canonical-key allocation. Check strings before retaining the value.
+    if (values.length === 1)
+      return typeof value === "string" &&
+        exceedsSemanticPrimitiveStringByteBudget([value])
+        ? semanticResourceLimitUnknown("primitive-bytes")
+        : { status: "literal", value };
+    uniqueValues ??= new Set<JavaScriptSemanticPrimitive>();
     uniqueValues.add(value);
     if (uniqueValues.size > SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT)
       return semanticResourceLimitUnknown("primitive-candidates");
   }
+  if (uniqueValues === undefined) return { status: "union", values: [] };
   if (
     exceedsSemanticPrimitiveStringByteBudget(
       [...uniqueValues].flatMap((value) =>

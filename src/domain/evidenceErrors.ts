@@ -2,10 +2,17 @@ import {
   AnalysisError,
   type AnalysisErrorOptions,
 } from "./analysisErrorBase.js";
+import type { AnalysisInputIssue } from "./analysisErrorCore.js";
 
 /** Receipt retained when publication succeeded but staging cleanup did not. */
 export interface PublishedEvidenceFile {
   readonly path: string;
+  readonly bytes: number;
+}
+
+/** Publication completion survives an explicitly excluded path identity. */
+export interface PublishedEvidenceFileObservation {
+  readonly path?: string;
   readonly bytes: number;
 }
 
@@ -25,6 +32,15 @@ export class EvidenceIntegrityError extends AnalysisError {
 
 /** A valid snapshot belongs to a different target, provider, or analysis profile. */
 export class AnalysisSnapshotMismatchError extends EvidenceIntegrityError {}
+
+/** A resource session cannot import or export a binary analysis snapshot. */
+export class ResourceSnapshotMismatchError extends AnalysisSnapshotMismatchError {
+  constructor(readonly operation: "import" | "export") {
+    super(
+      "Analysis snapshots do not apply to a resource-only app session because it has no executable identity or replay binding.",
+    );
+  }
+}
 
 /** A session Evidence reference is missing or has the wrong semantic identity. */
 export class EvidenceReferenceError extends EvidenceIntegrityError {
@@ -50,7 +66,10 @@ export class EvidenceFileError extends AnalysisError {
   /** Caller-selected path that failed, resolved against the working directory. */
   readonly path: string | undefined;
   /** Present only when a write committed before cleanup failed. */
-  readonly published: PublishedEvidenceFile | undefined;
+  readonly published: PublishedEvidenceFileObservation | undefined;
+  /** Schema issues relative to the selected file's JSON root, never the request envelope. */
+  readonly contentIssues: readonly AnalysisInputIssue[] | undefined;
+  readonly systemCode: "EFBIG" | "ENOSPC" | "EDQUOT" | undefined;
 
   constructor(
     readonly operation: "read" | "write",
@@ -60,16 +79,23 @@ export class EvidenceFileError extends AnalysisError {
       | "wrong-kind"
       | "invalid-json"
       | "missing"
+      | "path-limit"
+      | "storage-limit"
+      | "symlink-traversal"
       | "io",
     options?: AnalysisErrorOptions & {
       readonly path?: string;
-      readonly published?: PublishedEvidenceFile;
+      readonly published?: PublishedEvidenceFileObservation;
       readonly userMessage?: string;
+      readonly contentIssues?: readonly AnalysisInputIssue[];
+      readonly systemCode?: "EFBIG" | "ENOSPC" | "EDQUOT";
     },
   ) {
     super(`Evidence bundle ${operation} failed: ${reason}`, options);
     this.path = options?.path;
     this.published = options?.published;
     this.userMessage = options?.userMessage;
+    this.contentIssues = options?.contentIssues;
+    this.systemCode = options?.systemCode;
   }
 }

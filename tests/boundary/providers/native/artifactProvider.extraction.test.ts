@@ -5,6 +5,11 @@ import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
+import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
+import {
+  CPU,
+  machoImage,
+} from "../../../../src/artifacts/apple/MachoImage.fixture.js";
 import { ArtifactProvider } from "../../../../src/artifacts/ArtifactProvider.js";
 import { artifactExtractionExecutionSchema } from "../../../../src/contracts/artifactToolContracts.js";
 import {
@@ -12,16 +17,52 @@ import {
   artifactInventoryResultSchema,
 } from "../../../../src/domain/artifactGraph.js";
 import type { BinaryTarget } from "../../../../src/domain/binaryTargetTypes.js";
+import { withArtifactClient } from "../../../support/artifactClientScope.js";
 
 describe("artifact extraction", () => {
+  it.skipIf(process.platform === "win32").each(["file/..", "missing"])(
+    "refuses an invalid parent (%s) before acquiring output and permits a corrected request",
+    async (parent) => {
+      const root = await createTestTempDirectory("rea-extract-invalid-parent-");
+      const source = join(root, "source.app");
+      await mkdir(source);
+      await writeFile(join(source, "payload.txt"), "selected payload\n");
+      await writeFile(join(root, "file"), "parent is a file");
+      const output = join(root, "out");
+
+      await withArtifactClient(await target(source), async (client) => {
+        const refused = await client.execute("extract_artifact", {
+          output_root: `${root}/${parent}/out`,
+        });
+        expect(refused).toMatchObject({
+          ok: false,
+          error: { _tag: "ArtifactOperationError", reason: "path" },
+        });
+        if (!refused.ok) expect(refused.error.cleanupIncomplete).toBe(false);
+        await expect(access(output)).rejects.toMatchObject({ code: "ENOENT" });
+
+        const corrected = await client.execute("extract_artifact", {
+          output_root: output,
+        });
+        if (!corrected.ok) throw corrected.error;
+        expect(
+          artifactExtractionResultSchema.parse(corrected.value.result),
+        ).toMatchObject({ output_root: output, containment_verified: true });
+        expect(await readFile(join(output, "payload.txt"), "utf8")).toBe(
+          "selected payload\n",
+        );
+      });
+    },
+  );
+
   it("keeps committed files after the owning client closes", async () => {
     const root = await createTestTempDirectory("rea-extract-client-close-");
-    const source = join(root, "source");
+    const source = join(root, "source.app");
     await mkdir(source);
     await writeFile(join(source, "payload.txt"), "committed\n");
     const output = join(root, "output");
     const client = new ArtifactProvider(process.env).createClient(
-      target(source, "directory"),
+      await target(source),
     );
 
     const result = await client.execute("extract_artifact", {
@@ -36,11 +77,11 @@ describe("artifact extraction", () => {
 
   it("extracts all regular occurrences through an exclusively owned output tree", async () => {
     const root = await createTestTempDirectory("rea-extract-");
-    const source = join(root, "source");
+    const source = join(root, "source.app");
     await mkdir(join(source, "assets"), { recursive: true });
     await writeFile(join(source, "assets", "selected.js"), "selected();\n");
     await writeFile(join(source, "assets", "ignored.js"), "ignored();\n");
-    const targetValue = target(source, "directory");
+    const targetValue = await target(source);
     const graph = await inventory(targetValue);
     expect(
       graph.occurrences.some(
@@ -124,7 +165,7 @@ describe("artifact extraction", () => {
     expect((await readdir(root)).sort()).toEqual([
       "output",
       "relocated-output",
-      "source",
+      "source.app",
     ]);
   });
 });
@@ -136,13 +177,15 @@ const inventory = async (targetValue: BinaryTarget) => {
   return artifactInventoryResultSchema.parse(result.value.result);
 };
 
-const target = (
-  path: string,
-  format: Extract<BinaryTarget, { kind: "archive" }>["format"] | "directory",
-): BinaryTarget => ({
-  path,
-  sourcePath: path,
-  sha256: "0".repeat(64),
-  kind: "archive",
-  format: format === "directory" ? "asar" : format,
-});
+/** A real bundle target has an executable identity distinct from its resource tree. */
+const target = async (path: string): Promise<BinaryTarget> => {
+  await writeFile(
+    join(path, "Info.plist"),
+    '<plist version="1.0"><dict><key>CFBundleExecutable</key><string>Main</string></dict></plist>',
+  );
+  await writeFile(join(path, "Main"), machoImage({ cpu: CPU.arm64 }));
+  const parsed = await parseBinaryTarget(path);
+  if (!parsed.ok) throw parsed.error;
+  expect(parsed.value.bundleInfoPlist).toBe(join(path, "Info.plist"));
+  return parsed.value;
+};

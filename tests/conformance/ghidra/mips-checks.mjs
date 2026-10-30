@@ -23,6 +23,65 @@ const SOFT_FLOAT_SYMBOLS = [
   "rea_mips_soft_caller",
 ];
 
+/** Complete indexed ELF32 section types shared by the independent fixture readers. */
+export function parseMipsReadelfSectionTypes(text) {
+  const counts = [
+    ...text.matchAll(/^\s*Number of section headers:\s*(\d+)\s*$/gmu),
+  ];
+  assert.equal(counts.length, 1, "Missing or ambiguous readelf section count");
+  const sectionCount = Number(counts[0][1]);
+  assert.ok(sectionCount > 0, "Fixture must have a section header table");
+  const sections = [...text.matchAll(/^[ \t]*\[[ \t]*(\d+)\][ \t]+(.+)$/gmu)];
+  assert.equal(
+    sections.length,
+    sectionCount,
+    "Incomplete readelf section table",
+  );
+  return sections.map((section, index) => {
+    assert.equal(Number(section[1]), index, "Ambiguous readelf section index");
+    const columns =
+      /^(?:\S+[ \t]+)?(\S+)[ \t]+[\da-f]{8}[ \t]+[\da-f]+[ \t]+[\da-f]+[ \t]+[\da-f]{2}[ \t]+(?:[A-Za-z]+[ \t]+)?\d+[ \t]+\d+[ \t]+\d+[ \t]*$/u.exec(
+        section[2],
+      );
+    assert.ok(columns !== null, "Malformed readelf section header");
+    return columns[1];
+  });
+}
+
+/** Independent wire-format expectation shared by generic and PSP snapshots. */
+export function expectedMipsElfProfile(mips) {
+  const abi = mips.abiFlags;
+  assert.ok(abi != null, "Fixture ABI declarations must be inspected");
+  assert.notEqual(
+    mips.gnuAttributes,
+    undefined,
+    "Fixture GNU attributes must be inspected",
+  );
+  return {
+    elf_class: mips.elfClass,
+    byte_order: mips.byteOrder,
+    type: mips.type,
+    flags: mips.flags,
+    gnu_attributes:
+      mips.gnuAttributes === null
+        ? null
+        : { fp_abi: mips.gnuAttributes.fpAbi, msa: mips.gnuAttributes.msa },
+    abi_flags: {
+      version: abi.version,
+      isa_level: abi.isaLevel,
+      isa_revision: abi.isaRevision,
+      gpr_size: abi.gprSize,
+      cpr1_size: abi.cpr1Size,
+      cpr2_size: abi.cpr2Size,
+      fp_abi: abi.fpAbi,
+      isa_extension: abi.isaExtension,
+      ases: abi.ases,
+      flags1: abi.flags1,
+      flags2: abi.flags2,
+    },
+  };
+}
+
 /**
  * Parse only the documented GNU readelf fields needed by our tiny fixtures.
  * `rel` objects carry their own symbol checks in mips-relocatable-checks.mjs.
@@ -51,6 +110,10 @@ export function parseMipsReadelf(
     objectType === "rel" ? /^REL\b/u : /^EXEC\b/u,
   );
   assert.match(field(/^\s*Machine:\s*(.+)$/gmu, "machine"), /^MIPS\b/u);
+  assert.ok(
+    !parseMipsReadelfSectionTypes(text).includes("GNU_ATTRIBUTES"),
+    "Fixture unexpectedly declares GNU attributes",
+  );
   const flags = Number(field(/^\s*Flags:\s*(0x[\da-f]+),.*$/gmu, "flags"));
   assert.equal(flags, 0x70001001, "Fixture ELF flags differ from build intent");
   assert.equal(field(/^ISA:\s*(.+)$/gmu, "ISA"), "MIPS32r2");
@@ -123,6 +186,7 @@ export function parseMipsReadelf(
       type: objectType === "rel" ? 1 : 2,
       flags,
       abiFlags,
+      gnuAttributes: null,
     },
     symbols,
   };
@@ -144,7 +208,7 @@ export async function inspectMipsReadelf(path, byteOrder, floatAbi = "hard") {
   );
   const result = await execute(
     command,
-    ["-h", "-A", "-s", "-W", path],
+    ["-h", "-A", "-S", "-s", "-W", path],
     options,
   );
   assert.equal(

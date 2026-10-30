@@ -2,22 +2,35 @@ import * as t from "@babel/types";
 
 import type {
   JavaScriptSemanticCallable,
+  JavaScriptSemanticProjectedResultBinding,
   JavaScriptSemanticChildProcessInteraction,
   JavaScriptSemanticChildProcessSpawn,
 } from "./javascriptSemanticIr.js";
 import { createSemanticCallableIdStack } from "./javascriptSemanticCallableStack.js";
 import {
+  createSemanticExpressionShapeResolver,
+  optionsAfterOptionalArgv,
+  type JavaScriptExpressionShapeResolver,
+} from "./javascriptSemanticExpressionShapes.js";
+import {
+  readExactJavaScriptLiteral,
   semanticStaticPropertyName,
+  staticJavaScriptTruthiness,
+  staticObjectProperty,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
-  isUnshadowedGlobal,
   resolveSemanticBindingState,
+  semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
+import {
+  isUnshadowedGlobal,
+  semanticBindingAtRead,
+} from "./javascriptSemanticMutationInitializers.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
-import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
+import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import {
   builtinDataEffectMethod,
@@ -36,16 +49,14 @@ interface ChildProcessAnalysis {
   readonly childProcessInteractions: readonly JavaScriptSemanticChildProcessInteraction[];
 }
 
+type ChildSpawnContext = JavaScriptExpressionShapeResolver;
+
 interface SpawnCandidate {
   readonly node: t.CallExpression | t.OptionalCallExpression;
   readonly method: JavaScriptSemanticChildProcessSpawn["method"];
   readonly ownerCallableId: string | null;
   readonly resultBindingId: string | null;
-  readonly projectedResultBindings: readonly {
-    readonly bindingId: string;
-    readonly projectionPath: readonly (string | number | null)[];
-    readonly resolution: "complete" | "partial";
-  }[];
+  readonly projectedResultBindings: readonly JavaScriptSemanticProjectedResultBinding[];
 }
 
 interface ChildInteractionContext {
@@ -60,9 +71,12 @@ export const collectJavaScriptSemanticChildProcesses = (
   state: JavaScriptSemanticAnalysisState,
   callables: readonly JavaScriptSemanticCallable[],
 ): ChildProcessAnalysis => {
-  const candidates = collectSpawns(program, state, callables);
+  const context = createSemanticExpressionShapeResolver(state);
+  const candidates = collectSpawns(program, state, callables).filter(
+    (candidate) => !forkRejectsStdioArray(candidate, context),
+  );
   const childProcessSpawns = candidates.map((candidate) =>
-    immutableSpawn(candidate),
+    immutableSpawn(candidate, context),
   );
   return {
     childProcessSpawns,
@@ -86,7 +100,7 @@ const collectSpawns = (
   );
   const callableStack = createSemanticCallableIdStack(admittedCallables);
   const ancestors: t.Node[] = [];
-  traverseJavaScriptAst(program, {
+  traverseJavaScriptValueAst(program, state.erasedSyntaxNodes, {
     enter: (node, parent) => {
       callableStack.enter(node, parent);
       if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
@@ -124,8 +138,9 @@ const collectSpawns = (
 
 const immutableSpawn = (
   candidate: SpawnCandidate,
+  context: ChildSpawnContext,
 ): JavaScriptSemanticChildProcessSpawn => {
-  const options = spawnOptions(candidate);
+  const { options, argvCount } = spawnArguments(candidate, context);
   const command = dataEffectLiteralString(candidate.node.arguments[0]);
   return {
     processId: spawnId(candidate),
@@ -135,9 +150,9 @@ const immutableSpawn = (
     resultBindingId: candidate.resultBindingId,
     projectedResultBindings: candidate.projectedResultBindings,
     command,
-    argvCount: spawnArgvCount(candidate),
-    environmentSupplied: objectHasProperty(options, "env"),
-    stdioMode: stdioMode(options),
+    argvCount,
+    environmentSupplied: environmentSupplied(options, context),
+    stdioMode: stdioMode(options, candidate.method, context),
     resolution: command === null ? "partial" : "complete",
   };
 };
@@ -170,7 +185,7 @@ const collectInteractions = (
     spawnByNode,
     spawnsByBinding,
   };
-  traverseJavaScriptAst(program, {
+  traverseJavaScriptValueAst(program, state.erasedSyntaxNodes, {
     enter: (node, parent) => {
       callableStack.enter(node, parent);
       if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
@@ -193,20 +208,18 @@ const childInteraction = (
   ownerCallableId: string | null,
   context: ChildInteractionContext,
 ): JavaScriptSemanticChildProcessInteraction | null => {
-  const { state, spawnByNode, spawnsByBinding } = context;
+  const { state } = context;
   const member = dataEffectMemberCallee(node);
   if (member === null) return null;
   const method = semanticStaticPropertyName(member.property, member.computed);
-  const binding = objectBinding(member.object, state);
-  const linked = resolveChildCandidates(
-    member.object,
-    binding,
-    spawnByNode,
-    spawnsByBinding,
-  );
-  if (linked.length === 0) return null;
   const classification = classifyInteraction(method, node.arguments[0]);
   if (classification === null) return null;
+  const binding = objectBinding(member.object, state);
+  const { candidates: linked, complete } = resolveChildCandidates(
+    member.object,
+    context,
+  );
+  if (linked.length === 0) return null;
   const { kind, interactionMethod, eventName } = classification;
   const listener = node.arguments[1];
   return {
@@ -224,13 +237,7 @@ const childInteraction = (
       kind === "signal" ? killSignalName(node.arguments, state) : null,
     listenerLocation:
       kind === "listener" && t.isNode(listener) ? range(listener) : null,
-    resolution:
-      linked.length === 1 &&
-      !linked[0]?.projectedResultBindings.some(
-        ({ bindingId }) => bindingId === binding?.bindingId,
-      )
-        ? "complete"
-        : "partial",
+    resolution: complete ? "complete" : "partial",
   };
 };
 
@@ -291,61 +298,210 @@ const childProcessMethod = (
 
 const resolveChildCandidates = (
   node: t.Node,
-  binding: JavaScriptSemanticBindingState | undefined,
-  spawnByNode: WeakMap<t.Node, SpawnCandidate>,
-  spawnsByBinding: ReadonlyMap<string, readonly SpawnCandidate[]>,
-): readonly SpawnCandidate[] => {
-  const direct = spawnByNode.get(node);
-  if (direct !== undefined) return [direct];
-  return binding === undefined
-    ? []
-    : (spawnsByBinding.get(binding.bindingId) ?? []);
+  context: ChildInteractionContext,
+): {
+  readonly candidates: readonly SpawnCandidate[];
+  readonly complete: boolean;
+} => {
+  const { state, spawnByNode, spawnsByBinding } = context;
+  const candidates = new Set<SpawnCandidate>();
+  const fallback = new Set<SpawnCandidate>();
+  const pending = [node];
+  const visited = new Set<t.Node>();
+  let complete = true;
+  while (pending.length > 0) {
+    const current = unwrapJavaScriptExpression(pending.pop()!).node;
+    if (visited.has(current)) {
+      complete = false;
+      continue;
+    }
+    visited.add(current);
+    // Spawn-result assignment already admits await as an identity wrapper.
+    if (t.isAwaitExpression(current)) {
+      pending.push(current.argument);
+      continue;
+    }
+    const direct = spawnByNode.get(current);
+    if (direct !== undefined) {
+      candidates.add(direct);
+      continue;
+    }
+    const binding = t.isIdentifier(current)
+      ? resolveSemanticBindingState(state, current, current.name)
+      : undefined;
+    if (binding === undefined) {
+      complete = false;
+      continue;
+    }
+    for (const candidate of spawnsByBinding.get(binding.bindingId) ?? [])
+      fallback.add(candidate);
+    // An alias captures its source at its initializer read, not at the later
+    // interaction. The shared selector retains all sources across uncertain
+    // control flow, loops and writes in other activations.
+    const snapshot = semanticBindingAtRead(
+      binding,
+      current,
+      state.parentsByNode,
+    );
+    const selected = snapshot.binding;
+    const initializers = [
+      ...selected.initializers,
+      ...selected.referenceInitializers,
+    ];
+    // Defaults and other reference sources do not exclude a caller-supplied
+    // value, even when they are the binding's only retained source.
+    if (initializers.length !== 1 || selected.referenceInitializers.length > 0)
+      complete = false;
+    const stable = semanticStableInitializer(binding, state);
+    for (const initializer of initializers) {
+      if (state.conditionallySkippedExpressions.has(initializer.node))
+        complete = false;
+      if (initializer.projection.length > 0) {
+        complete = false;
+        continue;
+      }
+      // A lone assignment can still be later or belong to another activation.
+      // Only initialized lexical declarations exclude an earlier undefined value
+      // without a same-body ordering proof.
+      if (
+        !(stable === initializer && !binding.declarationKinds.has("var")) &&
+        snapshot.status !== "ordered"
+      )
+        complete = false;
+      pending.push(initializer.node);
+    }
+  }
+  // Preserve historical candidates with explicit uncertainty when the selected
+  // value cannot be established; a binding inventory alone never proves identity.
+  if (!complete) for (const candidate of fallback) candidates.add(candidate);
+  return {
+    candidates: [...candidates],
+    complete: complete && candidates.size === 1,
+  };
 };
-const spawnOptions = (candidate: SpawnCandidate): t.ObjectExpression | null => {
+const spawnArguments = (
+  candidate: SpawnCandidate,
+  context: ChildSpawnContext,
+): {
+  readonly options: t.Node | undefined;
+  readonly argvCount: number | null;
+} => {
   const args = candidate.node.arguments;
-
-  const value =
+  if (t.isSpreadElement(args[0])) return { options: args[0], argvCount: null };
+  const second = args[1] && unwrapJavaScriptExpression(args[1]).node;
+  const argv =
+    candidate.method !== "exec" && t.isArrayExpression(second)
+      ? second
+      : undefined;
+  // exec(command[, options][, callback]) has no argv slot.
+  const options =
     candidate.method === "exec"
-      ? args[1]
-      : t.isObjectExpression(args[1])
-        ? args[1]
-        : args[2];
-
-  return t.isObjectExpression(value) ? value : null;
-};
-const spawnArgvCount = (candidate: SpawnCandidate): number | null => {
-  if (candidate.method === "exec") return null;
-  const args = candidate.node.arguments[1];
-  return t.isArrayExpression(args) &&
-    !args.elements.some((element) => t.isSpreadElement(element))
-    ? args.elements.length
-    : null;
+      ? second
+      : optionsAfterOptionalArgv(args, context);
+  return {
+    options,
+    argvCount:
+      argv !== undefined &&
+      !argv.elements.some((element) => t.isSpreadElement(element))
+        ? argv.elements.length
+        : null,
+  };
 };
 
-const objectHasProperty = (
-  object: t.ObjectExpression | null,
-  name: string,
-): boolean => objectProperty(object, name) !== null;
+/**
+ * Node replaces a falsy `options.env` with a copy of the parent environment, so
+ * a nullish, empty-string, zero or `false` value passes the whole environment
+ * through instead of supplying one.
+ */
+const environmentSupplied = (
+  options: t.Node | undefined,
+  context: ChildSpawnContext,
+): boolean => {
+  const lookup = staticObjectProperty(options, "env", context.isNullish);
+  if (lookup.status !== "explicit") return false;
+  const value = unwrapJavaScriptExpression(lookup.value).node;
+  if (context.isNullish(value)) return false;
+  return staticJavaScriptTruthiness(value) !== false;
+};
 
-const stdioMode = (options: t.ObjectExpression | null): string => {
-  const property = objectProperty(options, "stdio");
-  if (property === null || !t.isObjectProperty(property)) return "default";
-  if (t.isStringLiteral(property.value)) return property.value.value;
-  if (t.isArrayExpression(property.value)) return "array";
+const stdioMode = (
+  options: t.Node | undefined,
+  method: JavaScriptSemanticChildProcessSpawn["method"],
+  context: ChildSpawnContext,
+): string => {
+  // Async exec/execFile do not forward options.stdio to their underlying spawn.
+  if (method === "exec" || method === "execFile") return "default";
+  if (options === undefined) return "default";
+  const expression = unwrapJavaScriptExpression(options).node;
+  if (context.isNullish(expression)) return "default";
+  const lookup = staticObjectProperty(expression, "stdio", context.isNullish);
+  if (lookup.status === "missing")
+    return unsetStdioMode(expression, method, context);
+  if (lookup.status !== "explicit") return "dynamic";
+  const value = unwrapJavaScriptExpression(lookup.value).node;
+  if (context.isNullish(value))
+    return unsetStdioMode(expression, method, context);
+  if (t.isStringLiteral(value)) return value.value;
+  if (t.isArrayExpression(value)) return "array";
+  // fork ignores any other known stdio value and falls back to `silent`.
+  if (method === "fork" && staticJavaScriptTruthiness(value) !== undefined)
+    return unsetStdioMode(expression, method, context);
   return "dynamic";
 };
 
-const objectProperty = (
-  object: t.ObjectExpression | null,
-  name: string,
-): t.ObjectMethod | t.ObjectProperty | null =>
-  object?.properties.find(
-    (property): property is t.ObjectMethod | t.ObjectProperty =>
-      (t.isObjectMethod(property) || t.isObjectProperty(property)) &&
-      // `{[env]: vars}` has a dynamic key; treating it as `env` would claim
-      // the caller supplied an environment when the real key is unknown.
-      semanticStaticPropertyName(property.key, property.computed) === name,
-  ) ?? null;
+/**
+ * Node's `fork` requires an explicit `stdio` array to carry the IPC channel. An
+ * array that provably omits `"ipc"` throws ERR_CHILD_PROCESS_IPC_REQUIRED
+ * synchronously, before any child process exists, so it is not a spawn at all.
+ * A string `stdio` is normalised with `"ipc"` appended, so only the array form
+ * can omit it; a spread or unreadable element may still supply the channel and
+ * is therefore left alone.
+ */
+const forkRejectsStdioArray = (
+  candidate: SpawnCandidate,
+  context: ChildSpawnContext,
+): boolean => {
+  if (candidate.method !== "fork") return false;
+  const { options } = spawnArguments(candidate, context);
+  if (options === undefined) return false;
+  const expression = unwrapJavaScriptExpression(options).node;
+  if (context.isNullish(expression)) return false;
+  const lookup = staticObjectProperty(expression, "stdio", context.isNullish);
+  if (lookup.status !== "explicit") return false;
+  const value = unwrapJavaScriptExpression(lookup.value).node;
+  if (!t.isArrayExpression(value)) return false;
+  const literals = value.elements.map((element) =>
+    element === null || t.isSpreadElement(element)
+      ? undefined
+      : readExactJavaScriptLiteral(element),
+  );
+  if (literals.some((literal) => literal === undefined || !literal.found))
+    return false;
+  return !literals.some(
+    (literal) =>
+      literal !== undefined && literal.found && literal.value === "ipc",
+  );
+};
+
+/**
+ * Without a string or array `stdio`, Node's `fork` pipes the standard streams
+ * when `silent` is truthy and inherits them otherwise.
+ */
+const unsetStdioMode = (
+  options: t.Node,
+  method: JavaScriptSemanticChildProcessSpawn["method"],
+  context: ChildSpawnContext,
+): string => {
+  if (method !== "fork") return "default";
+  const silent = staticObjectProperty(options, "silent", context.isNullish);
+  if (silent.status === "missing") return "default";
+  if (silent.status !== "explicit") return "dynamic";
+  const value = unwrapJavaScriptExpression(silent.value).node;
+  if (context.isNullish(value)) return "default";
+  const truthy = staticJavaScriptTruthiness(value);
+  if (truthy === undefined) return "dynamic";
+  return truthy ? "pipe" : "default";
+};
 
 const objectBinding = (
   node: t.Expression | t.Super,

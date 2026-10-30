@@ -1,7 +1,8 @@
+import { regularFileCancellation } from "../../filesystem/OwnedRegularFile.js";
 import { lstat } from "node:fs/promises";
 import type { Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
-import { readFileHandleChunks } from "../../filesystem/readFileHandleChunks.js";
+import { readArtifactFileChunks } from "../readArtifactFileChunks.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 
 import { ArtifactReaderFailure } from "../ArtifactReader.js";
@@ -10,6 +11,7 @@ import {
   RegularFileAdmissionFailure,
   openRegularFile,
   sameRegularFileState,
+  type StableRegularFileDescriptor,
 } from "../../filesystem/RegularFile.js";
 import {
   abortIfNeeded,
@@ -17,28 +19,77 @@ import {
   type HashResult,
 } from "../ArtifactHash.js";
 import type { ArtifactResourceScope } from "../ArtifactResourceScope.js";
+import { fileSnapshotPartialObservationSchema } from "../../domain/fileSnapshotObservation.js";
+
+/** Finalize the admitted root while preserving its completed identity and exact owner. */
+export const releaseRootArtifact = async (
+  path: string,
+  owner: OwnedFileHandle,
+  resourceScope: ArtifactResourceScope,
+  outcome:
+    | { readonly kind: "completed"; readonly digest: HashResult | null }
+    | { readonly kind: "failed"; readonly cause: unknown },
+  signal?: AbortSignal,
+): Promise<void> => {
+  const cleanup = await resourceScope.release({
+    kind: "file-handle",
+    resource: `root artifact descriptor for ${path}`,
+    handle: owner,
+  });
+  const observation =
+    outcome.kind === "completed" && outcome.digest !== null
+      ? fileSnapshotPartialObservationSchema.parse({
+          kind: "file-snapshot-hash",
+          path,
+          sha256: outcome.digest.sha256,
+          bytes: outcome.digest.bytes,
+        })
+      : undefined;
+  const finalOutcome =
+    outcome.kind === "completed" && signal?.aborted
+      ? {
+          kind: "failed" as const,
+          cause: new ArtifactReaderFailure(
+            "cancelled",
+            "Root artifact inventory cancelled during descriptor finalization",
+            { cause: signal.reason, partialObservation: observation },
+          ),
+        }
+      : outcome;
+  if (cleanup.kind === "failed")
+    throw resourceScope.cleanupFailure(finalOutcome, [cleanup], observation);
+  if (finalOutcome.kind === "failed") throw finalOutcome.cause;
+};
 
 /** Admit a root descriptor without losing ownership when validation cleanup fails. */
 export const openRootArtifact = async (
   path: string,
   resourceScope: ArtifactResourceScope,
   signal?: AbortSignal,
-): Promise<OwnedFileHandle> => {
+): Promise<
+  StableRegularFileDescriptor & { readonly owner: OwnedFileHandle }
+> => {
   try {
-    return new OwnedFileHandle(
-      await openRegularFile(path, { symlinks: "reject", signal }),
-    );
+    const source = await openRegularFile(path, { symlinks: "reject", signal });
+    return { ...source, owner: new OwnedFileHandle(source.handle) };
   } catch (cause: unknown) {
     const primary =
       cause instanceof RegularFileAdmissionFailure ? cause.cause : cause;
+    const cancellation = regularFileCancellation(primary);
     const failure =
-      primary instanceof NonRegularFileReadError
+      cancellation !== undefined
         ? new ArtifactReaderFailure(
-            "format",
-            `Artifact root is not a regular file: ${path}`,
-            { cause: primary },
+            "cancelled",
+            "Artifact admission cancelled",
+            { cause: cancellation.reason },
           )
-        : primary;
+        : primary instanceof NonRegularFileReadError
+          ? new ArtifactReaderFailure(
+              "format",
+              `Artifact root is not a regular file: ${path}`,
+              { cause: primary },
+            )
+          : primary;
     if (cause instanceof RegularFileAdmissionFailure) {
       const resource = `root artifact descriptor for ${path}`;
       const cleanup = await resourceScope.release({
@@ -47,10 +98,9 @@ export const openRootArtifact = async (
         handle: cause.owner,
       });
       if (cleanup.kind === "failed")
-        throw ArtifactReaderFailure.withCleanup(
-          failure,
-          ArtifactReaderFailure.cleanupObservation(cleanup.cause, resource),
-        );
+        throw resourceScope.cleanupFailure({ kind: "failed", cause: failure }, [
+          cleanup,
+        ]);
     }
     throw failure;
   }
@@ -62,13 +112,15 @@ export const hashStableRootArtifact = async (
   resourceScope: ArtifactResourceScope,
   signal?: AbortSignal,
 ): Promise<HashResult> => {
-  const owner = await openRootArtifact(path, resourceScope, signal);
-  const handle = owner.handle;
+  const { handle, initial, owner } = await openRootArtifact(
+    path,
+    resourceScope,
+    signal,
+  );
   let outcome:
     | { readonly kind: "completed"; readonly value: HashResult }
     | { readonly kind: "failed"; readonly cause: unknown };
   try {
-    const initial = await handle.stat();
     outcome = {
       kind: "completed",
       value: await hashStableRootArtifactHandle(path, handle, initial, signal),
@@ -76,17 +128,15 @@ export const hashStableRootArtifact = async (
   } catch (cause: unknown) {
     outcome = { kind: "failed", cause };
   }
-  const resource = `root artifact descriptor for ${path}`;
-  const cleanup = await resourceScope.release({
-    kind: "file-handle",
-    resource,
-    handle: owner,
-  });
-  if (cleanup.kind === "failed")
-    throw ArtifactReaderFailure.withCleanup(
-      outcome.kind === "failed" ? outcome.cause : cleanup.cause,
-      ArtifactReaderFailure.cleanupObservation(cleanup.cause, resource),
-    );
+  await releaseRootArtifact(
+    path,
+    owner,
+    resourceScope,
+    outcome.kind === "completed"
+      ? { kind: "completed", digest: outcome.value }
+      : outcome,
+    signal,
+  );
   if (outcome.kind === "failed") throw outcome.cause;
   return outcome.value;
 };
@@ -101,7 +151,7 @@ export const hashStableRootArtifactHandle = async (
   const digest = await hashReadable(
     // Read at most the admitted extent plus one byte to detect growth without
     // following an actively appended file indefinitely.
-    readFileHandleChunks(handle, { start: 0, end: initial.size }),
+    readArtifactFileChunks(handle, { start: 0, end: initial.size, signal }),
     signal,
   );
   abortIfNeeded(signal);
@@ -115,5 +165,6 @@ export const hashStableRootArtifactHandle = async (
       "integrity",
       `Root artifact changed during inventory: ${path}`,
     );
+  abortIfNeeded(signal);
   return digest;
 };

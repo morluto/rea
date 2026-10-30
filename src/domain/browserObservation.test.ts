@@ -4,12 +4,39 @@ import {
   browserEndpointSchema,
   browserObservationEndpointSchema,
   browserOriginSchema,
+  recordedBrowserOriginSchema,
   recordedBrowserObservationEndpointSchema,
   sanitizeEndpointCandidate,
   sanitizeBrowserUrl,
 } from "./browserObservation.js";
 
 describe("browser observation contracts", () => {
+  it.each(["127.0.0.1", "[::1]"])(
+    "preserves explicitly supplied default endpoint ports on %s",
+    (host) => {
+      const http = `http://${host}:80`;
+      expect(browserEndpointSchema.parse(http)).toBe(http);
+      expect(
+        browserEndpointSchema.parse(browserEndpointSchema.parse(http)),
+      ).toBe(http);
+      expect(recordedBrowserObservationEndpointSchema.parse(http)).toBe(http);
+      const socket = `ws://${host}:80/devtools/browser/id`;
+      expect(browserObservationEndpointSchema.parse(socket)).toEqual({
+        transport: "browser_websocket",
+        url: socket,
+        recorded: `ws://${host}:80/devtools/browser/[REDACTED]`,
+      });
+      for (const value of [
+        `http://${host}`,
+        `ws://${host}/devtools/browser/id`,
+        "http://192.0.2.1:80",
+      ])
+        expect(
+          browserObservationEndpointSchema.safeParse(value).success,
+          value,
+        ).toBe(false);
+    },
+  );
   it("normalizes exact HTTP origins without accepting broader URL scopes", () => {
     expect(browserOriginSchema.parse("https://Example.COM:443")).toBe(
       "https://example.com",
@@ -27,6 +54,20 @@ describe("browser observation contracts", () => {
       "file:///tmp/page.html",
     ])
       expect(browserOriginSchema.safeParse(value).success, value).toBe(false);
+  });
+
+  it("accepts only canonical recorded HTTP origins", () => {
+    expect(recordedBrowserOriginSchema.parse("https://app.example.test")).toBe(
+      "https://app.example.test",
+    );
+    for (const value of [
+      "https://%2A.example.com",
+      "https://*.example.com",
+      "https://Example.COM:443",
+    ])
+      expect(recordedBrowserOriginSchema.safeParse(value).success, value).toBe(
+        false,
+      );
   });
 
   it("accepts only literal loopback HTTP CDP endpoints", () => {
@@ -121,6 +162,42 @@ describe("browser observation sensitive surfaces and retention", () => {
     );
     expect(sanitized.url).not.toContain("user:pass");
     expect(sanitized.redacted).toBe(true);
+  });
+
+  it("preserves path userinfo-like text after a special-scheme backslash", () => {
+    const suffix = String.raw`\path@tail/../keep?x=1#frag`;
+    expect(
+      sanitizeBrowserUrl(`https://user:pass@app.example.test${suffix}`),
+    ).toEqual({
+      url: `https://app.example.test${suffix}`,
+      origin: "https://app.example.test",
+      query_parameter_names: ["x"],
+      redacted: true,
+    });
+    expect(sanitizeBrowserUrl(`https://app.example.test${suffix}`)).toEqual({
+      url: `https://app.example.test${suffix}`,
+      origin: "https://app.example.test",
+      query_parameter_names: ["x"],
+      redacted: false,
+    });
+    expect(
+      sanitizeBrowserUrl(
+        String.raw`custom://user:pass@host\name@tail/path?x=1#frag`,
+      ),
+    ).toEqual({
+      url: "custom://tail/path?x=1#frag",
+      origin: null,
+      query_parameter_names: ["x"],
+      redacted: true,
+    });
+    expect(
+      sanitizeBrowserUrl("https://us\ter:pass@app.example.test/path?x=1#frag"),
+    ).toEqual({
+      url: "https://app.example.test/path?x=1#frag",
+      origin: "https://app.example.test",
+      query_parameter_names: ["x"],
+      redacted: true,
+    });
   });
 
   it("retains ordinary query values and malformed URL diagnostics", () => {

@@ -42,7 +42,7 @@
     }
   });
 
-  document.addEventListener("DOMContentLoaded", async () => {
+  const initializeToggle = async () => {
     const button = document.querySelector("[data-theme-toggle]");
     if (button === null) return;
     const { t } = await import("./i18n.js");
@@ -66,5 +66,10 @@
     });
     updateLabel();
     button.hidden = false;
+  };
+  document.addEventListener("DOMContentLoaded", () => {
+    initializeToggle().catch((cause) => {
+      console.error("Theme toggle initialization failed", cause);
+    });
   });
 })();

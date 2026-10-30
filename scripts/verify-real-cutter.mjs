@@ -87,7 +87,7 @@ try {
     session.session_id,
     String(session.document_generation),
     "ij",
-    "--json",
+    "--json-output",
   );
   assert.equal(inspection.predicate_type, "rea.cutter.command-observation");
   assert.ok(

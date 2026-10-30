@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { z } from "incur";
 import type { Logger } from "pino";
 
@@ -5,9 +6,10 @@ import { CutterBridgeClient } from "../cutter/CutterBridgeClient.js";
 import { CutterBridgeService } from "../cutter/CutterBridgeService.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import type { CliInstance } from "./types.js";
+import { cliIntegerArgument } from "./options.js";
 
 /** Register commands that control an already-running Cutter instance. */
 export const registerCutterCommands = (
@@ -15,15 +17,25 @@ export const registerCutterCommands = (
   logger: Logger,
   environment: Readonly<NodeJS.ProcessEnv>,
 ): void => {
-  const cutter = new CutterBridgeService(new CutterBridgeClient(environment));
+  const createCutter = () =>
+    new CutterBridgeService(new CutterBridgeClient(environment));
 
   cli.command(CLI_COMMANDS.listCutterSessions, {
     description:
       "List live Cutter instances connected through the REA Python plugin bridge",
     args: z.object({}),
     run: () =>
-      logCliCommand(logger, CLI_COMMANDS.listCutterSessions, () =>
-        cutter.listSessions(),
+      withCommandCancellation((signal) =>
+        logCliCommand(logger, CLI_COMMANDS.listCutterSessions, async () => {
+          const cutter = createCutter();
+          return finishAnalysisCommand(
+            () => cutter.listSessions({ signal }),
+            cutter,
+            "cutter",
+            "list_cutter_sessions",
+            signal,
+          ).then(projectCliAnalysisResult);
+        }),
       ),
   });
   cli.command(CLI_COMMANDS.cutterCommand, {
@@ -33,11 +45,9 @@ export const registerCutterCommands = (
         .string()
         .uuid()
         .describe("Session ID copied from list-cutter-sessions."),
-      expectedGeneration: z.coerce
-        .number()
-        .int()
-        .nonnegative()
-        .describe("Session generation returned by list-cutter-sessions."),
+      expectedGeneration: cliIntegerArgument(0).describe(
+        "Session generation returned by list-cutter-sessions.",
+      ),
       command: z
         .string()
         .min(1)
@@ -45,24 +55,33 @@ export const registerCutterCommands = (
         .refine((value) => !/[\r\n]/u.test(value)),
     }),
     options: z.object({
-      json: z
+      jsonOutput: z
         .boolean()
-        .default(false)
-        .describe("Return command-specific JSON output when available."),
+        .optional()
+        .describe(
+          "Return command-specific JSON output when available (independent of CLI output formatting).",
+        ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, CLI_COMMANDS.cutterCommand, async () => {
-          const result = await cutter.execute(
-            {
-              session_id: args.sessionId,
-              expected_generation: args.expectedGeneration,
-              command: args.command,
-              json: options.json,
-            },
-            { signal },
-          );
-          return result.ok ? result.value : projectAnalysisError(result.error);
+          const cutter = createCutter();
+          return finishAnalysisCommand(
+            () =>
+              cutter.execute(
+                {
+                  session_id: args.sessionId,
+                  expected_generation: args.expectedGeneration,
+                  command: args.command,
+                  json: options.jsonOutput ?? false,
+                },
+                { signal },
+              ),
+            cutter,
+            "cutter",
+            "cutter_command",
+            signal,
+          ).then(projectCliAnalysisResult);
         }),
       ),
   });

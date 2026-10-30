@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { runInNewContext } from "node:vm";
 
 import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 
@@ -18,6 +19,10 @@ describe("RPC object property ownership", () => {
     ['url: "/trpc/old", url: "/trpc/live"', "/trpc/live"],
     ['url: "/trpc/old", url: runtimeUrl', null],
     ['url: "/trpc/old", ...options', null],
+    [
+      'url: "/trpc/old", ...{helper(){},url:"/trpc/ignored",url:"/trpc/live"}',
+      "/trpc/live",
+    ],
     ['url: "/trpc/old", [key]: runtimeUrl', null],
     ['url: "/trpc/old", get url() { return runtimeUrl; }', null],
     ['url: "/trpc/old", url() {}', null],
@@ -64,6 +69,36 @@ describe("RPC object property ownership", () => {
 });
 
 describe("tRPC procedure recognition", () => {
+  it("preserves lexical clients and router members with browser-global spellings", () => {
+    expect(
+      rpcEndpoints(`function scope() {
+      const history=createTRPCClient({links:[httpBatchLink({url:'/api/trpc'})]});
+      history.archive.query();
+      history.history.list.query();
+      history.endpoints.list.query();
+      navigator.permissions.query({name:'geolocation'});
+      api.endpoints.list.useQuery();
+    }`),
+    ).toEqual([
+      {
+        kind: "network",
+        value: "/api/trpc",
+        mechanism: "trpc:link:httpBatchLink",
+      },
+      { kind: "network", value: "archive", mechanism: "trpc:procedure:query" },
+      {
+        kind: "network",
+        value: "history.list",
+        mechanism: "trpc:procedure:query",
+      },
+      {
+        kind: "network",
+        value: "endpoints.list",
+        mechanism: "trpc:procedure:query",
+      },
+    ]);
+  });
+
   it("recognizes React hook procedures on a renamed proxy root", () => {
     expect(
       rpcEndpoints(`
@@ -122,7 +157,9 @@ describe("tRPC procedure recognition", () => {
       },
     ]);
   });
+});
 
+describe("tRPC procedure recognition", () => {
   it("recognizes vanilla client calls and link URLs only in sources carrying a tRPC marker", () => {
     expect(
       rpcEndpoints(`
@@ -401,6 +438,255 @@ describe("GraphQL operation recognition", () => {
 });
 
 describe("GraphQL document ownership", () => {
+  it("retains the only operation in a standalone Source object", () => {
+    expect(
+      rpcEndpoints(`const source = {
+        body: "query GetUser { user { id } }",
+        locationOffset: { line: 1, column: 1 },
+      };`),
+    ).toEqual([
+      { kind: "network", value: "GetUser", mechanism: "graphql:query" },
+    ]);
+  });
+
+  it("does not deduplicate an unrelated Source against the same operation name", () => {
+    expect(
+      rpcEndpoints(`
+        const source = {
+          body: "query GetUser { user { id } }",
+          locationOffset: { line: 1, column: 1 },
+        };
+        const operation = {
+          kind: "OperationDefinition", operation: "query",
+          name: { kind: "Name", value: "GetUser" },
+        };
+      `),
+    ).toEqual([
+      { kind: "network", value: "GetUser", mechanism: "graphql:query" },
+      { kind: "network", value: "GetUser", mechanism: "graphql:query" },
+    ]);
+  });
+
+  it.each(["referenced", "inline"])(
+    "deduplicates a proven %s source reference",
+    (representation) => {
+      const source = `{
+        body: "query GetUser { user { id } }",
+        locationOffset: { line: 1, column: 1 },
+      }`;
+      const document = `export {}; const doc = { kind: "Document", definitions: [{
+        kind: "OperationDefinition", operation: "query",
+        name: { kind: "Name", value: "GetUser" },
+      }], loc: { source: ${representation === "referenced" ? "source" : source} } };`;
+      expect(
+        rpcEndpoints(
+          representation === "referenced"
+            ? `const source = ${source};` + document
+            : document,
+        ),
+      ).toEqual([
+        { kind: "network", value: "GetUser", mechanism: "graphql:query" },
+      ]);
+    },
+  );
+
+  it("retains source text that differs from its document operation", () => {
+    const actual = rpcEndpoints(`
+        const source = {
+          body: "query SourceUser { user { id } }",
+          locationOffset: { line: 1, column: 1 },
+        };
+        const operation = {
+          kind: "OperationDefinition", operation: "mutation",
+          name: { kind: "Name", value: "UpdateUser" }, loc: { source },
+        };
+      `);
+    expect(actual).toHaveLength(2);
+    expect(actual).toEqual(
+      expect.arrayContaining([
+        { kind: "network", value: "SourceUser", mechanism: "graphql:query" },
+        { kind: "network", value: "UpdateUser", mechanism: "graphql:mutation" },
+      ]),
+    );
+  });
+
+  it("selects only the final known standalone Source body", () => {
+    expect(
+      rpcEndpoints(`const source = {
+        body: "query Old { user { id } }",
+        body: "query Current { user { id } }",
+        locationOffset: { line: 1, column: 1 },
+      };`),
+    ).toEqual([
+      { kind: "network", value: "Current", mechanism: "graphql:query" },
+    ]);
+  });
+
+  it("does not prove source ownership from an uninitialized reference", () => {
+    const actual = rpcEndpoints(`
+      const operation = {
+        kind: "OperationDefinition", operation: "query",
+        name: { kind: "Name", value: "GetUser" }, loc: { source },
+      };
+      const source = {
+        body: "query GetUser { user { id } }",
+        locationOffset: { line: 1, column: 1 },
+      };
+    `);
+    expect(actual).toHaveLength(2);
+    expect(actual.every(({ value }) => value === "GetUser")).toBe(true);
+  });
+});
+
+describe("GraphQL document container ownership", () => {
+  it.each([
+    ["", "", 2],
+    ["export {};", "", 1],
+    ["function inspect() {", "}", 1],
+  ] as const)(
+    "distinguishes global script bindings from private lexical objects: %s",
+    (prefix, suffix, count) => {
+      expect(
+        rpcEndpoints(`
+          ${prefix}
+          const source={body:"query GetUser { user { id } }",locationOffset:{line:1,column:1}};
+          const doc={kind:"OperationDefinition",operation:"query",name:{kind:"Name",value:"GetUser"},loc:{source}};
+          ${suffix}
+        `),
+      ).toHaveLength(count);
+    },
+  );
+
+  it("does not prove a copy when a caller supplies direct eval", () => {
+    expect(
+      rpcEndpoints(`
+        function inspect(eval) {
+          const source={body:"query GetUser { user { id } }",locationOffset:{line:1,column:1}};
+          const doc={kind:"OperationDefinition",operation:"query",name:{kind:"Name",value:"GetUser"},loc:{source}};
+          eval("doc.loc.source={}");
+        }
+      `),
+    ).toHaveLength(2);
+  });
+
+  it.each([
+    ["export {}; ", "", 1],
+    ["export {}; ", "holder.docs[0].loc.source = {};", 2],
+    ["export ", "", 2],
+  ] as const)(
+    "checks containing object and array ownership: %s %s",
+    (prefix, effect, count) => {
+      expect(
+        rpcEndpoints(`
+          ${prefix}const holder = {docs:[{kind:"OperationDefinition",operation:"query",name:{kind:"Name",value:"GetUser"},loc:{source:{body:"query GetUser { user { id } }",locationOffset:{line:1,column:1}}}}]};
+          ${effect}
+        `),
+      ).toHaveLength(count);
+    },
+  );
+
+  it.each([
+    ["", 'const indirect=globalThis; indirect.eval("loc.source={}");', 2],
+    ["export {};", 'globalThis.eval("loc.source={}");', 1],
+    ["export {};", 'eval("loc.source={}");', 2],
+  ] as const)(
+    "respects lexical exposure for indirect evaluation: %s %s",
+    (prefix, effect, count) => {
+      expect(
+        rpcEndpoints(`
+          ${prefix}
+          const source={body:"query GetUser { user { id } }",locationOffset:{line:1,column:1}};
+          const loc={source};
+          const doc={kind:"OperationDefinition",operation:"query",name:{kind:"Name",value:"GetUser"},loc};
+          ${effect}
+        `),
+      ).toHaveLength(count);
+    },
+  );
+
+  it.each([
+    "doc.loc.source = {};",
+    "mutate(doc);",
+    "export { doc };",
+    'globalThis.eval("source.body = replacement");',
+  ])("retains sources exposed through their document: %s", (effect) => {
+    const actual = rpcEndpoints(`
+      const source = {body:"query GetUser { user { id } }",locationOffset:{line:1,column:1}};
+      const doc = {kind:"OperationDefinition",operation:"query",name:{kind:"Name",value:"GetUser"},loc:{source}};
+      ${effect}
+    `);
+    expect(actual).toHaveLength(2);
+  });
+
+  it.each(["doc.loc.source = {};", "mutate(doc);", "export { doc };"])(
+    "retains inline sources when the document escapes: %s",
+    (effect) => {
+      const actual = rpcEndpoints(`
+      const doc = {kind:"OperationDefinition",operation:"query",name:{kind:"Name",value:"GetUser"},loc:{source:{body:"query GetUser { user { id } }",locationOffset:{line:1,column:1}}}};
+      ${effect}
+    `);
+      expect(actual).toHaveLength(2);
+    },
+  );
+});
+
+describe("GraphQL source alias effects", () => {
+  it.each([
+    'source.body = "query Changed { user { id } }";',
+    "mutate(source);",
+    'eval("source.body = replacement");',
+  ])(
+    "retains Source observations after an unproven member effect: %s",
+    (effect) => {
+      const actual = rpcEndpoints(`
+      const source = {
+        body: "query GetUser { user { id } }",
+        locationOffset: { line: 1, column: 1 },
+      };
+      ${effect}
+      const operation = {
+        kind: "OperationDefinition", operation: "query",
+        name: { kind: "Name", value: "GetUser" }, loc: { source },
+      };
+    `);
+      expect(actual.filter(({ value }) => value === "GetUser")).toHaveLength(2);
+    },
+  );
+
+  it("does not prove source ownership through a changed location alias", () => {
+    const actual = rpcEndpoints(`
+      const source = {
+        body: "query GetUser { user { id } }",
+        locationOffset: { line: 1, column: 1 },
+      };
+      const loc = { source };
+      loc.source = {};
+      const operation = {
+        kind: "OperationDefinition", operation: "query",
+        name: { kind: "Name", value: "GetUser" }, loc,
+      };
+    `);
+    expect(actual).toHaveLength(2);
+  });
+
+  it.each(["inline", "specifier"])(
+    "retains separately exported sources: %s",
+    (form) => {
+      const actual = rpcEndpoints(`
+      ${form === "inline" ? "export" : ""} const source = {
+        body: "query GetUser { user { id } }",
+        locationOffset: { line: 1, column: 1 },
+      };
+      ${form === "specifier" ? "export { source };" : ""}
+      const doc = { kind: "OperationDefinition", operation: "query",
+        name: { kind: "Name", value: "GetUser" }, loc: { source } };
+    `);
+      expect(actual).toHaveLength(2);
+    },
+  );
+});
+
+describe("GraphQL document recognition", () => {
   it("recognizes precompiled GraphQL document objects", () => {
     expect(
       rpcEndpoints(`
@@ -430,9 +716,10 @@ describe("GraphQL document ownership", () => {
     ).toEqual([]);
   });
 
-  it("reports a precompiled graphql-tag document once, not again from loc.source.body", () => {
+  it("reports a private precompiled document once, not again from loc.source.body", () => {
     expect(
       rpcEndpoints(`
+        export {};
         const doc = { kind: "Document", definitions: [{
           kind: "OperationDefinition",
           operation: "query",
@@ -459,6 +746,7 @@ describe("GraphQL document ownership", () => {
     (sourceFields) => {
       expect(
         rpcEndpoints(`
+          export {};
           const source = { ${sourceFields} };
           const operation = {
             kind: "OperationDefinition",
@@ -490,5 +778,42 @@ it("keeps existing network endpoint recognition unchanged", () => {
       value: "invoice.list",
       mechanism: "trpc:procedure:useQuery",
     },
+  ]);
+});
+
+it("keeps named spreads unknown without proving nullish aliases", () => {
+  expect(
+    rpcEndpoints(`var p=null;const root=Function("return this")();
+    root.p={url:"/changed"};httpLink({url:"/safe",...p});`),
+  ).toEqual([]);
+});
+
+it("preserves named fields across primitive and string spreads while retaining unknown overrides", () => {
+  const source = `
+      httpLink({url:"/primitives",...false,...42,...1n,[void effect()]:0});
+      httpLink({url:"/string",..."ab"});
+      httpLink({url:"/array",...[1]});
+      httpLink({url:"/unknown",...options});
+    `;
+  const observed: string[] = [];
+  runInNewContext(
+    source,
+    {
+      httpLink: (options: { url: string }) => observed.push(options.url),
+      effect: () => {},
+      options: { url: "/overwritten" },
+    },
+    { timeout: 1_000 },
+  );
+  expect(observed).toEqual([
+    "/primitives",
+    "/string",
+    "/array",
+    "/overwritten",
+  ]);
+  expect(rpcEndpoints(source)).toEqual([
+    { kind: "network", value: "/primitives", mechanism: "trpc:link:httpLink" },
+    { kind: "network", value: "/string", mechanism: "trpc:link:httpLink" },
+    { kind: "network", value: "/array", mechanism: "trpc:link:httpLink" },
   ]);
 });

@@ -1,6 +1,3 @@
-import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
-
 import { reconstructJavaScriptArtifact } from "./javascriptApplicationScope.js";
 import type {
   ApplicationEdge,
@@ -8,19 +5,7 @@ import type {
 } from "../../src/domain/javascript/javascriptApplicationGraphSchemas.js";
 import type { JavaScriptApplicationGraph } from "../../src/domain/javascript/javascriptApplicationGraph.js";
 
-/** Write text fixture files, creating parent directories as needed. */
-export const writeFixtureFiles = async (
-  root: string,
-  files: Readonly<Record<string, string>>,
-): Promise<void> => {
-  await Promise.all(
-    Object.entries(files).map(async ([relative, contents]) => {
-      const path = join(root, relative);
-      await mkdir(dirname(path), { recursive: true });
-      await writeFile(path, contents);
-    }),
-  );
-};
+export { writeFixtureFiles } from "./workspace/writeFixtureFiles.js";
 
 /** Reconstruct one JavaScript artifact fixture directory. */
 export const reconstructJavaScriptFixture = (

@@ -1,9 +1,6 @@
-import { createHash } from "node:crypto";
-import { open } from "node:fs/promises";
-
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
+  AnalysisCancelledError,
   AnalysisInputError,
 } from "../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -11,7 +8,6 @@ import {
   isMachOFormat,
   type BinaryTarget,
 } from "../domain/binaryTargetTypes.js";
-import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import {
@@ -20,7 +16,16 @@ import {
   type NativeCallObservationInput,
   type NativeCallObservationResult,
 } from "../domain/native/nativeCallObservation.js";
+import {
+  nativeCallTargetFailure,
+  verifyNativeCallTarget,
+} from "./NativeCallTarget.js";
+import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { err, ok, type Result } from "../domain/result.js";
+import {
+  nativeCallPartialObservationSchema,
+  type NativeCallPartialObservation,
+} from "../domain/native/nativeCallPartialObservation.js";
 import type { NativeCallTrace, NativeCallTracer } from "./LldbCallTracer.js";
 
 const OPERATION = "observe_native_calls";
@@ -40,8 +45,8 @@ export const observeNativeCalls = async (
   target: BinaryTarget,
   parameters: Readonly<Record<string, JsonValue>>,
   tracer: NativeCallTracer,
+  resources: ArtifactResourceScope,
   signal?: AbortSignal,
-  readTargetDigest: typeof fileSha256 = fileSha256,
 ): Promise<Result<NativeCallObservationResult, AnalysisError>> => {
   if (target.kind !== "executable" || !isMachOFormat(target.format))
     return err(
@@ -54,55 +59,67 @@ export const observeNativeCalls = async (
   const parsed = nativeCallObservationInputSchema.safeParse(parameters);
   if (!parsed.success)
     return err(new AnalysisInputError(OPERATION, { cause: parsed.error }));
-  // Observe the bytes the session's other Evidence describes.
-  let digest: string;
   try {
-    digest = await readTargetDigest(target.path, signal);
+    return await resources.run(async () => {
+      const selected = await verifyNativeCallTarget(target, resources, signal);
+      if (!selected.ok) return selected;
+      if (signal?.aborted)
+        return err(
+          new AnalysisCancelledError(OPERATION, { cause: signal.reason }),
+        );
+      try {
+        const traced = await tracer.trace(
+          {
+            executable: target.path,
+            architecture: target.architecture,
+            expectedSha256: target.sha256,
+            input: parsed.data,
+          },
+          signal,
+        );
+        if (!traced.ok) return traced;
+        return signal?.aborted
+          ? err(
+              new AnalysisCancelledError(OPERATION, {
+                cause: signal.reason,
+                partialObservation: projectPartialNativeCalls(
+                  target,
+                  parsed.data,
+                  traced.value,
+                  "cancelled",
+                ),
+              }),
+            )
+          : ok(projectNativeCalls(target, parsed.data, traced.value));
+      } catch (cause: unknown) {
+        // Unknown tracer/parser failures carry no file cleanup authority.
+        return err(
+          new ProviderAdapterError("native-macos", OPERATION, {
+            cause,
+            diagnostics: { phase: "trace-result" },
+          }),
+        );
+      }
+    });
   } catch (cause: unknown) {
-    if (signal?.aborted === true || isAbortError(cause))
-      return err(new AnalysisCancelledError(OPERATION));
-    return err(
-      new ProviderAdapterError("native-macos", OPERATION, {
-        diagnostics: {
-          reason: "Unable to verify the selected target digest",
-          detail: cause instanceof Error ? cause.message : String(cause),
-        },
-      }),
-    );
+    // Only resource admission/retry can reject outside the owned operation.
+    return err(nativeCallTargetFailure(cause, target.path));
   }
-  if (digest !== target.sha256)
-    return err(
-      new EvidenceIntegrityError(
-        "Native call observation target digest changed after session binding",
-      ),
-    );
-  if (signal?.aborted === true)
-    return err(new AnalysisCancelledError(OPERATION));
-  const traced = await tracer.trace(
-    {
-      executable: target.path,
-      architecture: target.architecture,
-      expectedSha256: target.sha256,
-      input: parsed.data,
-    },
-    signal,
-  );
-  if (!traced.ok) return traced;
-  return ok(projectNativeCalls(target, parsed.data, traced.value));
 };
 
-const isAbortError = (cause: unknown): boolean =>
-  cause instanceof Error && cause.name === "AbortError";
-
 /** Join the request, the tracer's run and REA's own checks into the result contract. */
-export const projectNativeCalls = (
+const nativeCallFacts = (
   target: Pick<BinaryTarget, "path" | "sha256"> & {
     readonly architecture: string;
   },
   input: NativeCallObservationInput,
-  trace: NativeCallTrace,
-): NativeCallObservationResult => {
+  trace: NativeCallReadback,
+) => {
   const { run } = trace;
+  const terminated = run.terminated && trace.terminated;
+  const terminationSummary = terminated
+    ? "the process was killed"
+    : "termination was requested but could not be confirmed";
   const unresolved = run.breakpoints
     .filter(({ location_count: count }) => count === 0)
     .map(({ index }) => index);
@@ -116,7 +133,7 @@ export const projectNativeCalls = (
     run.outcome === "duration-elapsed" ||
     run.outcome === "stop-limit" ||
     unresolved.length > 0;
-  return nativeCallObservationResultSchema.parse({
+  return {
     target: {
       path: target.path,
       sha256: target.sha256,
@@ -140,7 +157,7 @@ export const projectNativeCalls = (
       outcome: run.outcome,
       exit_status: run.exit_status,
       exit_description: run.exit_description,
-      terminated: run.terminated && trace.terminated,
+      terminated,
       elapsed_ms: run.elapsed_ms,
       stdout: trace.stdout,
       stderr: trace.stderr,
@@ -170,17 +187,17 @@ export const projectNativeCalls = (
       "The selected pathname digest and LLDB module identity are checked around launch. No immutable executable snapshot is used; concurrent in-place mutation or replacement and restoration cannot be ruled out, so the loaded-image digest remains unknown.",
       ...(eventLimit
         ? [
-            `Observation stopped at max_events (${input.max_events}); later calls were not recorded and the process was killed.`,
+            `Observation stopped at max_events (${input.max_events}); later calls were not recorded and ${terminationSummary}.`,
           ]
         : []),
       ...(resourceLimit
         ? [
-            "Observation stopped before retaining the next complete event because the estimated 8 MiB trace-payload or 65,536-frame aggregate budget was reached; the process was killed.",
+            `Observation stopped before retaining the next complete event because the estimated 8388608-byte (8 MiB) trace-payload or 65536-frame aggregate budget was reached; ${terminationSummary}. This release has no runtime override for those budgets.`,
           ]
         : []),
       ...(run.outcome === "duration-elapsed"
         ? [
-            `The process was still running after duration_ms (${input.duration_ms}) and was killed.`,
+            `The process was still running after duration_ms (${input.duration_ms}); ${terminationSummary}.`,
           ]
         : []),
       ...(run.target_identity.stable
@@ -190,7 +207,7 @@ export const projectNativeCalls = (
           ]),
       ...(run.outcome === "stop-limit"
         ? [
-            "Observation stopped after repeated signal or exception stops; the process was killed.",
+            `Observation stopped after repeated signal or exception stops; ${terminationSummary}.`,
           ]
         : []),
       ...(unresolved.length === 0
@@ -207,13 +224,18 @@ export const projectNativeCalls = (
         : []),
       ...(breakpointLocationLimit
         ? [
-            "Resolved breakpoint locations exceeded the aggregate 8 MiB metadata budget; omitted locations are counted in location_count. This metadata limit does not change the process outcome.",
+            "Resolved breakpoint locations exceeded the aggregate 8388608-byte (8 MiB) metadata budget; omitted locations are counted in location_count. This metadata limit does not change the process outcome. This release has no runtime override.",
           ]
         : []),
-      ...(trace.stdout.truncated || trace.stderr.truncated
-        ? ["Target output beyond 1 MiB per stream is counted but not kept."]
+      ...(trace.stdout === null || trace.stderr === null
+        ? ["One or more target output captures were unavailable."]
         : []),
-      ...(!trace.stdout.complete || !trace.stderr.complete
+      ...(trace.stdout?.truncated === true || trace.stderr?.truncated === true
+        ? [
+            "Target output beyond 1048576 bytes (1 MiB) per stream is counted but not kept. This release has no runtime override.",
+          ]
+        : []),
+      ...(trace.stdout?.complete === false || trace.stderr?.complete === false
         ? [
             "Target output draining did not complete; reported byte counts are observed lower bounds, not stream totals.",
           ]
@@ -224,25 +246,39 @@ export const projectNativeCalls = (
             `REA could not confirm that process ${run.pid} exited; check for it before relying on host state.`,
           ]),
     ],
-  });
+  };
 };
 
-const fileSha256 = async (
-  path: string,
-  signal?: AbortSignal,
-): Promise<string> => {
-  const handle = await open(path, "r");
-  try {
-    const hash = createHash("sha256");
-    const buffer = new Uint8Array(1024 * 1024);
-    for (;;) {
-      signal?.throwIfAborted();
-      const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
-      if (bytesRead === 0) break;
-      hash.update(buffer.subarray(0, bytesRead));
-    }
-    return hash.digest("hex");
-  } finally {
-    await handle.close();
-  }
+/** Completed tracer metadata with independently available output captures. */
+type NativeCallReadback = Omit<NativeCallTrace, "stdout" | "stderr"> & {
+  readonly stdout: NativeCallTrace["stdout"] | null;
+  readonly stderr: NativeCallTrace["stderr"] | null;
+};
+
+export const projectNativeCalls = (
+  target: Pick<BinaryTarget, "path" | "sha256"> & {
+    readonly architecture: string;
+  },
+  input: NativeCallObservationInput,
+  trace: NativeCallTrace,
+): NativeCallObservationResult =>
+  nativeCallObservationResultSchema.parse(
+    nativeCallFacts(target, input, trace),
+  );
+
+/** Retain already parsed run facts when capture or finalization remains incomplete. */
+export const projectPartialNativeCalls = (
+  target: Pick<BinaryTarget, "path" | "sha256"> & {
+    readonly architecture: string;
+  },
+  input: NativeCallObservationInput,
+  trace: NativeCallReadback,
+  reason: NativeCallPartialObservation["coverage"]["reason"],
+): NativeCallPartialObservation => {
+  const facts = nativeCallFacts(target, input, trace);
+  return nativeCallPartialObservationSchema.parse({
+    ...facts,
+    kind: "native-call-observation",
+    coverage: { ...facts.coverage, status: "partial", reason },
+  });
 };

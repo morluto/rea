@@ -148,7 +148,9 @@ it("analyzes a plain long-line loader without package metadata", async () => {
   for (const node of nodes) {
     expect(node.identity).toMatchObject({
       strategy: "artifact-local-key",
-      key: node.kind === "endpoint" ? literalEndpointKey("") : "",
+      // A Worker string is relative to the unestablished document base, so
+      // its identity is the retained expression rather than a specifier.
+      key: node.kind === "endpoint" ? literalEndpointKey("") : 'new Worker("")',
     });
     expect(node.observations.map(({ label }) => label)).toEqual([null]);
   }

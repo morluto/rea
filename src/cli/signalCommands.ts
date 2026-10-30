@@ -1,7 +1,7 @@
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { inspectSignalDecodersInputSchema } from "../domain/signals/signalDecoders.js";
 import { z } from "incur";
 import type { SignalRecordingService } from "../application/signals/SignalRecordingService.js";
-import { resolve } from "node:path";
 import { createSignalRecordingService } from "../composition/signals.js";
 import {
   signalRecordingOptionsSchema,
@@ -14,6 +14,9 @@ import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
+import { localPathStringSchema } from "../domain/localPath.js";
+import { absoluteCallerPath } from "../filesystem/callerPath.js";
 export const registerSignalCommands = (
   cli: CliInstance,
   logger: Logger,
@@ -62,14 +65,17 @@ export const registerSignalCommands = (
             service,
             "sigrok-recording",
             "inspect_signal_decoders",
-          ),
+            signal,
+          ).then(projectCliAnalysisResult),
         ),
       ),
   });
   cli.command(CLI_COMMANDS.decodeSignalRecording, {
     description:
       "Decode an existing signal recording with caller-supplied sigrok",
-    args: z.object({ path: z.string().describe("Local signal recording") }),
+    args: z.object({
+      path: localPathStringSchema.describe("Local signal recording"),
+    }),
     options: z
       .object({
         ...signalRecordingOptionsSchema.shape,
@@ -101,20 +107,22 @@ export const registerSignalCommands = (
     run: ({ args, options: { all_lines, ...options } }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, CLI_COMMANDS.decodeSignalRecording, async () => {
-          return finishAnalysisCommand(
+          return finishCliEvidenceCommand(
+            args.path,
             () =>
               service.decode(
                 {
                   ...options,
                   ...(all_lines ? { line_limit: null } : {}),
-                  path: resolve(args.path),
+                  path: absoluteCallerPath(args.path),
                 },
                 { signal },
               ),
             service,
             "sigrok-recording",
             "decode_signal_recording",
-          );
+            signal,
+          ).then(projectCliAnalysisResult);
         }),
       ),
   });

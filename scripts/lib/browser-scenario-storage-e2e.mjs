@@ -10,6 +10,7 @@ import {
   runScenarioCli,
   scenarioProfiles,
 } from "./browser-scenario-verifier.mjs";
+import { withVerifierCleanup } from "./verifier-cleanup.mjs";
 
 const scenarioFor = (browser, origin) =>
   browserScenarioSchema.parse({
@@ -202,7 +203,7 @@ export async function verifyScenarioStorage({
   targetId,
 }) {
   const site = await startStorageSite();
-  try {
+  return withVerifierCleanup(async () => {
     await verifyLaunchStorage(executable, site.origin);
     await verifyConnectedStorage(endpoint, targetId, site.origin);
     return {
@@ -216,9 +217,7 @@ export async function verifyScenarioStorage({
       externalTargetSurvives: true,
       cancellationCleanup: true,
     };
-  } finally {
-    await site.close();
-  }
+  }, [() => site.close()]);
 }
 
 const verifyLaunchStorage = async (executable, origin) => {
@@ -299,7 +298,7 @@ const verifyConnectedStorage = async (endpoint, targetId, origin) => {
     target.webSocketDebuggerUrl,
     "capture_browser_scenario",
   );
-  try {
+  return withVerifierCleanup(async () => {
     await assertStorageKeyPartition(observer, origin);
     const result = await runScenarioCli(scenario);
     const capture = result.normalized_result;
@@ -313,12 +312,7 @@ const verifyConnectedStorage = async (endpoint, targetId, origin) => {
     assert.equal(capture.browser.cleanup, "disconnected-external");
     await verifyCallerDebuggerPause(observer, origin, scenario);
     await verifyCancelledStorage(observer, endpoint, targetId, scenario);
-  } finally {
-    await raceWithTimeout(restoreTarget(observer, target.url), 1_000).catch(
-      () => undefined,
-    );
-    await raceWithTimeout(observer.close(), 1_000).catch(() => undefined);
-  }
+  }, [() => restoreTarget(observer, target.url), () => observer.close()]);
 };
 
 const assertStorageKeyPartition = async (connection, origin) => {
@@ -344,7 +338,7 @@ const assertStorageKeyPartition = async (connection, origin) => {
     waitForDebuggerOnStart: false,
     flatten: true,
   });
-  try {
+  return withVerifierCleanup(async () => {
     const start = await connection.send("Runtime.evaluate", {
       expression: "performance.timeOrigin",
       returnByValue: true,
@@ -407,14 +401,15 @@ const assertStorageKeyPartition = async (connection, origin) => {
       topLevel.storageKey,
       `Chrome did not expose distinct partition keys: child=${JSON.stringify(child)} top=${JSON.stringify(topLevel)} rootBefore=${JSON.stringify(beforeRoot)}`,
     );
-  } finally {
-    unsubscribe();
-    await connection.send("Target.setAutoAttach", {
-      autoAttach: false,
-      waitForDebuggerOnStart: false,
-      flatten: true,
-    });
-  }
+  }, [
+    () => unsubscribe(),
+    () =>
+      connection.send("Target.setAutoAttach", {
+        autoAttach: false,
+        waitForDebuggerOnStart: false,
+        flatten: true,
+      }),
+  ]);
 };
 
 const waitForPagePath = async (connection, path, priorTimeOrigin) => {
@@ -503,93 +498,97 @@ const verifyCallerDebuggerPause = async (caller, origin, scenario) => {
     ],
   });
   let settled = false;
-  const pending = createBrowserScenarioProvider(process.env)
+  const provider = createBrowserScenarioProvider(process.env);
+  const pending = provider
     .captureScenario(debuggerScenario, { signal: controller.signal })
     .finally(() => {
       settled = true;
       unsubscribe();
     });
-  try {
-    const callFrameId = await raceWithTimeout(paused, 10_000, () => {
-      throw new Error(
-        `Caller debugger pause was not observed at ${debuggerUrl}; settled=${String(settled)} events=${JSON.stringify(protocolTrace)}`,
+  return withVerifierCleanup(async () => {
+    try {
+      const callFrameId = await raceWithTimeout(paused, 10_000, () => {
+        throw new Error(
+          `Caller debugger pause was not observed at ${debuggerUrl}; settled=${String(settled)} events=${JSON.stringify(protocolTrace)}`,
+        );
+      });
+      const pausedState = await caller.send("Debugger.evaluateOnCallFrame", {
+        callFrameId,
+        expression: "window.reaDebuggerAfter === true",
+        returnByValue: true,
+      });
+      assert.equal(
+        pausedState.result.value,
+        false,
+        "Caller-owned debugger frame resumed before the caller inspected it",
       );
-    });
-    const pausedState = await caller.send("Debugger.evaluateOnCallFrame", {
-      callFrameId,
-      expression: "window.reaDebuggerAfter === true",
-      returnByValue: true,
-    });
-    assert.equal(
-      pausedState.result.value,
-      false,
-      "Caller-owned debugger frame resumed before the caller inspected it",
-    );
-    await delay(100);
-    assert.equal(
-      settled,
-      false,
-      "Storage observer resumed a caller-owned debugger pause",
-    );
-    await caller.send("Debugger.resume");
-    pauseObserved = false;
-    const result = await pending;
-    if (!result.ok) throw result.error;
-    const debuggerState = await caller.send("Runtime.evaluate", {
-      expression: "window.reaDebuggerAfter === true",
-      returnByValue: true,
-    });
-    assert.equal(debuggerState.result.value, true);
-  } catch (cause) {
-    if (!pauseObserved) controller.abort(cause);
-    else await caller.send("Debugger.resume").catch(() => undefined);
-    const completion = await raceWithTimeout(
-      pending.catch((pendingCause) => ({ ok: false, error: pendingCause })),
-      5_000,
-    );
-    if (completion === undefined)
-      throw new Error("Capture remained pending after cancellation", { cause });
-    const completionError =
-      typeof completion === "object" &&
-      completion !== null &&
-      "error" in completion
-        ? completion.error
-        : typeof completion === "object" &&
-            completion !== null &&
-            "ok" in completion &&
-            completion.ok === false
+      await delay(100);
+      assert.equal(
+        settled,
+        false,
+        "Storage observer resumed a caller-owned debugger pause",
+      );
+      await caller.send("Debugger.resume");
+      pauseObserved = false;
+      const result = await pending;
+      if (!result.ok) throw result.error;
+      const debuggerState = await caller.send("Runtime.evaluate", {
+        expression: "window.reaDebuggerAfter === true",
+        returnByValue: true,
+      });
+      assert.equal(debuggerState.result.value, true);
+    } catch (cause) {
+      if (!pauseObserved) controller.abort(cause);
+      else await caller.send("Debugger.resume").catch(() => undefined);
+      const completion = await raceWithTimeout(
+        pending.catch((pendingCause) => ({ ok: false, error: pendingCause })),
+        5_000,
+      );
+      if (completion === undefined)
+        throw new Error("Capture remained pending after cancellation", {
+          cause,
+        });
+      const completionError =
+        typeof completion === "object" &&
+        completion !== null &&
+        "error" in completion
           ? completion.error
-          : undefined;
-    const completionDetail =
-      completionError === undefined
-        ? "capture did not report an error"
-        : (() => {
-            const causes = [];
-            let current = completionError;
-            for (
-              let depth = 0;
-              depth < 4 && current !== undefined;
-              depth += 1
-            ) {
-              causes.push({
-                name: current.name,
-                tag: current._tag,
-                reason: current.reason,
-                message: current.message,
-              });
-              current = current.cause;
-            }
-            return JSON.stringify(causes);
-          })();
-    throw new Error(`${String(cause)}; capture=${completionDetail}`, {
-      cause,
-    });
-  } finally {
-    unsubscribe();
-    await raceWithTimeout(caller.send("Debugger.disable"), 1_000).catch(
-      () => undefined,
-    );
-  }
+          : typeof completion === "object" &&
+              completion !== null &&
+              "ok" in completion &&
+              completion.ok === false
+            ? completion.error
+            : undefined;
+      const completionDetail =
+        completionError === undefined
+          ? "capture did not report an error"
+          : (() => {
+              const causes = [];
+              let current = completionError;
+              for (
+                let depth = 0;
+                depth < 4 && current !== undefined;
+                depth += 1
+              ) {
+                causes.push({
+                  name: current.name,
+                  tag: current._tag,
+                  reason: current.reason,
+                  message: current.message,
+                });
+                current = current.cause;
+              }
+              return JSON.stringify(causes);
+            })();
+      throw new Error(`${String(cause)}; capture=${completionDetail}`, {
+        cause,
+      });
+    }
+  }, [
+    () => unsubscribe(),
+    () => caller.send("Debugger.disable"),
+    () => provider.close(),
+  ]);
 };
 
 const verifyCancelledStorage = async (
@@ -615,38 +614,44 @@ const verifyCancelledStorage = async (
     expression: "performance.timeOrigin",
     returnByValue: true,
   });
-  const pending = createBrowserScenarioProvider(process.env).captureScenario(
-    cancelledScenario,
-    { signal: controller.signal },
-  );
-  await waitForNewDocument(
-    observer,
-    "/storage-main",
-    priorDocument.result.value,
-  );
-  const state = await observer.send("Runtime.evaluate", {
-    expression:
-      "JSON.parse(document.querySelector('#main-report').textContent)",
-    returnByValue: true,
+  const provider = createBrowserScenarioProvider(process.env);
+  const pending = provider.captureScenario(cancelledScenario, {
+    signal: controller.signal,
   });
-  assert.deepEqual(state.result.value, {
-    local: "main-initial",
-    session: "main-session-initial",
-    removed: "main-remove-seed",
-    empty: "main-empty-seed",
-  });
-  controller.abort(new Error("cancel storage seed scenario"));
-  const result = await pending;
-  assert.ok(
-    !result.ok ||
-      result.value.steps.some(({ status }) => status === "cancelled"),
-    "Cancellation unexpectedly completed every scenario step",
-  );
-  const targets = await (await fetch(`${endpoint}/json/list`)).json();
-  assert.ok(
-    targets.some(({ id }) => id === targetId),
-    "Cancelled connect-mode storage cleanup closed the external target",
-  );
+  return withVerifierCleanup(async () => {
+    await waitForNewDocument(
+      observer,
+      "/storage-main",
+      priorDocument.result.value,
+    );
+    const state = await observer.send("Runtime.evaluate", {
+      expression:
+        "JSON.parse(document.querySelector('#main-report').textContent)",
+      returnByValue: true,
+    });
+    assert.deepEqual(state.result.value, {
+      local: "main-initial",
+      session: "main-session-initial",
+      removed: "main-remove-seed",
+      empty: "main-empty-seed",
+    });
+    controller.abort(new Error("cancel storage seed scenario"));
+    const result = await pending;
+    if (result.ok)
+      assert.ok(
+        result.value.steps.some(({ status }) => status === "cancelled"),
+        "Cancellation unexpectedly completed every scenario step",
+      );
+    else assert.equal(result.error._tag, "AnalysisCancelledError");
+    const targets = await (await fetch(`${endpoint}/json/list`)).json();
+    assert.ok(
+      targets.some(({ id }) => id === targetId),
+      "Cancelled connect-mode storage cleanup closed the external target",
+    );
+  }, [
+    () => controller.abort(new Error("cancel failed storage verification")),
+    () => provider.close(),
+  ]);
 };
 
 const waitForNewDocument = async (connection, path, priorTimeOrigin) => {
@@ -669,15 +674,38 @@ const waitForNewDocument = async (connection, path, priorTimeOrigin) => {
 };
 
 const restoreTarget = async (connection, url) => {
-  await connection.send("Page.navigate", { url });
-  const deadline = Date.now() + 10_000;
-  while (Date.now() < deadline) {
-    const result = await connection.send("Runtime.evaluate", {
-      expression: "location.href",
-      returnByValue: true,
-    });
-    if (result.result.value === url) return;
-    await new Promise((resolve) => setTimeout(resolve, 25));
+  const loaded = new Set();
+  let loaderId;
+  let resolveLoaded;
+  const load = new Promise((resolve) => {
+    resolveLoaded = resolve;
+  });
+  const unsubscribe = connection.onEvent((event) => {
+    if (
+      event.method !== "Page.lifecycleEvent" ||
+      event.params?.name !== "load" ||
+      typeof event.params.loaderId !== "string"
+    )
+      return;
+    loaded.add(event.params.loaderId);
+    if (event.params.loaderId === loaderId) resolveLoaded();
+  });
+  try {
+    await connection.send("Page.setLifecycleEventsEnabled", { enabled: true });
+    const navigation = await connection.send("Page.navigate", { url });
+    assert.equal(navigation.errorText, undefined);
+    assert.equal(typeof navigation.loaderId, "string");
+    loaderId = navigation.loaderId;
+    // A URL changes at commit, before old child frames have been retired.
+    // Do not hand the shared page to the next verifier until this load ends.
+    if (!loaded.has(loaderId))
+      await raceWithTimeout(load, 10_000, () => {
+        throw new Error(
+          "External browser did not finish restoring its document",
+        );
+      });
+  } finally {
+    unsubscribe();
+    await connection.send("Page.setLifecycleEventsEnabled", { enabled: false });
   }
-  throw new Error("External browser did not return to its original URL");
 };

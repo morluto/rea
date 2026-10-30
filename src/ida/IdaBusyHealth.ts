@@ -1,5 +1,9 @@
 import { setTimeout as sleep } from "node:timers/promises";
-import { AnalysisTimeoutError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisTimeoutError,
+} from "../domain/analysisErrorCore.js";
+import { idaRegistrationTimeoutGuidance } from "./IdaConfiguration.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { IdaMcpConnection } from "./IdaMcpConnection.js";
 import { busyHealthSchema } from "./IdaProtocolValues.js";
@@ -29,6 +33,11 @@ const isBusyStatus = (raw: JsonValue): boolean =>
   !Array.isArray(raw) &&
   raw["status"] === "busy";
 
+interface LastBusyHealth {
+  readonly raw: JsonValue;
+  readonly tool: string;
+}
+
 /**
  * Reads `server_health` until the worker stops reporting a transient busy
  * state. The wait ends when the worker answers, the caller aborts, or the
@@ -53,22 +62,93 @@ export const readSettledHealth = async (
 ): Promise<JsonValue> => {
   const started = clock.now();
   const remaining = (): number => timeoutMs - (clock.now() - started);
+  let lastBusy: LastBusyHealth | undefined;
   for (;;) {
-    const raw = await connection.call("server_health", { database });
+    if (signal?.aborted)
+      throw new AnalysisCancelledError("server_health", {
+        cause: signal.reason,
+      });
+    const budgetMs = remaining();
+    if (budgetMs <= 0)
+      throw lastBusy === undefined
+        ? new AnalysisTimeoutError("server_health", timeoutMs, {
+            ...idaRegistrationTimeoutGuidance(timeoutMs, "readiness"),
+          })
+        : busyTimeout(lastBusy, timeoutMs);
+    const requestTimeoutMs = Math.min(timeoutMs, Math.ceil(budgetMs));
+    let raw: JsonValue;
+    try {
+      raw = await connection.call(
+        "server_health",
+        { database },
+        { timeoutMs: requestTimeoutMs, signal },
+      );
+    } catch (cause: unknown) {
+      if (
+        lastBusy !== undefined &&
+        cause instanceof AnalysisTimeoutError &&
+        cause.timeoutMs === requestTimeoutMs &&
+        requestTimeoutMs < timeoutMs
+      ) {
+        throw busyTimeout(lastBusy, timeoutMs, cause);
+      }
+      throw cause;
+    }
     const busy = busyHealthSchema.safeParse(raw);
     if (!busy.success) {
       if (isBusyStatus(raw)) throw busy.error;
       return raw;
     }
+    const observedBusy = {
+      raw,
+      tool: busyToolName(busy.data.busy_tool),
+    };
+    lastBusy = observedBusy;
     const expired = (): AnalysisTimeoutError =>
-      new AnalysisTimeoutError(
-        `server_health: headless worker still busy in ${busyToolName(busy.data.busy_tool)}`,
-        timeoutMs,
-        { cause: raw },
-      );
+      busyTimeout(observedBusy, timeoutMs);
     if (remaining() <= 0) throw expired();
-    await clock.delay(Math.min(BUSY_HEALTH_RETRY_MS, remaining()), signal);
-    signal?.throwIfAborted();
+    try {
+      await clock.delay(Math.min(BUSY_HEALTH_RETRY_MS, remaining()), signal);
+    } catch (cause: unknown) {
+      if (
+        signal?.aborted &&
+        cause instanceof Error &&
+        cause.name === "AbortError"
+      )
+        throw new AnalysisCancelledError("server_health", {
+          cause: signal.reason,
+        });
+      throw cause;
+    }
+    if (signal?.aborted)
+      throw new AnalysisCancelledError("server_health", {
+        cause: signal.reason,
+      });
     if (remaining() <= 0) throw expired();
   }
+};
+
+const busyTimeout = (
+  lastBusy: LastBusyHealth,
+  timeoutMs: number,
+  requestFailure?: AnalysisTimeoutError,
+): AnalysisTimeoutError => {
+  const guidance = idaRegistrationTimeoutGuidance(timeoutMs, "readiness");
+  return new AnalysisTimeoutError("server_health", timeoutMs, {
+    cause: lastBusy.raw,
+    ...guidance,
+    userMessage: `${guidance.userMessage} The last reported busy tool was ${lastBusy.tool}.`,
+    diagnostics: {
+      busy_tool: lastBusy.tool,
+      ...(requestFailure === undefined
+        ? {}
+        : {
+            health_request_operation: requestFailure.operation,
+            health_request_timeout_ms: requestFailure.timeoutMs,
+          }),
+    },
+    ...(requestFailure === undefined
+      ? {}
+      : { capturedOutput: requestFailure.capturedOutput }),
+  });
 };

@@ -21,7 +21,7 @@ it.each([
   });
   expectConfigurationRefusal(
     result,
-    "Cannot run selected tool /nonexistent/tshark",
+    "The selected tshark executable /nonexistent/tshark could not be found",
   );
   expectConfigurationRefusal(result, "through absolute REA_TSHARK_COMMAND");
 });

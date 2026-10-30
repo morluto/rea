@@ -81,7 +81,8 @@ it("composes observed Evidence with the caller parameters inline", async () => {
 
 it("preserves cancellation before execution", async () => {
   const controller = new AbortController();
-  controller.abort();
+  const cancellationReason = { source: "caller", operation: "shutdown" };
+  controller.abort(cancellationReason);
   const service = new AdbDeviceAnalysisService(refusedPort);
   const result = await service.execute(
     "list_adb_devices",
@@ -90,7 +91,7 @@ it("preserves cancellation before execution", async () => {
       signal: controller.signal,
     },
   );
-  expect(result.ok).toBe(false);
-  if (result.ok) return;
+  if (result.ok) throw new Error("Expected cancellation before execution");
   expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+  expect(result.error.cause).toBe(cancellationReason);
 });

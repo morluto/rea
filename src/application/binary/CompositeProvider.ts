@@ -1,18 +1,20 @@
 import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { err, ok } from "../../domain/result.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js";
 import type {
   AnalysisClient,
   AnalysisClientContext,
+  AnalysisProviderBoundClientFactory,
   AnalysisProvider,
   CapabilityDescriptor,
   ExecutionOptions,
   ProviderIdentity,
 } from "../AnalysisProvider.js";
-import { closeAnalysisClient } from "./AnalysisClientCleanup.js";
+import { closeAnalysisClient } from "../AnalysisClientCleanup.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 
 /** Synthetic identity for a deterministic provider set. */
@@ -27,18 +29,20 @@ const compositeProviderIdentity = (
   version: null,
 });
 
-const closeCompositeClients =
-  (
-    identity: ProviderIdentity,
-    clients: ReadonlyMap<AnalysisProvider, AnalysisClient>,
-  ): AnalysisClient["close"] =>
-  async (options) => {
+const closeCompositeClients = (
+  identity: ProviderIdentity,
+  clients: ReadonlyMap<AnalysisProvider, AnalysisClient>,
+): AnalysisClient["close"] => {
+  const completed = new Set<AnalysisClient>();
+  return async (options) => {
     const outcomes = await Promise.all(
-      [...clients.entries()].map(([provider, client]) =>
-        closeAnalysisClient(client, provider.identity().id, options).then(
-          (result) => ({ providerId: provider.identity().id, result }),
-        ),
-      ),
+      [...clients.entries()].map(async ([provider, client]) => {
+        const providerId = provider.identity().id;
+        if (completed.has(client)) return { providerId, result: ok(null) };
+        const result = await closeAnalysisClient(client, providerId, options);
+        if (result.ok) completed.add(client);
+        return { providerId, result };
+      }),
     );
     const failures = outcomes.flatMap(({ providerId, result }) =>
       result.ok ? [] : [{ providerId, error: result.error }],
@@ -68,14 +72,26 @@ const closeCompositeClients =
           })),
         },
         {
+          remediationAction: [
+            ...new Set(
+              failures.map(
+                ({ error }) => projectAnalysisError(error).remediation.action,
+              ),
+            ),
+          ].join("\n"),
           cause: new AggregateError(
             failures.map(({ error }) => error),
             "Composed provider cleanup failed.",
           ),
         },
+      ).bindCleanupDependencies(
+        failures
+          .map(({ error }) => error)
+          .filter((error) => error.cleanupIncomplete),
       ),
     );
   };
+};
 
 const executeCompositeHealth = async (
   identity: ProviderIdentity,
@@ -114,8 +130,19 @@ export class CompositeProvider implements AnalysisProvider {
   readonly #identity: ProviderIdentity;
   readonly #capabilities: readonly CapabilityDescriptor[];
   readonly #providerByOperation: ReadonlyMap<string, AnalysisProvider>;
+  readonly #boundClientFactories: ReadonlyMap<
+    string,
+    AnalysisProviderBoundClientFactory
+  >;
 
-  constructor(readonly providers: readonly AnalysisProvider[]) {
+  constructor(
+    readonly providers: readonly AnalysisProvider[],
+    boundClientFactories: ReadonlyMap<
+      string,
+      AnalysisProviderBoundClientFactory
+    > = new Map(),
+  ) {
+    this.#boundClientFactories = boundClientFactories;
     if (providers.length === 0)
       throw new RangeError("CompositeProvider requires at least one provider");
     this.#identity = Object.freeze(
@@ -162,26 +189,39 @@ export class CompositeProvider implements AnalysisProvider {
     const clientFor = (provider: AnalysisProvider): AnalysisClient => {
       const existing = clients.get(provider);
       if (existing !== undefined) return existing;
-      const created = provider.createClient(
-        target,
-        profile?.provider.id === provider.identity().id ? profile : undefined,
-        context,
-      );
+      const providerProfile =
+        profile?.provider.id === provider.identity().id ? profile : undefined;
+      const factory = this.#boundClientFactories.get(provider.identity().id);
+      const created =
+        factory !== undefined && providerProfile !== undefined
+          ? factory(target, providerProfile, context)
+          : provider.createClient(target, providerProfile, context);
       clients.set(provider, created);
       return created;
     };
-    const close = closeCompositeClients(this.#identity, clients);
+    let closed = false;
+    const closeClients = closeCompositeClients(this.#identity, clients);
+    const close: AnalysisClient["close"] = (options) => {
+      closed = true;
+      return closeClients(options);
+    };
     return {
       executeIfReady: (operation, parameters, options) => {
         const provider = this.#providerByOperation.get(operation);
         const client =
-          provider === undefined ? undefined : clients.get(provider);
+          provider === undefined || closed ? undefined : clients.get(provider);
         return (
           client?.executeIfReady?.(operation, parameters, options) ??
           Promise.resolve(undefined)
         );
       },
       execute: async (operation, parameters, options) => {
+        if (closed)
+          return err(
+            new ProviderAdapterError(this.#identity.id, operation, {
+              diagnostics: { reason: "client_closed" },
+            }),
+          );
         if (operation === "health")
           return executeCompositeHealth(this.#identity, clients, options);
         const provider = this.#providerByOperation.get(operation);
@@ -209,17 +249,35 @@ export class CompositeProvider implements AnalysisProvider {
           .sort((left, right) =>
             compareUnicodeCodePoints(left.provider.id, right.provider.id),
           ),
+      reuseReadiness: () => {
+        if (closed) return "blocked";
+        const states = [...clients.values()].map(
+          (client) => client.reuseReadiness?.() ?? "unknown",
+        );
+        if (states.some((state) => state === "blocked")) return "blocked";
+        return states.some((state) => state === "unknown")
+          ? "unknown"
+          : "ready";
+      },
       operationHealthSnapshot: () => {
         const snapshots = [...clients.values()].map((client) =>
           client.operationHealthSnapshot?.(),
         );
+        const failed = snapshots.find(
+          (snapshot) =>
+            snapshot !== undefined &&
+            (snapshot.state === "exited" ||
+              snapshot.state === "unreachable" ||
+              snapshot.state === "not_started"),
+        );
+        if (failed !== undefined) return failed;
+        const nonIdle = snapshots.find(
+          (snapshot) => snapshot !== undefined && snapshot.state !== "idle",
+        );
+        if (nonIdle !== undefined) return nonIdle;
         if (snapshots.some((snapshot) => snapshot === undefined))
           return undefined;
-        return (
-          snapshots.find(
-            (snapshot) => snapshot !== undefined && snapshot.state !== "idle",
-          ) ?? snapshots[0]
-        );
+        return snapshots[0];
       },
       close,
     };

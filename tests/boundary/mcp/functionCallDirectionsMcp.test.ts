@@ -4,10 +4,11 @@ import { expect, it } from "vitest";
 
 import { FUNCTION_COMPARISON_EXAMPLE } from "../../../src/contracts/functionComparisonExample.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
-import { functionDossierSchema } from "../../../src/domain/hopperValues.js";
+import { functionDossierSchema } from "../../../src/domain/native/functionDossier.js";
 import type { RelationshipCoverage } from "../../../src/domain/relationshipCoverage.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 
 const observe = (relationshipCoverage: RelationshipCoverage) => {
   const template = FUNCTION_COMPARISON_EXAMPLE.left;
@@ -32,11 +33,15 @@ const observe = (relationshipCoverage: RelationshipCoverage) => {
   );
 };
 
-it("preserves directional gaps through advertised schemas and public path reconstruction", async () => {
+const profiles = ["full", "compact"] as const;
+it.each(profiles)("preserves directional gaps (%s)", async (profile) => {
   const session = createTestBinarySession(() => {
     throw new Error("Offline call paths must not launch a provider");
   });
-  const server = createServer({ kind: "session", session });
+  const server = createServer(
+    { kind: "session", session },
+    { environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: profile } },
+  );
   const client = new Client({ name: "function-call-directions", version: "1" });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
@@ -89,21 +94,28 @@ it("preserves directional gaps through advertised schemas and public path recons
         ["callees", "callees"],
         ["callers", "callees", "callers"],
         ["incoming"],
-      ])
-        expect(
-          validate({
-            ...input,
-            functions: [
-              {
-                ...observation,
-                relationship_coverage: {
-                  ...coverage,
-                  limited_directions,
-                },
+      ]) {
+        const malformed = {
+          ...input,
+          functions: [
+            {
+              ...observation,
+              relationship_coverage: {
+                ...coverage,
+                limited_directions,
               },
-            ],
-          }),
-        ).toBe(false);
+            },
+          ],
+        };
+        if (profile === "full") expect(validate(malformed)).toBe(false);
+        const rejected = await client.callTool({
+          name: "build_call_path",
+          arguments: malformed,
+        });
+        expect(parseMcpToolError(rejected)).toMatchObject({
+          error: { code: "invalid_request", category: "invalid_input" },
+        });
+      }
       const result = await client.callTool({
         name: "build_call_path",
         arguments: input,

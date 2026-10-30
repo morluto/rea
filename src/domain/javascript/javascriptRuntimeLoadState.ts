@@ -1,6 +1,7 @@
 import type { ApplicationNode } from "./javascriptApplicationGraphSchemas.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
 import type { ParsedStaticLayer } from "./javascriptRuntimeReconciliationParsing.js";
+import type { ParsedRuntimeCapture } from "./javascriptRuntimeReconciliationCaptureParsing.js";
 import type {
   JavaScriptRuntimeReconciliationItem,
   JavaScriptStaticLoadState,
@@ -9,7 +10,7 @@ import type { RuntimeReconciliationEntity } from "./javascriptRuntimeReconciliat
 import {
   createStaticRuntimeScope,
   mappedRuntimePaths,
-  staticNodeWithinRuntimeScope,
+  staticNodeRuntimeScope,
 } from "./javascriptRuntimeStaticCandidates.js";
 
 export interface StaticLoadStateProjection {
@@ -20,6 +21,7 @@ export interface StaticLoadStateProjection {
 /** Classify static code presence without claiming bundled module execution. */
 export const classifyStaticLoadStates = (
   layers: readonly ParsedStaticLayer[],
+  captures: readonly ParsedRuntimeCapture[],
   runtimeEntities: readonly RuntimeReconciliationEntity[],
   matches: readonly JavaScriptRuntimeReconciliationItem[],
   options: {
@@ -28,9 +30,15 @@ export const classifyStaticLoadStates = (
 ): StaticLoadStateProjection => {
   const states: JavaScriptStaticLoadState[] = [];
   for (const layer of layers) {
-    const projection = classifyLayer(layer, runtimeEntities, matches, {
-      reconciliationComplete: options.reconciliationComplete,
-    });
+    const projection = classifyLayer(
+      layer,
+      captures,
+      runtimeEntities,
+      matches,
+      {
+        reconciliationComplete: options.reconciliationComplete,
+      },
+    );
     states.push(...projection.states);
   }
   return { states, omittedStates: 0 };
@@ -38,6 +46,7 @@ export const classifyStaticLoadStates = (
 
 const classifyLayer = (
   layer: ParsedStaticLayer,
+  captures: readonly ParsedRuntimeCapture[],
   runtimeEntities: readonly RuntimeReconciliationEntity[],
   matches: readonly JavaScriptRuntimeReconciliationItem[],
   options: {
@@ -47,6 +56,7 @@ const classifyLayer = (
   const nodes = layer.graph.nodes.filter(isLoadStateNode);
   const direct = new Map<string, string[]>();
   const ambiguous = new Set<string>();
+  const incomplete = new Set<string>();
   for (const match of matches)
     if (
       match.status === "matched" &&
@@ -54,10 +64,12 @@ const classifyLayer = (
       match.static_node_id !== null
     )
       append(direct, match.static_node_id, match.runtime_node_id);
-    else if (match.status === "ambiguous")
+    else if (match.status === "ambiguous" || match.status === "unknown") {
+      const uncertain = match.status === "ambiguous" ? ambiguous : incomplete;
       for (const candidate of match.candidate_static_nodes)
         if (candidate.static_layer_id === layer.layerId)
-          ambiguous.add(candidate.static_node_id);
+          uncertain.add(candidate.static_node_id);
+    }
   const resident = residentNodes(layer, new Set(direct.keys()));
   const runtimeScope = createStaticRuntimeScope(layer, runtimeEntities);
   const scopedEntities = runtimeEntities.filter(
@@ -67,7 +79,12 @@ const classifyLayer = (
     options.reconciliationComplete &&
     layer.graph.coverage.status === "complete" &&
     scopedEntities.length > 0 &&
-    scopedEntities.every(({ capture }) => capture.scriptsCompleteWithinScope);
+    // An incomplete inventory may have omitted scripts that map into this
+    // layer, even when none of its reported entities map here.
+    captures.every(
+      ({ codeInventoryCompleteWithinScope }) =>
+        codeInventoryCompleteWithinScope,
+    );
   const states = nodes.map((node) => {
     const runtimeNodeIds = uniqueSorted(direct.get(node.node_id) ?? []);
     if (runtimeNodeIds.length > 0)
@@ -82,14 +99,16 @@ const classifyLayer = (
         runtimeNodeIds: [],
         reason: "containing-asset-was-loaded",
       });
-    if (ambiguous.has(node.node_id))
+    if (incomplete.has(node.node_id) || ambiguous.has(node.node_id))
       return state(layer, node, {
         status: "unknown",
         runtimeNodeIds: [],
-        reason: "ambiguous-runtime-candidate",
+        reason: incomplete.has(node.node_id)
+          ? "static-or-runtime-coverage-incomplete"
+          : "ambiguous-runtime-candidate",
       });
-    const nodeWithinScope = staticNodeWithinRuntimeScope(node, runtimeScope);
-    if (layerComplete && nodeWithinScope)
+    const membership = staticNodeRuntimeScope(node, runtimeScope);
+    if (layerComplete && membership === "within")
       return state(layer, node, {
         status: "not-observed-in-capture",
         runtimeNodeIds: [],
@@ -98,9 +117,10 @@ const classifyLayer = (
     return state(layer, node, {
       status: "unknown",
       runtimeNodeIds: [],
-      reason: !nodeWithinScope
-        ? "layer-outside-runtime-scope"
-        : "static-or-runtime-coverage-incomplete",
+      reason:
+        membership === "outside"
+          ? "layer-outside-runtime-scope"
+          : "static-or-runtime-coverage-incomplete",
     });
   });
   return { states };

@@ -1,12 +1,18 @@
+import {
+  JsonSchemaReferences,
+  type JsonSchemaScope,
+} from "./jsonSchemaReferences.js";
 import { z } from "zod";
 
 import type { ToolContract } from "./toolContractTypes.js";
 import { advertisedInputExamples } from "./advertisedInputExamples.js";
+import { presentInputJsonSchema } from "./inputSchemaPresentation.js";
 import {
-  advertisedReferenceExpansionBudget,
-  inputSchemaWithinReferenceExpansionBudget,
-  presentInputJsonSchema,
-} from "./inputSchemaPresentation.js";
+  schemaArrays,
+  schemaChildren,
+  schemaMaps,
+  schemaLiteralValues,
+} from "./jsonSchemaKeywords.js";
 import { digestCanonicalValue } from "../domain/canonicalDigest.js";
 
 const PROPERTY_DESCRIPTIONS: Readonly<Record<string, string>> = {
@@ -64,37 +70,22 @@ export const toolInputSchemaWithMetadata = <Contract extends ToolContract>(
     contract.inputSchema,
     "input",
     (project) => (options) => {
-      const shared = project({
+      const inline = project({
         ...options,
-        libraryOptions: { reused: "ref", ...options.libraryOptions },
+        libraryOptions: { ...options.libraryOptions, reused: "inline" },
       });
       const examples = advertisedInputExamples(contract);
       return {
-        // Sharing definitions only helps clients that resolve them. A client
-        // rendering declarations from a shared expansion budget degrades
-        // every reference past it to `unknown`, so an input whose shared form
-        // exceeds the budget is re-projected without shared definitions.
-        ...inputSchemaWithinReferenceExpansionBudget(
-          presentInputJsonSchema(shared, fallbackPropertyDescription),
-          () =>
-            presentInputJsonSchema(
-              project({
-                ...options,
-                libraryOptions: {
-                  ...options.libraryOptions,
-                  reused: "inline",
-                },
-              }),
-              fallbackPropertyDescription,
-            ),
-          advertisedReferenceExpansionBudget,
-        ),
+        // Keep advertised parameters self-contained for clients that do not
+        // resolve local references. The registered canonical schema remains
+        // responsible for runtime validation.
+        ...presentInputJsonSchema(inline, fallbackPropertyDescription),
         ...(examples.length === 0 ? {} : { examples }),
       };
     },
   );
 
-/** Return the same complete input JSON Schema projection registered on MCP. */
+/** Return the full-profile advertised input JSON Schema registered on MCP. */
 export const advertisedInputJsonSchema = <Contract extends ToolContract>(
   contract: Contract,
 ): Record<string, unknown> =>
@@ -146,7 +137,10 @@ export const transformAdvertisedInputJsonSchema = <Schema>(
   const byTarget = new Map<string, Record<string, unknown>>();
   const transformedInput = (options: unknown): unknown => {
     const target = Reflect.get(options as object, "target");
-    if (typeof target === "string") {
+    const cacheable =
+      typeof target === "string" &&
+      Reflect.get(options as object, "libraryOptions") === undefined;
+    if (cacheable) {
       const cached = byTarget.get(target);
       if (cached !== undefined) return cached;
     }
@@ -154,7 +148,7 @@ export const transformAdvertisedInputJsonSchema = <Schema>(
     const transformed = isSchemaRecord(projected)
       ? transform(projected)
       : projected;
-    if (typeof target === "string" && isSchemaRecord(transformed))
+    if (cacheable && isSchemaRecord(transformed))
       byTarget.set(target, transformed);
     return transformed;
   };
@@ -167,25 +161,77 @@ export const transformAdvertisedInputJsonSchema = <Schema>(
   } as Schema;
 };
 
+type SchemaPosition = "schema" | "map" | "unknown";
+
 const hasRelativeSchemaReference = (
   schema: Record<string, unknown>,
 ): boolean => {
-  const pending: unknown[] = [schema];
-  const visited = new WeakSet<object>();
+  // Local pointers can make even annotation values executable schemas. Keep
+  // their resource root and traversal role separate from ordinary instance data.
+  const references = new JsonSchemaReferences(schema);
+  const pending: {
+    value: unknown;
+    scope: JsonSchemaScope | undefined;
+    position: SchemaPosition;
+  }[] = [{ value: schema, scope: references.rootScope, position: "schema" }];
+  const visited = new WeakMap<
+    JsonSchemaScope,
+    Record<SchemaPosition, WeakSet<object>>
+  >();
   while (pending.length > 0) {
-    const current = pending.pop();
-    if (current === null || typeof current !== "object" || visited.has(current))
+    const entry = pending.pop()!;
+    const current = entry.value;
+    if (current === null || typeof current !== "object") continue;
+    const { position } = entry;
+    const scope =
+      position !== "map" && isSchemaRecord(current)
+        ? references.enter(current, entry.scope)
+        : entry.scope;
+    if (scope === undefined) return true;
+    let positions = visited.get(scope);
+    if (positions === undefined) {
+      positions = {
+        schema: new WeakSet(),
+        map: new WeakSet(),
+        unknown: new WeakSet(),
+      };
+      visited.set(scope, positions);
+    }
+    if (positions[position].has(current)) continue;
+    positions[position].add(current);
+    if (Array.isArray(current)) {
+      for (const value of current) pending.push({ value, scope, position });
       continue;
-    visited.add(current);
+    }
     for (const [key, value] of Object.entries(current)) {
       if (
+        position !== "map" &&
         ["$id", "$ref", "$dynamicRef", "$recursiveRef"].includes(key) &&
-        typeof value === "string" &&
-        !value.startsWith("#") &&
-        !URL.canParse(value)
-      )
-        return true;
-      if (value !== null && typeof value === "object") pending.push(value);
+        typeof value === "string"
+      ) {
+        if (key === "$dynamicRef" || key === "$recursiveRef") return true;
+        if (!value.startsWith("#") && !URL.canParse(value)) return true;
+        if (key !== "$id" && value.startsWith("#")) {
+          const target = references.resolve(scope, value);
+          // Unknown anchors are already examined at their schema positions.
+          // Unresolvable pointers retain the existing reference base.
+          if (target.kind === "unresolved") return true;
+          if (target.kind === "target")
+            pending.push({ value: target.value, scope, position: "schema" });
+        }
+      }
+      if (position === "schema" && schemaLiteralValues.has(key)) continue;
+      const childPosition =
+        position === "map"
+          ? "schema"
+          : position === "schema" && schemaMaps.has(key)
+            ? "map"
+            : position === "schema" &&
+                (schemaArrays.has(key) || schemaChildren.has(key))
+              ? "schema"
+              : "unknown";
+      if (value !== null && typeof value === "object")
+        pending.push({ value, scope, position: childPosition });
     }
   }
   return false;
