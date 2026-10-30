@@ -691,6 +691,9 @@ it.each([
       name: "get_class_summary",
       class_name: "fixture.Target",
       ...(values ? { dex_static_values: true } : {}),
+      ...(operation === "trace_android_references" && "method_name" in input
+        ? { reference_target: true, method_name: input.method_name }
+        : {}),
     });
   },
 );

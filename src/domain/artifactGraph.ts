@@ -99,10 +99,6 @@ export const ARTIFACT_FORMAT_IDS = [
 
 export type ArtifactFormatId = (typeof ARTIFACT_FORMAT_IDS)[number];
 
-/** Whether a stored format id is one of the recognized artifact formats. */
-export const isArtifactFormatId = (value: string): value is ArtifactFormatId =>
-  (ARTIFACT_FORMAT_IDS as readonly string[]).includes(value);
-
 const artifactFormatSchema = z.enum(ARTIFACT_FORMAT_IDS);
 
 /** Formats established from bytes or a virtual directory tree, independent of path roles. */
