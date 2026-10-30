@@ -1217,8 +1217,10 @@ bridge, and health readiness. Large binaries can need more: set
 milliseconds in the server environment. An absent setting uses the default;
 empty, invalid or out-of-range supplied values fail configuration validation.
 When the deadline elapses, the `provider_timeout` error names
-`REA_GHIDRA_STARTUP_TIMEOUT_MS` with the deadline that was applied and suggests
-`REA_GHIDRA_DISABLED_ANALYZERS` for analyzers that dominate the time.
+`REA_GHIDRA_STARTUP_TIMEOUT_MS` with the deadline that was applied. In
+fresh-import mode it also suggests `REA_GHIDRA_DISABLED_ANALYZERS` for analyzers
+that dominate the time and `REA_GHIDRA_PROJECT_PATH` for reusing a completed
+analysis; in existing-project mode it omits that import and analyzer advice.
 REA parses the supplied configuration environment and
 passes the deadline to each provider client; a startup failure is returned by the query that triggered it,
 without exposing partial analysis. This deadline is separate from MCP transport

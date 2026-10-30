@@ -3168,18 +3168,30 @@ it("projects Ghidra startup failure and its incomplete cleanup together", async 
 });
 
 describe("Ghidra deadline guidance", () => {
-  const timedOut = async (phase: "start" | "request", message: string) => {
+  const timedOut = async (
+    phase: "start" | "request",
+    message: string,
+    environment: Readonly<Record<string, string>> = {},
+  ) => {
     const failure = new GhidraSessionError(
       "timeout",
       message,
       { failure_kind: "timeout" },
       { timeoutMs: 250 },
     );
-    const ghidra = provider(installationHost(), () => ({
-      start: async () => (phase === "start" ? err(failure) : ok(sessionInfo())),
-      callTool: async () => err(failure),
-      close: async () => ok(null),
-    }));
+    const ghidra = provider(
+      installationHost(),
+      () => ({
+        start: async () =>
+          phase === "start" ? err(failure) : ok(sessionInfo()),
+        callTool: async () => err(failure),
+        close: async () => ok(null),
+      }),
+      environment,
+    );
+    onTestFinished(async () => {
+      await ghidra.closeOwnedResources();
+    });
     const target = executableTarget("elf", "x86_64");
     const profile = await ghidra.resolveAnalysisProfile(target);
     if (!profile.ok || profile.value.profile === null)
@@ -3209,6 +3221,7 @@ describe("Ghidra deadline guidance", () => {
     expect(projected.remediation.action).toContain(
       "REA_GHIDRA_DISABLED_ANALYZERS",
     );
+    expect(projected.remediation.action).toContain("REA_GHIDRA_PROJECT_PATH");
     expect(projected.remediation.action).toContain("without restarting REA");
     expect(projected.remediation.action).toContain("Export useful Evidence");
     expect(projected.details).toMatchObject({
@@ -3218,6 +3231,41 @@ describe("Ghidra deadline guidance", () => {
         applies_at: "next_startup",
       },
     });
+    expect(projected.remediation.action).not.toContain("rea doctor");
+  });
+
+  it("describes an existing-project startup timeout without import or analyzer advice", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rea-timeout-project-"));
+    onTestFinished(async () => {
+      await rm(root, { recursive: true, force: true });
+    });
+    await mkdir(join(root, "large.rep"));
+    await writeFile(join(root, "large.gpr"), "marker");
+    const projected = await timedOut(
+      "start",
+      "Ghidra startup deadline elapsed",
+      { REA_GHIDRA_PROJECT_PATH: join(root, "large.gpr") },
+    );
+    expect(projected).toMatchObject({
+      code: "provider_timeout",
+      details: {
+        timeout_ms: 250,
+        limit: { setting: "ghidra.startup_timeout_ms" },
+      },
+    });
+    expect(projected.message).toContain(
+      "copying and opening the selected project within its configured 250 ms startup deadline (REA_GHIDRA_STARTUP_TIMEOUT_MS)",
+    );
+    expect(projected.message).not.toContain("importing and analyzing");
+    expect(projected.remediation.action).toContain(
+      "ghidra.startup_timeout_ms and action set above 250",
+    );
+    expect(projected.remediation.action).not.toContain(
+      "REA_GHIDRA_DISABLED_ANALYZERS",
+    );
+    expect(projected.remediation.action).not.toContain(
+      "Reopening repeats import",
+    );
     expect(projected.remediation.action).not.toContain("rea doctor");
   });
 

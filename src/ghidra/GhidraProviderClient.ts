@@ -973,7 +973,9 @@ const ghidraClientPrerequisites = (
 /** Configured deadlines that Ghidra failure projections name. */
 type GhidraProjectionLimits = Pick<
   AppConfig,
-  "ghidraStartupTimeoutMs" | "ghidraDecompileTimeoutSeconds"
+  | "ghidraStartupTimeoutMs"
+  | "ghidraDecompileTimeoutSeconds"
+  | "ghidraExistingProject"
 >;
 
 const projectSessionError = (
@@ -1162,7 +1164,10 @@ const projectPrimarySessionError = (
     const timeoutMs = failure.timeoutMs ?? startupTimeoutMs;
     const guidance =
       failure.message === GHIDRA_STARTUP_DEADLINE_ELAPSED
-        ? ghidraStartupTimeoutGuidance(timeoutMs)
+        ? ghidraStartupTimeoutGuidance(
+            timeoutMs,
+            limits.ghidraExistingProject !== undefined,
+          )
         : undefined;
     return new AnalysisTimeoutError(operation, timeoutMs, {
       ...context,
@@ -1371,16 +1376,30 @@ const projectSigkill = (
   });
 };
 
-/** Name the settings that change Ghidra's import-and-analysis startup deadline. */
-const ghidraStartupTimeoutGuidance = (timeoutMs: number) => ({
-  limit: analysisSettingLimit(
-    "ghidra.startup_timeout_ms",
-    timeoutMs,
-    undefined,
-  ),
-  userMessage: `Ghidra did not finish importing and analyzing the target within its configured ${String(timeoutMs)} ms startup deadline (REA_GHIDRA_STARTUP_TIMEOUT_MS).`,
-  remediationAction: `Large binaries can need longer: use update_analysis_settings with setting ghidra.startup_timeout_ms and action set above ${String(timeoutMs)}, or set REA_GHIDRA_STARTUP_TIMEOUT_MS in the launch environment for future REA processes; REA_GHIDRA_DISABLED_ANALYZERS can skip selected expensive analyzers with reduced coverage. Export useful Evidence and resolve any retained cleanup before starting a new provider attempt. Runtime updates apply to the next startup attempt without restarting REA. Reopening repeats import from scratch. The MCP client's tool-call deadline must also allow startup and the query.`,
-});
+/** Name the settings that change Ghidra's startup deadline for the configured startup mode. */
+const ghidraStartupTimeoutGuidance = (
+  timeoutMs: number,
+  existingProject: boolean,
+) => {
+  const raise = `use update_analysis_settings with setting ghidra.startup_timeout_ms and action set above ${String(timeoutMs)}, or set REA_GHIDRA_STARTUP_TIMEOUT_MS in the launch environment for future REA processes`;
+  const retry =
+    "Export useful Evidence and resolve any retained cleanup before starting a new provider attempt. Runtime updates apply to the next startup attempt without restarting REA.";
+  const client =
+    "The MCP client's tool-call deadline must also allow startup and the query.";
+  return {
+    limit: analysisSettingLimit(
+      "ghidra.startup_timeout_ms",
+      timeoutMs,
+      undefined,
+    ),
+    userMessage: existingProject
+      ? `Ghidra did not finish copying and opening the selected project within its configured ${String(timeoutMs)} ms startup deadline (REA_GHIDRA_STARTUP_TIMEOUT_MS).`
+      : `Ghidra did not finish importing and analyzing the target within its configured ${String(timeoutMs)} ms startup deadline (REA_GHIDRA_STARTUP_TIMEOUT_MS).`,
+    remediationAction: existingProject
+      ? `Large projects can need longer: ${raise}. Existing-project mode does not run auto-analysis, so analyzer settings do not shorten this startup. ${retry} ${client}`
+      : `Large binaries can need longer: ${raise}; REA_GHIDRA_DISABLED_ANALYZERS can skip selected expensive analyzers with reduced coverage. ${retry} Reopening repeats import from scratch; for repeated work on the same native ELF, PE or Mach-O binary on a POSIX host, analyze it once into a Ghidra project and set REA_GHIDRA_PROJECT_PATH to reuse that analysis. ${client}`,
+  };
+};
 
 /** A provider already observed as running can be restarted by reopening. */
 const exitedProviderMessage = (
