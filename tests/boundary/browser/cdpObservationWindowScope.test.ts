@@ -448,3 +448,166 @@ it("does not join an empty document request identity to a later loading failure"
     }),
   );
 });
+
+const redirectCases = [
+  ...(
+    [
+      ["string status", "302"],
+      ["null status", null],
+      ["boolean status", false],
+      ["object status", {}],
+    ] as const
+  ).map(([name, status]) => ({
+    name,
+    invalidStatus: true,
+    response: (origin: string) => ({ url: `${origin}/prior`, status }),
+    expected: (origin: string) => ({
+      url: `${origin}/prior`,
+      status: null,
+      scope: "approved",
+    }),
+  })),
+  {
+    name: "malformed URL",
+    response: (_origin: string) => ({ url: "http://%", status: 302 }),
+    expected: (_origin: string) => ({ url: null, status: null, scope: null }),
+  },
+  {
+    name: "empty URL",
+    response: (_origin: string) => ({ url: "", status: 302 }),
+    expected: (_origin: string) => ({ url: null, status: null, scope: null }),
+  },
+
+  {
+    name: "missing URL",
+    response: (_origin: string) => ({ status: 302 }),
+    expected: (_origin: string) => ({ url: null, status: null, scope: null }),
+  },
+  {
+    name: "missing status",
+    response: (origin: string) => ({ url: `${origin}/prior` }),
+    expected: (origin: string) => ({
+      url: `${origin}/prior`,
+      status: null,
+      scope: "approved",
+    }),
+  },
+  {
+    name: "zero status",
+    response: (origin: string) => ({ url: `${origin}/prior`, status: 0 }),
+    expected: (origin: string) => ({
+      url: `${origin}/prior`,
+      status: 0,
+      scope: "approved",
+    }),
+  },
+  {
+    name: "outside origin",
+    response: (_origin: string) => ({
+      url: "https://outside.invalid/previous",
+      status: 302,
+    }),
+    expected: (_origin: string) => ({
+      url: null,
+      status: null,
+      scope: "outside_policy",
+    }),
+  },
+  {
+    name: "unsupported URL",
+    response: (_origin: string) => ({
+      url: "data:text/html,discard-redirect-body",
+      status: 302,
+    }),
+    expected: (_origin: string) => ({
+      url: null,
+      status: null,
+      scope: "unsupported",
+    }),
+  },
+  {
+    name: "credentials",
+    response: (origin: string) => ({
+      url:
+        origin.replace("http://", "http://user:discard-redirect-secret@") +
+        "/prior?token=visible",
+      status: 302,
+    }),
+    expected: (origin: string) => ({
+      url: `${origin}/prior?token=visible`,
+      status: 302,
+      scope: "approved",
+    }),
+  },
+];
+
+it.each(redirectCases)(
+  "preserves scoped redirect response facts with $name",
+  async (testCase) => {
+    const { response, expected } = testCase;
+    const { browser, observation } = await observeDuringClockSampling(
+      (command, origin) => {
+        if (command.method !== "Performance.getMetrics") return undefined;
+        return [
+          {
+            method: "Network.requestWillBeSent",
+            sessionId: command.sessionId,
+            params: {
+              requestId: "redirect-context",
+              timestamp: 21,
+              type: "Document",
+              frameId: "frame-main",
+              request: { url: `${origin}/next`, method: "GET" },
+              redirectResponse: {
+                ...response(origin),
+                headers: { Authorization: "discard-redirect-header" },
+              },
+            },
+          },
+        ];
+      },
+    );
+    expect(observation.timeline).toContainEqual(
+      expect.objectContaining({
+        type: "redirect",
+        request_id: "redirect-context",
+        redirect_response: expected(browser.allowedOrigin),
+      }),
+    );
+    if (
+      expected(browser.allowedOrigin).scope === null ||
+      "invalidStatus" in testCase
+    )
+      expect(observation.completeness.excluded).toContainEqual(
+        expect.objectContaining({
+          section: "timeline",
+          reason: "invalid_protocol_value",
+        }),
+      );
+    else
+      expect(observation.completeness.excluded).not.toContainEqual(
+        expect.objectContaining({
+          section: "timeline",
+          reason: "invalid_protocol_value",
+        }),
+      );
+    const scope = expected(browser.allowedOrigin).scope;
+    if (scope === "outside_policy" || scope === "unsupported") {
+      expect(observation.completeness.excluded).toContainEqual(
+        expect.objectContaining({
+          section: "timeline",
+          reason:
+            scope === "outside_policy"
+              ? "disallowed_origin"
+              : "unsupported_url",
+        }),
+      );
+      expect(observation.completeness.policy_filtered_sections).toContain(
+        "timeline",
+      );
+    }
+    const serialized = JSON.stringify(observation);
+    expect(serialized).not.toContain("discard-redirect-");
+    expect(serialized).not.toContain("outside.invalid");
+  },
+);

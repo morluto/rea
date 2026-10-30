@@ -80,8 +80,10 @@ without bytecode text or duplicated raw stdout:
 }
 ```
 
-The result is distinct derived Evidence linked to its complete parent. Its
-`normalized_result.summary` preserves every producer-returned selector, decoded
+The result is distinct view Evidence linked to its complete parent. Like the
+parent, it has `confidence: inferred`; projection never strengthens inferred
+candidates. Its `normalized_result.summary` preserves every producer-returned
+selector, decoded
 byte offset, dispatch, argument/mutability string including null, carrier/decoded
 identities, original limitations and explicit unknowns. Payload `evidence_kind`
 remains `inferred`. It preserves stderr/truncation and records stdout text length.

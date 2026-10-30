@@ -560,6 +560,8 @@ alternative object. A traced invocation whose key, API object or world stays
 unresolved or guarded keeps the call's own unresolved observation.
 Unknown spreads, reassigned bindings, accessors,
 dynamic channels and unsupported syntax do not become exact implementations.
+Literal switch cases retain their selection conditions. Possible fallthrough
+remains partial; dynamic case expressions remain unknown.
 This pass neither executes the bundle nor proves that runtime guards pass.
 An ambiguous or unresolved handler retains its channel registration but does
 not acquire a path to one arbitrarily selected callback. Unknown factory

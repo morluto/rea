@@ -512,9 +512,17 @@ describe("request step confinement", () => {
       };
     });
     const parsed = scenario([requestStep({})]);
+    const onOpaqueRedirect = vi.fn();
     await expect(
-      perform(fakePage({}), parsed.actions[0]!, resolved(parsed)),
+      performPlaywrightScenarioAction({
+        page: fakePage({}),
+        action: parsed.actions[0]!,
+        secrets: resolved(parsed),
+        startOrigin: ORIGIN,
+        onOpaqueRedirect,
+      }),
     ).rejects.toThrow("request steps do not follow");
+    expect(onOpaqueRedirect).toHaveBeenCalledOnce();
     expect(calls[0]!.init.redirect).toBe("manual");
     await expect(
       perform(

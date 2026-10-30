@@ -51,6 +51,11 @@ import {
   rpathCommand,
   codeSignatureCommand,
 } from "../../../src/artifacts/apple/MachoImage.fixture.js";
+import {
+  FIT_EMBEDDED,
+  FIT_EXTERNAL,
+} from "../../../src/artifacts/fit/FitImage.fixture.js";
+import { devicetreeFixture } from "../../../src/firmware/devicetree/Devicetree.fixture.js";
 
 it.each([
   [4000, false],
@@ -591,6 +596,30 @@ describe("binary target I/O: package classification", () => {
   });
 });
 
+it("classifies a FIT by its /images node and leaves a plain DTB rejected", async () => {
+  const directory = await createTestTempDirectory("rea-fit-target-");
+  const itb = join(directory, "boot.itb");
+  const extensionless = join(directory, "boot");
+  const dtb = join(directory, "board.dtb");
+  await Promise.all([
+    writeFile(itb, FIT_EMBEDDED),
+    writeFile(extensionless, FIT_EXTERNAL),
+    writeFile(dtb, devicetreeFixture()),
+  ]);
+  for (const path of [itb, extensionless])
+    expect(await parseBinaryTarget(path)).toMatchObject({
+      ok: true,
+      value: { kind: "archive", format: "fit" },
+    });
+  expect(await parseBinaryTarget(dtb)).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "BinaryTargetError",
+      constraint: "file_format_rejected",
+    },
+  });
+});
+
 describe("binary target I/O: filesystem and app bundle target resolution", () => {
   it("resolves relative Hopper databases and rejects unknown or unreadable paths", async () => {
     const directory = await createTestTempDirectory("rea-target-");
@@ -661,6 +690,48 @@ describe("binary target I/O: filesystem and app bundle target resolution", () =>
       format: "mach-o",
     });
   });
+
+  it.skipIf(process.platform === "win32")(
+    "preserves a literal backslash in a POSIX app executable name",
+    async () => {
+      const directory = await createTestTempDirectory("rea-target-");
+      const app = join(directory, "Back.app");
+      const programs = join(app, "Contents", "MacOS");
+      const executable = join(programs, "App\\Name");
+      await mkdir(programs, { recursive: true });
+      await writeFile(
+        join(app, "Contents", "Info.plist"),
+        "<plist><dict><key>CFBundleExecutable</key><string>App\\Name</string></dict></plist>",
+      );
+      await writeFile(executable, thinMach(0xfeedfacf, 0x0100000c));
+      const result = await parseBinaryTarget(app, {
+        cwd: directory,
+        hostArchitecture: "arm64",
+      });
+      expect(result.ok && result.value).toMatchObject({
+        path: await realpath(executable),
+        format: "mach-o",
+      });
+    },
+  );
+
+  it.skipIf(process.platform !== "win32")(
+    "rejects a Windows separator in an app executable declaration",
+    async () => {
+      const directory = await createTestTempDirectory("rea-target-");
+      const app = join(directory, "Broken.app");
+      await mkdir(join(app, "Contents", "MacOS"), { recursive: true });
+      await writeFile(
+        join(app, "Contents", "Info.plist"),
+        "<plist><dict><key>CFBundleExecutable</key><string>..\\escape</string></dict></plist>",
+      );
+      const result = await parseBinaryTarget(app, { cwd: directory });
+      expect(result).toMatchObject({
+        ok: false,
+        error: { reason: "app has an unsafe CFBundleExecutable" },
+      });
+    },
+  );
 
   it.each([
     ["missing plist", undefined],

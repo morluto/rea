@@ -8,6 +8,7 @@ import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { analysisBookmarkSchema } from "../domain/native/nativeInventory.js";
 import { parseContainingProcedureResolution } from "../domain/native/nativeObservation.js";
+import { nativeAddressCoordinateInputSchema } from "../domain/native/nativeAddress.js";
 import { resolveAnalysisDocument } from "./AnalysisDocument.js";
 import { err, ok, type Result } from "../domain/result.js";
 
@@ -176,8 +177,34 @@ const matchingBookmarks = (value: JsonValue, address: string): Facet => {
       remediation:
         "Retry list_bookmarks directly and report the provider output shape if it remains malformed.",
     };
-  return {
-    state: "available",
-    value: parsed.data.filter((bookmark) => bookmark.address === address),
-  };
+  const target = nativeAddressCoordinateInputSchema.safeParse(address);
+  const matching = [];
+  for (const bookmark of parsed.data) {
+    if (bookmark.address === address) {
+      matching.push(bookmark);
+      continue;
+    }
+    const candidate = nativeAddressCoordinateInputSchema.safeParse(
+      bookmark.address,
+    );
+    if (
+      !target.success ||
+      !candidate.success ||
+      (target.data.offset === candidate.data.offset &&
+        target.data.space !== candidate.data.space)
+    )
+      return {
+        state: "unavailable",
+        reason:
+          "Bookmark address identity could not be compared with the selected address.",
+        remediation:
+          "Call list_bookmarks directly to inspect the provider addresses.",
+      };
+    if (
+      target.data.offset === candidate.data.offset &&
+      target.data.space === candidate.data.space
+    )
+      matching.push(bookmark);
+  }
+  return { state: "available", value: matching };
 };

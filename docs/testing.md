@@ -480,6 +480,18 @@ and retain representative compiled CLI parity checks. Every distinct source
 scenario still runs through the public workflow; session-lifecycle scenarios
 need their own sessions and cleanup assertions.
 
+Complete-inline-Evidence conformance uses
+`scripts/lib/mcp-verification-environment.mjs`: a finite 65,536-element
+allowance selected by the application harness, file-owned CLI/MCP session and
+artifact verifiers.
+Explicit harness environment selections take precedence. This keeps canonical
+workflow assertions reachable for large retained observations. Admission-policy
+tests launch the public server with the resource setting unset or explicitly
+selected, including the default structured-input boundary and continued-service
+checks. Downstream capacity fixtures select enough finite transport allowance
+to reach their original memory, depth, cycle or representation boundary; retain
+those stronger assertions.
+
 When a matrix already holds a named tool definition from live `tools/list`,
 pass that definition through the SDK's `toolDefinition` call option. This keeps
 the selected output-schema validation without eagerly compiling unrelated
@@ -1729,6 +1741,10 @@ The Apple artifact CLI/MCP lane uses one `macos-15` job to avoid adding demand
 for scarce macOS runner capacity. It runs the artifact-format and metadata
 verifiers, followed by one consolidated focused invocation containing all
 existing native and process-boundary regression paths.
+The real native provenance verifier checks CLI/MCP agreement on complete
+per-slice encryption absence. The encryption CLI regression builds a universal
+image, marks its owned arm64 command with `cryptid=1`, and compares the reported
+range with `otool`; this verifies declared metadata, not actual FairPlay data.
 
 The Linux source-test shards download a shared runtime and generated test
 metadata snapshot produced by the build job with `npm run test:prepare`. The

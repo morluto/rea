@@ -34,7 +34,8 @@ import { inspectElfNotesInputSchema } from "../domain/native/elfNotes.js";
 import { inspectAppleIpsInputSchema } from "../domain/native/appleIps.js";
 import { inspectKernelModuleInputSchema } from "../domain/native/kernelModule.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
+import { withEvidenceCallerInputPath } from "../domain/evidence.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import {
@@ -65,7 +66,8 @@ export const registerBinaryDiagnosticsCommands = (
           logger,
           CLI_COMMANDS.inspectElfNotes,
           async () =>
-            finishAnalysisCommand(
+            finishCliEvidenceCommand(
+              args.path,
               () =>
                 elf.inspect(
                   {
@@ -87,7 +89,7 @@ export const registerBinaryDiagnosticsCommands = (
     description:
       "Inspect an Apple .ips crash report without executing a target",
     args: z.object({
-      path: z.string().describe("Local Apple .ips crash report"),
+      path: localPathStringSchema.describe("Local Apple .ips crash report"),
     }),
     options: z.object({
       maxFileBytes: inspectAppleIpsInputSchema.shape.max_file_bytes,
@@ -105,7 +107,8 @@ export const registerBinaryDiagnosticsCommands = (
           logger,
           CLI_COMMANDS.inspectAppleIps,
           async () =>
-            finishAnalysisCommand(
+            finishCliEvidenceCommand(
+              args.path,
               () =>
                 ips.inspect(
                   {
@@ -146,7 +149,8 @@ export const registerBinaryDiagnosticsCommands = (
           logger,
           CLI_COMMANDS.inspectKernelModule,
           async () =>
-            finishAnalysisCommand(
+            finishCliEvidenceCommand(
+              args.path,
               () =>
                 kernelModule.inspect(
                   {
@@ -181,7 +185,8 @@ export const registerBinaryDiagnosticsCommands = (
           logger,
           CLI_COMMANDS.inspectPeLoadConfig,
           async () =>
-            finishAnalysisCommand(
+            finishCliEvidenceCommand(
+              args.path,
               () =>
                 elf.inspect(
                   {
@@ -218,7 +223,8 @@ export const registerBinaryDiagnosticsCommands = (
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, CLI_COMMANDS.inspectByteEntropy, async () => {
-          return await finishAnalysisCommand(
+          return await finishCliEvidenceCommand(
+            args.path,
             () =>
               entropy.inspect(
                 {
@@ -254,7 +260,8 @@ export const registerBinaryDiagnosticsCommands = (
           logger,
           CLI_COMMANDS.inspectPeCertificates,
           async () =>
-            finishAnalysisCommand(
+            finishCliEvidenceCommand(
+              args.path,
               () =>
                 pe.inspect(
                   {
@@ -275,7 +282,9 @@ export const registerBinaryDiagnosticsCommands = (
   cli.command(CLI_COMMANDS.inspectPeImports, {
     description:
       "Inspect PE import and delay-load table identities without executing the image",
-    args: z.object({ path: z.string().describe("Local PE32/PE32+ image") }),
+    args: z.object({
+      path: localPathStringSchema.describe("Local PE32/PE32+ image"),
+    }),
     options: z.object({
       maxFileBytes: inspectPeImportsInputSchema.shape.max_file_bytes,
       maxDlls: inspectPeImportsInputSchema.shape.max_dlls,
@@ -288,7 +297,8 @@ export const registerBinaryDiagnosticsCommands = (
           logger,
           CLI_COMMANDS.inspectPeImports,
           async () =>
-            finishAnalysisCommand(
+            finishCliEvidenceCommand(
+              args.path,
               () =>
                 pe.inspect(
                   {
@@ -364,7 +374,8 @@ export const registerBinaryDiagnosticsCommands = (
           logger,
           CLI_COMMANDS.inspectPeResources,
           async () =>
-            finishAnalysisCommand(
+            finishCliEvidenceCommand(
+              args.path,
               () =>
                 pe.inspect(
                   {
@@ -410,6 +421,7 @@ export const registerBinaryDiagnosticsCommands = (
           CLI_COMMANDS.inspectDevicetree,
           async () =>
             deliverCliAnalysisEvidence({
+              callerInputPath: args.path,
               run: () =>
                 devicetree.inspect(
                   {
@@ -449,6 +461,7 @@ export const registerBinaryDiagnosticsCommands = (
           CLI_COMMANDS.inspectNativeExports,
           async () =>
             deliverCliAnalysisEvidence({
+              callerInputPath: args.path,
               run: () =>
                 exports.inspect(
                   {
@@ -492,7 +505,9 @@ export const registerBinaryDiagnosticsCommands = (
             },
             { signal },
           );
-          return result.ok ? result.value : projectAnalysisError(result.error);
+          return result.ok
+            ? withEvidenceCallerInputPath(result.value, args.path)
+            : projectAnalysisError(result.error);
         }),
       ),
   });
@@ -526,7 +541,9 @@ export const registerBinaryDiagnosticsCommands = (
             },
             { signal },
           );
-          return result.ok ? result.value : projectAnalysisError(result.error);
+          return result.ok
+            ? withEvidenceCallerInputPath(result.value, args.path)
+            : projectAnalysisError(result.error);
         }),
       ),
   });

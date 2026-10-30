@@ -212,6 +212,10 @@ const joinPath = (directory: string, name: string): string =>
 
 const directoryOf = (bundle: string): string => (bundle === "." ? "" : bundle);
 
+/** Inverse of joinPath: the directory part of an inventory path. */
+const parentDirectory = (path: string): string =>
+  path.slice(0, Math.max(0, path.lastIndexOf("/")));
+
 const enclosingBundle = (
   path: string,
   bundles: ReadonlySet<string>,
@@ -316,12 +320,16 @@ const infoPlistPath = (
   if (directories.length !== 1) return null;
   const directory = directories[0];
   if (directory === undefined) return null;
-  const parent =
-    layout === "versioned-framework"
-      ? namedDirectory(tree, directory, "Resources")
-      : directory;
-  if (parent === null) return null;
-  return namedFile(tree, parent, "Info.plist");
+  if (layout === "macos-deep") return namedFile(tree, directory, "Info.plist");
+  // A framework version keeps Info.plist in Resources/ (CoreFoundation's
+  // version-0 layout). A flattened macOS framework is that directory without
+  // the Versions/ wrapper; an iOS-style shallow bundle keeps it at its root,
+  // which takes precedence.
+  const resources = namedDirectory(tree, directory, "Resources");
+  const resourcePlist =
+    resources === null ? null : namedFile(tree, resources, "Info.plist");
+  if (layout === "versioned-framework") return resourcePlist;
+  return namedFile(tree, directory, "Info.plist") ?? resourcePlist;
 };
 
 const executableCandidates = (
@@ -366,11 +374,17 @@ const signingPaths = (
 export const platformsOf = (bundles: readonly Bundle[]): ("ios" | "macos")[] =>
   [
     ...new Set(
-      bundles.flatMap(({ role, layout, info_plist_path: plist }) => {
+      bundles.flatMap(({ path, role, layout, info_plist_path: plist }) => {
         if (role !== "application") return [];
         if (layout === "macos-deep") return ["macos" as const];
-        // An empty or partial root has no Contents/ either; require Info.plist.
-        if (layout === "shallow" && plist !== null) return ["ios" as const];
+        // An empty or partial root has no Contents/ either. iOS bundles keep
+        // Info.plist at their root, not in a Resources/ directory.
+        if (
+          layout === "shallow" &&
+          plist !== null &&
+          parentDirectory(plist) === directoryOf(path)
+        )
+          return ["ios" as const];
         return [];
       }),
     ),

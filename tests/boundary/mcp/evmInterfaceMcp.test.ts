@@ -398,7 +398,9 @@ it("returns the exact inferred interface summary while preserving complete defau
   );
   expect(derived.evidence_id).not.toBe(original.evidence_id);
   expect(derived.evidence_links).toEqual([original.evidence_id]);
-  expect(derived.confidence).toBe("derived");
+  // Retention and paging do not make inferred candidates more certain.
+  expect(original.confidence).toBe("inferred");
+  expect(derived.confidence).toBe("inferred");
   const { hex: _hex, ...bytecode } = value.bytecode;
   expect(view).toMatchObject({
     parent_operation: "inspect_evm_interface",
@@ -517,6 +519,7 @@ it.each(["valid", "wrong-subject", "no-subject"])(
         exhausted: true,
       });
       expect(derived.evidence_links).toEqual([source.evidence_id]);
+      expect(derived.confidence).toBe("inferred");
     } else
       expect(parseMcpToolError(response).error.code).toBe("invalid_request");
     expect(inspect).not.toHaveBeenCalled();

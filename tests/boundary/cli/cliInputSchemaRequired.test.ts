@@ -1,10 +1,14 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { Cli, z } from "incur";
 import { resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { createCli } from "../../../src/cli.js";
 import { createCliInventory } from "../../../scripts/lib/catalog-cli.mjs";
+import { registerAdbCommands } from "../../../src/cli/adbCommands.js";
+import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
+import { err } from "../../../src/domain/result.js";
+import { silentLogger } from "../../../src/logger.js";
 import { adbInputSchemas } from "../../../src/domain/adb/adbDeviceAnalysis.js";
 import {
   apktoolInputSchemas,
@@ -313,6 +317,251 @@ describe("web module CLI advertised input schema", () => {
     expect(options({ importMapPath: "" })).toBe(false);
     expect(options({ importMapPath: "map\u0000.json" })).toBe(false);
     expect(options({ importMapBaseUrl: "" })).toBe(false);
+  });
+});
+
+describe("ADB selector input schemas", () => {
+  it("matches canonical serial constraints for every command that accepts a serial", async () => {
+    const cli = createCli({});
+    const ajv = new Ajv2020({ strict: false, validateFormats: false });
+    const values = [
+      ["", false],
+      ["bad serial", false],
+      ['bad"serial', false],
+      ["S", true],
+      ["S".repeat(256), true],
+      ["S".repeat(257), false],
+    ] as const;
+    let checked = 0;
+    for (const command of createCliInventory(cli).primary.filter((name) =>
+      name.includes("-adb-"),
+    )) {
+      const parser = parserSchema(cli, command, "args");
+      const field = parser?.shape.serial as z.ZodType | undefined;
+      if (field === undefined) continue;
+      checked += 1;
+      const advertised = await advertisedSchema(cli, command);
+      expect(advertised.args!.properties.serial).toMatchObject({
+        description: "Device serial exactly as `adb devices` reports it",
+      });
+      const serialSchema = z
+        .record(z.string(), z.unknown())
+        .parse(advertised.args!.properties.serial);
+      const validate = ajv.compile(serialSchema);
+      const operation = command.replaceAll(
+        "-",
+        "_",
+      ) as keyof typeof adbInputSchemas;
+      const owner = adbInputSchemas[operation];
+      const canonical =
+        owner && (Reflect.get(owner.shape, "serial") as z.ZodType | undefined);
+      if (canonical === undefined)
+        throw new Error(`Missing owner for ${command}`);
+      for (const [value, expected] of values) {
+        expect(canonical.safeParse(value).success, `${command}: owner`).toBe(
+          expected,
+        );
+        expect(
+          field.safeParse(value).success,
+          `${command}: ${value.length}`,
+        ).toBe(expected);
+        expect(validate(value), `${command}: ${value.length}`).toBe(expected);
+      }
+    }
+    expect(checked).toBeGreaterThan(10);
+  });
+});
+
+describe("ADB selector input schemas: package and activity", () => {
+  it("preserves package and activity selector boundaries in parser and advertisement", async () => {
+    const cli = createCli({});
+    const ajv = new Ajv2020({ strict: false, validateFormats: false });
+    const descriptions: Record<string, string> = {
+      "pull-adb-package:package": "Installed package name",
+      "inspect-adb-package:package": "Package",
+      "uninstall-adb-package:package": "Installed package to uninstall",
+      "start-adb-app:package": "Installed package to start",
+      "stop-adb-app:package": "Package to force-stop",
+      "start-adb-activity:action": "Intent action to start",
+      "start-adb-activity:data-uri": "Intent data URI (-d)",
+      "start-adb-activity:component":
+        "Explicit component in package/activity form (-n)",
+    };
+    const selections = [
+      {
+        commands: [
+          "pull-adb-package",
+          "inspect-adb-package",
+          "uninstall-adb-package",
+          "start-adb-app",
+          "stop-adb-app",
+        ],
+        group: "args" as const,
+        key: "package",
+        canonical: adbInputSchemas.pull_adb_package.shape.package,
+        values: ["", "bad pkg!", "android", "a".repeat(256), "a".repeat(257)],
+        valid: [false, false, true, true, false],
+      },
+      {
+        commands: ["start-adb-activity"],
+        group: "args" as const,
+        key: "action",
+        canonical: adbInputSchemas.start_adb_activity.shape.action,
+        values: [
+          "",
+          "bad action!",
+          "android.intent.action.VIEW",
+          "a".repeat(256),
+          "a".repeat(257),
+        ],
+        valid: [false, false, true, true, false],
+      },
+      {
+        commands: ["start-adb-activity"],
+        group: "options" as const,
+        key: "data-uri",
+        canonical: adbInputSchemas.start_adb_activity.shape.data_uri,
+        values: [
+          undefined,
+          "",
+          "bad uri",
+          "https://example.invalid/item",
+          "a".repeat(2048),
+          "a".repeat(2049),
+        ],
+        valid: [true, false, false, true, true, false],
+      },
+      {
+        commands: ["start-adb-activity"],
+        group: "options" as const,
+        key: "component",
+        canonical: adbInputSchemas.start_adb_activity.shape.component,
+        values: [
+          undefined,
+          "",
+          "bad component!",
+          "com.example/.Main$Inner",
+          "a".repeat(512),
+          "a".repeat(513),
+        ],
+        valid: [true, false, false, true, true, false],
+      },
+    ];
+    for (const selection of selections) {
+      for (const command of selection.commands) {
+        const parser = parserSchema(cli, command, selection.group);
+        const field = parser?.shape[selection.key] as z.ZodType | undefined;
+        if (field === undefined)
+          throw new Error(`Missing ${command} ${selection.key}`);
+        const advertised = await advertisedSchema(cli, command);
+        const schema = advertised[selection.group];
+        expect(schema?.properties[selection.key]).toMatchObject({
+          description: descriptions[`${command}:${selection.key}`],
+        });
+        expect(schema?.required?.includes(selection.key) ?? false).toBe(
+          selection.group === "args",
+        );
+        const validate = ajv.compile(schema ?? {});
+        expect(selection.valid).toHaveLength(selection.values.length);
+        for (const [index, value] of selection.values.entries()) {
+          const expected = selection.valid[index];
+          expect(
+            selection.canonical.safeParse(value).success,
+            `${command} owner`,
+          ).toBe(expected);
+          const base = selection.group === "args" ? { serial: "S" } : {};
+          const input =
+            value === undefined ? base : { ...base, [selection.key]: value };
+          expect(
+            field.safeParse(value).success,
+            `${command} ${selection.key}`,
+          ).toBe(expected);
+          expect(
+            parser?.safeParse(input).success,
+            `${command} ${selection.key}`,
+          ).toBe(expected);
+          expect(validate(input), `${command} ${selection.key}`).toBe(expected);
+        }
+      }
+    }
+  });
+});
+
+describe("ADB selector input schemas: dispatch", () => {
+  it("rejects malformed CLI selectors before an inert provider is called", async () => {
+    const cli = Cli.create("rea-adb-selector-test", { sync: false });
+    const provider = {
+      inspectAvailability: vi.fn(async (): Promise<never> => {
+        throw new Error("unexpected availability probe");
+      }),
+      execute: vi.fn(async (): Promise<never> => {
+        throw new Error("unexpected provider execution");
+      }),
+      close: vi.fn(async () => undefined),
+    };
+    registerAdbCommands(cli, silentLogger, {}, provider);
+    const requests = [
+      ["inspect-adb-device", "bad serial"],
+      ["inspect-adb-device", "S".repeat(257)],
+      ["pull-adb-package", "S", "bad pkg!", "--output-directory", "."],
+      ["pull-adb-package", "S", "a".repeat(257), "--output-directory", "."],
+      ["start-adb-activity", "S", "bad action!"],
+      ["start-adb-activity", "S", "a".repeat(257)],
+      ["start-adb-activity", "S", "x", "--component", "bad component!"],
+      ["start-adb-activity", "S", "x", "--component", "a".repeat(513)],
+      ["start-adb-activity", "S", "x", "--data-uri", "bad uri"],
+      ["start-adb-activity", "S", "x", "--data-uri", "a".repeat(2049)],
+    ];
+    for (const request of requests) {
+      const result = await serve(cli, [...request, "--json"]);
+      expect(result.exitCode, request[0]).not.toBe(0);
+      expect(JSON.parse(result.stdout), request[0]).toMatchObject({
+        code: "VALIDATION_ERROR",
+      });
+    }
+    expect(provider.inspectAvailability).not.toHaveBeenCalled();
+    expect(provider.execute).not.toHaveBeenCalled();
+  });
+
+  it("preserves optional activity mapping and colon-containing extra values", async () => {
+    const cli = Cli.create("rea-adb-selector-valid-test", { sync: false });
+    const provider = {
+      inspectAvailability: vi.fn(async (): Promise<never> => {
+        throw new Error("unexpected availability probe");
+      }),
+      execute: vi.fn(async () =>
+        err(new AnalysisInputError("start_adb_activity")),
+      ),
+      close: vi.fn(async () => undefined),
+    };
+    registerAdbCommands(cli, silentLogger, {}, provider);
+    await serve(cli, [
+      "start-adb-activity",
+      "S",
+      "x",
+      "--data-uri",
+      "https://example.invalid/a",
+      "--component",
+      "com.example/.Main$Inner",
+      "--extra",
+      "string:key:value:rest",
+      "--json",
+    ]);
+    expect(provider.execute).toHaveBeenCalledOnce();
+    expect(provider.execute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: "start_adb_activity",
+        input: {
+          serial: "S",
+          action: "x",
+          data_uri: "https://example.invalid/a",
+          component: "com.example/.Main$Inner",
+          extras: [{ type: "string", key: "key", value: "value:rest" }],
+        },
+      }),
+      expect.anything(),
+    );
+    expect(provider.inspectAvailability).not.toHaveBeenCalled();
   });
 });
 
@@ -775,4 +1024,23 @@ describe("required CLI selector discovery", () => {
       }
     },
   );
+});
+
+it("advertises and rejects an empty native-value procedure before opening a target", async () => {
+  const cli = createCli({});
+  const schema = await advertisedSchema(cli, "trace-native-values");
+  expect(schema.args?.properties.procedure).toMatchObject({ minLength: 1 });
+  const result = await serve(cli, [
+    "trace-native-values",
+    "/missing",
+    "",
+    "--json",
+  ]);
+  expect(result.exitCode).toBe(1);
+  expect(JSON.parse(result.stdout)).toMatchObject({
+    code: "VALIDATION_ERROR",
+    fieldErrors: expect.arrayContaining([
+      expect.objectContaining({ path: "procedure" }),
+    ]),
+  });
 });

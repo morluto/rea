@@ -26,7 +26,7 @@ export const safeResponseMetadata = (
   // RFC 9110 section 5.3: repeated field lines combine as one comma-separated value.
   const field = (name: string): string | undefined =>
     headers.get(name)?.join(", ");
-  const responseUrl = response.url ?? url;
+  const responseUrl = response.url?.source ?? url;
   const parsedLinks = parseLinks(
     headers.get("link"),
     responseUrl,

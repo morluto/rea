@@ -71,13 +71,13 @@ msgstr "작성자: N0zoM1z0 · 2026년 10월 10일"
 #: website/public/examples/dino-lab/index.html:484
 #: website/public/faq/index.html:582
 #: website/public/first-investigation/index.html:543
-#: website/public/get-started/index.html:1826
+#: website/public/get-started/index.html:1860
 #: website/public/guides/browser/index.html:516
 #: website/public/guides/index.html:310
-#: website/public/guides/javascript/index.html:512
-#: website/public/guides/native/index.html:518
+#: website/public/guides/javascript/index.html:520
+#: website/public/guides/native/index.html:521
 #: website/public/guides/rl-environments/index.html:507
-#: website/public/index.html:1312 website/public/showcase/aegis/index.html:817
+#: website/public/index.html:1312 website/public/showcase/aegis/index.html:824
 #: website/public/showcase/ctf/index.html:786
 #: website/public/showcase/dx-ball/index.html:794
 #: website/public/showcase/index.html:346
@@ -3040,27 +3040,27 @@ msgstr "터미널"
 #: website/public/get-started/index.html:550
 #: website/public/get-started/index.html:582
 #: website/public/get-started/index.html:611
-#: website/public/get-started/index.html:746
-#: website/public/get-started/index.html:776
-#: website/public/get-started/index.html:801
-#: website/public/get-started/index.html:816
-#: website/public/get-started/index.html:864
-#: website/public/get-started/index.html:897
-#: website/public/get-started/index.html:1049
-#: website/public/get-started/index.html:1111
-#: website/public/get-started/index.html:1134
-#: website/public/get-started/index.html:1158
-#: website/public/get-started/index.html:1206
-#: website/public/get-started/index.html:1281
-#: website/public/get-started/index.html:1307
-#: website/public/get-started/index.html:1324
-#: website/public/get-started/index.html:1567
-#: website/public/get-started/index.html:1626
-#: website/public/get-started/index.html:1645
-#: website/public/get-started/index.html:1667
-#: website/public/get-started/index.html:1710
-#: website/public/get-started/index.html:1740
-#: website/public/get-started/index.html:1761
+#: website/public/get-started/index.html:777
+#: website/public/get-started/index.html:807
+#: website/public/get-started/index.html:832
+#: website/public/get-started/index.html:847
+#: website/public/get-started/index.html:895
+#: website/public/get-started/index.html:928
+#: website/public/get-started/index.html:1083
+#: website/public/get-started/index.html:1145
+#: website/public/get-started/index.html:1168
+#: website/public/get-started/index.html:1192
+#: website/public/get-started/index.html:1240
+#: website/public/get-started/index.html:1315
+#: website/public/get-started/index.html:1341
+#: website/public/get-started/index.html:1358
+#: website/public/get-started/index.html:1601
+#: website/public/get-started/index.html:1660
+#: website/public/get-started/index.html:1679
+#: website/public/get-started/index.html:1701
+#: website/public/get-started/index.html:1744
+#: website/public/get-started/index.html:1774
+#: website/public/get-started/index.html:1795
 msgctxt "page:get-started/index.html"
 msgid "Copy"
 msgstr "복사"
@@ -3118,13 +3118,13 @@ msgstr "{ph0}도움 받기{ph1}"
 #. {ph5}: <i>
 #. {ph6}: </i>
 #. {ph7}: </span >
-#: website/public/get-started/index.html:771
+#: website/public/get-started/index.html:802
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Your coding agent"
 msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}코딩 에이전트"
 
-#: website/public/get-started/index.html:797
+#: website/public/get-started/index.html:828
 msgctxt "page:get-started/index.html"
 msgid "Or run setup yourself"
 msgstr "직접 설정 명령 실행하기"
@@ -3187,7 +3187,7 @@ msgstr ""
 "{ph0} {ph1}(macOS: {ph2} {ph3}, Linux 터미널: {ph4} {ph5} {ph6})로 명령을 붙여넣고 "
 "Enter를 누르세요."
 
-#: website/public/get-started/index.html:833
+#: website/public/get-started/index.html:864
 msgctxt "page:get-started/index.html"
 msgid ""
 "Choose your client and review the setup plan. REA adds its MCP connection "
@@ -3197,7 +3197,7 @@ msgstr ""
 "클라이언트를 선택하고 설정 계획을 검토하세요. REA는 기존 설정을 백업한 뒤 MCP 연결과 맞는 분석 스킬을 추가합니다. 변경 사항을 "
 "적용하기 전에 승인을 요청합니다."
 
-#: website/public/get-started/index.html:847
+#: website/public/get-started/index.html:878
 msgctxt "page:get-started/index.html"
 msgid "How do I restart my client?"
 msgstr "클라이언트를 어떻게 다시 시작하나요?"
@@ -3206,7 +3206,7 @@ msgstr "클라이언트를 어떻게 다시 시작하나요?"
 #. {ph1}: </strong>
 #. {ph2}: <kbd>⌘</kbd>
 #. {ph3}: <kbd>Q</kbd>
-#: website/public/get-started/index.html:848
+#: website/public/get-started/index.html:879
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -3221,7 +3221,7 @@ msgstr ""
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
-#: website/public/get-started/index.html:855
+#: website/public/get-started/index.html:886
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -3230,7 +3230,7 @@ msgid ""
 msgstr ""
 "{ph0}터미널 에이전트{ph1}(Claude Code, Codex, Gemini CLI): 세션을 종료한 뒤 다시 시작하세요."
 
-#: website/public/get-started/index.html:959
+#: website/public/get-started/index.html:990
 msgctxt "page:get-started/index.html"
 msgid "How do I get a folder's full path?"
 msgstr "폴더의 전체 경로는 어떻게 얻나요?"
@@ -3239,7 +3239,7 @@ msgstr "폴더의 전체 경로는 어떻게 얻나요?"
 #. {ph1}: </strong>
 #. {ph2}: <em>
 #. {ph3}: </em>
-#: website/public/get-started/index.html:961
+#: website/public/get-started/index.html:992
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -3253,7 +3253,7 @@ msgstr ""
 #. {ph1}: </strong>
 #. {ph2}: <em>
 #. {ph3}: </em>
-#: website/public/get-started/index.html:966
+#: website/public/get-started/index.html:997
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -3265,7 +3265,7 @@ msgstr ""
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
-#: website/public/get-started/index.html:970
+#: website/public/get-started/index.html:1001
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -3273,27 +3273,27 @@ msgid ""
 "appears."
 msgstr "{ph0}모든 시스템:{ph1} 폴더를 터미널 창으로 드래그하면 해당 경로가 나타납니다."
 
-#: website/public/get-started/index.html:975
-#: website/public/get-started/index.html:1733
+#: website/public/get-started/index.html:1006
+#: website/public/get-started/index.html:1767
 msgctxt "page:get-started/index.html"
 msgid "In a terminal, put quotes around a path that contains spaces."
 msgstr "터미널에서는 공백이 있는 경로를 따옴표로 감싸세요."
 
-#: website/public/get-started/index.html:1560
+#: website/public/get-started/index.html:1594
 msgctxt "page:get-started/index.html"
 msgid ""
 "Analyze a JavaScript or Electron application folder or ASAR archive without "
 "running the app:"
 msgstr "앱을 실행하지 않고 JavaScript 또는 Electron 앱 폴더나 ASAR 파일을 분석합니다:"
 
-#: website/public/get-started/index.html:1566
+#: website/public/get-started/index.html:1600
 msgctxt "page:get-started/index.html"
 msgid "Static application analysis"
 msgstr "정적 애플리케이션 분석"
 
 #. {ph0}: <code>.asar</code>
 #. {ph1}: <code>"D:/apps/example"</code>
-#: website/public/get-started/index.html:1578
+#: website/public/get-started/index.html:1612
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -3301,13 +3301,13 @@ msgid ""
 "Windows, a path such as {ph1} works here."
 msgstr "경로를 압축을 푼 앱 폴더나 {ph0} 파일로 바꾸세요. Windows에서는 {ph1} 같은 경로를 사용할 수 있습니다."
 
-#: website/public/get-started/index.html:1584
+#: website/public/get-started/index.html:1618
 msgctxt "page:get-started/index.html"
 msgid "Where do I find an app's .asar file?"
 msgstr "앱의 .asar 파일은 어디에 있나요?"
 
 #. {ph0}: <code>resources</code>
-#: website/public/get-started/index.html:1585
+#: website/public/get-started/index.html:1619
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "Electron apps usually keep it in a {ph0} folder:"
@@ -3318,7 +3318,7 @@ msgstr "Electron 앱은 보통 {ph0} 폴더에 이 파일을 둡니다:"
 #. {ph2}: <code
 #. >C:\Users\&lt;you&gt;\AppData\Local\Programs\&lt;App&gt;\resources\app.asar</code
 #. >
-#: website/public/get-started/index.html:1590
+#: website/public/get-started/index.html:1624
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Windows:{ph1} {ph2}"
@@ -3330,7 +3330,7 @@ msgstr "{ph0}Windows:{ph1} {ph2}"
 #. >/Applications/&lt;App&gt;.app/Contents/Resources/app.asar</code >
 #. {ph3}: <em>
 #. {ph4}: </em>
-#: website/public/get-started/index.html:1596
+#: website/public/get-started/index.html:1630
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -3341,20 +3341,20 @@ msgstr "{ph0}macOS:{ph1} {ph2}(앱을 마우스 오른쪽 버튼으로 클릭한
 #. {ph0}: <strong>
 #. {ph1}: </strong>
 #. {ph2}: <code>/opt/&lt;App&gt;/resources/app.asar</code>
-#: website/public/get-started/index.html:1604
+#: website/public/get-started/index.html:1638
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Linux:{ph1} often {ph2}"
 msgstr "{ph0}Linux:{ph1} 대개 {ph2}"
 
 #. {ph0}: <code>app.asar</code>
-#: website/public/get-started/index.html:1609
+#: website/public/get-started/index.html:1643
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "Some apps install elsewhere. Search the app's folder for {ph0}."
 msgstr "다른 위치에 설치되는 앱도 있습니다. 앱 폴더에서 {ph0}을 찾아보세요."
 
-#: website/public/get-started/index.html:1614
+#: website/public/get-started/index.html:1648
 msgctxt "page:get-started/index.html"
 msgid ""
 "The result identifies the app, shows connections between modules and gives "
@@ -3363,36 +3363,36 @@ msgid ""
 msgstr "결과에는 앱의 식별 정보, 모듈 간 연결과 소스 위치가 나옵니다. REA가 연결을 확인하지 못한 부분도 표시됩니다."
 
 #. {ph0}: <code>rea</code>
-#: website/public/get-started/index.html:1619
+#: website/public/get-started/index.html:1653
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "If you'd like a permanent {ph0} command in your shell:"
 msgstr "셸에서 {ph0} 명령을 항상 사용할 수 있도록 설치하려면:"
 
-#: website/public/get-started/index.html:1625
+#: website/public/get-started/index.html:1659
 msgctxt "page:get-started/index.html"
 msgid "Install the CLI"
 msgstr "CLI 설치"
 
 #. {ph0}: <a href="../guides/javascript/" >
 #. {ph1}: </a >
-#: website/public/get-started/index.html:1637
+#: website/public/get-started/index.html:1671
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Continue with the JavaScript application guide{ph1}"
 msgstr "{ph0}JavaScript 앱 가이드 이어서 보기{ph1}"
 
-#: website/public/get-started/index.html:1154
+#: website/public/get-started/index.html:1188
 msgctxt "page:get-started/index.html"
 msgid "Connect your Ghidra installation"
 msgstr "기존 Ghidra 설치 연결"
 
-#: website/public/get-started/index.html:1124
+#: website/public/get-started/index.html:1158
 msgctxt "page:get-started/index.html"
 msgid "Connect Ghidra on Windows"
 msgstr "Windows에서 Ghidra 연결"
 
-#: website/public/get-started/index.html:1125
+#: website/public/get-started/index.html:1159
 msgctxt "page:get-started/index.html"
 msgid ""
 "Windows x64 has experimental, read-only support for native x86 and x64 PE "
@@ -3402,13 +3402,13 @@ msgstr ""
 "Windows x64에서는 고정 로컬 NTFS 드라이브의 네이티브 x86 및 x64 PE 앱과 DLL을 실험적으로 읽기 전용 분석할 수 "
 "있습니다. 기존 Ghidra 12.1.x 설치와 64비트 JDK 21 이상을 사용하세요."
 
-#: website/public/get-started/index.html:1148
+#: website/public/get-started/index.html:1182
 msgctxt "page:get-started/index.html"
 msgid ""
 "Replace the two paths with your installations, then review setup's plan."
 msgstr "두 경로를 실제 설치 경로로 바꾸고 설정 계획을 검토하세요."
 
-#: website/public/get-started/index.html:1030
+#: website/public/get-started/index.html:1061
 msgctxt "page:get-started/index.html"
 msgid ""
 "Connect Hopper on macOS or Linux. Run the setup command above; it detects an"
@@ -3416,18 +3416,18 @@ msgid ""
 msgstr ""
 "macOS 또는 Linux에서 Hopper를 연결하세요. 위 설정 명령은 기존 설치를 찾거나, 승인할 수 있는 설치 계획을 제안합니다."
 
-#: website/public/get-started/index.html:1691
+#: website/public/get-started/index.html:1725
 msgctxt "page:get-started/index.html"
 msgid "Getting help"
 msgstr "도움 받기"
 
-#: website/public/get-started/index.html:1693
+#: website/public/get-started/index.html:1727
 msgctxt "page:get-started/index.html"
 msgid "If your agent doesn't see REA"
 msgstr "에이전트에서 REA가 보이지 않을 때"
 
 #. {ph0}: <code>doctor</code>
-#: website/public/get-started/index.html:1694
+#: website/public/get-started/index.html:1728
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -3435,22 +3435,22 @@ msgid ""
 "{ph0}; for Codex:"
 msgstr "설정 후 클라이언트를 다시 시작하거나 연결하세요. {ph0}로 REA 연결을 확인할 수 있습니다. Codex의 예:"
 
-#: website/public/get-started/index.html:1705
+#: website/public/get-started/index.html:1739
 msgctxt "page:get-started/index.html"
 msgid "If a provider needs attention"
 msgstr "분석 도구에 문제가 있을 때"
 
-#: website/public/get-started/index.html:1706
+#: website/public/get-started/index.html:1740
 msgctxt "page:get-started/index.html"
 msgid "Check the provider you're using. For Ghidra:"
 msgstr "사용 중인 분석 도구를 확인하세요. Ghidra의 예:"
 
-#: website/public/get-started/index.html:1709
+#: website/public/get-started/index.html:1743
 msgctxt "page:get-started/index.html"
 msgid "Check one provider"
 msgstr "분석 도구 하나 진단"
 
-#: website/public/get-started/index.html:1721
+#: website/public/get-started/index.html:1755
 msgctxt "page:get-started/index.html"
 msgid "The report gives the failed check and a suggested next step."
 msgstr "보고서에 실패한 검사와 권장 후속 조치가 나옵니다."
@@ -3459,7 +3459,7 @@ msgstr "보고서에 실패한 검사와 권장 후속 조치가 나옵니다."
 #. {ph1}: </a >
 #. {ph2}: <span>
 #. {ph3}: </span>
-#: website/public/get-started/index.html:1786
+#: website/public/get-started/index.html:1820
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -3470,7 +3470,7 @@ msgstr "{ph0}REA FAQ{ph1}{ph2}업데이트, 에이전트, 분석에 관한 자�
 #. {ph1}: </a >
 #. {ph2}: <span >
 #. {ph3}: </span >
-#: website/public/get-started/index.html:1790
+#: website/public/get-started/index.html:1824
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -3482,7 +3482,7 @@ msgstr "{ph0}분석 가이드 선택{ph1}{ph2}바이너리, Electron 앱, 브라
 #. {ph1}: </a >
 #. {ph2}: <span>
 #. {ph3}: </span>
-#: website/public/get-started/index.html:1797
+#: website/public/get-started/index.html:1831
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -3494,7 +3494,7 @@ msgstr "{ph0}GitHub 이슈{ph1}{ph2}실행한 명령과 진단 결과를 첨부�
 #. {ph1}: </a >
 #. {ph2}: <span>
 #. {ph3}: </span>
-#: website/public/get-started/index.html:1801
+#: website/public/get-started/index.html:1835
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -3552,27 +3552,27 @@ msgctxt "page:get-started/index.html"
 msgid "REA getting started guide"
 msgstr "REA 시작 가이드"
 
-#: website/public/get-started/index.html:776
+#: website/public/get-started/index.html:807
 msgctxt "page:get-started/index.html"
 msgid "Copy REA installation prompt"
 msgstr "REA 설치 프롬프트 복사"
 
-#: website/public/get-started/index.html:1567
+#: website/public/get-started/index.html:1601
 msgctxt "page:get-started/index.html"
 msgid "Copy JavaScript analysis command"
 msgstr "JavaScript 분석 명령 복사"
 
-#: website/public/get-started/index.html:1626
+#: website/public/get-started/index.html:1660
 msgctxt "page:get-started/index.html"
 msgid "Copy CLI installation command"
 msgstr "CLI 설치 명령 복사"
 
-#: website/public/get-started/index.html:1710
+#: website/public/get-started/index.html:1744
 msgctxt "page:get-started/index.html"
 msgid "Copy provider diagnosis command"
 msgstr "분석 도구 진단 명령 복사"
 
-#: website/public/get-started/index.html:1826
+#: website/public/get-started/index.html:1860
 msgctxt "page:get-started/index.html"
 msgid "Back to top"
 msgstr "맨 위로"
@@ -4372,7 +4372,7 @@ msgid "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Your coding agent"
 msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}코딩 에이전트"
 
 #: website/public/guides/javascript/index.html:284
-#: website/public/guides/javascript/index.html:433
+#: website/public/guides/javascript/index.html:441
 msgctxt "page:guides/javascript/index.html"
 msgid "Copy"
 msgstr "복사"
@@ -4422,7 +4422,7 @@ msgctxt "page:guides/javascript/index.html"
 msgid "The page calls a small API"
 msgstr "페이지에서 작은 API를 호출합니다"
 
-#: website/public/guides/javascript/index.html:326
+#: website/public/guides/javascript/index.html:333
 msgctxt "page:guides/javascript/index.html"
 msgid ""
 "The page knows the method name. The implementation lives in the preload, "
@@ -4431,7 +4431,7 @@ msgstr "페이지는 메서드 이름을 알고 있습니다. 실제 구현은 �
 
 #. {ph0}: <code>notes.exportCsv</code>
 #. {ph1}: <code>notes:export</code>
-#: website/public/guides/javascript/index.html:340
+#: website/public/guides/javascript/index.html:347
 #, python-brace-format
 msgctxt "page:guides/javascript/index.html"
 msgid ""
@@ -4442,7 +4442,7 @@ msgstr ""
 
 #. {ph0}: <code>csv.js</code>
 #. {ph1}: <code>notes.csv</code>
-#: website/public/guides/javascript/index.html:357
+#: website/public/guides/javascript/index.html:364
 #, python-brace-format
 msgctxt "page:guides/javascript/index.html"
 msgid ""
@@ -4452,14 +4452,7 @@ msgstr ""
 "핸들러를 읽으면 처음 질문의 답이 나옵니다. {ph0}이 메모를 변환하고, 메인 프로세스가 사용자의 다운로드 폴더에 {ph1}을 "
 "저장합니다."
 
-#: website/public/guides/javascript/index.html:374
-msgctxt "page:guides/javascript/index.html"
-msgid ""
-"Recorded by REA 4.1.0 on the downloadable example below. Source locations "
-"accompany the API, channel and handler findings."
-msgstr "아래 다운로드 예제를 REA 4.1.0으로 분석한 기록입니다. API, 채널, 핸들러 결과에는 소스 위치가 함께 제공됩니다."
-
-#: website/public/guides/javascript/index.html:380
+#: website/public/guides/javascript/index.html:388
 msgctxt "page:guides/javascript/index.html"
 msgid "Analyze the example yourself"
 msgstr "예제를 직접 분석해 보세요"
@@ -4467,25 +4460,25 @@ msgstr "예제를 직접 분석해 보세요"
 #. {ph0}: <a class="button" href="../../examples/notes-example.zip"
 #. download="notes-example.zip" >
 #. {ph1}: </a >
-#: website/public/guides/javascript/index.html:387
+#: website/public/guides/javascript/index.html:395
 #, python-brace-format
 msgctxt "page:guides/javascript/index.html"
 msgid "{ph0}Download example ZIP{ph1}"
 msgstr "{ph0}예제 ZIP 다운로드{ph1}"
 
-#: website/public/guides/javascript/index.html:396
+#: website/public/guides/javascript/index.html:404
 msgctxt "page:guides/javascript/index.html"
 msgid "Browse the six source files"
 msgstr "소스 파일 6개 살펴보기"
 
-#: website/public/guides/javascript/index.html:432
+#: website/public/guides/javascript/index.html:440
 msgctxt "page:guides/javascript/index.html"
 msgid "Static application analysis"
 msgstr "정적 애플리케이션 분석"
 
 #. {ph0}: <code>normalized_result.summary.ipc</code>
 #. {ph1}: <code>normalized_result.graph</code>
-#: website/public/guides/javascript/index.html:445
+#: website/public/guides/javascript/index.html:453
 #, python-brace-format
 msgctxt "page:guides/javascript/index.html"
 msgid ""
@@ -4495,7 +4488,7 @@ msgstr ""
 "경로를 압축을 푼 폴더로 바꾸세요. {ph0}에서 IPC 채널 하나와 일치하는 핸들러 하나가 나와야 합니다. 소스 위치는 {ph1}에 "
 "있습니다."
 
-#: website/public/guides/javascript/index.html:451
+#: website/public/guides/javascript/index.html:459
 msgctxt "page:guides/javascript/index.html"
 msgid ""
 "For your own app, use the same command with its directory or ASAR path. An "
@@ -4505,13 +4498,13 @@ msgstr ""
 "직접 고른 앱도 폴더나 ASAR 경로로 같은 명령을 실행하세요. 에이전트는 REA의 기능 추적 도구로 리터럴 문자열, API 이름, "
 "IPC 채널을 추적할 수 있습니다."
 
-#: website/public/guides/javascript/index.html:458
+#: website/public/guides/javascript/index.html:466
 msgctxt "page:guides/javascript/index.html"
 msgid "Inspect the CSV writer"
 msgstr "CSV 저장 코드 살펴보기"
 
 #. {ph0}: <code>notes:export</code>
-#: website/public/guides/javascript/index.html:460
+#: website/public/guides/javascript/index.html:468
 #, python-brace-format
 msgctxt "page:guides/javascript/index.html"
 msgid ""
@@ -4519,7 +4512,7 @@ msgid ""
 "happens if writing the file fails?"
 msgstr "{ph0}에서 핸들러까지 추적해 줘. CSV 저장 함수에 어떤 입력이 전달되고, 파일 저장에 실패하면 어떻게 돼?"
 
-#: website/public/guides/javascript/index.html:466
+#: website/public/guides/javascript/index.html:474
 msgctxt "page:guides/javascript/index.html"
 msgid ""
 "Use the source locations to inspect those details. Computed channel names "
@@ -4533,7 +4526,7 @@ msgstr ""
 #. {ph1}: </a >
 #. {ph2}: <span>
 #. {ph3}: </span>
-#: website/public/guides/javascript/index.html:472
+#: website/public/guides/javascript/index.html:480
 #, python-brace-format
 msgctxt "page:guides/javascript/index.html"
 msgid ""
@@ -4546,7 +4539,7 @@ msgstr ""
 #. {ph1}: </a >
 #. {ph2}: <span >
 #. {ph3}: </span >
-#: website/public/guides/javascript/index.html:478
+#: website/public/guides/javascript/index.html:486
 #, python-brace-format
 msgctxt "page:guides/javascript/index.html"
 msgid ""
@@ -4558,7 +4551,7 @@ msgstr "{ph0}브라우저 내보내기 관찰{ph1}{ph2}실제 클릭을 캡처�
 #. {ph1}: </a >
 #. {ph2}: <span >
 #. {ph3}: </span >
-#: website/public/guides/javascript/index.html:484
+#: website/public/guides/javascript/index.html:492
 #, python-brace-format
 msgctxt "page:guides/javascript/index.html"
 msgid ""
@@ -4596,12 +4589,12 @@ msgctxt "page:guides/javascript/index.html"
 msgid "Copy example prompt"
 msgstr "예제 프롬프트 복사"
 
-#: website/public/guides/javascript/index.html:433
+#: website/public/guides/javascript/index.html:441
 msgctxt "page:guides/javascript/index.html"
 msgid "Copy static application analysis"
 msgstr "정적 애플리케이션 분석 명령 복사"
 
-#: website/public/guides/javascript/index.html:512
+#: website/public/guides/javascript/index.html:520
 msgctxt "page:guides/javascript/index.html"
 msgid "Back to top"
 msgstr "맨 위로"
@@ -4857,20 +4850,7 @@ msgstr "REA로 네이티브 프로그램을 읽으려면 다음 중 하나가 �
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
-#: website/public/guides/native/index.html:316
-#, python-brace-format
-msgctxt "page:guides/native/index.html"
-msgid ""
-"{ph0}Hopper{ph1} (macOS or Linux): REA's setup detects it or offers to "
-"install it. On macOS, open Hopper once and choose demo mode or activate a "
-"license before your first analysis."
-msgstr ""
-"{ph0}Hopper{ph1}(macOS 또는 Linux): REA 설정이 기존 설치를 찾거나 설치를 제안합니다. macOS에서는 첫 "
-"분석 전에 Hopper를 한 번 열어 데모 모드를 선택하거나 라이선스를 활성화하세요."
-
-#. {ph0}: <strong>
-#. {ph1}: </strong>
-#: website/public/guides/native/index.html:322
+#: website/public/guides/native/index.html:323
 #, python-brace-format
 msgctxt "page:guides/native/index.html"
 msgid ""
@@ -4880,18 +4860,9 @@ msgstr ""
 "{ph0}Ghidra{ph1} (macOS 또는 Linux, Windows에서는 실험적 지원): 무료이지만 기존 Ghidra 12.1.x"
 " 설치와 64비트 JDK 21 이상이 필요합니다."
 
-#. {ph0}: <strong>
-#. {ph1}: </strong>
-#: website/public/guides/native/index.html:327
-#, python-brace-format
-msgctxt "page:guides/native/index.html"
-msgid ""
-"{ph0}IDA{ph1} (Windows): for an existing IDA setup with an MCP registration."
-msgstr "{ph0}IDA{ph1}(Windows): MCP가 등록된 기존 IDA 환경에서 사용합니다."
-
 #. {ph0}: <a href="../../get-started/#native">
 #. {ph1}: </a>
-#: website/public/guides/native/index.html:332
+#: website/public/guides/native/index.html:335
 #, python-brace-format
 msgctxt "page:guides/native/index.html"
 msgid "See {ph0}Set up native analysis{ph1} for the steps."
@@ -4905,14 +4876,14 @@ msgstr "절차는 {ph0}네이티브 분석 설정{ph1}을 참고하세요."
 #. {ph5}: <i>
 #. {ph6}: </i>
 #. {ph7}: </span >
-#: website/public/guides/native/index.html:340
+#: website/public/guides/native/index.html:343
 #, python-brace-format
 msgctxt "page:guides/native/index.html"
 msgid "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Your coding agent"
 msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}코딩 에이전트"
 
-#: website/public/guides/native/index.html:344
-#: website/public/guides/native/index.html:475
+#: website/public/guides/native/index.html:347
+#: website/public/guides/native/index.html:478
 msgctxt "page:guides/native/index.html"
 msgid "Copy"
 msgstr "복사"
@@ -4923,7 +4894,7 @@ msgstr "복사"
 #. {ph3}: </span >
 #. {ph4}: <span class="terminal-cursor" aria-hidden="true">
 #. {ph5}: </span>
-#: website/public/guides/native/index.html:353
+#: website/public/guides/native/index.html:356
 #, python-brace-format
 msgctxt "page:guides/native/index.html"
 msgid ""
@@ -4933,7 +4904,7 @@ msgstr ""
 "{ph0}›{ph1}{ph2}REA로 DX-Ball의 사운드 패닝 계산 방식을 찾아줘. 계산을 설명하고 코드도 "
 "보여줘.{ph3}{ph4}{ph5}"
 
-#: website/public/guides/native/index.html:361
+#: website/public/guides/native/index.html:364
 msgctxt "page:guides/native/index.html"
 msgid ""
 "Example prompt. Give your agent the path to your local DX-Ball 1.07 "
@@ -4943,7 +4914,7 @@ msgstr ""
 "예제 프롬프트입니다. 에이전트에게 로컬 DX-Ball 1.07 실행 파일의 경로를 알려주세요. REA에는 DX-Ball이 포함되어 있지 "
 "않으므로 보유한 복사본을 사용하거나, 가지고 있는 다른 작은 Windows 프로그램에 같은 종류의 질문을 해 보세요."
 
-#: website/public/guides/native/index.html:368
+#: website/public/guides/native/index.html:371
 msgctxt "page:guides/native/index.html"
 msgid "How do I get a file's full path?"
 msgstr "파일의 전체 경로는 어떻게 얻나요?"
@@ -4952,7 +4923,7 @@ msgstr "파일의 전체 경로는 어떻게 얻나요?"
 #. {ph1}: </strong>
 #. {ph2}: <em>
 #. {ph3}: </em>
-#: website/public/guides/native/index.html:370
+#: website/public/guides/native/index.html:373
 #, python-brace-format
 msgctxt "page:guides/native/index.html"
 msgid ""
@@ -4966,7 +4937,7 @@ msgstr ""
 #. {ph1}: </strong>
 #. {ph2}: <em>
 #. {ph3}: </em>
-#: website/public/guides/native/index.html:375
+#: website/public/guides/native/index.html:378
 #, python-brace-format
 msgctxt "page:guides/native/index.html"
 msgid ""
@@ -4978,7 +4949,7 @@ msgstr ""
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
-#: website/public/guides/native/index.html:379
+#: website/public/guides/native/index.html:382
 #, python-brace-format
 msgctxt "page:guides/native/index.html"
 msgid ""
@@ -4986,30 +4957,30 @@ msgid ""
 "appears."
 msgstr "{ph0}모든 시스템:{ph1} 파일을 터미널 창으로 드래그하면 해당 경로가 나타납니다."
 
-#: website/public/guides/native/index.html:387
+#: website/public/guides/native/index.html:390
 msgctxt "page:guides/native/index.html"
 msgid "Read the REA results"
 msgstr "REA 결과 읽기"
 
-#: website/public/guides/native/index.html:388
+#: website/public/guides/native/index.html:391
 msgctxt "page:guides/native/index.html"
 msgid "Read the input"
 msgstr "입력 읽기"
 
-#: website/public/guides/native/index.html:397
+#: website/public/guides/native/index.html:400
 msgctxt "page:guides/native/index.html"
 msgid ""
 "The instructions load an integer argument and convert it for floating-point "
 "arithmetic. This is the input absent from the first pseudocode view."
 msgstr "명령어는 정수 인수를 읽어 부동소수점 연산용으로 변환합니다. 첫 의사 코드에서 빠졌던 입력이 바로 이 값입니다."
 
-#: website/public/guides/native/index.html:402
+#: website/public/guides/native/index.html:405
 msgctxt "page:guides/native/index.html"
 msgid "Follow the caller"
 msgstr "호출 함수 추적"
 
 #. {ph0}: <code>0x14</code>
-#: website/public/guides/native/index.html:411
+#: website/public/guides/native/index.html:414
 #, python-brace-format
 msgctxt "page:guides/native/index.html"
 msgid ""
@@ -5019,12 +4990,12 @@ msgstr ""
 "REA가 벽돌 충돌을 처리하는 호출 함수를 식별합니다. 앞선 명령어에서 타일 좌표에 30을 곱하고 {ph0}(20)을 더해 벽돌의 화면 "
 "위치를 구합니다."
 
-#: website/public/guides/native/index.html:416
+#: website/public/guides/native/index.html:419
 msgctxt "page:guides/native/index.html"
 msgid "Read the referenced constants"
 msgstr "참조된 상수 읽기"
 
-#: website/public/guides/native/index.html:427
+#: website/public/guides/native/index.html:430
 msgctxt "page:guides/native/index.html"
 msgid ""
 "The arithmetic references these addresses. Reading the bytes supplies the "
@@ -5032,12 +5003,12 @@ msgid ""
 msgstr ""
 "연산은 이 주소들을 참조합니다. 바이트를 읽으면 실제 값을 알 수 있고, 명령어 순서는 그 값을 어떻게 사용하는지 알려줍니다."
 
-#: website/public/guides/native/index.html:434
+#: website/public/guides/native/index.html:437
 msgctxt "page:guides/native/index.html"
 msgid "Write and check the recovered function"
 msgstr "복구한 함수 작성 및 검증"
 
-#: website/public/guides/native/index.html:443
+#: website/public/guides/native/index.html:446
 msgctxt "page:guides/native/index.html"
 msgid ""
 "With a scale of 1.0, screen positions 0, 320 and 640 map to −500, 0 and 500 "
@@ -5047,7 +5018,7 @@ msgstr ""
 "배율이 1.0이면 화면 위치 0, 320, 640은 정수 변환 전에 각각 −500, 0, 500이 됩니다. 화면 중앙이 스테레오 음장의 "
 "중앙에 대응하는 계산입니다."
 
-#: website/public/guides/native/index.html:448
+#: website/public/guides/native/index.html:451
 msgctxt "page:guides/native/index.html"
 msgid ""
 "The agent used REA's findings to write the C. Separate checks compared 3,205"
@@ -5059,20 +5030,20 @@ msgstr ""
 
 #. {ph0}: <a href="../../showcase/dx-ball/#sound-pan" >
 #. {ph1}: </a >
-#: website/public/guides/native/index.html:453
+#: website/public/guides/native/index.html:456
 #, python-brace-format
 msgctxt "page:guides/native/index.html"
 msgid "{ph0}See the full investigation and assembly-to-C comparison{ph1}"
 msgstr "{ph0}전체 조사와 어셈블리·C 비교 보기{ph1}"
 
-#: website/public/guides/native/index.html:460
+#: website/public/guides/native/index.html:463
 msgctxt "page:guides/native/index.html"
 msgid "Try it with your own binary"
 msgstr "직접 고른 바이너리로 시도하기"
 
 #. {ph0}: <a href="../../get-started/#native" >
 #. {ph1}: </a >
-#: website/public/guides/native/index.html:461
+#: website/public/guides/native/index.html:464
 #, python-brace-format
 msgctxt "page:guides/native/index.html"
 msgid ""
@@ -5084,20 +5055,20 @@ msgstr ""
 "{ph0}네이티브 분석 도구를 연결{ph1}한 뒤, 로컬 실행 파일이나 라이브러리와 조사할 기능을 에이전트에게 전달하세요. “이 파일은 "
 "어떻게 파싱해?” 또는 “이 메뉴 동작은 어떤 함수가 처리해?” 같은 질문으로 시작할 수 있습니다."
 
-#: website/public/guides/native/index.html:468
+#: website/public/guides/native/index.html:471
 msgctxt "page:guides/native/index.html"
 msgid ""
 "If you already know a function name or address, you can query it from the "
 "terminal. For a configured Ghidra installation:"
 msgstr "함수 이름이나 주소를 이미 안다면 터미널에서 조회할 수 있습니다. Ghidra가 설정된 환경의 예:"
 
-#: website/public/guides/native/index.html:474
+#: website/public/guides/native/index.html:477
 msgctxt "page:guides/native/index.html"
 msgid "Function analysis"
 msgstr "함수 분석"
 
 #. {ph0}: <code>main</code>
-#: website/public/guides/native/index.html:487
+#: website/public/guides/native/index.html:490
 #, python-brace-format
 msgctxt "page:guides/native/index.html"
 msgid ""
@@ -5109,7 +5080,7 @@ msgstr ""
 "대상 경로와 {ph0}를 실제 함수 이름이나 주소로 바꾸세요. CLI는 호출할 때마다 바이너리를 가져와 분석한 뒤 세션을 닫습니다. "
 "에이전트의 MCP 질의는 세션이 열려 있는 동안 가져온 바이너리를 재사용합니다."
 
-#: website/public/guides/native/index.html:493
+#: website/public/guides/native/index.html:496
 msgctxt "page:guides/native/index.html"
 msgid ""
 "Read the pseudocode alongside instructions and references. When a result "
@@ -5138,17 +5109,17 @@ msgctxt "page:guides/native/index.html"
 msgid "Native analysis"
 msgstr "기계 코드 프로그램 분석"
 
-#: website/public/guides/native/index.html:344
+#: website/public/guides/native/index.html:347
 msgctxt "page:guides/native/index.html"
 msgid "Copy example prompt"
 msgstr "예제 프롬프트 복사"
 
-#: website/public/guides/native/index.html:475
+#: website/public/guides/native/index.html:478
 msgctxt "page:guides/native/index.html"
 msgid "Copy function analysis"
 msgstr "함수 분석 명령 복사"
 
-#: website/public/guides/native/index.html:518
+#: website/public/guides/native/index.html:521
 msgctxt "page:guides/native/index.html"
 msgid "Back to top"
 msgstr "맨 위로"
@@ -6086,7 +6057,7 @@ msgid "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}Your coding agent"
 msgstr "{ph0}{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}{ph7}코딩 에이전트"
 
 #: website/public/showcase/aegis/index.html:276
-#: website/public/showcase/aegis/index.html:739
+#: website/public/showcase/aegis/index.html:746
 msgctxt "page:showcase/aegis/index.html"
 msgid "Copy"
 msgstr "복사"
@@ -6477,21 +6448,9 @@ msgctxt "page:showcase/aegis/index.html"
 msgid "Inspect the APK yourself"
 msgstr "APK 직접 살펴보기"
 
-#. {ph0}: <a href="../../get-started/">
-#. {ph1}: </a>
-#: website/public/showcase/aegis/index.html:714
-#, python-brace-format
-msgctxt "page:showcase/aegis/index.html"
-msgid ""
-"{ph0}Set up REA{ph1} on macOS or Linux, then download these two files into "
-"the same folder. On Windows, use a Linux environment such as WSL."
-msgstr ""
-"macOS나 Linux에서 {ph0}REA를 설정{ph1}한 뒤 아래 두 파일을 같은 폴더에 내려받으세요. Windows에서는 WSL "
-"같은 Linux 환경을 사용하세요."
-
 #. {ph0}: <code>JAVA_HOME</code>
 #. {ph1}: <code>PATH</code>
-#: website/public/showcase/aegis/index.html:719
+#: website/public/showcase/aegis/index.html:726
 #, python-brace-format
 msgctxt "page:showcase/aegis/index.html"
 msgid ""
@@ -6501,18 +6460,18 @@ msgstr ""
 "Android 분석에는 전체 JDK 17 이상이 필요합니다. {ph0}이나 {ph1}로 사용할 JDK를 지정하세요. 이 사례에서는 JDK"
 " 21을 사용했습니다."
 
-#: website/public/showcase/aegis/index.html:735
+#: website/public/showcase/aegis/index.html:742
 msgctxt "page:showcase/aegis/index.html"
 msgid "Point REA at the provider file and inspect the APK:"
 msgstr "REA가 사용할 분석 도구 파일의 경로를 지정한 뒤 APK를 살펴보세요:"
 
-#: website/public/showcase/aegis/index.html:738
+#: website/public/showcase/aegis/index.html:745
 msgctxt "page:showcase/aegis/index.html"
 msgid "macOS / Linux"
 msgstr "macOS / Linux"
 
 #. {ph0}: <code>REA_JADX_MCP_JAR</code>
-#: website/public/showcase/aegis/index.html:752
+#: website/public/showcase/aegis/index.html:759
 #, python-brace-format
 msgctxt "page:showcase/aegis/index.html"
 msgid ""
@@ -6524,7 +6483,7 @@ msgstr ""
 
 #. {ph0}: <strong >
 #. {ph1}: </strong >
-#: website/public/showcase/aegis/index.html:757
+#: website/public/showcase/aegis/index.html:764
 #, python-brace-format
 msgctxt "page:showcase/aegis/index.html"
 msgid ""
@@ -6532,7 +6491,7 @@ msgid ""
 "different time interval?{ph1}"
 msgstr "다음 질문: {ph0}계정이 8자리 코드나 다른 시간 간격을 사용하면 어떻게 될까요?{ph1}"
 
-#: website/public/showcase/aegis/index.html:767
+#: website/public/showcase/aegis/index.html:774
 msgctxt "page:showcase/aegis/index.html"
 msgid "Sources"
 msgstr "출처"
@@ -6548,7 +6507,7 @@ msgstr "출처"
 #. href="https://github.com/beemdevelopment/Aegis/blob/d6f4e5925a97e4e91593f1542085eae03432a759/LICENSE"
 #. >
 #. {ph5}: </a >
-#: website/public/showcase/aegis/index.html:769
+#: website/public/showcase/aegis/index.html:776
 #, python-brace-format
 msgctxt "page:showcase/aegis/index.html"
 msgid ""
@@ -6562,13 +6521,13 @@ msgstr ""
 #. {ph1}: </a >
 #. {ph2}: <a href="test-vectors.json">
 #. {ph3}: </a>
-#: website/public/showcase/aegis/index.html:785
+#: website/public/showcase/aegis/index.html:792
 #, python-brace-format
 msgctxt "page:showcase/aegis/index.html"
 msgid "{ph0}RFC 6238 reference cases{ph1} · {ph2}Demo test data{ph3}"
 msgstr "{ph0}RFC 6238 기준 사례{ph1} · {ph2}데모 테스트 데이터{ph3}"
 
-#: website/public/showcase/aegis/index.html:792
+#: website/public/showcase/aegis/index.html:799
 msgctxt "page:showcase/aegis/index.html"
 msgid ""
 "Inspected with REA 6.1.0 on 9 October 2026. Decompiled excerpts are credited"
@@ -6611,12 +6570,12 @@ msgctxt "page:showcase/aegis/index.html"
 msgid "Follow the login-code calculation"
 msgstr "로그인 코드 계산 따라가기"
 
-#: website/public/showcase/aegis/index.html:739
+#: website/public/showcase/aegis/index.html:746
 msgctxt "page:showcase/aegis/index.html"
 msgid "Copy APK inspection command"
 msgstr "APK 분석 명령 복사"
 
-#: website/public/showcase/aegis/index.html:817
+#: website/public/showcase/aegis/index.html:824
 msgctxt "page:showcase/aegis/index.html"
 msgid "Back to top"
 msgstr "맨 위로"
@@ -10194,13 +10153,13 @@ msgstr "가이드"
 #: website/public/examples/dino-lab/index.html:476
 #: website/public/faq/index.html:574
 #: website/public/first-investigation/index.html:535
-#: website/public/get-started/index.html:1818
+#: website/public/get-started/index.html:1852
 #: website/public/guides/browser/index.html:508
 #: website/public/guides/index.html:302
-#: website/public/guides/javascript/index.html:504
-#: website/public/guides/native/index.html:510
+#: website/public/guides/javascript/index.html:512
+#: website/public/guides/native/index.html:513
 #: website/public/guides/rl-environments/index.html:499
-#: website/public/index.html:1304 website/public/showcase/aegis/index.html:809
+#: website/public/index.html:1304 website/public/showcase/aegis/index.html:816
 #: website/public/showcase/ctf/index.html:778
 #: website/public/showcase/dx-ball/index.html:786
 #: website/public/showcase/index.html:338
@@ -10217,13 +10176,13 @@ msgstr "소스 코드"
 #: website/public/examples/dino-lab/index.html:477
 #: website/public/faq/index.html:575
 #: website/public/first-investigation/index.html:536
-#: website/public/get-started/index.html:1819
+#: website/public/get-started/index.html:1853
 #: website/public/guides/browser/index.html:509
 #: website/public/guides/index.html:303
-#: website/public/guides/javascript/index.html:505
-#: website/public/guides/native/index.html:511
+#: website/public/guides/javascript/index.html:513
+#: website/public/guides/native/index.html:514
 #: website/public/guides/rl-environments/index.html:500
-#: website/public/index.html:1305 website/public/showcase/aegis/index.html:810
+#: website/public/index.html:1305 website/public/showcase/aegis/index.html:817
 #: website/public/showcase/ctf/index.html:779
 #: website/public/showcase/dx-ball/index.html:787
 #: website/public/showcase/index.html:339
@@ -10240,13 +10199,13 @@ msgstr "MIT 라이선스"
 #: website/public/examples/dino-lab/index.html:478
 #: website/public/faq/index.html:576
 #: website/public/first-investigation/index.html:537
-#: website/public/get-started/index.html:1820
+#: website/public/get-started/index.html:1854
 #: website/public/guides/browser/index.html:510
 #: website/public/guides/index.html:304
-#: website/public/guides/javascript/index.html:506
-#: website/public/guides/native/index.html:512
+#: website/public/guides/javascript/index.html:514
+#: website/public/guides/native/index.html:515
 #: website/public/guides/rl-environments/index.html:501
-#: website/public/index.html:1306 website/public/showcase/aegis/index.html:811
+#: website/public/index.html:1306 website/public/showcase/aegis/index.html:818
 #: website/public/showcase/ctf/index.html:780
 #: website/public/showcase/dx-ball/index.html:788
 #: website/public/showcase/index.html:340
@@ -10263,13 +10222,13 @@ msgstr "커뮤니티 참여"
 #: website/public/examples/dino-lab/index.html:479
 #: website/public/faq/index.html:577
 #: website/public/first-investigation/index.html:538
-#: website/public/get-started/index.html:1821
+#: website/public/get-started/index.html:1855
 #: website/public/guides/browser/index.html:511
 #: website/public/guides/index.html:305
-#: website/public/guides/javascript/index.html:507
-#: website/public/guides/native/index.html:513
+#: website/public/guides/javascript/index.html:515
+#: website/public/guides/native/index.html:516
 #: website/public/guides/rl-environments/index.html:502
-#: website/public/index.html:1307 website/public/showcase/aegis/index.html:812
+#: website/public/index.html:1307 website/public/showcase/aegis/index.html:819
 #: website/public/showcase/ctf/index.html:781
 #: website/public/showcase/dx-ball/index.html:789
 #: website/public/showcase/index.html:341
@@ -10349,27 +10308,27 @@ msgctxt "page:guides/index.html"
 msgid "Export script"
 msgstr "내보내기 스크립트"
 
-#: website/public/guides/javascript/index.html:364
+#: website/public/guides/javascript/index.html:371
 msgctxt "page:guides/javascript/index.html"
 msgid "REA result · summary.ipc excerpt"
 msgstr "REA 결과 · summary.ipc 발췌"
 
-#: website/public/guides/native/index.html:391
+#: website/public/guides/native/index.html:394
 msgctxt "page:guides/native/index.html"
 msgid "REA instruction excerpt · 0x406409"
 msgstr "REA 명령어 발췌 · 0x406409"
 
-#: website/public/guides/native/index.html:405
+#: website/public/guides/native/index.html:408
 msgctxt "page:guides/native/index.html"
 msgid "REA caller excerpt · 0x411f5b"
 msgstr "REA 호출 함수 발췌 · 0x411f5b"
 
-#: website/public/guides/native/index.html:419
+#: website/public/guides/native/index.html:422
 msgctxt "page:guides/native/index.html"
 msgid "REA byte results · interpreted as little-endian doubles"
 msgstr "REA 바이트 결과 · 리틀 엔디언 double 값으로 해석"
 
-#: website/public/guides/native/index.html:436
+#: website/public/guides/native/index.html:439
 msgctxt "page:guides/native/index.html"
 msgid "Recovered C · excerpt"
 msgstr "복구된 C · 발췌"
@@ -10430,12 +10389,12 @@ msgctxt "page:showcase/aegis/index.html"
 msgid "REA · generateOTP, complete body"
 msgstr "REA · generateOTP, 함수 본문 전체"
 
-#: website/public/showcase/aegis/index.html:725
+#: website/public/showcase/aegis/index.html:732
 msgctxt "page:showcase/aegis/index.html"
 msgid "Download Aegis APK"
 msgstr "Aegis APK 다운로드"
 
-#: website/public/showcase/aegis/index.html:729
+#: website/public/showcase/aegis/index.html:736
 msgctxt "page:showcase/aegis/index.html"
 msgid "Download Android analysis provider"
 msgstr "Android 분석 도구 다운로드"
@@ -10782,7 +10741,7 @@ msgstr ""
 #. {ph4}: </span >
 #. {ph5}: <span class="terminal-cursor" aria-hidden="true">
 #. {ph6}: </span>
-#: website/public/get-started/index.html:785
+#: website/public/get-started/index.html:816
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -10990,8 +10949,8 @@ msgstr "{ph0}예제 열기{ph1} · {ph2}{ph3} 다운로드{ph4} · {ph5}{ph6} �
 
 #. {ph0}: <span translate="no">renderer.js</span>
 #: website/public/guides/javascript/index.html:316
-#: website/public/guides/javascript/index.html:332
-#: website/public/guides/javascript/index.html:347
+#: website/public/guides/javascript/index.html:339
+#: website/public/guides/javascript/index.html:354
 #, python-brace-format
 msgctxt "page:guides/javascript/index.html"
 msgid "{ph0} · example source"
@@ -10999,7 +10958,7 @@ msgstr "{ph0} · 예제 소스"
 
 #. {ph0}: <code>notes-example</code>
 #. {ph1}: <span translate="no">Node.js</span>
-#: website/public/guides/javascript/index.html:381
+#: website/public/guides/javascript/index.html:389
 #, python-brace-format
 msgctxt "page:guides/javascript/index.html"
 msgid ""
@@ -12630,15 +12589,6 @@ msgctxt "page:get-started/index.html"
 msgid "All supported clients and setup IDs"
 msgstr "지원하는 모든 클라이언트와 설정 ID"
 
-#. {ph0}: <code>--client</code>
-#: website/public/get-started/index.html:635
-#, python-brace-format
-msgctxt "page:get-started/index.html"
-msgid ""
-"The npm 6.4.0 release supports the clients below. Use the ID with {ph0} when"
-" choosing a client explicitly."
-msgstr "npm 6.4.0 릴리스는 아래 클라이언트를 지원합니다. 클라이언트를 직접 지정하려면 {ph0}에 해당 ID를 넣으세요."
-
 #: website/public/get-started/index.html:643
 msgctxt "page:get-started/index.html"
 msgid "Client"
@@ -12649,22 +12599,6 @@ msgctxt "page:get-started/index.html"
 msgid "Setup ID"
 msgstr "설정 ID"
 
-#. {ph0}: <code>qoder</code>
-#. {ph1}: <code>droid</code>
-#. {ph2}: <code>trae</code>
-#. {ph3}: <code>zcode</code>
-#. {ph4}: <code>dsh</code>
-#: website/public/get-started/index.html:719
-#, python-brace-format
-msgctxt "page:get-started/index.html"
-msgid ""
-"Qoder ({ph0}), Factory Droid ({ph1}), Trae ({ph2}), ZCode ({ph3}) and "
-"DeepSeek Harness ({ph4}) are available on repository main; use a source "
-"build or a release containing those integrations."
-msgstr ""
-"Qoder({ph0}), Factory Droid({ph1}), Trae({ph2}), ZCode({ph3}), DeepSeek "
-"Harness({ph4})는 저장소 main에서 사용할 수 있습니다. 소스 빌드나 이 연동을 포함하는 릴리스를 사용하세요."
-
 #. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/client-
 #. configuration.md" >
 #. {ph1}: </a >
@@ -12672,7 +12606,7 @@ msgstr ""
 #. href="https://github.com/morluto/rea/blob/main/docs/installation.md#released-
 #. package-and-main" >
 #. {ph3}: </a >
-#: website/public/get-started/index.html:726
+#: website/public/get-started/index.html:757
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -12680,13 +12614,13 @@ msgid ""
 "availability{ph3}"
 msgstr "{ph0}클라이언트 설정과 문제 해결{ph1} · {ph2}릴리스별 제공 여부{ph3}"
 
-#: website/public/get-started/index.html:738
+#: website/public/get-started/index.html:769
 msgctxt "page:get-started/index.html"
 msgid "Grok Bot · connect on its hosted computer"
 msgstr "Grok Bot · Bot이 실행되는 컴퓨터에서 연결하기"
 
 #. {ph0}: <code>rea</code>
-#: website/public/get-started/index.html:739
+#: website/public/get-started/index.html:770
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -12698,29 +12632,29 @@ msgstr ""
 #. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/client-
 #. configuration.md#other-client-settings" >
 #. {ph1}: </a >
-#: website/public/get-started/index.html:757
+#: website/public/get-started/index.html:788
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Grok Bot connector instructions{ph1}"
 msgstr "{ph0}Grok Bot 커넥터 설정 안내{ph1}"
 
-#: website/public/get-started/index.html:767
+#: website/public/get-started/index.html:798
 msgctxt "page:get-started/index.html"
 msgid "3. Connect REA"
 msgstr "3. REA 연결하기"
 
-#: website/public/get-started/index.html:768
+#: website/public/get-started/index.html:799
 msgctxt "page:get-started/index.html"
 msgid "Copy this into your coding agent:"
 msgstr "이 프롬프트를 코딩 에이전트에 붙여 넣으세요:"
 
-#: website/public/get-started/index.html:812
+#: website/public/get-started/index.html:843
 msgctxt "page:get-started/index.html"
 msgid "For one specific client, add its setup ID:"
 msgstr "특정 클라이언트 하나를 지정하려면 해당 설정 ID를 추가하세요."
 
 #. {ph0}: <code>y</code>
-#: website/public/get-started/index.html:827
+#: website/public/get-started/index.html:858
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -12731,7 +12665,7 @@ msgstr ""
 "npm이 패키지를 다운로드할지 물으면 {ph0}를 입력하고 Enter를 누르세요. REA의 클라이언트 목록에서는 방향키로 이동하고 "
 "Space로 클라이언트를 선택한 뒤 Enter로 진행하세요."
 
-#: website/public/get-started/index.html:838
+#: website/public/get-started/index.html:869
 msgctxt "page:get-started/index.html"
 msgid ""
 "MCP is the connection that lets your agent call REA. The skill gives it a "
@@ -12739,7 +12673,7 @@ msgid ""
 msgstr ""
 "MCP는 에이전트가 REA를 호출할 수 있게 하는 연결 방식입니다. 스킬은 소프트웨어를 조사하는 절차를 에이전트에 알려 줍니다."
 
-#: website/public/get-started/index.html:842
+#: website/public/get-started/index.html:873
 msgctxt "page:get-started/index.html"
 msgid ""
 "For the first exercise, you can skip the optional Hopper installation. "
@@ -12748,7 +12682,7 @@ msgstr "첫 실습에서는 선택 사항인 Hopper 설치를 건너뛰어도 �
 
 #. {ph0}: <code>codex</code>
 #. {ph1}: <code>"healthy": true</code>
-#: website/public/get-started/index.html:875
+#: website/public/get-started/index.html:906
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -12757,19 +12691,19 @@ msgid ""
 msgstr ""
 "{ph0}를 사용하는 클라이언트의 설정 ID로 바꾸세요. 검사가 성공하면 {ph1}가 표시됩니다. 그런 다음 에이전트에 요청하세요."
 
-#: website/public/get-started/index.html:881
+#: website/public/get-started/index.html:912
 msgctxt "page:get-started/index.html"
 msgid "Check that REA is connected and show me which REA tools you can use."
 msgstr "REA가 연결되어 있는지 확인하고 사용할 수 있는 REA 도구를 알려 주세요."
 
-#: website/public/get-started/index.html:888
+#: website/public/get-started/index.html:919
 msgctxt "page:get-started/index.html"
 msgid "4. Try your first investigation"
 msgstr "4. 첫 조사 해 보기"
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
-#: website/public/get-started/index.html:889
+#: website/public/get-started/index.html:920
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -12780,7 +12714,7 @@ msgstr ""
 "이 예제는 {ph0}노트 내보내기{ph1} 버튼이 있는, 파일 6개로 구성된 Electron 앱입니다. 에이전트는 Electron을 "
 "설치하거나 실행하지 않고도 코드를 살펴볼 수 있습니다."
 
-#: website/public/get-started/index.html:896
+#: website/public/get-started/index.html:927
 msgctxt "page:get-started/index.html"
 msgid "Your coding agent"
 msgstr "코딩 에이전트"
@@ -12794,7 +12728,7 @@ msgstr "코딩 에이전트"
 #. {ph5}: </span >
 #. {ph6}: <span class="terminal-cursor" aria-hidden="true">
 #. {ph7}: </span>
-#: website/public/get-started/index.html:906
+#: website/public/get-started/index.html:937
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -12806,7 +12740,7 @@ msgstr ""
 "{ph0}›{ph1}{ph2}{ph3}을 새 예제 폴더에 다운로드하고 압축을 풀어줘. REA로 메모 내보내기를 클릭하면 어떤 일이 "
 "일어나는지 찾아줘. {ph4}의 저장 위치, 포함된 필드, 관련 파일과 줄 번호를 보여줘.{ph5}{ph6}{ph7}"
 
-#: website/public/get-started/index.html:920
+#: website/public/get-started/index.html:951
 msgctxt "page:get-started/index.html"
 msgid "Look for a short explanation with file and line references:"
 msgstr "파일과 줄 번호를 포함한 짧은 설명을 확인하세요:"
@@ -12815,7 +12749,7 @@ msgstr "파일과 줄 번호를 포함한 짧은 설명을 확인하세요:"
 #. {ph1}: <code>notes.csv</code>
 #. {ph2}: <code>id</code>
 #. {ph3}: <code>title</code>
-#: website/public/get-started/index.html:922
+#: website/public/get-started/index.html:953
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -12828,13 +12762,13 @@ msgstr ""
 
 #. {ph0}: <a href="../first-investigation/#check" >
 #. {ph1}: </a >
-#: website/public/get-started/index.html:929
+#: website/public/get-started/index.html:960
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Check a prediction in the guided exercise →{ph1}"
 msgstr "{ph0}안내된 실습에서 예측 확인하기 →{ph1}"
 
-#: website/public/get-started/index.html:935
+#: website/public/get-started/index.html:966
 msgctxt "page:get-started/index.html"
 msgid "Download the example yourself, or use your own app"
 msgstr "예제를 직접 다운로드하거나 자신의 앱 사용하기"
@@ -12842,14 +12776,14 @@ msgstr "예제를 직접 다운로드하거나 자신의 앱 사용하기"
 #. {ph0}: <a class="button" href="../examples/notes-example.zip"
 #. download="notes-example.zip" >
 #. {ph1}: </a >
-#: website/public/get-started/index.html:938
+#: website/public/get-started/index.html:969
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Download example ZIP{ph1}"
 msgstr "{ph0}예제 ZIP 다운로드{ph1}"
 
 #. {ph0}: <code>notes-example</code>
-#: website/public/get-started/index.html:946
+#: website/public/get-started/index.html:977
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -12860,7 +12794,7 @@ msgstr ""
 "전달하세요."
 
 #. {ph0}: <code>/absolute/path/to/app</code>
-#: website/public/get-started/index.html:952
+#: website/public/get-started/index.html:983
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -12868,71 +12802,66 @@ msgid ""
 "relevant files and lines."
 msgstr "REA로 {ph0}에 있는 앱을 조사해 주세요. 데이터를 내보내는 방식을 찾아 관련 파일과 줄을 보여 주세요."
 
-#: website/public/get-started/index.html:982
+#: website/public/get-started/index.html:1013
 msgctxt "page:get-started/index.html"
 msgid "Analyze another kind of software"
 msgstr "다른 종류의 소프트웨어 분석하기"
 
-#: website/public/get-started/index.html:983
+#: website/public/get-started/index.html:1014
 msgctxt "page:get-started/index.html"
 msgid ""
 "Choose the section for your target. A provider is the local analysis tool "
 "REA uses for that kind of software."
 msgstr "대상에 맞는 항목을 선택하세요. 프로바이더는 REA가 해당 소프트웨어를 분석할 때 사용하는 로컬 분석 도구입니다."
 
-#: website/public/get-started/index.html:988
+#: website/public/get-started/index.html:1019
 msgctxt "page:get-started/index.html"
 msgid "Native executables and libraries · Hopper, Ghidra or IDA"
 msgstr "네이티브 실행 파일과 라이브러리 · Hopper, Ghidra, IDA"
 
-#: website/public/get-started/index.html:991
+#: website/public/get-started/index.html:1022
 msgctxt "page:get-started/index.html"
 msgid ""
 "Install one analysis tool on the computer running REA. The host is your "
 "operating system; the target is the program you want to inspect."
 msgstr "REA를 실행하는 컴퓨터에 분석 도구 하나를 설치하세요. 호스트는 여러분의 운영체제이고, 대상은 분석하려는 프로그램입니다."
 
-#: website/public/get-started/index.html:1000
+#: website/public/get-started/index.html:1031
 msgctxt "page:get-started/index.html"
 msgid "Provider"
 msgstr "분석 도구(프로바이더)"
 
-#: website/public/get-started/index.html:1009
+#: website/public/get-started/index.html:1040
 msgctxt "page:get-started/index.html"
 msgid "Unavailable"
 msgstr "사용 불가"
 
-#: website/public/get-started/index.html:1011
-msgctxt "page:get-started/index.html"
-msgid "Supported distributions"
-msgstr "지원 배포판"
-
-#: website/public/get-started/index.html:1015
+#: website/public/get-started/index.html:1046
 msgctxt "page:get-started/index.html"
 msgid "x64 · experimental"
 msgstr "x64 · 실험적 지원"
 
-#: website/public/get-started/index.html:1021
+#: website/public/get-started/index.html:1052
 msgctxt "page:get-started/index.html"
 msgid "Verified profiles"
 msgstr "검증된 구성"
 
-#: website/public/get-started/index.html:1022
+#: website/public/get-started/index.html:1053
 msgctxt "page:get-started/index.html"
 msgid "Verified headless profile"
 msgstr "검증된 헤드리스 구성"
 
-#: website/public/get-started/index.html:1023
+#: website/public/get-started/index.html:1054
 msgctxt "page:get-started/index.html"
 msgid "See provider guide"
 msgstr "분석 도구 가이드 참고"
 
-#: website/public/get-started/index.html:1029
+#: website/public/get-started/index.html:1060
 msgctxt "page:get-started/index.html"
 msgid "Hopper · let setup install or connect it"
 msgstr "Hopper · 설정 과정에서 설치하거나 연결하기"
 
-#: website/public/get-started/index.html:1035
+#: website/public/get-started/index.html:1066
 msgctxt "page:get-started/index.html"
 msgid ""
 "Choose Hopper in setup and review its separate installation plan. On macOS, "
@@ -12942,16 +12871,7 @@ msgstr ""
 "설정에서 Hopper를 선택하고 별도로 제시되는 설치 계획을 확인하세요. macOS에서는 Hopper를 처음 열 때 데모 모드를 "
 "선택하거나 라이선스를 활성화하세요. Linux에서는 설정 과정에서 지원되는 데모와 전용 디스플레이를 준비합니다."
 
-#: website/public/get-started/index.html:1041
-msgctxt "page:get-started/index.html"
-msgid ""
-"Linux hosts: Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS or "
-"Omarchy. Hopper is commercial software; its demo has vendor-defined limits."
-msgstr ""
-"Linux 호스트: Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS, "
-"Omarchy. Hopper는 상용 소프트웨어이며 데모에는 공급업체가 정한 제한이 있습니다."
-
-#: website/public/get-started/index.html:1060
+#: website/public/get-started/index.html:1094
 msgctxt "page:get-started/index.html"
 msgid ""
 "If macOS asks for Automation permission, allow the app that starts REA in "
@@ -12964,18 +12884,18 @@ msgstr ""
 #. href="https://github.com/morluto/rea/blob/main/docs/installation.md#hopper"
 #. >
 #. {ph1}: </a >
-#: website/public/get-started/index.html:1065
+#: website/public/get-started/index.html:1099
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Hopper setup and troubleshooting{ph1}"
 msgstr "{ph0}Hopper 설정과 문제 해결{ph1}"
 
-#: website/public/get-started/index.html:1073
+#: website/public/get-started/index.html:1107
 msgctxt "page:get-started/index.html"
 msgid "Ghidra · install the free analysis tool and Java"
 msgstr "Ghidra · 무료 분석 도구와 Java 설치하기"
 
-#: website/public/get-started/index.html:1077
+#: website/public/get-started/index.html:1111
 msgctxt "page:get-started/index.html"
 msgid ""
 "Install a 64-bit JDK 21 or newer, including the Java compiler. Choose the "
@@ -12983,7 +12903,7 @@ msgid ""
 msgstr "Java 컴파일러를 포함하는 64비트 JDK 21 이상을 설치하세요. 컴퓨터 아키텍처에 맞는 패키지를 선택하세요."
 
 #. {ph0}: <code>ghidra_…_PUBLIC_….zip</code>
-#: website/public/get-started/index.html:1082
+#: website/public/get-started/index.html:1116
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -12996,7 +12916,7 @@ msgstr ""
 #. {ph0}: <code>ghidraRun</code>
 #. {ph1}: <code>ghidraRun.bat</code>
 #. {ph2}: <code>GHIDRA_INSTALL_DIR</code>
-#: website/public/get-started/index.html:1087
+#: website/public/get-started/index.html:1121
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -13010,7 +12930,7 @@ msgstr "압축을 푼 폴더 중 {ph0} 또는 {ph1}가 들어 있는 폴더를 �
 #. href="https://github.com/NationalSecurityAgency/ghidra/releases/tag/Ghidra_12.1.4_build"
 #. >
 #. {ph3}: </a >
-#: website/public/get-started/index.html:1093
+#: website/public/get-started/index.html:1127
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Download a JDK{ph1} · {ph2}Download Ghidra 12.1.4{ph3}"
@@ -13018,7 +12938,7 @@ msgstr "{ph0}JDK 다운로드{ph1} · {ph2}Ghidra 12.1.4 다운로드{ph3}"
 
 #. {ph0}: <code>java.home</code>
 #. {ph1}: <code>JAVA_HOME</code>
-#: website/public/get-started/index.html:1103
+#: website/public/get-started/index.html:1137
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -13028,7 +12948,7 @@ msgstr ""
 "Java를 확인하세요. 첫 번째 명령어가 출력하는 {ph0} 폴더를 {ph1}로 지정하세요. 두 번째 명령어로 컴파일러가 설치되어 있는지"
 " 확인합니다."
 
-#: website/public/get-started/index.html:1219
+#: website/public/get-started/index.html:1253
 msgctxt "page:get-started/index.html"
 msgid ""
 "Keep these commands in the same terminal session. Rerun setup after setting "
@@ -13045,7 +12965,7 @@ msgstr ""
 #. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/windows-
 #. ghidra-p0.md" >
 #. {ph3}: </a >
-#: website/public/get-started/index.html:1224
+#: website/public/get-started/index.html:1258
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -13053,12 +12973,12 @@ msgid ""
 "guide{ph3}"
 msgstr "{ph0}Ghidra 설정과 아키텍처 요구사항{ph1} · {ph2}Windows Ghidra 가이드{ph3}"
 
-#: website/public/get-started/index.html:1237
+#: website/public/get-started/index.html:1271
 msgctxt "page:get-started/index.html"
 msgid "IDA · connect an existing installation"
 msgstr "IDA · 기존 설치 연결하기"
 
-#: website/public/get-started/index.html:1238
+#: website/public/get-started/index.html:1272
 msgctxt "page:get-started/index.html"
 msgid ""
 "Use the IDA provider guide to prepare an upstream MCP registration. Choose "
@@ -13068,7 +12988,7 @@ msgstr ""
 "IDA 분석 도구 가이드를 따라 연동할 MCP 서버의 등록 설정을 준비하세요. 원본 바이너리를 연 GUI에 연결하거나, 전용 "
 "데이터베이스를 여는 헤드리스 감독 프로세스를 선택하세요."
 
-#: website/public/get-started/index.html:1243
+#: website/public/get-started/index.html:1277
 msgctxt "page:get-started/index.html"
 msgid ""
 "Verified profiles include the Windows legacy GUI and headless supervisor, "
@@ -13078,7 +12998,7 @@ msgstr ""
 "검증된 구성에는 Windows의 레거시 GUI와 헤드리스 감독 프로세스, IDA Professional 9.1을 사용하는 macOS "
 "arm64 헤드리스 감독 프로세스가 포함됩니다. 선택 사항인 네이티브 GUI 브리지에는 별도의 버전 및 플랫폼 요구사항이 있습니다."
 
-#: website/public/get-started/index.html:1338
+#: website/public/get-started/index.html:1372
 msgctxt "page:get-started/index.html"
 msgid ""
 "Use the JSON registration file you prepared with the provider guide, then "
@@ -13088,13 +13008,13 @@ msgstr "분석 도구 가이드에서 준비한 JSON 등록 파일을 사용한 
 #. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/ida-
 #. provider.md" >
 #. {ph1}: </a >
-#: website/public/get-started/index.html:1342
+#: website/public/get-started/index.html:1376
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}IDA profiles, registration examples and verified platforms{ph1}"
 msgstr "{ph0}IDA 구성, 등록 예제, 검증된 플랫폼{ph1}"
 
-#: website/public/get-started/index.html:1350
+#: website/public/get-started/index.html:1384
 msgctxt "page:get-started/index.html"
 msgid ""
 "Once connected, give your agent the original executable's full path and name"
@@ -13103,128 +13023,128 @@ msgstr "연결한 뒤 원본 실행 파일의 전체 경로와 사용할 분석 
 
 #. {ph0}: <a href="../guides/native/">
 #. {ph1}: </a>
-#: website/public/get-started/index.html:1362
+#: website/public/get-started/index.html:1396
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Follow a native analysis example{ph1}"
 msgstr "{ph0}네이티브 분석 예제 따라 하기{ph1}"
 
-#: website/public/get-started/index.html:1367
+#: website/public/get-started/index.html:1401
 msgctxt "page:get-started/index.html"
 msgid "Websites, Android, .NET, firmware and other targets"
 msgstr "웹사이트, Android, .NET, 펌웨어 등 다른 대상"
 
-#: website/public/get-started/index.html:1370
+#: website/public/get-started/index.html:1404
 msgctxt "page:get-started/index.html"
 msgid ""
 "Open the guide for the target you have. Each guide gives the additional "
 "tools, supported hosts and first command."
 msgstr "분석할 대상에 맞는 가이드를 여세요. 각 가이드에서 추가 도구, 지원 호스트, 첫 명령어를 안내합니다."
 
-#: website/public/get-started/index.html:1378
+#: website/public/get-started/index.html:1412
 msgctxt "page:get-started/index.html"
 msgid "Target"
 msgstr "대상"
 
-#: website/public/get-started/index.html:1379
+#: website/public/get-started/index.html:1413
 msgctxt "page:get-started/index.html"
 msgid "Tools to prepare"
 msgstr "준비할 도구"
 
-#: website/public/get-started/index.html:1380
+#: website/public/get-started/index.html:1414
 msgctxt "page:get-started/index.html"
 msgid "Guide"
 msgstr "가이드"
 
-#: website/public/get-started/index.html:1385
+#: website/public/get-started/index.html:1419
 msgctxt "page:get-started/index.html"
 msgid "JavaScript / Electron"
 msgstr "JavaScript / Electron"
 
 #. {ph0}: <a href="../guides/javascript/">
 #. {ph1}: </a>
-#: website/public/get-started/index.html:1387
-#: website/public/get-started/index.html:1392
-#: website/public/get-started/index.html:1397
-#: website/public/get-started/index.html:1407
-#: website/public/get-started/index.html:1417
-#: website/public/get-started/index.html:1427
-#: website/public/get-started/index.html:1437
-#: website/public/get-started/index.html:1447
-#: website/public/get-started/index.html:1457
-#: website/public/get-started/index.html:1467
-#: website/public/get-started/index.html:1477
-#: website/public/get-started/index.html:1487
-#: website/public/get-started/index.html:1497
-#: website/public/get-started/index.html:1507
-#: website/public/get-started/index.html:1517
-#: website/public/get-started/index.html:1527
+#: website/public/get-started/index.html:1421
+#: website/public/get-started/index.html:1426
+#: website/public/get-started/index.html:1431
+#: website/public/get-started/index.html:1441
+#: website/public/get-started/index.html:1451
+#: website/public/get-started/index.html:1461
+#: website/public/get-started/index.html:1471
+#: website/public/get-started/index.html:1481
+#: website/public/get-started/index.html:1491
+#: website/public/get-started/index.html:1501
+#: website/public/get-started/index.html:1511
+#: website/public/get-started/index.html:1521
+#: website/public/get-started/index.html:1531
+#: website/public/get-started/index.html:1541
+#: website/public/get-started/index.html:1551
+#: website/public/get-started/index.html:1561
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Open guide{ph1}"
 msgstr "{ph0}가이드 열기{ph1}"
 
-#: website/public/get-started/index.html:1390
+#: website/public/get-started/index.html:1424
 msgctxt "page:get-started/index.html"
 msgid "Website"
 msgstr "웹사이트"
 
-#: website/public/get-started/index.html:1395
+#: website/public/get-started/index.html:1429
 msgctxt "page:get-started/index.html"
 msgid ".NET / Flutter / packages"
 msgstr ".NET / Flutter / 패키지"
 
-#: website/public/get-started/index.html:1405
+#: website/public/get-started/index.html:1439
 msgctxt "page:get-started/index.html"
 msgid "Android APK"
 msgstr "Android APK"
 
-#: website/public/get-started/index.html:1415
+#: website/public/get-started/index.html:1449
 msgctxt "page:get-started/index.html"
 msgid "Android device"
 msgstr "Android 기기"
 
-#: website/public/get-started/index.html:1425
+#: website/public/get-started/index.html:1459
 msgctxt "page:get-started/index.html"
 msgid "Android resources"
 msgstr "Android 리소스"
 
-#: website/public/get-started/index.html:1435
+#: website/public/get-started/index.html:1469
 msgctxt "page:get-started/index.html"
 msgid "JEB project"
 msgstr "JEB 프로젝트"
 
-#: website/public/get-started/index.html:1445
+#: website/public/get-started/index.html:1479
 msgctxt "page:get-started/index.html"
 msgid "Firmware"
 msgstr "펌웨어"
 
-#: website/public/get-started/index.html:1455
+#: website/public/get-started/index.html:1489
 msgctxt "page:get-started/index.html"
 msgid "WASM"
 msgstr "WASM"
 
-#: website/public/get-started/index.html:1485
+#: website/public/get-started/index.html:1519
 msgctxt "page:get-started/index.html"
 msgid "ELF / Linux crash"
 msgstr "ELF / Linux 충돌"
 
-#: website/public/get-started/index.html:1495
+#: website/public/get-started/index.html:1529
 msgctxt "page:get-started/index.html"
 msgid "HAR / SAZ / mitmproxy"
 msgstr "HAR / SAZ / mitmproxy"
 
-#: website/public/get-started/index.html:1505
+#: website/public/get-started/index.html:1539
 msgctxt "page:get-started/index.html"
 msgid "PCAP / PCAPNG"
 msgstr "PCAP / PCAPNG"
 
-#: website/public/get-started/index.html:1515
+#: website/public/get-started/index.html:1549
 msgctxt "page:get-started/index.html"
 msgid "Logic signals"
 msgstr "논리 신호"
 
-#: website/public/get-started/index.html:1525
+#: website/public/get-started/index.html:1559
 msgctxt "page:get-started/index.html"
 msgid "Process behavior"
 msgstr "프로세스 동작"
@@ -13240,7 +13160,7 @@ msgstr "프로세스 동작"
 #. {ph5}: </a >
 #. {ph6}: <a href="../guides/">
 #. {ph7}: </a>
-#: website/public/get-started/index.html:1537
+#: website/public/get-started/index.html:1571
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -13250,18 +13170,18 @@ msgstr ""
 "{ph0}Flutter 가이드{ph1} · {ph2}패키지와 리소스{ph3} · {ph4}EVM 바이트코드{ph5} · {ph6}모든 "
 "조사 가이드{ph7}"
 
-#: website/public/get-started/index.html:1557
+#: website/public/get-started/index.html:1591
 msgctxt "page:get-started/index.html"
 msgid "Use REA from a terminal"
 msgstr "터미널에서 REA 사용하기"
 
-#: website/public/get-started/index.html:1559
+#: website/public/get-started/index.html:1593
 msgctxt "page:get-started/index.html"
 msgid "CLI commands, global installation and curl"
 msgstr "CLI 명령어, 전역 설치, curl"
 
 #. {ph0}: <code>main</code>
-#: website/public/get-started/index.html:1656
+#: website/public/get-started/index.html:1690
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -13269,14 +13189,14 @@ msgid ""
 "list. Ghidra must be configured first."
 msgstr "{ph0}을 대상의 함수 목록에 있는 함수 이름이나 주소로 바꾸세요. 먼저 Ghidra를 설정해야 합니다."
 
-#: website/public/get-started/index.html:1660
+#: website/public/get-started/index.html:1694
 msgctxt "page:get-started/index.html"
 msgid ""
 "On macOS or Linux, you can also use the curl installer after preparing "
 "Node.js:"
 msgstr "macOS나 Linux에서는 Node.js를 준비한 뒤 curl 설치 프로그램을 사용할 수도 있습니다."
 
-#: website/public/get-started/index.html:1698
+#: website/public/get-started/index.html:1732
 msgctxt "page:get-started/index.html"
 msgid ""
 "Use the client check in step 3 with your setup ID. In editor clients, enable"
@@ -13285,12 +13205,12 @@ msgstr ""
 "3단계의 클라이언트 검사에 사용하는 설정 ID를 지정하세요. 편집기 클라이언트에서는 MCP 설정에서 REA를 활성화하고 에이전트 채팅에서"
 " 도구 사용을 허용하세요."
 
-#: website/public/get-started/index.html:1726
+#: website/public/get-started/index.html:1760
 msgctxt "page:get-started/index.html"
 msgid "Windows, WSL and paths with spaces"
 msgstr "Windows, WSL, 공백이 포함된 경로"
 
-#: website/public/get-started/index.html:1727
+#: website/public/get-started/index.html:1761
 msgctxt "page:get-started/index.html"
 msgid ""
 "Use Windows PowerShell for Windows clients and analysis tools. If your agent"
@@ -13301,17 +13221,17 @@ msgstr ""
 "Linux 환경 안에 Node.js와 REA를 설치하고 Linux 경로를 사용하세요. 헤드리스 분석 도구는 REA와 같은 호스트에서 "
 "실행됩니다."
 
-#: website/public/get-started/index.html:1736
+#: website/public/get-started/index.html:1770
 msgctxt "page:get-started/index.html"
 msgid "Windows setup command:"
 msgstr "Windows 설정 명령어:"
 
-#: website/public/get-started/index.html:1753
+#: website/public/get-started/index.html:1787
 msgctxt "page:get-started/index.html"
 msgid "Update or remove REA"
 msgstr "REA 업데이트 또는 제거하기"
 
-#: website/public/get-started/index.html:1754
+#: website/public/get-started/index.html:1788
 msgctxt "page:get-started/index.html"
 msgid ""
 "To refresh your agent connection, run the latest setup command again, review"
@@ -13320,7 +13240,7 @@ msgstr "에이전트 연결을 갱신하려면 최신 설정 명령어를 다시
 
 #. {ph0}: <code>rea update</code>
 #. {ph1}: <code>npx rea-agents@latest uninstall</code>
-#: website/public/get-started/index.html:1772
+#: website/public/get-started/index.html:1806
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -13332,7 +13252,7 @@ msgstr "전역 CLI를 설치했다면 {ph0}로 업데이트하세요. REA의 클
 #. href="https://github.com/morluto/rea/blob/main/docs/installation.md#diagnose-
 #. update-and-remove" >
 #. {ph1}: </a >
-#: website/public/get-started/index.html:1778
+#: website/public/get-started/index.html:1812
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Update and uninstall details{ph1}"
@@ -13351,27 +13271,27 @@ msgstr "Windows REA 설정 명령어 복사"
 #: website/public/get-started/index.html:550
 #: website/public/get-started/index.html:582
 #: website/public/get-started/index.html:611
-#: website/public/get-started/index.html:746
-#: website/public/get-started/index.html:801
-#: website/public/get-started/index.html:816
-#: website/public/get-started/index.html:864
-#: website/public/get-started/index.html:1049
-#: website/public/get-started/index.html:1111
-#: website/public/get-started/index.html:1134
-#: website/public/get-started/index.html:1158
-#: website/public/get-started/index.html:1206
-#: website/public/get-started/index.html:1281
-#: website/public/get-started/index.html:1307
-#: website/public/get-started/index.html:1324
-#: website/public/get-started/index.html:1645
-#: website/public/get-started/index.html:1667
-#: website/public/get-started/index.html:1740
-#: website/public/get-started/index.html:1761
+#: website/public/get-started/index.html:777
+#: website/public/get-started/index.html:832
+#: website/public/get-started/index.html:847
+#: website/public/get-started/index.html:895
+#: website/public/get-started/index.html:1083
+#: website/public/get-started/index.html:1145
+#: website/public/get-started/index.html:1168
+#: website/public/get-started/index.html:1192
+#: website/public/get-started/index.html:1240
+#: website/public/get-started/index.html:1315
+#: website/public/get-started/index.html:1341
+#: website/public/get-started/index.html:1358
+#: website/public/get-started/index.html:1679
+#: website/public/get-started/index.html:1701
+#: website/public/get-started/index.html:1774
+#: website/public/get-started/index.html:1795
 msgctxt "page:get-started/index.html"
 msgid "Copy command"
 msgstr "명령어 복사"
 
-#: website/public/get-started/index.html:897
+#: website/public/get-started/index.html:928
 msgctxt "page:get-started/index.html"
 msgid "Copy Notes investigation prompt"
 msgstr "메모 분석 프롬프트 복사"
@@ -13422,14 +13342,14 @@ msgctxt "page:get-started/index.html"
 msgid "OpenCode · choose an AI model"
 msgstr "OpenCode · AI 모델 선택하기"
 
-#: website/public/get-started/index.html:1265
+#: website/public/get-started/index.html:1299
 msgctxt "page:get-started/index.html"
 msgid "Prepare the IDA registration file"
 msgstr "IDA 등록 파일 준비하기"
 
 #. {ph0}: <code>ida-mcp.json</code>
 #. {ph1}: <code>.txt</code>
-#: website/public/get-started/index.html:1266
+#: website/public/get-started/index.html:1300
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -13443,7 +13363,7 @@ msgstr ""
 #. {ph0}: <code>idb_open</code>
 #. {ph1}: <code>idb_list</code>
 #. {ph2}: <code>idb_close</code>
-#: website/public/get-started/index.html:1273
+#: website/public/get-started/index.html:1307
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -13454,7 +13374,7 @@ msgstr "{ph0}, {ph1}, {ph2}를 제공하는 헤드리스 감독 프로세스에�
 #. {ph0}: <code>command</code>
 #. {ph1}: <code>args</code>
 #. {ph2}: <code>env</code>
-#: website/public/get-started/index.html:1296
+#: website/public/get-started/index.html:1330
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -13465,12 +13385,12 @@ msgstr ""
 "연결된 레거시 1.4.0 GUI 서버의 경우 동작이 확인된 {ph0}, {ph1}, 선택 사항인 {ph2}를 파일에 복사하세요. REA에"
 " 조사를 요청하기 전에 IDA에서 원본 바이너리를 열고 연동할 플러그인을 시작하세요."
 
-#: website/public/get-started/index.html:1465
+#: website/public/get-started/index.html:1499
 msgctxt "page:get-started/index.html"
 msgid "SQLite database"
 msgstr "SQLite 데이터베이스"
 
-#: website/public/get-started/index.html:1475
+#: website/public/get-started/index.html:1509
 msgctxt "page:get-started/index.html"
 msgid "EVM bytecode"
 msgstr "EVM 바이트코드"
@@ -13523,7 +13443,7 @@ msgid ""
 "in step 3{ph1}."
 msgstr "계획을 확인하고 승인한 뒤 Claude를 다시 열고 {ph0}3단계에서 연결을 확인{ph1}하세요."
 
-#: website/public/get-started/index.html:1170
+#: website/public/get-started/index.html:1204
 msgctxt "page:get-started/index.html"
 msgid ""
 "Replace both paths with your existing installations. For a fresh macOS or "
@@ -13533,12 +13453,12 @@ msgstr ""
 "두 경로를 기존 설치 경로로 바꾸세요. macOS나 Linux arm64에 새로 설치했다면 먼저 컴퓨터에 맞는 네이티브 디컴파일러를 "
 "빌드하세요."
 
-#: website/public/get-started/index.html:1176
+#: website/public/get-started/index.html:1210
 msgctxt "page:get-started/index.html"
 msgid "Build Ghidra's native decompiler"
 msgstr "Ghidra의 네이티브 디컴파일러 빌드하기"
 
-#: website/public/get-started/index.html:1177
+#: website/public/get-started/index.html:1211
 msgctxt "page:get-started/index.html"
 msgid ""
 "On macOS, the build needs Xcode Command Line Tools, make and bison. Use the "
@@ -13551,7 +13471,7 @@ msgstr ""
 #. href="https://github.com/morluto/rea/blob/main/docs/installation.md#missing-
 #. macos-native-decompiler" >
 #. {ph1}: </a >
-#: website/public/get-started/index.html:1182
+#: website/public/get-started/index.html:1216
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}macOS · Intel{ph1}"
@@ -13561,7 +13481,7 @@ msgstr "{ph0}macOS · Intel{ph1}"
 #. href="https://github.com/morluto/rea/blob/main/docs/installation.md#macos-
 #. arm64-native-decompiler" >
 #. {ph1}: </a >
-#: website/public/get-started/index.html:1188
+#: website/public/get-started/index.html:1222
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}macOS · Apple Silicon{ph1}"
@@ -13571,13 +13491,13 @@ msgstr "{ph0}macOS · Apple Silicon{ph1}"
 #. href="https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.1.4_build/GhidraDocs/GettingStarted.md#building-
 #. native-components" >
 #. {ph1}: </a >
-#: website/public/get-started/index.html:1194
+#: website/public/get-started/index.html:1228
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Linux arm64 · native build instructions{ph1}"
 msgstr "{ph0}Linux arm64 · 네이티브 빌드 안내{ph1}"
 
-#: website/public/get-started/index.html:1202
+#: website/public/get-started/index.html:1236
 msgctxt "page:get-started/index.html"
 msgid "Then check Ghidra and save its paths for your client:"
 msgstr "그런 다음 Ghidra를 검사하고 클라이언트용으로 경로를 저장하세요."
@@ -13941,7 +13861,7 @@ msgid "Other install options: {ph0}{ph1} →{ph2}"
 msgstr "다른 설치 방법: {ph0}{ph1} →{ph2}"
 
 #. {ph0}: <code>rea setup</code>
-#: website/public/get-started/index.html:1678
+#: website/public/get-started/index.html:1712
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -13954,7 +13874,7 @@ msgstr "설정 안내에 따라 에이전트를 연결하세요. 안내가 나�
 #. setup" >
 #. {ph1}: </a >
 #. {ph2}: <code>6.4.0</code>
-#: website/public/get-started/index.html:1249
+#: website/public/get-started/index.html:1283
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -13968,7 +13888,7 @@ msgstr ""
 #. {ph0}: <code>node scripts/rea.mjs doctor --provider ida --json</code>
 #. {ph1}: <code>node scripts/rea.mjs setup</code>
 #. {ph2}: <code>npx</code>
-#: website/public/get-started/index.html:1258
+#: website/public/get-started/index.html:1292
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -13978,7 +13898,7 @@ msgstr "빌드한 소스 디렉터리에서 아래 {ph2} 명령 대신 {ph0}와 
 
 #. {ph0}: <code>rea</code>
 #. {ph1}: <code>"$HOME/.local/bin/rea" setup</code>
-#: website/public/get-started/index.html:1682
+#: website/public/get-started/index.html:1716
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -13988,7 +13908,7 @@ msgstr ""
 "셸에서 {ph0}를 찾지 못하면 설치 프로그램이 출력한 실행 파일 경로를 사용하세요. Linux의 기본 설정 명령은 {ph1}입니다."
 
 #. {ph0}: <code>/absolute/path/to/program</code>
-#: website/public/get-started/index.html:1355
+#: website/public/get-started/index.html:1389
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
@@ -14006,13 +13926,13 @@ msgstr ""
 #: website/public/examples/dino-lab/index.html:475
 #: website/public/faq/index.html:573
 #: website/public/first-investigation/index.html:534
-#: website/public/get-started/index.html:1817
+#: website/public/get-started/index.html:1851
 #: website/public/guides/browser/index.html:507
 #: website/public/guides/index.html:301
-#: website/public/guides/javascript/index.html:503
-#: website/public/guides/native/index.html:509
+#: website/public/guides/javascript/index.html:511
+#: website/public/guides/native/index.html:512
 #: website/public/guides/rl-environments/index.html:498
-#: website/public/index.html:1303 website/public/showcase/aegis/index.html:808
+#: website/public/index.html:1303 website/public/showcase/aegis/index.html:815
 #: website/public/showcase/ctf/index.html:777
 #: website/public/showcase/dx-ball/index.html:785
 #: website/public/showcase/index.html:337
@@ -14847,6 +14767,171 @@ msgstr "REA: 코딩 에이전트를 위한 리버스 엔지니어링"
 msgctxt "page:index.html"
 msgid "See the full Calculator investigation"
 msgstr "계산기 전체 조사 보기"
+
+#: website/public/guides/javascript/index.html:381
+msgctxt "page:guides/javascript/index.html"
+msgid ""
+"Recorded by REA 4.1.0 on an earlier version of the example below. The "
+"renderer has since changed; the recorded source locations accompany the API,"
+" channel and handler findings."
+msgstr ""
+
+#. {ph0}: <code>--client</code>
+#: website/public/get-started/index.html:635
+#, python-brace-format
+msgctxt "page:get-started/index.html"
+msgid ""
+"Use the ID with {ph0} when choosing a client explicitly. These clients are "
+"supported in npm 6.8.0 and later."
+msgstr ""
+
+#. {ph0}: <code>droid</code>
+#. {ph1}: <code>dsh</code>
+#. {ph2}: <code>kimi</code>
+#. {ph3}: <code>qoder</code>
+#. {ph4}: <code>trae</code>
+#. {ph5}: <code>workbuddy</code>
+#. {ph6}: <code>zcode</code>
+#. {ph7}: <code>freebuff</code>
+#: website/public/get-started/index.html:751
+#, python-brace-format
+msgctxt "page:get-started/index.html"
+msgid ""
+"{ph0}, {ph1}, {ph2}, {ph3}, {ph4}, {ph5} and {ph6} require npm 6.5.0 or "
+"later. {ph7} requires npm 6.8.0 or later."
+msgstr ""
+
+#. {ph0}: <strong>
+#. {ph1}: </strong>
+#: website/public/guides/native/index.html:328
+#, python-brace-format
+msgctxt "page:guides/native/index.html"
+msgid ""
+"{ph0}IDA{ph1} (Windows; macOS arm64 headless): use an existing IDA setup "
+"with an MCP registration. The macOS headless profile requires a source build"
+" or a release that includes it."
+msgstr ""
+
+#: website/public/get-started/index.html:1042
+msgctxt "page:get-started/index.html"
+msgid "x86_64 installer on supported distributions"
+msgstr ""
+
+#. {ph0}: <a href="../../get-started/">
+#. {ph1}: </a>
+#. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/android-
+#. analysis.md" >
+#. {ph3}: </a >
+#: website/public/showcase/aegis/index.html:714
+#, python-brace-format
+msgctxt "page:showcase/aegis/index.html"
+msgid ""
+"{ph0}Set up REA{ph1}, then download these two files into the same folder. On"
+" Windows x64, use a package with matching Windows native controls and owned "
+"protocol stdin support; see the {ph2}Android provider guide{ph3} for "
+"prerequisites and PowerShell setup. A Linux environment such as WSL is "
+"another option."
+msgstr ""
+
+#: website/public/get-started/index.html:1072
+msgctxt "page:get-started/index.html"
+msgid ""
+"Automated Linux setup requires an x86_64 host running Ubuntu 24.04+, Fedora "
+"41+, Nobara 44+, Arch Linux, CachyOS or Omarchy. An existing Hopper launcher"
+" can also be configured on other supported Linux distributions. On Linux "
+"arm64, use Ghidra. Hopper is commercial software; its demo has vendor-"
+"defined limits."
+msgstr ""
+
+#. {ph0}: <strong>
+#. {ph1}: </strong>
+#: website/public/guides/native/index.html:316
+#, python-brace-format
+msgctxt "page:guides/native/index.html"
+msgid ""
+"{ph0}Hopper{ph1} (macOS or Linux): REA's setup detects it or offers to "
+"install it. On macOS, open Hopper once and choose demo mode or activate a "
+"license before your first analysis. Automated Linux setup requires x86_64; "
+"use Ghidra on Linux arm64."
+msgstr ""
+
+#~ msgctxt "page:get-started/index.html"
+#~ msgid ""
+#~ "Automated Linux setup requires an x86_64 host running Ubuntu 24.04+, Fedora "
+#~ "41+, Nobara 44+, Arch Linux, CachyOS or Omarchy. An existing Hopper launcher"
+#~ " can also be configured on other supported Linux distributions. On other "
+#~ "Linux architectures, use Ghidra. Hopper is commercial software; its demo has"
+#~ " vendor-defined limits."
+#~ msgstr ""
+
+#, python-brace-format
+#~ msgctxt "page:guides/native/index.html"
+#~ msgid ""
+#~ "{ph0}Hopper{ph1} (macOS or Linux): REA's setup detects it or offers to "
+#~ "install it. On macOS, open Hopper once and choose demo mode or activate a "
+#~ "license before your first analysis. Automated Linux setup requires x86_64; "
+#~ "use Ghidra on other Linux architectures."
+#~ msgstr ""
+
+#, python-brace-format
+#~ msgctxt "page:guides/native/index.html"
+#~ msgid ""
+#~ "{ph0}Hopper{ph1} (macOS or Linux): REA's setup detects it or offers to "
+#~ "install it. On macOS, open Hopper once and choose demo mode or activate a "
+#~ "license before your first analysis."
+#~ msgstr ""
+#~ "{ph0}Hopper{ph1}(macOS 또는 Linux): REA 설정이 기존 설치를 찾거나 설치를 제안합니다. macOS에서는 첫 "
+#~ "분석 전에 Hopper를 한 번 열어 데모 모드를 선택하거나 라이선스를 활성화하세요."
+
+#, python-brace-format
+#~ msgctxt "page:showcase/aegis/index.html"
+#~ msgid ""
+#~ "{ph0}Set up REA{ph1} on macOS or Linux, then download these two files into "
+#~ "the same folder. On Windows, use a Linux environment such as WSL."
+#~ msgstr ""
+#~ "macOS나 Linux에서 {ph0}REA를 설정{ph1}한 뒤 아래 두 파일을 같은 폴더에 내려받으세요. Windows에서는 WSL "
+#~ "같은 Linux 환경을 사용하세요."
+
+#~ msgctxt "page:get-started/index.html"
+#~ msgid "Supported distributions"
+#~ msgstr "지원 배포판"
+
+#~ msgctxt "page:get-started/index.html"
+#~ msgid ""
+#~ "Linux hosts: Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS or "
+#~ "Omarchy. Hopper is commercial software; its demo has vendor-defined limits."
+#~ msgstr ""
+#~ "Linux 호스트: Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS, "
+#~ "Omarchy. Hopper는 상용 소프트웨어이며 데모에는 공급업체가 정한 제한이 있습니다."
+
+#, python-brace-format
+#~ msgctxt "page:guides/native/index.html"
+#~ msgid ""
+#~ "{ph0}IDA{ph1} (Windows): for an existing IDA setup with an MCP registration."
+#~ msgstr "{ph0}IDA{ph1}(Windows): MCP가 등록된 기존 IDA 환경에서 사용합니다."
+
+#, python-brace-format
+#~ msgctxt "page:get-started/index.html"
+#~ msgid ""
+#~ "The npm 6.4.0 release supports the clients below. Use the ID with {ph0} when"
+#~ " choosing a client explicitly."
+#~ msgstr "npm 6.4.0 릴리스는 아래 클라이언트를 지원합니다. 클라이언트를 직접 지정하려면 {ph0}에 해당 ID를 넣으세요."
+
+#, python-brace-format
+#~ msgctxt "page:get-started/index.html"
+#~ msgid ""
+#~ "Qoder ({ph0}), Factory Droid ({ph1}), Trae ({ph2}), ZCode ({ph3}) and "
+#~ "DeepSeek Harness ({ph4}) are available on repository main; use a source "
+#~ "build or a release containing those integrations."
+#~ msgstr ""
+#~ "Qoder({ph0}), Factory Droid({ph1}), Trae({ph2}), ZCode({ph3}), DeepSeek "
+#~ "Harness({ph4})는 저장소 main에서 사용할 수 있습니다. 소스 빌드나 이 연동을 포함하는 릴리스를 사용하세요."
+
+#~ msgctxt "page:guides/javascript/index.html"
+#~ msgid ""
+#~ "Recorded by REA 4.1.0 on the downloadable example below. Source locations "
+#~ "accompany the API, channel and handler findings."
+#~ msgstr "아래 다운로드 예제를 REA 4.1.0으로 분석한 기록입니다. API, 채널, 핸들러 결과에는 소스 위치가 함께 제공됩니다."
 
 #~ msgctxt "page:index.html"
 #~ msgid "Calculator: by hand and with an agent"

@@ -187,3 +187,13 @@ it.each([["app.js"], ["app.js", "App.js"], ["other.js"]])(
     expect(destinationCaseCollision("res/app.js", names)).toBeUndefined();
   },
 );
+
+it("reserves prefix capacity atomically without declaring destination kinds", () => {
+  const registry = new ArtifactPathRegistry({ maxParts: 4, maxNodes: 3 });
+  registry.reservePath("a/b");
+  expect(() => registry.reservePath("a/c/d")).toThrow();
+  expect(() => registry.reservePath("z")).not.toThrow();
+  expect(() => registry.reservePath("a/b")).not.toThrow();
+  registry.add("a/b", "file");
+  expect(() => registry.add("a/b", "directory")).toThrow();
+});

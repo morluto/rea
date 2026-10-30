@@ -13,7 +13,7 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { ok } from "../domain/result.js";
 import { FRIDA_KEEPALIVE_INTERVAL_DESCRIPTION } from "../contracts/fridaToolContracts.js";
-import { isValidFridaRemoteAddress } from "../contracts/fridaRemoteAddress.js";
+import { isValidFridaRemoteAddress } from "../domain/fridaRemoteAddress.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";

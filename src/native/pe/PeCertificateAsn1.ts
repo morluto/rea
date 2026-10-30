@@ -26,8 +26,18 @@ const OID_NAMES: Readonly<Record<string, string>> = {
   "2.16.840.1.101.3.4.2.3": "sha512",
 };
 
+/** A fixed per-payload decoder allowance and its limit. */
+export interface PeCertificateDecodeAllowance {
+  readonly allowance: "asn1-nodes" | "decoded-text";
+  readonly limit: number;
+}
+
 export class PeCertificateAsn1Failure extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    /** Set when a fixed decoder allowance, not malformed DER, refused the payload. */
+    readonly exhausted: PeCertificateDecodeAllowance | null = null,
+  ) {
     super(message);
     this.name = "PeCertificateAsn1Failure";
   }
@@ -49,7 +59,13 @@ export const readAsn1 = (bytes: Buffer): Asn1BerNode => {
   try {
     return new Asn1BerReader(bytes, ASN1_NODE_BUDGET).read();
   } catch (cause: unknown) {
-    if (cause instanceof Asn1BerFailure) return fail(cause.message);
+    if (cause instanceof Asn1BerFailure)
+      throw new PeCertificateAsn1Failure(
+        cause.message,
+        cause.kind === "budget-exceeded"
+          ? { allowance: "asn1-nodes", limit: cause.limit ?? ASN1_NODE_BUDGET }
+          : null,
+      );
     throw cause;
   }
 };
@@ -78,8 +94,9 @@ interface DecodedNameBudget {
 
 const chargeDecodedName = (budget: DecodedNameBudget, bytes: number): void => {
   if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes > budget.remaining)
-    fail(
+    throw new PeCertificateAsn1Failure(
       `Certificate text exceeds the ${String(MAX_DECODED_NAME_BYTES)}-byte decoded budget.`,
+      { allowance: "decoded-text", limit: MAX_DECODED_NAME_BYTES },
     );
   budget.remaining -= bytes;
 };
@@ -109,7 +126,7 @@ export const decodeOid = (content: Buffer): string => {
   }
 };
 
-const decodeUtf16Be = (bytes: Buffer, budget: DecodedNameBudget): string => {
+const decodeBmpString = (bytes: Buffer, budget: DecodedNameBudget): string => {
   if (bytes.length % 2 !== 0) return fail("BMPString length is odd.");
   // Charge before the copy. Appending one character at a time retains a
   // cons-string chain of about sixteen heap bytes per source byte.
@@ -117,8 +134,11 @@ const decodeUtf16Be = (bytes: Buffer, budget: DecodedNameBudget): string => {
   if (bytes.length === 0) return "";
   const decoded = Buffer.allocUnsafe(bytes.length);
   for (let index = 0; index < bytes.length; index += 2) {
-    decoded[index] = bytes[index + 1] ?? 0;
-    decoded[index + 1] = bytes[index] ?? 0;
+    const codeUnit = bytes.readUInt16BE(index);
+    // BMPString is UCS-2: even a paired UTF-16 surrogate is not a BMP character.
+    if (codeUnit >= 0xd800 && codeUnit <= 0xdfff)
+      return fail("BMPString holds a surrogate code point.");
+    decoded.writeUInt16LE(codeUnit, index);
   }
   return decoded.toString("utf16le");
 };
@@ -165,7 +185,7 @@ const decodeDirectoryString = (
     case 0x1c:
       return decodeUtf32Be(node.content, budget);
     case 0x1e:
-      return decodeUtf16Be(node.content, budget);
+      return decodeBmpString(node.content, budget);
     case 0x0c:
     case 0x13:
     case 0x16:
@@ -202,6 +222,11 @@ const requireBitStringContent = (content: Buffer, label: string): void => {
   const unused = content[0];
   if (unused === undefined || unused > 7)
     return fail(`${label} BIT STRING is truncated or has invalid unused bits.`);
+  if (
+    (content.length === 1 && unused !== 0) ||
+    ((content[content.length - 1] ?? 0) & ((1 << unused) - 1)) !== 0
+  )
+    return fail(`${label} BIT STRING has invalid padding bits.`);
 };
 
 const requireBitString = (
@@ -425,6 +450,7 @@ export interface ParsedSigner {
   readonly serial_hex: string | null;
   readonly subject_key_identifier_hex: string | null;
   readonly authenticated_attributes: boolean;
+  readonly unsigned_attribute_oids: readonly string[] | null;
 }
 
 const signerIdentifier = (
@@ -497,7 +523,22 @@ const parseSigner = (
   if (signature.content.length === 0)
     return fail("SignerInfo signature OCTET STRING is empty.");
   cursor += 2;
-  if (children[cursor]?.tag === 0xa1) cursor += 1;
+  let unsignedAttributeOids: string[] | null = null;
+  const unsigned = children[cursor];
+  if (unsigned?.tag === 0xa1) {
+    unsignedAttributeOids = unsigned.children.map((attribute) => {
+      const fields = sequence(attribute, "SignerInfo unsigned attribute");
+      const oid = fields[0];
+      if (fields.length !== 2 || oid?.tag !== 0x06 || fields[1]?.tag !== 0x31)
+        return fail(
+          "SignerInfo unsigned attribute is missing its type or values.",
+        );
+      // OID text expands into decimal arcs and is retained in the result.
+      chargeDecodedName(names, oid.content.length * 4);
+      return decodeOid(oid.content);
+    });
+    cursor += 1;
+  }
   if (cursor !== children.length)
     return fail("SignerInfo has unexpected trailing fields.");
   return {
@@ -507,6 +548,7 @@ const parseSigner = (
     serial_hex,
     subject_key_identifier_hex,
     authenticated_attributes: authenticated,
+    unsigned_attribute_oids: unsignedAttributeOids,
   };
 };
 

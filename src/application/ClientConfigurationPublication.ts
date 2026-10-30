@@ -80,7 +80,6 @@ export class ClientConfigurationPublication {
     path: string,
     contents: string,
     previous: string | undefined,
-    mode?: number,
     selection?: ClientConfigurationSelection,
   ): Promise<ClientConfigurationPublication> {
     const parent = await realpath(dirname(path));
@@ -119,7 +118,7 @@ export class ClientConfigurationPublication {
       );
       staging.setFile(owner);
       await owner.handle.writeFile(contents, { encoding: "utf8" });
-      await preserveConfigurationAttributes(owner, input, mode, destination);
+      await preserveConfigurationAttributes(owner, input, destination);
       await owner.handle.sync();
       if ((await owner.handle.stat()).ino === 0)
         throw new RegularFileChangedError(stagedPath);
@@ -227,7 +226,6 @@ export class ClientConfigurationPublication {
 const preserveConfigurationAttributes = async (
   owner: OwnedFileHandle,
   input: Stats | undefined,
-  mode: number | undefined,
   destination: string,
 ): Promise<void> => {
   const created = await owner.handle.stat();
@@ -250,7 +248,7 @@ const preserveConfigurationAttributes = async (
     }
   }
   try {
-    await owner.handle.chmod(mode ?? (input?.mode ?? 0o600) & 0o7777);
+    await owner.handle.chmod((input?.mode ?? 0o600) & 0o7777);
   } catch (cause: unknown) {
     throw new ClientConfigurationWriteError(
       destination,
