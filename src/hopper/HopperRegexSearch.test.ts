@@ -8,6 +8,10 @@ import {
   HopperProcessError,
 } from "../domain/hopperErrors.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { parseConfig } from "../config/parseConfig.js";
+import { silentLogger } from "../logger.js";
+import { HopperClient } from "./HopperClient.js";
+import { HopperProvider } from "./HopperProvider.js";
 
 const regexMatch = vi.hoisted(() => ({
   afterSettle: undefined as (() => void) | undefined,
@@ -26,6 +30,103 @@ vi.mock("../process/RegexMatcher.js", async (importOriginal) => {
     },
   };
 });
+
+it.each(["search_strings", "search_procedures"] as const)(
+  "preserves selected source metadata through the provider's %s regex boundary",
+  async (operation) => {
+    const config = parseConfig({});
+    if (!config.ok) throw config.error;
+    const metadata =
+      operation === "search_strings"
+        ? {
+            provider_value: "short display",
+            string: {
+              encoding: "utf-8",
+              encoding_status: "observed",
+              termination: "present_or_not_required",
+              byte_length: 7,
+            },
+          }
+        : {
+            procedure: { external: false, thunk: true, thunk_target: "0x2" },
+          };
+    const selected = {
+      address: "0x1",
+      value: "matched",
+      ...metadata,
+      provider_metadata: { empty: "", absent: null, zero: 0, flag: false },
+    };
+    const source = [
+      { address: "0x1", value: "different" },
+      selected,
+      { ...selected, value: "matched alternative" },
+    ];
+    const callTool = vi
+      .spyOn(HopperClient.prototype, "callTool")
+      .mockResolvedValue(ok(source));
+    const provider = new HopperProvider(
+      config.value,
+      silentLogger,
+      {},
+      "linux",
+    );
+    const client = provider.createClient({
+      path: "/tmp/fixture.hop",
+      sha256: "a".repeat(64),
+      kind: "database",
+      format: "analysis-database",
+    });
+    try {
+      const result = await client.execute(operation, {
+        pattern: "^matched$",
+        mode: "regex",
+        case_sensitive: true,
+      });
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.value.result).toEqual([selected]);
+      expect(callTool).toHaveBeenCalledOnce();
+      expect(callTool.mock.calls[0]?.[0]).toBe(
+        operation === "search_strings" ? "list_strings" : "list_procedures",
+      );
+      expect(source[1]).toEqual(selected);
+    } finally {
+      await client.close();
+      callTool.mockRestore();
+    }
+  },
+);
+
+it.each(["search_strings", "search_procedures"] as const)(
+  "rejects malformed canonical metadata in the %s inventory",
+  async (operation) => {
+    const search = new HopperRegexSearch({
+      callTool: async () =>
+        ok([
+          {
+            address: "0x1",
+            value: "matched",
+            ...(operation === "search_strings"
+              ? { string: { encoding: false } }
+              : { procedure: { external: "unknown" } }),
+          },
+        ]),
+    });
+    try {
+      expect(
+        await search.execute(operation, {
+          pattern: "matched",
+          mode: "regex",
+          case_sensitive: true,
+        }),
+      ).toMatchObject({
+        ok: false,
+        error: { _tag: "AnalysisOutputError", operation },
+      });
+    } finally {
+      await search.close();
+    }
+  },
+);
 
 it.each(
   (["search_strings", "search_procedures"] as const).flatMap((operation) =>

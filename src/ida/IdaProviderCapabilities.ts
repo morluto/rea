@@ -37,11 +37,25 @@ const HEADLESS_ONLY_OPERATIONS: ReadonlySet<IdaOperation> = new Set([
 ]);
 
 /** Whether the configured profile admits an operation. */
-export const idaProfileAdmits = (
+const idaProfileAdmits = (
   operation: IdaOperation,
   profile: IdaCompatibilityProfile,
 ): boolean =>
   profile.mode === "headless" || !HEADLESS_ONLY_OPERATIONS.has(operation);
+
+/** One admission policy shared by catalog projection and live execution. */
+export const idaOperationUnavailableReason = (
+  operation: IdaOperation,
+  profile: IdaCompatibilityProfile,
+): string | undefined => {
+  if (!idaProfileAdmits(operation, profile))
+    return "This operation is available for the modern headless profile only.";
+  if (operation === "procedure_callers" && profile.protocol !== "legacy")
+    return profile.protocol === "native"
+      ? "The native upstream profile reports code references without proving direct call edges."
+      : "The modern upstream profile reports code references without proving direct call edges.";
+  return undefined;
+};
 
 /** Shared limitations of observations from an externally mutable analysis database. */
 export const IDA_LIMITATIONS = Object.freeze([
@@ -76,42 +90,38 @@ export const idaCapabilities = (
 ): readonly CapabilityDescriptor[] =>
   IDA_OPERATIONS.filter((operation) =>
     idaProfileAdmits(operation, profile),
-  ).map((operation) => ({
-    provider: IDA_PROVIDER_IDENTITY,
-    operation,
-    ...((profile.mode === "headless" || profile.protocol === "native") &&
-    operation === "procedure_callers"
-      ? ({
-          available: false,
-          reason:
-            profile.protocol === "native"
-              ? "The native upstream profile reports code references without proving direct call edges."
-              : "The modern upstream profile reports code references without proving direct call edges.",
-        } as const)
-      : ({ available: true, reason: null } as const)),
-    cachePolicy: "live",
-    effects: {
-      mutatesArtifact: false,
-      launchesProcess: stdio || profile.mode === "headless",
-      mayShowUi:
-        profile.mode === "attached" &&
-        (profile.protocol === "native"
-          ? operation === "procedure_pseudo_code" ||
-            operation === "analyze_function"
-          : ATTACHED_GUI_NAVIGATION_OPERATIONS.has(operation)),
-      mayAccessNetwork: true,
-      mayWriteFilesystem: stdio || profile.mode === "headless",
-      changesPermissions: false,
-      requiresRoot: false,
-    },
-    limitations: [
-      ...IDA_LIMITATIONS,
-      ...(profile.protocol === "native" &&
-      (operation === "list_strings" || operation === "search_strings")
-        ? [IDA_NATIVE_STRING_LIMITATION]
-        : []),
-      ...(operation === "search_procedures" || operation === "search_strings"
-        ? [regexLimitation]
-        : []),
-    ],
-  }));
+  ).map((operation) => {
+    const reason = idaOperationUnavailableReason(operation, profile);
+    return {
+      provider: IDA_PROVIDER_IDENTITY,
+      operation,
+      ...(reason === undefined
+        ? ({ available: true, reason: null } as const)
+        : ({ available: false, reason } as const)),
+      cachePolicy: "live",
+      effects: {
+        mutatesArtifact: false,
+        launchesProcess: stdio || profile.mode === "headless",
+        mayShowUi:
+          profile.mode === "attached" &&
+          (profile.protocol === "native"
+            ? operation === "procedure_pseudo_code" ||
+              operation === "analyze_function"
+            : ATTACHED_GUI_NAVIGATION_OPERATIONS.has(operation)),
+        mayAccessNetwork: true,
+        mayWriteFilesystem: stdio || profile.mode === "headless",
+        changesPermissions: false,
+        requiresRoot: false,
+      },
+      limitations: [
+        ...IDA_LIMITATIONS,
+        ...(profile.protocol === "native" &&
+        (operation === "list_strings" || operation === "search_strings")
+          ? [IDA_NATIVE_STRING_LIMITATION]
+          : []),
+        ...(operation === "search_procedures" || operation === "search_strings"
+          ? [regexLimitation]
+          : []),
+      ],
+    };
+  });

@@ -5,13 +5,13 @@ import {
   elfNativeExportsSchema as elf,
   type NativeExports,
 } from "../native/nativeExports.js";
-import type { AnalysisError } from "../analysisErrorBase.js";
-import { err, ok, type Result } from "../result.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import { err, ok } from "../result.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import {
+  assertOwnedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
@@ -38,7 +38,12 @@ export const nativeExportsViewRequestSchema = z.discriminatedUnion(
     z.strictObject({
       ...page,
       collection: z.literal("exports"),
-      names: z.array(z.string()).optional(),
+      names: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "Exact PE names, or UTF-8 ELF source names. ELF display fallbacks and names with unknown encoding are not identities; use indices for those rows. Omitted includes all names; [] matches none.",
+        ),
       indices: z.array(z.int().nonnegative()).optional(),
       fields: z.array(z.union([peRow.keyof(), elfRow.keyof()])).optional(),
     }),
@@ -83,8 +88,8 @@ const readReport = createAnalysisViewResultReader(nativeExportsSchema);
 /** Read selected export facts without reopening the artifact or reinterpreting its tables. */
 export const projectNativeExportsView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
+  view: AdmittedView,
+) => {
   const invalid = (message: string) =>
     err(
       analysisViewInputError([
@@ -95,6 +100,9 @@ export const projectNativeExportsView = (
     return invalid(
       "Native export Evidence supports summary and native-exports views.",
     );
+  assertOwnedView<
+    SummaryAnalysisView | z.output<typeof nativeExportsViewRequestSchema>
+  >(view, "summary", "native-exports");
   const parsed = readReport(parent);
   if (!parsed.ok) return parsed;
   const report = parsed.value;
@@ -126,7 +134,7 @@ export const projectNativeExportsView = (
   if (view.kind === "summary")
     return ok({
       ...shared,
-      kind: "summary",
+      kind: "summary" as const,
       view,
       summary,
       coverage: completeWithinViewCoverage(exports.length, exports.length),
@@ -153,7 +161,7 @@ export const projectNativeExportsView = (
           );
     return ok({
       ...shared,
-      kind: "native-exports",
+      kind: "native-exports" as const,
       view,
       exports: summary,
       items: selected.rows,
@@ -174,6 +182,32 @@ export const projectNativeExportsView = (
       `Selected export fields do not belong to ${report.format}; available fields: ${allowed.join(", ")}.`,
     );
   const names = view.names === undefined ? undefined : new Set(view.names);
+  const encodedNames =
+    names === undefined
+      ? undefined
+      : new Set(
+          [...names].flatMap((name) => {
+            const bytes = Buffer.from(name, "utf8");
+            return bytes.toString("utf8") === name
+              ? [bytes.toString("base64")]
+              : [];
+          }),
+        );
+  if (
+    names !== undefined &&
+    names.size > 0 &&
+    report.format === "elf" &&
+    report.exports.some(
+      (row) =>
+        row.name_utf8_decodable === null ||
+        (row.name_utf8_decodable &&
+          row.name_bytes_base64 === null &&
+          !/^[\x00-\x7f]*$/u.test(row.name)),
+    )
+  )
+    shared.unknowns.push(
+      "Some ELF names lack retained encoding facts and cannot be matched by UTF-8 identity; select their source indices. A no-match page does not establish their absence.",
+    );
   // A projected decoded name still carries its exact bytes and encoding qualification.
   const columns = new Set<string>(fields);
   if (report.format === "elf" && columns.has("name")) {
@@ -204,12 +238,18 @@ export const projectNativeExportsView = (
           view,
           (row, index) =>
             (indices === undefined || indices.has(index)) &&
-            (names === undefined || (row.name !== null && names.has(row.name))),
+            (names === undefined ||
+              ("name_utf8_decodable" in row
+                ? row.name_utf8_decodable === true &&
+                  (row.name_bytes_base64 !== null
+                    ? encodedNames!.has(row.name_bytes_base64)
+                    : /^[\x00-\x7f]*$/u.test(row.name) && names.has(row.name))
+                : row.name !== null && names.has(row.name))),
           projectRow,
         );
   return ok({
     ...shared,
-    kind: "native-exports",
+    kind: "native-exports" as const,
     view,
     exports: summary,
     items: selected.rows,

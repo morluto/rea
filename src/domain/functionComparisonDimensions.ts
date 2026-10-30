@@ -14,6 +14,7 @@ import {
   normalizeCfg,
   referencedStringProjection,
   sorted,
+  swiftLiteralCoverage,
   swiftLiteralSitesConflict,
 } from "./functionComparisonNormalization.js";
 import type {
@@ -101,7 +102,9 @@ const facetLimitations = (
     strings_names: [
       [
         "strings_names",
-        dossier.referenced_strings.length + dossier.referenced_names.length,
+        dossier.referenced_strings.length +
+          dossier.referenced_names.length +
+          (dossier.swift_string_literals?.length ?? 0),
       ],
     ],
     cfg: [["cfg", dossier.basic_blocks.length]],
@@ -514,15 +517,6 @@ const groupStringsByOffset = (
   }
   return groups;
 };
-
-const swiftLiteralCoverage = (
-  snapshot: FunctionSnapshot,
-): "absent" | "complete" | "partial" =>
-  (snapshot.dossier.swift_string_literal_omissions ?? []).length > 0
-    ? "partial"
-    : snapshot.dossier.swift_string_literals === undefined
-      ? "absent"
-      : "complete";
 
 const compareReferences = (
   compared: FunctionRelationshipComparison,

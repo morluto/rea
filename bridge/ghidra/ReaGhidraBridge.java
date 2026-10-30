@@ -1313,7 +1313,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         flow.addProperty("computed", false);
         if (instruction == null) {
             result.addProperty("status", !currentProgram.getMemory().contains(address) ? "outside-memory" : currentProgram.getListing().getInstructionContaining(address) != null
-                ? "not-instruction-boundary" : currentProgram.getListing().getDefinedDataContaining(address) != null ? "data" : "undecodable");
+                ? "not-instruction-boundary" : currentProgram.getListing().getDefinedDataContaining(address) != null ? "data" : "not-in-listing");
             for (String key : List.of("bytes", "length", "mnemonic", "raw_disassembly")) result.add(key, JsonNull.INSTANCE);
         } else {
             result.addProperty("status", "decoded");
@@ -1385,6 +1385,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             result.add("incoming_references", incomingReferences);
         }
         List<String> limitations = new ArrayList<>(List.of("Operand components are Ghidra Listing decoder tokens; effective memory base/index/displacement roles and per-instruction context mode are unavailable. The mode field is the program language variant."));
+        if (result.get("status").getAsString().equals("not-in-listing")) limitations.add("No listed instruction or defined data covers this in-memory address. REA did not attempt a decode; the memory may be uninitialized or contain valid instructions.");
         if (flow.get("kind").getAsString().equals("terminal")) limitations.add("No RETURN operation was observed in the provider's instruction p-code; terminal classification remains generic.");
         result.add("limitations", GSON.toJsonTree(limitations));
         return result;
@@ -2115,10 +2116,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
     }
 
     private JsonArray search(JsonObject params, boolean procedureSearch) throws Exception {
-        requireKeys(
-            params,
-            Set.of("pattern", "mode", "case_sensitive", "document")
-        );
+        Set<String> keys = new HashSet<>(Set.of("pattern", "mode", "case_sensitive", "document"));
+        if (params.has("literal_ascii_candidate")) keys.add("literal_ascii_candidate");
+        requireKeys(params, keys);
         requireDocument(params);
         String expression = requireString(params, "pattern");
         String mode = requireString(params, "mode");
@@ -2129,9 +2129,18 @@ public final class ReaGhidraBridge extends HeadlessScript {
         List<InventoryItem> inventory = procedureSearch
             ? procedures().stream().map(FunctionEntry::item).toList()
             : strings();
-        ValueMatcher matcher = mode.equals("literal")
-            ? literalMatcher(expression, caseSensitive)
-            : regexMatcher(expression, caseSensitive);
+        ValueMatcher matcher;
+        if (mode.equals("literal") && !caseSensitive) {
+            if (!params.has("literal_ascii_candidate"))
+                throw new RequestFailure("invalid_request", "Insensitive literal search requires an ASCII candidate");
+            matcher = literalCandidateMatcher(optionalString(params, "literal_ascii_candidate"));
+        } else {
+            if (params.has("literal_ascii_candidate"))
+                throw new RequestFailure("invalid_request", "ASCII candidate applies only to insensitive literals");
+            matcher = mode.equals("literal")
+                ? literalMatcher(expression)
+                : regexMatcher(expression, caseSensitive);
+        }
         JsonArray items = new JsonArray();
         for (InventoryItem item : inventory) {
             monitor.checkCancelled();
@@ -4697,11 +4706,18 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return source.name().toLowerCase(Locale.ROOT);
     }
 
-    private static ValueMatcher literalMatcher(String pattern, boolean caseSensitive) {
-        String needle = caseSensitive ? pattern : pattern.toLowerCase(Locale.ROOT);
+    private static ValueMatcher literalMatcher(String pattern) {
+        return value -> value.contains(pattern);
+    }
+
+    // REA's host owns Unicode simple folding. Keep all non-ASCII source values
+    // for its final predicate, and filter ASCII-only values without Java regexes.
+    private static ValueMatcher literalCandidateMatcher(String asciiPattern) {
+        if (asciiPattern != null && asciiPattern.chars().anyMatch(character -> character > 127))
+            throw new RequestFailure("invalid_request", "ASCII candidate contains a non-ASCII character");
         return value -> {
-            String candidate = caseSensitive ? value : value.toLowerCase(Locale.ROOT);
-            return candidate.contains(needle);
+            if (value.chars().anyMatch(character -> character > 127)) return true;
+            return asciiPattern != null && value.toLowerCase(Locale.ROOT).contains(asciiPattern);
         };
     }
 

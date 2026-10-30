@@ -344,21 +344,9 @@ const waitForProbeOutputClose = async (
   signal: AbortSignal | undefined,
 ): Promise<"exit" | "timeout" | "cancelled"> => {
   if (signal?.aborted === true) return "cancelled";
-  let releaseAbort: (() => void) | undefined;
-  const aborted = new Promise<"cancelled">((resolve) => {
-    if (signal === undefined) return;
-    const listener = (): void => resolve("cancelled");
-    signal.addEventListener("abort", listener, { once: true });
-    releaseAbort = () => signal.removeEventListener("abort", listener);
-  });
-  try {
-    return await Promise.race([
-      supervisor
-        .waitForOutputClose(Math.max(1, timeoutMs))
-        .then((closed): "exit" | "timeout" => (closed ? "exit" : "timeout")),
-      aborted,
-    ]);
-  } finally {
-    releaseAbort?.();
-  }
+  const closed = await supervisor.waitForOutputClose(
+    Math.max(1, timeoutMs),
+    signal,
+  );
+  return closed ? "exit" : isAborted(signal) ? "cancelled" : "timeout";
 };

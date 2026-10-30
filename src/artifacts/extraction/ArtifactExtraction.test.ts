@@ -12,6 +12,7 @@ import { openRegularFile } from "../../filesystem/RegularFile.js";
 import { ZipArtifactReader } from "../ZipArtifactReader.js";
 import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+import { asarHeaderBytes } from "../../../tests/fixtures/asarHeader.js";
 import { extractArtifact } from "./ArtifactExtraction.js";
 
 const zipBytes = async (content?: string): Promise<Buffer> => {
@@ -420,5 +421,59 @@ it("keeps the detection error primary and reports a failed detection close", asy
   } finally {
     close.mockRestore();
     await resourceScope.close().catch(() => undefined);
+  }
+});
+
+it("materializes the classified ASAR instead of repeating the adapter format hint", async () => {
+  const directory = await createTestTempDirectory("rea-extraction-format-");
+  const path = join(directory, "source.asar");
+  const content = Buffer.from("observed member");
+  await writeFile(
+    path,
+    Buffer.concat([
+      asarHeaderBytes(
+        JSON.stringify({
+          files: { "member.txt": { size: content.length, offset: "0" } },
+        }),
+      ),
+      content,
+    ]),
+  );
+  const output = join(directory, "out");
+  const resourceScope = new ArtifactResourceScope();
+  try {
+    const result = await extractArtifact(zipInput(path, output, resourceScope));
+    expect(result.manifest.root_format).toBe("asar");
+    expect(result.artifacts).toMatchObject([
+      { relative_path: "member.txt", bytes_written: content.length },
+    ]);
+    expect((await readFile(join(output, "member.txt"))).equals(content)).toBe(
+      true,
+    );
+  } finally {
+    await resourceScope.close();
+  }
+});
+
+it("refuses a classified non-container before publishing extraction output", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-extraction-unsupported-",
+  );
+  const path = join(directory, "source.zip");
+  await writeFile(path, "ordinary file bytes");
+  const output = join(directory, "out");
+  const resourceScope = new ArtifactResourceScope();
+  try {
+    await expect(
+      extractArtifact(zipInput(path, output, resourceScope)),
+    ).rejects.toMatchObject({
+      operation: "extract_artifact",
+      message: expect.stringContaining(
+        "Artifact format has no extraction reader: file",
+      ),
+    });
+    await expect(stat(output)).rejects.toMatchObject({ code: "ENOENT" });
+  } finally {
+    await resourceScope.close();
   }
 });

@@ -103,6 +103,27 @@ async function classify(
   return z.record(z.string(), z.unknown()).parse(JSON.parse(result.stdout));
 }
 
+it.each([
+  ["bridge/native/rea_lldb_tracer.py", "python"],
+  ["bridge/pwndbg/test_core_context.py", "python"],
+  ["tests/support/analysis-efficiency/test_signal_oracle.py", "python"],
+  ["scripts/run-python-tests.py", "python"],
+  ["src/captures/CaptureProvider.ts", "packet_capture"],
+  ["tests/boundary/mcp/packetCaptureMcp.test.ts", "packet_capture"],
+  ["src/signals/RecordingProvider.ts", "signal_recording"],
+  ["tests/boundary/mcp/signalRecordingMcp.test.ts", "signal_recording"],
+  ["src/process/LinuxResourceLimits.ts", "packet_capture"],
+  ["src/process/LinuxResourceLimits.ts", "signal_recording"],
+  ["scripts/ci/require-provider-tests.mjs", "packet_capture"],
+  ["scripts/ci/require-provider-tests.mjs", "signal_recording"],
+])("selects %s for %s", async (path, scope) => {
+  const { directory, base } = await fixture();
+  const head = await change(directory, [path]);
+  expect(await classify(directory, base, head)).toMatchObject({
+    [scope]: true,
+  });
+});
+
 it("reuses only scheduled qualification and preserves every explicit full request", async () => {
   const { directory, base } = await fixture();
   const reused = await classify(directory, base, base, "schedule", false, true);
@@ -717,6 +738,14 @@ it.each([
     { code: false, ghidra_bridge: true, runtime: false, package: false },
   ],
   [
+    "tests/conformance/ghidra/ReaArmContextProbe.java",
+    { ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
+    "tests/conformance/ghidra/ReaDecodeProbe.java",
+    { ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
     "bridge/ghidra/Example.java",
     {
       code: true,
@@ -749,6 +778,37 @@ it.each([
   [
     "scripts/verify/apple/example.mjs",
     { code: true, apple: true, package: false, runtime: false },
+  ],
+  [
+    "src/process/WindowsExecutable.ts",
+    { code: true, runtime: true, package: true },
+  ],
+  [
+    "src/process/WindowsExecutable.test.ts",
+    { code: true, runtime: true, package: true },
+  ],
+  ["src/adb/AdbConfiguration.ts", { code: true, runtime: true, package: true }],
+  [
+    "src/apktool/ApktoolConfiguration.ts",
+    { code: true, runtime: true, package: true },
+  ],
+  [
+    "src/application/UpdateCommandRunner.ts",
+    { code: true, runtime: true, package: true },
+  ],
+  [
+    "tests/boundary/process/windowsExecutableSelection.test.ts",
+    { code: true, runtime: true, package: true },
+  ],
+  ["src/hopper/BridgeLauncher.ts", { code: true, apple: true }],
+  ["src/domain/hopperErrors.ts", { code: true, apple: true }],
+  [
+    "tests/boundary/providers/hopper/hopperMacLaunchArguments.test.ts",
+    { code: true, apple: true },
+  ],
+  [
+    "tests/boundary/providers/hopper/hopperClient.helperFailure.test.ts",
+    { code: true, apple: true },
   ],
   [
     "src/windows/Example.ts",
@@ -1560,7 +1620,7 @@ const workflowFile = async (name: string): Promise<unknown> =>
 
 const scopesSchema = z.object({
   CI_FLAGS: z.array(z.string()),
-  SCOPES: z.record(z.string(), z.array(z.string())),
+  CI_LANES: z.record(z.string(), z.object({ paths: z.array(z.string()) })),
   MANUAL_VERIFIERS: z.array(z.string()),
 });
 
@@ -1582,7 +1642,7 @@ const stepRuns = z.object({
 });
 
 it("owns every explicit native-host test path with the lane that runs it", async () => {
-  const { SCOPES } = await loadScopes();
+  const { CI_LANES } = await loadScopes();
   const ci = stepRuns.parse(await workflowFile("ci.yml"));
   const listed = (job: string) =>
     (ci.jobs[job]?.steps ?? [])
@@ -1591,7 +1651,9 @@ it("owns every explicit native-host test path with the lane that runs it", async
   const unowned = (job: string, scope: string) =>
     listed(job).filter(
       (path) =>
-        !(SCOPES[scope] ?? []).some((pattern) => matchesGlob(path, pattern)),
+        !(CI_LANES[scope]?.paths ?? []).some((pattern) =>
+          matchesGlob(path, pattern),
+        ),
     );
   expect(listed("apple-artifacts").length).toBeGreaterThan(0);
   expect(listed("windows-curated").length).toBeGreaterThan(0);

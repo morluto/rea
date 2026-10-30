@@ -86,7 +86,9 @@ it("passes the selected environment to the actual browser launch boundary", asyn
         },
       },
     }),
-  ).rejects.toThrow("launch boundary reached");
+  ).rejects.toMatchObject({
+    diagnostics: { startup_error: "launch boundary reached" },
+  });
   expect(launchedEnvironment).toEqual({
     LANG: "selected-language",
     PATH: "/selected/bin",
@@ -126,7 +128,9 @@ it.skipIf(process.platform === "win32")(
             },
           },
         ),
-      ).rejects.toThrow("fake launch boundary reached");
+      ).rejects.toMatchObject({
+        diagnostics: { startup_error: "fake launch boundary reached" },
+      });
 
       expect(launchedExecutable).toBe(selected);
       expect(selected).toBe(`${root}/link/../browser`);
@@ -163,7 +167,9 @@ it("keeps Termux execution support when launching Chromium on Android", async ()
         },
       },
     }),
-  ).rejects.toThrow("launch boundary reached");
+  ).rejects.toMatchObject({
+    diagnostics: { startup_error: "launch boundary reached" },
+  });
 
   expect(launchOptions?.args).toEqual(["--no-sandbox", "--single-process"]);
   expect(launchOptions?.env).toEqual({
@@ -705,7 +711,9 @@ it("cancels same-target queued connection before acquiring a browser", async () 
   });
   await expect(
     openPlaywrightScenarioBrowser(launch, environment, { launcher }),
-  ).rejects.toThrow("launch boundary reached");
+  ).rejects.toMatchObject({
+    diagnostics: { startup_error: "launch boundary reached" },
+  });
   expect(launchPersistentContext).toHaveBeenCalledTimes(1);
 
   if (rejectFirst === undefined)
@@ -1054,7 +1062,9 @@ it("applies command_timeout_ms to launch startup", async () => {
         },
       },
     ),
-  ).rejects.toThrow("launch boundary reached");
+  ).rejects.toMatchObject({
+    diagnostics: { startup_error: "launch boundary reached" },
+  });
   expect(timeout).toBe(4_321);
 });
 
@@ -1081,7 +1091,9 @@ it("uses the default command deadline for an omitted launch timeout", async () =
         },
       },
     ),
-  ).rejects.toThrow("launch boundary reached");
+  ).rejects.toMatchObject({
+    diagnostics: { startup_error: "launch boundary reached" },
+  });
   expect(timeout).toBe(DEFAULT_CDP_COMMAND_TIMEOUT_MS);
 });
 
@@ -1399,7 +1411,14 @@ it.each([
           },
         },
       ),
-    ).rejects.toBe(failure);
+    ).rejects.toMatchObject({
+      _tag: "ProviderAdapterError",
+      cause: failure,
+      diagnostics: {
+        executable_path: process.execPath,
+        startup_error: failure.message,
+      },
+    });
     expect(profilePath).toBeDefined();
     await expect(access(profilePath!)).rejects.toMatchObject({
       code: "ENOENT",
@@ -1444,6 +1463,7 @@ it("normalizes a genuine Playwright launch timeout and releases its profile", as
     diagnostics: {
       phase: "launch",
       command_timeout_ms: 4_321,
+      executable_path: process.execPath,
       producer_message: "native launch deadline",
     },
   });

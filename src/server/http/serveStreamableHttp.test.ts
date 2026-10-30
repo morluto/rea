@@ -21,6 +21,7 @@ import {
 } from "./serveStreamableHttp.js";
 import { StreamableHttpListenError } from "./streamableHttpListenError.js";
 import { mcpAllowedHostsTextSchema } from "../../config/mcpHttpEndpoint.js";
+import { parseMcpHttpArguments } from "../../main/mcpHttpArguments.js";
 import { RequestTrackingMcpServer } from "../RequestTrackingMcpServer.js";
 
 const servers: StreamableHttpServer[] = [];
@@ -344,6 +345,49 @@ it.each([
   });
   expect(response.status).toBe(200);
   expect(JSON.parse(response.body)).toEqual({ allowed: true });
+});
+
+it("serves every declared repeated host while refusing undeclared hosts and origins", async () => {
+  const parsed = parseMcpHttpArguments([
+    "--http",
+    "--allowed-hosts",
+    "a.example",
+    "--allowed-hosts=b.example",
+  ]);
+  if (!parsed.ok || parsed.allowedHosts === undefined)
+    throw new Error("Expected valid repeated host lists");
+  const { served } = await start({
+    host: "0.0.0.0",
+    allowedHosts: parsed.allowedHosts,
+    routes: [
+      {
+        method: "GET",
+        path: "/probe",
+        handle: () => Response.json({ allowed: true }),
+      },
+    ],
+  });
+  const url = new URL(served.url);
+  url.hostname = "127.0.0.1";
+  url.pathname = "/probe";
+  for (const host of ["a.example", "b.example"]) {
+    const response = await rawHttpRequest(url, {
+      headers: { host, origin: `http://${host}` },
+    });
+    expect(response.status, host).toBe(200);
+    expect(JSON.parse(response.body)).toEqual({ allowed: true });
+  }
+  expect(
+    (await rawHttpRequest(url, { headers: { host: "undeclared.example" } }))
+      .status,
+  ).toBe(403);
+  expect(
+    (
+      await rawHttpRequest(url, {
+        headers: { host: "a.example", origin: "http://undeclared.example" },
+      })
+    ).status,
+  ).toBe(403);
 });
 
 it("announces an admitted non-loopback URL and gates it on the operator allowlist", async () => {

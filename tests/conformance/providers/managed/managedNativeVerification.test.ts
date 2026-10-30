@@ -92,6 +92,7 @@ const nativeFunctionEvidence = (
   modulePath: string,
   format: "elf" | "mach-o" | "pe" | "file",
   name = "open_native",
+  sha256 = "8".repeat(64),
 ) => {
   const native = exampleInput().native_observations[0];
   if (native === undefined) throw new Error("missing native provider");
@@ -123,16 +124,12 @@ const nativeFunctionEvidence = (
     native_value_flow: null,
     limitations: [],
   });
-  return createEvidence(
-    { path: modulePath, sha256: "8".repeat(64), format },
-    native.provider,
-    {
-      operation: "analyze_function",
-      parameters: {},
-      result: dossier,
-      rawResult: null,
-    },
-  );
+  return createEvidence({ path: modulePath, sha256, format }, native.provider, {
+    operation: "analyze_function",
+    parameters: {},
+    result: dossier,
+    rawResult: null,
+  });
 };
 
 const inputWithImportScope = (scope: string | null) => {
@@ -777,6 +774,51 @@ it("keeps POSIX backslashes literal in absolute module paths", () => {
     status: "contradicted",
     basis: "module-mismatch",
   });
+});
+
+it.each([
+  { scope: "/examples/nativehelper.so", path: "/", format: "elf" as const },
+  { scope: "nativehelper.dll", path: "C:\\", format: "pe" as const },
+])(
+  "retains unknown identity for an empty module filename ($format)",
+  ({ scope, path, format }) => {
+    const unknown = nativeFunctionEvidence(path, format);
+    const mismatch = nativeFunctionEvidence(
+      "/examples/unrelated",
+      format,
+      "open_native",
+      "9".repeat(64),
+    );
+    for (const observations of [
+      [unknown],
+      [mismatch, unknown],
+      [unknown, mismatch],
+    ]) {
+      const result = verifyManagedNativeVerificationSource(
+        readFixtureSource({
+          ...inputWithImportScope(scope),
+          native_observations: observations,
+        }),
+      );
+      expect(result.pinvoke_imports[0]).toMatchObject({
+        status: "unresolved",
+        basis: "module-identity-unknown",
+        matched_native: { evidence_id: unknown.evidence_id },
+      });
+    }
+  },
+);
+
+it("retains a trailing POSIX backslash as module identity", () => {
+  const result = verifyManagedNativeVerificationSource(
+    readFixtureSource({
+      ...inputWithImportScope("nativehelper\\"),
+      native_observations: [
+        nativeFunctionEvidence("/examples/nativehelper\\", "elf"),
+      ],
+    }),
+  );
+  expect(result.pinvoke_imports[0]).toMatchObject({ status: "verified" });
 });
 
 it("applies Unix suffix variations even when the name already has the suffix", () => {

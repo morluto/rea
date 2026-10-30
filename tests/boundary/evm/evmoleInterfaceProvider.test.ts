@@ -982,7 +982,15 @@ it.runIf(!unsupportedHost).each(["directory", "missing-interpreter"])(
       category: "unsupported_provider",
       details: { provider_id: "evmole-interface" },
     });
-    expect(result.error.message).toContain(limiter);
+    if (scenario === "directory")
+      expect(result.error).toMatchObject({
+        reason: "prlimit_not_file",
+        diagnostics: {
+          limiter_path: limiter,
+          code: "prlimit_not_file",
+        },
+      });
+    else expect(result.error.message).toContain(limiter);
     if (ownedRoot !== undefined)
       await expect(access(ownedRoot)).rejects.toMatchObject({ code: "ENOENT" });
     expect(await readFile(path, "utf8")).toBe("0x60006000f3\n");

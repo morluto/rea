@@ -116,6 +116,44 @@ describe("objects that repeat the entity a member names", () => {
     ).toBeUndefined();
   });
 
+  it("learns a list reference only when every element lists the same nonempty fields", () => {
+    const named = (id: string) =>
+      id === "1" || id === "2"
+        ? [
+            held("/api/tags", id, {
+              id,
+              name: id === "1" ? "Tools" : "Winter",
+              color: "#aa0000",
+            }),
+          ]
+        : [];
+    expect(
+      referenceRule(
+        "tags",
+        [
+          { id: "1", name: "Tools" },
+          { id: "2", name: "Winter" },
+        ],
+        { tagIds: ["1", "2"] },
+        named,
+      ),
+    ).toMatchObject({ many: true, fields: ["id", "name"] });
+    expect(
+      referenceRule(
+        "tags",
+        [
+          { id: "1", name: "Tools" },
+          { id: "2", name: "Winter", color: "#aa0000" },
+        ],
+        { tagIds: ["1", "2"] },
+        named,
+      ),
+    ).toBeUndefined();
+    expect(
+      referenceRule("tags", [{}], { tagIds: ["1"] }, named),
+    ).toBeUndefined();
+  });
+
   it("refuses a call naming an entity the environment does not hold, or holds in several collections", () => {
     const rule: Extract<FieldRule, { rule: "reference" }> = {
       field: "shelf",

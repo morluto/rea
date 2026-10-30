@@ -2,7 +2,7 @@ import type {
   AnalysisOperation,
   CapabilityDescriptor,
 } from "../application/AnalysisProvider.js";
-import type { ProviderRejectionCode } from "../contracts/providerSelection.js";
+import type { ProviderRejectionCode } from "../domain/providerSelection.js";
 import { KUNA_PROVIDER_ID } from "./KunaRelease.js";
 import {
   DEFAULT_REGEX_MATCHING_DEADLINE,

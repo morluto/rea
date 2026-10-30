@@ -1,5 +1,5 @@
 import { absoluteCallerPath } from "../../filesystem/callerPath.js";
-import { realpath } from "node:fs/promises";
+import { resolveArtifactSourcePath } from "../ArtifactSelectedSource.js";
 
 import {
   artifactInventoryResultSchema,
@@ -31,7 +31,7 @@ export const scanArtifactInventoryInScope = async (
   options: ArtifactInventoryOptions,
 ): Promise<ArtifactInventorySnapshot> => {
   abortIfNeeded(options.signal);
-  const path = await realpath(inputPath);
+  const path = await resolveArtifactSourcePath(inputPath);
   return scanCanonicalArtifactInventoryInScope(
     path,
     options,
@@ -49,7 +49,7 @@ export const scanArtifactInventoryForExtractionInScope = async (
   readonly transferredSource: TransferredArtifactInventorySource | undefined;
 }> => {
   abortIfNeeded(options.signal);
-  const path = await realpath(inputPath);
+  const path = await resolveArtifactSourcePath(inputPath);
   return scanCanonicalArtifactInventoryForExtractionInScope(
     path,
     options,

@@ -11,7 +11,7 @@ import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
-import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
 
 /** One-shot firmware CLI commands backed by the same workflows as MCP. */
 export const registerFirmwareCommands = (
@@ -28,10 +28,12 @@ export const registerFirmwareCommands = (
     name: string,
     operation: FirmwareOperation,
     input: unknown,
+    callerPath: string,
   ) =>
     withCommandCancellation((signal) =>
       logCliCommand(logger, name, () =>
-        finishAnalysisCommand(
+        finishCliEvidenceCommand(
+          callerPath,
           () => service.execute(operation, input, { signal }),
           service,
           operation === "inspect_firmware_regions" ? "binwalk" : "unblob",
@@ -59,6 +61,7 @@ export const registerFirmwareCommands = (
             ? {}
             : { analysis_timeout_ms: options.analysisTimeoutMs }),
         },
+        args.path,
       ),
   });
   cli.command(CLI_COMMANDS.extractFirmware, {
@@ -84,19 +87,24 @@ export const registerFirmwareCommands = (
       analysisTimeoutMs: extractInput.analysis_timeout_ms,
     }),
     run: ({ args, options }) =>
-      execute(CLI_COMMANDS.extractFirmware, "extract_firmware", {
-        path: absoluteCallerPath(args.path),
-        output_directory: absoluteCallerPath(args.outputDirectory),
-        ...(options.offset === undefined && options.length === undefined
-          ? {}
-          : { range: { offset: options.offset, length: options.length } }),
-        max_depth: options.maxDepth,
-        max_output_bytes: options.maxOutputBytes,
-        max_output_files: options.maxOutputFiles,
-        publication_timeout_ms: options.publicationTimeoutMs,
-        ...(options.analysisTimeoutMs === undefined
-          ? {}
-          : { analysis_timeout_ms: options.analysisTimeoutMs }),
-      }),
+      execute(
+        CLI_COMMANDS.extractFirmware,
+        "extract_firmware",
+        {
+          path: absoluteCallerPath(args.path),
+          output_directory: absoluteCallerPath(args.outputDirectory),
+          ...(options.offset === undefined && options.length === undefined
+            ? {}
+            : { range: { offset: options.offset, length: options.length } }),
+          max_depth: options.maxDepth,
+          max_output_bytes: options.maxOutputBytes,
+          max_output_files: options.maxOutputFiles,
+          publication_timeout_ms: options.publicationTimeoutMs,
+          ...(options.analysisTimeoutMs === undefined
+            ? {}
+            : { analysis_timeout_ms: options.analysisTimeoutMs }),
+        },
+        args.path,
+      ),
   });
 };

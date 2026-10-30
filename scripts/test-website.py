@@ -2,6 +2,7 @@
 
 import contextlib
 import errno
+from html import unescape
 import importlib.util
 import io
 import json
@@ -250,6 +251,16 @@ class WebsiteSearchChecks(unittest.TestCase):
 
 class WebsiteMaintenanceChecks(unittest.TestCase):
     """Exercise contributor edits and the static preview through real consumers."""
+
+    def test_electron_guide_renderer_matches_download(self):
+        public = ROOT / "website/public"
+        source = (public / "guides/javascript/index.html").read_text(encoding="utf-8")
+        document = Document(source)
+        blocks = [node for node in document.nodes if node.attrs.get("id") == "notes-renderer-source"]
+        self.assertEqual(len(blocks), 1)
+        self.assertEqual(blocks[0].tag, "code")
+        displayed = unescape(source[blocks[0].open_end:blocks[0].end_start]) + "\n"
+        self.assertEqual(displayed, (public / "examples/notes-electron/renderer.js").read_text(encoding="utf-8"))
 
     def test_contributors_render_from_snapshot_and_reject_drift_without_rewriting(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -562,7 +573,8 @@ class WebsiteTranslationChecks(unittest.TestCase):
 
     def test_completed_script_tag_pages_pass_search_metadata(self):
         with tempfile.TemporaryDirectory() as directory:
-            site = Path(directory)
+            # check_site canonicalizes its root before collecting page keys.
+            site = Path(directory).resolve()
             (site / "assets").mkdir()
             shutil.copyfile(ROOT / "website/_site/assets/social-card.png", site / "assets/social-card.png")
             shutil.copyfile(ROOT / "website/public/robots.txt", site / "robots.txt")

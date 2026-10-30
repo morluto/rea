@@ -14,6 +14,7 @@ import {
 } from "../../domain/native/nativeInvestigationGraph.js";
 import { nativeDispatchMetadataResultSchema } from "../../domain/native/objcSwiftMetadata.js";
 import { inspectNativeDispatch } from "./NativeDispatchMetadataInspection.js";
+import { parseProcedureAddress } from "../ProcedureAddressResolution.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
 import { readNativeCallRoutes } from "./NativeCallRoutes.js";
 import {
@@ -163,26 +164,27 @@ export const traceNativeUiAction = async (
     if (!native.ok && !permitsCapabilityFallback(native.error))
       return err(native.error);
     if (native.ok) {
-      const address = z.string().safeParse(native.value.result);
-      if (!address.success || native.value.subject?.sha256 !== targetSha256)
+      const address = parseProcedureAddress(native.value.result);
+      if (!address.ok) return address;
+      if (native.value.subject?.sha256 !== targetSha256)
         return err(
           new AnalysisOutputError(
             NATIVE_UI_ACTION_OPERATIONS.nativeSeed,
-            "Native seed lacks a validated address or matching target identity",
+            "Native seed lacks matching target identity",
           ),
         );
-      const id = `native:function:${address.data}`;
+      const id = `native:function:${address.value}`;
       graph.nodes.push({
         id,
         kind: "function",
         name: input.action,
-        location: { address: address.data, file_offset: null },
+        location: { address: address.value, file_offset: null },
         attributes: { resolved_by: native.value.provider.id },
         evidence: [
           {
             kind: "reference",
             description: `Provider resolved the explicit native seed ${input.action}`,
-            location: { address: address.data, file_offset: null },
+            location: { address: address.value, file_offset: null },
             artifact_path: null,
             artifact_sha256: targetSha256,
           },

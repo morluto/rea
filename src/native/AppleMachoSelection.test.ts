@@ -11,11 +11,13 @@ import {
   machoImageWithUnknownCommand,
 } from "../artifacts/apple/MachoImage.fixture.js";
 import { readMachoImage } from "../artifacts/apple/MachoLoadCommandReader.js";
+import { readMachoImage as readMachoMetadataImage } from "./metadata/MachoImage.js";
 import {
   parseMachoLayout,
   selectMachoSlice,
   UnsupportedMachoMetadataFormatError,
 } from "./AppleMachoSelection.js";
+import { parsePointerFixups } from "./AppleMachoFixups.js";
 import { decodeAppleDispatchMetadata } from "./AppleDispatchMetadata.js";
 
 /** macOS 27 system binaries ship CPU_SUBTYPE_ARM64E_X1 (12) with the PAC ABI bit. */
@@ -107,6 +109,236 @@ it.each([false, true])(
     });
   },
 );
+
+it.each([
+  { container: "thin", corrupt: false },
+  { container: "thin", corrupt: true },
+  { container: "fat", corrupt: false },
+  { container: "fat", corrupt: true },
+])(
+  "walks the entire selected command table beyond 4096 commands ($container, corrupt=$corrupt)",
+  ({ container, corrupt }) => {
+    const command = Buffer.alloc(16);
+    command.writeUInt32LE(0x2a); // LC_SOURCE_VERSION
+    command.writeUInt32LE(16, 4);
+    const thin = machoImage({
+      commands: Array.from({ length: 4097 }, () => command),
+    });
+    if (corrupt)
+      new DataView(thin.buffer).setUint32(32 + 4096 * 16 + 4, 4, true);
+    const bytes = Buffer.from(
+      container === "fat" ? fatImage([{ cpu: CPU.arm64, bytes: thin }]) : thin,
+    );
+    const decode = () =>
+      decodeAppleDispatchMetadata(bytes, 10, {
+        path: "/many-commands",
+        sha256: "fixture",
+      });
+    if (corrupt) {
+      expect(decode).toThrow(/load command 4096 .*invalid cmdsize 4/u);
+      return;
+    }
+    expect(decode()).toMatchObject({
+      objc_classes: [],
+      target_selection: { container, byte_length: thin.byteLength },
+    });
+  },
+);
+
+it.each([
+  { source: "__objc_const\0\nxx", expected: "__objc_const" },
+  { source: "abcdefghijklmnop", expected: "abcdefghijklmnop" },
+  { source: "\0\nignored", expected: "" },
+  { source: "before\nafter\0xx", expected: "before\nafter" },
+])(
+  "reads fixed-width section names from bytes: $source",
+  ({ source, expected }) => {
+    const segment = Buffer.alloc(152);
+    segment.writeUInt32LE(0x19, 0);
+    segment.writeUInt32LE(segment.length, 4);
+    segment.writeUInt32LE(1, 64);
+    Buffer.from(source, "latin1").copy(segment, 72, 0, 16);
+    Buffer.from("__DATA\0\npadding", "latin1").copy(segment, 72 + 16);
+    const bytes = Buffer.from(machoImage({ commands: [segment] }));
+
+    expect(parseMachoLayout(bytes, "arm64").sections[0]?.name).toBe(expected);
+    expect(readMachoMetadataImage(bytes).sections[0]).toMatchObject({
+      name: `__DATA,${expected}`,
+      section_name: expected,
+    });
+  },
+);
+
+/** File ranges remain inside the padded source while VM ranges may alias. */
+const mappingSegment = (
+  address: bigint,
+  fileOffset: number,
+  fileSize: number,
+  memorySize = fileSize,
+): Buffer => {
+  const command = Buffer.alloc(72);
+  command.writeUInt32LE(0x19);
+  command.writeUInt32LE(command.length, 4);
+  command.writeBigUInt64LE(address, 24);
+  command.writeBigUInt64LE(BigInt(memorySize), 32);
+  command.writeBigUInt64LE(BigInt(fileOffset), 40);
+  command.writeBigUInt64LE(BigInt(fileSize), 48);
+  command.writeUInt32LE(1, 60);
+  return command;
+};
+
+const mappingImage = (commands: readonly Buffer[]): Buffer => {
+  const bytes = Buffer.alloc(512);
+  Buffer.from(machoImage({ commands })).copy(bytes);
+  return bytes;
+};
+
+describe("Mach-O metadata span mapping", () => {
+  it.each([
+    ["file size larger than VM size", mappingSegment(0x1000n, 0, 128, 64)],
+    ["VM address overflow", mappingSegment((1n << 64n) - 1n, 0, 2)],
+  ])("rejects %s consistently across metadata consumers", (_name, segment) => {
+    const bytes = mappingImage([segment]);
+    expect(() => parseMachoLayout(bytes, "arm64")).toThrow(
+      "Mach-O segment addresses or sizes are invalid",
+    );
+    expect(() => readMachoMetadataImage(bytes)).toThrow(
+      "Mach-O segment addresses or sizes are invalid",
+    );
+  });
+
+  it.each(["unmapped", "pagezero"])(
+    "does not expose %s file bytes as metadata pointers",
+    (kind) => {
+      const segment = mappingSegment(0x1000n, 0, 128);
+      if (kind === "unmapped") {
+        segment.writeBigUInt64LE(0n, 32);
+        segment.writeUInt32LE(0, 60);
+      } else segment.write("__PAGEZERO", 8, "ascii");
+      const bytes = mappingImage([segment]);
+      const layout = parseMachoLayout(bytes, "arm64");
+      // Dyld fixup segment ordinals retain the original command order.
+      expect(layout.segments).toHaveLength(1);
+      expect(layout.baseAddress).toBe(0n);
+      expect(() => layout.offset(0x1000n)).toThrow(RangeError);
+      expect(readMachoMetadataImage(bytes).mappings).toEqual([]);
+    },
+  );
+
+  it("preserves dyld segment ordinals across PAGEZERO and unmapped segments", () => {
+    const pagezero = mappingSegment(0n, 0, 0, 4096);
+    pagezero.write("__PAGEZERO", 8, "ascii");
+    const unmapped = mappingSegment(0x1000n, 0, 0, 0);
+    unmapped.writeUInt32LE(0, 60);
+    const data = mappingSegment(0x2000n, 256, 128);
+    const opcodes = Buffer.from([
+      0x40,
+      ...Buffer.from("_local\0"),
+      0x72,
+      8,
+      0x90,
+      0,
+    ]);
+    const dyldInfo = Buffer.alloc(48);
+    dyldInfo.writeUInt32LE(0x80000022, 0);
+    dyldInfo.writeUInt32LE(48, 4);
+    dyldInfo.writeUInt32LE(400, 16);
+    dyldInfo.writeUInt32LE(opcodes.length, 20);
+    const bytes = mappingImage([pagezero, unmapped, data, dyldInfo]);
+    opcodes.copy(bytes, 400);
+    const layout = parseMachoLayout(bytes, "arm64");
+    expect(layout.offset(0x2008n, 8)).toBe(264);
+    expect(() => layout.offset(8n, 8)).toThrow(RangeError);
+    expect(() => layout.offset(0x1000n, 8)).toThrow(RangeError);
+    const fixups = parsePointerFixups(
+      bytes,
+      layout.fixups,
+      layout.segments,
+      layout.baseAddress,
+    );
+    expect(fixups.issues).toEqual([]);
+    expect(fixups.decode(0x2008n, 0n)).toMatchObject({
+      kind: "bind",
+      symbol: "_local",
+      library_ordinal: 0,
+      binding_source: "bind",
+    });
+  });
+
+  it("rejects a conflicting alias covering only the end of a pointer", () => {
+    const layout = parseMachoLayout(
+      mappingImage([
+        mappingSegment(0x1000n, 0, 512),
+        mappingSegment(0x1104n, 400, 4),
+      ]),
+      "arm64",
+    );
+    expect(layout.offset(0x1100n, 4)).toBe(256);
+    expect(() => layout.offset(0x1100n, 8)).toThrow(RangeError);
+  });
+
+  it("maps adjacent ranges and duplicate aliases with the same file translation", () => {
+    const layout = parseMachoLayout(
+      mappingImage([
+        mappingSegment(0x1000n, 0, 128),
+        mappingSegment(0x1080n, 128, 128),
+        mappingSegment(0x107cn, 124, 8),
+      ]),
+      "arm64",
+    );
+    expect(layout.offset(0x107cn, 8)).toBe(124);
+  });
+
+  it("rejects file aliases into another segment's zero-filled memory", () => {
+    const layout = parseMachoLayout(
+      mappingImage([
+        mappingSegment(0x1000n, 0, 128, 256),
+        mappingSegment(0x1080n, 256, 8),
+      ]),
+      "arm64",
+    );
+    expect(() => layout.offset(0x1080n, 8)).toThrow(RangeError);
+  });
+
+  it.each([-1, 0.5, Number.POSITIVE_INFINITY])(
+    "rejects an invalid requested span size %s",
+    (size) => {
+      const layout = parseMachoLayout(
+        mappingImage([mappingSegment(0x1000n, 0, 512)]),
+        "arm64",
+      );
+      expect(() => layout.offset(0x1000n, size)).toThrow(RangeError);
+    },
+  );
+
+  it("keeps dispatch coverage partial when a class-list pointer has a partial alias", () => {
+    const main = Buffer.concat([
+      mappingSegment(0x1000n, 0, 512),
+      Buffer.alloc(80),
+    ]);
+    main.writeUInt32LE(main.length, 4);
+    main.writeUInt32LE(1, 64);
+    main.write("__objc_classlist", 72, "ascii");
+    main.writeBigUInt64LE(0x1100n, 72 + 32);
+    main.writeBigUInt64LE(8n, 72 + 40);
+    const result = decodeAppleDispatchMetadata(
+      mappingImage([main, mappingSegment(0x1104n, 400, 4)]),
+      10,
+      { path: "/aliased", sha256: "fixture" },
+    );
+    expect(result.objc_classes).toEqual([]);
+    expect(result.coverage).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          status: "partial",
+          reason: expect.stringContaining(
+            "Unmapped or ambiguous metadata pointer",
+          ),
+        }),
+      ]),
+    );
+  });
+});
 
 describe("native Mach-O slice selection", () => {
   it("rejects misaligned load commands", () => {

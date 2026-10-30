@@ -312,7 +312,7 @@ it("accepts standardized GGUF metadata keys containing numeric hierarchy compone
   });
 });
 
-it.each([99_999_993, 100_000_000])(
+it.each([67_324_752, 67_324_760, 99_999_993, 100_000_000])(
   "admits safetensors declared header length %s before its independent representation limit",
   async (length) => {
     const bytes = Buffer.alloc(9);
@@ -1173,6 +1173,12 @@ it.each([640, 896, 1152, 1408, 66_176])(
 
 it.each([
   // Protocol 2 pickle of {"a": 1}: PROTO 2, EMPTY_DICT, BINPUT 0, ...
+  ["a ZIP local header", Buffer.from("504b0304140000000000", "hex")],
+  ["a short ZIP signature", Buffer.from("504b0304", "hex")],
+  [
+    "a ZIP signature followed by a brace and an inadmissible length",
+    Buffer.from("504b0304140000007b", "hex"),
+  ],
   ["a real pickle", Buffer.from("80027d710058010000006171014b01732e", "hex")],
   // Protocol 2 pickle of {}: six bytes, shorter than a safetensors prefix.
   ["an empty dict", Buffer.from("80027d71002e", "hex")],

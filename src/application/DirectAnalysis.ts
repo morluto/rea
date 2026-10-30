@@ -20,6 +20,7 @@ import { createImmutableEvidenceBundle } from "../domain/evidenceBundle.js";
 import { retainAnalysisResultSources } from "./investigation/recordEvidenceSources.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { NativeToolName } from "../contracts/native/nativeToolContracts.js";
+import type { EnhancedToolName } from "../contracts/enhancedInputs.js";
 import {
   ARTIFACT_ANALYSIS_OPERATIONS,
   type ArtifactAnalysisOperation,
@@ -61,7 +62,7 @@ import {
   workflowSnapshotRecord,
   recordWorkflowUnknowns,
 } from "./WorkflowEvidence.js";
-import type { AnalysisProviderSelector } from "../contracts/providerSelection.js";
+import type { AnalysisProviderSelector } from "../domain/providerSelection.js";
 import { resolveXrefsAddress } from "./XrefsAddressResolution.js";
 import {
   AnalysisCancelledError,
@@ -71,6 +72,7 @@ import { deliverAnalysisEvidence } from "./EvidenceBundleCommands.js";
 import type { BinaryTargetError } from "../domain/configurationErrors.js";
 import {
   directAnalysisCleanupFailure,
+  projectDirectAnalysisFailure,
   managedAnalysisCleanupFailure,
   withSessionCleanup,
 } from "./DirectAnalysisCleanup.js";
@@ -219,7 +221,7 @@ export const runProviderAnalysis = async (
         operationSignal,
       );
       await dispatchQueuedInterrupts();
-      if (!original.ok) return err(cliError(original.error));
+      if (!original.ok) return err(cliError(original.error, path));
       const evidence = withEvidenceCallerInputPath(original.value, path);
       if (operationSignal.aborted)
         return err(
@@ -239,7 +241,7 @@ export const runProviderAnalysis = async (
               delivery.detail,
               operationSignal,
             );
-      return result.ok ? ok(result.value) : err(cliError(result.error));
+      return result.ok ? ok(result.value) : err(cliError(result.error, path));
     }
     return runAnalysis(dependencies, path, tool, arguments_, {
       logger,
@@ -555,9 +557,11 @@ const runAnalysis = async (
       outcome.cleanupError.retainDiagnostics({
         analysis_snapshot: { ...publishedSnapshot },
       });
-    return err(directAnalysisCleanupFailure(result, outcome.cleanupError));
+    return err(
+      directAnalysisCleanupFailure(result, outcome.cleanupError, path),
+    );
   }
-  return result.ok ? ok(result.value) : err(cliError(result.error));
+  return result.ok ? ok(result.value) : err(cliError(result.error, path));
 };
 
 const executeAnalysisTool = async (input: {
@@ -598,15 +602,7 @@ const executeAnalysisTool = async (input: {
     );
     return result.ok ? ok({ evidence: result.value }) : result;
   }
-  if (
-    tool === "binary_overview" ||
-    tool === "inspect_native_api" ||
-    tool === "inspect_native_dispatch_metadata" ||
-    tool === "trace_feature" ||
-    tool === "trace_native_values" ||
-    tool === "trace_native_ui_action" ||
-    tool === "decompile_all"
-  ) {
+  if (isWorkflowEvidenceTool(tool)) {
     const { EnhancedTools } = await import("./EnhancedTools.js");
     let result = await executeComposedWorkflow(
       session,
@@ -812,7 +808,10 @@ const isWorkflowEvidenceTool = (
     | ArtifactAnalysisOperation
     | ManagedToolName
     | DirectAnalysisTool,
-): boolean =>
+): tool is Exclude<
+  Extract<DirectAnalysisTool, EnhancedToolName>,
+  "analyze_function"
+> =>
   tool === "binary_overview" ||
   tool === "inspect_native_api" ||
   tool === "inspect_native_dispatch_metadata" ||
@@ -837,7 +836,12 @@ const fileExists = async (path: string): Promise<boolean> => {
   }
 };
 
-const cliError = (error: AnalysisError): JsonValue => ({
+const cliError = (
+  error: AnalysisError,
+  callerInputPath?: string,
+): JsonValue => ({
   error: "Analysis failed",
-  ...projectAnalysisError(error),
+  ...(callerInputPath === undefined
+    ? projectAnalysisError(error)
+    : projectDirectAnalysisFailure(error, callerInputPath)),
 });

@@ -165,7 +165,7 @@ it.each([
               frameId: "frame-main",
               requestId: "redirect",
               type: "Document",
-              redirectResponse: { status: 302 },
+              redirectResponse: { url: `${origin}/prior`, status: 302 },
               request: {},
             },
           },

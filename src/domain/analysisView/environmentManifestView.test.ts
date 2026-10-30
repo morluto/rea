@@ -1152,7 +1152,7 @@ it("keeps opaque or redacted empty response text unknown when selecting bodiless
   ]);
 });
 
-it("refuses a parent whose subject is absent or names another path or digest", () => {
+it("refuses a parent whose subject is absent or names another digest", () => {
   const parent = parentOf();
   const refusal = {
     ok: false,
@@ -1167,15 +1167,6 @@ it("refuses a parent whose subject is absent or names another path or digest", (
     projectAnalysisView({ ...withoutSubject, subject: null }, view()),
   ).toMatchObject(refusal);
   if (subject == null) throw new Error("Fixture evidence carries a subject");
-  expect(
-    projectAnalysisView(
-      {
-        ...parent,
-        subject: { ...subject, local_path: "/elsewhere/capture.har" },
-      },
-      view(),
-    ),
-  ).toMatchObject(refusal);
   expect(
     projectAnalysisView(
       {

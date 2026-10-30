@@ -220,10 +220,15 @@ await withVerifierCleanup(async () => {
       root,
     }),
   );
-  await runStage("MCP tools and evidence", () =>
+  const extractedDirectory = join(workspace, "extracted-plugin");
+  await mkdir(extractedDirectory);
+  await commands.exec("tar", ["-xzf", tarball, "-C", extractedDirectory]);
+  // Codex extracts npm plugins without installing dependencies. Run the real
+  // catalog/Evidence workflow from that isolated tree so npm cannot repair it.
+  await runStage("extracted plugin MCP tools and evidence", () =>
     verifyPackageMcp({
       commands,
-      cli,
+      cli: join(extractedDirectory, "package", "scripts", "rea.mjs"),
       environment: environmentData.environment,
       evidenceRoot,
       artifactArchive,
@@ -258,6 +263,7 @@ await withVerifierCleanup(async () => {
     promptCompletion: true,
     promptCompletionLifecycle: true,
     evidenceMcp: true,
+    extractedPluginMcp: true,
     targetFree: true,
     targetLifecycle: true,
     boundedRegexBridge: true,

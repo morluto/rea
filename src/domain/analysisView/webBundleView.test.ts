@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 import type { WebBundleAnalysis } from "../webBundleAnalysis.js";
 import { AnalysisInputError } from "../analysisErrorCore.js";
+import { projectAnalysisError } from "../analysisErrorProjection.js";
 import {
   analysisViewRequestSchema,
   projectAnalysisView,
@@ -414,6 +415,9 @@ it("returns typed AnalysisResourceConstraintError when a single record exceeds 1
   if (result.ok) throw new Error("Expected resource error");
   expect(result.error._tag).toBe("AnalysisResourceConstraintError");
   expect(result.error.message).toContain("byte budget");
+  expect(projectAnalysisError(result.error).remediation.action).toContain(
+    "select fewer fields",
+  );
 });
 
 it.each([undefined, ["call:fetch"]])(

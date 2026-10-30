@@ -34,6 +34,7 @@ import {
 } from "./ArtifactFileOperation.js";
 import { AnalysisCleanupLease } from "./AnalysisCleanupLease.js";
 import { decodeDirectoryEntryName } from "../filesystem/decodeDirectoryEntryName.js";
+import { resolveArtifactSourcePath } from "./ArtifactSelectedSource.js";
 
 export type DirectoryArtifactEntry = ArtifactEntry & {
   readonly kind: "file" | "directory" | "symlink";
@@ -185,7 +186,7 @@ export class DirectoryArtifactReader implements ArtifactReader {
 
   async #resolveRoot(): Promise<DirectoryArtifactRoot> {
     return (this.#rootPromise ??= (async () => {
-      const root = await realpath(this.#rootPath);
+      const root = await resolveArtifactSourcePath(this.#rootPath);
       const metadata = await lstat(root, { bigint: true });
       if (metadata.isSymbolicLink())
         throw new ArtifactReaderFailure(

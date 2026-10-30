@@ -9,8 +9,8 @@ import {
   binaryArchitectureSchema,
   rawBinaryEntryPointSchema,
 } from "../domain/rawBinary.js";
-import { analysisProviderSelectorSchema } from "../contracts/providerSelection.js";
-import type { AnalysisProviderSelector } from "../contracts/providerSelection.js";
+import { analysisProviderSelectorSchema } from "../domain/providerSelection.js";
+import type { AnalysisProviderSelector } from "../domain/providerSelection.js";
 import type { Logger } from "pino";
 
 /** Parse decimal integer tokens before Number coercion can erase their syntax. */

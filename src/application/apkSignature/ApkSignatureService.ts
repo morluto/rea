@@ -70,6 +70,7 @@ export class ApkSignatureService {
     if (
       !report.success ||
       report.data.artifact.path !== input.value.path ||
+      execution.subject.path !== input.value.path ||
       !apkSignatureMatchesSubject(report.data.artifact, execution.subject)
     )
       return err(

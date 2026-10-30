@@ -25,6 +25,8 @@ export const evidenceSubjectFormatSchema = z.enum([
   "app-pack",
   "asar",
   "godot-pck",
+  "unityfs",
+  "uimage",
   "dmg",
   "pkg",
   "plist",
@@ -38,23 +40,42 @@ export const evidenceSubjectFormatSchema = z.enum([
   "entitlements",
   "pyinstaller",
   "node-sea",
+  "dotnet-bundle",
+  "bun-standalone",
+  "intel-hex",
+  "srec",
+  "esp-image",
+  "fit",
 ]);
 
 /** Format-owned architecture declarations shared by Evidence and persisted executions. */
-export const evidenceSubjectDeclarationShapes = [
-  {
-    format: evidenceSubjectFormatSchema.exclude(["raw-binary", "gamecube-dol"]),
-    architecture: z
-      .enum(BINARY_ARCHITECTURES)
-      .exclude([...RAW_ONLY_ARCHITECTURES])
-      .nullable(),
-  },
-  {
-    format: z.literal("raw-binary"),
-    architecture: z.enum(BINARY_ARCHITECTURES).nullable(),
-  },
-  {
-    format: z.literal("gamecube-dol"),
-    architecture: z.literal("powerpc"),
-  },
-] as const;
+const detectedEvidenceSubjectDeclaration = {
+  format: evidenceSubjectFormatSchema.exclude(["raw-binary", "gamecube-dol"]),
+  architecture: z
+    .enum(BINARY_ARCHITECTURES)
+    .exclude([...RAW_ONLY_ARCHITECTURES])
+    .nullable(),
+};
+
+const rawEvidenceSubjectDeclaration = {
+  format: z.literal("raw-binary"),
+  architecture: z.enum(BINARY_ARCHITECTURES).nullable(),
+};
+
+const gamecubeEvidenceSubjectDeclaration = {
+  format: z.literal("gamecube-dol"),
+  architecture: z.literal("powerpc"),
+};
+
+/** Add the complete format-owned declaration to a persistence envelope. */
+export const withEvidenceSubjectDeclaration = <
+  Shape extends z.ZodRawShape,
+  Config extends z.core.$ZodObjectConfig,
+>(
+  base: z.ZodObject<Shape, Config>,
+) =>
+  z.discriminatedUnion("format", [
+    base.extend(detectedEvidenceSubjectDeclaration),
+    base.extend(rawEvidenceSubjectDeclaration),
+    base.extend(gamecubeEvidenceSubjectDeclaration),
+  ]);

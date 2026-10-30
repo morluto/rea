@@ -537,3 +537,105 @@ it("retains observed manifests and closer completed scopes inside a partial inve
     }),
   ]);
 });
+
+it("keeps ambiguous directory coverage unknown while honoring exact directory identity", () => {
+  const first = "a\u0301\u0323";
+  const second = "a\u0323\u0301";
+  const ambiguous = "\u1ea1\u0301";
+  const files = [
+    ["main.cjs", `require("./${ambiguous}/dep"); require("./${second}/dep");`],
+    [`${ambiguous}/dep.js`, "module.exports = 1;"],
+    [`${second}/dep.js`, "module.exports = 2;"],
+  ] as const;
+  const parsed = parseReferenceSourceEntries(
+    {
+      root: "/selected/source",
+      bytesRead: 0,
+      limitations: [],
+      entries: [
+        ...files.map(([path, content]) => ({
+          status: "read" as const,
+          kind: "file" as const,
+          path,
+          bytes: Buffer.from(content),
+          size: Buffer.byteLength(content),
+        })),
+        {
+          status: "failed",
+          kind: "directory",
+          path: first,
+          code: "io",
+          message: "Partial enumeration",
+        },
+        { status: "read", kind: "directory", path: second },
+      ],
+    },
+    [],
+  );
+  expect(parsed.relationships).toEqual([
+    expect.objectContaining({
+      to: `${ambiguous}/dep`,
+      resolution: "unresolved",
+    }),
+    expect.objectContaining({ to: `${second}/dep.js`, resolution: "internal" }),
+  ]);
+});
+
+it("does not skip an ambiguous higher priority file for an observed extension fallback", () => {
+  const first = "a\u0301\u0323";
+  const second = "a\u0323\u0301";
+  const ambiguous = "\u1ea1\u0301";
+  const files = [
+    ["main.cjs", `require("./${ambiguous}"); require("./${first}");`],
+    [first, "module.exports = 1;"],
+    [second, "module.exports = 2;"],
+    [`${ambiguous}.js`, "module.exports = 3;"],
+  ] as const;
+  const parsed = parseReferenceSourceEntries(
+    {
+      root: "/selected/source",
+      bytesRead: 0,
+      limitations: [],
+      entries: files.map(([path, content]) => ({
+        status: "read" as const,
+        kind: "file" as const,
+        path,
+        bytes: Buffer.from(content),
+        size: Buffer.byteLength(content),
+      })),
+    },
+    [],
+  );
+  expect(parsed.relationships).toEqual([
+    expect.objectContaining({ to: ambiguous, resolution: "unresolved" }),
+    expect.objectContaining({ to: first, resolution: "internal" }),
+  ]);
+});
+
+it("prefers a later exact filename over an earlier unique canonical candidate", () => {
+  const composed = "caf\u00e9";
+  const decomposed = "cafe\u0301";
+  const files = [
+    ["main.cjs", `require("./${composed}");`],
+    [decomposed, "module.exports = 1;"],
+    [`${composed}.js`, "module.exports = 2;"],
+  ] as const;
+  const parsed = parseReferenceSourceEntries(
+    {
+      root: "/selected/source",
+      bytesRead: 0,
+      limitations: [],
+      entries: files.map(([path, content]) => ({
+        status: "read" as const,
+        kind: "file" as const,
+        path,
+        bytes: Buffer.from(content),
+        size: Buffer.byteLength(content),
+      })),
+    },
+    [],
+  );
+  expect(parsed.relationships).toEqual([
+    expect.objectContaining({ to: `${composed}.js`, resolution: "internal" }),
+  ]);
+});

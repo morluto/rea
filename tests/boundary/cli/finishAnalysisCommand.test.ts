@@ -3,7 +3,10 @@ import { expect, it } from "vitest";
 
 import { finishAnalysisCommand } from "../../../src/cli/finishAnalysisCommand.js";
 import { AnalysisOutputError } from "../../../src/domain/analysisErrorCore.js";
-import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import {
+  projectAnalysisError,
+  projectAnalysisErrorWithoutCapturedOutput,
+} from "../../../src/domain/analysisErrorProjection.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { scriptCaptureEvidenceFixture } from "../../fixtures/webScriptCapture.js";
@@ -108,6 +111,67 @@ it("retains late cancellation and completed Evidence when close also fails", asy
       },
     },
   });
+});
+
+it("keeps the initial failure snapshot when close resolves its cleanup but fails another resource during cancellation", async () => {
+  const controller = new AbortController();
+  const primary = new ProviderCleanupError(
+    "fixture-provider",
+    ["initial resource"],
+    { reason: "initial cleanup refused" },
+    {
+      operation: "capture_browser_scenario",
+      completedObservation: scriptCaptureEvidenceFixture(),
+      capturedOutput: {
+        stdout: "startup output",
+        stderr: "startup diagnostic",
+        exit_code: 1,
+        signal: null,
+        truncated: false,
+      },
+    },
+  );
+  const initial = projectAnalysisErrorWithoutCapturedOutput(primary);
+  const result = await finishAnalysisCommand(
+    async () => err(primary),
+    {
+      close: async () => {
+        primary.resolveCleanup();
+        controller.abort("cancelled during cleanup retry");
+        throw new ProviderCleanupError(
+          "fixture-provider",
+          ["remaining resource"],
+          { reason: "remaining cleanup denied" },
+        );
+      },
+    },
+    "fixture-provider",
+    "capture_browser_scenario",
+    controller.signal,
+    undefined,
+    {
+      failureProjection: "initial",
+      recoverCompletedObservation: () => {
+        throw new Error("Initial failure snapshots must not recover output");
+      },
+    },
+  );
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      code: "cleanup_incomplete",
+      details: {
+        captured_output: { stdout: "startup output" },
+        diagnostics: {
+          primary_error: initial,
+          cleanup_error: { details: { resources: ["remaining resource"] } },
+        },
+      },
+    },
+  });
+  expect(result).not.toHaveProperty(
+    "error.details.diagnostics.primary_error.details.captured_output",
+  );
 });
 
 it.each([false, true])(

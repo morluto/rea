@@ -7,7 +7,11 @@ import { isIntrinsicMapLookup } from "./javascriptSemanticMapOperations.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import { semanticIdentifierRole } from "./javascriptSemanticProjection.js";
 
-import { htmlUrlText, stripQueryAndFragment } from "../artifactPathSyntax.js";
+import {
+  hasScheme,
+  htmlUrlText,
+  stripQueryAndFragment,
+} from "../artifactPathSyntax.js";
 import { sanitizeEndpointCandidate } from "../browserObservation.js";
 import {
   addFindingOnce,
@@ -36,6 +40,7 @@ import type {
   JavaScriptFindingContext as FindingContext,
   JavaScriptReferenceInput as ReferenceInput,
 } from "./javascriptStaticAnalysisState.js";
+import { VITE_OUTPUT_DEPENDENCY_PREFIX } from "./javascriptStaticAnalysisTypes.js";
 import {
   resolveSemanticBindingState,
   semanticStableInitializer,
@@ -392,9 +397,25 @@ const vitePreloadDependencySpecifiers = (
   return indexes.map((element) => {
     if (element === null || !t.isNumericLiteral(element)) return undefined;
     const index = element.value;
-    return Number.isSafeInteger(index) && index >= 0 ? table[index] : undefined;
+    return Number.isSafeInteger(index) && index >= 0
+      ? viteDependencySpecifier(table[index])
+      : undefined;
   });
 };
+
+// A relative base writes importer-relative `./` paths, which remain module
+// URLs. Without a scheme or leading dot or slash, the entry names a file under
+// the build output directory.
+const viteDependencySpecifier = (
+  dependency: string | undefined,
+): string | undefined =>
+  dependency === undefined ||
+  dependency === "" ||
+  dependency.startsWith(".") ||
+  dependency.startsWith("/") ||
+  hasScheme(dependency)
+    ? dependency
+    : `${VITE_OUTPUT_DEPENDENCY_PREFIX}${dependency}`;
 
 const isExplicitDefaultArgument = (
   argument: t.CallExpression["arguments"][number],

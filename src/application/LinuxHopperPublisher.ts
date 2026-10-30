@@ -306,6 +306,7 @@ export class LinuxHopperPublisher {
       );
       const lease = await this.#acquireCacheLease(
         verified.release.main_exe_hash,
+        resources,
         signal,
       );
       await this.#withOwnedResource(
@@ -412,6 +413,7 @@ export class LinuxHopperPublisher {
 
   async #acquireCacheLease(
     digest: string,
+    resources: ArtifactResourceScope,
     signal?: AbortSignal,
   ): Promise<OwnedLease> {
     const deadline = performance.now() + 120_000;
@@ -423,6 +425,7 @@ export class LinuxHopperPublisher {
         cacheDirectory: this.cacheRoot,
         launcherSha256: digest,
         runId,
+        resources,
       });
       if (acquired.acquired) return acquired.lease;
       const remaining = deadline - performance.now();

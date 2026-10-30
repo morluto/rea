@@ -139,7 +139,9 @@ for (const scenario of cases)
         appliedActions: [],
       });
       if ("syntax" in scenario) {
-        expect(setup.json).toMatchObject({ remediation: expect.any(String) });
+        expect(setup.json).toMatchObject({
+          remediation: expect.stringMatching(/\S/u),
+        });
         if (scenario.syntax === "JSON")
           expect(setup.stdout).toContain("Invalid JSON/JSONC");
       } else {

@@ -118,7 +118,7 @@ it("qualifies projected names with exact encoding facts and normalizes historica
       analysisViewRequestSchema.parse({
         kind: "native-exports",
         collection: "exports",
-        names: ["café"],
+        indices: [3],
         fields: ["name"],
       }),
     );
@@ -129,6 +129,66 @@ it("qualifies projected names with exact encoding facts and normalizes historica
       ],
     });
   }
+});
+
+it("matches ELF UTF-8 identities without conflating Latin-1 display names or unknown encodings", () => {
+  const report = parseNativeExports(
+    elfExportImage({
+      symbols: [{ name: "cafÃ©" }, { name: "café" }, { name: "same" }],
+    }),
+    artifact,
+  );
+  expect(
+    project(report, {
+      kind: "native-exports",
+      collection: "exports",
+      names: ["café"],
+      fields: ["name"],
+    }),
+  ).toMatchObject({
+    items: [{ source_index: 0, name: "café", name_utf8_decodable: true }],
+    coverage: { total: 1 },
+  });
+  if (report.format !== "elf") throw new Error("Expected ELF fixture");
+  const historical = {
+    ...report,
+    exports: report.exports.map(
+      ({ name_bytes_base64: _bytes, name_utf8_decodable: _utf8, ...row }) =>
+        row,
+    ),
+  };
+  expect(
+    project(historical, {
+      kind: "native-exports",
+      collection: "exports",
+      names: ["café"],
+    }),
+  ).toMatchObject({
+    items: [],
+    unknowns: [expect.stringContaining("lack retained encoding facts")],
+  });
+  expect(
+    project(historical, {
+      kind: "native-exports",
+      collection: "exports",
+      names: [],
+    }),
+  ).toMatchObject({ items: [], unknowns: [] });
+  const missingBytes = {
+    ...report,
+    exports: report.exports.map((row) => ({ ...row, name_bytes_base64: null })),
+  };
+  expect(
+    project(missingBytes, {
+      kind: "native-exports",
+      collection: "exports",
+      names: ["café", "same"],
+      fields: [],
+    }),
+  ).toMatchObject({
+    items: [{ source_index: 2 }],
+    unknowns: [expect.stringContaining("lack retained encoding facts")],
+  });
 });
 
 it("does not fill historical name defaults into a projection that omits names", () => {
@@ -145,6 +205,54 @@ it("does not fill historical name defaults into a projection that omits names", 
   const { view_digest, ...content } = result;
   expect(view_digest).toBe(digestCanonicalValue(content, "Analysis view"));
 });
+
+it.each(["Y2Fmw6k", "Y2Fmw6l=", "not base64"])(
+  "rejects untrustworthy imported ELF name bytes %s before selection",
+  (encoded) => {
+    for (const target of ["symbol", "version"]) {
+      const report = elf();
+      const row = report.exports[0]!;
+      if (target === "symbol") row.name_bytes_base64 = encoded;
+      else if (typeof row.version === "object" && row.version !== null)
+        row.version.name_bytes_base64 = encoded;
+      const result = projectAnalysisView(
+        parent(report),
+        analysisViewRequestSchema.parse({
+          kind: "native-exports",
+          collection: "exports",
+          names: ["missing"],
+        }),
+      );
+      expect(result.ok).toBe(false);
+    }
+  },
+);
+
+it.each(["text", "encoding"])(
+  "rejects contradictory ELF %s facts at the source owner",
+  (fact) => {
+    for (const target of ["symbol", "version"]) {
+      const report = elf();
+      const row = report.exports[0]!;
+      const name = target === "symbol" ? row : row.version;
+      if (name === null || typeof name !== "object")
+        throw new Error("Expected named ELF row");
+      name.name_bytes_base64 = Buffer.from(name.name!).toString("base64");
+      if (fact === "text") name.name = "different";
+      else name.name_utf8_decodable = false;
+      expect(
+        projectAnalysisView(
+          parent(report),
+          analysisViewRequestSchema.parse({
+            kind: "native-exports",
+            collection: "exports",
+            names: ["missing"],
+          }),
+        ).ok,
+      ).toBe(false);
+    }
+  },
+);
 
 it("preserves PE ordinal-only, forwarder, alias and same-address distinctions", () => {
   const report = parseNativeExports(

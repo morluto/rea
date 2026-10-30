@@ -2683,7 +2683,7 @@ Read the [6.1 to 6.2 migration guide](docs/migration-6.2.md) before upgrading. R
 * enforce conventional pull request titles ([3a21f16](https://github.com/morluto/rea/commit/3a21f16c1832430765083636511a8c12dbccf2dd))
 * verify installed package with Linux Hopper ([4f97f69](https://github.com/morluto/rea/commit/4f97f699e4d5471557d1ce0ff91e144065d06a61))
 
-## [0.3.0](https://github.com/morluto/rea/compare/rea-agents-0.2.1...rea-agents-0.3.0) (2026-07-12)
+## [0.3.0](https://github.com/morluto/rea/compare/rea-0.2.1...rea-agents-0.3.0) (2026-07-12)
 
 
 ### Features
@@ -2736,7 +2736,7 @@ Read the [6.1 to 6.2 migration guide](docs/migration-6.2.md) before upgrading. R
 * redesign and localize README ([051b6db](https://github.com/morluto/rea/commit/051b6db65687fd14826b6462cd623feb2504f123))
 * redesign and localize README ([910eda6](https://github.com/morluto/rea/commit/910eda6f323ba1151b0771fe5de6c60a91e3d46d))
 
-## [0.2.0](https://github.com/morluto/rea/compare/rea-0.1.0...rea-0.2.0) (2026-07-12)
+## [0.2.0](https://github.com/morluto/rea/releases/tag/rea-0.2.0) (2026-07-12)
 
 
 ### Features

@@ -6,9 +6,9 @@ import type { BinarySessionPort } from "../application/binary/BinarySessionPort.
 import {
   readImmutableEvidenceBundle,
   writeEvidenceBundle,
+  evidenceBundleExportReceipt,
 } from "../application/EvidenceBundleFiles.js";
 import { toolContract } from "../contracts/toolContracts.js";
-import type { EvidenceBundle } from "../domain/evidenceBundle.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { err, ok } from "../domain/result.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
@@ -61,12 +61,7 @@ const registerExportEvidenceTool = ({
       );
       return written.ok
         ? server.delivery.toCallToolResult(
-            ok({
-              path: written.value.path,
-              bytes: written.value.bytes,
-              records: bundle.records.length,
-              unknowns: bundle.unknowns.length,
-            }),
+            ok(evidenceBundleExportReceipt(bundle, written.value)),
             exportContract,
           )
         : server.delivery.toCallToolResult(written, exportContract);
@@ -117,11 +112,6 @@ const registerImportEvidenceTool = ({
           );
           if (!loaded.ok)
             return server.delivery.toCallToolResult(loaded, importContract);
-          const retainedUnknownRevisions = new Set(
-            session
-              .immutableEvidenceBundle()
-              .unknowns.map((unknown) => unknownRevisionKey(unknown)),
-          );
           if (signal.aborted)
             return server.delivery.toCallToolResult(
               err(
@@ -135,14 +125,9 @@ const registerImportEvidenceTool = ({
           return imported.ok
             ? server.delivery.toCallToolResult(
                 ok({
-                  imported: imported.value,
-                  unknowns_added: loaded.value.unknowns.filter(
-                    (unknown) =>
-                      !retainedUnknownRevisions.has(
-                        unknownRevisionKey(unknown),
-                      ),
-                  ).length,
-                  total: session.immutableEvidenceBundle().records.length,
+                  imported: imported.value.recordsAdded,
+                  unknowns_added: imported.value.unknownsAdded,
+                  total: imported.value.totalRecords,
                 }),
                 importContract,
               )
@@ -151,10 +136,6 @@ const registerImportEvidenceTool = ({
       ),
   );
 };
-
-const unknownRevisionKey = (
-  unknown: EvidenceBundle["unknowns"][number],
-): string => `${unknown.unknown_id}:${String(unknown.revision)}`;
 
 interface UnknownToolRegistration {
   readonly server: EvidenceMcpServer;

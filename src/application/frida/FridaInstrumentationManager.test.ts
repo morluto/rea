@@ -1203,6 +1203,9 @@ it("redacts remote credentials and maps a missing optional binding", async () =>
   if (!failed.ok) {
     expect(failed.error.message).not.toContain(secret);
     expect(failed.error.message).not.toContain("synthetic-url-token");
+    expect(JSON.stringify(projectAnalysisError(failed.error))).not.toContain(
+      "synthetic-url-token",
+    );
   }
 
   const missing = new FridaInstrumentationManager({
@@ -1214,6 +1217,80 @@ it("redacts remote credentials and maps a missing optional binding", async () =>
   expect(unavailable.ok).toBe(false);
   if (!unavailable.ok)
     expect(unavailable.error.message).toContain("Cannot find package 'frida'");
+});
+
+it("retains the selected device or credential-free remote address on discovery and startup failures", async () => {
+  const bindings = new FakeDeviceManager();
+  bindings.getDeviceById = async () => {
+    throw new Error("Device not found");
+  };
+  bindings.addRemoteDevice = async () => {
+    throw new Error("Unable to connect to remote frida-server");
+  };
+  const manager = new FridaInstrumentationManager({ deviceManager: bindings });
+  const device = await manager.listProcesses({ deviceId: "missing-device" });
+  expect(device.ok).toBe(false);
+  if (!device.ok) {
+    expect(projectAnalysisError(device.error)).toMatchObject({
+      code: "provider_timeout",
+      details: { diagnostics: { device_id: "missing-device" } },
+    });
+  }
+  const remote = { address: "127.0.0.1:27042", token: "secret-token" };
+  for (const result of [
+    await manager.listProcesses({ remote }),
+    await manager.listDevices(remote),
+    await manager.startSession({ mode: "attach", remote, pid: 512 }),
+  ]) {
+    expect(result.ok).toBe(false);
+    if (result.ok) continue;
+    const projected = projectAnalysisError(result.error);
+    expect(projected).toMatchObject({
+      code: "capability_unavailable",
+      details: { diagnostics: { remote_address: remote.address } },
+    });
+    expect(JSON.stringify(projected)).not.toContain(remote.token);
+    expect(projected.remediation.action).toContain("selected Frida server");
+  }
+});
+
+it("redacts credentials from inherited typed failure diagnostics", async () => {
+  const bindings = new FakeDeviceManager();
+  bindings.addRemoteDevice = async () => {
+    throw new AnalysisTimeoutError("frida_device_lookup", 1000, {
+      diagnostics: { detail: "token=synthetic-secret-token" },
+    });
+  };
+  const manager = new FridaInstrumentationManager({ deviceManager: bindings });
+  const result = await manager.listProcesses({
+    remote: { address: "127.0.0.1:27042", token: "synthetic-secret-token" },
+  });
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  const projected = projectAnalysisError(result.error);
+  expect(projected).toMatchObject({
+    code: "provider_timeout",
+    details: { diagnostics: { remote_address: "127.0.0.1:27042" } },
+  });
+  expect(JSON.stringify(projected)).not.toContain("synthetic-secret-token");
+});
+
+it("does not describe a connected device's enumeration failure as a connection failure", async () => {
+  const bindings = new FakeDeviceManager();
+  bindings.device.enumerateProcesses = async () => {
+    throw new Error("process enumeration denied");
+  };
+  const manager = new FridaInstrumentationManager({ deviceManager: bindings });
+  const result = await manager.listProcesses({
+    remote: { address: "127.0.0.1:27042" },
+  });
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  const projected = projectAnalysisError(result.error);
+  expect(projected.details?.diagnostics).toMatchObject({
+    remote_address: "127.0.0.1:27042",
+  });
+  expect(projected.remediation.action).not.toContain("selected Frida server");
 });
 
 it("clears current binding failure after recovery", async () => {

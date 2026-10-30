@@ -2,11 +2,15 @@ import { launchRegexMatchingLimitation } from "../process/RegexMatcher.js";
 import { AnalysisSettings } from "../application/AnalysisSettings.js";
 import { runtimeAnalysisConfig } from "../config/runtimeAnalysisSettings.js";
 import { describe, expect, it, vi } from "vitest";
-import { rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
 import { parseConfig } from "../config/parseConfig.js";
+import {
+  BINARY_ARCHITECTURES,
+  type BinaryTarget,
+} from "../domain/binaryTargetTypes.js";
 import {
   RecordingIdaMcp,
   createIdaTarget,
@@ -86,6 +90,60 @@ it("keeps a selected valid registration distinct from a live IDA connection", as
   }
 });
 
+it.each(["missing", "file", "directory", "omitted"] as const)(
+  "reports headless workspace readiness without launching IDA: %s",
+  async (kind) => {
+    const root = await createTestTempDirectory("rea-ida-discovery-workspace-");
+    const workspace = join(root, "workspace");
+    if (kind === "file") await writeFile(workspace, "caller data");
+    if (kind === "directory") await mkdir(workspace);
+    const registration = join(root, "registration.json");
+    await writeFile(
+      registration,
+      JSON.stringify({
+        mode: "headless",
+        command: "must-not-launch",
+        ...(kind === "omitted" ? {} : { workspaceRoot: workspace }),
+      }),
+    );
+    const config = parseConfig({ REA_IDA_MCP_CONFIG: registration });
+    if (!config.ok) throw config.error;
+    const connect = vi.fn(() => {
+      throw new Error("Readiness must not connect to IDA");
+    });
+    const provider = new IdaProvider(config.value, {}, connect);
+    const before = await readdir(root);
+    try {
+      const snapshot = await provider.inspectReadinessSnapshot();
+      if (kind === "missing" || kind === "file") {
+        expect(snapshot.availability).toMatchObject({
+          status: "unavailable",
+          code: "open_options_invalid",
+          reason: expect.stringContaining(workspace),
+          diagnostics: {
+            workspace_root: workspace,
+            live_connection_probed: false,
+            configuration_remediation: expect.stringContaining("workspaceRoot"),
+          },
+        });
+        expect(snapshot.capabilities.every(({ available }) => !available)).toBe(
+          true,
+        );
+        expect(
+          snapshot.capabilities.find(
+            ({ operation }) => operation === "procedure_callers",
+          )?.reason,
+        ).toContain("direct call edges");
+      } else expect(snapshot.availability.status).toBe("available");
+      expect(await readdir(root)).toEqual(before);
+      expect(connect).not.toHaveBeenCalled();
+    } finally {
+      const closed = await provider.closeOwnedResources();
+      if (!closed.ok) throw closed.error;
+    }
+  },
+);
+
 describe("IDA provider target support", () => {
   it("declines caller-selected gamecube-dol targets", () => {
     const config = parseConfig({});
@@ -154,8 +212,35 @@ describe("IDA provider target support", () => {
     ).toMatchObject({
       status: "unsupported",
       code: "architecture_unsupported",
-      reason: expect.stringContaining("Hexagon"),
+      reason: expect.stringMatching(/hexagon.*Ghidra/su),
     });
+  });
+  it("admits only the families IDA admits today, so new families stay refused", () => {
+    const config = parseConfig({});
+    if (!config.ok) throw new Error("expected valid configuration");
+    const provider = new IdaProvider(config.value, {});
+    const admitted: readonly string[] = ["x86", "x86_64", "arm", "arm64"];
+    for (const architecture of BINARY_ARCHITECTURES) {
+      // Admission reads only kind, format and family, so one ELF shape
+      // covers every recognized family, including any added later.
+      const support = provider.inspectTargetSupport({
+        path: "/tmp/fixture.elf",
+        sha256: "a".repeat(64),
+        kind: "executable",
+        format: "elf",
+        architecture,
+        availableArchitectures: [architecture],
+      } as BinaryTarget);
+      expect(support, architecture).toMatchObject(
+        admitted.includes(architecture)
+          ? { status: "supported" }
+          : {
+              status: "unsupported",
+              code: "architecture_unsupported",
+              reason: expect.stringContaining(architecture),
+            },
+      );
+    }
   });
   it("declines thin arm64_32 Mach-O targets without a verified lane", () => {
     const config = parseConfig({});

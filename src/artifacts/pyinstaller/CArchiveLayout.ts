@@ -72,7 +72,7 @@ export interface CArchiveEntry {
   readonly offset: number;
   readonly compressedSize: number;
   readonly uncompressedSize: number;
-  readonly compressionFlag: number;
+  readonly compressionFlag: 0 | 1;
 }
 
 /** Role-defined declarations never own local payload bytes. */

@@ -20,6 +20,7 @@ import type { ElectronObservationPort } from "../../../src/application/javascrip
 import { analyzeJavaScriptApplication } from "../../support/javascriptApplicationScope.js";
 import { CdpElectronProvider } from "../../../src/browser/CdpElectronProvider.js";
 import { createServer } from "../../../src/server/createServer.js";
+import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../../scripts/lib/mcp-verification-environment.mjs";
 import { observed } from "../../fixtures/analysisExecution.js";
 import {
   startFakeCdpBrowser,
@@ -313,6 +314,7 @@ it("exposes endpoint-scoped Electron discovery and inspection as Evidence", asyn
     { kind: "session", session },
     {
       electronObservation: new CdpElectronProvider(),
+      environment: { ...process.env, ...INLINE_EVIDENCE_MCP_ENVIRONMENT },
       availabilityPolicy: () => ({
         processCaptureEnabled: false,
         investigationInputRoots: 1,
@@ -660,7 +662,11 @@ it("exposes the target-free static JavaScript application workflow", async () =>
         summary: z.object({
           browser_windows: z.number(),
           context_bridge_apis: z.number(),
-          ipc: z.object({ paired_renderer_transmissions: z.number() }),
+          ipc: z.object({
+            paired_renderer_transmissions: z.number(),
+            ambiguous_renderer_transmissions: z.number(),
+            unpaired_literal_renderer_transmissions: z.number(),
+          }),
         }),
         graph: z.object({
           graph_id: z.string(),
@@ -682,7 +688,11 @@ it("exposes the target-free static JavaScript application workflow", async () =>
     summary: {
       browser_windows: 3,
       context_bridge_apis: 2,
-      ipc: { paired_renderer_transmissions: 4 },
+      ipc: {
+        paired_renderer_transmissions: 0,
+        ambiguous_renderer_transmissions: 7,
+        unpaired_literal_renderer_transmissions: 0,
+      },
     },
   });
   expect(projected.normalized_result.graph.nodes.length).toBeGreaterThan(0);

@@ -11,6 +11,7 @@ on:
       - tests/conformance/android/**
       - tests/fixtures/android/static-initializers/**
       - tests/fixtures/android/direct-invokes/**
+      - tests/fixtures/android/external-invokes/**
       - .nvmrc
   workflow_dispatch:
   workflow_call:
@@ -44,7 +45,8 @@ jobs:
           "$JAVA_HOME/bin/javac" -J-Xmx512m -J-XX:ActiveProcessorCount=2 \
             -classpath "$jar" -d "$classes" \
             bridge/android/ReaJadxBridge.java \
-            tests/conformance/android/ReaJadxMetadataRegression.java
+            tests/conformance/android/ReaJadxMetadataRegression.java \
+            tests/conformance/android/ReaJadxExternalReferencesRegression.java
           "$JAVA_HOME/bin/java" -Xmx512m -XX:ActiveProcessorCount=2 \
             -classpath "$classes:$jar" ReaJadxMetadataRegression \
             "$android_root/ApiDemos-debug.apk" \
@@ -53,3 +55,9 @@ jobs:
             | tee "$android_root/metadata.log"
           grep -F 'RAW_CLASS_SELECTOR_REGRESSION_PASS nested=true metadata=true references=true' \
             "$android_root/metadata.log"
+          "$JAVA_HOME/bin/java" -Xmx512m -XX:ActiveProcessorCount=2 \
+            -classpath "$classes:$jar" ReaJadxExternalReferencesRegression \
+            "$GITHUB_WORKSPACE/tests/fixtures/android/external-invokes" "$classes" \
+            | tee "$android_root/external-references.log"
+          grep -F 'EXTERNAL_REFERENCE_REGRESSION_PASS prototypes=2 using_nodes=3 sites=4' \
+            "$android_root/external-references.log"

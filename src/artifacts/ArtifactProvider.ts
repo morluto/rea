@@ -20,6 +20,7 @@ import {
 } from "./apple/KeyedArchiveReader.js";
 import { traceDylibResolution } from "./apple/DylibResolutionReader.js";
 import { dirname } from "node:path";
+import { withArtifactTargetIdentity } from "./withArtifactTargetIdentity.js";
 import { inventoryArtifact } from "./inventory/ArtifactInventory.js";
 import { extractArtifact } from "./extraction/ArtifactExtraction.js";
 import { analyzeInterfaceBuilderBundle } from "./apple/InterfaceBuilderAnalysis.js";
@@ -242,13 +243,21 @@ class ArtifactClient implements AnalysisClient {
       }
       if (operation === "decode_interface_builder") {
         const limits = interfaceBuilderLimitsSchema.parse(parameters);
-        const result = await analyzeInterfaceBuilderBundle({
-          bundlePath: this.target.sourcePath ?? this.target.path,
-          targetSha256: this.target.sha256,
-          limits,
-          resources: this.#resourceScope,
-          ...(options?.signal === undefined ? {} : { signal: options.signal }),
-        });
+        const result = await withArtifactTargetIdentity(
+          this.target,
+          this.#resourceScope,
+          () =>
+            analyzeInterfaceBuilderBundle({
+              bundlePath: this.target.sourcePath ?? this.target.path,
+              targetSha256: this.target.sha256,
+              limits,
+              resources: this.#resourceScope,
+              ...(options?.signal === undefined
+                ? {}
+                : { signal: options.signal }),
+            }),
+          options?.signal,
+        );
         return ok(
           createAnalysisExecution(result, ARTIFACT_GRAPH_PROVIDER, {
             limitations: result.limitations,
@@ -275,16 +284,22 @@ class ArtifactClient implements AnalysisClient {
                 ? {}
                 : { signal: options.signal }),
             })
-          : await inspectBundleKeyedArchive({
-              bundlePath: this.target.sourcePath ?? this.target.path,
-              targetSha256: this.target.sha256,
-              parameters,
-              platform: this.platform,
-              resources: this.#resourceScope,
-              ...(options?.signal === undefined
-                ? {}
-                : { signal: options.signal }),
-            });
+          : await withArtifactTargetIdentity(
+              this.target,
+              this.#resourceScope,
+              () =>
+                inspectBundleKeyedArchive({
+                  bundlePath: this.target.sourcePath ?? this.target.path,
+                  targetSha256: this.target.sha256,
+                  parameters,
+                  platform: this.platform,
+                  resources: this.#resourceScope,
+                  ...(options?.signal === undefined
+                    ? {}
+                    : { signal: options.signal }),
+                }),
+              options?.signal,
+            );
         return ok(
           createAnalysisExecution(result, ARTIFACT_GRAPH_PROVIDER, {
             limitations: result.limitations,
@@ -401,14 +416,20 @@ class ArtifactClient implements AnalysisClient {
     options?: ExecutionOptions,
   ) {
     const bundlePath = this.target.sourcePath ?? this.target.path;
-    const result = await analyzeAppleAssetCatalogs({
-      environment: this.environment,
-      bundlePath,
-      resources: this.#resourceScope,
-      targetSha256: this.target.sha256,
-      page: parameters,
-      ...(options?.signal === undefined ? {} : { signal: options.signal }),
-    });
+    const result = await withArtifactTargetIdentity(
+      this.target,
+      this.#resourceScope,
+      () =>
+        analyzeAppleAssetCatalogs({
+          environment: this.environment,
+          bundlePath,
+          resources: this.#resourceScope,
+          targetSha256: this.target.sha256,
+          page: parameters,
+          ...(options?.signal === undefined ? {} : { signal: options.signal }),
+        }),
+      options?.signal,
+    );
     return ok(
       createAnalysisExecution(result, ARTIFACT_GRAPH_PROVIDER, {
         limitations: result.limitations,
