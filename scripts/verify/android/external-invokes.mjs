@@ -64,18 +64,17 @@ const check = (value, digest, index, dexEntry) => {
   return evidence;
 };
 
-const cli = async (options, path, index) => {
+const cli = async (options, path, index, selector = input(path, index)) => {
   const result = await options.execute(
     process.execPath,
     [
       options.entrypoint,
       "trace-android-references",
       path,
-      className,
+      selector.class_name,
       "--method-name",
-      "notify",
-      "--overload-index",
-      String(index),
+      selector.method_name,
+      ...(index === undefined ? [] : ["--overload-index", String(index)]),
       "--json",
     ],
     {
@@ -151,6 +150,9 @@ const verifyApk = async (options, path, dexEntry) => {
     ]) {
       const error = requireMcpToolError(await call(operation, args));
       assert.equal(error.category, "invalid_input");
+      if (args === ambiguous)
+        for (const descriptor of prototype)
+          assert.ok(error.details.issues[0].message.includes(descriptor));
     }
     const replay = check(
       requireMcpOutput(await call(operation, input(path, 0)), operation),
@@ -170,21 +172,26 @@ const verifyApk = async (options, path, dexEntry) => {
   );
 };
 
-const verifyLimit = async (options, path) => {
+const verifyLimit = async (
+  options,
+  path,
+  stage = "caller_inventory",
+  selector,
+) => {
   const digest = await hashAndroidFile(path);
   try {
-    await cli(options, path, 0);
-    assert.fail("Oversized external caller inventory was accepted");
+    await cli(options, path, 0, selector);
+    assert.fail("Oversized external reference inventory was accepted");
   } catch (cause) {
     assert.equal(cause.code, 1);
     const failure = JSON.parse(cause.stdout);
     assert.equal(failure.category, "resource_constraint");
-    assert.equal(failure.details.reported_limits.stage, "caller_inventory");
+    assert.equal(failure.details.reported_limits.stage, stage);
     assert.equal(failure.retryable, false);
   }
   assert.equal(await hashAndroidFile(path), digest);
   console.log(
-    "PASS real external caller representation refusal retains typed resource constraint and immutable APK",
+    `PASS real external ${stage} representation refusal retains typed resource constraint and immutable APK`,
   );
 };
 
@@ -248,6 +255,21 @@ const verifySiteBudget = async (options, path, control) => {
         await call({ ...input(path, 0), class_name: "fixture.Absent" }),
       ).category,
       "invalid_input",
+    );
+    const prototypeLimit = requireMcpToolError(
+      await call({
+        ...input(
+          resolve(options.classes, "external-oversized-prototype.apk"),
+          0,
+        ),
+        class_name: "external.Library",
+        method_name: "wide",
+      }),
+    );
+    assert.equal(prototypeLimit.category, "resource_constraint");
+    assert.equal(
+      prototypeLimit.details.reported_limits.stage,
+      "method_inventory",
     );
     check(
       requireMcpOutput(await call(input(control, 0)), operation),
@@ -318,6 +340,10 @@ export const verifyAndroidExternalReferences = async (options) => {
     /EXTERNAL_REFERENCE_REGRESSION_PASS prototypes=2 using_nodes=3 sites=4 overloaded_callers=true nested=true multidex=true no_source=true post_codegen=true/u,
   );
   assert.match(result.stdout, /EXTERNAL_SITE_BUDGET_PASS callers=11/u);
+  assert.match(
+    result.stdout,
+    /EXTERNAL_PROTOTYPE_LIMIT_PASS single_prototype=true/u,
+  );
   await verifyApk(
     options,
     resolve(classes, "external-invokes.apk"),
@@ -329,6 +355,15 @@ export const verifyAndroidExternalReferences = async (options) => {
     "classes2.dex",
   );
   await verifyLimit(options, resolve(classes, "external-invokes-large.apk"));
+  await verifyLimit(
+    options,
+    resolve(classes, "external-oversized-prototype.apk"),
+    "method_inventory",
+    {
+      class_name: "external.Library",
+      method_name: "wide",
+    },
+  );
   await verifySiteBudget(
     options,
     resolve(classes, "external-invokes-site-heavy.apk"),

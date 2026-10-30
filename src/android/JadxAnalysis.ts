@@ -374,6 +374,12 @@ const matchingMethods = (
   return candidates;
 };
 
+const overloadChoices = (
+  candidates: ReturnType<typeof matchingMethods>,
+  external = false,
+): string =>
+  `Select one of ${candidates.length} overloads: ${candidates.map((method) => `${method.overload_index}: ${method.reported_signature}${external ? ` [${method.dex_descriptor}]` : ""}`).join("; ")}`;
+
 const inspectMethod = async (
   tools: JadxToolPort,
   request: Extract<AndroidRequest, { operation: "inspect_android_method" }>,
@@ -382,11 +388,7 @@ const inspectMethod = async (
 ): Promise<JsonValue> => {
   const candidates = matchingMethods(summary, request);
   if (candidates.length > 1 && request.input.overload_index === undefined)
-    inputFailure(
-      request,
-      "overload_index",
-      `Select one of ${candidates.length} overloads: ${candidates.map((method) => `${method.overload_index}: ${method.reported_signature}`).join("; ")}`,
-    );
+    inputFailure(request, "overload_index", overloadChoices(candidates));
   const index = request.input.overload_index ?? 0;
   const selected =
     candidates[index] ??
@@ -532,7 +534,7 @@ const traceReferences = async (
     inputFailure(
       request,
       "overload_index",
-      `Select one of ${candidates.length} overloads: ${candidates.map((method) => `${method.overload_index}: ${method.reported_signature}`).join("; ")}`,
+      overloadChoices(candidates, external),
     );
   const index = request.input.overload_index ?? 0;
   const selected = methodName === undefined ? undefined : candidates[index];

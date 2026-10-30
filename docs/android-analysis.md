@@ -276,6 +276,10 @@ it returns a typed `resource_constraint`, rather than a truncated caller list
 reported as complete. Direct instruction offsets have their separate explicit
 `direct_invokes_exhaustive` coverage. Older retained Evidence may omit the new
 definition, scope and caller-selector fields; omission does not establish them.
+The bridge checks prototype expansion before copying descriptors or joining
+displayed signatures. It reuses one bounded prototype inventory for the exact
+class/method selection in the current APK session; replacing the session or
+selection invalidates that retained result.
 
 `inspect_android_class` also reports `dex_static_value` for each `static final`
 field whose class definition encodes a value in its DEX static values, so

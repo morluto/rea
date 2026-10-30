@@ -95,6 +95,46 @@ const analyze = (
 };
 
 describe("external DEX method-reference projection", () => {
+  it("lists exact observed DEX descriptors when an external overload is ambiguous", async () => {
+    const descriptors = [
+      "(ILandroid/app/Notification;)V",
+      "(Ljava/lang/String;ILandroid/app/Notification;)V",
+    ];
+    const ambiguous = {
+      ...summary,
+      observed_method_count: 2,
+      prototypes: descriptors.map((dex_descriptor) => ({
+        ...summary.prototypes[0]!,
+        dex_descriptor,
+      })),
+    };
+    const failure = analyze(ambiguous);
+    await expect(failure).rejects.toMatchObject({
+      _tag: "AnalysisInputError",
+      issues: [
+        {
+          path: ["overload_index"],
+          reason: "invalid_value",
+        },
+      ],
+    });
+    for (const descriptor of descriptors)
+      await expect(failure).rejects.toMatchObject({
+        issues: [{ message: expect.stringContaining(descriptor) }],
+      });
+    for (const index of descriptors.keys())
+      await expect(failure).rejects.toMatchObject({
+        issues: [
+          { message: expect.stringMatching(new RegExp(`\\b${index}\\b`, "u")) },
+        ],
+      });
+    await expect(failure).rejects.toMatchObject({
+      issues: [
+        { message: expect.stringContaining(summary.prototypes[0]!.signature) },
+      ],
+    });
+  });
+
   it("retains an external target, direct-only scope and an inspectable caller", async () => {
     const result = androidResultSchemas.trace_android_references.parse(
       await analyze(),

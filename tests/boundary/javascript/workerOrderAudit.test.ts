@@ -62,6 +62,31 @@ it("preserves buffered startup bytes until the runtime owns stdout", async () =>
   }
 });
 
+it("observes a fragmented resource frame after stdout ownership", async () => {
+  const stdout = new PassThrough();
+  const frame = {
+    kind: "failure",
+    id: "00000000-0000-4000-8000-000000000000",
+    reason: "resource",
+    resource: "memory",
+    limits: null,
+    message: "resource failure before abort",
+  } as const;
+  const encoded = JSON.stringify(frame) + "\n";
+  const split = encoded.indexOf("before abort") + 3;
+  const observed: JavaScriptWorkerMessage[] = [];
+  observeWorkerFrames(stdout, (message) => observed.push(message));
+  try {
+    stdout.on("data", () => undefined);
+    stdout.write(encoded.slice(0, split));
+    stdout.end(encoded.slice(split));
+    await once(stdout, "end");
+    expect(observed).toEqual([frame]);
+  } finally {
+    stdout.destroy();
+  }
+});
+
 const sourceText = "export const observed = 1;";
 const file: JavaScriptArtifactFile = {
   path: "app.mjs",
@@ -277,6 +302,7 @@ it("keeps coalesced static and resource frames in FIFO order and reuses the work
 
 it("retains coalesced static evidence when abort follows a resource frame", async () => {
   const controller = new AbortController();
+  const aborted = once(controller.signal, "abort");
   const encodedStatic = JSON.stringify(staticCheckpointFacts);
   const worker = new JavaScriptAnalysisWorker(
     { heapMb: 128, timeoutMs: 30_000 },
@@ -288,8 +314,11 @@ it("retains coalesced static evidence when abort follows a resource frame", asyn
           `${ready} const fs=require("node:fs"); const {createHash}=require("node:crypto"); const staticFacts=JSON.parse(${JSON.stringify(encodedStatic)}); require("node:readline").createInterface({input:process.stdin}).on("line", line => { const request=JSON.parse(line); if(!request.file)return; const text=JSON.stringify(staticFacts); fs.writeFileSync(request.id+".static.json",text); const frames=[{kind:"static",id:request.id,bytes:Buffer.byteLength(text),sha256:createHash("sha256").update(text).digest("hex")},{kind:"failure",id:request.id,reason:"resource",resource:"memory",limits:null,message:"resource failure before abort"}]; process.stdout.write(frames.map(frame=>JSON.stringify(frame)).join("\\n")+"\\n"); });`,
         ],
       });
-      launched.process.stdout?.on("data", (chunk: Buffer | string) => {
-        if (String(chunk).includes("resource failure before abort"))
+      observeWorkerFrames(launched.process.stdout, (frame) => {
+        if (
+          frame.kind === "failure" &&
+          frame.message === "resource failure before abort"
+        )
           setTimeout(() => controller.abort(null), 5);
       });
       return launched;
@@ -301,6 +330,8 @@ it("retains coalesced static evidence when abort follows a resource frame", asyn
       { nodes: 100, unknowns: 100 },
       controller.signal,
     );
+    // Completion can precede the fixture's queued abort; observe the event before checking it.
+    await aborted;
     expect(controller.signal.aborted).toBe(true);
     expect(result.ok).toBe(false);
     if (!result.ok) {

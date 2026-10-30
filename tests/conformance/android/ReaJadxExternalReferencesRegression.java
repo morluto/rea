@@ -110,6 +110,11 @@ public class ReaJadxExternalReferencesRegression {
     require(summary.get("observed_method_count").getAsInt() == 2, "Lost observed prototypes");
     require(!summary.has("fields") && !summary.has("field_count"), "External class definition was invented");
     JsonArray prototypes = summary.getAsJsonArray("prototypes");
+    Method inventory = bridge.getClass().getDeclaredMethod("externalMethods", JsonObject.class);
+    inventory.setAccessible(true);
+    Object retained = inventory.invoke(bridge, external(null));
+    require(retained == inventory.invoke(bridge, external(null)),
+        "External summary and references rebuilt the same validated prototype inventory");
     require(prototypes.get(0).getAsJsonObject().get("dex_descriptor").getAsString().equals(INT_PROTO)
         && prototypes.get(1).getAsJsonObject().get("dex_descriptor").getAsString().equals(STRING_PROTO),
         "Observed overload identities or order changed");
@@ -152,6 +157,15 @@ public class ReaJadxExternalReferencesRegression {
         "Other prototype references mixed with int overload");
     JsonObject control = call(handle, bridge, "get_xrefs_to_method", args("fixture.Target", "mark", 0));
     require(control.get("count").getAsInt() == 1, "Defined target reference behavior changed");
+    Object priorSessionInventory = inventory.invoke(bridge, external(null));
+    BuildersKt.runBlocking(EmptyCoroutineContext.INSTANCE,
+        (scope, continuation) -> holder.unload(continuation));
+    BuildersKt.runBlocking(EmptyCoroutineContext.INSTANCE,
+        (scope, continuation) -> holder.load(apk.toString(), config, continuation));
+    require(priorSessionInventory != inventory.invoke(bridge, external(null)),
+        "Replaced session reused a prior APK prototype inventory");
+    require(references.equals(call(handle, bridge, "get_xrefs_to_method", external(0))),
+        "Session replacement changed exact caller facts");
   }
 
   private static Path largeFixture(Path output) throws Exception {
@@ -187,6 +201,40 @@ public class ReaJadxExternalReferencesRegression {
     return apk(output, "external-invokes-site-heavy.apk", List.of(dex));
   }
 
+  private static Path oversizedPrototypeFixture(Path output) throws Exception {
+    Path source = output.resolve("OversizedPrototype.smali");
+    String parameter = "Lexternal/" + "a".repeat(12000) + ";";
+    Files.writeString(source, ".class public Lfixture/OversizedPrototype;\n.super Ljava/lang/Object;\n"
+        + ".method public static call()V\n.registers 240\n"
+        + "invoke-static/range {v0 .. v239}, Lexternal/Library;->wide(" + parameter.repeat(240) + ")V\n"
+        + "return-void\n.end method\n", StandardCharsets.UTF_8);
+    Path dex = output.resolve("external-oversized-prototype.dex");
+    assemble(dex, List.of(source));
+    return apk(output, "external-oversized-prototype.apk", List.of(dex));
+  }
+
+  private static void verifyPrototypeLimit(SessionHolder holder, SessionConfig config,
+      Constructor<?> constructor, Method handle, Path apk) throws Exception {
+    BuildersKt.runBlocking(EmptyCoroutineContext.INSTANCE,
+        (scope, continuation) -> holder.unload(continuation));
+    BuildersKt.runBlocking(EmptyCoroutineContext.INSTANCE,
+        (scope, continuation) -> holder.load(apk.toString(), config, continuation));
+    Object bridge = constructor.newInstance(holder);
+    JsonObject selection = args("external.Library", "wide", null);
+    selection.addProperty("reference_target", true);
+    try {
+      call(handle, bridge, "get_class_summary", selection);
+      throw new AssertionError("Oversized external prototype was accepted");
+    } catch (InvocationTargetException expected) {
+      Throwable cause = expected.getCause();
+      require(cause.getClass().getSimpleName().equals("ReferenceLimit"), "Not a typed prototype limit: " + cause);
+      Field stage = cause.getClass().getDeclaredField("stage");
+      stage.setAccessible(true);
+      require("method_inventory".equals(stage.get(cause)), "Wrong prototype limit stage");
+    }
+    System.out.println("EXTERNAL_PROTOTYPE_LIMIT_PASS single_prototype=true typed_method_inventory=true");
+  }
+
   private static void verifySiteBudget(SessionHolder holder, SessionConfig config,
       Constructor<?> constructor, Method handle, Path apk) throws Exception {
     BuildersKt.runBlocking(EmptyCoroutineContext.INSTANCE,
@@ -215,6 +263,7 @@ public class ReaJadxExternalReferencesRegression {
     List<Path> fixtures = fixtures(Path.of(args[0]), output);
     largeFixture(output);
     Path siteHeavy = siteHeavyFixture(output);
+    Path oversizedPrototype = oversizedPrototypeFixture(output);
     SessionConfig config = new SessionConfig(1048576, 0, 90000L, 1, List.of(), List.of(), 64, ResourceMode.FULL);
     SessionHolder holder = new SessionHolder(config);
     Class<?> type = Class.forName("ReaJadxBridge");
@@ -226,6 +275,7 @@ public class ReaJadxExternalReferencesRegression {
       verify(holder, config, constructor, handle, fixtures.get(0), "classes.dex");
       verify(holder, config, constructor, handle, fixtures.get(1), "classes2.dex");
       verifySiteBudget(holder, config, constructor, handle, siteHeavy);
+      verifyPrototypeLimit(holder, config, constructor, handle, oversizedPrototype);
       System.out.println("EXTERNAL_REFERENCE_REGRESSION_PASS prototypes=2 using_nodes=3 sites=4 overloaded_callers=true nested=true multidex=true no_source=true post_codegen=true");
     } finally {
       BuildersKt.runBlocking(EmptyCoroutineContext.INSTANCE,
