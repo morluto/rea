@@ -16,6 +16,7 @@ import {
   pyzArchive,
   PYTHON_39_MAGIC,
 } from "./CArchive.fixture.js";
+import { parseCArchiveToc } from "./CArchiveLayout.js";
 import { readPyzArchive } from "./PyzArchive.js";
 import { marshalCode } from "../../python/PythonPyc.fixture.js";
 import { createEvidence } from "../../domain/evidence.js";
@@ -24,6 +25,61 @@ import {
   ArtifactReaderFailure,
   type ArtifactEntry,
 } from "../ArtifactReader.js";
+
+it("rejects a CArchive TOC name without its required NUL terminator", () => {
+  const toc = Buffer.alloc(32, 0x61);
+  toc.writeUInt32BE(toc.length, 0);
+  toc.writeUInt32BE(0, 4);
+  toc.writeUInt32BE(0, 8);
+  toc.writeUInt32BE(0, 12);
+  toc[16] = 0;
+  toc[17] = "x".charCodeAt(0);
+
+  const parsed = parseCArchiveToc(toc);
+
+  expect(parsed).toMatchObject({
+    ok: false,
+    error: {
+      reason: "format",
+      message: expect.stringContaining("table index 0 at TOC offset 0"),
+    },
+  });
+});
+
+it("accepts a CArchive TOC name with a NUL terminator and zero padding", () => {
+  const toc = Buffer.alloc(32);
+  toc.writeUInt32BE(toc.length, 0);
+  toc[17] = "x".charCodeAt(0);
+  toc.write("member", 18, "ascii");
+
+  expect(parseCArchiveToc(toc)).toMatchObject({
+    ok: true,
+    value: [{ name: "member", typeCode: "x", role: "other" }],
+  });
+});
+
+it("rejects a CArchive TOC name with non-NUL padding", () => {
+  const toc = Buffer.alloc(32);
+  toc.writeUInt32BE(toc.length, 0);
+  toc.writeUInt32BE(0, 4);
+  toc.writeUInt32BE(0, 8);
+  toc.writeUInt32BE(0, 12);
+  toc[16] = 0;
+  toc[17] = "x".charCodeAt(0);
+  toc.write("member", 18, "ascii");
+  toc[24] = 0;
+  toc[25] = 0x61;
+
+  const parsed = parseCArchiveToc(toc);
+
+  expect(parsed).toMatchObject({
+    ok: false,
+    error: {
+      reason: "format",
+      message: expect.stringContaining("table index 0 at TOC offset 0"),
+    },
+  });
+});
 
 it.each([0, 1, 2])(
   "identifies malformed CArchive compression at table index %i",

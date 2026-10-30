@@ -287,11 +287,10 @@ export class JadxSession {
             calls: this.#observedCalls.map(({ complete }) => complete),
           },
           subject: target,
-          limitations: [
-            ...(request.operation === "inspect_android_jni_bindings"
+          limitations:
+            request.operation === "inspect_android_jni_bindings"
               ? []
-              : [...JADX_LIMITATIONS, ...androidMappingLimitations(mapping)]),
-          ],
+              : [...JADX_LIMITATIONS, ...androidMappingLimitations(mapping)],
           locations:
             request.operation === "inspect_android_package"
               ? [{ kind: "artifact-path", path: "AndroidManifest.xml" }]

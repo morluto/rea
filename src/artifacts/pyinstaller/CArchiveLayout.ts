@@ -314,7 +314,11 @@ const libraryName = (
 
 const tocName = (bytes: Buffer): Result<string, PyInstallerFailure> => {
   const end = bytes.indexOf(0);
-  const text = end < 0 ? bytes : bytes.subarray(0, end);
+  if (end < 0 || bytes.subarray(end).some((byte) => byte !== 0))
+    return err(
+      pyInstallerFailure("format", "CArchive entry name is not NUL-padded"),
+    );
+  const text = bytes.subarray(0, end);
   if (text.length === 0)
     return err(pyInstallerFailure("format", "CArchive entry name is empty"));
   try {
