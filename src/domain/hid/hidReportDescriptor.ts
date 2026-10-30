@@ -13,11 +13,21 @@ export interface HidItem {
   readonly byteLength: number;
 }
 
+export interface HidCollection {
+  readonly collectionType: number;
+  readonly usagePage: number;
+  readonly usagePageHex: string;
+  readonly usage: number | null;
+  readonly usageHex: string | null;
+}
+
 export interface HidReportField {
   readonly usagePage: number;
   readonly usagePageHex: string;
   readonly usage: number | null;
   readonly usageHex: string | null;
+  readonly usages: readonly number[];
+  readonly usagesHex: readonly string[];
   readonly usageMin: number | null;
   readonly usageMax: number | null;
   readonly reportSizeBits: number;
@@ -36,6 +46,7 @@ export interface HidEndpointReport {
 
 export interface ParsedHidDescriptor {
   readonly items: readonly HidItem[];
+  readonly collections: readonly HidCollection[];
   readonly reports: readonly HidEndpointReport[];
   readonly vendorUsagePages: readonly string[];
 }
@@ -139,13 +150,33 @@ function handleLocalItem(
 
 function handleMainItem(
   bTag: number,
+  data: number,
   global: HidGlobalState,
   local: HidLocalState,
   reportMap: Map<string, MutableEndpointReport>,
   reportsList: MutableEndpointReport[],
+  collectionsList: HidCollection[],
 ): void {
-  if (bTag === 0x0a || bTag === 0x0c) {
-    // Collection or End Collection: consumes active local usage
+  if (bTag === 0x0a) {
+    // Collection: captures active collection usage and clears local state
+    collectionsList.push({
+      collectionType: data,
+      usagePage: global.usagePage,
+      usagePageHex: `0x${global.usagePage.toString(16).toUpperCase()}`,
+      usage: local.usages[0] ?? null,
+      usageHex:
+        local.usages[0] !== undefined
+          ? `0x${local.usages[0].toString(16).toUpperCase()}`
+          : null,
+    });
+    local.usages = [];
+    local.usageMin = null;
+    local.usageMax = null;
+    return;
+  }
+
+  if (bTag === 0x0c) {
+    // End Collection: clears local state
     local.usages = [];
     local.usageMin = null;
     local.usageMax = null;
@@ -177,14 +208,16 @@ function handleMainItem(
   report.totalSizeBytes =
     Math.ceil(report.totalBits / 8) + (report.reportId !== null ? 1 : 0);
 
+  const usages = [...local.usages];
+  const usagesHex = usages.map((u) => `0x${u.toString(16).toUpperCase()}`);
+
   report.fields.push({
     usagePage: global.usagePage,
     usagePageHex: `0x${global.usagePage.toString(16).toUpperCase()}`,
-    usage: local.usages[0] ?? null,
-    usageHex:
-      local.usages[0] !== undefined
-        ? `0x${local.usages[0].toString(16).toUpperCase()}`
-        : null,
+    usage: usages[0] ?? null,
+    usageHex: usagesHex[0] ?? null,
+    usages,
+    usagesHex,
     usageMin: local.usageMin,
     usageMax: local.usageMax,
     reportSizeBits: global.reportSize,
@@ -218,6 +251,7 @@ export function parseHidReportDescriptor(
   const vendorUsagePages = new Set<string>();
   const reportMap = new Map<string, MutableEndpointReport>();
   const reportsList: MutableEndpointReport[] = [];
+  const collectionsList: HidCollection[] = [];
   const globalStack: HidGlobalState[] = [];
 
   const global: HidGlobalState = {
@@ -306,12 +340,21 @@ export function parseHidReportDescriptor(
     } else if (typeName === "local") {
       handleLocalItem(bTag, data, local);
     } else if (typeName === "main") {
-      handleMainItem(bTag, global, local, reportMap, reportsList);
+      handleMainItem(
+        bTag,
+        data,
+        global,
+        local,
+        reportMap,
+        reportsList,
+        collectionsList,
+      );
     }
   }
 
   return ok({
     items,
+    collections: collectionsList,
     reports: reportsList,
     vendorUsagePages: Array.from(vendorUsagePages).sort(),
   });

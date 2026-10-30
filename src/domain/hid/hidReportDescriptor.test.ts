@@ -40,6 +40,9 @@ describe("HID Report Descriptor - Parsing and Layout", () => {
 
     expect(result.value.items.length).toBeGreaterThan(5);
     expect(result.value.reports.length).toBe(1);
+    expect(result.value.collections.length).toBe(1);
+    expect(result.value.collections[0]?.usagePage).toBe(0x01);
+    expect(result.value.collections[0]?.usage).toBe(0x06);
 
     const report = result.value.reports[0];
     if (!report) throw new Error("Expected input report");
@@ -52,6 +55,7 @@ describe("HID Report Descriptor - Parsing and Layout", () => {
     expect(report.totalSizeBytes).toBe(2);
     // Issue 6: Collection usage does not leak into modifier field
     expect(report.fields[0]?.usage).toBeNull();
+    expect(report.fields[0]?.usages).toEqual([]);
     expect(report.fields[0]?.usageMin).toBe(0xe0);
     expect(report.fields[0]?.usageMax).toBe(0xe7);
   });
@@ -138,6 +142,39 @@ describe("HID Report Descriptor - Parsing and Layout", () => {
     expect(report.fields[1]?.reportCount).toBe(8);
     expect(report.fields[1]?.bitOffset).toBe(16);
     expect(report.fields[1]?.bitLength).toBe(8);
+  });
+});
+
+describe("HID Report Descriptor - Usage Lists and Collections", () => {
+  it("preserves explicit local usage lists across multi-count fields without loss", () => {
+    const buttonDescriptor = [
+      0x05,
+      0x09, // Usage Page (Button)
+      0x09,
+      0x01, // Usage (1)
+      0x09,
+      0x02, // Usage (2)
+      0x09,
+      0x03, // Usage (3)
+      0x75,
+      0x01, // Report Size (1 bit)
+      0x95,
+      0x03, // Report Count (3)
+      0x81,
+      0x02, // Input
+    ];
+
+    const result = parseHidReportDescriptor(buttonDescriptor);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.error.reason);
+
+    const report = result.value.reports[0];
+    if (!report) throw new Error("Expected report");
+    const field = report.fields[0];
+    if (!field) throw new Error("Expected field");
+    expect(field.usage).toBe(1);
+    expect(field.usages).toEqual([1, 2, 3]);
+    expect(field.usagesHex).toEqual(["0x1", "0x2", "0x3"]);
   });
 });
 
