@@ -37,7 +37,11 @@ export interface HidReportField {
   readonly usagesHex: readonly string[];
   readonly usageEntries: readonly HidFieldUsage[];
   readonly usageMin: number | null;
+  readonly usageMinPage: number | null;
   readonly usageMax: number | null;
+  readonly usageMaxPage: number | null;
+  readonly usageMinEntry: HidFieldUsage | null;
+  readonly usageMaxEntry: HidFieldUsage | null;
   readonly reportSizeBits: number;
   readonly reportCount: number;
   readonly bitOffset: number;
@@ -93,12 +97,31 @@ interface HidLocalUsage {
   raw: number;
 }
 
+interface HidLocalBound {
+  id: number;
+  page: number;
+  raw: number;
+}
+
 interface HidLocalState {
   usages: HidLocalUsage[];
-  usageMin: number | null;
-  usageMinPage: number | null;
-  usageMax: number | null;
-  usageMaxPage: number | null;
+  usageMin: HidLocalBound | null;
+  usageMax: HidLocalBound | null;
+}
+
+function toFieldUsage(page: number, id: number): HidFieldUsage {
+  return {
+    usagePage: page,
+    usagePageHex: `0x${page.toString(16).toUpperCase()}`,
+    usage: id,
+    usageHex: `0x${id.toString(16).toUpperCase()}`,
+  };
+}
+
+function resetLocalState(local: HidLocalState): void {
+  local.usages = [];
+  local.usageMin = null;
+  local.usageMax = null;
 }
 
 interface MutableEndpointReport {
@@ -172,12 +195,10 @@ function handleLocalItem(
       local.usages.push({ id, page, raw: data });
       break;
     case 0x01: // Usage Minimum
-      local.usageMin = id;
-      local.usageMinPage = page;
+      local.usageMin = { id, page, raw: data };
       break;
     case 0x02: // Usage Maximum
-      local.usageMax = id;
-      local.usageMaxPage = page;
+      local.usageMax = { id, page, raw: data };
       break;
   }
 }
@@ -205,21 +226,13 @@ function handleMainItem(
       usageHex:
         usageId !== null ? `0x${usageId.toString(16).toUpperCase()}` : null,
     });
-    local.usages = [];
-    local.usageMin = null;
-    local.usageMinPage = null;
-    local.usageMax = null;
-    local.usageMaxPage = null;
+    resetLocalState(local);
     return;
   }
 
   if (bTag === 0x0c) {
     // End Collection: clears local state
-    local.usages = [];
-    local.usageMin = null;
-    local.usageMinPage = null;
-    local.usageMax = null;
-    local.usageMaxPage = null;
+    resetLocalState(local);
     return;
   }
 
@@ -249,16 +262,20 @@ function handleMainItem(
     Math.ceil(report.totalBits / 8) + (report.reportId !== null ? 1 : 0);
 
   const primary = local.usages[0];
-  const fieldPage = primary?.page ?? local.usageMinPage ?? global.usagePage;
-  const usageEntries: HidFieldUsage[] = local.usages.map((u) => ({
-    usagePage: u.page,
-    usagePageHex: `0x${u.page.toString(16).toUpperCase()}`,
-    usage: u.id,
-    usageHex: `0x${u.id.toString(16).toUpperCase()}`,
-  }));
+  const fieldPage = primary?.page ?? local.usageMin?.page ?? global.usagePage;
+  const usageEntries: HidFieldUsage[] = local.usages.map((u) =>
+    toFieldUsage(u.page, u.id),
+  );
   const usages = local.usages.map((u) => u.raw);
   const usagesHex = usages.map((u) => `0x${u.toString(16).toUpperCase()}`);
   const usageId = primary?.id ?? null;
+
+  const usageMinEntry: HidFieldUsage | null = local.usageMin
+    ? toFieldUsage(local.usageMin.page, local.usageMin.id)
+    : null;
+  const usageMaxEntry: HidFieldUsage | null = local.usageMax
+    ? toFieldUsage(local.usageMax.page, local.usageMax.id)
+    : null;
 
   report.fields.push({
     usagePage: fieldPage,
@@ -269,19 +286,19 @@ function handleMainItem(
     usages,
     usagesHex,
     usageEntries,
-    usageMin: local.usageMin,
-    usageMax: local.usageMax,
+    usageMin: local.usageMin?.raw ?? null,
+    usageMinPage: local.usageMin?.page ?? null,
+    usageMax: local.usageMax?.raw ?? null,
+    usageMaxPage: local.usageMax?.page ?? null,
+    usageMinEntry,
+    usageMaxEntry,
     reportSizeBits: global.reportSize,
     reportCount: global.reportCount,
     bitOffset,
     bitLength,
   });
 
-  local.usages = [];
-  local.usageMin = null;
-  local.usageMinPage = null;
-  local.usageMax = null;
-  local.usageMaxPage = null;
+  resetLocalState(local);
 }
 
 /** Parse raw USB HID Report Descriptor bytes. */
@@ -317,9 +334,7 @@ export function parseHidReportDescriptor(
   const local: HidLocalState = {
     usages: [],
     usageMin: null,
-    usageMinPage: null,
     usageMax: null,
-    usageMaxPage: null,
   };
 
   let offset = 0;

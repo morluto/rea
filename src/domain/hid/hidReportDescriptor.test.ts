@@ -57,7 +57,13 @@ describe("HID Report Descriptor - Parsing and Layout", () => {
     expect(report.fields[0]?.usage).toBeNull();
     expect(report.fields[0]?.usages).toEqual([]);
     expect(report.fields[0]?.usageMin).toBe(0xe0);
+    expect(report.fields[0]?.usageMinPage).toBe(0x07);
+    expect(report.fields[0]?.usageMinEntry?.usagePage).toBe(0x07);
+    expect(report.fields[0]?.usageMinEntry?.usage).toBe(0xe0);
     expect(report.fields[0]?.usageMax).toBe(0xe7);
+    expect(report.fields[0]?.usageMaxPage).toBe(0x07);
+    expect(report.fields[0]?.usageMaxEntry?.usagePage).toBe(0x07);
+    expect(report.fields[0]?.usageMaxEntry?.usage).toBe(0xe7);
   });
 
   it("accumulates multiple field groups into a single endpoint report (Issue 5)", () => {
@@ -219,6 +225,69 @@ describe("HID Report Descriptor - Usage Lists and Collections", () => {
     expect(field.usageEntries[0]?.usage).toBe(0x30);
     expect(field.usageEntries[1]?.usagePage).toBe(0x0c);
     expect(field.usageEntries[1]?.usage).toBe(0xe9);
+  });
+
+  it("preserves saved pages and encoded values for extended usage minimum and maximum ranges", () => {
+    // Page 1 usage followed by Consumer range 0x000C00E9..0x000C00EA
+    const rangeDescriptor = [
+      0x05,
+      0x01, // Usage Page (Generic Desktop, 1)
+      0x09,
+      0x01, // Usage (Pointer, 1)
+      0x1b,
+      0xe9,
+      0x00,
+      0x0c,
+      0x00, // Usage Minimum (0x000C00E9: Consumer Vol Increment)
+      0x2b,
+      0xea,
+      0x00,
+      0x0c,
+      0x00, // Usage Maximum (0x000C00EA: Consumer Vol Decrement)
+      0x75,
+      0x01, // Report Size (1 bit)
+      0x95,
+      0x02, // Report Count (2)
+      0x81,
+      0x02, // Input
+    ];
+
+    const result = parseHidReportDescriptor(rangeDescriptor);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.error.reason);
+
+    const report = result.value.reports[0];
+    if (!report) throw new Error("Expected report");
+    const field = report.fields[0];
+    if (!field) throw new Error("Expected field");
+
+    expect(field.usagePage).toBe(0x01);
+    expect(field.usage).toBe(1);
+    expect(field.usageEntries).toEqual([
+      { usagePage: 0x01, usagePageHex: "0x1", usage: 1, usageHex: "0x1" },
+    ]);
+
+    // Retains encoded values
+    expect(field.usageMin).toBe(0x000c00e9);
+    expect(field.usageMax).toBe(0x000c00ea);
+
+    // Returns saved range pages
+    expect(field.usageMinPage).toBe(0x0c);
+    expect(field.usageMaxPage).toBe(0x0c);
+
+    // Exposes structured range bound entries
+    expect(field.usageMinEntry).toEqual({
+      usagePage: 0x0c,
+      usagePageHex: "0xC",
+      usage: 0xe9,
+      usageHex: "0xE9",
+    });
+    expect(field.usageMaxEntry).toEqual({
+      usagePage: 0x0c,
+      usagePageHex: "0xC",
+      usage: 0xea,
+      usageHex: "0xEA",
+    });
   });
 });
 
