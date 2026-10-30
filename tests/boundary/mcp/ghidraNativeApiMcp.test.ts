@@ -211,6 +211,32 @@ const prototypeConflicts = (): NativePrototypeConflict[] => [
       "The cleanup difference does not prove a fifth source parameter.",
     ],
   },
+  {
+    kind: "return-stack-cleanup",
+    inferred_signature: "undefined g(int, int, int, int)",
+    signature_source: "analysis",
+    inferred_parameter_count: 4,
+    instruction_address: "0x401c00",
+    instruction: "RET 0x0",
+    cleanup_bytes: 0,
+    inferred_stack_bytes: 16,
+    unresolved_assumptions: [
+      "A zero-byte cleanup does not establish the compiler's calling convention.",
+    ],
+  },
+  {
+    kind: "return-stack-cleanup",
+    inferred_signature: "undefined h(void)",
+    signature_source: "analysis",
+    inferred_parameter_count: 0,
+    instruction_address: "0x401d00",
+    instruction: "RET 0x8",
+    cleanup_bytes: 8,
+    inferred_stack_bytes: 0,
+    unresolved_assumptions: [
+      "A nonzero cleanup does not establish a source-level parameter.",
+    ],
+  },
 ];
 
 const connectPrototypeConflictHarness = async (name: string) => {

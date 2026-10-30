@@ -104,7 +104,7 @@ const prototypeConflictSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     ...prototypeConflictFacts,
     kind: z.literal("return-stack-cleanup"),
-    cleanup_bytes: z.int().positive(),
+    cleanup_bytes: z.int().nonnegative(),
     inferred_stack_bytes: z.int().nonnegative(),
   }),
 ]);
