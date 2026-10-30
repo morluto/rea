@@ -147,7 +147,8 @@ const fixture = async () => {
     target,
     downloads,
     setupOptions,
-    host: () => withPluginSetup(base, {}, true, launch),
+    host: (cursorPlugin = true) =>
+      withPluginSetup(base, {}, { preferPlugins: true, cursorPlugin }, launch),
     fail: () => {
       fail = true;
     },
@@ -345,4 +346,25 @@ it("rechecks Cursor direct registration after approval before downloading", asyn
   expect(f.downloads).toEqual([]);
   expect(f.base.configurations).toBe(0);
   await expect(access(f.local)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it("keeps ordinary Cursor setup direct without opting in to a plugin", async () => {
+  const f = await fixture();
+  f.missingNode();
+  const result = await runSetup(f.setupOptions, f.host(false));
+  expect(result.status).toBe("ready");
+  expect(f.downloads).toEqual([]);
+  expect(f.base.configurations).toBe(1);
+  expect(f.base.skillInstalls).toBe(1);
+  await expect(access(f.local)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it("recognizes a local Cursor plugin on ordinary reruns without another download or server", async () => {
+  const f = await fixture();
+  expect((await runSetup(f.setupOptions, f.host())).status).toBe("ready");
+  const result = await runSetup(f.setupOptions, f.host(false));
+  expect(result.status).toBe("ready");
+  expect(result.doctor.scope.plugin_clients).toEqual(["cursor"]);
+  expect(f.downloads).toHaveLength(1);
+  expect(f.base.configurations + f.base.skillInstalls).toBe(0);
 });

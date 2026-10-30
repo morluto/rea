@@ -104,7 +104,7 @@ const fixture = (clientId = "codex", platform: NodeJS.Platform = "win32") => {
     host: (
       preferPlugins = true,
       environment: Readonly<NodeJS.ProcessEnv> = {},
-    ) => withPluginSetup(base, environment, preferPlugins, launch),
+    ) => withPluginSetup(base, environment, { preferPlugins }, launch),
     nodeDisappearsOnInstall: () => {
       dropNodeOnInstall = true;
     },

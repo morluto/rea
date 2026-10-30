@@ -67,6 +67,12 @@ const registerSetupCommand = (
         .array(skillClientSchema)
         .default([])
         .describe("Existing client skill destination to update; repeatable"),
+      cursorPlugin: z
+        .boolean()
+        .default(false)
+        .describe(
+          "Opt in to downloading REA as a local Cursor plugin instead of direct setup",
+        ),
       toolFamilies: z
         .string()
         .optional()
@@ -209,6 +215,7 @@ interface SetupCommandOptions {
   readonly installHopper: boolean;
   readonly client: readonly string[];
   readonly skillClient: readonly string[];
+  readonly cursorPlugin: boolean;
   readonly toolFamilies?: string | undefined;
   readonly allDetected: boolean;
   readonly skill?: boolean | undefined;
@@ -242,9 +249,13 @@ const runSetupCommand = async (
     withPluginSetup(
       systemSetupHost(createSystemDoctorHost(environment), environment),
       environment,
-      options.skill !== false &&
-        options.skillClient.length === 0 &&
-        options.toolFamilies === undefined,
+      {
+        preferPlugins:
+          options.skill !== false &&
+          options.skillClient.length === 0 &&
+          options.toolFamilies === undefined,
+        cursorPlugin: options.cursorPlugin,
+      },
     ),
     interactive
       ? (actions, context) =>

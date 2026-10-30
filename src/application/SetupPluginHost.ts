@@ -12,6 +12,11 @@ import {
   type PluginInspection,
 } from "./SetupPluginClient.js";
 
+interface PluginSetupOptions {
+  readonly preferPlugins: boolean;
+  readonly cursorPlugin?: boolean;
+}
+
 type ClientRoute =
   | { readonly mode: "direct" }
   | { readonly mode: "blocked"; readonly remediation: string }
@@ -36,7 +41,7 @@ class PluginSetupHost {
   constructor(
     private readonly host: SetupHost,
     private readonly environment: Readonly<NodeJS.ProcessEnv>,
-    private readonly preferPlugins: boolean,
+    private readonly options: PluginSetupOptions,
     private readonly launch?: SetupPluginCommandLauncher,
   ) {}
   private directRegistrationMissing = async (id: string): Promise<boolean> => {
@@ -52,9 +57,20 @@ class PluginSetupHost {
       ) === true
     );
   };
+  private pluginRequested(
+    id: string,
+    state: PluginInspection | undefined,
+  ): boolean {
+    return (
+      id !== "cursor" ||
+      this.options.cursorPlugin === true ||
+      (state?.status === "available" && state.installed)
+    );
+  }
   private inspectRoute = async (id: string): Promise<ClientRoute> => {
     // Explicit direct setup must not launch a client that can migrate its settings.
-    if (!this.preferPlugins || this.providerSettings) return { mode: "direct" };
+    if (!this.options.preferPlugins || this.providerSettings)
+      return { mode: "direct" };
     const commands: Readonly<Record<string, "codex" | "claude" | "cursor">> = {
       codex: "codex",
       claude_code: "claude",
@@ -97,6 +113,7 @@ class PluginSetupHost {
     if (state?.status === "unsupported") return { mode: "direct" };
     if (state?.status === "invalid")
       return { mode: "blocked", remediation: state.remediation };
+    if (!this.pluginRequested(id, state)) return { mode: "direct" };
     const runtimeFailure = await manager.inspectRuntime();
     if (runtimeFailure !== undefined)
       return { mode: "blocked", remediation: runtimeFailure };
@@ -375,7 +392,7 @@ class PluginSetupHost {
 export const withPluginSetup = (
   host: SetupHost,
   environment: Readonly<NodeJS.ProcessEnv>,
-  preferPlugins: boolean,
+  options: PluginSetupOptions,
   launch?: SetupPluginCommandLauncher,
 ): SetupHost =>
-  new PluginSetupHost(host, environment, preferPlugins, launch).asHost();
+  new PluginSetupHost(host, environment, options, launch).asHost();

@@ -6,7 +6,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
 cliTest(
-  "public Cursor setup downloads one pinned local plugin after approval",
+  "public Cursor setup downloads a local plugin only after opt-in and approval",
   async ({ cli }) => {
     const home = await createTestTempDirectory("rea-cursor-local-cli-");
     const bin = join(home, "selected tools");
@@ -57,7 +57,14 @@ await writeFile(${JSON.stringify(downloads)}, JSON.stringify(count + 1));
     }
     const run = (mode: string) =>
       cli.run({
-        arguments: ["setup", "--client", "cursor", "--json", mode],
+        arguments: [
+          "setup",
+          "--client",
+          "cursor",
+          "--cursor-plugin",
+          "--json",
+          mode,
+        ],
         cwd: home,
         environment: {
           HOME: home,
@@ -68,6 +75,15 @@ await writeFile(${JSON.stringify(downloads)}, JSON.stringify(count + 1));
             : {}),
         },
       });
+    const ordinary = await cli.run({
+      arguments: ["setup", "--client", "cursor", "--json", "--dry-run"],
+      cwd: home,
+      environment: { HOME: home, USERPROFILE: home },
+    });
+    expect(ordinary.exitCode, ordinary.stdout + ordinary.stderr).toBe(0);
+    expect(JSON.stringify(ordinary.json)).not.toContain(
+      "REA local plugin for Cursor",
+    );
     const preview = await run("--dry-run");
     expect(preview.exitCode, preview.stdout + preview.stderr).toBe(0);
     expect(preview.json).toMatchObject({
@@ -93,6 +109,20 @@ await writeFile(${JSON.stringify(downloads)}, JSON.stringify(count + 1));
     const rerun = await run("--yes");
     expect(rerun.exitCode, rerun.stdout + rerun.stderr).toBe(0);
     expect(rerun.json).toMatchObject({
+      status: "ready",
+      plannedActions: [],
+      appliedActions: [],
+    });
+    const ordinaryRerun = await cli.run({
+      arguments: ["setup", "--client", "cursor", "--json", "--yes"],
+      cwd: home,
+      environment: { HOME: home, USERPROFILE: home },
+    });
+    expect(
+      ordinaryRerun.exitCode,
+      ordinaryRerun.stdout + ordinaryRerun.stderr,
+    ).toBe(0);
+    expect(ordinaryRerun.json).toMatchObject({
       status: "ready",
       plannedActions: [],
       appliedActions: [],

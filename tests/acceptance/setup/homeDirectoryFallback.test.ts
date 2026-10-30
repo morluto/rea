@@ -86,8 +86,16 @@ cliTest.skipIf(process.platform === "win32")(
         environment,
       });
 
-    const setup = await run(["setup", "--client", "cursor", "--yes", "--json"]);
-    expect(setup.exitCode, setup.stderr).toBe(0);
+    const setup = await run([
+      "setup",
+      "--client",
+      "cursor",
+      "--skill-client",
+      "shared",
+      "--yes",
+      "--json",
+    ]);
+    expect(setup.exitCode, setup.stdout + setup.stderr).toBe(0);
     expect(setup.json).toMatchObject({ status: "ready" });
     await access(join(home, ".cursor", "mcp.json"));
     await access(

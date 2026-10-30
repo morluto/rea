@@ -1616,8 +1616,9 @@ Claude chat/Cowork app. Account-level Claude plugins must be added through
 Claude's supported app or organization flow. Claude Desktop's direct MCP
 integration remains separate; setup does not change account-level plugins.
 
-`rea setup --client cursor` automatically downloads a local Cursor plugin after
-approval. It installs the exact `rea-agents` version running setup, with its
+`rea setup --client cursor` keeps direct MCP registration and skill installation
+by default. To opt in to a downloaded local plugin, use
+`rea setup --client cursor --cursor-plugin` and approve its plan. It installs the exact `rea-agents` version running setup, with its
 runtime dependencies and generated skill, under
 `~/.cursor/plugins/local/rea/node_modules/rea-agents`. The local Cursor manifest
 uses that release's shared plugin metadata and launches its bundled Node
@@ -1628,7 +1629,8 @@ or upgrade either. Package lifecycle scripts are disabled during acquisition.
 The plan shows the package, destination and registry before downloading. Setup
 stages and verifies the package before publishing it, and writes no separate
 Cursor MCP registration or skill copy. A matching installation is left in place
-on reruns. Existing direct integrations stay direct; foreign, edited, linked,
+on reruns, including ordinary setup without `--cursor-plugin`, so dropping the
+flag does not create a duplicate direct server. Existing direct integrations stay direct; foreign, edited, linked,
 incomplete or differently versioned local plugin directories stop with
 remediation and are preserved. Move an old local installation aside deliberately
 before installing a different version. Interrupted downloads retain their owned

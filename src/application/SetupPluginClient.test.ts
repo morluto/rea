@@ -61,7 +61,7 @@ it("preserves cancellation and retained cleanup ownership through setup and retr
   const host = withPluginSetup(
     base,
     {},
-    true,
+    { preferPlugins: true },
     async (_command, _args, launchOptions) => {
       launchOptions.resources.retain({
         kind: "lease",

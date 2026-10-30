@@ -89,7 +89,8 @@ npx rea-agents setup
 Choose your agents, review the proposed changes, and approve them. Setup adds
 REA's MCP server and matching workflow instructions, with backups of existing
 configuration. New Codex and Claude Code integrations use their marketplace
-plugins; Cursor downloads a local plugin with its own pinned runtime and skill.
+plugins. Cursor keeps direct setup by default; `--cursor-plugin` opts in to a
+local plugin with its own pinned runtime and skill.
 Restart your agent afterward. Direct setup records the selected runtime and REA
 entry script directly. If acquired through a package runner, keep its cache entry
 available. Run package acquisition from a trusted directory outside the target
