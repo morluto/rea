@@ -1,5 +1,5 @@
 import type { Page, Route } from "playwright-core";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { browserScenarioSchema } from "../domain/browserScenario.js";
 import type { BrowserScenarioAction } from "../domain/browserScenarioValues.js";
@@ -1935,6 +1935,9 @@ describe("saved response limits and deadlines", () => {
 it.each(["array", "embedded", "headers"])(
   "refuses repeated large saved JSON values in %s before expansion or browser dispatch",
   async (kind) => {
+    onTestFinished(() => {
+      vi.unstubAllGlobals();
+    });
     const parsed = scenario([
       requestStep({ save: [{ name: "large", json_pointer: "/value" }] }),
       requestStep({
