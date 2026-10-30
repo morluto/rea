@@ -51,8 +51,7 @@ export const MAX_PROVIDER_STARTUP_TIMEOUT_MS = 2_147_483_647;
  * Largest caller-scan budget Node can schedule exactly. A delay above this
  * signed 32-bit bound becomes 1 ms, so the setting stops here.
  */
-export const MAXIMUM_HOPPER_CALLER_SCAN_BUDGET_MS =
-  MAX_PROVIDER_STARTUP_TIMEOUT_MS;
+export const MAXIMUM_HOPPER_CALLER_SCAN_BUDGET_MS = 2_147_483_647;
 
 /**
  * Ghidra 12.1.4 converts whole seconds to a signed int millisecond delay.

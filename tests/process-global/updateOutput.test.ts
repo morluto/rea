@@ -63,6 +63,66 @@ it.each(["stdout", "stderr"])(
   },
 );
 
+it("terminates an uncooperative probe writer with a signal when exceeding the output budget", async () => {
+  await updateCommands.close();
+  updateCommands = new UpdateCommandRunner(undefined, {
+    maxOutputBytes: 1024,
+    terminationGraceMs: 50,
+  });
+  const result = await updateCommands.runProbe(
+    command('while (true) process.stdout.write("excessive output chunk ");'),
+    process.env,
+  );
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      kind: "execution",
+      detail: expect.stringContaining("1024"),
+    },
+  });
+  expect(child?.signalCode).toBe("SIGTERM");
+});
+
+it("escalates to SIGKILL when an uncooperative probe writer ignores SIGTERM", async () => {
+  await updateCommands.close();
+  updateCommands = new UpdateCommandRunner(undefined, {
+    maxOutputBytes: 1024,
+    terminationGraceMs: 50,
+  });
+  const result = await updateCommands.runProbe(
+    command(
+      'process.on("SIGTERM", () => {}); while (true) process.stdout.write("excessive output chunk ");',
+    ),
+    process.env,
+  );
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      kind: "execution",
+      detail: expect.stringContaining("1024"),
+    },
+  });
+  expect(child?.signalCode).toBe("SIGKILL");
+});
+
+it("allows a verbose install to survive an output overflow and complete normally", async () => {
+  await updateCommands.close();
+  updateCommands = new UpdateCommandRunner(undefined, {
+    maxOutputBytes: 1024,
+    terminationGraceMs: 50,
+  });
+  const result = await updateCommands.runInstall(
+    command(
+      'process.stdout.write("x".repeat(5000)); setTimeout(() => {}, 100);',
+    ),
+    process.env,
+    "structured",
+  );
+  expect(result).toEqual({ ok: true, value: "" });
+  expect(child?.exitCode).toBe(0);
+  expect(child?.signalCode).toBeNull();
+});
+
 it("accepts exactly the combined byte budget and preserves split UTF-8", async () => {
   const result = await updateCommands.runProbe(
     command(
@@ -112,6 +172,28 @@ it("waits for physical close after an early process error", async () => {
     },
   });
   expect(child?.exitCode).toBe(0);
+});
+
+it("reports a stream failure below the output budget as its actual cause", async () => {
+  const pending = updateCommands.runProbe(
+    command("setTimeout(()=>process.stdout.write('late output'),50)"),
+    process.env,
+  );
+  await nextTurn();
+  child!.stdout!.emit("error", new Error("controlled stdout failure"));
+  const result = await pending;
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      detail: expect.stringContaining(
+        "stdout stream failed: controlled stdout failure",
+      ),
+    },
+  });
+  if (!result.ok)
+    expect(result.error.detail).not.toContain(
+      "complete-output retention budget",
+    );
 });
 
 it("joins the final human progress write before reporting success", async () => {

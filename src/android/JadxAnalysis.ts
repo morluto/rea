@@ -11,6 +11,7 @@ import { parseAndroidManifestComponents } from "./AndroidManifestComponents.js";
 import {
   AnalysisInputError,
   AnalysisOutputError,
+  AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { AndroidNativeDeclarations } from "../domain/android/androidNativeDeclarations.js";
@@ -19,7 +20,6 @@ import {
   ANDROID_JNI_REPORT_BYTES,
   projectAndroidJniBindings,
 } from "../domain/android/androidJniBindings.js";
-import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import {
   jadxAppSchema,
   type JadxClassPage,

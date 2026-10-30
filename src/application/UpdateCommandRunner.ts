@@ -18,8 +18,27 @@ import { UpdateCommandProgress } from "./UpdateCommandProgress.js";
 import type { UpdateOutput } from "./Update.js";
 import { withoutPackageRunnerIdentity } from "./ClientRegistrationIdentity.js";
 
+/** Aggregate raw-byte retention policy for package-manager replies and diagnostics. */
 export const UPDATE_COMMAND_OUTPUT_BYTES = 4 * 1024 * 1024;
+/** Grace period before an uncooperative update subprocess is terminated and escalated to SIGKILL. */
+export const DEFAULT_UPDATE_TERMINATION_GRACE_MS = 1_000;
 const UPDATE_PROBE_TIMEOUT_MS = 10_000;
+
+/** Output collection limits applied to update subprocesses. */
+export interface UpdateCommandLimits {
+  /** Shared stdout and stderr retention budget. Defaults to `UPDATE_COMMAND_OUTPUT_BYTES`. */
+  readonly maxOutputBytes?: number;
+  /**
+   * Time an oversized complete-output writer gets to exit on its own before it is
+   * sent `SIGTERM`, and again before `SIGKILL`. Defaults to `DEFAULT_UPDATE_TERMINATION_GRACE_MS`.
+   */
+  readonly terminationGraceMs?: number;
+}
+
+interface ResolvedUpdateCommandLimits {
+  readonly maxOutputBytes: number;
+  readonly terminationGraceMs: number;
+}
 
 /** The runner owns whether the process started; callers need not infer it from text. */
 export interface UpdateCommandFailure {
@@ -36,7 +55,17 @@ const commandFailure = (
 export class UpdateCommandRunner {
   readonly #resources = new ArtifactResourceScope();
   readonly #controller = new AbortController();
-  constructor(private readonly probeTimeoutMs = UPDATE_PROBE_TIMEOUT_MS) {}
+  readonly #limits: ResolvedUpdateCommandLimits;
+  constructor(
+    private readonly probeTimeoutMs = UPDATE_PROBE_TIMEOUT_MS,
+    limits: UpdateCommandLimits = {},
+  ) {
+    this.#limits = {
+      maxOutputBytes: limits.maxOutputBytes ?? UPDATE_COMMAND_OUTPUT_BYTES,
+      terminationGraceMs:
+        limits.terminationGraceMs ?? DEFAULT_UPDATE_TERMINATION_GRACE_MS,
+    };
+  }
 
   async runProbe(
     command: readonly string[],
@@ -60,6 +89,7 @@ export class UpdateCommandRunner {
           "complete",
           this.#resources,
           deadline.signal,
+          this.#limits,
           deadline,
         ),
       );
@@ -90,6 +120,7 @@ export class UpdateCommandRunner {
           "diagnostics",
           this.#resources,
           this.#controller.signal,
+          this.#limits,
         ),
       )
       .then((result) => (result.ok ? result : err(result.error.detail)))
@@ -112,6 +143,7 @@ const runUpdateProcess = async (
   retention: "complete" | "diagnostics",
   resources: ArtifactResourceScope,
   lookupSignal: AbortSignal,
+  limits: ResolvedUpdateCommandLimits,
   probe?: ProviderStartupDeadline,
 ): Promise<Result<string, UpdateCommandFailure>> => {
   if (probe?.signal.aborted)
@@ -193,12 +225,72 @@ const runUpdateProcess = async (
     spawned = true;
   });
   let processFailure: string | undefined;
+  let outputBudgetExceeded = false;
+  const { terminationGraceMs } = limits;
+  let drainGraceTimer: NodeJS.Timeout | undefined;
+  let killTimer: NodeJS.Timeout | undefined;
+  const running = (): boolean =>
+    child.exitCode === null && child.signalCode === null;
+  const clearTimers = (): void => {
+    if (drainGraceTimer !== undefined) clearTimeout(drainGraceTimer);
+    if (killTimer !== undefined) clearTimeout(killTimer);
+    drainGraceTimer = undefined;
+    killTimer = undefined;
+  };
+  const onExit = (): void => {
+    clearTimers();
+  };
+  const signal = (name: NodeJS.Signals): void => {
+    try {
+      child.kill(name);
+    } catch {
+      // Subprocess may have already terminated.
+    }
+  };
+  const terminate = (): void => {
+    if (!running()) return;
+    child.stdout?.destroy();
+    child.stderr?.destroy();
+    signal("SIGTERM");
+    if (!running()) return;
+    if (terminationGraceMs <= 0) {
+      signal("SIGKILL");
+      return;
+    }
+    killTimer = setTimeout(() => {
+      killTimer = undefined;
+      if (running()) signal("SIGKILL");
+    }, terminationGraceMs);
+    killTimer.unref();
+  };
+  // A rejected complete reply is never accepted, so an endless writer must not hold the
+  // probe open until its deadline. A finite writer still gets the grace window to exit.
+  const scheduleTerminationAfterDrainGrace = (): void => {
+    if (drainGraceTimer !== undefined || killTimer !== undefined || !running())
+      return;
+    if (terminationGraceMs <= 0) {
+      terminate();
+      return;
+    }
+    drainGraceTimer = setTimeout(() => {
+      drainGraceTimer = undefined;
+      terminate();
+    }, terminationGraceMs);
+    drainGraceTimer.unref();
+  };
+  child.once("exit", onExit);
   const supervisor = new ProviderProcessSupervisor(
     { process: child, ownsProcessLifetime: true },
     {
-      maxDiagnosticBytes: UPDATE_COMMAND_OUTPUT_BYTES,
+      maxDiagnosticBytes: limits.maxOutputBytes,
       onDiagnostic: (event) => {
         if (event.type === "error") processFailure ??= event.message;
+        if (event.type === "output" && event.truncated === true) {
+          // `snapshot().diagnosticTruncated` also reports incomplete output, so record
+          // the byte-budget overflow itself, and only when no failure preceded it.
+          if (processFailure === undefined) outputBudgetExceeded = true;
+          if (retention === "complete") scheduleTerminationAfterDrainGrace();
+        }
       },
     },
   );
@@ -210,8 +302,8 @@ const runUpdateProcess = async (
   }
   let retained = false;
   try {
-    // Drain even an oversized reply. Verbosity must not interrupt a package install.
-    // Keep the existing launch/signal policy; this collector owns no process-tree authority.
+    // Drain oversized replies so verbose installs finish normally;
+    // complete-output probes terminate an uncooperative writer after a drain grace window.
     const completed = await supervisor.waitForOutputClose(
       undefined,
       probe?.signal,
@@ -241,6 +333,18 @@ const runUpdateProcess = async (
     }
     const progressFailure = await progress?.close();
     const snapshot = supervisor.snapshot();
+    // An overflow can destroy streams and terminate the child after the drain grace window,
+    // so the complete-output budget error takes precedence over the resulting teardown
+    // stream or process errors. A failure observed before any overflow keeps its own
+    // cause, and probe interruption keeps its own cleanup report.
+    if (
+      interrupted === undefined &&
+      retention === "complete" &&
+      outputBudgetExceeded
+    )
+      return commandFailure(
+        `Update command output exceeded the ${String(limits.maxOutputBytes)}-byte complete-output retention budget; reply was not accepted.`,
+      );
     if (processFailure !== undefined)
       return commandFailure(
         probeFailureDetail(
@@ -255,10 +359,6 @@ const runUpdateProcess = async (
       return commandFailure(probeFailureDetail(interrupted, snapshot));
     if (snapshot.outputIncomplete === true)
       return commandFailure("Update command output did not close completely.");
-    if (retention === "complete" && snapshot.diagnosticTruncated === true)
-      return commandFailure(
-        `Update command output exceeded the ${UPDATE_COMMAND_OUTPUT_BYTES}-byte complete-output retention budget; reply was not accepted.`,
-      );
     if (snapshot.exitCode !== 0 || snapshot.signal !== null) {
       const detail =
         snapshot.stderr.text.trim() ||
@@ -270,7 +370,7 @@ const runUpdateProcess = async (
             : "Update command failed without a recorded exit status.");
       return commandFailure(
         snapshot.diagnosticTruncated
-          ? `${detail}\n[Update diagnostics truncated at ${UPDATE_COMMAND_OUTPUT_BYTES} bytes; later output omitted.]`
+          ? `${detail}\n[Update diagnostics truncated at ${String(limits.maxOutputBytes)} bytes; later output omitted.]`
           : detail,
       );
     }
@@ -296,6 +396,8 @@ const runUpdateProcess = async (
       );
     return ok(retention === "diagnostics" ? "" : snapshot.stdout.text.trim());
   } finally {
+    clearTimers();
+    child.removeListener("exit", onExit);
     // Failed stop ownership stays on the runner for a later cleanup attempt.
     if (!retained) supervisor.dispose();
     await progress?.close();
