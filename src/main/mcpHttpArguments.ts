@@ -79,7 +79,6 @@ const invalid = (message: string): McpHttpArguments => ({
   message,
 });
 
-/** Split `--flag=value` into its flag and inline value. */
 /**
  * Store one flag occurrence. A collection-valued flag accumulates so a repeated
  * occurrence adds names instead of silently discarding the earlier ones; a
@@ -100,6 +99,7 @@ const storeFlagValue = (
   );
 };
 
+/** Split `--flag=value` into its flag and inline value. */
 const splitFlag = (argument: string): readonly [string, string | undefined] => {
   const separator = argument.indexOf("=");
   return separator === -1
