@@ -402,6 +402,9 @@ the external action. After the window ends successfully, `completed: 2` and
 `terminal: true` report its end. Failed preparation does not announce arming;
 a failed or cancelled observation does not fabricate a successful end event.
 MCP exposes the same provider progress through its progress notifications.
+If navigation leaves the selected scope, or the target detaches or terminates
+during preparation, the ended window can be reported without an armed event.
+Only the explicit armed event invites the caller to perform its action.
 
 The web-session timeline uses CDP monotonic seconds where the event producer
 provides a comparable timestamp; absent or invalid timestamps are `null` rather

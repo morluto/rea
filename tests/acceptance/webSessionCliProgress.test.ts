@@ -112,19 +112,18 @@ processTest(
     });
     expect(result.code, result.stderr).toBe(0);
     expect(actions).toBe(1);
-    expect(result.updates).toEqual([
+    expect(
+      result.updates.map(({ message: _message, ...facts }) => facts),
+    ).toEqual([
       {
         phase: "browser_observation",
         completed: 1,
         total: 2,
-        message:
-          "Browser observation armed; perform the requested user action now",
       },
       {
         phase: "browser_observation",
         completed: 2,
         total: 2,
-        message: "Browser observation window ended",
         terminal: true,
       },
     ]);
@@ -153,7 +152,9 @@ processTest(
     onTestFinished(() => browser.close());
     const result = await observe(processes, browser);
     expect(result.code).not.toBe(0);
-    expect(result.updates).toEqual([]);
+    expect(
+      result.updates.map(({ message: _message, ...facts }) => facts),
+    ).toEqual([]);
     expect(JSON.parse(result.stdout)).toMatchObject({
       code: expect.any(String),
       category: expect.any(String),
@@ -181,5 +182,61 @@ processTest(
       code: expect.any(String),
       category: expect.any(String),
     });
+  },
+);
+
+const stoppedPreparations = [
+  { event: "outside-origin", endReason: "target_left_scope" },
+  { event: "session-detached", endReason: "session_detached" },
+  { event: "target-crashed", endReason: "target_terminated" },
+] as const;
+
+processTest.for(stoppedPreparations)(
+  "does not arm when preparation already stopped collection: $event",
+  async ({ event, endReason }, { processes }) => {
+    const browser = await startFakeCdpBrowser({
+      eventsBeforeReply: ["Page.setLifecycleEventsEnabled"],
+      commandEvents: (command) => {
+        if (command.method !== "Page.setLifecycleEventsEnabled") return [];
+        const sessionId = z.string().parse(command.sessionId);
+        if (event === "outside-origin")
+          return [
+            {
+              method: "Page.navigatedWithinDocument",
+              sessionId,
+              params: {
+                frameId: "frame-main",
+                url: "https://outside.example/withheld",
+                navigationType: "historyApi",
+              },
+            },
+          ];
+        if (event === "session-detached")
+          return [
+            {
+              method: "Target.detachedFromTarget",
+              params: { sessionId, targetId: "allowed-page" },
+            },
+          ];
+        return [{ method: "Inspector.targetCrashed", sessionId, params: {} }];
+      },
+    });
+    onTestFinished(() => browser.close());
+    let actions = 0;
+    const result = await observe(processes, browser, ({ completed }) => {
+      if (completed === 1) actions += 1;
+    });
+    expect(result.code, result.stderr).toBe(0);
+    expect(actions).toBe(0);
+    expect(
+      result.updates.map(({ message: _message, ...facts }) => facts),
+    ).toEqual([
+      { phase: "browser_observation", completed: 2, total: 2, terminal: true },
+    ]);
+    const capture = webObservationSessionSchema.parse(
+      parseEvidence(JSON.parse(result.stdout)).normalized_result,
+    );
+    expect(capture.window.end_reason).toBe(endReason);
+    expect(result.stdout).not.toContain("https://outside.example/withheld");
   },
 );

@@ -135,13 +135,14 @@ export const observeCdpSession = async (
       context.sessionId,
       context.signal,
     );
-    await context.progress?.report({
-      phase: "browser_observation",
-      completed: 1,
-      total: 2,
-      message:
-        "Browser observation armed; perform the requested user action now",
-    });
+    if (!capture.stopped)
+      await context.progress?.report({
+        phase: "browser_observation",
+        completed: 1,
+        total: 2,
+        message:
+          "Browser observation armed; perform the requested user action now",
+      });
     let endReason = await waitForWindow(
       context.input.observation_ms,
       capture,
@@ -226,7 +227,7 @@ class TimelineCapture {
   }
 
   ingest(event: CdpTransportEvent): void {
-    if (this.#endReason !== undefined || this.#scopeExcluded) return;
+    if (this.stopped) return;
     if (!isTimelineEvent(event.method)) return;
     if (this.#armTimestamp === undefined) {
       this.#bufferBeforeArm(event);
@@ -236,7 +237,7 @@ class TimelineCapture {
   }
 
   #ingestArmed(event: CdpTransportEvent, bufferedBeforeArm = false): void {
-    if (this.#endReason !== undefined || this.#scopeExcluded) return;
+    if (this.stopped) return;
     const params = recordValue(event.params);
     if (params === undefined) {
       if (
@@ -320,6 +321,11 @@ class TimelineCapture {
     }
     this.#eventsBeforeArm.push(event);
     this.#eventsBeforeArmBytes += bytes;
+  }
+
+  /** One lifecycle fact controls event retention and readiness delivery. */
+  get stopped(): boolean {
+    return this.#endReason !== undefined || this.#scopeExcluded;
   }
 
   onEnd(listener: (reason: EndReason) => void): () => void {
