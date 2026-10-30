@@ -63,10 +63,10 @@ same classification rule as their component rows.
 names HTTP Archive JSON, so identifying one needs verified ZIP bytes rather than
 a path rule. Different paths sharing the same bytes remain separate entries. App
 Pack children of an App Pack root are already reported in `app_pack_children`,
-so they are not repeated as unclassified files; a nested `.hap` or `.hsp` member
-of a HAP or HSP root is disclosed there instead, because child-package
-inventory is not recursive. Unreadable or encrypted content remains in
-`unavailable_components` with unknown identity instead.
+so they are not repeated as unclassified files. A nested `.hap` or `.hsp` member
+of a HAP or HSP root is disclosed in `unclassified_components` instead, because
+child-package inventory is not recursive. Unreadable or encrypted content remains
+in `unavailable_components` with unknown identity instead.
 
 `coverage.status: "complete-within-inventory"` describes the authenticated
 source inventory and bounded bridge projection, not semantic understanding of
