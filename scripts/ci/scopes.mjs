@@ -8,10 +8,16 @@ export const WINDOWS_EXECUTABLE_SELECTION_INPUTS = [
   "tests/boundary/process/windowsExecutableSelection.test.ts",
 ];
 
+// Inputs whose changes must select both real capture lanes, even at shared boundaries.
+const CAPTURE_SHARED_INPUTS = [
+  "src/process/LinuxResourceLimits*",
+  "scripts/ci/require-provider-tests.mjs",
+];
+
 // Ownership of the native-host, real-provider and website verification lanes.
 // Shared build inputs are classified once in plan.mjs rather than repeated in
 // every workflow.
-export const SCOPES = {
+const PATH_SCOPES = {
   python: [
     "bridge/**/*.py",
     "tests/support/analysis-efficiency/**",
@@ -35,9 +41,8 @@ export const SCOPES = {
     "src/composition/captures.ts",
     "src/cli/captureCommands.ts",
     "src/server/registerCaptureTools.ts",
-    "src/process/LinuxResourceLimits*",
+    ...CAPTURE_SHARED_INPUTS,
     "scripts/verify-packet-capture.mjs",
-    "scripts/ci/require-provider-tests.mjs",
     ".github/workflows/real-packet-capture.yml",
   ],
   signal_recording: [
@@ -51,9 +56,8 @@ export const SCOPES = {
     "src/composition/signals.ts",
     "src/cli/signalCommands.ts",
     "src/server/registerSignalTools.ts",
-    "src/process/LinuxResourceLimits*",
+    ...CAPTURE_SHARED_INPUTS,
     "scripts/verify-signal-recording.mjs",
-    "scripts/ci/require-provider-tests.mjs",
     ".github/workflows/real-signal-recording.yml",
   ],
   readiness: [
@@ -609,19 +613,73 @@ export const SCOPES = {
   ],
 };
 
-export const CI_FLAGS = [
-  ...new Set([
-    "code",
-    "runtime",
-    "package",
-    "apple",
-    "fixtures",
-    "readiness",
-    "docs",
-    "workflows",
-    ...Object.keys(SCOPES),
+// Each lane owns its path inputs, selection policy, and required jobs. The
+// workflow stays explicit; contract tests bind it to this registry.
+const sameJobs = (paths, jobs, selection = {}) => ({
+  paths,
+  required: { fast: jobs, full: jobs },
+  ...selection,
+});
+export const CI_LANES = {
+  code: {
+    paths: [],
+    required: {
+      fast: ["build", "test-shard", "test-source"],
+      full: ["build", "test-shard"],
+    },
+  },
+  runtime: sameJobs([], ["windows-native-build", "package-e2e"]),
+  package: sameJobs(PATH_SCOPES.package, ["windows-curated"], {
+    testInputs: true,
+  }),
+  apple: sameJobs(PATH_SCOPES.apple, ["apple-artifacts"], { testInputs: true }),
+  fixtures: sameJobs([], ["conformance-fixtures"]),
+  readiness: sameJobs(PATH_SCOPES.readiness, ["reconstruction-readiness"]),
+  docs: sameJobs([], ["docs"]),
+  workflows: sameJobs([], ["static"]),
+  python: {
+    paths: PATH_SCOPES.python,
+    earlyAll: true,
+    required: { fast: ["python"], full: ["static-deep"] },
+  },
+  packet_capture: sameJobs(PATH_SCOPES.packet_capture, ["packet_capture"], {
+    testInputs: true,
+    earlyInputs: CAPTURE_SHARED_INPUTS,
+  }),
+  signal_recording: sameJobs(
+    PATH_SCOPES.signal_recording,
+    ["signal_recording"],
+    { testInputs: true, earlyInputs: CAPTURE_SHARED_INPUTS },
+  ),
+  reverse_tools: sameJobs(
+    PATH_SCOPES.reverse_tools,
+    ["reverse-tools-quality"],
+    { earlyAll: true },
+  ),
+  sqlite: sameJobs(PATH_SCOPES.sqlite, ["sqlite-runtime"], {
+    testInputs: true,
+  }),
+  browser: sameJobs(PATH_SCOPES.browser, ["browser"]),
+  binary_layout: sameJobs(PATH_SCOPES.binary_layout, ["binary_layout"]),
+  evm: sameJobs(PATH_SCOPES.evm, ["evm"]),
+  apk_signature: sameJobs(PATH_SCOPES.apk_signature, ["apk_signature"]),
+  javascript_recovery: sameJobs(PATH_SCOPES.javascript_recovery, [
+    "javascript_recovery",
   ]),
-];
+  recorded_crash: sameJobs(PATH_SCOPES.recorded_crash, ["recorded_crash"]),
+  web_network: sameJobs(PATH_SCOPES.web_network, ["web_network"]),
+  web_runtime: sameJobs(PATH_SCOPES.web_runtime, ["web_runtime"]),
+  web_source_map: sameJobs(PATH_SCOPES.web_source_map, ["web_source_map"]),
+  agentenv: sameJobs(PATH_SCOPES.agentenv, ["agentenv"]),
+  nativeaot: sameJobs(PATH_SCOPES.nativeaot, ["nativeaot"]),
+  ghidra_bridge: sameJobs(PATH_SCOPES.ghidra_bridge, ["ghidra_bridge"]),
+  website: sameJobs(PATH_SCOPES.website, ["website"]),
+};
+// An input owner omitted from the registry must never silently lose a lane.
+for (const [name, paths] of Object.entries(PATH_SCOPES))
+  if (!Object.hasOwn(CI_LANES, name) || CI_LANES[name].paths !== paths)
+    throw new Error(`CI lane registry does not own input scope: ${name}`);
+export const CI_FLAGS = Object.keys(CI_LANES);
 
 // Verifier entrypoints that only manual, licensed, or self-hosted workflows
 // run. No selected CI lane executes them, so their edits need only the static

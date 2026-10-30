@@ -857,9 +857,9 @@ bridges, analysis-efficiency inputs, or the Python test runner select a separate
 required Python job. That job installs locked dependencies and prepares the
 compiled runtime before the suite, because analysis-efficiency checks import
 built process modules. Bridge tests are discovered from the source tree. The
-mitmproxy, native, and pwndbg families must each keep a test module, and a
-newly added failing test fails the job. Portable test shards and documentation
-checks remain independent of static results, so they can still provide
+mitmproxy, native, and pwndbg families must each contain a test module and
+execute at least one non-skipped case. A newly added failing test fails the job.
+Portable test shards and documentation checks remain independent of static results, so they can still provide
 diagnostic feedback. The required gate rejects skipped selected lanes when
 static checks fail; on the full tier it also requires the deep static job.
 Passing revisions retain all selected coverage. This ordering reduces peak
@@ -1577,9 +1577,10 @@ initial proposal measures only leaf producer-test omissions; it does not promise
 the savings of a broader affected-test planner.
 
 `scripts/ci/plan.mjs` selects lanes using the ownership table in
-`scripts/ci/scopes.mjs`. Provider implementation changes run their real-provider
-verifiers and the Linux x64 installed-package/Inspector baseline. The `apple`
-scope owns the Apple artifact lane; the `package` scope owns the multi-host
+`scripts/ci/scopes.mjs`. Each lane record owns its path and test selection
+rules and required fast/full jobs; workflow contract tests verify the mapped jobs.
+Provider implementation changes run their real-provider verifiers and the Linux
+x64 installed-package/Inspector baseline. The `apple` scope owns the Apple artifact lane; the `package` scope owns the multi-host
 package matrix and the Windows curated lane, including Windows native controls,
 Inspector, setup, configuration and packaging entrypoints. Runtime sources under
 `src/` or `bridge/` without an owner, and the authored skill, run the Linux suite

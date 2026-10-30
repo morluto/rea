@@ -764,6 +764,27 @@ it("discovers Python bridge tests and fails on a newly added failing producer te
   expect(discovered.stderr).toContain("bridge.native.test_case");
   expect(discovered.stderr).toContain("bridge.pwndbg.test_case");
   expect(discovered.stderr).toContain("OK");
+  const native = join(root, "bridge", "native", "test_case.py");
+  for (const content of [
+    "# A present file can contain no tests.\n",
+    "import unittest\nclass Example(unittest.TestCase):\n @unittest.skip('unavailable')\n def test_case(self): pass\n",
+  ]) {
+    await writeFile(native, content);
+    await expect(
+      execute("python3", command, { cwd: root }),
+    ).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining('"code": "no_executed_bridge_tests"'),
+    });
+  }
+  await writeFile(
+    native,
+    "import unittest\nclass Example(unittest.TestCase):\n def test_case(self): pass\n @unittest.skip('optional')\n def test_skipped(self): pass\n",
+  );
+  expect((await execute("python3", command, { cwd: root })).stderr).toContain(
+    "skipped 'optional'",
+  );
+  await writeFile(native, passing);
   await writeFile(
     join(root, "bridge", "example", "test_second.py"),
     "import unittest\nclass Example(unittest.TestCase):\n def test_case(self): self.fail('new test executed')\n",
@@ -780,7 +801,9 @@ it("discovers Python bridge tests and fails on a newly added failing producer te
     (error: { code?: unknown; stderr?: unknown }) => error,
   );
   expect(missingFamily).toMatchObject({ code: 1 });
-  expect(JSON.parse(String(missingFamily?.stderr))).toEqual({
+  expect(
+    JSON.parse(String(missingFamily?.stderr).trim().split("\n").at(-1)!),
+  ).toEqual({
     code: "missing_bridge_family",
     families: ["mitmproxy"],
   });
