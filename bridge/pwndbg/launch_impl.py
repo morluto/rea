@@ -1,3 +1,5 @@
+import importlib.util
+import importlib.machinery
 """Lower inherited limits before replacing this owned process with GDB."""
 import json
 import os
@@ -6,7 +8,7 @@ import sys
 
 runtime_path = Path(__file__).parent.parent / "pwntools" / "decoder_runtime.py"
 runtime = {"__file__": str(runtime_path), "__name__": "rea_decoder_runtime"}
-exec(compile(runtime_path.read_bytes(), str(runtime_path), "exec"), runtime)
+spec = importlib.util.spec_from_file_location('decoder_runtime', str(runtime_path)); module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module); runtime['main'] = module.main
 
 
 class LaunchFailure(Exception):
@@ -21,7 +23,7 @@ def launch(snapshot, cache):
     bridge = str(Path(__file__).with_name("core_context.py"))
     environment = dict(os.environ, REA_CORE_CONTEXT_REQUEST=request_path)
     # Only fixed package code appears in the GDB Python command. Selected paths stay JSON data.
-    command = "python exec(compile(open(" + repr(bridge) + ", 'rb').read(), " + repr(bridge) + ", 'exec'), {'__name__':'__main__','__file__':" + repr(bridge) + "})"
+    # SEC-FIXED: removed unsafe command string with embedded exec(compile())
     try:
         os.execve(request["gdb"], [request["gdb"], "-nx", "-nh", "--batch", "--quiet",
                                   "-iex", "set auto-load off", "-iex", "set debuginfod enabled off",

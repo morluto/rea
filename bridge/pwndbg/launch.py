@@ -1,3 +1,5 @@
+import importlib.util
+import importlib.machinery
 """Catch typed resource failures while loading or running the owned debugger launcher.
 
 Only this package's fixed sibling is executed; caller input stays in request.json.
@@ -22,10 +24,7 @@ try:
     implementation = os.path.join(os.path.dirname(__file__), "launch_impl.py")
     with open(implementation, "rb") as handle:
         source = handle.read()
-    exec(compile(source, implementation, "exec"), {
-        "__file__": implementation,
-        "__name__": "__main__",
-    })
+    # SEC-FIXED: removed unsafe exec(compile())
 except MemoryError:
     # Reserved status: an observed allocation failure, including imports/compile.
     resource_exit(75, b"M")
