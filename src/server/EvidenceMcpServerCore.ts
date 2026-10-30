@@ -203,6 +203,35 @@ const partitionSdkDiagnostic = (
   };
 };
 
+/**
+ * Guarantee a 2026-07-28-valid tools/call result on the wire, regardless of
+ * the era the SDK encoded for. The SDK stamps resultType only for
+ * 2026-era results; a 2025-era result legitimately omits it, and the SDK's
+ * 2025 client codec strips it on decode, so adding it here does not change
+ * what a 2025-era SDK client sees. It does change what a downstream
+ * component that re-validates the raw wire result with the strict 2026
+ * rules sees — e.g. a client background task that replays a completed
+ * long call — from "missing required resultType" to a valid complete
+ * result. Only fill when absent; never overwrite a handler/SDK-provided
+ * discriminator such as input_required.
+ */
+const ensureToolResultType = (message: JSONRPCMessage): JSONRPCMessage => {
+  if (
+    !isJSONRPCResultResponse(message) ||
+    !isCallToolResult(message.result)
+  )
+    return message;
+  if (
+    (message.result as { readonly resultType?: unknown }).resultType !==
+    undefined
+  )
+    return message;
+  return {
+    ...message,
+    result: { ...message.result, resultType: "complete" },
+  };
+};
+
 /** Replace the tool payload after the SDK codec while retaining its envelope. */
 const replaceToolResultPayload = (
   original: CallToolResult,
@@ -638,15 +667,16 @@ class ErrorEvidenceTransport implements Transport {
             this.compactedOutputSchemas,
           )
         : recovered;
+      const wire = ensureToolResultType(advertised);
       if (
-        isJSONRPCResultResponse(advertised) &&
-        isCallToolResult(advertised.result) &&
-        advertised.result.isError === true
+        isJSONRPCResultResponse(wire) &&
+        isCallToolResult(wire.result) &&
+        wire.result.isError === true
       ) {
         // Keep the complete typed JSON in content. Error projections are not
         // success outputSchema data; oversized recovery must consume their
         // private structured carrier before it is removed from the wire.
-        const { structuredContent: _diagnostic, ...result } = advertised.result;
+        const { structuredContent: _diagnostic, ...result } = wire.result;
         // Errors the SDK builds itself (input validation, a thrown handler)
         // bypass ToolResultDelivery; mark them for target-content tools too.
         const marked =
@@ -658,8 +688,8 @@ class ErrorEvidenceTransport implements Transport {
                 _meta: { ...result._meta, ...TARGET_CONTENT_RESULT_META },
               }
             : result;
-        await this.transport.send({ ...advertised, result: marked }, options);
-      } else await this.transport.send(advertised, options);
+        await this.transport.send({ ...wire, result: marked }, options);
+      } else await this.transport.send(wire, options);
     } finally {
       if (!isJSONRPCRequest(message) && id !== undefined) {
         this.pendingValidation.delete(id);
