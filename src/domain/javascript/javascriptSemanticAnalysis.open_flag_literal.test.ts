@@ -27,6 +27,19 @@ it.each([
   ["an uppercase flag", `openSync(p, "R")`],
   ["a callback-form read flag", `open(p, "rb", cb)`],
   ["a promise-form read flag", `openPromise(p, "rb")`],
+  // Node also rejects every non-string flag that is not a nullish value or a
+  // usable bitmask integer.
+  ["a fractional flag", `openSync(p, 1.5)`],
+  ["a negative flag", `openSync(p, -1)`],
+  ["a negated fractional flag", `openSync(p, -1.5)`],
+  ["a non-finite numeric flag", `openSync(p, 1e400)`],
+  ["a NaN flag", `openSync(p, NaN)`],
+  ["an Infinity flag", `openSync(p, Infinity)`],
+  ["a BigInt flag", `openSync(p, 0n)`],
+  ["a true flag", `openSync(p, true)`],
+  ["a false flag", `openSync(p, false)`],
+  ["an object flag", `openSync(p, {})`],
+  ["an array flag", `openSync(p, [])`],
 ] as const)("emits no acquisition for %s", (_name, call) => {
   expect(acquisitionsFor(call)).toEqual([]);
 });
@@ -40,6 +53,9 @@ it.each([
   ["an omitted flag", `openSync(p)`],
   ["a computed flag", `openSync(p, flag)`],
   ["a numeric bitmask", `openSync(p, 1)`],
+  ["a zero bitmask", `openSync(p, 0)`],
+  ["a large bitmask", `openSync(p, 65536)`],
+  ["a unary-plus bitmask", `openSync(p, +5)`],
   ["an explicit undefined flag", `openSync(p, undefined)`],
   ["an explicit null flag", `openSync(p, null)`],
 ] as const)("keeps the acquisition for %s", (_name, call) => {

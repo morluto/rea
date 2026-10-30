@@ -76,19 +76,44 @@ export const collectJavaScriptSemanticResources = (
 };
 
 /**
- * `fs.open`/`fs.openSync` validate a literal flag string before touching the
- * filesystem and throw `ERR_INVALID_ARG_VALUE` synchronously, so no descriptor
- * exists. A numeric flag is a platform bitmask and a computed value may still be
- * a valid flag, so only an exactly readable non-flag string is decided.
+ * `fs.open`/`fs.openSync` validate the flag before touching the filesystem, so
+ * a flag Node rejects at the call site throws synchronously and no descriptor
+ * exists. Node accepts only a known flag string, a nullish value (which defaults
+ * to `"r"`), or a bitmask integer; everything else throws. A computed value may
+ * still be valid, so only an exactly readable literal is decided.
  */
 const rejectsOpenFlagLiteral = (
   node: t.CallExpression | t.OptionalCallExpression,
+  context: DataEffectTraversalContext,
 ): boolean => {
   const flag = node.arguments[1];
   if (flag === undefined || t.isSpreadElement(flag)) return false;
   const value = unwrapJavaScriptExpression(flag).node;
-  if (!t.isStringLiteral(value)) return false;
-  return !FS_OPEN_FLAGS.has(value.value);
+  if (t.isStringLiteral(value)) return !FS_OPEN_FLAGS.has(value.value);
+  // A non-integer, non-finite or negative number is not a usable bitmask.
+  if (t.isNumericLiteral(value))
+    return !Number.isInteger(value.value) || value.value < 0;
+  // `-1` is a unary expression over a numeric literal: always negative, and
+  // Node rejects a negative bitmask at the call site.
+  if (t.isUnaryExpression(value)) {
+    const operand = unwrapJavaScriptExpression(value.argument).node;
+    if (!t.isNumericLiteral(operand)) return false;
+    return value.operator === "-" || !Number.isInteger(operand.value);
+  }
+  // `NaN` and `Infinity` are unshadowed globals, and neither is a bitmask.
+  if (
+    t.isIdentifier(value) &&
+    (value.name === "NaN" || value.name === "Infinity") &&
+    isUnmodifiedGlobalReference(value, context.state, value.name)
+  )
+    return true;
+  // BigInt, boolean, object and array literals all fail Node's flag check.
+  return (
+    t.isBigIntLiteral(value) ||
+    t.isBooleanLiteral(value) ||
+    t.isObjectExpression(value) ||
+    t.isArrayExpression(value)
+  );
 };
 
 /** `fs.open`, `fs.openSync` and `fs/promises.open` take the flag in slot 1. */
@@ -106,7 +131,10 @@ const collectAcquisitions = (
     if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node)) return;
     const reference = acquisitionMethod(node.callee, context.state);
     if (reference === null) return;
-    if (openFlagInFirstArgument(reference) && rejectsOpenFlagLiteral(node))
+    if (
+      openFlagInFirstArgument(reference) &&
+      rejectsOpenFlagLiteral(node, context)
+    )
       return;
     output.push({
       node,
