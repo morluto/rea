@@ -161,6 +161,8 @@ The headless profile supports upstream's **database supervisor** API: `idb_open`
 
 Use an already-installed executable. When required by your existing idalib installation, include `"env": { "IDADIR": "/absolute/path/to/ida" }`. REA neither edits the global activation configuration nor installs dependencies. A configured local Streamable HTTP supervisor can instead use `"url": "http://127.0.0.1:8745/mcp"` and `"mode": "headless"`.
 
+The supervisor's `decompile` must paginate with `offset` and `max_lines`; REA's headless pseudocode read requests pages and follows the returned cursor. A supervisor that serves `idb_open`, `idb_list`, and `idb_close` but predates paginated decompilation satisfies the session model yet still fails a pseudocode request, surfacing the upstream `Invalid params: unexpected parameters: ['offset', 'max_lines']` as an `unreadable_output` tool failure. Pin the upstream to a build that paginates decompilation — the verified commit `c133c3853faa111a9b00ee615c013b720d0c4acd` (see [Verification](#verification)) — and point `command` at that environment's `idalib-mcp`.
+
 The same CLI commands work in both modes. For a Windows-native REA process:
 
 ```powershell
