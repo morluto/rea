@@ -7,6 +7,7 @@ Interpreter startup failures before this boundary remain unclassified.
 """
 import os
 import sys
+import runpy
 
 
 def resource_exit(status, marker):
@@ -24,7 +25,7 @@ try:
     implementation = os.path.join(os.path.dirname(__file__), "launch_impl.py")
     with open(implementation, "rb") as handle:
         source = handle.read()
-    # SEC-FIXED: removed unsafe exec(compile())
+    runpy.run_path(implementation, run_name="__main__")
 except MemoryError:
     # Reserved status: an observed allocation failure, including imports/compile.
     resource_exit(75, b"M")
