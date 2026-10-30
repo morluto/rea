@@ -227,6 +227,29 @@ const MANIFEST = `<?xml version="1.0" encoding="utf-8"?>
   </application>
 </manifest>`;
 
+it.each(['a:name=".First" b:name=".Last"', 'b:name=".Last" a:name=".First"'])(
+  "refuses duplicate Android attribute identities: %s",
+  (attributes) => {
+    const inventory = parseAndroidManifestComponents(
+      `<manifest package="com.example" xmlns:a="http://schemas.android.com/apk/res/android" xmlns:b="http://schemas.android.com/apk/res/android"><application><activity ${attributes}/></application></manifest>`,
+      "complete",
+      "33",
+    );
+    expect(inventory).toMatchObject({ status: "unavailable", items: [] });
+    expect(inventory.limitations.join(" ")).toContain("not well-formed XML");
+  },
+);
+
+it("does not infer the Android namespace from an undeclared prefix", () => {
+  expect(
+    parseAndroidManifestComponents(
+      '<manifest package="com.example"><application><activity android:name=".Guess"/></application></manifest>',
+      "complete",
+      "33",
+    ),
+  ).toMatchObject({ status: "unavailable", items: [] });
+});
+
 it.each([".9Activity", ".hyphen-name", ".😀Activity", ".nested.7"])(
   "resolves DEX component name %s and its alias reference",
   (name) => {

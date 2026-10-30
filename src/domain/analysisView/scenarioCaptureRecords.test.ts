@@ -86,6 +86,26 @@ describe("scenarioCaptureRecords", () => {
     );
   });
 
+  it("records a hidden request body as absent only when the request names no Content-Type", () => {
+    const toggle = {
+      method: "PUT",
+      url: "/api/entries/1/bookmark",
+      status: 204,
+      requestBodyHidden: true,
+    } as const;
+    const projected = scenarioCaptureRecords(
+      scenarioCaptureFixture([
+        { ...toggle, requestHeaderNames: ["accept", "authorization"] },
+        { ...toggle, requestHeaderNames: ["accept", "Content-Type"] },
+      ]),
+      "manifest",
+    );
+    expect(projected.records.map((entry) => entry.reported)).toMatchObject([
+      { request: { bodySize: 0 } },
+      { request: { bodySize: -1 } },
+    ]);
+  });
+
   it("leaves a transaction that cannot be attributed to one request and response unrepresented", () => {
     const capture = scenarioCaptureFixture(SCENARIO_EXCHANGES.slice(1, 2));
     const response = capture.events.items.find(

@@ -2,10 +2,11 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it } from "vitest";
-import { parse } from "plist";
 
+import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
 import { inspectBundleKeyedArchive } from "../../../src/artifacts/apple/KeyedArchiveReader.js";
 import { plistNestingLimitMessage } from "../../../src/domain/apple/plistValue.js";
+import type { OpenStepPropertyListCode } from "../../../src/domain/propertyListOpenStep.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { deeplyNestedXmlPlist } from "../../fixtures/keyedArchiveXmlNesting.js";
 
@@ -29,31 +30,34 @@ it.each([129, 3000])(
   },
 );
 
-it.each(["(}", "{)", "(@", "{key @", "(x @", "(x ", "{key ", "{key = x,"])(
-  "preserves the pinned OpenStep syntax diagnosis before a deep suffix after %s",
-  async (prefix) => {
-    const text = prefix + "(".repeat(130);
-    let pinned: unknown;
-    try {
-      parse(text);
-    } catch (cause) {
-      pinned = cause;
-    }
-    if (!(pinned instanceof Error) || pinned instanceof RangeError)
-      throw new Error(
-        "Malformed control must fail in the pinned syntax decoder",
-      );
+it.each([
+  ["(}", "unexpected_character", 1],
+  ["{)", "unexpected_character", 1],
+  ["(@", "unexpected_character", 1],
+  ["{key @", "expected_equals", 5],
+  ["(x @", "expected_separator", 3],
+  ["(x ", "expected_separator", 3],
+  ["{key ", "expected_equals", 5],
+  ["{key = x,", "unexpected_character", 8],
+] as const)(
+  "reports OpenStep %s before a deep suffix as %s at %s",
+  async (prefix, code: OpenStepPropertyListCode, position) => {
     const root = await createTestTempDirectory("rea-keyed-openstep-malformed-");
-    await writeFile(join(root, "Malformed.plist"), text);
+    await writeFile(join(root, "Malformed.plist"), prefix + "(".repeat(130));
     const rejected = await inspectBundleKeyedArchive({
       bundlePath: root,
       targetSha256: "a".repeat(64),
       parameters: { path: "Malformed.plist" },
       platform: "linux",
     }).catch((cause: unknown) => cause);
+    expect(rejected).toBeInstanceOf(ArtifactReaderFailure);
     expect(rejected).toMatchObject({
       reason: "format",
-      message: `Cannot decode selected Foundation keyed archive: ${pinned.message}`,
+      cause: {
+        _tag: "OpenStepPropertyListError",
+        code,
+        position,
+      },
     });
   },
 );

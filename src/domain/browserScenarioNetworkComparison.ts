@@ -5,6 +5,17 @@ import { digestCanonicalValue } from "./canonicalDigest.js";
 import { normalizeScenarioValue } from "./browserScenarioNormalization.js";
 import { indexBrowserScenarioTransactions } from "./browserScenarioTransactions.js";
 
+/** A comparison node lost the fingerprint its producer should have stored. */
+export class ScenarioNetworkFingerprintError extends Error {
+  readonly _tag = "ScenarioNetworkFingerprintError";
+  readonly code = "missing_fingerprint" as const;
+
+  constructor() {
+    super("missing_fingerprint");
+    this.name = "ScenarioNetworkFingerprintError";
+  }
+}
+
 /** Numeric links are temporary local indices, never durable transaction identity. */
 export const scenarioNetworkTransactionSchema = z.strictObject({
   events: z.array(z.unknown()),
@@ -241,8 +252,7 @@ export const fingerprintScenarioNetworkTransactions = (
   }
   return nodes.map((_, index) => {
     const fingerprint = fingerprints.get(index);
-    if (fingerprint === undefined)
-      throw new Error("Network comparison node has no fingerprint");
+    if (fingerprint === undefined) throw new ScenarioNetworkFingerprintError();
     return fingerprint;
   });
 };

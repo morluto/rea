@@ -71,6 +71,7 @@ export const createSessionMcpHarness = async (
   root: string,
   provider: (closed: string[]) => AnalysisProvider,
   resources: Array<{ close(): Promise<unknown> }>,
+  maximumInputElements?: number,
 ): Promise<SessionMcpHarness> => {
   const first = join(root, "first.hop");
   const second = join(root, "second.hop");
@@ -87,6 +88,14 @@ export const createSessionMcpHarness = async (
       adbDeviceAnalysis,
       apktoolAnalysis,
       logger: silentLogger,
+      ...(maximumInputElements === undefined
+        ? {}
+        : {
+            environment: {
+              ...process.env,
+              REA_MCP_MAX_INPUT_ELEMENTS: String(maximumInputElements),
+            },
+          }),
     },
   );
   const mcp = new Client({ name: "session-test", version: "1.0.0" });

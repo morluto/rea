@@ -1,6 +1,7 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchema } from "ajv";
+import type { DeviceManager } from "frida";
 import { expect, it, onTestFinished } from "vitest";
 
 import type { FridaInstrumentationPort } from "../../../src/application/frida/FridaInstrumentationPort.js";
@@ -14,6 +15,43 @@ import { fridaSessionStatusSchema } from "../../../src/domain/fridaSessionStatus
 import { evidenceBundleSummarySchema } from "../../../src/domain/evidenceRecordSummary.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { parseMcpEvidenceBundle } from "../../fixtures/mcpEvidenceBundle.js";
+
+it("retains the remote address, but not authentication, in discovery failures", async () => {
+  const session = createTestBinarySession(() => {
+    throw new Error("unexpected binary provider");
+  });
+  const bindings = {
+    addRemoteDevice: async () => {
+      throw new Error("connection refused: synthetic-secret-token");
+    },
+  } as unknown as DeviceManager;
+  const provider = new FridaInstrumentationManager({ deviceManager: bindings });
+  const server = createServer(
+    { kind: "session", session },
+    { fridaInstrumentation: provider },
+  );
+  const client = await connectFridaTestClient(
+    server,
+    session,
+    "frida-discovery-failure",
+  );
+  const result = await client.callTool({
+    name: "list_frida_processes",
+    arguments: {
+      remote: { address: "127.0.0.1:27042", token: "synthetic-secret-token" },
+    },
+  });
+  expect(result.isError).toBe(true);
+  const first = result.content[0];
+  if (first?.type !== "text") throw new Error("Expected text failure");
+  expect(JSON.parse(first.text)).toMatchObject({
+    error: {
+      code: "capability_unavailable",
+      details: { diagnostics: { remote_address: "127.0.0.1:27042" } },
+    },
+  });
+  expect(JSON.stringify(result)).not.toContain("synthetic-secret-token");
+});
 
 const createFridaTestProvider = (
   overrides: Partial<FridaInstrumentationPort> = {},

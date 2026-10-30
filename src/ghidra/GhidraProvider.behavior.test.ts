@@ -1811,7 +1811,7 @@ describe("Ghidra measured DOS load-image projection", () => {
           ok: true,
           value: {
             result: { status: state, observations: fixture.observation },
-            rawResult: fixture.observation,
+            rawResult: null,
             analysisProfile: profile.value.profile,
           },
         });
@@ -1894,7 +1894,7 @@ it("returns read-only NativeAOT metadata inline and drills down by derived Metho
           ],
         },
       },
-      rawResult: observations,
+      rawResult: null,
     },
   });
   for (const address of [
@@ -2149,9 +2149,7 @@ it("shares one session snapshot across callers while isolating cancellation and 
   expect(secondResult).toMatchObject({
     ok: true,
     value: {
-      rawResult: {
-        source_files: [{ name: "caller-2" }],
-      },
+      rawResult: null,
       result: {
         observations: {
           source_files: [{ name: "caller-2" }],
@@ -4615,6 +4613,26 @@ it("reports every Windows existing-project capability unavailable before open", 
           capability.availabilityCode === "unsupported_host",
       ),
     ).toBe(true);
+  } finally {
+    await ghidra.closeOwnedResources();
+  }
+});
+
+it("reports an unsupported existing-project target as an invalid REA_GHIDRA_PROJECT_PATH setting", async () => {
+  const ghidra = provider(installationHost(), undefined, {
+    REA_GHIDRA_PROJECT_PATH: join(process.cwd(), "selected.gpr"),
+  });
+  try {
+    const resolved = await ghidra.resolveAnalysisProfile({
+      ...executableTarget("elf", "x86_64"),
+      format: "dos-com",
+    } as unknown as BinaryTarget);
+    expect(resolved.ok).toBe(false);
+    if (resolved.ok) return;
+    expect(resolved.error).toMatchObject({
+      _tag: "ConfigurationError",
+      settings: [{ setting: "REA_GHIDRA_PROJECT_PATH" }],
+    });
   } finally {
     await ghidra.closeOwnedResources();
   }

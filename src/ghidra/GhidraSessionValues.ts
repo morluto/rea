@@ -1,3 +1,4 @@
+import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { ghidraSeedReportSchema } from "./GhidraAnalysisSeeds.js";
 import { ghidraDisabledAnalyzerReportSchema } from "./GhidraDisabledAnalyzers.js";
 import { z } from "zod";
@@ -191,7 +192,7 @@ export const parseGhidraSessionInfo = (
         parsed.data.analysis_complete === null ||
         parsed.data.analysis_complete === parsed.data.analysis_timed_out)
   )
-    return err(new Error("Ghidra bridge handshake identity is invalid"));
+    return err(new GhidraAdmissionError("handshake_identity"));
   return ok(parsed.data);
 };
 

@@ -113,14 +113,6 @@ describe("CLI output argument boundary", () => {
     expect(JSON.parse(renderCliDocument(value, "json", false))).toEqual(value);
   });
 
-  it("formats arrays of empty objects without column keys as JSON in Markdown", () => {
-    expect(renderCliDocument([{}], "md", false)).toBe("\\[{}\\]\n");
-    expect(renderCliDocument([{}, {}], "md", false)).toBe("\\[{},{}\\]\n");
-    expect(renderCliDocument({ empty: [{}] }, "md", false)).toBe(
-      "## empty\n\n\\[{}\\]\n",
-    );
-  });
-
   it("rejects token windows that would corrupt structured output", () => {
     for (const format of ["json", "jsonl", "yaml"] as const) {
       const validation = parseCliOutputArguments([
@@ -172,6 +164,16 @@ describe("CLI output argument boundary", () => {
         .validation,
     ).toEqual({ ok: true });
   });
+});
+
+it("formats arrays of empty objects without column keys as JSON in Markdown", () => {
+  expect(renderCliDocument([{}], "md", false)).toBe("\\[\\{\\}\\]\n");
+  expect(renderCliDocument([{}, {}], "md", false)).toBe(
+    "\\[\\{\\},\\{\\}\\]\n",
+  );
+  expect(renderCliDocument({ empty: [{}] }, "md", false)).toBe(
+    "## empty\n\n\\[\\{\\}\\]\n",
+  );
 });
 
 it("preserves flag-shaped values consumed by valued output options", () => {

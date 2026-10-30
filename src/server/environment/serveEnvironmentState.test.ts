@@ -920,6 +920,30 @@ it("loads a padded inline state file and keeps the RPC result compact", async ()
 });
 
 describe("serveEnvironment with a state", () => {
+  it("replays safe non-GET methods with the recorded-view reason", async () => {
+    const environment = await serveState(
+      environmentStateServeInputs(
+        environmentStateServeFixture(
+          timedCaptureEvidence([
+            ["GET", "/api/items", [{ id: 1 }]],
+            ["HEAD", "/api/items"],
+            ["OPTIONS", "/api/items", { allow: "GET, HEAD, OPTIONS" }],
+            ["TRACE", "/api/items", { trace: true }],
+          ]),
+        ),
+      ),
+    );
+    await withClient(environment, async (client) => {
+      for (const name of ["head_items", "options_items", "trace_items"]) {
+        const response = await client.callTool({ name, arguments: {} });
+        expect(response.isError).not.toBe(true);
+        expect(response.structuredContent).toMatchObject({
+          state: { source: "recording", reason: "method-replay" },
+        });
+      }
+    });
+  });
+
   it("declares the data plane, serves read tools from the state and reflects data/add in the next answer", async () => {
     const environment = await serveState({ source, state });
     const url = new URL(environment.url);

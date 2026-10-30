@@ -27,6 +27,8 @@ export interface ElectronIpcPairingState {
   readonly transmission: ElectronIpcRecord;
   readonly candidates: readonly ElectronIpcRecord[];
   readonly status: "paired" | "ambiguous" | "unpaired";
+  /** An observed match that may have unseen competitors when coverage is incomplete. */
+  readonly coverageLimitedCandidate: ElectronIpcRecord | null;
 }
 
 /** Flatten all per-file IPC facts into deterministic application records. */
@@ -55,6 +57,7 @@ export interface ElectronIpcContext {
 export const createElectronIpcContext = (
   analysis: JavaScriptArtifactAnalysis,
   applicationOwner: (file: JavaScriptArtifactFile) => string | null,
+  coverageComplete = true,
 ): ElectronIpcContext => {
   const records = collectElectronIpcRecords(analysis);
   const owners = new Map(
@@ -81,11 +84,20 @@ export const createElectronIpcContext = (
       // Unknown ownership can conceal competing dispatch contexts. Different owners
       // do not prove runtime isolation, so retain ambiguity rather than absence.
       const uncertain =
+        !coverageComplete ||
         owner == null ||
         matching.some((handler) => owners.get(handler.key) == null);
       return {
         transmission,
         candidates,
+        coverageLimitedCandidate:
+          !coverageComplete &&
+          owner != null &&
+          candidates.length === 1 &&
+          candidates[0]?.finding.receiver === undefined &&
+          !matching.some((handler) => owners.get(handler.key) == null)
+            ? (candidates[0] ?? null)
+            : null,
         status:
           !uncertain &&
           candidates.length === 1 &&

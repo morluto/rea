@@ -256,6 +256,7 @@ export function* collectElectronWrappedCallPathsSteps(
   let remainingVisits = 1_000_000;
   const prefixes = new ElectronCallPathBlockPrefixes(
     () => --remainingVisits >= 0,
+    state.parentsByNode,
   );
   const resolver = new JavaScriptSymbolicBindings(state, program, identity);
   const paths: ElectronCallPath[] = [];
@@ -298,6 +299,92 @@ export function* collectElectronWrappedCallPathsSteps(
                   : `!(${expression})`,
           location: range(node),
         },
+      ],
+    };
+  };
+  /** A case can be reached by its own selection or by fallthrough from an earlier case. */
+  const switchCaseContext = (
+    node: t.SwitchStatement,
+    index: number,
+    context: PathContext,
+  ): PathContext => {
+    const text = (part: t.Node): string | undefined =>
+      part.start == null || part.end == null || part.end - part.start > 512
+        ? undefined
+        : source.slice(part.start, part.end);
+    const discriminant = text(node.discriminant);
+    if (discriminant === undefined) {
+      accumulator.unknownFindings += 1;
+      return context;
+    }
+    const choices: string[] = [];
+    let expressionBytes = 0;
+    let defaultBefore = false;
+    const compare = (test: t.Expression, operator: "===" | "!==") => {
+      // Dynamic case expressions can mutate the evaluated discriminant; do
+      // not turn a second source evaluation into an invented predicate.
+      if (
+        !t.isStringLiteral(test) &&
+        !t.isNumericLiteral(test) &&
+        !t.isBooleanLiteral(test) &&
+        !t.isNullLiteral(test) &&
+        !t.isBigIntLiteral(test)
+      )
+        return undefined;
+      const label = text(test);
+      return label === undefined
+        ? undefined
+        : `(${discriminant}) ${operator} (${label})`;
+    };
+    const append = (output: string[], item: string): boolean => {
+      expressionBytes += item.length + 6;
+      if (expressionBytes > 512) return false;
+      output.push(item);
+      return true;
+    };
+    let fallthrough = false;
+    for (let i = 0; i <= index; i += 1) {
+      if (--remainingVisits < 0) return context;
+      const branch = node.cases[i];
+      if (!branch) continue;
+      if (i < index && branch.consequent.length > 0) fallthrough = true;
+      if (branch.test == null) {
+        defaultBefore = true;
+        continue;
+      }
+      const match = compare(branch.test, "===");
+      if (match === undefined || !append(choices, match)) {
+        accumulator.unknownFindings += 1;
+        return context;
+      }
+    }
+    if (defaultBefore) {
+      const unmatched: string[] = [];
+      for (const branch of node.cases) {
+        if (--remainingVisits < 0) return context;
+        if (branch.test == null) continue;
+        const mismatch = compare(branch.test, "!==");
+        if (mismatch === undefined || !append(unmatched, mismatch)) {
+          accumulator.unknownFindings += 1;
+          return context;
+        }
+      }
+      choices.push(unmatched.length === 0 ? "true" : unmatched.join(" && "));
+    }
+    // Earlier case bodies may terminate or change state before reaching this
+    // case. The selection disjunction is necessary but not a complete path.
+    if (fallthrough) accumulator.unknownFindings += 1;
+    const expression = choices.map((choice) => `(${choice})`).join(" || ");
+    if (expression.length > 512) {
+      accumulator.unknownFindings += 1;
+      return context;
+    }
+    if (expression === "") return context;
+    return {
+      ...context,
+      conditions: [
+        ...context.conditions,
+        { expression, location: range(node) },
       ],
     };
   };
@@ -1171,8 +1258,9 @@ export function* collectElectronWrappedCallPathsSteps(
       let next = context;
       for (const statement of node.body) {
         walk(statement, env, next);
+        if (remainingVisits < 0) return;
         const fallthrough = sequentialFallthrough(
-          prefixes.statement(statement),
+          prefixes.statement(statement, node) ?? null,
           env,
           next,
         );
@@ -1217,9 +1305,27 @@ export function* collectElectronWrappedCallPathsSteps(
       );
       return;
     }
+    if (t.isSwitchStatement(node)) {
+      walk(node.discriminant, env, context);
+      for (let index = 0; index < node.cases.length; index += 1) {
+        if (remainingVisits < 0) return;
+        const branch = node.cases[index]!;
+        if (branch.test) walk(branch.test, env, context);
+        if (remainingVisits < 0) return;
+        const branchContext = switchCaseContext(node, index, context);
+        for (const statement of branch.consequent) {
+          if (remainingVisits < 0) return;
+          walk(statement, env, branchContext);
+        }
+      }
+      return;
+    }
     if (t.isCallExpression(node) || t.isOptionalCallExpression(node))
       call(node, env, context);
-    for (const child of childNodes(node)) walk(child, env, context);
+    for (const child of childNodes(node)) {
+      if (remainingVisits < 0) return;
+      walk(child, env, context);
+    }
   }
   let prefixVisits = 0;
   function* seed(
@@ -1256,6 +1362,18 @@ export function* collectElectronWrappedCallPathsSteps(
         if (truth !== undefined && truth !== positive) return;
         if (truth === undefined)
           context = condition(context, parent.test, positive);
+      } else if (t.isSwitchCase(parent) && child !== parent.test) {
+        const owner = state.parentsByNode.get(parent);
+        if (owner && t.isSwitchStatement(owner)) {
+          let index = 0;
+          while (index < owner.cases.length && owner.cases[index] !== parent) {
+            if (--remainingVisits < 0) return;
+            index += 1;
+          }
+          if (index < owner.cases.length)
+            context = switchCaseContext(owner, index, context);
+          else accumulator.unknownFindings += 1;
+        } else accumulator.unknownFindings += 1;
       } else if (t.isLogicalExpression(parent) && child === parent.right) {
         const right = symbolicLogicalRight(
           parent.operator,

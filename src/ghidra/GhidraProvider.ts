@@ -3,7 +3,7 @@ import {
   ghidraPinnedLanguage,
   resolveGhidraAnalysisProfile,
 } from "./GhidraAnalysisProfile.js";
-import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
 import { resolveGhidraProject } from "./GhidraProjectSnapshot.js";
 import { DeferredAnalysisClient } from "../providers/DeferredAnalysisClient.js";
 import type { ProviderInspectionScope } from "../application/ProviderInspectionScope.js";
@@ -419,14 +419,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
           isMachOFormat(target.format)
         )
       )
-        return err(
-          new ProviderAdapterError("ghidra", "resolve_analysis_profile", {
-            diagnostics: {
-              reason:
-                "Existing-project mode supports native ELF/PE/Mach-O programs on POSIX without fresh-import loader preparation or pinned language overrides; use fresh import for this target/host.",
-            },
-          }),
-        );
+        return err(existingProjectUnsupported());
       const project = await resolveGhidraProject(
         this.config.ghidraExistingProject,
         target,
@@ -670,6 +663,15 @@ export class GhidraProvider implements AnalysisProviderCandidate {
       : inspectGhidraInstallation(options, this.installationHost);
   }
 }
+
+/** The selected project, not the target or provider, is what this host cannot serve. */
+const existingProjectUnsupported = (): ConfigurationError => {
+  const constraint =
+    "Existing-project mode supports native ELF/PE/Mach-O programs on POSIX without fresh-import loader preparation or pinned language overrides; unset REA_GHIDRA_PROJECT_PATH to use fresh import for this target/host.";
+  return new ConfigurationError(constraint, {
+    settings: [{ setting: "REA_GHIDRA_PROJECT_PATH", constraint }],
+  });
+};
 
 const providerFailureText = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);

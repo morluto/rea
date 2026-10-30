@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { reconstructionProofApplicabilityCases } from "../../tests/fixtures/reconstructionProofApplicability.js";
 
 import {
   boundProofEvidence,
@@ -11,6 +12,26 @@ import {
 } from "./ReconstructionObligationLedger.fixture.js";
 import { createEvidence } from "../domain/evidence.js";
 import type { ReviewedReconstructionObligation } from "../domain/reconstructionObligationLedgerSchemas.js";
+
+describe("selected reconstruction fixture outcomes", () => {
+  it.each(reconstructionProofApplicabilityCases())(
+    "$name",
+    ({ input, status, codes }) => {
+      const ledger = build(input);
+      expect(ledger.status).toBe(status);
+      expect(ledger.obligations[0]?.status).toBe(
+        status === "ready" ? "verified" : "implemented",
+      );
+      expect(
+        ledger.obligations[0]?.diagnostics.map(({ code }) => code).sort(),
+      ).toEqual([...codes].sort());
+      for (const fixture of input.manifest.bindings[0]!.fixtures)
+        for (const evidenceId of fixture.evidence_ids)
+          expect(ledger.evidence_links).toContain(evidenceId);
+      expect(ledger.summary.required_open).toBe(status === "ready" ? 0 : 1);
+    },
+  );
+});
 
 const registerOriginalProcessAuthorityCases = (): void => {
   it.each([

@@ -23,6 +23,7 @@ import {
 
 import {
   resolveSemanticBindingState,
+  semanticBindingLookupAt,
   type JavaScriptBindingIndex,
   type JavaScriptSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
@@ -842,7 +843,11 @@ export function* collectSemanticMemberMutationsSteps(
         continue;
       }
       if (t.isIdentifier(expression)) {
-        const binding = resolveBinding(expression, expression.name);
+        let binding = resolveBinding(expression, expression.name);
+        const lookup =
+          binding === undefined
+            ? semanticBindingLookupAt(state, expression, expression.name)
+            : undefined;
         if (binding === undefined) {
           for (const path of ambientPaths(
             expression,
@@ -877,8 +882,11 @@ export function* collectSemanticMemberMutationsSteps(
               arrayPrototypeIterationMayChange(current.path.slice(2)))
           )
             state.arrayIterationUnknown = true;
-          continue;
+          if (lookup?.kind !== "uncertain-binding") continue;
+          binding = lookup.binding;
         }
+        const definiteReceiver =
+          current.definiteReceiver && lookup?.kind !== "uncertain-binding";
         // An alias restored from a saved reference can revisit the same binding
         // at an earlier capture or a shorter getter-receiver path. Only a
         // repeated capture and path closes a cycle.
@@ -969,7 +977,7 @@ export function* collectSemanticMemberMutationsSteps(
           current.originAt?.start ?? -1
         }\u0001${current.originAt?.end ?? -1}\u0001${
           current.ownerInitializer?.start ?? -1
-        }\u0001${current.ownerInitializer?.end ?? -1}\u0001${widenedGetterResult}\u0001${current.definiteReceiver}\u0001${assignedSources?.[0]?.target?.start ?? -1}\u0001${current.memberReadAt?.start ?? -1}\u0001${current.memberReadAt?.end ?? -1}`;
+        }\u0001${current.ownerInitializer?.end ?? -1}\u0001${widenedGetterResult}\u0001${definiteReceiver}\u0001${assignedSources?.[0]?.target?.start ?? -1}\u0001${current.memberReadAt?.start ?? -1}\u0001${current.memberReadAt?.end ?? -1}`;
         let covering = coveringPaths.get(pathState);
         if (covering === undefined) {
           covering = new SemanticPropertyPathCoverage();
@@ -1142,9 +1150,7 @@ export function* collectSemanticMemberMutationsSteps(
             });
           else
             binding.memberWrites.push({
-              receiverIdentity: current.definiteReceiver
-                ? "definite"
-                : "possible",
+              receiverIdentity: definiteReceiver ? "definite" : "possible",
               path,
               node: mutation,
               receiverInitializers,
@@ -1183,7 +1189,7 @@ export function* collectSemanticMemberMutationsSteps(
               path: [...initializer.projection, ...path],
               bindings: nested,
               definiteReceiver:
-                current.definiteReceiver &&
+                definiteReceiver &&
                 origins.initializers.length +
                   origins.referenceInitializers.length ===
                   1,
@@ -1209,7 +1215,7 @@ export function* collectSemanticMemberMutationsSteps(
             path: copiedPath,
             bindings: nested,
             definiteReceiver:
-              current.definiteReceiver &&
+              definiteReceiver &&
               origins.initializers.length +
                 origins.referenceInitializers.length ===
                 1 &&

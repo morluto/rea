@@ -6,16 +6,29 @@ import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import { fileHandleMatchesBytes } from "../filesystem/fileHandleMatchesBytes.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { OwnedStagedOutput } from "../filesystem/OwnedStagedOutput.js";
-import {
-  RegularFileChangedError,
-  sameRegularFileState,
-} from "../filesystem/RegularFile.js";
+import { sameRegularFileState } from "../filesystem/RegularFile.js";
 
 /** The read owner's byte-exact original and selected identity. */
 export interface SkillFileSnapshot {
   readonly bytes: Buffer;
   readonly mode: number;
   readonly state: Stats;
+}
+
+/** The selected destination no longer has the state admitted for publication. */
+export class SkillDestinationChangedError extends Error {
+  readonly _tag = "SkillDestinationChangedError";
+  constructor(
+    readonly path: string,
+    cause?: unknown,
+  ) {
+    super(
+      `Skill destination appeared or changed during installation: ${path}`,
+      {
+        cause,
+      },
+    );
+  }
 }
 
 export interface SkillPublicationCleanupOwner {
@@ -148,7 +161,20 @@ export class SkillFilePublication {
     this.#attempted = true;
     if (this.original === undefined) {
       // Exclusive creation preserves a file created after the absence check.
-      await link(this.stagedPath, this.path);
+      try {
+        await link(this.stagedPath, this.path);
+      } catch (cause: unknown) {
+        if (
+          cause instanceof Error &&
+          "code" in cause &&
+          cause.code === "EEXIST"
+        ) {
+          // EEXIST proves the exclusive link did not publish our staging file.
+          this.#attempted = false;
+          throw new SkillDestinationChangedError(this.path, cause);
+        }
+        throw cause;
+      }
     } else {
       await rename(this.stagedPath, this.path);
       this.staging.recordPublishedRename();
@@ -162,12 +188,12 @@ export class SkillFilePublication {
       before === undefined ||
       !sameRegularFileState(before, await this.owner.handle.stat())
     )
-      throw new RegularFileChangedError(this.path);
+      throw new SkillDestinationChangedError(this.path);
     await this.#assertNamed(before);
     if (!(await fileHandleMatchesBytes(this.owner.handle, this.bytes)))
-      throw new RegularFileChangedError(this.path);
+      throw new SkillDestinationChangedError(this.path);
     if (!sameRegularFileState(before, await this.owner.handle.stat()))
-      throw new RegularFileChangedError(this.path);
+      throw new SkillDestinationChangedError(this.path);
     await this.#assertNamed(before);
   }
 
@@ -205,7 +231,7 @@ export class SkillFilePublication {
     await this.owner.handle.sync();
     await this.#assertNamed(await this.owner.handle.stat());
     if (!(await fileHandleMatchesBytes(this.owner.handle, original.bytes)))
-      throw new RegularFileChangedError(this.path);
+      throw new SkillDestinationChangedError(this.path);
     this.#restored = true;
   }
 
@@ -214,13 +240,14 @@ export class SkillFilePublication {
   }
 
   async #assertNamed(expected: Stats): Promise<void> {
-    const named = await lstat(this.path);
+    const named = await optionalState(this.path);
     if (
       expected.ino === 0 ||
+      named === undefined ||
       named.isSymbolicLink() ||
       !sameRegularFileState(expected, named)
     )
-      throw new RegularFileChangedError(this.path);
+      throw new SkillDestinationChangedError(this.path);
   }
 
   async #assertSelected(): Promise<void> {
@@ -232,7 +259,7 @@ export class SkillFilePublication {
           current.isSymbolicLink() ||
           !sameRegularFileState(this.original.state, current)
     )
-      throw new RegularFileChangedError(this.path);
+      throw new SkillDestinationChangedError(this.path);
   }
 }
 

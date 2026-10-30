@@ -100,8 +100,7 @@ const page = (source: AnalysisViewParent, view: unknown) => {
     artifactInventoryViewRequestSchema.parse(view),
   );
   if (!result.ok) throw result.error;
-  if (result.value.kind !== "inventory")
-    throw new Error("Expected an inventory page");
+  if (!("items" in result.value)) throw new Error("Expected an inventory page");
   return result.value;
 };
 afterEach(() => vi.restoreAllMocks());

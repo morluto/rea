@@ -7,6 +7,7 @@ import {
 import { hashStableRootArtifactHandle } from "../inventory/hashStableRootArtifact.js";
 import { absoluteCallerPath } from "../../filesystem/callerPath.js";
 import type { AsarHeaderAdmission } from "../../config/asarHeaderAdmission.js";
+import { artifactFormatDescriptor } from "../artifactFormats.js";
 import { createArtifactReader } from "../createArtifactReader.js";
 import { resolveAsarHeaderAdmission } from "../AsarHeader.js";
 import {
@@ -40,7 +41,6 @@ import { ArtifactTraversalObservation } from "../ArtifactTraversalObservation.js
 import { abortIfNeeded } from "../ArtifactHash.js";
 import { SafeOutputTree } from "../SafeOutputTree.js";
 import { SafeOutputTreeCreationFailure } from "../SafeOutputTreeCreationFailure.js";
-import { isZipPackageFormat } from "../../domain/zipPackageFormat.js";
 import {
   artifactExtractionResultSchema,
   type ArtifactExtractionResult,
@@ -582,18 +582,7 @@ const requireExtractableFormat = async (
   // A thin Mach-O has no child entries of its own: inventory lists only its
   // root unless it carries an embedded pack, so it takes the same pack probe
   // as ELF and PE while only the universal container has a slice reader.
-  if (
-    !directory &&
-    format !== "asar" &&
-    format !== "godot-pck" &&
-    format !== "unityfs" &&
-    format !== "uimage" &&
-    format !== "intel-hex" &&
-    format !== "srec" &&
-    format !== "esp-image" &&
-    format !== "mach-o-universal" &&
-    !isZipPackageFormat(format)
-  ) {
+  if (!directory && artifactFormatDescriptor(format)?.extractable !== true) {
     const detected = await withArtifactRegularFile(
       path,
       input.resourceScope,
@@ -604,7 +593,9 @@ const requireExtractableFormat = async (
           (await probes.godotPck()) !== undefined ||
           ((format === "elf" || format === "pe" || format === "mach-o") &&
             ((await probes.nodeSea()) !== undefined ||
-              (await probes.pyInstaller()) !== undefined));
+              (await probes.pyInstaller()) !== undefined ||
+              (await probes.bunStandalone()).status === "present" ||
+              (await probes.dotnetBundle()) !== undefined));
         if (pack && input.expectedRootSha256 !== undefined) {
           const digest = await hashStableRootArtifactHandle(
             path,
@@ -648,7 +639,10 @@ const createReader = (
       ? undefined
       : createArtifactReader(path, containerFormat, {
           environment: input.environment,
-          unreadableDirectories: "fail",
+          // Inventory already records inaccessible descendants as omissions.
+          // Keep that traversal policy here; the selected-path check below
+          // still refuses any inventoried file that cannot be materialized.
+          unreadableDirectories: "omit",
           selectedPath: absoluteCallerPath(
             input.selectedPath ?? input.inputPath,
           ),

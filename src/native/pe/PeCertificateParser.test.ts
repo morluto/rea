@@ -21,7 +21,10 @@ import {
   PeCertificateAsn1Failure,
   readAsn1,
 } from "./PeCertificateAsn1.js";
-import { parsePeCertificates } from "./PeCertificateParser.js";
+import {
+  parsePeCertificates,
+  UNSIGNED_ATTRIBUTES_LIMITATION,
+} from "./PeCertificateParser.js";
 
 const defaults = inspectPeCertificatesInputSchema.parse({
   path: "/artifacts/app.exe",
@@ -69,6 +72,36 @@ it("reads PE32 and PE32+ PKCS#7 certificate tables", () => {
       examined_entries: 1,
       certificates: 1,
     });
+  }
+});
+
+it("reports unsigned attribute OIDs and incomplete nested coverage", () => {
+  const types = [
+    [1, 3, 6, 1, 4, 1, 311, 3, 3, 1],
+    [1, 3, 6, 1, 4, 1, 311, 2, 4, 1],
+  ];
+  for (const plus of [false, true]) {
+    const report = peCertificatesSchema.parse(
+      parse(
+        peCertificateFixture(
+          plus,
+          pkcs7SignedDataFixture(undefined, undefined, undefined, types),
+        ),
+      ),
+    );
+    expect(
+      report.entries[0]?.pkcs7?.signers[0]?.unsigned_attribute_oids,
+    ).toEqual(["1.3.6.1.4.1.311.3.3.1", "1.3.6.1.4.1.311.2.4.1"]);
+    expect(report.coverage).toMatchObject({
+      status: "partial",
+      certificates: 1,
+    });
+    expect(report.limitations).toContain(UNSIGNED_ATTRIBUTES_LIMITATION);
+    const control = parse(peCertificateFixture(plus));
+    expect(
+      control.entries[0]?.pkcs7?.signers[0]?.unsigned_attribute_oids,
+    ).toBeNull();
+    expect(control.coverage.status).toBe("complete");
   }
 });
 
@@ -551,6 +584,42 @@ const namedCertificate = (issuer: Buffer, subject: Buffer) =>
     der(0x03, Buffer.from([0])),
   );
 
+it.each(["signature", "public-key", "issuer-id", "subject-id"] as const)(
+  "validates BIT STRING padding for %s at the shared certificate boundary",
+  (field) => {
+    const name = directoryName(der(0x0c, Buffer.from("Fixture")));
+    const certificate = (content: number[]) =>
+      readAsn1(
+        derSeq(
+          derSeq(
+            derInt(1),
+            SHA256_ALG,
+            name,
+            validity,
+            name,
+            field === "public-key"
+              ? derSeq(SHA256_ALG, der(0x03, Buffer.from(content)))
+              : spki,
+            ...(field === "issuer-id" ? [der(0x81, Buffer.from(content))] : []),
+            ...(field === "subject-id"
+              ? [der(0x82, Buffer.from(content))]
+              : []),
+          ),
+          SHA256_ALG,
+          der(0x03, Buffer.from(field === "signature" ? content : [0])),
+        ),
+      );
+    for (const invalid of [[1], [7], [1, 1], [7, 0x81]])
+      expect(() => parseCertificate(certificate(invalid))).toThrow(
+        PeCertificateAsn1Failure,
+      );
+    for (const valid of [[0], [0, 0xff], [1, 0xfe], [7, 0x80]])
+      expect(parseCertificate(certificate(valid)).subject.text).toBe(
+        "commonName=Fixture",
+      );
+  },
+);
+
 it("rejects a certificate missing subjectPublicKeyInfo or signatureValue", () => {
   const issuer = directoryName(der(0x0c, Buffer.from("A")));
   const subject = directoryName(der(0x0c, Buffer.from("B")));
@@ -733,4 +802,30 @@ it("decodes UniversalString names as UTF-32BE", () => {
   expect(() => parseCertificate(broken)).toThrow(
     /UniversalString length is not a multiple of 4/u,
   );
+});
+
+it.each([0xd800, 0xdfff])(
+  "rejects BMPString surrogate code unit %i in certificate names",
+  (codeUnit) => {
+    const content = Buffer.alloc(2);
+    content.writeUInt16BE(codeUnit);
+    const certificate = readAsn1(
+      namedCertificate(
+        directoryName(der(0x1e, content)),
+        directoryName(der(0x0c, Buffer.from("Subject"))),
+      ),
+    );
+    expect(() => parseCertificate(certificate)).toThrow(
+      PeCertificateAsn1Failure,
+    );
+  },
+);
+
+it("preserves valid BMPString code units on both sides of the surrogate range", () => {
+  const name = directoryName(
+    der(0x1e, Buffer.from([0xd7, 0xff, 0xe0, 0, 0xfe, 0xff])),
+  );
+  expect(
+    parseCertificate(readAsn1(namedCertificate(name, name))).subject.text,
+  ).toBe("commonName=\ud7ff\ue000\ufeff");
 });

@@ -4,13 +4,13 @@ import {
   elfDependenciesSchema,
   type ElfDependencies,
 } from "../native/elfDependencies.js";
-import type { AnalysisError } from "../analysisErrorBase.js";
-import { err, ok, type Result } from "../result.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import { err, ok } from "../result.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import {
+  assertOwnedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
@@ -128,8 +128,8 @@ const flattenVersions = (report: ElfDependencies) =>
 /** Read selected dynamic-dependency facts without reopening the artifact. */
 export const projectElfDependenciesView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
+  view: AdmittedView,
+) => {
   const invalid = (message: string) =>
     err(
       analysisViewInputError([
@@ -140,6 +140,9 @@ export const projectElfDependenciesView = (
     return invalid(
       "ELF dependency Evidence supports summary and elf-dependencies views.",
     );
+  assertOwnedView<
+    SummaryAnalysisView | z.output<typeof elfDependenciesViewRequestSchema>
+  >(view, "summary", "elf-dependencies");
   const parsed = readReport(parent);
   if (!parsed.ok) return parsed;
   const report = parsed.value;

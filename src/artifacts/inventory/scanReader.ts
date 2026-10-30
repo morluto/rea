@@ -177,10 +177,13 @@ const visitArtifactEntries = async (
           : `${frame.prefix}/${entry.path}`,
       );
       const expandableAsar = isExpandableAsar(entry, logicalPath);
-      // PyInstaller TOC rows are source-distinct even when their logical
+      // PyInstaller rows and Bun modules are source-distinct even when their logical
       // destinations collide. Inventory retains those observations; the
       // extraction path registry remains the authority for materialization.
-      if (frame.reader.format !== "pyinstaller")
+      if (
+        frame.reader.format !== "pyinstaller" &&
+        frame.reader.format !== "bun-standalone"
+      )
         context.registry.add(
           logicalPath,
           expandableAsar ? "directory" : entry.kind,

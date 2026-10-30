@@ -202,7 +202,9 @@ const readJson = async (
     operation,
     loaded.error.reason === "invalid-json"
       ? `Process input file is not valid UTF-8 JSON: ${path} (${detail}). Repair the file, then try again.`
-      : `Process input file could not be read: ${path} (${detail}). Check the reported filesystem constraint and retry.`,
+      : loaded.error.reason === "symlink-traversal"
+        ? `Process input file could not be read: ${path} (${detail}). Repair the symbolic-link chain or select another file.`
+        : `Process input file could not be read: ${path} (${detail}). Check the reported filesystem constraint and retry.`,
     ["input_file"],
     "invalid_value",
   );

@@ -18,6 +18,7 @@ import {
 } from "./artifactGraph.js";
 import { digestCanonicalValue } from "./canonicalDigest.js";
 import { isJavaScriptSourcePath } from "./javascript/javascriptArtifactFiles.js";
+import { admitRawBinary } from "./rawBinary.js";
 import { uniqueSorted } from "./canonicalOrdering.js";
 import { evidenceSchema, parseEvidence, type Evidence } from "./evidence.js";
 import { jsonValueSchema } from "./jsonValue.js";
@@ -330,9 +331,55 @@ const probesFor = (
           },
         ]
       : [];
+  if (format === "fit") return fitProbes(inventory);
   return format === "directory"
     ? directoryProbes(inventory)
     : probesForFormat(format);
+};
+
+const fitProbes = (
+  inventory: ArtifactInventoryResult,
+): ArtifactInspectionResult["next_probes"] => {
+  // Extraction keeps stored bytes, so only plain images are directly analyzable.
+  const images = inventory.occurrences.flatMap((row) =>
+    row.format_metadata?.kind === "fit-image" &&
+    row.format_metadata.compression === "none" &&
+    row.format_metadata.cipher_present === false
+      ? [{ row, image: row.format_metadata }]
+      : [],
+  );
+  let rawProbe: ArtifactInspectionResult["next_probes"][number] | undefined;
+  for (const { row, image } of images) {
+    if (row.declared_size === null) continue;
+    if (image.entry !== null && image.entry !== image.load) continue;
+    // An unavailable entry is not proof that the declaration was absent.
+    if (image.unreadable_fields.includes("entry")) continue;
+    const admitted = admitRawBinary({
+      architecture: image.arch,
+      entryPoint: image.load,
+      fileBytes: row.declared_size,
+    });
+    if (!admitted.ok) continue;
+    rawProbe = {
+      operation: "open_binary",
+      rationale: `Extract ${JSON.stringify(row.logical_path)} with extract_artifact, then open those uncompressed, unciphered bytes with format raw-binary, architecture ${admitted.value.architecture} and entry_point ${admitted.value.entryPoint}. This maps offset 0 and seeds analysis at that address; the declared entry is absent or equal to load.`,
+      authority: "native-analysis-provider",
+    };
+    break;
+  }
+  return [
+    ...(images.some(({ image }) => image.type === "flat_dt")
+      ? [
+          {
+            operation: "inspect_devicetree",
+            rationale:
+              "Extract images with extract_artifact, then inspect uncompressed, unciphered flat_dt images with inspect_devicetree.",
+            authority: "artifact-bytes" as const,
+          },
+        ]
+      : []),
+    ...(rawProbe === undefined ? [] : [rawProbe]),
+  ];
 };
 
 // An application bundle directory is only a container, so its probes follow
@@ -376,6 +423,24 @@ const directoryProbes = (
 const probesForFormat = (
   format: ArtifactInventoryResult["manifest"]["root_format"],
 ): ArtifactInspectionResult["next_probes"] => {
+  if (format === "bun-standalone")
+    return [
+      {
+        operation: "extract_artifact",
+        authority: "artifact-bytes",
+        rationale:
+          "Extract the stored module regions into a fresh owned directory, then inspect compatible source separately. Bytecode and source-map regions remain stored evidence; they are not decoded or executed.",
+      },
+    ];
+  if (format === "dotnet-bundle")
+    return [
+      {
+        operation: "extract_artifact",
+        rationale:
+          "Extract members into a fresh owned directory, then inspect candidate files separately; bundle declarations do not establish their format.",
+        authority: "artifact-bytes",
+      },
+    ];
   if (["asar", "javascript-bundle"].includes(format))
     return [
       {

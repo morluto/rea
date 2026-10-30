@@ -1076,12 +1076,22 @@ describe("snapshot cache eligibility", () => {
         const parameters: Readonly<Record<string, JsonValue>> = live
           ? { address: "0x1000", document: "main" }
           : {};
+        const evidenceIds: Array<string | undefined> = [];
         for (let attempt = 0; attempt < 2; attempt += 1) {
           const result = await session.execute("address_name", parameters);
-          expect(result).toMatchObject({ ok: true });
-          if (result.ok) expect(result.value.evidenceId).toBeUndefined();
+          if (!result.ok) throw result.error;
+          evidenceIds.push(result.value.evidenceId);
         }
-        expect(session.exportEvidenceBundle().records).toEqual([source]);
+        const records = session.exportEvidenceBundle().records;
+        if (live) {
+          expect(evidenceIds).toEqual([expect.any(String), evidenceIds[0]]);
+          expect(records.map((record) => record.evidence_id)).toEqual(
+            expect.arrayContaining([source.evidence_id, evidenceIds[0]]),
+          );
+        } else {
+          expect(evidenceIds).toEqual([undefined, undefined]);
+          expect(records).toEqual([source]);
+        }
         expect(session.exportAnalysisSnapshot()).toMatchObject({
           ok: true,
           value: { entries: [] },
@@ -1122,20 +1132,20 @@ describe("snapshot cache eligibility", () => {
       await session.close();
     }
   });
+});
 
-  it("does not snapshot reads that depend on the provider cursor", async () => {
-    const [first] = await createBinarySessionTargets();
-    const calls: string[] = [];
-    const session = createTestBinarySession(createCacheProvider(calls));
-    await openAndExecuteAddressName(session, first, {});
-    expect((await session.execute("address_name", {})).ok).toBe(true);
-    expect(calls).toEqual(["address_name", "address_name"]);
-    expect(session.exportAnalysisSnapshot()).toMatchObject({
-      ok: true,
-      value: { entries: [] },
-    });
-    await session.close();
+it("does not snapshot reads that depend on the provider cursor", async () => {
+  const [first] = await createBinarySessionTargets();
+  const calls: string[] = [];
+  const session = createTestBinarySession(createCacheProvider(calls));
+  await openAndExecuteAddressName(session, first, {});
+  expect((await session.execute("address_name", {})).ok).toBe(true);
+  expect(calls).toEqual(["address_name", "address_name"]);
+  expect(session.exportAnalysisSnapshot()).toMatchObject({
+    ok: true,
+    value: { entries: [] },
   });
+  await session.close();
 });
 
 describe("provider health and availability", () => {

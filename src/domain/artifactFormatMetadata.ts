@@ -122,6 +122,14 @@ export type PyInstallerEntryMetadata = z.infer<
   typeof pyInstallerEntryMetadataSchema
 >;
 
+/** Ordinary .NET bundle manifest facts, not proof of managed assembly validity. */
+export const dotnetBundleEntryMetadataSchema = z.strictObject({
+  kind: z.literal("dotnet-bundle-entry"),
+  major_version: uint32,
+  minor_version: uint32,
+  file_type: z.number().int().min(0).max(255),
+});
+
 /**
  * Node.js single-executable blob facts. Lengths follow the Node 24 64-bit
  * little-endian `size_t` reader. The fuse sentinel is a separate carrier scan.
@@ -197,9 +205,93 @@ export const hexRecordRegionMetadataSchema = z.strictObject({
   first_line: offset,
   last_line: offset,
 });
-export type HexRecordRegionMetadata = z.infer<
-  typeof hexRecordRegionMetadataSchema
->;
+
+/**
+ * U-Boot FIT root facts. Configuration references are declared names; a
+ * reference that names no image is reported as a limitation, not removed.
+ */
+export const fitMetadataSchema = z.strictObject({
+  kind: z.literal("fit"),
+  fdt_version: uint32,
+  fdt_totalsize: offset,
+  external_data_base: offset,
+  description: z.string().nullable(),
+  timestamp: uint32.nullable(),
+  address_cells: uint32.nullable(),
+  default_configuration: z.string().nullable(),
+  configurations: z.array(
+    z.strictObject({
+      name: z.string(),
+      description: z.string().nullable(),
+      kernel: z.array(z.string()),
+      firmware: z.array(z.string()),
+      fdt: z.array(z.string()),
+      ramdisk: z.array(z.string()),
+      loadables: z.array(z.string()),
+      signature_count: uint32,
+      signatures_unreadable: uint32,
+      unresolved_reference_count: uint32,
+      signature_algorithms: z.array(z.string()),
+    }),
+  ),
+});
+export type FitMetadata = z.infer<typeof fitMetadataSchema>;
+
+/**
+ * One /images node's facts. Null fields are absent unless unreadable_fields
+ * identifies an interpretation failure. Load and entry are declarations;
+ * stored bytes may be compressed or ciphered.
+ */
+export const fitImageMetadataSchema = z.strictObject({
+  kind: z.literal("fit-image"),
+  index: uint32,
+  name: z.string(),
+  description: z.string().nullable(),
+  type: z.string().nullable(),
+  arch: z.string().nullable(),
+  os: z.string().nullable(),
+  compression: z.string().nullable(),
+  load: z.string().nullable(),
+  entry: z.string().nullable(),
+  data_source: z.enum(["embedded", "data-offset", "data-position"]),
+  declared_offset: uint32.nullable(),
+  image_data: z.string().nullable(),
+  /** Presence is independent of whether the declared algorithm is readable. */
+  cipher_present: z.boolean(),
+  cipher_algo: z.string().nullable(),
+  unreadable_fields: z.array(
+    z.enum([
+      "description",
+      "type",
+      "arch",
+      "os",
+      "compression",
+      "load",
+      "entry",
+      "cipher_algo",
+    ]),
+  ),
+  hash_algorithms: z.array(z.string()),
+  hashes_verified: uint32,
+  hashes_unverified: uint32,
+  signature_count: uint32,
+  signatures_unreadable: uint32,
+  signature_algorithms: z.array(z.string()),
+});
+export type FitImageMetadata = z.infer<typeof fitImageMetadataSchema>;
+/** Payload interpretation and sharing declarations, independent of FIT placement. */
+export const fitImageDeclaration = (metadata: FitImageMetadata) => ({
+  type: metadata.type,
+  arch: metadata.arch,
+  os: metadata.os,
+  compression: metadata.compression,
+  load: metadata.load,
+  entry: metadata.entry,
+  image_data: metadata.image_data,
+  cipher_present: metadata.cipher_present,
+  cipher_algo: metadata.cipher_algo,
+});
+
 /** Runtime member identity, independent of blob layout and directory order. */
 export const nodeSeaEntryDeclaration = (
   metadata: z.infer<typeof nodeSeaEntryMetadataSchema>,
@@ -404,6 +496,62 @@ export const uImageEntryMetadataSchema = z.strictObject({
 });
 export type UImageEntryMetadata = z.infer<typeof uImageEntryMetadataSchema>;
 
+const bunHex = z
+  .string()
+  .regex(/^[0-9a-f]+$/u)
+  .nullable();
+
+/**
+ * Container facts for one Bun standalone module graph. `flags` stays the raw
+ * u32 because Bun 1.3 and 1.4 reuse the low bits for different meanings.
+ */
+export const bunStandaloneMetadataSchema = z.strictObject({
+  kind: z.literal("bun-standalone"),
+  layout_revision: z.enum(["bun-1.3.3", "bun-1.3.9"]),
+  carrier: z.enum([
+    "mach-o-section",
+    "pe-section",
+    "elf-section",
+    "appended-trailer",
+  ]),
+  payload_offset: offset,
+  payload_length: offset,
+  module_count: uint32,
+  entry_point_id: uint32,
+  entry_point_source_name: z.string().nullable(),
+  entry_point_logical_path: z.string().nullable(),
+  compile_exec_argv: z.string().nullable(),
+  compile_exec_argv_hex: bunHex,
+  flags: uint32,
+});
+export type BunStandaloneMetadata = z.infer<typeof bunStandaloneMetadataSchema>;
+
+/** One stored region of a Bun module. Siblings repeat the module's source facts. */
+export const bunStandaloneEntryMetadataSchema = z.strictObject({
+  kind: z.literal("bun-standalone-entry"),
+  index: uint32,
+  region: z.enum(["contents", "sourcemap", "bytecode", "module-info"]),
+  source_name: z.string().nullable(),
+  source_name_hex: bunHex,
+  encoding: uint32,
+  encoding_name: z.enum(["binary", "latin1", "utf8", "utf16"]).nullable(),
+  loader: uint32,
+  loader_name: z.string().nullable(),
+  module_format: uint32,
+  module_format_name: z.enum(["none", "esm", "cjs"]).nullable(),
+  side: uint32,
+  side_name: z.enum(["server", "client"]).nullable(),
+  entry_point: z.boolean(),
+  sourcemap_bytes: offset,
+  bytecode_bytes: offset,
+  module_info_bytes: offset,
+  bytecode_origin: z.string().nullable(),
+  bytecode_origin_hex: bunHex,
+});
+export type BunStandaloneEntryMetadata = z.infer<
+  typeof bunStandaloneEntryMetadataSchema
+>;
+
 export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   godotPckMetadataSchema,
   godotPckEntryMetadataSchema,
@@ -411,6 +559,9 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   unityFsEntryMetadataSchema,
   pyInstallerMetadataSchema,
   pyInstallerEntryMetadataSchema,
+  dotnetBundleEntryMetadataSchema,
+  bunStandaloneMetadataSchema,
+  bunStandaloneEntryMetadataSchema,
   nodeSeaMetadataSchema,
   nodeSeaEntryMetadataSchema,
   hexRecordsMetadataSchema,
@@ -420,6 +571,8 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   espImageMetadataSchema,
   espImageSegmentMetadataSchema,
   espImageSignatureBlockMetadataSchema,
+  fitMetadataSchema,
+  fitImageMetadataSchema,
 ]);
 export type ArtifactFormatMetadata = z.infer<
   typeof artifactFormatMetadataSchema
