@@ -1,5 +1,84 @@
 const read = "require('fs').readFileSync('result');";
 
+export const mutatorEvaluationBoundaryCases = [
+  ...[
+    "typeof table[change(module)]",
+    "typeof table?.[change(module)]",
+    "void table[change(module)]",
+    "!table[change(module)]",
+    "table[change(module)]===0",
+    "`${typeof table[change(module)]}`",
+    "typeof table[table[change(module)]]",
+  ].map((value) => ({
+    source: `const table={};function change(v){v.require=replacement;return 'x'}Object.assign=(t,key)=>{t[key]=1};Object.assign({},${value});${read}`,
+    kept: false,
+  })),
+  ...[
+    "typeof value++",
+    "typeof ++value",
+    "typeof (value+=1)",
+    "typeof (value*=2)",
+  ].map((value) => ({
+    source: `const owner=module;let value={owner,valueOf(){this.owner.require=replacement;return 1}};Object.assign=(t,key)=>{t[key]=1};Object.assign({},${value});${read}`,
+    kept: false,
+  })),
+  ...[
+    "typeof table['x']",
+    "typeof table?.['x']",
+    "typeof value++",
+    "typeof (value+=1)",
+  ].map((value) => ({
+    source: `const table={x:1};let value=1;Object.assign=(t,key)=>{t[key]=1};Object.assign({},${value});${read}`,
+    kept: true,
+  })),
+  ...[
+    ["{owner:{}}", "box.owner=module", "box.owner"],
+    ["[{}]", "box[0]=module", "box[0]"],
+    ["{nested:{owner:{}}}", "box.nested.owner=module", "box.nested.owner"],
+  ].map(([initial, mutation, value]) => ({
+    source: `const box=${initial};eval('${mutation}');Object.assign=(t,v)=>{v.require=replacement};Object.assign({},${value});${read}`,
+    kept: false,
+  })),
+  {
+    source: `const box={owner:{}};const saved=box.owner;eval('box.owner=module');Object.assign=(t,v)=>{v.require=replacement};Object.assign({},saved);${read}`,
+    kept: true,
+  },
+  ...["{hook:0}", "{__proto__:null,hook:0}"].map((initial) => ({
+    source: `function custom(){};let target=${initial};eval('target={set hook(v){this.fs.readFileSync=custom}}');const fs=require('fs'),receiver={fs};Reflect.set(target,'hook',1,receiver);${read}`,
+    kept: false,
+  })),
+  {
+    source: `function custom(){};const target={hook:0};eval('Object.defineProperty(target,"hook",{set(v){this.fs.readFileSync=custom}})');const fs=require('fs'),receiver={fs};Reflect.set(target,'hook',1,receiver);${read}`,
+    kept: false,
+  },
+  ...["{hook:0}", "{__proto__:null,hook:0}"].map((initial) => ({
+    source: `const target=${initial};const fs=require('fs'),receiver={fs};Reflect.set(target,'hook',1,receiver);${read}`,
+    kept: true,
+  })),
+  ...["Object", "Reflect"].flatMap((owner) => [
+    {
+      source: `const descriptor={value:Reflect.set.bind(null,{})};const define=${owner}.defineProperty.bind(null,Reflect,'set',descriptor);descriptor.value=Reflect.set.bind(null,module);define();Reflect.set('require',replacement);${read}`,
+      kept: false,
+    },
+    {
+      source: `let descriptor={value:Reflect.set.bind(null,{})};const define=${owner}.defineProperty.bind(null,Reflect,'set',descriptor);descriptor={value:Reflect.set.bind(null,module)};define();Reflect.set('require',replacement);${read}`,
+      kept: true,
+    },
+    {
+      source: `const descriptor={value:Reflect.set.bind(null,{})};const define=${owner}.defineProperty.bind(null,Reflect,'set',descriptor);define();descriptor.value=Reflect.set.bind(null,module);Reflect.set('require',replacement);${read}`,
+      kept: true,
+    },
+  ]),
+  {
+    source: `const definitions={set:{value:Reflect.set.bind(null,{})}};const define=Object.defineProperties.bind(null,Reflect,definitions);definitions.set.value=Reflect.set.bind(null,module);define();Reflect.set('require',replacement);${read}`,
+    kept: false,
+  },
+  {
+    source: `const methods={set:Reflect.set.bind(null,{})};const assign=Object.assign.bind(null,Reflect,methods);methods.set=Reflect.set.bind(null,module);assign();Reflect.set('require',replacement);${read}`,
+    kept: false,
+  },
+];
+
 export const opaqueMutatorCases = [
   ...[
     "let r={};const saved=r;eval('r=module');Reflect.set(module,'require',replacement,saved);",

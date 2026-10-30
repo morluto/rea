@@ -15,7 +15,7 @@ export const mcpProgressReporter = (
 ): ProgressReporter => {
   const token = context.mcpReq._meta?.progressToken;
   if (token === undefined) return silentProgressReporter;
-  return createProgressReporter(
+  const reporter = createProgressReporter(
     async (update) => {
       try {
         await context.mcpReq.notify({
@@ -36,4 +36,11 @@ export const mcpProgressReporter = (
     },
     { minimumIntervalMs: 100 },
   );
+  return {
+    // Provider child operations can each complete before their enclosing
+    // workflow does. MCP progress uses the emitted sequence, not these local
+    // phase counts, so reset them before the shared monotonic check.
+    report: (update) =>
+      reporter.report({ ...update, completed: 0, total: null }),
+  };
 };

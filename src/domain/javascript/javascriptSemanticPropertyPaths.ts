@@ -12,6 +12,57 @@ export type JavaScriptSemanticPropertyPath = readonly (
   | JavaScriptSemanticPropertySelection
 )[];
 
+/** Join equal-depth may-effect projections without claiming an exact selector. */
+export function joinSemanticPropertyPaths(
+  previous: readonly (string | null)[],
+  incoming: readonly (string | null)[],
+): readonly (string | null)[] | undefined;
+export function joinSemanticPropertyPaths(
+  previous: JavaScriptSemanticPropertyPath,
+  incoming: JavaScriptSemanticPropertyPath,
+): JavaScriptSemanticPropertyPath | undefined;
+export function joinSemanticPropertyPaths(
+  previous: JavaScriptSemanticPropertyPath,
+  incoming: JavaScriptSemanticPropertyPath,
+): JavaScriptSemanticPropertyPath | undefined {
+  if (previous.length !== incoming.length) return undefined;
+  const joined = previous.map((key, index) =>
+    joinPropertySelections(key, incoming[index]!),
+  );
+  return joined.every((key, index) => key === previous[index])
+    ? previous
+    : joined;
+}
+
+const joinPropertySelections = (
+  previous: JavaScriptSemanticPropertyPath[number],
+  incoming: JavaScriptSemanticPropertyPath[number],
+): JavaScriptSemanticPropertyPath[number] => {
+  if (keyCovers(previous, incoming)) return previous;
+  if (keyCovers(incoming, previous)) return incoming;
+  if (previous === null || incoming === null) return null;
+  if (typeof previous !== "object" && typeof incoming !== "object") return null;
+  if (typeof previous === "object" && typeof incoming === "object")
+    return {
+      excludedKeys: previous.excludedKeys.filter((key) =>
+        incoming.excludedKeys.includes(key),
+      ),
+      ...(previous.startIndex === undefined || incoming.startIndex === undefined
+        ? {}
+        : { startIndex: Math.min(previous.startIndex, incoming.startIndex) }),
+    };
+  const selected = typeof previous === "object" ? previous : incoming;
+  const scalar = typeof previous === "object" ? incoming : previous;
+  if (typeof selected !== "object" || typeof scalar === "object") return null;
+  const index = semanticArrayIndex(scalar);
+  return {
+    excludedKeys: selected.excludedKeys.filter((key) => key !== String(scalar)),
+    ...(selected.startIndex === undefined || index === null
+      ? {}
+      : { startIndex: Math.min(selected.startIndex, index) }),
+  };
+};
+
 /** Read only canonical JavaScript array indices, excluding named properties. */
 export const semanticArrayIndex = (key: string | number): number | null => {
   const index = Number(key);
@@ -43,6 +94,7 @@ interface PropertyPathCoverageNode {
     string,
     {
       readonly key: JavaScriptSemanticPropertyPath[number];
+      readonly context: string | undefined;
       readonly node: PropertyPathCoverageNode;
     }
   >;
@@ -57,11 +109,13 @@ const coverageNode = (): PropertyPathCoverageNode => ({
 const ensurePath = (
   root: PropertyPathCoverageNode,
   path: JavaScriptSemanticPropertyPath,
+  contexts?: readonly (string | undefined)[],
 ): PropertyPathCoverageNode => {
   let node = root;
-  for (const key of path) {
+  for (const [offset, key] of path.entries()) {
+    const context = contexts?.[offset];
     if (key !== null && typeof key !== "object") {
-      const name = String(key);
+      const name = JSON.stringify([String(key), context]);
       let child = node.exact.get(name);
       if (child === undefined) {
         child = coverageNode();
@@ -69,10 +123,10 @@ const ensurePath = (
       }
       node = child;
     } else {
-      const identity = JSON.stringify(key);
+      const identity = JSON.stringify([key, context]);
       let selected = node.selectors.get(identity);
       if (selected === undefined) {
-        selected = { key, node: coverageNode() };
+        selected = { key, context, node: coverageNode() };
         node.selectors.set(identity, selected);
       }
       node = selected.node;
@@ -101,7 +155,7 @@ export class SemanticPropertyPathWriteIndex {
       if ((this.#offsets.get(current.node) ?? Infinity) < before) return true;
       const key = path[current.offset];
       if (key === undefined) continue;
-      const exact = current.node.exact.get(key);
+      const exact = current.node.exact.get(JSON.stringify([key, undefined]));
       if (exact !== undefined)
         pending.push({ node: exact, offset: current.offset + 1 });
       for (const selected of current.node.selectors.values())
@@ -112,14 +166,59 @@ export class SemanticPropertyPathWriteIndex {
   }
 }
 
+/** Retain effects by path, selecting only overlapping ancestors and children. */
+export class SemanticPropertyPathEffectIndex<Effect> {
+  readonly #root = coverageNode();
+  readonly #effects = new WeakMap<PropertyPathCoverageNode, Effect[]>();
+
+  retain(path: JavaScriptSemanticPropertyPath, effect: Effect): void {
+    const node = ensurePath(this.#root, path);
+    const effects = this.#effects.get(node) ?? [];
+    effects.push(effect);
+    this.#effects.set(node, effects);
+  }
+
+  *matching(
+    path: JavaScriptSemanticPropertyPath,
+    descendants = true,
+  ): Generator<Effect> {
+    const pending = [{ node: this.#root, offset: 0 }];
+    while (pending.length > 0) {
+      const { node, offset } = pending.pop()!;
+      yield* this.#effects.get(node) ?? [];
+      if (offset === path.length && !descendants) continue;
+      const key = path[offset];
+      if (key === undefined || key === null || typeof key === "object") {
+        for (const child of node.exact.values())
+          pending.push({ node: child, offset: offset + 1 });
+      } else {
+        const child = node.exact.get(JSON.stringify([String(key), undefined]));
+        if (child !== undefined)
+          pending.push({ node: child, offset: offset + 1 });
+      }
+      for (const selected of node.selectors.values())
+        if (
+          key === undefined ||
+          key === null ||
+          typeof key === "object" ||
+          semanticPropertyPathKeyMatches(selected.key, String(key))
+        )
+          pending.push({ node: selected.node, offset: offset + 1 });
+    }
+  }
+}
+
 /** Index exact effect prefixes without widening distinct member paths. */
 export class SemanticPropertyPathCoverage {
   readonly #root = coverageNode();
 
-  /** Retain a path only when no previously retained prefix covers it. */
-  retain(path: JavaScriptSemanticPropertyPath): boolean {
-    if (this.covers(path)) return false;
-    const node = ensurePath(this.#root, path);
+  /** Match optional per-slot receiver identities along the covering prefix. */
+  retain(
+    path: JavaScriptSemanticPropertyPath,
+    contexts?: readonly (string | undefined)[],
+  ): boolean {
+    if (this.covers(path, contexts)) return false;
+    const node = ensurePath(this.#root, path, contexts);
     node.terminal = true;
     node.exact.clear();
     node.selectors.clear();
@@ -127,7 +226,10 @@ export class SemanticPropertyPathCoverage {
   }
 
   /** Query retained prefixes without changing the coverage index. */
-  covers(path: JavaScriptSemanticPropertyPath): boolean {
+  covers(
+    path: JavaScriptSemanticPropertyPath,
+    contexts?: readonly (string | undefined)[],
+  ): boolean {
     const pending = [{ node: this.#root, offset: 0 }];
     while (pending.length > 0) {
       const current = pending.pop();
@@ -135,13 +237,16 @@ export class SemanticPropertyPathCoverage {
       if (current.node.terminal) return true;
       const key = path[current.offset];
       if (key === undefined) continue;
+      const context = contexts?.[current.offset];
       if (key !== null && typeof key !== "object") {
-        const exact = current.node.exact.get(String(key));
+        const exact = current.node.exact.get(
+          JSON.stringify([String(key), context]),
+        );
         if (exact !== undefined)
           pending.push({ node: exact, offset: current.offset + 1 });
       }
       for (const selected of current.node.selectors.values()) {
-        if (keyCovers(selected.key, key))
+        if (selected.context === context && keyCovers(selected.key, key))
           pending.push({ node: selected.node, offset: current.offset + 1 });
       }
     }

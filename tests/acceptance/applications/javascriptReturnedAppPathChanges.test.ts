@@ -19,6 +19,12 @@ const cases = [
     changed: true,
   },
   {
+    name: "shallow-copied app",
+    setter: "const copy={...{app}};copy.app.setAppPath('./lib');",
+    owners: 1,
+    changed: true,
+  },
+  {
     name: "local app",
     setter: "const getApp=()=>({setAppPath(){}});getApp().setAppPath('./lib');",
     owners: 1,

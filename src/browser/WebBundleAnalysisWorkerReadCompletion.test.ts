@@ -47,7 +47,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 });
 
 import { createWebTextArtifact } from "../domain/webContentArtifact.js";
-import type { IncludedScript } from "../domain/webBundleAnalyzerInspection.js";
+import type { IncludedScript } from "../domain/webBundleAnalyzerState.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
 import {

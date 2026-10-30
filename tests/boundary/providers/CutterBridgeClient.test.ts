@@ -19,6 +19,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { CutterBridgeClient } from "../../../src/cutter/CutterBridgeClient.js";
+import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
 import { CutterBridgeService } from "../../../src/cutter/CutterBridgeService.js";
 
 const listen = async (
@@ -197,7 +198,9 @@ it.skipIf(process.platform === "win32").each(["discovery", "command"] as const)(
       await writeDescriptor(directory, sessionId, port, token);
       const { CutterBridgeClient: ObservedClient } =
         await import("../../../src/cutter/CutterBridgeClient.js");
-      const service = new CutterBridgeService(
+      const { CutterBridgeService: ObservedService } =
+        await import("../../../src/cutter/CutterBridgeService.js");
+      const service = new ObservedService(
         new ObservedClient({ REA_CUTTER_BRIDGE_DIR: directory }),
       );
       if (operation === "discovery") {
@@ -243,6 +246,63 @@ it.skipIf(process.platform === "win32").each(["discovery", "command"] as const)(
     }
   },
 );
+
+describe("CutterBridgeClient: selected POSIX paths", () => {
+  let directory: string | undefined;
+  let server: ReturnType<typeof createServer> | undefined;
+
+  afterEach(async () => {
+    if (server !== undefined)
+      await new Promise<void>((resolve) => server?.close(() => resolve()));
+    if (directory !== undefined)
+      await rm(directory, { recursive: true, force: true });
+    server = undefined;
+    directory = undefined;
+  });
+
+  it
+    .skipIf(process.platform === "win32")
+    .each(["explicit", "tilde", "default"] as const)(
+    "discovers descriptors through symlink parent traversal in %s directory selection",
+    async (selection) => {
+      directory = await mkdtemp(join(tmpdir(), "rea-cutter-selected-path-"));
+      const home = `${directory}/home`;
+      const target = `${directory}/actual`;
+      await mkdir(home);
+      await mkdir(`${target}/child`, { recursive: true });
+      await symlink(`${target}/child`, `${home}/linked`);
+      const selectedHome = `${home}/linked/..`;
+      const suffix =
+        selection === "default" ? ".cache/rea/cutter-bridge" : "bridge";
+      const actualDirectory = `${target}/${suffix}`;
+      await mkdir(actualDirectory, { recursive: true, mode: 0o700 });
+      const sessionId = "27d3e3f1-f1e5-49ae-91ec-95af1f343a5a";
+      const token = "synthetic-cutter-selected-path-token";
+      server = statusServer(token, "/tmp/selected.bin", 7);
+      const port = await listen(server);
+      await writeDescriptor(actualDirectory, sessionId, port, token);
+      const selectedDirectory = `${selectedHome}/${suffix}`;
+      const client = createClient({
+        HOME: selection === "tilde" ? home : selectedHome,
+        ...(selection === "default"
+          ? {}
+          : {
+              REA_CUTTER_BRIDGE_DIR:
+                selection === "tilde"
+                  ? "~/linked/../bridge"
+                  : selectedDirectory,
+            }),
+      });
+      try {
+        const result = await client.listSessions();
+        expect(result.bridge_directory).toBe(selectedDirectory);
+        expectDiscoveredSession(result, sessionId, 7, "/tmp/selected.bin");
+      } finally {
+        await client.close();
+      }
+    },
+  );
+});
 
 describe("CutterBridgeClient: scenario group 1", () => {
   let directory: string | undefined;
@@ -696,12 +756,32 @@ describe("CutterBridgeClient: scenario group 4", () => {
       documentGeneration: 9,
       cutterVersion: "new",
     });
+    for (const state of [undefined, "running", "unknown", "failed"]) {
+      response = {
+        ok: false,
+        execution_state: state,
+        error: "active-document-generation-changed",
+      };
+      await expect(run()).resolves.toMatchObject({
+        executionState: state === "failed" ? "failed" : "unknown",
+        error: "active-document-generation-changed",
+      });
+    }
     response = {
       ok: false,
       execution_state: "not_started",
       error: "active-document-generation-changed",
     };
-    await expect(run()).rejects.toThrow("List sessions again");
+    await expect(run()).rejects.toMatchObject({
+      _tag: "AnalysisInputError",
+      issues: [
+        {
+          path: ["expected_generation"],
+          reason: "invalid_value",
+          message: expect.stringContaining("List sessions again"),
+        },
+      ],
+    });
     response = { ok: true, unexpected: true };
     // Valid schema responses can omit all optional fields; the fallback result is nullable.
     await expect(run()).resolves.toMatchObject({
@@ -896,18 +976,22 @@ describe("CutterBridgeClient: scenario group 6", () => {
       port,
       "synthetic-cutter-bridge-token-for-test",
     );
-    await expect(
-      createClient({ REA_CUTTER_BRIDGE_DIR: directory }).execute({
-        sessionId,
-        expectedGeneration: 0,
-        command: "pd 1",
-        json: false,
-      }),
-    ).resolves.toMatchObject({
+    const execution = await createClient({
+      REA_CUTTER_BRIDGE_DIR: directory,
+    }).execute({
+      sessionId,
+      expectedGeneration: 0,
+      command: "pd 1",
+      json: false,
+    });
+    expect(execution).toMatchObject({
       executionState: "unknown",
       error: "transport-response-missing",
-      message: expect.stringContaining("may have completed"),
+      message: expect.stringMatching(
+        /framed transport limit of 16777216 bytes.*REA_BRIDGE_MAX_REQUEST_BYTES.*may have completed/s,
+      ),
     });
+    expect(execution.message).not.toContain("no runtime override");
   });
 
   it("rejects stale sessions and preserves failures before command dispatch", async () => {
@@ -921,7 +1005,7 @@ describe("CutterBridgeClient: scenario group 6", () => {
         command: "pd 1",
         json: false,
       }),
-    ).rejects.toThrow("unavailable or stale");
+    ).rejects.toBeInstanceOf(AnalysisInputError);
 
     const unopened = createServer();
     const port = await listen(unopened);
@@ -997,12 +1081,11 @@ describe("CutterBridgeClient: scenario group 7", () => {
     );
     const controller = new AbortController();
     const signal = controller.signal;
+    const reason = new Error("cancel immediately after listener registration");
     const add = signal.addEventListener.bind(signal);
     vi.spyOn(signal, "addEventListener").mockImplementation((...args) => {
       add(...args);
-      controller.abort(
-        new Error("cancel immediately after listener registration"),
-      );
+      controller.abort(reason);
     });
     await expect(
       createClient({ REA_CUTTER_BRIDGE_DIR: directory }).execute({
@@ -1012,7 +1095,10 @@ describe("CutterBridgeClient: scenario group 7", () => {
         json: false,
         signal,
       }),
-    ).rejects.toThrow("Cutter bridge request was cancelled");
+    ).rejects.toMatchObject({
+      _tag: "AnalysisCancelledError",
+      cause: reason,
+    });
   });
 
   it("supports platforms without O_NOFOLLOW using the documented read-only flags", async () => {

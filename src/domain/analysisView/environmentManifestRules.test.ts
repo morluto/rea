@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vitest";
-import { toolName, toolNameRegistry } from "./environmentManifestRules.js";
+import { toolName, toolNameRegistry } from "./environmentManifestNames.js";
 
 it("shares suffix work when distinct names truncate to the same suffixed prefix", () => {
   const registry = toolNameRegistry();

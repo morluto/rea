@@ -15,8 +15,11 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   installMacHopperBundle,
+  systemMacHopperInstallHost,
   type MacHopperBundleInstallOperations,
 } from "../../../src/application/MacHopper.js";
+import { SetupCleanupOwner } from "../../../src/application/SetupCleanupOwner.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 
 const roots: string[] = [];
 
@@ -176,7 +179,10 @@ describe("macOS Hopper replacement ownership", () => {
         },
         (path) => (stagingRoot = path),
       ),
-      (cleanup) => retained.push(cleanup),
+      (cleanup, resources) => {
+        expect(resources).toEqual([stagingRoot]);
+        retained.push(cleanup);
+      },
     );
 
     expect(result).toMatchObject({
@@ -233,7 +239,10 @@ describe("macOS Hopper replacement ownership", () => {
         },
         (path) => (stagingRoot = path),
       ),
-      (cleanup) => rollbackRetained.push(cleanup),
+      (cleanup, resources) => {
+        expect(resources).toEqual([stagingRoot]);
+        rollbackRetained.push(cleanup);
+      },
     );
 
     expect(result).toMatchObject({
@@ -272,4 +281,40 @@ describe("macOS Hopper replacement ownership", () => {
     ).toBe("original installation");
     await expect(access(stagingRoot)).rejects.toMatchObject({ code: "ENOENT" });
   });
+});
+
+it("reports only retained Mac cleanup roots and clears the live report after exact retries", async () => {
+  const home = await temporaryRoot();
+  const temporary = join(home, "owned-dmg");
+  const stage = join(home, "owned-stage");
+  await Promise.all([mkdir(temporary), mkdir(stage)]);
+  const host = systemMacHopperInstallHost(home, { HOME: home });
+  let allowTemporary = false;
+  let allowStage = false;
+  let temporaryCalls = 0;
+  host.retainCleanup?.(async () => {
+    temporaryCalls++;
+    if (!allowTemporary) throw new Error("DMG root busy");
+    await rm(temporary, { recursive: true });
+  }, [temporary]);
+  host.retainCleanup?.(async () => {
+    if (!allowStage) throw new Error("staging root busy");
+    await rm(stage, { recursive: true });
+  }, [stage]);
+  const cleanup = new SetupCleanupOwner([{ close: () => host.close() }]);
+  const failure = await cleanup.close();
+  expect(failure).toBeDefined();
+  expect(projectAnalysisError(failure!).details?.resources).toEqual([
+    temporary,
+    stage,
+  ]);
+  allowTemporary = true;
+  expect((await cleanup.close())?.cleanupResources).toEqual([stage]);
+  expect(failure?.cleanupResources).toEqual([stage]);
+  await expect(access(temporary)).rejects.toMatchObject({ code: "ENOENT" });
+  allowStage = true;
+  expect(await cleanup.close()).toBeUndefined();
+  expect(failure?.cleanupIncomplete).toBe(false);
+  expect(temporaryCalls).toBe(2);
+  await expect(access(stage)).rejects.toMatchObject({ code: "ENOENT" });
 });

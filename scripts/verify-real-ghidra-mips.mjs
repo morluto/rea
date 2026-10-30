@@ -21,7 +21,7 @@ import {
 } from "../tests/conformance/ghidra/mips-checks.mjs";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { parseAnalysisSnapshot } from "../dist/domain/analysisSnapshot.js";
-import { functionDossierSchema } from "../dist/domain/hopperValues.js";
+import { functionDossierSchema } from "../dist/domain/native/functionDossier.js";
 import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
 import { buildMipsFixture } from "../tests/conformance/ghidra/mips-fixture.mjs";
 import {
@@ -100,6 +100,7 @@ async function verifySoftFloat(call, symbols, byteOrder) {
   const caller = functionDossierSchema.parse(
     await call("analyze_function", {
       procedure: symbols.rea_mips_soft_caller,
+      detail: "complete",
     }),
   );
   // Includes the struct call and the indirect call through a typed pointer.
@@ -211,7 +212,10 @@ try {
           legacy.symbols.rea_mips_probe,
         );
         const dossier = functionDossierSchema.parse(
-          await call("analyze_function", { procedure: entry.address }),
+          await call("analyze_function", {
+            procedure: entry.address,
+            detail: "complete",
+          }),
         );
         assert.ok(dossier.pseudocode.trim().length > 0);
         const saved = await call("close_binary", {
@@ -461,7 +465,10 @@ try {
       });
       assert.ok(assembly.trim().length > 0);
       const dossier = functionDossierSchema.parse(
-        await call("analyze_function", { procedure: entry.address }),
+        await call("analyze_function", {
+          procedure: entry.address,
+          detail: "complete",
+        }),
       );
       assert.ok(dossier.pseudocode.trim().length > 0);
       const mapping = await call("address_to_file_offset", {

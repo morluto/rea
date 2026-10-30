@@ -19,10 +19,14 @@ import type {
   JavaScriptRuntimeObservation,
   ObserveJavaScriptRuntimeInput,
 } from "../../../src/domain/javascript/javascriptRuntimeObservation.js";
-import { observeJavaScriptRuntimeInputSchema } from "../../../src/domain/javascript/javascriptRuntimeObservation.js";
+import {
+  javascriptRuntimeObservationSchema,
+  observeJavaScriptRuntimeInputSchema,
+} from "../../../src/domain/javascript/javascriptRuntimeObservation.js";
 import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { javascriptRuntimeReconciliationResultSchema } from "../../../src/domain/javascript/javascriptRuntimeReconciliationSchemas.js";
+import { parseRuntimeCaptures } from "../../../src/domain/javascript/javascriptRuntimeReconciliationCaptureParsing.js";
 import { startFakeV8Inspector } from "../../fixtures/inspector/fakeV8Inspector.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -759,6 +763,143 @@ describe("passive V8 Inspector evidence", () => {
     expect(JSON.stringify(result.graph)).toContain("v8-hash");
     expect(JSON.stringify(result.graph)).toContain('"reported_url":""');
   });
+});
+
+test("keeps Inspector parse failures separate and preserves file URL script identity through reconciliation", async () => {
+  const fixture = await runtimeFixture();
+  const firstUrl = `${pathToFileURL(fixture.entry).href}?instance=1#first`;
+  const secondUrl = `${pathToFileURL(fixture.entry).href}?instance=2#second`;
+  const fake = await startFakeV8Inspector({
+    targetUrl: pathToFileURL(fixture.entry).href,
+    scriptEvents: [
+      ...[firstUrl, secondUrl].map((url, index) => ({
+        method: "Debugger.scriptParsed",
+        params: {
+          scriptId: String(index + 1),
+          url,
+          executionContextId: 1,
+          hash: "same-source-hash",
+          length: 42,
+          isModule: true,
+        },
+      })),
+      {
+        method: "Debugger.scriptFailedToParse",
+        params: { scriptId: "failed", url: firstUrl },
+      },
+    ],
+  });
+  try {
+    const observed = await new V8InspectorProvider().observe(
+      observeInput(fake.endpoint, fake.targetId, "node"),
+    );
+    if (!observed.ok) throw observed.error;
+    expect(observed.value.scripts.items).toHaveLength(2);
+    expect(observed.value.scripts.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          location: { kind: "file", file_path: fixture.entry },
+          reported_url: firstUrl,
+        }),
+        expect.objectContaining({
+          location: { kind: "file", file_path: fixture.entry },
+          reported_url: secondUrl,
+        }),
+      ]),
+    );
+    expect(
+      new Set(observed.value.scripts.items.map(({ script_key }) => script_key))
+        .size,
+    ).toBe(2);
+    expect(observed.value.scripts).toMatchObject({
+      parse_failed_total: 1,
+      excluded: {
+        unsupported_location: 0,
+        invalid_protocol_value: 0,
+      },
+    });
+
+    const evidence = createJavaScriptRuntimeObservationEvidence(
+      "observe_javascript_runtime",
+      {
+        inspector_endpoint: fake.endpoint,
+        target_id: fake.targetId,
+        runtime_kind: "node",
+        observation_ms: 100,
+      },
+      observed.value,
+      V8_INSPECTOR_PROVIDER_IDENTITY,
+    );
+    const reconciled = reconcileJavaScriptRuntimeEvidence({
+      static_layers: JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE.static_layers,
+      runtime_observations: [evidence],
+    });
+    if (!reconciled.ok) throw reconciled.error;
+    const result = javascriptRuntimeReconciliationResultSchema.parse(
+      reconciled.value.normalized_result,
+    );
+    const runtimeScripts = result.graph.nodes.filter(
+      (node) => node.kind === "runtime-script-instance",
+    );
+    const reportedUrls = runtimeScripts.flatMap((node) =>
+      node.observations
+        .map(({ properties }) => properties.reported_url)
+        .filter((url): url is string => typeof url === "string"),
+    );
+    expect(reportedUrls).toEqual(expect.arrayContaining([firstUrl, secondUrl]));
+    expect(new Set(reportedUrls).size).toBe(2);
+    const scriptKeys = runtimeScripts.flatMap((node) =>
+      node.identity.strategy === "runtime-instance"
+        ? [node.identity.runtime_key]
+        : [],
+    );
+    expect(new Set(scriptKeys).size).toBe(2);
+
+    const parsedCapture = parseRuntimeCaptures([evidence])[0];
+    if (parsedCapture?.kind !== "v8-inspector")
+      throw new Error("Expected the Inspector Evidence to parse as V8 capture");
+    expect(
+      parsedCapture.inspection.completeness.unavailable_sections,
+    ).not.toContain("scripts");
+
+    const legacySnapshot = {
+      ...observed.value,
+      scripts: {
+        ...observed.value.scripts,
+      },
+    };
+    delete legacySnapshot.scripts.parse_failed_total;
+    const parsedLegacySnapshot =
+      javascriptRuntimeObservationSchema.parse(legacySnapshot);
+    expect("parse_failed_total" in parsedLegacySnapshot.scripts).toBe(false);
+  } finally {
+    await fake.close();
+  }
+});
+
+test("keeps malformed scriptFailedToParse protocol values in the invalid count", async () => {
+  const fixture = await runtimeFixture();
+  const fake = await startFakeV8Inspector({
+    targetUrl: pathToFileURL(fixture.entry).href,
+    scriptEvents: [
+      {
+        method: "Debugger.scriptFailedToParse",
+        params: { url: pathToFileURL(fixture.entry).href },
+      },
+    ],
+  });
+  try {
+    const observed = await new V8InspectorProvider().observe(
+      observeInput(fake.endpoint, fake.targetId, "node"),
+    );
+    if (!observed.ok) throw observed.error;
+    expect(observed.value.scripts.excluded).toMatchObject({
+      invalid_protocol_value: 1,
+    });
+    expect(observed.value.scripts.parse_failed_total).toBe(0);
+  } finally {
+    await fake.close();
+  }
 });
 
 const runtimeFixture = async () => {

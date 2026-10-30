@@ -1,4 +1,26 @@
 import { z } from "zod";
+import { commandEvidenceDetailSchema } from "./commandObservation.js";
+import { localPathStringSchema } from "./localPath.js";
+
+/** Omitted one-shot objdump/rizin wall clock. Preflight shares it; the command gets it again. */
+export const DEFAULT_REVERSE_COMMAND_TIMEOUT_MS = 120_000;
+/** Node timer ceiling. Larger deadlines would be clamped instead of honored. */
+export const MAX_REVERSE_COMMAND_TIMEOUT_MS = 2_147_483_647;
+
+/** Per-call deadline for one-shot objdump and rizin commands. */
+export const reverseCommandTimeoutSchema = z
+  .number()
+  .int()
+  .min(1)
+  .max(MAX_REVERSE_COMMAND_TIMEOUT_MS)
+  .exactOptional()
+  .describe(
+    "Wall-clock budget in milliseconds. Target preflight shares one budget across stat and digest, and the one-shot command receives that budget again (default 120000 each). Omitted means 120000. Applies on the next call. Does not raise the 16 MiB combined output cap, Ghidra or Hopper startup deadlines, or debugger session deadlines.",
+  );
+
+const commandTimeoutMsField = {
+  command_timeout_ms: reverseCommandTimeoutSchema,
+};
 
 export const OBJDUMP_ARTIFACT_OPERATIONS = [
   "file_headers",
@@ -12,9 +34,10 @@ export const OBJDUMP_ARTIFACT_OPERATIONS = [
 
 const objdumpArtifactInputSchema = z
   .object({
-    path: z.string().min(1),
+    path: localPathStringSchema,
     operation: z.enum(OBJDUMP_ARTIFACT_OPERATIONS).exclude(["disassemble"]),
     follow_debug_links: z.boolean().default(false),
+    ...commandTimeoutMsField,
   })
   .strict();
 
@@ -35,17 +58,24 @@ const objdumpDisassemblyInputSchema = objdumpArtifactInputSchema.extend({
     .optional(),
 });
 
-/** Caller-selected artifact facet or pathless provider capability query. */
+const objdumpArchitecturesInputSchema = z.strictObject({
+  operation: z.literal("architectures"),
+  ...commandTimeoutMsField,
+});
+
+/** Caller-selected native selection and independent Evidence delivery. */
 export const objdumpInputSchema = z.discriminatedUnion("operation", [
-  objdumpArtifactInputSchema,
-  objdumpDisassemblyInputSchema,
-  z.strictObject({ operation: z.literal("architectures") }),
+  objdumpArtifactInputSchema.extend({ detail: commandEvidenceDetailSchema }),
+  objdumpDisassemblyInputSchema.extend({ detail: commandEvidenceDetailSchema }),
+  objdumpArchitecturesInputSchema.extend({
+    detail: commandEvidenceDetailSchema,
+  }),
 ]);
 
 /** Caller-selected Rizin command against one local artifact. */
 export const rizinInputSchema = z
   .object({
-    path: z.string().min(1),
+    path: localPathStringSchema,
     command: z
       .string()
       .min(1)
@@ -53,8 +83,12 @@ export const rizinInputSchema = z
         (value) => !/[\r\n\u0000]/u.test(value),
         "A single command line is required",
       ),
+    ...commandTimeoutMsField,
   })
   .strict();
 
-export type ObjdumpInput = z.input<typeof objdumpInputSchema>;
-export type RizinInput = z.input<typeof rizinInputSchema>;
+export type ObjdumpSelection =
+  | z.input<typeof objdumpArtifactInputSchema>
+  | z.input<typeof objdumpDisassemblyInputSchema>
+  | z.input<typeof objdumpArchitecturesInputSchema>;
+export type RizinInput = z.output<typeof rizinInputSchema>;

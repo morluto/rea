@@ -1,5 +1,7 @@
+import { hasStableNativeSymbol } from "./native/nativeSymbol.js";
 import { canonicalJson } from "./comparisonSemantics.js";
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
+import { nativeAddressCoordinateInputSchema } from "./native/nativeAddress.js";
 
 import type { FunctionSnapshot } from "./functionDossierEvidence.js";
 import type { FunctionComparisonResult } from "./functionComparisonSchemas.js";
@@ -18,7 +20,9 @@ export const functionMatch = (
 ): FunctionComparisonResult["function_match"] => {
   const leftName = left.dossier.procedure.name;
   const rightName = right.dossier.procedure.name;
-  const stableNames = !isAutoName(leftName) && !isAutoName(rightName);
+  const stableNames =
+    hasStableNativeSymbol(leftName, left.dossier.procedure.symbol) &&
+    hasStableNativeSymbol(rightName, right.dossier.procedure.symbol);
   if (stableNames && leftName === rightName)
     return {
       status: "matched",
@@ -42,11 +46,20 @@ export const normalizeCfg = (
     start: bigint;
     end: bigint;
   }[] = [];
+  let space: string | null | undefined;
   for (const block of blocks) {
     const start = parseAddress(block.start);
     const end = parseAddress(block.end);
-    if (start === null || end === null || end <= start) return null;
-    parsed.push({ block, start, end });
+    if (
+      start === null ||
+      end === null ||
+      start.space !== end.space ||
+      (space !== undefined && start.space !== space) ||
+      end.offset <= start.offset
+    )
+      return null;
+    space = start.space;
+    parsed.push({ block, start: start.offset, end: end.offset });
   }
   const ordered = parsed.sort((left, right) =>
     left.start < right.start ? -1 : left.start > right.start ? 1 : 0,
@@ -59,8 +72,8 @@ export const normalizeCfg = (
     const successors: number[] = [];
     for (const address of block.successors) {
       const parsedAddress = parseAddress(address);
-      if (parsedAddress === null) return null;
-      const index = indices.get(parsedAddress);
+      if (parsedAddress === null || parsedAddress.space !== space) return null;
+      const index = indices.get(parsedAddress.offset);
       if (index === undefined) return null;
       successors.push(index);
     }
@@ -83,21 +96,33 @@ export const commentProjection = (
   return values.some(({ offset }) => offset === null) ? null : sorted(values);
 };
 
-export const stringAndNameProjection = (
+export const referencedStringProjection = (snapshot: FunctionSnapshot) => {
+  const values = snapshot.dossier.referenced_strings.map(
+    ({ source_address: sourceAddress, value, decoding, string }) => ({
+      source_offset: relativeAddress(
+        sourceAddress,
+        snapshot.dossier.procedure.address,
+      ),
+      content: decoding === undefined ? value : null,
+      decoding_reason: decoding?.reason ?? null,
+      metadata:
+        string === undefined
+          ? null
+          : {
+              encoding: string.encoding,
+              termination: string.termination,
+              byte_length: string.byte_length,
+            },
+    }),
+  );
+  return sorted(values);
+};
+
+export const nameAndSwiftProjection = (
   snapshot: FunctionSnapshot,
   includeSwiftLiterals = true,
 ): readonly unknown[] | null => {
   const values = [
-    ...snapshot.dossier.referenced_strings.map(
-      ({ source_address: sourceAddress, value }) => ({
-        kind: "string",
-        source_offset: relativeAddress(
-          sourceAddress,
-          snapshot.dossier.procedure.address,
-        ),
-        value,
-      }),
-    ),
     ...snapshot.dossier.referenced_names.map(
       ({ source_address: sourceAddress, value }) => ({
         kind: "name",
@@ -166,9 +191,18 @@ export const swiftLiteralSitesConflict = (
   return false;
 };
 
+/** Omitted literal inventory differs from an observed empty inventory. */
+export const swiftLiteralCoverage = (
+  snapshot: FunctionSnapshot,
+): "absent" | "complete" | "partial" =>
+  (snapshot.dossier.swift_string_literal_omissions ?? []).length > 0
+    ? "partial"
+    : snapshot.dossier.swift_string_literals === undefined
+      ? "absent"
+      : "complete";
+
 const swiftLiteralSites = (snapshot: FunctionSnapshot) => {
   const base = snapshot.dossier.procedure.address;
-  const omissions = snapshot.dossier.swift_string_literal_omissions ?? [];
   const site = (sourceAddress: string, registers: readonly string[]) => {
     const offset = relativeAddress(sourceAddress, base);
     return offset === null ? null : canonicalJson([offset, registers]);
@@ -186,9 +220,7 @@ const swiftLiteralSites = (snapshot: FunctionSnapshot) => {
       ].sort(compareUnicodeCodePoints),
     );
   }
-  const complete =
-    snapshot.dossier.swift_string_literals !== undefined &&
-    omissions.length === 0;
+  const complete = swiftLiteralCoverage(snapshot) === "complete";
   return { values, complete };
 };
 
@@ -201,17 +233,18 @@ export const sorted = <T>(values: readonly T[]): readonly T[] =>
     .sort((left, right) => compareUnicodeCodePoints(left.json, right.json))
     .map(({ value }) => value);
 
-/** Recognize address-derived procedure names without excluding named FUN_ symbols. */
-export const isAutoName = (name: string): boolean =>
-  /^(?:sub_[0-9a-f]+|fcn\.[0-9a-f]+|FUN_[0-9a-f]+)$/iu.test(name);
-
-const parseAddress = (value: string): bigint | null =>
-  /^0x[0-9a-f]+$/iu.test(value) ? BigInt(value) : null;
+const parseAddress = (value: string) => {
+  const parsed = nativeAddressCoordinateInputSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+};
 
 const relativeAddress = (value: string, base: string): string | null => {
   const parsed = parseAddress(value);
   const parsedBase = parseAddress(base);
-  return parsed === null || parsedBase === null || parsed < parsedBase
+  return parsed === null ||
+    parsedBase === null ||
+    parsed.space !== parsedBase.space ||
+    parsed.offset < parsedBase.offset
     ? null
-    : String(parsed - parsedBase);
+    : String(parsed.offset - parsedBase.offset);
 };

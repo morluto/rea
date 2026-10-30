@@ -1,7 +1,11 @@
 import {
-  reportLifecycleEnd,
-  reportLifecycleStart,
-} from "./lifecycleProgress.js";
+  retainSavedAnalysisSnapshot,
+  type SavedAnalysisSnapshot,
+} from "../domain/savedAnalysisSnapshot.js";
+import {
+  reportOperationEnd,
+  reportOperationStart,
+} from "./operationProgress.js";
 import { err, ok } from "../domain/result.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
@@ -33,6 +37,7 @@ export const registerCloseLifecycleTool = ({
 }: LifecycleToolRegistration): void => {
   const closeWithResources = async <Value>(
     closeSession: () => Promise<Result<Value, AnalysisError>>,
+    savedSnapshot?: (value: Value) => SavedAnalysisSnapshot,
   ): Promise<Result<Value, AnalysisError>> => {
     const [sessionClose, resourceClose] = await Promise.allSettled([
       closeResult(closeSession),
@@ -69,7 +74,15 @@ export const registerCloseLifecycleTool = ({
         );
       return closed;
     }
-    return resources.ok ? closed : resources;
+    if (resources.ok) return closed;
+    return savedSnapshot === undefined
+      ? resources
+      : err(
+          retainSavedAnalysisSnapshot(
+            resources.error,
+            savedSnapshot(closed.value),
+          ),
+        );
   };
   server.registerTool(
     closeContract.name,
@@ -83,25 +96,27 @@ export const registerCloseLifecycleTool = ({
         const closing = logToolExecution(logger, closeContract.name, () =>
           closeWithResources(() => session.close({ progress })),
         );
-        await reportLifecycleStart(progress, closeContract.name);
+        await reportOperationStart(progress, closeContract.name);
         const closed = await closing;
-        await reportLifecycleEnd(progress, closeContract.name, closed.ok);
+        await reportOperationEnd(progress, closeContract.name, closed.ok);
         return server.delivery.toCallToolResult(closed, closeContract);
       }
       const closing = logToolExecution(logger, closeContract.name, () =>
-        closeWithResources(() =>
-          session.closeWithSnapshot(snapshotPath, input.overwrite, {
-            progress,
-          }),
+        closeWithResources(
+          () =>
+            session.closeWithSnapshot(snapshotPath, input.overwrite, {
+              progress,
+            }),
+          (receipt) => receipt,
         ),
       );
-      await reportLifecycleStart(
+      await reportOperationStart(
         progress,
         closeContract.name,
         "saving snapshot; closing provider",
       );
       const closed = await closing;
-      await reportLifecycleEnd(progress, closeContract.name, closed.ok);
+      await reportOperationEnd(progress, closeContract.name, closed.ok);
       return server.delivery.toCallToolResult(
         closed.ok ? ok({ ...closed.value }) : closed,
         closeContract,

@@ -51,10 +51,12 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 
 import { parseBinaryTarget } from "../../src/application/BinaryTargetResolver.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
+import { RegularFileOperationCancelled } from "../../src/filesystem/RegularFile.js";
 import {
-  RegularFileAdmissionFailure,
-  RegularFileOperationCancelled,
-} from "../../src/filesystem/RegularFile.js";
+  RetainedRegularFileCleanupFailure,
+  retryRegularFileCleanup,
+} from "../../src/application/RegularFileRead.js";
+import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
 import { createApplicationMcpHarness } from "../fixtures/applicationMcpHarness.js";
 import { createTestBinarySession } from "../fixtures/binarySession.js";
 import { advertisedMcpToolSchemas } from "../fixtures/advertisedMcpTool.js";
@@ -103,8 +105,12 @@ it.each([
   "classifies $name cancellation at descriptor stat $checkpoint and closes the file",
   async ({ checkpoint, reason }) => {
     const { path, controller } = await fixture(checkpoint, reason);
+    // A valid selected load reaches the second stat during hash finalization.
     const resolved = await parseBinaryTarget(path, {
       signal: controller.signal,
+      formatHint: "raw-binary",
+      architecture: "x86",
+      entryPoint: "0x1000",
     });
     expect(resolved.ok).toBe(false);
     if (resolved.ok) throw new Error("cancelled target was admitted");
@@ -153,20 +159,29 @@ it("retains the cleanup failure and its file owner when cancelled admission cann
   const { path, controller } = await fixture(1, reason);
   const cleanup = new Error("descriptor close failed");
   admission.closeFailure = cleanup;
-  const failure = await parseBinaryTarget(path, {
+  const result = await parseBinaryTarget(path, {
     signal: controller.signal,
-  }).catch((cause: unknown) => cause);
-  expect(failure).toBeInstanceOf(RegularFileAdmissionFailure);
-  if (!(failure instanceof RegularFileAdmissionFailure)) throw failure;
-  expect(failure.cause).toBeInstanceOf(RegularFileOperationCancelled);
-  if (!(failure.cause instanceof RegularFileOperationCancelled))
-    throw failure.cause;
-  expect(failure.cause.reason).toBe(reason);
+  });
+  if (result.ok) throw new Error("Expected typed admission cleanup failure");
+  expect(result.error.cleanupIncomplete).toBe(true);
+  const failure = result.error.cause;
+  expect(failure).toBeInstanceOf(RetainedRegularFileCleanupFailure);
+  if (!(failure instanceof RetainedRegularFileCleanupFailure)) throw failure;
+  expect(failure.outcome.kind).toBe("failed");
+  if (failure.outcome.kind !== "failed")
+    throw new Error("Expected failed admission");
+  expect(failure.outcome.cause).toBeInstanceOf(RegularFileOperationCancelled);
+  if (!(failure.outcome.cause instanceof RegularFileOperationCancelled))
+    throw failure.outcome.cause;
+  expect(failure.outcome.cause.reason).toBe(reason);
   expect(failure.cleanupCause).toBe(cleanup);
   expect(failure.owner.handle).toBe(admission.handles[0]);
   expect(failure.owner.handle.fd).toBeGreaterThanOrEqual(0);
-  await failure.owner.close();
+  const resources = new ArtifactResourceScope();
+  await retryRegularFileCleanup(failure, resources);
+  await resources.close();
   expect(failure.owner.handle.fd).toBe(-1);
+  expect(result.error.cleanupIncomplete).toBe(false);
 });
 
 it("settles SDK cancellation at the admission boundary and reuses the same MCP connection", async () => {

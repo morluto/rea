@@ -1,8 +1,14 @@
-import { writeFile } from "node:fs/promises";
+import { realpath, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { expect, onTestFinished, test, vi } from "vitest";
 
-import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
+import {
+  AnalysisArtifactChangedError,
+  AnalysisCancelledError,
+} from "../../../src/domain/analysisErrorCore.js";
+import { AnalysisCleanupLease } from "../../../src/artifacts/AnalysisCleanupLease.js";
+import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
+import { readStableArtifact } from "../../../src/artifacts/readStableArtifact.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { resolvedAnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
@@ -62,6 +68,7 @@ const fixture = async (
   reason: unknown,
   failedCleanupAttempts: number,
   activeVersion = false,
+  artifactReader: typeof readStableArtifact = readStableArtifact,
 ) => {
   const root = await createTestTempDirectory("rea-pcap-provider-cancel-");
   const tools = await writeTools(root, mode, activeVersion);
@@ -100,10 +107,114 @@ const fixture = async (
       REA_CAPINFOS_COMMAND: tools.capinfos,
     },
     launcher,
+    artifactReader,
   });
   onTestFinished(async () => provider.close());
   return { provider, root, capture, cleanupAttempts: () => cleanupAttempts };
 };
+
+// The tshark version probe's owned process cleanup fails once, and the tool's
+// bytes appear changed when the probe re-reads it after the run.
+const probeCleanupFixture = async (rereadCloseFailure = false) => {
+  const root = await createTestTempDirectory("rea-pcap-probe-cleanup-");
+  const tools = await writeTools(root, "complete");
+  const tshark = await realpath(tools.tshark);
+  let tsharkReads = 0;
+  let probeCleanupAttempts = 0;
+  const launcher: PcapCommandLauncher = async (spawn) => {
+    const launched = await spawnOwnedProviderProcess(spawn);
+    if (!spawn.arguments.includes("--version")) return launched;
+    const cleanup =
+      launched.cleanup ?? (() => cleanupOwnedProcessGroup(launched.ownership));
+    return {
+      ...launched,
+      cleanup: async () => {
+        probeCleanupAttempts += 1;
+        if (probeCleanupAttempts === 1)
+          throw new Error("injected probe cleanup failure");
+        return cleanup();
+      },
+    };
+  };
+  const artifactReader: typeof readStableArtifact = async (...args) => {
+    const snapshot = await readStableArtifact(...args);
+    if (args[0] !== tshark) return snapshot;
+    tsharkReads += 1;
+    // Reads: identity capture, pre-run check, post-run check.
+    if (tsharkReads !== 3) return snapshot;
+    if (!rereadCloseFailure) return { ...snapshot, sha256: "0".repeat(64) };
+    const resource = `executable-read:${tshark}`;
+    const lease = new AnalysisCleanupLease(async () => {}, [resource]);
+    args[4]?.retain({ kind: "lease", resource, lease });
+    throw new ArtifactReaderFailure("io", "injected executable read failure", {
+      cleanup: { reason: "injected file close failure", resources: [resource] },
+      cleanupLeases: [lease],
+    });
+  };
+  const provider = new PcapProvider({
+    environment: {
+      REA_TSHARK_COMMAND: tools.tshark,
+      REA_CAPINFOS_COMMAND: tools.capinfos,
+    },
+    launcher,
+    artifactReader,
+  });
+  onTestFinished(async () => provider.close());
+  return provider;
+};
+
+it("reports a probe's pending cleanup when its post-run identity check fails", async () => {
+  const provider = await probeCleanupFixture();
+  const result = await provider.execute({
+    operation: "inspect_pcap_client",
+    input: {},
+  });
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  expect(result.error.cleanupIncomplete).toBe(true);
+  expect(projectAnalysisError(result.error).code).toBe("cleanup_incomplete");
+  expect(result.error.cleanupPrimary).toBeInstanceOf(
+    AnalysisArtifactChangedError,
+  );
+  expect(
+    result.error.cleanupResources.some((path) =>
+      path.startsWith("process-group:"),
+    ),
+  ).toBe(true);
+});
+
+it("keeps an executable re-read's own cleanup live beside the probe's pending cleanup", async () => {
+  const provider = await probeCleanupFixture(true);
+  const result = await provider.execute({
+    operation: "inspect_pcap_client",
+    input: {},
+  });
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  expect(result.error.cleanupIncomplete).toBe(true);
+  expect(result.error.cleanupResources).toEqual(
+    expect.arrayContaining([
+      expect.stringMatching(/^executable-read:/u),
+      expect.stringMatching(/^process-group:/u),
+    ]),
+  );
+  await provider.close();
+  expect(result.error.cleanupIncomplete).toBe(false);
+});
+
+it("availability surfaces a probe's pending cleanup instead of reporting the tool unavailable", async () => {
+  const provider = await probeCleanupFixture();
+  let failure: unknown;
+  try {
+    await provider.inspectAvailability();
+  } catch (cause) {
+    failure = cause;
+  }
+  expect(failure).toMatchObject({ cleanupIncomplete: true });
+  expect(
+    (failure as { cleanupPrimary?: unknown }).cleanupPrimary,
+  ).toBeInstanceOf(AnalysisArtifactChangedError);
+});
 
 it("availability preserves the producer's exact cancellation reason", async () => {
   const controller = new AbortController();
@@ -121,6 +232,31 @@ it("availability preserves the producer's exact cancellation reason", async () =
   }
   expect(failure).toBeInstanceOf(AnalysisCancelledError);
   expect(failure).toMatchObject({ cause: reason });
+});
+
+it("executable identity hashing preserves artifact-read cancellation", async () => {
+  const controller = new AbortController();
+  const reason = { caller: "cancel executable identity read" };
+  const { provider } = await fixture(
+    "active",
+    controller,
+    reason,
+    0,
+    false,
+    async () => {
+      throw new ArtifactReaderFailure("cancelled", "identity read cancelled", {
+        cancellation: { reason },
+      });
+    },
+  );
+  const result = await provider.execute(
+    { operation: "inspect_pcap_client", input: {} },
+    { signal: controller.signal },
+  );
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+  expect(result.error.cause).toBe(reason);
 });
 
 it("active cancellation stays primary through retained command and snapshot cleanup retry", async () => {

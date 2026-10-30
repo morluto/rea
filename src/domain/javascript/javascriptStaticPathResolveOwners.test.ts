@@ -2,14 +2,14 @@ import { posix } from "node:path";
 
 import { expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeCommonJsStaticFixture } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
 
 it.each(["/other", "relative"])(
   "keeps a shadowed source-directory parameter dynamic: %s",
   (directory) => {
     const actual = posix.resolve("/runtime/base", directory, "decoy.cjs");
     expect(actual).not.toBe("/source/app/decoy.cjs");
-    const analysis = analyzeJavaScriptStaticSource(`
+    const analysis = analyzeCommonJsStaticFixture(`
       const path = require('node:path');
       const {BrowserWindow, utilityProcess} = require('electron');
       function build(__dirname) {
@@ -75,7 +75,7 @@ it.each(localResolvers)(
         false,
       ),
     ).toBe("/actual/runtime.cjs");
-    const analysis = analyzeJavaScriptStaticSource(`
+    const analysis = analyzeCommonJsStaticFixture(`
     import {BrowserWindow, utilityProcess} from 'electron';
     ${setup}
     new BrowserWindow({webPreferences:{preload:${expression}}});
@@ -126,7 +126,7 @@ it("does not treat a constructed Node resolver as a path call", () => {
   expect(() => Reflect.construct(posix.resolve, ["/app", "decoy.cjs"])).toThrow(
     TypeError,
   );
-  const analysis = analyzeJavaScriptStaticSource(`
+  const analysis = analyzeCommonJsStaticFixture(`
     const helper = require('node:path');
     const {BrowserWindow} = require('electron');
     new BrowserWindow({webPreferences:{preload:new helper.resolve(runtimePath,__dirname,'decoy.cjs')}});
@@ -144,7 +144,7 @@ it.each(nodeResolvers)(
       posix.resolve("/actual/runtime.cjs", "/fixture/app", "decoy.cjs"),
     ).toBe("/fixture/app/decoy.cjs");
     const expression = `${callee}(runtimePath, __dirname, "decoy.cjs")`;
-    const analysis = analyzeJavaScriptStaticSource(`
+    const analysis = analyzeCommonJsStaticFixture(`
     const {BrowserWindow, utilityProcess} = require('electron');
     ${setup}
     new BrowserWindow({webPreferences:{preload:${expression}}});

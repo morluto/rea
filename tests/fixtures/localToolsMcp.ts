@@ -2,7 +2,10 @@ import {
   Client,
   type CallToolRequestOptions,
 } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import {
+  StdioClientTransport,
+  type StdioServerParameters,
+} from "@modelcontextprotocol/client/stdio";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { ValidateFunction } from "ajv";
 import { fileURLToPath } from "node:url";
@@ -37,8 +40,10 @@ const compileValidator = (schema: unknown): ValidateFunction<unknown> => {
 export async function connectLocalToolsMcp(
   environment: Readonly<Record<string, string>> = {},
   registerCleanup: (cleanup: () => Promise<void>) => void = onTestFinished,
+  transportOptions: Readonly<Pick<StdioServerParameters, "maxBufferSize">> = {},
 ) {
   const transport = new StdioClientTransport({
+    ...transportOptions,
     command: process.execPath,
     args: [
       fileURLToPath(new URL("../../scripts/rea.mjs", import.meta.url)),

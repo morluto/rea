@@ -5,13 +5,19 @@ import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarnes
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { advertisedMcpToolSchemas } from "../../fixtures/advertisedMcpTool.js";
+import { advertisedInputJsonSchema } from "../../../src/contracts/toolSchemaMetadata.js";
+import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import {
   analysisViewJavaScriptAnalysis,
   analysisViewJavaScriptEvidence,
   analysisViewBindJavaScriptGraphs,
 } from "../../fixtures/analysisView.js";
-import { parseEvidence } from "../../../src/domain/evidence.js";
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { parseEvidence, type Evidence } from "../../../src/domain/evidence.js";
+import {
+  analysisViewResultSchema,
+  type AnalysisViewResult,
+} from "../../../src/domain/analysisView/analysisView.js";
 import {
   createJavaScriptApplicationGraph,
   createJavaScriptApplicationNode,
@@ -43,6 +49,57 @@ const facts = async (
   return { evidence, page, wire };
 };
 
+/** Summary counts and both Evidence lookup paths preserve selected/excluded source facts. */
+const expectSelectedSourceCoverage = async (
+  harness: Awaited<ReturnType<typeof connect>>,
+  parent: Evidence,
+  summary: Extract<
+    AnalysisViewResult,
+    { kind: "summary"; parent_operation: "analyze_javascript_application" }
+  >,
+): Promise<void> => {
+  expect(summary.summary.coverage).toMatchObject({
+    static_sources: {
+      sources: 2,
+      unmeasured_sources: 0,
+      syntax: { complete: 1, "not-examined": 1 },
+      examination: { complete: 1, "not-examined": 1 },
+      electron_applicability: { observed: 0, unknown: 2 },
+    },
+  });
+  const query = {
+    kind: "javascript-facts",
+    where: { paths: ["a.js", "b.js"], kinds: ["javascript-asset"] },
+    property_keys: ["analysis_coverage"],
+    limit: 64,
+  };
+  const retained = await facts(
+    harness,
+    { kind: "retained-evidence", evidence_id: parent.evidence_id },
+    query,
+  );
+  const portable = await facts(
+    harness,
+    { kind: "inline", evidence: parent },
+    query,
+  );
+  expect(portable.evidence).toEqual(retained.evidence);
+  expect(
+    retained.page.rows.map(({ properties }) => properties.analysis_coverage),
+  ).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        syntax: { status: "complete", error_count: 0 },
+      }),
+      expect.objectContaining({
+        syntax: { status: "not-examined", error_count: null },
+        unexamined_reason:
+          "Source is outside the caller-selected source_paths.",
+      }),
+    ]),
+  );
+};
+
 it("pages selected real filesystem observations with shared identities and portable/retained parity", async () => {
   const root = await createTestTempDirectory("rea-retained-file-facts-");
   await Promise.all(
@@ -65,9 +122,15 @@ it("pages selected real filesystem observations with shared identities and porta
   const summary = analysisViewResultSchema.parse(
     parseEvidence(preparation.structuredContent).normalized_result,
   );
+  if (
+    summary.kind !== "summary" ||
+    summary.parent_operation !== "analyze_javascript_application"
+  )
+    throw new Error("Expected JavaScript summary view");
   const parent = harness.session.evidenceById(summary.parent_evidence_id);
   if (parent === undefined) throw new Error("Missing retained parent");
   const source = { kind: "retained-evidence", evidence_id: parent.evidence_id };
+  await expectSelectedSourceCoverage(harness, parent, summary);
   const query = {
     kind: "javascript-facts",
     where: { paths: ["first.node", "second.node", "package.json", "missing"] },
@@ -79,12 +142,18 @@ it("pages selected real filesystem observations with shared identities and porta
     "inspect_analysis_view",
   );
   expect(ajv.validate(inputSchema, { source, view: query })).toBe(true);
-  expect(
-    ajv.validate(inputSchema, {
-      source,
-      view: { ...query, property_keys: [""] },
-    }),
-  ).toBe(false);
+  const malformed = { source, view: { ...query, property_keys: [""] } };
+  const fullInputSchema = advertisedInputJsonSchema(
+    toolContract("inspect_analysis_view"),
+  );
+  expect(ajv.validate(fullInputSchema, malformed)).toBe(false);
+  const rejected = await harness.client.callTool({
+    name: "inspect_analysis_view",
+    arguments: malformed,
+  });
+  expect(parseMcpToolError(rejected)).toMatchObject({
+    error: { code: "invalid_request", category: "invalid_input" },
+  });
   const full = await facts(harness, source, query);
   expect(ajv.validate(outputSchema, full.wire.structuredContent)).toBe(true);
   const portable = await facts(

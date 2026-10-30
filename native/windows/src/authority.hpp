@@ -7,11 +7,14 @@
 #include <bcrypt.h>
 #include <node_api.h>
 
+#include "handle_close.hpp"
+
 #include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -54,23 +57,133 @@ inline void require(bool condition, const char* constraint, const std::wstring& 
 }
 
 class Handle {
-  HANDLE value_ = INVALID_HANDLE_VALUE;
-public:
-  Handle() = default;
-  explicit Handle(HANDLE value) : value_(value) {}
-  ~Handle() { reset(); }
+  OwnedHandle<HANDLE> owned_;
+
+ public:
+  Handle() noexcept : owned_(INVALID_HANDLE_VALUE) {}
+  explicit Handle(HANDLE value) noexcept : owned_(INVALID_HANDLE_VALUE) { adopt(value, false); }
+  ~Handle() noexcept;
   Handle(const Handle&) = delete;
   Handle& operator=(const Handle&) = delete;
-  Handle(Handle&& other) noexcept : value_(other.release()) {}
-  Handle& operator=(Handle&& other) noexcept { reset(other.release()); return *this; }
-  HANDLE get() const { return value_; }
-  bool valid() const { return value_ != INVALID_HANDLE_VALUE && value_ != nullptr; }
-  HANDLE release() { return std::exchange(value_, INVALID_HANDLE_VALUE); }
-  void reset(HANDLE next = INVALID_HANDLE_VALUE) {
-    if (valid()) CloseHandle(value_);
-    value_ = next;
-  }
+  Handle(Handle&& other) noexcept : owned_(std::move(other.owned_)) {}
+  Handle& operator=(Handle&& other) noexcept;
+  HANDLE get() const noexcept { return owned_.get(); }
+  bool valid() const noexcept { return owned_.valid(); }
+  bool fullyReleased() const noexcept { return owned_.fullyReleased(); }
+  // A failed close leaves the numeric value blocked. It must not be used for
+  // I/O or closed again; only a not-in-table probe may drop it.
+  bool closeBlocked() const noexcept { return owned_.closeBlocked(); }
+  void adopt(HANDLE value, bool blockClose) noexcept;
+  HandleCloseDecision release() noexcept;
+  void reset(HANDLE next = INVALID_HANDLE_VALUE) noexcept;
 };
+
+struct RetainedNativeHandle {
+  HANDLE value;
+  bool blockClose;
+};
+
+struct RetainedNativeHandles {
+  std::mutex mutex;
+  std::vector<RetainedNativeHandle> handles;
+};
+
+// Leaked for the process lifetime. Handle destructors can run during exit,
+// after an ordinary function-local static would already have been destroyed.
+inline RetainedNativeHandles& retainedNativeHandles() {
+  static auto* const retained = new RetainedNativeHandles();
+  return *retained;
+}
+
+inline HANDLE normalizedNativeHandle(HANDLE value) noexcept {
+  return value == nullptr ? INVALID_HANDLE_VALUE : value;
+}
+
+inline CloseAttempt closeNativeHandle(HANDLE value) noexcept {
+  if (CloseHandle(value) != FALSE) return {true, 0};
+  return {false, GetLastError()};
+}
+
+inline LivenessProbe probeNativeHandle(HANDLE value) noexcept {
+  DWORD flags = 0;
+  if (GetHandleInformation(value, &flags) != FALSE) return {HandleLiveness::Open, 0};
+  const DWORD error = GetLastError();
+  if (error == ERROR_INVALID_HANDLE) return {HandleLiveness::NotInTable, error};
+  return {HandleLiveness::Unavailable, error};
+}
+
+// Last owner for a value whose C++ handle is dying. A failed record keeps the
+// kernel object until process exit instead of closing an unconfirmed number.
+inline void retainNativeHandle(HANDLE value, bool blockClose) noexcept {
+  value = normalizedNativeHandle(value);
+  if (value == INVALID_HANDLE_VALUE) return;
+  try {
+    auto& retained = retainedNativeHandles();
+    const std::lock_guard<std::mutex> lock(retained.mutex);
+    retained.handles.push_back(RetainedNativeHandle{value, blockClose});
+  } catch (...) {
+    // The number stays open until process exit. Closing it here could reuse it.
+  }
+}
+
+inline void Handle::adopt(HANDLE value, bool blockClose) noexcept {
+  value = normalizedNativeHandle(value);
+  if (value == INVALID_HANDLE_VALUE) return;
+  if (!owned_.park(value, blockClose)) retainNativeHandle(value, blockClose);
+}
+
+inline HandleCloseDecision Handle::release() noexcept {
+  return owned_.release(&closeNativeHandle, &probeNativeHandle);
+}
+
+inline void Handle::reset(HANDLE next) noexcept {
+  owned_.reset(normalizedNativeHandle(next), &closeNativeHandle, &probeNativeHandle,
+               &retainNativeHandle);
+}
+
+inline Handle::~Handle() noexcept {
+  owned_.abandon(&closeNativeHandle, &probeNativeHandle, &retainNativeHandle);
+}
+
+inline Handle& Handle::operator=(Handle&& other) noexcept {
+  if (this == &other) return *this;
+  const auto incoming = other.owned_.take();
+  owned_.release(&closeNativeHandle, &probeNativeHandle);
+  const auto keep = [&](HANDLE value, bool blockClose) noexcept {
+    if (value == INVALID_HANDLE_VALUE || value == nullptr) return;
+    if (!owned_.park(value, blockClose)) retainNativeHandle(value, blockClose);
+  };
+  keep(incoming.value, incoming.blockValue);
+  keep(incoming.extra, incoming.blockExtra);
+  return *this;
+}
+
+inline void requireReleased(Handle& handle, const char* constraint,
+                            const std::wstring& path = L"") {
+  const HandleCloseDecision decision = handle.release();
+  if (handle.fullyReleased()) return;
+  const DWORD code = decision.closeError != 0       ? decision.closeError
+                     : decision.evidenceError != 0 ? decision.evidenceError
+                                                   : ERROR_GEN_FAILURE;
+  throw Failure(constraint, path, code);
+}
+
+// Closes values detached by a dying owner. Survivors stay in the retainer.
+inline void retryRetainedNativeHandles() noexcept {
+  std::vector<RetainedNativeHandle> pending;
+  try {
+    auto& retained = retainedNativeHandles();
+    const std::lock_guard<std::mutex> lock(retained.mutex);
+    pending.swap(retained.handles);
+  } catch (...) {
+    return;
+  }
+  for (const RetainedNativeHandle& item : pending) {
+    // The destructor releases the value once and parks it again on failure.
+    Handle handle;
+    handle.adopt(item.value, item.blockClose);
+  }
+}
 
 enum class Kind { File, Runtime, Process };
 struct Resource {
@@ -91,7 +204,13 @@ struct Runtime : Resource {
   std::vector<Handle> parents;
   Handle directory;
   std::vector<Handle> immutableFiles;
+  // Handles whose close stayed unconfirmed after snapshot or owner teardown.
+  // runtime close retries these before deleting the private tree.
+  std::vector<Handle> unreleased;
   bool closing = false;
+  // The private tree and root directory handle have been released. Later
+  // closes resume with the parent handles and do not duplicate that root.
+  bool treeReleased = false;
   // Main-thread admission is single-flight; only the accepted copy owns the
   // atomic cancellation flag consumed by its async worker. ERROR_BUSY rejects
   // another copy before it can reset that flag or replace pending ownership.

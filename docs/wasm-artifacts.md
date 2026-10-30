@@ -26,6 +26,17 @@ execution validates tool files and version banners. Host process-ownership and
 private-workspace controls must also be available. The real-tool profile has
 been exercised on macOS arm64; other hosts require their own verification.
 
+Configuration failures do not establish anything about the selected WASM bytes.
+For a rejected version probe, `details.diagnostics` identifies the executable,
+tool, expected version and configuration key; `details.captured_output` preserves
+its actual stdout and stderr, including empty banners or warnings. Fix the
+reported directory, executable access or release rather than changing the module
+or repeating an unchanged call. All three tools must report 1.0.42 on stdout with
+empty stderr. For CLI calls, set the environment before the next invocation. For
+MCP, change the server's launch environment and restart/reconnect that server;
+exporting a variable in a different shell does not update a running server.
+REA never installs tools or relaxes version admission to recover.
+
 ```bash
 REA_WABT_BIN_DIRECTORY=/absolute/wabt/bin rea inspect-wasm-artifact \
   /artifacts/module.wasm --glue_paths /artifacts/glue.js \
@@ -51,20 +62,77 @@ returns `resource_constraint` with resource `file-size` and its fixed byte
 allowance in `reported_limits.maximum_input_bytes`; retrying the unchanged file
 does not raise that allowance. WASM bytes are copied
 into a private workspace as read-only `module.wasm`; its digest is rechecked
-before and after each tool. WABT validates with `--enable-all`,
-reports sections through `wasm-objdump -h -x`, and decodes through
-`wasm2wat --enable-all`. The result retains selected byte SHA-256 and size,
-section payload ranges, full header/detail output (including module-name
-preambles), exact import/export WAT
-forms, decoded WAT and its UTF-8 SHA-256. Producer format drift and invalid or
-truncated modules are failures, with validation diagnostics and partial Evidence
-retaining selected byte identity and tool provenance.
+before and after each tool. WABT validates with
+`wasm-validate --enable-all --ignore-custom-section-errors`, reports sections
+through `wasm-objdump -h -x`, and decodes through
+`wasm2wat --enable-all --ignore-custom-section-errors`. The result retains
+selected byte SHA-256 and size, section payload ranges, full header/detail output
+(including module-name preambles), exact import/export WAT forms, decoded WAT
+and its UTF-8 SHA-256. Producer format drift and invalid or truncated modules
+are failures, with validation diagnostics and partial Evidence retaining
+selected byte identity and tool provenance.
+If inspection stops after selected files were read, partial Evidence also keeps
+the completed candidate file identities and glue parse observations. A stable
+read remains observed when descriptor finalization later fails; cleanup still
+requires retry. Partial Evidence for a glue read whose finalization fails
+before decoding retains its digest with `not-performed` parse status. Invalid
+UTF-8 retains the digest with failed parse status. Neither case invents
+references, and a failed file read contributes no invented facts.
+These independent observations do not establish that the selected WASM module is
+valid: partial results state whether WABT validation is unknown, rejected the
+module, or succeeded before a later inspection failure.
+CLI errors include this partial Evidence inline. MCP errors can return its
+`retained-evidence` reference in `details.partial_observation`; use
+`get_evidence_bundle` with `detail: "complete"` to retrieve the matching record.
+
+Core validation remains authoritative when an optional custom section cannot
+be interpreted. WABT warning output is preserved in `custom_section_warnings`;
+`debug_name_metadata` reports whether the optional name section was absent,
+fully interpreted, uninterpretable, or unknown. WABT custom-section warnings
+whose section attribution is unknown prevent a complete debug-name claim, even
+when module names were decoded. They do not establish that the name section is
+malformed. Exact warnings retain their producing tool and text. Older portable
+reports retain their original strict command profile; missing metadata coverage
+is `unknown` and missing warning history is `null`. Decoded WAT retains readable
+custom sections; WABT omits a section whose name is invalid UTF-8. In that case
+REA verifies the selected bytes, retains the section range and exact producer
+diagnostic, and leaves its identity and debug-name coverage unknown. An uninterpretable name section leaves complete
+debug-name coverage unknown. Module names decoded before a later metadata
+failure remain available for exact objdump framing, including names containing
+newlines or NUL; those partial observations do not establish complete optional
+metadata.
 
 The tool profile preserves upstream release/source identity, resolved executable
 paths, executable digests, exact banners and arguments. Executable digests are
 checked again after each command. Caller-supplied tools are trusted programs;
 version and digest recording are not publisher authentication or an OS sandbox.
-Each subprocess has a 30-second deadline and 32 MiB combined output budget.
+Each WABT version/analysis command defaults to a 30,000 ms deadline. Set optional
+MCP `command_timeout_ms`, or CLI `--command-timeout-ms <milliseconds>`, to select a
+positive integer up to 2,147,483,647 ms (the runtime timer range) for that call.
+The selected deadline is retained as `tool_profile.timeout_ms` and, when supplied,
+in Evidence parameters. It applies separately to each command, not the whole
+inspection, file admission or cleanup. The MCP client must allow time for all
+commands, file checks, cleanup and delivery. A provider timeout reports the
+actual selected deadline and these recovery controls; increasing only the client
+deadline does not change the provider budget. No server restart is required to
+change this per-call setting. Resolve incomplete cleanup before another attempt.
+
+To change the default across new MCP operations, set `wasm.command_timeout_ms`
+through `update_analysis_settings`. An explicit `command_timeout_ms` still wins;
+correct that argument if it caused the timeout. Runtime defaults do not insert
+omitted arguments into Evidence parameters. See the
+[settings design](design/limits-and-recovery.md#precedence-and-lifetime).
+
+For example, `rea inspect-wasm-artifact /artifacts/module.wasm
+--command-timeout-ms 60000 --format json` uses a 60-second per-command deadline;
+the equivalent MCP input is `{"path":"/artifacts/module.wasm",
+"command_timeout_ms":60000,"detail":"summary"}`. Summary delivery retains the
+complete Evidence but does not reduce WABT analysis work.
+
+The 8 MiB input allowance and 32 MiB combined command-output budget remain fixed;
+increasing `command_timeout_ms`, host memory or the client deadline does not raise
+them. Do not truncate required module bytes to fit. Select another suitable
+complete artifact only if it answers the question, otherwise report the limit.
 Inspection output past the budget fails with `resource_constraint`; an oversized
 `--version` probe still reports `unreadable_output`. Both streams share the
 budget, so a stream that starts after the other has filled it retains nothing.
@@ -110,7 +178,14 @@ import/export forms. Function/tag signatures resolve type indices; table/memory
 limits, memory page size and global value type/mutability remain explicit.
 Unadmitted types (including GC reference signatures) retain null signatures and
 issues. Exact decoded names retain escapes, empty names, BOM and punctuation.
-This facet is absent in historical Evidence that did not examine typed interfaces.
+Internal WAT labels are display identifiers: a repeated label in a type or
+function/table/memory/global/tag index space is ambiguous. Named references to
+it retain null signatures or indices and an explicit issue; numeric references
+and uniquely named definitions keep their own identity. Comparison treats an
+unresolved signature as unknown, including in self-comparison. Inventory
+completeness describes observed import/export entries, independently of type
+resolution. This facet is absent in historical Evidence that did not examine
+typed interfaces.
 
 `compare_wasm_interfaces` accepts two complete `inspect_wasm_artifact` Evidence
 records, or exact retained references in the current MCP session, and required
@@ -145,3 +220,9 @@ After building, run `REA_WABT_BIN_DIRECTORY=/absolute/wabt/bin node
 scripts/verify-wasm-interface-comparison.mjs` for original-module comparison
 through the compiled CLI and stdio MCP. It uses owned fixtures and WABT 1.0.42;
 no WASM module is instantiated or executed.
+
+Glue parsing accepts Node-supported WASM source-phase imports, including
+`import source module from "./module.wasm"` and
+`await import.source("./module.wasm")`. Their string literals retain the same
+coordinates and local candidate associations as ordinary import literals; these
+are static source observations, without module instantiation or execution.

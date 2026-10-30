@@ -1,4 +1,6 @@
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { z } from "incur";
+import { cliIntegerArgument } from "./options.js";
 
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import type { ReferenceSourcePolicy } from "../domain/referenceSourcePolicy.js";
@@ -14,12 +16,16 @@ import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { projectInputIssues } from "../domain/inputIssueProjection.js";
 import { safeParseJson } from "../domain/safeJson.js";
 import { nativeUiScenarioInputSchema } from "../domain/native/nativeUiObservation.js";
+import {
+  nativeCommandTimeoutField,
+  nativeUiDeadlineField,
+} from "../domain/native/nativeDeadlines.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
-import { logCliCommand } from "../cliLogging.js";
+import { isCliOperationFailure, logCliCommand } from "../cliLogging.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { swiftSymbolsSchema } from "../contracts/native/nativeToolContracts.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 import type { Logger } from "pino";
-import { isReferenceSourceImportCliFailure } from "./referenceSourceImportStatus.js";
 import type { CliInstance } from "./types.js";
 import { registerNativeCallCommands } from "./nativeCallCommands.js";
 
@@ -59,6 +65,7 @@ const nativeUiScopeOptions = {
     .safe()
     .default(500)
     .describe("Maximum accessibility nodes per capture"),
+  nativeUiDeadlineMs: nativeUiDeadlineField,
 };
 
 const nativeUiScope = (options: {
@@ -67,12 +74,16 @@ const nativeUiScope = (options: {
   readonly screenshot: boolean;
   readonly accessibility: boolean;
   readonly maxNodes: number;
+  readonly nativeUiDeadlineMs?: number | undefined;
 }) => ({
   pid: options.pid,
   window_id: options.windowId,
   screenshot: options.screenshot,
   accessibility: options.accessibility,
   max_nodes: options.maxNodes,
+  ...(options.nativeUiDeadlineMs === undefined
+    ? {}
+    : { native_ui_deadline_ms: options.nativeUiDeadlineMs }),
 });
 
 /**
@@ -86,7 +97,7 @@ const registerNativeUiCommands = (
   runProviderAnalysis: DirectAnalysis["runProviderAnalysis"],
 ): void => {
   const pathArgument = z.object({
-    path: z.string().describe("Local native executable or app path"),
+    path: localPathStringSchema.describe("Local native executable or app path"),
   });
   cli.command(CLI_COMMANDS.observeNativeUi, {
     description:
@@ -100,7 +111,7 @@ const registerNativeUiCommands = (
           "observe_native_ui",
           nativeUiScope(options),
           logger,
-        ),
+        ).then(projectCliAnalysisResult),
       ),
   });
   const operation = "capture_native_ui_scenario";
@@ -112,16 +123,14 @@ const registerNativeUiCommands = (
       ...nativeUiScopeOptions,
       steps: z
         .string()
-        .optional()
-        .describe("JSON array of declarative AX actions or waits"),
+        .describe(
+          "Required JSON array of one or more declarative AX actions or waits",
+        ),
     }),
     run: ({ args, options }) =>
       logCliCommand(logger, CLI_COMMANDS.captureNativeUiScenario, async () => {
         const parameters = nativeUiScope(options);
-        const decoded =
-          options.steps === undefined
-            ? { ok: true as const, value: undefined }
-            : safeParseJson(options.steps);
+        const decoded = safeParseJson(options.steps);
         if (!decoded.ok)
           return invalidNativeUiScenarioInput(operation, [
             { path: ["steps"], reason: "invalid_format", expected: "JSON" },
@@ -135,10 +144,18 @@ const registerNativeUiCommands = (
             operation,
             projectInputIssues(parsed.error.issues, {
               ...parameters,
-              ...(options.steps === undefined ? {} : { steps: decoded.value }),
+              steps: decoded.value,
             }),
           );
-        return runProviderAnalysis(args.path, operation, parsed.data, logger);
+        const { native_ui_deadline_ms: deadline, ...scenario } = parsed.data;
+        return runProviderAnalysis(
+          args.path,
+          operation,
+          deadline === undefined
+            ? scenario
+            : { ...scenario, native_ui_deadline_ms: deadline },
+          logger,
+        ).then(projectCliAnalysisResult);
       }),
   });
 };
@@ -182,16 +199,30 @@ const registerNativeCommands = (
   ] as const) {
     cli.command(command, {
       description: `Run ${tool} without launching Hopper`,
-      args: z.object({ path: z.string().describe("Mach-O or app path") }),
-      run: ({ args }) =>
+      args: z.object({
+        path: localPathStringSchema.describe("Mach-O or app path"),
+      }),
+      options: z.object({
+        nativeCommandTimeoutMs: nativeCommandTimeoutField,
+      }),
+      run: ({ args, options }) =>
         logCliCommand(logger, command, () =>
-          runProviderAnalysis(args.path, tool, {}, logger),
+          runProviderAnalysis(
+            args.path,
+            tool,
+            options.nativeCommandTimeoutMs === undefined
+              ? {}
+              : { native_command_timeout_ms: options.nativeCommandTimeoutMs },
+            logger,
+          ).then(projectCliAnalysisResult),
         ),
     });
   }
   cli.command(CLI_COMMANDS.inspectPlist, {
     description: "Parse app plist metadata without launching Hopper",
-    args: z.object({ path: z.string().describe("App or Mach-O path") }),
+    args: z.object({
+      path: localPathStringSchema.describe("App or Mach-O path"),
+    }),
     options: z.object({
       relativePath: z
         .string()
@@ -199,33 +230,49 @@ const registerNativeCommands = (
         .describe(
           "Plist path relative to the app root, or an absolute path (default: the bundle's Info.plist)",
         ),
+      nativeCommandTimeoutMs: nativeCommandTimeoutField,
     }),
     run: ({ args, options }) =>
       logCliCommand(logger, "inspect-plist", () =>
         runProviderAnalysis(
           args.path,
           "inspect_plist",
-          options.relativePath === undefined
-            ? {}
-            : { path: options.relativePath },
+          {
+            ...(options.relativePath === undefined
+              ? {}
+              : { path: options.relativePath }),
+            ...(options.nativeCommandTimeoutMs === undefined
+              ? {}
+              : { native_command_timeout_ms: options.nativeCommandTimeoutMs }),
+          },
           logger,
-        ),
+        ).then(projectCliAnalysisResult),
       ),
   });
   cli.command(CLI_COMMANDS.demangleSwift, {
     description: "Demangle Swift symbols without Hopper",
     args: z.object({
-      path: z.string().describe("Artifact path used for evidence identity"),
+      path: localPathStringSchema.describe(
+        "Artifact path used for evidence identity",
+      ),
       symbols: swiftSymbolsSchema.describe("Swift mangled symbols to demangle"),
     }),
-    run: ({ args }) =>
+    options: z.object({
+      nativeCommandTimeoutMs: nativeCommandTimeoutField,
+    }),
+    run: ({ args, options }) =>
       logCliCommand(logger, "demangle-swift", () =>
         runProviderAnalysis(
           args.path,
           "demangle_swift",
-          { symbols: args.symbols },
+          {
+            symbols: args.symbols,
+            ...(options.nativeCommandTimeoutMs === undefined
+              ? {}
+              : { native_command_timeout_ms: options.nativeCommandTimeoutMs }),
+          },
           logger,
-        ),
+        ).then(projectCliAnalysisResult),
       ),
   });
 };
@@ -249,13 +296,7 @@ const registerReferenceSourceCommand = (
         .describe(
           "Complete committed graph or compact historical-source summary",
         ),
-      outlineDepth: z
-        .number()
-        .int()
-        .safe()
-        // After .safe(): its safe-range check overwrites an earlier minimum,
-        // which advertised negative depths the parser rejects.
-        .nonnegative()
+      outlineDepth: cliIntegerArgument(0)
         .optional()
         .describe(
           "Summary outline path depth (default: 2; 0 omits entries); requires --detail summary",
@@ -300,7 +341,7 @@ const registerReferenceSourceCommand = (
               : undefined,
           );
         },
-        isReferenceSourceImportCliFailure,
+        isCliOperationFailure,
       ),
   });
 };

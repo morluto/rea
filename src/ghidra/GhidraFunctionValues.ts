@@ -1,5 +1,10 @@
+import { nativeAddressObservationSchema } from "../domain/native/nativeAddress.js";
 import { procedureInfoSchema } from "../domain/native/procedureInfo.js";
 import { z } from "zod";
+import {
+  ghidraNativeApiBoundary,
+  ghidraNativeValueFlow,
+} from "./GhidraNativeAnalysisValues.js";
 import {
   nativeFunctionAnnotationsInputSchema,
   nativeFunctionAnnotationsSchema,
@@ -15,18 +20,25 @@ import {
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
 import {
-  functionBodyEntryAgrees,
   functionInstructionWindowSchema,
   functionDossierSchema,
-  type FunctionDossier,
-} from "../domain/hopperValues.js";
+} from "../domain/native/functionDossier.js";
+import {
+  availableReferenceKindSchema,
+  unresolvedCallSchema,
+} from "../domain/native/nativeReference.js";
+import {
+  swiftSmallStringLiteralSchema,
+  swiftLargeStringLiteralSchema,
+  swiftSmallStringLiteralOmissionSchema,
+  swiftLargeStringLiteralOmissionSchema,
+} from "../domain/native/swiftStringLiteral.js";
+import { functionBodyEntryAgrees } from "../domain/native/functionBody.js";
 import {
   jsonObjectSchema,
   jsonValueSchema,
   type JsonValue,
 } from "../domain/jsonValue.js";
-import { nativeApiBoundarySchema } from "../domain/native/nativeApiBoundary.js";
-import { nativeValueFlowSchema } from "../domain/native/nativeValueFlow.js";
 import type { EvidenceLocation } from "../domain/evidence.js";
 import {
   relationshipCoverageSchema,
@@ -37,10 +49,10 @@ import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js"
 import {
   ghidraIdentifierSchema,
   ghidraInputAddressSchema,
-  ghidraCanonicalAddressSchema,
   ghidraFunctionClassificationSchema as classification,
   ghidraFunctionBodySchema as ghidraFunctionBody,
   ghidraProcedureIdentitySchema as procedureIdentity,
+  ghidraFunctionIdentitySchema as dossierProcedureIdentity,
 } from "./GhidraInventoryValues.js";
 
 /** Function analysis and annotation operations admitted by the Ghidra adapter. */
@@ -139,30 +151,14 @@ const localVariable = z
     provenance: z.literal("ghidra-function-database"),
   })
   .strict();
-const referenceKind = z
-  .object({
-    available: z.literal(true),
-    provenance: z.literal("ghidra-reference-manager"),
-    type: z.string().min(1),
-    flow: z.boolean(),
-    call: z.boolean(),
-    jump: z.boolean(),
-    data: z.boolean(),
-    read: z.boolean(),
-    write: z.boolean(),
-    indirect: z.boolean(),
-    computed: z.boolean(),
-    conditional: z.boolean(),
-    terminal: z.boolean(),
-    primary: z.boolean(),
-    operand_index: z.number().int(),
-    external: z.boolean(),
-  })
-  .strict();
+const referenceKind = availableReferenceKindSchema.safeExtend({
+  provenance: z.literal("ghidra-reference-manager"),
+  type: z.string().min(1),
+});
 const referenceEdge = z
   .object({
-    source_address: ghidraCanonicalAddressSchema,
-    target_address: ghidraCanonicalAddressSchema,
+    source_address: nativeAddressObservationSchema,
+    target_address: nativeAddressObservationSchema,
     source_procedure: procedureIdentity.nullable(),
     target_procedure: procedureIdentity.nullable(),
     kind: referenceKind,
@@ -176,7 +172,7 @@ const procedureReferences = z
     reference_kinds_available: z.boolean(),
     unresolved_calls: z.array(
       z.strictObject({
-        address: ghidraCanonicalAddressSchema,
+        address: nativeAddressObservationSchema,
         reason: z.string(),
       }),
     ),
@@ -185,8 +181,8 @@ const procedureReferences = z
 const procedureInfo = procedureInfoSchema
   .safeExtend({
     name: z.string().min(1),
-    entrypoint: ghidraCanonicalAddressSchema,
-    length: z.number().int().min(0),
+    entrypoint: nativeAddressObservationSchema,
+    length: z.int().min(0),
     locals: z.array(localVariable),
     classification,
     body: ghidraFunctionBody,
@@ -205,92 +201,82 @@ const procedureInfo = procedureInfoSchema
       });
   });
 
-const ghidraNativeApiBoundary = nativeApiBoundarySchema.superRefine(
-  (value, context) => {
-    if (!value.available) return;
-    if (value.provenance !== "ghidra-high-function")
-      context.addIssue({
-        code: "custom",
-        message:
-          "Ghidra native API observations require HighFunction provenance",
-      });
-    const addresses = value.jump_tables.flatMap((table) => [
-      table.dispatch_address,
-      ...table.data_sources.map(({ address }) => address),
-      ...table.mappings.map(({ target_address }) => target_address),
-      ...table.default_targets.map(({ target_address }) => target_address),
-    ]);
-    if (
-      addresses.some(
-        (address) => !ghidraCanonicalAddressSchema.safeParse(address).success,
-      )
-    )
-      context.addIssue({
-        code: "custom",
-        message:
-          "Ghidra native API observation contains a non-canonical address",
-      });
-  },
-);
-
-const ghidraNativeValueFlow = nativeValueFlowSchema.superRefine(
-  (value, context) => {
-    if (!value.available) return;
-    const operations = value.operations;
-    const addresses = operations.flatMap((operation) => [
-      operation.address,
-      ...operation.inputs.flatMap(({ location }) =>
-        location === null ? [] : [location],
-      ),
-      ...(operation.output?.location == null
-        ? []
-        : [operation.output.location]),
-    ]);
-    if (
-      addresses.some(
-        (address) => !ghidraCanonicalAddressSchema.safeParse(address).success,
-      )
-    )
-      context.addIssue({
-        code: "custom",
-        message: "Ghidra p-code flow contains a non-canonical address",
-      });
-    const operationIds = new Set(operations.map(({ id }) => id));
-    if (operationIds.size !== operations.length)
-      context.addIssue({
-        code: "custom",
-        message: "Ghidra p-code operation identifiers are not unique",
-      });
-    if (
-      value.def_use.some(
-        ({ definition, use }) =>
-          !operationIds.has(definition) || !operationIds.has(use),
-      ) ||
-      value.effects.some(({ operation }) => !operationIds.has(operation))
-    )
-      context.addIssue({
-        code: "custom",
-        message: "Ghidra p-code relationship references a missing operation",
-      });
-    if (
-      value.truncated !==
-      (value.omitted_operations_lower_bound > 0 ||
-        value.known_omitted_inputs > 0 ||
-        value.known_omitted_edges > 0)
-    )
-      context.addIssue({
-        code: "custom",
-        message: "Ghidra p-code truncation flag contradicts omitted counts",
-      });
-  },
-);
+const dossierReferenceEdge =
+  functionDossierSchema.shape.incoming_references.element.extend({
+    source_address: nativeAddressObservationSchema,
+    target_address: nativeAddressObservationSchema,
+    source_procedure: dossierProcedureIdentity.nullable(),
+    target_procedure: dossierProcedureIdentity.nullable(),
+    kind: referenceKind,
+  });
 
 const ghidraFunctionDossier = functionDossierSchema
   .extend({
-    procedure: functionDossierSchema.shape.procedure.safeExtend({
-      classification,
-      body: ghidraFunctionBody,
+    procedure: dossierProcedureIdentity.safeExtend({
+      signature: functionDossierSchema.shape.procedure.shape.signature,
+      locals: z.array(localVariable),
     }),
+    comments: z.array(
+      functionDossierSchema.shape.comments.element.extend({
+        address: nativeAddressObservationSchema,
+      }),
+    ),
+    callers: z.array(dossierProcedureIdentity),
+    callees: z.array(dossierProcedureIdentity),
+    incoming_references: z.array(dossierReferenceEdge),
+    outgoing_references: z.array(dossierReferenceEdge),
+    unresolved_calls: z
+      .array(
+        unresolvedCallSchema.extend({
+          address: nativeAddressObservationSchema,
+        }),
+      )
+      .exactOptional(),
+    referenced_strings: z.array(
+      functionDossierSchema.shape.referenced_strings.element.extend({
+        address: nativeAddressObservationSchema,
+        source_address: nativeAddressObservationSchema,
+      }),
+    ),
+    referenced_names: z.array(
+      functionDossierSchema.shape.referenced_names.element.extend({
+        address: nativeAddressObservationSchema,
+        source_address: nativeAddressObservationSchema,
+      }),
+    ),
+    swift_string_literals: z
+      .array(
+        z.discriminatedUnion("representation", [
+          swiftSmallStringLiteralSchema.extend({
+            source_address: nativeAddressObservationSchema,
+          }),
+          swiftLargeStringLiteralSchema.extend({
+            source_address: nativeAddressObservationSchema,
+            address: nativeAddressObservationSchema,
+          }),
+        ]),
+      )
+      .exactOptional(),
+    swift_string_literal_omissions: z
+      .array(
+        z.discriminatedUnion("representation", [
+          swiftSmallStringLiteralOmissionSchema.extend({
+            source_address: nativeAddressObservationSchema,
+          }),
+          swiftLargeStringLiteralOmissionSchema.extend({
+            source_address: nativeAddressObservationSchema,
+            address: nativeAddressObservationSchema,
+          }),
+        ]),
+      )
+      .exactOptional(),
+    basic_blocks: z.array(
+      functionDossierSchema.shape.basic_blocks.element.extend({
+        start: nativeAddressObservationSchema,
+        end: nativeAddressObservationSchema,
+        successors: z.array(nativeAddressObservationSchema),
+      }),
+    ),
     native_api: ghidraNativeApiBoundary,
     native_value_flow: ghidraNativeValueFlow,
   })
@@ -304,79 +290,6 @@ const ghidraFunctionDossier = functionDossierSchema
         code: "custom",
         message:
           "Ghidra dossier must record Swift literals and their omissions together",
-      });
-    const addresses = [
-      value.procedure.address,
-      ...value.comments.map(({ address }) => address),
-      ...value.callers.map(({ address }) => address),
-      ...value.callees.map(({ address }) => address),
-      ...(value.unresolved_calls ?? []).map(({ address }) => address),
-      ...value.incoming_references.flatMap(referenceAddresses),
-      ...value.outgoing_references.flatMap(referenceAddresses),
-      ...value.referenced_strings.flatMap(({ address, source_address }) => [
-        address,
-        source_address,
-      ]),
-      ...value.referenced_names.flatMap(({ address, source_address }) => [
-        address,
-        source_address,
-      ]),
-      ...(value.swift_string_literals ?? []).flatMap(
-        ({ address, source_address }) =>
-          address === null ? [source_address] : [address, source_address],
-      ),
-      ...(value.swift_string_literal_omissions ?? []).flatMap(
-        ({ address, source_address }) =>
-          address === null ? [source_address] : [address, source_address],
-      ),
-      ...value.basic_blocks.flatMap(({ start, end, successors }) => [
-        start,
-        end,
-        ...successors,
-      ]),
-    ];
-    if (
-      addresses.some(
-        (address) => !ghidraCanonicalAddressSchema.safeParse(address).success,
-      )
-    )
-      context.addIssue({
-        code: "custom",
-        message: "Ghidra dossier contains a non-canonical address",
-      });
-    const identities = [
-      value.procedure,
-      ...value.callers,
-      ...value.callees,
-      ...value.incoming_references.flatMap(referenceProcedures),
-      ...value.outgoing_references.flatMap(referenceProcedures),
-    ];
-    if (
-      identities.some(
-        (identity) =>
-          !classification.safeParse(identity.classification).success ||
-          !ghidraFunctionBody.safeParse(identity.body).success ||
-          !functionBodyEntryAgrees(identity.body, identity.address) ||
-          (identity.body.available &&
-            identity.classification?.external === false &&
-            !identity.body.contains_entry),
-      )
-    )
-      context.addIssue({
-        code: "custom",
-        message: "Ghidra dossier omitted function classification",
-      });
-    if (
-      value.procedure.locals.some(
-        (variable) => !localVariable.safeParse(variable).success,
-      ) ||
-      [...value.incoming_references, ...value.outgoing_references].some(
-        ({ kind }) => !referenceKind.safeParse(kind).success,
-      )
-    )
-      context.addIssue({
-        code: "custom",
-        message: "Ghidra dossier contains invalid provenance",
       });
     if (
       !value.limitations.some((item) => /indirect|computed/u.test(item)) ||
@@ -397,8 +310,8 @@ const resultSchemas = {
   }),
   analyze_function: ghidraFunctionDossier,
   procedure_assembly: z.string(),
-  procedure_callees: z.array(ghidraCanonicalAddressSchema),
-  procedure_callers: z.array(ghidraCanonicalAddressSchema),
+  procedure_callees: z.array(nativeAddressObservationSchema),
+  procedure_callers: z.array(nativeAddressObservationSchema),
   procedure_info: procedureInfo,
   procedure_pseudo_code: z.string().nullable(),
   read_function_instructions: ghidraFunctionInstructionWindow,
@@ -406,7 +319,7 @@ const resultSchemas = {
   inspect_native_data_type: nativeDataTypeSchema,
   resolve_native_call_targets: nativeCallTargetsSchema,
   procedure_references: procedureReferences,
-  xrefs: z.array(ghidraCanonicalAddressSchema),
+  xrefs: z.array(nativeAddressObservationSchema),
 } satisfies Readonly<Record<GhidraFunctionOperation, z.ZodType>>;
 
 const functionBoundaryObservationOperations: ReadonlySet<GhidraFunctionOperation> =
@@ -428,9 +341,9 @@ const functionObservationEnvelope = z.strictObject({
   relationship_coverage: relationshipCoverageSchema.exactOptional(),
   selection: z
     .strictObject({
-      file_offset: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
-      mapped_address: ghidraCanonicalAddressSchema,
-      procedure_address: ghidraCanonicalAddressSchema,
+      file_offset: z.int().min(0).max(Number.MAX_SAFE_INTEGER),
+      mapped_address: nativeAddressObservationSchema,
+      procedure_address: nativeAddressObservationSchema,
     })
     .exactOptional(),
 });
@@ -522,21 +435,3 @@ export const parseGhidraFunctionResult = (
         ),
       );
 };
-
-const referenceAddresses = (
-  edge: FunctionDossier["incoming_references"][number],
-): readonly string[] => [
-  edge.source_address,
-  edge.target_address,
-  ...(edge.source_procedure === null ? [] : [edge.source_procedure.address]),
-  ...(edge.target_procedure === null ? [] : [edge.target_procedure.address]),
-];
-
-const referenceProcedures = (
-  edge: FunctionDossier["incoming_references"][number],
-): readonly NonNullable<
-  FunctionDossier["incoming_references"][number]["source_procedure"]
->[] => [
-  ...(edge.source_procedure === null ? [] : [edge.source_procedure]),
-  ...(edge.target_procedure === null ? [] : [edge.target_procedure]),
-];

@@ -5,6 +5,7 @@ export const GHIDRA_BRIDGE_SOURCES = Object.freeze({
   extensions: "ReaGhidraExtensions.java",
   prepareCom: "ReaGhidraPrepareCom.java",
   prepareRaw: "ReaGhidraPrepareRaw.java",
+  prepareDol: "ReaGhidraPrepareDol.java",
   applySeeds: "ReaGhidraApplySeeds.java",
   analysisOptions: "ReaGhidraAnalysisOptions.java",
   noReturnFix: "ReaGhidraNoReturnFix.java",

@@ -1,7 +1,13 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["typescript", "import", "unicorn", "oxc"],
+  "plugins": ["typescript", "import", "unicorn", "oxc", "vitest"],
   "rules": {
+    "rea/no-buffer-deep-equality": "error",
+    "rea/cancellation-cause": "error",
+    "no-async-promise-executor": "error",
+    "no-unreachable": "error",
+    "no-unsafe-optional-chaining": "error",
+    "no-useless-escape": ["warn", { "allowRegexCharacters": ["-"] }],
     "complexity": ["warn", 20],
     "max-depth": ["warn", 4],
     "max-lines": [
@@ -23,7 +29,38 @@
     "max-params": ["warn", 4],
     "no-var": "warn",
     "no-var-requires": "error",
-    "typescript/no-import-type-side-effects": "error"
+    "typescript/no-import-type-side-effects": "error",
+    "vitest/no-standalone-expect": "off",
+    "vitest/no-conditional-expect": "off",
+    "vitest/expect-expect": "off",
+    "vitest/no-disabled-tests": "off",
+    "vitest/require-mock-type-parameters": "off",
+    "vitest/require-to-throw-message": "off",
+    "import/no-duplicates": [
+      "warn",
+      {
+        "preferInline": false
+      }
+    ],
+    "vitest/valid-expect": [
+      "warn",
+      {
+        "maxArgs": 2
+      }
+    ],
+    "rea/no-evidence-json-preadmission": "error",
+    "rea/no-positional-tool-contract": "error",
+    "rea/no-fixture-root-cleanup": "error",
+    "typescript/no-floating-promises": "error",
+    "typescript/no-misused-promises": "warn",
+    "typescript/return-await": ["error", "error-handling-correctness-only"],
+    "typescript/switch-exhaustiveness-check": [
+      "error",
+      {
+        "considerDefaultExhaustiveForUnions": true
+      }
+    ],
+    "rea/no-shared-module-mock": "error"
   },
   "overrides": [
     {
@@ -37,6 +74,12 @@
       }
     },
     {
+      "files": ["src/**/*.ts"],
+      "rules": {
+        "typescript/no-misused-promises": "error"
+      }
+    },
+    {
       "files": ["tests/**/*.ts", "src/**/*.test.ts", "src/**/*.fixture.ts"],
       "rules": {
         "max-lines": "off",
@@ -47,7 +90,8 @@
             "skipBlankLines": true,
             "skipComments": true
           }
-        ]
+        ],
+        "typescript/no-misused-promises": "warn"
       }
     },
     {
@@ -91,6 +135,45 @@
           }
         ]
       }
+    },
+    {
+      "files": ["tests/**/*.test.ts", "src/**/*.test.ts"],
+      "rules": {
+        "vitest/valid-expect": [
+          "warn",
+          {
+            "maxArgs": 2
+          }
+        ],
+        "vitest/valid-expect-in-promise": "error",
+        "vitest/no-focused-tests": "error"
+      }
+    },
+    {
+      "files": [
+        "scripts/lib/http3-capture-assertions.test.mjs",
+        "scripts/lib/http3-verifier-lifecycle.test.mjs"
+      ],
+      "rules": {
+        "typescript/no-floating-promises": [
+          "error",
+          {
+            "allowForKnownSafeCalls": [
+              {
+                "from": "package",
+                "package": "@types/node",
+                "name": "test"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["scripts/fixtures/javascript-recovery/code-split/entry.mjs"],
+      "rules": {
+        "typescript/no-floating-promises": "off"
+      }
     }
   ],
   "env": {
@@ -109,5 +192,14 @@
     ".devin",
     ".factory",
     "third_party"
+  ],
+  "options": {
+    "reportUnusedDisableDirectives": "error"
+  },
+  "jsPlugins": [
+    {
+      "name": "rea",
+      "specifier": "./scripts/lint/index.mjs"
+    }
   ]
 }

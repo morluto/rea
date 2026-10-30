@@ -135,7 +135,7 @@ it("returns a first-call overview and pages the unchanged source after its file 
       .exportEvidenceBundle()
       .records.find((x) => x.evidence_id === parent.evidence_id),
   ).toEqual(parent);
-  const portable = inspectAnalysisView({
+  const portable = await inspectAnalysisView({
     source: { kind: "inline", evidence: parent },
     view: { kind: "summary" },
   });
@@ -175,7 +175,7 @@ it("keeps malformed metadata, empty returned rows and historical null subjects e
     { kind: "summary" },
     { kind: "managed", collection: "attributes", offset: 0, limit: 3 },
   ]) {
-    const result = inspectAnalysisView({
+    const result = await inspectAnalysisView({
       source: { kind: "inline", evidence: historical },
       view,
     });
@@ -209,7 +209,7 @@ it("keeps malformed metadata, empty returned rows and historical null subjects e
     },
   );
   expect(
-    inspectAnalysisView({
+    await inspectAnalysisView({
       source: { kind: "inline", evidence: incompatible },
       view: { kind: "summary" },
     }),

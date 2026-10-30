@@ -13,7 +13,8 @@ export interface LinuxProcessStat {
 /**
  * Parse the changing command field by its final `)`, then validate the native
  * identity and relation fields. Zero is valid for the native group/session
- * facts; callers may impose narrower admission rules for their own purpose.
+ * facts; -1 for group/session means lock_task_sighand could not supply them
+ * during teardown. Preserve these sentinels separately from the start identity.
  */
 export const parseLinuxProcessStat = (
   value: string,
@@ -42,9 +43,9 @@ export const parseLinuxProcessStat = (
     parentPidText === undefined ||
     !/^\d+$/u.test(parentPidText) ||
     processGroupIdText === undefined ||
-    !/^\d+$/u.test(processGroupIdText) ||
+    !/^(?:-1|\d+)$/u.test(processGroupIdText) ||
     sessionIdText === undefined ||
-    !/^\d+$/u.test(sessionIdText) ||
+    !/^(?:-1|\d+)$/u.test(sessionIdText) ||
     startTime === undefined ||
     !/^\d+$/u.test(startTime)
   )

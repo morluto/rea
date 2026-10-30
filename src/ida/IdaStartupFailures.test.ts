@@ -5,6 +5,7 @@ import {
   RecordingIdaMcp,
 } from "../../tests/fixtures/idaMcp.js";
 import {
+  AnalysisCancelledError,
   AnalysisTimeoutError,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
@@ -123,19 +124,35 @@ it.each(["timeout", "resource"] as const)(
   },
 );
 
-it.each(["pending", "released"] as const)(
-  "keeps cancellation linked to the exact startup cleanup owner when %s",
-  async (state) => {
+it.each([
+  { kind: "cancellation", state: "pending" },
+  { kind: "cancellation", state: "released" },
+  { kind: "timeout", state: "pending" },
+  { kind: "timeout", state: "released" },
+] as const)(
+  "keeps producer $kind linked to the exact startup cleanup owner when $state",
+  async ({ kind, state }) => {
     const { root, target } = await createIdaTarget();
     const controller = new AbortController();
-    const primary = new AnalysisTimeoutError("ida_mcp_connect", 123, {
+    const callerReason = { caller: "startup wait cancelled" };
+    const sourceOptions = {
+      diagnostics: { stage_fact: "original" },
       cleanup: { reason: "release denied", resources: ["owned transport"] },
       capturedOutput: {
-        stdout: "",
+        stdout: "original output",
         stderr: "original warning",
-        truncated: false,
+        truncated: true,
       },
-    });
+    };
+    // The producer authors the outcome; an aborted caller alone cannot turn
+    // an established startup timeout into cancellation.
+    const primary =
+      kind === "cancellation"
+        ? new AnalysisCancelledError("ida_mcp_connect", {
+            ...sourceOptions,
+            cause: callerReason,
+          })
+        : new AnalysisTimeoutError("ida_mcp_connect", 123, sourceOptions);
     let permitRelease = state === "released";
     const lease = new AnalysisCleanupLease(async () => {
       if (!permitRelease) throw new Error("release denied");
@@ -143,8 +160,9 @@ it.each(["pending", "released"] as const)(
     lease.bindCleanupError(primary);
     const producer = new RecordingIdaMcp(target, "headless");
     producer.connect = async () => {
+      producer.connects++;
       if (state === "released") await lease.release();
-      controller.abort("caller reason");
+      controller.abort(callerReason);
       throw primary;
     };
     const client = new IdaSessionClient(
@@ -169,11 +187,22 @@ it.each(["pending", "released"] as const)(
       { procedure: "main" },
       { signal: controller.signal },
     );
-    if (result.ok) throw new Error("Expected cancellation");
+    if (result.ok) throw new Error("Expected startup failure");
+    expect(producer.connects).toBe(1);
+    expect(producer.calls).toEqual([]);
+    expect(controller.signal.reason).toBe(callerReason);
+    expect(primary.operation).toBe("ida_mcp_connect");
+    expect(result.error.cause).toBe(
+      kind === "cancellation" ? callerReason : primary,
+    );
     if (state === "pending") {
-      expect(projectAnalysisError(result.error).code).toBe(
-        "cleanup_incomplete",
-      );
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: "cleanup_incomplete",
+        details: {
+          resources: ["owned transport"],
+          captured_output: sourceOptions.capturedOutput,
+        },
+      });
       await expect(lease.release()).rejects.toThrow("release denied");
       expect(projectAnalysisError(result.error).code).toBe(
         "cleanup_incomplete",
@@ -182,12 +211,21 @@ it.each(["pending", "released"] as const)(
       await lease.release();
     }
     expect(projectAnalysisError(result.error)).toMatchObject({
-      code: "cancelled",
+      code: kind === "cancellation" ? "cancelled" : "provider_timeout",
       details: {
         operation: "procedure_pseudo_code",
-        captured_output: { stderr: "original warning" },
+        captured_output: sourceOptions.capturedOutput,
+        diagnostics: sourceOptions.diagnostics,
       },
     });
+    if (kind === "timeout")
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        retryable: true,
+        details: {
+          timeout_ms: 123,
+          diagnostics: { startup_operation: "ida_mcp_connect" },
+        },
+      });
     expect(projectAnalysisError(result.error).details).not.toHaveProperty(
       "resources",
     );

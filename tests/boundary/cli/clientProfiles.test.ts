@@ -1,5 +1,6 @@
+import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import { access, mkdir, readFile, writeFile, rm } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { expect } from "vitest";
 import { parse } from "jsonc-parser";
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
@@ -482,12 +483,9 @@ cliTest(
         mcp: {
           rea: {
             type: "local",
-            command: [
-              "npx",
-              "-y",
-              PRODUCT_IDENTITY.registrationPackageSpecifier,
-              "mcp",
-            ],
+            command: currentClientRegistrationCommand({
+              entrypointPath: resolve("scripts/rea.mjs"),
+            }),
             enabled: true,
           },
         },
@@ -541,12 +539,9 @@ cliTest(
     await mkdir(dirname(custom), { recursive: true });
     const owned = {
       type: "local",
-      command: [
-        "npx",
-        "-y",
-        PRODUCT_IDENTITY.registrationPackageSpecifier,
-        "mcp",
-      ],
+      command: currentClientRegistrationCommand({
+        entrypointPath: resolve("scripts/rea.mjs"),
+      }),
       enabled: true,
     };
     const original = JSON.stringify({

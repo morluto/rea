@@ -1,8 +1,8 @@
+import { requireOutputSchema } from "./toolOutputSchemaPrimitives.js";
 import { matchNativeFunctionsInputSchema } from "./native/functionMatchingContracts.js";
 import { z } from "zod";
 
 import { absoluteLocalPathStringSchema } from "../domain/localPath.js";
-import { artifactComparisonInputSchema } from "../domain/artifactComparison.js";
 import { callPathInputSchema } from "../domain/callPathSchemas.js";
 import { changedBehaviorInputSchema } from "../domain/changedBehavior.js";
 import { functionComparisonInputSchema } from "../domain/functionComparisonSchemas.js";
@@ -14,14 +14,15 @@ import {
 import { reconstructionVerificationInputSchema } from "../domain/reconstructionVerificationSchemas.js";
 import { staticRuntimeCorrelationInputSchema } from "../domain/staticRuntimeCorrelation.js";
 import { sessionOutputSchemas } from "./toolOutputSchemaGroups.js";
-import { requireOutputSchema } from "./toolOutputSchemaPrimitives.js";
 import {
   closeBinaryInputSchema,
+  openBundleResourcesInputSchema,
   openBinaryInputSchema,
 } from "./sessionLifecycleInputs.js";
 import { binarySessionInputSchema } from "./sessionStatusContract.js";
 import {
   addressContextInputSchema,
+  artifactComparisonInputSchema,
   bundleComparisonMcpInputSchema,
   importEvidenceBundleInputSchema,
   listUnknownsInputSchema,
@@ -68,13 +69,18 @@ export const SESSION_TOOL_CONTRACTS = [
     openBinaryInputSchema,
   ),
   session(
+    "open_bundle_resources",
+    "Open a local app bundle for read-only plist, Interface Builder, asset catalog, and keyed archive inspection without resolving or inventing its executable identity. This switches the shared session to a resource-only lane; executable analysis is unavailable until another target is opened.",
+    openBundleResourcesInputSchema,
+  ),
+  session(
     "close_binary",
-    "When the investigation is finished, drain earlier provider requests, optionally write a provider-neutral analysis snapshot atomically to the caller-supplied path, then close the active target and every provider resource started for it. Later provider requests wait until this lifecycle operation finishes. Existing files require explicit overwrite; a failed save leaves the session open so cached analysis is not lost. Metadata edits prevent immutable snapshot saves until the session is recreated; export_evidence_bundle preserves mutable observations before closing without a snapshot.",
+    "When the investigation is finished, drain earlier provider requests, optionally write a provider-neutral analysis snapshot atomically to the caller-supplied path, then close the active analysis session and every provider resource started for it. Resource-only app sessions have no binary snapshot binding, so close them without snapshot_path. Later provider requests wait until this lifecycle operation finishes. Existing files require explicit overwrite; a failed save leaves the session open so cached analysis is not lost. Metadata edits prevent immutable snapshot saves until the session is recreated; export_evidence_bundle preserves mutable observations before closing without a snapshot.",
     closeBinaryInputSchema,
   ),
   session(
     "binary_session",
-    "Report the complete current target, provider, capability availability, client-feature, analysis, and server-identity status without starting analysis.",
+    'Report the active binary target or resource-only app root, provider and capability availability when applicable, client-feature, analysis, and server-identity status without starting analysis. The default summary lists omitted_fields; detail: "complete" adds provider diagnostics, candidate capabilities and static tool flags.',
     binarySessionInputSchema,
   ),
   session(
@@ -89,7 +95,7 @@ export const SESSION_TOOL_CONTRACTS = [
   ),
   session(
     "capture_process_scenario",
-    "Run one caller-selected command under a PTY and return process capture Evidence with residual unknowns. The renderer admits at most 1,000,000 combined terminal cells, computed as columns × (rows + scrollback); every resize uses the selected scrollback and must fit the same budget. Supply a smaller terminal shape when that product is too large; dimensions are never clamped. A command name resolves through the inherited PATH; the working directory defaults to the caller's current directory; host environment variables are inherited with scenario overrides. Environment keys cannot contain '=' or NUL, and REA_PROCESS_RUN_ID is reserved for process ownership. Filesystem snapshots are opt-in through filesystem_observation_paths. A positive finalization_ms makes a timeout or idle deadline send SIGTERM to the captured root through its start identity, keep observing, and send SIGKILL once after the interval; exit.finalization records each attempt with its delivery result and the observed exit, and cancellation still ends the run at once. The target runs with the current user's permissions; this is not a security sandbox.",
+    "Run one caller-selected command under a PTY and return process capture Evidence with residual unknowns. The renderer admits at most 1,000,000 combined terminal cells, computed as columns × (rows + scrollback); every resize uses the selected scrollback and must fit the same budget. Supply a smaller terminal shape when that product is too large; dimensions are never clamped. This release has no runtime override for that cell budget. A command name resolves through the inherited PATH; the working directory defaults to the caller's current directory; host environment variables are inherited with scenario overrides. Environment keys cannot contain '=' or NUL, and REA_PROCESS_RUN_ID is reserved for process ownership. Filesystem snapshots are opt-in through filesystem_observation_paths. A positive finalization_ms makes a timeout or idle deadline send SIGTERM to the captured root through its start identity, keep observing, and send SIGKILL once after the interval; exit.finalization records each attempt with its delivery result and the observed exit, and cancellation still ends the run at once. The target runs with the current user's permissions; this is not a security sandbox.",
     processScenarioSchema,
   ),
   session(
@@ -99,7 +105,7 @@ export const SESSION_TOOL_CONTRACTS = [
   ),
   session(
     "compare_artifacts",
-    "Compare complete artifact inventories by logical occurrence path, content identity, metadata, and graph relations. Pass the inventory Evidence nested in each inspect_artifact result as left and right, or pass its inspect_analysis_view summary while the complete parent Evidence remains retained in this session. Summary facts are not treated as a complete inventory; comparison resolves the exact retained parent. Every delta cites both complete inputs, and gaps yield truncated or unknown, never equivalence. Returns every change inline.",
+    'Compare complete artifact inventories by logical occurrence path, content identity, metadata, and graph relations. Name each side once without resending Evidence: {kind: "retained-evidence", evidence_id} selects an inspect_artifact result, its nested inventory, or its inspect_analysis_view summary retained in this session; {kind: "evidence-file", path, evidence_id?} reads one record from a local Evidence file or bundle at an absolute path. Complete inline Evidence is also accepted. Summary facts are not treated as a complete inventory; comparison resolves the exact complete parent from the same source bundle or the retained session. Every delta cites both complete inputs, and gaps yield truncated or unknown, never equivalence. Returns every change inline.',
     artifactComparisonInputSchema,
   ),
   session(
@@ -119,7 +125,7 @@ export const SESSION_TOOL_CONTRACTS = [
   ),
   session(
     "find_changed_behavior",
-    "Aggregate validated process and artifact comparison Evidence. Runtime observations remain distinct from static behavior candidates; missing or incomplete comparisons produce unresolved findings, never causal claims. Returns every finding inline.",
+    "Aggregate validated process, artifact, and function comparison Evidence. Runtime observations remain distinct from static behavior candidates; missing or incomplete comparisons produce unresolved findings, never causal claims. Returns every finding inline.",
     changedBehaviorInputSchema,
   ),
   session(
@@ -162,11 +168,14 @@ export const SESSION_TOOL_CONTRACTS = [
     "Return every retained Evidence record and residual unknown as a complete canonical bundle by default. detail=summary discovers retained records without copying or transferring their payloads; optionally filter by exact Evidence ID, operation, target SHA-256, analysis-profile digest or canonical native procedure address. Metadata distinguishes complete record retention from native value-flow truncation or unavailable/unknown coverage. Use a discovered evidence_id with inspect_analysis_view without restarting a provider. Filters apply only to summary delivery.",
     getEvidenceBundleInputSchema,
   ),
-  session(
-    "get_navigation_context",
-    "Return the selected document, current address, and containing/current procedure in one provider-neutral result. The result reflects sequential provider observations, not an atomic cursor snapshot; a cursor outside any procedure returns procedure: null.",
-    navigationContextInputSchema,
-  ),
+  {
+    ...session(
+      "get_navigation_context",
+      "Return the selected document, current address, and containing/current procedure in one provider-neutral result. The result reflects sequential provider observations, not an atomic cursor snapshot; a cursor outside any procedure returns procedure: null.",
+      navigationContextInputSchema,
+    ),
+    requiresActiveTarget: true,
+  },
   session(
     "inspect_address_context",
     "Inspect one explicit reproducible address for its analyzed name, containing procedure, regular and inline comments, and matching bookmarks. Each unsupported facet returns a typed unavailable outcome; use xrefs, assembly, or pseudocode for those deeper views.",

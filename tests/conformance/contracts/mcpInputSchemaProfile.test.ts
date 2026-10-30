@@ -31,10 +31,10 @@ describe("MCP input schema profile configuration", () => {
     },
   );
 
-  it("selects the same result-affecting budget for the compact profile", () => {
-    expect(compactPresentationForMcpInputSchemaProfile(undefined)).toBe(
-      undefined,
-    );
+  it("defaults to compact while preserving an explicit full choice", () => {
+    expect(compactPresentationForMcpInputSchemaProfile(undefined)).toEqual({
+      budgetBytes: COMPACT_INPUT_SCHEMA_BUDGET_BYTES,
+    });
     expect(compactPresentationForMcpInputSchemaProfile("full")).toBe(undefined);
     expect(compactPresentationForMcpInputSchemaProfile("compact")).toEqual({
       budgetBytes: COMPACT_INPUT_SCHEMA_BUDGET_BYTES,

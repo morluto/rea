@@ -17,8 +17,8 @@ const leafSchema = z.object({
   sourcesContent: z.array(z.string().nullable()).nullable().optional(),
   names: z.array(z.string()).default([]),
   mappings: sourceMapMappingsSchema.regex(/^[A-Za-z0-9+/,;]*$/u),
-  ignoreList: z.array(z.number().int().min(0)).optional(),
-  x_google_ignoreList: z.array(z.number().int().min(0)).optional(),
+  ignoreList: z.array(z.int().min(0)).optional(),
+  x_google_ignoreList: z.array(z.int().min(0)).optional(),
 });
 const mapHeaderSchema = z.object({
   version: z.literal(3),
@@ -27,8 +27,8 @@ const mapHeaderSchema = z.object({
 });
 const sectionSchema = z.object({
   offset: z.object({
-    line: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
-    column: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+    line: z.int().min(0).max(Number.MAX_SAFE_INTEGER),
+    column: z.int().min(0).max(Number.MAX_SAFE_INTEGER),
   }),
   map: z.unknown().optional(),
   url: z.unknown().optional(),
@@ -55,7 +55,7 @@ export interface SourceMapStructureOptions {
 /** A decoder-profile failure with an actionable producer constraint. */
 export class SourceMapFormatFailure extends Error {
   constructor(
-    readonly reason: "format" | "unsupported" | "limit",
+    readonly reason: "format" | "unsupported" | "limit" | "section-overlap",
     message: string,
   ) {
     super(message);
@@ -147,10 +147,10 @@ const addSections = ({
   for (const [index, section] of sections.entries()) {
     if ((index & 255) === 0) options.check?.();
     const previous = sections[index - 1];
-    if (previous !== undefined && compare(section.offset, previous.offset) <= 0)
+    if (previous !== undefined && compare(section.offset, previous.offset) < 0)
       throw new SourceMapFormatFailure(
         "format",
-        "Indexed section offsets must be strictly increasing.",
+        "Indexed section offsets must be in nondecreasing order.",
       );
     const classification = classifySourceMapSection(section);
     if (classification.kind === "external")
@@ -159,7 +159,10 @@ const addSections = ({
         `External source-map section URL is not fetched: ${classification.url}`,
       );
     if (classification.kind === "invalid")
-      throw new SourceMapFormatFailure("format", classification.reason);
+      throw new SourceMapFormatFailure(
+        "format",
+        `${classification.reason} Section path: ${JSON.stringify([...node.path, index])}.`,
+      );
     embeddedMaps.push(classification.map);
   }
   for (let index = sections.length - 1; index >= 0; index -= 1) {
@@ -181,11 +184,6 @@ const addSections = ({
           ? nextOffset
           : node.stop;
     const offset = addOffset(node.offset, section.offset);
-    if (node.stop !== null && compare(offset, node.stop) >= 0)
-      throw new SourceMapFormatFailure(
-        "format",
-        "Nested source-map section overlaps its enclosing boundary.",
-      );
     pending.push({
       value: map,
       path: [...node.path, index],

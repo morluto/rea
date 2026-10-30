@@ -4,8 +4,11 @@ import { access, lstat, readFile, symlink, writeFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
-import { expect, it as nativeTest, onTestFinished } from "vitest";
+import { expect, it as nativeTest, onTestFinished, vi } from "vitest";
+import { ZodError } from "zod";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
+import { SQLITE_DATABASE_LIMITS } from "../../../src/sqlite/SqliteDatabaseLimits.js";
 import { SqliteDatabaseProvider } from "../../../src/sqlite/SqliteDatabaseProvider.js";
 import { inspectSqliteDatabaseSnapshot } from "../../../src/sqlite/SqliteDatabaseInspection.js";
 import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
@@ -14,6 +17,7 @@ import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 import { waitForProviderProcessReady } from "../../fixtures/providerProcess.js";
 import {
   createSqliteDatabaseFixture,
+  createSqliteApplicationCollationFixture,
   SQLITE_NATIVE_LIMITS_AVAILABLE,
 } from "../../fixtures/sqlite/database.js";
 import {
@@ -50,6 +54,161 @@ const createFixture = async (wal = false) => {
 
 const expectPrivateRootRemoved = (path: string) =>
   expect(access(path)).rejects.toMatchObject({ code: "ENOENT" });
+
+nativeTest.each([
+  { input: { path: "relative.db" }, field: "path" },
+  {
+    input: { path: "/selected.db", table: "records", row_limit: 0 },
+    field: "row_limit",
+  },
+  { input: { path: "/selected.db", columns: ["id"] }, field: "columns" },
+])(
+  "attributes invalid provider input to its argument before allocating resources: %j",
+  async ({ input, field }) => {
+    const createRuntime = vi.fn(async () => {
+      throw new Error("Invalid input must not allocate a SQLite runtime");
+    });
+    const provider = new SqliteDatabaseProvider({}, undefined, createRuntime);
+    onTestFinished(() => provider.close());
+    const result = await provider.inspect({ ...input });
+    if (result.ok) throw new Error("Expected an input rejection");
+    expect(result.error.cause).toBeInstanceOf(ZodError);
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "invalid_request",
+      details: { issues: [{ path: [field] }] },
+    });
+    expect(createRuntime).not.toHaveBeenCalled();
+  },
+);
+
+it("enforces a selected worker budget and completes the corrected same-database retry", async () => {
+  const { database } = await createFixture();
+  const original = await readFile(database.path);
+  let first = true;
+  let root = "";
+  const provider = new SqliteDatabaseProvider(process.env, (spawn) => {
+    root = spawn.cwd ?? "";
+    if (first) {
+      first = false;
+      return spawnOwnedProviderProcess({
+        ...spawn,
+        arguments: [
+          spawn.arguments[0] ?? "--max-old-space-size=256",
+          "-e",
+          `process.argv[2]=process.argv[1];setTimeout(()=>import(${JSON.stringify(workerUrl.href)}),250)`,
+          spawn.arguments[2] ?? "",
+        ],
+      });
+    }
+    return spawnOwnedProviderProcess({
+      ...spawn,
+      arguments: spawn.arguments.map((arg, index) =>
+        index === 1 ? fileURLToPath(workerUrl) : arg,
+      ),
+    });
+  });
+  onTestFinished(() => provider.close());
+  const failed = await provider.inspect({
+    path: database.path,
+    worker_timeout_ms: 50,
+  });
+  if (failed.ok) throw new Error("Worker deadline was ignored");
+  expect(projectAnalysisError(failed.error)).toMatchObject({
+    code: "provider_timeout",
+    details: { timeout_ms: 50 },
+  });
+  expect(failed.error.cleanupIncomplete).toBe(false);
+  await expectPrivateRootRemoved(root);
+  const corrected = await provider.inspect({
+    path: database.path,
+    worker_timeout_ms: 2000,
+  });
+  if (!corrected.ok) throw corrected.error;
+  expect(corrected.value.result).toMatchObject({
+    worker_timeout_ms: 2000,
+    schema: { completeness: "complete" },
+  });
+  await expectPrivateRootRemoved(root);
+  expect(Buffer.compare(await readFile(database.path), original)).toBe(0);
+});
+
+nativeTest(
+  "retains a timed-out worker's budget and one output copy through owned cleanup retry",
+  async () => {
+    const { database } = await createFixture();
+    const original = await readFile(database.path);
+    let cleanupAllowed = false;
+    let launches = 0;
+    let root = "";
+    const provider = new SqliteDatabaseProvider(process.env, async (spawn) => {
+      launches += 1;
+      root = spawn.cwd ?? "";
+      const launched = await spawnOwnedProviderProcess({
+        ...spawn,
+        arguments: [
+          "-e",
+          "process.stdout.write('ready\\n');setTimeout(()=>process.stdout.write('sqlite-timeout-marker'),100);setInterval(()=>{},1000)",
+        ],
+      });
+      return {
+        ...launched,
+        cleanup: async () =>
+          cleanupAllowed
+            ? await (launched.cleanup?.() ??
+                cleanupOwnedProcessGroup(launched.ownership))
+            : { cleaned: false, reason: "owned timeout cleanup denied" },
+      };
+    });
+    onTestFinished(async () => {
+      cleanupAllowed = true;
+      await provider.close();
+    });
+    const result = await provider.inspect({
+      path: database.path,
+      worker_timeout_ms: 3000,
+    });
+    if (result.ok) throw new Error("Expected timeout with unresolved cleanup");
+    const projected = projectAnalysisError(result.error);
+    expect(projected).toMatchObject({
+      code: "cleanup_incomplete",
+      retryable: false,
+      details: {
+        resources: expect.arrayContaining([root]),
+        diagnostics: {
+          previous_error: {
+            code: "provider_timeout",
+            details: { timeout_ms: 3000 },
+            remediation: {
+              action: expect.stringContaining("worker_timeout_ms"),
+            },
+          },
+        },
+      },
+    });
+    expect(
+      JSON.stringify(projected).split("sqlite-timeout-marker"),
+    ).toHaveLength(2);
+    await expect(access(root)).resolves.toBeUndefined();
+    expect(await provider.inspect({ path: database.path })).toMatchObject({
+      ok: false,
+      error: { cleanupIncomplete: true },
+    });
+    expect(launches).toBe(1);
+    cleanupAllowed = true;
+    await provider.close();
+    const resolved = projectAnalysisError(result.error);
+    expect(resolved).toMatchObject({
+      code: "provider_timeout",
+      details: { timeout_ms: 3000 },
+    });
+    expect(
+      JSON.stringify(resolved).split("sqlite-timeout-marker"),
+    ).toHaveLength(2);
+    expect(result.error.cleanupResources).toEqual([]);
+    await expectPrivateRootRemoved(root);
+    expect(Buffer.compare(await readFile(database.path), original)).toBe(0);
+  },
+);
 
 it.each(["completed reply", "malformed reply"] as const)(
   "preserves the primary result for a %s while retaining unconfirmed cleanup ownership",
@@ -251,7 +410,7 @@ nativeTest(
   },
 );
 
-it.each(["late-cancellation", "cleanup-failure"])(
+it.each(["late-cancellation", "cleanup-failure", "cancelled cleanup-failure"])(
   "preserves completed native-worker observations across %s",
   async (scenario) => {
     const { workspace, database } = await createFixture();
@@ -277,9 +436,9 @@ it.each(["late-cancellation", "cleanup-failure"])(
         return {
           path: acquired.path,
           close: async () => {
-            if (scenario === "late-cancellation")
+            if (scenario !== "cleanup-failure")
               controller.abort(cancellationReason);
-            else if (!cleanupAllowed)
+            if (scenario !== "late-cancellation" && !cleanupAllowed)
               throw new Error("Completed snapshot cleanup denied");
             await acquired.close();
           },
@@ -291,7 +450,13 @@ it.each(["late-cancellation", "cleanup-failure"])(
       await provider.close();
     });
     const result = await provider.inspect(
-      { path: database.path, table: "records", columns: ["id"], row_limit: 1 },
+      {
+        path: database.path,
+        table: "records",
+        columns: ["id"],
+        row_limit: 1,
+        worker_timeout_ms: 42000,
+      },
       { signal: controller.signal },
     );
     if (scenario === "late-cancellation") {
@@ -313,15 +478,28 @@ it.each(["late-cancellation", "cleanup-failure"])(
               table: "records",
               columns: ["id"],
               row_limit: 1,
+              worker_timeout_ms: 42000,
             },
-            normalized_result: { rows: { columns: ["id"], returned_rows: 1 } },
+            normalized_result: {
+              worker_timeout_ms: 42000,
+              rows: { columns: ["id"], returned_rows: 1 },
+            },
           },
         },
       });
       if (result.ok || result.error._tag !== "AnalysisCancelledError")
         throw new Error("Expected cancellation after final root cleanup");
       expect(result.error.cause).toBe(cancellationReason);
+      if (root === undefined) throw new Error("Missing acquired root");
+      await expectPrivateRootRemoved(root.path);
     } else {
+      // Incomplete cleanup stays primary over a cancellation observed during it.
+      expect(controller.signal.aborted).toBe(
+        scenario === "cancelled cleanup-failure",
+      );
+      expect(result.ok ? undefined : result.error).toBeInstanceOf(
+        ProviderCleanupError,
+      );
       expect(result).toMatchObject({
         ok: false,
         error: {
@@ -338,8 +516,12 @@ it.each(["late-cancellation", "cleanup-failure"])(
               table: "records",
               columns: ["id"],
               row_limit: 1,
+              worker_timeout_ms: 42000,
             },
-            normalized_result: { rows: { columns: ["id"], returned_rows: 1 } },
+            normalized_result: {
+              worker_timeout_ms: 42000,
+              rows: { columns: ["id"], returned_rows: 1 },
+            },
           },
         },
       });
@@ -349,7 +531,7 @@ it.each(["late-cancellation", "cleanup-failure"])(
       await provider.close();
       await expectPrivateRootRemoved(root.path);
     }
-    expect(await readFile(database.path)).toEqual(original);
+    expect(Buffer.compare(await readFile(database.path), original)).toBe(0);
   },
 );
 
@@ -431,7 +613,9 @@ it("inspects committed WAL schema and rows while preserving every source artifac
     },
   });
   for (const artifact of original) {
-    expect(await readFile(artifact.path)).toEqual(artifact.bytes);
+    expect(Buffer.compare(await readFile(artifact.path), artifact.bytes)).toBe(
+      0,
+    );
     const after = await lstat(artifact.path);
     expect({
       ino: after.ino,
@@ -651,6 +835,148 @@ it("attributes table and column selection failures to their own arguments", asyn
   expect(selected.value.result).toMatchObject({ rows: { columns: ["id"] } });
 });
 
+it("reports a projection above SQLite's result-column capacity as capacity, not invalid input", async () => {
+  const { database } = await createFixture();
+  const reader = new DatabaseSync(database.path, { readOnly: true });
+  const engineColumnLimit = (() => {
+    try {
+      return reader.limits.column;
+    } finally {
+      reader.close();
+    }
+  })();
+  const provider = createProvider();
+  onTestFinished(() => provider.close());
+  const columns = (count: number): string[] =>
+    Array.from({ length: count }, () => "text_value");
+  const atLimit = await provider.inspect({
+    path: database.path,
+    table: "records",
+    columns: columns(engineColumnLimit),
+    row_limit: 1,
+  });
+  if (!atLimit.ok) throw atLimit.error;
+  expect(atLimit.value.result).toMatchObject({
+    rows: { columns: columns(engineColumnLimit), returned_rows: 1 },
+  });
+
+  const overLimit = await provider.inspect({
+    path: database.path,
+    table: "records",
+    columns: columns(engineColumnLimit + 1),
+    row_limit: 1,
+  });
+  if (overLimit.ok) throw new Error("Expected a rejected projection");
+  const projection = projectAnalysisError(overLimit.error);
+  expect(projection).toMatchObject({
+    code: "resource_constraint",
+    details: {
+      resource: "capacity",
+      reported_limits: {
+        selected_result_columns: engineColumnLimit + 1,
+        engine_result_column_limit: engineColumnLimit,
+      },
+    },
+  });
+  expect(JSON.stringify(projection)).not.toContain("invalid_format");
+});
+
+it("attributes inventory selections beyond metadata bind capacity to result-column capacity", async () => {
+  const { database } = await createFixture();
+  const reader = new DatabaseSync(database.path, { readOnly: true });
+  let selectedColumns: number;
+  let engineColumnLimit: number;
+  try {
+    engineColumnLimit = reader.limits.column;
+    selectedColumns =
+      Math.max(reader.limits.variableNumber, engineColumnLimit) + 1;
+  } finally {
+    reader.close();
+  }
+  const provider = createProvider();
+  onTestFinished(() => provider.close());
+  const original = await readFile(database.path);
+  const control = await provider.inspect({
+    path: database.path,
+    table: "records",
+    schema_scope: "inventory",
+    columns: ["text_value", "text_value"],
+    row_limit: 1,
+  });
+  if (!control.ok) throw control.error;
+  expect(control.value.result).toMatchObject({
+    rows: {
+      columns: ["text_value", "text_value"],
+      returned_rows: 1,
+    },
+  });
+  const result = await provider.inspect({
+    path: database.path,
+    table: "records",
+    schema_scope: "inventory",
+    columns: Array.from({ length: selectedColumns }, () => "text_value"),
+    row_limit: 1,
+  });
+  if (result.ok) throw new Error("Expected result-column capacity refusal");
+  const projected = projectAnalysisError(result.error);
+  expect(projected).toMatchObject({
+    code: "resource_constraint",
+    details: {
+      resource: "capacity",
+      reported_limits: {
+        selected_result_columns: selectedColumns,
+        engine_result_column_limit: engineColumnLimit,
+      },
+    },
+  });
+  expect(JSON.stringify(projected)).not.toContain("invalid_format");
+  expect(Buffer.compare(await readFile(database.path), original)).toBe(0);
+});
+
+it("reports application-collation row failures as unavailable while retaining schema-only recovery", async () => {
+  const workspace = await createTestWorkspace("rea-sqlite-collation-");
+  onTestFinished(() => removeTestWorkspace(workspace.root));
+  const path = createSqliteApplicationCollationFixture(workspace.root);
+  const original = await readFile(path);
+  const provider = createProvider();
+  onTestFinished(() => provider.close());
+  const schema = await provider.inspect({ path, schema_scope: "database" });
+  if (!schema.ok) throw schema.error;
+  expect(schema.value.result).toMatchObject({
+    schema: {
+      tables: [
+        {
+          name: "items",
+          sql: expect.stringContaining("COLLATE APPLICATION_COLLATION"),
+        },
+      ],
+    },
+    rows: null,
+  });
+  for (const columns of [undefined, ["value"], ["generated_value"]]) {
+    const result = await provider.inspect({
+      path,
+      table: "items",
+      ...(columns === undefined ? {} : { columns }),
+    });
+    if (result.ok)
+      throw new Error("Expected unavailable application collation");
+    const projected = projectAnalysisError(result.error);
+    expect(projected).toMatchObject({
+      code: "capability_unavailable",
+      message: expect.stringContaining('rows of table "items"'),
+      remediation: {
+        action: expect.stringContaining("schema_scope: database"),
+      },
+    });
+    expect(JSON.stringify(projected)).not.toContain("invalid_format");
+    expect(projected.remediation.action).not.toContain(
+      "Select columns whose values were read",
+    );
+  }
+  expect(Buffer.compare(await readFile(path), original)).toBe(0);
+});
+
 it("rejects malformed databases without altering the selected file", async () => {
   const workspace = await createTestWorkspace("rea-sqlite-invalid-");
   onTestFinished(() => removeTestWorkspace(workspace.root));
@@ -664,7 +990,7 @@ it("rejects malformed databases without altering the selected file", async () =>
     ok: false,
     error: { _tag: "AnalysisInputError" },
   });
-  expect(await readFile(path)).toEqual(bytes);
+  expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
 });
 
 nativeTest.runIf(process.platform !== "win32")(
@@ -700,8 +1026,8 @@ nativeTest(
         ok: false,
         error: { _tag: "AnalysisInputError" },
       });
-      expect(await readFile(database.path)).toEqual(main);
-      expect(await readFile(journalPath)).toEqual(journal);
+      expect(Buffer.compare(await readFile(database.path), main)).toBe(0);
+      expect(Buffer.compare(await readFile(journalPath), journal)).toBe(0);
     } finally {
       writer.exec("ROLLBACK");
       writer.close();
@@ -920,7 +1246,7 @@ it("retains an unavailable virtual module definition without executing it", asyn
   expect(
     await provider.inspect({ path, table: "optional_search" }),
   ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });
-  expect(await readFile(path)).toEqual(bytes);
+  expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
 });
 
 nativeTest(
@@ -970,6 +1296,150 @@ nativeTest(
     if (pid === undefined) throw new Error("SQLite worker not acquired");
     const acquiredPid = pid;
     expect(() => process.kill(acquiredPid, 0)).toThrow();
+    await expectPrivateRootRemoved(ownedRoot);
+  },
+);
+
+nativeTest.each([
+  ["cancelled", "cancelled"],
+  ["output-limit", "unreadable_output"],
+  ["heap-diagnostic", "resource_constraint"],
+] as const)(
+  "preserves the typed %s worker failure through retained cleanup retry",
+  async (scenario, code) => {
+    const { database } = await createFixture();
+    const controller = new AbortController();
+    const reason = { requested: "cancel retained SQLite worker" };
+    let cleanupAllowed = false;
+    let ownedRoot = "";
+    let launches = 0;
+    const provider = new SqliteDatabaseProvider({}, async (spawn) => {
+      launches += 1;
+      ownedRoot = spawn.cwd ?? "";
+      const script =
+        scenario === "heap-diagnostic"
+          ? "process.stderr.write('JavaScript heap out of memory'); process.exitCode = 3"
+          : scenario === "output-limit"
+            ? `process.stdout.write('x'.repeat(${String(SQLITE_DATABASE_LIMITS.diagnosticBytes + 1)})); setInterval(() => {}, 1000)`
+            : "process.stdout.write('ready\\n'); setInterval(() => {}, 1000)";
+      const launched = await spawnOwnedProviderProcess({
+        ...spawn,
+        arguments: ["-e", script],
+      });
+      const cleanupOwned =
+        launched.cleanup ??
+        (() => cleanupOwnedProcessGroup(launched.ownership));
+      if (scenario === "cancelled") {
+        await waitForProviderProcessReady(launched.process);
+        setImmediate(() => controller.abort(reason));
+      }
+      return {
+        ...launched,
+        cleanup: async () => {
+          const cleaned = await cleanupOwned();
+          if (!cleanupAllowed)
+            throw new Error("controlled SQLite worker cleanup refusal");
+          return cleaned;
+        },
+      };
+    });
+    onTestFinished(async () => {
+      cleanupAllowed = true;
+      await provider.close();
+    });
+    const result = await provider.inspect(
+      { path: database.path },
+      { signal: controller.signal },
+    );
+    if (result.ok) throw new Error("Expected retained worker cleanup");
+    expect(projectAnalysisError(result.error).code).toBe("cleanup_incomplete");
+    const primary = result.error.cleanupPrimary;
+    if (primary === undefined) throw new Error("Missing typed worker failure");
+    expect(projectAnalysisError(primary).code).toBe(code);
+    if (scenario === "cancelled")
+      expect(result.error.cleanupPrimary?.cause).toBe(reason);
+    expect(await provider.inspect({ path: database.path })).toMatchObject({
+      ok: false,
+      error: { cleanupIncomplete: true },
+    });
+    expect(launches).toBe(1);
+    await access(ownedRoot);
+    cleanupAllowed = true;
+    await provider.close();
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(result.error.cleanupResources).toEqual([]);
+    expect(projectAnalysisError(result.error).code).toBe(code);
+    if (scenario === "cancelled")
+      expect(result.error.cleanupPrimary?.cause).toBe(reason);
+    await expectPrivateRootRemoved(ownedRoot);
+  },
+);
+
+nativeTest.each([
+  { encoding: "malformed UTF-8", code: "unreadable_output" },
+  { encoding: "literal replacement character", code: "capability_unavailable" },
+  { encoding: "UTF-8 BOM", code: "unreadable_output" },
+  { encoding: "malformed JSON", code: "unreadable_output" },
+] as const)(
+  "admits complete SQLite reply-file JSON without replacement decoding: $encoding",
+  async ({ encoding, code }) => {
+    const { database } = await createFixture();
+    let ownedRoot = "";
+    const provider = new SqliteDatabaseProvider(process.env, async (spawn) => {
+      ownedRoot = spawn.cwd ?? "";
+      const requestPath = spawn.arguments[2];
+      if (requestPath === undefined)
+        throw new Error("SQLite request path missing");
+      const request = JSON.parse(await readFile(requestPath, "utf8")) as {
+        reply_path: string;
+      };
+      const valid = Buffer.from(
+        JSON.stringify({
+          ok: false,
+          reason: "unavailable",
+          message: "recorded \ufffd diagnostic",
+        }),
+      );
+      let bytes = valid;
+      if (encoding === "malformed UTF-8") {
+        const replacementOffset = valid.indexOf(Buffer.from("\ufffd"));
+        expect(replacementOffset).toBeGreaterThanOrEqual(0);
+        bytes = Buffer.concat([
+          valid.subarray(0, replacementOffset),
+          Buffer.from([0xff]),
+          valid.subarray(replacementOffset + 3),
+        ]);
+      } else if (encoding === "UTF-8 BOM") {
+        bytes = Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), valid]);
+      } else if (encoding === "malformed JSON") {
+        bytes = Buffer.from("{ malformed reply");
+      }
+      await writeFile(request.reply_path, bytes, { flag: "wx", mode: 0o600 });
+      return spawnOwnedProviderProcess({
+        ...spawn,
+        arguments: [
+          "-e",
+          "process.stderr.write('sqlite-reply-marker'); process.exit(0)",
+        ],
+      });
+    });
+    onTestFinished(() => provider.close());
+    const result = await provider.inspect({ path: database.path });
+    if (result.ok) throw new Error("Expected worker refusal");
+    expect(projectAnalysisError(result.error).code).toBe(code);
+    expect(result.error.capturedOutput).toMatchObject({
+      stderr: "sqlite-reply-marker",
+      truncated: false,
+    });
+    if (encoding === "literal replacement character")
+      expect(projectAnalysisError(result.error).message).toBe(
+        "recorded \ufffd diagnostic",
+      );
+    else
+      expect(result.error.cause).toBeInstanceOf(
+        encoding === "malformed UTF-8" ? TypeError : SyntaxError,
+      );
+    await provider.close();
     await expectPrivateRootRemoved(ownedRoot);
   },
 );

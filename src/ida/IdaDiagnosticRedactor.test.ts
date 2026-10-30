@@ -5,6 +5,34 @@ import {
 } from "./IdaDiagnosticRedactor.js";
 
 describe("IDA diagnostic credential redaction", () => {
+  it("redacts known URL-encoded credentials while preserving unrelated URL spelling", () => {
+    const redact = createIdaDiagnosticRedactor({
+      url: "http://localhost:1234/mcp",
+      headers: { Authorization: "Bearer fixture-secret" },
+      mode: "attached",
+      timeoutMs: 1000,
+    }).url;
+    expect(
+      redact("HTTP://localhost:1234/mcp?token=fixture%2Dsecret&cursor=%2Fkeep"),
+    ).toBe(
+      "HTTP://localhost:1234/mcp?token=[redacted transport credential]&cursor=%2Fkeep",
+    );
+  });
+
+  it("maps encoded UTF-8 and query plus signs to their original URL spans", () => {
+    const redact = createIdaDiagnosticRedactor({
+      url: "http://localhost:1234/mcp",
+      headers: { "X-Private": "café secret" },
+      sensitive: { headers: ["X-Private"], env: [] },
+      mode: "attached",
+      timeoutMs: 1000,
+    }).url;
+    expect(
+      redact("http://localhost/mcp?token=caf%C3%A9+secret&cursor=keep"),
+    ).toBe(
+      "http://localhost/mcp?token=[redacted transport credential]&cursor=keep",
+    );
+  });
   it.each([false, true])(
     "redacts literal credentials once regardless of header order (reversed: %s)",
     (reversed) => {
@@ -62,6 +90,21 @@ describe("IDA diagnostic credential redaction", () => {
     const message = "Failed at /caller/input \t with ordinary whitespace";
     expect(redact(message)).toBe(message);
   });
+  it.each(["X-Caller-Value", "Authorization"])(
+    "redacts explicitly marked whitespace in %s independently of HTTP authentication",
+    (name) => {
+      const redact = createIdaDiagnosticRedactor({
+        url: "http://127.0.0.1:12345/mcp",
+        headers: { [name]: "\t" },
+        sensitive: { headers: [name.toLowerCase()], env: [] },
+        mode: "attached",
+        timeoutMs: 1000,
+      }).text;
+      expect(redact("input\tvalue")).toBe(
+        "input[redacted transport credential]value",
+      );
+    },
+  );
   it("does not reprocess the replacement marker as another credential", () => {
     const redact = createIdaDiagnosticRedactor({
       url: "http://127.0.0.1:12345/mcp",
@@ -560,4 +603,28 @@ describe("unclassified diagnostic blocks and message ownership", () => {
       redactor.text("Q".repeat(IDA_DIAGNOSTIC_SOURCE_BYTES + 1)),
     ).not.toContain("omitted");
   });
+});
+
+it("redacts explicitly marked registration values without guessing from environment names", () => {
+  const environment = createIdaDiagnosticRedactor({
+    command: "fixture",
+    args: [],
+    env: { PRIVATE_VALUE: "marked-secret", IDADIR: "/caller/ida" },
+    sensitive: { env: ["PRIVATE_VALUE"], headers: [] },
+    mode: "attached",
+    timeoutMs: 1000,
+  });
+  expect(environment.text("marked-secret /caller/ida")).toBe(
+    "[redacted transport credential] /caller/ida",
+  );
+  const headers = createIdaDiagnosticRedactor({
+    url: "http://localhost:8745/mcp",
+    headers: { "X-Custom": "marked-header", "X-Input": "retained" },
+    sensitive: { headers: ["x-custom"], env: [] },
+    mode: "attached",
+    timeoutMs: 1000,
+  });
+  expect(headers.text("marked-header retained")).toBe(
+    "[redacted transport credential] retained",
+  );
 });

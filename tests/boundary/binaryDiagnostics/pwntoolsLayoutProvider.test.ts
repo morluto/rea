@@ -86,6 +86,15 @@ it.runIf(!unsupportedHost).each([
     expect(projected.remediation.action).toContain(
       resource === "cpu" ? "CPU" : "file-size",
     );
+    if (resource === "file-size") {
+      expect(projected.remediation.action).toContain("outputBytes");
+      expect(projected.remediation.action).toContain("67108864");
+      expect(projected.remediation.action).toContain("file_size_bytes");
+      expect(projected.remediation.action).not.toContain("address-space");
+      expect(projected.remediation.action).not.toContain("3221225472");
+      if (scenario === "reported")
+        expect(projected.remediation.action).toContain("1024");
+    }
     await expect(access(ownedPath)).rejects.toMatchObject({ code: "ENOENT" });
   },
 );
@@ -123,10 +132,10 @@ it.runIf(!unsupportedHost)(
     if (result.ok) throw new Error("Expected compounded lifecycle failure");
     expect(result.error).toMatchObject({
       cleanupIncomplete: true,
+      capturedOutput: { truncated: true, stderr: "" },
       diagnostics: {
         primary_error: {
           code: "unreadable_output",
-          details: { captured_output: { truncated: true, stderr: "" } },
         },
         cleanup_error: {
           code: "cleanup_incomplete",
@@ -136,6 +145,22 @@ it.runIf(!unsupportedHost)(
         },
       },
     });
+    const projected = projectAnalysisError(result.error);
+    expect(projected.details?.captured_output).toEqual(
+      result.error.capturedOutput,
+    );
+    expect(projected).not.toHaveProperty(
+      "details.diagnostics.primary_error.details.captured_output",
+    );
+    const output = result.error.capturedOutput?.stdout;
+    if (!output) throw new Error("Expected retained truncated worker output");
+    // Preserve the cleanup owner's separate snapshot, but not a redundant
+    // captured_output copy in generic primary history.
+    expect(projected).toHaveProperty(
+      "details.diagnostics.cleanup_error.details.diagnostics.captured_output.stdout",
+      output,
+    );
+    expect(JSON.stringify(projected).split(output)).toHaveLength(3);
     await expect(access(ownedPath)).resolves.toBeUndefined();
     cleanupAllowed = true;
     await provider.close();
@@ -297,7 +322,8 @@ it.runIf(!unsupportedHost).each([
     );
     const result = await provider.inspect({ path });
     if (result.ok) throw new Error("Expected resource failure");
-    expect(projectAnalysisError(result.error)).toMatchObject({
+    const projected = projectAnalysisError(result.error);
+    expect(projected).toMatchObject({
       code: "resource_constraint",
       category: "resource_constraint",
       details: {
@@ -309,6 +335,8 @@ it.runIf(!unsupportedHost).each([
         },
       },
     });
+    expect(projected.remediation.action).toContain("memory");
+    expect(projected.remediation.action).toContain("address-space");
     await expect(access(ownedPath)).rejects.toMatchObject({ code: "ENOENT" });
     expect(await readFile(path, "utf8")).toBe("source-owned-seam-bytes");
   },
@@ -491,6 +519,9 @@ it
     "output-limit",
     "wrong-profile",
     "malformed-reply",
+    "invalid-utf8",
+    "literal-replacement",
+    "bom-reply",
   ])(
   "preserves process/reply boundaries and cleans private snapshots: %s",
   async (scenario) => {
@@ -514,32 +545,50 @@ it
           diagnostics: _diagnostics,
           ...value
         } = binaryLayoutFixture(path);
-        await writeFile(
-          request.reply_path,
-          scenario === "malformed-reply"
-            ? "broken-json"
-            : JSON.stringify(
-                [
-                  "format",
-                  "unavailable",
-                  "unsupported",
-                  "output-limit",
-                ].includes(scenario)
-                  ? {
-                      ok: false,
-                      reason: scenario,
-                      message: "ELF table is truncated.",
-                    }
-                  : {
-                      ok: true,
-                      profile:
-                        scenario === "wrong-profile"
-                          ? "pwntools@other"
-                          : PWNTOOLS_PROVIDER_IDENTITY.version,
-                      value,
-                    },
-              ),
-        );
+        const encodedReplies: Partial<Record<string, string | Buffer>> = {
+          "invalid-utf8": Buffer.concat([
+            Buffer.from('{"ok":false,"reason":"format","message":"'),
+            Buffer.from([0xff]),
+            Buffer.from('"}'),
+          ]),
+          "literal-replacement": JSON.stringify({
+            ok: false,
+            reason: "format",
+            message: "valid �",
+          }),
+          "bom-reply": '\uFEFF{"ok":false,"reason":"format","message":"valid"}',
+        };
+        const encodedReply = encodedReplies[scenario];
+        if (encodedReply !== undefined)
+          await writeFile(request.reply_path, encodedReply);
+        else {
+          await writeFile(
+            request.reply_path,
+            scenario === "malformed-reply"
+              ? "broken-json"
+              : JSON.stringify(
+                  [
+                    "format",
+                    "unavailable",
+                    "unsupported",
+                    "output-limit",
+                  ].includes(scenario)
+                    ? {
+                        ok: false,
+                        reason: scenario,
+                        message: "ELF table is truncated.",
+                      }
+                    : {
+                        ok: true,
+                        profile:
+                          scenario === "wrong-profile"
+                            ? "pwntools@other"
+                            : PWNTOOLS_PROVIDER_IDENTITY.version,
+                        value,
+                      },
+                ),
+          );
+        }
         return spawnOwnedProviderProcess({
           ...spawn,
           command: process.execPath,
@@ -548,6 +597,11 @@ it
       },
     );
     const result = await provider.inspect({ path });
+    if (scenario === "literal-replacement")
+      expect(result).toMatchObject({
+        ok: false,
+        error: { issues: [{ message: "valid �" }] },
+      });
     if (scenario === "success") {
       if (!result.ok) throw result.error;
       expect(result.value.artifact).toMatchObject({
@@ -561,7 +615,7 @@ it
         ok: false,
         error: {
           _tag:
-            scenario === "format"
+            scenario === "format" || scenario === "literal-replacement"
               ? "AnalysisInputError"
               : scenario === "unavailable"
                 ? "ProviderSelectionError"

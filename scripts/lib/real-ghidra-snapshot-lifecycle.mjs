@@ -68,7 +68,10 @@ export async function verifyGhidraSnapshotLifecycle(
       await assert.rejects(access(destination), { code: "ENOENT" });
       assert.equal((await call("binary_session")).analysis_run.run_id, runId);
       assert.deepEqual(
-        await call("analyze_function", { procedure: entry }),
+        await call("analyze_function", {
+          procedure: entry,
+          detail: "complete",
+        }),
         edited,
       );
     }
@@ -80,7 +83,7 @@ export async function verifyGhidraSnapshotLifecycle(
     assert.deepEqual(await readFile(snapshotPath), snapshotBytes);
     assert.equal((await call("binary_session")).analysis_run.run_id, runId);
     assert.deepEqual(
-      await call("analyze_function", { procedure: entry }),
+      await call("analyze_function", { procedure: entry, detail: "complete" }),
       edited,
     );
 
@@ -109,7 +112,10 @@ export async function verifyGhidraSnapshotLifecycle(
       provider_id: "ghidra",
       snapshot_path: snapshotPath,
     });
-    const restored = await call("analyze_function", { procedure: entry });
+    const restored = await call("analyze_function", {
+      procedure: entry,
+      detail: "complete",
+    });
     assert.deepEqual(restored.procedure, original.procedure);
     assert.deepEqual(restored.comments, original.comments);
     assert.notEqual((await call("binary_session")).analysis_run.run_id, runId);
@@ -165,14 +171,15 @@ async function verifyConcurrentSnapshotClose({
   await assert.rejects(access(destination), { code: "ENOENT" });
   assert.equal((await call("binary_session")).open, true);
   assert.deepEqual(
-    await call("analyze_function", { procedure: entry }),
+    await call("analyze_function", { procedure: entry, detail: "complete" }),
     updated.dossier,
   );
   // Discard the ephemeral edit and leave the caller with a pristine database.
   await call("close_binary");
   await call("open_binary", { path: target.path, provider_id: "ghidra" });
   assert.deepEqual(
-    (await call("analyze_function", { procedure: entry })).procedure,
+    (await call("analyze_function", { procedure: entry, detail: "complete" }))
+      .procedure,
     original.procedure,
   );
 }

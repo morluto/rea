@@ -3,19 +3,19 @@ import * as t from "@babel/types";
 
 import type { JavaScriptModuleOrigin } from "./javascriptSemanticIr.js";
 import {
-  isUnshadowedGlobal,
   resolveSemanticBindingState,
   semanticScopeId,
   semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
-import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
 import { semanticOpaqueBindingReadMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
 import {
   semanticEffectTiming,
   semanticTopLevelEffectIsOrderable,
+  isUnshadowedGlobal,
 } from "./javascriptSemanticMutationInitializers.js";
+import { readSemanticRequireOrigin } from "./javascriptSemanticRequireOriginSlot.js";
 import {
   childNodes,
   javaScriptAstChildKeys,
@@ -346,10 +346,18 @@ export const createSemanticModuleInterop = (
 
   const intrinsicValueReferences = (
     node: t.Node,
-  ): readonly { node: t.Node; path: JavaScriptSemanticPropertyPath }[] => {
+  ): readonly {
+    node: t.Node;
+    path: JavaScriptSemanticPropertyPath;
+    readAt?: t.Node;
+  }[] => {
     const capture = capturedIntrinsic(node);
     if (capture === undefined) return [];
-    const result: { node: t.Node; path: JavaScriptSemanticPropertyPath }[] = [];
+    const result: {
+      node: t.Node;
+      path: JavaScriptSemanticPropertyPath;
+      readAt?: t.Node;
+    }[] = [];
     for (let length = 0; length <= capture.path.length; length++) {
       const values = assignedValues.get(
         JSON.stringify(capture.path.slice(0, length)),
@@ -392,12 +400,20 @@ export const createSemanticModuleInterop = (
           const key = capture.path[value.path.length - 1]!;
           if (operation === "intrinsic.Object.assign") {
             for (const source of args.slice(1))
-              result.push({ node: source, path: [key, ...suffix] });
+              result.push({
+                node: source,
+                path: [key, ...suffix],
+                readAt: value.node,
+              });
           } else if (
             operation === "intrinsic.Object.defineProperties" &&
             args[1] !== undefined
           )
-            result.push({ node: args[1], path: [key, "value", ...suffix] });
+            result.push({
+              node: args[1],
+              path: [key, "value", ...suffix],
+              readAt: value.node,
+            });
           else if (
             [
               "intrinsic.Object.defineProperty",
@@ -405,7 +421,11 @@ export const createSemanticModuleInterop = (
             ].includes(operation) &&
             args[2] !== undefined
           )
-            result.push({ node: args[2], path: ["value", ...suffix] });
+            result.push({
+              node: args[2],
+              path: ["value", ...suffix],
+              readAt: value.node,
+            });
           else if (
             operation === "intrinsic.Reflect.set" &&
             args[2] !== undefined
@@ -855,7 +875,7 @@ export const createSemanticModuleInterop = (
     const required =
       converted === undefined
         ? undefined
-        : semanticRequireOrigin(converted.input, state)?.origin;
+        : readSemanticRequireOrigin(converted.input, state)?.origin;
     if (
       converted === undefined ||
       required === undefined ||
@@ -951,7 +971,7 @@ export const createSemanticModuleInterop = (
       resolveSemanticBindingState(state, input, input.name) !== binding
     )
       return undefined;
-    const required = semanticRequireOrigin(initial.node, state)?.origin;
+    const required = readSemanticRequireOrigin(initial.node, state)?.origin;
     if (required === undefined || required.importedPath.length !== 0)
       return undefined;
     if (convertedCall === undefined) return undefined;

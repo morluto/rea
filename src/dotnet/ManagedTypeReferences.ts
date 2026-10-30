@@ -1,13 +1,16 @@
 import { managedDecodeBudget } from "./ManagedDecodeBudget.js";
 import type { ManagedMetadataLayout } from "./ManagedMetadataLayout.js";
 import {
-  metadataCodedTokenInvalidReason,
+  decodeMetadataCodedIndex,
   metadataRowCursor,
   metadataToken,
   readMetadataString,
 } from "./ManagedMetadataHeaps.js";
 import { readManagedValue } from "./ManagedReaderFailure.js";
-import { metadataRowOffset } from "./ManagedMetadataLayout.js";
+import {
+  MANAGED_CODED_INDEXES,
+  metadataRowOffset,
+} from "./ManagedMetadataLayout.js";
 import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
 
 export interface ManagedTypeReference {
@@ -46,25 +49,25 @@ export const managedTypeReferences = (
       readManagedValue(() => {
         const cursor = metadataRowCursor(bytes, layout, 1, row);
         const raw = cursor.readIndex(layout.codedIndexSize("ResolutionScope"));
-        const reason = metadataCodedTokenInvalidReason(
+        const scope = decodeMetadataCodedIndex(
           raw,
-          2,
-          [0, 26, 35, 1],
+          MANAGED_CODED_INDEXES.ResolutionScope.bits,
+          MANAGED_CODED_INDEXES.ResolutionScope.tables,
           layout.rowCounts,
         );
-        if (reason !== null)
+        if (scope.kind === "invalid")
           issues.push({
             code: "invalid-row",
             scope: `metadata.TypeRef:${metadataToken(1, row)}`,
             offset: cursor.start,
-            detail: `TypeRef ResolutionScope coded index 0x${raw.toString(16)} is invalid: ${reason}`,
+            detail: `TypeRef ResolutionScope coded index 0x${raw.toString(16)} is invalid: ${scope.reason}`,
           });
         return {
           nameIndex: cursor.readIndex(layout.stringIndexSize),
           namespaceIndex: cursor.readIndex(layout.stringIndexSize),
           enclosingRow:
-            raw !== 0 && (raw & 3) === 3 ? Math.floor(raw / 4) : null,
-          scopeValid: reason === null,
+            scope.kind !== "null" && scope.table === 1 ? scope.row : null,
+          scopeValid: scope.kind !== "invalid",
         };
       }, issues) ?? null;
     rows.set(row, value);

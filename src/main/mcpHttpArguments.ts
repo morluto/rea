@@ -1,7 +1,11 @@
 import { Help, z } from "incur";
+import type { HttpHostname } from "../domain/httpHostname.js";
 
 import {
+  MCP_ALLOWED_HOSTS_FLAG_CONSTRAINT,
   MCP_HTTP_PORT_CONSTRAINT,
+  mcpAllowedHostsTextSchema,
+  mcpHttpListenerPortSchema,
   mcpHttpPortSchema,
 } from "../config/mcpHttpEndpoint.js";
 
@@ -18,13 +22,15 @@ const MCP_HTTP_OPTIONS = z.object({
     .min(1)
     .optional()
     .describe("Listener address; default MCP_HOST, else 127.0.0.1"),
-  port: z
-    .number()
-    .int()
-    .min(0)
-    .max(65535)
+  port: mcpHttpListenerPortSchema
     .optional()
     .describe("Listener port; default MCP_PORT, else 0 for an ephemeral port"),
+  allowedHosts: z
+    .array(z.string())
+    .optional()
+    .describe(
+      "Host/Origin names a non-loopback bind may serve; default MCP_ALLOWED_HOSTS, else the bind is refused",
+    ),
   help: z.boolean().optional().describe("Show help"),
 });
 
@@ -33,7 +39,11 @@ const MCP_HTTP_COMMAND = "rea mcp --http";
 const MCP_HTTP_DESCRIPTION =
   "Serve the MCP server over streamable HTTP for one local client";
 const HELP_FLAGS: ReadonlySet<string> = new Set(["--help", "-h"]);
-const VALUED_FLAGS: ReadonlySet<string> = new Set(["--host", "--port"]);
+const VALUED_FLAGS: ReadonlySet<string> = new Set([
+  "--host",
+  "--port",
+  "--allowed-hosts",
+]);
 
 /** Render help for the dispatcher entry, which accepts no Incur global options. */
 export const renderMcpHttpHelp = (): string =>
@@ -47,7 +57,12 @@ export const renderMcpHttpHelp = (): string =>
 
 /** Parsed `rea mcp --http` arguments; omitted values defer to the environment. */
 export type McpHttpArguments =
-  | { readonly ok: true; readonly host?: string; readonly port?: number }
+  | {
+      readonly ok: true;
+      readonly host?: string;
+      readonly port?: number;
+      readonly allowedHosts?: readonly HttpHostname[];
+    }
   | { readonly ok: false; readonly help: true }
   | { readonly ok: false; readonly help: false; readonly message: string };
 
@@ -96,9 +111,19 @@ export const parseMcpHttpArguments = (
     portText === undefined ? undefined : mcpHttpPortSchema.safeParse(portText);
   if (port !== undefined && !port.success)
     return invalid(`Invalid --port: ${MCP_HTTP_PORT_CONSTRAINT}`);
+  const allowedHostsText = values.get("--allowed-hosts");
+  const allowedHosts =
+    allowedHostsText === undefined
+      ? undefined
+      : mcpAllowedHostsTextSchema.safeParse(allowedHostsText);
+  if (allowedHosts !== undefined && !allowedHosts.success)
+    return invalid(
+      `Invalid --allowed-hosts: ${MCP_ALLOWED_HOSTS_FLAG_CONSTRAINT}`,
+    );
   return {
     ok: true,
     ...(host === undefined ? {} : { host }),
     ...(port === undefined ? {} : { port: port.data }),
+    ...(allowedHosts === undefined ? {} : { allowedHosts: allowedHosts.data }),
   };
 };

@@ -53,6 +53,11 @@ const opaqueMutatorSources = {
 
 const writeReceiverReviewSources = async (root: string): Promise<void> => {
   const sources = [
+    "const table={};function change(v){v.require=replacement;return 'x'}Object.assign=(t,key)=>{t[key]=1};Object.assign({},typeof table[table[change(module)]]);require('fs').readFileSync('wrong-computed-key');",
+    "const box={owner:{}};eval('box.owner=module');Object.assign=(t,v)=>{v.require=replacement};Object.assign({},box.owner);require('fs').readFileSync('wrong-opaque-object-property');",
+    "function custom(){};let target={hook:0};eval('target={set hook(v){this.fs.readFileSync=custom}}');const fs=require('fs'),receiver={fs};Reflect.set(target,'hook',1,receiver);fs.readFileSync('wrong-opaque-target-descriptor');",
+    "const descriptor={value:Reflect.set.bind(null,{})};const define=Object.defineProperty.bind(null,Reflect,'set',descriptor);descriptor.value=Reflect.set.bind(null,module);define();Reflect.set('require',replacement);require('fs').readFileSync('wrong-bound-descriptor-field');",
+    "const owner=module;let value={owner,valueOf(){this.owner.require=replacement;return 1}};Object.assign=(t,key)=>{t[key]=1};Object.assign({},typeof value++);require('fs').readFileSync('wrong-update-coercion');",
     "import * as ns from 'node:path';import fs from 'node:fs';const receiver={};Reflect.set(ns,'saved',fs,receiver);receiver.saved.readFileSync=custom;fs.readFileSync('wrong-namespace-stored-value');",
     "let fs=require('fs');const define=Object.defineProperty.bind(null,fs,'readFileSync');fs={};define({value:custom});require('fs').readFileSync('wrong-bound-descriptor-target');",
     "function patch(){Reflect.set=(target,key,value)=>target[key]=value;}patch();const fs=require('fs');Reflect.set(fs,'readFileSync',custom,{});fs.readFileSync('wrong-helper-intrinsic-write');",
@@ -225,7 +230,7 @@ const writeBuiltinIdentitySources = async (root: string): Promise<void> => {
      require('node:fs').readFileSync('wrong-direct-loader.json');`,
   );
   await writeFile(
-    join(root, "imports.ts"),
+    join(root, "imports.cts"),
     `import fs = require('node:fs'); const other = require('fs');
      const read = other.readFileSync; observe(read); read('escaped.json');
      fs.readFileSync = custom; other.readFileSync('wrong-import-equals.json');`,
@@ -237,7 +242,7 @@ const writeBuiltinIdentitySources = async (root: string): Promise<void> => {
      require('fs').readFileSync('wrong-late-loader.json');`,
   );
   await writeFile(
-    join(root, "replacement.ts"),
+    join(root, "replacement.cts"),
     `import fs = require('fs'); const other=require('fs'); fs={}; fs.readFileSync=custom; other.readFileSync('replacement-kept.json');`,
   );
   await writeFile(
@@ -375,7 +380,12 @@ it("preserves earlier and sibling effects without inventing replaced cached-modu
       ({ relation }) => relation === "releases",
     ),
   ).toHaveLength(2);
-  const { client, call } = await connectLocalToolsMcp();
+  // This combined regression corpus includes the complete retained analysis.
+  const { client, call } = await connectLocalToolsMcp(
+    { REA_MCP_MAX_RESPONSE_BYTES: String(16 * 1024 * 1024) },
+    undefined,
+    { maxBufferSize: 16 * 1024 * 1024 },
+  );
   const response = await call("analyze_javascript_application", {
     input_path: root,
     format: "auto",

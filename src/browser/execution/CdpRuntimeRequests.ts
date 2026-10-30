@@ -1,23 +1,34 @@
 import type { WebExecution } from "../../domain/webExecution.js";
+import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { sanitizeBrowserUrl } from "../../domain/browserObservation.js";
 import { jsonObjectSchema } from "../../domain/jsonValue.js";
-import { WEB_RUNTIME_LIMITS } from "../../domain/webRuntime.js";
 import type { CdpEvent } from "../CdpConnection.js";
-import {
-  runtimeRequestSchema,
-  runtimeStackSchema,
-} from "./CdpRuntimeProtocol.js";
+import { runtimeRequestSchema } from "../CdpNetworkEventFacts.js";
+import { runtimeStackSchema } from "./CdpRuntimeProtocol.js";
 import type { CdpRuntimeSources } from "./CdpRuntimeSources.js";
 import { sanitizeRuntimeInitiator } from "./CdpRuntimeInitiator.js";
+import { assertRuntimeRetention } from "./CdpRuntimeRetention.js";
+
+type RuntimeRequestSources = Pick<
+  CdpRuntimeSources,
+  "location" | "sourceUrl"
+> & {
+  readonly session: Pick<
+    CdpRuntimeSources["session"],
+    "operation" | "allowedOrigins"
+  > & {
+    readonly target: Pick<CdpRuntimeSources["session"]["target"], "frame_id">;
+  };
+};
 
 /** Join producer initiators by script ID while preserving unresolved async parent identities. */
 export class CdpRuntimeRequests {
   readonly items: WebExecution["requests"] = [];
   excluded = 0;
   #bytes = 0;
-  #failure: AnalysisOutputError | undefined;
-  constructor(readonly sources: CdpRuntimeSources) {}
+  #failure: AnalysisError | undefined;
+  constructor(readonly sources: RuntimeRequestSources) {}
 
   /** Retain only armed-window requests from the selected main frame and selected origins. */
   ingest(event: CdpEvent): void {
@@ -37,11 +48,6 @@ export class CdpRuntimeRequests {
         this.excluded += 1;
         return;
       }
-      this.#bytes += Buffer.byteLength(JSON.stringify(event.params));
-      if (this.#bytes > WEB_RUNTIME_LIMITS.retainedEventBytes)
-        throw new Error(
-          "Request initiator evidence exceeds its complete 8 MiB event budget.",
-        );
       const callsites: WebExecution["requests"][number]["callsites"] = [];
       const parents: WebExecution["requests"][number]["async_parent_ids"] = [];
       let current: unknown = request.initiator.stack;
@@ -76,7 +82,7 @@ export class CdpRuntimeRequests {
             request.initiator.columnNumber ?? null,
           ),
         );
-      this.items.push({
+      const retained: WebExecution["requests"][number] = {
         request_id: request.requestId,
         url: url.url,
         method: request.request.method,
@@ -89,19 +95,29 @@ export class CdpRuntimeRequests {
         callsites,
         async_parent_ids: parents,
         causal_attribution: "unknown",
-      });
-    } catch (cause: unknown) {
-      this.#failure = new AnalysisOutputError(
+      };
+      this.#bytes += Buffer.byteLength(JSON.stringify(retained));
+      assertRuntimeRetention(
         this.sources.session.operation,
-        cause instanceof Error ? cause.message : String(cause),
+        "requests",
+        this.#bytes,
       );
+      this.items.push(retained);
+    } catch (cause: unknown) {
+      this.#failure =
+        cause instanceof AnalysisError
+          ? cause
+          : new AnalysisOutputError(
+              this.sources.session.operation,
+              cause instanceof Error ? cause.message : String(cause),
+            );
     }
   }
 
   /** Preserve all repeated/redirect requests and bind callsites after metadata collection ends. */
   result(): WebExecution["requests"] {
     this.check();
-    return this.items.map((request) => ({
+    const result = this.items.map((request) => ({
       ...request,
       reported_initiator: sanitizeRuntimeInitiator(
         jsonObjectSchema.parse(request.reported_initiator),
@@ -117,6 +133,13 @@ export class CdpRuntimeRequests {
         ),
       ),
     }));
+    // Late source binding may expand the output after the ingress projection.
+    assertRuntimeRetention(
+      this.sources.session.operation,
+      "requests",
+      Buffer.byteLength(JSON.stringify(result)),
+    );
+    return result;
   }
   /** Report malformed or oversized producer evidence without partial success. */
   check(): void {

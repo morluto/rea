@@ -6,47 +6,44 @@ import { summarizeRetainedAnalysis } from "../application/analysisView/AnalysisV
 import { withAdmittedAnalysis } from "./analysisAdmission.js";
 import { createEvidenceToolHandler } from "./contractToolHandler.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
-import { recordSessionEvidenceSources } from "./sessionEvidence.js";
-import { matchNativeFunctionsInputSchema } from "../contracts/native/functionMatchingContracts.js";
-import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
-import { err, ok } from "../domain/result.js";
+import { recordEvidenceSources } from "../application/investigation/recordEvidenceSources.js";
+import { ok } from "../domain/result.js";
 import type { Logger } from "pino";
+import { runtimeNativeMatchingAllowance } from "../config/runtimeAnalysisSettings.js";
 
 /** Bind one named contract to the same retained-Evidence workflow used by CLI. */
 export const registerNativeFunctionMatchingTool = (
   server: EvidenceMcpServer,
   session: BinarySessionPort,
   logger: Logger,
+  environment: Readonly<Record<string, string | undefined>>,
 ): void => {
   const contract = toolContract("match_native_functions");
-  const evidenceById = (id: string) =>
-    session.evidenceForAnalysis?.(id) ?? session.evidenceById(id);
+  // Reads each accepted operation's settings snapshot over the launch value.
+  const resolveAllowance = runtimeNativeMatchingAllowance(
+    environment,
+    server.analysisSettings?.read,
+  );
+  const evidenceById = session.evidenceForAnalysis.bind(session);
   const recordEvidence: BinarySessionPort["recordEvidence"] = (evidence) =>
     session.recordEvidence(evidence);
   const handler = createEvidenceToolHandler(
     server,
     async (input, options) => {
-      const parsed = matchNativeFunctionsInputSchema.safeParse(input);
-      if (!parsed.success)
-        return err(
-          analysisInputErrorFromIssues(
-            contract.name,
-            parsed.error.issues,
-            input,
-          ),
-        );
+      const allowance = resolveAllowance();
+      if (!allowance.ok) return allowance;
       const result = await matchNativeFunctions(
-        parsed.data,
-        options,
+        input,
+        { ...options, representationAllowance: allowance.value },
         evidenceById,
       );
       if (!result.ok) return result;
-      const recorded = recordSessionEvidenceSources(
+      const recorded = recordEvidenceSources(
         recordEvidence,
         result.value.sources,
       );
       if (!recorded.ok) return recorded;
-      return parsed.data.detail === "summary"
+      return result.value.detail === "summary"
         ? summarizeRetainedAnalysis(result.value.evidence, {
             evidenceById,
             recordEvidence,

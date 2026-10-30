@@ -486,3 +486,56 @@ it("closes cycles at full-binding reads with bounded lookup growth", () => {
   expect(ten).toBeLessThan(3 * eight);
   expect(twelve).toBeLessThan(3 * ten);
 });
+
+it("resolves calls to preceding exported variable initializers and computed method keys", () => {
+  const context = indexed(`
+    export const pick = () => "target";
+    const obj = { [pick()]() { return 1; } };
+    pick();
+  `);
+  const objStatement = context.state.program.body[1];
+  if (
+    !t.isVariableDeclaration(objStatement) ||
+    !t.isVariableDeclarator(objStatement.declarations[0]) ||
+    !t.isObjectExpression(objStatement.declarations[0].init)
+  )
+    throw new Error("Missing obj declaration");
+  const method = objStatement.declarations[0].init.properties[0];
+  if (!t.isObjectMethod(method) || !t.isCallExpression(method.key))
+    throw new Error("Missing computed key call");
+  const target = context.state.callables.find(
+    (callable) => callable.name === "pick",
+  );
+  if (target === undefined) throw new Error("Missing target");
+  expect(context.resolve(method.key.callee)).toMatchObject({
+    complete: true,
+    callableIds: [target.callableId],
+  });
+
+  const callStatement = context.state.program.body[2];
+  if (
+    !t.isExpressionStatement(callStatement) ||
+    !t.isCallExpression(callStatement.expression)
+  )
+    throw new Error("Missing pick call");
+  expect(context.resolve(callStatement.expression.callee)).toMatchObject({
+    complete: true,
+    callableIds: [target.callableId],
+  });
+});
+
+it("resolves calls in computed method keys before subsequent pattern writes", () => {
+  const analysis = analyzeJavaScriptSemantics(`
+    function original() {}
+    function replacement() {}
+    let make = original;
+    const obj = { [make()]() { return 1; } };
+    if (flag) [make] = [replacement];
+  `);
+  const original = analysis.callables.find(({ name }) => name === "original");
+  expect(original).toBeDefined();
+  expect(analysis.callSites[0]).toMatchObject({
+    resolution: "exact",
+    calleeCallableIds: [original?.callableId],
+  });
+});

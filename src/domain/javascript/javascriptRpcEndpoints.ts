@@ -9,19 +9,12 @@ import { calleeName } from "./javascriptStaticAnalysisHelpers.js";
 import type { JavaScriptBindingIndex } from "./javascriptSemanticState.js";
 import { createJavaScriptGraphqlScan } from "./javascriptGraphqlOperations.js";
 
-/** One RPC operation or transport URL recovered from client-side syntax. */
-export interface JavaScriptRpcEndpoint {
-  readonly value: string;
-  readonly mechanism: string;
-}
+import type {
+  JavaScriptRpcEndpoint,
+  JavaScriptRpcScan,
+} from "./javascriptRpcEndpoint.js";
 
-/** Feed every AST node in pre-order, then drain finish() for Source findings. */
-export interface JavaScriptRpcScan {
-  inspect(node: t.Node): JavaScriptRpcEndpoint | undefined;
-  finish(): Iterable<
-    (JavaScriptRpcEndpoint & { readonly node: t.Node }) | void
-  >;
-}
+export type { JavaScriptRpcScan } from "./javascriptRpcEndpoint.js";
 
 // tRPC proxies preserve router and procedure names as property names, so they
 // survive identifier minification. Method names follow @trpc/react-query and
@@ -169,8 +162,9 @@ const trpcLinkUrl = (
  * Create the per-source scan. Hook and option-factory methods are distinctive.
  * `query`/`mutate` need a root bound to a tRPC client factory, or a tRPC source
  * marker with a router path of at least two segments; `subscribe` needs the
- * marker and a tRPC observer argument. `this` roots, browser globals and RTK
- * Query `endpoints` chains are never procedures.
+ * marker and a tRPC observer argument. Unshadowed browser globals and `this`
+ * roots are excluded; RTK Query `endpoints` exclusions apply only without a
+ * recognized client binding. Router segment spelling does not supply identity.
  */
 export const createJavaScriptRpcScan = (
   source: string,
@@ -187,15 +181,18 @@ export const createJavaScriptRpcScan = (
   ): JavaScriptRpcEndpoint | undefined => {
     const path = memberPath(node.callee);
     if (path === undefined || t.isThisExpression(path.root)) return undefined;
-    if (t.isIdentifier(path.root) && BROWSER_GLOBAL_NAMES.has(path.root.name))
+    const bound = clientRoots.has(path.root);
+    if (
+      t.isIdentifier(path.root) &&
+      BROWSER_GLOBAL_NAMES.has(path.root.name) &&
+      index.bindingForReferenceAt(path.root) === undefined
+    )
       return undefined;
     const method = path.properties[path.properties.length - 1];
     const segments = path.properties.slice(0, -1);
     const first = segments[0];
     if (method === undefined || first === undefined) return undefined;
-    if (BROWSER_GLOBAL_NAMES.has(first) || segments.includes("endpoints"))
-      return undefined;
-    const bound = clientRoots.has(path.root);
+    if (!bound && segments.includes("endpoints")) return undefined;
     const recognized = TRPC_HOOK_METHODS.has(method)
       ? true
       : TRPC_REQUEST_METHODS.has(method)

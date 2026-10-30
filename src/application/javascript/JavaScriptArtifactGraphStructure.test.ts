@@ -1,3 +1,5 @@
+import { addElectronIpcBoundaries } from "./ElectronBoundaryGraphIpc.js";
+import { createElectronIpcContext } from "./ElectronBoundaryAnalysis.js";
 import { describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
 
@@ -6,7 +8,7 @@ import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptA
 import { analyzeJavaScriptStaticSource } from "../../domain/javascript/javascriptStaticAnalysis.js";
 import type {
   AnalyzedJavaScriptArtifactFile,
-  JavaScriptModuleArtifactAnalysis,
+  JavaScriptArtifactAnalysis,
 } from "./JavaScriptArtifactAnalysisTypes.js";
 import { javascriptArtifactAnalysisScopes } from "./JavaScriptArtifactAnalysisTypes.js";
 import { JavaScriptArtifactGraphAccumulator } from "./JavaScriptArtifactGraphAccumulator.js";
@@ -17,6 +19,7 @@ import {
 } from "./JavaScriptArtifactGraphStructure.js";
 import { addJavaScriptStaticFindingsSteps } from "./JavaScriptArtifactGraphFindings.js";
 import { applicationContainerIdentity } from "./JavaScriptArtifactGraphContext.js";
+import { JavaScriptJsonDocuments } from "./JavaScriptJsonDocuments.js";
 
 const SHA256 = "a".repeat(64);
 const REASON =
@@ -50,7 +53,8 @@ const skippedEntry = (
 
 const analysisFor = (
   entries: readonly AnalyzedJavaScriptArtifactFile[],
-): JavaScriptModuleArtifactAnalysis => ({
+): JavaScriptArtifactAnalysis => ({
+  jsonDocuments: new JavaScriptJsonDocuments(),
   files: entries,
   packages: [],
   json_modules: [],
@@ -66,7 +70,7 @@ const analysisFor = (
 
 const contextFor = (
   file: JavaScriptArtifactFile,
-  analysis: JavaScriptModuleArtifactAnalysis,
+  analysis: JavaScriptArtifactAnalysis,
 ): JavaScriptArtifactGraphContext => {
   const accumulator = new JavaScriptArtifactGraphAccumulator();
   const snapshot = {
@@ -78,6 +82,9 @@ const contextFor = (
       graph_sha256: SHA256,
     },
     nodes: [{ artifact_id: `art_${SHA256}`, sha256: SHA256, size: 1 }],
+    // These fixtures model complete directory traversal; source-analysis gaps
+    // remain on the individual files and do not imply missing inventory paths.
+    coverage: { scope: "root", status: "complete" },
   } as unknown as ArtifactInventorySnapshot;
   const fileSet = {
     files: [file],
@@ -125,6 +132,11 @@ describe("skipped JavaScript parse reporting", () => {
     const context = contextFor(file, analysisFor([skippedEntry(file)]));
     addJavaScriptArtifactFiles(context);
     expect(fileObservation(context).parse_status).toBe("skipped");
+    expect(fileObservation(context).analysis_coverage).toMatchObject({
+      syntax: { status: "not-examined", error_count: null },
+      semantics: { unknown_findings: null },
+      examination: { status: "not-examined" },
+    });
   });
 
   it("keeps parse_status null for a JavaScript file never attempted", () => {
@@ -152,7 +164,63 @@ describe("skipped JavaScript parse reporting", () => {
     const context = contextFor(file, analysisFor([entry]));
     addJavaScriptArtifactFiles(context);
     expect(fileObservation(context).parse_status).toBe(javascript.parse_status);
+    expect(fileObservation(context).analysis_coverage).toEqual(
+      javascript.analysis_coverage,
+    );
   });
+
+  it("does not reconstruct coverage from a historical overall summary", () => {
+    const file = skippedFile();
+    const { analysis_coverage: _coverage, ...javascript } =
+      analyzeJavaScriptStaticSource(file.text.included ? file.text.value : "");
+    const context = contextFor(
+      file,
+      analysisFor([{ file, javascript, semantic: null }]),
+    );
+    addJavaScriptArtifactFiles(context);
+    expect(fileObservation(context)).not.toHaveProperty("analysis_coverage");
+  });
+});
+
+it("preserves omitted inventory facts on an unavailable artifact", () => {
+  const file = skippedFile();
+  const base = contextFor(file, analysisFor([]));
+  const context: JavaScriptArtifactGraphContext = {
+    ...base,
+    fileSet: {
+      ...base.fileSet,
+      files: [],
+      unavailable_relevant_files: [
+        {
+          path: file.path,
+          container_sha256: file.container_sha256,
+          sha256: null,
+          bytes: null,
+          inventory_artifact_id: null,
+        },
+      ],
+    },
+  };
+  addJavaScriptArtifactFiles(context);
+  const entry = context.accumulator
+    .nodes()
+    .find(
+      ({ identity }) =>
+        identity.strategy === "canonical-path" && identity.path === file.path,
+    );
+  expect(entry?.observations[0]?.properties).toEqual({
+    path: file.path,
+    entry_sha256: null,
+    bytes: null,
+    inventory_artifact_id: null,
+    content_available: false,
+  });
+  expect(
+    context.accumulator
+      .edges()
+      .find(({ target_node_id }) => target_node_id === entry?.node_id)
+      ?.properties,
+  ).toEqual({ path: file.path, content_available: false });
 });
 
 it.each([false, true])(
@@ -327,6 +395,7 @@ it.each([
         gap === "opaque"
           ? {
               get: (path) => (path === target.path ? target : undefined),
+              coverage: base.snapshot.coverage,
               hasDirectory: () => false,
             }
           : undefined,
@@ -376,3 +445,80 @@ it.each([
     }
   },
 );
+
+it("attaches sender validation to the innermost handler after a long minified line", () => {
+  const source = `const {ipcMain}=require('electron');/*${"x".repeat(2_000_010)}*/ipcMain.handle('outer', event=>{
+  ipcMain.handle('inner', event=>{ if(event.senderFrame.url === 'https://trusted.test') return true; });
+});`;
+  const file = {
+    ...skippedFile(),
+    bytes: Buffer.byteLength(source),
+    text: { included: true as const, value: source },
+  };
+  const javascript = analyzeJavaScriptStaticSource(source);
+  expect(javascript.electron.sender_validations).toHaveLength(1);
+  const analysis = analysisFor([{ file, javascript, semantic: null }]);
+  const context = contextFor(file, analysis);
+  addJavaScriptArtifactFiles(context);
+  addElectronIpcBoundaries(
+    context,
+    createElectronIpcContext(analysis, () => "app"),
+  );
+  const handlers = context.accumulator
+    .nodes()
+    .filter(({ kind }) => kind === "ipc-handler");
+  const validated = handlers.filter(({ observations }) =>
+    observations.some(
+      ({ properties }) =>
+        properties.fact_kind === "sender-validation-candidate",
+    ),
+  );
+  expect(validated).toHaveLength(1);
+  expect(
+    validated[0]?.observations.some(
+      ({ properties }) => properties.channel === "inner",
+    ),
+  ).toBe(true);
+});
+
+it("projects package parse status from the package observation", () => {
+  const file = {
+    ...skippedFile(),
+    path: "package.json",
+    kind: "package-json" as const,
+  };
+  const entry: AnalyzedJavaScriptArtifactFile = {
+    file,
+    javascript: null,
+    semantic: null,
+  };
+  const analysis = {
+    ...analysisFor([entry]),
+    packages: [
+      {
+        path: file.path,
+        sha256: file.sha256,
+        status: "included" as const,
+        name: "fixture",
+        version: null,
+        main: null,
+        main_status: "default" as const,
+        main_entrypoint: "index.js",
+        renderer_declarations: {},
+        renderer_entrypoint: null,
+        limitation: null,
+      },
+    ],
+  };
+  const context = contextFor(file, analysis);
+  addJavaScriptArtifactFiles(context);
+  const observation = context.accumulator
+    .nodes()
+    .flatMap(({ observations }) => observations)
+    .find(({ properties }) => properties.file_kind === "package-json");
+  expect(observation?.properties).toMatchObject({
+    file_kind: "package-json",
+    package_parse_status: "included",
+    json_parse_status: null,
+  });
+});

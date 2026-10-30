@@ -19,6 +19,7 @@ import {
   noFollowOpenSupported,
   prepareRoot,
 } from "./ReferenceSourceReaderValidate.js";
+import { referenceSourceResourceFailure } from "./ReferenceSourceReaderErrors.js";
 
 const PATH_RACE_LIMITATION =
   "Path identity is revalidated around operations; Node lacks portable descriptor-relative openat traversal, so a syscall-boundary pathname race remains.";
@@ -33,13 +34,7 @@ export const readReferenceSource = async (
     return await resources.run(() => readSource(root, resources, options));
   } catch (cause: unknown) {
     if (!(cause instanceof ArtifactReaderFailure)) throw cause;
-    return err({
-      tag: "reference-source-reader",
-      code: cause.reason === "cancelled" ? "cancelled" : "io",
-      message: cause.message,
-      ...(cause.cleanup === undefined ? {} : { cleanup: cause.cleanup }),
-      cause,
-    });
+    return err(referenceSourceResourceFailure(cause));
   }
 };
 
@@ -65,6 +60,9 @@ const readSource = async (
     ...(options.shouldExclude === undefined
       ? {}
       : { shouldExclude: options.shouldExclude }),
+    ...(options.beforeDirectory === undefined
+      ? {}
+      : { beforeDirectory: options.beforeDirectory }),
     entries: [],
     exclusions: [],
     pending: [{ path: canonicalRoot }],
@@ -93,6 +91,13 @@ const readSource = async (
     bytesRead: state.bytesRead,
     limitations: [PATH_RACE_LIMITATION],
   };
+  if (traversal.ok && state.rootFailure?.code === "io")
+    return err({
+      tag: "reference-source-reader",
+      code: "io",
+      message: state.rootFailure.message,
+      partial: read,
+    });
   return traversal.ok ? ok(read) : err({ ...traversal.error, partial: read });
 };
 

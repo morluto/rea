@@ -105,6 +105,6 @@ cliTest(
         parseEvidence(reply.structuredContent).normalized_result,
       ),
     ).toEqual(result);
-    expect(await readFile(path)).toEqual(bytes);
+    expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
   },
 );

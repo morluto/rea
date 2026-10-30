@@ -10,6 +10,7 @@ import { namespaceReceiverCases } from "./javascriptNamespaceReceiver.fixture.js
 import {
   opaqueMutatorCases,
   scalarAndThenableCases,
+  mutatorEvaluationBoundaryCases,
 } from "./javascriptOpaqueMutators.fixture.js";
 import {
   callableScalarPropertyCases,
@@ -437,7 +438,6 @@ it.each([
   "const set=Reflect.set.bind(null,module); set();",
   "Reflect.set(module,'require',replacement,require('node:path'));",
   "const path=require('node:path'); Reflect.set(module,'require',replacement,path);",
-  "import path from 'node:path'; Reflect.set(module,'require',replacement,path);",
   "Reflect.set(module,'require',replacement,require('node:util'));",
   "Reflect.set(module,'require',replacement,new (class {})());",
   "class Receiver{} Reflect.set(module,'require',replacement,new Receiver());",
@@ -713,7 +713,6 @@ it.each([
   "const registry=Object.create(module); Reflect.set(registry, 'require', replacement);",
   "const fs=require('node:fs'); Reflect.set(fs, 'require', replacement);",
   "const fs=require('fs'); const receiver=fs; Reflect.set(module, 'require', replacement, receiver);",
-  "import * as fs from 'node:fs'; Reflect.set(fs, 'require', replacement);",
   "let receiver=module; receiver=require('fs'); Reflect.set(receiver, 'require', replacement);",
   "Reflect.set(module, 0, replacement);",
   "Reflect.set(module, -0, replacement);",
@@ -1804,12 +1803,26 @@ it.each(["ns", "null", "1", "false", "'value'", "void 0"])(
   },
 );
 
+it.each([
+  "import path from 'node:path';import fs from 'node:fs';Reflect.set(fs,'readFileSync',replacement,path);fs.readFileSync('kept');",
+  "import * as fs from 'node:fs';Reflect.set(fs,'require',replacement);fs.readFileSync('kept');",
+])(
+  "preserves imported native reads through separate receivers and unrelated slots: %s",
+  (source) => {
+    expect(
+      analyzeJavaScriptSemantics(source).configurationOperations.map(
+        ({ key }) => key,
+      ),
+    ).toEqual(["kept"]);
+  },
+);
+
 it.each([true, false])(
   "uses the captured namespace write value after rebinding: %s",
   (capturedBuiltin) => {
     expect(
       analyzeJavaScriptSemantics(
-        `import * as ns from 'node:path';let value=${capturedBuiltin ? "require('fs')" : "{}"};const receiver={};const set=Reflect.set.bind(null,ns,'saved',value);value=${capturedBuiltin ? "{}" : "require('fs')"};set(receiver);receiver.saved.readFileSync=custom;require('fs').readFileSync('kept');`,
+        `import * as ns from 'node:path';import fs from 'node:fs';let value=${capturedBuiltin ? "fs" : "{}"};const receiver={};const set=Reflect.set.bind(null,ns,'saved',value);value=${capturedBuiltin ? "{}" : "fs"};set(receiver);receiver.saved.readFileSync=custom;fs.readFileSync('kept');`,
       ).configurationOperations.map(({ key }) => key),
     ).toEqual(capturedBuiltin ? [] : ["kept"]);
   },
@@ -1970,7 +1983,11 @@ it("retains uncertainty for a saved callable property selected again after escap
   ).toEqual([]);
 });
 
-it.each([...opaqueMutatorCases, ...scalarAndThenableCases])(
+it.each([
+  ...opaqueMutatorCases,
+  ...scalarAndThenableCases,
+  ...mutatorEvaluationBoundaryCases,
+])(
   "retains read/capture identity across opaque and suspended inputs: $source",
   ({ source, kept }) => {
     expect(

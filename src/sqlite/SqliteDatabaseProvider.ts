@@ -13,7 +13,6 @@ import type {
 } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
-  AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
@@ -27,9 +26,10 @@ import {
   sqliteDatabaseSchema,
   type InspectSqliteDatabaseInput,
   SQLITE_PROVIDER_IDENTITY,
+  DEFAULT_SQLITE_WORKER_TIMEOUT_MS,
   sqliteInspectionParameters,
 } from "../domain/sqlite/sqliteDatabase.js";
-import { isAbsolute } from "node:path";
+import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import {
   OwnedCommandFailure,
@@ -39,12 +39,16 @@ import type {
   ProviderProcessStopResult,
   ProviderProcessSupervisor,
 } from "../process/ProviderProcess.js";
-import { sqliteDatabaseFailure } from "./SqliteDatabaseFailures.js";
+import {
+  createSqliteCleanupError,
+  sqliteDatabaseFailure,
+} from "./SqliteDatabaseFailures.js";
 import { captureSqliteDatabaseSnapshot } from "./SqliteDatabaseSnapshot.js";
 import { SQLITE_DATABASE_LIMITS } from "./SqliteDatabaseLimits.js";
 
 import {
   executeSqliteDatabaseWorker,
+  sqliteReplyFinalizationFailure,
   type SqliteWorkerLauncher,
 } from "./SqliteDatabaseWorkerExecution.js";
 
@@ -103,8 +107,7 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
             input_bytes_per_inspection: SQLITE_DATABASE_LIMITS.inputBytes,
           },
           {
-            remediationAction:
-              "Retry after an active SQLite inspection completes.",
+            remediationAction: `The concurrent SQLite inspection allowance is ${String(SQLITE_DATABASE_LIMITS.concurrentInspections)}. This release has no runtime override. Waiting for an active inspection to finish can free a slot. worker_timeout_ms does not raise it. Retry after an active SQLite inspection completes.`,
           },
         ),
       );
@@ -257,6 +260,8 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
     let retainedOutput: AnalysisCapturedOutput | undefined;
     let phase = "configuration";
     let result: Result<AnalysisExecution, AnalysisError>;
+    const workerTimeoutMs =
+      input.worker_timeout_ms ?? DEFAULT_SQLITE_WORKER_TIMEOUT_MS;
     try {
       if (options?.signal?.aborted)
         throw new AnalysisCancelledError(operation, {
@@ -279,10 +284,11 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
         options?.signal,
       );
       phase = "worker";
-      const inspection = await executeSqliteDatabaseWorker({
+      const completed = await executeSqliteDatabaseWorker({
         input,
         root: root.path,
         snapshotPath: snapshot.snapshotPath,
+        timeoutMs: workerTimeoutMs,
         environment: this.environment,
         resourceScope: this.#artifactResources,
         ...(this.launcher === undefined ? {} : { launcher: this.launcher }),
@@ -298,17 +304,29 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
       const validated = sqliteDatabaseSchema.safeParse({
         artifact: snapshot.artifact,
         wal: snapshot.wal,
-        ...inspection,
+        ...completed.inspection,
+        worker_timeout_ms: workerTimeoutMs,
       });
       if (!validated.success)
-        throw new AnalysisOutputError(
-          operation,
-          "SQLite worker report dimensions or identity fields are invalid",
-          retainedOutput === undefined
-            ? undefined
-            : { capturedOutput: retainedOutput },
+        throw sqliteReplyFinalizationFailure(
+          new AnalysisOutputError(
+            operation,
+            "SQLite worker report dimensions or identity fields are invalid",
+            retainedOutput === undefined
+              ? undefined
+              : { capturedOutput: retainedOutput },
+          ),
+          completed.finalization,
         );
-      result = ok(createSqliteObservation(validated.data, input.path));
+      const execution = createSqliteObservation(validated.data, input.path);
+      result =
+        completed.finalization === undefined
+          ? ok(execution)
+          : err(
+              completed.finalization.retainPartialObservation(
+                completedSqliteEvidence(input, execution),
+              ),
+            );
     } catch (cause: unknown) {
       // A failure rethrown after retainCleanup carries no owner of its own;
       // keep the retained worker instead of discarding it.
@@ -322,6 +340,7 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
         input.path,
         phase,
         options?.signal,
+        workerTimeoutMs,
       );
       retainedOutput ??= failure.capturedOutput;
       result = err(failure);
@@ -495,17 +514,14 @@ const sqliteCleanupFailure = (
   const partialObservation = result.ok
     ? completedSqliteEvidence(input, result.value)
     : result.error.partialObservation;
-  return new ProviderCleanupError(
-    SQLITE_PROVIDER_IDENTITY.id,
+  return createSqliteCleanupError(
     resources,
     {
       ...details,
       reason,
-      previous_error: result.ok ? null : projectAnalysisError(result.error),
-      ...(output === undefined ? {} : { captured_output: { ...output } }),
     },
     {
-      operation,
+      ...(output === undefined ? {} : { capturedOutput: output }),
       ...(result.ok ? {} : { cleanupPrimary: result.error }),
       ...(cause === undefined ? {} : { cause }),
       ...(partialObservation === undefined ? {} : { partialObservation }),
@@ -528,14 +544,8 @@ const completedSqliteEvidence = (
 
 const validateSqliteInput = (input: InspectSqliteDatabaseInput): void => {
   const parsed = inspectSqliteDatabaseInputSchema.safeParse(input);
-  if (!parsed.success || !isAbsolute(input.path))
-    throw new AnalysisInputError(operation, undefined, [
-      {
-        path: ["path"],
-        reason: "invalid_format",
-        message: parsed.success
-          ? "path must be an absolute local filesystem path"
-          : parsed.error.message,
-      },
-    ]);
+  if (!parsed.success)
+    throw analysisInputErrorFromIssues(operation, parsed.error.issues, input, {
+      cause: parsed.error,
+    });
 };

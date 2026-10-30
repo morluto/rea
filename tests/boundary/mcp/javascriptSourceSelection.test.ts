@@ -31,6 +31,8 @@ const createSelectionClient = () => {
     env: {
       PATH: process.env.PATH ?? "",
       NODE_OPTIONS: "--max-old-space-size=512 --max-semi-space-size=8",
+      // Exact advertised constraints require the complete schema profile.
+      REA_MCP_INPUT_SCHEMA_PROFILE: "full",
     },
     stderr: "pipe",
   });

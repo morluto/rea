@@ -1,3 +1,5 @@
+import { snapshotEnvironment } from "../../process/snapshotEnvironment.js";
+import { safeParseUtf8Json } from "../../domain/safeJson.js";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
@@ -17,13 +19,18 @@ import { constants } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
-import type { ProviderIdentity } from "../../application/AnalysisProvider.js";
+import type {
+  ExecutionOptions,
+  ProviderIdentity,
+} from "../../application/AnalysisProvider.js";
 import type {
   AnalysisCapturedOutput,
   AnalysisPartialObservation,
 } from "../../domain/analysisErrorBase.js";
-import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
+import {
+  completedStableArtifact,
+  readStableArtifact,
+} from "../../artifacts/readStableArtifact.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
@@ -35,7 +42,10 @@ import {
   AnalysisOutputError,
   AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
-import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
+import {
+  projectAnalysisError,
+  projectAnalysisErrorWithoutCapturedOutput,
+} from "../../domain/analysisErrorProjection.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
@@ -64,6 +74,12 @@ import { pwntoolsInputBytes } from "./PwntoolsInputLimit.js";
 const HOST_REQUIREMENT =
   "The initial real-verified pwntools artifact profile supports Linux x64 only.";
 
+/** The pwntools profile runs only on Linux x64; discovery and execution share this check. */
+export const pwntoolsHostSupported = (
+  platform: NodeJS.Platform,
+  arch: string,
+): boolean => platform === "linux" && arch === "x64";
+
 /** Owned launcher seam shared by the offline pwntools artifact adapters. */
 export type PwntoolsLauncher = NonNullable<
   Parameters<typeof runOwnedCommand>[2]
@@ -79,7 +95,10 @@ type DecoderReport = AnalysisPartialObservation & {
 };
 /** Adapter-selected semantics around a shared owned pwntools process boundary. */
 export interface PwntoolsDecoderProfile<
-  Input extends { readonly path: string },
+  Input extends {
+    readonly path: string;
+    readonly pwntools_timeout_ms?: number | undefined;
+  },
   Payload,
   Report extends DecoderReport,
 > {
@@ -91,17 +110,33 @@ export interface PwntoolsDecoderProfile<
     readonly input: Input;
     readonly payload: Payload;
     readonly snapshot: { readonly bytes: Buffer; readonly sha256: string };
+    readonly diagnostics: AnalysisCapturedOutput;
+  }) => Report;
+  /** Describe admitted facts when the reply cannot be finalized before enrichment. */
+  readonly partialObservation?: (
+    input: Input,
+    report: Report,
+  ) => AnalysisPartialObservation;
+  /** Optional resource-acquiring work starts only after base report admission and reply finalization. */
+  readonly enrich?: (context: {
+    readonly environment: Readonly<NodeJS.ProcessEnv>;
+    readonly input: Input;
+    readonly report: Report;
+    readonly snapshot: { readonly bytes: Buffer; readonly sha256: string };
     readonly rootPath: string;
     readonly resources: ArtifactResourceScope;
-    readonly diagnostics: AnalysisCapturedOutput;
     readonly options: ExecutionOptions | undefined;
     readonly runCommand: PwntoolsCommand;
-  }) => Report | Promise<Report>;
+    readonly timeoutMs: number;
+  }) => Promise<Report>;
 }
 
 /** Thin owned-process adapter; all ELF parsing and heuristics come from unchanged upstream code. */
 export class PwntoolsDecoder<
-  Input extends { readonly path: string },
+  Input extends {
+    readonly path: string;
+    readonly pwntools_timeout_ms?: number | undefined;
+  },
   Payload,
   Report extends DecoderReport,
 > {
@@ -206,10 +241,16 @@ export class PwntoolsDecoder<
     input: Input,
     options?: ExecutionOptions,
   ): Promise<Result<Report, AnalysisError>> {
+    const environment = snapshotEnvironment(this.environment);
     const pending = await this.#retire();
     if (pending !== undefined) return err(pending);
     const OPERATION = this.profile.operation;
-    const context = { operation: OPERATION, providerId: this.identity.id };
+    const timeoutMs = input.pwntools_timeout_ms ?? PWNTOOLS_LIMITS.timeoutMs;
+    const context = {
+      operation: OPERATION,
+      providerId: this.identity.id,
+      timeoutMs,
+    };
     const replySchema = z.discriminatedUnion("ok", [
       z.strictObject({
         ok: z.literal(true),
@@ -233,8 +274,9 @@ export class PwntoolsDecoder<
     ]);
     let root: Pick<PrivateRuntimeRoot, "path" | "close"> | undefined;
     let result: Result<Report, AnalysisError>;
+    let replyFinalization: AnalysisError | undefined;
     let phase: "configuration" | "artifact-read" | "decoder" = "configuration";
-    const executablePath = this.environment.REA_PWNTOOLS_PYTHON ?? "";
+    const executablePath = environment.REA_PWNTOOLS_PYTHON ?? "";
     let selectedPath = executablePath;
     const failure = (cause: unknown) =>
       pwntoolsDecoderFailure(
@@ -250,7 +292,7 @@ export class PwntoolsDecoder<
         throw new AnalysisCancelledError(OPERATION, {
           cause: options.signal.reason,
         });
-      if (process.platform !== "linux" || process.arch !== "x64")
+      if (!pwntoolsHostSupported(process.platform, process.arch))
         throw new AnalysisCapabilityUnavailableError(
           this.identity.id,
           OPERATION,
@@ -275,7 +317,7 @@ export class PwntoolsDecoder<
           undefined,
           context,
         );
-      const inputLimit = pwntoolsInputBytes(this.environment);
+      const inputLimit = pwntoolsInputBytes(environment);
       if (!inputLimit.configured)
         throw pwntoolsUnavailable(
           inputLimit.error,
@@ -335,8 +377,9 @@ export class PwntoolsDecoder<
         { flag: "wx", mode: 0o600 },
       );
       const execution = await this.#runCommand(
+        timeoutMs,
         {
-          command: this.environment.REA_PWNTOOLS_PYTHON ?? "",
+          command: environment.REA_PWNTOOLS_PYTHON ?? "",
           arguments: [
             "-I",
             fileURLToPath(this.profile.bridge),
@@ -346,7 +389,7 @@ export class PwntoolsDecoder<
           cwd: root.path,
           runId: `rea-artifact-decoder-${randomUUID()}`,
           hostEnvironment: {
-            ...this.environment,
+            ...environment,
             PWNLIB_NOTERM: "1",
             OPENBLAS_NUM_THREADS: "1",
             OMP_NUM_THREADS: "1",
@@ -358,14 +401,59 @@ export class PwntoolsDecoder<
       const capturedOutput = capturedPwntoolsOutput(execution);
       let reply: z.output<typeof replySchema>;
       try {
-        const file = await readStableArtifact(
-          replyPath,
-          PWNTOOLS_LIMITS.outputBytes,
-          options?.signal,
-          undefined,
-          this.#resources,
-        );
-        reply = replySchema.parse(JSON.parse(file.bytes.toString("utf8")));
+        let file;
+        try {
+          file = await readStableArtifact(
+            replyPath,
+            PWNTOOLS_LIMITS.outputBytes,
+            options?.signal,
+            undefined,
+            this.#resources,
+          );
+        } catch (cause: unknown) {
+          const completed = completedStableArtifact(cause);
+          if (
+            !(cause instanceof ArtifactReaderFailure) ||
+            completed === undefined
+          )
+            throw cause;
+          file = completed;
+          const cleanup =
+            cause.cleanup === undefined
+              ? undefined
+              : new ProviderCleanupError(
+                  this.identity.id,
+                  cause.cleanup.resources,
+                  {
+                    phase: "reply_descriptor_close",
+                    reason: cause.cleanup.reason,
+                  },
+                  { operation: OPERATION, cause, capturedOutput },
+                );
+          if (cleanup !== undefined) bindArtifactFileCleanup(cause, cleanup);
+          const primary =
+            cause.reason === "cancelled"
+              ? new AnalysisCancelledError(OPERATION, {
+                  cause: artifactFileCancellationCause(cause),
+                  capturedOutput,
+                })
+              : (cleanup ??
+                new AnalysisOutputError(OPERATION, cause.message, {
+                  cause,
+                  capturedOutput,
+                }));
+          replyFinalization =
+            cleanup !== undefined && primary !== cleanup
+              ? analysisErrorWithCleanupFailure(
+                  primary,
+                  cleanup,
+                  OPERATION,
+                ).bindCleanupDependencies([primary, cleanup])
+              : primary;
+        }
+        const decoded = safeParseUtf8Json(file.bytes);
+        if (!decoded.ok) throw decoded.cause;
+        reply = replySchema.parse(decoded.value);
       } catch (cause: unknown) {
         if (
           cause instanceof ArtifactReaderFailure &&
@@ -408,9 +496,12 @@ export class PwntoolsDecoder<
           throw new AnalysisResourceConstraintError(
             OPERATION,
             "memory",
-            reply.message,
+            `${reply.message} cpuSeconds is ${String(PWNTOOLS_LIMITS.cpuSeconds)}. Output is ${String(PWNTOOLS_LIMITS.outputBytes)} bytes, diagnostics are ${String(PWNTOOLS_LIMITS.diagnosticBytes)} bytes, and address space is ${String(PWNTOOLS_LIMITS.addressSpaceBytes)} bytes. This release has no runtime override.`,
             reply.reported_limits ?? null,
-            { capturedOutput },
+            {
+              capturedOutput,
+              remediationAction: `Review the reported worker memory limits and available host memory. cpuSeconds ${String(PWNTOOLS_LIMITS.cpuSeconds)}, the ${String(PWNTOOLS_LIMITS.outputBytes)}-byte output allowance, the ${String(PWNTOOLS_LIMITS.diagnosticBytes)}-byte diagnostic allowance, and the ${String(PWNTOOLS_LIMITS.addressSpaceBytes)}-byte address-space allowance have no runtime override. pwntools_timeout_ms does not raise them. Repeating the unchanged request fails the same way.`,
+            },
           );
         if (reply.reason === "format")
           throw new AnalysisInputError(OPERATION, { capturedOutput }, [
@@ -423,7 +514,7 @@ export class PwntoolsDecoder<
         if (reply.reason === "unavailable")
           throw pwntoolsUnavailable(
             reply.message,
-            this.environment.REA_PWNTOOLS_PYTHON ?? "",
+            environment.REA_PWNTOOLS_PYTHON ?? "",
             undefined,
             capturedOutput,
             context,
@@ -450,20 +541,50 @@ export class PwntoolsDecoder<
           },
         });
       }
-      result = ok(
-        await this.profile.project({
-          input,
-          payload: reply.value,
-          snapshot,
-          rootPath: root.path,
-          resources: this.#resources,
-          diagnostics: capturedOutput,
-          options,
-          runCommand: (spawn, classifyFailure) =>
-            this.#runCommand(spawn, options, classifyFailure),
-        }),
-      );
+      const admitted = this.profile.project({
+        input,
+        payload: reply.value,
+        snapshot,
+        diagnostics: capturedOutput,
+      });
+      if (replyFinalization !== undefined) {
+        result = err(
+          replyFinalization.retainPartialObservation(
+            this.profile.partialObservation?.(input, admitted) ?? admitted,
+          ),
+        );
+      } else {
+        result = ok(
+          this.profile.enrich === undefined
+            ? admitted
+            : await this.profile.enrich({
+                environment,
+                input,
+                report: admitted,
+                snapshot,
+                rootPath: root.path,
+                resources: this.#resources,
+                options,
+                runCommand: (spawn, classifyFailure) =>
+                  this.#runCommand(timeoutMs, spawn, options, classifyFailure),
+                timeoutMs,
+              }),
+        );
+      }
     } catch (cause: unknown) {
+      if (replyFinalization !== undefined && cause !== replyFinalization) {
+        const primary = failure(cause);
+        cause = replyFinalization.cleanupIncomplete
+          ? analysisErrorWithCleanupFailure(
+              primary,
+              replyFinalization,
+              OPERATION,
+            ).bindCleanupDependencies([primary, replyFinalization])
+          : primary.retainSecondaryFailure(replyFinalization, {
+              reply_finalization_error:
+                projectAnalysisErrorWithoutCapturedOutput(replyFinalization),
+            });
+      }
       // The command owner has exhausted this operation's cleanup attempts.
       // Keep its resources and do not consume files an unresolved worker may change.
       if (cause instanceof AnalysisError && cause.cleanupIncomplete) {
@@ -522,6 +643,7 @@ export class PwntoolsDecoder<
   }
 
   async #runCommand(
+    timeoutMs: number,
     spawn: OwnedProviderProcessSpawnOptions,
     options: ExecutionOptions | undefined,
     failure: (cause: unknown) => AnalysisError,
@@ -542,7 +664,7 @@ export class PwntoolsDecoder<
             expectedCommand: spawn.expectedCommand ?? null,
           },
           {
-            timeoutMs: PWNTOOLS_LIMITS.timeoutMs,
+            timeoutMs,
             diagnosticBytes: PWNTOOLS_LIMITS.diagnosticBytes,
           },
           {

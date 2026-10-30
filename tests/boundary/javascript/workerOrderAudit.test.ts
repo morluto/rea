@@ -7,7 +7,10 @@ import { expect, it } from "vitest";
 import {
   AnalysisCancelledError,
   AnalysisOutputError,
+  AnalysisResourceConstraintError,
 } from "../../../src/domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import { javaScriptRuntime } from "../../../src/domain/runtimeVersion.js";
 import { JavaScriptAnalysisWorker } from "../../../src/javascript/analysis/JavaScriptAnalysisWorker.js";
 import {
   javaScriptWorkerMessageSchema,
@@ -15,6 +18,7 @@ import {
 } from "../../../src/javascript/analysis/JavaScriptAnalysisWorkerProtocol.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
 import type { JavaScriptArtifactFile } from "../../../src/domain/javascript/javascriptArtifactFiles.js";
+import { staticCheckpointFacts } from "../../fixtures/javascriptWorkerCheckpoint.js";
 
 const observeWorkerFrames = (
   stdout: Readable | null | undefined,
@@ -73,27 +77,6 @@ const ready =
   'process.stdout.write(JSON.stringify({kind:"ready",heap_limit_bytes:require("node:v8").getHeapStatistics().heap_size_limit})+"\\n");';
 const phaseAfterRequest =
   'process.stdin.once("data", chunk => { const request=JSON.parse(String(chunk)); process.stdout.write(JSON.stringify({kind:"phase",id:request.id,phase:"parse"})+"\\n");';
-const staticCheckpointFacts = {
-  parse_status: "complete",
-  parse_error_count: 0,
-  visited_ast_nodes: 1,
-  references: [],
-  endpoints: [],
-  storage: [],
-  bundler_registrations: [],
-  role_paths: [],
-  source_map_urls: [],
-  vendors: [],
-  electron: {
-    browser_windows: [],
-    context_bridge_apis: [],
-    ipc: [],
-    sender_validations: [],
-    utility_processes: [],
-    native_addon_bindings: [],
-  },
-  limitations: [],
-};
 
 it.each([
   {
@@ -777,11 +760,28 @@ it("retains the owned worker's V8 heap exhaustion classification", async () => {
   try {
     const result = await worker.analyze(file, { nodes: 100, unknowns: 100 });
     expect(result.ok).toBe(false);
-    if (!result.ok)
-      expect(result.error.error).toMatchObject({
-        _tag: "AnalysisResourceConstraintError",
-        resource: "memory",
-      });
+    if (!result.ok) {
+      expect(result.error.error).toBeInstanceOf(
+        AnalysisResourceConstraintError,
+      );
+      const projected = projectAnalysisError(result.error.error);
+      if (javaScriptRuntime(process.versions).id === "node") {
+        expect(projected.message).toContain(
+          "128 MiB V8 old-space heap (max_heap_mb)",
+        );
+        expect(projected.remediation.action).toContain("--max-heap-mb");
+      } else {
+        expect(projected.message).toContain(
+          "Bun ignores the V8 old-space flag",
+        );
+        expect(projected.message).not.toContain(
+          "128 MiB V8 old-space heap (max_heap_mb)",
+        );
+        expect(projected.remediation.action).not.toContain(
+          "Increase max_heap_mb",
+        );
+      }
+    }
   } finally {
     await worker.close();
   }

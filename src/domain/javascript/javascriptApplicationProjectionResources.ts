@@ -46,6 +46,11 @@ export const estimateJavaScriptStaticApplicationProjection = (
       path.steps.length *
       2;
   }
+  // The per-record allowance already covers retention: projected Vite-style
+  // chunks serialize to about 0.46 KB per record, under a quarter of it.
+  // Expanding the allowance again charged about 25x the serialized
+  // relationships, so a few files used up the parent budget that every later
+  // source shares. Checkpoint and repeated bytes keep their expansion.
   const metadataBytes = 2048 + Buffer.byteLength(sourcePath) * 4;
-  return (checkpointBytes * 4 + repeatedBytes + records * metadataBytes) * 8;
+  return (checkpointBytes * 4 + repeatedBytes) * 8 + records * metadataBytes;
 };

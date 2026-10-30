@@ -10,14 +10,61 @@ import {
   createArtifactEdges,
   classifyArtifactContent,
   createOccurrence,
-  indexOccurrencesByPath,
+  indexDestinationOccurrencesByPath,
   resolveOccurrenceParents,
 } from "./ArtifactGraphConstruction.js";
 import { createArtifactClassificationProbe } from "../ArtifactClassificationProbe.js";
 import { artifactIdForContent } from "../../domain/artifactIdentity.js";
+import { pe } from "../../domain/binaryTarget.fixture.js";
 import type { ArtifactEntry } from "../ArtifactReader.js";
 
 import { classifyArtifactBytesAtPath } from "../../../tests/fixtures/artifactClassification.js";
+import {
+  ESP32C3_APP_SEGMENTS,
+  esp8266Image,
+  espImage,
+} from "../../../tests/fixtures/espImage.js";
+import { devicetreeFixture } from "../../firmware/devicetree/Devicetree.fixture.js";
+import { fitFixture } from "../fit/FitImage.fixture.js";
+
+it("joins only observed PE signature bytes across stream chunks", () => {
+  const bytes = pe(0x8664, 8190);
+  const probe = createArtifactClassificationProbe();
+  probe.write(bytes.subarray(0, 8191));
+  probe.write(bytes.subarray(8191, 8192));
+  const partial = probe.finish(bytes.length);
+  expect(partial.mzWindowsHeaderSignature).toEqual({
+    offset: 8190,
+    bytes: Buffer.from("PE"),
+  });
+  expect(
+    classifyArtifactContent("native.exe", partial, bytes.length).format,
+  ).toBe("unknown");
+  probe.write(bytes.subarray(8192));
+  const complete = probe.finish(bytes.length);
+  expect(complete.mzWindowsHeaderSignature).toEqual({
+    offset: 8190,
+    bytes: Buffer.from([0x50, 0x45, 0, 0]),
+  });
+  expect(
+    classifyArtifactContent("native.exe", complete, bytes.length).format,
+  ).toBe("pe");
+});
+
+it("classifies original DOS header padding as an executable", () => {
+  const bytes = Buffer.alloc(128);
+  bytes.write("MZ", 0, "ascii");
+  bytes.writeUInt16LE(128, 2);
+  bytes.writeUInt16LE(1, 4);
+  bytes.writeUInt16LE(2, 6);
+  bytes.writeUInt16LE(4, 8);
+  bytes.writeUInt16LE(28, 24);
+  bytes.write("ABCD", 60, "ascii");
+  expect(classifyArtifactBytesAtPath("legacy.exe", bytes)).toEqual({
+    kind: "executable",
+    format: "dos-mz",
+  });
+});
 
 const entry = (path: string, kind: ArtifactEntry["kind"]): ArtifactEntry => ({
   path,
@@ -33,6 +80,59 @@ const entry = (path: string, kind: ArtifactEntry["kind"]): ArtifactEntry => ({
   adapterKey: path,
 });
 
+it.each([false, true])(
+  "preserves ASAR file storage (unpacked=%s)",
+  (unpacked) => {
+    const occurrence = createOccurrence(
+      { ...entry("main.js", "file"), unpacked },
+      "main.js",
+      null,
+      { sourceFormat: "asar" },
+    );
+    expect(occurrence.unpacked).toBe(unpacked);
+  },
+);
+
+it.each(["directory", "symlink"] as const)(
+  "preserves positive ASAR declarations for %s entries",
+  (kind) => {
+    for (const unpacked of [false, true]) {
+      const occurrence = createOccurrence(
+        { ...entry("member", kind), unpacked },
+        "member",
+        null,
+        { sourceFormat: "asar" },
+      );
+      if (unpacked) expect(occurrence.unpacked).toBe(true);
+      else expect(occurrence).not.toHaveProperty("unpacked");
+    }
+  },
+);
+
+it.each(["directory", "zip", "node-sea"] as const)(
+  "omits false storage declarations for %s readers",
+  (sourceFormat) => {
+    const occurrence = createOccurrence(
+      entry("main.js", "file"),
+      "main.js",
+      null,
+      {
+        sourceFormat,
+      },
+    );
+    expect(occurrence).not.toHaveProperty("unpacked");
+  },
+);
+
+it("preserves a positive storage declaration without reader format", () => {
+  const occurrence = createOccurrence(
+    { ...entry("main.js", "file"), unpacked: true },
+    "main.js",
+    null,
+  );
+  expect(occurrence.unpacked).toBe(true);
+});
+
 describe("occurrence parent ownership", () => {
   it("selects the nearest unique nested parent", () => {
     const outer = createOccurrence(entry("a", "directory"), "a", null);
@@ -42,7 +142,7 @@ describe("occurrence parent ownership", () => {
 
     resolveOccurrenceParents(
       occurrences,
-      indexOccurrencesByPath(occurrences),
+      indexDestinationOccurrencesByPath(occurrences),
       new Set(),
     );
 
@@ -50,14 +150,18 @@ describe("occurrence parent ownership", () => {
   });
 
   it("leaves a child unparented when duplicate directories make ownership ambiguous", () => {
-    const first = createOccurrence(entry("a", "directory"), "a", null, 0);
-    const second = createOccurrence(entry("a", "directory"), "a", null, 1);
+    const first = createOccurrence(entry("a", "directory"), "a", null, {
+      duplicateOrdinal: 0,
+    });
+    const second = createOccurrence(entry("a", "directory"), "a", null, {
+      duplicateOrdinal: 1,
+    });
     const file = createOccurrence(entry("a/file", "file"), "a/file", null);
     const occurrences = [first, second, file];
 
     const resolution = resolveOccurrenceParents(
       occurrences,
-      indexOccurrencesByPath(occurrences),
+      indexDestinationOccurrencesByPath(occurrences),
       new Set(),
     );
 
@@ -96,7 +200,7 @@ describe("source-map artifact relationships", () => {
           entry("app/main.js", "file"),
           "app/main.js",
           directory.occurrence_id,
-          index,
+          { duplicateOrdinal: index },
         );
         target.artifact_id = identity === "unread" ? null : contentId("2");
         return target;
@@ -341,6 +445,82 @@ describe("bounded FAT inventory classification", () => {
     ] as const;
     for (const testCase of cases) expectStreamedFatClassification(testCase);
   });
+});
+
+it("keeps byte content format separate from path-specific package role", () => {
+  const probe = createArtifactClassificationProbe();
+  probe.write(Buffer.from("PK\x03\x04", "binary"));
+  expect(
+    classifyArtifactContent("application.apk", probe.finish(4), 4),
+  ).toEqual({
+    kind: "container",
+    format: "apk",
+    contentFormat: "zip",
+  });
+});
+
+it("classifies nested HEX and S-record content as containers by bytes", () => {
+  expect(
+    classifyArtifactBytesAtPath(
+      "firmware/update.txt",
+      Buffer.from(":0300300002337A1E\n:00000001FF\n"),
+    ),
+  ).toEqual({ kind: "container", format: "intel-hex" });
+  expect(
+    classifyArtifactBytesAtPath(
+      "firmware/app.s19",
+      Buffer.from("S00600004844521B\n"),
+    ),
+  ).toEqual({ kind: "container", format: "srec" });
+  expect(
+    classifyArtifactBytesAtPath(
+      "firmware/bad.hex",
+      Buffer.from(":0300300002337A1F\n"),
+    ),
+  ).toEqual({ kind: "resource", format: "file" });
+});
+
+it("classifies nested ESP images as containers by bytes", () => {
+  const image = espImage({ segments: ESP32C3_APP_SEGMENTS });
+  expect(classifyArtifactBytesAtPath("ota/update.dat", image)).toEqual({
+    kind: "container",
+    format: "esp-image",
+  });
+  // An unsupported ESP8266 image is a plain file, not a container.
+  expect(classifyArtifactBytesAtPath("esp8266.bin", esp8266Image())).toEqual({
+    kind: "resource",
+    format: "file",
+  });
+});
+
+it("classifies a FIT by a /images node within the first 4 KiB", () => {
+  const images = [{ name: "kernel", data: Buffer.from("kernel") }];
+  const late = devicetreeFixture({
+    name: "",
+    properties: { padding: Buffer.alloc(4096) },
+    children: [{ name: "images" }],
+  });
+  const configurationsFirst = devicetreeFixture({
+    name: "",
+    children: [{ name: "configurations" }, { name: "images" }],
+  });
+  for (const [path, bytes] of [
+    ["firmware/boot.itb", fitFixture({ images })],
+    ["firmware/boot", configurationsFirst],
+  ] as const)
+    expect(classifyArtifactBytesAtPath(path, bytes)).toEqual({
+      kind: "container",
+      format: "fit",
+    });
+  for (const bytes of [
+    devicetreeFixture(),
+    fitFixture({ images, version: 15 }),
+    late,
+  ])
+    expect(classifyArtifactBytesAtPath("firmware/board.dtb", bytes)).toEqual({
+      kind: "resource",
+      format: "file",
+    });
 });
 
 describe("FAT prefix observation coverage", () => {

@@ -2,12 +2,19 @@ import { isSafeNumber } from "lossless-json";
 import { jsonValueSchema, type JsonValue } from "./jsonValue.js";
 import { safeParseJson } from "./safeJson.js";
 
-/** Whether native JSON conversion and serialization preserve the recorded number. */
+/**
+ * Whether native JSON conversion and serialization preserve the recorded number. Both the recorded
+ * spelling and the one serialization writes must be safe, so `1e20` and `100000000000000000000`
+ * are judged alike and anything accepted is accepted again once written back.
+ */
 export const isExactJsonNumber = (
   value: number,
   source: string | undefined,
 ): boolean =>
-  source !== undefined && isSafeNumber(source) && !Object.is(value, -0);
+  source !== undefined &&
+  isSafeNumber(source) &&
+  isSafeNumber(String(value)) &&
+  !Object.is(value, -0);
 
 /** Parse JSON text whose every number survives native conversion exactly; undefined otherwise. */
 export const parseExactJson = (text: string): JsonValue | undefined => {

@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { plistNestingLimitMessage } from "../domain/apple/plistValue.js";
 import { resolveAppBundleExecutable } from "./AppBundleExecutable.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
@@ -33,7 +34,7 @@ describe("OpenStep Info.plist nesting during app target resolution", () => {
           error: {
             path: join(app, "Contents", "Info.plist"),
             cause: expect.objectContaining({
-              message: "Plist exceeds 128 nesting levels",
+              message: plistNestingLimitMessage(),
             }),
           },
         });

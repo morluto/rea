@@ -60,10 +60,10 @@ if (args.length === 1 && args[0] === 'version') {
         harness.client,
         "uninstall_adb_package",
       );
-      const response = await harness.client.callTool({
-        name: schemas.name,
-        arguments: input,
-      });
+      const response = await harness.client.callTool(
+        { name: schemas.name, arguments: input },
+        { toolDefinition: schemas.toolDefinition },
+      );
       if (succeeds) {
         const evidence = parseEvidence(output.json);
         expect(evidence.normalized_result).toMatchObject({

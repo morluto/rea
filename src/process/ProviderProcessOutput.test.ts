@@ -1,7 +1,10 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { expect, it, vi } from "vitest";
-import { ProviderProcessSupervisor } from "./ProviderProcess.js";
+import {
+  ProviderProcessSupervisor,
+  type ProcessDiagnosticBudget,
+} from "./ProviderProcess.js";
 import { redactCapturedTransportCredential } from "./ProviderDiagnosticRedaction.js";
 
 it("retains final stderr between verified exit and output close during stop", async () => {
@@ -332,6 +335,169 @@ it("scopes output checkpoints to raw bytes on one supervisor and epoch", () => {
   }
 });
 
+it.each<{ budget: ProcessDiagnosticBudget; stderr: string }>([
+  { budget: 4, stderr: "" },
+  { budget: { stdout: 4, stderr: 4 }, stderr: "wxyz" },
+])(
+  "distinguishes aggregate and per-stream output budgets: $budget",
+  ({ budget, stderr }) => {
+    const producer = Object.assign(new EventEmitter(), {
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      exitCode: null,
+      signalCode: null,
+      kill: () => false,
+    });
+    const supervisor = new ProviderProcessSupervisor(
+      { process: producer, ownsProcessLifetime: false },
+      { maxDiagnosticBytes: budget },
+    );
+    try {
+      const checkpoint = supervisor.checkpointOutput();
+      producer.stdout.write("abcd");
+      producer.stderr.write("wxyz");
+      expect(supervisor.snapshot().stdout).toEqual({
+        text: "abcd",
+        bytes: 4,
+        observedBytes: 4,
+      });
+      expect(supervisor.snapshot().stderr).toEqual({
+        text: stderr,
+        bytes: stderr.length,
+        observedBytes: 4,
+      });
+      expect(supervisor.snapshot().diagnosticTruncated === true).toBe(
+        stderr === "",
+      );
+      expect(supervisor.snapshotOutputSince(checkpoint).complete).toBe(
+        stderr !== "",
+      );
+    } finally {
+      supervisor.dispose();
+      producer.stdout.destroy();
+      producer.stderr.destroy();
+    }
+  },
+);
+
+it.each(["stdout", "stderr"] as const)(
+  "drains and reports overflowing %s without consuming the other stream's budget",
+  (stream) => {
+    const producer = Object.assign(new EventEmitter(), {
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      exitCode: null,
+      signalCode: null,
+      kill: () => false,
+    });
+    const events: unknown[] = [];
+    const supervisor = new ProviderProcessSupervisor(
+      { process: producer, ownsProcessLifetime: false },
+      {
+        maxDiagnosticBytes: { stdout: 4, stderr: 4 },
+        onDiagnostic: (event) => {
+          if (event.type === "output") events.push(event);
+        },
+      },
+    );
+    const other = stream === "stdout" ? "stderr" : "stdout";
+    try {
+      producer[stream].write("abcde");
+      producer[stream].write("fg");
+      producer[other].write("wxyz");
+      expect(supervisor.snapshot()).toMatchObject({
+        diagnosticTruncated: true,
+        [stream]: { text: "abcd", bytes: 4, observedBytes: 7 },
+        [other]: { text: "wxyz", bytes: 4, observedBytes: 4 },
+      });
+      expect(events).toEqual([
+        { type: "output", stream, bytes: 5, totalBytes: 5, truncated: true },
+        { type: "output", stream, bytes: 2, totalBytes: 7, truncated: true },
+        { type: "output", stream: other, bytes: 4, totalBytes: 4 },
+      ]);
+    } finally {
+      supervisor.dispose();
+      producer.stdout.destroy();
+      producer.stderr.destroy();
+    }
+  },
+);
+
+it("tightens aggregate retention without replacing or relaxing the original stream caps", () => {
+  const producer = Object.assign(new EventEmitter(), {
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    exitCode: null,
+    signalCode: null,
+    kill: () => false,
+  });
+  const supervisor = new ProviderProcessSupervisor(
+    { process: producer, ownsProcessLifetime: false },
+    { maxDiagnosticBytes: { stdout: 4, stderr: 10 } },
+  );
+  try {
+    producer.stdout.write("abc");
+    producer.stderr.write("de");
+    supervisor.limitAdditionalOutputBytes(4);
+    producer.stdout.write("fgh");
+    producer.stderr.write("ijklmn");
+    expect(supervisor.snapshot()).toMatchObject({
+      diagnosticTruncated: true,
+      stdout: { text: "abcf", bytes: 4, observedBytes: 6 },
+      stderr: { text: "deijk", bytes: 5, observedBytes: 8 },
+    });
+    supervisor.limitAdditionalOutputBytes(100);
+    producer.stderr.write("op");
+    expect(supervisor.snapshot().stderr).toEqual({
+      text: "deijk",
+      bytes: 5,
+      observedBytes: 10,
+    });
+  } finally {
+    supervisor.dispose();
+    producer.stdout.destroy();
+    producer.stderr.destroy();
+  }
+});
+
+it.each(["stdout", "stderr"] as const)(
+  "retains raw UTF-8 and checkpoint facts while scanning %s markers past its stream cap",
+  (stream) => {
+    const producer = Object.assign(new EventEmitter(), {
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      exitCode: null,
+      signalCode: null,
+      kill: () => false,
+    });
+    const supervisor = new ProviderProcessSupervisor(
+      { process: producer, ownsProcessLifetime: false },
+      { maxDiagnosticBytes: { stdout: 4, stderr: 4 }, outputToken: "DONE" },
+    );
+    try {
+      const checkpoint = supervisor.checkpointOutput();
+      const bytes = Buffer.from("é🧭 DONE\n");
+      producer[stream].write(bytes.subarray(0, 3));
+      producer[stream].write(bytes.subarray(3));
+      const scoped = supervisor.snapshotOutputSince(checkpoint);
+      expect(scoped.complete).toBe(false);
+      expect(scoped.snapshot[stream]).toEqual({
+        text: "é\ufffd",
+        bytes: 4,
+        observedBytes: 12,
+        invalidUtf8: true,
+      });
+      expect(scoped.markers).toEqual([
+        { stream, offset: 7, line: "é🧭 DONE", truncated: false },
+      ]);
+    } finally {
+      supervisor.dispose();
+      producer.stdout.destroy();
+      producer.stderr.destroy();
+    }
+  },
+);
+
 it.each(["stdout", "stderr"] as const)(
   "redacts a budget-cut credential in scoped %s after prior output",
   (stream) => {
@@ -586,9 +752,15 @@ it("unreferences process and stream handles when stop reports incomplete cleanup
   }
 });
 
-it.each(["close", "abort"] as const)(
-  "awaits output without a deadline until %s",
-  async (outcome) => {
+it.each([
+  { outcome: "close", timeoutMs: undefined },
+  { outcome: "abort", timeoutMs: undefined },
+  { outcome: "close", timeoutMs: 5000 },
+  { outcome: "abort", timeoutMs: 5000 },
+] as const)(
+  "releases output wait resources after $outcome with timeout $timeoutMs",
+  async ({ outcome, timeoutMs }) => {
+    vi.useFakeTimers();
     const producer = Object.assign(new EventEmitter(), {
       stdout: new PassThrough(),
       stderr: new PassThrough(),
@@ -604,7 +776,7 @@ it.each(["close", "abort"] as const)(
     const removeListener = vi.spyOn(controller.signal, "removeEventListener");
     let settled = false;
     const pending = owner
-      .waitForOutputClose(undefined, controller.signal)
+      .waitForOutputClose(timeoutMs, controller.signal)
       .then((result) => {
         settled = true;
         return result;
@@ -615,11 +787,13 @@ it.each(["close", "abort"] as const)(
       if (outcome === "close") producer.emit("close", 0, null);
       else controller.abort();
       expect(await pending).toBe(outcome === "close");
+      expect(vi.getTimerCount()).toBe(0);
       expect(removeListener).toHaveBeenCalledWith(
         "abort",
         expect.any(Function),
       );
     } finally {
+      vi.useRealTimers();
       removeListener.mockRestore();
       owner.dispose();
       producer.stdout.destroy();
@@ -663,4 +837,44 @@ it("keeps current checkpoint coverage separate from historically dropped output"
     producer.stdout.destroy();
     producer.stderr.destroy();
   }
+});
+
+it("marks a stop the owner requested before any signal it sends", async () => {
+  const producer = () =>
+    Object.assign(new EventEmitter(), {
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      exitCode: null,
+      signalCode: null,
+      kill: () => false,
+    });
+  const external = producer();
+  const unowned = new ProviderProcessSupervisor({
+    process: external,
+    ownsProcessLifetime: true,
+    cleanup: async () => ({ cleaned: true, signaled: false }),
+  });
+  external.emit("exit", null, "SIGKILL");
+  expect(unowned.snapshot()).toMatchObject({ signal: "SIGKILL" });
+  expect(unowned.snapshot()).not.toHaveProperty("stopRequested");
+
+  const stopped = producer();
+  const owner = new ProviderProcessSupervisor({
+    process: stopped,
+    ownsProcessLifetime: true,
+    cleanup: async () => {
+      // The owner's group cleanup is the SIGKILL sender here.
+      expect(owner.snapshot().stopRequested).toBe(true);
+      stopped.emit("exit", null, "SIGKILL");
+      stopped.stdout.end();
+      stopped.stderr.end();
+      stopped.emit("close", null, "SIGKILL");
+      return { cleaned: true, signaled: true };
+    },
+  });
+  await owner.stop();
+  expect(owner.snapshot()).toMatchObject({
+    signal: "SIGKILL",
+    stopRequested: true,
+  });
 });

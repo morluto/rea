@@ -1,6 +1,10 @@
 import type { ExecutableFormatHint } from "../../domain/dosCom.js";
-import type { BinaryArchitecture } from "../../domain/binaryTargetTypes.js";
-import type { AnalysisProviderSelector } from "../../contracts/providerSelection.js";
+import type {
+  BinaryArchitecture,
+  BinaryTarget,
+} from "../../domain/binaryTargetTypes.js";
+import { artifactTargetSelectedPath } from "../../domain/binaryTargetTypes.js";
+import type { AnalysisProviderSelector } from "../../domain/providerSelection.js";
 import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js";
 import {
   snapshotMatchesBinding,
@@ -9,7 +13,7 @@ import {
 } from "../../domain/analysisSnapshot.js";
 import type { AnalysisSnapshot } from "../../domain/analysisSnapshot.js";
 import { parseBinaryTarget } from "../BinaryTargetResolver.js";
-import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
+import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import {
   EvidenceIntegrityError,
   AnalysisSnapshotMismatchError,
@@ -56,6 +60,7 @@ export interface ResolvedSessionOpen {
 }
 
 interface ResolveSessionOpenInput {
+  readonly resources: ArtifactResourceScope;
   readonly router: SessionProviderRouter;
   readonly current: CurrentOpenBinding | undefined;
   readonly path: string;
@@ -83,6 +88,7 @@ export const resolveSessionOpen = async (
 ): Promise<Result<ResolvedSessionOpen, AnalysisError>> => {
   const { path, options } = input;
   const parsed = await parseBinaryTarget(path, {
+    resources: input.resources,
     ...(options.targetKind === undefined
       ? {}
       : { targetKind: options.targetKind }),
@@ -146,6 +152,8 @@ const sameSessionTarget = (
   current.path === target.path &&
   // Native admission is bound to the requested path, not just its realpath.
   (current.sourcePath ?? current.path) === (target.sourcePath ?? target.path) &&
+  // Artifact name hints and companions depend on the selected spelling.
+  artifactTargetSelectedPath(current) === artifactTargetSelectedPath(target) &&
   snapshotMatchesTarget(snapshotTarget(current), target);
 
 interface ValidateSnapshotInput {

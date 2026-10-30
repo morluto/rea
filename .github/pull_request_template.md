@@ -17,7 +17,10 @@ describe the use case and observable outcome. -->
 ## Change and scope
 
 <!-- Explain the chosen approach, why it fits REA's architecture, and what is
-intentionally not included. -->
+intentionally not included. If adding complexity for a speculative or vanishingly
+unlikely race or security edge case, record the concrete failure mode, likelihood,
+complexity cost, and the user's buy-in obtained before implementation. Do not
+silently expand scope for theoretical robustness. -->
 
 Follow the [contribution scope](https://github.com/morluto/rea/blob/main/CONTRIBUTING.md#contribution-scope).
 Unresolved scope, authority, side effects, or required verification block
@@ -33,6 +36,9 @@ unchecked. Maintainers can help resolve open questions.
 Use "none" or "not applicable" only when established. -->
 
 - Semantic owner and earliest changed stage:
+  <!-- Name the producer of parsed facts or resources and its affected consumers.
+  Summarize superseded paths removed and any distinct policy, lifecycle,
+  lazy-loading, or compatibility responsibility retained. -->
 - Contribution scope fit and linked maintainer decision:
 - CLI and MCP/tool-catalog contract:
 - Provider, bridge, target-format, or platform compatibility:
@@ -64,6 +70,10 @@ source, link, or rendered-document checks. -->
 - Base reproduction or other evidence:
 - User-visible CLI/MCP output (if applicable):
 - Remaining proof gaps:
+
+For boundary fixes, identify the applicable [boundary regressions](https://github.com/morluto/rea/blob/main/docs/testing.md#boundary-regressions)
+and [lifecycle regressions](https://github.com/morluto/rea/blob/main/docs/testing.md#lifecycle-regressions)
+covered by the evidence above, and explain relevant gaps.
 
 For evidence-bearing changes:
 

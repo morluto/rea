@@ -18,7 +18,7 @@ const archive = build({
 
 it("preflights repeated unterminated quoted declarations without suffix rescans", async () => {
   const preflightUrl = new URL(
-    "../../../dist/artifacts/apple/InterfaceBuilderDecodeBudget.js",
+    "../../../dist/artifacts/apple/PropertyListDecodeBudget.js",
     import.meta.url,
   ).href;
   const { stdout } = await promisify(execFile)(

@@ -1,4 +1,7 @@
-import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
+import {
+  AnalysisInputError,
+  AnalysisResourceConstraintError,
+} from "../../../src/domain/analysisErrorCore.js";
 import { expect, it } from "vitest";
 import { parseGhidraSeeds } from "../../../src/ghidra/GhidraAnalysisSeeds.js";
 import {
@@ -10,6 +13,7 @@ import {
   IL2CPP_METADATA_SECTION_NAMES,
   type Il2cppMetadata,
 } from "../../../src/domain/il2cpp/il2cppMetadata.js";
+import { analysisErrorRemediationAction } from "../../../src/domain/analysisErrorPresentation.js";
 
 const type = (
   name: string,
@@ -85,6 +89,7 @@ const report: Il2cppMetadata = {
     code_gen_modules: [{ image: 0, address: "0x700", method_pointer_count: 5 }],
     types_field: "0x900",
     types_count: 0,
+    generic_methods: null,
   },
   method_addresses: [
     address("0x100"),
@@ -96,6 +101,7 @@ const report: Il2cppMetadata = {
   return_types: [],
   field_types: [],
   parameter_types: [],
+  generic_method_instances: null,
   limitations: [],
 };
 
@@ -120,9 +126,53 @@ it("names linked methods Type$$Method with nested types and shifts by the base",
     without_address: 1,
     no_body: 1,
     unknown: 0,
+    generic_instances: null,
+    generic_without_seed: null,
   });
   const parsed = parseGhidraSeeds(seeds.text);
   expect(parsed.ok && parsed.value.length).toBe(3);
+});
+
+it("seeds generic instances after definitions and folds shared code", () => {
+  const row = (spec: number, name: string | null, rva: string) => ({
+    method_spec: spec,
+    method: 2,
+    name,
+    ...address(rva),
+  });
+  const seeds = il2cppGhidraSeeds(
+    {
+      ...report,
+      generic_method_instances: [
+        row(0, "Game.Player.Slot$$Add<int, string>", "0x130"),
+        row(1, "Game.Player.Slot$$Add<object, string>", "0x100"),
+        row(2, "Game.Player.Slot$$Add<long, string>", "0x130"),
+        row(3, "Game.Player.Slot$$Add<bool, string>", "no-body"),
+        row(4, "Game.Player.Slot$$Add<char, string>", "unknown"),
+        row(5, null, "unknown"),
+      ],
+    },
+    0x100000n,
+  );
+  expect(seeds.text).toBe(
+    "0x100100\tfunction\tGame.Player$$Update\n" +
+      "0x100110\tfunction\tGame.Player.Slot$$Add\n" +
+      "0x100120\tfunction\tGame.Player.Slot.<>c$$<Run>b__0_x\n" +
+      "0x100130\tfunction\tGame.Player.Slot$$Add<int,_string>\n" +
+      "# folded 0x100100 Game.Player$$Update also Game.Player.Slot$$Folded Game.Player.Slot$$Add<object,_string>\n" +
+      "# folded 0x100130 Game.Player.Slot$$Add<int,_string> also Game.Player.Slot$$Add<long,_string>\n" +
+      `# metadata_sha256 ${report.artifact.sha256}\n# binary_sha256 ${report.binary!.artifact.sha256}\n# link_base 0x0\n# seed_base 0x100000\n`,
+  );
+  expect(seeds).toMatchObject({
+    functions: 4,
+    folded: 3,
+    without_address: 1,
+    generic_instances: 3,
+    generic_without_seed: 3,
+  });
+  // The real consumer parser admits every generic seed name.
+  const parsed = parseGhidraSeeds(seeds.text);
+  expect(parsed.ok && parsed.value.length).toBe(4);
 });
 
 it("seeds neither a method without a body nor one no module claims", () => {
@@ -175,7 +225,27 @@ it("bounds folded-name retention against the actual Ghidra file admission", () =
     })),
     method_addresses: Array.from({ length: count }, () => address("0x100")),
   };
-  expect(() => il2cppGhidraSeeds(repeated, 0n)).toThrow(/byte admission/);
+  let caught: unknown;
+  try {
+    il2cppGhidraSeeds(repeated, 0n);
+  } catch (error) {
+    caught = error;
+  }
+  expect(caught).toBeInstanceOf(AnalysisResourceConstraintError);
+  if (!(caught instanceof AnalysisResourceConstraintError))
+    throw new Error("Expected seed-file allowance refusal");
+  expect(caught.message).toMatch(/byte admission/);
+  expect(analysisErrorRemediationAction(caught)).toContain(
+    "The IL2CPP Ghidra seed-file allowance",
+  );
+  expect(analysisErrorRemediationAction(caught)).toContain(
+    "fixed byte allowance",
+  );
+  expect(analysisErrorRemediationAction(caught)).not.toContain("fixed count");
+  expect(analysisErrorRemediationAction(caught)).not.toContain(
+    "seed-name allowance",
+  );
+  expect(caught.retryable).toBe(false);
 });
 it("refuses cyclic type ancestry before emitting a seed", () => {
   const cyclic = {
@@ -200,5 +270,22 @@ it("refuses names the real Ghidra seed parser cannot admit", () => {
     ...report,
     methods: [{ name: "M".repeat(2001), declaring_type: 0 }],
   };
-  expect(() => il2cppGhidraSeeds(oversized, 0n)).toThrow(/character admission/);
+  let caught: unknown;
+  try {
+    il2cppGhidraSeeds(oversized, 0n);
+  } catch (error) {
+    caught = error;
+  }
+  expect(caught).toBeInstanceOf(AnalysisResourceConstraintError);
+  if (!(caught instanceof AnalysisResourceConstraintError))
+    throw new Error("Expected seed-name allowance refusal");
+  expect(caught.message).toMatch(/character admission/);
+  expect(analysisErrorRemediationAction(caught)).toContain(
+    "The IL2CPP Ghidra seed-name allowance",
+  );
+  expect(analysisErrorRemediationAction(caught)).toContain("fixed count");
+  expect(analysisErrorRemediationAction(caught)).not.toContain(
+    "fixed byte allowance",
+  );
+  expect(caught.retryable).toBe(false);
 });

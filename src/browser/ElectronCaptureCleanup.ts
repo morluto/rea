@@ -12,7 +12,7 @@ import type {
   ProcessCleanupResult,
   ProcessLineageObservation,
 } from "../process/ProcessOwnership.js";
-import { runWithExecutionLimits } from "./PlaywrightElectronActiveActions.js";
+import { runWithExecutionLimits } from "./PlaywrightElectronExecution.js";
 import { cleanupElectronProcesses } from "./ElectronProcessCleanup.js";
 
 type ElectronApplication = Awaited<ReturnType<typeof electron.launch>>;

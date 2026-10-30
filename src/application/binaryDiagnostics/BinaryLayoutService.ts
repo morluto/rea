@@ -1,22 +1,23 @@
-import { isAbsolute } from "node:path";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { BinaryLayoutPort } from "./BinaryLayoutPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import {
-  AnalysisCancelledError,
-  AnalysisInputError,
-  AnalysisOutputError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import {
   inspectBinaryLayoutInputSchema,
   binaryLayoutSchema,
 } from "../../domain/native/binaryLayout.js";
-import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
-import { err, ok, type Result } from "../../domain/result.js";
+import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
+import { parseAnalysisInput } from "../AnalysisInput.js";
 
 const OPERATION = "inspect_binary_layout";
+const EVIDENCE_ARCHITECTURES = {
+  EM_X86_64: "x86_64",
+  EM_386: "x86",
+  EM_ARM: "arm",
+  EM_MIPS: "mips",
+} as const;
 
 /** Shared CLI/MCP validation and Evidence composition for offline layout inspection. */
 export class BinaryLayoutService {
@@ -53,26 +54,14 @@ export class BinaryLayoutService {
       input: Parameters<BinaryLayoutPort["inspect"]>[0],
     ) => ReturnType<BinaryLayoutPort["inspect"]>,
   ): Promise<Result<Evidence, AnalysisError>> {
-    if (options?.signal?.aborted)
-      return err(new AnalysisCancelledError(OPERATION));
-    const input = inspectBinaryLayoutInputSchema.safeParse(rawInput);
-    if (!input.success)
-      return err(
-        analysisInputErrorFromIssues(OPERATION, input.error.issues, rawInput, {
-          cause: input.error,
-        }),
-      );
-    if (!isAbsolute(input.data.path))
-      return err(
-        new AnalysisInputError(OPERATION, undefined, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: "Expected an absolute filesystem path on this host.",
-          },
-        ]),
-      );
-    const inspected = await inspect(input.data);
+    const input = parseAnalysisInput(
+      OPERATION,
+      rawInput,
+      inspectBinaryLayoutInputSchema,
+      options?.signal,
+    );
+    if (!input.ok) return input;
+    const inspected = await inspect(input.value);
     if (!inspected.ok) return inspected;
     const diagnostics = binaryLayoutSchema.shape.diagnostics.safeParse(
       inspected.value.diagnostics,
@@ -81,7 +70,7 @@ export class BinaryLayoutService {
       ? { capturedOutput: diagnostics.data }
       : undefined;
     const report = binaryLayoutSchema.safeParse(inspected.value);
-    if (!report.success || report.data.artifact.path !== input.data.path)
+    if (!report.success || report.data.artifact.path !== input.value.path)
       return err(
         new AnalysisOutputError(
           OPERATION,
@@ -95,13 +84,18 @@ export class BinaryLayoutService {
         {
           path: value.artifact.path,
           format: "elf",
-          architecture: "x86_64",
+          architecture: EVIDENCE_ARCHITECTURES[value.architecture.machine],
           sha256: value.artifact.sha256,
         },
         this.provider.identity,
         {
           operation: OPERATION,
-          parameters: input.data,
+          parameters: {
+            path: input.value.path,
+            ...(input.value.pwntools_timeout_ms === undefined
+              ? {}
+              : { pwntools_timeout_ms: input.value.pwntools_timeout_ms }),
+          },
           result: value,
           // The decoded report is the only representation; do not repeat it.
           rawResult: null,

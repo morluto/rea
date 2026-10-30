@@ -159,7 +159,9 @@ it
         const request = requestSchema.parse(
           JSON.parse(await readFile(spawn.arguments.at(-1) ?? "", "utf8")),
         );
-        expect(await readFile(request.snapshot_path)).toEqual(bytes);
+        expect(
+          Buffer.compare(await readFile(request.snapshot_path), bytes),
+        ).toBe(0);
         const payload = structuredClone(value);
         alterRecordedCrashReply(payload, scenario);
         const {
@@ -201,7 +203,7 @@ it
           capturedOutput: { stdout: "recorded warning" },
         },
       });
-    expect(await readFile(path)).toEqual(bytes);
+    expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
     await expect(access(owned)).rejects.toMatchObject({ code: "ENOENT" });
   },
 );
@@ -257,7 +259,9 @@ it
         const request = requestSchema.parse(
           JSON.parse(await readFile(spawn.arguments.at(-1) ?? "", "utf8")),
         );
-        expect(await readFile(request.snapshot_path)).toEqual(bytes);
+        expect(
+          Buffer.compare(await readFile(request.snapshot_path), bytes),
+        ).toBe(0);
         if (snapshotPath === "") {
           snapshotPath = request.snapshot_path;
           owned = spawn.cwd ?? "";
@@ -341,14 +345,14 @@ it
     }
     if (scenario === "cancelled" || scenario === "cancelled-exec")
       expectDebuggerStopped(debuggerProcess);
-    expect(await readFile(path)).toEqual(bytes);
+    expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
     if (
       scenario === "cleanup-failure" ||
       scenario === "decoder-cleanup-failure" ||
       scenario === "cancelled-exec-foreign"
     ) {
       await expect(access(owned)).resolves.toBeUndefined();
-      expect(await readFile(snapshotPath)).toEqual(bytes);
+      expect(Buffer.compare(await readFile(snapshotPath), bytes)).toBe(0);
       const refused = await provider.inspect({
         path,
         include_debugger_context: true,
@@ -473,6 +477,82 @@ const expectOptionalContextFailure = (
     });
 };
 
+it.runIf(host)(
+  "reports a non-default debugger deadline when pwndbg times out",
+  async () => {
+    const { path, value, bytes, root } = await fixture();
+    const venv = join(root, "venv");
+    const plugin = join(root, "gdbinit.py");
+    await mkdir(venv);
+    await writeFile(plugin, "");
+    let stage = 0;
+    const provider = new PwntoolsRecordedCrashProvider(
+      {
+        REA_PWNTOOLS_PYTHON: process.execPath,
+        REA_PWNDBG_GDB: process.execPath,
+        REA_PWNDBG_GDBINIT: plugin,
+        REA_PWNDBG_VENV_PATH: venv,
+      },
+      async (spawn) => {
+        stage += 1;
+        const request = requestSchema.parse(
+          JSON.parse(await readFile(spawn.arguments.at(-1) ?? "", "utf8")),
+        );
+        if (stage === 1) {
+          const {
+            artifact: _artifact,
+            diagnostics: _diagnostics,
+            debugger: _debugger,
+            decoder_diagnostics: _decoderDiagnostics,
+            ...raw
+          } = value;
+          await writeFile(
+            request.reply_path,
+            JSON.stringify({
+              ok: true,
+              profile: PWNTOOLS_PROVIDER_IDENTITY.version,
+              value: raw,
+            }),
+          );
+          return spawnOwnedProviderProcess({
+            ...spawn,
+            command: process.execPath,
+            arguments: ["-e", "process.stdout.write('basic stage diagnostic')"],
+          });
+        }
+        await new Promise<void>((resolve) => {
+          if (spawn.signal?.aborted === true) {
+            resolve();
+            return;
+          }
+          spawn.signal?.addEventListener("abort", () => resolve(), {
+            once: true,
+          });
+        });
+        return spawnOwnedProviderProcess({
+          ...spawn,
+          command: process.execPath,
+          arguments: ["-e", "process.exit(0)"],
+        });
+      },
+    );
+    onTestFinished(() => provider.close());
+    const result = await provider.inspect({
+      path,
+      include_debugger_context: true,
+      pwntools_timeout_ms: 1_500,
+    });
+    expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
+    if (result.ok) throw new Error("expected debugger timeout");
+    const projected = projectAnalysisError(result.error);
+    expect(projected.code).toBe("provider_timeout");
+    expect(projected.message).toContain("of 1500 ms");
+    expect(projected.remediation.action).toContain("above 1500");
+    expect(projected.remediation.action).not.toContain("above 30000");
+  },
+  10_000,
+);
+
 const fixture = async (
   createReport: (path: string) => RecordedCrash = recordedCrashFixture,
 ) => {
@@ -533,7 +613,7 @@ const alterRecordedCrashReply = (
     }));
   if (scenario === "wrong-note-kind") {
     payload.notes = payload.notes.map((note) =>
-      note.index === 0 ? { ...note, type: "NT_AUXV" } : note,
+      note.index === 0 ? { ...note, type: "NT_AUXV", type_id: 6 } : note,
     );
     payload.threads = [];
   }

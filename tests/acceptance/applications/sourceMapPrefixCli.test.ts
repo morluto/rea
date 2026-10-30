@@ -417,3 +417,69 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     expect(await readFile(join(root, "indexed.js.map"), "utf8")).toBe(mapText);
   },
 );
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "preserves source-root declarations and URL path identity through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-source-root-identity-");
+    const cases = [
+      {
+        sourceRoot: "https://cdn.example/src//",
+        resolution: { kind: "suffix", path: "cdn.example/src//a.js" },
+      },
+      {
+        sourceRoot: "webpack://",
+        resolution: {
+          kind: "unresolved",
+          reason:
+            "Source reference uses a non-hierarchical URL without a file pathname.",
+        },
+      },
+      {
+        sourceRoot: "webpack:///",
+        resolution: { kind: "suffix", path: "a.js" },
+      },
+    ] as const;
+    const maps = cases.map(({ sourceRoot }, index) => ({
+      path: `${String(index)}.js.map`,
+      text: JSON.stringify({
+        version: 3,
+        sourceRoot,
+        sources: ["a.js"],
+        names: [],
+        mappings: "AAAA",
+      }),
+    }));
+    await writeFixtureFiles(
+      root,
+      Object.fromEntries(maps.map(({ path, text }) => [path, text])),
+    );
+    const { graph } = await analyzeJavaScriptDirectory(surface, cli, root);
+    for (const [index, { sourceRoot, resolution }] of cases.entries()) {
+      const map = maps[index]!;
+      expect(graph.nodes).toContainEqual(
+        expect.objectContaining({
+          kind: "source-module",
+          identity: expect.objectContaining({
+            strategy: "source-map-original",
+            source_map_sha256: createHash("sha256")
+              .update(map.text)
+              .digest("hex"),
+            original_source: "a.js",
+          }),
+          observations: expect.arrayContaining([
+            expect.objectContaining({
+              source_map_reference: {
+                source_name: "a.js",
+                source_root: sourceRoot,
+                map_path: map.path,
+                resolution,
+              },
+            }),
+          ]),
+        }),
+      );
+      expect(await readFile(join(root, map.path), "utf8")).toBe(map.text);
+    }
+  },
+);

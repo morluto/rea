@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { WindowsNativeAuthority } from "./WindowsNativeLoader.js";
 import {
   quoteWindowsProcessArgument,
+  WindowsNativeControlUnavailableError,
   WindowsOwnedProcess,
 } from "./WindowsOwnedProcess.js";
 
@@ -135,10 +136,13 @@ describe("Windows native release retry", () => {
       );
 
       shouldFailClose = false;
+      const callsBeforeRetry = calls.length;
       const cleanup = child.cleanup();
-      await vi.advanceTimersByTimeAsync(25);
-      expect(await cleanup).toMatchObject({ cleaned: true });
+      expect(await cleanup).toMatchObject({ cleaned: true, signaled: false });
       await closed;
+      expect(
+        calls.slice(callsBeforeRetry).map(({ operation }) => operation),
+      ).toEqual(["process_close"]);
       expect(child.stdout.writableEnded).toBe(true);
       expect(child.stderr.writableEnded).toBe(true);
     } finally {
@@ -177,7 +181,45 @@ describe("Windows Job Object memory limits", () => {
   it("refuses a requested limit before launch when the artifact lacks the control", () => {
     const { native, calls } = authority();
     expect(() => launch(native, LIMIT)).toThrow(
-      "does not support Job Object memory limits",
+      expect.objectContaining({
+        constructor: WindowsNativeControlUnavailableError,
+        control: "job-memory-limit",
+        retryable: false,
+        message: expect.stringContaining(
+          "does not support Job Object memory limits",
+        ),
+      }),
+    );
+    expect(calls).toEqual([]);
+  });
+
+  it("refuses protocol stdin before launch when the artifact lacks the control", () => {
+    const { native, calls } = authority();
+    const earlier = {
+      ...native,
+      inspection: { ...native.inspection, protocolStdin: false },
+    };
+    expect(
+      () =>
+        new WindowsOwnedProcess(
+          "C:\\runtime\\bun.exe",
+          [],
+          undefined,
+          {},
+          false,
+          {
+            authority: earlier,
+            protocolStdin: true,
+          },
+        ),
+    ).toThrow(
+      expect.objectContaining({
+        constructor: WindowsNativeControlUnavailableError,
+        control: "protocol-stdin",
+        message: expect.stringContaining(
+          "does not support owned protocol stdin",
+        ),
+      }),
     );
     expect(calls).toEqual([]);
   });

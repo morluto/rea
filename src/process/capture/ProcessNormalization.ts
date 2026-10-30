@@ -2,7 +2,11 @@ import { isIP } from "node:net";
 
 import type { ProcessScenario } from "../../domain/process/processScenario.js";
 
-import type { ProcessSample } from "../../domain/process/processCapture.js";
+import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
+import type {
+  TerminalFrame,
+  ProcessSample,
+} from "../../domain/process/processCapture.js";
 
 export type BoundedProcessTextNormalization =
   | {
@@ -10,7 +14,10 @@ export type BoundedProcessTextNormalization =
       readonly value: string;
       readonly utf8Bytes: number;
     }
-  | { readonly state: "over_budget" };
+  | {
+      readonly state: "over_budget";
+      readonly reason: "normalization" | "retention";
+    };
 
 type RegexReplacement = (match: string, ...groups: string[]) => string;
 
@@ -168,34 +175,122 @@ export const normalizeProcessElapsedTime = (
   timeBucketMs: number,
 ): number => Math.floor(elapsedMs / timeBucketMs) * timeBucketMs;
 
+type ProcessTextRule =
+  | {
+      readonly kind: "regex";
+      readonly matcher: RegExp;
+      readonly replace: RegexReplacement;
+    }
+  | {
+      readonly kind: "literal";
+      readonly pattern: string;
+      readonly replacement: string;
+    };
+
+type ProcessIdentifierSource =
+  | number
+  | readonly number[]
+  | (() => number | readonly number[]);
+
+/** Encounter order defines one shared identity set for text and sampled rows. */
+const processSampleIdentifiers = (
+  samples: readonly ProcessSample[],
+  rootPid: number,
+): readonly number[] =>
+  [
+    ...new Set([
+      rootPid,
+      ...samples.flatMap((sample) => [
+        sample.pid,
+        sample.parent_pid,
+        sample.process_group_id ?? 0,
+        sample.session_id ?? 0,
+      ]),
+    ]),
+  ].filter((pid) => pid > 0);
+
+/** Reuse an immutable identifier snapshot until the root or retained samples change. */
+export const createProcessIdentifierLookup = (
+  samples: readonly ProcessSample[],
+  rootPid: () => number,
+): (() => readonly number[]) => {
+  let count = -1;
+  let root = -1;
+  let identifiers: readonly number[] = [];
+  return () => {
+    const currentRoot = rootPid();
+    if (currentRoot !== root || count !== samples.length) {
+      root = currentRoot;
+      count = samples.length;
+      identifiers = processSampleIdentifiers(samples, root);
+    }
+    return identifiers;
+  };
+};
+
+/** Compile one ordered policy for both bounded retention and unrestricted text. */
+const createProcessTextRules = (
+  scenario: ProcessScenario,
+  temporaryRoot: string,
+  pid: ProcessIdentifierSource,
+): (() => readonly (ProcessTextRule | undefined)[]) => {
+  const rules: (ProcessTextRule | undefined)[] = [];
+  const pathRule = scenario.normalization.paths
+    ? createPathRule(scenario, temporaryRoot)
+    : undefined;
+  if (pathRule !== undefined) rules.push({ kind: "regex", ...pathRule });
+  if (scenario.normalization.ports)
+    rules.push(
+      {
+        kind: "regex",
+        matcher: PORT_ENDPOINT_MATCHER,
+        replace: portEndpointReplacement,
+      },
+      {
+        kind: "regex",
+        matcher: PORT_FIELD_MATCHER,
+        replace: portFieldReplacement,
+      },
+    );
+  const pidIndex = rules.length;
+  if (scenario.normalization.pids) rules.push(undefined);
+  for (const pattern of scenario.normalization.patterns)
+    rules.push({ kind: "literal", ...pattern });
+  let previousPid: number | readonly number[] | undefined;
+  return () => {
+    if (scenario.normalization.pids) {
+      const currentPid = typeof pid === "function" ? pid() : pid;
+      if (currentPid !== previousPid) {
+        previousPid = currentPid;
+        const matcher = createPidMatcher(
+          typeof currentPid === "number" ? [currentPid] : currentPid,
+        );
+        rules[pidIndex] =
+          matcher === undefined
+            ? undefined
+            : { kind: "regex", matcher, replace: () => "<pid>" };
+      }
+    }
+    return rules;
+  };
+};
+
 /** Prepare capture-local matchers while retaining a live terminal PID lookup. */
 export const createProcessTextNormalizer = (
   scenario: ProcessScenario,
   temporaryRoot: string,
-  pid: number | (() => number),
+  pid: ProcessIdentifierSource,
 ): ((value: string) => string) => {
-  const normalizePaths = scenario.normalization.paths
-    ? createPathNormalizer(scenario, temporaryRoot)
-    : (value: string): string => value;
-  let previousPid: number | undefined;
-  let normalizePids = (value: string): string => value;
+  const rules = createProcessTextRules(scenario, temporaryRoot, pid);
   return (value) => {
-    let normalized = normalizePaths(value);
-    if (scenario.normalization.ports)
-      normalized = normalizePortTokens(normalized);
-    if (scenario.normalization.pids) {
-      const currentPid = typeof pid === "number" ? pid : pid();
-      if (currentPid !== previousPid) {
-        previousPid = currentPid;
-        normalizePids = createPidNormalizer([currentPid]);
-      }
-      normalized = normalizePids(normalized);
+    let normalized = value;
+    for (const rule of rules()) {
+      if (rule === undefined) continue;
+      normalized =
+        rule.kind === "regex"
+          ? normalized.replace(rule.matcher, rule.replace)
+          : normalized.replaceAll(rule.pattern, () => rule.replacement);
     }
-    for (const pattern of scenario.normalization.patterns)
-      normalized = normalized.replaceAll(
-        pattern.pattern,
-        () => pattern.replacement,
-      );
     return normalized;
   };
 };
@@ -204,77 +299,39 @@ export const createProcessTextNormalizer = (
 export const createBoundedProcessTextNormalizer = (
   scenario: ProcessScenario,
   temporaryRoot: string,
-  pid: number | (() => number),
+  pid: ProcessIdentifierSource,
 ): ((value: string, maxBytes: number) => BoundedProcessTextNormalization) => {
-  const pathRule = scenario.normalization.paths
-    ? createPathRule(scenario, temporaryRoot)
-    : undefined;
-  let previousPid: number | undefined;
-  let pidMatcher: RegExp | undefined;
+  const rules = createProcessTextRules(scenario, temporaryRoot, pid);
   return (value, maxBytes) => {
     let normalized = value;
-    const apply = (result: BoundedStageResult): boolean => {
-      if (result.state === "over_budget") return false;
-      if (result.state === "bounded") normalized = result.value;
-      return true;
-    };
-    if (pathRule !== undefined) {
-      if (
-        !apply(
-          boundedRegexReplace(
-            normalized,
-            pathRule.matcher,
-            pathRule.replace,
-            maxBytes,
-          ),
-        )
-      )
-        return { state: "over_budget" };
-    }
-    if (scenario.normalization.ports) {
-      if (!apply(normalizePortsBounded(normalized, maxBytes)))
-        return { state: "over_budget" };
-    }
-    if (scenario.normalization.pids) {
-      const currentPid = typeof pid === "number" ? pid : pid();
-      if (currentPid !== previousPid) {
-        previousPid = currentPid;
-        pidMatcher = createPidMatcher([currentPid]);
-      }
-      if (pidMatcher !== undefined) {
-        if (
-          !apply(
-            boundedRegexReplace(
+    for (const rule of rules()) {
+      if (rule === undefined) continue;
+      const result =
+        rule.kind === "regex"
+          ? boundedRegexReplace(
               normalized,
-              pidMatcher,
-              () => "<pid>",
+              rule.matcher,
+              rule.replace,
               maxBytes,
-            ),
-          )
-        )
-          return { state: "over_budget" };
-      }
+            )
+          : boundedLiteralReplace(
+              normalized,
+              rule.pattern,
+              rule.replacement,
+              maxBytes,
+            );
+      if (result.state === "over_budget")
+        return { state: "over_budget", reason: "normalization" };
+      normalized = result.value;
     }
-    for (const pattern of scenario.normalization.patterns) {
-      if (
-        !apply(
-          boundedLiteralReplace(
-            normalized,
-            pattern.pattern,
-            pattern.replacement,
-            maxBytes,
-          ),
-        )
-      )
-        return { state: "over_budget" };
-    }
-    return boundedIdentity(normalized, maxBytes).state === "bounded"
+    const identity = boundedIdentity(normalized, maxBytes);
+    return identity.state === "bounded"
       ? {
           state: "normalized",
-          value: normalized,
-          utf8Bytes: Buffer.byteLength(normalized),
+          value: identity.value,
+          utf8Bytes: identity.utf8Bytes,
         }
-      : { state: "over_budget" };
+      : { state: "over_budget", reason: "retention" };
   };
 };
 
@@ -286,6 +343,15 @@ export const normalizeProcessText = (
   pid: number,
 ): string => createProcessTextNormalizer(scenario, temporaryRoot, pid)(value);
 
+// `/dir/` and `/dir/.` name the same directory as `/dir`. Keep one spelling so
+// descendants such as `/dir/file` still meet the path-delimiter lookahead.
+const directoryIdentity = (path: string): string => {
+  let identity = path;
+  while (identity.length > 1 && /\/\.?$/u.test(identity))
+    identity = identity.replace(/\/\.?$/u, "") || "/";
+  return identity;
+};
+
 /** Match original paths once, preferring the most specific selected identity. */
 const createPathRule = (
   scenario: ProcessScenario,
@@ -296,11 +362,11 @@ const createPathRule = (
   const aliases = new Map<string, string>();
   const selected: readonly (readonly [string, string])[] = [
     [temporaryRoot, "<temporary-root>"],
-    [scenario.working_directory, "<working-directory>"],
+    [directoryIdentity(scenario.working_directory), "<working-directory>"],
     [scenario.executable, "<executable>"],
     ...scenario.filesystem_observation_paths.map(
       (root, index): readonly [string, string] => [
-        root,
+        directoryIdentity(root),
         `<filesystem-root-${String(index)}>`,
       ],
     ),
@@ -312,35 +378,28 @@ const createPathRule = (
   );
   if (paths.length === 0) return undefined;
   const pattern = paths
-    .map((path) => path.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"))
+    .map((path) =>
+      path === "/"
+        ? "/(?!/)(?=([^\\s\"']?))"
+        : `${path.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}(?=$|/|[\\s"'])`,
+    )
     .join("|");
-  const matcher = new RegExp(pattern, "gu");
+  // A selected path is an identity, not an arbitrary text prefix. Only match
+  // it at a clear text delimiter; keep the parent-directory case (`/root` in
+  // `/root/file`) while leaving punctuation-adjacent names untouched.
+  const matcher = new RegExp(`(^|[\\s"'=:(\\[{<])(${pattern})`, "gu");
   return {
     matcher,
-    replace: (path) => aliases.get(path) ?? path,
+    replace: (match, prefix, path, rootChild) =>
+      path === "/" && prefix === "<"
+        ? match
+        : `${prefix}${aliases.get(path) ?? path}${path === "/" && rootChild ? "/" : ""}`,
   };
 };
 
-const createPathNormalizer = (
-  scenario: ProcessScenario,
-  temporaryRoot: string,
-): ((value: string) => string) => {
-  const rule = createPathRule(scenario, temporaryRoot);
-  if (rule === undefined) return (value) => value;
-  return (value) => value.replace(rule.matcher, rule.replace);
-};
-
 // A port may end a sentence, but a period followed by a letter, digit, or
-// underscore in any script continues a decimal, version, or host name and is
-// not a port boundary.
-// PTY chunks are normalized independently, so a period that ends the chunk
-// stays unnormalized: its continuation may arrive in the next chunk.
-const normalizePortTokens = (value: string): string => {
-  return value
-    .replaceAll(PORT_ENDPOINT_MATCHER, portEndpointReplacement)
-    .replaceAll(PORT_FIELD_MATCHER, portFieldReplacement);
-};
-
+// underscore continues a decimal, version, or host name. A period ending a PTY
+// chunk stays unnormalized because its continuation may arrive in the next one.
 const PORT_ENDPOINT_MATCHER =
   /(\b[a-z][a-z0-9+.-]*:\/\/[^\s/?#"'<>]+|\blocalhost|\b(?:\d{1,3}\.){3}\d{1,3}|\[[\da-f:.%]+\]):(\d{1,5})(?![\p{L}\p{N}_@:]|\.(?:[\p{L}\p{N}_]|$))/giu;
 const PORT_FIELD_MATCHER =
@@ -358,58 +417,23 @@ const portEndpointReplacement: RegexReplacement = (match, endpoint, port) => {
 const portFieldReplacement: RegexReplacement = (match, prefix, port) =>
   Number(port) <= 65_535 ? `${prefix}<port>` : match;
 
-const normalizePortsBounded = (
-  value: string,
-  maxBytes: number,
-): BoundedStageResult => {
-  const endpoint = boundedRegexReplace(
-    value,
-    PORT_ENDPOINT_MATCHER,
-    portEndpointReplacement,
-    maxBytes,
-  );
-  if (endpoint.state === "over_budget") return endpoint;
-  const afterEndpoint = endpoint.state === "bounded" ? endpoint.value : value;
-  return boundedRegexReplace(
-    afterEndpoint,
-    PORT_FIELD_MATCHER,
-    portFieldReplacement,
-    maxBytes,
-  );
-};
-
 /** Project sampled observations under the caller-selected normalization rules. */
 export const normalizeProcessSamples = (
   samples: readonly ProcessSample[],
   scenario: ProcessScenario,
   rootPid: number,
 ): readonly ProcessSample[] => {
-  const identifiers = [
-    rootPid,
-    ...samples.flatMap((sample) => [
-      sample.pid,
-      sample.parent_pid,
-      sample.process_group_id ?? 0,
-      sample.session_id ?? 0,
-    ]),
-  ];
-  const mapping = new Map<number, number>();
-  for (const identifier of identifiers)
-    if (identifier > 0 && !mapping.has(identifier))
-      mapping.set(identifier, mapping.size + 1);
+  const identifiers = processSampleIdentifiers(samples, rootPid);
+  const mapping = new Map(
+    identifiers.map((identifier, index) => [identifier, index + 1]),
+  );
   const normalizeText = createProcessTextNormalizer(
     scenario,
     "<no-temporary-root>",
-    rootPid,
+    identifiers,
   );
-  const normalizeSamplePids = scenario.normalization.pids
-    ? createPidNormalizer(identifiers)
-    : undefined;
-  const normalizeCommand = (command: string): string => {
-    const normalized = normalizeText(command);
-    const withNormalizedPids = normalizeSamplePids?.(normalized) ?? normalized;
-    return withNormalizedPids.trim();
-  };
+  const normalizeCommand = (command: string): string =>
+    normalizeText(command).trim();
   return samples.map((sample) => ({
     at_ms: normalizeProcessElapsedTime(
       sample.at_ms,
@@ -433,14 +457,6 @@ export const normalizeProcessSamples = (
   }));
 };
 
-const createPidNormalizer = (
-  identifiers: readonly number[],
-): ((value: string) => string) => {
-  const matcher = createPidMatcher(identifiers);
-  if (matcher === undefined) return (value) => value;
-  return (value) => value.replace(matcher, "<pid>");
-};
-
 const createPidMatcher = (
   identifiers: readonly number[],
 ): RegExp | undefined => {
@@ -450,4 +466,50 @@ const createPidMatcher = (
     .map(String);
   if (tokens.length === 0) return undefined;
   return new RegExp(`(?<!\\d)(?:${tokens.join("|")})(?!\\d)`, "gu");
+};
+
+/** Reproject retained raw chunks atomically when later samples reveal more identifiers. */
+export const normalizeRetainedTerminalFrames = (
+  frames: TerminalFrame[],
+  normalize: (
+    value: string,
+    maxBytes: number,
+  ) => BoundedProcessTextNormalization,
+  maximumBytes: number,
+  reason: "sampled-identifiers" | "sensitive-input" = "sampled-identifiers",
+): number => {
+  let bytes = 0;
+  const projected: TerminalFrame[] = [];
+  for (const frame of frames) {
+    const raw = frame.raw_data ?? frame.data;
+    const value = normalize(raw, maximumBytes - bytes);
+    if (value.state === "over_budget")
+      throw new AnalysisResourceConstraintError(
+        "capture_process",
+        "capacity",
+        `Retained terminal text exceeded the selected output budget after ${reason} projection.`,
+        {
+          maximum_output_bytes: maximumBytes,
+          frame_index: frame.sequence,
+          boundary:
+            reason === "sampled-identifiers"
+              ? "terminal-pid-normalization"
+              : "terminal-sensitive-input-normalization",
+        },
+        {
+          retryable: false,
+          remediationAction:
+            "Increase limits.output_bytes within its advertised range, or select a narrower scenario. Completed raw PTY chunks remain in partial observations; the corrected normalized representation did not fit.",
+        },
+      );
+    bytes += value.utf8Bytes;
+    projected.push({
+      sequence: frame.sequence,
+      at_ms: frame.at_ms,
+      data: value.value,
+      ...(value.value === raw ? {} : { raw_data: raw }),
+    });
+  }
+  for (const [index, frame] of projected.entries()) frames[index] = frame;
+  return bytes;
 };

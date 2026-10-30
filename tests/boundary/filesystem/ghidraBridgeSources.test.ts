@@ -102,7 +102,7 @@ const admissionCases: readonly AdmissionCase[] = [
   {
     name: "malformed Unicode escape",
     properties: "application.version=12.1.4\nother=\\u00xx\n",
-    error: "Malformed Unicode escape in Java properties file",
+    error: "malformed_unicode_escape",
   },
 ];
 
@@ -210,7 +210,15 @@ it("rejects an omitted auxiliary source at the actual package verification bound
       "--input-type=module",
       "-e",
       `import { verifyPackedBridge } from "./scripts/verify-packed-bridge.mjs";
-       await verifyPackedBridge({ tarball: "unused-because-admission-must-fail", packedFiles: JSON.parse(process.argv[1]) });`,
+       import { createPackageVerifierCommands } from "./scripts/lib/verify-package-commands.mjs";
+       import { withVerifierCleanup } from "./scripts/lib/verifier-cleanup.mjs";
+       import { PrivateRuntimeRoot } from "./dist/process/PrivateRuntimeRoot.js";
+       const root = await PrivateRuntimeRoot.create({ prefix: "rea-bridge-admission-" });
+       let commands;
+       await withVerifierCleanup(async () => {
+         commands = await createPackageVerifierCommands({ workspace: root });
+         await verifyPackedBridge({ tarball: "unused-because-admission-must-fail", packedFiles: JSON.parse(process.argv[1]), commands });
+       }, [() => commands === undefined ? root.close() : commands.close()]);`,
       JSON.stringify(packedFiles),
     ]),
   ).rejects.toMatchObject({

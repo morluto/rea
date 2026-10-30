@@ -184,3 +184,79 @@ it("bounds simulated Linux preparation by the command deadline before launch", a
   await expected;
   expect(enteredLaunch).toBe(false);
 });
+
+it.each([false, true])(
+  "keeps no-deadline preparation pending without a timer (caller signal: %s)",
+  async (withCallerSignal) => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const prepared = createDeferred<void>();
+    const failure = new Error("authored preparation failure");
+    let preparationSignal: AbortSignal | undefined;
+    const pending = runOwnedCommand(
+      {
+        command: "never-launched",
+        arguments: [],
+        runId: "authored-no-deadline-prepare",
+      },
+      { timeoutMs: null, diagnosticBytes: 1024 },
+      {
+        ...(withCallerSignal ? { signal: controller.signal } : {}),
+        launcher: async (input) => {
+          preparationSignal = input.signal;
+          await prepared.promise;
+          throw failure;
+        },
+      },
+    );
+    const expected = expect(pending).rejects.toBe(failure);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(preparationSignal?.aborted).toBe(false);
+    if (withCallerSignal) expect(preparationSignal).toBe(controller.signal);
+    expect(vi.getTimerCount()).toBe(0);
+    prepared.resolve();
+    await expected;
+  },
+);
+
+it("cancels no-deadline preparation with the caller's exact opaque reason", async () => {
+  const controller = new AbortController();
+  const reason = new DarwinProcessOwnershipInspectionError(
+    "opaque caller reason",
+  );
+  const started = createDeferred<void>();
+  const pending = runOwnedCommand(
+    {
+      command: "never-launched",
+      arguments: [],
+      runId: "authored-no-deadline-cancel",
+    },
+    { timeoutMs: null, diagnosticBytes: 1024 },
+    {
+      signal: controller.signal,
+      launcher: async (input) => {
+        expect(input.signal).toBe(controller.signal);
+        started.resolve();
+        await new Promise<void>((_resolve, reject) =>
+          input.signal?.addEventListener(
+            "abort",
+            () => reject(input.signal?.reason),
+            {
+              once: true,
+            },
+          ),
+        );
+        throw new Error("Cancelled preparation must not launch");
+      },
+    },
+  );
+  const expected = expect(pending).rejects.toMatchObject({
+    reason: "cancelled",
+    cancellation: { reason },
+    preparationFailure: undefined,
+    snapshot: null,
+  });
+  await started.promise;
+  controller.abort(reason);
+  await expected;
+});

@@ -65,6 +65,7 @@ mcpTest(
     const provider = new GoBinaryProvider();
     const session = createTestBinarySession(createCacheProvider([]));
     const service = new GoBinaryService({
+      close: () => provider.close(),
       identity: provider.identity,
       inspect: async (input, options) => {
         const result = await provider.inspect(input, options);
@@ -190,7 +191,6 @@ goMcpTest(
         name: "inspect_go_binary",
         arguments: { path },
       });
-      expect(response.isError).toBe(true);
       expect(parseMcpToolError(response)).toMatchObject({
         error: {
           code: fixture.code,
@@ -236,14 +236,21 @@ goMcpTest(
     expect(
       ajv.validate(inputSchema, { path: "/artifacts/program", execute: true }),
     ).toBe(false);
-    expect(ajv.validate(inputSchema, { path: "/artifacts/\0program" })).toBe(
-      false,
-    );
     expect(advertised.annotations).toMatchObject({
       readOnlyHint: false,
       destructiveHint: false,
       idempotentHint: true,
       openWorldHint: false,
+    });
+    const nulPath = await client.callTool({
+      name: "inspect_go_binary",
+      arguments: { path: "/artifacts/\0program" },
+    });
+    expect(parseMcpToolError(nulPath)).toMatchObject({
+      error: {
+        code: "invalid_request",
+        details: { issues: [{ path: ["path"], reason: "invalid_format" }] },
+      },
     });
     const root = await createTestTempDirectory("rea-go-mcp-");
     const path = join(root, "application");
@@ -278,7 +285,6 @@ goMcpTest(
       name: "inspect_go_binary",
       arguments: { path: "relative.bin" },
     });
-    expect(invalid.isError).toBe(true);
     expect(parseMcpToolError(invalid)).toMatchObject({
       error: {
         code: "invalid_request",

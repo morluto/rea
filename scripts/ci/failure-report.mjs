@@ -11,6 +11,7 @@ import {
   readStaticCheckArtifact,
   safeSha,
   selectStaticCheckArtifact,
+  STATIC_EVIDENCE_ARTIFACTS,
   validRepoPath,
 } from "./artifacts.mjs";
 import { createGhApiRequest } from "./github-api.mjs";
@@ -24,8 +25,6 @@ const MAX_MAIN_CANDIDATES = 5;
 const MAX_MAIN_RUN_LOOKUPS = 100;
 const MAX_PATHS_PER_COMPARISON = 50;
 const MAX_API_REQUESTS = 250;
-
-export { classifyFailure } from "./artifacts.mjs";
 
 /** Uses only failed CI candidates present in the supplied bounded timing manifest. */
 export async function reportCiFailures({
@@ -366,12 +365,18 @@ export function createGitHubApi({
       return page.jobs;
     },
     async getStaticEvidence(repository, run, job) {
-      if (job.name !== "Static checks") return null;
+      const artifactName = STATIC_EVIDENCE_ARTIFACTS[job.name];
+      if (!artifactName) return null;
       if (run.run_attempt !== 1) return null;
       const page = await request(
         `repos/${repository}/actions/runs/${positiveId(run.id)}/artifacts?per_page=100&page=1`,
       );
-      const artifact = selectStaticCheckArtifact(page, run, run.run_attempt);
+      const artifact = selectStaticCheckArtifact(
+        page,
+        run,
+        run.run_attempt,
+        artifactName,
+      );
       if (!artifact) return null;
       return await readStaticCheckArtifact({
         repository,

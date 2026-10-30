@@ -6,10 +6,57 @@ import { expect, it } from "vitest";
 import type { DeviceManager } from "frida";
 
 import { createCli } from "../../../src/cli.js";
-import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { FRIDA_TOOL_CONTRACTS } from "../../../src/contracts/fridaToolContracts.js";
 import type { FridaInstrumentationPort } from "../../../src/application/frida/FridaInstrumentationPort.js";
 import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
 import { FridaInstrumentationManager } from "../../../src/frida/FridaInstrumentationManager.js";
+
+it.each([
+  {
+    option: "--device-id",
+    value: "missing-device",
+    error: "Device not found",
+    field: "device_id",
+    code: "provider_timeout",
+  },
+  {
+    option: "--remote-address",
+    value: "127.0.0.1:27042",
+    error: "Unable to connect to remote frida-server",
+    field: "remote_address",
+    code: "capability_unavailable",
+  },
+])(
+  "retains selected Frida endpoint in CLI discovery failures: $field",
+  async ({ option, value, error, field, code }) => {
+    const bindings = {
+      getDeviceById: async () => {
+        throw new Error(error);
+      },
+      addRemoteDevice: async () => {
+        throw new Error(error);
+      },
+    } as unknown as DeviceManager;
+    const provider = new FridaInstrumentationManager({
+      deviceManager: bindings,
+    });
+    let stdout = "";
+    await createCli({}, undefined, provider).serve(
+      ["list-frida-processes", option, value, "--json"],
+      {
+        env: {},
+        exit: () => {},
+        stdout: (text) => {
+          stdout += text;
+        },
+      },
+    );
+    expect(JSON.parse(stdout)).toMatchObject({
+      code,
+      details: { diagnostics: { [field]: value } },
+    });
+  },
+);
 
 it.each([
   { devices: [], cleanupError: null },
@@ -47,9 +94,9 @@ it.each([
   );
   expect(exitCode).toBe(0);
   expect(closed).toBe(true);
-  const output = toolContract("list_frida_devices").outputSchema.parse(
-    JSON.parse(stdout),
-  );
+  const output = FRIDA_TOOL_CONTRACTS.find(
+    (contract) => contract.name === "list_frida_devices",
+  )!.outputSchema.parse(JSON.parse(stdout));
   expect(output).toEqual({
     devices: observation.devices.map(({ deviceId, name, type }) => ({
       device_id: deviceId,
@@ -102,13 +149,13 @@ it.each([false, true])(
     if (cleanupFails)
       expect(JSON.parse(stdout)).toMatchObject({
         code: "cleanup_incomplete",
-        details: { diagnostics: { partial_observation: expected } },
+        details: { partial_observation: expected },
       });
     else
       expect(
-        toolContract("list_frida_processes").outputSchema.parse(
-          JSON.parse(stdout),
-        ),
+        FRIDA_TOOL_CONTRACTS.find(
+          (contract) => contract.name === "list_frida_processes",
+        )!.outputSchema.parse(JSON.parse(stdout)),
       ).toEqual(expected);
   },
 );
@@ -213,6 +260,11 @@ it("maps one-shot Frida CLI target, script, duration, and remote options", async
   );
   expect(exitCode).toBe(0);
   const result: unknown = JSON.parse(stdout);
+  expect(() =>
+    FRIDA_TOOL_CONTRACTS.find(
+      (contract) => contract.name === "instrument_with_frida",
+    )!.outputSchema.parse(result),
+  ).not.toThrow();
   expect(JSON.stringify(result)).not.toContain("synthetic-secret-token");
   expect(calls).toEqual([
     {
@@ -359,14 +411,12 @@ it("keeps Frida script-file identity in original bytes when UTF-8 decoding repla
       if (name === "ff.js" || name === "fe.js") {
         expect(rawDigest).not.toBe(loadedSourceDigest);
         expect(output).toMatchObject({
-          evidence: {
-            normalized_result: { source_sha256: rawDigest },
-            raw_result: {
-              source_representation: {
-                encoding: "utf8",
-                decoding: "replacement",
-                loaded_source_sha256: loadedSourceDigest,
-              },
+          normalized_result: { source_sha256: rawDigest },
+          raw_result: {
+            source_representation: {
+              encoding: "utf8",
+              decoding: "replacement",
+              loaded_source_sha256: loadedSourceDigest,
             },
           },
         });
@@ -375,9 +425,7 @@ it("keeps Frida script-file identity in original bytes when UTF-8 decoding repla
         );
       } else {
         expect(output).toMatchObject({
-          evidence: {
-            normalized_result: { source_sha256: rawDigest },
-          },
+          normalized_result: { source_sha256: rawDigest },
         });
         expect(outputText).not.toContain("source_representation");
       }
@@ -388,7 +436,7 @@ it("keeps Frida script-file identity in original bytes when UTF-8 decoding repla
   }
 });
 
-it("awaits failed startup cleanup and retains the primary error if cleanup still fails", async () => {
+it("awaits failed startup cleanup without clearing an unbound cleanup marker", async () => {
   for (const cleanupFails of [false, true]) {
     const calls: string[] = [];
     const provider: FridaInstrumentationPort =
@@ -435,7 +483,7 @@ it("awaits failed startup cleanup and retains the primary error if cleanup still
     expect(calls).toEqual(["start", "cleanup"]);
     const output: unknown = JSON.parse(stdout);
     expect(output).toMatchObject({
-      code: cleanupFails ? "cleanup_incomplete" : "capability_unavailable",
+      code: "cleanup_incomplete",
     });
     expect(stdout).toContain("attach failed after spawn");
     if (cleanupFails) expect(stdout).toContain("primary_error");
@@ -469,17 +517,15 @@ it("preserves observed devices when CLI provider cleanup fails", async () => {
   expect(output).toMatchObject({
     code: "cleanup_incomplete",
     details: {
-      diagnostics: {
-        partial_observation: {
-          devices: [
-            {
-              device_id: "remote-device",
-              name: "selected endpoint",
-              type: "remote",
-            },
-          ],
-          cleanup_error: null,
-        },
+      partial_observation: {
+        devices: [
+          {
+            device_id: "remote-device",
+            name: "selected endpoint",
+            type: "remote",
+          },
+        ],
+        cleanup_error: null,
       },
     },
   });
@@ -493,6 +539,11 @@ it.each([
   ],
   [
     ["attach", "71"],
+    "script",
+    "Provide exactly one of --script or --script-file.",
+  ],
+  [
+    ["attach", "71", "--script", "send(1)", "--script-file", "source.js"],
     "script",
     "Provide exactly one of --script or --script-file.",
   ],
@@ -529,3 +580,55 @@ it.each([
     expect(starts).toBe(0);
   },
 );
+
+it("advances each Frida script source to the attach target error without attaching or spawning", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "rea-frida-script-source-"));
+  const scriptPath = join(directory, "source.js");
+  try {
+    await writeFile(scriptPath, "send(1);\n");
+    for (const scriptArguments of [
+      ["--script", "send(1)"],
+      ["--script-file", scriptPath],
+    ]) {
+      let starts = 0;
+      const provider = {
+        async startSession() {
+          starts += 1;
+          throw new Error("Frida must not attach or spawn for an invalid PID");
+        },
+      } as unknown as FridaInstrumentationPort;
+      let stdout = "";
+      await createCli({}, undefined, provider).serve(
+        [
+          "instrument-with-frida",
+          "attach",
+          "abc",
+          ...scriptArguments,
+          "--json",
+        ],
+        {
+          env: {},
+          exit: () => undefined,
+          stdout: (text) => {
+            stdout += text;
+          },
+        },
+      );
+      expect(JSON.parse(stdout)).toMatchObject({
+        code: "invalid_request",
+        details: {
+          issues: [
+            {
+              path: ["target"],
+              reason: "invalid_value",
+              message: "attach mode needs a positive integer process ID.",
+            },
+          ],
+        },
+      });
+      expect(starts).toBe(0);
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});

@@ -1,7 +1,7 @@
 import { expect, it, vi } from "vitest";
 import type { IPty } from "@lydell/node-pty";
 
-import { parseProcessScenario } from "../../domain/process/processScenario.js";
+import { processScenarioSchema } from "../../domain/process/processScenario.js";
 import type { ProcessCaptureFinalization } from "../../domain/process/processCapture.js";
 import { awaitTerminalExit } from "./ProcessCaptureLifecycle.js";
 import type { ProcessTimer } from "./ProcessTimer.js";
@@ -75,7 +75,7 @@ const start = (
 ) =>
   awaitTerminalExit({
     terminal: fake.terminal,
-    scenario: parseProcessScenario({
+    scenario: processScenarioSchema.parse({
       executable: "unused",
       idle_timeout_ms: 10_000,
       ...scenario,

@@ -1,4 +1,5 @@
-import { readFile } from "node:fs/promises";
+import { ProcessAdmissionError } from "./ProcessAdmissionError.js";
+import { readFile, stat as statPath } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
 import { setTimeout as delay } from "node:timers/promises";
 import {
@@ -9,7 +10,11 @@ import {
   type ProcessExitSettlementBudget,
 } from "./ProcessLifecycle.js";
 import { parseLinuxProcessStat } from "./LinuxProcessStat.js";
-import { parseLinuxProcessEffectiveUid } from "./LinuxProcessStatus.js";
+import {
+  linuxEnvironmentRestriction,
+  parseLinuxProcessIds,
+  type LinuxEnvironmentRestriction,
+} from "./LinuxProcessStatus.js";
 import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
 
 import { launcherIdentityFailure } from "./ProcessOwnershipIdentity.js";
@@ -19,7 +24,10 @@ import {
   createDarwinProcessRunTokenReader,
   type DarwinProcessReaderCompiler,
 } from "./DarwinProcessRunTokenReader.js";
-import { readProcessRunTokens } from "./ProcessRunTokenObservations.js";
+import {
+  ProcessRunTokenReadError,
+  readProcessRunTokens,
+} from "./ProcessRunTokenObservations.js";
 import type {
   OwnedProcessGroup,
   ProcessGroupObservation,
@@ -239,6 +247,27 @@ export const observeOwnedProcessLineage = async (
     return unavailableLineage(ownership, identityFailure);
   const descendants = descendantsOf([launcher.pid], processes);
   const verifiedDescendants: ProcessTableEntry[] = [];
+  // Seed every initial row. A later refresh reads a row again when its parent,
+  // group, or launcher-tree membership changes. A row whose token was read is
+  // read again on every later refresh: parent and group are not a generation.
+  const initialTree = new Set(descendants.map(({ pid }) => pid));
+  const initialRelations = new Map<number, ExaminedLineageRefresh>();
+  const examinedRefresh = new Map<number, ExaminedLineageRefresh>();
+  for (const process of processes) {
+    if (process.pid === launcher.pid) continue;
+    const relation: ExaminedLineageRefresh = {
+      parentPid: process.parentPid,
+      processGroupId: process.processGroupId,
+      inTree: initialTree.has(process.pid),
+      tokenChecked: false,
+      descendant: undefined,
+    };
+    initialRelations.set(process.pid, relation);
+    examinedRefresh.set(process.pid, relation);
+  }
+  let refreshDescendants: readonly ProcessTableEntry[] = [];
+  let suppressedRefreshPids = new Set<number>();
+  let latestRefreshPids: ReadonlySet<number> | undefined;
   for await (const { process: member, observation } of readProcessRunTokens(
     host,
     [launcher, ...descendants],
@@ -247,22 +276,46 @@ export const observeOwnedProcessLineage = async (
       if (observation.runId !== ownership.runId)
         return unavailableLineage(
           ownership,
-          "process lineage contains an unowned or PID-reused process",
+          lineageTokenMismatchReason(member.pid, observation.runId),
         );
       if (member.pid !== launcher.pid) verifiedDescendants.push(member);
+      const seeded = examinedRefresh.get(member.pid);
+      if (seeded !== undefined)
+        examinedRefresh.set(member.pid, { ...seeded, tokenChecked: true });
     } else {
-      if (await processIsGone(host, member.pid)) {
-        if (member.pid === launcher.pid)
-          return unavailableLineage(
-            ownership,
-            "owned launcher exited during lineage validation",
-          );
-        continue;
+      let refreshed: readonly ProcessTableEntry[];
+      try {
+        refreshed = liveProcesses(await host.listProcesses());
+      } catch (cause: unknown) {
+        void cause;
+        return unavailableLineage(
+          ownership,
+          `process ownership could not be revalidated for PID ${member.pid}: ${observation.reason}`,
+        );
       }
-      return unavailableLineage(
+      if (refreshed.some((process) => process.pid === member.pid))
+        return unavailableLineage(
+          ownership,
+          `process ownership could not be revalidated for PID ${member.pid}: ${observation.reason}`,
+        );
+      if (member.pid === launcher.pid)
+        return unavailableLineage(
+          ownership,
+          "owned launcher exited during lineage validation",
+        );
+      const classified = await classifyIdentitylessLineageRefresh(
         ownership,
-        `process ownership could not be revalidated for PID ${member.pid}: ${observation.reason}`,
+        launcher.pid,
+        refreshed,
+        host,
+        examinedRefresh,
+        initialRelations,
       );
+      if (classified.status === "unavailable")
+        return unavailableLineage(ownership, classified.reason);
+      refreshDescendants = classified.descendants;
+      suppressedRefreshPids = new Set(classified.suppressedPids);
+      latestRefreshPids = new Set(refreshed.map(({ pid }) => pid));
     }
   }
   return {
@@ -273,7 +326,15 @@ export const observeOwnedProcessLineage = async (
       launcherPid: launcher.pid,
       launcherParentPid: launcher.parentPid,
       processGroupId: launcher.processGroupId,
-      descendants: verifiedDescendants
+      descendants: [
+        ...verifiedDescendants.filter(
+          ({ pid }) =>
+            (latestRefreshPids === undefined || latestRefreshPids.has(pid)) &&
+            !suppressedRefreshPids.has(pid) &&
+            !refreshDescendants.some((descendant) => descendant.pid === pid),
+        ),
+        ...refreshDescendants,
+      ]
         .sort((left, right) => left.pid - right.pid)
         .map(({ pid, parentPid, processGroupId }) => ({
           pid,
@@ -291,39 +352,45 @@ const observeNativeOwnedProcessLineage = async (
 ): Promise<ProcessLineageObservation> => {
   const initialIdentities = await readNativeProcessIdentityMap(processes, host);
   const launcher = processes.find(({ pid }) => pid === ownership.leaderPid);
-  if (launcher === undefined)
-    return unavailableLineage(ownership, "owned launcher is not live");
-  const launcherIdentity = initialIdentities.get(launcher.pid);
-  if (launcherIdentity?.state === "absent")
-    return unavailableLineage(ownership, "owned launcher is not live");
-  if (launcherIdentity?.state !== "readable")
-    return unavailableLineage(
-      ownership,
-      `owned launcher identity could not be read: ${launcherIdentity?.reason ?? "identity observation was omitted"}`,
-    );
-  if (processIdentityHasExited(launcherIdentity))
-    return unavailableLineage(ownership, "owned launcher is not live");
-  const nativeLauncher = processWithNativeRelation(launcher, launcherIdentity);
-  if (nativeLauncher === undefined)
-    return unavailableLineage(
-      ownership,
-      "owned launcher native parent/group relation was unavailable",
-    );
-  const identityFailure = launcherIdentityFailure(nativeLauncher, ownership);
-  if (identityFailure !== null)
-    return unavailableLineage(ownership, identityFailure);
-
-  const nativeProcesses = processes.flatMap((process) => {
+  const launcherIdentity =
+    launcher === undefined ? undefined : initialIdentities.get(launcher.pid);
+  const nativeLauncher =
+    launcher !== undefined &&
+    launcherIdentity?.state === "readable" &&
+    !processIdentityHasExited(launcherIdentity)
+      ? processWithNativeRelation(launcher, launcherIdentity)
+      : undefined;
+  const identityFailure =
+    nativeLauncher === undefined
+      ? null
+      : launcherIdentityFailure(nativeLauncher, ownership);
+  // Missing native facts leave table ancestry as candidate scope only. Keep
+  // unresolved and exited intermediates as discovery bridges to descendants;
+  // only validated live native facts may authorize the published lineage.
+  const candidateProcesses = processes.map((process) => {
     const identity = initialIdentities.get(process.pid);
-    if (processIdentityHasExited(identity)) return [];
     const nativeProcess =
       identity?.state === "readable"
         ? processWithNativeRelation(process, identity)
         : undefined;
-    return nativeProcess === undefined ? [] : [nativeProcess];
+    return nativeProcess ?? process;
   });
-  const descendants = descendantsOf([ownership.leaderPid], nativeProcesses);
-  const candidates = [nativeLauncher, ...descendants];
+  const descendants = descendantsOf([ownership.leaderPid], candidateProcesses);
+  const lineageRows = [
+    ...(launcher === undefined ? [] : [launcher]),
+    ...descendants,
+  ];
+  // A retained candidate may have moved outside the current launcher lineage.
+  const nativeExitedPids = new Set(
+    processes
+      .filter(({ pid }) => processIdentityHasExited(initialIdentities.get(pid)))
+      .map(({ pid }) => pid),
+  );
+  // A native terminal fact settles the old candidate. Keep its ancestry link,
+  // but do not enroll a replacement that appears during later token reads.
+  const candidates = lineageRows.filter(
+    ({ pid }) => !nativeExitedPids.has(pid),
+  );
   const facts = await readProcessOwnershipFacts(candidates, host, undefined, {
     identityBefore: initialIdentities,
   });
@@ -339,7 +406,38 @@ const observeNativeOwnedProcessLineage = async (
       ownership.processGroupId,
       ...(ownership.sampledProcessGroupIds ?? []),
     ]),
+    // A readable mismatching launcher disproves the captured anchors. Keep
+    // independent token evidence, existing candidates, and unknown/exit bridges.
+    // Later same-generation movement cannot erase valid initial scope.
+    allowCapturedScope: identityFailure === null,
+    nativeExitedPids,
+    unverifiedLineageRelations: new Map(
+      lineageRows.map(({ pid, parentPid, processGroupId }) => [
+        pid,
+        { parentPid, processGroupId },
+      ]),
+    ),
   });
+  // A launcher failure prevents publication, but must not discard partial
+  // ownership evidence already observed for this run's descendants.
+  if (launcher === undefined)
+    return unavailableLineage(ownership, "owned launcher is not live");
+  if (launcherIdentity?.state === "absent")
+    return unavailableLineage(ownership, "owned launcher is not live");
+  if (launcherIdentity?.state !== "readable")
+    return unavailableLineage(
+      ownership,
+      `owned launcher identity could not be read: ${launcherIdentity?.reason ?? "identity observation was omitted"}`,
+    );
+  if (processIdentityHasExited(launcherIdentity))
+    return unavailableLineage(ownership, "owned launcher is not live");
+  if (nativeLauncher === undefined)
+    return unavailableLineage(
+      ownership,
+      "owned launcher native parent/group relation was unavailable",
+    );
+  if (identityFailure !== null)
+    return unavailableLineage(ownership, identityFailure);
   const factsByPid = new Map(facts.map((fact) => [fact.process.pid, fact]));
   const verifiedDescendants: ProcessTableEntry[] = [];
   let currentLauncher = nativeLauncher;
@@ -379,7 +477,7 @@ const observeNativeOwnedProcessLineage = async (
     if (fact.token.runId !== ownership.runId)
       return unavailableLineage(
         ownership,
-        "process lineage contains an unowned or PID-reused process",
+        lineageTokenMismatchReason(member.pid, fact.token.runId),
       );
     const nativeMember = processWithNativeRelation(
       fact.process,
@@ -431,6 +529,145 @@ const observeNativeOwnedProcessLineage = async (
   };
 };
 
+/** Relation already classified for one PID seen by an identityless refresh. */
+interface ExaminedLineageRefresh {
+  readonly parentPid: number;
+  readonly processGroupId: number;
+  /** True when this row was a launcher descendant at this classification. */
+  readonly inTree: boolean;
+  /** True after this refresh has read the row's run token. */
+  readonly tokenChecked: boolean;
+  readonly descendant: ProcessTableEntry | undefined;
+}
+
+/**
+ * A liveness refresh is a process table, not a boolean. New rows still under
+ * the launcher join the published lineage after a matching token. A matching
+ * token outside that tree, or an unreadable live row, blocks a verified result.
+ * A readable foreign token outside the tree is not part of this run. A row is
+ * read again when its parent, process group, or launcher-tree membership
+ * changes. A row whose token was already read is read again on every later
+ * refresh, because those fields do not identify a process generation.
+ * Unchanged rows from the initial snapshot are not read again. The launcher
+ * is read on every refresh; a missing, unowned, or relation-mismatched
+ * launcher PID is unavailable.
+ */
+const classifyIdentitylessLineageRefresh = async (
+  ownership: OwnedProcessGroup,
+  launcherPid: number,
+  refreshed: readonly ProcessTableEntry[],
+  host: ProcessOwnershipHost,
+  examined: Map<number, ExaminedLineageRefresh>,
+  initialRelations: ReadonlyMap<number, ExaminedLineageRefresh>,
+): Promise<
+  | {
+      readonly status: "classified";
+      readonly descendants: readonly ProcessTableEntry[];
+      readonly suppressedPids: readonly number[];
+    }
+  | { readonly status: "unavailable"; readonly reason: string }
+> => {
+  const refreshedLauncher = refreshed.find(
+    (process) => process.pid === launcherPid,
+  );
+  if (refreshedLauncher === undefined)
+    return {
+      status: "unavailable",
+      reason: "owned launcher exited during lineage validation",
+    };
+  for await (const { observation } of readProcessRunTokens(host, [
+    refreshedLauncher,
+  ])) {
+    if (observation.state !== "readable")
+      return {
+        status: "unavailable",
+        reason: `process ownership could not be revalidated for PID ${String(launcherPid)}: ${observation.reason}`,
+      };
+    if (observation.runId !== ownership.runId)
+      return {
+        status: "unavailable",
+        reason: lineageTokenMismatchReason(launcherPid, observation.runId),
+      };
+  }
+  const identityFailure = launcherIdentityFailure(refreshedLauncher, ownership);
+  if (identityFailure !== null)
+    return { status: "unavailable", reason: identityFailure };
+  const inTree = new Set(
+    descendantsOf([launcherPid], refreshed).map(({ pid }) => pid),
+  );
+  const due = refreshed.filter((process) => {
+    if (process.pid === launcherPid) return false;
+    const previous = examined.get(process.pid);
+    return (
+      previous === undefined ||
+      previous.tokenChecked ||
+      previous.parentPid !== process.parentPid ||
+      previous.processGroupId !== process.processGroupId ||
+      previous.inTree !== inTree.has(process.pid)
+    );
+  });
+  if (due.length > 0) {
+    const included = new Map<number, ProcessTableEntry>();
+    const ownedOutside: number[] = [];
+    for await (const { process, observation } of readProcessRunTokens(
+      host,
+      due,
+    )) {
+      if (observation.state !== "readable")
+        return {
+          status: "unavailable",
+          reason: `process ownership could not be revalidated for PID ${String(process.pid)}: ${observation.reason}`,
+        };
+      if (observation.runId !== ownership.runId) {
+        if (inTree.has(process.pid))
+          return {
+            status: "unavailable",
+            reason: lineageTokenMismatchReason(process.pid, observation.runId),
+          };
+        continue;
+      }
+      if (inTree.has(process.pid)) included.set(process.pid, process);
+      else ownedOutside.push(process.pid);
+    }
+    if (ownedOutside.length > 0)
+      return {
+        status: "unavailable",
+        reason: `process lineage refresh contained owned PID(s) outside the observed descendants: ${ownedOutside
+          .sort((left, right) => left - right)
+          .join(", ")}`,
+      };
+    for (const process of due)
+      examined.set(process.pid, {
+        parentPid: process.parentPid,
+        processGroupId: process.processGroupId,
+        inTree: inTree.has(process.pid),
+        tokenChecked: true,
+        descendant: included.get(process.pid),
+      });
+  }
+  const livePids = new Set(refreshed.map(({ pid }) => pid));
+  for (const pid of examined.keys())
+    if (!livePids.has(pid)) examined.delete(pid);
+  const suppressedPids = [...examined.keys()].filter((pid) => {
+    const seed = initialRelations.get(pid);
+    const entry = examined.get(pid);
+    return (
+      seed !== undefined &&
+      entry !== undefined &&
+      (seed.parentPid !== entry.parentPid ||
+        seed.processGroupId !== entry.processGroupId ||
+        seed.inTree !== entry.inTree)
+    );
+  });
+  return {
+    status: "classified",
+    descendants: [...examined.values()].flatMap((entry) =>
+      entry.descendant === undefined ? [] : [entry.descendant],
+    ),
+    suppressedPids,
+  };
+};
+
 const processWithNativeRelation = (
   process: ProcessTableEntry,
   identity: ProcessIdentityObservation,
@@ -442,6 +679,14 @@ const processWithNativeRelation = (
         processGroupId: identity.relation.processGroupId,
       }
     : undefined;
+
+const lineageTokenMismatchReason = (
+  pid: number,
+  observedRunId: string | undefined,
+): string =>
+  observedRunId === undefined
+    ? `REA_PROCESS_RUN_ID was absent from the readable environment for PID ${String(pid)}; process lineage ownership remains unverified`
+    : "process lineage contains an unowned or PID-reused process";
 
 const unavailableLineage = (
   ownership: OwnedProcessGroup,
@@ -458,16 +703,15 @@ const unavailableLineage = (
 /** Parse the NUL-delimited Linux process environment without nameless keys. */
 export const parseProcessEnvironment = (
   value: string,
-): Readonly<Record<string, string>> =>
-  Object.fromEntries(
-    value
-      .split("\0")
-      .filter((entry) => entry.indexOf("=") > 0)
-      .map((entry) => {
-        const separator = entry.indexOf("=");
-        return [entry.slice(0, separator), entry.slice(separator + 1)];
-      }),
-  );
+): Readonly<Record<string, string>> => {
+  const environment: Record<string, string> = Object.create(null);
+  for (const entry of value.split("\0")) {
+    const separator = entry.indexOf("=");
+    if (separator > 0)
+      environment[entry.slice(0, separator)] = entry.slice(separator + 1);
+  }
+  return environment;
+};
 
 const identityFact = (
   observations: ReadonlyMap<number, ProcessIdentityObservation> | undefined,
@@ -487,7 +731,7 @@ const readIdentityFacts = async (
   host: ProcessOwnershipHost,
   phase: "before" | "after",
   signal?: AbortSignal,
-  effectiveUidPids?: ReadonlySet<number>,
+  credentialPids?: ReadonlySet<number>,
 ): Promise<ReadonlyMap<number, ProcessIdentityObservation>> => {
   signal?.throwIfAborted();
   if (host.processIdentities === undefined)
@@ -504,7 +748,7 @@ const readIdentityFacts = async (
     const observations = await host.processIdentities(
       processes,
       signal,
-      effectiveUidPids,
+      credentialPids,
     );
     signal?.throwIfAborted();
     return new Map<number, ProcessIdentityObservation>(
@@ -541,6 +785,8 @@ export const settleExitingProcessIdentities = async (
   initial: ReadonlyMap<number, ProcessIdentityObservation>,
   signal?: AbortSignal,
   budget: ProcessExitSettlementBudget = { deadline: undefined },
+  /** Keep the initial read's selective Linux credential facts on refresh. */
+  credentialPids?: ReadonlySet<number>,
 ): Promise<ReadonlyMap<number, ProcessIdentityObservation>> => {
   signal?.throwIfAborted();
   let pending = processes.filter(({ pid }) =>
@@ -563,7 +809,13 @@ export const settleExitingProcessIdentities = async (
       signal?.throwIfAborted();
       throw cause;
     }
-    const refreshed = await readNativeProcessIdentityMap(pending, host, signal);
+    const refreshed = await readIdentityFacts(
+      pending,
+      host,
+      "before",
+      signal,
+      credentialPids,
+    );
     for (const { pid } of pending)
       identities.set(pid, identityFact(refreshed, pid, "after"));
     pending = pending.filter(({ pid }) => {
@@ -579,6 +831,77 @@ export const settleExitingProcessIdentities = async (
   }
   signal?.throwIfAborted();
   return identities;
+};
+
+/** Corroborate Linux token-open exit races without granting signal authority. */
+export const settleVanishedTokenFacts = async (
+  facts: readonly ProcessOwnershipFact[],
+  host: ProcessOwnershipHost,
+  budget: ProcessExitSettlementBudget,
+  signal?: AbortSignal,
+): Promise<readonly ProcessOwnershipFact[]> => {
+  if ((host.platform ?? process.platform) !== "linux") return facts;
+  let pending = facts
+    .filter(
+      ({ token, identityAfter }) =>
+        token.state === "unavailable" &&
+        (token.code === "ENOENT" || token.code === "ESRCH") &&
+        !processIdentityHasExited(identityAfter),
+    )
+    .map(({ process }) => process);
+  if (pending.length === 0) return facts;
+  let current = facts;
+  const deadline = (budget.deadline ??=
+    performance.now() + PROCESS_CLEANUP_VERIFICATION_GRACE_MS);
+  for (let attempt = 0; attempt < 4 && pending.length > 0; attempt += 1) {
+    signal?.throwIfAborted();
+    if (attempt > 0) {
+      const remaining = deadline - performance.now();
+      if (remaining <= 0) break;
+      await delay(
+        Math.min(40, remaining),
+        undefined,
+        signal === undefined ? undefined : { signal },
+      );
+    }
+    const confirmed = await readNativeProcessIdentityMap(pending, host, signal);
+    const pendingPids = new Set(pending.map(({ pid }) => pid));
+    const nextPending = new Set<number>();
+    current = current.map((fact) => {
+      if (!pendingPids.has(fact.process.pid)) return fact;
+      const after = confirmed.get(fact.process.pid);
+      if (after?.state === "absent")
+        return {
+          ...fact,
+          state: "absent" as const,
+          identityAfter: after,
+          beforeExitSettlement: fact.beforeExitSettlement ?? fact,
+        };
+      const previous = fact.identityAfter;
+      if (previous.state !== "readable" || after?.state !== "readable")
+        return fact;
+      if (previous.identity !== after.identity)
+        return {
+          ...fact,
+          state: "unavailable" as const,
+          identityAfter: {
+            state: "unavailable" as const,
+            reason: "process_identity_changed_during_final_token_exit_check",
+          },
+        };
+      if (processIdentityHasExited(after))
+        return {
+          ...fact,
+          identityAfter: after,
+          beforeExitSettlement: fact.beforeExitSettlement ?? fact,
+        };
+      nextPending.add(fact.process.pid);
+      return fact;
+    });
+    pending = pending.filter(({ pid }) => nextPending.has(pid));
+  }
+  signal?.throwIfAborted();
+  return current;
 };
 
 /**
@@ -626,7 +949,7 @@ export const readProcessOwnershipFacts = async (
   }
   signal?.throwIfAborted();
 
-  const effectiveUidPids = new Set(
+  const credentialPids = new Set(
     processes
       .filter(({ pid }) => tokens.get(pid)?.state !== "readable")
       .map(({ pid }) => pid),
@@ -636,14 +959,61 @@ export const readProcessOwnershipFacts = async (
     host,
     "after",
     signal,
-    effectiveUidPids,
+    credentialPids,
   );
+  // An ENOENT/ESRCH environment failure can race with process exit while
+  // /proc/PID/stat is still readable. Do not treat the token error itself as
+  // proof of exit: ask the native identity owner again, which corroborates a
+  // missing procfs entry with signal-zero ESRCH. Keep the previous live
+  // observation if the refresh is unreadable; PID reuse remains a mismatch.
+  let finalObservedAfter = observedAfter;
+  if ((host.platform ?? process.platform) === "linux") {
+    const disappearing = processes.filter(({ pid }) => {
+      const token = tokens.get(pid);
+      return (
+        token?.state === "unavailable" &&
+        (token.code === "ENOENT" || token.code === "ESRCH") &&
+        observedAfter.get(pid)?.state === "readable"
+      );
+    });
+    if (disappearing.length > 0) {
+      const refreshed = await readIdentityFacts(
+        disappearing,
+        host,
+        "after",
+        signal,
+        credentialPids,
+      );
+      const confirmed = new Map(observedAfter);
+      for (const { pid } of disappearing) {
+        const before = observedAfter.get(pid);
+        const after = refreshed.get(pid);
+        if (after?.state === "absent") {
+          confirmed.set(pid, after);
+        } else if (
+          before?.state === "readable" &&
+          after?.state === "readable"
+        ) {
+          // A recycled PID (including a zombie replacement) is not proof of
+          // the original process exit. Keep its ownership unresolved.
+          if (before.identity !== after.identity)
+            confirmed.set(pid, {
+              state: "unavailable",
+              reason: "process_identity_changed_during_environment_exit_check",
+            });
+          else if (processIdentityHasExited(after)) confirmed.set(pid, after);
+        }
+      }
+      finalObservedAfter = confirmed;
+    }
+  }
   const identityAfter = await settleExitingProcessIdentities(
     processes,
     host,
-    observedAfter,
+    finalObservedAfter,
     signal,
     options.exitSettlement,
+    credentialPids,
   );
   signal?.throwIfAborted();
   const deriveFact = (
@@ -729,12 +1099,13 @@ export const createSystemProcessOwnershipHost = (
   const darwinTokens =
     platform === "darwin"
       ? createDarwinProcessRunTokenReader({
+          environment: hostEnvironment,
           ...(darwinCompiler === undefined ? {} : { compiler: darwinCompiler }),
           ...(darwinModuleCachePath === undefined
             ? {}
             : { moduleCachePath: darwinModuleCachePath }),
           ...(options.compileTimeoutMs === undefined
-            ? { environment: hostEnvironment }
+            ? {}
             : { compileTimeoutMs: options.compileTimeoutMs }),
         })
       : undefined;
@@ -766,7 +1137,7 @@ export const createSystemProcessOwnershipHost = (
   };
   const processIdentities: NonNullable<
     ProcessOwnershipHost["processIdentities"]
-  > = async (processes, signal, effectiveUidPids) => {
+  > = async (processes, signal, credentialPids) => {
     if (processes.length === 0) return new Map();
     if (platform === "linux")
       return new Map<number, ProcessIdentityObservation>(
@@ -795,10 +1166,14 @@ export const createSystemProcessOwnershipHost = (
               const readableIdentity = (
                 facts: typeof parsed,
                 effectiveUid?: number,
+                environmentRestriction?: LinuxEnvironmentRestriction,
               ) => ({
                 state: "readable" as const,
                 identity: `linux-starttime:${facts.startTime}`,
                 ...(effectiveUid === undefined ? {} : { effectiveUid }),
+                ...(environmentRestriction === undefined
+                  ? {}
+                  : { environmentRestriction }),
                 lifecycle:
                   facts.lifecycle === undefined
                     ? {
@@ -809,14 +1184,20 @@ export const createSystemProcessOwnershipHost = (
                         state: "observed" as const,
                         lifecycle: facts.lifecycle,
                       },
-                relation: {
-                  state: "observed" as const,
-                  parentPid: facts.parentPid,
-                  processGroupId: facts.processGroupId,
-                },
+                relation:
+                  facts.processGroupId < 0
+                    ? {
+                        state: "unavailable" as const,
+                        reason: "proc_stat_relation_unavailable",
+                      }
+                    : {
+                        state: "observed" as const,
+                        parentPid: facts.parentPid,
+                        processGroupId: facts.processGroupId,
+                      },
               });
 
-              if (!effectiveUidPids?.has(pid))
+              if (!credentialPids?.has(pid))
                 return [pid, readableIdentity(parsed)] as const;
 
               let status: string;
@@ -830,9 +1211,26 @@ export const createSystemProcessOwnershipHost = (
                 return [pid, readableIdentity(parsed)] as const;
               }
               signal?.throwIfAborted();
-              const effectiveUid = parseLinuxProcessEffectiveUid(status);
-              if (effectiveUid === undefined)
+              const uids = parseLinuxProcessIds(status, "Uid");
+              if (uids === undefined)
                 return [pid, readableIdentity(parsed)] as const;
+              // procfs reports root ownership of environ while a process is non-dumpable.
+              let procfsOwnerUid: number | undefined;
+              try {
+                procfsOwnerUid = (
+                  await statPath(`/proc/${String(pid)}/environ`)
+                ).uid;
+              } catch (cause: unknown) {
+                void cause;
+              }
+              signal?.throwIfAborted();
+              const environmentRestriction = linuxEnvironmentRestriction({
+                uids,
+                gids: parseLinuxProcessIds(status, "Gid"),
+                procfsOwnerUid,
+                callerUid: process.geteuid?.(),
+                callerGid: process.getegid?.(),
+              });
 
               let afterStatus: string;
               try {
@@ -860,7 +1258,10 @@ export const createSystemProcessOwnershipHost = (
                 ] as const;
               if (verified === undefined || verified.pid !== pid)
                 return [pid, readableIdentity(parsed)] as const;
-              return [pid, readableIdentity(verified, effectiveUid)] as const;
+              return [
+                pid,
+                readableIdentity(verified, uids[1], environmentRestriction),
+              ] as const;
             } catch (cause: unknown) {
               if (isExpectedAbort(cause, signal)) throw cause;
               if (
@@ -948,9 +1349,9 @@ export const createSystemProcessOwnershipHost = (
         liveAfterRetry.some((entry) => entry.pid === pid),
       );
       if (stillUnresolved.length > 0)
-        throw new Error(
-          `process identity snapshot is unavailable for ${String(stillUnresolved.length)} live processes`,
-        );
+        throw new ProcessAdmissionError("identity_snapshot_unavailable", {
+          live_processes: stillUnresolved.length,
+        });
     }
     return processes.map(({ pid }) => {
       const observation = identities.get(pid);
@@ -969,16 +1370,10 @@ export const createSystemProcessOwnershipHost = (
         try {
           const processes = await listProcesses(signal);
           if (!processes.some(({ pid }) => pid === process.pid))
-            throw new Error("ps did not report REA's current process");
+            throw new ProcessAdmissionError("current_process_unreported");
         } catch (cause: unknown) {
           if (isExpectedAbort(cause, signal)) throw cause;
-          const reason = `Linux process ownership inspection requires a procps-compatible ps on REA's PATH before launching a child: ${errorMessage(cause)}`;
-          throw new AnalysisCapabilityUnavailableError(
-            "process-ownership",
-            "prepare_owned_process",
-            reason,
-            { cause, userMessage: reason },
-          );
+          throw new LinuxOwnedProcessPrerequisiteError(cause);
         }
       }
     },
@@ -994,17 +1389,26 @@ export const createSystemProcessOwnershipHost = (
           (entry) => entry.pid === pid,
         );
         if (process === undefined)
-          throw new Error(`process ${String(pid)} is not live`);
+          throw new ProcessRunTokenReadError(
+            pid,
+            "absent",
+            "process_not_in_snapshot",
+          );
         const observation = (await darwinTokens?.read([process], signal))?.get(
           pid,
         );
         if (observation === undefined || observation.state === "unavailable")
-          throw new Error(
+          throw new ProcessRunTokenReadError(
+            pid,
+            observation?.reason === "process_not_in_snapshot"
+              ? "absent"
+              : "unavailable",
             observation?.reason ?? "process run token could not be read",
           );
-        return observation.runId === undefined
-          ? {}
-          : { REA_PROCESS_RUN_ID: observation.runId };
+        const environment: Record<string, string> = Object.create(null);
+        if (observation.runId !== undefined)
+          environment.REA_PROCESS_RUN_ID = observation.runId;
+        return environment;
       }
       const { stdout } = await execFileOutput(
         "ps",
@@ -1015,7 +1419,7 @@ export const createSystemProcessOwnershipHost = (
           ...(signal === undefined ? {} : { signal }),
         },
       );
-      const observedEnvironment: Record<string, string> = {};
+      const observedEnvironment: Record<string, string> = Object.create(null);
       for (const match of stdout.matchAll(
         /(?:^|\s)([A-Za-z_][A-Za-z0-9_]*)=([^\s]*)/gu,
       )) {
@@ -1148,6 +1552,17 @@ export const signalProcessWithStartIdentity = async (
     return "unverified";
   }
 };
+
+/** Refusal before an owned launch when Linux `ps` is missing or incompatible. */
+export class LinuxOwnedProcessPrerequisiteError extends AnalysisCapabilityUnavailableError {
+  constructor(cause: unknown) {
+    const reason = `Linux process ownership inspection requires a procps-compatible ps on REA's PATH before launching a child: ${errorMessage(cause)}`;
+    super("process-ownership", "prepare_owned_process", reason, {
+      cause,
+      userMessage: reason,
+    });
+  }
+}
 
 /** Prepare native token inspection before REA launches a captured child. */
 export const prepareProcessOwnershipInspection = async (

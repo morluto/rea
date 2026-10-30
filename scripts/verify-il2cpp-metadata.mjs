@@ -6,10 +6,12 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { absoluteCallerPath } from "../dist/filesystem/callerPath.js";
 import { toolContract } from "../dist/contracts/toolContracts.js";
-import { analysisViewResultSchema } from "../dist/domain/analysisView/analysisView.js";
 import { ArtifactResourceScope } from "../dist/artifacts/ArtifactResourceScope.js";
-import { mcpTextValue } from "./lib/mcp-verifier-results.mjs";
-import { closeVerifierResources } from "./lib/verifier-cleanup.mjs";
+import {
+  requireMcpOutput,
+  requireMcpToolError,
+} from "./lib/mcp-verifier-results.mjs";
+import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { hashVerifierFile } from "./lib/verifier-file-resources.mjs";
 
 const args = process.argv.slice(2);
@@ -43,12 +45,10 @@ const call = async (name, input) => {
     { name, arguments: input },
     { timeout: 120_000 },
   );
-  assert.notEqual(response.isError, true, mcpTextValue(response));
-  return JSON.parse(mcpTextValue(response));
+  return requireMcpOutput(response, name);
 };
 const resources = new ArtifactResourceScope();
-let primaryError;
-try {
+await withVerifierCleanup(async () => {
   await client.connect(transport);
   const { tools } = await client.listTools();
   assert(tools.some((tool) => tool.name === operation));
@@ -75,7 +75,7 @@ try {
     if (complete.isError === true) {
       // Large inventories exceed the stdio budget; the result must stay
       // retained and addressable rather than truncated.
-      const { error } = JSON.parse(mcpTextValue(complete));
+      const error = requireMcpToolError(complete);
       assert.equal(error.code, "resource_constraint");
       assert.equal(error.details.reported_limits.boundary, "mcp-response");
       assert.match(error.details.reported_limits.evidence_id, /^ev_/u);
@@ -83,9 +83,7 @@ try {
         `[ok] MCP complete delivery refused at the stdio budget (${error.details.reported_limits.response_bytes_at_least} bytes) with retained Evidence`,
       );
     } else {
-      const mcp = contract.outputSchema.parse(
-        JSON.parse(mcpTextValue(complete)),
-      );
+      const mcp = requireMcpOutput(complete, operation, contract);
       assert.deepEqual(mcp.normalized_result, report);
       console.log("[ok] CLI/MCP complete Evidence parity");
     }
@@ -109,9 +107,7 @@ try {
     });
     console.log("[ok] image type ranges and type method ranges agree");
 
-    const summary = contract.outputSchema.parse(
-      await call(operation, { path }),
-    ).normalized_result;
+    const summary = (await call(operation, { path })).normalized_result;
     assert.equal(summary.summary.magic, report.magic);
     assert.deepEqual(summary.summary.counts, {
       sections: report.sections.length,
@@ -132,38 +128,37 @@ try {
       return_types: null,
       field_types: null,
       parameter_types: null,
+      generic_method_instances: null,
+      generic_method_instance_states: null,
+      generic_method_issues: null,
     });
-    const page = analysisViewResultSchema.parse(
-      (
-        await call("inspect_analysis_view", {
-          source: {
-            kind: "retained-evidence",
-            evidence_id: summary.parent_evidence_id,
-          },
-          view: { kind: "il2cpp-metadata", collection: "methods", limit: 16 },
-        })
-      ).normalized_result,
-    );
+    const page = (
+      await call("inspect_analysis_view", {
+        source: {
+          kind: "retained-evidence",
+          evidence_id: summary.parent_evidence_id,
+        },
+        view: { kind: "il2cpp-metadata", collection: "methods", limit: 16 },
+      })
+    ).normalized_result;
     assert.deepEqual(
       page.items,
       report.methods.slice(0, 16).map((row, index) => ({ ...row, index })),
     );
-    const last = analysisViewResultSchema.parse(
-      (
-        await call("inspect_analysis_view", {
-          source: {
-            kind: "retained-evidence",
-            evidence_id: summary.parent_evidence_id,
-          },
-          view: {
-            kind: "il2cpp-metadata",
-            collection: "types",
-            offset: Math.max(0, report.types.length - 4),
-            limit: 16,
-          },
-        })
-      ).normalized_result,
-    );
+    const last = (
+      await call("inspect_analysis_view", {
+        source: {
+          kind: "retained-evidence",
+          evidence_id: summary.parent_evidence_id,
+        },
+        view: {
+          kind: "il2cpp-metadata",
+          collection: "types",
+          offset: Math.max(0, report.types.length - 4),
+          limit: 16,
+        },
+      })
+    ).normalized_result;
     const lastOffset = Math.max(0, report.types.length - 4);
     assert.deepEqual(
       last.items,
@@ -182,13 +177,5 @@ try {
       `[ok] summary and page parity; ${report.images.length} images, ${report.types.length} types, ${report.methods.length} methods; complete Evidence ${Buffer.byteLength(stdout)} bytes, summary ${Buffer.byteLength(JSON.stringify(summary))} bytes; CLI ${cliMs} ms`,
     );
   }
-} catch (cause) {
-  primaryError = cause;
-  throw cause;
-} finally {
-  await closeVerifierResources(
-    [() => client.close(), () => transport.close(), () => resources.close()],
-    primaryError,
-  );
-}
+}, [() => client.close(), () => transport.close(), () => resources.close()]);
 console.log("All asserted IL2CPP metadata CLI/MCP checks passed");

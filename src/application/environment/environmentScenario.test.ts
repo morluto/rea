@@ -13,6 +13,7 @@ import {
 } from "./environmentBundle.js";
 import { replayEnvironmentTool } from "./environmentReplay.js";
 import { loadEnvironmentSource } from "./environmentSource.js";
+import { prepareServedState } from "./environmentState.js";
 
 const fixture = scenarioServeFixture();
 
@@ -48,8 +49,8 @@ describe("environment manifests from capture_browser_scenario parents", () => {
     );
   });
 
-  it("refuses a scenario capture that selected neither response bodies nor header values", () => {
-    const refused = inspectAnalysisView({
+  it("refuses a scenario capture that selected neither response bodies nor header values", async () => {
+    const refused = await inspectAnalysisView({
       source: {
         kind: "inline",
         evidence: scenarioCaptureEvidence(
@@ -69,21 +70,21 @@ describe("environment manifests from capture_browser_scenario parents", () => {
     });
   });
 
-  it("names the views a scenario capture supports when another is requested", () => {
-    const refused = inspectAnalysisView({
+  it("names the views a scenario capture supports when another is requested", async () => {
+    const refused = await inspectAnalysisView({
       source: {
         kind: "inline",
         evidence: scenarioCaptureEvidence(scenarioCaptureFixture()),
       },
-      view: { kind: "summary" },
+      view: { kind: "dart-aot", collection: "package_uris" },
     });
     if (refused.ok) throw new Error("Expected the unsupported view refusal");
     expect(projectAnalysisError(refused.error)).toMatchObject({
-      code: "unsupported_target",
-      message: expect.stringContaining(
-        "supports only the environment-manifest and environment-state views",
-      ),
+      code: "invalid_request",
     });
+    expect(JSON.stringify(projectAnalysisError(refused.error))).toContain(
+      "supports summary and browser-scenario views",
+    );
   });
 
   it("serves and exports a scenario-built manifest from the same capture", () => {
@@ -114,6 +115,8 @@ describe("environment manifests from capture_browser_scenario parents", () => {
     });
     const planned = planEnvironmentBundle(source.value, {
       packageSource: registryPackageSource(),
+      served: (name) =>
+        prepareServedState(source.value, fixture.capture, { name }),
     });
     if (!planned.ok) throw planned.error;
     const readme =

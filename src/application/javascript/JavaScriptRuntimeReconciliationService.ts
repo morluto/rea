@@ -1,14 +1,12 @@
 import { resolve } from "node:path";
 import { z } from "zod";
 
-import { AnalysisProtocolError } from "../../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import {
-  parseRuntimeReconciliationInput,
+  readRuntimeReconciliationInput,
   reconcileJavaScriptRuntime,
-  type ParsedRuntimeReconciliationInput,
 } from "../../domain/javascript/javascriptRuntimeReconciliation.js";
 import { reconcileJavaScriptRuntimeInputSchema } from "../../domain/javascript/javascriptRuntimeReconciliationSchemas.js";
 import { err, ok, type Result } from "../../domain/result.js";
@@ -32,37 +30,14 @@ export const reconcileJavaScriptRuntimeEvidence = (
 export const reconcileJavaScriptRuntimeEvidenceValidated = (
   parsedInput: z.output<typeof reconcileJavaScriptRuntimeInputSchema>,
 ): Result<Evidence, AnalysisError> => {
-  let parsed: ParsedRuntimeReconciliationInput;
-  try {
-    parsed = parseRuntimeReconciliationInput(
-      normalizeRuntimeMappingRoots(parsedInput),
-    );
-  } catch (cause: unknown) {
-    if (cause instanceof z.ZodError)
-      return err(
-        analysisInputErrorFromIssues(OPERATION, cause.issues, parsedInput),
-      );
-    return err(
-      new AnalysisProtocolError(
-        "JavaScript runtime reconciliation input parsing failed",
-        { cause },
-      ),
-    );
-  }
-
-  try {
-    const result = reconcileJavaScriptRuntime(parsed);
-    return ok(
-      createJavaScriptRuntimeReconciliationEvidence(parsed.input, result),
-    );
-  } catch (cause: unknown) {
-    return err(
-      new AnalysisProtocolError(
-        "JavaScript runtime reconciliation produced an invalid result",
-        { cause },
-      ),
-    );
-  }
+  const parsed = readRuntimeReconciliationInput(
+    normalizeRuntimeMappingRoots(parsedInput),
+  );
+  if (!parsed.ok) return parsed;
+  const result = reconcileJavaScriptRuntime(parsed.value);
+  return ok(
+    createJavaScriptRuntimeReconciliationEvidence(parsed.value.input, result),
+  );
 };
 
 const normalizeRuntimeMappingRoots = (

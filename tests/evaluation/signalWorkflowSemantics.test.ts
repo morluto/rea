@@ -4,7 +4,7 @@ import { test } from "vitest";
 
 test("signal verification rejects skipped identical UART bytes and reordered I2C samples", () => {
   const moduleUrl = new URL(
-    "../../experiments/analysis-efficiency/signal-entry.mjs",
+    "../../tests/support/analysis-efficiency/signal-entry.mjs",
     import.meta.url,
   ).href;
   const source = `

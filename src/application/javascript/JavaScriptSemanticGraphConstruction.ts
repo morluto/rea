@@ -1,3 +1,4 @@
+import { javascriptSourceRangeKey } from "../../domain/javascript/javascriptSourceCoordinates.js";
 import type { z } from "zod";
 import type { JavaScriptApplicationGraph } from "../../domain/javascript/javascriptApplicationGraph.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
@@ -9,14 +10,14 @@ import {
   JavaScriptSemanticEvidenceContextRegistry,
   javaScriptSemanticNodeId,
 } from "../../domain/javascript/javascriptSemanticGraph.js";
-import type { JavaScriptSemanticGraphNode } from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
-import type { ApplicationGraphEvidence } from "../../domain/javascript/javascriptApplicationEvidenceSchemas.js";
 import type {
+  JavaScriptSemanticGraphNode,
   JavaScriptSemanticGraphRelation,
   JavaScriptSemanticGraphUnknown,
   JavaScriptSemanticUnknownOmission,
   javaScriptSemanticUnknownInputSchema,
 } from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
+import type { ApplicationGraphEvidence } from "../../domain/javascript/javascriptApplicationEvidenceSchemas.js";
 import type { JavaScriptSourceRange } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import {
@@ -338,7 +339,5 @@ const applicationLocationKey = (
   [
     artifactSha256,
     path,
-    range === null
-      ? "artifact-path"
-      : `${range.start.line}:${range.start.column}-${range.end.line}:${range.end.column}`,
+    range === null ? "artifact-path" : javascriptSourceRangeKey(range),
   ].join("\u0000");

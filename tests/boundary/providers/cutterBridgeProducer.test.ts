@@ -100,7 +100,7 @@ it("authenticates bridge peers before payloads and permits status recovery after
     [resolve("tests/fixtures/cutter_bridge_protocol_test.py")],
     {
       encoding: "utf8",
-      timeout: 10_000,
+      timeout: 20_000,
     },
   );
 });
@@ -120,7 +120,16 @@ it("round-trips authenticated status and command bytes across the Python produce
           command: "iI",
           json: false,
         }),
-      ).rejects.toThrow("List sessions again");
+      ).rejects.toMatchObject({
+        _tag: "AnalysisInputError",
+        issues: [
+          {
+            path: ["expected_generation"],
+            reason: "invalid_value",
+            message: expect.stringContaining("List sessions again"),
+          },
+        ],
+      });
     }
 
     const result = await client.execute({

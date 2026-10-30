@@ -123,9 +123,35 @@ struct ProcessRunTokenParserProbe {
     do {
       _ = try parseProcessEnvironment(in: truncatedArgv)
       truncatedArgvFailsClosed = false
-    } catch {
+    } catch RunTokenReadError.invalidBuffer {
       truncatedArgvFailsClosed = true
     }
+    var invalidPadding = fixture(arguments: ["x"], environment: [], executablePath: "x")
+    invalidPadding[6] = 1 // argc (4 bytes), path and its NUL precede the padding.
+    var unterminated = fixture(arguments: ["x"], environment: [], executablePath: "x")
+    unterminated.removeLast()
+    let malformedBuffers: [[UInt8]] = [
+      [0, 0, 0], // Short argc.
+      [255, 255, 255, 255], // Negative argc.
+      [0, 0, 0, 0, 120], // Unterminated executable path.
+      invalidPadding,
+      unterminated,
+    ]
+    let malformedBuffersRejected = malformedBuffers.allSatisfy { bytes in
+      do {
+        _ = try parseProcessEnvironment(in: bytes)
+        return false
+      } catch RunTokenReadError.invalidBuffer {
+        return true
+      } catch {
+        return false
+      }
+    }
+    let malformedObservation = processRunTokenObservation(
+      pid: 1,
+      parse: .failure(.invalidBuffer),
+      codeSigningFlags: { 0 }
+    )
     let duplicateTokenFailsClosed: Bool
     do {
       _ = try parseProcessEnvironment(in: fixture(
@@ -228,6 +254,11 @@ struct ProcessRunTokenParserProbe {
       "emptyLaterArgumentRead": emptyLaterArgument.runId == "empty-argument-token",
       "alternatePaddingRead": alternatePadding.runId == "alternate-padding-token",
       "truncatedArgvFailsClosed": truncatedArgvFailsClosed,
+      "malformedBuffersRejected": malformedBuffersRejected,
+      "malformedObservation": [
+        "state": malformedObservation.state,
+        "reason": malformedObservation.reason as Any? ?? NSNull(),
+      ],
       "duplicateTokenFailsClosed": duplicateTokenFailsClosed,
       "missingAppleBoundaryFailsClosed": missingAppleBoundaryFailsClosed,
       "emptyArgv0Read": emptyArgv0Read.runId == "empty-argv0-token",

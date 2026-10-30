@@ -15,6 +15,107 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
 cliTest(
+  "uninstall refuses a foreign OpenCode fallback across configuration layers",
+  async ({ cli }) => {
+    const home = await createTestTempDirectory(
+      "rea-uninstall-layered-fallback-cli-",
+    );
+    const directory = join(home, "opencode");
+    await mkdir(directory, { recursive: true });
+    const lower = join(directory, "opencode.json");
+    const upper = join(directory, "opencode.jsonc");
+    const claude = join(home, ".claude.json");
+    const legacy = JSON.stringify({
+      mcp: {
+        rea: { type: "local", command: ["/usr/bin/false"], enabled: true },
+      },
+    });
+    const native = JSON.stringify({
+      mcp: {
+        servers: {
+          rea: {
+            type: "local",
+            command: [PRODUCT_IDENTITY.cliBinary, "mcp"],
+            disabled: false,
+          },
+        },
+      },
+    });
+    await writeFile(lower, legacy);
+    await writeFile(upper, native);
+    const claudeOriginal = JSON.stringify({
+      mcpServers: {
+        rea: { command: PRODUCT_IDENTITY.cliBinary, args: ["mcp"] },
+      },
+    });
+    await writeFile(claude, claudeOriginal);
+    const run = () =>
+      cli.run({
+        arguments: ["uninstall", "--json"],
+        cwd: home,
+        environment: {
+          HOME: home,
+          USERPROFILE: home,
+          OPENCODE_CONFIG_DIR: directory,
+        },
+      });
+    const refused = await run();
+    expect(refused.exitCode, refused.stderr).toBe(1);
+    expect(refused.json).toMatchObject({
+      status: "failed",
+      items: expect.arrayContaining([
+        expect.objectContaining({
+          name: "opencode",
+          status: "failed",
+          detail: expect.stringContaining("V1"),
+        }),
+      ]),
+    });
+    expect(await readFile(lower, "utf8")).toBe(legacy);
+    expect(await readFile(upper, "utf8")).toBe(native);
+    expect(await readFile(claude, "utf8")).toBe(claudeOriginal);
+    await expect(access(`${claude}.rea.backup`)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(access(`${upper}.rea.backup`)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    // A foreign later fragment can inherit fields from an owned V1 entry.
+    const ownedLegacy = JSON.stringify({
+      mcp: {
+        servers: {},
+        rea: {
+          type: "local",
+          command: [PRODUCT_IDENTITY.cliBinary, "mcp"],
+          enabled: true,
+        },
+      },
+    });
+    const foreignPartial = JSON.stringify({
+      mcp: { servers: { rea: { command: ["/usr/bin/false"] } } },
+    });
+    await writeFile(lower, ownedLegacy);
+    await writeFile(upper, foreignPartial);
+    const legacyRefusal = await run();
+    expect(legacyRefusal.exitCode, legacyRefusal.stderr).toBe(1);
+    expect(legacyRefusal.json).toMatchObject({ status: "failed" });
+    expect(await readFile(lower, "utf8")).toBe(ownedLegacy);
+    expect(await readFile(upper, "utf8")).toBe(foreignPartial);
+    expect(await readFile(claude, "utf8")).toBe(claudeOriginal);
+    await expect(access(`${lower}.rea.backup`)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+
+    await writeFile(lower, "{}\n");
+    await writeFile(upper, native);
+    const removed = await run();
+    expect(removed.exitCode, removed.stderr).toBe(0);
+    expect(removed.json).toMatchObject({ status: "complete" });
+    expect(await readFile(upper, "utf8")).not.toContain('"rea"');
+  },
+);
+
+cliTest(
   "uninstall reports completed file removals beside a later OpenCode failure and recovers",
   async ({ cli }) => {
     const home = await createTestTempDirectory(
@@ -120,6 +221,12 @@ const cases = [
     client: "grok_build",
     env: { GROK_HOME: "" },
     config: ".grok/config.toml",
+    skill: ".agents/skills",
+  },
+  {
+    client: "copilot_cli",
+    env: { COPILOT_HOME: "" },
+    config: ".copilot/mcp-config.json",
     skill: ".agents/skills",
   },
   {

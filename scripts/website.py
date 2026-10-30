@@ -23,8 +23,6 @@ NAVIGATION = (
     ("Showcases", "showcase/"),
     ("Blog", "blog/"),
     ("Guides", "guides/"),
-    ("FAQ", "faq/"),
-    ("Contributors", "contributors/"),
 )
 
 

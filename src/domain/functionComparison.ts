@@ -1,6 +1,6 @@
 import { canonicalJson } from "./comparisonSemantics.js";
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
-import { parseFunctionEvidence } from "./functionDossierEvidence.js";
+import type { FunctionSnapshot } from "./functionDossierEvidence.js";
 import { functionMatch } from "./functionComparisonNormalization.js";
 import {
   functionComparisonResultSchema,
@@ -9,13 +9,11 @@ import {
 import { overallStatus, summarize } from "./functionComparisonResults.js";
 import { compareDimensions } from "./functionComparisonDimensions.js";
 
-/** Compare two complete function Evidence records without fuzzy matching. */
+/** Compare two authenticated function snapshots without fuzzy matching. */
 export const compareFunctions = (
-  leftInput: unknown,
-  rightInput: unknown,
+  left: FunctionSnapshot,
+  right: FunctionSnapshot,
 ): FunctionComparisonResult => {
-  const left = parseFunctionEvidence(leftInput);
-  const right = parseFunctionEvidence(rightInput);
   const links = [left.evidence.evidence_id, right.evidence.evidence_id];
   const providersDiffer =
     canonicalJson(left.evidence.provider, "Function comparison") !==

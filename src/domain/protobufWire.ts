@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { localPathStringSchema } from "./localPath.js";
+import { absoluteLocalPathStringSchema } from "./localPath.js";
 
 /** Optional decoding applies only to explicitly selected capture records. */
 export const protobufOptionsSchema = z.strictObject({
@@ -9,7 +9,7 @@ export const protobufOptionsSchema = z.strictObject({
   body_pointers: z.array(z.string()).optional(),
   schema: z
     .strictObject({
-      descriptor_set_path: localPathStringSchema,
+      descriptor_set_path: absoluteLocalPathStringSchema,
       message_type: z.string().min(1),
     })
     .optional(),

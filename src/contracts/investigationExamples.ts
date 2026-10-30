@@ -1,53 +1,53 @@
 import { createEvidence } from "../domain/evidence.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
-import { compareProcessCaptures } from "../domain/process/processComparison.js";
+import { FUNCTION_COMPARISON_PROVIDER } from "../domain/comparisonEvidenceIdentity.js";
+import { compareProcessCaptureEvidence } from "../domain/process/processComparisonEvidence.js";
+import { PROCESS_PROVIDER } from "../domain/process/processEvidenceProvider.js";
 import { parseProcessCapture } from "../domain/process/processCaptureParsing.js";
 import { FUNCTION_COMPARISON_EXAMPLE } from "./functionComparisonExample.js";
 import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../domain/process/processCaptureExample.js";
 
+import { parseFunctionEvidence } from "../domain/functionDossierEvidence.js";
 import { compareFunctions } from "../domain/functionComparison.js";
-const comparison = compareFunctions(
-  FUNCTION_COMPARISON_EXAMPLE.left,
-  FUNCTION_COMPARISON_EXAMPLE.right,
-);
+const left = parseFunctionEvidence(FUNCTION_COMPARISON_EXAMPLE.left, {
+  operation: "compare_functions",
+  path: ["left"],
+});
+if (!left.ok) throw left.error;
+const right = parseFunctionEvidence(FUNCTION_COMPARISON_EXAMPLE.right, {
+  operation: "compare_functions",
+  path: ["right"],
+});
+if (!right.ok) throw right.error;
+const comparison = compareFunctions(left.value, right.value);
 
 export const FUNCTION_COMPARISON_EVIDENCE = createEvidence(
   undefined,
-  {
-    id: "rea-function-comparison",
-    name: "REA function comparison",
-    version: "1",
-  },
+  FUNCTION_COMPARISON_PROVIDER,
   {
     predicateType: "rea.function-comparison",
     operation: "compare_functions",
     parameters: {
-      left_evidence_id: FUNCTION_COMPARISON_EXAMPLE.left.evidence_id,
-      right_evidence_id: FUNCTION_COMPARISON_EXAMPLE.right.evidence_id,
+      left_evidence_id: left.value.evidence.evidence_id,
+      right_evidence_id: right.value.evidence.evidence_id,
     },
-    result: jsonValueSchema.parse(comparison),
+    result: comparison,
     confidence: "derived",
     authority: "analyst-inference",
     limitations: comparison.limitations,
     evidenceLinks: [
-      FUNCTION_COMPARISON_EXAMPLE.left.evidence_id,
-      FUNCTION_COMPARISON_EXAMPLE.right.evidence_id,
+      left.value.evidence.evidence_id,
+      right.value.evidence.evidence_id,
     ],
   },
 );
 
-const PROCESS_PROVIDER = {
-  id: "rea-process",
-  name: "REA deterministic process harness",
-  version: "3",
-} as const;
 const capture = parseProcessCapture(EMPTY_PROCESS_CAPTURE_EXAMPLE);
 const captureEvidence = (scenario: string) =>
   createEvidence(undefined, PROCESS_PROVIDER, {
     predicateType: "rea.process-capture",
     operation: "capture_process_scenario",
     parameters: { scenario },
-    result: jsonValueSchema.parse(capture),
+    result: capture,
     confidence: "observed",
     authority: "controlled-replay",
     environment: {
@@ -59,27 +59,10 @@ const captureEvidence = (scenario: string) =>
   });
 export const PROCESS_CAPTURE_REFERENCE = captureEvidence("reference");
 export const PROCESS_CAPTURE_RECONSTRUCTION = captureEvidence("reconstruction");
-export const PROCESS_COMPARISON_EVIDENCE = createEvidence(
-  undefined,
-  PROCESS_PROVIDER,
-  {
-    predicateType: "rea.process-comparison",
-    operation: "compare_process_captures",
-    parameters: {
-      left_evidence_id: PROCESS_CAPTURE_REFERENCE.evidence_id,
-      right_evidence_id: PROCESS_CAPTURE_RECONSTRUCTION.evidence_id,
-      left_normalization: capture.normalization,
-      right_normalization: capture.normalization,
-    },
-    result: jsonValueSchema.parse(compareProcessCaptures(capture, capture)),
-    confidence: "derived",
-    authority: "analyst-inference",
-    evidenceLinks: [
-      PROCESS_CAPTURE_REFERENCE.evidence_id,
-      PROCESS_CAPTURE_RECONSTRUCTION.evidence_id,
-    ],
-  },
-);
+export const PROCESS_COMPARISON_EVIDENCE = compareProcessCaptureEvidence(
+  { record: PROCESS_CAPTURE_REFERENCE, capture },
+  { record: PROCESS_CAPTURE_RECONSTRUCTION, capture },
+).evidence;
 
 /** Canonical inputs for comparison-composed investigation contracts. */
 export const INVESTIGATION_EXAMPLES = {

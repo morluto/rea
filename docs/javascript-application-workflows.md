@@ -23,6 +23,11 @@ artifact digest and structural graph ID. Semantic tracing requires the semantic
 relation graph and reports when it is unavailable rather than treating missing
 data as an empty graph.
 
+Worker progress reports the source path and last observed parse, static,
+semantic, projection or transfer stage. These notifications do not measure
+stage CPU/time or establish the root cause of a slow or incomplete analysis.
+Semantic projection limits bound retained output, not upstream analysis work.
+
 Explicit TypeScript `import type` and `export type` declarations remain source
 facts and do not create runtime import or export relationships. Type export names
 are reported separately from value export names. Inline `type` specifiers can
@@ -39,6 +44,12 @@ reading fields such as `evidence.authority` must look up the context by ID and
 combine its fields with the fact's location. Semantic trace results include the
 canonical context subset referenced by their returned facts, so those facts
 remain self-contained in the response.
+
+Content-deduplicated module references match every retained observation path.
+A path-filtered reference reports the caller-selected path while keeping its
+shared node identity. Item selection also accepts any retained path when it
+identifies one module; if several module kinds share that path, select the
+reported `node_id`. Node-ID selection uses the stable representative path.
 
 ## Retained module facts
 
@@ -145,11 +156,29 @@ Select one literal seed kind: node ID, route, string, API, IPC channel, module,
 or native export. Matching is exact or literal substring matching; regular
 expressions and executable predicates are not accepted. The trace includes all
 matching seeds and the complete graph reachable in the selected direction.
+`both` follows relationships in either direction, except that a container
+reached through `contains` from one of its children only leads further up its
+containment chain, so a shared asset or artifact root does not pull in its
+other children.
+
+When a string seed has no application match and the supplied Evidence has a
+semantic graph, `semantic_discovery` lists matching retained semantic node
+labels and direct string call arguments using the same matching mode and case
+rules. These are candidate starting
+points, not application trace matches. Its graph coverage and total describe the
+retained graph; missing or partial source coverage cannot establish absence.
+Results follow retained node order and default to offset 0 and limit 64. Supply
+`semantic_page` and follow `next_offset` for further matches. Use a returned
+`trace_seed` with the same application Evidence and `trace_javascript_semantics`
+to examine relationships from that node. Other typed seeds do not search labels.
 
 The result contains the matching basis, complete reachable subgraph, terminal
 paths, authority summaries, and native handoffs. A handoff binds
 the exact native artifact digest and requested exports from the application
-graph. Existing Hopper or Ghidra Evidence is linked only when its subject digest
+graph. Trace direction selects the reachable addons; requested
+exports for each selected addon come from the complete supplied graph, so an
+outgoing trace does not discard an incoming export association. Existing Hopper
+or Ghidra Evidence is linked only when its subject digest
 matches exactly. Otherwise the result recommends provider-neutral follow-up
 tools and reports `requires-provider-analysis`; it never starts or switches a
 provider implicitly.
@@ -169,6 +198,10 @@ rereading mutable files. A seed may identify a semantic or application node,
 literal, function fingerprint, property, endpoint, event, or boundary field.
 For a recovered parse, coercion, or validation boundary, its field value is the
 static operation's method name (for example, `Number`).
+When a recovered boundary call directly supplies a scalar binding, the graph
+connects the boundary to that binding; unresolved boundary calls remain
+candidates. A boundary nested inside another expression or compound assignment
+does not establish a direct result binding.
 The query declares backward provenance, forward influence, callers, or
 ownership and can restrict admitted relation kinds. REA returns every matching
 seed and the complete reachable subgraph; callers do not choose node, relation,
@@ -183,6 +216,38 @@ registrations/removals and dispatch, Node timers and cancellation handles, async
 `node:child_process` creation and ownership, configuration sources and direct
 defaults, request construction and response consumers, parse/coercion/
 validation boundaries, and built-in resource acquisition/release.
+Reassignments connect retained right-hand reads to the binding or property
+write. Compound assignments also retain the previous-value input; logical
+assignments keep conditional inputs as candidates. These edges describe
+influence without evaluating arithmetic or establishing execution order or the
+resulting value. Deferred callback bodies do not become inputs to the enclosing
+assignment. Computed method keys belong to the enclosing callable; parameter
+defaults and method bodies belong to the method. Uncertain later property reads
+remain opt-in through `include_ambiguous_dynamic_edges`.
+
+Binary, logical, unary, template, conditional, and sequence expressions retain
+`influences` edges from supported immediate inputs to the result, then to a
+direct declaration, assignment, call argument, or return. These are static
+dependencies, not aliases or proof that the expression executed; conditional
+operands and logical-assignment writes carry `conditional: true`. Unsupported
+operand dependencies, unmodeled receiving containers, dynamic call results,
+and sequence side effects remain unknown. An applicable
+unknown makes the trace status `partial` even when a seed was found. Literal
+operator operands, direct call arguments and directly returned scalar literals
+can also be seeds. Older graphs that only recorded a call-site literal remain
+searchable. The offered per-file node capacity also bounds the producer's
+expression and operand collections before graph projection.
+Expression nodes and unknowns share the existing per-file graph admission
+budgets; omitted facts make graph coverage truncated and the trace partial.
+Consumers that previously treated `found` as compatible with a relevant
+unknown should handle `partial` and inspect the returned unknowns. Retained
+graphs without `influences` edges remain readable but do not gain edges until
+the application is analyzed again.
+Global timer, `fetch`, `WebSocket`, `JSON.parse`, and coercion calls receive
+these built-in effects only when the file has no visible possible write to that
+global, including a computed write through a global object. The check does not
+evaluate order or reachability, so a later or guarded polyfill write also
+removes the resolved effect.
 
 Node built-in effects follow the selected binding at its read and preserve
 earlier observations across later top-level writes. Shared exports, saved child
@@ -251,7 +316,14 @@ mapped candidate, but structural reachability, semantic influence, runtime
 observation, and causal proof remain separate claims.
 
 Semantic literal nodes keep their complete value in `properties.value`; literal
-queries match that field. String labels use `string literal` when that is
+queries match that field. Call-site nodes also retain direct scalar arguments in
+`properties.arguments`, with source argument indexes; literal queries can start
+at those call sites. These are syntactic facts, not runtime values, and an index
+after a spread is not necessarily the runtime argument position. Nonliteral
+arguments and values not representable in JSON are omitted. The primitive byte
+bound and the worker transfer record ceiling can also omit direct values; the
+call-site unknown reports the applicable limit. String labels use
+`string literal` when that is
 shorter than the complete JSON value. A literal's `identity.role_key` commits
 its canonical JSON value as `value-sha256:<digest>` when the digest key is
 shorter; smaller values keep their existing JSON key. This keeps large values
@@ -293,6 +365,14 @@ change hashed event IDs and longer event/listener labels; query the preserved
 name or select IDs from the parent graph. Previously stored graphs keep their
 original IDs and remain valid trace inputs.
 
+Empty string event names remain exact identities and can be selected with an
+event seed whose `name` is `""`. A property seed selects the named slots and
+retained accesses whose producer established that no slot was resolved. Those
+accesses keep their source locations and unknowns; a missing retained relation
+does not prove that an access is slotless. New access nodes record
+`property_slot_resolution` independently of whether capacity permitted retaining
+the resolved slot node or its relations.
+
 ## Version comparison
 
 REA pairs entities only when a tier produces one unique candidate on each side.
@@ -329,6 +409,11 @@ remain `changed` while retaining any separate relationship uncertainty.
 An unknown item with no observed content, property, or relationship difference
 does not emit a `changed_from` edge; its pairing and uncertainty remain in the item.
 
+Within a valid `file_occurrence`, `container_sha256` records provenance and does
+not by itself count as a semantic property change. The graph retains the original
+occurrence; its path and source digest still participate in comparison.
+Unrecognized occurrence metadata remains part of property comparison.
+
 One-sided absence is `added` or `removed` only when the opposite input graph has
 complete coverage. With partial, unavailable, or truncated input, the same
 condition is `unknown`. The comparison retains every classified item and
@@ -351,9 +436,16 @@ files; multiple canonical-equivalent candidates remain unknown.
 
 Each historical source file is classified as `unchanged`, `modified`,
 `removed`, `split`, `merged`, `duplicated`, or `unknown`. Multiple equally
-scored path mappings form a static split inference. Multiple current
-nodes with the exact historical digest are duplicated; multiple historical
-paths with exact identity to one current node are merged. `removed` requires
+scored path mappings form a static split inference. Multiple current file
+occurrences with the exact historical digest are duplicated; multiple historical
+paths with exact identity to one current occurrence are merged. Fresh file
+observations carry their container digest, inventory path, and content digest.
+Their asset, source-module, and export-binding representations form one candidate,
+which retains `current_file_occurrence` and `representation_node_ids`. Equal bytes
+at two inventory paths remain two occurrences even when they share an asset node.
+Logical bundle modules and older observations without occurrence facts retain
+their graph identities; matching does not infer common ownership from a label.
+`removed` requires
 complete historical and application inventories. The comparison analyzes and
 returns all source files, candidate nodes, and matching signals represented in
 the supplied graphs. Partial inventories remain unknown where absence cannot
@@ -366,12 +458,36 @@ equivalence.
 name on each authenticated graph. Missing or duplicate exact selectors return
 candidate inventory and an unknown result; the tool never chooses a fuzzy
 match. An export is linked to a callable only through exact lexical/module
-relationships recovered by the AST analysis.
+relationships recovered by the AST analysis. A later named CommonJS deletion
+invalidates the earlier publication per exported field at the receiver owner;
+surviving fields from the same assignment stay available. Descriptor-defined
+fields retain unknown deletion success unless configurability is established.
+Conditional or
+dynamic deletions retain uncertainty. Unresolved invocation spreads remain
+unknown source sequences and cannot publish a phantom array index.
 
 Direct return expressions, including expression-bodied arrows, are evaluated
 through an execution-free value lattice. Literal object fields and direct
 return sites are represented in the result. Calls, dynamic spreads, computed
-keys, and parser recovery remain partial or unknown.
+keys, and parser recovery remain partial or unknown. Known conditional and
+logical tests select only the established branch; uncertain tests retain
+alternatives. Object copies preserve known own primitive data fields at copy time while
+unknown sources retain incomplete coverage. Array holes do not overwrite own
+fields during a copy. Copied reference fields keep explicit uncertainty; shared
+reference projection remains responsible for their later member reads.
+Declaration initializers and later assignments share the binding-at-read owner;
+a declaration-only `var` read before its initializer does not inherit the future
+value. Earlier `break`/`continue` paths can leave a var initializer unexecuted.
+Legacy non-strict block-function copies are indexed on their outer variable
+owner, while strict/module and lexical-shadowing boundaries keep their values.
+A catch-shadowed var declaration keeps declaration ownership separate from its
+initializer's lexical assignment, including object and array destructuring slots.
+Projected initializer facts retain their source and alias identity on the lexical
+recipient, so a later mutation through that alias prevents reporting the original
+object field as an unchanged constant. Ordinary functions own an implicit
+arguments object; arrows retain lexical arguments lookup. Promise source identity uses
+the same read-position selection and requires an unmodified intrinsic factory.
+
 Rebound values are evaluated at their read position: saving an incoming parameter
 before a later assignment preserves caller-dependent uncertainty, while a proven
 preceding assignment can supply a constant. Unresolved ordering remains unknown.
@@ -386,8 +502,10 @@ uncertainty rather than pretending to execute later writes. References
 handed back by local functions, methods, constructors, async functions, and
 generators also retain escape uncertainty, including when the call is read-only;
 this does not establish that a mutation occurred. Aliases
-and shared children in spread and rest copies retain that uncertainty; copied
-primitive slots and unrelated containing properties remain known. Object rest
+and shared children in spread and rest copies retain that uncertainty. Exposing
+the copy alone does not invalidate copied primitive slots or unrelated containing
+properties. Dynamic child writes such as `copy[key].value = 2` remain conservative
+about which original slot was selected. Object rest
 excludes consumed keys, array rest excludes the consumed prefix for known
 arrays, and later explicit data properties and methods replace earlier object
 spread references. A known array prefix does not expose values from a following
@@ -404,14 +522,76 @@ Receiver projections follow known data fields initialized from `this` or earlier
 self-referencing fields; static fields retain their declaring class identity.
 An alias cycle that repeatedly selects deeper children retains escape uncertainty
 at its recovered roots rather than claiming a fixed number of loop iterations.
+Equivalent member reads in a repeating loop share unknown ordering instead of
+creating a distinct capture for every branch history. Straight-line captures and
+once-only loop inputs retain their own selection sites. When unobserved suffixes
+are widened, their exact observed prefixes stay separate so unrelated siblings
+remain known.
 
 Writes through an object getter's returned receiver retain that uncertainty
 when the object is an array element, nested inside mixed object/array
 containers, or assigned to a previously declared identifier. Saving the getter
 result in an alias does not make its old field values immutable. Known array
 indices include holes; an element after a spread has only a minimum possible
-index. Unrelated properties and known array prefixes remain precise, and a
-getter read without a write does not invalidate the receiver's fields.
+index. For these returned-reference writes, unrelated properties and known
+array prefixes remain precise. Accessor applicability uses the shared object
+reference owner for literal definition order, own-property shadowing, known
+array elements and explicit literal prototypes. Getter invocation effects
+project write and call operands through the same local alias and `this` owner
+used by returned references. Reads of another selected getter continue that
+effect walk. A receiver reached by these effects becomes uncertain on an
+ordinary or optional read, compound assignment or update. A simple assignment
+or deletion does not invoke the getter. Selected setters invalidate
+the receiver and its shared children on assignment, including through known
+array and prototype paths. Supported class descriptors use the same inherited
+field and own-property shadowing rules as class reference selection. Inert
+getters and ordinary data slots retain their supported precision. Exposing a
+constructed receiver also exposes its retained shared field references, using
+the same reference owner as selected getter effects.
+
+Object spreads, rest copies and destructuring obtain their property reads from
+the shared pattern-source owner. Copies read own enumerable properties;
+ordinary destructuring can invoke an inherited getter. Operations requiring
+primitive conversion conservatively expose their conversion operands, including
+computed keys, arithmetic and untagged template interpolation. `using` and
+`await using` expose the retained resource at its lexical scope exit; earlier
+scalar reads retain their capture timing, including reads before a later scope's
+disposal. Repeated loop iterations can expose
+a previous disposal and therefore retain uncertainty. Private getter fields
+retain their parsed initializer references; `super` reads use the selected
+receiver conservatively, including superclass reads whose lookup and receiver
+authority differ. Custom `instanceof` hooks expose their receiver and argument.
+Known unmodified intrinsic Symbol keys cannot overwrite string properties or
+invoke primitive conversion; their omitted symbol-slot inventory stays partial.
+Shadowed or visibly replaced Symbol references retain unknown key effects.
+These are source-derived effects,
+not execution results or proofs of accessor purity. Reflectively installed
+descriptors remain opaque; their setup calls retain ordinary argument/receiver
+escape uncertainty. External prototype changes and unsupported runtime protocols
+remain unknown rather than supplying exact post-invocation values.
+Identifier references and closure captures share Babel syntax-role facts plus
+explicit binding/write roles; noncomputed declaration keys and import/meta names
+are not lexical reads. TypeScript type positions, including `typeof` type queries
+and computed keys in erased signatures, do not evaluate JavaScript bindings or
+create runtime calls or captures. Decorators on declared class fields can still
+run when the class is defined, and a decorated declared or abstract field can
+evaluate its computed key. Provenance-only expression-depth omissions enter
+the same typed source coverage as value-evaluation bounds and remain visible in
+retained application Evidence.
+Immediate synchronous function results also share the loader reference owner.
+An expression arrow returning the retained CommonJS `require` can preserve that
+loader identity. Possible loader results with opaque alternatives or block
+bodies retain candidate uncertainty; async and generator results are their
+wrapper values.
+This does not interpret `typeof` or Proxy behavior in bundler shims. Historical
+source imports consume the same proven loader fact and keep their existing
+requirement for a known loader association.
+
+Direct generator and async calls produce iterators and
+Promises; body returns do not become direct call-result flows. Their unresolved
+consumption remains an explicit frontier. Replaced emitter bindings select their
+initializer lifetime at each operation. A lexical `this` owner remains partial
+because it does not prove one runtime instance.
 Nested callable returns are not assigned to their parent callable. Projected
 graph observations carry source ranges but never source text.
 
@@ -425,7 +605,9 @@ Changes use JSON Pointer paths with `added`, `removed`, `changed`, or `unknown`
 status and a separate `presence` object (`present`, `absent`, or
 `unknown-coverage`) on each side. A name is `added` or `removed` when one paired
 shape proves presence and the other proves absence. Complete parent-property
-coverage can establish absence even when field values stay unresolved. Identical literals are
+coverage can establish absence even when field values stay unresolved. Proven
+absence of an ancestor also establishes absence of its descendants. An observed
+ancestor with unresolved contents keeps its descendants unknown. Identical literals are
 omitted. Unresolved values that remain on both sides stay `unknown` when the
 projections differ, and are omitted when presence is unchanged and the unknown
 projections match. Incomplete spreads and other partial parent coverage keep

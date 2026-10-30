@@ -1,16 +1,16 @@
 import type { EvidenceMcpServer } from "../EvidenceMcpServer.js";
 import { runAdmittedToolOperation } from "../admittedToolOperation.js";
 
-import { importManagedReconstructionEvidenceValidated } from "../../application/managed/ManagedReconstructionService.js";
+import {
+  importManagedReconstructionEvidenceResolved,
+  resolveManagedReconstructionEvidenceInput,
+} from "../../application/managed/ManagedReconstructionService.js";
 import { logToolExecution } from "../toolLogging.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
-import { managedWorkflowContract } from "./contract.js";
-import { resolveManagedEvidence } from "./evidence.js";
+import { toolContract } from "../../contracts/toolContracts.js";
 import type { ManagedWorkflowToolRegistration } from "./types.js";
 
-const reconstructionContract = managedWorkflowContract(
-  "import_managed_reconstruction",
-);
+const reconstructionContract = toolContract("import_managed_reconstruction");
 
 /** Register the managed reconstruction import workflow tool. */
 export const registerImportManagedReconstruction = (
@@ -27,24 +27,18 @@ export const registerImportManagedReconstruction = (
         reconstructionContract.name,
         context.mcpReq.signal,
         async () => {
-          const resolved = resolveManagedEvidence(input.static_members);
+          const resolved = resolveManagedReconstructionEvidenceInput(input);
           if (!resolved.ok)
             return server.delivery.toCallToolResult(
               resolved,
               reconstructionContract,
             );
-          const staticMembers = resolved.value[0];
-          if (staticMembers === undefined)
-            throw new TypeError(
-              "Managed reconstruction Evidence resolution failed",
-            );
-          const parsed = { ...input, static_members: staticMembers };
           const result = await logToolExecution(
             options.logger,
             reconstructionContract.name,
             () =>
               Promise.resolve(
-                importManagedReconstructionEvidenceValidated(parsed),
+                importManagedReconstructionEvidenceResolved(resolved.value),
               ),
           );
           if (!result.ok)
@@ -53,7 +47,7 @@ export const registerImportManagedReconstruction = (
               reconstructionContract,
             );
           const recordedSource = options.recordEvidence?.(
-            parsed.static_members,
+            resolved.value.staticEvidence,
           );
           if (recordedSource !== undefined && !recordedSource.ok)
             return server.delivery.toCallToolResult(

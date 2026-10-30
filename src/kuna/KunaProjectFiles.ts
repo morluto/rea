@@ -180,7 +180,7 @@ const inventorySchema = z.object({
       name: z.string(),
       address_hex: z.string().regex(/^0x[0-9a-f]+$/u),
       aliases: z.array(z.string()),
-      size: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+      size: z.int().nonnegative().max(Number.MAX_SAFE_INTEGER),
     }),
   ),
 });

@@ -78,15 +78,18 @@ const emitMainWebMcpTools = (
             ? options.webMcpConsequential
             : true,
         },
-        stackTrace: {
-          callFrames: [
-            {
-              url: `http://127.0.0.1:${String(port)}/app.js?token=tool-source-secret`,
-              lineNumber: 12,
-              columnNumber: 4,
-            },
-          ],
-        },
+        stackTrace:
+          options.webMcpStackTrace !== undefined
+            ? options.webMcpStackTrace(`http://127.0.0.1:${String(port)}`)
+            : {
+                callFrames: [
+                  {
+                    url: `http://127.0.0.1:${String(port)}/app.js?token=tool-source-secret`,
+                    lineNumber: 12,
+                    columnNumber: 4,
+                  },
+                ],
+              },
       },
       {
         name: "private_tool",
@@ -273,13 +276,21 @@ const emitSessionTimeline = (
       loaderId: "loader-redirect",
       request: { url: redirectUrl, method: "GET" },
       initiator: { type: "other" },
-      redirectResponse: { status: 302 },
+      redirectResponse: { url: allowed, status: 302 },
       timestamp: 13,
+    });
+    event(socket, "Network.requestWillBeSent", command.sessionId, {
+      requestId: "failed-request",
+      type: "Document",
+      frameId: "frame-main",
+      loaderId: "loader-reload",
+      request: { url: allowed, method: "GET" },
+      initiator: { type: "other" },
+      timestamp: 13.5,
     });
     event(socket, "Network.loadingFailed", command.sessionId, {
       requestId: "failed-request",
-      frameId: "frame-main",
-      loaderId: "loader-reload",
+      type: "Document",
       errorText: "net::ERR_CONNECTION_REFUSED",
       timestamp: 14,
     });
@@ -305,6 +316,8 @@ const emitSessionTimeline = (
         sessionId: command.sessionId,
         targetId: "allowed-page",
       });
+    if (options.sessionTimeline === "target_crashed")
+      event(socket, "Inspector.targetCrashed", command.sessionId, {});
   }
 };
 
@@ -668,6 +681,9 @@ const emitRuntimeEvents = (
               description: "object-secret",
             },
           ]
+        : []),
+      ...(options.nullConsoleArgument === true
+        ? [{ type: "object", subtype: "null", value: null }]
         : []),
     ],
     stackTrace: {

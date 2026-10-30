@@ -1,3 +1,4 @@
+import type { AsarHeaderAdmission } from "../config/asarHeaderAdmission.js";
 import {
   createAsarHeaderSignatureProbe,
   type FinalAsarHeaderProbeObservation,
@@ -14,6 +15,10 @@ import {
   type MachoHeaderPrefixFacts,
   type FatSliceHeaderEvidence,
 } from "../domain/apple/machoContainer.js";
+import {
+  observeMzWindowsHeader,
+  type MzWindowsHeaderSignatureEvidence,
+} from "../domain/dosMz.js";
 
 /** Initial bytes required by the other bounded format classifiers. */
 export const ARTIFACT_CLASSIFICATION_PREFIX_BYTES = 8_192;
@@ -23,6 +28,7 @@ export interface ArtifactClassificationEvidence {
   readonly prefix: Buffer;
   readonly asarHeader: FinalAsarHeaderProbeObservation;
   readonly fatSliceHeaders?: FatSliceHeaderEvidence;
+  readonly mzWindowsHeaderSignature?: MzWindowsHeaderSignatureEvidence;
 }
 
 const observeFatSliceHeaders = (input: {
@@ -73,6 +79,7 @@ const finishClassificationEvidence = (
   archiveBytes: number,
   finishAsar: (archiveBytes: number) => FinalAsarHeaderProbeObservation,
   sliceHeadersByOffset: Map<number, MachoHeaderPrefixFacts>,
+  mzWindowsHeaderSignature: MzWindowsHeaderSignatureEvidence | undefined,
 ): ArtifactClassificationEvidence => {
   const finalHeader = readFatContainerHeader(prefix, archiveBytes);
   if (finalHeader.state === "parsed") {
@@ -101,13 +108,18 @@ const finishClassificationEvidence = (
     prefix,
     asarHeader: finishAsar(archiveBytes),
     ...(fatSliceHeaders === undefined ? {} : { fatSliceHeaders }),
+    ...(mzWindowsHeaderSignature === undefined
+      ? {}
+      : { mzWindowsHeaderSignature }),
   };
 };
 
 /** Share acquisition bounds and signature observations across files and streams. */
-export const createArtifactClassificationProbe = () => {
+export const createArtifactClassificationProbe = (
+  asarHeaderAdmission?: AsarHeaderAdmission,
+) => {
   const xml = createXmlPlistSignatureProbe();
-  const asar = createAsarHeaderSignatureProbe();
+  const asar = createAsarHeaderSignatureProbe(asarHeaderAdmission);
   const blocks: Buffer[] = [];
   let retainedBytes = 0;
   let observedBytes = 0;
@@ -117,6 +129,37 @@ export const createArtifactClassificationProbe = () => {
     number,
     { readonly bytes: Buffer; count: number }
   >();
+  let mzWindowsHeaderSignature: MzWindowsHeaderSignatureEvidence | undefined;
+  let mzWindowsHeaderOffset: number | undefined;
+  let mzHeaderChecked = false;
+  const observeSignatureWindow = (
+    offset: number,
+    sourceOffset: number,
+    sourceBytes: Uint8Array,
+  ): void => {
+    if (!Number.isSafeInteger(offset) || offset < 0) return;
+    const start = Math.max(offset, sourceOffset);
+    const end = Math.min(offset + 4, sourceOffset + sourceBytes.length);
+    if (start >= end) return;
+    const window = Buffer.alloc(4);
+    const previous =
+      mzWindowsHeaderSignature?.offset === offset
+        ? mzWindowsHeaderSignature.bytes
+        : undefined;
+    previous?.copy(window);
+    let observedLength = previous?.length ?? 0;
+    if (start < end && start <= offset + observedLength) {
+      Buffer.from(
+        sourceBytes.subarray(start - sourceOffset, end - sourceOffset),
+      ).copy(window, start - offset);
+      observedLength = Math.max(observedLength, end - offset);
+    }
+    if (observedLength === 0) return;
+    mzWindowsHeaderSignature = {
+      offset,
+      bytes: window.subarray(0, observedLength),
+    };
+  };
   const retain = (bytes: Uint8Array): void => {
     let offset = 0;
     while (offset < bytes.length) {
@@ -190,6 +233,31 @@ export const createArtifactClassificationProbe = () => {
         streamOffset,
         bytes,
       });
+      if (!mzHeaderChecked && retainedBytes >= 64) {
+        mzHeaderChecked = true;
+        const prefix = retainedPrefix();
+        if (prefix[0] === 0x4d && prefix[1] === 0x5a) {
+          const windowsHeader = observeMzWindowsHeader(
+            prefix,
+            Number.MAX_SAFE_INTEGER,
+          );
+          if (windowsHeader.state === "signature-needed") {
+            mzWindowsHeaderOffset = windowsHeader.offset;
+            if (windowsHeader.offset < prefix.length) {
+              const inline = prefix.subarray(
+                windowsHeader.offset,
+                Math.min(windowsHeader.offset + 4, prefix.length),
+              );
+              mzWindowsHeaderSignature = {
+                offset: windowsHeader.offset,
+                bytes: inline,
+              };
+            }
+          }
+        }
+      }
+      if (mzWindowsHeaderOffset !== undefined)
+        observeSignatureWindow(mzWindowsHeaderOffset, streamOffset, bytes);
       observedBytes += bytes.length;
     },
     finish(archiveBytes: number): ArtifactClassificationEvidence {
@@ -198,6 +266,7 @@ export const createArtifactClassificationProbe = () => {
         archiveBytes,
         (bytes) => asar.finish(bytes),
         fatSliceHeadersByOffset,
+        mzWindowsHeaderSignature,
       );
     },
   };

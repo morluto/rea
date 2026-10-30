@@ -1,9 +1,142 @@
+import { artifactMcpCall } from "../../../scripts/lib/artifact-e2e.mjs";
 import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+
+import { Client } from "@modelcontextprotocol/client";
+import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { expect } from "vitest";
+import { z } from "zod";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+
+cliTest.skipIf(process.platform === "win32")(
+  "migrates an owned shebang registration and starts its generated MCP command without a runtime on PATH",
+  async ({ cli }) => {
+    const home = await createTestTempDirectory("rea-registration-interpreter-");
+    const profile = join(home, ".qwen");
+    const config = join(profile, "settings.json");
+    const entrypoint = resolve("scripts/rea.mjs");
+    const restrictedPath = join(home, "path-without-runtime");
+    await mkdir(restrictedPath);
+    // Linux process ownership requires procps; no JavaScript runtime is exposed.
+    if (process.platform === "linux")
+      await symlink("/bin/ps", join(restrictedPath, "ps"));
+    const retainedEnvironment = {
+      PATH: restrictedPath,
+      CALLER_SETTING: "keep exactly",
+    };
+    const unrelated = { command: "other-server", args: ["keep"] };
+    const original = JSON.stringify({
+      mcpServers: {
+        rea: {
+          command: entrypoint,
+          args: ["mcp"],
+          env: retainedEnvironment,
+        },
+        unrelated,
+      },
+    });
+    await mkdir(profile);
+    await writeFile(config, original);
+    const environment = {
+      HOME: home,
+      USERPROFILE: home,
+      QWEN_HOME: profile,
+      PATH: restrictedPath,
+      HOPPER_LAUNCHER_PATH: join(home, "missing-hopper"),
+      GHIDRA_INSTALL_DIR: join(home, "missing-ghidra"),
+      JAVA_HOME: join(home, "missing-java"),
+    };
+    const run = (arguments_: readonly string[]) =>
+      cli.run({
+        arguments: [...arguments_, "--json"],
+        cwd: home,
+        environment,
+      });
+    const doctor = await run([
+      "doctor",
+      "--client",
+      "qwen_code",
+      "--skill=false",
+    ]);
+    expect(doctor.exitCode, doctor.stdout).toBe(1);
+    expect(doctor.json).toMatchObject({
+      identity: {
+        registrations: expect.arrayContaining([
+          expect.objectContaining({ client: "qwen_code", state: "stale" }),
+        ]),
+      },
+    });
+    expect(await readFile(config, "utf8")).toBe(original);
+
+    const setupArguments = [
+      "setup",
+      "--client",
+      "qwen_code",
+      "--skill=false",
+      "--yes",
+    ];
+    const setup = await run(setupArguments);
+    expect(setup.exitCode, setup.stdout).toBe(0);
+    const configured = await readFile(config, "utf8");
+    const document = z
+      .object({
+        mcpServers: z.object({
+          rea: z.object({
+            command: z.string(),
+            args: z.array(z.string()),
+            env: z.record(z.string(), z.string()),
+          }),
+          unrelated: z.unknown(),
+        }),
+      })
+      .parse(JSON.parse(configured));
+    const registration = document.mcpServers.rea;
+    expect(registration).toMatchObject({
+      command: process.execPath,
+      args: [entrypoint, "mcp"],
+      env: retainedEnvironment,
+    });
+    expect(document.mcpServers.unrelated).toEqual(unrelated);
+    expect(await readFile(`${config}.rea.backup`, "utf8")).toBe(original);
+
+    const transport = new StdioClientTransport({
+      command: registration.command,
+      args: registration.args,
+      cwd: home,
+      env: { ...environment, ...registration.env },
+      stderr: "pipe",
+    });
+    const client = new Client({ name: "setup-interpreter", version: "1" });
+    try {
+      await client.connect(transport);
+      expect(
+        (await client.listTools()).tools.map(({ name }) => name),
+      ).toContain("binary_session");
+      const session = await artifactMcpCall(client, {
+        name: "binary_session",
+        arguments: {},
+      });
+      expect(session.isError).not.toBe(true);
+      expect(session.structuredContent).toMatchObject({
+        result: { open: false },
+      });
+    } finally {
+      await client.close();
+      await transport.close();
+    }
+
+    const repeated = await run(setupArguments);
+    expect(repeated.exitCode, repeated.stdout).toBe(0);
+    expect(repeated.json).toMatchObject({
+      plannedActions: [],
+      appliedActions: [],
+    });
+    expect(await readFile(config, "utf8")).toBe(configured);
+    expect(await readFile(`${config}.rea.backup`, "utf8")).toBe(original);
+  },
+);
 
 cliTest.skipIf(process.platform === "win32").for([
   ["rea", "rea-agents"],
@@ -111,7 +244,8 @@ cliTest.skipIf(process.platform === "win32").for([
             client: "cursor",
             state: "unknown",
             command,
-            remediation: expect.stringContaining("symlink targets"),
+            config_path: config,
+            remediation: expect.stringMatching(/\S/u),
           }),
         ]),
       },

@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 
 import { ReverseEngineeringService } from "../../src/application/reverse/ReverseEngineeringService.js";
+import { analysisErrorProjectionSchema } from "../../src/contracts/errorSchemas.js";
+import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "../../src/contracts/reverseEngineeringToolContracts.js";
 import { execFileOutput } from "../../src/process/ExecFileOutput.js";
 
@@ -112,3 +114,206 @@ it("does not reintroduce ambient variables absent from the captured provider env
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+it("projects missing and non-file objdump targets with actionable path reasons", async () => {
+  const directory = await mkdtemp(
+    join(tmpdir(), "rea-reverse-invalid-target-"),
+  );
+  const missing = join(directory, "missing.bin");
+  const run = vi.fn(async () => ({ stdout: "", stderr: "" }));
+  const service = new ReverseEngineeringService({
+    commands: {
+      objdump: () => ({
+        executable: "unused-objdump",
+        arguments: [missing],
+        identity: {
+          id: "test.objdump",
+          name: "Test objdump",
+          version: null,
+        },
+      }),
+      rizin: ({ path }) => ({
+        executable: "unused-rizin",
+        arguments: [path],
+        identity: { id: "test.rizin", name: "Test Rizin", version: null },
+      }),
+    },
+    run,
+  });
+
+  try {
+    for (const [path, reason] of [
+      [missing, "not found"],
+      [directory, "not a regular file"],
+    ] as const) {
+      const result = await service.inspectWithObjdump({
+        path,
+        operation: "symbols",
+      });
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("Expected target validation failure");
+      const projection = projectAnalysisError(result.error);
+      expect(analysisErrorProjectionSchema.safeParse(projection).success).toBe(
+        true,
+      );
+      expect(projection).toMatchObject({
+        code: "invalid_request",
+        category: "invalid_input",
+        retryable: false,
+        message: expect.stringContaining(path),
+        remediation: {
+          action: expect.stringContaining("Correct the listed fields"),
+        },
+        details: {
+          operation: "inspect_with_objdump",
+          issues: [
+            {
+              path: ["path"],
+              reason: "invalid_value",
+              message: expect.stringContaining(reason),
+            },
+          ],
+        },
+      });
+    }
+    expect(run).not.toHaveBeenCalled();
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+it("keeps target preflight I/O failures out of invalid-input classification", async () => {
+  const directory = await mkdtemp(
+    join(tmpdir(), "rea-reverse-target-io-failure-"),
+  );
+  const path = join(directory, "fixture.bin");
+  await writeFile(path, Buffer.from([0x7f, 0x45, 0x4c, 0x46]));
+  const ioFailure = Object.assign(new Error("device I/O failure"), {
+    code: "EIO",
+  });
+  const stat = vi.fn(async () => {
+    throw ioFailure;
+  });
+  const run = vi.fn(async () => ({ stdout: "", stderr: "" }));
+  const service = new ReverseEngineeringService({
+    stat,
+    commands: {
+      objdump: () => ({
+        executable: "unused-objdump",
+        arguments: [path],
+        identity: {
+          id: "test.objdump",
+          name: "Test objdump",
+          version: null,
+        },
+      }),
+      rizin: () => ({
+        executable: "unused-rizin",
+        arguments: [path],
+        identity: { id: "test.rizin", name: "Test Rizin", version: null },
+      }),
+    },
+    run,
+  });
+
+  try {
+    const result = await service.inspectWithObjdump({
+      path,
+      operation: "symbols",
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected target preflight I/O failure");
+    expect(result.error).toMatchObject({
+      _tag: "ProviderAdapterError",
+      cause: ioFailure,
+      diagnostics: { phase: "target_preflight", system_code: "EIO" },
+    });
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "execution_failure",
+      category: "execution_failure",
+      retryable: false,
+      details: {
+        provider_id: "test.objdump",
+        operation: "inspect_with_objdump",
+        diagnostics: { phase: "target_preflight", system_code: "EIO" },
+      },
+    });
+    expect(run).not.toHaveBeenCalled();
+    expect(stat).toHaveBeenCalledOnce();
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+it.each([
+  { code: "ELOOP", reason: "symbolic-link loop" },
+  { code: "ENAMETOOLONG", reason: "path is too long" },
+])(
+  "classifies selected target $code as correctable input",
+  async ({ code, reason }) => {
+    const directory = await mkdtemp(
+      join(tmpdir(), "rea-reverse-target-path-error-"),
+    );
+    const path = join(directory, "fixture.bin");
+    const pathFailure = Object.assign(new Error(`stat failed: ${code}`), {
+      code,
+    });
+    const stat = vi.fn(async () => {
+      throw pathFailure;
+    });
+    const run = vi.fn(async () => ({ stdout: "", stderr: "" }));
+    const service = new ReverseEngineeringService({
+      stat,
+      commands: {
+        objdump: () => ({
+          executable: "unused-objdump",
+          arguments: [path],
+          identity: {
+            id: "test.objdump",
+            name: "Test objdump",
+            version: null,
+          },
+        }),
+        rizin: () => ({
+          executable: "unused-rizin",
+          arguments: [path],
+          identity: { id: "test.rizin", name: "Test Rizin", version: null },
+        }),
+      },
+      run,
+    });
+
+    try {
+      const result = await service.inspectWithObjdump({
+        path,
+        operation: "symbols",
+      });
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error(`Expected ${code} target path failure`);
+      expect(result.error).toMatchObject({
+        _tag: "AnalysisInputError",
+        cause: pathFailure,
+      });
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: "invalid_request",
+        category: "invalid_input",
+        retryable: false,
+        message: expect.stringContaining(path),
+        details: {
+          operation: "inspect_with_objdump",
+          issues: [
+            {
+              path: ["path"],
+              reason: "invalid_value",
+              message: expect.stringContaining(reason),
+            },
+          ],
+        },
+      });
+      expect(run).not.toHaveBeenCalled();
+      expect(stat).toHaveBeenCalledOnce();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);

@@ -18,7 +18,7 @@ import {
 } from "../../../src/process/capture/ProcessCaptureLifecycle.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createServer } from "../../../src/server/createServer.js";
-import { ToolResultDelivery } from "../../../src/server/toolResult.js";
+import { ToolResultDelivery } from "../../../src/server/ToolResultDelivery.js";
 
 const createTemporaryRoot = (): Promise<string> =>
   mkdtemp(join(tmpdir(), "rea-mcp-process-cleanup-retry-"));
@@ -121,7 +121,7 @@ it("projects the retained process root through close_binary and resolves its ret
     const firstWire = JSON.stringify(failed);
     expect(failed.error).toMatchObject({
       code: "cleanup_incomplete",
-      details: { resources: ["temporary_root"] },
+      details: { resources: [root] },
     });
     expect(fault.removalAttempts).toBe(2);
     expect(fault.retryFailure).toBeInstanceOf(ProcessCaptureError);
@@ -129,7 +129,7 @@ it("projects the retained process root through close_binary and resolves its ret
       throw new Error("Expected the process scope's typed retry error");
     const retryError = fault.retryFailure;
     expect(retryError.cleanupIncomplete).toBe(true);
-    expect(retryError.cleanupResources).toEqual(["temporary_root"]);
+    expect(retryError.cleanupResources).toEqual([root]);
 
     denyRemoval = false;
     const recovered = await callClose();
@@ -185,7 +185,7 @@ it.each(["returned", "thrown", "synchronous"] as const)(
       expect(failed.error).toMatchObject({
         code: "cleanup_incomplete",
         details: {
-          resources: ["temporary_root"],
+          resources: [root],
           diagnostics: {
             primary_error: {
               details: {
@@ -207,7 +207,9 @@ it.each(["returned", "thrown", "synchronous"] as const)(
         throw new Error("Expected the process scope's typed retry error");
       const retryError = fault.retryFailure;
       expect(retryError.cleanupIncomplete).toBe(true);
+      expect(retryError.cleanupResources).toEqual([root]);
       expect(composed.cleanupIncomplete).toBe(true);
+      expect(composed.cleanupResources).toEqual([root]);
 
       denyRemoval = false;
       const recovered = parseMcpToolError(await callClose());

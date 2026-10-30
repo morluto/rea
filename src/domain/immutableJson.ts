@@ -38,8 +38,10 @@ export const immutableJsonSnapshotMember = (
   return member;
 };
 
-/** Match a completed snapshot to its parsed representation without recursion. */
-export const canBorrowParsedJsonSnapshot = <Parsed extends JsonValue>(
+/** Match a completed snapshot to its parsed representation without recursion.
+ * Parsed schemas may permit optional undefined members; only exact JSON matches borrow.
+ */
+export const canBorrowParsedJsonSnapshot = <Parsed>(
   source: unknown,
   parsed: Parsed,
 ): source is Parsed => {
@@ -136,6 +138,74 @@ export const freezeJsonSnapshot = <T extends JsonValue>(value: T): T => {
     immutableSnapshots.add(value);
   return value;
 };
+
+/**
+ * Seal a freshly parsed, exclusively owned JSON tree. Its parser has removed
+ * aliases, accessors and hidden properties; existing sealed subtrees may be shared.
+ * Keep only the active ancestry rather than retaining every completed object.
+ * Unlike general graph sealing, failure can leave this provisional tree frozen.
+ */
+export const freezeOwnedJsonTreeSnapshot = <T extends JsonValue>(
+  value: T,
+): T => {
+  const frames: { value: object; children: Iterator<unknown> }[] = [];
+  const ancestors = new Set<object>();
+  const enter = (item: unknown): void => {
+    if (isImmutableJsonSnapshot(item)) return;
+    if (typeof item !== "object" || item === null)
+      throw new TypeError("Immutable JSON snapshots require JSON values");
+    if (isProxy(item))
+      throw new TypeError("Immutable JSON snapshots cannot contain proxies");
+    if (ancestors.has(item))
+      throw new TypeError(
+        "Immutable JSON snapshots cannot contain circular references",
+      );
+    const prototype: unknown = Object.getPrototypeOf(item);
+    if (
+      !Array.isArray(item) &&
+      prototype !== Object.prototype &&
+      prototype !== null
+    )
+      throw new TypeError("Immutable JSON snapshots require ordinary objects");
+    ancestors.add(item);
+    frames.push({ value: item, children: ownedTreeChildren(item) });
+  };
+  enter(value);
+  while (frames.length > 0) {
+    const frame = frames[frames.length - 1]!;
+    const next = frame.children.next();
+    if (!next.done) enter(next.value);
+    else {
+      Object.freeze(frame.value);
+      ancestors.delete(frame.value);
+      frames.pop();
+    }
+  }
+  if (typeof value === "object" && value !== null)
+    immutableSnapshots.add(value);
+  return value;
+};
+
+function* ownedTreeChildren(value: object): Generator<unknown> {
+  if (Array.isArray(value)) {
+    for (let index = 0; index < value.length; index++) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, index);
+      if (descriptor === undefined || !Object.hasOwn(descriptor, "value"))
+        throw new TypeError("Owned JSON trees require dense data arrays");
+      yield descriptor.value;
+    }
+  } else {
+    for (const key in value) {
+      if (!Object.hasOwn(value, key)) continue;
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (descriptor === undefined || !Object.hasOwn(descriptor, "value"))
+        throw new TypeError(
+          "Immutable JSON snapshots cannot contain accessors",
+        );
+      yield descriptor.value;
+    }
+  }
+}
 
 /**
  * Seal exclusively owned JSON in bounded steps, authenticating only completion.

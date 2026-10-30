@@ -7,12 +7,14 @@ import type { EvidenceBundle } from "../../domain/evidenceBundle.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { evidenceBundleForTarget } from "../../domain/evidenceBundle.js";
 import {
-  EvidenceFileError,
   EvidenceIntegrityError,
   AnalysisSnapshotMismatchError,
 } from "../../domain/evidenceErrors.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import type { AnalysisInputError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisCapabilityUnavailableError,
+  type AnalysisInputError,
+} from "../../domain/analysisErrorCore.js";
 import type { UnknownRegistryError } from "../../domain/unknownRegistryError.js";
 import type {
   RecordUnknownInput,
@@ -21,6 +23,7 @@ import type {
   UpdateUnknownInput,
 } from "../../domain/residualUnknown.js";
 import type {
+  EvidenceImportReceipt,
   UnknownPage,
   UnknownQuery,
 } from "../investigation/InvestigationRecordPort.js";
@@ -28,13 +31,19 @@ import { err, ok, type Result } from "../../domain/result.js";
 import type {
   AnalysisExecution,
   AnalysisOperation,
+  RetainedResourceScope,
 } from "../AnalysisProvider.js";
 import { AnalysisSnapshotCache } from "./AnalysisSnapshotCache.js";
 import { InvestigationRecords } from "../investigation/InvestigationRecords.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { writeAnalysisSnapshot as writeSnapshotFile } from "./AnalysisSnapshotFiles.js";
-import { workflowAnalysisProfile } from "../InvestigationProviders.js";
+import { bindRegularFileCleanup } from "../RegularFileRead.js";
+import {
+  writeAnalysisSnapshot as writeSnapshotFile,
+  readAnalysisSnapshot as readSnapshotFile,
+} from "./AnalysisSnapshotFiles.js";
+import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
+import { workflowAnalysisProfile } from "../WorkflowAnalysisProfile.js";
 import {
   hasOnlyProfilelessNativeDispatchEntries,
   isProfilelessNativeDispatchSnapshot,
@@ -42,6 +51,19 @@ import {
 
 const SNAPSHOT_MUTATION_RECOVERY =
   "Export session observations through export_evidence_bundle if needed. Close the active target without saving a snapshot, then reopen it before importing or saving a snapshot.";
+
+/** A missing replay prerequisite is not an Evidence integrity failure. */
+const snapshotUnavailable = (reason: string) =>
+  new AnalysisCapabilityUnavailableError(
+    "rea",
+    "export_analysis_snapshot",
+    reason,
+    {
+      userMessage: `Analysis snapshot unavailable: ${reason}`,
+      remediationAction:
+        "Export session observations with export_evidence_bundle if needed, or call close_binary without snapshot_path to close the session.",
+    },
+  );
 
 export interface ActiveAnalysisBinding {
   readonly target: BinaryTarget;
@@ -63,10 +85,20 @@ export interface WorkflowSnapshotRecordInput {
 /** Own binary snapshots and coordinate the composed investigation records. */
 export abstract class BinarySessionRecords {
   readonly #records: InvestigationRecords;
-  readonly #writeResources = new ArtifactResourceScope();
+  protected readonly fileResources = new ArtifactResourceScope();
+
+  readonly resourceScope: RetainedResourceScope = {
+    retain: (owner, resource) =>
+      this.fileResources.retain({
+        kind: "lease",
+        resource,
+        lease: { release: () => owner.close() },
+      }),
+    run: (operation) => this.fileResources.run(operation),
+  };
 
   protected get hasPendingFileResources(): boolean {
-    return this.#writeResources.hasPending;
+    return this.fileResources.hasPending;
   }
   readonly #snapshot = new AnalysisSnapshotCache();
   #snapshotInvalidated = false;
@@ -107,9 +139,14 @@ export abstract class BinarySessionRecords {
     return this.#records.exportEvidenceBundle();
   }
 
-  /** Borrow a sealed bundle for complete serialization without cloning retained graphs. */
-  evidenceBundleForSerialization(): EvidenceBundle {
-    return this.#records.evidenceBundleForSerialization();
+  /** Borrow the record owner's immutable bundle for read-only workflows. */
+  immutableEvidenceBundle(): EvidenceBundle {
+    return this.#records.immutableEvidenceBundle();
+  }
+
+  /** Read one snapshot while retaining failed descriptors under this session. */
+  readAnalysisSnapshot(path: string, signal?: AbortSignal) {
+    return readSnapshotFile(path, signal, this.fileResources);
   }
 
   /** Persist one provider-neutral snapshot under this session's resource owner. */
@@ -120,39 +157,45 @@ export abstract class BinarySessionRecords {
   ): Promise<
     Result<{ readonly path: string; readonly bytes: number }, AnalysisError>
   > {
-    return writeSnapshotFile(snapshot, path, overwrite, this.#writeResources);
+    return writeSnapshotFile(snapshot, path, overwrite, this.fileResources);
   }
 
-  /** Retry and release staged snapshot files at the owning session shutdown. */
-  async closeWriteResources(): Promise<Result<null, AnalysisError>> {
+  /** Retry retained target reads and snapshot files at the owning session shutdown. */
+  async closeFileResources(): Promise<Result<null, AnalysisError>> {
     try {
-      await this.#writeResources.retryCleanup();
+      await this.fileResources.retryCleanup();
       return ok(null);
     } catch (cause: unknown) {
       const observation = ArtifactReaderFailure.cleanupObservation(
         cause,
-        "analysis snapshot staging",
+        "analysis session files",
       );
-      return err(
-        new EvidenceFileError("write", "io", {
-          cause,
-          cleanup: {
-            reason: observation.reason,
-            resources: observation.resources,
-          },
-        }),
+      const error = new ProviderCleanupError(
+        "rea",
+        observation.resources,
+        { reason: observation.reason },
+        { cause, operation: "close_binary" },
       );
+      bindRegularFileCleanup(cause, error);
+      return err(error);
     }
   }
 
   importEvidenceBundle(
     bundle: unknown,
-  ): Result<number, EvidenceIntegrityError | AnalysisInputError> {
+  ): Result<
+    EvidenceImportReceipt,
+    EvidenceIntegrityError | AnalysisInputError
+  > {
     const imported = this.#records.mergeEvidenceBundle(bundle);
     if (!imported.ok) return imported;
-    if (imported.value.metadataChanged) this.invalidateSnapshot();
-    else if (imported.value.changed) this.#emitSnapshotChanged();
-    return ok(imported.value.recordsAdded);
+    this.#snapshot.refreshEvidenceMetadata(imported.value.replacements);
+    if (imported.value.changed) this.#emitSnapshotChanged();
+    return ok({
+      recordsAdded: imported.value.recordsAdded,
+      unknownsAdded: imported.value.unknownsAdded,
+      totalRecords: this.#records.immutableEvidenceBundle().records.length,
+    });
   }
 
   protected abstract activeAnalysisBinding(): ActiveAnalysisBinding | undefined;
@@ -173,8 +216,8 @@ export abstract class BinarySessionRecords {
       active?.profile ?? active?.profilelessWorkflowProfile ?? undefined;
     if (target !== undefined && profile === undefined)
       return err(
-        new EvidenceIntegrityError(
-          "Analysis snapshots require a concrete provider analysis profile",
+        snapshotUnavailable(
+          "The active target has no provider analysis profile for a snapshot.",
         ),
       );
     if (
@@ -189,8 +232,8 @@ export abstract class BinarySessionRecords {
         ))
     )
       return err(
-        new EvidenceIntegrityError(
-          "Profileless native snapshots may contain only current dispatch workflow observations",
+        snapshotUnavailable(
+          "The active session does not have a supported snapshot binding with replayable workflow observations for this target.",
         ),
       );
     return this.#snapshot.export(
@@ -238,7 +281,9 @@ export abstract class BinarySessionRecords {
           : { target: active.target, profile },
       (bundle) => {
         const imported = this.#records.mergeEvidenceBundle(bundle);
-        return imported.ok ? ok(imported.value.recordsAdded) : imported;
+        if (!imported.ok) return imported;
+        this.#snapshot.refreshEvidenceMetadata(imported.value.replacements);
+        return ok(imported.value.recordsAdded);
       },
     );
     if (imported.ok) this.#emitSnapshotChanged();

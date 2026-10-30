@@ -1,9 +1,11 @@
-import type { FileCloseResourceOwner } from "../application/AnalysisProvider.js";
+import type {
+  RetainedResourceScope,
+  ProviderAvailability,
+} from "../application/AnalysisProvider.js";
 import type {
   DoctorProviderCheck,
   DoctorProviderInspection,
 } from "../application/Doctor.js";
-import type { ProviderAvailability } from "../application/AnalysisProvider.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import {
   inspectJadxAvailability,
@@ -15,7 +17,7 @@ import {
 /** Project the validated JADX configuration into the doctor contract. */
 export const inspectJadxProvider = async (
   environment: Readonly<Record<string, string | undefined>>,
-  resourceOwner: FileCloseResourceOwner,
+  resourceOwner: RetainedResourceScope,
   signal?: AbortSignal,
 ): Promise<DoctorProviderInspection> => {
   const configured = environment.REA_JADX_MCP_JAR !== undefined;

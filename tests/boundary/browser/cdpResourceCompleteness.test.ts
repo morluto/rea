@@ -12,7 +12,7 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { compareWebCaptures } from "../../../src/domain/webCaptureDiff.js";
 import { compareWebCapturesInputSchema } from "../../../src/domain/webCaptureDiffSchemas.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
-import { runCliJson } from "../../fixtures/cliJsonProcess.js";
+import { cliTest } from "../../support/cli/cliFixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { trackBrowser } from "./cdpBrowserProvider.support.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
@@ -144,7 +144,7 @@ const compareResources = (
     }),
   ).dimensions.resources;
 
-describe("resource inventory omissions through CDP", () => {
+describe("resource metadata through CDP", () => {
   it.each([
     { fields: { type: undefined }, retained: false },
     { fields: { type: null }, retained: false },
@@ -215,10 +215,15 @@ describe("resource inventory omissions through CDP", () => {
       expect(capture.completeness.unavailable_sections).not.toContain(
         "resources",
       );
-      expect(compareResources(capture, capture).status).toBe("unchanged");
+      // Omitted contentSize is valid metadata, but cannot prove equal resource size.
+      expect(compareResources(capture, capture).status).toBe(
+        size === null ? "unknown" : "unchanged",
+      );
     },
   );
+});
 
+describe("resource inventory omissions through CDP", () => {
   it.each([
     "missing",
     "null",
@@ -436,34 +441,41 @@ describe("resource uncertainty in production MCP registration", () => {
 });
 
 describe("resource uncertainty in public CLI Evidence", () => {
-  it("preserves partial membership while complete inventories still prove removal", async () => {
-    const { state, inspect } = await startBrowser();
-    const root = await createTestTempDirectory("rea-resource-comparison-");
-    const before = join(root, "before.json");
-    const after = join(root, "after.json");
-    await writeFile(before, JSON.stringify({ inspection: await inspect() }));
-    for (const { mode, fields } of [
-      { mode: "invalid-entry", fields: undefined },
-      { mode: "valid", fields: { type: undefined } },
-      { mode: "valid", fields: { contentSize: -1 } },
-      { mode: "empty", fields: undefined },
-    ] as const) {
-      state.mode = mode;
-      state.peerFields = fields;
-      await writeFile(after, JSON.stringify({ inspection: await inspect() }));
-      expect(
-        await runCliJson(["compare-web-captures", before, after, "--json"]),
-      ).toMatchObject({
-        operation: "compare_web_captures",
-        normalized_result: {
-          dimensions: {
-            resources: {
-              status: mode === "empty" ? "changed" : "unknown",
-              total_changes: mode === "empty" ? 2 : 0,
+  cliTest(
+    "preserves partial membership while complete inventories still prove removal",
+    async ({ cli }) => {
+      const { state, inspect } = await startBrowser();
+      const root = await createTestTempDirectory("rea-resource-comparison-");
+      const before = join(root, "before.json");
+      const after = join(root, "after.json");
+      await writeFile(before, JSON.stringify({ inspection: await inspect() }));
+      for (const { mode, fields } of [
+        { mode: "invalid-entry", fields: undefined },
+        { mode: "valid", fields: { type: undefined } },
+        { mode: "valid", fields: { contentSize: -1 } },
+        { mode: "empty", fields: undefined },
+      ] as const) {
+        state.mode = mode;
+        state.peerFields = fields;
+        await writeFile(after, JSON.stringify({ inspection: await inspect() }));
+        const cliResult = await cli.run({
+          arguments: ["compare-web-captures", before, after, "--json"],
+          environment: process.env,
+        });
+        expect(cliResult.exitCode).toBe(0);
+        expect(cliResult.signal).toBeNull();
+        expect(cliResult.json).toMatchObject({
+          operation: "compare_web_captures",
+          normalized_result: {
+            dimensions: {
+              resources: {
+                status: mode === "empty" ? "changed" : "unknown",
+                total_changes: mode === "empty" ? 2 : 0,
+              },
             },
           },
-        },
-      });
-    }
-  });
+        });
+      }
+    },
+  );
 });

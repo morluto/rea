@@ -189,3 +189,33 @@ it("preserves exact cancellation after an overlay descriptor read", async () => 
     await handle.close();
   }
 });
+
+it.each([
+  [0, "invalid DOS MZ page count or final-page size"],
+  [4, "truncated DOS MZ load module"],
+] as const)(
+  "preserves early extent failure before Windows inspection (pages=%s)",
+  async (pages, error) => {
+    const fixture = fixtureDosLoadImage(Buffer.alloc(1024));
+    fixture.bytes.writeUInt16LE(pages, 4);
+    fixture.bytes.writeUInt32LE(512, 60);
+    fixture.bytes.write("NE", 512, "ascii");
+    const directory = await createTestTempDirectory("rea-mz-extent-");
+    const path = join(directory, "inert.exe");
+    await writeFile(path, fixture.bytes);
+    const handle = await open(path, "r");
+    try {
+      await expect(
+        attestGhidraDosSnapshot(
+          handle,
+          fixture.bytes.length,
+          path,
+          fixture.sha256,
+          fixture.observation,
+        ),
+      ).resolves.toEqual({ ok: false, error });
+    } finally {
+      await handle.close();
+    }
+  },
+);
