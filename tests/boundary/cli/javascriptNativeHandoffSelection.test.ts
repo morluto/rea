@@ -183,7 +183,13 @@ cliTest(
           ),
         ).toBe(false);
       }
-      expect(trace.evidence_links).not.toContain(unrelated.evidence_id);
+      expect([...trace.evidence_links].sort()).toEqual(
+        [
+          parent.evidence_id,
+          evidenceA.evidence_id,
+          ...(direction === "both" ? [evidenceB.evidence_id] : []),
+        ].sort(),
+      );
     }
     expect(await readFile(pathA)).toEqual(bytesA);
     expect(await readFile(pathB)).toEqual(bytesB);
