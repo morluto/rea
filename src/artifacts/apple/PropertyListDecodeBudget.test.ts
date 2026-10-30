@@ -20,6 +20,20 @@ it("refuses an XML plist whose DOM exceeds the native decode budget", () => {
   expect(parsed.error.message).toContain("native plist decode budget");
 });
 
+// Saxes accepts any XML NameStartChar, and the DOM holds every element
+// before the plist decoder rejects an unknown tag.
+it.each(["é", "_", ":", "雪", "\u{1d4b3}"])(
+  "refuses 100,000 elements whose names start with %s before building the DOM",
+  (name) => {
+    const parsed = parsePlistXmlSource(
+      xmlPlist(`<array>${`<${name}/>`.repeat(100_000)}</array>`),
+    );
+    expect(parsed.ok).toBe(false);
+    if (parsed.ok) throw new Error("Expected a decode budget refusal");
+    expect(parsed.error).toBeInstanceOf(AnalysisResourceConstraintError);
+  },
+);
+
 it("admits an ordinary pretty-printed XML plist", () => {
   const entry = (index: number) =>
     `\t<dict>\n${Array.from(
@@ -41,6 +55,9 @@ it.each([
   ["text after elements", "<true/>\n", 1280 + 384],
   ["comments", "<!---->", 384],
   ["CDATA sections", "<string><![CDATA[a]]></string>", 1280 + 384],
+  ["non-ASCII elements", "<é/>", 1280],
+  ["attributes", '<true a="x>y" b="z"/>', 1280 + 2 * 384],
+  ["references", "<string>&amp;&#x41;</string>", 1280 + 384 + 2 * 64],
 ])(
   "charges %s for the DOM nodes the decoder builds",
   (_name, item, perItem) => {
