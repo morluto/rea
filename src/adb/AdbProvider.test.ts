@@ -32,6 +32,7 @@ vi.mock("../process/ExecFileOutput.js", async (importOriginal) => {
 
 import { AdbProvider } from "./AdbProvider.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
+import { execFileOutputFailure } from "../process/ExecFileOutput.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { parseEvidence } from "../domain/evidence.js";
 import type { AdbRequest } from "../domain/adb/adbDeviceAnalysis.js";
@@ -1946,8 +1947,8 @@ const packageVerdictCases = [
   },
   {
     name: "nonzero without a verdict",
-    stdout: "Performing Streamed Install\n",
-    stderr: "transport closed\n",
+    stdout: "Performing Streamed Install ✓\n",
+    stderr: "transport closed ✓\n",
     exit: 2,
     verdict: "unreadable",
   },
@@ -2005,6 +2006,16 @@ exit 1`,
         expect(projected).toMatchObject({ code: "unreadable_output" });
         expect(result.error.message).toContain("transport closed");
         expect(projected.message).not.toContain("refused");
+        expect(execFileOutputFailure(result.error.cause)).toEqual({
+          stdout: scenario.stdout,
+          stderr: scenario.stderr,
+          stdoutBytes: Buffer.byteLength(scenario.stdout),
+          stderrBytes: Buffer.byteLength(scenario.stderr),
+          code: scenario.exit,
+          signal: null,
+          killed: false,
+          outputTruncated: false,
+        });
       } else {
         expect(projected).toMatchObject({
           code: "unreadable_output",
