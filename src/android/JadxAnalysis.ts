@@ -1,12 +1,25 @@
 import type { z } from "zod";
 import type { AndroidRequest } from "../domain/android/androidAnalysis.js";
 import { androidResultSchemas } from "../domain/android/androidAnalysis.js";
+import { observedAndroidManifestComponentsSchema } from "../domain/android/androidManifestComponents.js";
+import {
+  type AndroidMappingQuery,
+  type AndroidMappingSource,
+  projectAndroidMapping,
+} from "../domain/android/androidMapping.js";
 import { parseAndroidManifestComponents } from "./AndroidManifestComponents.js";
 import {
   AnalysisInputError,
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import type { AndroidNativeDeclarations } from "../domain/android/androidNativeDeclarations.js";
+import type { AndroidJniLibraries } from "./AndroidJniLibraries.js";
+import {
+  ANDROID_JNI_REPORT_BYTES,
+  projectAndroidJniBindings,
+} from "../domain/android/androidJniBindings.js";
+import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import {
   jadxAppSchema,
   type JadxClassPage,
@@ -38,6 +51,22 @@ type Engine = z.infer<
   typeof androidResultSchemas.inspect_android_package
 >["engine"];
 type ClassSummary = z.infer<typeof jadxClassSchema>;
+/** Session facts shared by every request, and the caller's optional mapping. */
+export interface JadxAnalysisContext {
+  readonly loaded: z.infer<typeof jadxLoadSchema> | undefined;
+  readonly engine: Engine;
+  readonly mapping?: AndroidMappingSource | undefined;
+  readonly jni?: {
+    readonly apkSha256: string;
+    readonly inventory: () => Promise<AndroidNativeDeclarations>;
+    readonly libraries: () => Promise<AndroidJniLibraries>;
+  };
+}
+
+const observedPackageSchema =
+  androidResultSchemas.inspect_android_package.extend({
+    components: observedAndroidManifestComponentsSchema,
+  });
 
 const methodsOf = (summary: ClassSummary) => {
   const seen = new Map<string, number>();
@@ -54,6 +83,50 @@ const methodsOf = (summary: ClassSummary) => {
   });
 };
 
+/** Mapping lookups use the bridge's raw DEX identities, never display aliases. */
+const classQuery = (summary: ClassSummary): AndroidMappingQuery => ({
+  kind: "class",
+  name: summary.full_name,
+  raw_name: summary.raw_name,
+});
+
+const innerClassQueries = (summary: ClassSummary): AndroidMappingQuery[] =>
+  summary.inner_classes.map((name, index) => ({
+    kind: "class",
+    name,
+    raw_name: summary.inner_class_raw_names[index] ?? "",
+  }));
+
+const methodQueries = (summary: ClassSummary) =>
+  methodsOf(summary).map(
+    (method, index): Extract<AndroidMappingQuery, { kind: "method" }> => ({
+      kind: "method",
+      class_raw_name: summary.raw_name,
+      name: method.name,
+      overload_index: method.overload_index,
+      raw_name: summary.methods[index]?.raw_name ?? "",
+      dex_descriptor: method.dex_descriptor,
+    }),
+  );
+
+const fieldQueries = (summary: ClassSummary): AndroidMappingQuery[] =>
+  summary.fields.map((field) => ({
+    kind: "field",
+    class_raw_name: summary.raw_name,
+    name: field.name,
+    raw_name: field.raw_name,
+    dex_type: field.dex_type,
+  }));
+
+/** The optional mapping block; absent unless the caller selected a mapping. */
+const mappingOf = (
+  mapping: AndroidMappingSource | undefined,
+  queries: () => AndroidMappingQuery[],
+) =>
+  mapping === undefined
+    ? {}
+    : { mapping: projectAndroidMapping(mapping, queries()) };
+
 const inputFailure = (
   request: AndroidRequest,
   field: string,
@@ -68,7 +141,12 @@ const classSummary = async (
   tools: JadxToolPort,
   request: Exclude<
     AndroidRequest,
-    { operation: "inspect_android_package" | "search_android_classes" }
+    {
+      operation:
+        | "inspect_android_package"
+        | "search_android_classes"
+        | "inspect_android_jni_bindings";
+    }
   >,
 ): Promise<ClassSummary> => {
   // Only class inspection reports DEX static values; method and reference
@@ -109,7 +187,8 @@ const classSummary = async (
   if (
     value.method_count !== value.methods.length ||
     value.field_count !== value.fields.length ||
-    value.inner_class_count !== value.inner_classes.length
+    value.inner_class_count !== value.inner_classes.length ||
+    value.inner_class_raw_names.length !== value.inner_classes.length
   )
     throw new AnalysisOutputError(
       request.operation,
@@ -127,7 +206,7 @@ const inspectPackage = async (
   const manifest = normalizeJadxText(
     await tools.text("get_android_manifest", {}),
   );
-  return androidResultSchemas.inspect_android_package.parse({
+  return observedPackageSchema.parse({
     engine,
     package_name: app.package || null,
     version_name: app.version_name || null,
@@ -229,7 +308,7 @@ const inspectMethod = async (
   tools: JadxToolPort,
   request: Extract<AndroidRequest, { operation: "inspect_android_method" }>,
   summary: ClassSummary,
-  engine: Engine,
+  { engine, mapping }: JadxAnalysisContext,
 ): Promise<JsonValue> => {
   const candidates = matchingMethods(summary, request);
   if (candidates.length > 1 && request.input.overload_index === undefined)
@@ -275,6 +354,14 @@ const inspectMethod = async (
     fell_back: body.fell_back,
     markers: body.markers,
     source: normalizeJadxText(body.body),
+    ...mappingOf(mapping, () => [
+      classQuery(summary),
+      ...methodQueries(summary).filter(
+        (method) =>
+          method.name === selected.name &&
+          method.overload_index === selected.overload_index,
+      ),
+    ]),
   });
 };
 
@@ -282,9 +369,47 @@ const inspectMethod = async (
 export const analyzeJadxRequest = async (
   tools: JadxToolPort,
   request: AndroidRequest,
-  loaded: z.infer<typeof jadxLoadSchema>,
-  engine: Engine,
+  context: JadxAnalysisContext,
 ): Promise<JsonValue> => {
+  const { loaded, engine } = context;
+  if (request.operation === "inspect_android_jni_bindings") {
+    if (context.jni === undefined)
+      throw new AnalysisOutputError(
+        request.operation,
+        "Native declaration and immutable APK library readers are unavailable.",
+      );
+    const inventory = await context.jni.inventory();
+    const libraries = await context.jni.libraries();
+    const { path, ...selection } = request.input;
+    const projected = projectAndroidJniBindings({
+      apk: { path, sha256: context.jni.apkSha256 },
+      selection,
+      inventory,
+      libraries: libraries.libraries,
+      libraryInventory: libraries.inventory,
+    });
+    if (!projected.ok)
+      throw new AnalysisResourceConstraintError(
+        request.operation,
+        "memory",
+        "JNI relationship facts exceed the bounded retained report allowance.",
+        { limit_bytes: ANDROID_JNI_REPORT_BYTES },
+        {
+          retryable: false,
+          remediationAction:
+            "Select fewer ABI or library occurrences; raw declaration uniqueness remains global.",
+        },
+      );
+    return androidResultSchemas.inspect_android_jni_bindings.parse({
+      ...projected.value,
+      engine,
+    });
+  }
+  if (loaded === undefined)
+    throw new AnalysisOutputError(
+      request.operation,
+      "Decompiler operation requires the admitted APK to be loaded.",
+    );
   if (request.operation === "inspect_android_package")
     return inspectPackage(tools, loaded, engine);
   if (request.operation === "search_android_classes")
@@ -301,9 +426,15 @@ export const analyzeJadxRequest = async (
         dex_static_value: field.dex_static_value ?? null,
       })),
       inner_classes: summary.inner_classes,
+      ...mappingOf(context.mapping, () => [
+        classQuery(summary),
+        ...innerClassQueries(summary),
+        ...methodQueries(summary),
+        ...fieldQueries(summary),
+      ]),
     });
   if (request.operation === "inspect_android_method")
-    return inspectMethod(tools, request, summary, engine);
+    return inspectMethod(tools, request, summary, context);
   return traceReferences(tools, request, summary, engine);
 };
 

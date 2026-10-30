@@ -1,10 +1,11 @@
+import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisResult.js";
 import { parseConfig } from "../../../src/config/parseConfig.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { describe, expect, it, onTestFinished } from "vitest";
 
 import type { AnalysisOperationPort } from "../../../src/application/AnalysisProvider.js";
 import { runDirectAnalysis } from "../../../src/application/DirectAnalysis.js";
-import { functionDossierSchema } from "../../../src/domain/hopperValues.js";
+import { functionDossierSchema } from "../../../src/domain/native/functionDossier.js";
 import { ghidraFunctionDossier } from "../../../src/domain/ghidraValues.fixture.js";
 import {
   jsonValueSchema,
@@ -86,7 +87,9 @@ describe("official operation arguments", () => {
       ],
     ] as const) {
       const cli = parseEvidence(
-        await runDirectAnalysis(dependencies, path, name, cliParameters),
+        await runDirectAnalysis(dependencies, path, name, cliParameters).then(
+          projectCliAnalysisResult,
+        ),
       );
       const mcp = await client.callTool({ name, arguments: mcpParameters });
       expect(mcp.isError).not.toBe(true);

@@ -5,6 +5,7 @@ import {
   analysisSnapshotSchema,
   analysisQueryId,
   parseAnalysisSnapshot,
+  immutableAnalysisSnapshot,
   snapshotBinding,
   snapshotEvidenceForQuery,
   snapshotTarget,
@@ -638,4 +639,94 @@ describe("analysis snapshot Evidence binding", () => {
       );
     }
   });
+});
+
+describe("analysis snapshot payload ownership", () => {
+  it.each(["provider", "workflow"] as const)(
+    "shares authenticated %s payloads only in immutable snapshots",
+    (kind) => {
+      const { snapshot } = snapshotWithHistoricalEvidence();
+      const entry = snapshot.entries[0];
+      if (entry === undefined) throw new Error("Missing fixture query");
+      entry.execution.raw_result = { source: "raw" };
+      const evidence = createEvidence(
+        ANALYSIS_SNAPSHOT_TARGET,
+        ANALYSIS_SNAPSHOT_PROVIDER,
+        {
+          operation: entry.operation,
+          parameters: entry.parameters,
+          result: entry.execution.result,
+          rawResult: entry.execution.raw_result,
+          analysisProfile: ANALYSIS_SNAPSHOT_PROFILE,
+          confidence: kind === "provider" ? "observed" : "derived",
+        },
+      );
+      const input = {
+        ...snapshot,
+        entries: kind === "provider" ? [entry] : [],
+        workflow_entries:
+          kind === "workflow"
+            ? [
+                {
+                  ...entry,
+                  execution: {
+                    ...entry.execution,
+                    analysis_profile: ANALYSIS_SNAPSHOT_PROFILE,
+                  },
+                },
+              ]
+            : [],
+        evidence_bundle: createEvidenceBundle([evidence]),
+      };
+      const original = structuredClone(input);
+      const immutable = immutableAnalysisSnapshot(input);
+      const immutableEntry = (
+        kind === "provider" ? immutable.entries : immutable.workflow_entries
+      )[0];
+      const immutableEvidence = immutable.evidence_bundle.records[0];
+      if (immutableEntry === undefined || immutableEvidence === undefined)
+        throw new Error("Missing immutable payload");
+      expect(immutableEntry.execution.result).toBe(
+        immutableEvidence.normalized_result,
+      );
+      expect(immutableEntry.execution.raw_result).toBe(
+        immutableEvidence.raw_result,
+      );
+      expect(Object.isFrozen(immutableEntry.execution.result)).toBe(true);
+      expect(Object.isFrozen(immutableEntry.execution.raw_result)).toBe(true);
+      expect(Object.isFrozen(immutable)).toBe(true);
+      expect(immutableAnalysisSnapshot(immutable)).toBe(immutable);
+      expect(parseAnalysisSnapshot(immutable)).toBe(immutable);
+      expect(input).toEqual(original);
+      expect(Object.isFrozen(entry.execution.result)).toBe(false);
+      expect(Object.isFrozen(entry.execution.raw_result)).toBe(false);
+      const mutable = parseAnalysisSnapshot(input);
+      const mutableEntry = (
+        kind === "provider" ? mutable.entries : mutable.workflow_entries
+      )[0];
+      const mutableEvidence = mutable.evidence_bundle.records[0];
+      if (mutableEntry === undefined || mutableEvidence === undefined)
+        throw new Error("Missing mutable payload");
+      expect(mutableEntry.execution.result).not.toBe(
+        mutableEvidence.normalized_result,
+      );
+      expect(mutableEntry.execution.raw_result).not.toBe(
+        mutableEvidence.raw_result,
+      );
+      mutableEntry.execution.result = { changed: true };
+      mutableEntry.execution.raw_result = { changed: true };
+      expect(mutableEvidence).toEqual(evidence);
+      expect(input).toEqual(original);
+      const tampered = structuredClone(input);
+      const tamperedEntry = (
+        kind === "provider" ? tampered.entries : tampered.workflow_entries
+      )[0];
+      if (tamperedEntry === undefined) throw new Error("Missing tamper query");
+      tamperedEntry.execution.result = { changed: true };
+      expect(() => immutableAnalysisSnapshot(tampered)).toThrow(
+        /differs from its Evidence/u,
+      );
+      expect(Object.isFrozen(tamperedEntry.execution.result)).toBe(false);
+    },
+  );
 });

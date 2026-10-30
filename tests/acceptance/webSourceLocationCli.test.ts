@@ -18,7 +18,15 @@ cliTest(
   "accepts numeric UTF-16 coordinates and runs the actual owned source-map codec without a browser",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-source-map-cli-");
-    const fixture = webSourceLocationFixture();
+    const fixture = webSourceLocationFixture(
+      JSON.stringify({
+        version: 3,
+        sources: ["dir/original.ts", "dir//original.ts"],
+        sourcesContent: ["original", "second"],
+        names: [],
+        mappings: "AAAA,ACAA",
+      }),
+    );
     await mkdir(join(root, "files", "modules"), { recursive: true });
     await writeFile(join(root, "files", "modules", "main.js"), fixture.source);
     let manifest = join(root, "manifest.json").replaceAll("\\", "/");
@@ -63,11 +71,28 @@ cliTest(
         source_map: { association: "caller-selected" },
         generated_offset: 0,
         execution: "unknown",
-        matches: [{ content: { text: "original" } }],
+        matches: [
+          {
+            source_index: 0,
+            resolved_url: "https://app.test/dir/original.ts",
+            content: { text: "original" },
+          },
+          {
+            source_index: 1,
+            resolved_url: "https://app.test/dir//original.ts",
+            content: { text: "second" },
+          },
+        ],
         runtime: {
           id: process.versions.bun === undefined ? "node-v8" : "bun",
         },
       },
+    });
+    const limitation =
+      "Source names and sourceRoot are reported declarations. REA derives resolved URLs using WHATWG URL resolution; the pinned upstream codec decodes mappings. No original source is fetched or executed.";
+    expect(response.json).toMatchObject({
+      limitations: expect.arrayContaining([limitation]),
+      normalized_result: { limitations: expect.arrayContaining([limitation]) },
     });
     const transport = new StdioClientTransport({
       command: process.execPath,

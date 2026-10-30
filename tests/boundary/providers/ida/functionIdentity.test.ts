@@ -1,7 +1,7 @@
 import { rm } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
-import { functionDossierSchema } from "../../../../src/domain/hopperValues.js";
+import { functionDossierSchema } from "../../../../src/domain/native/functionDossier.js";
 import {
   jsonValueSchema,
   type JsonValue,

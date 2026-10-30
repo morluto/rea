@@ -14,9 +14,13 @@ import {
   type ProviderIdentity,
   type ExecutionOptions,
 } from "../application/AnalysisProvider.js";
-import { inspectBundleKeyedArchive } from "./apple/KeyedArchiveReader.js";
+import {
+  inspectBundleKeyedArchive,
+  inspectStandaloneKeyedArchive,
+} from "./apple/KeyedArchiveReader.js";
 import { traceDylibResolution } from "./apple/DylibResolutionReader.js";
-import { basename, dirname } from "node:path";
+import { dirname } from "node:path";
+import { withArtifactTargetIdentity } from "./withArtifactTargetIdentity.js";
 import { inventoryArtifact } from "./inventory/ArtifactInventory.js";
 import { extractArtifact } from "./extraction/ArtifactExtraction.js";
 import { analyzeInterfaceBuilderBundle } from "./apple/InterfaceBuilderAnalysis.js";
@@ -33,7 +37,6 @@ import {
 } from "../domain/binaryTargetTypes.js";
 import {
   AnalysisCapabilityUnavailableError,
-  AnalysisInputError,
   AnalysisUnsupportedTargetError,
 } from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -240,13 +243,21 @@ class ArtifactClient implements AnalysisClient {
       }
       if (operation === "decode_interface_builder") {
         const limits = interfaceBuilderLimitsSchema.parse(parameters);
-        const result = await analyzeInterfaceBuilderBundle({
-          bundlePath: this.target.sourcePath ?? this.target.path,
-          targetSha256: this.target.sha256,
-          limits,
-          resources: this.#resourceScope,
-          ...(options?.signal === undefined ? {} : { signal: options.signal }),
-        });
+        const result = await withArtifactTargetIdentity(
+          this.target,
+          this.#resourceScope,
+          () =>
+            analyzeInterfaceBuilderBundle({
+              bundlePath: this.target.sourcePath ?? this.target.path,
+              targetSha256: this.target.sha256,
+              limits,
+              resources: this.#resourceScope,
+              ...(options?.signal === undefined
+                ? {}
+                : { signal: options.signal }),
+            }),
+          options?.signal,
+        );
         return ok(
           createAnalysisExecution(result, ARTIFACT_GRAPH_PROVIDER, {
             limitations: result.limitations,
@@ -260,43 +271,48 @@ class ArtifactClient implements AnalysisClient {
       if (operation === "inspect_keyed_archive") {
         const standalone =
           this.target.kind === "artifact" && this.target.format === "plist";
-        if (
-          standalone &&
-          parameters.path !== undefined &&
-          parameters.path !== "." &&
-          parameters.path !== basename(this.target.path)
-        )
-          throw new AnalysisInputError(operation, undefined, [
-            {
-              path: ["path"],
-              reason: "invalid_value",
-              message:
-                "For an active plist, path must select that archive (omit path or use its basename).",
-              expected: basename(this.target.path),
-            },
-          ]);
-        const bundlePath = standalone
-          ? dirname(this.target.path)
-          : (this.target.sourcePath ?? this.target.path);
-        const result = await inspectBundleKeyedArchive({
-          bundlePath,
-          targetSha256: this.target.sha256,
-          parameters: standalone
-            ? { ...parameters, path: basename(this.target.path) }
-            : parameters,
-          platform: this.platform,
-          resources: this.#resourceScope,
-          ...(options?.signal === undefined ? {} : { signal: options.signal }),
-        });
-        if (standalone && result.archive_sha256 !== this.target.sha256)
-          throw new ArtifactReaderFailure(
-            "integrity",
-            `Active archive digest changed: expected ${this.target.sha256}, observed ${result.archive_sha256}`,
-          );
+        const selectedPath = artifactTargetSelectedPath(this.target);
+        const result = standalone
+          ? await inspectStandaloneKeyedArchive({
+              path: this.target.path,
+              selectedPath,
+              targetSha256: this.target.sha256,
+              parameters,
+              platform: this.platform,
+              resources: this.#resourceScope,
+              ...(options?.signal === undefined
+                ? {}
+                : { signal: options.signal }),
+            })
+          : await withArtifactTargetIdentity(
+              this.target,
+              this.#resourceScope,
+              () =>
+                inspectBundleKeyedArchive({
+                  bundlePath: this.target.sourcePath ?? this.target.path,
+                  targetSha256: this.target.sha256,
+                  parameters,
+                  platform: this.platform,
+                  resources: this.#resourceScope,
+                  ...(options?.signal === undefined
+                    ? {}
+                    : { signal: options.signal }),
+                }),
+              options?.signal,
+            );
         return ok(
           createAnalysisExecution(result, ARTIFACT_GRAPH_PROVIDER, {
             limitations: result.limitations,
             locations: [{ kind: "artifact-path", path: result.archive_path }],
+            ...(standalone
+              ? {
+                  subject: {
+                    path: selectedPath,
+                    sha256: result.archive_sha256,
+                    format: "plist" as const,
+                  },
+                }
+              : {}),
           }),
         );
       }
@@ -310,7 +326,11 @@ class ArtifactClient implements AnalysisClient {
         const result = await extractArtifact(
           {
             inputPath: this.target.sourcePath ?? this.target.path,
-            selectedPath: this.target.asarSelectedPath,
+            expectedRootSha256:
+              this.target.bundleInfoPlist === undefined
+                ? this.target.sha256
+                : undefined,
+            selectedPath: this.target.artifactSelectedPath,
             inputFormat: this.target.format,
             outputRoot: parsed.output_root,
             environment: this.environment,
@@ -396,14 +416,20 @@ class ArtifactClient implements AnalysisClient {
     options?: ExecutionOptions,
   ) {
     const bundlePath = this.target.sourcePath ?? this.target.path;
-    const result = await analyzeAppleAssetCatalogs({
-      environment: this.environment,
-      bundlePath,
-      resources: this.#resourceScope,
-      targetSha256: this.target.sha256,
-      page: parameters,
-      ...(options?.signal === undefined ? {} : { signal: options.signal }),
-    });
+    const result = await withArtifactTargetIdentity(
+      this.target,
+      this.#resourceScope,
+      () =>
+        analyzeAppleAssetCatalogs({
+          environment: this.environment,
+          bundlePath,
+          resources: this.#resourceScope,
+          targetSha256: this.target.sha256,
+          page: parameters,
+          ...(options?.signal === undefined ? {} : { signal: options.signal }),
+        }),
+      options?.signal,
+    );
     return ok(
       createAnalysisExecution(result, ARTIFACT_GRAPH_PROVIDER, {
         limitations: result.limitations,
@@ -505,7 +531,11 @@ class ArtifactClient implements AnalysisClient {
     options?: ExecutionOptions,
   ) {
     return inventoryArtifact(this.target.sourcePath ?? this.target.path, {
-      selectedPath: this.target.asarSelectedPath,
+      expectedRootSha256:
+        this.target.bundleInfoPlist === undefined
+          ? this.target.sha256
+          : undefined,
+      selectedPath: this.target.artifactSelectedPath,
       resourceScope: this.#resourceScope,
       environment: this.environment,
       asarHeaderAdmission: runtimeAsarHeaderAdmission(
@@ -513,7 +543,7 @@ class ArtifactClient implements AnalysisClient {
         this.settings,
       ),
       ...(options?.signal === undefined ? {} : { signal: options.signal }),
-      integrity: { mode: parsed.integrity_policy },
+      integrity: parsed.integrity_policy,
     });
   }
 }

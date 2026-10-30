@@ -1,3 +1,4 @@
+import { permitsCapabilityFallback } from "./CapabilityFallback.js";
 import type { NativeCallGraph } from "../domain/native/nativeCallGraph.js";
 import { nativeProcedureInputSchema } from "../domain/native/nativeProcedureInput.js";
 import { CALL_RELATIONSHIP_TRAVERSALS } from "./CallRelationshipTraversal.js";
@@ -16,18 +17,20 @@ import {
 } from "../contracts/enhancedInputs.js";
 import {
   AnalysisCancelledError,
-  AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { parseFunctionDossier } from "../domain/native/functionDossier.js";
 import {
-  parseFunctionDossier,
-  parseListCount,
-  parseRelatedAddresses,
+  parseNativeInventoryCount,
+  addressedValueSchema,
+} from "../domain/native/nativeInventory.js";
+import { parseRelatedAddresses } from "../domain/native/nativeObservation.js";
+import {
   parseSegments,
   projectBinaryOverview,
-} from "../domain/hopperValues.js";
+} from "../domain/native/nativeSegments.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   categorizeSwiftTypes,
@@ -40,7 +43,6 @@ import { traceNativeValues } from "./native/NativeValueTrace.js";
 import { traceNativeUiAction } from "./native/NativeUiActionTrace.js";
 import { decompileAll } from "./decompileDirectory/decompileAll.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
-import { addressedValueSchema } from "../domain/native/nativeInventory.js";
 import {
   nativeDispatchMetadataResultSchema,
   MAX_DISPATCH_METADATA_RECORDS,
@@ -62,7 +64,10 @@ import {
 import { resolveAnalysisDocument } from "./AnalysisDocument.js";
 import { traceCallPath } from "./CallPathTracing.js";
 import { resolveXrefsName } from "./XrefsAddressResolution.js";
-import { resolveProcedureAddress } from "./ProcedureAddressResolution.js";
+import {
+  parseProcedureAddress,
+  resolveProcedureAddress,
+} from "./ProcedureAddressResolution.js";
 import { traceLiteralFeature } from "./EnhancedLiteralTracing.js";
 import { projectNativeApiInspection } from "./native/NativeApiInspection.js";
 
@@ -101,12 +106,6 @@ const isAnalysisCancellation = (
   error: AnalysisError,
 ): error is AnalysisCancelledError => error._tag === "AnalysisCancelledError";
 
-const permitsCapabilityFallback = (
-  error: AnalysisError,
-): error is AnalysisCapabilityUnavailableError =>
-  error instanceof AnalysisCapabilityUnavailableError &&
-  !error.cleanupIncomplete;
-
 /**
  * Composes direct provider operations into reverse-engineering tools.
  * Direct callers use `execute`; adapters that own validation use
@@ -127,14 +126,14 @@ export class EnhancedTools {
       const parsed = enhancedInputSchemas.trace_native_values.safeParse(input);
       return parsed.success
         ? this.executeValidated({ name, input: parsed.data }, signal)
-        : invalidEnhancedInput(name, parsed.error);
+        : invalidEnhancedInput(name, parsed.error, input);
     }
     if (name === "trace_native_ui_action") {
       const parsed =
         enhancedInputSchemas.trace_native_ui_action.safeParse(input);
       return parsed.success
         ? this.executeValidated({ name, input: parsed.data }, signal)
-        : invalidEnhancedInput(name, parsed.error);
+        : invalidEnhancedInput(name, parsed.error, input);
     }
     if (name === "analyze_function" || name === "inspect_native_api")
       return this.#executeFunctionAnalysis(name, input, signal);
@@ -146,56 +145,56 @@ export class EnhancedTools {
           );
         return parsed.success
           ? this.executeValidated({ name, input: parsed.data }, signal)
-          : invalidEnhancedInput(name, parsed.error);
+          : invalidEnhancedInput(name, parsed.error, input);
       }
       case "get_objc_classes": {
         const parsed = enhancedInputSchemas.get_objc_classes.safeParse(input);
         return parsed.success
           ? this.executeValidated({ name, input: parsed.data }, signal)
-          : invalidEnhancedInput(name, parsed.error);
+          : invalidEnhancedInput(name, parsed.error, input);
       }
       case "get_objc_protocols": {
         const parsed = enhancedInputSchemas.get_objc_protocols.safeParse(input);
         return parsed.success
           ? this.executeValidated({ name, input: parsed.data }, signal)
-          : invalidEnhancedInput(name, parsed.error);
+          : invalidEnhancedInput(name, parsed.error, input);
       }
       case "batch_decompile": {
         const parsed = enhancedInputSchemas.batch_decompile.safeParse(input);
         return parsed.success
           ? this.executeValidated({ name, input: parsed.data }, signal)
-          : invalidEnhancedInput(name, parsed.error);
+          : invalidEnhancedInput(name, parsed.error, input);
       }
       case "decompile_all": {
         const parsed = enhancedInputSchemas.decompile_all.safeParse(input);
         return parsed.success
           ? this.executeValidated({ name, input: parsed.data }, signal)
-          : invalidEnhancedInput(name, parsed.error);
+          : invalidEnhancedInput(name, parsed.error, input);
       }
       case "get_call_graph": {
         const parsed = enhancedInputSchemas.get_call_graph.safeParse(input);
         return parsed.success
           ? this.executeValidated({ name, input: parsed.data }, signal)
-          : invalidEnhancedInput(name, parsed.error);
+          : invalidEnhancedInput(name, parsed.error, input);
       }
       case "analyze_swift_types": {
         const parsed =
           enhancedInputSchemas.analyze_swift_types.safeParse(input);
         return parsed.success
           ? this.executeValidated({ name, input: parsed.data }, signal)
-          : invalidEnhancedInput(name, parsed.error);
+          : invalidEnhancedInput(name, parsed.error, input);
       }
       case "find_xrefs_to_name": {
         const parsed = enhancedInputSchemas.find_xrefs_to_name.safeParse(input);
         return parsed.success
           ? this.executeValidated({ name, input: parsed.data }, signal)
-          : invalidEnhancedInput(name, parsed.error);
+          : invalidEnhancedInput(name, parsed.error, input);
       }
       case "binary_overview": {
         const parsed = enhancedInputSchemas.binary_overview.safeParse(input);
         return parsed.success
           ? this.executeValidated({ name, input: parsed.data }, signal)
-          : invalidEnhancedInput(name, parsed.error);
+          : invalidEnhancedInput(name, parsed.error, input);
       }
     }
   }
@@ -267,11 +266,12 @@ export class EnhancedTools {
   ): EnhancedResult {
     if (name === "trace_call_path") {
       const parsed = enhancedInputSchemas.trace_call_path.safeParse(input);
-      if (!parsed.success) return invalidEnhancedInput(name, parsed.error);
+      if (!parsed.success)
+        return invalidEnhancedInput(name, parsed.error, input);
       return this.executeValidated({ name, input: parsed.data }, signal);
     }
     const parsed = enhancedInputSchemas.trace_feature.safeParse(input);
-    if (!parsed.success) return invalidEnhancedInput(name, parsed.error);
+    if (!parsed.success) return invalidEnhancedInput(name, parsed.error, input);
     return this.executeValidated({ name, input: parsed.data }, signal);
   }
 
@@ -281,7 +281,7 @@ export class EnhancedTools {
     signal?: AbortSignal,
   ): EnhancedResult {
     const parsed = nativeProcedureInputSchema.safeParse(input);
-    if (!parsed.success) return invalidEnhancedInput(name, parsed.error);
+    if (!parsed.success) return invalidEnhancedInput(name, parsed.error, input);
     return this.executeValidated({ name, input: parsed.data }, signal);
   }
 
@@ -576,14 +576,9 @@ export class EnhancedTools {
     if (!resolved.ok) return resolved;
     for (const limitation of resolved.value.limitations)
       limitations.add(limitation);
-    const startAddress = resolved.value.result;
-    if (typeof startAddress !== "string" || startAddress.length === 0)
-      return err(
-        new AnalysisOutputError(
-          "procedure_address",
-          "provider returned no canonical procedure address",
-        ),
-      );
+    const parsedAddress = parseProcedureAddress(resolved.value.result);
+    if (!parsedAddress.ok) return parsedAddress;
+    const startAddress = parsedAddress.value;
     const discovered = new Set([startAddress]);
     const queue: Array<{ address: string; depth: number }> = [
       { address: startAddress, depth: 0 },
@@ -761,9 +756,15 @@ export class EnhancedTools {
       ? parseSegments(segmentsResult.value)
       : undefined;
     if (segments !== undefined && !segments.ok) return segments;
-    const procedureCount = parseListCount(proceduresResult.value, "procedures");
+    const procedureCount = parseNativeInventoryCount(
+      proceduresResult.value,
+      "list_procedures",
+    );
     if (!procedureCount.ok) return procedureCount;
-    const stringCount = parseListCount(stringsResult.value, "strings");
+    const stringCount = parseNativeInventoryCount(
+      stringsResult.value,
+      "list_strings",
+    );
     if (!stringCount.ok) return stringCount;
 
     return ok(

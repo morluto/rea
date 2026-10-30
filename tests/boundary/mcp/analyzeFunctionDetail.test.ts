@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import { ok } from "../../../src/domain/result.js";
-import { functionDossierSchema } from "../../../src/domain/hopperValues.js";
+import { functionDossierSchema } from "../../../src/domain/native/functionDossier.js";
 import { ghidraFunctionDossier } from "../../../src/domain/ghidraValues.fixture.js";
 import { parseGhidraFunctionInput } from "../../../src/ghidra/GhidraFunctionValues.js";
 import { EvidenceLedger } from "../../../src/application/investigation/EvidenceLedger.js";

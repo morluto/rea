@@ -101,8 +101,11 @@ run token while process release is unconfirmed, and the directory until removal
 succeeds. A later successful retry settles every error bound to that command;
 historical failure diagnostics remain available.
 
-Complete evidence is bounded by a 4 MiB map, 32 MiB codec reply, 262144 decoded
-rows/segments and 64 nested section levels. Those structural budgets and the
+Complete evidence is bounded by a 4 MiB map, 32 MiB codec reply and a shared
+262144-record decoder budget. Generated rows, mapping segments, leaf maps,
+source and name declarations, `sourcesContent` entries and indexed sections all
+consume this budget. Generated rows and mapping segments also each have a
+262144 limit; indexed maps allow at most 64 nested section levels. Those budgets and the
 192 MiB codec heap have no runtime override. Exceeding a budget returns an explicit
 failure, without partial results. The existing 32 MiB manifest and 16 MiB selected
 script boundaries also apply. No global toolchain or browser configuration changes
@@ -120,6 +123,11 @@ that enclosing section's first generated line. Parent boundaries still clip
 preceding browser mappings when a nested section starts with a gap or has no
 child leaves. Raw map text, original source identities and the dedicated decoder
 profile are preserved.
+
+Browser `original_module_edges` carry a `declaration_index` joining each edge to
+its `original_sources` declaration, including repeated source URLs across indexed
+sections. Imports are deduplicated within each declaration. Older observations
+may omit the index; their edge declaration identity remains unknown.
 
 Browser collection accepts up to 64 MiB of map responses per inspection and
 preflights indexed sections, sources, names, generated rows and mapping segments

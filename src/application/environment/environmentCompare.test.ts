@@ -130,6 +130,26 @@ describe("matchProbeRequest", () => {
     expect(item?.args).toEqual({ id: "%31" });
   });
 
+  it("keeps trailing slashes significant when matching HTTP route templates", () => {
+    const manifest = {
+      ...source.manifest,
+      tools: source.manifest.tools.map((tool) => ({
+        ...tool,
+        path_template: `${tool.path_template}/`,
+      })),
+    };
+    const request = {
+      method: "GET",
+      path: "/api/books/7/",
+      query: null,
+      body: undefined,
+    };
+    expect(matchProbeRequest(manifest, request)?.args).toEqual({ id: "7" });
+    expect(
+      matchProbeRequest(manifest, { ...request, path: "/api/books/7" }),
+    ).toBeUndefined();
+  });
+
   it("keeps every occurrence of a repeated query value", () => {
     const item = matchProbeRequest(environmentServeSource().manifest, {
       method: "GET",
@@ -174,6 +194,31 @@ describe("collections under different parents", () => {
       ),
     ).toBe("/api/orgs/1/users/10");
     expect(map.env(110, "/api/orgs/2/users")).toBe(20);
+  });
+
+  it("uses state collection identity for root and trailing-slash routes", () => {
+    const trailing = {
+      ...nestedUsers,
+      path_template: `${nestedUsers.path_template}/`,
+    };
+    const segments = ["api", "orgs", "%32", "users", "101", ""];
+    expect(collectionScope(trailing, segments)).toBe("/api/orgs/2/users");
+    expect(parameterScopes(trailing, segments)).toEqual(
+      parameterScopes(nestedUsers, segments),
+    );
+    expect(
+      collectionScope({ ...nestedUsers, path_template: "/", params: [] }),
+    ).toBe("/");
+    expect(
+      collectionScope({
+        ...nestedUsers,
+        path_template: "/api//books/",
+        params: [],
+      }),
+    ).toBe("/api//books");
+    expect(
+      collectionScope(trailing, ["api", "orgs", "a%2Fb", "users", "101", ""]),
+    ).toBe("/api/orgs/a%2Fb/users");
   });
 
   it("shares a child map when the same parent is spelled with one encoding", () => {
@@ -464,6 +509,24 @@ const compareRows = (
   if (!report.ok) throw report.error;
   return report.value.probes[0]!;
 };
+
+it("learns ids from trailing-slash lists in the collection their item calls name", () => {
+  const item = (id: number, name: string) => ({ id, name });
+  const probe = compareRows(
+    [
+      ["GET", "/api/books", [item(1, "Book")]],
+      ["GET", "/api/books/1", item(1, "Book")],
+      ["GET", "/api/authors/", [item(2, "Ann")]],
+      ["GET", "/api/authors/2/", item(2, "Ann")],
+    ],
+    [
+      ["GET", "/api/books", [item(101, "Book")]],
+      ["GET", "/api/authors/", [item(101, "Ann")]],
+      ["GET", "/api/authors/101/", item(101, "Ann")],
+    ],
+  );
+  expect(probe.results.map((step) => step.equal)).toEqual([true, true, true]);
+});
 
 describe("ids the comparison used to misread", () => {
   it.each([

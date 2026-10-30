@@ -5,10 +5,13 @@ import {
 } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import {
+  projectAnalysisError,
+  projectAnalysisErrorWithoutCapturedOutput,
+} from "../domain/analysisErrorProjection.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import type { Result } from "../domain/result.js";
+import { err, ok, type Result } from "../domain/result.js";
 import { dispatchQueuedInterrupts } from "../process/queuedInterrupts.js";
 
 /** Finish a one-shot CLI operation while retaining primary results through close. */
@@ -25,8 +28,12 @@ export const finishAnalysisCommand = async <
     readonly failureProjection?: "initial" | "final";
     /** Apply invocation-specific exclusions after all owned cleanup is composed. */
     readonly redactFailure?: (error: AnalysisError) => AnalysisError;
+    /** Validate producer-attested completed output against this command's exact result contract. */
+    readonly recoverCompletedObservation?: (
+      observation: AnalysisPartialObservation,
+    ) => Value | undefined;
   } = {},
-): Promise<Value | ReturnType<typeof projectAnalysisError>> => {
+): Promise<Result<Value, ReturnType<typeof projectAnalysisError>>> => {
   const projectFailure = (error: AnalysisError) =>
     projectAnalysisError(options.redactFailure?.(error) ?? error);
   let result: Result<Value, AnalysisError>;
@@ -48,6 +55,14 @@ export const finishAnalysisCommand = async <
     !result.ok && options.failureProjection === "initial"
       ? projectFailure(result.error)
       : undefined;
+  const initialDiagnosticFailure =
+    initialFailure !== undefined &&
+    !result.ok &&
+    result.error.capturedOutput !== undefined
+      ? projectAnalysisErrorWithoutCapturedOutput(
+          options.redactFailure?.(result.error) ?? result.error,
+        )
+      : initialFailure;
   try {
     // Resource owners may resolve their retained errors during close. This
     // adapter cannot infer resolution of a producer's earlier cleanup failure.
@@ -74,7 +89,35 @@ export const finishAnalysisCommand = async <
     }
   }
   await dispatchQueuedInterrupts();
-  if (initialFailure !== undefined) return initialFailure;
+  if (initialFailure !== undefined && cleanup === undefined)
+    return err(initialFailure);
+  if (
+    initialFailure === undefined &&
+    !result.ok &&
+    result.error instanceof ProviderCleanupError &&
+    !result.error.cleanupIncomplete &&
+    result.error.cleanupPrimary === undefined &&
+    result.error.completedObservation !== undefined
+  ) {
+    const completed = options.recoverCompletedObservation?.(
+      result.error.completedObservation,
+    );
+    if (completed !== undefined) {
+      const recoveredCleanup = result.error;
+      result = signal.aborted
+        ? {
+            ok: false,
+            error: new AnalysisCancelledError(canonicalOperation, {
+              cause: signal.reason,
+              partialObservation: completed,
+              diagnostics: {
+                cleanup_history: projectFailure(recoveredCleanup),
+              },
+            }),
+          }
+        : { ok: true, value: completed };
+    }
+  }
   if (result.ok && signal.aborted)
     result = {
       ok: false,
@@ -96,5 +139,25 @@ export const finishAnalysisCommand = async <
           ).bindCleanupDependencies([result.error, cleanup]),
     };
   }
-  return result.ok ? result.value : projectFailure(result.error);
+  if (result.ok) return ok(result.value);
+  const failure = projectFailure(result.error);
+  const diagnostics = failure.details?.diagnostics;
+  return err(
+    initialFailure === undefined || cleanup === undefined
+      ? failure
+      : {
+          ...failure,
+          details: {
+            ...failure.details,
+            diagnostics: {
+              ...(typeof diagnostics === "object" &&
+              diagnostics !== null &&
+              !Array.isArray(diagnostics)
+                ? diagnostics
+                : {}),
+              primary_error: initialDiagnosticFailure ?? initialFailure,
+            },
+          },
+        },
+  );
 };

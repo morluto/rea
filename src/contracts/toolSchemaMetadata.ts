@@ -85,7 +85,7 @@ export const toolInputSchemaWithMetadata = <Contract extends ToolContract>(
     },
   );
 
-/** Return the same complete input JSON Schema projection registered on MCP. */
+/** Return the full-profile advertised input JSON Schema registered on MCP. */
 export const advertisedInputJsonSchema = <Contract extends ToolContract>(
   contract: Contract,
 ): Record<string, unknown> =>

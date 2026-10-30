@@ -1,6 +1,7 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it, onTestFinished } from "vitest";
+import { z } from "zod";
 
 import type {
   JebAnalysisPort,
@@ -326,11 +327,20 @@ it.each(
   "preserves requested $operation through MCP with metadata $metadata",
   async ({ operation, tool, input, metadata }) => {
     let informationCalls = 0;
+    const refusal = {
+      success: false,
+      message: "Client information temporarily refused",
+      error: {
+        code: "future_metadata_code",
+        recovery_required_before_retry: true,
+        recovery_tool: "get_client_information",
+      },
+    };
     const fixture = await startJebMcpFixture((name) => {
       if (name !== "get_client_information") return jebPrimaryResponses[name]!;
       informationCalls++;
       return metadata === "refusal" || informationCalls > 1
-        ? { success: false, message: "Client information temporarily refused" }
+        ? refusal
         : { success: true, gui_client: false };
     });
     const provider = new JebProvider({
@@ -376,12 +386,38 @@ it.each(
           .join("");
         expect(JSON.parse(text)).toMatchObject({
           error: {
-            code: "unsupported_target",
+            code: "execution_failure",
+            message: refusal.message,
             details: {
+              provider_id: "jeb",
               operation,
-              reason: "Client information temporarily refused",
+              diagnostics: {
+                endpoint: fixture.endpoint,
+                upstream_response: refusal,
+              },
+              partial_observation: {
+                kind: "retained-evidence",
+                evidence_id: expect.any(String),
+              },
             },
           },
+        });
+        const partial = z
+          .object({
+            error: z.object({
+              details: z.object({
+                partial_observation: z.object({
+                  kind: z.literal("retained-evidence"),
+                  evidence_id: z.string(),
+                }),
+              }),
+            }),
+          })
+          .parse(JSON.parse(text)).error.details.partial_observation;
+        expect(session.evidenceById(partial.evidence_id)).toMatchObject({
+          evidence_id: partial.evidence_id,
+          operation,
+          raw_result: jebPrimaryResponses[tool],
         });
         expect(fixture.calls).toEqual([tool, "get_client_information"]);
       }

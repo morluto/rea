@@ -407,12 +407,22 @@ it.skipIf(process.platform === "win32").each(["exited", "cancelled"] as const)(
   async (outcome) => {
     const { helper, ready } = await inertProbe(outcome === "cancelled");
     const controller = new AbortController();
+    const scheduled = vi.spyOn(globalThis, "setTimeout");
+    const cleared = vi.spyOn(globalThis, "clearTimeout");
+    onTestFinished(() => {
+      scheduled.mockRestore();
+      cleared.mockRestore();
+    });
     const original = ownership.cleanupOwnedProcessGroup;
     const cleanup = vi
       .spyOn(ownership, "cleanupOwnedProcessGroup")
-      .mockResolvedValue({
-        cleaned: false,
-        reason: "controlled display probe cleanup refusal",
+      .mockImplementation(async () => {
+        // Finalization cancellation must not replace a completed probe outcome.
+        if (outcome === "exited") controller.abort("cancelled during cleanup");
+        return {
+          cleaned: false,
+          reason: "controlled display probe cleanup refusal",
+        };
       });
     let pending:
       | Extract<
@@ -435,6 +445,13 @@ it.skipIf(process.platform === "win32").each(["exited", "cancelled"] as const)(
     }
     const result = await operation;
     expect(result.outcome).toBe(outcome);
+    // The probe has settled despite refused cleanup; no abandoned output wait
+    // should keep its original deadline alive until a later cleanup retry.
+    const deadlines = scheduled.mock.calls.flatMap((arguments_, index) =>
+      arguments_[1] === 5000 ? [scheduled.mock.results[index]!.value] : [],
+    );
+    expect(deadlines.length).toBeGreaterThan(0);
+    for (const timer of deadlines) expect(cleared).toHaveBeenCalledWith(timer);
     expect(result.stderr).toBe("authored probe diagnostic");
     expect(result.cleanup.status).toBe("pending");
     if (result.cleanup.status !== "pending")

@@ -10,7 +10,7 @@ import {
 } from "../../../src/domain/analysisProfile.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { functionComparisonResultSchema } from "../../../src/domain/functionComparisonSchemas.js";
-import { functionDossierSchema } from "../../../src/domain/hopperValues.js";
+import { functionDossierSchema } from "../../../src/domain/native/functionDossier.js";
 
 import { reconstructionVerificationResultSchema } from "../../../src/domain/reconstructionVerificationSchemas.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";

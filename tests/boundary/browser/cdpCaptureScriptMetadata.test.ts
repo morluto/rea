@@ -5,6 +5,31 @@ import { inspectWebPageInputSchema } from "../../../src/domain/browserObservatio
 import { CDP_CAPTURE_SCRIPT_METADATA_LIMITS } from "../../../src/browser/CdpCaptureEventTypes.js";
 
 describe("CDP script metadata admission", () => {
+  it("retains an invalid source-map declaration as unknown", () => {
+    const events = captureEvents();
+    events.beginAuthorizedFrame("frame-1");
+    for (const [scriptId, sourceMapURL] of [
+      ["bad", null],
+      ["absent", undefined],
+      ["empty", ""],
+    ] as const) {
+      events.ingest({
+        method: "Debugger.scriptParsed",
+        params: {
+          scriptId,
+          url: "https://app.example/app.js",
+          sourceMapURL,
+        },
+      });
+      expect(events.scripts.get(scriptId)?.sourceMapUrl).toBeNull();
+    }
+    expect(events.completeness.snapshot().excluded).toContainEqual({
+      section: "source_maps",
+      reason: "invalid_protocol_value",
+      count: 1,
+    });
+  });
+
   it("releases a replaced script ID's prior bytes and resets admission on a new document", () => {
     const events = captureEvents();
     const origin = "https://app.example";

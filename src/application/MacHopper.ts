@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { join, posix } from "node:path";
 import { promisify } from "node:util";
 
+import { appendCallerPath } from "../filesystem/callerPath.js";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 import type { AnalysisCleanupObservation } from "../domain/analysisErrorBase.js";
 import { HOPPER_PUBLISHER } from "../domain/hopperPublisher.js";
@@ -194,7 +195,11 @@ export const installMacHopper = async (
             : { cleanupFailure: installation.cleanupFailure }),
         };
       bundleCleanupFailure = installation.cleanupFailure;
-      const launcherPath = posix.join(destination, "Contents/MacOS/hopper");
+      const launcherPath = appendCallerPath(
+        destination,
+        "Contents/MacOS/hopper",
+        "darwin",
+      );
       let openFailure: string | undefined;
       try {
         await host.openApplication(destination);
@@ -260,8 +265,12 @@ export const installMacHopperBundle = async (
   const stagingRoot = await operations.createStagingRoot(
     posix.dirname(destination),
   );
-  const stagedBundle = posix.join(stagingRoot, "new.app");
-  const previousBundle = posix.join(stagingRoot, "previous.app");
+  const stagedBundle = appendCallerPath(stagingRoot, "new.app", "darwin");
+  const previousBundle = appendCallerPath(
+    stagingRoot,
+    "previous.app",
+    "darwin",
+  );
   let originalBackedUp = false;
   let newCommitted = false;
   let failureReason: "copy" | "launcher_missing" = "copy";
@@ -270,7 +279,7 @@ export const installMacHopperBundle = async (
     await operations.copyBundle(source, stagedBundle);
     failureReason = "launcher_missing";
     await operations.requireLauncher(
-      posix.join(stagedBundle, "Contents/MacOS/hopper"),
+      appendCallerPath(stagedBundle, "Contents/MacOS/hopper", "darwin"),
     );
     failureReason = "copy";
     if (replaceExisting) {
@@ -428,7 +437,9 @@ export const systemMacHopperInstallHost = (
         {
           async createStagingRoot(parent) {
             await mkdir(parent, { recursive: true });
-            return mkdtemp(posix.join(parent, ".rea-hopper-stage-"));
+            return mkdtemp(
+              appendCallerPath(parent, ".rea-hopper-stage-", "darwin"),
+            );
           },
           copyBundle: async (bundle, staged) => {
             await execFileAsync("ditto", [bundle, staged], {

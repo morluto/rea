@@ -7,7 +7,6 @@ import {
   readMappedCString,
 } from "../metadata/BinaryContainer.js";
 import { architectureForElfMachine } from "../metadata/ElfImage.js";
-import { isUtf8 } from "node:buffer";
 import { readElfStringBytes } from "../metadata/ElfStringTable.js";
 import { readElfSymbol } from "../../domain/elfSymbol.js";
 import {
@@ -17,6 +16,7 @@ import {
 import { readPeImage } from "../metadata/PeImage.js";
 import {
   MAX_NATIVE_EXPORT_ROWS,
+  decodeElfExportName,
   type ElfExport,
   type NativeExportIssue,
   type NativeExports,
@@ -132,12 +132,15 @@ const parsePeExports = (bytes: Buffer, artifact: Artifact): NativeExports => {
   const mappings = imageFileMappings(image);
   const map = (rva: number, size: number): number =>
     mappedFileOffset(mappings, base + BigInt(rva), size, image.zero_fills);
-  const cStringBytes = (rva: number): Buffer => {
+  const cStringBytes = (
+    rva: number,
+    maximumBytes = MAXIMUM_NAME_BYTES,
+  ): Buffer => {
     const value = readMappedCString(
       bytes,
       image,
       base + BigInt(rva),
-      MAXIMUM_NAME_BYTES,
+      maximumBytes,
     );
     if (value.length === 0)
       throw new BinaryFormatFailure(
@@ -216,7 +219,12 @@ const parsePeExports = (bytes: Buffer, artifact: Artifact): NativeExports => {
       try {
         target = {
           address: null,
-          forwarder: cStringBytes(rva).toString("latin1"),
+          // PE forwarder strings, including their NUL, must fit within the
+          // export data directory. Ordinary export names have no such bound.
+          forwarder: cStringBytes(
+            rva,
+            Math.min(MAXIMUM_NAME_BYTES, forwarderEnd - rva - 1),
+          ).toString("latin1"),
         };
       } catch (cause) {
         issues.push({
@@ -304,35 +312,82 @@ const versionSectionData = (
 };
 
 /** Version names by index, read from `.gnu.version_d` and `.gnu.version_r`. */
-type DecodedElfString = {
-  readonly name: string;
-  readonly name_bytes_base64: string | null;
-  readonly name_utf8_decodable: boolean;
-};
+type DecodedElfString = ReturnType<typeof decodeElfExportName>;
 
-const decodeElfString = (bytes: Buffer): DecodedElfString => {
-  const utf8 = isUtf8(bytes);
-  return {
-    name: bytes.toString(utf8 ? "utf8" : "latin1"),
-    name_bytes_base64: bytes.some((byte) => byte >= 0x80)
-      ? bytes.toString("base64")
-      : null,
-    name_utf8_decodable: utf8,
+class ElfVersionWorkFailure extends BinaryResourceFailure {}
+
+/** Charge both headers and auxiliary visits, including aliased record replays. */
+const versionRecordStep = (size: number, width: number): (() => boolean) => {
+  const allowance = Math.min(Math.floor(size / width), MAX_NATIVE_EXPORT_ROWS);
+  let visited = 0;
+  return () => {
+    if (++visited > allowance)
+      throw new ElfVersionWorkFailure(
+        "structure",
+        size,
+        `ELF version traversal work allowance of ${String(allowance)} record visits was exhausted; remaining version names are unknown`,
+      );
+    return visited % 1024 === 0;
   };
 };
 
-const readVersionNames = (
+/** One format owner decodes each selected string-table offset at most once. */
+const createVersionNameReader = () => {
+  const decodedNames = new Map<
+    string,
+    | { readonly value: DecodedElfString | null }
+    | { readonly failure: BinaryFormatFailure }
+  >();
+  let cacheBytes = 0;
+  const chargeCache = (bytes: number): void => {
+    if (cacheBytes + bytes > MAXIMUM_RETAINED_TEXT_BYTES)
+      throw new ElfVersionWorkFailure(
+        "structure",
+        MAXIMUM_RETAINED_TEXT_BYTES,
+        "ELF version name decoding exceeds its 16 MiB cache allowance; remaining version names are unknown",
+      );
+    cacheBytes += bytes;
+  };
+  const readName = (names: Buffer, offset: number): DecodedElfString | null => {
+    const key = `${String(names.byteOffset)}:${String(names.length)}:${String(offset)}`;
+    const cached = decodedNames.get(key);
+    if (cached !== undefined) {
+      if ("failure" in cached) throw cached.failure;
+      return cached.value;
+    }
+    let raw: Buffer;
+    try {
+      raw = readElfStringBytes(names, offset);
+    } catch (cause) {
+      if (!(cause instanceof BinaryFormatFailure)) throw cause;
+      // Invalid offsets/unterminated aliases must not repeatedly scan strings
+      // either. Account for the cached error and its stack conservatively.
+      chargeCache(4096);
+      decodedNames.set(key, { failure: cause });
+      throw cause;
+    }
+    chargeCache(512 + raw.length * 6);
+    const value = raw.length === 0 ? null : decodeElfExportName(raw);
+    decodedNames.set(key, { value });
+    return value;
+  };
+  return readName;
+};
+
+function* readVersionNames(
   reader: BinaryReader,
   sections: readonly NativeSection[],
   issues: NativeExportIssue[],
-): Map<number, DecodedElfString | null> => {
+): Generator<void, Map<number, DecodedElfString | null>> {
   const namesByIndex = new Map<number, DecodedElfString | null>();
+  const readName = createVersionNameReader();
   // This intermediate map owns its storage independently of repeated text in
   // output rows. Replacing an index releases its previous decoded name.
   let textBytes = 0;
-  const addName = (index: number, name: Buffer): void => {
-    const decoded = name.length === 0 ? null : decodeElfString(name);
+  const addName = (index: number, decoded: DecodedElfString | null): void => {
     const previous = namesByIndex.get(index);
+    // Replayed offsets reuse the exact parsed fact, including its accounted text.
+    if (previous === decoded) return;
     const nextTextBytes =
       textBytes -
       retainedTextBytes(
@@ -356,6 +411,7 @@ const readVersionNames = (
         verneed,
         "Version requirements",
       );
+      const visit = versionRecordStep(table.size, 16);
       let offset = 0;
       for (let record = 0; record < verneed.info; record++) {
         if (offset + 16 > table.size)
@@ -363,6 +419,7 @@ const readVersionNames = (
             "malformed",
             "Version requirement chain leaves its section",
           );
+        if (visit()) yield;
         const at = table.offset + offset;
         const auxiliaryCount = reader.u16(at + 2);
         const auxiliaryOffset = reader.u32(at + 8);
@@ -379,15 +436,14 @@ const readVersionNames = (
               "malformed",
               "Version requirement auxiliary chain leaves its section",
             );
+          if (visit()) yield;
           const auxAt = table.offset + auxiliary;
           const versionIndex = reader.u16(auxAt + 6) & 0x7fff;
           const auxiliaryNext = reader.u32(auxAt + 12);
           try {
-            addName(
-              versionIndex,
-              readElfStringBytes(names, reader.u32(auxAt + 8)),
-            );
+            addName(versionIndex, readName(names, reader.u32(auxAt + 8)));
           } catch (cause) {
+            if (cause instanceof ElfVersionWorkFailure) throw cause;
             issues.push({
               code: "version_unresolved",
               location: hex(verneed.offset + BigInt(auxiliary)),
@@ -413,10 +469,13 @@ const readVersionNames = (
         }
       }
     } catch (cause) {
+      // Unvisited records may redefine an index seen in the prefix. Do not
+      // promote an interrupted name lookup to a complete version identity.
+      if (cause instanceof ElfVersionWorkFailure) namesByIndex.clear();
       issues.push({
         code: "version_unresolved",
         location: hex(verneed.offset),
-        message: `Version requirements: ${failureMessage(cause)}`,
+        message: `Version requirements: ${cause instanceof ElfVersionWorkFailure ? cause.message : failureMessage(cause)}`,
       });
     }
   }
@@ -430,6 +489,7 @@ const readVersionNames = (
         verdef,
         "Version definitions",
       );
+      const visit = versionRecordStep(table.size, 8);
       let offset = 0;
       for (let index = 0; index < verdef.info; index++) {
         if (offset + 20 > table.size)
@@ -437,6 +497,7 @@ const readVersionNames = (
             "malformed",
             "Version definition chain leaves its section",
           );
+        if (visit()) yield;
         const at = table.offset + offset;
         const versionIndex = reader.u16(at + 4) & 0x7fff;
         const aux = reader.u32(at + 12);
@@ -448,7 +509,7 @@ const readVersionNames = (
             "Version definition name entry leaves its section",
           );
         let auxiliary = offset + aux;
-        const versionName = readElfStringBytes(
+        const versionName = readName(
           names,
           reader.u32(table.offset + auxiliary),
         );
@@ -459,6 +520,7 @@ const readVersionNames = (
               "malformed",
               "Version definition auxiliary chain leaves its section",
             );
+          if (visit()) yield;
           if (item + 1 < auxiliaryCount) {
             const auxiliaryNext = reader.u32(table.offset + auxiliary + 4);
             if (auxiliaryNext < 8)
@@ -479,19 +541,23 @@ const readVersionNames = (
         }
       }
     } catch (cause) {
+      if (cause instanceof ElfVersionWorkFailure) namesByIndex.clear();
       issues.push({
         code: "version_unresolved",
         location: hex(verdef.offset),
-        message: `Version definitions: ${failureMessage(cause)}`,
+        message: `Version definitions: ${cause instanceof ElfVersionWorkFailure ? cause.message : failureMessage(cause)}`,
       });
     }
   }
 
   return namesByIndex;
-};
+}
 
 /** Read defined exported entries of `.dynsym` with their symbol versions. */
-const parseElfExports = (bytes: Buffer, artifact: Artifact): NativeExports => {
+function* parseElfExports(
+  bytes: Buffer,
+  artifact: Artifact,
+): Generator<void, NativeExports> {
   const directory = readElfDirectoryFromBuffer(bytes);
   const reader = new BinaryReader(bytes, directory.little);
   const result = {
@@ -585,11 +651,12 @@ const parseElfExports = (bytes: Buffer, artifact: Artifact): NativeExports => {
       });
     }
   }
-  const versionNames = readVersionNames(reader, sections, issues);
+  const versionNames = yield* readVersionNames(reader, sections, issues);
   const unresolvedVersions = new Set<number>();
   const retain = createRetention();
   const exports: ElfExport[] = [];
   for (let index = 1; index < count; index++) {
+    if (index % 1024 === 0) yield;
     const at = table + index * width;
     const parsedSymbol = readElfSymbol(
       bytes.subarray(at, at + width),
@@ -641,7 +708,7 @@ const parseElfExports = (bytes: Buffer, artifact: Artifact): NativeExports => {
     let rawNameBase64: string | null;
     try {
       const rawName = readElfStringBytes(names, symbol.name_offset);
-      const decodedName = decodeElfString(rawName);
+      const decodedName = decodeElfExportName(rawName);
       nameUtf8Decodable = decodedName.name_utf8_decodable;
       name = decodedName.name;
       rawNameBase64 = decodedName.name_bytes_base64;
@@ -685,19 +752,31 @@ const parseElfExports = (bytes: Buffer, artifact: Artifact): NativeExports => {
     issues,
     limitations: ELF_LIMITATIONS,
   };
-};
+}
 
-/** Static export inventory of one PE or ELF image; other formats are unsupported. */
-export const parseNativeExports = (
+/** Shared bounded checkpoints; consumers may yield/cancel without another parser. */
+export function* parseNativeExportsSteps(
   bytes: Buffer,
   artifact: Artifact,
-): NativeExports => {
+): Generator<void, NativeExports> {
+  yield;
   if (bytes.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46])))
-    return parseElfExports(bytes, artifact);
+    return yield* parseElfExports(bytes, artifact);
   if (bytes.subarray(0, 2).equals(Buffer.from("MZ")))
     return parsePeExports(bytes, artifact);
   throw new BinaryFormatFailure(
     "unsupported",
     "Only PE and ELF images are supported; inspect Mach-O exports with inspect_macho",
   );
+}
+
+/** Synchronous callers use exactly the same parsed facts and resource bounds. */
+export const parseNativeExports = (
+  bytes: Buffer,
+  artifact: Artifact,
+): NativeExports => {
+  const steps = parseNativeExportsSteps(bytes, artifact);
+  let step = steps.next();
+  while (!step.done) step = steps.next();
+  return step.value;
 };

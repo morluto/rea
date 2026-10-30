@@ -5,6 +5,12 @@ lane. Start with the commands below; use [real-toolchain lanes](#real-toolchain-
 for engine prerequisites and [client verification](client-verification.md) for
 installed-client and agent runs.
 
+Historical verification records may refer to `experiments/analysis-efficiency`.
+Those experiment scripts are available in the [archived source tree](https://github.com/morluto/rea/tree/a2e2c29b59e8775b0e6aedb09a9eb16adf32646b/experiments/analysis-efficiency);
+they are not included in current checkouts. The retained [test support](https://github.com/morluto/rea/blob/main/tests/support/analysis-efficiency/README.md)
+contains deterministic checkers and fixtures. The [allocation report](verification/analysis-efficiency/mcp-integer-allocation.md)
+and its original receipt JSON remain documentation, checked by the report producer.
+
 ## Developer commands
 
 Use source feedback while editing, explicit boundary checks for the changed
@@ -204,7 +210,11 @@ changing a callback solely to satisfy its declared `void` return type.
 Ordinary Knip remains. `check`, `check:pr`, and `check:ci:deep` run reachability
 then typed lint sequentially after cached work. Typed lint builds the project
 type graph and stays separate from fast feedback. Its default Go settings are
-`GOMAXPROCS=2` and `GOMEMLIMIT=1024MiB`; caller-selected settings take precedence.
+`GOMAXPROCS=1` and `GOMEMLIMIT=1024MiB`; caller-selected settings take precedence.
+One Go worker reuses checker caches across the file queue without changing the
+file inventory or TypeScript project scope. The Go memory target is soft and
+does not cap the complete process family's memory; measure the full invocation
+when enforcing a host budget.
 
 Routine iterations and rebases need focused regressions and relevant checks.
 Before handing off a PR, run `npm run check` and generated-document checks when
@@ -469,6 +479,18 @@ Stateless source-analysis matrices may share a file-owned stdio MCP connection
 and retain representative compiled CLI parity checks. Every distinct source
 scenario still runs through the public workflow; session-lifecycle scenarios
 need their own sessions and cleanup assertions.
+
+Complete-inline-Evidence conformance uses
+`scripts/lib/mcp-verification-environment.mjs`: a finite 65,536-element
+allowance selected by the application harness, file-owned CLI/MCP session and
+artifact verifiers.
+Explicit harness environment selections take precedence. This keeps canonical
+workflow assertions reachable for large retained observations. Admission-policy
+tests launch the public server with the resource setting unset or explicitly
+selected, including the default structured-input boundary and continued-service
+checks. Downstream capacity fixtures select enough finite transport allowance
+to reach their original memory, depth, cycle or representation boundary; retain
+those stronger assertions.
 
 When a matrix already holds a named tool definition from live `tools/list`,
 pass that definition through the SDK's `toolDefinition` call option. This keeps
@@ -1164,8 +1186,8 @@ its metadata regressions against the same checksum-pinned engine and public APK.
 It runs on branch pushes affecting its bridge, fixture or engine inputs, and can
 also be dispatched manually or called by another workflow. It uses the runner's
 JDK with two active processors and a 512 MiB heap; it needs no npm dependency
-installation. This lane checks exact raw/display class selectors and the existing
-cold-metadata regressions. It does not establish CLI/MCP parity or application
+installation. This lane checks exact raw/display class selectors, raw member names and field
+DEX types used by mapping lookups, and the existing cold-metadata regressions. It does not establish CLI/MCP parity or application
 execution behavior. The broader `verify:android` lane checks CLI/MCP parity;
 neither lane runs the APK.
 
@@ -1211,7 +1233,7 @@ HarmonyOS `.har` libraries are deliberately not suffix-classified because
 Synthetic producer regressions run independently:
 
 ```sh
-npm run test:focused -- tests/boundary/process/jadxIntegration.test.ts tests/boundary/process/androidAnalysisMcp.test.ts
+npm run test:focused -- tests/boundary/process/jadxIntegration.test.ts tests/boundary/process/androidAnalysisMcp.test.ts tests/boundary/process/androidMappingMcp.test.ts
 ```
 
 ## Apktool resource decoding
@@ -1374,7 +1396,7 @@ other engine versions and architectures remain unverified; see the
 
 Native IDA MCP verification uses `"protocol": "native"` with an already-running native plugin and requires `--second-procedure other_function --second-marker unique_second_body_text` to exercise GUI function switching and a return to the first function. These options remain optional for other profiles. The literal marker must appear in the second function's pseudocode and be absent from the first. Native cloud/widget failures are reported without hidden retries.
 
-The initial Linux x64 IDA Free 9.4 run used native MCP 1.1.2 with a local navigation correction. Windows x64 verification uses **IDA Pro 9.3**, the two-function public fixture, and the shipped Windows `whoami.exe` application. The native plugin was built from upstream `c9d15d98e8a143fc74f6e14037c48f63889b6d6c`, including the merged navigation fix, with a local loopback-listener change. Production CLI/MCP parity, switching, identity and cleanup passed. Correctness and performance measurements are recorded in the [Windows native verification notes](https://github.com/morluto/rea/blob/main/experiments/analysis-efficiency/ida-native-windows.md). Stock 1.1.2 switching, native macOS, and Windows IDA Free remain unverified. See the [native bridge prerequisites](ida-provider.md#optional-native-ida-mcp-bridge).
+The initial Linux x64 IDA Free 9.4 run used native MCP 1.1.2 with a local navigation correction. Windows x64 verification uses **IDA Pro 9.3**, the two-function public fixture, and the shipped Windows `whoami.exe` application. The native plugin was built from upstream `c9d15d98e8a143fc74f6e14037c48f63889b6d6c`, including the merged navigation fix, with a local loopback-listener change. Production CLI/MCP parity, switching, identity and cleanup passed. Correctness and performance measurements are recorded in the [Windows native verification notes](https://github.com/morluto/rea/blob/a2e2c29b59e8775b0e6aedb09a9eb16adf32646b/experiments/analysis-efficiency/ida-native-windows.md). Stock 1.1.2 switching, native macOS, and Windows IDA Free remain unverified. See the [native bridge prerequisites](ida-provider.md#optional-native-ida-mcp-bridge).
 
 ## Kuna lane
 
@@ -1624,6 +1646,11 @@ results after a failure. Available failed-shard reports remain diagnostic only:
 failed, cancelled, skipped, or missing selected shards cannot pass the gate or
 publish successful timing history. This deliberately avoids relying on an
 import graph for generated files, filesystem inputs, subprocesses, or bridges.
+The portable report rejects an entirely skipped module inventory and lists
+fully skipped modules in its summary. A mixed passed/skipped inventory is
+allowed: Vitest's skip state does not establish whether a skipped module was
+required on that runner. Review the listed skips against platform and provider
+prerequisites; the inventory alone does not prove every required case ran.
 
 Scheduled qualification is admitted hourly at minute 23. A forced full run at
 03:23 UTC refreshes runner and dependency drift every day. Other hourly runs
@@ -1714,6 +1741,10 @@ The Apple artifact CLI/MCP lane uses one `macos-15` job to avoid adding demand
 for scarce macOS runner capacity. It runs the artifact-format and metadata
 verifiers, followed by one consolidated focused invocation containing all
 existing native and process-boundary regression paths.
+The real native provenance verifier checks CLI/MCP agreement on complete
+per-slice encryption absence. The encryption CLI regression builds a universal
+image, marks its owned arm64 command with `cryptid=1`, and compares the reported
+range with `otool`; this verifies declared metadata, not actual FairPlay data.
 
 The Linux source-test shards download a shared runtime and generated test
 metadata snapshot produced by the build job with `npm run test:prepare`. The
@@ -1934,6 +1965,19 @@ unknown chunks, depth limits and extracted child digests. The optional
 `REA_FIRMWARE_VERIFY_GHIDRA=1` lane checks a selected host ELF through real Ghidra.
 Neither optional toolchain is a base-lane prerequisite. See
 [firmware analysis](firmware-analysis.md) for limits and unverified formats.
+
+`npm run verify:esp-images` requires a Clang with the RISC-V target and
+`ld.lld` (`REA_RISCV_CLANG`, `REA_RISCV_LLD`) and a Python that runs esptool
+and espsecure (`REA_ESPTOOL_PYTHON`). It builds ESP32-C3 app and bootloader
+ELF files from `tests/conformance/esp/`, converts them with `esptool
+elf2image`, including `--secure-pad-v2`, `--ram-only-header` and
+`--pad-to-size`, signs one with RSA, ECDSA P-256 and P-384 keys, and compares
+REA's facts with `esptool image-info` and `espsecure signature-info-v2`. It
+compares extracted segments and signature blocks with the producer's bytes,
+and derives malformed images and ESP8266 v1 and v3 images. It checks each
+tool before building and warns when esptool is not the pinned v5.6.0.
+`REA_XTENSA_ESP32_GCC` adds an ESP32 Xtensa build. See
+[ESP images](esp-image.md).
 
 ### JavaScript source recovery
 

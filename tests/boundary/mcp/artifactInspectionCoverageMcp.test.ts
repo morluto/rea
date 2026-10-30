@@ -6,6 +6,7 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
 
+import { machoImage } from "../../../src/artifacts/apple/MachoImage.fixture.js";
 import { createArtifactBinarySession } from "../../../src/composition/binary.js";
 import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
 import { artifactInspectionResultSchema } from "../../../src/domain/artifactInspection.js";
@@ -22,9 +23,9 @@ const writeBundle = async (withFifo: boolean): Promise<string> => {
   await mkdir(bundle);
   await writeFile(
     join(bundle, "Info.plist"),
-    "<plist><dict><key>CFBundleExecutable</key><string>main.js</string></dict></plist>",
+    "<plist><dict><key>CFBundleExecutable</key><string>main</string></dict></plist>",
   );
-  await writeFile(join(bundle, "main.js"), "export const value = 1;\n");
+  await writeFile(join(bundle, "main"), machoImage({}));
   if (withFifo) execFileSync("mkfifo", [join(bundle, "omitted.fifo")]);
   return bundle;
 };

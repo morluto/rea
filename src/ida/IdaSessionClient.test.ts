@@ -1,5 +1,13 @@
-import { readFile, readdir, rm } from "node:fs/promises";
-import { sep } from "node:path";
+import {
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
+import { basename, dirname, join, sep } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import {
@@ -12,7 +20,7 @@ import {
   DEFAULT_REGEX_MATCHING_DEADLINE,
   REGEX_MATCHING_DEADLINE_SETTING,
 } from "../config/regexMatchingDeadline.js";
-import { functionDossierSchema } from "../domain/hopperValues.js";
+import { functionDossierSchema } from "../domain/native/functionDossier.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import {
   AnalysisProtocolError,
@@ -86,6 +94,127 @@ const fixture = async (
   );
   return { root, target, producer, client };
 };
+
+it.each([
+  new Error("HTTP 404: fixture response"),
+  new ProviderAdapterError("ida", "transport", {
+    diagnostics: { reason: "fixture response" },
+  }),
+  new AnalysisTimeoutError("ida_mcp_connect", 1000),
+  new AnalysisProtocolError("Malformed MCP response"),
+  new AnalysisResourceConstraintError(
+    "ida_mcp_connect",
+    "transport",
+    "fixture limit",
+    { max_response_bytes: 1 },
+  ),
+])(
+  "retains the selected HTTP endpoint on a connection failure",
+  async (cause) => {
+    const { root, target } = await createIdaTarget();
+    roots.push(root);
+    const producer = new RecordingIdaMcp(target, "attached");
+    vi.spyOn(producer, "connect").mockRejectedValue(cause);
+    const selected = "HTTP://LOCALHOST:01234/mcp?cursor=kept";
+    const client = new IdaSessionClient(
+      {
+        url: selected,
+        headers: { Authorization: "Bearer fixture-secret" },
+        mode: "attached",
+        timeoutMs: 1000,
+      },
+      target,
+      producer,
+    );
+    const result = await client.execute("list_procedures", {});
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected connection failure");
+    expect(result.error.diagnostics).toMatchObject({ endpoint: selected });
+    expect(JSON.stringify(projectAnalysisError(result.error))).not.toContain(
+      "fixture-secret",
+    );
+    await client.close();
+  },
+);
+
+it.each([
+  "fixture-secret",
+  "fixture%2Dsecret",
+  "fixture%2dsecret",
+  "%66%69%78%74%75%72%65-secret",
+])(
+  "redacts a known transport credential in the selected endpoint: %s",
+  async (encoded) => {
+    const { root, target } = await createIdaTarget();
+    roots.push(root);
+    const producer = new RecordingIdaMcp(target, "attached");
+    vi.spyOn(producer, "connect").mockRejectedValue(
+      new Error("fixture failure"),
+    );
+    const client = new IdaSessionClient(
+      {
+        url: `http://localhost:1234/mcp?token=${encoded}&cursor=keep`,
+        headers: { Authorization: "Bearer fixture-secret" },
+        mode: "attached",
+        timeoutMs: 1000,
+      },
+      target,
+      producer,
+    );
+    const result = await client.execute("list_procedures", {});
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected connection failure");
+    const output = JSON.stringify(projectAnalysisError(result.error));
+    expect(output).not.toContain("fixture-secret");
+    expect(output).not.toContain(encoded);
+    expect(output).toContain("http://localhost:1234/mcp?token=");
+    expect(output).toContain("&cursor=keep");
+    await client.close();
+  },
+);
+
+it.each(["initialize", "transport"])(
+  "preserves producer outcome facts when attributing a cached %s failure",
+  async (operation) => {
+    const { producer, client } = await fixture();
+    const primary = new AnalysisCancelledError("provider_startup");
+    const source = new ProviderAdapterError("ida", operation, {
+      cleanupPrimary: primary,
+      limit: {
+        setting: "regex.matching_deadline_ms",
+        effective_value: 100,
+        unit: "ms",
+        minimum: 1,
+        maximum: 1000,
+        applies_at: "next_operation",
+        agent_editable: true,
+        scope: "rea-runtime",
+        rea_restart_required: false,
+      },
+      diagnostics: { producer_fact: "retained" },
+    });
+    const connect = vi.spyOn(producer, "connect").mockRejectedValue(source);
+    for (const requested of ["list_procedures", "list_strings"] as const) {
+      const result = await client.execute(requested, {});
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("Expected startup failure");
+      expect(result.error).toBeInstanceOf(ProviderAdapterError);
+      expect(result.error).toMatchObject({
+        operation: requested,
+        limit: source.limit,
+        cleanupPrimary: { operation: requested },
+        diagnostics: { producer_fact: "retained" },
+      });
+      expect(result.error.cleanupPrimary).toBeInstanceOf(
+        AnalysisCancelledError,
+      );
+    }
+    expect(connect).toHaveBeenCalledTimes(1);
+    expect(source.operation).toBe(operation);
+    expect(source.cleanupPrimary).toBe(primary);
+    await client.close();
+  },
+);
 
 describe("headless IDA producer pagination", () => {
   it("follows reported cursors for modern inventories, pseudocode, and bare-hex assembly without losing pages", async () => {
@@ -355,6 +484,75 @@ describe("attached IDA input identity and validation", () => {
     );
     await client.close();
   });
+
+  it.skipIf(process.platform === "win32")(
+    "rejects a document whose symlink traversal names a different input",
+    async () => {
+      const { root, target, producer, client } = await fixture();
+      await mkdir(join(root, "foreign", "inner"), { recursive: true });
+      await writeFile(
+        join(root, "foreign", basename(target.path)),
+        "foreign input",
+      );
+      await symlink(join(root, "foreign", "inner"), join(root, "link"));
+      const document = `${root}/link/../${basename(target.path)}`;
+      expect(await realpath(document)).not.toBe(await realpath(target.path));
+
+      const result = await client.execute("list_procedures", { document });
+
+      expect(result).toMatchObject({
+        ok: false,
+        error: { _tag: "AnalysisInputError" },
+      });
+      expect(producer.connects).toBe(0);
+      await client.close();
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "refuses an opened worker whose input only matches after lexical parent collapse",
+    async () => {
+      const { root, producer, client } = await fixture("headless");
+      await mkdir(join(root, "foreign", "inner"), { recursive: true });
+      let privateInput = "";
+      producer.beforeCall = async (name, args) => {
+        if (name !== "idb_open") return;
+        privateInput = z.string().parse(args.input_path);
+        await writeFile(
+          join(root, "foreign", basename(privateInput)),
+          "foreign input",
+        );
+        await symlink(
+          join(root, "foreign", "inner"),
+          join(dirname(privateInput), "link"),
+        );
+      };
+      producer.overrideCall = (name, args) => {
+        if (name !== "idb_open") return undefined;
+        producer.database = z.string().parse(args.preferred_session_id);
+        producer.inputPath = `${dirname(privateInput)}/link/../${basename(privateInput)}`;
+        return {
+          success: true,
+          session: {
+            session_id: producer.database,
+            input_path: producer.inputPath,
+          },
+        };
+      };
+
+      const result = await client.execute("list_procedures", {});
+
+      expect(await realpath(producer.inputPath)).not.toBe(
+        await realpath(privateInput),
+      );
+      expect(result.ok).toBe(false);
+      expect(producer.calls.some(({ name }) => name === "list_funcs")).toBe(
+        false,
+      );
+      producer.inputPath = privateInput;
+      await client.close();
+    },
+  );
 
   it("rejects an unrelated document before connecting or opening a provider", async () => {
     const { producer, client } = await fixture();

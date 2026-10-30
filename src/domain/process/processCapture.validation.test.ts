@@ -7,7 +7,10 @@ import {
   type ProcessCapture,
 } from "./processCaptureParsing.js";
 import type { UnverifiedProcessCapture } from "./processCapture.js";
-import { partialProcessCaptureObservationSchema } from "./processCapture.js";
+import {
+  processCaptureSchema,
+  partialProcessCaptureObservationSchema,
+} from "./processCapture.js";
 import {
   FINALIZED_PROCESS_CAPTURE_EXAMPLE,
   compareUnverifiedProcessCaptures as compareProcessCaptures,
@@ -135,6 +138,50 @@ it.each([
 ] as const)("accepts a partial entry with $reason evidence", (omission) => {
   const capture = captureWithEnumerationOmission(omission);
   expect(parseProcessCapture(capture)).toEqual(capture);
+});
+
+it("preserves distinct byte-name omissions at one directory through finalized capture parsing", () => {
+  const capture = captureWithEnumerationOmission({
+    path: "root_0:.",
+    reason: "unrepresentable_name",
+    system_code: null,
+    raw_name_hex: "ff",
+  });
+  const coverage = capture.truncation_details.filesystem_after;
+  coverage.enumeration_omissions.push({
+    path: "root_0:.",
+    reason: "unrepresentable_name",
+    system_code: null,
+    raw_name_hex: "fe",
+  });
+  expect(parseProcessCapture(capture)).toEqual(capture);
+  coverage.enumeration_omissions.push({
+    path: "root_0:.",
+    reason: "identity_changed",
+    system_code: null,
+  });
+  coverage.enumeration_reasons.push("identity_changed");
+  expect(parseProcessCapture(capture)).toEqual(capture);
+  // Re-reading the same raw basename is not a distinct omission.
+  coverage.enumeration_omissions.push({
+    path: "root_0:.",
+    reason: "unrepresentable_name",
+    system_code: null,
+    raw_name_hex: "ff",
+  });
+  expect(() => parseProcessCapture(capture)).toThrow("enumeration_omissions");
+});
+
+it("requires raw-name evidence for an unrepresentable-name coverage reason", () => {
+  const capture = captureWithEnumerationOmission({
+    path: "root_0:.",
+    reason: "unrepresentable_name",
+    system_code: null,
+    raw_name_hex: "ff",
+  });
+  expect(parseProcessCapture(capture)).toEqual(capture);
+  capture.truncation_details.filesystem_after.enumeration_omissions = [];
+  expect(() => parseProcessCapture(capture)).toThrow("enumeration_omissions");
 });
 
 it.each([
@@ -1163,4 +1210,30 @@ it("requires interaction dispatch times to follow their sequence", () => {
       message: expect.stringContaining("dispatch timestamps must be ordered"),
     },
   ]);
+});
+
+it("validates private interaction fields together while retaining legacy captures", () => {
+  const event = {
+    sequence: 0,
+    scheduled_at_ms: 0,
+    dispatched_at_ms: 0,
+    type: "input",
+    data: "",
+    outcome: "dispatched",
+  };
+  const shape = processCaptureSchema.shape.interaction_events;
+  expect(
+    shape.safeParse([{ ...event, sensitive: true, input_bytes: 6 }]).success,
+  ).toBe(true);
+  expect(
+    shape.safeParse([{ ...event, data: "<redacted-input:6-bytes>" }]).success,
+  ).toBe(true);
+  for (const invalid of [
+    { ...event, sensitive: true },
+    { ...event, input_bytes: 6 },
+    { ...event, sensitive: true, input_bytes: 6, data: "original" },
+    { ...event, sensitive: true, input_bytes: 6, type: "signal" },
+  ])
+    expect(shape.safeParse([invalid]).success).toBe(false);
+  expect(() => parseProcessCapture(emptyCapture())).not.toThrow();
 });

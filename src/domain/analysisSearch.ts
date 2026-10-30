@@ -1,10 +1,10 @@
 import { z } from "zod";
 
-import { analysisSearchInput } from "../contracts/analysisSearchContract.js";
+import { nativeSearchInput } from "./native/nativeSearch.js";
 import { AnalysisInputError } from "./analysisErrorCore.js";
 
 /** Parsed `search_procedures`/`search_strings` query shared by providers that match in REA. */
-export const analysisSearchQuerySchema = z.object(analysisSearchInput);
+export const analysisSearchQuerySchema = z.object(nativeSearchInput);
 
 export type AnalysisSearchQuery = z.infer<typeof analysisSearchQuerySchema>;
 

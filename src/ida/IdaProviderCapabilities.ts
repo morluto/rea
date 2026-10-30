@@ -1,3 +1,4 @@
+import type { IdaCompatibilityProfile } from "./IdaConfiguration.js";
 import type {
   AnalysisOperation,
   CapabilityDescriptor,
@@ -36,10 +37,25 @@ const HEADLESS_ONLY_OPERATIONS: ReadonlySet<IdaOperation> = new Set([
 ]);
 
 /** Whether the configured profile admits an operation. */
-export const idaProfileAdmits = (
+const idaProfileAdmits = (
   operation: IdaOperation,
-  mode: "attached" | "headless",
-): boolean => mode === "headless" || !HEADLESS_ONLY_OPERATIONS.has(operation);
+  profile: IdaCompatibilityProfile,
+): boolean =>
+  profile.mode === "headless" || !HEADLESS_ONLY_OPERATIONS.has(operation);
+
+/** One admission policy shared by catalog projection and live execution. */
+export const idaOperationUnavailableReason = (
+  operation: IdaOperation,
+  profile: IdaCompatibilityProfile,
+): string | undefined => {
+  if (!idaProfileAdmits(operation, profile))
+    return "This operation is available for the modern headless profile only.";
+  if (operation === "procedure_callers" && profile.protocol !== "legacy")
+    return profile.protocol === "native"
+      ? "The native upstream profile reports code references without proving direct call edges."
+      : "The modern upstream profile reports code references without proving direct call edges.";
+  return undefined;
+};
 
 /** Shared limitations of observations from an externally mutable analysis database. */
 export const IDA_LIMITATIONS = Object.freeze([
@@ -55,7 +71,7 @@ export const IDA_NATIVE_STRING_LIMITATION =
   "Native string observations use upstream C-string rendering; other string representations remain unknown.";
 
 /**
- * Attached mode requires the legacy 1.4 profile, whose `disassemble_function`
+ * The legacy attached profile uses `disassemble_function`, which
  * jumps to the function and whose `decompile_function` opens or reuses a
  * pseudocode view whenever an IDA window is active.
  */
@@ -68,41 +84,38 @@ const ATTACHED_GUI_NAVIGATION_OPERATIONS: ReadonlySet<IdaOperation> = new Set([
 
 /** Advertise live observations and configured lifecycle effects truthfully. */
 export const idaCapabilities = (
-  mode: "attached" | "headless",
+  profile: IdaCompatibilityProfile,
   stdio: boolean,
-  native = false,
   regexLimitation = REGEX_MATCHING_LIMITATION,
 ): readonly CapabilityDescriptor[] =>
-  IDA_OPERATIONS.filter((operation) => idaProfileAdmits(operation, mode)).map(
-    (operation) => ({
+  IDA_OPERATIONS.filter((operation) =>
+    idaProfileAdmits(operation, profile),
+  ).map((operation) => {
+    const reason = idaOperationUnavailableReason(operation, profile);
+    return {
       provider: IDA_PROVIDER_IDENTITY,
       operation,
-      ...((mode === "headless" || native) && operation === "procedure_callers"
-        ? ({
-            available: false,
-            reason: native
-              ? "The native upstream profile reports code references without proving direct call edges."
-              : "The modern upstream profile reports code references without proving direct call edges.",
-          } as const)
-        : ({ available: true, reason: null } as const)),
+      ...(reason === undefined
+        ? ({ available: true, reason: null } as const)
+        : ({ available: false, reason } as const)),
       cachePolicy: "live",
       effects: {
         mutatesArtifact: false,
-        launchesProcess: stdio || mode === "headless",
+        launchesProcess: stdio || profile.mode === "headless",
         mayShowUi:
-          mode === "attached" &&
-          (native
+          profile.mode === "attached" &&
+          (profile.protocol === "native"
             ? operation === "procedure_pseudo_code" ||
               operation === "analyze_function"
             : ATTACHED_GUI_NAVIGATION_OPERATIONS.has(operation)),
         mayAccessNetwork: true,
-        mayWriteFilesystem: stdio || mode === "headless",
+        mayWriteFilesystem: stdio || profile.mode === "headless",
         changesPermissions: false,
         requiresRoot: false,
       },
       limitations: [
         ...IDA_LIMITATIONS,
-        ...(native &&
+        ...(profile.protocol === "native" &&
         (operation === "list_strings" || operation === "search_strings")
           ? [IDA_NATIVE_STRING_LIMITATION]
           : []),
@@ -110,5 +123,5 @@ export const idaCapabilities = (
           ? [regexLimitation]
           : []),
       ],
-    }),
-  );
+    };
+  });

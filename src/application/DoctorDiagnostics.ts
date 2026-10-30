@@ -3,6 +3,7 @@ import {
   supportsJavaScriptRuntime,
 } from "../domain/runtimeVersion.js";
 import { hopperLauncherDiscovery } from "./HopperLauncherDiscovery.js";
+import { macosMajorVersion } from "../domain/macosVersion.js";
 import { LINUX_HOPPER_SETUP_HOSTS, supportsReaHost } from "./LinuxHopper.js";
 import type {
   DoctorCheck,
@@ -129,10 +130,7 @@ const hostCheck = async (host: DoctorHost): Promise<DoctorCheck> => {
     host.platform === "darwin" ? await host.macosVersion() : undefined;
   const linuxDistribution =
     host.platform === "linux" ? await host.linuxDistribution() : undefined;
-  const macosMajor =
-    macosVersion !== undefined && /^\d+(?:\.\d+)*$/u.test(macosVersion)
-      ? Number(macosVersion.split(".")[0])
-      : undefined;
+  const macosMajor = macosMajorVersion(macosVersion);
   if (host.platform === "darwin" && macosMajor === undefined)
     return {
       name: "host",

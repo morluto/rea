@@ -21,7 +21,7 @@ import {
   sha256Bytes,
 } from "./ManagedMetadataHeaps.js";
 import {
-  validateLocalSignature,
+  readLocalSignatureFacts,
   isParsedTokenInstruction,
 } from "./ManagedMemberInspectorCore.js";
 import { ManagedReaderFailure } from "./ManagedReaderFailure.js";
@@ -34,10 +34,16 @@ const bodyStatus = (
   decodedIssue: string | null,
   truncatedInstructions: number,
   exceptionRegions: ReturnType<typeof parseExceptionRegions> | null,
+  localSigFailure: "malformed" | "partial" | null,
 ): "malformed" | "partial" | "present" => {
-  if (decodedIssue !== null || exceptionRegions?.status === "malformed")
+  if (
+    decodedIssue !== null ||
+    exceptionRegions?.status === "malformed" ||
+    localSigFailure === "malformed"
+  )
     return "malformed";
-  if (truncatedInstructions > 0) return "partial";
+  if (truncatedInstructions > 0 || localSigFailure === "partial")
+    return "partial";
   return "present";
 };
 
@@ -197,6 +203,7 @@ export const methodBody = (
             decoded.instructionStarts,
           )
         : null;
+    let localVarSignature: ManagedMethodBody["local_var_signature"] = null;
     let localSigIssue: string | null = null;
     let localSigFailure: "malformed" | "partial" | null = null;
     const localSignature =
@@ -228,7 +235,7 @@ export const methodBody = (
             cursor.readIndex(context.metadataLayout.blobIndexSize),
             context.metadataLayout.blob?.size ?? 0,
           );
-          const signatureIssue = validateLocalSignature(
+          const signatureFacts = readLocalSignatureFacts(
             context.metadataLayout,
             blob,
             {
@@ -237,7 +244,9 @@ export const methodBody = (
             },
             context.budget,
           );
-          if (signatureIssue !== null) {
+          if (signatureFacts.ok) localVarSignature = signatureFacts.value;
+          else {
+            const signatureIssue = signatureFacts.error;
             localSigIssue = signatureIssue.detail;
             localSigFailure =
               signatureIssue.code === "unsupported-signature"
@@ -258,9 +267,22 @@ export const methodBody = (
         }
       }
     }
-    const status =
-      localSigFailure ??
-      bodyStatus(decoded.issue, decoded.truncated, exceptionRegions);
+    const status = bodyStatus(
+      decoded.issue,
+      decoded.truncated,
+      exceptionRegions,
+      localSigFailure,
+    );
+    // Independent decoding failures must survive together. Present malformed
+    // instruction/section facts before local-signature limitations.
+    const bodyIssues = [
+      decoded.issue,
+      exceptionRegions?.status === "malformed" ? exceptionRegions.issue : null,
+      localSigIssue,
+      decoded.truncated > 0
+        ? "Instruction decoding stopped before the end of the method body"
+        : null,
+    ].filter((issue): issue is string => issue !== null);
     const body: ManagedMethodBody = {
       status,
       header_format: header.format,
@@ -269,6 +291,7 @@ export const methodBody = (
       max_stack: header.maxStack,
       init_locals: (header.flags & 0x10) !== 0,
       local_var_sig_token: localSignature?.token ?? null,
+      local_var_signature: localVarSignature,
       il_size: header.ilSize,
       il_sha256: sha256Bytes(il),
       normalized_il_sha256:
@@ -279,15 +302,7 @@ export const methodBody = (
       opcode_counts: opcodeCounts,
       anchors,
       exception_regions: exceptionRegions?.regions ?? [],
-      issue:
-        localSigIssue ??
-        decoded.issue ??
-        (exceptionRegions?.status === "malformed"
-          ? exceptionRegions.issue
-          : null) ??
-        (decoded.truncated > 0
-          ? "Instruction decoding stopped before the end of the method body"
-          : null),
+      issue: bodyIssues.length > 0 ? bodyIssues.join("; ") : null,
     };
     const admittedBody = admitManagedProjection(body, context.budget);
     const tokenInstructions: ParsedTokenInstruction[] = [];
@@ -352,6 +367,7 @@ const emptyMethodBody = (
   max_stack: null,
   init_locals: null,
   local_var_sig_token: null,
+  local_var_signature: null,
   il_size: 0,
   il_sha256: null,
   normalized_il_sha256: null,

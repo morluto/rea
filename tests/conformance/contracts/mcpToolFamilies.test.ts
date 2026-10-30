@@ -7,7 +7,7 @@ import {
 import {
   TOOL_FAMILY_IDS,
   type ToolFamilyId,
-} from "../../../src/contracts/toolFamilies.js";
+} from "../../../src/contracts/toolFamilyIds.js";
 
 describe("MCP tool families configuration", () => {
   it("accepts an unset scope and every valid family selection", () => {

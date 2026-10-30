@@ -1,3 +1,4 @@
+import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
 import { basename } from "node:path";
 import {
   regularFileCancellation,
@@ -34,7 +35,7 @@ import {
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import type { EvidenceLocation } from "../domain/evidence.js";
 import { combineFunctionRelationshipCoverage } from "../domain/functionCallCoverage.js";
-import { functionDossierSchema } from "../domain/hopperValues.js";
+import { functionDossierSchema } from "../domain/native/functionDossier.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
@@ -89,10 +90,7 @@ import {
   type KunaProjectFileSpan,
 } from "./KunaProjectReader.js";
 import { kunaUnavailable } from "./KunaUnavailable.js";
-import {
-  ArtifactResourceRetryFailure,
-  ArtifactResourceScope,
-} from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { kunaQueryFailureForCaller } from "./KunaQueryErrors.js";
@@ -204,11 +202,7 @@ const descriptorCleanupError = (
     { reason: observation.reason },
     { cause, operation },
   );
-  if (
-    cause instanceof ArtifactResourceRetryFailure &&
-    cause.cleanupLeases.length > 0
-  )
-    new AnalysisCleanupLeaseGroup(error, cause.cleanupLeases);
+  bindArtifactFileCleanup(cause, error);
   return error;
 };
 

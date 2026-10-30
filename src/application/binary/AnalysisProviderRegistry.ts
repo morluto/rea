@@ -1,4 +1,4 @@
-import { ProviderInspectionScope } from "../../providers/ProviderInspectionScope.js";
+import { ProviderInspectionScope } from "../ProviderInspectionScope.js";
 import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
@@ -11,7 +11,7 @@ import {
   analysisProviderIdSchema,
   analysisProviderSelectorSchema,
   type AnalysisProviderSelector,
-} from "../../contracts/providerSelection.js";
+} from "../../domain/providerSelection.js";
 import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import {
@@ -252,16 +252,15 @@ export class AnalysisProviderRegistry {
     const distinct = [...new Set(failures)];
     if (distinct.length === 0) return ok(null);
     if (distinct.length === 1) return err(distinct[0]!);
-    return err(
-      new ProviderCleanupError(
-        "rea",
-        [...new Set(distinct.flatMap((failure) => failure.cleanupResources))],
-        { reason: distinct.map((failure) => failure.message).join("; ") },
-        { cause: new AggregateError(distinct) },
-      ).bindCleanupDependencies(
-        distinct.filter((failure) => failure.cleanupIncomplete),
-      ),
+    const failure = new ProviderCleanupError(
+      "rea",
+      [...new Set(distinct.flatMap((failure) => failure.cleanupResources))],
+      { reason: distinct.map((failure) => failure.message).join("; ") },
+      { cause: new AggregateError(distinct) },
     );
+    if (distinct.every((failure) => failure.cleanupIncomplete))
+      failure.bindCleanupDependencies(distinct);
+    return err(failure);
   }
 
   /** List the unique deep-operation declarations without probing candidates. */

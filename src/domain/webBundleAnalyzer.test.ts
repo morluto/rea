@@ -16,6 +16,30 @@ import { createWebTextArtifact } from "./webContentArtifact.js";
 
 const origin = "https://app.example.test";
 
+it("shares runtime module declarations with source analysis while retaining inline type side effects", () => {
+  const source = `
+    import type {T} from "./erased-import";
+    export type {T} from "./erased-export";
+    export type * from "./erased-all";
+    import {type X} from "./inline-import";
+    export {type Y} from "./inline-export";
+    import "";
+    export * from "./runtime";
+    export const local = 1;
+  `;
+  const expected = ["./inline-import", "./inline-export", "", "./runtime"];
+  const result = analyzeWebBundleFixture(inspection(source));
+  expect(result.completeness.parse_failures).toBe(0);
+  expect(
+    result.observations.chunks.edges.map(({ specifier }) => specifier),
+  ).toEqual(expected);
+  expect(
+    analyzeJavaScriptStaticSource(source)
+      .references.filter(({ kind }) => kind === "static-import")
+      .map(({ specifier }) => specifier),
+  ).toEqual(expected);
+});
+
 it("retains standalone GraphQL Source operations in captured scripts", () => {
   const result = analyzeWebBundleFixture(
     inspection(`
@@ -561,12 +585,17 @@ describe("web bundle source-map coverage", () => {
 });
 
 describe("web bundle static-analysis parity", () => {
-  it("recognizes endpoints through nested dynamic receivers like static analysis", () => {
+  it("qualifies network spellings through nested dynamic receivers", () => {
     const result = analyzeWebBundleFixture(
       inspection('window[recv].fetch("/nested-fetch");'),
     );
-    expect(result.observations.endpoints).toContainEqual(
-      expect.objectContaining({ value: "/nested-fetch" }),
+    expect(result.observations.endpoints).toEqual([]);
+    expect(result.inferences).toContainEqual(
+      expect.objectContaining({
+        kind: "endpoint_candidate",
+        value: "/nested-fetch",
+        confidence: "low",
+      }),
     );
   });
 
@@ -604,11 +633,17 @@ describe("web bundle static-analysis parity", () => {
     );
     expect(
       result.observations.endpoints.map(({ value }) => value).sort(),
+    ).toEqual(["/shadowed-parent-xhr"]);
+    expect(
+      result.inferences
+        .filter(({ kind }) => kind === "endpoint_candidate")
+        .map(({ value }) => value)
+        .sort(),
     ).toEqual([
       "/dav/",
       "/dynamic-method",
-      "/shadowed-parent-xhr",
       "/xhr-get",
+      "api/relative",
       "https://xhr.example.test/submit",
     ]);
     expect(result.inferences).toContainEqual(
@@ -630,9 +665,9 @@ describe("web bundle API classification parity", () => {
       indexedDB.open("GET", "/storage-named-xhr");
     `;
     expect(
-      analyzeWebBundleFixture(inspection(source)).observations.endpoints.map(
-        ({ value }) => value,
-      ),
+      analyzeWebBundleFixture(inspection(source))
+        .inferences.filter(({ kind }) => kind === "endpoint_candidate")
+        .map(({ value }) => value),
     ).toEqual(["/storage-named-xhr"]);
     const analysis = analyzeJavaScriptStaticSource(source);
     expect(analysis.endpoints.map(({ value }) => value)).toEqual([
@@ -662,7 +697,7 @@ describe("web bundle API classification parity", () => {
     );
     expect(
       result.observations.endpoints.map(({ value }) => value).sort(),
-    ).toEqual(["/api", "/dav"]);
+    ).toEqual(["/api"]);
   });
 
   it("classifies optional and one-hop aliased open calls", () => {
@@ -709,7 +744,7 @@ describe("web bundle API classification parity", () => {
     );
     expect(
       result.observations.endpoints.map(({ value }) => value).sort(),
-    ).toEqual(["/search", "/v1/headers"]);
+    ).toEqual([]);
     expect(
       result.inferences
         .filter(({ kind }) => kind === "endpoint_candidate")
@@ -717,7 +752,9 @@ describe("web bundle API classification parity", () => {
         .sort(),
     ).toEqual([
       "../search",
+      "/search",
       "/users",
+      "/v1/headers",
       "cache-key",
       "https://api.example.test/headers",
       "https://api.example.test/users",
@@ -815,13 +852,12 @@ describe("web bundle explicit request reference forms", () => {
       caches.open(name, "#cache-name");
       fs.open(path, "r");
     `;
-    const expected = [
+    const expected: string[] = [];
+    const expectedCandidates = [
       "?view=1",
       "#view=1",
       "#literal=1",
       "https:api.example.test/xhr",
-    ].sort();
-    const expectedCandidates = [
       ...references,
       ...ambiguous,
       "POST",
@@ -870,7 +906,7 @@ describe("web bundle endpoint candidate classification", () => {
     const result = analyzeWebBundleFixture(inspection(source));
     expect(
       result.observations.endpoints.map(({ value }) => value).sort(),
-    ).toEqual(["login", "ping"]);
+    ).toEqual(["login"]);
     const candidates = result.inferences.filter(
       ({ kind }) => kind === "endpoint_candidate",
     );
@@ -881,6 +917,7 @@ describe("web bundle endpoint candidate classification", () => {
       "X",
       "login",
       "passwordControl",
+      "ping",
       "token",
       "users",
     ]);
@@ -1087,12 +1124,17 @@ describe("web bundle configuration and navigation parity", () => {
     });
   });
 
-  it("recognizes loadURL endpoints like static analysis", () => {
+  it("keeps loadURL spelling without Electron receiver proof as a candidate", () => {
     const result = analyzeWebBundleFixture(
       inspection('window.win.loadURL("https://embedded.test/app");'),
     );
-    expect(result.observations.endpoints).toContainEqual(
-      expect.objectContaining({ value: "https://embedded.test/app" }),
+    expect(result.observations.endpoints).toEqual([]);
+    expect(result.inferences).toContainEqual(
+      expect.objectContaining({
+        kind: "endpoint_candidate",
+        value: "https://embedded.test/app",
+        confidence: "low",
+      }),
     );
   });
 });
@@ -1828,7 +1870,6 @@ it("retains direct and literal computed call names", () => {
   expect(result.observations.endpoints.map(({ value }) => value)).toEqual([
     "/direct",
     "/literal",
-    "/nested-receiver",
   ]);
   expect(
     result.observations.chunks.edges.map(({ specifier }) => specifier),
@@ -2045,3 +2086,100 @@ it("keeps known capture omissions in compact route summaries and queryable gap f
   for (const row of gaps.value.items)
     expect(row).toMatchObject({ source_id: null, provenance: null });
 });
+
+it("retains captured Next script identity while deriving decoded route patterns", () => {
+  const url = `${origin}/base/_next/static/chunks/app/%28shop%29/blog/%5Bid%5D/page-abc.js`;
+  const captured = createWebPageInspection([
+    {
+      source: "router.push('/help');",
+      scriptKey: `scr_${"2".repeat(64)}`,
+      url,
+      origin,
+      cdpHash: "hash",
+    },
+  ]);
+  const result = analyzeWebBundleFixture(captured);
+  expect(result.route_inventory?.routes.map(({ path }) => path)).toEqual([
+    "/base/blog/:id",
+    "/base/help",
+  ]);
+  expect(result.route_inventory?.sources).toEqual([
+    expect.objectContaining({
+      url,
+      sha256: captured.scripts.items[0]?.source.included
+        ? captured.scripts.items[0].source.artifact.sha256
+        : null,
+    }),
+  ]);
+  expect(result.route_inventory?.occurrences).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        origin: "source-url",
+        unprefixed_path: "/blog/:id",
+        inferred_base_path: "/base",
+      }),
+      expect.objectContaining({
+        origin: "source-syntax",
+        unprefixed_path: "/help",
+      }),
+    ]),
+  );
+});
+
+it("qualifies local browser API spellings while preserving intrinsic requests", () => {
+  const result = analyzeWebBundleFixture(
+    inspection(`
+    const local = { fetch(x) { return x; }, sendBeacon(x) { return x; }, EventSource(x) { return x; } };
+    local.fetch('/local-fetch'); local.sendBeacon('/local-beacon'); local.EventSource('/local-events');
+    const other = { open(a,b) { return b; }, post(x) { return x; }, put(x) { return x; }, patch(x) { return x; }, request(x) { return x; } };
+    other.open('GET', '/local-open'); other.post('/local-post'); other.put('/local-put'); other.patch('/local-patch'); other.request('/local-request');
+    fetch('/intrinsic-fetch'); navigator.sendBeacon('/intrinsic-beacon'); new EventSource('/intrinsic-events');
+  `),
+  );
+  expect(
+    result.observations.endpoints.map(({ value }) => value).sort(),
+  ).toEqual(["/intrinsic-beacon", "/intrinsic-events", "/intrinsic-fetch"]);
+  expect(
+    result.inferences
+      .filter(({ kind }) => kind === "endpoint_candidate")
+      .map(({ value }) => value)
+      .sort(),
+  ).toEqual([
+    "/local-beacon",
+    "/local-events",
+    "/local-fetch",
+    "/local-open",
+    "/local-patch",
+    "/local-post",
+    "/local-put",
+    "/local-request",
+  ]);
+});
+
+it.each([
+  ["", true],
+  ["xhr.open = replacement;", false],
+  ["XMLHttpRequest.prototype.open = replacement;", false],
+  ["const alias = xhr; alias.open = replacement;", false],
+  ["mutate(xhr);", false],
+])(
+  "preserves XHR receiver proof across visible mutation: %s",
+  (mutation, observed) => {
+    const source = `const xhr = new XMLHttpRequest(); ${mutation} xhr.open('GET', '/xhr');`;
+    const result = analyzeWebBundleFixture(inspection(source));
+    expect(result.observations.endpoints.map(({ value }) => value)).toEqual(
+      observed ? ["/xhr"] : [],
+    );
+    expect(
+      result.inferences
+        .filter(({ kind }) => kind === "endpoint_candidate")
+        .map(({ value }) => value),
+    ).toEqual(observed ? [] : ["/xhr"]);
+    expect(analyzeJavaScriptStaticSource(source).endpoints).toContainEqual(
+      expect.objectContaining({
+        value: "/xhr",
+        ...(observed ? {} : { interpretation: "candidate" }),
+      }),
+    );
+  },
+);

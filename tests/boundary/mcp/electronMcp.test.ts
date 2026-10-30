@@ -1,4 +1,6 @@
 import { parseEvidence } from "../../../src/domain/evidence.js";
+import { digestCanonicalValue } from "../../../src/domain/canonicalDigest.js";
+import { electronActiveObservationInputSchema } from "../../../src/domain/javascript/electronActiveObservation.js";
 import { ok as resultOk, err } from "../../../src/domain/result.js";
 import { mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
@@ -18,6 +20,7 @@ import type { ElectronObservationPort } from "../../../src/application/javascrip
 import { analyzeJavaScriptApplication } from "../../support/javascriptApplicationScope.js";
 import { CdpElectronProvider } from "../../../src/browser/CdpElectronProvider.js";
 import { createServer } from "../../../src/server/createServer.js";
+import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../../scripts/lib/mcp-verification-environment.mjs";
 import { observed } from "../../fixtures/analysisExecution.js";
 import {
   startFakeCdpBrowser,
@@ -311,6 +314,7 @@ it("exposes endpoint-scoped Electron discovery and inspection as Evidence", asyn
     { kind: "session", session },
     {
       electronObservation: new CdpElectronProvider(),
+      environment: { ...process.env, ...INLINE_EVIDENCE_MCP_ENVIRONMENT },
       availabilityPolicy: () => ({
         processCaptureEnabled: false,
         investigationInputRoots: 1,
@@ -419,7 +423,8 @@ it("exposes endpoint-scoped Electron discovery and inspection as Evidence", asyn
   });
 }, 20_000);
 
-it("runs active Electron scenarios with selected paths and inferred working directory", async () => {
+/** Create the selected-path aliases and retained IPC-gap capture for the public workflow. */
+const activeElectronScenarioFixture = async () => {
   const root = await createTestTempDirectory("rea-electron-active-mcp-");
   temporary.push(root);
   const applicationPath = join(root, "main.js");
@@ -436,7 +441,6 @@ it("runs active Electron scenarios with selected paths and inferred working dire
     "rea-electron-working-directory-",
   );
   temporary.push(workingDirectory);
-  const capturedInputs: unknown[] = [];
   const activeResult =
     createElectronActiveObservationFixtureResult(applicationPath);
   const capturedEvent = activeResult.timeline.events[0];
@@ -459,6 +463,13 @@ it("runs active Electron scenarios with selected paths and inferred working dire
   activeResult.retention.estimated_retained_bytes = 1_536;
   activeResult.retention.observed_runtime = 2;
   activeResult.coverage.observed_event_families.push("ipc-observation-gap");
+  return { root, applicationPath, aliasedRoot, workingDirectory, activeResult };
+};
+
+it("runs active Electron scenarios with selected paths and inferred working directory", async () => {
+  const { root, applicationPath, aliasedRoot, workingDirectory, activeResult } =
+    await activeElectronScenarioFixture();
+  const capturedInputs: unknown[] = [];
   const provider: ElectronActiveObservationPort = {
     identity: () => ({
       id: "test-electron-active",
@@ -539,6 +550,24 @@ it("runs active Electron scenarios with selected paths and inferred working dire
     application_path: applicationPath,
     application_root: workingDirectory,
   });
+  const capturedEvidence = parseEvidence(captured.structuredContent);
+  expect(capturedEvidence.parameters).toMatchObject({
+    executable_path: process.execPath,
+    application_path: join(aliasedRoot, "main.js"),
+    application_root: workingDirectory,
+  });
+  expect(capturedEvidence.normalized_result).toMatchObject({
+    application: { application_path: applicationPath },
+  });
+  const { scenario_sha256, resolved_paths, ...selectedScenario } =
+    capturedEvidence.parameters;
+  expect(resolved_paths).toMatchObject({
+    application_path: applicationPath,
+    application_root: workingDirectory,
+  });
+  expect(scenario_sha256).toBe(
+    digestCanonicalValue(selectedScenario, "Electron scenario"),
+  );
   const inferredRoot = await client.callTool({
     name: "capture_electron_scenario",
     arguments: {
@@ -552,6 +581,18 @@ it("runs active Electron scenarios with selected paths and inferred working dire
     application_path: applicationPath,
     application_root: root,
   });
+  const inferredEvidence = parseEvidence(inferredRoot.structuredContent);
+  expect(inferredEvidence.parameters).not.toHaveProperty("application_root");
+  expect(inferredEvidence.parameters.scenario_sha256).toBe(
+    digestCanonicalValue(
+      electronActiveObservationInputSchema.parse({
+        executable_path: process.execPath,
+        application_path: applicationPath,
+        actions: [],
+      }),
+      "Electron scenario",
+    ),
+  );
   expect(JSON.stringify(captured.structuredContent)).toContain("submit-secret");
   expect(JSON.stringify(captured.structuredContent)).toContain("super-secret");
   expect(captured.structuredContent).toMatchObject({
@@ -621,7 +662,11 @@ it("exposes the target-free static JavaScript application workflow", async () =>
         summary: z.object({
           browser_windows: z.number(),
           context_bridge_apis: z.number(),
-          ipc: z.object({ paired_renderer_transmissions: z.number() }),
+          ipc: z.object({
+            paired_renderer_transmissions: z.number(),
+            ambiguous_renderer_transmissions: z.number(),
+            unpaired_literal_renderer_transmissions: z.number(),
+          }),
         }),
         graph: z.object({
           graph_id: z.string(),
@@ -643,7 +688,11 @@ it("exposes the target-free static JavaScript application workflow", async () =>
     summary: {
       browser_windows: 3,
       context_bridge_apis: 2,
-      ipc: { paired_renderer_transmissions: 4 },
+      ipc: {
+        paired_renderer_transmissions: 0,
+        ambiguous_renderer_transmissions: 7,
+        unpaired_literal_renderer_transmissions: 0,
+      },
     },
   });
   expect(projected.normalized_result.graph.nodes.length).toBeGreaterThan(0);

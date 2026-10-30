@@ -21,7 +21,7 @@ import addFormats from "ajv-formats";
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
 import { parseAnalysisSnapshot } from "../dist/domain/analysisSnapshot.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
-import { functionDossierSchema } from "../dist/domain/hopperValues.js";
+import { functionDossierSchema } from "../dist/domain/native/functionDossier.js";
 import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
 import { buildRiscvFixture } from "../tests/conformance/ghidra/riscv-fixture.mjs";
 import {

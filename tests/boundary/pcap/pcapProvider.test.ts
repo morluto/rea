@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { watch } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, symlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { expect, onTestFinished, test, vi } from "vitest";
 
@@ -9,6 +9,7 @@ import {
   CAPINFOS_COMMAND_ENV,
   TSHARK_COMMAND_ENV,
 } from "../../../src/pcap/PcapConfiguration.js";
+import { primaryAnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import {
   pcapResultSchemas,
@@ -23,6 +24,7 @@ import type { PcapCommandLauncher } from "../../../src/pcap/PcapCommand.js";
 import {
   CAPINFOS_OUTPUT,
   TSHARK_JSON,
+  TSHARK_DNS_JSON,
   writeStubTools,
   type PcapStubToolsOptions,
 } from "../../fixtures/pcap/pcapTestTools.js";
@@ -146,6 +148,7 @@ it("inspects a capture with endpoints, DNS, TLS SNI, and HTTP", async () => {
   expect(result.dns_queries).toEqual([
     {
       query: "api.example.com",
+      query_labels_hex: ["617069", "6578616d706c65", "636f6d"],
       response_addresses: ["93.184.216.34"],
       response_address_count: 1,
     },
@@ -153,6 +156,66 @@ it("inspects a capture with endpoints, DNS, TLS SNI, and HTTP", async () => {
   expect(result.tls_sni_values).toEqual(["api.example.com"]);
   expect(result.http_request_uris).toEqual(["http://api.example.com/v1/data"]);
   expect(result.coverage).toBe("complete");
+});
+
+it.each([0, 1])(
+  "preserves packet-count mismatch facts while accepting an empty capture: capinfos=%s",
+  async (count) => {
+    const { provider, root } = await providerWith({
+      tsharkJson: "[]",
+      dnsJson: "[]",
+      capinfosText: `File type: pcap\nFile encapsulation: Ethernet\nNumber of packets: ${String(count)}\n`,
+    });
+    const path = await captureFixture(root);
+    const result = await provider.execute({
+      operation: "inspect_pcap_capture",
+      input: { path },
+    });
+    if (count === 0) {
+      if (!result.ok) throw result.error;
+      expect(result.value.result).toMatchObject({
+        packet_count: 0,
+        coverage: "complete",
+      });
+    } else {
+      if (result.ok) throw new Error("Expected contradictory counts");
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: "unreadable_output",
+        details: {
+          diagnostics: {
+            reason: "packet_count_mismatch",
+            capinfos_packet_count: 1,
+            tshark_packet_count: 0,
+          },
+        },
+      });
+    }
+  },
+);
+
+it("retains both observed digests when capinfos disagrees with the snapshot", async () => {
+  const reported = "0".repeat(64);
+  const { provider, root } = await providerWith({
+    capinfosText: `File type: pcap\nFile encapsulation: Ethernet\nNumber of packets: 0\nSHA256: ${reported}\n`,
+  });
+  const path = await captureFixture(root);
+  const result = await provider.execute({
+    operation: "inspect_pcap_capture",
+    input: { path },
+  });
+  if (result.ok) throw new Error("Expected contradictory snapshot digest");
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "unreadable_output",
+    details: {
+      diagnostics: {
+        reason: "capture_sha256_mismatch",
+        capinfos_sha256: reported,
+        snapshot_sha256: createHash("sha256")
+          .update("pcap-fixture-bytes")
+          .digest("hex"),
+      },
+    },
+  });
 });
 
 it("retains an absolute HTTP request target without a Host-derived full URI", async () => {
@@ -304,7 +367,7 @@ it.each([
               packet_count: 3,
             }
           : {
-              coverage: "complete",
+              coverage: "partial",
               packet_count: 3,
               endpoints: expect.any(Array),
             },
@@ -477,6 +540,203 @@ it("names the prlimit selection when the Linux limiter is unusable", async () =>
   expect(projected.message).toContain("Check that REA_TSHARK_PRLIMIT_COMMAND");
 });
 
+it("rejects directory and non-prlimit selections before opening the capture", async () => {
+  const root = await createTestTempDirectory("rea-pcap-invalid-limiter-");
+  const tools = await writeStubTools(root);
+  for (const configured of [root, "/usr/bin/true"]) {
+    const provider = new PcapProvider({
+      environment: {
+        REA_TSHARK_COMMAND: tools.tshark,
+        REA_CAPINFOS_COMMAND: tools.capinfos,
+        REA_TSHARK_PRLIMIT_COMMAND: configured,
+      },
+    });
+    try {
+      const result = await provider.execute({
+        operation: "inspect_pcap_capture",
+        input: { path: "/not-opened/capture.pcap" },
+      });
+      if (result.ok) throw new Error("expected an unusable limiter");
+      const error = projectAnalysisError(result.error);
+      expect(error).toMatchObject({
+        code: "capability_unavailable",
+        details: {
+          diagnostics: {
+            configuration_key: "REA_TSHARK_PRLIMIT_COMMAND",
+            configured,
+          },
+        },
+      });
+      expect(error.message).toContain("REA_TSHARK_PRLIMIT_COMMAND");
+      expect(error.message).not.toContain("Cannot run selected tool");
+    } finally {
+      await provider.close();
+    }
+  }
+});
+
+it("rejects a different util-linux command before opening capture bytes", async () => {
+  const root = await createTestTempDirectory("rea-pcap-other-util-linux-");
+  const tools = await writeStubTools(root);
+  const provider = new PcapProvider({
+    environment: {
+      REA_TSHARK_COMMAND: tools.tshark,
+      REA_CAPINFOS_COMMAND: tools.capinfos,
+      REA_TSHARK_PRLIMIT_COMMAND: "/usr/bin/lsblk",
+    },
+  });
+  try {
+    const result = await provider.execute({
+      operation: "inspect_pcap_capture",
+      input: { path: "/not-opened/capture.pcap" },
+    });
+    if (result.ok) throw new Error("expected an unusable limiter");
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisCapabilityUnavailableError",
+      capturedOutput: { stdout: expect.stringContaining("--output") },
+    });
+  } finally {
+    await provider.close();
+  }
+});
+
+it("accepts real prlimit selected through differently named symlinks", async () => {
+  const root = await createTestTempDirectory("rea-pcap-prlimit-alias-");
+  const tools = await writeStubTools(root);
+  for (const name of ["bounded-capture", " limiter "]) {
+    const limiter = join(root, name);
+    await symlink("/usr/bin/prlimit", limiter);
+    const provider = new PcapProvider({
+      environment: {
+        REA_TSHARK_COMMAND: tools.tshark,
+        REA_CAPINFOS_COMMAND: tools.capinfos,
+        REA_TSHARK_PRLIMIT_COMMAND: limiter,
+      },
+    });
+    try {
+      const result = await provider.execute({
+        operation: "inspect_pcap_capture",
+        input: { path: await captureFixture(root) },
+      });
+      if (!result.ok) throw result.error;
+      expect(result.value.result).toMatchObject({ coverage: "complete" });
+    } finally {
+      await provider.close();
+    }
+  }
+});
+
+// Capture execution requires the Linux native resource bound used by providerWith.
+it.each([
+  { pass: "selected", invalidUtf8: false },
+  { pass: "dns", invalidUtf8: false },
+  { pass: "selected", invalidUtf8: true },
+  { pass: "metadata", invalidUtf8: false },
+  { pass: "digest", invalidUtf8: false },
+] as const)(
+  "retains invalid $pass output cleanup ownership (UTF-8: $invalidUtf8) and retries it with the snapshot",
+  async ({ pass, invalidUtf8 }) => {
+    const capinfosPass = pass === "metadata" || pass === "digest";
+    const capinfosText =
+      pass === "metadata"
+        ? "not capinfos"
+        : `${CAPINFOS_OUTPUT}\nSHA256: ${"0".repeat(64)}`;
+    const failureText = capinfosPass
+      ? pass === "digest"
+        ? "SHA256 disagrees"
+        : "did not provide machine-readable"
+      : invalidUtf8
+        ? "not valid UTF-8"
+        : "malformed JSON";
+    let mayClean = false;
+    let cleanupAttempts = 0;
+    const launcher: PcapCommandLauncher = async (spawn) => {
+      const launched = await spawnOwnedProviderProcess(spawn);
+      if (
+        capinfosPass
+          ? !spawn.arguments.includes("-M")
+          : !spawn.arguments.includes("-T") ||
+            spawn.arguments.includes("-x") !== (pass === "dns")
+      )
+        return launched;
+      const cleanupOwned =
+        launched.cleanup ??
+        (() => cleanupOwnedProcessGroup(launched.ownership));
+      return {
+        ...launched,
+        cleanup: async () => {
+          cleanupAttempts += 1;
+          const cleaned = await cleanupOwned();
+          if (!mayClean) throw new Error("injected output cleanup failure");
+          return cleaned;
+        },
+      };
+    };
+    const { provider, root } = await providerWith({
+      launcher,
+      ...(capinfosPass
+        ? { capinfosText }
+        : invalidUtf8
+          ? { invalidTsharkStream: "stdout" as const }
+          : pass === "dns"
+            ? { malformedDnsJson: true }
+            : { tsharkJson: "{" }),
+      beforeClose: () => {
+        mayClean = true;
+      },
+    });
+    const path = await captureFixture(root);
+    const result = await provider.execute({
+      operation: "inspect_pcap_capture",
+      input: { path },
+    });
+    if (result.ok) throw new Error("Expected malformed output cleanup failure");
+    expect(result.error).toMatchObject({ cleanupIncomplete: true });
+    expect(result.error.diagnostics).toMatchObject({
+      cleanup_error: {
+        details: {
+          diagnostics: {
+            reason: "injected output cleanup failure",
+            captured_output: {
+              stdout: capinfosPass
+                ? capinfosText + "\n"
+                : invalidUtf8
+                  ? expect.stringContaining("�")
+                  : "{",
+              truncated: false,
+            },
+          },
+        },
+      },
+    });
+    const primary = primaryAnalysisError(result.error);
+    expect(primary).toMatchObject({
+      _tag: invalidUtf8 ? "AnalysisOutputError" : "AnalysisProtocolError",
+      message: expect.stringContaining(failureText),
+    });
+    const snapshot = result.error.cleanupResources.find((resource) =>
+      resource.endsWith("/capture.pcap"),
+    );
+    if (snapshot === undefined)
+      throw new Error("Missing retained output snapshot");
+    expect(
+      result.error.cleanupResources.some((resource) =>
+        resource.startsWith("process-group:"),
+      ),
+    ).toBe(true);
+    expect(
+      (await readFile(snapshot)).equals(Buffer.from("pcap-fixture-bytes")),
+    ).toBe(true);
+    const attempts = cleanupAttempts;
+    mayClean = true;
+    await provider.close();
+    expect(cleanupAttempts).toBe(attempts + 1);
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(primaryAnalysisError(result.error)).toBe(primary);
+    await expect(readFile(snapshot)).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
+
 const nodeTool = async (
   root: string,
   name: string,
@@ -504,7 +764,7 @@ it("refuses observations whose owned snapshot changed during dissection", async 
     `${versionProbe}
 const selected = process.argv[process.argv.indexOf('-r') + 1];
 fs.chmodSync(selected, 0o600); fs.writeFileSync(selected, 'changed private snapshot');
-console.log(${JSON.stringify(TSHARK_JSON)});`,
+console.log(process.argv.includes("-x") ? ${JSON.stringify(TSHARK_DNS_JSON)} : ${JSON.stringify(TSHARK_JSON)});`,
   );
   const provider = new PcapProvider({
     environment: { REA_TSHARK_COMMAND: tshark, REA_CAPINFOS_COMMAND: capinfos },
@@ -743,4 +1003,32 @@ it("requests HTTP/2 URI facts and projects them through capture inspection", asy
   expect(result.http_request_uris).toEqual(["http://example.test/h2"]);
   expect(result.http_request_uri_count).toBe(1);
   expect(result.coverage).toBe("complete");
+});
+
+it("reports partial DNS coverage when raw extraction fails without selected DNS facts", async () => {
+  const base: { _source: { layers: Record<string, unknown> } }[] =
+    JSON.parse(TSHARK_JSON);
+  for (const packet of base) {
+    for (const key of Object.keys(packet._source.layers)) {
+      if (key === "dns" || key === "dns_raw" || key.startsWith("dns."))
+        delete packet._source.layers[key];
+    }
+  }
+  const { provider, root } = await providerWith({
+    malformedDnsJson: true,
+    tsharkJson: JSON.stringify(base),
+  });
+  const result = await provider.execute({
+    operation: "inspect_pcap_capture",
+    input: { path: await captureFixture(root) },
+  });
+  if (!result.ok) throw result.error;
+  expect(result.value.result).toMatchObject({
+    coverage: "partial",
+    dns_queries: [],
+    dns_query_count: 0,
+  });
+  expect(result.value.limitations.join(" ")).toContain(
+    "DNS wire identity extraction was unavailable",
+  );
 });

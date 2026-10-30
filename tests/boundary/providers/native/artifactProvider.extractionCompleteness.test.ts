@@ -1,16 +1,23 @@
 import { createHash } from "node:crypto";
-import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  mkdir,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 
 import { createPackage, createPackageWithOptions } from "@electron/asar";
-import { expect, it, vi } from "vitest";
+import { expect, it, onTestFinished, vi } from "vitest";
 
+import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
 import { ArtifactProvider } from "../../../../src/artifacts/ArtifactProvider.js";
 import {
   materializeArtifactInventory,
   scanArtifactInventory,
 } from "../../../fixtures/artifactInventory.js";
-import { artifactExtractionResultSchema } from "../../../../src/domain/artifactGraph.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { DirectoryArtifactReader } from "../../../../src/artifacts/DirectoryArtifactReader.js";
@@ -29,9 +36,7 @@ it.for([false, true])(
         "unrepresented",
       );
     const snapshot = await scanArtifactInventory(source);
-    const result = await extract(source, join(root, "output"));
-    if (!result.ok) throw result.error;
-    const extracted = artifactExtractionResultSchema.parse(result.value.result);
+    const extracted = await extractDirectory(source, join(root, "output"));
     expect(extracted.coverage).toEqual(snapshot.coverage);
     expect(extracted.coverage.status).toBe(
       invalidName ? "unknown" : "complete",
@@ -108,6 +113,31 @@ it.each(["file", "directory"] as const)(
         .update(await readFile(join(source, "a.txt")))
         .digest("hex"),
     ).toBe(createHash("sha256").update(bytes).digest("hex"));
+  },
+);
+
+it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "rolls back when a previously inventoried directory becomes unreadable",
+  async () => {
+    const root = await createTestTempDirectory("rea-extract-denied-late-");
+    const source = join(root, "source");
+    const child = join(source, "child");
+    await mkdir(child, { recursive: true });
+    await writeFile(join(child, "selected.txt"), "selected bytes\n");
+    const output = join(root, "output");
+    const materialize = await inventoriedExtraction(source, output);
+    await chmod(child, 0);
+    onTestFinished(() => chmod(child, 0o755));
+    await expect(materialize()).rejects.toMatchObject({
+      reason: "integrity",
+      message:
+        "Inventoried regular artifact entries were not materialized: child/selected.txt",
+    });
+    await expect(access(output)).rejects.toThrow();
+    await chmod(child, 0o755);
+    expect(await readFile(join(child, "selected.txt"), "utf8")).toBe(
+      "selected bytes\n",
+    );
   },
 );
 
@@ -317,9 +347,7 @@ it("preserves every equal-content occurrence and copies a nested ASAR as its con
   await writeFile(join(source, "a.txt"), "same bytes\n");
   await writeFile(join(source, "b.txt"), "same bytes\n");
   const output = join(root, "output");
-  const result = await extract(source, output);
-  if (!result.ok) throw result.error;
-  const extracted = artifactExtractionResultSchema.parse(result.value.result);
+  const extracted = await extractDirectory(source, output);
   expect(extracted.artifacts.map(({ relative_path }) => relative_path)).toEqual(
     ["a.txt", "app.asar", "b.txt"],
   );
@@ -350,11 +378,7 @@ it("ignores unavailable members of a nested ASAR but refuses them as active entr
   await rm(join(`${archive}.unpacked`, "native", "addon.node"));
 
   const nestedOutput = join(root, "nested-output");
-  const nestedResult = await extract(source, nestedOutput);
-  if (!nestedResult.ok) throw nestedResult.error;
-  const nestedExtraction = artifactExtractionResultSchema.parse(
-    nestedResult.value.result,
-  );
+  const nestedExtraction = await extractDirectory(source, nestedOutput);
   expect(
     nestedExtraction.extraction_manifest.selected_occurrence_ids,
   ).toHaveLength(1);
@@ -369,7 +393,7 @@ it("ignores unavailable members of a nested ASAR but refuses them as active entr
   ).toBe(0);
 
   const activeOutput = join(root, "active-output");
-  const activeResult = await extract(archive, activeOutput);
+  const activeResult = await extractArchive(archive, activeOutput);
   if (activeResult.ok)
     throw new Error("Unavailable active ASAR member must fail extraction");
   expect(projectAnalysisError(activeResult.error)).toMatchObject({
@@ -396,13 +420,16 @@ const inventoriedExtraction = async (source: string, output: string) => {
     );
 };
 
-const extract = (source: string, output: string) =>
-  new ArtifactProvider(process.env)
-    .createClient({
-      path: source,
-      sourcePath: source,
-      sha256: "0".repeat(64),
-      kind: "archive",
-      format: "asar",
-    })
+/** Raw directory completeness belongs to inventory/materialization, not file target admission. */
+const extractDirectory = async (source: string, output: string) => {
+  const materialize = await inventoriedExtraction(source, output);
+  return materialize();
+};
+
+const extractArchive = async (source: string, output: string) => {
+  const target = await parseBinaryTarget(source);
+  if (!target.ok) throw target.error;
+  return new ArtifactProvider(process.env)
+    .createClient(target.value)
     .execute("extract_artifact", { output_root: output });
+};

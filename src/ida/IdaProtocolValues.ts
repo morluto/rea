@@ -61,30 +61,28 @@ export const cursorSchema = z.union([
   z.object({ next: z.int().nonnegative() }),
   z.object({ done: z.literal(true) }),
 ]);
-export const nextOffset = (
-  cursor: z.infer<typeof cursorSchema>,
+/** Both legacy pages and modern cursors must finish or advance strictly. */
+export const nextPageOffset = (
+  next: number | null,
   current: number,
 ): number | null => {
-  if ("done" in cursor) return null;
-  if (cursor.next <= current)
+  if (next !== null && next <= current)
     throw new AnalysisProtocolError(
       "IDA MCP pagination did not advance its offset.",
     );
-  return cursor.next;
+  return next;
 };
+export const nextOffset = (
+  cursor: z.infer<typeof cursorSchema>,
+  current: number,
+): number | null =>
+  nextPageOffset("done" in cursor ? null : cursor.next, current);
 
 export const legacyPageSchema = z.object({
   data: z.array(jsonValueSchema),
   next_offset: z.int().nonnegative().nullable(),
 });
-export const modernPageSchema = z
-  .array(
-    z.object({
-      data: z.array(jsonValueSchema),
-      next_offset: z.int().nonnegative().nullable(),
-    }),
-  )
-  .length(1);
+export const modernPageSchema = z.array(legacyPageSchema).length(1);
 
 const modernLookupRowSchema = z.object({
   query: z.string(),

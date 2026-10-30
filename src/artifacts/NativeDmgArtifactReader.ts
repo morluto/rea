@@ -202,6 +202,7 @@ export class NativeDmgArtifactReader implements ArtifactReader {
     const prefix = basename(this.path);
     const entries = directory
       .entries(signal, {
+        onCoverage: (coverage) => options?.onCoverage?.(coverage),
         onOmission: (omission) =>
           options?.onOmission?.({
             ...omission,

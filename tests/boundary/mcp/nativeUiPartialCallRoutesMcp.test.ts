@@ -112,6 +112,10 @@ const noClassifiedReferences = {
 
 type Plan = {
   readonly references?: unknown;
+  readonly referencesFailure?: AnalysisError;
+  readonly uiFailure?: AnalysisError;
+  readonly metadataFailure?: AnalysisError;
+  readonly calls?: string[];
   readonly callees?: readonly string[];
   readonly fallbackProvider?: typeof identity;
   readonly fallbackFailure?: "unavailable" | "output" | "cancelled";
@@ -122,6 +126,22 @@ function publicTrace(plan: Plan, maxNodes = 12, maxEdges = 500) {
       operation,
       parameters,
     ): Promise<Result<AnalysisExecution, AnalysisError>> => {
+      plan.calls?.push(operation);
+      if (
+        operation === "decode_interface_builder" &&
+        plan.uiFailure !== undefined
+      )
+        return err(plan.uiFailure);
+      if (
+        operation === "inspect_native_dispatch_metadata" &&
+        plan.metadataFailure !== undefined
+      )
+        return err(plan.metadataFailure);
+      if (
+        operation === "procedure_references" &&
+        plan.referencesFailure !== undefined
+      )
+        return err(plan.referencesFailure);
       if (operation === "decode_interface_builder")
         return err(
           new AnalysisCapabilityUnavailableError(
@@ -714,5 +734,74 @@ it.each([
       "direct_call",
       "provider_call",
     ]);
+  },
+);
+
+it.each([false, true])(
+  "keeps unsupported reference fallback conditional on completed cleanup through MCP (incomplete=%s)",
+  async (incomplete) => {
+    const calls: string[] = [];
+    const failure = new AnalysisCapabilityUnavailableError(
+      identity.id,
+      "procedure_references",
+      "Typed references unavailable",
+      incomplete
+        ? { cleanup: { reason: "release failed", resources: ["route-owner"] } }
+        : undefined,
+    );
+    const response = await publicTrace({ referencesFailure: failure, calls });
+    if (incomplete) {
+      expect(calls).not.toContain("procedure_callees");
+      expect(parseMcpToolError(response).error).toMatchObject({
+        code: "cleanup_incomplete",
+        details: { resources: ["route-owner"] },
+      });
+      expect(failure.cleanupResources).toEqual(["route-owner"]);
+    } else {
+      expect(response.isError).not.toBe(true);
+      expect(calls).toContain("procedure_callees");
+      expect(traceFrom(response).edges).toContainEqual(
+        expect.objectContaining({
+          to: "native:function:0x3000",
+          relation: "provider_call",
+        }),
+      );
+    }
+  },
+);
+
+it.each([false, true])(
+  "retains initial UI cleanup failure with failed metadata peer=%s",
+  async (failedPeer) => {
+    const cleanupFailure = (operation: string, resource: string) =>
+      new AnalysisCapabilityUnavailableError(
+        identity.id,
+        operation,
+        "unavailable after cleanup failed",
+        { cleanup: { reason: "release failed", resources: [resource] } },
+      );
+    const calls: string[] = [];
+    const response = await publicTrace({
+      calls,
+      uiFailure: cleanupFailure("decode_interface_builder", "ui-owner"),
+      ...(failedPeer
+        ? {
+            metadataFailure: cleanupFailure(
+              "inspect_native_dispatch_metadata",
+              "metadata-owner",
+            ),
+          }
+        : {}),
+    });
+    expect(parseMcpToolError(response).error).toMatchObject({
+      code: "cleanup_incomplete",
+      details: {
+        resources: expect.arrayContaining(
+          failedPeer ? ["ui-owner", "metadata-owner"] : ["ui-owner"],
+        ),
+      },
+    });
+    expect(calls).not.toContain("procedure_address");
+    expect(calls).not.toContain("list_names");
   },
 );

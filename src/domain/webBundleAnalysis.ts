@@ -254,6 +254,8 @@ const originalSourceSchema = z.object({
   artifact: webTextArtifactSchema.nullable(),
 });
 const originalModuleEdgeSchema = z.object({
+  // Historical observations omit this link to original_sources declarations.
+  declaration_index: z.int().min(0).optional(),
   from_source: z.string(),
   kind: z.enum(["static_import", "dynamic_import", "require"]),
   specifier: z.string(),

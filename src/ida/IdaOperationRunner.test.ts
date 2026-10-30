@@ -8,6 +8,49 @@ import { IdaOperationRunner } from "./IdaOperationRunner.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 
 it.each(["legacy", "modern", "native"] as const)(
+  "%s validates string address selectors independently of inventory contents",
+  async (protocol) => {
+    const { root, target } = await createIdaTarget();
+    const producer = new RecordingIdaMcp(target);
+    const runner = new IdaOperationRunner(producer, protocol);
+    try {
+      for (const populated of [false, true]) {
+        const strings = populated
+          ? [
+              { address: "0x10", string: "selected", length: 8 },
+              { address: "0x20", string: "other", length: 5 },
+            ]
+          : [];
+        producer.overrideCall = (tool) => {
+          if (tool === "list_strings")
+            return { data: strings, next_offset: null };
+          if (tool === "find_regex")
+            return {
+              matches: strings.map(({ address, string }) => ({
+                addr: address,
+                string,
+              })),
+              cursor: { done: true },
+            };
+          return undefined;
+        };
+        const callsBeforeInvalidSelector = producer.calls.length;
+        await expect(
+          runner.run("list_strings", { address: "invalid" }),
+        ).rejects.toThrow();
+        expect(producer.calls).toHaveLength(callsBeforeInvalidSelector);
+        expect(await runner.run("list_strings", { address: "0X0010" })).toEqual(
+          populated ? [{ address: "0x10", value: "selected" }] : [],
+        );
+      }
+    } finally {
+      await producer.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+it.each(["legacy", "modern", "native"] as const)(
   "%s procedure resolution rejects file coordinates before any symbol lookup",
   async (protocol) => {
     const { root, target } = await createIdaTarget();
@@ -138,6 +181,50 @@ it.each(["legacy", "modern", "native"] as const)(
           return undefined;
         };
         await expect(runner.resolve("main")).rejects.toThrow();
+      }
+    } finally {
+      await producer.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+it.each([
+  ["legacy", "functions"],
+  ["modern", "functions"],
+  ["native", "functions"],
+  ["legacy", "strings"],
+  ["modern", "strings"],
+  ["native", "strings"],
+] as const)(
+  "%s %s inventory rejects a repeated or backward offset before another request",
+  async (protocol, inventory) => {
+    const { root, target } = await createIdaTarget();
+    const producer = new RecordingIdaMcp(target);
+    try {
+      for (const next of [2, 1]) {
+        let pages = 0;
+        producer.overrideCall = (tool) => {
+          if (
+            ![
+              "list_functions",
+              "list_funcs",
+              "list_strings",
+              "find_regex",
+            ].includes(tool)
+          )
+            return undefined;
+          const nextOffset = pages++ === 0 ? 2 : next;
+          if (tool === "find_regex")
+            return { matches: [], cursor: { next: nextOffset } };
+          const page = { data: [], next_offset: nextOffset };
+          return tool === "list_funcs" ? [page] : page;
+        };
+        const runner = new IdaOperationRunner(producer, protocol);
+        await expect(runner[inventory]()).rejects.toMatchObject({
+          _tag: "AnalysisProtocolError",
+        });
+        expect(pages).toBe(2);
       }
     } finally {
       await producer.close();

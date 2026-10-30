@@ -2,7 +2,7 @@ import { procedureInfoSchema } from "../domain/native/procedureInfo.js";
 import { z } from "zod";
 import { utcDateTimeSchema } from "../domain/offsetDateTime.js";
 
-import { functionDossierSchema } from "../domain/hopperValues.js";
+import { functionDossierSchema } from "../domain/native/functionDossier.js";
 import { analysisProfileSchema } from "../domain/analysisProfile.js";
 import {
   evidenceSchema,
@@ -12,15 +12,16 @@ import { jsonObjectSchema } from "../domain/jsonValue.js";
 import {
   PROVIDER_REJECTION_CODES,
   type ProviderRejectionCode,
-} from "./providerSelection.js";
+} from "../domain/providerSelection.js";
 import {
   PROVIDER_FAILURE_STAGES,
   PROVIDER_OPERATION_STATES,
   PROVIDER_RETRY_ACTIONS,
 } from "../domain/providerOperationHealth.js";
-import { analysisErrorProjectionSchema } from "./errorSchemas.js";
-import { ZIP_PACKAGE_FORMATS } from "../domain/zipPackageFormat.js";
-import { objcClassImportIdentitySchema } from "../domain/native/objcSwiftMetadata.js";
+import {
+  objcClassDiscoveryCoverageSchema,
+  objcClassImportIdentitySchema,
+} from "../domain/native/objcSwiftMetadata.js";
 import { BINARY_SESSION_SUMMARY_OMITTED_FIELDS } from "./sessionStatusContract.js";
 
 /** Specialize the single normalized result inside a complete Evidence record. */
@@ -46,34 +47,6 @@ export const requireOutputSchema = <
     throw new Error(`Missing output schema for ${name}`);
   return schema;
 };
-
-export const targetFormatSchema = z.enum([
-  "hopper",
-  "analysis-database",
-  "mach-o",
-  "mach-o-universal",
-  "elf",
-  "pe",
-  "dos-mz",
-  "dos-com",
-  "raw-binary",
-  "gamecube-dol",
-  ...ZIP_PACKAGE_FORMATS,
-  "asar",
-  "godot-pck",
-  "dmg",
-  "pkg",
-  "plist",
-  "javascript",
-  "source-map",
-]);
-
-export const targetKindSchema = z.enum([
-  "executable",
-  "database",
-  "archive",
-  "artifact",
-]);
 
 const providerCapabilityFacts = {
   operation: z.string(),
@@ -650,12 +623,6 @@ export const sessionStatusDetailShapes = [
   },
 ] as const;
 
-/** Session status for either detail level, keyed by `detail`. */
-export const sessionProvider = z.discriminatedUnion("detail", [
-  sessionProviderFacts.extend(sessionStatusDetailShapes[0]),
-  sessionProviderFacts.extend(sessionStatusDetailShapes[1]),
-]);
-
 export const nullableText = z.string().nullable();
 export const addressedEntry = z.object({
   address: z.string(),
@@ -712,17 +679,7 @@ export const objcClassDiscoveryOutput = evidenceResultOf(
           .optional(),
       }),
     ),
-    identity_coverage: z.strictObject({
-      status: z.enum([
-        "complete",
-        "partial",
-        "unsupported",
-        "not_requested",
-        "unknown",
-        "not_applicable",
-      ]),
-      reason: z.string().nullable(),
-    }),
+    identity_coverage: objcClassDiscoveryCoverageSchema,
   }),
 );
 

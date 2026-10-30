@@ -2695,11 +2695,11 @@ fast-string-width@3.0.2 | runtime | MIT
   Package: https://www.npmjs.com/package/fast-string-width/v/3.0.2
   Archive: https://registry.npmjs.org/fast-string-width/-/fast-string-width-3.0.2.tgz
   Integrity: sha512-gX8LrtNEI5hq8DVUfRQMbr5lpaS4nMIWV+7XEbXk2b8kiQIizgnlr12B4dA3ZEx3308ze0O4Q1R+cHts8kyUJg==
-fast-uri@3.1.8 | runtime | BSD-3-Clause
+fast-uri@3.1.9 | runtime | BSD-3-Clause
   Lockfile path: node_modules/fast-uri
-  Package: https://www.npmjs.com/package/fast-uri/v/3.1.8
-  Archive: https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.8.tgz
-  Integrity: sha512-GZMtZUTNRpOVIECoXwLNZS5xUGE+mVNbTB8h/7Rwh2TFWcBQiPzTgyZi05BF9UMZKkLJv8XBRJTlU7zg8+ZfMg==
+  Package: https://www.npmjs.com/package/fast-uri/v/3.1.9
+  Archive: https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.9.tgz
+  Integrity: sha512-hS/0Wt3Ya043oKXs0sIxrMpKQITXhMLIrVAKKXi4gozGC9v7YRWVnXIZzjNPTO02M9BdxLCWqK1yRXgNziVyJQ==
 fast-wrap-ansi@0.2.2 | runtime | MIT
   Lockfile path: node_modules/fast-wrap-ansi
   Package: https://www.npmjs.com/package/fast-wrap-ansi/v/0.2.2
@@ -3775,11 +3775,11 @@ pure-rand@8.4.2 | development | MIT
   Package: https://www.npmjs.com/package/pure-rand/v/8.4.2
   Archive: https://registry.npmjs.org/pure-rand/-/pure-rand-8.4.2.tgz
   Integrity: sha512-vvuOGgcuPJAirlHvuQw1TrOiw7ptaIXXmIbNuiNOY6lNGJJH49PQ1Kj4nd783nPdQhQdicgOjVI2yI/9BD6/Ng==
-qs@6.16.0 | development | BSD-3-Clause
+qs@6.16.1 | development | BSD-3-Clause
   Lockfile path: node_modules/qs
-  Package: https://www.npmjs.com/package/qs/v/6.16.0
-  Archive: https://registry.npmjs.org/qs/-/qs-6.16.0.tgz
-  Integrity: sha512-h6fhOIaRrID2CbEY2fqs+7t+UXZo+MLAnU5gRIq85uFtdiUPCdsApMlHhXogKVM4HM2DVbIjGNTTYH2OcmP1vA==
+  Package: https://www.npmjs.com/package/qs/v/6.16.1
+  Archive: https://registry.npmjs.org/qs/-/qs-6.16.1.tgz
+  Integrity: sha512-5Px6J7rfHBAGUhNQ3es4YzcOdBBw0SDcVtThJml4RdnKw4tKs2epA0kPZ+K8X+WiHktT93RHVcQ/3ym5aTCgtg==
 quick-format-unescaped@4.0.4 | runtime | MIT
   Lockfile path: node_modules/quick-format-unescaped
   Package: https://www.npmjs.com/package/quick-format-unescaped/v/4.0.4

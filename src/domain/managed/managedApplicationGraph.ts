@@ -300,6 +300,17 @@ export const readManagedGraphProjection = (
 
 const OPERATION = "project_managed_application_graph";
 
+/** Validated graph input still had no artifact source. */
+class ManagedGraphSourceError extends Error {
+  readonly _tag = "ManagedGraphSourceError";
+  readonly code = "missing_source" as const;
+
+  constructor() {
+    super("missing_source");
+    this.name = "ManagedGraphSourceError";
+  }
+}
+
 const chooseArtifact = (
   parsed: ParsedManagedGraphInput,
 ): { readonly sha256: string; readonly path: string } => {
@@ -307,8 +318,7 @@ const chooseArtifact = (
     parsed.artifact?.result ??
     parsed.members?.result ??
     parsed.boundaries?.result;
-  if (result === undefined)
-    throw new Error("Validated managed graph projection has no source");
+  if (result === undefined) throw new ManagedGraphSourceError();
   return { sha256: result.artifact.sha256, path: result.artifact.path };
 };
 

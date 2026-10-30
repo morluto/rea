@@ -606,10 +606,24 @@ describe("evidence metadata imports and snapshot cache", () => {
     );
     expect(
       session.importEvidenceBundle(createEvidenceBundle([addition])),
-    ).toEqual({ ok: true, value: 1 });
+    ).toEqual({
+      ok: true,
+      value: {
+        recordsAdded: 1,
+        unknownsAdded: 0,
+        totalRecords: before.value.evidence_bundle.records.length + 1,
+      },
+    });
     expect(
       session.importEvidenceBundle(createEvidenceBundle([addition])),
-    ).toEqual({ ok: true, value: 0 });
+    ).toEqual({
+      ok: true,
+      value: {
+        recordsAdded: 0,
+        unknownsAdded: 0,
+        totalRecords: before.value.evidence_bundle.records.length + 1,
+      },
+    });
     expect(session.exportAnalysisSnapshot()).toMatchObject({
       ok: true,
       value: {
@@ -630,7 +644,9 @@ describe("evidence metadata imports and snapshot cache", () => {
     expect(session.exportAnalysisSnapshot().ok).toBe(true);
     await session.close();
   });
+});
 
+describe("Evidence display metadata refresh", () => {
   it.each(["active", "unrelated"] as const)(
     "refreshes %s Evidence display metadata without invalidating provider observations",
     async (scope) => {
@@ -671,7 +687,14 @@ describe("evidence metadata imports and snapshot cache", () => {
         const unsubscribe = session.onAnalysisSnapshotChanged(changed);
         expect(
           session.importEvidenceBundle(createEvidenceBundle([relocated])),
-        ).toEqual({ ok: true, value: 0 });
+        ).toEqual({
+          ok: true,
+          value: {
+            recordsAdded: 0,
+            unknownsAdded: 0,
+            totalRecords: session.immutableEvidenceBundle().records.length,
+          },
+        });
         expect(changed).toHaveBeenCalledTimes(1);
         unsubscribe();
         expect(session.evidenceById(evidence.evidence_id)).toEqual(relocated);
@@ -968,6 +991,55 @@ describe("snapshot switch rollback", () => {
 });
 
 describe("snapshot cache eligibility", () => {
+  it.each([
+    "decode_interface_builder",
+    "inspect_asset_catalog",
+    "inspect_keyed_archive",
+    "trace_dylib_resolution",
+  ] as const)(
+    "reobserves resource-scoped %s without executable snapshot Evidence",
+    async (operation) => {
+      const [target] = await createBinarySessionTargets();
+      const provider = createCacheProvider([]);
+      const [baseCapability] = provider.capabilities();
+      if (baseCapability === undefined)
+        throw new Error("Expected fixture capability");
+      provider.capabilities = () => [
+        { ...baseCapability, operation, cachePolicy: "snapshot" },
+      ];
+      let observations = 0;
+      provider.createClient = () => ({
+        execute: async (name) =>
+          resultOk(
+            createAnalysisExecution(
+              name === "health" ? null : ++observations,
+              provider.identity(),
+            ),
+          ),
+        close: async () => resultOk(null),
+      });
+      const session = createTestBinarySession(provider);
+      try {
+        expect((await session.open(target)).ok).toBe(true);
+        for (const observation of [1, 2]) {
+          const result = await session.execute(operation, {});
+          expect(result).toMatchObject({
+            ok: true,
+            value: { result: observation },
+          });
+          if (result.ok) expect(result.value.evidenceId).toBeUndefined();
+        }
+        expect(session.exportEvidenceBundle().records).toEqual([]);
+        expect(session.exportAnalysisSnapshot()).toMatchObject({
+          ok: true,
+          value: { entries: [] },
+        });
+      } finally {
+        await session.close();
+      }
+    },
+  );
+
   it.each([false, true])(
     "retains source Evidence independently of snapshot eligibility (live=%s)",
     async (live) => {
@@ -1004,12 +1076,22 @@ describe("snapshot cache eligibility", () => {
         const parameters: Readonly<Record<string, JsonValue>> = live
           ? { address: "0x1000", document: "main" }
           : {};
+        const evidenceIds: Array<string | undefined> = [];
         for (let attempt = 0; attempt < 2; attempt += 1) {
           const result = await session.execute("address_name", parameters);
-          expect(result).toMatchObject({ ok: true });
-          if (result.ok) expect(result.value.evidenceId).toBeUndefined();
+          if (!result.ok) throw result.error;
+          evidenceIds.push(result.value.evidenceId);
         }
-        expect(session.exportEvidenceBundle().records).toEqual([source]);
+        const records = session.exportEvidenceBundle().records;
+        if (live) {
+          expect(evidenceIds).toEqual([expect.any(String), evidenceIds[0]]);
+          expect(records.map((record) => record.evidence_id)).toEqual(
+            expect.arrayContaining([source.evidence_id, evidenceIds[0]]),
+          );
+        } else {
+          expect(evidenceIds).toEqual([undefined, undefined]);
+          expect(records).toEqual([source]);
+        }
         expect(session.exportAnalysisSnapshot()).toMatchObject({
           ok: true,
           value: { entries: [] },
@@ -1050,20 +1132,20 @@ describe("snapshot cache eligibility", () => {
       await session.close();
     }
   });
+});
 
-  it("does not snapshot reads that depend on the provider cursor", async () => {
-    const [first] = await createBinarySessionTargets();
-    const calls: string[] = [];
-    const session = createTestBinarySession(createCacheProvider(calls));
-    await openAndExecuteAddressName(session, first, {});
-    expect((await session.execute("address_name", {})).ok).toBe(true);
-    expect(calls).toEqual(["address_name", "address_name"]);
-    expect(session.exportAnalysisSnapshot()).toMatchObject({
-      ok: true,
-      value: { entries: [] },
-    });
-    await session.close();
+it("does not snapshot reads that depend on the provider cursor", async () => {
+  const [first] = await createBinarySessionTargets();
+  const calls: string[] = [];
+  const session = createTestBinarySession(createCacheProvider(calls));
+  await openAndExecuteAddressName(session, first, {});
+  expect((await session.execute("address_name", {})).ok).toBe(true);
+  expect(calls).toEqual(["address_name", "address_name"]);
+  expect(session.exportAnalysisSnapshot()).toMatchObject({
+    ok: true,
+    value: { entries: [] },
   });
+  await session.close();
 });
 
 describe("provider health and availability", () => {

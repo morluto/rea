@@ -1,3 +1,4 @@
+import { filterGhidraLiteralCandidates } from "./GhidraLiteralSearch.js";
 import { ghidraProjectHistoryEvidence } from "./GhidraProjectHistory.js";
 import type { Evidence, EvidenceLocation } from "../domain/evidence.js";
 import { ghidraProjectCommitmentSchema } from "./GhidraProjectSnapshot.js";
@@ -787,6 +788,18 @@ export const createGhidraProviderClient = (input: {
         : parseGhidraInventoryResult(operation, called.value);
       if (!result.ok) return result;
       let { value: normalized, ...observation } = result.value;
+      if (
+        (operation === "search_procedures" || operation === "search_strings") &&
+        input.value.mode === "literal" &&
+        input.value.case_sensitive === false &&
+        typeof input.value.pattern === "string"
+      ) {
+        normalized = filterGhidraLiteralCandidates(
+          normalized,
+          input.value.pattern,
+        );
+        observation = { ...observation, rawResult: called.value };
+      }
       if (
         operation === "inspect_native_data_type" &&
         normalized !== null &&

@@ -14,7 +14,10 @@ import {
   type BrowserTargetList,
   type WebPageInspection,
 } from "../domain/browserObservationSchemas.js";
-import { IsolatedWebBundleAnalyzer } from "./IsolatedWebBundleAnalyzer.js";
+import {
+  IsolatedWebBundleAnalyzer,
+  type WebBundleAnalysisAdmission,
+} from "./IsolatedWebBundleAnalyzer.js";
 import { sourceMapsWithCaptureExclusions } from "../domain/webSourceMapCoverage.js";
 import type {
   AnalyzeWebBundleInput,
@@ -97,7 +100,11 @@ const CLEANUP_DOMAINS = [
 /** Passive browser observation through a selected user-owned CDP endpoint. */
 export class CdpBrowserProvider implements BrowserObservationPort {
   readonly #owner = new CdpTargetSessionOwner();
-  readonly #bundleAnalyzer = new IsolatedWebBundleAnalyzer();
+  readonly #bundleAnalyzer: IsolatedWebBundleAnalyzer;
+
+  constructor(admission?: WebBundleAnalysisAdmission) {
+    this.#bundleAnalyzer = new IsolatedWebBundleAnalyzer(undefined, admission);
+  }
 
   async close(): Promise<void> {
     const outcomes = await Promise.allSettled([
@@ -166,7 +173,7 @@ export class CdpBrowserProvider implements BrowserObservationPort {
                 ]),
             ...(selected.allowed.some((target) => target.attached === null)
               ? [
-                  "CDP discovery omitted attachment state for one or more targets; attached is reported as unknown.",
+                  "CDP discovery could not establish debugger attachment state for one or more targets.",
                 ]
               : []),
           ],

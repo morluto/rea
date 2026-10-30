@@ -1,9 +1,5 @@
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import type {
-  CallToolResult,
-  McpServer,
-  ServerContext,
-} from "@modelcontextprotocol/server";
+import type { McpServer, ServerContext } from "@modelcontextprotocol/server";
 import type { Logger } from "pino";
 
 import {
@@ -13,12 +9,16 @@ import {
 import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import { toolContract } from "../contracts/toolContracts.js";
-import type { ToolContract } from "../contracts/toolContractTypes.js";
 import { logToolExecution } from "./toolLogging.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 import type { ToolResultDelivery } from "./ToolResultDelivery.js";
 import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
-import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
+import { runAdmittedToolOperation } from "./admittedToolOperation.js";
+import {
+  AnalysisCancelledError,
+  AnalysisOutputError,
+} from "../domain/analysisErrorCore.js";
+import { retainExternalMutationCancellation } from "./externalMutationAdmission.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Result } from "../domain/result.js";
 
@@ -35,7 +35,7 @@ export const registerReverseEngineeringTools = (
     path: string | undefined,
     signal: AbortSignal | undefined,
     operation: () => Promise<Result<Value, AnalysisError>>,
-    retirementFailure: (
+    completionFailure: (
       value: Result<Value, AnalysisError>,
       error: AnalysisError,
     ) => AnalysisError,
@@ -48,11 +48,11 @@ export const registerReverseEngineeringTools = (
     objdump.name,
     toolRegistrationOptions(objdump),
     (input, context: ServerContext) =>
-      runAdmitted(
-        objdump,
-        context,
+      runAdmittedToolOperation(
+        { delivery },
         withAdmittedAnalysis,
-        delivery,
+        objdump.name,
+        context.mcpReq.signal,
         async () => {
           const result = await logToolExecution(logger, objdump.name, () =>
             service.inspectWithObjdump(
@@ -102,6 +102,13 @@ export const registerReverseEngineeringTools = (
             );
           },
           (value, cause) => {
+            if (cause instanceof AnalysisCancelledError) {
+              return retainExternalMutationCancellation(
+                value,
+                cause,
+                (evidence) => evidence,
+              );
+            }
             if (!value.ok)
               return value.error.retainSecondaryFailure(cause, {
                 retirement_error: projectAnalysisError(cause),
@@ -112,9 +119,6 @@ export const registerReverseEngineeringTools = (
               "Rizin may have changed the bound artifact, but the active analysis session could not be retired.",
               {
                 cause,
-                ...(cause.cleanup === undefined
-                  ? {}
-                  : { cleanup: cause.cleanup }),
                 ...(cause.capturedOutput === undefined
                   ? {}
                   : { capturedOutput: cause.capturedOutput }),
@@ -144,11 +148,11 @@ export const registerReverseEngineeringTools = (
           recordEvidence?.(result.value),
         );
       }
-      return runAdmitted(
-        rizin,
-        context,
+      return runAdmittedToolOperation(
+        { delivery },
         withAdmittedAnalysis,
-        delivery,
+        rizin.name,
+        context.mcpReq.signal,
         async () => {
           if (invalidateSnapshotForExternalMutation !== undefined && parsed.ok)
             invalidateSnapshotForExternalMutation();
@@ -174,22 +178,4 @@ export const registerReverseEngineeringTools = (
       );
     },
   );
-};
-
-const runAdmitted = async (
-  contract: ToolContract,
-  context: ServerContext,
-  admission: WithAdmittedAnalysis | undefined,
-  delivery: ToolResultDelivery,
-  operation: () => Promise<CallToolResult>,
-): Promise<CallToolResult> => {
-  if (admission === undefined) return operation();
-  const admitted = await admission(
-    contract.name,
-    context.mcpReq.signal,
-    async () => operation(),
-  );
-  return admitted.ok
-    ? admitted.value
-    : delivery.toErrorToolResult(admitted.error, contract.returnsTargetContent);
 };

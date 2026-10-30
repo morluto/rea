@@ -158,6 +158,7 @@ const isArtifactBundleSubject = (
   subject: EvidenceSubjectTarget,
   target: BinaryTarget,
 ): boolean =>
+  target.bundleInfoPlist !== undefined &&
   (operation === "inventory_artifact" ||
     operation === "inspect_artifact" ||
     operation === "extract_artifact") &&

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import type { JsonValue } from "../domain/jsonValue.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
-import { functionDossierSchema } from "../domain/hopperValues.js";
+import { functionDossierSchema } from "../domain/native/functionDossier.js";
 import {
   compactReference,
   compactInstruction,

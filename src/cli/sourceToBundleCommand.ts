@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { z } from "incur";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
@@ -68,9 +69,9 @@ export const registerSourceToBundleCommand = (
             "compare_source_to_bundle",
             signal,
           );
-          return "evidence_id" in result
-            ? result
-            : { error: "Application workflow failed", ...result };
+          return result.ok
+            ? result.value
+            : { error: "Application workflow failed", ...result.error };
         }),
       ),
   });

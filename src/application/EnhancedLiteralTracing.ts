@@ -1,3 +1,4 @@
+import type { LiteralFeatureMatch } from "../domain/native/literalFeatureMatch.js";
 import { nativeInventoryRowsSchemas } from "../domain/native/nativeInventory.js";
 import type {
   AnalysisExecution,
@@ -9,13 +10,9 @@ import type { JsonValue } from "../domain/jsonValue.js";
 import {
   parseContainingProcedureResolution,
   type ContainingProcedureResolution,
-} from "../domain/hopperValues.js";
+} from "../domain/native/nativeObservation.js";
 import { err, ok, type Result } from "../domain/result.js";
-import type {
-  EnhancedResult,
-  TraceMatch,
-  TraceReference,
-} from "./EnhancedToolTypes.js";
+import type { EnhancedResult, TraceReference } from "./EnhancedToolTypes.js";
 
 type AnalysisCall = (
   name: AnalysisOperation,
@@ -35,7 +32,7 @@ type LiteralSearchSource = readonly [
 ];
 
 interface ReferenceTraceRequest {
-  readonly matches: readonly TraceMatch[];
+  readonly matches: readonly LiteralFeatureMatch[];
   readonly signal?: AbortSignal;
 }
 
@@ -83,8 +80,8 @@ const literalMatches = async (
   input: LiteralTraceInput,
   sources: readonly LiteralSearchSource[],
   signal?: AbortSignal,
-): Promise<Result<{ matches: TraceMatch[] }, AnalysisError>> => {
-  const matches: TraceMatch[] = [];
+): Promise<Result<{ matches: LiteralFeatureMatch[] }, AnalysisError>> => {
+  const matches: LiteralFeatureMatch[] = [];
   for (const [tool, type] of sources) {
     const result = await call(
       tool,

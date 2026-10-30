@@ -189,9 +189,10 @@ export const captureElectronScenario = async (
     ? {
         ok: true,
         value: createElectronActiveEvidence(
-          canonical.value,
+          input,
           captured.value,
           provider.identity(),
+          canonical.value,
         ),
       }
     : captured;

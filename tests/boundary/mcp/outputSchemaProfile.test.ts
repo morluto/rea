@@ -17,6 +17,7 @@ import type { ToolContract } from "../../../src/contracts/toolContractTypes.js";
 import { FULL_CATALOG_IDENTITY } from "../../../src/catalogIdentity.js";
 import type { McpOutputSchemaProfile } from "../../../src/config/mcpOutputSchemaProfile.js";
 import { advertisedSchemaErrors } from "../../fixtures/mcpAdvertisedSchemaValidity.js";
+import { advertisedInputJsonSchema } from "../../../src/contracts/toolSchemaMetadata.js";
 
 const createServer = (
   outputSchemaProfile: McpOutputSchemaProfile,
@@ -183,6 +184,12 @@ it("keeps the default compact-input catalog below a measured one-megabyte frame"
   const compactInput: CompactInputSchemaPresentation = {
     budgetBytes: COMPACT_INPUT_SCHEMA_BUDGET_BYTES,
   };
+  const canonicalInputs = new Map<string, Record<string, unknown>>(
+    TOOL_CONTRACTS.map((contract) => [
+      contract.name,
+      advertisedInputJsonSchema(contract),
+    ]),
+  );
   const measure = async (
     profile: McpOutputSchemaProfile,
     inputPresentation: CompactInputSchemaPresentation | undefined,
@@ -203,6 +210,19 @@ it("keeps the default compact-input catalog below a measured one-megabyte frame"
     await client.connect(clientTransport);
     try {
       const listed = await client.listTools();
+      expect(listed.tools).toHaveLength(canonicalInputs.size);
+      expect(new Set(listed.tools.map((tool) => tool.name))).toEqual(
+        new Set(canonicalInputs.keys()),
+      );
+      if (inputPresentation === undefined)
+        for (const tool of listed.tools)
+          expect(tool.inputSchema, tool.name).toEqual(
+            canonicalInputs.get(tool.name),
+          );
+      if (profile === "off")
+        expect(
+          listed.tools.every((tool) => tool.outputSchema === undefined),
+        ).toBe(true);
       if (profile === "compact") {
         // Validate the advertised documents as the client receives them, not
         // just their bytes: a projection that broke a reference or left an
@@ -237,7 +257,10 @@ it("keeps the default compact-input catalog below a measured one-megabyte frame"
   expect(fullBytes).toBeGreaterThan(1024 * 1024);
   expect(compactBytes).toBeLessThan(1024 * 1024);
   expect(offBytes).toBeLessThan(1024 * 1024);
-  expect(fullInputOffBytes).toBeLessThan(1024 * 1024);
+  // Full input is an explicit guidance choice, not the bounded compatibility
+  // profile. Omitting output schemas must preserve those complete inputs.
+  expect(fullInputOffBytes).toBeGreaterThan(offBytes);
+  expect(fullInputOffBytes).toBeLessThan(fullBytes);
   expect(compactBytes).toBeLessThan(fullBytes);
   expect(compactBytes).toBeGreaterThan(offBytes);
 });

@@ -80,11 +80,13 @@ export class ClientConfigurationPublication {
     path: string,
     contents: string,
     previous: string | undefined,
-    mode?: number,
     selection?: ClientConfigurationSelection,
   ): Promise<ClientConfigurationPublication> {
     const parent = await realpath(dirname(path));
-    const destination = join(parent, basename(path));
+    // Retain the transaction owner's directory requirement through final-file
+    // publication rather than allowing basename/join to select a regular file.
+    const destination =
+      join(parent, basename(path)) + (path.endsWith(sep) ? sep : "");
     const input = await selectedConfiguration(destination, previous);
     if (selection !== undefined) {
       await assertRequestedConfigurationPath(path, selection.requestedPath);
@@ -116,7 +118,7 @@ export class ClientConfigurationPublication {
       );
       staging.setFile(owner);
       await owner.handle.writeFile(contents, { encoding: "utf8" });
-      await preserveConfigurationAttributes(owner, input, mode, destination);
+      await preserveConfigurationAttributes(owner, input, destination);
       await owner.handle.sync();
       if ((await owner.handle.stat()).ino === 0)
         throw new RegularFileChangedError(stagedPath);
@@ -169,12 +171,12 @@ export class ClientConfigurationPublication {
     return outcome.value;
   }
 
-  async assertCurrent(readback?: string): Promise<void> {
+  async assertCurrent(readback: string): Promise<void> {
     const owned = await this.owner.handle.stat();
     const named = await lstat(this.path);
     if (
       owned.ino === 0 ||
-      (readback !== undefined && readback !== this.contents) ||
+      readback !== this.contents ||
       named.isSymbolicLink() ||
       !sameRegularFileState(owned, named)
     )
@@ -224,7 +226,6 @@ export class ClientConfigurationPublication {
 const preserveConfigurationAttributes = async (
   owner: OwnedFileHandle,
   input: Stats | undefined,
-  mode: number | undefined,
   destination: string,
 ): Promise<void> => {
   const created = await owner.handle.stat();
@@ -247,7 +248,7 @@ const preserveConfigurationAttributes = async (
     }
   }
   try {
-    await owner.handle.chmod(mode ?? (input?.mode ?? 0o600) & 0o7777);
+    await owner.handle.chmod((input?.mode ?? 0o600) & 0o7777);
   } catch (cause: unknown) {
     throw new ClientConfigurationWriteError(
       destination,

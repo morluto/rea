@@ -1,3 +1,6 @@
+import type { BrowserContext, Page } from "playwright-core";
+import { capturePlaywrightStepArtifacts } from "./PlaywrightScenarioArtifacts.js";
+import { resolveScenarioSecrets } from "../../tests/fixtures/browserScenarioSecrets.js";
 import {
   failBrowserScenarioOperation,
   PlaywrightScenarioBrowserCleanupOwner,
@@ -1273,3 +1276,58 @@ it("keeps an earlier physical failure primary when final cleanup also observes c
     await provider.close();
   }
 });
+
+it.each([false, true])(
+  "keeps planned secret screenshots unavailable through success and cleanup failure (failure: %s)",
+  async (cleanupFailure) => {
+    const input = browserScenarioSchema.parse({
+      ...scenario({ captures: ["screenshot"] }),
+      actions: [
+        {
+          step_id: "request",
+          action: "request",
+          method: "POST",
+          path: "/api/items",
+          save: [{ name: "token", json_pointer: "/token", secret: true }],
+        },
+      ],
+    });
+    const secrets = resolveScenarioSecrets(input, {});
+    const screenshot = vi.fn(async () =>
+      Buffer.from("private screenshot pixels"),
+    );
+    const session = new FakeSession(
+      "launch",
+      cleanupFailure ? { close: new Error("cleanup failed") } : {},
+    );
+    session.capture = async (requested) =>
+      capturePlaywrightStepArtifacts({
+        context: {} as BrowserContext,
+        page: { screenshot } as unknown as Page,
+        secrets,
+        requested,
+      });
+    session.onPerform = () =>
+      secrets.save("request.token", "token", "late-pixel-token", true);
+    const provider = new PlaywrightBrowserScenarioProvider(async () => session);
+    const result = await provider.captureScenario(input);
+    const step = {
+      artifacts: { screenshot: { state: "missing" } },
+      completeness: {
+        equality_eligible: false,
+        missing_sections: ["screenshot"],
+      },
+    };
+    if (cleanupFailure)
+      expect(result).toMatchObject({
+        ok: false,
+        error: { partialObservation: { capture: { steps: [step, step] } } },
+      });
+    else {
+      if (!result.ok) throw result.error;
+      expect(result.value.steps).toMatchObject([step, step]);
+      expect(result.value.completeness.equality_eligible).toBe(false);
+    }
+    expect(screenshot).not.toHaveBeenCalled();
+  },
+);

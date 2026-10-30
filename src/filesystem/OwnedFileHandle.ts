@@ -1,5 +1,15 @@
 import type { FileHandle } from "node:fs/promises";
 
+/** Close admission for one owned file handle. `code` is the stable identity. */
+export class OwnedFileHandleError extends Error {
+  readonly _tag = "OwnedFileHandleError";
+
+  constructor(readonly code: "handle_invalidated") {
+    super(code);
+    this.name = "OwnedFileHandleError";
+  }
+}
+
 type CloseState =
   | { readonly kind: "open" }
   | { readonly kind: "closing"; readonly attempt: Promise<void> }
@@ -20,9 +30,7 @@ export class OwnedFileHandle<
     if (this.#state.kind === "closing") return this.#state.attempt;
     if (this.#state.kind === "failed") return Promise.reject(this.#state.cause);
     if (this.handle.fd < 0) {
-      const cause = new Error(
-        "File handle was invalidated before this owner confirmed its close",
-      );
+      const cause = new OwnedFileHandleError("handle_invalidated");
       this.#state = { kind: "failed", cause };
       return Promise.reject(cause);
     }

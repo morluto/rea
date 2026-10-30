@@ -364,3 +364,278 @@ it("resolves extensionless imports and requires to .mts and .cts files and direc
     ]),
   );
 });
+
+it("does not infer missing candidates or manifests from partial directory enumeration", () => {
+  const file = (
+    path: string,
+    content: string,
+  ): ReferenceSourceRead["entries"][number] => ({
+    status: "read",
+    kind: "file",
+    path,
+    bytes: Buffer.from(content),
+    size: Buffer.byteLength(content),
+  });
+  const read: ReferenceSourceRead = {
+    root: "/selected/source",
+    bytesRead: 0,
+    limitations: [],
+    entries: [
+      file("package.json", '{"type":"commonjs"}'),
+      file(
+        "main.cjs",
+        'require("./pkg"); require("./other"); require("./exact.js");',
+      ),
+      file("pkg/index.js", "module.exports = 1;"),
+      file("other/index.js", "module.exports = 1;"),
+      file("exact.js", "module.exports = 1;"),
+      file("pkg/source.js", 'require("../exact.js");'),
+      {
+        status: "failed",
+        kind: "directory",
+        path: "pkg",
+        code: "io",
+        message: "Partial enumeration",
+      },
+      { status: "read", kind: "directory", path: "other" },
+    ],
+  };
+  const parsed = parseReferenceSourceEntries(read, []);
+  expect(
+    parsed.relationships.filter(({ from_path }) => from_path === "main.cjs"),
+  ).toEqual([
+    expect.objectContaining({ to: "pkg", resolution: "unresolved" }),
+    expect.objectContaining({ to: "other/index.js", resolution: "internal" }),
+    expect.objectContaining({ to: "exact.js", resolution: "internal" }),
+  ]);
+  expect(
+    parsed.relationships.filter(
+      ({ from_path }) => from_path === "pkg/source.js",
+    ),
+  ).not.toContainEqual(expect.objectContaining({ resolution: "internal" }));
+  const partialRoot = parseReferenceSourceEntries(
+    { ...read, rootFailure: { code: "io", message: "Partial root" } },
+    [],
+  );
+  expect(
+    partialRoot.relationships.find(
+      ({ from_path, to }) =>
+        from_path === "main.cjs" && to === "other/index.js",
+    ),
+  ).toBeUndefined();
+  expect(partialRoot.relationships).toContainEqual(
+    expect.objectContaining({
+      from_path: "main.cjs",
+      to: "exact.js",
+      resolution: "internal",
+    }),
+  );
+});
+
+it.each(["failed", "excluded"] as const)(
+  "keeps higher priority %s candidates unknown",
+  (state) => {
+    const files = [
+      ["main.cjs", 'require("./pkg"); require("./pkg/index.js");'],
+      ["pkg/index.js", "module.exports = 1;"],
+    ] as const;
+    const read: ReferenceSourceRead = {
+      root: "/selected/source",
+      bytesRead: 0,
+      limitations: [],
+      entries: [
+        ...files.map(([path, content]) => ({
+          status: "read" as const,
+          kind: "file" as const,
+          path,
+          bytes: Buffer.from(content),
+          size: Buffer.byteLength(content),
+        })),
+        ...(state === "failed"
+          ? [
+              {
+                status: "failed" as const,
+                kind: "file" as const,
+                path: "pkg.js",
+                code: "io" as const,
+                message: "Unreadable",
+              },
+            ]
+          : []),
+      ],
+    };
+    const parsed = parseReferenceSourceEntries(
+      read,
+      state === "excluded"
+        ? [
+            {
+              path: "pkg.js",
+              entry_kind: "file",
+              reason: "caller-excluded",
+              pattern: "pkg.js",
+            },
+          ]
+        : [],
+    );
+    expect(parsed.relationships).toEqual([
+      expect.objectContaining({ to: "pkg", resolution: "unresolved" }),
+      expect.objectContaining({ to: "pkg/index.js", resolution: "internal" }),
+    ]);
+  },
+);
+
+it("retains observed manifests and closer completed scopes inside a partial inventory", () => {
+  const files = [
+    ["main.cjs", 'require("./pkg");'],
+    ["pkg/package.json", '{"main":"entry.js","type":"commonjs"}'],
+    ["pkg/entry.js", 'require("./known.js");'],
+    ["pkg/known.js", "module.exports = 1;"],
+    ["complete/source.js", 'require("./known.js");'],
+    ["complete/known.js", "module.exports = 1;"],
+    ["complete/package.json", '{"type":"commonjs"}'],
+  ] as const;
+  const parsed = parseReferenceSourceEntries(
+    {
+      root: "/selected/source",
+      bytesRead: 0,
+      limitations: [],
+      entries: [
+        ...files.map(([path, content]) => ({
+          status: "read" as const,
+          kind: "file" as const,
+          path,
+          bytes: Buffer.from(content),
+          size: Buffer.byteLength(content),
+        })),
+        {
+          status: "failed",
+          kind: "directory",
+          path: "pkg",
+          code: "io",
+          message: "Partial enumeration",
+        },
+        { status: "read", kind: "directory", path: "complete" },
+      ],
+    },
+    [],
+  );
+  expect(parsed.relationships).toEqual([
+    expect.objectContaining({
+      from_path: "main.cjs",
+      to: "pkg/entry.js",
+      resolution: "internal",
+    }),
+    expect.objectContaining({
+      from_path: "pkg/entry.js",
+      to: "pkg/known.js",
+      resolution: "internal",
+    }),
+    expect.objectContaining({
+      from_path: "complete/source.js",
+      to: "complete/known.js",
+      resolution: "internal",
+    }),
+  ]);
+});
+
+it("keeps ambiguous directory coverage unknown while honoring exact directory identity", () => {
+  const first = "a\u0301\u0323";
+  const second = "a\u0323\u0301";
+  const ambiguous = "\u1ea1\u0301";
+  const files = [
+    ["main.cjs", `require("./${ambiguous}/dep"); require("./${second}/dep");`],
+    [`${ambiguous}/dep.js`, "module.exports = 1;"],
+    [`${second}/dep.js`, "module.exports = 2;"],
+  ] as const;
+  const parsed = parseReferenceSourceEntries(
+    {
+      root: "/selected/source",
+      bytesRead: 0,
+      limitations: [],
+      entries: [
+        ...files.map(([path, content]) => ({
+          status: "read" as const,
+          kind: "file" as const,
+          path,
+          bytes: Buffer.from(content),
+          size: Buffer.byteLength(content),
+        })),
+        {
+          status: "failed",
+          kind: "directory",
+          path: first,
+          code: "io",
+          message: "Partial enumeration",
+        },
+        { status: "read", kind: "directory", path: second },
+      ],
+    },
+    [],
+  );
+  expect(parsed.relationships).toEqual([
+    expect.objectContaining({
+      to: `${ambiguous}/dep`,
+      resolution: "unresolved",
+    }),
+    expect.objectContaining({ to: `${second}/dep.js`, resolution: "internal" }),
+  ]);
+});
+
+it("does not skip an ambiguous higher priority file for an observed extension fallback", () => {
+  const first = "a\u0301\u0323";
+  const second = "a\u0323\u0301";
+  const ambiguous = "\u1ea1\u0301";
+  const files = [
+    ["main.cjs", `require("./${ambiguous}"); require("./${first}");`],
+    [first, "module.exports = 1;"],
+    [second, "module.exports = 2;"],
+    [`${ambiguous}.js`, "module.exports = 3;"],
+  ] as const;
+  const parsed = parseReferenceSourceEntries(
+    {
+      root: "/selected/source",
+      bytesRead: 0,
+      limitations: [],
+      entries: files.map(([path, content]) => ({
+        status: "read" as const,
+        kind: "file" as const,
+        path,
+        bytes: Buffer.from(content),
+        size: Buffer.byteLength(content),
+      })),
+    },
+    [],
+  );
+  expect(parsed.relationships).toEqual([
+    expect.objectContaining({ to: ambiguous, resolution: "unresolved" }),
+    expect.objectContaining({ to: first, resolution: "internal" }),
+  ]);
+});
+
+it("prefers a later exact filename over an earlier unique canonical candidate", () => {
+  const composed = "caf\u00e9";
+  const decomposed = "cafe\u0301";
+  const files = [
+    ["main.cjs", `require("./${composed}");`],
+    [decomposed, "module.exports = 1;"],
+    [`${composed}.js`, "module.exports = 2;"],
+  ] as const;
+  const parsed = parseReferenceSourceEntries(
+    {
+      root: "/selected/source",
+      bytesRead: 0,
+      limitations: [],
+      entries: files.map(([path, content]) => ({
+        status: "read" as const,
+        kind: "file" as const,
+        path,
+        bytes: Buffer.from(content),
+        size: Buffer.byteLength(content),
+      })),
+    },
+    [],
+  );
+  expect(parsed.relationships).toEqual([
+    expect.objectContaining({ to: `${composed}.js`, resolution: "internal" }),
+  ]);
+});

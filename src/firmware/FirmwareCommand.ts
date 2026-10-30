@@ -236,6 +236,39 @@ export const runFirmwareCommand = async (context: {
       throw firmwareCancellation(operation, signal.reason, context.deadline);
     throw cause;
   });
+  let failure: AnalysisError | undefined;
+  const isFailedExit = (code: number | null | undefined) =>
+    code !== undefined &&
+    code !== 0 &&
+    !(context.acceptReportedExtractionFailure === true && code === 1);
+  const completedFailure = (snapshot: ProviderProcessSnapshot) => {
+    if (isFailedExit(snapshot.exitCode)) {
+      const signalLimit = firmwareSignalLimitError(
+        operation,
+        snapshot.signal,
+        fileSizeBytes,
+        fileSizeAdjustable,
+        capturedFirmwareOutput(snapshot),
+      );
+      if (signalLimit !== undefined) return signalLimit;
+      return new ProviderAdapterError(engine, operation, {
+        diagnostics: {
+          reason:
+            "Tool failed; inspect exit status and stderr for format, dependency, sandbox or resource-limit failures",
+          exit_code: snapshot.exitCode ?? null,
+          signal: snapshot.signal ?? null,
+          stdout: snapshot.stdout.text,
+          stderr: snapshot.stderr.text,
+          stdout_bytes: snapshot.stdout.bytes,
+          stderr_bytes: snapshot.stderr.bytes,
+          truncated: snapshot.diagnosticTruncated === true,
+        },
+        remediationAction: `Inspect exit status and stderr for format, dependency, sandbox, or resource-limit failures. ${firmwareProcessLimitRecovery(fileSizeBytes, fileSizeAdjustable)} A format or dependency failure is not repaired by changing analysis_timeout_ms.`,
+      });
+    }
+    return undefined;
+  };
+  let completedFailureObserved = false;
   let diagnosticTruncated = false;
   const supervisor = new ProviderProcessSupervisor(
     {
@@ -249,6 +282,17 @@ export const runFirmwareCommand = async (context: {
       onDiagnostic: (event) => {
         if (event.type === "output" && event.truncated === true)
           diagnosticTruncated = true;
+        // Root exit and inherited-pipe closure are different observations.
+        // Retain a completed failure before drain or cleanup can be interrupted,
+        // while cancellation already present at exit keeps its precedence.
+        if (
+          event.type === "exit" &&
+          failure === undefined &&
+          !diagnosticTruncated &&
+          firmwarePhaseInterruption(operation, signal, context.deadline) ===
+            undefined
+        )
+          completedFailureObserved = isFailedExit(event.code);
       },
     },
   );
@@ -272,7 +316,6 @@ export const runFirmwareCommand = async (context: {
       );
     }
   };
-  let failure: AnalysisError | undefined;
   try {
     while (!(await supervisor.waitForOutputClose(100))) {
       checkDiagnostics();
@@ -289,13 +332,15 @@ export const runFirmwareCommand = async (context: {
     checkDiagnostics();
     checkInterruption();
   } catch (cause: unknown) {
-    failure = firmwareFailure(cause, context);
+    failure ??= firmwareFailure(cause, context);
   }
   const stopped = await supervisor.stop();
   // Cleanup is an awaited part of this phase. Preserve a prior observed failure,
   // otherwise retain an interruption that arrived while stopping owned resources.
   failure ??= firmwarePhaseInterruption(operation, signal, context.deadline);
   const snapshot = supervisor.snapshot();
+  // Capture diagnostics only after owned cleanup has drained the inherited pipes.
+  if (completedFailureObserved) failure = completedFailure(snapshot);
   if (stopped.status === "incomplete") {
     context.retainCleanup(supervisor);
     const previous =
@@ -320,35 +365,6 @@ export const runFirmwareCommand = async (context: {
     );
   }
   if (failure !== undefined) throw failure;
-  if (
-    snapshot.exitCode !== 0 &&
-    !(
-      context.acceptReportedExtractionFailure === true &&
-      snapshot.exitCode === 1
-    )
-  ) {
-    const signalLimit = firmwareSignalLimitError(
-      operation,
-      snapshot.signal,
-      fileSizeBytes,
-      fileSizeAdjustable,
-      capturedFirmwareOutput(snapshot),
-    );
-    if (signalLimit !== undefined) throw signalLimit;
-    throw new ProviderAdapterError(engine, operation, {
-      diagnostics: {
-        reason:
-          "Tool failed; inspect exit status and stderr for format, dependency, sandbox or resource-limit failures",
-        exit_code: snapshot.exitCode ?? null,
-        signal: snapshot.signal ?? null,
-        stdout: snapshot.stdout.text,
-        stderr: snapshot.stderr.text,
-        stdout_bytes: snapshot.stdout.bytes,
-        stderr_bytes: snapshot.stderr.bytes,
-      },
-      remediationAction: `Inspect exit status and stderr for format, dependency, sandbox, or resource-limit failures. ${firmwareProcessLimitRecovery(fileSizeBytes, fileSizeAdjustable)} A format or dependency failure is not repaired by changing analysis_timeout_ms.`,
-    });
-  }
   return {
     stdout: snapshot.stdout,
     stderr: snapshot.stderr,

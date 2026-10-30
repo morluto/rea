@@ -11,7 +11,7 @@ import {
   analysisViewJavaScriptEvidence,
   analysisViewLayoutEvidence,
 } from "../../../tests/fixtures/analysisView.js";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE } from "../../contracts/javascript/javascriptRuntimeReconciliationExample.js";
 import {
@@ -20,7 +20,7 @@ import {
   rebindEvidenceToTargetPath,
 } from "../../domain/evidence.js";
 import { inspectAnalysisViewInputSchema } from "../../domain/analysisView/analysisView.js";
-import { functionDossierSchema } from "../../domain/hopperValues.js";
+import { functionDossierSchema } from "../../domain/native/functionDossier.js";
 import { ghidraFunctionDossier } from "../../domain/ghidraValues.fixture.js";
 import {
   inspectAnalysisView,
@@ -33,6 +33,7 @@ import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import { err, ok } from "../../domain/result.js";
 import { EvidenceLedger } from "../investigation/EvidenceLedger.js";
 import { WEB_NETWORK_CAPTURE_LIMITS } from "../../domain/webNetworkCapture.js";
+
 import { isImmutableJsonSnapshot } from "../../domain/immutableJson.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import {
@@ -41,6 +42,149 @@ import {
   scenarioCaptureFixture,
 } from "../../../tests/fixtures/browserScenarioCapture.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
+import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
+import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import * as queuedInterrupts from "../../process/queuedInterrupts.js";
+import { createEvidenceBundle } from "../../domain/evidenceBundle.js";
+import * as evidenceFileSource from "./evidenceFileSource.js";
+
+it("projects retained GPU source facts while delivering the caller's rebound subject", () => {
+  const sha256 = "a".repeat(64);
+  const original = createEvidence(
+    { path: "/original/gpu", sha256, format: "elf" },
+    { id: "fixture", name: "Fixture", version: "1" },
+    {
+      operation: "inspect_gpu_code_objects",
+      parameters: {},
+      result: {
+        artifact: {
+          path: "/original/gpu",
+          file_size: 0,
+          sha256,
+          bytes_read: 0,
+        },
+        format: "elf",
+        analysis: "inventory",
+        objects: [],
+        kernels: [],
+        ptx_artifacts: [],
+        coverage: {
+          discovery_scope: "supported-section-names-and-standalone-formats",
+          discovery: "partial",
+          payloads: "not-requested",
+          examined_sections: 0,
+          unknown_section_names: 0,
+        },
+        limitations: [],
+      },
+    },
+  );
+  const ledger = new EvidenceLedger();
+  expect(ledger.record(original).ok).toBe(true);
+  const retained = ledger.forAnalysis(original.evidence_id)!;
+  const payload = retained.normalized_result;
+  const selected = rebindEvidenceToTargetPath(original, {
+    path: "/selected/gpu",
+    sha256,
+    format: "elf",
+  });
+  expect(selected.evidence_id).toBe(original.evidence_id);
+  const retention = {
+    recordEvidence: (evidence: Evidence) => ledger.record(evidence),
+    evidenceById: (id: string) => ledger.forAnalysis(id),
+  };
+  for (const view of [
+    { kind: "summary" as const },
+    {
+      kind: "gpu-code-objects" as const,
+      collection: "objects" as const,
+      offset: 0,
+      limit: 64,
+    },
+  ]) {
+    const result = projectRetainedAnalysis(selected, retention, view);
+    if (!result.ok) throw result.error;
+    expect(result.value.subject?.local_path).toBe("/selected/gpu");
+    expect(result.value.normalized_result).toMatchObject({
+      parent_evidence_id: original.evidence_id,
+      artifact: { path: "/original/gpu", sha256 },
+    });
+  }
+  expect(ledger.forAnalysis(original.evidence_id)).toBe(retained);
+  // Local path metadata may be rebound before first retention or bundle import.
+  const aliasLedger = new EvidenceLedger();
+  expect(aliasLedger.record(selected).ok).toBe(true);
+  const imported = new EvidenceLedger();
+  expect(imported.import(aliasLedger.export()).ok).toBe(true);
+  // Importing metadata into an existing ledger must preserve view validity too.
+  expect(ledger.import(aliasLedger.export()).ok).toBe(true);
+  for (const sourceLedger of [aliasLedger, imported, ledger]) {
+    const result = projectRetainedAnalysis(
+      selected,
+      {
+        recordEvidence: (evidence) => sourceLedger.record(evidence),
+        evidenceById: (id) => sourceLedger.forAnalysis(id),
+      },
+      { kind: "summary" },
+    );
+    if (!result.ok) throw result.error;
+    expect(result.value.subject?.local_path).toBe("/selected/gpu");
+    expect(result.value.normalized_result).toMatchObject({
+      artifact: { path: "/original/gpu", sha256 },
+    });
+  }
+  expect(retained.normalized_result).toBe(payload);
+  expect(retained.subject?.local_path).toBe("/original/gpu");
+  const mismatched = createEvidence(
+    { path: "/original/gpu", sha256: "b".repeat(64), format: "elf" },
+    original.provider,
+    {
+      operation: original.operation,
+      parameters: {},
+      result: original.normalized_result,
+    },
+  );
+  expect(summarizeRetainedAnalysis(mismatched, retention)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisInputError" },
+  });
+});
+it.each(["inline", "retained-evidence", "invalid"] as const)(
+  "refuses an already cancelled %s view before source admission",
+  async (kind) => {
+    const parent = analysisViewLayoutEvidence();
+    const ledger = new EvidenceLedger();
+    expect(ledger.record(parent).ok).toBe(true);
+    const retained = ledger.forAnalysis(parent.evidence_id);
+    let lookups = 0;
+    const controller = new AbortController();
+    const reason = Object.freeze({ requested: "cancel-before-view-admission" });
+    controller.abort(reason);
+    const result = await inspectAnalysisView(
+      kind === "invalid"
+        ? null
+        : {
+            source:
+              kind === "inline"
+                ? { kind, evidence: parent }
+                : { kind, evidence_id: parent.evidence_id },
+            view: { kind: "summary" },
+          },
+      (id) => {
+        lookups++;
+        return ledger.forAnalysis(id);
+      },
+      { signal: controller.signal },
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError" },
+    });
+    expect(result.ok ? undefined : result.error.cause).toBe(reason);
+    expect(lookups).toBe(0);
+    expect(ledger.forAnalysis(parent.evidence_id)).toBe(retained);
+  },
+);
 
 it.each([false, true])(
   "summarizes the selected observation path rather than older retained display metadata (history=%s)",
@@ -1184,6 +1328,308 @@ describe("inspectAnalysisView", () => {
     expect(result.ok ? undefined : result.error.cause).toBe(reason);
   });
 });
+
+it("prioritizes queued cancellation over a file authentication failure", async () => {
+  const controller = new AbortController();
+  const reason = Object.freeze({ requested: "cancel-after-authentication" });
+  // Model an event callback which queues the caller's cancellation notification
+  // as authentication finishes. The service must dispatch that notification
+  // before accepting the authentication failure.
+  const read = vi
+    .spyOn(evidenceFileSource, "readEvidenceFileSource")
+    .mockImplementationOnce(async () => {
+      setImmediate(() => setImmediate(() => controller.abort(reason)));
+      return err(new EvidenceIntegrityError("Invalid selected Evidence"));
+    });
+  try {
+    const result = await inspectAnalysisView(
+      {
+        source: { kind: "evidence-file", path: "/selected-evidence.json" },
+        view: manifestView,
+      },
+      undefined,
+      { signal: controller.signal },
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError" },
+    });
+    expect(result.ok ? undefined : result.error.cause).toBe(reason);
+    if (result.ok) throw new Error("Expected cancellation");
+    expect(result.error.secondaryFailures).toHaveLength(1);
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "cancelled",
+      details: {
+        diagnostics: { source_error: { code: "evidence_integrity_mismatch" } },
+      },
+    });
+  } finally {
+    read.mockRestore();
+  }
+});
+
+it("retries the owned descriptor when queued cancellation supersedes file cleanup failure", async () => {
+  const controller = new AbortController();
+  const path = join(
+    await createTestTempDirectory("rea-view-cleanup-"),
+    "evidence.json",
+  );
+  await writeFile(path, JSON.stringify(analysisViewCaptureEvidence()));
+  const resources = new ArtifactResourceScope();
+  const originalClose = OwnedFileHandle.prototype.close;
+  const owners = new Set<OwnedFileHandle>();
+  let failClose = true;
+  const close = vi
+    .spyOn(OwnedFileHandle.prototype, "close")
+    .mockImplementation(async function (this: OwnedFileHandle) {
+      owners.add(this);
+      if (failClose) {
+        setImmediate(() => setImmediate(() => controller.abort("stop")));
+        throw new Error("Fixture descriptor close unavailable");
+      }
+      return originalClose.call(this);
+    });
+  try {
+    const result = await inspectAnalysisView(
+      { source: { kind: "evidence-file", path }, view: manifestView },
+      undefined,
+      { signal: controller.signal, resources },
+    );
+    if (result.ok)
+      throw new Error("Expected cancellation with pending cleanup");
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(result.error.cleanupResources).toEqual([path]);
+    expect(result.error.cleanupPrimary?.secondaryFailures).toHaveLength(1);
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      details: {
+        diagnostics: {
+          primary_error: {
+            details: {
+              diagnostics: { source_error: { code: "cleanup_incomplete" } },
+            },
+          },
+        },
+      },
+    });
+    expect(resources.hasPending).toBe(true);
+    expect(owners.size).toBe(1);
+    expect([...owners][0]!.handle.fd).toBeGreaterThanOrEqual(0);
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "cleanup_incomplete",
+      details: { diagnostics: { primary_error: { code: "cancelled" } } },
+    });
+    failClose = false;
+    await resources.retryCleanup();
+    expect([...owners][0]!.handle.fd).toBe(-1);
+    expect(resources.hasPending).toBe(false);
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(result.error.cleanupResources).toEqual([]);
+  } finally {
+    failClose = false;
+    await resources.close();
+    close.mockRestore();
+  }
+});
+
+it.each(["file", "bundle"] as const)(
+  "preserves the %s source authentication cancellation precedence",
+  async (kind) => {
+    const path = join(
+      await createTestTempDirectory("rea-view-invalid-"),
+      "invalid.json",
+    );
+    await writeFile(path, "{}");
+    const controller = new AbortController();
+    const dispatch = queuedInterrupts.dispatchQueuedInterrupts;
+    const interrupt = vi
+      .spyOn(queuedInterrupts, "dispatchQueuedInterrupts")
+      .mockImplementation(async () => {
+        await dispatch();
+        controller.abort("after-authentication");
+      });
+    try {
+      const result = await inspectAnalysisView(
+        {
+          source:
+            kind === "file"
+              ? { kind: "evidence-file", path }
+              : {
+                  kind: "retained-evidence",
+                  evidence_id: "ev_" + "a".repeat(64),
+                },
+          view: manifestView,
+        },
+        undefined,
+        {
+          signal: controller.signal,
+          ...(kind === "bundle" ? { evidenceBundlePath: path } : {}),
+        },
+      );
+      expect(result).toMatchObject({
+        ok: false,
+        error:
+          kind === "file"
+            ? { _tag: "AnalysisCancelledError", cause: "after-authentication" }
+            : { _tag: "EvidenceIntegrityError" },
+      });
+    } finally {
+      interrupt.mockRestore();
+    }
+  },
+);
+
+it.each(["file", "bundle"] as const)(
+  "preserves authenticated %s parent Evidence when cancellation arrives before projection",
+  async (kind) => {
+    const parent = analysisViewCaptureEvidence();
+    const path = join(
+      await createTestTempDirectory("rea-view-admission-"),
+      "source.json",
+    );
+    await writeFile(
+      path,
+      JSON.stringify(kind === "file" ? parent : createEvidenceBundle([parent])),
+    );
+    const controller = new AbortController();
+    const dispatch = queuedInterrupts.dispatchQueuedInterrupts;
+    const interrupt = vi
+      .spyOn(queuedInterrupts, "dispatchQueuedInterrupts")
+      .mockImplementation(async () => {
+        await dispatch();
+        controller.abort("after-source-admission");
+      });
+    try {
+      const result = await inspectAnalysisView(
+        {
+          source:
+            kind === "file"
+              ? { kind: "evidence-file", path }
+              : { kind: "retained-evidence", evidence_id: parent.evidence_id },
+          view: manifestView,
+        },
+        undefined,
+        {
+          signal: controller.signal,
+          ...(kind === "bundle" ? { evidenceBundlePath: path } : {}),
+        },
+      );
+      if (result.ok) throw new Error("Expected cancellation before projection");
+      expect(result.error).toMatchObject({
+        _tag: "AnalysisCancelledError",
+        cause: "after-source-admission",
+        partialObservation: parent,
+      });
+    } finally {
+      interrupt.mockRestore();
+    }
+  },
+);
+
+it.each(["file", "bundle"] as const)(
+  "preserves completed %s view Evidence when cancellation arrives after projection",
+  async (kind) => {
+    const parent = analysisViewCaptureEvidence();
+    const path = join(
+      await createTestTempDirectory("rea-view-completion-"),
+      "source.json",
+    );
+    await writeFile(
+      path,
+      JSON.stringify(kind === "file" ? parent : createEvidenceBundle([parent])),
+    );
+    const controller = new AbortController();
+    const dispatch = queuedInterrupts.dispatchQueuedInterrupts;
+    let stages = 0;
+    const interrupt = vi
+      .spyOn(queuedInterrupts, "dispatchQueuedInterrupts")
+      .mockImplementation(async () => {
+        await dispatch();
+        stages += 1;
+        if (stages === 2) controller.abort("after-projection");
+      });
+    try {
+      const result = await inspectAnalysisView(
+        {
+          source:
+            kind === "file"
+              ? { kind: "evidence-file", path }
+              : { kind: "retained-evidence", evidence_id: parent.evidence_id },
+          view: manifestView,
+        },
+        undefined,
+        {
+          signal: controller.signal,
+          ...(kind === "bundle" ? { evidenceBundlePath: path } : {}),
+        },
+      );
+      if (result.ok) throw new Error("Expected cancellation after projection");
+      expect(result.error).toMatchObject({
+        _tag: "AnalysisCancelledError",
+        partialObservation: {
+          operation: "inspect_analysis_view",
+          evidence_links: [parent.evidence_id],
+        },
+      });
+    } finally {
+      interrupt.mockRestore();
+    }
+  },
+);
+
+it.each(["file", "bundle"] as const)(
+  "preserves a produced %s projection failure when cancellation arrives",
+  async (kind) => {
+    const parent = createEvidence(
+      undefined,
+      { id: "fixture", name: "Fixture", version: "1" },
+      {
+        operation: "inspect_recorded_crash",
+        parameters: {},
+        result: { path: "/artifacts/crash.core" },
+      },
+    );
+    const path = join(
+      await createTestTempDirectory("rea-view-failure-"),
+      "source.json",
+    );
+    await writeFile(
+      path,
+      JSON.stringify(kind === "file" ? parent : createEvidenceBundle([parent])),
+    );
+    const controller = new AbortController();
+    const dispatch = queuedInterrupts.dispatchQueuedInterrupts;
+    let stages = 0;
+    const interrupt = vi
+      .spyOn(queuedInterrupts, "dispatchQueuedInterrupts")
+      .mockImplementation(async () => {
+        await dispatch();
+        if (++stages === 2) controller.abort("after-failure");
+      });
+    try {
+      const result = await inspectAnalysisView(
+        {
+          source:
+            kind === "file"
+              ? { kind: "evidence-file", path }
+              : { kind: "retained-evidence", evidence_id: parent.evidence_id },
+          view: { kind: "summary" },
+        },
+        undefined,
+        {
+          signal: controller.signal,
+          ...(kind === "bundle" ? { evidenceBundlePath: path } : {}),
+        },
+      );
+      expect(controller.signal.aborted).toBe(true);
+      expect(result).toMatchObject({
+        ok: false,
+        error: { _tag: "AnalysisUnsupportedTargetError" },
+      });
+    } finally {
+      interrupt.mockRestore();
+    }
+  },
+);
 
 describe("inspectAnalysisView scenario parents", () => {
   const view = manifestView;

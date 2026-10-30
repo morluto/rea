@@ -56,6 +56,31 @@ const put = async (root: string, path: string, bytes: Buffer | string) => {
   await writeFile(destination, bytes);
 };
 
+it.each(["NE", "LE", "LX", "PE\0\0"])(
+  "admits the MZ signature before interpreting a trailing %j header as PE",
+  async (signature) => {
+    const root = await createTestTempDirectory("rea-desktop-mz-signature-");
+    const bytes = Buffer.alloc(64 + signature.length);
+    bytes.write("MZ");
+    bytes.writeUInt16LE(4, 8);
+    bytes.writeUInt32LE(64, 60);
+    bytes.write(signature, 64, "latin1");
+    await put(root, "legacy.exe", bytes);
+
+    const { report } = await inspect(root);
+    const file = report.files.find((row) => row.path === "legacy.exe");
+    expect(file?.facts).toEqual([]);
+    expect(file?.issues).toEqual(
+      signature.startsWith("PE") ? ["PE COFF header is truncated"] : [],
+    );
+    expect(file?.ranges).toContainEqual({
+      offset: 64,
+      bytes: signature.length,
+      sha256: expect.any(String),
+    });
+  },
+);
+
 it.each(["oversized-header", "prefix-only-section"] as const)(
   "keeps desktop CLR prefix admission distinct from full managed admission: %s",
   async (mode) => {

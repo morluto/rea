@@ -1,3 +1,6 @@
+import { rebindEvidenceToTargetPath } from "../../../src/domain/evidence.js";
+import { EvidenceLedger } from "../../../src/application/investigation/EvidenceLedger.js";
+import { inspectAnalysisView } from "../../../src/application/analysisView/AnalysisViewService.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
@@ -39,9 +42,29 @@ it("checks parent subject identity again when signing facts are already cached",
           { kind: "summary" },
         ).ok,
       ).toBe(true);
+    const rebound = rebindEvidenceToTargetPath(evidence, {
+      path: join(root, "alias.apk"),
+      sha256: evidence.subject.digest.sha256,
+      format: evidence.subject.format,
+    });
+    const exporting = new EvidenceLedger();
+    expect(exporting.record(rebound).ok).toBe(true);
+    const imported = new EvidenceLedger();
+    expect(imported.import(exporting.export()).ok).toBe(true);
+    const replay = await inspectAnalysisView(
+      {
+        source: { kind: "retained-evidence", evidence_id: rebound.evidence_id },
+        view: { kind: "summary" },
+      },
+      (id) => imported.forAnalysis(id),
+    );
+    if (!replay.ok) throw replay.error;
+    expect(replay.value.subject?.local_path).toBe(join(root, "alias.apk"));
+    expect(replay.value.normalized_result).toMatchObject({
+      artifact: { path },
+    });
     for (const subject of [
       { ...evidence.subject, format: "directory" as const },
-      { ...evidence.subject, local_path: join(root, "other.apk") },
       {
         ...evidence.subject,
         digest: { ...evidence.subject.digest, sha256: "00".repeat(32) },

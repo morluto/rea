@@ -1,12 +1,13 @@
 import {
   buildGodotPck,
+  buildGodotPck1,
   buildAliasedGodotPck,
   embedGodotPck,
   pckU32,
   pckU64,
   type GodotPckMember,
 } from "../../tests/fixtures/godotPck.js";
-import { mkdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { text } from "node:stream/consumers";
 import { once } from "node:events";
@@ -14,9 +15,11 @@ import { once } from "node:events";
 import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { renameOpenParent } from "../../tests/fixtures/renameOpenParent.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
 
 import type { ArtifactEntry } from "./ArtifactReader.js";
+import { ArtifactEmbeddedFormatProbes } from "./ArtifactEmbeddedFormatProbes.js";
 import { GodotPckArtifactReader } from "./GodotPckArtifactReader.js";
 
 const writePck = async (bytes: Buffer): Promise<string> => {
@@ -50,6 +53,95 @@ const members: readonly GodotPckMember[] = [
   { path: "project.binary", data: "" },
   { path: "data/é.json", data: '{"session":"Session1"}' },
 ];
+
+describe("GodotPckArtifactReader format 1", () => {
+  it.each([false, true])(
+    "reads Godot 3 format 1 directory and absolute member offsets (embedded=%s)",
+    async (embedded) => {
+      const carrier = embedded
+        ? Buffer.from("old Godot engine")
+        : Buffer.alloc(0);
+      const pack = buildGodotPck1(members, { carrierBytes: carrier.length });
+      const bytes = embedded
+        ? Buffer.concat([
+            carrier,
+            pack,
+            pckU64(pack.length),
+            Buffer.from("GDPC"),
+          ])
+        : pack;
+      await withReader(bytes, async (reader) => {
+        const entries = await list(reader);
+        expect(entries.map(({ sourcePath }) => sourcePath)).toEqual(
+          members.map(({ path }) => path),
+        );
+        expect(entries.map(({ path }) => path)).toEqual([
+          "scenes/main.gd",
+          "project.binary",
+          "data/é.json",
+        ]);
+        expect(reader.formatMetadata()).toMatchObject({
+          format_version: 1,
+          engine_major: 3,
+          engine_minor: 5,
+          embedded,
+          pack_start: carrier.length,
+          directory_start: carrier.length + 84,
+          file_base: 0,
+          pack_flags: 0,
+          declared_file_count: members.length,
+        });
+        for (const [index, entry] of entries.entries()) {
+          expect(entry.encrypted).toBe(false);
+          expect(entry.formatMetadata).toMatchObject({ flags: 0 });
+          expect(await text(await reader.open(entry))).toBe(
+            members[index]?.data,
+          );
+        }
+      });
+    },
+  );
+
+  it("keeps a valid empty Godot 3 format 1 inventory complete", async () => {
+    await withReader(buildGodotPck1([]), async (reader) => {
+      expect(await list(reader)).toEqual([]);
+      expect(reader.formatMetadata()).toMatchObject({
+        format_version: 1,
+        directory_status: "available",
+        declared_file_count: 0,
+      });
+    });
+  });
+
+  it.each([
+    [
+      "zero-offset removal",
+      { path: "gone.gd", data: "", offset: 0n },
+      "unavailable",
+    ],
+    [
+      "out-of-pack data",
+      { path: "bad.bin", data: "x", offset: 1n << 40n },
+      "format",
+    ],
+    [
+      "oversized data",
+      { path: "bad.bin", data: "x", size: 1n << 40n },
+      "format",
+    ],
+  ] as const)("refuses Godot 3 format 1 %s", async (_, member, reason) => {
+    await withReader(buildGodotPck1([member]), async (reader) => {
+      await expect(list(reader)).rejects.toMatchObject({ reason });
+    });
+  });
+
+  it("rejects a truncated Godot 3 format 1 directory", async () => {
+    const pack = buildGodotPck1([{ path: "a.gd", data: "x" }]);
+    await withReader(pack.subarray(0, 110), async (reader) => {
+      await expect(list(reader)).rejects.toMatchObject({ reason: "format" });
+    });
+  });
+});
 
 describe("GodotPckArtifactReader", () => {
   it.each([
@@ -185,8 +277,8 @@ describe("GodotPckArtifactReader", () => {
       "format",
     ],
     [
-      "a Godot 3 format 1 pack",
-      Buffer.concat([Buffer.from("GDPC"), pckU32(1), Buffer.alloc(120)]),
+      "an unknown format 5 pack",
+      Buffer.concat([Buffer.from("GDPC"), pckU32(5), Buffer.alloc(120)]),
       "unavailable",
     ],
     ["bytes without a pack", Buffer.from("not a godot pack at all"), "format"],
@@ -262,32 +354,85 @@ describe("GodotPckArtifactReader member streams", () => {
     );
   });
 
-  it("reads members from the admitted descriptor after the path is replaced", async () => {
-    const root = await createTestTempDirectory("rea-godot-borrowed-source-");
-    const selected = join(root, "selected");
-    await mkdir(selected);
-    const path = join(selected, "game");
-    await writeFile(path, buildGodotPck(3, members));
+  it("rejects stale located facts after the admitted carrier changes", async () => {
+    const path = await writePck(buildGodotPck(3, members));
     const descriptor = await openRegularFile(path, { symlinks: "reject" });
-    const { handle } = descriptor;
     try {
-      // Replace the selected directory without changing the admitted inode's
-      // metadata. Moving the file itself would change its validated ctime.
-      await rename(selected, join(root, "original"));
-      await mkdir(selected);
-      await writeFile(path, buildGodotPck(3, [{ path: "other.gd", data: "" }]));
-      const reader = new GodotPckArtifactReader(path, descriptor);
-      const entries = await list(reader);
-      expect(entries.map(({ path: member }) => member)).toEqual([
-        "scenes/main.gd",
-        "project.binary",
-        "data/é.json",
-      ]);
-      await reader.close();
+      const location = await new ArtifactEmbeddedFormatProbes(
+        path,
+        descriptor,
+      ).godotPck();
+      if (location === undefined) throw new Error("expected a pack location");
+      const reader = new GodotPckArtifactReader(path, {
+        kind: "godot-pck",
+        source: descriptor,
+        location,
+      });
+      try {
+        await writeFile(path, Buffer.from("replaced carrier"));
+        await expect(list(reader)).rejects.toMatchObject({
+          reason: "integrity",
+        });
+      } finally {
+        await reader.close();
+      }
     } finally {
-      await handle.close();
+      await descriptor.handle.close();
     }
   });
+
+  it.each([false, true])(
+    "reads located pack facts from the admitted descriptor after an attempted path replacement (embedded: %s)",
+    async (embedded) => {
+      const root = await createTestTempDirectory("rea-godot-borrowed-source-");
+      const selected = join(root, "selected");
+      await mkdir(selected);
+      const path = join(selected, "game");
+      const bytes = buildGodotPck(3, members);
+      await writeFile(path, embedded ? embedGodotPck(bytes) : bytes);
+      const descriptor = await openRegularFile(path, { symlinks: "reject" });
+      const { handle } = descriptor;
+      try {
+        const location = await new ArtifactEmbeddedFormatProbes(
+          path,
+          descriptor,
+        ).godotPck();
+        if (location === undefined) throw new Error("expected a pack location");
+        // Replace the selected directory without changing the admitted inode's
+        // metadata. Moving the file itself would change its validated ctime.
+        const swap = await renameOpenParent(selected, join(root, "original"));
+        if (swap.kind === "renamed") {
+          await mkdir(selected);
+          await writeFile(
+            path,
+            buildGodotPck(3, [{ path: "other.gd", data: "" }]),
+          );
+        }
+        const reader = new GodotPckArtifactReader(path, {
+          kind: "godot-pck",
+          source: descriptor,
+          location,
+        });
+        const cancelled = new AbortController();
+        cancelled.abort();
+        await expect(
+          reader.entries(cancelled.signal)[Symbol.asyncIterator]().next(),
+        ).rejects.toMatchObject({
+          reason: "cancelled",
+        });
+        const entries = await list(reader);
+        expect(reader.formatMetadata()?.embedded).toBe(embedded);
+        expect(entries.map(({ path: member }) => member)).toEqual([
+          "scenes/main.gd",
+          "project.binary",
+          "data/é.json",
+        ]);
+        await reader.close();
+      } finally {
+        await handle.close();
+      }
+    },
+  );
 });
 
 describe("Godot PCK logical-byte admission", () => {

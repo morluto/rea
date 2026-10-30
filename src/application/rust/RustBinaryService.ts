@@ -26,7 +26,7 @@ export class RustBinaryService {
   constructor(readonly provider: RustBinaryPort) {}
 
   close(): Promise<void> {
-    return this.provider.close?.() ?? Promise.resolve();
+    return this.provider.close();
   }
 
   /** Inspect one explicitly selected file without acquiring a binary session. */

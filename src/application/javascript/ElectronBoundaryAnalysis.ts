@@ -27,6 +27,8 @@ export interface ElectronIpcPairingState {
   readonly transmission: ElectronIpcRecord;
   readonly candidates: readonly ElectronIpcRecord[];
   readonly status: "paired" | "ambiguous" | "unpaired";
+  /** An observed match that may have unseen competitors when coverage is incomplete. */
+  readonly coverageLimitedCandidate: ElectronIpcRecord | null;
 }
 
 /** Flatten all per-file IPC facts into deterministic application records. */
@@ -43,49 +45,82 @@ export const collectElectronIpcRecords = (
     )
     .sort((left, right) => compareUnicodeCodePoints(left.key, right.key));
 
-/** Match only exact literal channels and retain ambiguous matches separately. */
-export const classifyElectronIpcPairings = (
-  records: readonly ElectronIpcRecord[],
-): readonly ElectronIpcPairingState[] => {
-  const handlers = records.filter(isMainHandler);
-  return records.filter(isPairableRendererTransmission).map((transmission) => {
-    const candidates =
-      transmission.finding.channel === null
-        ? []
-        : handlers.filter(
-            (handler) =>
-              (handler.finding.channel === transmission.finding.channel ||
-                (handler.finding.receiver !== undefined &&
-                  handler.finding.channel === null)) &&
-              compatibleIpcModes(transmission.finding, handler.finding),
-          );
-    return {
-      transmission,
-      candidates,
-      status:
-        candidates.length === 1 && candidates[0]?.finding.receiver === undefined
-          ? "paired"
-          : candidates.length > 0
-            ? "ambiguous"
-            : "unpaired",
-    };
-  });
-};
+/** One interpretation shared by summary and every graph pairing consumer. */
+export interface ElectronIpcContext {
+  readonly records: readonly ElectronIpcRecord[];
+  readonly owners: ReadonlyMap<string, string | null>;
+  readonly states: readonly ElectronIpcPairingState[];
+  readonly pairings: readonly ElectronIpcPairing[];
+}
 
-/** Return only pairings supported by one unique literal main handler. */
-export const unambiguousElectronIpcPairings = (
-  records: readonly ElectronIpcRecord[],
-): readonly ElectronIpcPairing[] =>
-  classifyElectronIpcPairings(records).flatMap((state) => {
+/** Equal channel text only establishes a pairing within one proven application owner. */
+export const createElectronIpcContext = (
+  analysis: JavaScriptArtifactAnalysis,
+  applicationOwner: (file: JavaScriptArtifactFile) => string | null,
+  coverageComplete = true,
+): ElectronIpcContext => {
+  const records = collectElectronIpcRecords(analysis);
+  const owners = new Map(
+    records.map((record) => [record.key, applicationOwner(record.file)]),
+  );
+  const handlers = records.filter(isMainHandler);
+  const states: ElectronIpcPairingState[] = records
+    .filter(isPairableRendererTransmission)
+    .map((transmission) => {
+      const owner = owners.get(transmission.key);
+      const matching =
+        transmission.finding.channel === null
+          ? []
+          : handlers.filter(
+              (handler) =>
+                (handler.finding.channel === transmission.finding.channel ||
+                  (handler.finding.receiver !== undefined &&
+                    handler.finding.channel === null)) &&
+                compatibleIpcModes(transmission.finding, handler.finding),
+            );
+      const candidates = matching.filter(
+        (handler) => owners.get(handler.key) === owner,
+      );
+      // Unknown ownership can conceal competing dispatch contexts. Different owners
+      // do not prove runtime isolation, so retain ambiguity rather than absence.
+      const uncertain =
+        !coverageComplete ||
+        owner == null ||
+        matching.some((handler) => owners.get(handler.key) == null);
+      return {
+        transmission,
+        candidates,
+        coverageLimitedCandidate:
+          !coverageComplete &&
+          owner != null &&
+          candidates.length === 1 &&
+          candidates[0]?.finding.receiver === undefined &&
+          !matching.some((handler) => owners.get(handler.key) == null)
+            ? (candidates[0] ?? null)
+            : null,
+        status:
+          !uncertain &&
+          candidates.length === 1 &&
+          candidates[0]?.finding.receiver === undefined
+            ? "paired"
+            : uncertain || matching.length > 0
+              ? "ambiguous"
+              : "unpaired",
+      };
+    });
+  const pairings = states.flatMap((state) => {
     const handler = state.candidates[0];
     return state.status === "paired" && handler !== undefined
       ? [{ transmission: state.transmission, handler }]
       : [];
   });
+  return { records, owners, states, pairings };
+};
 
 /** Summarize static Electron findings without treating gaps as absence. */
 export const summarizeElectronBoundaries = (
   analysis: JavaScriptArtifactAnalysis,
+  ipcContext: ElectronIpcContext,
   directoryPaths?: ReadonlySet<string>,
 ): ElectronBoundarySummary => {
   const files = new Map(analysis.files.map(({ file }) => [file.path, file]));
@@ -113,8 +148,8 @@ export const summarizeElectronBoundaries = (
       finding,
     })),
   );
-  const ipc = collectElectronIpcRecords(analysis);
-  const pairing = classifyElectronIpcPairings(ipc);
+  const ipc = ipcContext.records;
+  const pairing = ipcContext.states;
   const literalChannels = new Set(
     ipc.flatMap(({ finding }) =>
       finding.channel === null ? [] : [finding.channel],

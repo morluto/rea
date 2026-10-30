@@ -509,6 +509,52 @@ export interface ElfFixtureOptions {
   readonly zeroFilledTable?: boolean;
 }
 
+/** A valid large RELA image; extra file-backed pointers do not add IL2CPP registrations. */
+export const createLargeElfRelativeFixture = (
+  image: Buffer,
+  extraRecords: number,
+  machine = 183,
+): Buffer => {
+  const original = createElfFixture(image, { machine });
+  const originalDynamic = Number(original.readBigUInt64LE(128));
+  const originalRelaSize = Number(
+    original.readBigUInt64LE(originalDynamic + 24),
+  );
+  const pointersAt = Math.ceil(original.length / 8) * 8;
+  const relaAt = pointersAt + extraRecords * 8;
+  const relaSize = originalRelaSize + extraRecords * 24;
+  const dynamicAt = relaAt + relaSize;
+  const bytes = Buffer.alloc(dynamicAt + 64);
+  original.copy(bytes);
+  original.copy(bytes, relaAt, 0x1000, 0x1000 + originalRelaSize);
+  for (let index = 0; index < extraRecords; index++) {
+    const row = relaAt + originalRelaSize + index * 24;
+    bytes.writeBigUInt64LE(
+      FIXTURE_BINARY_BASE + BigInt(pointersAt + index * 8),
+      row,
+    );
+    bytes.writeBigUInt64LE(machine === 62 ? 8n : 1027n, row + 8);
+    bytes.writeBigUInt64LE(FIXTURE_BINARY_BASE + 0x100n, row + 16);
+  }
+  for (const [index, [tag, value]] of [
+    [7n, FIXTURE_BINARY_BASE + BigInt(relaAt)],
+    [8n, BigInt(relaSize)],
+    [9n, 24n],
+    [0n, 0n],
+  ].entries()) {
+    bytes.writeBigUInt64LE(tag!, dynamicAt + index * 16);
+    bytes.writeBigUInt64LE(value!, dynamicAt + index * 16 + 8);
+  }
+  bytes.writeBigUInt64LE(BigInt(bytes.length), 96);
+  bytes.writeBigUInt64LE(BigInt(bytes.length), 104);
+  bytes.writeBigUInt64LE(BigInt(dynamicAt), 128);
+  bytes.writeBigUInt64LE(FIXTURE_BINARY_BASE + BigInt(dynamicAt), 136);
+  bytes.writeBigUInt64LE(FIXTURE_BINARY_BASE + BigInt(dynamicAt), 144);
+  bytes.writeBigUInt64LE(64n, 152);
+  bytes.writeBigUInt64LE(64n, 160);
+  return bytes;
+};
+
 /**
  * Rewrap a fixture image as a 64-bit ELF shared object loaded at the same
  * base: every pointer slot into the image is zeroed on disk and restored by

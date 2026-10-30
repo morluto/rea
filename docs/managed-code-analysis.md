@@ -120,6 +120,50 @@ literal pool's own coverage. Older Evidence that never examined exported types
 or user strings reports a null count and refuses those pages rather than
 returning an empty one.
 
+To find specific retained members without returning their IL anchors, select
+exact names and defining types, then project columns:
+
+```json
+{
+  "source": {
+    "kind": "retained-evidence",
+    "evidence_id": "<parent_evidence_id>"
+  },
+  "view": {
+    "kind": "managed-members",
+    "collection": "methods",
+    "names": ["ParseNumber", "ParseReadNumber"],
+    "declaring_types": ["Newtonsoft.Json.JsonTextReader"],
+    "fields": ["name", "declaring_type", "signature"],
+    "offset": 0,
+    "limit": 64
+  }
+}
+```
+
+Filters are exact and case-sensitive; lists are alternatives and filters
+intersect. An empty list matches nothing. Names select `name` in types,
+exported types, fields, methods and member references; in call edges they select
+`target_name`, and in field accesses `field_name`. Declaring-type filters select
+`declaring_type` in fields/methods, `parent_name` in member references,
+`target_declaring_type` in call edges and `field_declaring_type` in field accesses.
+Types, exported types and user strings do not accept a declaring-type filter;
+user strings do not accept a name filter. No display strings are reparsed.
+
+`fields` accepts only columns of that collection. Omitting it preserves full
+rows, including method bodies. Selecting `body` explicitly returns the full
+recorded body and anchors; selecting no columns (`[]`) returns identity fields.
+Projected or filtered rows add their original `source_index`; tokens and source
+byte offsets remain, with defining/parent tokens or IL-site endpoints where
+applicable. The page retains module/MVID, artifact digest, parent Evidence,
+producer selection and source coverage. Full facts remain in the parent.
+
+Paging offsets and totals count known matches in original order. `source_count`
+counts the producer-returned collection; `unresolved_filter_rows` counts rows
+that could match but lack a requested name/type. Those candidates remain unknown
+and are excluded from the matched total. Exhausting the known matches does not
+prove absence among unresolved or unexamined source rows.
+
 #### CLI summary and saved member rows
 
 The CLI accepts the same `complete` and `summary` detail choices. Omitted or
@@ -167,12 +211,16 @@ authenticates the saved bundle; the full source is retained on disk.
 
 The canonical parser admits PE/CLI bytes and their metadata/CIL without loading
 an assembly. It reports observed implementation markers and unavailable facts;
-it does not unpack .NET single-file hosts or infer a NativeAOT identity from an
-ordinary native PE. It does not decode IL2CPP; use
+it does not itself unpack .NET single-file hosts or infer a NativeAOT identity
+from an ordinary native PE. It does not decode IL2CPP; use
 [IL2CPP metadata](il2cpp-metadata.md) for the image, type and method names in a
 Unity `global-metadata.dat`. Inputs without admitted CLI metadata do not
 become managed assemblies through naming or routing guesses.
 Inspect separately obtained components explicitly and preserve their identities.
+
+For ordinary .NET single-file hosts, use the existing artifact tools to
+[inventory and extract bundle members](dotnet-bundles.md), then inspect the
+extracted assembly explicitly with the managed tools.
 
 A valid implementation marker establishes a candidate native boundary, not
 recovered native semantics or runtime behavior.
@@ -432,8 +480,18 @@ raw digest stands in. Missing or unreadable TypeDef and TypeRef operands are
 reported as coverage issues. Invalid NestedClass rows retain their failure
 reasons and withhold TypeDef signature identities; type names and nesting are
 parsed once by their shared owner. Each current inspection records
-`signature_resolution: "type-names-v1"`, even when none of its operands can be
-resolved. Historical Evidence defaults this attestation to `null`. When either
+`signature_resolution: "type-names-v2"`, even when none of its operands can be
+resolved. Version 2 also appends readable names to signature operands, for
+example `class:7772 (AnalysisJob)`. Coded indexes remain build-local references;
+names are display text and do not change raw or resolved signature digests.
+Nested names use `Outer/Inner`. Generic instantiations keep their decoded
+arguments, for example ``class:9 (System.Collections.Generic.List`1)<string>``;
+custom modifiers are named too. Valid but unresolved TypeSpecs, invalid scopes,
+unreadable type names, cycles and nesting beyond the cap keep their raw operand
+spelling. Invalid or missing metadata coordinates retain the existing malformed
+signature result and source issue; rendering does not bypass validation.
+Version 1 Evidence remains readable and compares using the same digest policy.
+Historical Evidence defaults this attestation to `null`. When either
 observation predates resolution, both sides compare raw digests, which pair only where type rows agree,
 and the comparison reports that limitation. The signature is exact whether or
 not REA decoded it, so undecoded signatures pair by that tuple too, but they
@@ -660,13 +718,15 @@ name and raw signature digest available while marking that signature malformed
 and coverage partial.
 A fat method header's nonzero LocalVarSigTok must name an existing StandAloneSig
 row whose blob is a structurally valid LocalVarSig. REA validates its local
-types and exact blob coverage but does not project their identities. An invalid
+types and exact blob coverage, retaining `local_var_signature` with the raw blob
+digest and whether named types, modifiers, or generic variables require metadata
+or declaring context. Historical Evidence defaults this field to null. An invalid
 token or malformed signature leaves decoded CIL anchors intact but marks the
 body malformed and coverage partial. Unsupported local type encodings retain
 the readable body with partial coverage. Zero continues to mean no locals
-signature. Comparison detects whether a locals declaration is present, but raw
-table tokens are not cross-build identities and local type contents are not
-compared.
+signature. Raw table tokens are not cross-build identities. Comparison uses
+validated context-free signature digests; signatures requiring metadata or
+declaring context remain unknown across artifacts.
 
 ## Decoded-CIL fingerprint
 
@@ -868,9 +928,14 @@ MethodDef flags or implementation flags value differs, including accessibility
 or synchronization changes. Observed method-body `init_locals` and `max_stack`
 differences also contribute to `metadata`, even when CIL decoding is incomplete.
 For complete bodies, presence or absence of a locals signature also contributes;
-the locals table token is build-local and is not compared. Local type contents
-are not currently compared, so this facet does not establish equivalent locals
-declarations.
+the locals table token is build-local and is not compared. Different validated
+context-free LocalVarSig digests report a metadata encoding difference without
+asserting a semantic type change. Equal digests establish unchanged bytes only
+when neither signature requires metadata or declaring context. Historical
+unrecorded signatures and context-dependent signatures keep local identity
+unknown, preserving any independently observed changes. The same method token
+in an artifact with the same authenticated SHA-256 identifies the same local
+signature bytes, including for retained historical Evidence.
 An unavailable header value keeps body coverage unknown rather than establishing
 equality or a difference. These comparisons are separate from the CIL/signature
 matching tiers: identical instructions do not establish unchanged method metadata.

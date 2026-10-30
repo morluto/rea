@@ -21,10 +21,8 @@ import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../dist/domain/evidence.js";
-import {
-  functionBodySchema,
-  functionDossierSchema,
-} from "../dist/domain/hopperValues.js";
+import { functionDossierSchema } from "../dist/domain/native/functionDossier.js";
+import { functionBodySchema } from "../dist/domain/native/functionBody.js";
 import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
 import { buildDosMzFixture } from "../tests/conformance/ghidra/dos-mz-fixture.mjs";
 import {

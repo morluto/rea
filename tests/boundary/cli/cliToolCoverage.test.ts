@@ -8,6 +8,7 @@ import { CLI_COMMAND_NAMES } from "../../../src/cliCommandNames.js";
 /** Canonical MCP operations reached by CLI commands with different names. */
 const CLI_COMMAND_TOOL_ALIASES = Object.freeze({
   "environment-build": ["export_environment_bundle"],
+  guidance: ["search_guidance", "read_guidance_section"],
   analyze: ["binary_overview"],
   inspect: ["binary_overview"],
   decompile: ["procedure_pseudo_code"],
@@ -16,7 +17,7 @@ const CLI_COMMAND_TOOL_ALIASES = Object.freeze({
   trace: ["trace_feature"],
   search: ["search_strings", "search_procedures"],
   "capture-process": ["capture_process_scenario"],
-  "compare-bundles": ["compare_bundles"],
+  compare: ["compare_bundles"],
   "list-objdump-architectures": ["inspect_with_objdump"],
   "debug-with-gdb": ["gdb_console"],
   "debug-with-rizin": ["rizin_debug_command"],
@@ -69,7 +70,6 @@ const MCP_TOOLS_WITHOUT_DEDICATED_CLI = Object.freeze([
   "binary_session",
   "export_evidence_bundle",
   "import_evidence_bundle",
-  "compare_artifacts",
   "compare_functions",
   "find_changed_behavior",
   "build_call_path",

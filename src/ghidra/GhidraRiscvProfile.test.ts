@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { parseConfig } from "../config/parseConfig.js";
 import type {
   BinaryTarget,
-  RiscvElfMetadata,
+  ElfFamilyMetadata,
 } from "../domain/binaryTargetTypes.js";
 import { silentLogger } from "../logger.js";
 import { HopperProvider } from "../hopper/HopperProvider.js";
@@ -60,7 +60,7 @@ const configOf = (
   if (!parsed.ok) throw parsed.error;
   return parsed.value;
 };
-const target = (change: Partial<RiscvElfMetadata> = {}): BinaryTarget => ({
+const target = (change: Partial<ElfFamilyMetadata> = {}): BinaryTarget => ({
   path: "/fixture.elf",
   sha256: "a".repeat(64),
   kind: "executable",
@@ -170,7 +170,7 @@ const registerRiscvAdmissionAndCapabilityCases = () => {
     [{ flags: 0x7 }, "quad-float"],
     [{ flags: 0x8000_0005 }, "(0x80000000)"],
     [{ flags: 0x24 }, "bits outside the verified lane"],
-  ] satisfies [Partial<RiscvElfMetadata>, string][])(
+  ] satisfies [Partial<ElfFamilyMetadata>, string][])(
     "refuses an unverified RISC-V interpretation %j",
     async (change, reason) => {
       const provider = ghidra();

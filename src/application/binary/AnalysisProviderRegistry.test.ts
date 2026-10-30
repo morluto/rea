@@ -1132,6 +1132,34 @@ it("joins cancelled readiness finalization and shutdown before admitting another
   }
 });
 
+it.each(["alpha", "beta"])(
+  "retains unknown owned-resource cleanup when %s has no completion signal",
+  async (unknownOwner) => {
+    const unknown = new ProviderAdapterError(unknownOwner, "close_binary", {
+      userMessage: "cleanup completion unknown",
+    });
+    const tracked = new ProviderCleanupError("rea", ["owned-reader"], {});
+    let released = false;
+    const registry = new AnalysisProviderRegistry(
+      ["alpha", "beta"].map((id) => ({
+        ...candidate(id).provider,
+        closeOwnedResources: async () => {
+          if (!released) return err(id === unknownOwner ? unknown : tracked);
+          if (id !== unknownOwner) tracked.resolveCleanup();
+          return ok(null);
+        },
+      })),
+    );
+    const closed = await registry.closeOwnedResources();
+    if (closed.ok) throw new Error("Expected incomplete registry close");
+    expect(closed.error.cleanupIncomplete).toBe(true);
+    released = true;
+    expect(await registry.closeOwnedResources()).toEqual(ok(null));
+    expect(tracked.cleanupIncomplete).toBe(false);
+    expect(closed.error.cleanupIncomplete).toBe(true);
+  },
+);
+
 it("joins every candidate and retains physical failure with exact mixed cleanup owners", async () => {
   const alpha = candidate("alpha").provider;
   const beta = candidate("beta").provider;

@@ -129,7 +129,7 @@ const stopChild = async (
   graceMs: number,
 ): Promise<void> => {
   if (child.exitCode !== null || child.signalCode !== null) return;
-  // EOF lets the worker await closeCliJavaScriptResources before exiting.
+  // EOF lets the worker await closeCliResources before exiting.
   if (!child.stdin.writableEnded) child.stdin.end();
   if (await waitForExit(child, graceMs)) return;
   signalChild(child, "SIGTERM");
