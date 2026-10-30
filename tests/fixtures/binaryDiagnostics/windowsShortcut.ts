@@ -314,10 +314,11 @@ const linkInfoBytes = (info: FixtureLinkInfo, unicode: boolean): Buffer => {
   return bytes;
 };
 
+/** StringData is counted, not NUL-terminated (MS-SHLLINK 2.4). */
 const stringDataField = (value: string, unicode: boolean): Buffer => {
-  const text = unicode ? utf16z(value) : ansiZ(value);
+  const text = Buffer.from(value, unicode ? "utf16le" : "latin1");
   const count = Buffer.alloc(2);
-  count.writeUInt16LE(unicode ? value.length + 1 : value.length + 1, 0);
+  count.writeUInt16LE(value.length, 0);
   return Buffer.concat([count, text]);
 };
 

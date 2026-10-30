@@ -4,7 +4,11 @@ import {
 } from "../../artifacts/StableArtifactFailure.js";
 import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
+import {
+  readStableArtifact,
+  type StableArtifactSnapshot,
+} from "../../artifacts/readStableArtifact.js";
+import { fileSnapshotPartialObservationSchema } from "../../domain/fileSnapshotObservation.js";
 import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
@@ -63,6 +67,7 @@ export class WindowsShortcutProvider implements WindowsShortcutPort {
     input: InspectWindowsShortcutInput,
     options?: ExecutionOptions,
   ) {
+    let completed: StableArtifactSnapshot | undefined;
     try {
       return await this.#resources.run(async () => {
         const snapshot = await readStableArtifact(
@@ -72,6 +77,7 @@ export class WindowsShortcutProvider implements WindowsShortcutPort {
           undefined,
           this.#resources,
         );
+        completed = snapshot;
         assertArtifactReadActive(options?.signal);
         const report = await parseWindowsShortcut(
           snapshot.bytes,
@@ -87,7 +93,17 @@ export class WindowsShortcutProvider implements WindowsShortcutPort {
         return ok(report);
       });
     } catch (cause) {
-      return err(windowsShortcutFailure(cause, input));
+      const failure = windowsShortcutFailure(cause, input);
+      if (completed !== undefined)
+        failure.retainPartialObservation(
+          fileSnapshotPartialObservationSchema.parse({
+            kind: "file-snapshot-hash",
+            path: input.path,
+            sha256: completed.sha256,
+            bytes: completed.bytes.length,
+          }),
+        );
+      return err(failure);
     }
   }
 }

@@ -321,7 +321,9 @@ export const registerBinaryDiagnosticsCommands = (
     description:
       "Inspect a Windows Shell Link (.lnk) without resolving or executing the target",
     args: z.object({
-      path: z.string().describe("Local Windows Shell Link (.lnk) file"),
+      path: localPathStringSchema.describe(
+        "Local Windows Shell Link (.lnk) file",
+      ),
     }),
     options: z.object({
       maxFileBytes: inspectWindowsShortcutInputSchema.shape.max_file_bytes,
@@ -337,7 +339,8 @@ export const registerBinaryDiagnosticsCommands = (
           logger,
           CLI_COMMANDS.inspectWindowsShortcut,
           async () =>
-            finishAnalysisCommand(
+            finishCliEvidenceCommand(
+              args.path,
               () =>
                 shortcut.inspect(
                   {

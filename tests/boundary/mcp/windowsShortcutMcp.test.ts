@@ -1,7 +1,7 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
-import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../../../src/contracts/native/binaryDiagnosticsToolContracts.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
@@ -9,6 +9,15 @@ import { powershellHiddenIconSpoofShortcut } from "../../fixtures/binaryDiagnost
 import { advertisedMcpToolSchemas } from "../../fixtures/advertisedMcpTool.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { mcpTest } from "../../support/mcp/mcpFixture.js";
+
+const shortcutContract = (() => {
+  const contract = BINARY_DIAGNOSTICS_TOOL_CONTRACTS.find(
+    (item) => item.name === "inspect_windows_shortcut",
+  );
+  if (contract === undefined)
+    throw new Error("Missing inspect_windows_shortcut contract");
+  return contract;
+})();
 
 mcpTest(
   "advertises inspect_windows_shortcut and reads Shell Link facts",
@@ -41,9 +50,9 @@ mcpTest(
         ajv.validate(outputSchema, response.structuredContent),
         JSON.stringify(ajv.errors),
       ).toBe(true);
-      const evidence = toolContract(
-        "inspect_windows_shortcut",
-      ).outputSchema.parse(response.structuredContent);
+      const evidence = shortcutContract.outputSchema.parse(
+        response.structuredContent,
+      );
       expect(evidence.normalized_result.header.clsid).toBe(
         "00021401-0000-0000-C000-000000000046",
       );

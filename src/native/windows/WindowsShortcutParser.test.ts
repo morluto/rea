@@ -210,3 +210,81 @@ it("keeps unknown IDList items as raw hashed blobs", async () => {
     }),
   ]);
 });
+
+it("keeps counted StringData bytes after an embedded NUL", async () => {
+  const report = await parse(windowsShortcutBytes({ arguments: "a\0-hidden" }));
+  expect(report.string_data.arguments?.value).toBe("a\0-hidden");
+  expect(report.observations).toContainEqual({
+    kind: "argument_length",
+    evidence_kind: "derived",
+    characters: 9,
+  });
+});
+
+it("reports argument presence as unknown when HasArguments data is unreadable", async () => {
+  // Cut the file inside COMMAND_LINE_ARGUMENTS so the field cannot be read.
+  const report = await parse(
+    windowsShortcutBytes({
+      iconLocation: "",
+      extraData: [],
+      terminalBlock: false,
+      omitStringBytes: 10,
+    }),
+  );
+  expect(report.coverage.status).toBe("partial");
+  expect(report.string_data.arguments).toBeNull();
+  expect(report.observations).toContainEqual({
+    kind: "arguments_present",
+    evidence_kind: "derived",
+    value: null,
+  });
+  expect(windowsShortcutSchema.safeParse(report).success).toBe(true);
+});
+
+it("derives the target extension from the joined base path and suffix", async () => {
+  const report = await parse(
+    windowsShortcutBytes({
+      linkInfo: { localBasePath: "C:\\x", commonPathSuffix: "app.exe" },
+      relativePath: "",
+      idList: null,
+    }),
+  );
+  expect(report.observations).toContainEqual({
+    kind: "target_extension",
+    evidence_kind: "derived",
+    extension: ".exe",
+  });
+});
+
+it("keeps readable dates for FILETIME values before 1970", async () => {
+  // 1950-01-01T00:00:00Z in 100 ns intervals since 1601.
+  const report = await parse(
+    windowsShortcutBytes({ creationTime: 110133216000000000n }),
+  );
+  expect(report.header.creation_time.iso8601).toBe("1950-01-01T00:00:00.000Z");
+});
+
+it("marks an IDList without a TerminalID as partial", async () => {
+  const bytes = windowsShortcutBytes({
+    idList: [{ kind: "volume", name: "C:\\" }],
+  });
+  // Replace the IDList's TerminalID with a 2-byte empty ItemID of the same size.
+  const declared = bytes.readUInt16LE(76);
+  bytes.writeUInt16LE(2, 76 + declared);
+  const report = await parse(bytes);
+  expect(report.coverage.status).toBe("partial");
+  expect(report.issues.map((issue) => issue.message)).toContain(
+    "LinkTargetIDList has no TerminalID inside its declared size",
+  );
+});
+
+it("charges the string budget before decoding a LinkInfo string", async () => {
+  await expect(
+    parse(
+      windowsShortcutBytes({
+        linkInfo: { localBasePath: `C:\\${"a".repeat(4096)}` },
+      }),
+      { max_string_bytes: 1 },
+    ),
+  ).rejects.toBeInstanceOf(WindowsShortcutResourceFailure);
+});

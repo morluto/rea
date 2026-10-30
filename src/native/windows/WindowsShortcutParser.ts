@@ -23,6 +23,13 @@ const HEADER_BYTES = 76;
 const FILETIME_UNIX_EPOCH = 116444736000000000n;
 const UUID_UNIX_EPOCH = 0x01b21dd213814000n;
 const ENTRIES_PER_YIELD = 32;
+/** ECMAScript Date range: 8.64e15 ms either side of the Unix epoch. */
+const MAX_DATE_MS = 8_640_000_000_000_000n;
+
+const isoFromUnixMs = (unixMs: bigint): string | null =>
+  unixMs < -MAX_DATE_MS || unixMs > MAX_DATE_MS
+    ? null
+    : new Date(Number(unixMs)).toISOString();
 
 const LINK_FLAG_NAMES: ReadonlyArray<readonly [number, string]> = [
   [0x00000001, "HasLinkTargetIDList"],
@@ -146,13 +153,9 @@ const formatGuid = (bytes: Buffer, offset: number): string => {
 
 const fileTime = (raw: bigint): WindowsShortcut["header"]["creation_time"] => {
   if (raw === 0n) return { raw: "0", iso8601: null };
-  const unixMs = (raw - FILETIME_UNIX_EPOCH) / 10000n;
-  if (unixMs < 0n || unixMs > BigInt(Number.MAX_SAFE_INTEGER))
-    return { raw: raw.toString(10), iso8601: null };
-  const date = new Date(Number(unixMs));
   return {
     raw: raw.toString(10),
-    iso8601: Number.isNaN(date.getTime()) ? null : date.toISOString(),
+    iso8601: isoFromUnixMs((raw - FILETIME_UNIX_EPOCH) / 10000n),
   };
 };
 
@@ -192,19 +195,19 @@ const latin1Z = (bytes: Buffer): string => {
   return bytes.subarray(0, end === -1 ? bytes.length : end).toString("latin1");
 };
 
-const utf16Z = (bytes: Buffer): { value: string; odd: boolean } => {
-  if (bytes.length % 2 === 1) return { value: "", odd: true };
-  let end = bytes.length;
+/** Byte offset of the first UTF-16LE NUL code unit, or -1 when unterminated. */
+const utf16TerminatorOf = (bytes: Buffer): number => {
   for (let index = 0; index + 1 < bytes.length; index += 2) {
-    if (bytes[index] === 0 && bytes[index + 1] === 0) {
-      end = index;
-      break;
-    }
+    if (bytes[index] === 0 && bytes[index + 1] === 0) return index;
   }
-  return {
-    value: bytes.subarray(0, end).toString("utf16le"),
-    odd: false,
-  };
+  return -1;
+};
+
+const utf16Z = (bytes: Buffer): string => {
+  const end = utf16TerminatorOf(bytes);
+  return bytes
+    .subarray(0, end === -1 ? bytes.length - (bytes.length % 2) : end)
+    .toString("utf16le");
 };
 
 const uuidV1 = (
@@ -217,21 +220,13 @@ const uuidV1 = (
   const timeMid = BigInt(bytes.readUInt16LE(offset + 4));
   const timeHi = BigInt(timeHiVersion & 0x0fff);
   const timestamp = (timeHi << 48n) | (timeMid << 32n) | timeLow;
-  const unixMs = (timestamp - UUID_UNIX_EPOCH) / 10000n;
-  const date =
-    unixMs >= 0n && unixMs <= BigInt(Number.MAX_SAFE_INTEGER)
-      ? new Date(Number(unixMs))
-      : null;
   return {
     evidence_kind: "derived",
     version: 1,
     mac: [...bytes.subarray(offset + 10, offset + 16)]
       .map((byte) => byte.toString(16).padStart(2, "0"))
       .join(":"),
-    timestamp_iso8601:
-      date !== null && !Number.isNaN(date.getTime())
-        ? date.toISOString()
-        : null,
+    timestamp_iso8601: isoFromUnixMs((timestamp - UUID_UNIX_EPOCH) / 10000n),
     timestamp_100ns: timestamp.toString(10),
   };
 };
@@ -269,11 +264,11 @@ const targetPaths = (report: {
   if (info !== null) {
     const local = info.local_base_path_unicode ?? info.local_base_path;
     const suffix = info.common_path_suffix_unicode ?? info.common_path_suffix;
-    if (local !== null && local.length > 0) values.push(local);
     if (local !== null && suffix !== null && suffix.length > 0)
       values.push(
         `${local.replace(/\\$/u, "")}\\${suffix.replace(/^\\/u, "")}`,
       );
+    if (local !== null && local.length > 0) values.push(local);
     const net = info.common_network_relative_link;
     if (net !== null) {
       const share = net.net_name_unicode ?? net.net_name;
@@ -301,7 +296,15 @@ const observationsOf = (
     "header" | "link_info" | "string_data" | "id_list"
   >,
 ): WindowsShortcut["observations"] => {
-  const argumentsValue = report.string_data.arguments?.value ?? "";
+  const argumentsDeclared = (report.header.link_flags.raw & 0x00000020) !== 0;
+  const argumentsField = report.string_data.arguments;
+  // HasArguments set but the field was not read: presence and length stay unknown.
+  const argumentsValue =
+    argumentsField !== null
+      ? argumentsField.value
+      : argumentsDeclared
+        ? null
+        : "";
   const targets = targetPaths(report);
   const icon = report.string_data.icon_location?.value;
   const iconDiffers =
@@ -314,12 +317,12 @@ const observationsOf = (
     {
       kind: "arguments_present",
       evidence_kind: "derived",
-      value: argumentsValue.length > 0,
+      value: argumentsValue === null ? null : argumentsValue.length > 0,
     },
     {
       kind: "argument_length",
       evidence_kind: "derived",
-      characters: argumentsValue.length,
+      characters: argumentsValue === null ? null : argumentsValue.length,
     },
     {
       kind: "target_extension",
@@ -443,9 +446,19 @@ const readAnsiAt = (
     );
     return null;
   }
-  const value = latin1Z(view.subarray(offset));
-  charge(walk, value.length + 1);
-  return value;
+  const slice = view.subarray(offset);
+  const end = slice.indexOf(0);
+  if (end === -1) {
+    note(
+      walk,
+      "malformed_structure",
+      base + offset,
+      "ANSI string has no NUL terminator inside its structure",
+    );
+    return null;
+  }
+  charge(walk, end + 1);
+  return slice.subarray(0, end).toString("latin1");
 };
 
 const readUtf16At = (
@@ -465,18 +478,18 @@ const readUtf16At = (
     return null;
   }
   const slice = view.subarray(offset);
-  const decoded = utf16Z(slice);
-  if (decoded.odd) {
+  const end = utf16TerminatorOf(slice);
+  if (end === -1) {
     note(
       walk,
-      "odd_unicode_length",
+      slice.length % 2 === 1 ? "odd_unicode_length" : "malformed_structure",
       base + offset,
-      "Unicode string length is not a multiple of two",
+      "Unicode string has no NUL terminator inside its structure",
     );
     return null;
   }
-  charge(walk, (decoded.value.length + 1) * 2);
-  return decoded.value;
+  charge(walk, end + 2);
+  return slice.subarray(0, end).toString("utf16le");
 };
 
 const parseVolume = (
@@ -589,6 +602,13 @@ const parseLinkInfo = (
   }
   const view = bytes.subarray(walk.offset, walk.offset + size);
   const headerSize = view.readUInt32LE(4);
+  if (headerSize < 0x1c || headerSize > size)
+    note(
+      walk,
+      "malformed_structure",
+      walk.offset + 4,
+      `LinkInfoHeaderSize ${String(headerSize)} is outside 0x1C..LinkInfoSize`,
+    );
   const flags = view.readUInt32LE(8);
   const volumeOffset = view.readUInt32LE(12);
   const localOffset = view.readUInt32LE(16);
@@ -678,7 +698,7 @@ const parseStringField = (
     walk.offset + 2 + payloadBytes,
   );
   charge(walk, payloadBytes);
-  const value = unicode ? utf16Z(payload).value : latin1Z(payload);
+  const value = payload.toString(unicode ? "utf16le" : "latin1");
   const field: WindowsShortcutStringField = {
     encoding: unicode ? "unicode" : "ansi",
     count_characters: count,
@@ -696,7 +716,7 @@ const environmentTargets = (
   if (payload.length < 780) return null;
   return {
     target_ansi: latin1Z(payload.subarray(0, 260)),
-    target_unicode: utf16Z(payload.subarray(260, 780)).value,
+    target_unicode: utf16Z(payload.subarray(260, 780)),
   };
 };
 
@@ -821,6 +841,8 @@ const parseIdList = async (
   const end = walk.offset + 2 + byteSize;
   let cursor = walk.offset + 2;
   const items: WindowsShortcutIdListItem[] = [];
+  let terminated = false;
+  let malformed = false;
   while (cursor + 2 <= end) {
     if (items.length > 0 && items.length % ENTRIES_PER_YIELD === 0) {
       await setImmediate();
@@ -829,6 +851,7 @@ const parseIdList = async (
     const size = bytes.readUInt16LE(cursor);
     if (size === 0) {
       cursor += 2;
+      terminated = true;
       break;
     }
     if (size < 2 || cursor + size > end) {
@@ -838,6 +861,7 @@ const parseIdList = async (
         cursor,
         "ItemID size overruns the IDList",
       );
+      malformed = true;
       break;
     }
     if (items.length + 1 > maxItems)
@@ -849,6 +873,13 @@ const parseIdList = async (
     items.push(decodeIdListItem(bytes, cursor, size));
     cursor += size;
   }
+  if (!terminated && !malformed)
+    note(
+      walk,
+      "malformed_structure",
+      cursor,
+      "LinkTargetIDList has no TerminalID inside its declared size",
+    );
   walk.offset = end;
   return {
     location: { offset: start, bytes: 2 + byteSize },

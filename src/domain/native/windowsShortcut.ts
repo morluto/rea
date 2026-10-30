@@ -255,12 +255,12 @@ const extraDataBlockSchema = z.strictObject({
 const argumentsPresentObservationSchema = z.strictObject({
   kind: z.literal("arguments_present"),
   evidence_kind: z.literal("derived"),
-  value: z.boolean(),
+  value: z.boolean().nullable(),
 });
 const argumentLengthObservationSchema = z.strictObject({
   kind: z.literal("argument_length"),
   evidence_kind: z.literal("derived"),
-  characters: uint,
+  characters: uint.nullable(),
 });
 const targetExtensionObservationSchema = z.strictObject({
   kind: z.literal("target_extension"),

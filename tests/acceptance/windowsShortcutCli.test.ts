@@ -1,7 +1,7 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
-import { toolContract } from "../../src/contracts/toolContracts.js";
+import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../../src/contracts/native/binaryDiagnosticsToolContracts.js";
 import {
   powershellHiddenIconSpoofShortcut,
   truncatedStringDataShortcut,
@@ -9,6 +9,15 @@ import {
 } from "../fixtures/binaryDiagnostics/windowsShortcut.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+
+const shortcutContract = (() => {
+  const contract = BINARY_DIAGNOSTICS_TOOL_CONTRACTS.find(
+    (item) => item.name === "inspect_windows_shortcut",
+  );
+  if (contract === undefined)
+    throw new Error("Missing inspect_windows_shortcut contract");
+  return contract;
+})();
 
 cliTest(
   "reports Shell Link facts through CLI and stdio MCP",
@@ -20,9 +29,7 @@ cliTest(
       arguments: ["inspect-windows-shortcut", path, "--json"],
     });
     expect(result.exitCode, result.stderr).toBe(0);
-    const evidence = toolContract(
-      "inspect_windows_shortcut",
-    ).outputSchema.parse(result.json);
+    const evidence = shortcutContract.outputSchema.parse(result.json);
     expect(evidence.normalized_result.header.show_command.decoded).toBe(
       "minimized",
     );
@@ -33,9 +40,9 @@ cliTest(
     if (call === undefined) throw new Error("Expected a stdio MCP session");
     const mcp = await call("inspect_windows_shortcut", { path });
     expect(mcp.isError, JSON.stringify(mcp.content)).not.toBe(true);
-    const mcpEvidence = toolContract(
-      "inspect_windows_shortcut",
-    ).outputSchema.parse(mcp.structuredContent);
+    const mcpEvidence = shortcutContract.outputSchema.parse(
+      mcp.structuredContent,
+    );
     expect(mcpEvidence.normalized_result.observations).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -60,9 +67,7 @@ cliTest(
       cwd: root,
     });
     expect(result.exitCode, result.stderr).toBe(0);
-    const evidence = toolContract(
-      "inspect_windows_shortcut",
-    ).outputSchema.parse(result.json);
+    const evidence = shortcutContract.outputSchema.parse(result.json);
     expect(evidence.subject?.local_path).toBe(join(root, "shortcut.lnk"));
   },
 );
@@ -93,7 +98,7 @@ cliTest(
       arguments: ["inspect-windows-shortcut", path, "--json"],
     });
     expect(result.exitCode, result.stderr).toBe(0);
-    const report = toolContract("inspect_windows_shortcut").outputSchema.parse(
+    const report = shortcutContract.outputSchema.parse(
       result.json,
     ).normalized_result;
     expect(report.coverage.status).toBe("partial");
