@@ -13,7 +13,10 @@ import { createServer as createNetServer } from "node:net";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createDesktopApplicationService } from "../../../src/composition/desktop.js";
-import { desktopApplicationSchema } from "../../../src/domain/desktopApplication.js";
+import {
+  desktopApplicationSchema,
+  type DesktopFact,
+} from "../../../src/domain/desktopApplication.js";
 import { createDesktopApplicationEvidence } from "../../../src/domain/desktopApplicationEvidence.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { inspectAnalysisView } from "../../../src/application/analysisView/AnalysisViewService.js";
@@ -35,6 +38,7 @@ import { DirectoryArtifactReader } from "../../../src/artifacts/DirectoryArtifac
 import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
 import { artifactFilePrimaryFacts } from "../../../src/artifacts/ArtifactFileOperation.js";
 import { DesktopApplicationReader } from "../../../src/artifacts/DesktopApplicationReader.js";
+import { inspectDesktopFile } from "../../../src/artifacts/DesktopFileInspection.js";
 import { DesktopApplicationService } from "../../../src/application/artifacts/DesktopApplicationService.js";
 
 const inspect = async (path: string, extra: Record<string, number> = {}) => {
@@ -732,6 +736,7 @@ it("bounds omitted-entry retention before allocating rows or serializing identit
 const inspectSimulatedRows = async (
   count: number,
   path: (index: number) => string,
+  kind: "file" | "directory" = "directory",
 ) => {
   const root = await createTestTempDirectory("rea-desktop-row-capacity-");
   let yielded = 0;
@@ -743,8 +748,8 @@ const inspectSimulatedRows = async (
           yielded++;
           yield {
             path: path(index),
-            kind: "directory",
-            declaredSize: null,
+            kind,
+            declaredSize: kind === "file" ? 1 : null,
             compressedSize: null,
             executable: false,
             encrypted: false,
@@ -803,6 +808,77 @@ it("charges escaped JSON expansion before retaining control-character paths", as
   expect(Buffer.byteLength(JSON.stringify(report.files))).toBeLessThan(
     32 * 1024 * 1024,
   );
+});
+
+it.each([
+  ["Unreal pack", "Content/Paks/pakchunk0.pak", 0],
+  ["Electron archive", "resources/app.asar", 2],
+])(
+  "charges %s convention facts and probes that repeat control-character paths",
+  async (_name, suffix, probes) => {
+    const { yielded, report } = await inspectSimulatedRows(
+      3000,
+      (index) => `${"\u0001".repeat(1000)}/${index}/${suffix}`,
+      "file",
+    );
+    expect(report.files.length).toBeLessThan(3000);
+    expect(report.files).toHaveLength(yielded - 1);
+    // The fact value and each next probe repeat the escaped path.
+    expect(report.files[0]?.facts).toHaveLength(1);
+    expect(report.next_probes).toHaveLength(probes * report.files.length);
+    expect(report.coverage.status).toBe("partial");
+    expect(report.limitations).toContainEqual(
+      expect.stringContaining("representation budget"),
+    );
+    expect(Buffer.byteLength(JSON.stringify(report))).toBeLessThan(
+      32 * 1024 * 1024,
+    );
+  },
+);
+
+it("charges the next probes a header fact offers before retaining the fact", async () => {
+  const root = await createTestTempDirectory("rea-desktop-fact-probes-");
+  const bytes = buildManagedPeFixture();
+  await put(root, "Managed.dll", bytes);
+  // Each managed fact offers a probe that repeats this escaped local path.
+  const localPath = "\u0001".repeat(100_000);
+  const inspectWithin = async (maximumRetainedBytes: number) => {
+    const row = {
+      file_id: `dsf_${"a".repeat(64)}`,
+      path: "Managed.dll",
+      local_path: localPath,
+      kind: "file" as const,
+      bytes: bytes.length,
+      identity: null,
+      read_status: "not-selected" as const,
+      ranges: [],
+      facts: [] as DesktopFact[],
+      issues: [] as string[],
+    };
+    const file = await open(join(root, "Managed.dll"), "r");
+    try {
+      await inspectDesktopFile(file, row, {
+        bytes: 0,
+        maximum: 1024 * 1024,
+        retainedBytes: 0,
+        maximumRetainedBytes,
+      });
+    } finally {
+      await file.close();
+    }
+    return row;
+  };
+  const refused = await inspectWithin(1024 * 1024);
+  expect(refused.facts).toEqual([]);
+  expect(refused.issues).toEqual([
+    "Directory facts reached the retained metadata budget",
+  ]);
+  const admitted = await inspectWithin(32 * 1024 * 1024);
+  expect(admitted.facts.map((fact) => fact.kind)).toEqual([
+    "native-image-header",
+    "pe-cli-directory",
+  ]);
+  expect(admitted.issues).toEqual([]);
 });
 
 it("preserves the selected root alias and directs follow-ups to the admitted physical root", async () => {
