@@ -1630,7 +1630,9 @@ The plan shows the package, destination and registry before downloading. Setup
 stages and verifies the package before publishing it, and writes no separate
 Cursor MCP registration or skill copy. A matching installation is left in place
 on reruns, including ordinary setup without `--cursor-plugin`, so dropping the
-flag does not create a duplicate direct server. Existing direct integrations stay direct; foreign, edited, linked,
+flag does not create a duplicate direct server. If a local plugin appears or
+becomes unreadable while an ordinary direct setup plan awaits approval, setup
+stops before registration and requires a fresh plan. Existing direct integrations stay direct; foreign, edited, linked,
 incomplete or differently versioned local plugin directories stop with
 remediation and are preserved. Move an old local installation aside deliberately
 before installing a different version. Interrupted downloads retain their owned

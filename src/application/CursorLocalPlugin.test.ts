@@ -368,3 +368,41 @@ it("recognizes a local Cursor plugin on ordinary reruns without another download
   expect(f.downloads).toHaveLength(1);
   expect(f.base.configurations + f.base.skillInstalls).toBe(0);
 });
+
+it.each(["installed", "foreign"] as const)(
+  "refuses an automatically chosen direct route when a %s Cursor plugin appears during approval",
+  async (state) => {
+    const f = await fixture();
+    const result = await runSetup(
+      { ...f.setupOptions, approved: false, structured: false },
+      f.host(false),
+      async () => {
+        if (state === "installed") {
+          expect((await runSetup(f.setupOptions, f.host())).status).toBe(
+            "ready",
+          );
+        } else {
+          await mkdir(f.target, { recursive: true });
+          await writeFile(join(f.target, "user-data"), "preserve");
+        }
+        return true;
+      },
+    );
+    expect(result.status).toBe("needs_human");
+    expect(f.base.configurations + f.base.skillInstalls).toBe(0);
+    await expect(access(f.config)).rejects.toMatchObject({ code: "ENOENT" });
+    if (state === "installed") {
+      expect(f.downloads).toHaveLength(1);
+      expect(JSON.stringify(result)).toContain("Rerun setup");
+      expect((await runSetup(f.setupOptions, f.host(false))).status).toBe(
+        "ready",
+      );
+      expect(f.base.configurations + f.base.skillInstalls).toBe(0);
+    } else {
+      expect(f.downloads).toEqual([]);
+      expect(await readFile(join(f.target, "user-data"), "utf8")).toBe(
+        "preserve",
+      );
+    }
+  },
+);

@@ -18,7 +18,11 @@ interface PluginSetupOptions {
 }
 
 type ClientRoute =
-  | { readonly mode: "direct" }
+  | {
+      readonly mode: "direct";
+      /** Only automatic fallback retains the read-only plugin absence probe. */
+      readonly recheckPlugin?: () => Promise<PluginInspection>;
+    }
   | { readonly mode: "blocked"; readonly remediation: string }
   | {
       readonly mode: "plugin";
@@ -113,7 +117,8 @@ class PluginSetupHost {
     if (state?.status === "unsupported") return { mode: "direct" };
     if (state?.status === "invalid")
       return { mode: "blocked", remediation: state.remediation };
-    if (!this.pluginRequested(id, state)) return { mode: "direct" };
+    if (!this.pluginRequested(id, state))
+      return { mode: "direct", recheckPlugin: () => manager.inspect() };
     const runtimeFailure = await manager.inspectRuntime();
     if (runtimeFailure !== undefined)
       return { mode: "blocked", remediation: runtimeFailure };
@@ -224,14 +229,32 @@ class PluginSetupHost {
             (await this.host.clientNeedsConfigure(client, settings, command));
     };
 
+  private async directPluginChange(
+    route: Extract<ClientRoute, { readonly mode: "direct" }>,
+  ): Promise<string | undefined> {
+    const state = await route.recheckPlugin?.();
+    if (
+      state === undefined ||
+      (state.status === "available" && !state.installed)
+    )
+      return undefined;
+    return state.status === "available"
+      ? "A local Cursor plugin appeared after the direct setup plan was approved. Rerun setup to review the plugin route; no direct registration was added."
+      : state.remediation;
+  }
+
   private configureClient: NonNullable<SetupHost["configureClient"]> = async (
     client,
     settings,
     command,
   ) => {
     const selected = await this.route(client.name);
-    if (selected.mode === "direct")
-      return this.host.configureClient(client, settings, command);
+    if (selected.mode === "direct") {
+      const change = await this.directPluginChange(selected);
+      return change === undefined
+        ? this.host.configureClient(client, settings, command)
+        : { status: "failed", reason: "plugin", detail: change };
+    }
     if (selected.mode === "blocked")
       return {
         status: "failed",
