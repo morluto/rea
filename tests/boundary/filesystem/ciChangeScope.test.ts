@@ -5,6 +5,7 @@ import {
   readFile,
   readdir,
   rename,
+  rm,
   writeFile,
 } from "node:fs/promises";
 import { dirname, join, matchesGlob } from "node:path";
@@ -287,6 +288,29 @@ it("does not charge a documentation PR for unrelated implementation updates on m
     package: false,
   });
 });
+
+it.each(["modify", "delete", "rename"])(
+  "keeps the packaged portable guide on the package lane after %s",
+  async (operation) => {
+    const { directory } = await fixture();
+    const path = "docs/portable-windows.md";
+    const base = await change(directory, [path], "Portable artifact input\n");
+    if (operation === "modify")
+      await writeFile(join(directory, path), "Updated portable guide\n");
+    else if (operation === "delete") await rm(join(directory, path));
+    else await rename(join(directory, path), join(directory, "docs/moved.md"));
+    const head = await commit(directory);
+    expect(await classify(directory, base, head)).toMatchObject({
+      code: true,
+      package: true,
+      runtime: true,
+      docs: true,
+      apple: false,
+      browser: false,
+      evm: false,
+    });
+  },
+);
 
 it.each([
   "src/gdb/GdbSessionManager.ts",
@@ -833,6 +857,38 @@ it.each([
     { code: true, runtime: true, package: true, javascript_recovery: true },
   ],
   ["install.sh", { code: true, runtime: true, package: true, evm: false }],
+  [
+    "scripts/package-portable-windows.mjs",
+    { code: true, runtime: true, package: true, apple: false, evm: false },
+  ],
+  [
+    "scripts/verify-portable-windows.mjs",
+    { code: true, runtime: true, package: true, apple: false, evm: false },
+  ],
+  [
+    "scripts/lib/portable-dependencies.mjs",
+    { code: true, runtime: true, package: true, apple: false, evm: false },
+  ],
+  [
+    "scripts/lib/portable-inventory.mjs",
+    { code: true, runtime: true, package: true, apple: false, evm: false },
+  ],
+  [
+    "scripts/lib/portable-launcher.ps1",
+    { code: true, runtime: true, package: true, apple: false, evm: false },
+  ],
+  [
+    "tests/process-global/runnerCancellation.test.ts",
+    { code: true, runtime: true, package: true, apple: false, evm: false },
+  ],
+  [
+    "tests/process-global/portableCommand.test.ts",
+    { code: true, runtime: true, package: true, apple: false, evm: false },
+  ],
+  [
+    "tests/process-global/portableInventory.test.ts",
+    { code: true, runtime: true, package: true, apple: false, evm: false },
+  ],
   [
     ".agents/skills/reverse-engineer-anything/SKILL.md",
     { code: true, runtime: true, docs: true, package: false, evm: false },
@@ -1647,6 +1703,12 @@ it("owns every explicit native-host test path with the lane that runs it", async
     );
   expect(listed("apple-artifacts").length).toBeGreaterThan(0);
   expect(listed("windows-curated").length).toBeGreaterThan(0);
+  expect(listed("windows-curated")).toContain(
+    "tests/process-global/portableCommand.test.ts",
+  );
+  expect(listed("windows-curated")).toContain(
+    "tests/process-global/portableInventory.test.ts",
+  );
   expect(unowned("apple-artifacts", "apple")).toEqual([]);
   expect(unowned("windows-curated", "package")).toEqual([]);
 });

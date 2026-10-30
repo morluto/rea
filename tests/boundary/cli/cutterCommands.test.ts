@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
-import ts from "typescript6";
+import { parse } from "@babel/parser";
+import { traverseFast } from "@babel/types";
 
 import { serveCli } from "./cliServeHarness.js";
 import {
@@ -29,38 +30,32 @@ const assertRealVerifierJsonInspection = async (
   commandJsonModes: readonly boolean[],
 ): Promise<void> => {
   // Exercise the actual real-verifier command selection against the public CLI.
-  const source = ts.createSourceFile(
-    "verify-real-cutter.mjs",
+  const source = parse(
     await readFile("scripts/verify-real-cutter.mjs", "utf8"),
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.JS,
+    { sourceType: "module" },
   );
   const observations: string[][] = [];
-  const visit = (node: ts.Node): void => {
+  traverseFast(source, (node) => {
     if (
-      ts.isCallExpression(node) &&
-      ts.isIdentifier(node.expression) &&
-      node.expression.text === "runCli" &&
-      ts.isStringLiteral(node.arguments[0]!) &&
-      node.arguments[0].text === "cutter-command" &&
-      node.arguments[3] !== undefined &&
-      ts.isStringLiteral(node.arguments[3]) &&
-      node.arguments[3].text === "ij"
+      node.type === "CallExpression" &&
+      node.callee.type === "Identifier" &&
+      node.callee.name === "runCli" &&
+      node.arguments[0]?.type === "StringLiteral" &&
+      node.arguments[0].value === "cutter-command" &&
+      node.arguments[3]?.type === "StringLiteral" &&
+      node.arguments[3].value === "ij"
     ) {
       observations.push(
         node.arguments.slice(4).map((argument) => {
-          if (!ts.isStringLiteral(argument))
+          if (argument.type !== "StringLiteral")
             throw new Error(
               "Verifier inspection flags must be explicit arguments",
             );
-          return argument.text;
+          return argument.value;
         }),
       );
     }
-    ts.forEachChild(node, visit);
-  };
-  visit(source);
+  });
   expect(observations).toHaveLength(1);
   const verification = await serveCli(
     [

@@ -249,6 +249,11 @@ if (tier === "reused") {
           (/\.(?:[cm]?[jt]s|[jt]sx)$/u.test(file) ||
             file.endsWith("/package.json"));
         selected.website ||= matchesAny(file, SCOPES.website);
+        // Authored docs copied into a shipped artifact also own package checks.
+        const packaged =
+          file.startsWith("docs/") && matchesAny(file, SCOPES.package);
+        selected.package ||= packaged;
+        selected.code ||= packaged;
         continue;
       }
       if (/^(src|tests)\/.*\.(?:test|spec)\.[cm]?[jt]sx?$/.test(file)) {

@@ -13,6 +13,8 @@
     "scripts/verify/fridaBindingsCompatibility.ts",
     "scripts/verify/termux/browser.mjs",
     "scripts/verify-real-ghidra-noreturn.mjs",
+    "scripts/package-portable-windows.mjs",
+    "scripts/lib/portable-node-bootstrap.mjs",
     "scripts/verify-real-ghidra-decompiler-failure.mjs",
     "scripts/verify-real-ghidra-decompile-timeout.mjs",
     "tests/processOwnershipRunner.ts"

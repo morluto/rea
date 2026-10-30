@@ -550,6 +550,12 @@ non-TTY, and JSON modes without applying configuration changes.
 
 ## Released package and main
 
+For a Windows x64 directory with its own Node runtime and production
+dependencies, see [Windows portable preparation](portable-windows.md). The
+preparation machine needs the development toolchain; the resulting directory
+starts without npm on the destination machine. External analysis engines remain
+separate prerequisites.
+
 Repository main documents its current code and generated catalog. `@latest`
 selects the npm release, and managed MCP registrations bind the installation
 that performed setup. Installing newer instructions does not update a

@@ -368,15 +368,25 @@ it.runIf(process.platform === "win32")(
   "resolves bare node and Windows command shims without losing arguments",
   async () => {
     const directory = await createTestTempDirectory("rea-runner-shims-");
-    const payload = 'argument with spaces and "quotes" & ^ % !';
-    const code = "process.stdout.write(JSON.stringify(process.argv.slice(1)))";
-    expect(
-      await execute(directory, "node", ["-e", code, payload]),
-    ).toMatchObject({
-      code: 0,
-      stdout: JSON.stringify([payload]),
-      stderr: "",
-    });
+    const entry = join(directory, "capture %PATH% & !NAME! 中文.mjs");
+    const payload = [
+      'argument with spaces and "quotes" & ^ % !',
+      "C:\\Users\\Jane Doe\\node runtime",
+      "E:\\便携包 & archive\\",
+      "%PATH% ^ (literal) !",
+    ];
+    await writeFile(
+      entry,
+      "process.stdout.write(JSON.stringify(process.argv.slice(2)))",
+      "utf8",
+    );
+    expect(await execute(directory, "node", [entry, ...payload])).toMatchObject(
+      {
+        code: 0,
+        stdout: JSON.stringify(payload),
+        stderr: "",
+      },
+    );
 
     const npm = await execute(directory, "npm", ["--version"]);
     expect(npm).toMatchObject({ code: 0, stderr: "" });
