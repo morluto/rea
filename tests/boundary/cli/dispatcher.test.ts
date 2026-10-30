@@ -413,6 +413,7 @@ describe("executable dispatcher JavaScript shutdown", () => {
       await installCliRuntime(
         workspace,
         'export const closeCliResources = () => Promise.reject(new Error("worker still owned")); export const createCli = () => ({ serve: (_args, options) => { options.exit(); } });\n',
+        'export const createCliResultOutput = () => ({ handled: false, failed: false, captureSdkOutput: () => true, finishSdkOutput: async (status) => { process.stderr.write(`finalization status: ${status}\\n`); } });\n',
       );
       const result = await processes.run(
         process.execPath,
@@ -421,6 +422,7 @@ describe("executable dispatcher JavaScript shutdown", () => {
       );
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain("worker still owned");
+      expect(result.stderr).toContain("finalization status: 1");
     },
   );
 
