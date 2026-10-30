@@ -35,10 +35,10 @@ import { verifyGhidraAddressBoundaries } from "./lib/real-ghidra-address-boundar
 // This lane intentionally has no game paths, binary seeds or compiler dependency.
 if (process.argv.length !== 2)
   throw new Error("Usage: node scripts/verify-real-ghidra-dos.mjs");
-if (!["linux", "darwin"].includes(process.platform))
-  throw new Error(
-    "verify:ghidra:dos supports Linux/macOS hosts only; Windows P0 is PE x86-64 only.",
-  );
+if (!["linux", "darwin", "win32"].includes(process.platform))
+  throw new Error("verify:ghidra:dos supports Linux, macOS and Windows hosts.");
+// Windows P0 is read-only: annotation and naming edits must be refused.
+const windows = process.platform === "win32";
 if (process.env.GHIDRA_INSTALL_DIR === undefined)
   throw new Error(
     "verify:ghidra:dos prerequisite missing: GHIDRA_INSTALL_DIR (bring your own Ghidra).",
@@ -72,6 +72,8 @@ await writeFile(targetPath, fixture.bytes, { mode: 0o600 });
 const sha256 = digest(fixture.bytes);
 const entrypoint = fileURLToPath(new URL("./rea.mjs", import.meta.url));
 const env = {
+  // Windows children need the system environment (SystemRoot, profile paths).
+  ...(windows ? { ...process.env, TMP: runtime, TEMP: runtime } : {}),
   PATH: process.env.PATH ?? "/usr/bin:/bin",
   TMPDIR: runtime,
   REA_LOG_LEVEL: "silent",
@@ -382,6 +384,7 @@ try {
     client,
     identities.entry.address,
     cliEvidence,
+    { mutable: !windows },
   );
   const cliWindow = await cliEvidence("instructions", identities.entry.address);
   assert.deepEqual(
@@ -451,7 +454,11 @@ try {
       "The complete body is Ghidra's observed AddressSet, not independently proven historical compiler ownership.",
       "Language/compiler identity is bound by the production authenticated bridge handshake; profile loader is the declared import policy.",
       "Native high-pcode flow is excluded from cross-runtime parity: LOAD/STORE address-space selector constants are process-specific in current Ghidra output. Both dossiers are still strictly parsed.",
-      "Windows P0 remains unsupported for DOS MZ.",
+      ...(windows
+        ? [
+            "Windows P0 is read-only: annotation and naming edits were checked as refused, not exercised.",
+          ]
+        : []),
     ],
   };
 } catch (error) {
@@ -487,7 +494,8 @@ try {
 }
 assert.ok(report, "No DOS proof report was produced");
 const verifierRun = await completeVerifierRun(run);
-assertVerifierCleanupComplete(verifierRun.process_lineage);
+// Windows provider jobs are verified by their native owners, as in the 6502 lane.
+if (!windows) assertVerifierCleanupComplete(verifierRun.process_lineage);
 process.stdout.write(
   `${JSON.stringify({ verifier_run: verifierRun, ...report, cleanup: "complete" })}\n`,
 );

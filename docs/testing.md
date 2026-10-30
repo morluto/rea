@@ -1440,13 +1440,14 @@ unverified by this lane.
 ## DOS Ghidra analysis
 
 `npm run verify:ghidra:dos` requires the supported Ghidra and JDK installation
-on Linux x64 or macOS x64/arm64. It generates a source-owned MZ fixture without
+on Linux x64, macOS x64/arm64, or Windows x64 P0. It generates a source-owned MZ fixture without
 a DOS emulator or compiler, then checks real 16-bit decoding, segment
 relocation, near/far calls, decompilation, disjoint function body ranges,
 stable CLI/MCP observations, unchanged source bytes, and owned process/project
 cleanup. Raw p-code address-space selector tokens are reported separately from
-the stable observation comparison. Linux x64 and macOS arm64 are verified;
-macOS x64 remains unverified. This lane is separate from host-native and optional cross-format
+the stable observation comparison. Linux x64, macOS arm64 and Windows x64 are
+verified; macOS x64 remains unverified. On Windows P0 the lane checks that
+annotation edits are refused instead of exercising them. This lane is separate from host-native and optional cross-format
 verification. See [DOS analysis](ghidra-dos.md).
 
 `npm run verify:ghidra:com` uses a generated headerless fixture with no compiler,

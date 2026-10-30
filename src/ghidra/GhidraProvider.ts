@@ -683,7 +683,10 @@ const inspectWindowsP0TargetSupport = (
   // The raw 6502 lane uses the same immutable snapshot and native ownership boundary.
   if (target.format === "raw-binary" && target.architecture === "6502")
     return { status: "supported", code: null, reason: null, diagnostics };
-  // DOL is verified on POSIX hosts only; Windows P0 does not admit it, like the other non-PE lanes.
+  // DOS MZ reuses the host-neutral MzLoader import and its attested load image.
+  if (target.format === "dos-mz")
+    return { status: "supported", code: null, reason: null, diagnostics };
+  // DOL is verified on POSIX hosts only; Windows P0 does not admit it.
   if (target.format === "gamecube-dol")
     return {
       status: "unsupported",
@@ -697,7 +700,7 @@ const inspectWindowsP0TargetSupport = (
       status: "unsupported",
       code: "target_format_unsupported",
       reason:
-        "Windows Ghidra P0 accepts native PE and explicitly selected raw 6502 targets only.",
+        "Windows Ghidra P0 accepts native PE, DOS MZ, and explicitly selected raw 6502 targets only.",
       diagnostics,
     };
   if (!WINDOWS_P0_NATIVE_PE_ARCHITECTURES.includes(target.architecture))
