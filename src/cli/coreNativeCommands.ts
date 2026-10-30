@@ -264,7 +264,9 @@ export const registerCoreNativeCommands = (
   cli.command(CLI_COMMANDS.inspectNativeDataType, {
     description: `Inspect one recovered database type or typed data object. ${dataTypeSelectorGuidance}`,
     args: z.object({
-      path: z.string().describe("Local native executable or app path"),
+      path: localPathStringSchema.describe(
+        "Local native executable or app path",
+      ),
     }),
     options: z.object({
       type: z
