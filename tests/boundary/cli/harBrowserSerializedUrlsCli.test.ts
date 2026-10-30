@@ -42,6 +42,22 @@ const BROWSER_SERIALIZED = [
 ];
 
 cliTest(
+  "keeps admitting an RFC 3986 request URL that WHATWG would rewrite",
+  async ({ cli }) => {
+    const url = "https://EXAMPLE.test/a";
+    expect(new URL(url).href).not.toBe(url);
+    const har = await writeHar([url]);
+    const inspected = await cli.run({
+      arguments: ["inspect-web-network-capture", har, "har", "--json"],
+    });
+    expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
+    expect(inspected.json).toMatchObject({
+      normalized_result: { records: [{ reported: { request: { url } } }] },
+    });
+  },
+);
+
+cliTest(
   "inspects and builds HARs whose request URLs are browser serializations",
   async ({ cli }) => {
     for (const url of BROWSER_SERIALIZED)

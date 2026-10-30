@@ -137,8 +137,9 @@ const HAR_REQUEST_URL_FORMAT = "absolute-url";
 // HAR 1.2 defines request.url only as the absolute request URL. har-schema's
 // RFC 3986 `uri` format rejects URLs exactly as browsers serialize and send
 // them, such as an unescaped `|` or `{` in the query. Keep every RFC 3986 URL
-// admitted, and also admit a spelling that WHATWG URL serialization reproduces
-// unchanged, so its recorded text and its WHATWG reading cannot disagree.
+// admitted, even one WHATWG would rewrite. Otherwise admit only a spelling that
+// WHATWG URL serialization reproduces unchanged, so a URL admitted by this
+// branch reads the same under WHATWG as it was recorded.
 const harRequestUrlValidator = (
   plugin: object,
 ): ((value: string) => boolean) => {
