@@ -115,6 +115,18 @@ const withJsonInputPipeline = async <Value>(
   else signal.addEventListener("abort", cancel, { once: true });
   try {
     return await run(controller.signal);
+  } catch (cause: unknown) {
+    // Node 22 wraps this pipeline's own abort reason; normalize it at its owner.
+    if (
+      controller.signal.aborted &&
+      cause instanceof Error &&
+      cause.name === "AbortError" &&
+      "code" in cause &&
+      cause.code === "ABORT_ERR" &&
+      cause.cause === controller.signal.reason
+    )
+      throw controller.signal.reason;
+    throw cause;
   } finally {
     signal.removeEventListener("abort", cancel);
   }

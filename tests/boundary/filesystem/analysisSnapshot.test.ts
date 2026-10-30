@@ -289,7 +289,10 @@ describe("analysis snapshot member decoding", () => {
     try {
       expect(await pending).toMatchObject({
         ok: false,
-        error: { _tag: "AnalysisCancelledError" },
+        error: {
+          _tag: "AnalysisCancelledError",
+          cause: controller.signal.reason,
+        },
       });
       expect(reads.readCount).toBe(1);
     } finally {
