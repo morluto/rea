@@ -21,6 +21,13 @@ export interface HidCollection {
   readonly usageHex: string | null;
 }
 
+export interface HidFieldUsage {
+  readonly usagePage: number;
+  readonly usagePageHex: string;
+  readonly usage: number;
+  readonly usageHex: string;
+}
+
 export interface HidReportField {
   readonly usagePage: number;
   readonly usagePageHex: string;
@@ -28,6 +35,7 @@ export interface HidReportField {
   readonly usageHex: string | null;
   readonly usages: readonly number[];
   readonly usagesHex: readonly string[];
+  readonly usageEntries: readonly HidFieldUsage[];
   readonly usageMin: number | null;
   readonly usageMax: number | null;
   readonly reportSizeBits: number;
@@ -81,7 +89,7 @@ interface HidGlobalState {
 
 interface HidLocalUsage {
   id: number;
-  page: number | null;
+  page: number;
   raw: number;
 }
 
@@ -142,14 +150,20 @@ function handleLocalItem(
   bTag: number,
   data: number,
   dataLength: number,
+  global: HidGlobalState,
   local: HidLocalState,
   vendorUsagePages: Set<string>,
 ): void {
+  // Only Usage (0x00), Usage Minimum (0x01), and Usage Maximum (0x02) carry usages.
+  if (bTag !== 0x00 && bTag !== 0x01 && bTag !== 0x02) {
+    return;
+  }
+
   const isExtended = dataLength === 4;
-  const page = isExtended ? (data >>> 16) & 0xffff : null;
+  const page = isExtended ? (data >>> 16) & 0xffff : global.usagePage;
   const id = isExtended ? data & 0xffff : data;
 
-  if (page !== null && page >= 0xff00 && page <= 0xffff) {
+  if (isExtended && page >= 0xff00 && page <= 0xffff) {
     vendorUsagePages.add(`0x${page.toString(16).toUpperCase()}`);
   }
 
@@ -236,7 +250,13 @@ function handleMainItem(
 
   const primary = local.usages[0];
   const fieldPage = primary?.page ?? local.usageMinPage ?? global.usagePage;
-  const usages = local.usages.map((u) => u.id);
+  const usageEntries: HidFieldUsage[] = local.usages.map((u) => ({
+    usagePage: u.page,
+    usagePageHex: `0x${u.page.toString(16).toUpperCase()}`,
+    usage: u.id,
+    usageHex: `0x${u.id.toString(16).toUpperCase()}`,
+  }));
+  const usages = local.usages.map((u) => u.raw);
   const usagesHex = usages.map((u) => `0x${u.toString(16).toUpperCase()}`);
   const usageId = primary?.id ?? null;
 
@@ -248,6 +268,7 @@ function handleMainItem(
       usageId !== null ? `0x${usageId.toString(16).toUpperCase()}` : null,
     usages,
     usagesHex,
+    usageEntries,
     usageMin: local.usageMin,
     usageMax: local.usageMax,
     reportSizeBits: global.reportSize,
@@ -372,7 +393,7 @@ export function parseHidReportDescriptor(
     if (typeName === "global") {
       handleGlobalItem(bTag, data, global, globalStack, vendorUsagePages);
     } else if (typeName === "local") {
-      handleLocalItem(bTag, data, dataLength, local, vendorUsagePages);
+      handleLocalItem(bTag, data, dataLength, global, local, vendorUsagePages);
     } else if (typeName === "main") {
       handleMainItem(
         bTag,

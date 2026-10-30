@@ -175,6 +175,50 @@ describe("HID Report Descriptor - Usage Lists and Collections", () => {
     expect(field.usage).toBe(1);
     expect(field.usages).toEqual([1, 2, 3]);
     expect(field.usagesHex).toEqual(["0x1", "0x2", "0x3"]);
+    expect(field.usageEntries.length).toBe(3);
+    expect(field.usageEntries[0]?.usagePage).toBe(0x09);
+    expect(field.usageEntries[0]?.usage).toBe(1);
+  });
+
+  it("keeps encoded pages and field usage entries when mixing extended usages from different pages", () => {
+    // 0x00010030 (Generic Desktop X) and 0x000C00E9 (Consumer Volume Increment)
+    const mixedExtendedDescriptor = [
+      0x0b,
+      0x30,
+      0x00,
+      0x01,
+      0x00, // Usage (0x00010030)
+      0x0b,
+      0xe9,
+      0x00,
+      0x0c,
+      0x00, // Usage (0x000C00E9)
+      0x75,
+      0x08, // Report Size (8 bits)
+      0x95,
+      0x02, // Report Count (2)
+      0x81,
+      0x02, // Input
+    ];
+
+    const result = parseHidReportDescriptor(mixedExtendedDescriptor);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.error.reason);
+
+    const report = result.value.reports[0];
+    if (!report) throw new Error("Expected report");
+    const field = report.fields[0];
+    if (!field) throw new Error("Expected field");
+
+    // Retains raw encoded values in usages array
+    expect(field.usages).toEqual([0x00010030, 0x000c00e9]);
+
+    // Exposes structured usageEntries with individual usagePage and usage
+    expect(field.usageEntries.length).toBe(2);
+    expect(field.usageEntries[0]?.usagePage).toBe(0x01);
+    expect(field.usageEntries[0]?.usage).toBe(0x30);
+    expect(field.usageEntries[1]?.usagePage).toBe(0x0c);
+    expect(field.usageEntries[1]?.usage).toBe(0xe9);
   });
 });
 
@@ -286,6 +330,9 @@ describe("HID Report Descriptor - Validation and Vendor Extensions", () => {
     expect(report.fields[0]?.usagePageHex).toBe("0xFF13");
     expect(report.fields[0]?.usage).toBe(1);
     expect(report.fields[0]?.usageHex).toBe("0x1");
+    expect(report.fields[0]?.usages).toEqual([0xff130001]);
+    expect(report.fields[0]?.usageEntries[0]?.usagePage).toBe(0xff13);
+    expect(report.fields[0]?.usageEntries[0]?.usage).toBe(1);
     expect(result.value.vendorUsagePages).toContain("0xFF13");
 
     // Raw unsigned 32-bit value preserved in items
@@ -328,6 +375,23 @@ describe("HID Report Descriptor - Validation and Vendor Extensions", () => {
       (item) => item.type === "local" && item.tag === 0,
     );
     expect(rawUsage?.data).toBe(0xff130001);
+  });
+
+  it("ignores reserved local item tags without polluting vendor usage pages", () => {
+    // Reserved local item tag 0x0F (prefix 0xFB) with 4-byte payload
+    const reservedLocal = [0xfb, 0x01, 0x00, 0x13, 0xff];
+    const result = parseHidReportDescriptor(reservedLocal);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.error.reason);
+
+    // Vendor usage pages must remain empty for non-usage items
+    expect(result.value.vendorUsagePages).toEqual([]);
+
+    // Raw item is preserved opaquely in items
+    expect(result.value.items.length).toBe(1);
+    expect(result.value.items[0]?.type).toBe("local");
+    expect(result.value.items[0]?.tag).toBe(0x0f);
+    expect(result.value.items[0]?.data).toBe(0xff130001);
   });
 
   it("identifies custom hardware vendor usage pages (e.g. 0xFF13 for Aula keyboard configuration)", () => {
