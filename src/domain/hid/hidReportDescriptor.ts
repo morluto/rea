@@ -29,12 +29,6 @@ export interface HidReportField {
 export interface HidEndpointReport {
   readonly reportId: number | null;
   readonly reportType: "input" | "output" | "feature";
-  readonly usagePage: number;
-  readonly usagePageHex: string;
-  readonly usage: number | null;
-  readonly usageHex: string | null;
-  readonly reportSizeBits: number;
-  readonly reportCount: number;
   readonly totalBits: number;
   readonly totalSizeBytes: number;
   readonly fields: readonly HidReportField[];
@@ -83,12 +77,6 @@ interface HidLocalState {
 interface MutableEndpointReport {
   reportId: number | null;
   reportType: "input" | "output" | "feature";
-  usagePage: number;
-  usagePageHex: string;
-  usage: number | null;
-  usageHex: string | null;
-  reportSizeBits: number;
-  reportCount: number;
   totalBits: number;
   totalSizeBytes: number;
   fields: HidReportField[];
@@ -175,15 +163,6 @@ function handleMainItem(
     report = {
       reportId: global.reportId,
       reportType,
-      usagePage: global.usagePage,
-      usagePageHex: `0x${global.usagePage.toString(16).toUpperCase()}`,
-      usage: local.usages[0] ?? null,
-      usageHex:
-        local.usages[0] !== undefined
-          ? `0x${local.usages[0].toString(16).toUpperCase()}`
-          : null,
-      reportSizeBits: global.reportSize,
-      reportCount: 0,
       totalBits: 0,
       totalSizeBytes: 0,
       fields: [],
@@ -195,7 +174,6 @@ function handleMainItem(
   const bitLength = global.reportSize * global.reportCount;
   const bitOffset = report.totalBits;
   report.totalBits += bitLength;
-  report.reportCount += global.reportCount;
   report.totalSizeBytes =
     Math.ceil(report.totalBits / 8) + (report.reportId !== null ? 1 : 0);
 
@@ -225,6 +203,17 @@ export function parseHidReportDescriptor(
   rawBytes: Uint8Array | readonly number[],
 ): Result<ParsedHidDescriptor, HidDescriptorFailure> {
   const bytes = Array.from(rawBytes);
+
+  for (let i = 0; i < bytes.length; i++) {
+    const b = bytes[i];
+    if (typeof b !== "number" || !Number.isInteger(b) || b < 0 || b > 255) {
+      return err({
+        reason: `invalid byte value at index ${String(i)}: expected integer 0..255, got ${String(b)}`,
+        offset: i,
+      });
+    }
+  }
+
   const items: HidItem[] = [];
   const vendorUsagePages = new Set<string>();
   const reportMap = new Map<string, MutableEndpointReport>();

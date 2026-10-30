@@ -4,7 +4,7 @@ import {
   HID_USAGE_PAGE_NAMES,
 } from "./hidReportDescriptor.js";
 
-describe("HID Report Descriptor Parser", () => {
+describe("HID Report Descriptor - Parsing and Layout", () => {
   it("decodes standard keyboard input report descriptor items", () => {
     const descriptor = [
       0x05,
@@ -45,9 +45,9 @@ describe("HID Report Descriptor Parser", () => {
     if (!report) throw new Error("Expected input report");
     expect(report.reportId).toBe(1);
     expect(report.reportType).toBe("input");
-    expect(report.usagePage).toBe(0x07);
-    expect(report.reportSizeBits).toBe(1);
-    expect(report.reportCount).toBe(8);
+    expect(report.fields[0]?.usagePage).toBe(0x07);
+    expect(report.fields[0]?.reportSizeBits).toBe(1);
+    expect(report.fields[0]?.reportCount).toBe(8);
     // 8 bits payload + 1 byte report ID = 2 bytes total
     expect(report.totalSizeBytes).toBe(2);
     // Issue 6: Collection usage does not leak into modifier field
@@ -98,9 +98,50 @@ describe("HID Report Descriptor Parser", () => {
     expect(report.fields[0]?.bitOffset).toBe(0);
     expect(report.fields[1]?.bitOffset).toBe(8);
   });
+
+  it("correctly models mixed-size field layouts without contradictory report sizes", () => {
+    // Report ID 3: two 8-bit fields (16 bits) followed by eight 1-bit fields (8 bits) = 24 bits total
+    const mixedDescriptor = [
+      0x85,
+      0x03, // Report ID (3)
+      0x75,
+      0x08, // Report Size (8 bits)
+      0x95,
+      0x02, // Report Count (2)
+      0x81,
+      0x02, // Input (16 bits)
+      0x75,
+      0x01, // Report Size (1 bit)
+      0x95,
+      0x08, // Report Count (8)
+      0x81,
+      0x02, // Input (8 bits)
+    ];
+
+    const result = parseHidReportDescriptor(mixedDescriptor);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.error.reason);
+
+    const report = result.value.reports[0];
+    if (!report) throw new Error("Expected mixed report");
+    expect(report.totalBits).toBe(24);
+    // 24 bits / 8 = 3 bytes + 1 byte report ID = 4 bytes total
+    expect(report.totalSizeBytes).toBe(4);
+    expect(report.fields.length).toBe(2);
+
+    expect(report.fields[0]?.reportSizeBits).toBe(8);
+    expect(report.fields[0]?.reportCount).toBe(2);
+    expect(report.fields[0]?.bitOffset).toBe(0);
+    expect(report.fields[0]?.bitLength).toBe(16);
+
+    expect(report.fields[1]?.reportSizeBits).toBe(1);
+    expect(report.fields[1]?.reportCount).toBe(8);
+    expect(report.fields[1]?.bitOffset).toBe(16);
+    expect(report.fields[1]?.bitLength).toBe(8);
+  });
 });
 
-describe("HID Report Descriptor Advanced Features", () => {
+describe("HID Report Descriptor - Global Stack and Long Items", () => {
   it("handles Push and Pop global item stack (Issue 7)", () => {
     const pushPopDescriptor = [
       0x85,
@@ -128,7 +169,7 @@ describe("HID Report Descriptor Advanced Features", () => {
     if (!report) throw new Error("Expected input report");
     // Pop restored Report ID 1 and Report Size 8
     expect(report.reportId).toBe(1);
-    expect(report.reportSizeBits).toBe(8);
+    expect(report.fields[0]?.reportSizeBits).toBe(8);
   });
 
   it("skips 0xFE long-item payloads without corrupting item parsing (Issue 8)", () => {
@@ -157,6 +198,17 @@ describe("HID Report Descriptor Advanced Features", () => {
     const report = result.value.reports[0];
     if (!report) throw new Error("Expected input report");
     expect(report.reportId).toBe(1); // Not 7!
+  });
+});
+
+describe("HID Report Descriptor - Validation and Vendor Extensions", () => {
+  it("rejects invalid or negative byte arrays without hanging (Issue 1)", () => {
+    const invalidDescriptor = [0xfe, -3, 1];
+    const result = parseHidReportDescriptor(invalidDescriptor);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected failure for negative byte");
+    expect(result.error.reason).toContain("invalid byte value at index 1");
+    expect(result.error.offset).toBe(1);
   });
 
   it("returns failure on truncated descriptor items (Issue 9)", () => {
@@ -192,8 +244,8 @@ describe("HID Report Descriptor Advanced Features", () => {
 
     const report = result.value.reports[0];
     if (!report) throw new Error("Expected report");
-    expect(report.usage).toBe(0xff130001);
-    expect(report.usageHex).toBe("0xFF130001");
+    expect(report.fields[0]?.usage).toBe(0xff130001);
+    expect(report.fields[0]?.usageHex).toBe("0xFF130001");
   });
 
   it("identifies custom hardware vendor usage pages (e.g. 0xFF13 for Aula keyboard configuration)", () => {
@@ -229,9 +281,9 @@ describe("HID Report Descriptor Advanced Features", () => {
     const feature = result.value.reports[0];
     if (!feature) throw new Error("Expected feature report");
     expect(feature.reportType).toBe("feature");
-    expect(feature.usagePage).toBe(0xff13);
-    expect(feature.reportSizeBits).toBe(8);
-    expect(feature.reportCount).toBe(64);
+    expect(feature.fields[0]?.usagePage).toBe(0xff13);
+    expect(feature.fields[0]?.reportSizeBits).toBe(8);
+    expect(feature.fields[0]?.reportCount).toBe(64);
     expect(feature.totalSizeBytes).toBe(64);
   });
 
