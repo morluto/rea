@@ -16,6 +16,8 @@ public class ReaPrototypeConflictProbe extends GhidraScript {
         requireNoRead(0x1100);      // XCHG EAX, EBP before the frame-relative read.
         requireNoRead(0x1200);      // MOV BP, AX before the frame-relative read.
         requireRead(0x1300, 0x1303);
+        requireRead(0x1600, 0x1603); // Read through old frame before overwriting EBP.
+        requireNoRead(0x1700);      // POP [EBP+8] reads from ESP, not EBP.
         Instruction ret8 = decode(0x1400).get(0);
         Instruction ret0 = decode(0x1500).get(0);
         require(Long.valueOf(8).equals(ReaGhidraBridge.conflictingReturnCleanup(ret8, 0)),

@@ -2699,9 +2699,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
             Address address = pending.removeFirst();
             if (!visited.add(address)) continue;
             Instruction instruction = decoded.get(address);
-            if (instruction == null || writesFramePointer(instruction)) continue;
+            if (instruction == null) continue;
             Long offset = frameArgumentOffset(instruction);
             if (offset != null) return new FrameRead(instruction, offset);
+            // The read uses the old EBP value; a write invalidates only successors.
+            if (writesFramePointer(instruction)) continue;
             Address fallThrough = instruction.getFallThrough();
             if (fallThrough != null && decoded.containsKey(fallThrough)) pending.add(fallThrough);
             for (Address destination : instruction.getFlows()) {
@@ -2714,14 +2716,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
     static record FrameRead(Instruction instruction, long offset) {}
 
     private static Long frameArgumentOffset(Instruction instruction) {
-        boolean loadsMemory = false;
-        for (PcodeOp operation : instruction.getPcode()) {
-            if (operation.getOpcode() == PcodeOp.LOAD) {
-                loadsMemory = true;
-                break;
-            }
-        }
-        if (!loadsMemory) return null;
+        PcodeOp[] operations = instruction.getPcode();
         for (int operand = 0; operand < instruction.getNumOperands(); operand++) {
             int type = instruction.getOperandType(operand);
             if (!OperandType.isDynamic(type) && !OperandType.isIndirect(type)) continue;
@@ -2734,9 +2729,19 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 else if (object instanceof Scalar scalar) offset = scalar;
             }
             // An indexed operand has additional objects, not a direct [EBP + disp].
-            if (base != null && offset != null &&
-                base.getName().equalsIgnoreCase("EBP") && offset.getSignedValue() >= 8)
-                return offset.getSignedValue();
+            if (base == null || offset == null ||
+                !base.getName().equalsIgnoreCase("EBP") || offset.getSignedValue() < 8)
+                continue;
+            PcodeOp[] addressOps = instruction.getPcode(operand);
+            if (addressOps.length == 0) continue;
+            Varnode pointer = addressOps[addressOps.length - 1].getOutput();
+            if (pointer == null) continue;
+            for (PcodeOp operation : operations) {
+                // LOAD's second input is the address being read. A LOAD from
+                // ESP (POP's source) cannot justify a read through [EBP + disp].
+                if (operation.getOpcode() == PcodeOp.LOAD &&
+                    pointer.equals(operation.getInput(1))) return offset.getSignedValue();
+            }
         }
         return null;
     }
