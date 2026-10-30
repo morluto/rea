@@ -597,6 +597,9 @@ export const SCOPES = {
     "src/ghidra/GhidraJavaProperties.ts",
     "src/ghidra/GhidraReleasePolicy.ts",
     "scripts/verify-ghidra-bridge-sources.mjs",
+    "scripts/verify-real-ghidra-loader-relocation.mjs",
+    "tests/conformance/ghidra/ReaLoaderRelocationProbe.java",
+    "tests/conformance/ghidra/loader-relocation*.c",
     ".github/workflows/ghidra-bridge-sources.yml",
   ],
   website: [
@@ -623,10 +626,10 @@ export const CI_FLAGS = [
   ]),
 ];
 
-// Verifier entrypoints that only manual, licensed, or self-hosted workflows
-// run. No selected CI lane executes them, so their edits need only the static
-// checks and the source-test suite. Shared helpers under scripts/lib remain
-// broad inputs.
+// Verifier entrypoints that are manual, licensed, or self-hosted unless an
+// automatic CI scope explicitly owns them. Unowned edits need only static
+// checks and source tests. Shared helpers under scripts/lib remain broad
+// inputs.
 export const MANUAL_VERIFIERS = [
   "scripts/verify-real-electron.mjs",
   "scripts/verify-real-ghidra*.mjs",

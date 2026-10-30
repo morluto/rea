@@ -69,6 +69,7 @@ const sharedAnalysisSemantics = {
   instruction_references: "exact-address-incoming-without-synthetic-entry-v2",
   function_boundary_observations: "ghidra-function-boundary-limitations-v4",
 } as const;
+const loaderRelocationSemantics = "volatile-read-only-relocation-blocks-v1";
 
 /**
  * The processor language REA pins for this target, or undefined when Ghidra may
@@ -317,6 +318,7 @@ export const resolveGhidraAnalysisProfile = async (
             }
           : {}),
         ...sharedAnalysisSemantics,
+        loader_relocation_semantics: loaderRelocationSemantics,
         no_return_repair:
           installation.platform === "win32"
             ? "disabled-windows-p0"

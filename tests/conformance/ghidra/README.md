@@ -58,6 +58,19 @@ binaries and Ghidra projects are never committed.
   from the worst-case line size before allocating the source. Larger or
   invalid counts are rejected before installation inspection or compilation.
 
+- `loader-relocation.c`, `loader-relocation-provider.c` and
+  `ReaLoaderRelocationProbe.java` exercise the production `ReaGhidraBridge`
+  against a real imported Linux full-RELRO PIE ELF and a small shared library.
+  The fixture's `.data.rel.ro` pointer is populated by an importer-created
+  relocation. The probe proves that the `ET_DYN` program is marked relocatable
+  by Ghidra but is still protected, checks the relocation byte range and
+  read/write reference handling, and compares baseline/protected pseudocode.
+  It also checks that a `-fno-plt` GOT caller retains identical pseudocode when
+  its relocation blocks become volatile. Source `FileBytes` and block
+  permissions must remain unchanged. `npm run
+  verify:ghidra:loader-relocation` requires Linux, BYO Ghidra/JDK with its
+  native decompiler, and a C compiler; the fixture is never executed.
+
 `scripts/verify-real-ghidra.mjs` uses `cc`, `clang`, and `lld-link` by default;
 `REA_CC`, `REA_CLANG`, and `REA_LLD_LINK` can select alternate commands. The
 verifier requires the verified bring-your-own Ghidra 12.1.4 installation through

@@ -722,6 +722,18 @@ it.each([
     { code: true, ghidra_bridge: true, runtime: false, package: false },
   ],
   [
+    "scripts/verify-real-ghidra-loader-relocation.mjs",
+    { code: true, ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
+    "tests/conformance/ghidra/ReaLoaderRelocationProbe.java",
+    { code: true, ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
+    "tests/conformance/ghidra/loader-relocation-provider.c",
+    { code: true, ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
     "src/ghidra/GhidraBridgeSources.ts",
     { code: true, ghidra_bridge: true, runtime: true, package: true },
   ],
@@ -1651,8 +1663,8 @@ it("owns every explicit native-host test path with the lane that runs it", async
   expect(unowned("windows-curated", "package")).toEqual([]);
 });
 
-it("never runs a manual-only verifier from an automatic workflow", async () => {
-  const { MANUAL_VERIFIERS } = await loadScopes();
+it("only runs scoped verifiers from automatic workflows", async () => {
+  const { MANUAL_VERIFIERS, SCOPES } = await loadScopes();
   const scripts = z
     .object({ scripts: z.record(z.string(), z.string()) })
     .parse(
@@ -1692,8 +1704,12 @@ it("never runs a manual-only verifier from an automatic workflow", async () => {
   }
   expect(files.size).toBeGreaterThan(0);
   expect(
-    [...files].filter((file) =>
-      MANUAL_VERIFIERS.some((pattern) => matchesGlob(file, pattern)),
+    [...files].filter(
+      (file) =>
+        MANUAL_VERIFIERS.some((pattern) => matchesGlob(file, pattern)) &&
+        !Object.values(SCOPES).some((patterns) =>
+          patterns.some((pattern) => matchesGlob(file, pattern)),
+        ),
     ),
   ).toEqual([]);
 });

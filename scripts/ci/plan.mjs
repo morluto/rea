@@ -257,7 +257,10 @@ if (tier === "reused") {
           selected[owner] ||= matchesAny(file, SCOPES[owner]);
         continue;
       }
-      if (matchesAny(file, MANUAL_VERIFIERS)) {
+      if (
+        matchesAny(file, MANUAL_VERIFIERS) &&
+        !Object.values(SCOPES).some((patterns) => matchesAny(file, patterns))
+      ) {
         selected.code = true;
         continue;
       }

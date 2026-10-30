@@ -1490,6 +1490,21 @@ specifications, independent mappings, unchanged bytes, and decompilation of a
 known return value. AArch64 remains covered by deterministic tests rather than
 this real-provider lane. See [raw binary analysis](raw-binary.md).
 
+`npm run verify:ghidra:loader-relocation` runs
+`tests/conformance/ghidra/ReaLoaderRelocationProbe.java` inside a real Linux
+Ghidra ELF import. The source-owned PIE fixture emits a `.data.rel.ro` pointer
+relocation; the probe resolves that importer-created record, requires the real
+reader instruction's read reference to target its destination, and requires the
+loaded block to be non-writable. It compares baseline pseudocode that folds the
+file-backed `0x11111111` value with a fresh decompilation after the production
+bridge marks the block volatile, and checks the loader-value limitation,
+unchanged source `FileBytes`, and unchanged read/write/execute permissions. The
+lane never executes the fixture and does not inject a relocation or reference.
+The native decompiler is required to compare baseline and protected pseudocode;
+Ghidra/JDK with that decompiler and a Linux C compiler are required.
+The change-selected [Ghidra bridge CI lane](../.github/workflows/ghidra-bridge-sources.yml)
+runs this verifier with its checksum-verified Ghidra 12.1.4 distribution.
+
 `npm run verify:ghidra:address-context` runs on Linux with a caller-installed
 Ghidra, full JDK, and an x86-64 ELF GCC toolchain (`CC` selects another compatible
 compiler). It builds

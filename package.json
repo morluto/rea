@@ -215,6 +215,7 @@
     "verify:ghidra:switch": "npm run build:cached && node scripts/verify-real-ghidra-switch.mjs",
     "verify:kuna": "npm run build:cached && node scripts/verify-real-kuna.mjs",
     "verify:ghidra:dos": "npm run build:cached && node scripts/verify-real-ghidra-dos.mjs",
+    "verify:ghidra:loader-relocation": "npm run build:cached && node scripts/verify-real-ghidra-loader-relocation.mjs",
     "verify:ghidra:com": "npm run build:cached && node scripts/verify-real-ghidra-com.mjs",
     "verify:ghidra:raw": "npm run build:cached && node scripts/verify-real-ghidra-raw.mjs",
     "verify:ghidra:address-context": "npm run build:cached && node scripts/verify-real-ghidra-address-context.mjs",
