@@ -39,7 +39,9 @@ jobs:
           export JAVA_HOME="$JAVA_HOME_21_X64"
           android_root="$RUNNER_TEMP/rea-android"
           classes="$android_root/classes"
-          jar="$android_root/jadx-headless-mcp-0.7.1-all.jar"
+          # Derive the fixture's file name from the pinned release identity so an
+          # engine upgrade cannot leave this workflow pointing at a stale path.
+          jar="$android_root/$(node --input-type=module -e 'import { JADX_RELEASE } from "./src/android/JadxRelease.ts"; console.log(`jadx-headless-mcp-${JADX_RELEASE.version}-all.jar`);')"
           mkdir -p "$classes"
           "$JAVA_HOME/bin/javac" -J-Xmx512m -J-XX:ActiveProcessorCount=2 \
             -classpath "$jar" -d "$classes" \
