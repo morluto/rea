@@ -34,6 +34,37 @@ it.each(["é", "_", ":", "雪", "\u{1d4b3}"])(
   },
 );
 
+it("refuses text whose entity references exceed the decode budget", () => {
+  const parsed = parsePlistXmlSource(
+    xmlPlist(`<array><string>${"&amp;".repeat(1_000_000)}</string></array>`),
+  );
+  expect(parsed.ok).toBe(false);
+  if (parsed.ok) throw new Error("Expected a decode budget refusal");
+  expect(parsed.error).toBeInstanceOf(AnalysisResourceConstraintError);
+});
+
+// Opaque sections hold literal ampersands, not references the parser expands.
+it.each([
+  ["a CDATA string", `<string><![CDATA[${"&".repeat(1_000_000)}]]></string>`],
+  ["a comment", `<!--${"&".repeat(1_000_000)}--><true/>`],
+])("admits literal ampersands in %s", (_name, value) => {
+  const parsed = parsePlistXmlSource(xmlPlist(`<array>${value}</array>`));
+  if (!parsed.ok) throw parsed.error;
+  expect(parsed.value.value).toEqual([
+    value.startsWith("<string>") ? "&".repeat(1_000_000) : true,
+  ]);
+});
+
+it("charges references only in text and attribute values", () => {
+  const mixed =
+    '<array><string a="&amp;">&lt;<![CDATA[&&&]]>&gt;</string><?pi &?></array>';
+  const estimate = (body: string) =>
+    preflightPropertyListDecode(xmlPlist(body), Number.MAX_SAFE_INTEGER)
+      .estimatedBytes;
+  // Same length and nodes without any "&": only the three references differ.
+  expect(estimate(mixed) - estimate(mixed.replaceAll("&", "x"))).toBe(3 * 64);
+});
+
 it("admits an ordinary pretty-printed XML plist", () => {
   const entry = (index: number) =>
     `\t<dict>\n${Array.from(
