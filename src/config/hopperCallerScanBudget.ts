@@ -1,6 +1,6 @@
 import {
   DEFAULT_HOPPER_CALLER_SCAN_BUDGET_MS,
-  MAX_PROVIDER_STARTUP_TIMEOUT_MS,
+  MAXIMUM_HOPPER_CALLER_SCAN_BUDGET_MS,
   MINIMUM_HOPPER_CALLER_SCAN_BUDGET_MS,
 } from "../domain/analysisResourceLimits.js";
 import {
@@ -28,7 +28,7 @@ export const defaultHopperCallerScanBudget = (): HopperCallerScanBudget => ({
   source: "default",
   defaultMilliseconds: DEFAULT_HOPPER_CALLER_SCAN_BUDGET_MS,
   floorMilliseconds: MINIMUM_HOPPER_CALLER_SCAN_BUDGET_MS,
-  maximumMilliseconds: MAX_PROVIDER_STARTUP_TIMEOUT_MS,
+  maximumMilliseconds: MAXIMUM_HOPPER_CALLER_SCAN_BUDGET_MS,
 });
 
 /** Record whether the launch environment supplied the budget. */

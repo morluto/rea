@@ -1,5 +1,4 @@
 import { readFieldDefinitionRow } from "./ManagedFieldDefinitionRows.js";
-import { createManagedFieldConstantReader } from "./ManagedFieldConstants.js";
 import { readMemberReferenceRowFacts } from "./ManagedMemberReferenceRows.js";
 import { readMethodDefinitionRow } from "./ManagedMethodDefinitionRows.js";
 import { jsonStringByteLength } from "../domain/jsonStringByteLength.js";
@@ -84,7 +83,6 @@ export const parseFields = (
   const fields: ManagedField[] = [];
   const core = new Map<string, MemberCore>();
   const issues: ManagedParseIssue[] = [];
-  const constant = createManagedFieldConstantReader(bytes, layout, issues);
   const table = layout.table(4);
   const ownerRow = readManagedValue(
     () => memberDeclaringTypeRowLookup(bytes, layout, 4, memberLists),
@@ -146,7 +144,6 @@ export const parseFields = (
         name,
         flags,
         signature: decoded,
-        constant: constant(row, flags),
       });
     }, issues);
   }

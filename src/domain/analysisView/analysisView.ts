@@ -82,6 +82,7 @@ import type { AnalysisViewParent } from "./analysisViewParent.js";
 import type { GroupingViewKind } from "./analysisViewShape.js";
 import {
   analysisViewRequestSchema,
+  analysisViewSourceSchema,
   inspectAnalysisViewInputSchema,
   type AnalysisViewRequest,
   type InspectAnalysisViewInput,
@@ -103,6 +104,7 @@ import {
   rustBinaryPageViewResultSchema,
   binaryLayoutSummaryViewResultSchema,
   javascriptApplicationSummaryViewResultSchema,
+  javascriptModuleReferencesViewResultSchema,
   artifactInventorySummaryViewResultSchema,
   desktopApplicationSummaryViewResultSchema,
   wasmArtifactSummaryViewResultSchema,
@@ -136,6 +138,7 @@ import {
   nativeInventorySummaryViewResultSchema,
   nativeLoadImageSummaryViewResultSchema,
   nativeFunctionMatchingSummaryViewResultSchema,
+  nativeFunctionSummarySchema,
   nativeFunctionSummaryViewResultSchema,
   sourceToBundleSummaryViewResultSchema,
   sourceToBundlePageViewResultSchema,
@@ -145,11 +148,13 @@ import {
 } from "./analysisViewResult.js";
 export {
   analysisViewRequestSchema,
+  analysisViewSourceSchema,
   inspectAnalysisViewInputSchema,
   type AnalysisViewRequest,
   type InspectAnalysisViewInput,
   type AnalysisViewParent,
 };
+export { type GroupingViewKind };
 export {
   nativeObservationSummaryViewResultSchemas,
   byteEntropySummaryViewResultSchema,
@@ -167,6 +172,7 @@ export {
   rustBinaryPageViewResultSchema,
   binaryLayoutSummaryViewResultSchema,
   javascriptApplicationSummaryViewResultSchema,
+  javascriptModuleReferencesViewResultSchema,
   artifactInventorySummaryViewResultSchema,
   desktopApplicationSummaryViewResultSchema,
   wasmArtifactSummaryViewResultSchema,
@@ -200,6 +206,7 @@ export {
   nativeInventorySummaryViewResultSchema,
   nativeLoadImageSummaryViewResultSchema,
   nativeFunctionMatchingSummaryViewResultSchema,
+  nativeFunctionSummarySchema,
   nativeFunctionSummaryViewResultSchema,
   sourceToBundleSummaryViewResultSchema,
   sourceToBundlePageViewResultSchema,

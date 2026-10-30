@@ -3,10 +3,7 @@ import { err, ok } from "../domain/result.js";
 import type { HopperClient } from "./HopperClient.js";
 import { reconcileHopperCallers } from "./HopperCallerReconciliation.js";
 import { AnalysisWorkScope } from "../application/AnalysisWorkScope.js";
-import {
-  formatHopperCallerScanReason,
-  HOPPER_CALLER_SCAN_RETENTION_BYTES,
-} from "../domain/native/hopperCallerReconciliation.js";
+import { formatHopperCallerScanReason } from "../domain/native/hopperCallerReconciliation.js";
 import {
   hopperCallerScanBudgetForMilliseconds,
   hopperCallerScanRecovery,
@@ -15,6 +12,7 @@ import {
   AnalysisOutputError,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
+import { HOPPER_CALLER_SCAN_RETENTION_BYTES } from "../domain/native/hopperCallerReconciliation.js";
 
 const identity = (address: string) => ({
   address,

@@ -8,7 +8,8 @@ import {
   applicationGraphEvidenceSchema,
 } from "./javascriptApplicationEvidenceSchemas.js";
 import { jsonValueSchema } from "../jsonValue.js";
-import { digestSchema, prefixedDigestSchema } from "../digests.js";
+import { digestSchema } from "../digests.js";
+import { prefixedDigestSchema } from "../digests.js";
 
 const boundedTextSchema = z.string().min(1);
 const semanticNodeIdSchema = prefixedDigestSchema("jsrg_node");
