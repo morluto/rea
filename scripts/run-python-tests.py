@@ -16,31 +16,49 @@ def fail(code, **details):
 
 
 class BridgeResult(unittest.TextTestResult):
-    """Count cases that actually started and did not skip in each family."""
+    """Record non-skipped test and subtest outcomes for required families."""
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.started = {family: set() for family in REQUIRED_BRIDGE_FAMILIES}
-        self.skipped_cases = {family: set() for family in REQUIRED_BRIDGE_FAMILIES}
+        self.completed = set()
+        self.active_test = None
+        self.has_subtests = False
 
-    @staticmethod
-    def family(test):
+    def record(self, test):
         parts = test.id().split(".")
         if len(parts) > 2 and parts[0] == "bridge":
-            return parts[1]
-        return None
+            if parts[1] in REQUIRED_BRIDGE_FAMILIES:
+                self.completed.add(parts[1])
 
     def startTest(self, test):
-        family = self.family(test)
-        if family in self.started:
-            self.started[family].add(test.id())
+        self.active_test = test
+        self.has_subtests = False
         super().startTest(test)
 
+    def stopTest(self, test):
+        super().stopTest(test)
+        self.active_test = None
+
+    def addSuccess(self, test):
+        # A parent with only skipped subtests also receives addSuccess.
+        if not self.has_subtests:
+            self.record(test)
+        super().addSuccess(test)
+
+    def addSubTest(self, test, subtest, outcome):
+        self.has_subtests = True
+        if outcome is None:
+            self.record(test)
+        super().addSubTest(test, subtest, outcome)
+
     def addSkip(self, test, reason):
-        family = self.family(test)
-        if family in self.skipped_cases:
-            self.skipped_cases[family].add(test.id())
+        if self.active_test is not None and test is not self.active_test:
+            self.has_subtests = True
         super().addSkip(test, reason)
+
+    def addExpectedFailure(self, test, err):
+        self.record(test)
+        super().addExpectedFailure(test, err)
 
 
 def run_bridge(modules):
@@ -51,7 +69,7 @@ def run_bridge(modules):
     missing = [
         family
         for family in REQUIRED_BRIDGE_FAMILIES
-        if not result.started[family] - result.skipped_cases[family]
+        if family not in result.completed
     ]
     if missing:
         fail("no_executed_bridge_tests", families=missing)

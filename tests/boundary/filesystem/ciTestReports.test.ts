@@ -733,7 +733,7 @@ it("records failed omissions from full reports without treating partial or unhan
   ).rejects.toMatchObject({ code: "ENOENT" });
 });
 
-it("discovers Python bridge tests and fails on a newly added failing producer test", async () => {
+it("requires executed Python cases in every bridge family", async () => {
   const root = await createTestTempDirectory("rea-python-inventory-");
   await mkdir(join(root, "scripts"), { recursive: true });
   await mkdir(join(root, "bridge", "example"), { recursive: true });
@@ -768,6 +768,8 @@ it("discovers Python bridge tests and fails on a newly added failing producer te
   for (const content of [
     "# A present file can contain no tests.\n",
     "import unittest\nclass Example(unittest.TestCase):\n @unittest.skip('unavailable')\n def test_case(self): pass\n",
+    "import unittest\nclass Example(unittest.TestCase):\n def test_case(self):\n  for x in range(2):\n   with self.subTest(x=x): self.skipTest('unavailable')\n",
+    "import unittest\nclass Example(unittest.TestCase):\n def test_case(self):\n  with self.subTest(outer=1):\n   with self.subTest(inner=2): self.skipTest('unavailable')\n",
   ]) {
     await writeFile(native, content);
     await expect(
@@ -784,6 +786,23 @@ it("discovers Python bridge tests and fails on a newly added failing producer te
   expect((await execute("python3", command, { cwd: root })).stderr).toContain(
     "skipped 'optional'",
   );
+  await writeFile(
+    native,
+    "import unittest\nclass Example(unittest.TestCase):\n def test_case(self):\n  for x in range(2):\n   with self.subTest(x=x):\n    if x == 0: self.skipTest('optional')\n    self.assertEqual(x, 1)\n",
+  );
+  expect((await execute("python3", command, { cwd: root })).stderr).toContain(
+    "skipped 'optional'",
+  );
+  await writeFile(
+    native,
+    "import unittest\nclass Example(unittest.TestCase):\n def test_case(self):\n  with self.subTest(value=1): self.fail('subtest failed')\n",
+  );
+  await expect(
+    execute("python3", command, { cwd: root }),
+  ).rejects.toMatchObject({
+    code: 1,
+    stderr: expect.stringContaining("subtest failed"),
+  });
   await writeFile(native, passing);
   await writeFile(
     join(root, "bridge", "example", "test_second.py"),
