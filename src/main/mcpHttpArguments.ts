@@ -29,7 +29,7 @@ const MCP_HTTP_OPTIONS = z.object({
     .array(z.string())
     .optional()
     .describe(
-      "Host/Origin names a non-loopback bind may serve; default MCP_ALLOWED_HOSTS, else the bind is refused",
+      "Host/Origin names a non-loopback bind may serve; repeat the flag or separate names with commas; default MCP_ALLOWED_HOSTS, else the bind is refused",
     ),
   help: z.boolean().optional().describe("Show help"),
 });
@@ -44,6 +44,13 @@ const VALUED_FLAGS: ReadonlySet<string> = new Set([
   "--port",
   "--allowed-hosts",
 ]);
+
+/**
+ * Flags whose contract declares a collection. A repeated occurrence adds to the
+ * value instead of replacing it, so the two spellings agree. Scalar flags keep
+ * last-occurrence behaviour, which is what their schema declares.
+ */
+const REPEATABLE_FLAGS: ReadonlySet<string> = new Set(["--allowed-hosts"]);
 
 /** Render help for the dispatcher entry, which accepts no Incur global options. */
 export const renderMcpHttpHelp = (): string =>
@@ -71,6 +78,26 @@ const invalid = (message: string): McpHttpArguments => ({
   help: false,
   message,
 });
+
+/**
+ * Store one flag occurrence. A collection-valued flag accumulates so a repeated
+ * occurrence adds names instead of silently discarding the earlier ones; a
+ * scalar flag keeps last-occurrence behaviour, which is what its schema
+ * declares.
+ */
+const storeFlagValue = (
+  values: Map<string, string>,
+  flag: string,
+  value: string,
+): void => {
+  const previous = values.get(flag);
+  values.set(
+    flag,
+    previous === undefined || !REPEATABLE_FLAGS.has(flag)
+      ? value
+      : `${previous},${value}`,
+  );
+};
 
 /** Split `--flag=value` into its flag and inline value. */
 const splitFlag = (argument: string): readonly [string, string | undefined] => {
@@ -100,7 +127,7 @@ export const parseMcpHttpArguments = (
     if (inline === undefined) index += 1;
     if (value === undefined || (inline === undefined && value.startsWith("-")))
       return invalid(`Missing value for ${flag}`);
-    values.set(flag, value);
+    storeFlagValue(values, flag, value);
   }
   if (!http) return invalid("--host and --port require --http");
   const host = values.get("--host")?.trim();

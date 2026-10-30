@@ -51,12 +51,65 @@ describe("rea mcp --http arguments", () => {
     });
   });
 
+  it("accumulates repeated --allowed-hosts occurrences instead of overwriting", () => {
+    // The schema declares allowedHosts as an array, so the flag is repeatable;
+    // storing each occurrence in a single-valued map silently dropped the
+    // earlier names and a repeated flag looked like a successful override.
+    expect(
+      parseMcpHttpArguments([
+        "--http",
+        "--allowed-hosts",
+        "a.example",
+        "--allowed-hosts",
+        "b.example",
+      ]),
+    ).toEqual({ ok: true, allowedHosts: ["a.example", "b.example"] });
+    expect(
+      parseMcpHttpArguments([
+        "--http",
+        "--allowed-hosts=a.example",
+        "--allowed-hosts=b.example",
+      ]),
+    ).toEqual({ ok: true, allowedHosts: ["a.example", "b.example"] });
+    // The comma-separated spelling keeps working, and repeated names collapse.
+    expect(
+      parseMcpHttpArguments([
+        "--http",
+        "--allowed-hosts",
+        "a.example,b.example",
+        "--allowed-hosts",
+        "a.example",
+      ]),
+    ).toEqual({ ok: true, allowedHosts: ["a.example", "b.example"] });
+  });
+
+  it("keeps single-valued flags on their existing last-occurrence behaviour", () => {
+    // host and port declare scalars, so repeating them must not accumulate.
+    expect(
+      parseMcpHttpArguments([
+        "--http",
+        "--host",
+        "127.0.0.1",
+        "--host",
+        "::1",
+        "--port",
+        "1",
+        "--port",
+        "2",
+      ]),
+    ).toEqual({ ok: true, host: "::1", port: 2 });
+  });
+
   it("renders help from the option schema without Incur global options", () => {
     const help = renderMcpHttpHelp();
     expect(help).toContain("rea mcp --http");
     expect(help).toContain("--host");
     expect(help).toContain("--port");
     expect(help).toContain("MCP_PORT");
+    // The flag's declared cardinality is a contract fact. The prose that
+    // explains repeat and comma spelling belongs in review; both spellings are
+    // asserted through parsing above.
+    expect(help).toContain("--allowed-hosts <array>");
     expect(help).not.toContain("--filter-output");
   });
 
