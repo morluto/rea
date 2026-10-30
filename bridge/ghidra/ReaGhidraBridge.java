@@ -75,6 +75,7 @@ import ghidra.program.model.block.CodeBlockReference;
 import ghidra.program.model.block.CodeBlockReferenceIterator;
 import ghidra.program.model.data.StringDataInstance;
 import ghidra.program.model.data.DataType;
+import ghidra.program.model.lang.OperandType;
 import ghidra.program.model.lang.Register;
 import ghidra.program.model.scalar.Scalar;
 import ghidra.program.model.listing.CommentType;
@@ -86,6 +87,7 @@ import ghidra.program.model.listing.Instruction;
 import ghidra.program.model.listing.InstructionIterator;
 import ghidra.program.model.listing.Listing;
 import ghidra.program.model.listing.Variable;
+import ghidra.program.model.listing.VariableStorage;
 import ghidra.program.model.mem.MemoryBlock;
 import ghidra.program.model.mem.MemoryBlockSourceInfo;
 import ghidra.program.database.mem.FileBytes;
@@ -1659,7 +1661,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         result.add(
             "native_api",
             decompilerFailure == null
-                ? nativeApiBoundary(function, decompilation)
+                ? nativeApiBoundary(function, decompilation, scan.instructions)
                 : unavailableNativeApiBoundary(decompilerFailure)
         );
         result.add(
@@ -2489,7 +2491,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
 
     private JsonObject nativeApiBoundary(
         Function function,
-        DecompileResults decompilation
+        DecompileResults decompilation,
+        List<Instruction> instructions
     ) throws Exception {
         if (decompilation == null || decompilation.getHighFunction() == null) {
             return unavailableNativeApiBoundary(
@@ -2575,6 +2578,18 @@ public final class ReaGhidraBridge extends HeadlessScript {
             );
         }
 
+        if (currentProgram.getLanguageID().getIdAsString().startsWith("x86:LE:32:")) {
+            if (signatureSource.equals("analysis")) {
+                result.add(
+                    "prototype_conflicts",
+                    prototypeConflicts(function, prototype, instructions, signatureSource)
+                );
+            }
+            limitations.add(
+                "Prototype conflict checks cover direct EBP-framed argument reads and immediate RET cleanup under an inferred stdcall convention in analysis-inferred x86-32 signatures only; no diagnostic does not establish a correct signature."
+            );
+        }
+
         JumpTable[] recoveredJumpTables = highFunction.getJumpTables();
         List<ClangNode> caseTokens = new ArrayList<>();
         if (decompilation.getCCodeMarkup() != null) {
@@ -2584,6 +2599,130 @@ public final class ReaGhidraBridge extends HeadlessScript {
             jumpTables.add(inferredJumpTable(recoveredJumpTables[index], caseTokens));
         }
         return result;
+    }
+
+    private JsonArray prototypeConflicts(
+        Function function,
+        FunctionPrototype prototype,
+        List<Instruction> instructions,
+        String signatureSource
+    ) throws Exception {
+        JsonArray conflicts = new JsonArray();
+        String signature = function.getPrototypeString(false, true);
+        int count = prototype.getNumParams();
+        if (count == 0 && instructions.size() >= 2 &&
+            instructions.get(0).getMnemonicString().equalsIgnoreCase("PUSH") &&
+            registerOperand(instructions.get(0), 0, "EBP") &&
+            instructions.get(1).getMnemonicString().equalsIgnoreCase("MOV") &&
+            registerOperand(instructions.get(1), 0, "EBP") &&
+            registerOperand(instructions.get(1), 1, "ESP")) {
+            boolean foundRead = false;
+            for (int index = 2; index < instructions.size(); index++) {
+                monitor.checkCancelled();
+                Instruction instruction = instructions.get(index);
+                // An EBP write ends the range in which the entry frame is established.
+                if (instruction.getMnemonicString().equalsIgnoreCase("LEAVE") ||
+                    (instruction.getMnemonicString().equalsIgnoreCase("POP") &&
+                        registerOperand(instruction, 0, "EBP"))) break;
+                for (int operand = 0; operand < instruction.getNumOperands(); operand++) {
+                    int type = instruction.getOperandType(operand);
+                    if (!OperandType.isIndirect(type) || !OperandType.doesRead(type)) continue;
+                    Object[] objects = instruction.getOpObjects(operand);
+                    if (objects.length != 2) continue;
+                    Register base = null;
+                    Scalar offset = null;
+                    for (Object object : objects) {
+                        if (object instanceof Register register) base = register;
+                        else if (object instanceof Scalar scalar) offset = scalar;
+                    }
+                    // Two decoded objects with one EBP register and one scalar are the
+                    // direct [EBP + disp] form; indexed forms carry an extra object.
+                    if (base == null || offset == null ||
+                        !base.getName().equalsIgnoreCase("EBP") ||
+                        offset.getSignedValue() < 8) continue;
+                    JsonObject conflict = prototypeConflict(
+                        "stack-argument-read", signature, signatureSource, count, instruction);
+                    conflict.addProperty("frame_offset_bytes", offset.getSignedValue());
+                    conflict.add("unresolved_assumptions", GSON.toJsonTree(List.of(
+                        "The frame-relative read is not proof of a source-level parameter or its type.",
+                        "The instruction does not establish the value's origin or the function's complete computation."
+                    )));
+                    conflicts.add(conflict);
+                    foundRead = true;
+                    break;
+                }
+                if (foundRead) break;
+                if (instruction.getNumOperands() > 0 &&
+                    OperandType.doesWrite(instruction.getOperandType(0)) &&
+                    registerOperand(instruction, 0, "EBP")) break;
+            }
+        }
+        String convention = prototype.getModelName();
+        if (count == 0 || convention == null ||
+            !convention.toLowerCase(Locale.ROOT).contains("stdcall")) return conflicts;
+        int inferredStackBytes = 0;
+        for (int index = 0; index < count; index++) {
+            HighSymbol parameter = prototype.getParam(index);
+            if (parameter == null) return conflicts;
+            VariableStorage storage = parameter.getStorage();
+            if (storage == null || !storage.isStackStorage() || storage.isCompoundStorage() ||
+                storage.size() != 4) return conflicts;
+            inferredStackBytes += 4;
+        }
+        for (Instruction instruction : instructions) {
+            monitor.checkCancelled();
+            Instruction terminal = instruction;
+            if (instruction.getMnemonicString().equalsIgnoreCase("JMP") &&
+                instruction.getFlows().length == 1) {
+                Address target = instruction.getFlows()[0];
+                // A direct one-hop shared epilogue is evidence, not additional owned
+                // body. A target belonging to another function is a tail call, whose
+                // cleanup belongs to that callee rather than this prototype.
+                if (!function.getBody().contains(target) &&
+                    functionAtOrContaining(target) == null) {
+                    terminal = currentProgram.getListing().getInstructionAt(target);
+                    if (terminal == null) continue;
+                }
+            }
+            if (!terminal.getMnemonicString().equalsIgnoreCase("RET") ||
+                terminal.getNumOperands() != 1 ||
+                !OperandType.isImmediate(terminal.getOperandType(0))) continue;
+            Object[] objects = terminal.getOpObjects(0);
+            if (objects.length != 1 || !(objects[0] instanceof Scalar immediate)) continue;
+            long cleanup = immediate.getUnsignedValue();
+            if (cleanup <= 0 || cleanup > 0xffff || cleanup == inferredStackBytes) continue;
+            JsonObject conflict = prototypeConflict(
+                "return-stack-cleanup", signature, signatureSource, count, terminal);
+            conflict.addProperty("cleanup_bytes", cleanup);
+            conflict.addProperty("inferred_stack_bytes", inferredStackBytes);
+            conflict.add("unresolved_assumptions", GSON.toJsonTree(List.of(
+                "The cleanup difference does not establish a missing, extra or differently sized source parameter.",
+                "Hidden arguments, alternate entry paths and the compiler's calling convention remain unverified."
+            )));
+            conflicts.add(conflict);
+            break;
+        }
+        return conflicts;
+    }
+
+    private static boolean registerOperand(Instruction instruction, int index, String name) {
+        if (instruction.getNumOperands() <= index) return false;
+        Object[] objects = instruction.getOpObjects(index);
+        return objects.length == 1 && objects[0] instanceof Register register &&
+            register.getName().equalsIgnoreCase(name);
+    }
+
+    private static JsonObject prototypeConflict(
+        String kind, String signature, String source, int count, Instruction instruction
+    ) {
+        JsonObject conflict = new JsonObject();
+        conflict.addProperty("kind", kind);
+        conflict.addProperty("inferred_signature", signature);
+        conflict.addProperty("signature_source", source);
+        conflict.addProperty("inferred_parameter_count", count);
+        conflict.addProperty("instruction_address", canonicalAddress(instruction.getAddress()));
+        conflict.addProperty("instruction", renderInstruction(instruction));
+        return conflict;
     }
 
     private static JsonObject unavailableNativeValueFlow(String reason) {
@@ -3903,17 +4042,21 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private static List<String> renderAssemblyLines(List<Instruction> instructions) {
         List<String> result = new ArrayList<>();
         for (Instruction instruction : instructions) {
-            StringBuilder line = new StringBuilder();
-            line.append(canonicalAddress(instruction.getAddress()));
-            line.append(": ");
-            line.append(instruction.getMnemonicString());
-            for (int index = 0; index < instruction.getNumOperands(); index += 1) {
-                line.append(index == 0 ? " " : ", ");
-                line.append(instruction.getDefaultOperandRepresentation(index));
-            }
-            result.add(line.toString());
+            result.add(
+                canonicalAddress(instruction.getAddress()) + ": " + renderInstruction(instruction)
+            );
         }
         return result;
+    }
+
+    private static String renderInstruction(Instruction instruction) {
+        StringBuilder line = new StringBuilder();
+        line.append(instruction.getMnemonicString());
+        for (int index = 0; index < instruction.getNumOperands(); index += 1) {
+            line.append(index == 0 ? " " : ", ");
+            line.append(instruction.getDefaultOperandRepresentation(index));
+        }
+        return line.toString();
     }
 
     private List<Reference> collectReferences(
