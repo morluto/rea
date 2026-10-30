@@ -701,7 +701,7 @@ it("bounds omitted-entry retention before allocating rows or serializing identit
       reader.entries = async function* (_signal, options) {
         if (typeof options === "function")
           throw new Error("Expected traversal options");
-        for (let index = 0; index < 400; index++) {
+        for (let index = 0; index < 5000; index++) {
           examined++;
           options?.onOmission?.({
             path: `${prefix}/${index}/entry`,
@@ -716,7 +716,7 @@ it("bounds omitted-entry retention before allocating rows or serializing identit
   const result = await service.inspect({ path: root });
   if (!result.ok) throw result.error;
   const report = desktopApplicationSchema.parse(result.value.normalized_result);
-  expect(examined).toBeLessThan(400);
+  expect(examined).toBeLessThan(5000);
   expect(report.omissions).toHaveLength(examined - 1);
   expect(report.coverage).toMatchObject({
     status: "partial",
@@ -725,6 +725,83 @@ it("bounds omitted-entry retention before allocating rows or serializing identit
   });
   expect(report.limitations).toContainEqual(
     expect.stringContaining("representation budget"),
+  );
+});
+
+/** Inspect simulated directory rows without creating their filesystem tree. */
+const inspectSimulatedRows = async (
+  count: number,
+  path: (index: number) => string,
+) => {
+  const root = await createTestTempDirectory("rea-desktop-row-capacity-");
+  let yielded = 0;
+  const service = new DesktopApplicationService(
+    new DesktopApplicationReader((selected) => {
+      const reader = new DirectoryArtifactReader(selected);
+      reader.entries = async function* () {
+        for (let index = 0; index < count; index++) {
+          yielded++;
+          yield {
+            path: path(index),
+            kind: "directory",
+            declaredSize: null,
+            compressedSize: null,
+            executable: false,
+            encrypted: false,
+            byteOffset: null,
+            declaredIntegrity: null,
+            unpacked: false,
+            limitations: [],
+            adapterKey: `${root}/${path(index)}`,
+          };
+        }
+      };
+      return reader;
+    }),
+  );
+  onTestFinished(() => service.close());
+  const result = await service.inspect({ path: root, max_entries: count });
+  if (!result.ok) throw result.error;
+  return {
+    yielded,
+    report: desktopApplicationSchema.parse(result.value.normalized_result),
+  };
+};
+
+it("admits bundle-sized rows up to max_entries within the representation budget", async () => {
+  // Localized resources dominate large macOS bundles such as iWork apps.
+  const { report } = await inspectSimulatedRows(
+    20_000,
+    (index) =>
+      `Contents/Resources/${String(index % 40).padStart(2, "0")}.lproj/Localizable${index}.strings`,
+  );
+  expect(report.files).toHaveLength(20_000);
+  expect(report.coverage).toMatchObject({
+    status: "complete-within-scan",
+    entries_examined: 20_000,
+  });
+  expect(report.limitations).not.toContainEqual(
+    expect.stringContaining("representation budget"),
+  );
+});
+
+it("charges escaped JSON expansion before retaining control-character paths", async () => {
+  const { yielded, report } = await inspectSimulatedRows(
+    6000,
+    (index) => `${"\u0001".repeat(1000)}/${index}`,
+  );
+  expect(report.files.length).toBeLessThan(6000);
+  expect(report.files).toHaveLength(yielded - 1);
+  expect(report.coverage).toMatchObject({
+    status: "partial",
+    entries_examined: yielded,
+  });
+  expect(report.limitations).toContainEqual(
+    expect.stringContaining("representation budget"),
+  );
+  // Escaping makes each path six times longer in JSON than in memory.
+  expect(Buffer.byteLength(JSON.stringify(report.files))).toBeLessThan(
+    32 * 1024 * 1024,
   );
 });
 

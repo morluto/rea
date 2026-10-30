@@ -28,6 +28,7 @@ import type {
 } from "../domain/desktopApplication.js";
 import { projectDesktopApplication } from "../domain/desktopApplicationProjection.js";
 import { digestCanonicalValue } from "../domain/canonicalDigest.js";
+import { jsonStringByteLength } from "../domain/jsonStringByteLength.js";
 import { err, ok } from "../domain/result.js";
 import { createDesktopApplicationEvidence } from "../domain/desktopApplicationEvidence.js";
 import { ARTIFACT_GRAPH_PROVIDER } from "../domain/investigationProviders.js";
@@ -42,6 +43,21 @@ import type {
 import { BinaryTargetError } from "../domain/configurationErrors.js";
 
 const RETAINED_METADATA_BYTES = 32 * 1024 * 1024;
+/**
+ * Upper bound for one file row besides its two paths: the row and identity
+ * objects, file_id, identity strings, arrays and array slot. Whole rows,
+ * paths included, measured 800–940 heap and 490–640 JSON bytes on real app
+ * bundles (64-bit Node; #8104).
+ */
+const RETAINED_ROW_BYTES = 1024;
+const RETAINED_OMISSION_BYTES = 512;
+
+/**
+ * A retained path's larger representation: two-byte heap code units, or its
+ * escaped UTF-8 JSON (up to six bytes for a control character).
+ */
+const retainedPathBytes = (path: string): number =>
+  Math.max(2 * path.length, jsonStringByteLength(path));
 
 /** Stop traversal without discarding the preceding bounded observations. */
 class DesktopRepresentationLimit extends ArtifactReaderFailure {
@@ -225,7 +241,10 @@ const scanDirectory = async (
   const budget: DesktopReadBudget = {
     bytes: 0,
     maximum: input.max_probe_bytes,
-    retainedBytes: 1024 + (input.path.length + root.canonical_path.length) * 24,
+    retainedBytes:
+      RETAINED_ROW_BYTES +
+      retainedPathBytes(input.path) +
+      retainedPathBytes(root.canonical_path),
     maximumRetainedBytes: RETAINED_METADATA_BYTES,
   };
   const reserve = (bytes: number) => {
@@ -256,7 +275,7 @@ const scanDirectory = async (
           entries++;
         }
         partial = true;
-        reserve(512 + omission.path.length * 24);
+        reserve(RETAINED_OMISSION_BYTES + retainedPathBytes(omission.path));
         const semantic = {
           root_namespace_id: namespaceId,
           path: omission.path,
@@ -277,10 +296,12 @@ const scanDirectory = async (
     })) {
       entries++;
       abortIfNeeded(signal);
-      // Reserve a conservative representation estimate before retaining path-dependent objects.
-      const reservation =
-        1024 + (entry.path.length + entry.adapterKey.length) * 24;
-      reserve(reservation);
+      // Reserve before retaining path-dependent objects.
+      reserve(
+        RETAINED_ROW_BYTES +
+          retainedPathBytes(entry.path) +
+          retainedPathBytes(entry.adapterKey),
+      );
       const row = fileRow(entry, namespaceId);
       files.push(row);
       if (entry.kind === "symlink") {
