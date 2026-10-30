@@ -28,7 +28,10 @@ def inspect(request):
         gdb.execute(command, to_string=True)
     entry = request["gdbinit"]
     try:
-        spec = importlib.util.spec_from_file_location('pwndbg_context', entry); module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+        loader = importlib.machinery.SourceFileLoader('pwndbg_context', entry)
+        spec = importlib.util.spec_from_loader('pwndbg_context', loader)
+        module = importlib.util.module_from_spec(spec)
+        loader.exec_module(module)
         import pwndbg.aglib.vmmap
         import pwndbg.lib.version
     except (ImportError, OSError) as error:
