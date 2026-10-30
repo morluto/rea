@@ -79,10 +79,18 @@ interface HidGlobalState {
   reportCount: number;
 }
 
+interface HidLocalUsage {
+  id: number;
+  page: number | null;
+  raw: number;
+}
+
 interface HidLocalState {
-  usages: number[];
+  usages: HidLocalUsage[];
   usageMin: number | null;
+  usageMinPage: number | null;
   usageMax: number | null;
+  usageMaxPage: number | null;
 }
 
 interface MutableEndpointReport {
@@ -133,17 +141,29 @@ function handleGlobalItem(
 function handleLocalItem(
   bTag: number,
   data: number,
+  dataLength: number,
   local: HidLocalState,
+  vendorUsagePages: Set<string>,
 ): void {
+  const isExtended = dataLength === 4;
+  const page = isExtended ? (data >>> 16) & 0xffff : null;
+  const id = isExtended ? data & 0xffff : data;
+
+  if (page !== null && page >= 0xff00 && page <= 0xffff) {
+    vendorUsagePages.add(`0x${page.toString(16).toUpperCase()}`);
+  }
+
   switch (bTag) {
     case 0x00: // Usage
-      local.usages.push(data);
+      local.usages.push({ id, page, raw: data });
       break;
     case 0x01: // Usage Minimum
-      local.usageMin = data;
+      local.usageMin = id;
+      local.usageMinPage = page;
       break;
     case 0x02: // Usage Maximum
-      local.usageMax = data;
+      local.usageMax = id;
+      local.usageMaxPage = page;
       break;
   }
 }
@@ -159,19 +179,23 @@ function handleMainItem(
 ): void {
   if (bTag === 0x0a) {
     // Collection: captures active collection usage and clears local state
+    const primary = local.usages[0];
+    const page = primary?.page ?? global.usagePage;
+    const usageId = primary?.id ?? null;
+
     collectionsList.push({
       collectionType: data,
-      usagePage: global.usagePage,
-      usagePageHex: `0x${global.usagePage.toString(16).toUpperCase()}`,
-      usage: local.usages[0] ?? null,
+      usagePage: page,
+      usagePageHex: `0x${page.toString(16).toUpperCase()}`,
+      usage: usageId,
       usageHex:
-        local.usages[0] !== undefined
-          ? `0x${local.usages[0].toString(16).toUpperCase()}`
-          : null,
+        usageId !== null ? `0x${usageId.toString(16).toUpperCase()}` : null,
     });
     local.usages = [];
     local.usageMin = null;
+    local.usageMinPage = null;
     local.usageMax = null;
+    local.usageMaxPage = null;
     return;
   }
 
@@ -179,7 +203,9 @@ function handleMainItem(
     // End Collection: clears local state
     local.usages = [];
     local.usageMin = null;
+    local.usageMinPage = null;
     local.usageMax = null;
+    local.usageMaxPage = null;
     return;
   }
 
@@ -208,14 +234,18 @@ function handleMainItem(
   report.totalSizeBytes =
     Math.ceil(report.totalBits / 8) + (report.reportId !== null ? 1 : 0);
 
-  const usages = [...local.usages];
+  const primary = local.usages[0];
+  const fieldPage = primary?.page ?? local.usageMinPage ?? global.usagePage;
+  const usages = local.usages.map((u) => u.id);
   const usagesHex = usages.map((u) => `0x${u.toString(16).toUpperCase()}`);
+  const usageId = primary?.id ?? null;
 
   report.fields.push({
-    usagePage: global.usagePage,
-    usagePageHex: `0x${global.usagePage.toString(16).toUpperCase()}`,
-    usage: usages[0] ?? null,
-    usageHex: usagesHex[0] ?? null,
+    usagePage: fieldPage,
+    usagePageHex: `0x${fieldPage.toString(16).toUpperCase()}`,
+    usage: usageId,
+    usageHex:
+      usageId !== null ? `0x${usageId.toString(16).toUpperCase()}` : null,
     usages,
     usagesHex,
     usageMin: local.usageMin,
@@ -228,7 +258,9 @@ function handleMainItem(
 
   local.usages = [];
   local.usageMin = null;
+  local.usageMinPage = null;
   local.usageMax = null;
+  local.usageMaxPage = null;
 }
 
 /** Parse raw USB HID Report Descriptor bytes. */
@@ -264,7 +296,9 @@ export function parseHidReportDescriptor(
   const local: HidLocalState = {
     usages: [],
     usageMin: null,
+    usageMinPage: null,
     usageMax: null,
+    usageMaxPage: null,
   };
 
   let offset = 0;
@@ -338,7 +372,7 @@ export function parseHidReportDescriptor(
     if (typeName === "global") {
       handleGlobalItem(bTag, data, global, globalStack, vendorUsagePages);
     } else if (typeName === "local") {
-      handleLocalItem(bTag, data, local);
+      handleLocalItem(bTag, data, dataLength, local, vendorUsagePages);
     } else if (typeName === "main") {
       handleMainItem(
         bTag,

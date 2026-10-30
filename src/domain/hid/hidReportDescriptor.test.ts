@@ -266,7 +266,7 @@ describe("HID Report Descriptor - Validation and Vendor Extensions", () => {
       0x01,
       0x00,
       0x13,
-      0xff, // Usage (0xFF130001)
+      0xff, // Usage (0xFF130001: Page 0xFF13, Usage 1)
       0x75,
       0x08,
       0x95,
@@ -281,8 +281,53 @@ describe("HID Report Descriptor - Validation and Vendor Extensions", () => {
 
     const report = result.value.reports[0];
     if (!report) throw new Error("Expected report");
-    expect(report.fields[0]?.usage).toBe(0xff130001);
-    expect(report.fields[0]?.usageHex).toBe("0xFF130001");
+    // Resolved from 4-byte extended usage width
+    expect(report.fields[0]?.usagePage).toBe(0xff13);
+    expect(report.fields[0]?.usagePageHex).toBe("0xFF13");
+    expect(report.fields[0]?.usage).toBe(1);
+    expect(report.fields[0]?.usageHex).toBe("0x1");
+    expect(result.value.vendorUsagePages).toContain("0xFF13");
+
+    // Raw unsigned 32-bit value preserved in items
+    const rawUsage = result.value.items.find(
+      (item) => item.type === "local" && item.tag === 0,
+    );
+    expect(rawUsage?.data).toBe(0xff130001);
+  });
+
+  it("resolves four-byte extended usage page and ID for vendor collections", () => {
+    // Greptile fixture: extended 4-byte usage 0xFF130001 inside Generic Desktop overrides page for collection
+    const vendorCollection = [
+      0x05,
+      0x01, // Usage Page (Generic Desktop: 0x01)
+      0x0b,
+      0x01,
+      0x00,
+      0x13,
+      0xff, // Usage (4-byte: 0xFF130001 => Page 0xFF13, Usage 1)
+      0xa1,
+      0x01, // Collection (Application: 0x01)
+      0xc0, // End Collection
+    ];
+
+    const result = parseHidReportDescriptor(vendorCollection);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.error.reason);
+
+    expect(result.value.collections.length).toBe(1);
+    const col = result.value.collections[0];
+    if (!col) throw new Error("Expected collection");
+    expect(col.usagePage).toBe(0xff13);
+    expect(col.usagePageHex).toBe("0xFF13");
+    expect(col.usage).toBe(1);
+    expect(col.usageHex).toBe("0x1");
+    expect(result.value.vendorUsagePages).toContain("0xFF13");
+
+    // Raw value preserved in items
+    const rawUsage = result.value.items.find(
+      (item) => item.type === "local" && item.tag === 0,
+    );
+    expect(rawUsage?.data).toBe(0xff130001);
   });
 
   it("identifies custom hardware vendor usage pages (e.g. 0xFF13 for Aula keyboard configuration)", () => {
