@@ -245,14 +245,14 @@ it("advertises and enforces the same Unicode selector grammar through MCP", asyn
       ).isError,
     ).not.toBe(true);
   }
-  for (const abi of [
-    "",
-    "lib/x86_64",
-    "😀".repeat(1011),
+  for (const [abi, reason] of [
+    ["", "out_of_range"],
+    ["lib/x86_64", "invalid_format"],
+    ["😀".repeat(1011), "invalid_value"],
     ...["\n", "\r", "\u2028", "\u2029"].map(
-      (terminator) => "l".repeat(1010) + terminator,
+      (terminator) => ["l".repeat(1010) + terminator, "invalid_value"] as const,
     ),
-  ]) {
+  ] as const) {
     const arguments_ = { path: "/fixture.apk", abi };
     expect(ajv.validate(tool.inputSchema, arguments_)).toBe(false);
     const refused = await harness.client.callTool({
@@ -265,10 +265,11 @@ it("advertises and enforces the same Unicode selector grammar through MCP", asyn
       details: {
         operation: "inspect_dart_aot",
         issues: [
-          {
+          expect.objectContaining({
             path: ["abi"],
+            reason,
             message: ABI_SELECTOR_MESSAGE,
-          },
+          }),
         ],
       },
     });

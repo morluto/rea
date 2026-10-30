@@ -68,14 +68,14 @@ export const createElectronIpcContext = (
     .filter(isPairableRendererTransmission)
     .map((transmission) => {
       const owner = owners.get(transmission.key);
+      const channel = transmission.finding.channel;
       const matching =
-        transmission.finding.channel === null
+        channel === null
           ? []
           : handlers.filter(
               (handler) =>
-                (handler.finding.channel === transmission.finding.channel ||
-                  (handler.finding.receiver !== undefined &&
-                    handler.finding.channel === null)) &&
+                (handler.finding.channel === channel ||
+                  mayReceiveChannel(handler, channel)) &&
                 compatibleIpcModes(transmission.finding, handler.finding),
             );
       const candidates = matching.filter(
@@ -94,14 +94,14 @@ export const createElectronIpcContext = (
           !coverageComplete &&
           owner != null &&
           candidates.length === 1 &&
-          candidates[0]?.finding.receiver === undefined &&
+          isExactIpcHandler(candidates[0]) &&
           !matching.some((handler) => owners.get(handler.key) == null)
             ? (candidates[0] ?? null)
             : null,
         status:
           !uncertain &&
           candidates.length === 1 &&
-          candidates[0]?.finding.receiver === undefined
+          isExactIpcHandler(candidates[0])
             ? "paired"
             : uncertain || matching.length > 0
               ? "ambiguous"
@@ -239,6 +239,27 @@ const isRendererTransmission = ({ finding }: ElectronIpcRecord): boolean =>
 
 const isPairableRendererTransmission = (record: ElectronIpcRecord): boolean =>
   isRendererTransmission(record) && record.finding.operation !== "send-to-host";
+
+/**
+ * An unresolved channel may receive any literal channel, so it competes without
+ * ever pairing. A wrapper site whose invocations all supplied literal channels
+ * is represented by their findings, except guarded invocations, which have none
+ * and still compete for their own channels.
+ */
+const mayReceiveChannel = (
+  { finding }: ElectronIpcRecord,
+  channel: string,
+): boolean =>
+  finding.channel === null &&
+  (finding.receiver !== undefined ||
+    finding.invocation_channels !== "literal" ||
+    finding.guarded_invocation_channels?.includes(channel) === true);
+
+/** Only an ipcMain registration on the same literal channel can be paired. */
+const isExactIpcHandler = (handler: ElectronIpcRecord | undefined): boolean =>
+  handler !== undefined &&
+  handler.finding.receiver === undefined &&
+  handler.finding.channel !== null;
 
 const isMainHandler = ({ finding }: ElectronIpcRecord): boolean =>
   finding.side === "main" &&

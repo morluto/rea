@@ -184,5 +184,4 @@ export const MAXIMUM_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES = Math.floor(
  * GDB startup or detach MI). This is not `REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES`:
  * a caller cap below this budget must not truncate those required replies.
  */
-export const DEBUGGER_CONTROL_REPLY_BYTES =
-  DEFAULT_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES;
+export const DEBUGGER_CONTROL_REPLY_BYTES = 16 * 1024 * 1024;

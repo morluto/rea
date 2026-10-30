@@ -138,7 +138,22 @@ export type ElectronIpcFinding = ElectronIpcDescriptor &
   ElectronIpcFindingContext &
   (
     | { readonly channel: string; readonly channel_expression: null }
-    | { readonly channel: null; readonly channel_expression: string }
+    | {
+        readonly channel: null;
+        readonly channel_expression: string;
+        /**
+         * Every invocation of this site is a traced direct call that supplied a
+         * literal channel, recorded as its own wrapper-substitution finding or
+         * guarded call path. Absent when any invocation may supply another value.
+         */
+        readonly invocation_channels?: "literal";
+        /**
+         * Channels from guarded invocations, which keep their predicate on a
+         * call path instead of becoming findings. Each still competes for its
+         * channel in pairing.
+         */
+        readonly guarded_invocation_channels?: readonly string[];
+      }
   );
 
 /** Static check involving an IPC sender, frame, process, URL, or origin. */
