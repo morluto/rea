@@ -1064,7 +1064,7 @@ session metadata edits leave executable bytes unchanged and are discarded on clo
 require Hopper; Windows P0 remains read-only.
 
 Windows P0 admits native x86, x86-64, ARMNT (Thumb-2) and ARM64 PE applications and DLLs, plus explicitly
-selected [raw NMOS 6502 images](raw-binary.md#nmos-6502) with a caller-supplied
+selected [raw NMOS 6502 images](raw-binary.md#nmos-6502) and [raw ARM Cortex-M images](raw-binary.md#arm-cortex-m) with a caller-supplied
 entry at file offset 0, on fixed local NTFS volumes. Other raw CPU families remain
 unsupported on Windows.
 The npm package bundles native Job Object ownership, protected private runtime

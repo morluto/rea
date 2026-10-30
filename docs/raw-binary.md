@@ -28,10 +28,10 @@ rea inspect-native-load-image /absolute/path/to/ecu.bin --target-format raw-bina
 }
 ```
 
-`architecture` is one of `x86`, `x86_64`, `arm`, `arm64`, `6502`, or `m68k`. `entry_point` is a
+`architecture` is one of `x86`, `x86_64`, `arm`, `arm64`, `cortex-m`, `6502`, or `m68k`. `entry_point` is a
 hexadecimal address of the form `0x…`. The complete file is mapped starting at
 that address, and Ghidra seeds an `entry` function there before auto-analysis.
-ARM and AArch64 entries must be 4-byte aligned; m68k entries must be 2-byte
+ARM and AArch64 entries must be 4-byte aligned; cortex-m and m68k entries must be 2-byte
 aligned; x86 and 6502 entries may be byte-aligned.
 For 6502, the entry and complete mapped file must fit within `0x0000..0xffff`;
 images that cross the 16-bit boundary are rejected before provider startup.
@@ -51,6 +51,7 @@ m68k is big-endian and the others are little-endian.
 | x86_64       | `x86:LE:64:default`   | `gcc`            |
 | arm          | `ARM:LE:32:v7`        | `default`        |
 | arm64        | `AARCH64:LE:64:v8A`   | `default`        |
+| cortex-m     | `ARM:LE:32:Cortex`    | `default`        |
 | 6502         | `6502:LE:16:default`  | `default`        |
 | m68k         | `68000:BE:32:default` | `default`        |
 
@@ -78,7 +79,7 @@ non-overlay in the bound language's default address space. Contradictory mapping
 observations are retained with `mismatch`, even when the source hashes agree.
 
 Hopper and IDA refuse raw-binary targets. Windows Ghidra P0 admits native PE
-applications/DLLs and explicitly selected raw 6502 images. Other raw CPU families
+applications/DLLs and explicitly selected raw 6502 and cortex-m images. Other raw CPU families
 remain outside the Windows boundary. Native path admission, private DACLs, Job
 Object ownership, immutable snapshots, and the no-mutation policy still apply.
 
@@ -113,6 +114,20 @@ unchanged source bytes and complete runtime cleanup. Windows requires the
 matching native addon; the POSIX provider path has not been exercised by the
 Windows run.
 
+## ARM Cortex-M
+
+```bash
+rea function /absolute/path/to/image.bin 0x8000000 --target-format raw-binary --architecture cortex-m --entry-point 0x8000000 --provider ghidra --json
+rea inspect-native-load-image /absolute/path/to/image.bin --target-format raw-binary --architecture cortex-m --entry-point 0x8000000 --provider ghidra --json
+```
+
+Select headerless Cortex-M microcontroller firmware with a known, 2-byte aligned
+entry point at file offset 0. Ghidra's `ARM:LE:32:Cortex` language decodes 16-bit
+Thumb and Thumb-2 instructions in 32-bit little-endian mode. Non-Cortex-M Thumb-only
+variants, big-endian ARM, vector table interpretation, and memory-mapped peripheral
+hardware emulation are outside this profile. Windows Ghidra P0 admits cortex-m
+raw images.
+
 ## Motorola 68000
 
 ```bash
@@ -145,8 +160,8 @@ exercised.
 
 - Headers are not discovered from file bytes. This increment does not guess
   load addresses, vector tables, or memory maps.
-- Big-endian ARM, Thumb-only, Cortex-M, and other Ghidra processor variants are
-  unsupported. m68k is the only big-endian family.
+- Big-endian ARM, non-Cortex-M Thumb-only ARM, and other Ghidra processor variants are
+  unsupported. Cortex-M uses ARM:LE:32:Cortex with 16-bit Thumb instruction alignment. m68k is the only big-endian family.
 - Reset vectors, memory-mapped I/O, and firmware boot sequences are not
   emulated.
 - Independent load-image verification covers source identity, mapped file

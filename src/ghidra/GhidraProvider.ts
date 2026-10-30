@@ -92,6 +92,7 @@ const SUPPORTED_ARCHITECTURES = new Set([
   "x86_64",
   "arm",
   "arm64",
+  "cortex-m",
   "mips",
   "6502",
   "riscv",
@@ -297,7 +298,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
         status: "unsupported",
         code: "architecture_unsupported",
         reason:
-          "Ghidra v1 requires a supported x86, x86_64, arm, arm64, MIPS, RISC-V, raw 6502, or raw m68k target profile.",
+          "Ghidra v1 requires a supported x86, x86_64, arm, arm64, cortex-m, MIPS, RISC-V, raw 6502, or raw m68k target profile.",
         diagnostics,
       };
     return {
@@ -680,8 +681,11 @@ const inspectWindowsP0TargetSupport = (
   target: BinaryTarget,
   diagnostics: Readonly<Record<string, JsonValue>>,
 ): ProviderTargetSupport => {
-  // The raw 6502 lane uses the same immutable snapshot and native ownership boundary.
-  if (target.format === "raw-binary" && target.architecture === "6502")
+  // The raw 6502 and cortex-m lanes use the same immutable snapshot and native ownership boundary.
+  if (
+    target.format === "raw-binary" &&
+    (target.architecture === "6502" || target.architecture === "cortex-m")
+  )
     return { status: "supported", code: null, reason: null, diagnostics };
   // DOL is verified on POSIX hosts only; Windows P0 does not admit it, like the other non-PE lanes.
   if (target.format === "gamecube-dol")
@@ -697,7 +701,7 @@ const inspectWindowsP0TargetSupport = (
       status: "unsupported",
       code: "target_format_unsupported",
       reason:
-        "Windows Ghidra P0 accepts native PE and explicitly selected raw 6502 targets only.",
+        "Windows Ghidra P0 accepts native PE and explicitly selected raw 6502 and cortex-m targets only.",
       diagnostics,
     };
   if (!WINDOWS_P0_NATIVE_PE_ARCHITECTURES.includes(target.architecture))

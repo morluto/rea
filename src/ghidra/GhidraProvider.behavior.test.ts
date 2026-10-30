@@ -444,6 +444,31 @@ describe("Ghidra raw-binary profile", () => {
         .some(({ available, effects }) => available && effects.mutatesArtifact),
     ).toBe(false);
   });
+  it("admits raw cortex-m and binds its ARM:LE:32:Cortex language", async () => {
+    const ghidra = provider(installationHost("win32"));
+    const target: BinaryTarget = {
+      path: "/tmp/cortex-m.bin",
+      sha256: "b".repeat(64),
+      kind: "executable",
+      format: "raw-binary",
+      architecture: "cortex-m",
+      availableArchitectures: ["cortex-m"],
+      entryPoint: "0x4000",
+      entryPointSource: "0x004000",
+    };
+    expect(ghidra.inspectTargetSupport(target).status).toBe("supported");
+    const resolved = await ghidra.resolveAnalysisProfile(target);
+    if (!resolved.ok) throw resolved.error;
+    expect(resolved.value.profile?.parameters).toMatchObject({
+      architecture: "cortex-m",
+      loader: "BinaryLoader",
+      language_id: "ARM:LE:32:Cortex",
+      compiler_spec_id: "default",
+      entry_point: "0x4000",
+      language_selection: "caller-supplied-v1",
+      load_image_evidence: "independent-raw-mapping-context-v4",
+    });
+  });
   it("commits BinaryLoader language and caller-supplied entry", async () => {
     const ghidra = provider();
     const target: BinaryTarget = {

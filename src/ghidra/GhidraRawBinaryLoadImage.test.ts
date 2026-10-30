@@ -33,6 +33,11 @@ describe("raw-binary Ghidra language binding", () => {
       compilerSpecId: "default",
       defaultAddressSpace: "ram",
     });
+    expect(ghidraRawBinaryLanguage("cortex-m")).toEqual({
+      languageId: "ARM:LE:32:Cortex",
+      compilerSpecId: "default",
+      defaultAddressSpace: "ram",
+    });
   });
 });
 
