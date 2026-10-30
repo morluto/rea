@@ -395,6 +395,14 @@ Screenshot capture requires a valid main-frame identity. Malformed identity
 produces a protocol failure; a readable child frame cannot substitute for the
 main frame.
 
+The `observe-web-session` CLI writes JSON progress lines to stderr, leaving
+stdout for the final Evidence or failure. Wait for `rea_progress` with
+`phase: "browser_observation"`, `completed: 1` and `total: 2` before performing
+the external action. After the window ends successfully, `completed: 2` and
+`terminal: true` report its end. Failed preparation does not announce arming;
+a failed or cancelled observation does not fabricate a successful end event.
+MCP exposes the same provider progress through its progress notifications.
+
 The web-session timeline uses CDP monotonic seconds where the event producer
 provides a comparable timestamp; absent or invalid timestamps are `null` rather
 than a synthetic zero. Events buffered while REA samples the window boundary are
