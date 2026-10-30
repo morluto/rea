@@ -42,7 +42,7 @@ export const NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES =
 export const MITMPROXY_CAPTURE_PROVIDER_IDENTITY = {
   id: "mitmproxy-native-tnetstring",
   name: "REA offline native mitmproxy adapter",
-  version: "12.2.3",
+  version: "12.3.1",
 } as const;
 
 /** Native SAZ member decoding with the existing ZIP and XML package profiles. */

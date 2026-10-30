@@ -17,7 +17,7 @@ from urllib.parse import unquote_to_bytes
 from mitmproxy import ctx, version
 from mitmproxy.io import tnetstring
 
-PROFILE = "12.2.3"
+PROFILE = "12.3.1"
 OUTPUT_BYTES = 96 * 1024 * 1024
 CREDENTIALS = {b"authorization", b"proxy-authorization", b"cookie", b"set-cookie"}
 
