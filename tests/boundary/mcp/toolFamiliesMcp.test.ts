@@ -1,4 +1,4 @@
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import type { Client } from "@modelcontextprotocol/client";
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { describe, expect, it } from "vitest";
 
@@ -14,6 +14,7 @@ import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
 import { ToolResultDelivery } from "../../../src/server/ToolResultDelivery.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
+import { createTestMcp } from "../../support/mcp/mcpFixture.js";
 
 const scopedServer = (
   advertisedToolFamilies: ReadonlySet<string> | undefined,
@@ -42,15 +43,15 @@ const withClient = async (
   server: EvidenceMcpServer,
   use: (client: Client) => Promise<void>,
 ): Promise<void> => {
-  const client = new Client({ name: "tool-families", version: "0" });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
+  const mcp = createTestMcp();
   try {
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
+    const client = await mcp.connect(server, {
+      name: "tool-families",
+      version: "0",
+    });
     await use(client);
   } finally {
-    await Promise.allSettled([client.close(), server.close()]);
+    await mcp.close();
   }
 };
 

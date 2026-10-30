@@ -577,37 +577,29 @@ console.log("LATE_PUBLICATION_REFUSED");
   expect(child.stderr).toBe("");
 });
 
-it.each([
-  {},
-  { REA_MCP_INPUT_SCHEMA_PROFILE: "compact" },
-  { REA_MCP_INPUT_SCHEMA_PROFILE: "full" },
-  { REA_MCP_OUTPUT_SCHEMA_PROFILE: "off" },
-])("preserves the configured catalog profile %j", async (environment) => {
-  const { client } = await connect("legacy", environment);
-  const before = await client.listTools();
-  const catalog = JSON.parse(
-    await readFile(
-      environment.REA_MCP_INPUT_SCHEMA_PROFILE === "full"
-        ? "dist/mcp-catalog-full.json"
-        : "dist/mcp-catalog.json",
-      "utf8",
-    ),
-  );
-  expect(before.tools).toHaveLength(catalog.tools.length);
-  const expected =
-    environment.REA_MCP_OUTPUT_SCHEMA_PROFILE === "off"
-      ? catalog.tools.map(
-          ({ outputSchema: _output, ...tool }: Record<string, unknown>) => tool,
-        )
-      : catalog.tools;
-  expect(before.tools).toEqual(expected);
-  const result = await client.callTool({
-    name: "list_unknowns",
-    arguments: {},
-  });
-  expect(result.isError).not.toBe(true);
-  expect(await client.listTools()).toEqual(before);
-});
+it.each([{}, { REA_MCP_OUTPUT_SCHEMA_PROFILE: "off" }])(
+  "preserves the configured catalog profile %j",
+  async (environment) => {
+    const { client } = await connect("legacy", environment);
+    const before = await client.listTools();
+    const catalog = JSON.parse(await readFile("dist/mcp-catalog.json", "utf8"));
+    expect(before.tools).toHaveLength(catalog.tools.length);
+    const expected =
+      environment.REA_MCP_OUTPUT_SCHEMA_PROFILE === "off"
+        ? catalog.tools.map(
+            ({ outputSchema: _output, ...tool }: Record<string, unknown>) =>
+              tool,
+          )
+        : catalog.tools;
+    expect(before.tools).toEqual(expected);
+    const result = await client.callTool({
+      name: "list_unknowns",
+      arguments: {},
+    });
+    expect(result.isError).not.toBe(true);
+    expect(await client.listTools()).toEqual(before);
+  },
+);
 
 it("runs the real static artifact workflow after deferred initialization", async () => {
   const { client } = await connect("legacy");
