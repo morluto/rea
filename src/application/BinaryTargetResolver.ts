@@ -29,7 +29,7 @@ import {
   stat,
   type FileHandle,
 } from "node:fs/promises";
-import { extname } from "node:path";
+import { extname, isAbsolute, resolve } from "node:path";
 
 import { BinaryTargetError } from "../domain/configurationErrors.js";
 import {
@@ -37,12 +37,15 @@ import {
   type StableRegularFileDescriptor,
 } from "../filesystem/RegularFile.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
-import type {
-  BinaryTarget,
-  BinaryArchitecture,
-  PeCodeViewRecord,
-  UniversalMachOSlice,
+import {
+  isMachOFormat,
+  type BinaryTarget,
+  type BinaryArchitecture,
+  type PeCodeViewRecord,
+  type UniversalMachOSlice,
+  type MachODebugCompanion,
 } from "../domain/binaryTargetTypes.js";
+import { admitDebugCompanion } from "./DebugCompanionAdmission.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { readMipsElfMetadata } from "./MipsElfMetadata.js";
 import { validateElfDeclaredRanges } from "../domain/elfDeclaredRanges.js";
@@ -131,6 +134,8 @@ export interface BinaryTargetResolverOptions {
   readonly formatHint?: ExecutableFormatHint;
   readonly architecture?: BinaryArchitecture;
   readonly entryPoint?: string;
+  /** Caller-selected dSYM bundle; admitted only for Mach-O executable targets. */
+  readonly dsymPath?: string;
   readonly signal?: AbortSignal;
   readonly resources?: ArtifactResourceScope;
 }
@@ -267,7 +272,16 @@ const readOpenedBinaryTarget = async (
   const bundle = bundleInfoPlist === undefined ? {} : { bundleInfoPlist };
   const hostArchitecture = options.hostArchitecture ?? process.arch;
   const { targetKind, formatHint, signal, architecture, entryPoint } = options;
+  const dsymPath = options.dsymPath;
   throwIfTargetResolutionCancelled(signal);
+  if (dsymPath !== undefined && formatHint !== undefined)
+    return err(
+      new BinaryTargetError(
+        path,
+        "dsym_path applies only to detected Mach-O executable targets, not to explicit headerless formats",
+        { constraint: "debug_companion_rejected" },
+      ),
+    );
   if (formatHint === "raw-binary") {
     if (targetKind !== undefined && targetKind !== "executable")
       return err(
@@ -389,10 +403,18 @@ const readOpenedBinaryTarget = async (
     targetKind === "database"
       ? undefined
       : await detectArtifactFormat(classificationPath, source, signal);
-  if (
+  const databaseTarget =
     targetKind === "database" ||
-    (targetKind === undefined && path.toLowerCase().endsWith(".hop"))
-  )
+    (targetKind === undefined && path.toLowerCase().endsWith(".hop"));
+  if (databaseTarget && dsymPath !== undefined)
+    return err(
+      new BinaryTargetError(
+        path,
+        "dsym_path applies only to Mach-O executable targets; this target is an analysis database",
+        { constraint: "debug_companion_rejected" },
+      ),
+    );
+  if (databaseTarget)
     return ok({
       path,
       sourcePath,
@@ -400,6 +422,14 @@ const readOpenedBinaryTarget = async (
       kind: "database",
       format: "analysis-database",
     });
+  if (artifactFormat !== undefined && dsymPath !== undefined)
+    return err(
+      new BinaryTargetError(
+        path,
+        `dsym_path applies only to Mach-O executable targets; this target is ${artifactFormat}`,
+        { constraint: "debug_companion_rejected" },
+      ),
+    );
   if (artifactFormat !== undefined) {
     const identity = {
       path,
@@ -424,7 +454,15 @@ const readOpenedBinaryTarget = async (
       (await locateTrailingZipArchive(metadata.size, (position, length) =>
         readHandleRange(handle, position, length, signal),
       )) !== undefined
-    )
+    ) {
+      if (dsymPath !== undefined)
+        return err(
+          new BinaryTargetError(
+            path,
+            "dsym_path applies only to Mach-O executable targets; this target is an archive with a trailing ZIP",
+            { constraint: "debug_companion_rejected" },
+          ),
+        );
       return ok({
         path,
         sourcePath,
@@ -433,6 +471,7 @@ const readOpenedBinaryTarget = async (
         format: zipRootPackageFormat(classificationPath),
         artifactSelectedPath: selectedPath,
       });
+    }
     const reason =
       typeof detected.error === "string"
         ? detected.error
@@ -448,6 +487,34 @@ const readOpenedBinaryTarget = async (
       }),
     );
   }
+  let debugCompanion: MachODebugCompanion | undefined;
+  if (dsymPath !== undefined) {
+    if (!isMachOFormat(detected.value.format))
+      return err(
+        new BinaryTargetError(
+          path,
+          `dsym_path applies only to Mach-O executable targets; this target is ${detected.value.format}`,
+          { constraint: "debug_companion_rejected" },
+        ),
+      );
+    const companion = await admitDebugCompanion({
+      dsymPath,
+      targetHandle: handle,
+      targetSize: metadata.size,
+      architecture: detected.value.architecture,
+      ...(detected.value.format === "mach-o-universal"
+        ? { targetSlice: detected.value.universalSlice }
+        : {}),
+      ...(signal === undefined ? {} : { signal }),
+    });
+    if (!companion.ok)
+      return err(
+        new BinaryTargetError(path, companion.error.reason, {
+          constraint: "debug_companion_rejected",
+        }),
+      );
+    debugCompanion = companion.value;
+  }
   return ok({
     path,
     sourcePath,
@@ -455,6 +522,9 @@ const readOpenedBinaryTarget = async (
     sha256: await sha256Handle(handle, path, metadata, signal),
     kind: "executable",
     ...detected.value,
+    ...(debugCompanion === undefined
+      ? {}
+      : { debugCompanion: { ...debugCompanion } }),
   });
 };
 

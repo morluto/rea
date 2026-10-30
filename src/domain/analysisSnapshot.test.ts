@@ -189,6 +189,95 @@ describe("analysis snapshot target identity", () => {
       "entry_point",
     );
   });
+
+  it("hashes a bare target exactly like snapshots written before companions", () => {
+    const base = {
+      sha256: ANALYSIS_SNAPSHOT_TARGET.sha256,
+      kind: "executable",
+      architecture: "arm64",
+      format: "mach-o",
+    } as const;
+    // A legacy file has no debug_companion key; parsing a bare target adds
+    // null. Both must hash identically so legacy query IDs keep validating.
+    const legacyShape = {
+      ...base,
+    } as unknown as Parameters<typeof analysisQueryId>[0];
+    const binding = snapshotBinding(ANALYSIS_SNAPSHOT_PROFILE);
+    const parsedShape = analysisSnapshotSchema.parse({
+      target: legacyShape,
+      binding,
+      entries: [],
+      workflow_entries: [],
+      evidence_bundle: createEvidenceBundle([]),
+    });
+    expect(parsedShape.target.debug_companion).toBeNull();
+    expect(
+      analysisQueryId(parsedShape.target, binding, "list_procedures", {}),
+    ).toBe(analysisQueryId(legacyShape, binding, "list_procedures", {}));
+    // A present companion changes the identifier.
+    const withCompanion = {
+      ...legacyShape,
+      debug_companion: {
+        source_path: "/fixture/pair.dSYM",
+        uuid: "A1B2C3D4-E5F6-0789-ABCD-EF0123456789",
+        member_sha256: "a".repeat(64),
+      },
+    };
+    expect(
+      analysisQueryId(withCompanion, binding, "list_procedures", {}),
+    ).not.toBe(analysisQueryId(legacyShape, binding, "list_procedures", {}));
+  });
+
+  it("partitions session and snapshot identity by the selected dSYM", () => {
+    const base: BinaryTarget = {
+      path: "/fixture/pair",
+      sha256: ANALYSIS_SNAPSHOT_TARGET.sha256,
+      kind: "executable",
+      format: "mach-o",
+      architecture: "arm64",
+      availableArchitectures: ["arm64"],
+    };
+    const companion = {
+      sourcePath: "/fixture/pair.dSYM",
+      memberPath: "/fixture/pair.dSYM/Contents/Resources/DWARF/pair",
+      memberSha256: "a".repeat(64),
+      memberSizeBytes: 4096,
+      uuid: "A1B2C3D4-E5F6-0789-ABCD-EF0123456789",
+    };
+    // A byte-identical companion copied to another path is a different
+    // selection: the session must restage rather than report the old bundle.
+    const same = (a: unknown, b: unknown): boolean =>
+      JSON.stringify(a) === JSON.stringify(b);
+    const withCompanion = { ...base, debugCompanion: companion };
+    expect(snapshotMatchesTarget(snapshotTarget(base), base)).toBe(true);
+    expect(
+      snapshotMatchesTarget(snapshotTarget(withCompanion), withCompanion),
+    ).toBe(true);
+    // Omitting the companion after using one, or adding one after a bare open,
+    // is a different analysis input and must not reuse the retained session.
+    expect(snapshotMatchesTarget(snapshotTarget(withCompanion), base)).toBe(
+      false,
+    );
+    expect(snapshotMatchesTarget(snapshotTarget(base), withCompanion)).toBe(
+      false,
+    );
+    // A different companion is a different identity too.
+    expect(
+      snapshotMatchesTarget(snapshotTarget(withCompanion), {
+        ...base,
+        debugCompanion: {
+          ...companion,
+          uuid: "99999999-9999-9999-9999-999999999999",
+        },
+      }),
+    ).toBe(false);
+    // Snapshots persisted before companion admission carry no field and match
+    // only a bare target.
+    const legacy = snapshotTarget(base);
+    delete (legacy as Record<string, unknown>).debug_companion;
+    expect(snapshotMatchesTarget(legacy, base)).toBe(true);
+    expect(snapshotMatchesTarget(legacy, withCompanion)).toBe(false);
+  });
 });
 
 describe("analysis snapshot nested subject contract", () => {

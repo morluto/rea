@@ -38,6 +38,7 @@ export interface BinarySessionOpenOptions {
   readonly formatHint?: ExecutableFormatHint;
   readonly architecture?: BinaryArchitecture;
   readonly entryPoint?: string;
+  readonly dsymPath?: string;
   readonly snapshot?: AnalysisSnapshot;
   /**
    * Load the snapshot inside the open's turn instead of before it, so calls
@@ -101,6 +102,7 @@ export const resolveSessionOpen = async (
     ...(options.entryPoint === undefined
       ? {}
       : { entryPoint: options.entryPoint }),
+    ...(options.dsymPath === undefined ? {} : { dsymPath: options.dsymPath }),
     ...(options.signal === undefined ? {} : { signal: options.signal }),
   });
   if (!parsed.ok) return parsed;

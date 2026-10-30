@@ -84,6 +84,7 @@ export default defineConfig({
           { text: "Ghidra on Windows", link: "/windows-ghidra-p0" },
           { text: "Ghidra DOS analysis", link: "/ghidra-dos" },
           { text: "Ghidra raw binary", link: "/raw-binary" },
+          { text: "Mach-O dSYM companion", link: "/dsym" },
           { text: "Ghidra NativeAOT", link: "/ghidra-nativeaot" },
           { text: "Ghidra PowerPC", link: "/ghidra-ppc" },
           { text: "Ghidra GameCube DOL", link: "/ghidra-dol" },

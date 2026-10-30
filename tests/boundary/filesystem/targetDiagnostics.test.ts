@@ -1,11 +1,53 @@
-import { chmod, readFile, realpath, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { chmod, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
+import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { systemDoctorHost } from "../../../src/application/Doctor.js";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
+import { binaryTargetSummary } from "../../../src/application/binary/BinaryTargetSummary.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { pe } from "../../../src/domain/binaryTarget.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+
+const execFileAsync = promisify(execFile);
+const onDarwin = process.platform === "darwin";
+
+/** Compile a two-file C fixture with real debug symbols and a dSYM bundle. */
+const compilePairFixture = async (directory: string, name: string) => {
+  const source = join(directory, `${name}.c`);
+  await writeFile(
+    source,
+    [
+      "#include <stdio.h>",
+      "typedef struct { int a; int b; } Pair;",
+      "__attribute__((noinline)) int pair_sum(Pair p) { return p.a + p.b; }",
+      'int main(void) { Pair p = {19, 23}; printf("%d\\n", pair_sum(p)); return 0; }',
+      "",
+    ].join("\n"),
+  );
+  const object = join(directory, `${name}.o`);
+  const binary = join(directory, name);
+  await execFileAsync("/usr/bin/xcrun", [
+    "clang",
+    "-O0",
+    "-g",
+    "-c",
+    source,
+    "-o",
+    object,
+  ]);
+  await execFileAsync("/usr/bin/xcrun", ["clang", object, "-o", binary]);
+  await execFileAsync("/usr/bin/xcrun", [
+    "dsymutil",
+    binary,
+    "-o",
+    `${binary}.dSYM`,
+  ]);
+  return binary;
+};
 
 describe("executable format refusal diagnostics", () => {
   it.each([
@@ -346,6 +388,496 @@ describe("raw-binary load rejection diagnostics", () => {
   });
 });
 
+describe("debug companion admission diagnostics", () => {
+  it("rejects dsym_path paired with an explicit headerless format", async () => {
+    const directory = await createTestTempDirectory("rea-dsym-pairing-");
+    const path = join(directory, "image.bin");
+    await writeFile(path, Buffer.alloc(64));
+    const result = await parseBinaryTarget(path, {
+      formatHint: "raw-binary",
+      architecture: "arm64",
+      entryPoint: "0x100000000",
+      dsymPath: join(directory, "image.dSYM"),
+    });
+    if (result.ok) throw new Error("dsym with raw-binary was admitted");
+    const projected = projectAnalysisError(result.error);
+    expect(projected).toMatchObject({
+      code: "invalid_request",
+      category: "invalid_input",
+      details: {
+        constraint: "debug_companion_rejected",
+        reason:
+          "dsym_path applies only to detected Mach-O executable targets, not to explicit headerless formats",
+      },
+    });
+  });
+
+  it("rejects dsym_path on an artifact target instead of discarding it", async () => {
+    const directory = await createTestTempDirectory("rea-dsym-artifact-");
+    const path = join(directory, "bundle.zip");
+    await writeFile(path, Buffer.from([0x50, 0x4b, 0x03, 0x04, 0, 0, 0, 0]));
+    const result = await parseBinaryTarget(path, {
+      dsymPath: join(directory, "bundle.dSYM"),
+    });
+    if (result.ok) throw new Error("dsym on a zip target was admitted");
+    const projected = projectAnalysisError(result.error);
+    expect(projected).toMatchObject({
+      code: "invalid_request",
+      category: "invalid_input",
+      details: {
+        constraint: "debug_companion_rejected",
+        reason:
+          "dsym_path applies only to Mach-O executable targets; this target is zip",
+      },
+    });
+  });
+
+  it("rejects dsym_path on a trailing-ZIP archive target instead of discarding it", async () => {
+    const directory = await createTestTempDirectory("rea-dsym-zip-tail-");
+    const writer = new ZipWriter(new Uint8ArrayWriter());
+    await writer.add("a.txt", new TextReader("hello\n"));
+    const zip = Buffer.from(await writer.close());
+    const path = join(directory, "selfextractor.tool");
+    await writeFile(
+      path,
+      Buffer.concat([Buffer.from("#!/bin/sh\nexit 0\n"), zip]),
+    );
+    const result = await parseBinaryTarget(path, {
+      dsymPath: join(directory, "selfextractor.dSYM"),
+    });
+    if (result.ok)
+      throw new Error("dsym with a trailing-ZIP archive was admitted");
+    const projected = projectAnalysisError(result.error);
+    expect(projected).toMatchObject({
+      code: "invalid_request",
+      category: "invalid_input",
+      details: {
+        constraint: "debug_companion_rejected",
+        reason:
+          "dsym_path applies only to Mach-O executable targets; this target is an archive with a trailing ZIP",
+      },
+    });
+  });
+});
+
+describe("debug companion fixture admission", () => {
+  it.skipIf(!onDarwin)(
+    "admits a matching dSYM with its UUID and member digest",
+    async () => {
+      const directory = await createTestTempDirectory("rea-dsym-admit-");
+      const binary = await compilePairFixture(directory, "pair");
+      const result = await parseBinaryTarget(binary, {
+        dsymPath: `${binary}.dSYM`,
+      });
+      if (!result.ok)
+        throw new Error(
+          `matching dSYM was rejected: ${JSON.stringify(projectAnalysisError(result.error))}`,
+        );
+      expect(
+        result.value.format === "mach-o" ||
+          result.value.format === "mach-o-universal",
+      ).toBe(true);
+      const companion =
+        result.value.format === "mach-o" ||
+        result.value.format === "mach-o-universal"
+          ? result.value.debugCompanion
+          : undefined;
+      expect(companion).toMatchObject({
+        sourcePath: `${binary}.dSYM`,
+        uuid: expect.stringMatching(
+          /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/u,
+        ),
+        memberSha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      });
+      expect(companion?.memberPath).toContain(
+        join("Contents", "Resources", "DWARF"),
+      );
+      expect(binaryTargetSummary(result.value)).toMatchObject({
+        debug_companion: {
+          source_path: `${binary}.dSYM`,
+          uuid: companion?.uuid,
+          member_sha256: companion?.memberSha256,
+        },
+      });
+    },
+  );
+
+  it.skipIf(!onDarwin)(
+    "skips a non-Mach-O DWARF member such as .DS_Store during admission",
+    async () => {
+      const directory = await createTestTempDirectory("rea-dsym-junk-");
+      const binary = await compilePairFixture(directory, "pair");
+      await writeFile(
+        join(`${binary}.dSYM`, "Contents", "Resources", "DWARF", ".DS_Store"),
+        Buffer.alloc(64),
+      );
+      const result = await parseBinaryTarget(binary, {
+        dsymPath: `${binary}.dSYM`,
+      });
+      if (!result.ok)
+        throw new Error(
+          `bundle with a junk member was rejected: ${JSON.stringify(projectAnalysisError(result.error))}`,
+        );
+      expect(
+        result.value.format === "mach-o" ||
+          result.value.format === "mach-o-universal",
+      ).toBe(true);
+    },
+  );
+
+  it.skipIf(!onDarwin)(
+    "rejects a DWARF directory with too many entries",
+    async () => {
+      const directory = await createTestTempDirectory("rea-dsym-count-");
+      const binary = await compilePairFixture(directory, "pair");
+      const dwarfDirectory = join(
+        `${binary}.dSYM`,
+        "Contents",
+        "Resources",
+        "DWARF",
+      );
+      for (let index = 0; index < 16; index += 1)
+        await writeFile(
+          join(dwarfDirectory, `extra-${String(index)}`),
+          Buffer.alloc(16),
+        );
+      const result = await parseBinaryTarget(binary, {
+        dsymPath: `${binary}.dSYM`,
+      });
+      if (result.ok) throw new Error("oversized member count was admitted");
+      const projected = projectAnalysisError(result.error);
+      expect(projected).toMatchObject({
+        code: "invalid_request",
+        details: {
+          constraint: "debug_companion_rejected",
+          reason: expect.stringContaining(
+            "more than 16 DWARF directory entries",
+          ),
+        },
+      });
+    },
+  );
+
+  it.skipIf(!onDarwin)(
+    "rejects an oversized DWARF member before hashing or staging it",
+    async () => {
+      const directory = await createTestTempDirectory("rea-dsym-size-");
+      const binary = await compilePairFixture(directory, "pair");
+      const dwarfDirectory = join(
+        `${binary}.dSYM`,
+        "Contents",
+        "Resources",
+        "DWARF",
+      );
+      // Replace the only matching member so enumeration order cannot bypass the size check.
+      const huge = join(dwarfDirectory, "pair");
+      // Preserve the real member UUID while growing its sparse extent.
+      // A sparse file reports a size beyond the budget without occupying it.
+      const truncate = (await import("node:fs/promises")).truncate;
+      await truncate(huge, 1024 * 1024 * 1024 + 1);
+      const result = await parseBinaryTarget(binary, {
+        dsymPath: `${binary}.dSYM`,
+      });
+      if (result.ok) throw new Error("oversized member was admitted");
+      const projected = projectAnalysisError(result.error);
+      expect(projected).toMatchObject({
+        code: "invalid_request",
+        details: {
+          constraint: "debug_companion_rejected",
+          reason: expect.stringContaining("exceeds the supported size"),
+        },
+      });
+    },
+  );
+
+  it.skipIf(!onDarwin)(
+    "rejects a mismatched dSYM as caller input with the UUID reason",
+    async () => {
+      const directory = await createTestTempDirectory("rea-dsym-mismatch-");
+      const pair = await compilePairFixture(directory, "pair");
+      const other = await compilePairFixture(directory, "other");
+      const result = await parseBinaryTarget(pair, {
+        dsymPath: `${other}.dSYM`,
+      });
+      if (result.ok) throw new Error("mismatched dSYM was admitted");
+      const projected = projectAnalysisError(result.error);
+      expect(projected).toMatchObject({
+        code: "invalid_request",
+        category: "invalid_input",
+        details: {
+          constraint: "debug_companion_rejected",
+          reason:
+            "dsym_path contains no Mach-O DWARF member whose LC_UUID matches the selected target slice",
+        },
+      });
+      expect(projected.message).not.toContain("Check that the path");
+    },
+  );
+});
+
+describe("debug companion universal slice selection", () => {
+  it("honors a UUID-less first slice over a UUID-bearing same-family sibling", async () => {
+    const directory = await createTestTempDirectory("rea-dsym-nouuid-");
+    const target = join(directory, "target.macho");
+    // Container: first x86_64-family slice without LC_UUID, then a sibling
+    // with one. The import is the first slice; the sibling must not match.
+    const filler = Buffer.alloc(28 + 8);
+    filler.writeUInt32LE(0xfeedface, 0);
+    filler.writeUInt32LE(0x01000007, 4);
+    filler.writeUInt32LE(1, 16);
+    filler.writeUInt32LE(8, 20);
+    filler.writeUInt32LE(0x29, 28);
+    filler.writeUInt32LE(8, 32);
+    const siblingUuid = "55555555-5555-5555-5555-555555555555";
+    const siblingBytes = Buffer.alloc(28 + 24);
+    siblingBytes.writeUInt32LE(0xfeedface, 0);
+    siblingBytes.writeUInt32LE(0x01000007, 4);
+    siblingBytes.writeUInt32LE(1, 16);
+    siblingBytes.writeUInt32LE(24, 20);
+    siblingBytes.writeUInt32LE(0x1b, 28);
+    siblingBytes.writeUInt32LE(24, 32);
+    Buffer.from(siblingUuid.replace(/-/gu, ""), "hex").copy(siblingBytes, 36);
+    const headerSize = 8 + 2 * 20;
+    const container = Buffer.alloc(
+      headerSize + filler.length + siblingBytes.length,
+    );
+    container.writeUInt32BE(0xcafebabe, 0);
+    container.writeUInt32BE(2, 4);
+    container.writeInt32BE(0x01000007, 8);
+    container.writeUInt32BE(headerSize, 8 + 8);
+    container.writeUInt32BE(filler.length, 8 + 12);
+    container.writeInt32BE(0x01000007, 8 + 20);
+    container.writeUInt32BE(headerSize + filler.length, 8 + 20 + 8);
+    container.writeUInt32BE(siblingBytes.length, 8 + 20 + 12);
+    filler.copy(container, headerSize);
+    siblingBytes.copy(container, headerSize + filler.length);
+    await writeFile(target, container);
+    const { readMachoFileUuidEntries } =
+      await import("../../../src/application/DebugCompanionAdmission.js");
+    const { open } = await import("node:fs/promises");
+    const handle = await open(target, "r");
+    try {
+      const entries = await readMachoFileUuidEntries(handle, container.length);
+      expect(entries).toEqual({
+        ok: true,
+        value: [
+          { cpuType: 0x01000007, uuid: null },
+          { cpuType: 0x01000007, uuid: siblingUuid },
+        ],
+      });
+    } finally {
+      await handle.close();
+    }
+    // A valid bundle whose only member carries the sibling's UUID: the
+    // import is the UUID-less first slice, so admission must still refuse.
+    const bundle = join(directory, "sibling-only.dSYM");
+    const dwarfDirectory = join(bundle, "Contents", "Resources", "DWARF");
+    const mkdir = (await import("node:fs/promises")).mkdir;
+    await mkdir(dwarfDirectory, { recursive: true });
+    await writeFile(join(dwarfDirectory, "member"), siblingBytes);
+    const result = await parseBinaryTarget(target, {
+      dsymPath: bundle,
+      hostArchitecture: "x64",
+    });
+    if (result.ok) throw new Error("uuid-less target admitted a companion");
+    const projected = projectAnalysisError(result.error);
+    expect(projected.details).toMatchObject({
+      constraint: "debug_companion_rejected",
+      reason: expect.stringContaining("declares no usable LC_UUID"),
+    });
+  });
+  it.skipIf(!onDarwin || process.arch !== "arm64")(
+    "rejects a companion that matches only the unselected universal slice",
+    async () => {
+      const directory = await createTestTempDirectory("rea-dsym-universal-");
+      const source = join(directory, "universal.c");
+      await writeFile(
+        source,
+        [
+          "#include <stdio.h>",
+          "typedef struct { int a; int b; } Pair;",
+          "__attribute__((noinline)) int pair_sum(Pair p) { return p.a + p.b; }",
+          'int main(void) { Pair p = {19, 23}; printf("%d\\n", pair_sum(p)); return 0; }',
+          "",
+        ].join("\n"),
+      );
+      const object = join(directory, "universal.o");
+      const binary = join(directory, "universal");
+      await execFileAsync("/usr/bin/xcrun", [
+        "clang",
+        "-O0",
+        "-g",
+        "-c",
+        source,
+        "-o",
+        object,
+        "-arch",
+        "arm64",
+        "-arch",
+        "x86_64",
+      ]);
+      await execFileAsync("/usr/bin/xcrun", [
+        "clang",
+        object,
+        "-o",
+        binary,
+        "-arch",
+        "arm64",
+        "-arch",
+        "x86_64",
+      ]);
+      await execFileAsync("/usr/bin/xcrun", [
+        "dsymutil",
+        binary,
+        "-o",
+        `${binary}.dSYM`,
+      ]);
+      const member = `${binary}.dSYM/Contents/Resources/DWARF/${"universal"}`;
+      const x86Only = join(directory, "x86-only.dSYM");
+      await execFileAsync("mkdir", [
+        "-p",
+        `${x86Only}/Contents/Resources/DWARF`,
+      ]);
+      await execFileAsync("/usr/bin/xcrun", [
+        "lipo",
+        "-thin",
+        "x86_64",
+        member,
+        "-output",
+        `${x86Only}/Contents/Resources/DWARF/universal`,
+      ]);
+      const result = await parseBinaryTarget(binary, { dsymPath: x86Only });
+      if (result.ok) throw new Error("unselected-slice companion was admitted");
+      const projected = projectAnalysisError(result.error);
+      expect(projected).toMatchObject({
+        code: "invalid_request",
+        category: "invalid_input",
+        details: {
+          constraint: "debug_companion_rejected",
+          reason:
+            "dsym_path contains no Mach-O DWARF member whose LC_UUID matches the selected target slice",
+        },
+      });
+    },
+  );
+});
+
+describe("debug companion slice selection", () => {
+  it.skipIf(!onDarwin)(
+    "admits only the first slice of a CPU family, not a same-family sibling",
+    async () => {
+      const directory = await createTestTempDirectory("rea-dsym-sibling-");
+      const source = join(directory, "sibling.c");
+      await writeFile(
+        source,
+        [
+          "#include <stdio.h>",
+          "__attribute__((noinline)) int twice(int x) { return x * 2; }",
+          'int main(void) { printf("%d\\n", twice(21)); return 0; }',
+          "",
+        ].join("\n"),
+      );
+      const object = join(directory, "sibling.o");
+      const binary = join(directory, "sibling");
+      await execFileAsync("/usr/bin/xcrun", [
+        "clang",
+        "-O0",
+        "-g",
+        "-c",
+        source,
+        "-o",
+        object,
+        "-arch",
+        "x86_64",
+        "-arch",
+        "x86_64h",
+      ]);
+      await execFileAsync("/usr/bin/xcrun", [
+        "clang",
+        object,
+        "-o",
+        binary,
+        "-arch",
+        "x86_64",
+        "-arch",
+        "x86_64h",
+      ]);
+      await execFileAsync("/usr/bin/xcrun", [
+        "dsymutil",
+        binary,
+        "-o",
+        `${binary}.dSYM`,
+      ]);
+      const member = `${binary}.dSYM/Contents/Resources/DWARF/sibling`;
+      const siblingOnly = join(directory, "sibling-only.dSYM");
+      await execFileAsync("mkdir", [
+        "-p",
+        `${siblingOnly}/Contents/Resources/DWARF`,
+      ]);
+      await execFileAsync("/usr/bin/xcrun", [
+        "lipo",
+        "-thin",
+        "x86_64h",
+        member,
+        "-output",
+        `${siblingOnly}/Contents/Resources/DWARF/sibling`,
+      ]);
+      // The host-compat selection imports the first x86_64 family slice; a
+      // companion carrying only the x86_64h sibling UUID must not match.
+      const result = await parseBinaryTarget(binary, {
+        dsymPath: siblingOnly,
+        hostArchitecture: "x64",
+      });
+      if (result.ok)
+        throw new Error("same-family sibling companion was admitted");
+      const projected = projectAnalysisError(result.error);
+      expect(projected).toMatchObject({
+        code: "invalid_request",
+        details: {
+          constraint: "debug_companion_rejected",
+          reason:
+            "dsym_path contains no Mach-O DWARF member whose LC_UUID matches the selected target slice",
+        },
+      });
+    },
+  );
+
+  it("admits a watchOS arm64_32 companion by its own cputype", async () => {
+    const directory = await createTestTempDirectory("rea-dsym-arm6432-");
+    const uuid = "0123456789abcdef0123456789abcdef";
+    // Thin 32-bit Mach-O with LC_UUID; arm64_32 is cputype 0x0200000c, not
+    // arm64's 0x0100000c, so a family table keyed on the wrong constant would
+    // report the target as UUID-less and refuse this companion.
+    const thinArm64_32 = (): Buffer => {
+      const bytes = Buffer.alloc(28 + 24);
+      bytes.writeUInt32LE(0xfeedface, 0);
+      bytes.writeInt32LE(0x0200000c, 4);
+      bytes.writeUInt32LE(1, 16);
+      bytes.writeUInt32LE(24, 20);
+      bytes.writeUInt32LE(0x1b, 28);
+      bytes.writeUInt32LE(24, 32);
+      Buffer.from(uuid, "hex").copy(bytes, 36);
+      return bytes;
+    };
+    const target = join(directory, "watch.macho");
+    await writeFile(target, thinArm64_32());
+    const bundle = join(directory, "watch.dSYM");
+    await mkdir(`${bundle}/Contents/Resources/DWARF`, { recursive: true });
+    await writeFile(`${bundle}/Contents/Resources/DWARF/watch`, thinArm64_32());
+    const result = await parseBinaryTarget(target, { dsymPath: bundle });
+    if (!result.ok) {
+      throw new Error(
+        `arm64_32 companion was rejected: ${JSON.stringify(result.error)}`,
+      );
+    }
+    expect(result.value).toMatchObject({
+      format: "mach-o",
+      architecture: "arm64_32",
+      debugCompanion: { uuid: "01234567-89AB-CDEF-0123-456789ABCDEF" },
+    });
+  });
+});
+
 describe("caller-selected and inferred target interpretation", () => {
   it.each(["archive.hop", "archive.HOP"])(
     "preserves inferred database routing for ZIP content named %s",
@@ -365,7 +897,7 @@ describe("caller-selected and inferred target interpretation", () => {
         ok: true,
         value: { kind: "database", format: "analysis-database" },
       });
-      expect(Buffer.compare(await readFile(databasePath), bytes)).toBe(0);
+      expect((await readFile(databasePath)).equals(bytes)).toBe(true);
     },
   );
 

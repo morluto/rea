@@ -87,6 +87,8 @@ import {
   withArtifactRegularFile,
 } from "../artifacts/ArtifactFileOperation.js";
 import { readArtifactFileChunks } from "../artifacts/readArtifactFileChunks.js";
+import { stageGhidraDebugCompanion } from "./GhidraDebugCompanion.js";
+import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 import {
   assertRegularFileActive,
@@ -971,6 +973,31 @@ export class GhidraClient {
       // Snapshot finalization has settled and no launcher exists yet. Preserve
       // its producer outcome rather than reclassifying from a later deadline.
       return this.#startupFailure(failure);
+    }
+    if (this.#options.debugCompanion !== undefined) {
+      try {
+        const staged = await stageGhidraDebugCompanion(
+          this.#options.debugCompanion,
+          this.#runtimeRoot.path,
+          this.#snapshotPath,
+          { signal: deadline.signal },
+        );
+        this.#targetAdmission =
+          this.#targetAdmission === undefined
+            ? staged
+            : {
+                ...(this.#targetAdmission as Record<string, JsonValue>),
+                ...(staged as Record<string, JsonValue>),
+              };
+      } catch (cause: unknown) {
+        if (deadline.signal.aborted) return this.#startupInterrupted(deadline);
+        const failure = this.#failure(
+          "start",
+          "Ghidra debug companion staging failed",
+          cause,
+        );
+        return this.#startupFailure(failure);
+      }
     }
     if (deadline.signal.aborted) return this.#startupInterrupted(deadline);
     this.#token = randomBytes(32).toString("hex");

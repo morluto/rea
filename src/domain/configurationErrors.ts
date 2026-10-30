@@ -46,7 +46,8 @@ export interface BinaryTargetErrorOptions extends AnalysisErrorOptions {
     | "directory_requires_file"
     | "wasm_requires_static_inspection"
     | "file_format_rejected"
-    | "load_selection_rejected";
+    | "load_selection_rejected"
+    | "debug_companion_rejected";
 }
 
 /** A supplied target path could not be safely opened as a supported app or binary. */

@@ -92,10 +92,19 @@ const subjectBaseSchema = z.object({
   sha256: digestSchema,
 });
 const subjectSchema = withEvidenceSubjectDeclaration(subjectBaseSchema);
+/** Companion identity that partitions session and snapshot reuse by dSYM. */
+const debugCompanionSchema = z.object({
+  source_path: z.string(),
+  uuid: z.string(),
+  member_sha256: z.string(),
+});
+
 const targetIdentitySchema = z.object({
   sha256: digestSchema,
   kind: kindSchema,
   architecture: architectureSchema.nullable(),
+  /** Absent in snapshots written before companion admission; null when none. */
+  debug_companion: debugCompanionSchema.nullable().default(null),
 });
 const targetSchema = z.discriminatedUnion("format", [
   targetIdentitySchema.extend({
@@ -377,6 +386,7 @@ export const snapshotTarget = (target: BinaryTarget): AnalysisSnapshotTarget =>
         sha256: target.sha256,
         kind: target.kind,
         architecture: target.architecture,
+        debug_companion: null,
         format: target.format,
         entry_point: target.entryPoint,
       }
@@ -385,6 +395,7 @@ export const snapshotTarget = (target: BinaryTarget): AnalysisSnapshotTarget =>
           sha256: target.sha256,
           kind: target.kind,
           architecture: target.architecture,
+          debug_companion: null,
           format: target.format,
           entry_point: target.entryPoint,
         }
@@ -392,8 +403,22 @@ export const snapshotTarget = (target: BinaryTarget): AnalysisSnapshotTarget =>
           sha256: target.sha256,
           kind: target.kind,
           architecture: target.architecture ?? null,
+          debug_companion: machOCompanionIdentity(target),
           format: target.format,
         };
+
+/** A dSYM change is a different analysis input, not the same target. */
+const machOCompanionIdentity = (
+  target: BinaryTarget,
+): AnalysisSnapshotTarget["debug_companion"] =>
+  (target.format === "mach-o" || target.format === "mach-o-universal") &&
+  target.debugCompanion !== undefined
+    ? {
+        source_path: target.debugCompanion.sourcePath,
+        uuid: target.debugCompanion.uuid,
+        member_sha256: target.debugCompanion.memberSha256,
+      }
+    : null;
 
 /** Build the immutable provider/profile binding used by a cached snapshot. */
 export const snapshotBinding = (
@@ -413,12 +438,33 @@ export const snapshotMatchesTarget = (
   snapshot.kind === target.kind &&
   snapshot.format === target.format &&
   snapshot.architecture === (target.architecture ?? null) &&
+  sameDebugCompanion(snapshot, target) &&
   (snapshot.format !== "raw-binary" ||
     (target.format === "raw-binary" &&
       snapshot.entry_point === target.entryPoint)) &&
   (snapshot.format !== "gamecube-dol" ||
     (target.format === "gamecube-dol" &&
       snapshot.entry_point === target.entryPoint));
+
+/** A dSYM change is a different analysis input, not the same target. */
+const sameDebugCompanion = (
+  snapshot: AnalysisSnapshotTarget,
+  target: BinaryTarget,
+): boolean => {
+  const selected =
+    (target.format === "mach-o" || target.format === "mach-o-universal") &&
+    target.debugCompanion !== undefined
+      ? target.debugCompanion
+      : undefined;
+  const recorded = snapshot.debug_companion ?? null;
+  if (selected === undefined) return recorded === null;
+  return (
+    recorded !== null &&
+    recorded.uuid === selected.uuid &&
+    recorded.member_sha256 === selected.memberSha256 &&
+    (recorded.source_path ?? null) === selected.sourcePath
+  );
+};
 
 /** Compare a snapshot binding with the selected concrete analysis profile. */
 export const snapshotMatchesProfile = (
@@ -547,6 +593,17 @@ export const evidenceMatchesEntry = (
     evidenceContentDigest(evidence),
   ]) === entryEvidenceKey(entry, snapshot.binding);
 
+/**
+ * The target shape hashed into query IDs. A null companion is stripped so a
+ * bare target hashes exactly like the snapshots written before companion
+ * admission; a present companion keeps its key.
+ */
+const queryIdTarget = (target: AnalysisSnapshotTarget): JsonValue => {
+  if (target.debug_companion != null) return target;
+  const { debug_companion: _stripped, ...legacy } = target;
+  return legacy;
+};
+
 /** Compute the stable lookup key for one provider/profile-specific query. */
 export const analysisQueryId = (
   target: AnalysisSnapshotTarget,
@@ -555,7 +612,14 @@ export const analysisQueryId = (
   parameters: Readonly<Record<string, JsonValue>>,
 ): string =>
   `query_${createHash("sha256")
-    .update(canonicalJson({ target, binding, operation, parameters }))
+    .update(
+      canonicalJson({
+        target: queryIdTarget(target),
+        binding,
+        operation,
+        parameters,
+      }),
+    )
     .digest("hex")}`;
 
 /** Create one serializable snapshot entry from a successful provider call. */

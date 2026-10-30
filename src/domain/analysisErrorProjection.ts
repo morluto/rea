@@ -189,7 +189,8 @@ const underlyingErrorCode = (
   if (error instanceof ArtifactOperationError)
     return artifactOperationCode(error);
   if (error instanceof BinaryTargetError)
-    return error.constraint === "load_selection_rejected"
+    return error.constraint === "load_selection_rejected" ||
+      error.constraint === "debug_companion_rejected"
       ? "invalid_request"
       : error.systemCode === undefined
         ? "target_unavailable"
