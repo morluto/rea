@@ -407,3 +407,39 @@ it("fails when undefined symbols exceed the caller-selected import budget", () =
       expect(cause.message).toContain("Undefined dynamic symbols");
   }
 });
+
+it("marks an empty PT_INTERP path unreadable with partial coverage", () => {
+  const report = parse(elfDependencyFixture({ interpreter: "" }));
+  expect(report.interpreter.status).toBe("unreadable");
+  expect(report.coverage.status).toBe("partial");
+  expect(report.issues).toContainEqual(
+    expect.objectContaining({
+      code: "name_unreadable",
+      message: "PT_INTERP path is empty",
+    }),
+  );
+});
+
+it("keeps imports unresolved when two verneed entries share a version index", () => {
+  const report = parse(
+    elfDependencyFixture({
+      verneed: [
+        { file: "liba.so.1", versions: [{ name: "A_1.0", index: 2 }] },
+        { file: "libb.so.1", versions: [{ name: "B_1.0", index: 2 }] },
+      ],
+      imports: [{ name: "shared", version: 2 }],
+    }),
+  );
+  expect(report.coverage.status).toBe("partial");
+  expect(report.version_requirements.files).toHaveLength(2);
+  expect(report.imports[0]?.version).toEqual({
+    index: 2,
+    hidden: false,
+    name: null,
+    file: null,
+    status: "unknown",
+  });
+  expect(report.issues).toContainEqual(
+    expect.objectContaining({ code: "version_unresolved" }),
+  );
+});

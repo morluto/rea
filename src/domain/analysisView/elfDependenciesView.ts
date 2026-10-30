@@ -187,7 +187,7 @@ export const projectElfDependenciesView = (
   if (view.kind === "summary")
     return ok({
       ...shared,
-      kind: "summary",
+      kind: "summary" as const,
       view,
       summary,
       coverage: completeWithinViewCoverage(
@@ -217,7 +217,7 @@ export const projectElfDependenciesView = (
           );
     return ok({
       ...shared,
-      kind: "elf-dependencies",
+      kind: "elf-dependencies" as const,
       view,
       dependencies: summary,
       items: selected.rows,
@@ -266,7 +266,7 @@ export const projectElfDependenciesView = (
           );
     return ok({
       ...shared,
-      kind: "elf-dependencies",
+      kind: "elf-dependencies" as const,
       view,
       dependencies: summary,
       items: selected.rows,
@@ -314,7 +314,7 @@ export const projectElfDependenciesView = (
           );
     return ok({
       ...shared,
-      kind: "elf-dependencies",
+      kind: "elf-dependencies" as const,
       view,
       dependencies: summary,
       items: selected.rows,
@@ -360,7 +360,7 @@ export const projectElfDependenciesView = (
         );
   return ok({
     ...shared,
-    kind: "elf-dependencies",
+    kind: "elf-dependencies" as const,
     view,
     dependencies: summary,
     items: selected.rows,

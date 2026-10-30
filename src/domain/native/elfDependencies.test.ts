@@ -57,6 +57,32 @@ it("derives the highest GNU-style NAME_x.y string per namespace", () => {
   ]);
 });
 
+it("compares large version components exactly and skips empty namespaces", () => {
+  expect(
+    derivedElfVersionMaxima([
+      "LIB_9007199254740993",
+      "LIB_9007199254740992",
+      "LIB_9007199254740994",
+      "_2.5",
+    ]),
+  ).toEqual([
+    {
+      namespace: "LIB",
+      maximum: "LIB_9007199254740994",
+      evidence_kind: "derived",
+    },
+  ]);
+  expect(
+    derivedElfVersionMaxima(["LIB_9007199254740992", "LIB_9007199254740993"]),
+  ).toEqual([
+    {
+      namespace: "LIB",
+      maximum: "LIB_9007199254740993",
+      evidence_kind: "derived",
+    },
+  ]);
+});
+
 it("decodes named DT_FLAGS and DT_FLAGS_1 bits without expanding unrecognized values", () => {
   expect(decodeElfDynamicFlags(0x9, DF_FLAG_BITS)).toEqual({
     raw: 0x9,

@@ -114,32 +114,34 @@ export const elfSearchPathTokens = (
 
 const VERSION_NAME = /^(.*)_([0-9]+(?:\.[0-9]+)*)$/u;
 
-const versionParts = (value: string): number[] =>
-  value.split(".").map((part) => Number(part));
+const versionParts = (value: string): bigint[] =>
+  value.split(".").map((part) => BigInt(part));
 
-const compareVersionParts = (left: number[], right: number[]): number => {
+const compareVersionParts = (left: bigint[], right: bigint[]): number => {
   const length = Math.max(left.length, right.length);
   for (let index = 0; index < length; index += 1) {
-    const a = left[index] ?? 0;
-    const b = right[index] ?? 0;
+    const a = left[index] ?? 0n;
+    const b = right[index] ?? 0n;
     if (a !== b) return a < b ? -1 : 1;
   }
   return 0;
 };
 
 /**
- * Highest GNU-style NAME_x.y string per namespace. Comparison is numeric on
- * the dotted suffix; names that do not match stay out of the derived set.
+ * Highest GNU-style NAME_x.y string per namespace. Comparison is exact integer
+ * order on the dotted suffix; names that do not match, or that have an empty
+ * namespace, stay out of the derived set while their requirements remain.
  */
 export const derivedElfVersionMaxima = (
   names: readonly string[],
 ): { namespace: string; maximum: string; evidence_kind: "derived" }[] => {
-  const best = new Map<string, { maximum: string; parts: number[] }>();
+  const best = new Map<string, { maximum: string; parts: bigint[] }>();
   for (const name of names) {
     const match = VERSION_NAME.exec(name);
     if (match === null || match[1] === undefined || match[2] === undefined)
       continue;
     const namespace = match[1];
+    if (namespace.length === 0) continue;
     const parts = versionParts(match[2]);
     const current = best.get(namespace);
     if (current === undefined || compareVersionParts(parts, current.parts) > 0)

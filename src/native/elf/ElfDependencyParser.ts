@@ -277,6 +277,20 @@ const mapAddress = (
   }
 };
 
+/** File-offset end of the PT_LOAD mapping that contains a virtual address. */
+const mappedExtentEnd = (
+  mappings: readonly FileMapping[],
+  address: bigint,
+): number | null => {
+  for (const mapping of mappings)
+    if (
+      address >= mapping.address &&
+      address < mapping.address + BigInt(mapping.size)
+    )
+      return mapping.offset + mapping.size;
+  return null;
+};
+
 const tableFromSection = (
   section: SectionFacts | undefined,
 ): LocatedTable | null => {
@@ -324,15 +338,17 @@ const sysvSymbolCount = (
 const gnuSymbolCountAt = (
   reader: BinaryReader,
   header: number,
+  limit: number,
   bits: 32 | 64,
 ): number | null => {
-  if (header + 16 > reader.bytes.length) return null;
+  const end = Math.min(limit, reader.bytes.length);
+  if (header + 16 > end) return null;
   const buckets = reader.u32(header);
   const firstSymbol = reader.u32(header + 4);
   const bloomWords = reader.u32(header + 8);
   if (buckets === 0 || bloomWords === 0) return null;
   const prefixBytes = 16 + bloomWords * (bits === 64 ? 8 : 4) + buckets * 4;
-  if (header + prefixBytes > reader.bytes.length) return null;
+  if (header + prefixBytes > end) return null;
   let last = 0;
   const bucketsAt = header + 16 + bloomWords * (bits === 64 ? 8 : 4);
   for (let index = 0; index < buckets; index += 1)
@@ -342,7 +358,7 @@ const gnuSymbolCountAt = (
     let index = last;
     for (;;) {
       const span = prefixBytes + (index - firstSymbol + 1) * 4;
-      if (header + span > reader.bytes.length) return null;
+      if (header + span > end) return null;
       const chain = reader.u32(header + span - 4);
       index += 1;
       if ((chain & 1) !== 0) {
@@ -362,7 +378,9 @@ const gnuSymbolCount = (
 ): number | null => {
   const header = mapAddress(mappings, BigInt(address), 16);
   if (header === null) return null;
-  return gnuSymbolCountAt(reader, header, bits);
+  const limit = mappedExtentEnd(mappings, BigInt(address));
+  if (limit === null) return null;
+  return gnuSymbolCountAt(reader, header, limit, bits);
 };
 
 const locateVersionTable = (
@@ -376,10 +394,15 @@ const locateVersionTable = (
   if (address === undefined) return null;
   const offset = mapAddress(mappings, BigInt(address), 16);
   if (offset === null) return null;
+  // Without a section header the table extent is unknown; keep every later
+  // record read inside the PT_LOAD mapping that admitted the table start.
+  const end = mappedExtentEnd(mappings, BigInt(address));
+  if (end === null) return null;
+  const size = Math.min(end, fileBytes) - offset;
   return {
     offset,
-    size: fileBytes - offset,
-    location: { offset, bytes: 16 },
+    size,
+    location: { offset, bytes: size },
   };
 };
 
@@ -825,8 +848,14 @@ const parseInterpreter = (
   issues: ElfDependencyIssue[],
 ): ElfDependencies["interpreter"] => {
   if (interp === null) return { status: "absent", path: null, location: null };
-  if (interp.bytes === 0)
+  if (interp.bytes === 0) {
+    issues.push({
+      code: "name_unreadable",
+      location: hex(interp.offset),
+      message: "PT_INTERP segment is empty",
+    });
     return { status: "unreadable", path: null, location: interp };
+  }
   try {
     const body = reader.range(interp.offset, interp.bytes, "PT_INTERP");
     const observed = observeElfStringTableEntry(body, 0, interp.bytes);
@@ -839,8 +868,14 @@ const parseInterpreter = (
       return { status: "unreadable", path: null, location: interp };
     }
     const path = observed.bytes.toString("latin1");
-    if (path.length === 0)
+    if (path.length === 0) {
+      issues.push({
+        code: "name_unreadable",
+        location: hex(interp.offset),
+        message: "PT_INTERP path is empty",
+      });
       return { status: "unreadable", path: null, location: interp };
+    }
     return { status: "present", path, location: interp };
   } catch (cause) {
     if (cause instanceof BinaryFormatFailure) {
@@ -920,7 +955,12 @@ const locateSymbolCount = (
   if (sysv !== null) return sysv;
   const gnu =
     gnuHash !== undefined && gnuHash.size >= 16
-      ? gnuSymbolCountAt(reader, gnuHash.offset, bits)
+      ? gnuSymbolCountAt(
+          reader,
+          gnuHash.offset,
+          gnuHash.offset + gnuHash.size,
+          bits,
+        )
       : tags.has(DT_GNU_HASH)
         ? gnuSymbolCount(reader, mappings, tags.get(DT_GNU_HASH)!, bits)
         : null;
@@ -963,12 +1003,32 @@ const parseVerneed = (
       files: [],
     };
   }
-  const count = declaredCount ?? section?.info ?? 0;
+  const count = declaredCount ?? section?.info;
+  if (count === undefined) {
+    issues.push({
+      code: "table_unavailable",
+      location: hex(table.offset),
+      message:
+        "GNU version requirements have no DT_VERNEEDNUM or section record count",
+    });
+    return { status: "unreadable", location: table.location, files: [] };
+  }
   if (count === 0)
     return { status: "present", location: table.location, files: [] };
+  const files: ElfVersionNeedFile[] = [];
+  const conflicts = new Set<number>();
+  const settleConflicts = () => {
+    for (const index of conflicts) {
+      versionNames.set(index, { name: null, file: null });
+      issues.push({
+        code: "version_unresolved",
+        location: hex(table.offset),
+        message: `GNU version requirements assign version index ${String(index)} more than once; imports using it stay unresolved`,
+      });
+    }
+  };
   try {
     reader.range(table.offset, Math.min(table.size, 16), "GNU verneed");
-    const files: ElfVersionNeedFile[] = [];
     const seen = new Set<number>();
     let offset = 0;
     for (let record = 0; record < count; record += 1) {
@@ -988,6 +1048,8 @@ const parseVerneed = (
           "GNU version requirement auxiliary chain starts inside its header",
         );
       const versions: ElfVersionNeedFile["versions"] = [];
+      const pending: [number, { name: string | null; file: string | null }][] =
+        [];
       let auxiliary = offset + auxiliaryOffset;
       const auxSeen = new Set<number>();
       for (let item = 0; item < auxiliaryCount; item += 1) {
@@ -1011,7 +1073,7 @@ const parseVerneed = (
           index,
         });
         if (name !== null || file !== null)
-          versionNames.set(index, { name, file });
+          pending.push([index, { name, file }]);
         if (item + 1 < auxiliaryCount) {
           if (auxiliaryNext === 0 || auxiliary + auxiliaryNext <= auxiliary)
             fail("GNU version requirement auxiliary chain is cyclic");
@@ -1023,6 +1085,12 @@ const parseVerneed = (
         }
       }
       files.push({ file, versions });
+      // Join imports only against records whose whole file entry was read.
+      for (const [index, entry] of pending) {
+        if (versionNames.has(index) || conflicts.has(index))
+          conflicts.add(index);
+        else versionNames.set(index, entry);
+      }
       if (record + 1 < count) {
         if (next === 0 || offset + next <= offset)
           fail("GNU version requirement chain is cyclic");
@@ -1031,17 +1099,21 @@ const parseVerneed = (
         offset += next;
       }
     }
+    settleConflicts();
     return { status: "present", location: table.location, files };
   } catch (cause) {
     if (cause instanceof ArtifactReaderFailure) throw cause;
     if (cause instanceof BinaryFormatFailure && /cyclic/u.test(cause.message))
       throw cause;
+    settleConflicts();
     issues.push({
       code: "version_unresolved",
       location: hex(table.offset),
       message: `GNU version requirements: ${cause instanceof Error ? cause.message : String(cause)}`,
     });
-    return { status: "unreadable", location: table.location, files: [] };
+    // Keep the records read before the failure; versionNames already joins
+    // imports against exactly this prefix.
+    return { status: "unreadable", location: table.location, files };
   }
 };
 
@@ -1073,11 +1145,20 @@ const parseVerdef = (
       names: [],
     };
   }
-  const count = declaredCount ?? section?.info ?? 0;
+  const count = declaredCount ?? section?.info;
+  if (count === undefined) {
+    issues.push({
+      code: "table_unavailable",
+      location: hex(table.offset),
+      message:
+        "GNU version definitions have no DT_VERDEFNUM or section record count",
+    });
+    return { status: "unreadable", location: table.location, names: [] };
+  }
   if (count === 0)
     return { status: "present", location: table.location, names: [] };
+  const names: ElfVersionDefinition[] = [];
   try {
-    const names: ElfVersionDefinition[] = [];
     const seen = new Set<number>();
     let offset = 0;
     for (let record = 0; record < count; record += 1) {
@@ -1117,7 +1198,7 @@ const parseVerdef = (
       location: hex(table.offset),
       message: `GNU version definitions: ${cause instanceof Error ? cause.message : String(cause)}`,
     });
-    return { status: "unreadable", location: table.location, names: [] };
+    return { status: "unreadable", location: table.location, names };
   }
 };
 
