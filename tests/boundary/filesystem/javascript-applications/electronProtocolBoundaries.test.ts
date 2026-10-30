@@ -37,6 +37,52 @@ const protocolFixture = async (): Promise<string> => {
   return root;
 };
 
+describe("Electron wrapped protocol.handle graph", () => {
+  it("retains wrapped handle registrations while rejecting missing legacy callbacks", async () => {
+    const root = await createTestTempDirectory(
+      "rea-electron-wrapped-protocol-",
+    );
+    await writeFile(
+      join(root, "main.cjs"),
+      `
+      const { protocol, session } = require("electron");
+      protocol.handle("module-omitted");
+      protocol.handle("module-null", null);
+      protocol.handle("module-undefined", void 0);
+      session.defaultSession.protocol.handle("session-omitted");
+      session.defaultSession.protocol.handle("session-null", null);
+      session.defaultSession.protocol.handle("session-undefined", void 0);
+      protocol.registerStringProtocol("legacy-omitted");
+      protocol.registerStringProtocol("legacy-null", null);
+      protocol.registerStringProtocol("legacy-undefined", void 0);
+    `,
+    );
+    const result = await reconstructJavaScriptArtifact({ input_path: root });
+    const graph = parseJavaScriptApplicationGraph(result.graph);
+    const schemes = graph.nodes.filter(({ kind }) => kind === "url-scheme");
+    expect(
+      schemes.map((node) => node.observations[0]?.label).toSorted(),
+    ).toEqual([
+      "module-null",
+      "module-omitted",
+      "module-undefined",
+      "session-null",
+      "session-omitted",
+      "session-undefined",
+    ]);
+    expect(
+      graph.edges.filter((edge) => edge.relation === "handles"),
+    ).toHaveLength(6);
+    for (const scheme of schemes) {
+      expect(scheme.observations[0]?.properties).toMatchObject({
+        api: "handle",
+        role: "handler",
+        resolution: "literal",
+      });
+    }
+  });
+});
+
 describe("Electron URL scheme boundaries", () => {
   it("joins case-insensitive scheme identities while preserving declared spellings", async () => {
     const root = await createTestTempDirectory("rea-electron-protocol-case-");
