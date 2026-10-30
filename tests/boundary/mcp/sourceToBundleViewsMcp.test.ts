@@ -1,8 +1,8 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, it, onTestFinished } from "vitest";
-import { Ajv2020 } from "ajv/dist/2020.js";
+import { afterAll, expect, it, onTestFinished } from "vitest";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { sourceToBundleComparisonResultSchema } from "../../../src/domain/javascript/sourceToBundleComparisonSchemas.js";
@@ -11,6 +11,9 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { importReferenceSource } from "../../support/referenceSourceResourceScope.js";
 import { analyzeJavaScriptApplication } from "../../support/javascriptApplicationScope.js";
+
+const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
 
 it.each(["full", "compact"] as const)(
   "selects real source-map correspondence with stable identities and full parent retention (%s)",
@@ -54,7 +57,7 @@ it.each(["full", "compact"] as const)(
       summary: { summary: full.summary, source_coverage: full.coverage },
     });
     const { tools } = await client.listTools();
-    const ajv = new Ajv2020({ strict: false, validateFormats: false });
+    const ajv = schemaValidation.assertions;
     const comparisonTool = tools.find(
       (tool) => tool.name === "compare_source_to_bundle",
     )!;
@@ -74,7 +77,7 @@ it.each(["full", "compact"] as const)(
       limit: 1,
     };
     expect(
-      ajv.compile(comparisonTool.inputSchema)({ ...inputs, view: request }),
+      ajv.validate(comparisonTool.inputSchema, { ...inputs, view: request }),
     ).toBe(true);
     const selected = await call("compare_source_to_bundle", {
       ...inputs,
@@ -82,7 +85,7 @@ it.each(["full", "compact"] as const)(
       view: request,
     });
     const outputSchema: Record<string, unknown> = comparisonTool.outputSchema!;
-    expect(ajv.compile(outputSchema)(selected)).toBe(true);
+    expect(ajv.validate(outputSchema, selected)).toBe(true);
     expect(selected.confidence).toBe("inferred");
     const page = analysisViewResultSchema.parse(selected.normalized_result);
     expect(page).toMatchObject({
@@ -218,7 +221,10 @@ const comparisonFixture = async (profile: "full" | "compact") => {
       environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: profile },
     },
   );
-  const client = new Client({ name: "source-view", version: "1" });
+  const client = new Client(
+    { name: "source-view", version: "1" },
+    { jsonSchemaValidator: schemaValidation },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();

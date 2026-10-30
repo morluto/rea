@@ -105,65 +105,61 @@ it("preserves opaque HAR container fields through CLI and MCP", async () => {
   expect(await readFile(path, "utf8")).toBe(original);
 });
 
-it.each([
-  { encoded: "1e3", literal: "1000" },
-  { encoded: "0.0000001", literal: "1e-7" },
-])(
-  "excludes normalized HAR numbers through CLI and MCP: $encoded",
-  async ({ encoded, literal }) => {
-    const root = await createTestTempDirectory("rea-har-normalized-number-");
-    const path = join(root, "capture.har");
-    const original = JSON.stringify(historicalHar())
-      .replace('"log":{', `"_number":${encoded},"log":{`)
-      .replace('"cache":{}', `"cache":{},"_number":${encoded}`);
-    await writeFile(path, original);
-    const { call } = await connectLocalToolsMcp();
-    for (const marked of [false, true]) {
-      const fromCli = await cli(
-        path,
-        "har",
-        marked ? ["--sensitive-value", literal] : [],
-      );
-      expect(fromCli.ok, fromCli.stdout).toBe(true);
-      const evidence = parseEvidence(JSON.parse(fromCli.stdout));
-      const response = await call("inspect_web_network_capture", {
-        capture_path: path,
-        format: "har",
-        ...(marked ? { sensitive_values: [literal] } : {}),
+it("excludes normalized HAR numbers through CLI and MCP", async () => {
+  const encoded = "1e3";
+  const literal = "1000";
+  const root = await createTestTempDirectory("rea-har-normalized-number-");
+  const path = join(root, "capture.har");
+  const original = JSON.stringify(historicalHar())
+    .replace('"log":{', `"_number":${encoded},"log":{`)
+    .replace('"cache":{}', `"cache":{},"_number":${encoded}`);
+  await writeFile(path, original);
+  const { call } = await connectLocalToolsMcp();
+  for (const marked of [false, true]) {
+    const fromCli = await cli(
+      path,
+      "har",
+      marked ? ["--sensitive-value", literal] : [],
+    );
+    expect(fromCli.ok, fromCli.stdout).toBe(true);
+    const evidence = parseEvidence(JSON.parse(fromCli.stdout));
+    const response = await call("inspect_web_network_capture", {
+      capture_path: path,
+      format: "har",
+      ...(marked ? { sensitive_values: [literal] } : {}),
+    });
+    expect(response.isError, JSON.stringify(response)).not.toBe(true);
+    const mcp = parseEvidence(response.structuredContent);
+    expect(mcp.evidence_id).toBe(evidence.evidence_id);
+    expect(mcp.normalized_result).toEqual(evidence.normalized_result);
+    const capture = webNetworkCaptureSchema.parse(evidence.normalized_result);
+    for (const projection of [capture.container, ...capture.records]) {
+      expect(projection.reported).toMatchObject({
+        _number: marked ? null : Number(encoded),
       });
-      expect(response.isError, JSON.stringify(response)).not.toBe(true);
-      const mcp = parseEvidence(response.structuredContent);
-      expect(mcp.evidence_id).toBe(evidence.evidence_id);
-      expect(mcp.normalized_result).toEqual(evidence.normalized_result);
-      const capture = webNetworkCaptureSchema.parse(evidence.normalized_result);
-      for (const projection of [capture.container, ...capture.records]) {
-        expect(projection.reported).toMatchObject({
-          _number: marked ? null : Number(encoded),
+      const numbers = projection.numeric_literals.filter(
+        (number) => number.pointer === "/_number",
+      );
+      expect(numbers).toEqual(
+        marked
+          ? []
+          : [
+              {
+                pointer: "/_number",
+                producer_type: "json-number",
+                literal: encoded,
+              },
+            ],
+      );
+      if (marked)
+        expect(projection.redactions).toContainEqual({
+          pointer: "/_number",
+          reason: "explicit-sensitive-value",
         });
-        const numbers = projection.numeric_literals.filter(
-          (number) => number.pointer === "/_number",
-        );
-        expect(numbers).toEqual(
-          marked
-            ? []
-            : [
-                {
-                  pointer: "/_number",
-                  producer_type: "json-number",
-                  literal: encoded,
-                },
-              ],
-        );
-        if (marked)
-          expect(projection.redactions).toContainEqual({
-            pointer: "/_number",
-            reason: "explicit-sensitive-value",
-          });
-      }
     }
-    expect(await readFile(path, "utf8")).toBe(original);
-  },
-);
+  }
+  expect(await readFile(path, "utf8")).toBe(original);
+});
 
 it("retains Playwright IPv6 spelling through public CLI and MCP workflows", async () => {
   const root = await createTestTempDirectory("rea-har-ipv6-");

@@ -297,30 +297,34 @@ describe("execFileOutput cancellation lifecycle", () => {
     async () => {
       const directory = await createTestTempDirectory("rea-exec-double-stop-");
       const ready = join(directory, "ready");
+      const interrupted = join(directory, "interrupted");
       const script = [
         'const fs = require("node:fs");',
-        'for (const name of ["SIGINT", "SIGTERM"]) process.on(name, () => {});',
+        `process.on("SIGINT", () => fs.writeFileSync(${JSON.stringify(interrupted)}, ""));`,
         `fs.writeFileSync(${JSON.stringify(ready)}, "");`,
         "setInterval(() => {}, 1000);",
       ].join("\n");
       const controller = new AbortController();
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
       const execution = execFileOutput(process.execPath, ["-e", script], {
         signal: controller.signal,
         timeout: 10_000,
         stopSignal: "SIGINT",
-      });
-      const startedAt = Date.now();
-      expect(await waitForFile(ready)).toBe(true);
-      const remainingBeforeDeadline = Math.max(
-        0,
-        9_000 - (Date.now() - startedAt),
-      );
-      await new Promise((resolve) =>
-        setTimeout(resolve, remainingBeforeDeadline),
-      );
-      controller.abort();
-
-      await expect(execution).rejects.toMatchObject({ name: "AbortError" });
+      }).catch((cause: unknown) => cause);
+      try {
+        expect(await waitForFile(ready)).toBe(true);
+        await vi.advanceTimersByTimeAsync(9_000);
+        controller.abort();
+        expect(await waitForFile(interrupted)).toBe(true);
+        await vi.advanceTimersByTimeAsync(1_000);
+        await vi.advanceTimersByTimeAsync(4_000);
+        expect(await execution).toMatchObject({ name: "AbortError" });
+      } finally {
+        controller.abort();
+        await vi.runAllTimersAsync();
+        vi.useRealTimers();
+        await execution;
+      }
     },
   );
 
@@ -391,17 +395,22 @@ describe.skipIf(process.platform === "win32")(
         `fs.writeFileSync(${JSON.stringify(ready)}, "");`,
         "setInterval(() => {}, 1000);",
       ].join("\n");
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const execution = execFileOutput(process.execPath, ["-e", script], {
+        timeout: 10_000,
+        stopSignal: "SIGINT",
+      }).catch((cause: unknown) => cause);
       try {
-        const execution = execFileOutput(process.execPath, ["-e", script], {
-          timeout: 10_000,
-          stopSignal: "SIGINT",
-        });
         expect(await waitForFile(ready)).toBe(true);
-        await expect(execution).rejects.toMatchObject({
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect(await execution).toMatchObject({
           code: "ETIMEDOUT",
           signal: null,
         });
       } finally {
+        await vi.runAllTimersAsync();
+        vi.useRealTimers();
+        await execution;
         await rm(directory, { recursive: true, force: true });
       }
     });
