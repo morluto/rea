@@ -104,7 +104,8 @@ const allowObservedProducerRepresentations = (
   const log = value.log;
   if (!captureObject(log.creator) || !Array.isArray(log.entries)) return [];
   const mitmproxy =
-    log.creator.name === "mitmproxy" && log.creator.version === "12.2.3";
+    log.creator.name === "mitmproxy" &&
+    (log.creator.version === "12.2.3" || log.creator.version === "12.3.1");
   const playwright =
     log.creator.name === "Playwright" && log.creator.version === "1.58.2";
   if (!mitmproxy && !playwright) return [];
