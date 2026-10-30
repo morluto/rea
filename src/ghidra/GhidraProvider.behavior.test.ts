@@ -3294,6 +3294,92 @@ describe("Ghidra deadline guidance", () => {
   });
 });
 
+describe("Ghidra missing project program", () => {
+  const startFailure = async (
+    stdout: string,
+    environment: Readonly<Record<string, string>> = {},
+  ) => {
+    const root = await mkdtemp(join(tmpdir(), "rea-missing-program-"));
+    onTestFinished(async () => {
+      await rm(root, { recursive: true, force: true });
+    });
+    await mkdir(join(root, "selected.rep"));
+    await writeFile(join(root, "selected.gpr"), "marker");
+    const failure = new GhidraSessionError(
+      "start",
+      "Ghidra exited before the bridge was ready",
+      {
+        failure_kind: "start",
+        exit_code: 1,
+        failure_output: failureOutput(stdout),
+      },
+    );
+    const ghidra = provider(
+      installationHost(),
+      () => ({
+        start: async () => err(failure),
+        callTool: async () => err(failure),
+        close: async () => ok(null),
+      }),
+      {
+        REA_GHIDRA_PROJECT_PATH: join(root, "selected.gpr"),
+        ...environment,
+      },
+    );
+    onTestFinished(async () => {
+      await ghidra.closeOwnedResources();
+    });
+    const target = executableTarget("elf", "x86_64");
+    const profile = await ghidra.resolveAnalysisProfile(target);
+    if (!profile.ok || profile.value.profile === null)
+      throw new Error("Expected Ghidra analysis profile");
+    const result = await ghidra
+      .createClient(target, profile.value.profile)
+      .execute("list_documents", {});
+    if (result.ok) throw new Error("Expected a Ghidra start failure");
+    return projectAnalysisError(result.error);
+  };
+  const abort = (name: string) =>
+    `ERROR Abort due to Headless analyzer error: Requested project program file(s) not found: ${name} (HeadlessAnalyzer) java.io.IOException: Requested project program file(s) not found: ${name}`;
+
+  it("names the defaulted program and REA_GHIDRA_PROGRAM_NAME instead of doctor advice", async () => {
+    const projected = await startFailure(abort("fixture"));
+    expect(projected).toMatchObject({
+      code: "configuration_invalid",
+      details: { settings: [{ setting: "REA_GHIDRA_PROGRAM_NAME" }] },
+    });
+    expect(projected.message).toContain('no root program named "fixture"');
+    expect(projected.message).toContain(
+      "defaulted from the target file name because REA_GHIDRA_PROGRAM_NAME is unset",
+    );
+    expect(projected.remediation.action).toContain(
+      "Set REA_GHIDRA_PROGRAM_NAME to the exact name of a root program",
+    );
+    expect(projected.remediation.action).not.toContain("rea doctor");
+  });
+
+  it("reports an explicitly configured program name that the project lacks", async () => {
+    const projected = await startFailure(abort("program_gamma"), {
+      REA_GHIDRA_PROGRAM_NAME: "program_gamma",
+    });
+    expect(projected.code).toBe("configuration_invalid");
+    expect(projected.message).toContain(
+      'no root program named "program_gamma" (set by REA_GHIDRA_PROGRAM_NAME)',
+    );
+  });
+
+  it("keeps the generic start failure when Ghidra names a different program", async () => {
+    const projected = await startFailure(abort("fixture_other"));
+    expect(projected.code).toBe("execution_failure");
+    expect(projected.message).not.toContain("REA_GHIDRA_PROGRAM_NAME");
+  });
+
+  it("keeps the generic start failure for unrelated launch output", async () => {
+    const projected = await startFailure("ERROR Unable to lock project");
+    expect(projected.code).toBe("execution_failure");
+  });
+});
+
 describe("Ghidra analysis seeds and configured language", () => {
   const seedSession = async (
     report: (sha256: string) => GhidraSeedReport | undefined,
