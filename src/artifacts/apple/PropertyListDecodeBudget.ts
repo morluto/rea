@@ -561,9 +561,11 @@ export const estimateBinaryPlistExpansion = (
     },
   );
   const normalizeOffsetWidth = (cloneLengths: readonly number[]) => {
+    if (cloneLengths.length === 0 && [1, 2, 4, 8].includes(offsetSize))
+      return offsetSize;
     const width = binaryPlistCloneOffsetWidth(
       offsetSize,
-      offsetTable,
+      trailer,
       cloneLengths,
     );
     if (width === undefined)
@@ -576,10 +578,13 @@ export const estimateBinaryPlistExpansion = (
       ...containerCloneLengths,
     ];
     const normalizedOffsetSize = normalizeOffsetWidth(cloneLengths);
-    if (cloneLengths.length > 0 || normalizedOffsetSize !== offsetSize) {
+    if (
+      cloneLengths.length > 0 ||
+      normalizedOffsetSize !== offsetSize ||
+      normalizedReferenceSize !== referenceSize
+    ) {
       const cloneBytes = cloneLengths.reduce((sum, length) => sum + length, 0);
-      estimate +=
-        2 * (cloneBytes + objectCount * (normalizedOffsetSize - offsetSize));
+      estimate += 2 * (cloneBytes + objectCount * normalizedOffsetSize);
       if (estimate > maxBytes)
         throw fail(
           "expansion",
@@ -648,10 +653,13 @@ export const estimateBinaryPlistExpansion = (
     ...Array.from(cloneOffsets, () => 9),
   ];
   const normalizedOffsetSize = normalizeOffsetWidth(cloneLengths);
-  if (cloneLengths.length > 0 || normalizedOffsetSize !== offsetSize) {
+  if (
+    cloneLengths.length > 0 ||
+    normalizedOffsetSize !== offsetSize ||
+    normalizedReferenceSize !== referenceSize
+  ) {
     const cloneBytes = cloneLengths.reduce((sum, length) => sum + length, 0);
-    estimate +=
-      2 * (cloneBytes + objectCount * (normalizedOffsetSize - offsetSize));
+    estimate += 2 * (cloneBytes + objectCount * normalizedOffsetSize);
     if (estimate > maxBytes)
       throw fail(
         "expansion",

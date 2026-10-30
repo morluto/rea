@@ -1,18 +1,21 @@
-import { access, chmod, mkdir, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
 import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
 import { ArtifactProvider } from "../../../../src/artifacts/ArtifactProvider.js";
-import { artifactInventoryResultSchema } from "../../../../src/domain/artifactGraph.js";
+import {
+  artifactExtractionResultSchema,
+  artifactInventoryResultSchema,
+} from "../../../../src/domain/artifactGraph.js";
 import { thinMach } from "../../../../src/domain/binaryTarget.fixture.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { withArtifactClient } from "../../../support/artifactClientScope.js";
 
 describe("artifact directory diagnostics", () => {
   it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
-    "omits inaccessible directory descendants during inventory but refuses incomplete extraction",
+    "retains the omission when extracting readable inventoried entries",
     async () => {
       const root = await createTestTempDirectory("rea-directory-policy-");
       const source = join(root, "Fixture.app");
@@ -53,14 +56,23 @@ describe("artifact directory diagnostics", () => {
           const extracted = await client.execute("extract_artifact", {
             output_root: output,
           });
-          expect(extracted).toMatchObject({
-            ok: false,
-            error: {
-              _tag: "ArtifactOperationError",
-              detail: expect.stringContaining("EACCES"),
-            },
-          });
-          await expect(access(output)).rejects.toMatchObject({
+          if (!extracted.ok) throw extracted.error;
+          const result = artifactExtractionResultSchema.parse(
+            extracted.value.result,
+          );
+          expect(result.coverage.status).toBe("unknown");
+          expect(result.limitations).toContainEqual(
+            expect.stringContaining("EACCES"),
+          );
+          expect(
+            result.artifacts.map(({ relative_path }) => relative_path),
+          ).toContain("readable.txt");
+          expect(await readFile(join(output, "readable.txt"), "utf8")).toBe(
+            "retained bytes\n",
+          );
+          await expect(
+            access(join(output, "blocked", "hidden.txt")),
+          ).rejects.toMatchObject({
             code: "ENOENT",
           });
         });

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { watch } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, symlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { expect, onTestFinished, test, vi } from "vitest";
 
@@ -156,6 +156,66 @@ it("inspects a capture with endpoints, DNS, TLS SNI, and HTTP", async () => {
   expect(result.tls_sni_values).toEqual(["api.example.com"]);
   expect(result.http_request_uris).toEqual(["http://api.example.com/v1/data"]);
   expect(result.coverage).toBe("complete");
+});
+
+it.each([0, 1])(
+  "preserves packet-count mismatch facts while accepting an empty capture: capinfos=%s",
+  async (count) => {
+    const { provider, root } = await providerWith({
+      tsharkJson: "[]",
+      dnsJson: "[]",
+      capinfosText: `File type: pcap\nFile encapsulation: Ethernet\nNumber of packets: ${String(count)}\n`,
+    });
+    const path = await captureFixture(root);
+    const result = await provider.execute({
+      operation: "inspect_pcap_capture",
+      input: { path },
+    });
+    if (count === 0) {
+      if (!result.ok) throw result.error;
+      expect(result.value.result).toMatchObject({
+        packet_count: 0,
+        coverage: "complete",
+      });
+    } else {
+      if (result.ok) throw new Error("Expected contradictory counts");
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: "unreadable_output",
+        details: {
+          diagnostics: {
+            reason: "packet_count_mismatch",
+            capinfos_packet_count: 1,
+            tshark_packet_count: 0,
+          },
+        },
+      });
+    }
+  },
+);
+
+it("retains both observed digests when capinfos disagrees with the snapshot", async () => {
+  const reported = "0".repeat(64);
+  const { provider, root } = await providerWith({
+    capinfosText: `File type: pcap\nFile encapsulation: Ethernet\nNumber of packets: 0\nSHA256: ${reported}\n`,
+  });
+  const path = await captureFixture(root);
+  const result = await provider.execute({
+    operation: "inspect_pcap_capture",
+    input: { path },
+  });
+  if (result.ok) throw new Error("Expected contradictory snapshot digest");
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "unreadable_output",
+    details: {
+      diagnostics: {
+        reason: "capture_sha256_mismatch",
+        capinfos_sha256: reported,
+        snapshot_sha256: createHash("sha256")
+          .update("pcap-fixture-bytes")
+          .digest("hex"),
+      },
+    },
+  });
 });
 
 it("retains an absolute HTTP request target without a Host-derived full URI", async () => {
@@ -478,6 +538,92 @@ it("names the prlimit selection when the Linux limiter is unusable", async () =>
   });
   expect(projected.message).toContain("must be absolute");
   expect(projected.message).toContain("Check that REA_TSHARK_PRLIMIT_COMMAND");
+});
+
+it("rejects directory and non-prlimit selections before opening the capture", async () => {
+  const root = await createTestTempDirectory("rea-pcap-invalid-limiter-");
+  const tools = await writeStubTools(root);
+  for (const configured of [root, "/usr/bin/true"]) {
+    const provider = new PcapProvider({
+      environment: {
+        REA_TSHARK_COMMAND: tools.tshark,
+        REA_CAPINFOS_COMMAND: tools.capinfos,
+        REA_TSHARK_PRLIMIT_COMMAND: configured,
+      },
+    });
+    try {
+      const result = await provider.execute({
+        operation: "inspect_pcap_capture",
+        input: { path: "/not-opened/capture.pcap" },
+      });
+      if (result.ok) throw new Error("expected an unusable limiter");
+      const error = projectAnalysisError(result.error);
+      expect(error).toMatchObject({
+        code: "capability_unavailable",
+        details: {
+          diagnostics: {
+            configuration_key: "REA_TSHARK_PRLIMIT_COMMAND",
+            configured,
+          },
+        },
+      });
+      expect(error.message).toContain("REA_TSHARK_PRLIMIT_COMMAND");
+      expect(error.message).not.toContain("Cannot run selected tool");
+    } finally {
+      await provider.close();
+    }
+  }
+});
+
+it("rejects a different util-linux command before opening capture bytes", async () => {
+  const root = await createTestTempDirectory("rea-pcap-other-util-linux-");
+  const tools = await writeStubTools(root);
+  const provider = new PcapProvider({
+    environment: {
+      REA_TSHARK_COMMAND: tools.tshark,
+      REA_CAPINFOS_COMMAND: tools.capinfos,
+      REA_TSHARK_PRLIMIT_COMMAND: "/usr/bin/lsblk",
+    },
+  });
+  try {
+    const result = await provider.execute({
+      operation: "inspect_pcap_capture",
+      input: { path: "/not-opened/capture.pcap" },
+    });
+    if (result.ok) throw new Error("expected an unusable limiter");
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisCapabilityUnavailableError",
+      capturedOutput: { stdout: expect.stringContaining("--output") },
+    });
+  } finally {
+    await provider.close();
+  }
+});
+
+it("accepts real prlimit selected through differently named symlinks", async () => {
+  const root = await createTestTempDirectory("rea-pcap-prlimit-alias-");
+  const tools = await writeStubTools(root);
+  for (const name of ["bounded-capture", " limiter "]) {
+    const limiter = join(root, name);
+    await symlink("/usr/bin/prlimit", limiter);
+    const provider = new PcapProvider({
+      environment: {
+        REA_TSHARK_COMMAND: tools.tshark,
+        REA_CAPINFOS_COMMAND: tools.capinfos,
+        REA_TSHARK_PRLIMIT_COMMAND: limiter,
+      },
+    });
+    try {
+      const result = await provider.execute({
+        operation: "inspect_pcap_capture",
+        input: { path: await captureFixture(root) },
+      });
+      if (!result.ok) throw result.error;
+      expect(result.value.result).toMatchObject({ coverage: "complete" });
+    } finally {
+      await provider.close();
+    }
+  }
 });
 
 // Capture execution requires the Linux native resource bound used by providerWith.

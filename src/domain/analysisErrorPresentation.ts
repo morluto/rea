@@ -1,3 +1,4 @@
+import { describeResidualUnknownGraphConstraint } from "./residualUnknownGraphError.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
@@ -20,6 +21,7 @@ import {
   EvidenceIntegrityError,
   EvidenceReferenceError,
   AnalysisSnapshotMismatchError,
+  ResourceSnapshotMismatchError,
 } from "./evidenceErrors.js";
 import {
   HopperRemoteError,
@@ -78,6 +80,10 @@ export const analysisErrorRemediationAction = (
     error.remediationAction !== undefined
   )
     return error.remediationAction;
+  if (error instanceof ResourceSnapshotMismatchError)
+    return error.operation === "export"
+      ? "Call close_binary without snapshot_path to close this resource-only session."
+      : "Open an executable analysis target before importing a binary analysis snapshot.";
   if (error instanceof AnalysisSnapshotMismatchError)
     return "Run analysis without this snapshot, then save a fresh snapshot using the intended artifact, provider, and analysis profile.";
   if (error instanceof AnalysisUnsupportedTargetError)
@@ -177,6 +183,43 @@ export const analysisErrorRemediationAction = (
     error.remediationAction !== undefined
   )
     return error.remediationAction;
+  if (
+    error instanceof UnknownRegistryError &&
+    error.reason === "constraint" &&
+    error.constraint !== undefined
+  ) {
+    const suffix = " Do not repeat the unchanged call.";
+    switch (error.constraint.kind) {
+      case "missing_evidence":
+        return (
+          "Use an Evidence ID retained in this session; obtain or import the missing Evidence before referencing it." +
+          suffix
+        );
+      case "missing_unknown":
+        return (
+          "Use an unknown_id retained in this session; create or import the related unknown before referencing it." +
+          suffix
+        );
+      case "resolution_unproven":
+        return (
+          "Supply supporting non-mutation Evidence matching the unknown's required authority, confidence and environment, or withdraw the unsupported resolution." +
+          suffix
+        );
+      case "contradicting_evidence":
+        return (
+          "Reconcile the contradicting Evidence before claiming a verified resolution." +
+          suffix
+        );
+      case "dependency_cycle":
+        return (
+          "Correct the depends-on relationships to remove the dependency cycle." +
+          suffix
+        );
+      case "history_gap":
+      case "revision_chain":
+        break;
+    }
+  }
   if (error instanceof UnknownRegistryError && error.reason === "not-found")
     return "Check that the unknown_id belongs to this session, then retry.";
   return analysisErrorUserMessage(error);
@@ -222,11 +265,15 @@ export const analysisErrorCategory = (
     return "unavailable";
   if (error instanceof ArtifactOperationError)
     return artifactErrorCategory(error.reason);
-  if (error instanceof EvidenceFileError && error.reason === "path-limit")
+  if (
+    error instanceof EvidenceFileError &&
+    (error.reason === "path-limit" || error.reason === "storage-limit")
+  )
     return "resource_constraint";
   if (
     error instanceof EvidenceFileError &&
     (error.reason === "missing" ||
+      error.reason === "symlink-traversal" ||
       error.reason === "not-file" ||
       error.reason === "wrong-kind" ||
       error.reason === "exists")
@@ -234,7 +281,7 @@ export const analysisErrorCategory = (
     return "invalid_input";
   if (
     error instanceof UnknownRegistryError &&
-    error.reason === "already-exists"
+    (error.reason === "already-exists" || error.reason === "constraint")
   )
     return "invalid_input";
   return STATIC_ERROR_CATEGORIES[error._tag] ?? "execution_failure";
@@ -327,6 +374,8 @@ export const analysisErrorUserMessage = (error: AnalysisError): string => {
     return "This residual unknown already exists in the session. Reuse it or call update_unknown with its current expected_revision; do not repeat record_unknown.";
   if (error instanceof UnknownRegistryError && error.reason === "not-found")
     return "The requested residual unknown does not exist in this session. Check the unknown_id and try again.";
+  if (error instanceof UnknownRegistryError && error.constraint !== undefined)
+    return describeResidualUnknownGraphConstraint(error.constraint);
   if (error instanceof UnknownRegistryError)
     return "Evidence state changed before the update completed. Refresh the current state and try again.";
   if (error instanceof ConfigurationError)
@@ -524,11 +573,20 @@ const evidenceFileMessage = ({
   operation,
   reason,
   published,
+  systemCode,
 }: EvidenceFileError): string => {
   if (published !== undefined)
     return "The output file was published, but staging cleanup remains incomplete.";
   if (reason === "path-limit")
     return "Filesystem path-length constraints prevented reading or atomic publication at the selected path. Choose a shorter local path.";
+  if (reason === "storage-limit")
+    return systemCode === "EFBIG"
+      ? "The host file-size limit prevented Evidence publication. Increase the inherited file-size allowance and retry."
+      : systemCode === undefined
+        ? "A host filesystem resource limit prevented Evidence publication. Check the file-size allowance, filesystem space and quota before retrying."
+        : "The filesystem lacks space or quota for Evidence publication. Free space or increase quota and retry.";
+  if (reason === "symlink-traversal")
+    return "The selected path cannot be resolved because its symbolic-link chain loops or exceeds the host traversal limit. Repair the chain or select another path.";
   if (reason === "missing")
     return operation === "read"
       ? "Evidence file does not exist at the selected path. Check the path and try again."

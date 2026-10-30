@@ -646,3 +646,47 @@ cliTest(
     }
   },
 );
+
+cliTest(
+  "managed CLI renders type names and preserves unresolved operands",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-managed-signature-names-");
+    const path = join(root, "names.dll");
+    await writeFile(
+      path,
+      buildManagedPeFixture({
+        fieldSignature: Buffer.from([0x06, 0x12, 0x04]),
+        typeSpecSignatures: [Buffer.from([0x08])],
+        methodSignature: Buffer.from([
+          0x00, 0x02, 0x12, 0x04, 0x12, 0x09, 0x12, 0x06,
+        ]),
+        typeReferences: [{ namespace: "System", name: "Uri" }],
+      }),
+    );
+    const result = await cli.run({
+      arguments: ["inspect-managed-members", path, "--json"],
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.json).toMatchObject({
+      normalized_result: {
+        signature_resolution: "type-names-v2",
+        fields: [
+          expect.objectContaining({
+            signature: expect.objectContaining({
+              field_type: "class:4 (Fixture.Program)",
+            }),
+          }),
+        ],
+        methods: [
+          expect.objectContaining({
+            signature: expect.objectContaining({
+              return_type: "class:4 (Fixture.Program)",
+              parameter_types: ["class:9 (System.Uri)", "class:6"],
+              resolved_sha256: null,
+            }),
+          }),
+        ],
+      },
+    });
+  },
+);

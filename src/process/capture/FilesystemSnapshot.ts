@@ -1,4 +1,4 @@
-import { observedSymlinkTarget } from "../../domain/process/symlinkTarget.js";
+import { observedSymlinkTarget } from "../../domain/symlinkTarget.js";
 import { createHash } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import { lstat, open, opendir, readlink, realpath } from "node:fs/promises";

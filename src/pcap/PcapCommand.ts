@@ -8,7 +8,11 @@ import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { artifactFileCancellationCause } from "../artifacts/ArtifactFileOperation.js";
 import { randomUUID } from "node:crypto";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
-import { AnalysisError } from "../domain/analysisErrorBase.js";
+import {
+  AnalysisError,
+  type AnalysisCapturedOutput,
+} from "../domain/analysisErrorBase.js";
+import { createPcapDiagnosticProjection } from "./PcapDiagnosticOutput.js";
 import {
   AnalysisCancelledError,
   AnalysisProtocolError,
@@ -22,7 +26,10 @@ import {
   prepareOwnedCommand,
   runOwnedCommand,
 } from "../process/OwnedCommand.js";
-import type { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
+import type {
+  ProviderProcessSupervisor,
+  ProviderProcessSnapshot,
+} from "../process/ProviderProcess.js";
 import {
   isWindowsBatchFile,
   windowsBatchCommand,
@@ -37,14 +44,12 @@ export type PcapCommandLauncher = NonNullable<
 export interface PcapCommandCleanup {
   readonly reason: string;
   readonly resources: readonly string[];
-  readonly capturedOutput: {
-    readonly stdout: string;
-    readonly stderr: string;
-    readonly truncated: boolean;
-  };
+  readonly capturedOutput: AnalysisCapturedOutput;
 }
 
 export interface PcapCommandOutput {
+  /** Lazy safe diagnostics; raw stdout remains owned by the successful parser. */
+  readonly capturedOutput: AnalysisCapturedOutput;
   readonly stdout: string;
   readonly stderr: string;
   readonly invalidUtf8Streams: readonly ("stdout" | "stderr")[];
@@ -65,6 +70,7 @@ export const runPcapCommand = async (options: {
   readonly environment: Readonly<Record<string, string | undefined>>;
   readonly signal: AbortSignal | undefined;
   readonly inputPath?: string;
+  readonly redactHttpTransportCredentials?: boolean;
   readonly nativeBound?: {
     readonly limiter?: {
       command: ArtifactCommandPath;
@@ -81,6 +87,23 @@ export const runPcapCommand = async (options: {
   ) => void;
 }): Promise<PcapCommandOutput> => {
   const { operation, command, limits, signal } = options;
+  const projectDiagnostic = createPcapDiagnosticProjection(
+    options.redactHttpTransportCredentials === true,
+  );
+  const captureDiagnostic = (
+    snapshot: ProviderProcessSnapshot,
+  ): AnalysisCapturedOutput =>
+    projectDiagnostic({
+      stdout: snapshot.stdout.text,
+      stderr: snapshot.stderr.text,
+      stdout_bytes: snapshot.stdout.bytes,
+      stderr_bytes: snapshot.stderr.bytes,
+      exit_code: snapshot.exitCode ?? null,
+      signal: snapshot.signal ?? null,
+      truncated:
+        snapshot.diagnosticTruncated === true ||
+        snapshot.outputIncomplete === true,
+    });
   if (signal?.aborted)
     throw new AnalysisCancelledError(operation, { cause: signal.reason });
   const hostEnvironment = {
@@ -138,13 +161,7 @@ export const runPcapCommand = async (options: {
               ? ["owned-process"]
               : ownedCommandResources(owner.launch.ownership);
           const snapshot = owner.snapshot();
-          const capturedOutput = {
-            stdout: snapshot.stdout.text,
-            stderr: snapshot.stderr.text,
-            truncated:
-              snapshot.diagnosticTruncated === true ||
-              snapshot.outputIncomplete === true,
-          };
+          const capturedOutput = captureDiagnostic(snapshot);
           options.retain(owner, resources, stopped.reason, capturedOutput);
           cleanup = { reason: stopped.reason, resources, capturedOutput };
         },
@@ -152,19 +169,14 @@ export const runPcapCommand = async (options: {
     );
     if (selectedLimiter !== undefined)
       await assertArtifactCommandPath(selectedLimiter, operation, {
-        capturedOutput: {
-          stdout: output.stdout.text,
-          stderr: output.stderr.text,
-          stdout_bytes: output.stdout.bytes,
-          stderr_bytes: output.stderr.bytes,
-          exit_code: output.exitCode ?? null,
-          signal: output.signal ?? null,
-          truncated:
-            output.diagnosticTruncated === true ||
-            output.outputIncomplete === true,
+        get capturedOutput() {
+          return captureDiagnostic(output);
         },
       });
     return {
+      get capturedOutput() {
+        return captureDiagnostic(output);
+      },
       stdout: output.stdout.text,
       stderr: output.stderr.text,
       invalidUtf8Streams: [
@@ -206,27 +218,13 @@ export const runPcapCommand = async (options: {
         cause.cleanupFailure ?? cause.message,
         cause.snapshot === null
           ? { stdout: "", stderr: "", truncated: true }
-          : {
-              stdout: cause.snapshot.stdout.text,
-              stderr: cause.snapshot.stderr.text,
-              truncated:
-                cause.snapshot.diagnosticTruncated === true ||
-                cause.snapshot.outputIncomplete === true,
-            },
+          : captureDiagnostic(cause.snapshot),
       );
     const details = {
       cause,
       ...(cause instanceof OwnedCommandFailure && cause.snapshot !== null
         ? {
-            capturedOutput: {
-              stdout: cause.snapshot.stdout.text,
-              stderr: cause.snapshot.stderr.text,
-              truncated:
-                cause.snapshot.diagnosticTruncated === true ||
-                cause.snapshot.outputIncomplete === true,
-              exit_code: cause.snapshot.exitCode ?? null,
-              signal: cause.snapshot.signal ?? null,
-            },
+            capturedOutput: captureDiagnostic(cause.snapshot),
           }
         : {}),
       ...(cleanup !== undefined

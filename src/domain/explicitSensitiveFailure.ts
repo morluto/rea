@@ -189,6 +189,10 @@ const redactFailure = (
     const publishedPath = identity(error.published?.path);
     return new EvidenceFileError(error.operation, error.reason, {
       ...context,
+      ...(error.systemCode === undefined ||
+      text(error.systemCode) !== error.systemCode
+        ? {}
+        : { systemCode: error.systemCode }),
       ...(retainedPath === undefined ? {} : { path: retainedPath }),
       ...(error.userMessage === undefined
         ? {}

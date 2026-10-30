@@ -68,6 +68,14 @@ it.each([undefined, "SIGTERM"] as const)(
   },
 );
 
+it("rejects a lifetime pipe without a stoppable command", async () => {
+  await expect(
+    execFileOutput(process.execPath, ["-e", "process.exit(0)"], {
+      lifetimePipe: true,
+    }),
+  ).rejects.toThrow("lifetimePipe requires stopSignal");
+});
+
 describe("execFileOutput", () => {
   it("ignores non-Error and incomplete failure metadata", () => {
     expect(execFileOutputFailure("failure")).toBeUndefined();

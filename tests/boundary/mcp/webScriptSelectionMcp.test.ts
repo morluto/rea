@@ -133,7 +133,7 @@ it("refuses an existing output directory as invalid output_directory input", asy
         {
           path: ["output_directory"],
           reason: "invalid_value",
-          message: "Extraction output root already exists",
+          message: "Output root already exists",
         },
       ],
     },

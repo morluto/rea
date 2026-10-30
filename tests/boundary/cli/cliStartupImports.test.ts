@@ -15,6 +15,10 @@ const MARKER = "REA_TEST_RESOLVED ";
 // must not resolve them just to register the complete command catalog.
 const DEFERRED_IMPORTS = [
   {
+    name: "guided-workflows",
+    path: "/dist/application/GuidedWorkflowAccess.js",
+  },
+  {
     name: "direct-analysis",
     path: "/dist/application/DirectAnalysis.js",
   },
@@ -220,6 +224,22 @@ describe("CLI startup imports", () => {
     await expect(
       resolvedPackages(evaluate('await import("./dist/cli.js");')),
     ).resolves.toEqual(new Set());
+  });
+
+  it("renders guidance without loading the tool catalog or provider composition", async () => {
+    await expect(
+      resolvedPackages([
+        "scripts/rea.mjs",
+        "guided-workflows",
+        "--action",
+        "render",
+        "--workflow-id",
+        "investigate_feature",
+        "--arguments-json",
+        JSON.stringify({ feature: "offline search" }),
+        "--json",
+      ]),
+    ).resolves.toEqual(new Set(["guided-workflows"]));
   });
 
   it("does not load native provider composition for JavaScript application analysis", async () => {

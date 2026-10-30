@@ -517,7 +517,7 @@ it.each([
   },
 );
 
-it.each(["reported carutil", "observed assetutil"])(
+it.each(["reported carutil", "tab-indented carutil", "observed assetutil"])(
   "attributes %s rejection of a readable nested catalog as invalid bytes",
   async (variant) => {
     const bundle = await createTestTempDirectory("rea-asset-rejected-");
@@ -535,9 +535,9 @@ it.each(["reported carutil", "observed assetutil"])(
     // catalog. This test injects those diagnoses, without running Apple tools.
     const stderr =
       "BOMStreamWithFileAndSys: read: Operation not permitted\n" +
-      (variant === "reported carutil"
+      (variant !== "observed assetutil"
         ? `assetutil Error: Unable to read file at '${path}'\n` +
-          `carutil: error:\n    ${path} is not a valid AssetCatalog\n`
+          `carutil: error:\n${variant === "tab-indented carutil" ? "\t" : "    "}${path} is not a valid AssetCatalog\n`
         : `assetutil: file error error exiting: 'can't read from: '${path}' Undefined error: 0' invalid file\n`);
     const cause = Object.assign(new Error("assetutil exited 1"), {
       code: 1,
@@ -580,6 +580,7 @@ it.each(["reported carutil", "observed assetutil"])(
 it.each([
   "unrecognized text",
   "another catalog",
+  "tab-indented another catalog",
   "signal",
   "truncated capture",
   "failed capture",
@@ -589,13 +590,15 @@ it.each([
   const bundle = await createTestTempDirectory("rea-asset-unknown-rejection-");
   const path = join(bundle, "Assets.car");
   await writeFile(path, "readable catalog");
-  const rejectedPath = scenario === "another catalog" ? `${path}.other` : path;
+  const rejectedPath = scenario.includes("another catalog")
+    ? `${path}.other`
+    : path;
   const stderr =
     scenario === "unrecognized text"
       ? "Operation not permitted; catalog may be invalid"
       : scenario.startsWith("different file-error")
         ? `assetutil: file error error exiting: 'can't read from: '${path}' Undefined error: ${scenario === "different file-error code" ? "13" : "0"}' ${scenario === "different file-error text" ? "access denied" : "invalid file"}\n`
-        : `carutil: error:\n    ${rejectedPath} is not a valid AssetCatalog\n`;
+        : `carutil: error:\n${scenario.startsWith("tab-indented") ? "\t" : "    "}${rejectedPath} is not a valid AssetCatalog\n`;
   const cause = Object.assign(new Error("assetutil failed"), {
     code: 1,
     stdout: "",

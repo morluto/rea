@@ -47,6 +47,17 @@ export const solidityMetadataSchema = z
       })
       .nullable(),
     diagnostic: z.string().max(512).nullable(),
+    admission: z
+      .strictObject({
+        code: z.string().min(1).max(64),
+        detail: z
+          .record(
+            z.string().min(1).max(64),
+            z.union([z.string().max(512), z.number()]),
+          )
+          .optional(),
+      })
+      .optional(),
   })
   .superRefine((value, context) => {
     const unavailable = value.status === "unavailable";

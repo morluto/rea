@@ -1,4 +1,5 @@
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../../scripts/lib/mcp-verification-environment.mjs";
 import { readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -350,7 +351,11 @@ it.each(["full", "compact"] as const)(
     const server = createServer(
       { kind: "session", session },
       {
-        environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: profile },
+        environment: {
+          ...process.env,
+          ...INLINE_EVIDENCE_MCP_ENVIRONMENT,
+          REA_MCP_INPUT_SCHEMA_PROFILE: profile,
+        },
       },
     );
     const client = new Client({ name: "artifact-inline-test", version: "1" });

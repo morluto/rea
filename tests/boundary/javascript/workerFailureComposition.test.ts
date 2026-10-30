@@ -19,7 +19,7 @@ vi.mock("node:v8", async (original) => {
         ? {
             ...observed,
             heap_size_limit:
-              observed.used_heap_size + 192 * 1024 * 1024 + 128 * 1024,
+              observed.used_heap_size + 192 * 1024 * 1024 + 64 * 1024,
           }
         : observed;
     },

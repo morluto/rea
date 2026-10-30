@@ -262,7 +262,7 @@ itWithCaptureCapability(
     ).toBe(original.replaceAll("\n", "\r\n"));
     expect(capture.manifest.comparison_contract).toHaveProperty(
       "path_normalization_version",
-      "path-component-boundaries-v2",
+      "path-component-boundaries-v3",
     );
     const legacyContract = { ...capture.manifest.comparison_contract };
     delete legacyContract.path_normalization_version;
@@ -305,6 +305,34 @@ itWithCaptureCapability(
       owned_process_group: "verified",
       temporary_root: "removed",
     });
+  },
+  20_000,
+);
+
+itWithCaptureCapability(
+  "normalizes descendants of a selected directory spelled with a trailing slash in actual PTY Evidence",
+  async () => {
+    const root = await createTestTempDirectory("rea-process-slash-root-");
+    const observed = join(root, "selected");
+    await mkdir(observed);
+    const original = `P=${observed}/item.txt`;
+    const scenario = processScenarioSchema.parse({
+      executable: process.execPath,
+      working_directory: root,
+      filesystem_observation_paths: [`${observed}/`],
+      arguments: ["-e", `process.stdout.write(${JSON.stringify(original)})`],
+      normalization: { paths: true, pids: false, ports: false, patterns: [] },
+      settle_ms: 100,
+    });
+    const result = await captureProcessScenario(scenario);
+    if (!result.ok) throw result.error;
+    const capture = parseProcessCapture(
+      createProcessCaptureEvidence(scenario, result.value).normalized_result,
+    );
+    expect(capture.frames.map(({ data }) => data).join("")).toBe(
+      "P=<filesystem-root-0>/item.txt",
+    );
+    expect(capture.exit).toMatchObject({ code: 0, reason: "exited" });
   },
   20_000,
 );

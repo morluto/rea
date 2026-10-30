@@ -379,6 +379,29 @@ describe("safe CDP response metadata CSP sources", () => {
       { kind: "approved_origin", value: origin },
     ]);
   });
+
+  it("ignores a directive repeated within one policy but not across policies", () => {
+    const captured = safeResponseMetadata(
+      "request-csp-duplicate",
+      `${origin}/api`,
+      {
+        headers: {
+          "Content-Security-Policy":
+            "script-src 'self'; Script-Src 'unsafe-inline' 'nonce-abc', script-src data:",
+        },
+      },
+      new Set([origin]),
+    );
+
+    expect(captured.response.csp).toEqual({
+      directives: [
+        { name: "script-src", sources: [{ kind: "keyword", value: "'self'" }] },
+        { name: "script-src", sources: [{ kind: "scheme", value: "data:" }] },
+      ],
+      nonce_count: 0,
+      hash_count: 0,
+    });
+  });
 });
 
 describe("Link header value delimiters", () => {

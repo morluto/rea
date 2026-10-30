@@ -8,6 +8,7 @@ import { JavaScriptAnalysisWorker } from "../../../src/javascript/analysis/JavaS
 import { createJavaScriptSourceAnalysis } from "../../../src/artifacts/javascript/JavaScriptSourceAnalysis.js";
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
 import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
+import { ProcessOwnershipEvidenceOwner } from "../../../src/process/ProcessOwnershipEvidence.js";
 import type { OwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
@@ -549,7 +550,9 @@ const worker = new JavaScriptAnalysisWorker({ heapMb: 128, timeoutMs: 10000 }, a
   ] });
   // The launcher is deliberately orphaned when this host exits; cleanup still
   // requires its run token and executable identity, rather than its old parent.
-  const { expectedParentPid, ...ownership } = launched.ownership;
+  // The live ledger belongs to this host and cannot be serialized. Transfer
+  // only the process facts needed for the independent fixture cleanup.
+  const { expectedParentPid, evidenceOwner, ...ownership } = launched.ownership;
   await writeFile(${JSON.stringify(ownershipPath)}, JSON.stringify(ownership));
   return { ...launched, cleanup: async () => ({ cleaned: false, reason: "fixture inspection unavailable" }) };
 });
@@ -575,9 +578,12 @@ catch (error) {
     const ownership = JSON.parse(
       await readFile(ownershipPath, "utf8"),
     ) as OwnedProcessGroup;
-    expect(await cleanupOwnedProcessGroup(ownership)).toMatchObject({
-      cleaned: true,
-    });
+    expect(
+      await cleanupOwnedProcessGroup({
+        ...ownership,
+        evidenceOwner: new ProcessOwnershipEvidenceOwner(),
+      }),
+    ).toMatchObject({ cleaned: true });
   }
 });
 

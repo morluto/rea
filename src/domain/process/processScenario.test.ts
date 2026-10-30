@@ -189,9 +189,9 @@ it("admits the default and the exact combined terminal-cell budget", () => {
     processScenarioSchema.safeParse({
       executable: "/bin/true",
       terminal: {
-        columns: 1,
+        columns: 2,
         rows: 1,
-        scrollback: PROCESS_TERMINAL_CELL_BUDGET - 1,
+        scrollback: PROCESS_TERMINAL_CELL_BUDGET / 2 - 1,
       },
     }).success,
   ).toBe(true);
@@ -250,7 +250,7 @@ it("applies the selected scrollback budget to every scheduled resize", () => {
   expect(
     processScenarioSchema.safeParse({
       executable: "/bin/true",
-      terminal: { columns: 1, rows: 1, scrollback: 0 },
+      terminal: { columns: 2, rows: 1, scrollback: 0 },
       events: [{ type: "resize", at_ms: 10, columns: 1_000, rows: 1 }],
     }).success,
   ).toBe(true);

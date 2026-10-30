@@ -12,14 +12,18 @@ import type {
 } from "./javascriptApplicationGraphSchemas.js";
 import {
   applicationFeatureTraceResultSchema,
+  featureSeedMatchMode,
   type ApplicationFeatureSeed,
   type ApplicationFeatureTraceResult,
   type TraceApplicationFeatureInput,
 } from "./javascriptFeatureTraceSchemas.js";
 import {
   findApplicationFeatureSeeds,
+  normalizeFeatureSeedText,
   type ApplicationFeatureSeedMatch,
 } from "./javascriptFeatureSeed.js";
+import type { JavaScriptSemanticGraph } from "./javascriptSemanticGraph.js";
+import { semanticCallLiteralValues } from "./javascriptSemanticCallLiterals.js";
 import {
   traverseApplicationFeature,
   type ApplicationFeatureTraversal,
@@ -30,6 +34,8 @@ import { buildJavaScriptNativeHandoffs } from "./javascriptNativeHandoff.js";
 export interface ApplicationFeatureTraceProjectionInput {
   readonly sourceEvidenceId: string;
   readonly graph: JavaScriptApplicationGraph;
+  readonly semanticGraph?: JavaScriptSemanticGraph | null;
+  readonly semanticPage?: { readonly offset: number; readonly limit: number };
   readonly nativeEvidence: readonly Evidence[];
   readonly seed: ApplicationFeatureSeed;
   readonly direction: TraceApplicationFeatureInput["direction"];
@@ -98,12 +104,14 @@ export const traceApplicationFeature = (
 const noMatchResult = (
   input: ApplicationFeatureTraceProjectionInput,
 ): ApplicationFeatureTraceResult => {
+  const discovery = discoverSemanticLabels(input);
   const semantic = {
     source_evidence_id: input.sourceEvidenceId,
     source_graph_id: input.graph.graph_id,
     seed: input.seed,
     direction: input.direction,
     seed_matches: [],
+    ...(discovery === undefined ? {} : { semantic_discovery: discovery }),
     graph: null,
     paths: [],
     native_handoffs: [],
@@ -125,7 +133,12 @@ const noMatchResult = (
     },
     evidence_links: [input.sourceEvidenceId],
     limitations: uniqueSorted([
-      "No graph entity matched the literal seed; this is not evidence that the feature is absent.",
+      "No application graph entity matched the literal seed; this is not evidence that the feature is absent.",
+      ...(discovery === undefined
+        ? []
+        : [
+            "Semantic discovery matches retained node labels and direct string call arguments; matches are starting points, not application-graph feature traces. Use trace_javascript_semantics with a returned trace_seed and the same application Evidence.",
+          ]),
       ...sourceCoverageLimitations(input.graph),
     ]),
   };
@@ -133,6 +146,56 @@ const noMatchResult = (
     ...semantic,
     trace_id: `jatr_${digestCanonicalValue(semantic, "Feature trace")}`,
   });
+};
+
+/** Semantic discovery is independent of the application graph traversal. */
+const discoverSemanticLabels = (
+  input: ApplicationFeatureTraceProjectionInput,
+): ApplicationFeatureTraceResult["semantic_discovery"] => {
+  const graph = input.semanticGraph;
+  const seed = input.seed;
+  if (graph === undefined || graph === null || seed.kind !== "string")
+    return undefined;
+  const query = normalizeFeatureSeedText(seed.value, seed.case_sensitive);
+  const mode = featureSeedMatchMode(seed);
+  const { offset, limit } = input.semanticPage ?? { offset: 0, limit: 64 };
+  const matches: NonNullable<
+    ApplicationFeatureTraceResult["semantic_discovery"]
+  >["matches"] = [];
+  let total = 0;
+  for (const node of graph.nodes) {
+    const { label, node_id, kind } = node;
+    const values = [
+      ...(label === null ? [] : [label]),
+      ...semanticCallLiteralValues(node).filter(
+        (value): value is string => typeof value === "string",
+      ),
+    ];
+    if (
+      !values.some((entry) => {
+        const value = normalizeFeatureSeedText(entry, seed.case_sensitive);
+        return mode === "exact" ? value === query : value.includes(query);
+      })
+    )
+      continue;
+    if (total >= offset && matches.length < limit)
+      matches.push({
+        node_id,
+        kind,
+        trace_seed: { kind: "semantic-node", node_id },
+      });
+    total += 1;
+  }
+  return {
+    source_graph_id: graph.graph_id,
+    source_coverage: graph.coverage.status,
+    total,
+    offset,
+    limit,
+    next_offset:
+      offset + matches.length < total ? offset + matches.length : null,
+    matches,
+  };
 };
 
 const traceGraph = (

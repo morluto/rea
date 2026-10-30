@@ -1,6 +1,6 @@
 import type { z } from "zod";
 
-import { AnalysisInputError } from "../domain/analysisErrorCore.js";
+import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { ContainingProcedureResolution } from "../domain/native/nativeObservation.js";
@@ -27,6 +27,9 @@ export type ValidatedEnhancedCall = {
 
 export const invalidEnhancedInput = (
   name: EnhancedToolName,
-  cause: Error,
+  cause: z.ZodError,
+  input: unknown,
 ): EnhancedResult =>
-  Promise.resolve(err(new AnalysisInputError(name, { cause })));
+  Promise.resolve(
+    err(analysisInputErrorFromIssues(name, cause.issues, input, { cause })),
+  );

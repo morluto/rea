@@ -695,3 +695,25 @@ it("keeps compressed-note refusal ahead of alignment precision admission", () =>
     "Compressed ELF note sections are unsupported",
   );
 });
+
+it.each([
+  { bits: 32, little: true },
+  { bits: 32, little: false },
+  { bits: 64, little: true },
+  { bits: 64, little: false },
+] as const)(
+  "rejects dangling section names with and without notes (ELF$bits $little)",
+  ({ bits, little }) => {
+    for (const ownership of ["program", "none"] as const) {
+      const bytes = elfNoteFixture({ bits, little, ownership });
+      const before = parse(bytes);
+      const nameOffset = bits === 64 ? 62 : 50;
+      if (little) bytes.writeUInt16LE(5, nameOffset);
+      else bytes.writeUInt16BE(5, nameOffset);
+      expect(() => parse(bytes)).toThrow("ELF section table is missing");
+      if (little) bytes.writeUInt16LE(0, nameOffset);
+      else bytes.writeUInt16BE(0, nameOffset);
+      expect(parse(bytes)).toEqual(before);
+    }
+  },
+);

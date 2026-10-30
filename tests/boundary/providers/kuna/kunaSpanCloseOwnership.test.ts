@@ -143,9 +143,10 @@ it.each([
       const handle = fault.handles[0];
       if (handle === undefined) throw new Error("missing span descriptor");
       if (short) {
-        expect(result.error.cleanupPrimary?.userMessage).toContain(
-          "shorter than its recorded span",
-        );
+        expect(result.error.cleanupPrimary?.cause).toMatchObject({
+          _tag: "KunaDocumentError",
+          code: "span_short",
+        });
         expect(result.error.diagnostics?.span_read).toBeUndefined();
       } else {
         expect(result.error).toBeInstanceOf(ProviderCleanupError);

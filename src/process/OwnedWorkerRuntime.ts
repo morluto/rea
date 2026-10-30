@@ -1,3 +1,4 @@
+import { ProcessAdmissionError } from "./ProcessAdmissionError.js";
 import { PrivateRuntimeRoot } from "./PrivateRuntimeRoot.js";
 import type { Readable, Writable } from "node:stream";
 import {
@@ -18,7 +19,34 @@ export interface OwnedWorkerRuntimeOptions {
   readonly onInputFailure?: (cause: Error) => void;
   /** Let a higher-level owner release its dependent resources before this root. */
   readonly retryCleanup?: () => Promise<void>;
+  /** Host that retries this runtime. Omitted runtimes share the process registry. */
+  readonly cleanupRegistry?: WorkerCleanupRegistry;
 }
+
+/** Retained worker runtimes one host retries before admitting another child. */
+export class WorkerCleanupRegistry {
+  readonly #pending = new Set<OwnedWorkerRuntime>();
+
+  has(runtime: OwnedWorkerRuntime): boolean {
+    return this.#pending.has(runtime);
+  }
+
+  add(runtime: OwnedWorkerRuntime): void {
+    this.#pending.add(runtime);
+  }
+
+  delete(runtime: OwnedWorkerRuntime): void {
+    this.#pending.delete(runtime);
+  }
+
+  async retry(except?: OwnedWorkerRuntime): Promise<void> {
+    for (const owner of [...this.#pending])
+      if (owner !== except) await owner.retryRetainedCleanup();
+  }
+}
+
+/** Runtimes that were not given a host registry. */
+export const processWorkerCleanup = new WorkerCleanupRegistry();
 
 export class OwnedWorkerRuntimeCleanupError extends Error {
   readonly #cleanupEpoch: OwnedWorkerRuntimeCleanupEpoch | undefined;
@@ -92,7 +120,7 @@ class OwnedWorkerRuntimeCleanupEpoch {
 
 /** Own the private root and process lifecycle shared by sequential workers. */
 export class OwnedWorkerRuntime {
-  static readonly #pending = new Set<OwnedWorkerRuntime>();
+  readonly #registry: WorkerCleanupRegistry;
 
   #root: PrivateRuntimeRoot | undefined;
   #cleanupEpoch: OwnedWorkerRuntimeCleanupEpoch | undefined;
@@ -112,7 +140,9 @@ export class OwnedWorkerRuntime {
     readonly listener: (chunk: Buffer | string) => void;
   }>();
 
-  constructor(readonly options: OwnedWorkerRuntimeOptions) {}
+  constructor(readonly options: OwnedWorkerRuntimeOptions) {
+    this.#registry = options.cleanupRegistry ?? processWorkerCleanup;
+  }
 
   get rootPath(): string | undefined {
     return this.#root?.path;
@@ -135,7 +165,7 @@ export class OwnedWorkerRuntime {
 
   /** Whether this exact owner still retains an unconfirmed resource release. */
   get hasPendingCleanup(): boolean {
-    return OwnedWorkerRuntime.#pending.has(this);
+    return this.#registry.has(this);
   }
 
   /** First error observed on the current child's request stream, if any. */
@@ -155,13 +185,22 @@ export class OwnedWorkerRuntime {
 
   /** Mark this still-owned runtime for retry before any consumer starts a child. */
   retainForCleanup(): void {
-    OwnedWorkerRuntime.#pending.add(this);
+    this.#registry.add(this);
   }
 
-  /** Retry every earlier worker owner before any consumer admits a new child. */
+  /** Retry every retained runtime in this host's registry. */
+  retryCohort(): Promise<void> {
+    return this.#registry.retry();
+  }
+
+  /** Called by the owning registry. Not a process-wide sweep. */
+  retryRetainedCleanup(): Promise<void> {
+    return this.#retryPending();
+  }
+
+  /** Retry runtimes left on the process registry by owners that named no host. */
   static async retryPending(except?: OwnedWorkerRuntime): Promise<void> {
-    for (const owner of [...this.#pending])
-      if (owner !== except) await owner.#retryPending();
+    await processWorkerCleanup.retry(except);
   }
 
   /**
@@ -173,23 +212,17 @@ export class OwnedWorkerRuntime {
     initialize?: (supervisor: ProviderProcessSupervisor) => Promise<void>,
   ): Promise<void> {
     if (this.#terminalCloseRequested || this.#closing)
-      return Promise.reject(new Error("Owned worker runtime is closing"));
+      return Promise.reject(new ProcessAdmissionError("runtime_closing"));
     if (this.#acquisition !== undefined) return this.#acquisition;
-    if (
-      this.#supervisor !== undefined &&
-      !OwnedWorkerRuntime.#pending.has(this)
-    )
+    if (this.#supervisor !== undefined && !this.#registry.has(this))
       return Promise.resolve();
-    if (
-      this.options.retryCleanup !== undefined &&
-      OwnedWorkerRuntime.#pending.has(this)
-    )
+    if (this.options.retryCleanup !== undefined && this.#registry.has(this))
       return this.#retryOwnedCleanup().then(() => {
         if (this.#terminalCloseRequested || this.#closing)
-          throw new Error("Owned worker runtime is closing");
+          throw new ProcessAdmissionError("runtime_closing");
         return this.start(spawnOptions, initialize);
       });
-    const ownRetry = OwnedWorkerRuntime.#pending.has(this)
+    const ownRetry = this.#registry.has(this)
       ? this.#retryPending()
       : Promise.resolve();
     const acquisition = ownRetry.then(async () => {
@@ -209,7 +242,7 @@ export class OwnedWorkerRuntime {
   onStdout(listener: (chunk: Buffer | string) => void): void {
     const stream = this.#supervisor?.launch.process.stdout;
     if (stream === null || stream === undefined)
-      throw new Error("Owned worker runtime has no stdout stream");
+      throw new ProcessAdmissionError("stdout_missing");
     stream.on("data", listener);
     this.#stdoutListeners.add({ stream, listener });
   }
@@ -276,7 +309,7 @@ export class OwnedWorkerRuntime {
     const attempt = Promise.resolve()
       .then(() => this.options.retryCleanup?.())
       .then(() => {
-        if (OwnedWorkerRuntime.#pending.has(this))
+        if (this.#registry.has(this))
           throw this.#cleanupError(
             "Higher-level cleanup retry returned while ownership remains pending",
           );
@@ -297,13 +330,13 @@ export class OwnedWorkerRuntime {
       | ((supervisor: ProviderProcessSupervisor) => Promise<void>)
       | undefined,
   ): Promise<void> {
-    await OwnedWorkerRuntime.retryPending(this);
-    if (this.#closing) throw new Error("Owned worker runtime is closing");
+    await this.#registry.retry(this);
+    if (this.#closing) throw new ProcessAdmissionError("runtime_closing");
     this.#root ??= await PrivateRuntimeRoot.create({
       prefix: this.options.rootPrefix,
     });
     this.#cleanupEpoch ??= new OwnedWorkerRuntimeCleanupEpoch(this.#root.path);
-    if (this.#closing) throw new Error("Owned worker runtime is closing");
+    if (this.#closing) throw new ProcessAdmissionError("runtime_closing");
     this.#lastRunId = spawnOptions.runId;
     const spawned = await (this.options.launcher ?? spawnOwnedProviderProcess)({
       ...spawnOptions,
@@ -324,9 +357,9 @@ export class OwnedWorkerRuntime {
     );
     // A close may have begun while spawn was pending. Adopt the process first;
     // close waits for this acquisition and then stops the exact adopted owner.
-    if (this.#closing) throw new Error("Owned worker runtime is closing");
+    if (this.#closing) throw new ProcessAdmissionError("runtime_closing");
     await initialize?.(this.#supervisor);
-    if (this.#closing) throw new Error("Owned worker runtime is closing");
+    if (this.#closing) throw new ProcessAdmissionError("runtime_closing");
   }
 
   async #stop(): Promise<ProviderProcessStopResult> {
@@ -337,7 +370,7 @@ export class OwnedWorkerRuntime {
     this.#detachStdout();
     const stopped = await supervisor.stop();
     if (stopped.status === "incomplete") {
-      OwnedWorkerRuntime.#pending.add(this);
+      this.#registry.add(this);
       const stdin = supervisor.launch.process.stdin;
       if (
         stdin !== undefined &&
@@ -372,12 +405,12 @@ export class OwnedWorkerRuntime {
         this.#cleanupEpoch?.release();
         this.#cleanupEpoch = undefined;
       } catch (cause: unknown) {
-        OwnedWorkerRuntime.#pending.add(this);
+        this.#registry.add(this);
         throw this.#cleanupError(message(cause), cause);
       }
     }
     this.#closed = true;
-    OwnedWorkerRuntime.#pending.delete(this);
+    this.#registry.delete(this);
   }
 
   #detachStdout(): void {
@@ -398,7 +431,9 @@ export class OwnedWorkerRuntime {
       this.#inputFailure =
         cause instanceof Error
           ? cause
-          : new Error("Owned worker request stream failed", { cause });
+          : new ProcessAdmissionError("request_stream_failed", undefined, {
+              cause,
+            });
       this.options.onInputFailure?.(this.#inputFailure);
     };
     const onClose = (): void => {

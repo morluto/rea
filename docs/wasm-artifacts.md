@@ -93,8 +93,10 @@ whose section attribution is unknown prevent a complete debug-name claim, even
 when module names were decoded. They do not establish that the name section is
 malformed. Exact warnings retain their producing tool and text. Older portable
 reports retain their original strict command profile; missing metadata coverage
-is `unknown` and missing warning history is `null`. The raw custom section
-remains in the decoded WAT. An uninterpretable name section leaves complete
+is `unknown` and missing warning history is `null`. Decoded WAT retains readable
+custom sections; WABT omits a section whose name is invalid UTF-8. In that case
+REA verifies the selected bytes, retains the section range and exact producer
+diagnostic, and leaves its identity and debug-name coverage unknown. An uninterpretable name section leaves complete
 debug-name coverage unknown. Module names decoded before a later metadata
 failure remain available for exact objdump framing, including names containing
 newlines or NUL; those partial observations do not establish complete optional

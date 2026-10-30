@@ -1,10 +1,29 @@
 import type { z } from "zod";
 import type { AnalysisInputError } from "../analysisErrorCore.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
+import type { Evidence } from "../evidence.js";
 import { analysisInputErrorFromIssues } from "../inputIssueProjection.js";
 import { err, ok, type Result } from "../result.js";
-import type { AnalysisViewParent } from "./analysisView.js";
 import { ownedJsonValueSchema } from "../jsonValue.js";
+
+/** Parent record already resolved from inline Evidence or a session reference. */
+export interface AnalysisViewParent {
+  readonly evidenceId: string;
+  readonly operation: string;
+  readonly normalizedResult: unknown;
+  readonly provider?: Evidence["provider"];
+  readonly analysisProfile?: Evidence["analysis_profile"];
+  readonly authority?: Evidence["authority"];
+  readonly environment?: Evidence["environment"];
+  /** The owner proved normalizedResult belongs to a sealed, deep-frozen Evidence snapshot. */
+  readonly sealedResult?: boolean;
+  /** Subject presentation for this delivery, including explicit absence. */
+  readonly subject?: Evidence["subject"];
+  readonly limitations: readonly string[];
+  readonly artifact?: { readonly path: string; readonly sha256: string } | null;
+  /** Parent Evidence parameters, when the parent operation records them. */
+  readonly parameters?: unknown;
+}
 import {
   canBorrowParsedJsonSnapshot,
   freezeOwnedJsonTreeSnapshot,

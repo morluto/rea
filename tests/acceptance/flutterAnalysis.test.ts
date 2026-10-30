@@ -19,6 +19,7 @@ import {
   createDuplicateFlutterApk,
 } from "../fixtures/flutterApk.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
+import { expectCliMcpEvidenceParity } from "../fixtures/cliMcpEvidenceParity.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
@@ -46,7 +47,7 @@ cliTest(
       );
       const response = await call("inspect_dart_aot", { path, abi: "x86_64" });
       expect(response.isError, JSON.stringify(response)).not.toBe(true);
-      expect(parseEvidence(response.structuredContent)).toEqual(evidence);
+      expectCliMcpEvidenceParity(evidence, response.structuredContent, path);
       const digest = createHash("sha256").update(image).digest("hex");
       expect(report).toMatchObject({
         coverage: "complete",

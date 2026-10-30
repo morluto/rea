@@ -831,11 +831,7 @@ export class JavaScriptRouteScan {
       // Decide generic-constant admission only after all specific owners finish.
       if (this.#propertyValues.has(literal.node)) continue;
       const path = routePath(literal.value, { navigation: true });
-      if (
-        path === undefined ||
-        /^\/(?:_next|api|assets|static)(?:\/|$)/u.test(path)
-      )
-        continue;
+      if (path === undefined) continue;
       // These remain inferred candidates. The inventory owner additionally binds them to app roots across sources.
       if (this.#nextRuntime || roots.has(path.split("/")[1]!))
         this.#emit(

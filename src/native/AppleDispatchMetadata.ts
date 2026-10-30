@@ -18,6 +18,7 @@ import {
   AnalysisAccessDeniedError,
   AnalysisCapabilityUnavailableError,
   AnalysisResourceConstraintError,
+  AnalysisUnsupportedTargetError,
 } from "../domain/analysisErrorCore.js";
 import {
   ArtifactFileCleanupFailure,
@@ -41,6 +42,7 @@ import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
 import { pushDispatchCoverage } from "./AppleDispatchCoverage.js";
 import { parsePointerFixups } from "./AppleMachoFixups.js";
+import { BinaryFormatFailure } from "./metadata/BinaryContainer.js";
 import {
   parseMachoLayout,
   UnsupportedMachoMetadataFormatError,
@@ -230,7 +232,10 @@ export const decodeAppleDispatchMetadata = (
     ({ name }) => name === "__swift5_types",
   )) {
     if (section.size % 4 !== 0)
-      throw new RangeError("Misaligned Swift type section");
+      throw new BinaryFormatFailure(
+        "malformed",
+        "Misaligned Swift type section",
+      );
     for (let index = 0; index < section.size / 4 && index < maxRecords; index++)
       typeEntries.push(section.address + BigInt(index * 4));
     if (section.size / 4 > maxRecords) budget.truncated = true;
@@ -445,6 +450,19 @@ const appleDispatchMetadataPrimaryFailure = (
 ): AnalysisError => {
   if (origin === "owned-or-classified") {
     if (cause instanceof AnalysisError) return cause;
+    if (cause instanceof BinaryFormatFailure)
+      return new AnalysisUnsupportedTargetError(
+        OPERATION,
+        path,
+        cause.message,
+        {
+          cause,
+          remediationAction:
+            cause.kind === "malformed"
+              ? "Select a Mach-O artifact with well-formed metadata sections, reopen the target, then retry."
+              : "Select a supported little-endian 64-bit Mach-O artifact, reopen the target, then retry.",
+        },
+      );
     if (cause instanceof UnsupportedMachoMetadataFormatError)
       return new AnalysisCapabilityUnavailableError(
         IDENTITY.id,

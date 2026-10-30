@@ -8,6 +8,7 @@ import {
   isObject,
   lastSegmentValue,
   listItems,
+  markedDeleted,
   renderStateEntity,
   renderStateList,
   same,
@@ -359,7 +360,9 @@ const listReproduces = (
             collection,
             scalarText(ownMember(item, field)) ?? "",
           );
-          return entity === undefined ? [] : [entity];
+          return entity === undefined || markedDeleted(entity.fields)
+            ? []
+            : [entity];
         }));
     const rendered = members.map((entity) => {
       const item = observed.get(entity.id);

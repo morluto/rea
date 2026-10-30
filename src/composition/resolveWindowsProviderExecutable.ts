@@ -1,5 +1,6 @@
 import { existsSync, statSync } from "node:fs";
 import { win32 } from "node:path";
+import { windowsPathEntries } from "../process/WindowsExecutable.js";
 
 export interface WindowsExecutableLookup {
   /** Windows-formatted working directory; defaults to the process CWD. */
@@ -7,25 +8,6 @@ export interface WindowsExecutableLookup {
   /** Test seam for Windows paths when running on a non-Windows host. */
   readonly isFile?: (path: string) => boolean;
 }
-
-const splitWindowsPath = (value: string): readonly string[] => {
-  const entries: string[] = [];
-  let start = 0;
-  let quoted = false;
-  for (let index = 0; index < value.length; index += 1) {
-    if (value[index] === '"') quoted = !quoted;
-    else if (value[index] === ";" && !quoted) {
-      entries.push(value.slice(start, index));
-      start = index + 1;
-    }
-  }
-  entries.push(value.slice(start));
-  return entries.flatMap((entry) => {
-    if (entry.startsWith('"') && entry.endsWith('"') && entry.length >= 2)
-      return [entry.slice(1, -1)];
-    return entry.includes('"') ? [] : [entry];
-  });
-};
 
 const isRegularFile = (path: string): boolean => {
   try {
@@ -53,7 +35,7 @@ export const resolveWindowsProviderExecutable = (
 
   const pathValue = environment.PATH ?? environment.Path ?? environment.path;
   if (pathValue === undefined) return executable;
-  const pathEntries = splitWindowsPath(pathValue);
+  const pathEntries = windowsPathEntries(pathValue);
   const explicitExtension = win32.extname(executable).toLowerCase();
   if (explicitExtension !== "" && ![".com", ".exe"].includes(explicitExtension))
     return executable;

@@ -80,6 +80,61 @@ const createMatchingFixture = async () => {
     importedPath,
   };
 };
+
+cliTest(
+  "keeps the committed Evidence receipt when JSON Lines refuses the result",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-matching-jsonl-receipt-");
+    const request = join(root, "request.json");
+    const left = nativeMatchingInventory("1", [
+      { address: "0x10", value: "main" },
+    ]);
+    const right = nativeMatchingInventory("2", [
+      { address: "0x20", value: "main" },
+    ]);
+    for (const detail of ["summary", "complete"] as const) {
+      await writeFile(request, JSON.stringify({ left, right, detail }));
+      const output = join(root, `${detail}.json`);
+      const result = await cli.run({
+        arguments: [
+          "match-native-functions",
+          request,
+          "--evidence_output",
+          output,
+          "--format",
+          "jsonl",
+        ],
+      });
+      expect(result.exitCode).toBe(1);
+      const receipt = {
+        path: output,
+        bytes: (await readFile(output)).byteLength,
+      };
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        type: "error",
+        result: {
+          code: "invalid_request",
+          category: "invalid_input",
+          details: { diagnostics: { evidence_bundle: receipt } },
+        },
+      });
+      const retry = await cli.run({
+        arguments: [
+          "match-native-functions",
+          request,
+          "--evidence_output",
+          output,
+          "--json",
+        ],
+      });
+      expect(retry.exitCode).toBe(1);
+      expect(retry.json).toMatchObject({ details: { reason: "exists" } });
+      expect(
+        parseEvidenceBundle(JSON.parse(await readFile(output, "utf8"))).records,
+      ).toHaveLength(3);
+    }
+  },
+);
 const verifyPortableCli = async (
   cli: TestCli,
   fixture: Awaited<ReturnType<typeof createMatchingFixture>>,
@@ -563,7 +618,11 @@ cliTest(
 cliTest(
   "native matching admits the request representation before authenticating observation carriers",
   async () => {
-    const { call } = await connectLocalToolsMcp();
+    // Reach the native matching representation boundary with this intentionally
+    // oversized carrier fixture, rather than stopping at MCP's lower default.
+    const { call } = await connectLocalToolsMcp({
+      REA_MCP_MAX_INPUT_ELEMENTS: "1048576",
+    });
     const left = nativeMatchingInventory("1", [
       { address: "0x10", value: "main" },
     ]);

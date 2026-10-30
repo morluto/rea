@@ -6,6 +6,7 @@ import { ok as resultOk } from "../../src/domain/result.js";
 import { createTestBinarySession } from "./binarySession.js";
 import type { BinarySession } from "../../src/application/binary/BinarySession.js";
 import { observed } from "./analysisExecution.js";
+import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../scripts/lib/mcp-verification-environment.mjs";
 import { createServer } from "../../src/server/createServer.js";
 import {
   createTestMcp,
@@ -19,7 +20,7 @@ export interface ApplicationMcpHarness {
   readonly close: () => Promise<void>;
 }
 
-/** Connect application workflows through the production MCP registration. */
+/** Connect complete-Evidence workflow fixtures through production registration. */
 export async function createApplicationMcpHarness(
   options: {
     readonly session?: BinarySession;
@@ -60,7 +61,13 @@ export async function createApplicationMcpHarness(
     options.registerCleanup?.(close);
     const server = createServer(
       { kind: "session", session },
-      options.serverOptions,
+      {
+        ...options.serverOptions,
+        environment: {
+          ...INLINE_EVIDENCE_MCP_ENVIRONMENT,
+          ...(options.serverOptions?.environment ?? process.env),
+        },
+      },
     );
     const client = await mcp.connect(
       server,

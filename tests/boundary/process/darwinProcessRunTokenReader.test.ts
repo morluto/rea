@@ -813,9 +813,8 @@ const temporaryStateSchema = z.object({
 });
 
 /**
- * A compiler that behaves like swift-driver: a job in its own process group
- * writes an object under TMPDIR, SIGINT stops the job and deletes the object,
- * and any other signal leaves the job writing after the driver exits.
+ * A compiler whose detached job closes standard streams but retains fd 3,
+ * writes an object after the SIGINT-stopped driver exits, then closes fd 3.
  */
 const writeTemporaryObjectCompiler = async (directory: string) => {
   const executable = join(directory, "fake-temporary-xcrun");
@@ -828,14 +827,14 @@ const path = process.getBuiltinModule("node:path");
 const { spawn } = process.getBuiltinModule("node:child_process");
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "TemporaryDirectory."));
 const object = path.join(temporary, "ProcessRunTokenReader-1.o");
+let lifetime = "ignore";
+try { if (fs.fstatSync(3).isSocket()) lifetime = 3; } catch {}
 const job = spawn(process.execPath, ["-e",
   "setTimeout(() => { const fs = process.getBuiltinModule('node:fs'); fs.mkdirSync(" + JSON.stringify(temporary) +
   ", { recursive: true }); fs.writeFileSync(" + JSON.stringify(object) + ", 'object'); }, 300)"],
-  { detached: true, stdio: "ignore" });
+  { detached: true, stdio: ["ignore", "ignore", "ignore", lifetime] });
 job.unref();
 process.on("SIGINT", () => {
-  job.kill("SIGKILL");
-  fs.rmSync(object, { force: true });
   process.exit(130);
 });
 const output = process.argv[process.argv.indexOf("-o") + 1];
@@ -1041,7 +1040,10 @@ it.skipIf(process.platform === "win32")(
         throw new Error("closed reader compilation unexpectedly succeeded");
       expect(outcome.cause).toMatchObject({ name: "AbortError" });
       await expect(access(state.root)).rejects.toThrow();
-      await expect(reader.prepare()).rejects.toThrow(/reader is closed/u);
+      await expect(reader.prepare()).rejects.toMatchObject({
+        _tag: "ProcessAdmissionError",
+        code: "reader_closed",
+      });
       await expect(reader.close()).resolves.toBeUndefined();
     } finally {
       await Promise.allSettled([preparation]);

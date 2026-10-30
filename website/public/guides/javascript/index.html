@@ -318,9 +318,16 @@
                   source</span
                 >
               </div>
-              <pre><code>document.querySelector(&quot;#export&quot;).addEventListener(&quot;click&quot;, async () =&gt; {
+              <pre><code id="notes-renderer-source">async function exportNotes() {
   const destination = await window.notes.exportCsv();
   document.querySelector(&quot;#status&quot;).textContent = `Saved to ${destination}`;
+}
+
+document.querySelector(&quot;#export&quot;).addEventListener(&quot;click&quot;, () =&gt; {
+  exportNotes().catch((cause) =&gt; {
+    document.querySelector(&quot;#status&quot;).textContent = &quot;Export failed&quot;;
+    console.error(&quot;Notes export failed&quot;, cause);
+  });
 });</code></pre>
             </div>
             <p>
@@ -372,8 +379,9 @@
 }</code></pre>
             </div>
             <p class="caption">
-              Recorded by REA 4.1.0 on the downloadable example below. Source
-              locations accompany the API, channel and handler findings.
+              Recorded by REA 4.1.0 on an earlier version of the example below.
+              The renderer has since changed; the recorded source locations
+              accompany the API, channel and handler findings.
             </p>
           </section>
           <section class="article-section" id="try">

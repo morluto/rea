@@ -39,6 +39,7 @@ import { cdpTargetEventMatches } from "./CdpTargetEvents.js";
 
 import {
   readCdpRequestWillBeSent,
+  scopeCdpResponse,
   readCdpLoadingFailed,
   readCdpLoadingFinished,
   type CdpRequestWillBeSentFacts,
@@ -67,6 +68,7 @@ interface TimelineEntryOptions {
   readonly destinationScope?: TimelineEvent["destination_scope"];
   readonly requestId?: string | null;
   readonly detail?: string | null;
+  readonly redirectResponse?: TimelineEvent["redirect_response"];
 }
 
 /** Observe external user actions without rejecting approved same-origin navigation. */
@@ -516,6 +518,12 @@ class TimelineCapture {
     if (!eventTime.keep) return;
     const rawUrl = facts.request?.url;
     const destination = scopedUrl(rawUrl, this.allowedOrigins);
+    const response = facts.redirect.response;
+    const prior = scopeCdpResponse(response, this.allowedOrigins);
+    if (prior.scope !== "approved")
+      this.completeness.exclude("timeline", prior.reason);
+    else if (!response.status.ok)
+      this.completeness.exclude("timeline", "invalid_protocol_value");
     this.#add({
       type: "redirect",
       params: facts.source ?? {},
@@ -525,6 +533,14 @@ class TimelineCapture {
       rawUrl: rawUrl ?? null,
       requestId: facts.requestId,
       detail: null,
+      redirectResponse: {
+        url: prior.scope === "approved" ? prior.url.url : null,
+        status:
+          prior.scope === "approved" && response.status.ok
+            ? response.status.value
+            : null,
+        scope: prior.scope,
+      },
     });
     if (!this.#hasObservedUrl(rawUrl)) return;
     this.#stopIfOutOfScope(destination);
@@ -712,6 +728,9 @@ class TimelineCapture {
       url: destination?.scope === "approved" ? destination.url : null,
       destination_scope: options.destinationScope ?? destination?.scope ?? null,
       detail,
+      ...(options.redirectResponse === undefined
+        ? {}
+        : { redirect_response: options.redirectResponse }),
     });
   }
 }

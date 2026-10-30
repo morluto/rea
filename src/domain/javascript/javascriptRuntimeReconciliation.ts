@@ -58,6 +58,7 @@ export const reconcileJavaScriptRuntime = (
   });
   const loadStates = classifyStaticLoadStates(
     layers,
+    captures,
     runtime.entities,
     matching.items,
     {

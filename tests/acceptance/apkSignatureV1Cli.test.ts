@@ -81,6 +81,20 @@ cliTest(
         },
       ]),
     );
+    const rotatedWithV2 = join(root, "v1-v2-v3-rotated.apk");
+    await writeFile(
+      rotatedWithV2,
+      withSigningBlock(v1Zip, [
+        { id: APK_SIGNATURE_V2_ID, value: v2SchemeValue(LEAF_CERTIFICATE) },
+        {
+          id: APK_SIGNATURE_V3_ID,
+          value: v3SchemeValue(ROOT_CERTIFICATE, [
+            LEAF_CERTIFICATE,
+            ROOT_CERTIFICATE,
+          ]),
+        },
+      ]),
+    );
     // A lineage that does not start at the v1 key is still a mismatch.
     const misrotated = join(root, "v1-v3-misrotated.apk");
     await writeFile(
@@ -106,6 +120,7 @@ cliTest(
     const cliV1 = await viaCli(v1Only);
     const cliMixed = await viaCli(mixed);
     const cliRotated = await viaCli(rotated);
+    const cliRotatedWithV2 = await viaCli(rotatedWithV2);
     const cliMisrotated = await viaCli(misrotated);
 
     expect(cliV1.normalized_result.schemes.v1.signers).toMatchObject([
@@ -127,7 +142,14 @@ cliTest(
     expect(cliRotated.normalized_result.posture).toMatchObject({
       v1_only: false,
       rotation_present: true,
+      schemes_agree_on_signer: true,
       signer_change_declared_by_rotation: false,
+      v1_signers_match_block_signers: true,
+    });
+    expect(cliRotatedWithV2.normalized_result.posture).toMatchObject({
+      rotation_present: true,
+      schemes_agree_on_signer: false,
+      signer_change_declared_by_rotation: true,
       v1_signers_match_block_signers: true,
     });
     expect(
@@ -157,6 +179,7 @@ cliTest(
         [v1Only, cliV1],
         [mixed, cliMixed],
         [rotated, cliRotated],
+        [rotatedWithV2, cliRotatedWithV2],
       ] as const) {
         const reply = await client.callTool(
           { name: tool.name, arguments: { path, detail: "complete" } },
@@ -227,6 +250,48 @@ cliTest(
           decode_error: null,
         },
       ]);
+    }
+  },
+);
+
+cliTest(
+  "explains an unreadable v1 signer comparison through CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-apk-v1-unknown-");
+    const path = join(root, "unreadable-v1.apk");
+    await writeFile(
+      path,
+      withSigningBlock(
+        await zipWith([
+          { name: "META-INF/CERT.SF", data: "Signature-Version: 1.0" },
+          { name: "META-INF/CERT.RSA", data: "not pkcs7" },
+        ]),
+        [{ id: APK_SIGNATURE_V2_ID, value: v2SchemeValue(LEAF_CERTIFICATE) }],
+      ),
+    );
+    const run = await cli.run({
+      arguments: ["inspect-apk-signature", path, "--json"],
+    });
+    expect(run.exitCode, run.stderr).toBe(0);
+    const call = await cli.sharedMcpCall!();
+    const mcp = await call("inspect_apk_signature", {
+      path,
+      detail: "complete",
+    });
+    expect(mcp.isError).not.toBe(true);
+    for (const evidence of [
+      completeEvidence(run.json),
+      completeEvidence(mcp.structuredContent),
+    ]) {
+      expect(
+        evidence.normalized_result.posture.v1_signers_match_block_signers,
+      ).toBeNull();
+      expect(
+        evidence.normalized_result.schemes.v1.signers[0]?.decode_error,
+      ).toContain("malformed PKCS#7");
+      expect(evidence.limitations).toContain(
+        "v1_signers_match_block_signers is null: one or more v1 signer identities are unknown; inspect the v1 signer records for details.",
+      );
     }
   },
 );

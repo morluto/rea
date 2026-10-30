@@ -10,13 +10,13 @@ import {
 } from "../native/nativeLoadImage.js";
 import { nativeAddressObservationSchema } from "../native/nativeAddress.js";
 import { jsonValueSchema } from "../jsonValue.js";
-import { err, ok, type Result } from "../result.js";
-import type { AnalysisError } from "../analysisErrorBase.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import { err, ok } from "../result.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import {
+  ownedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
@@ -199,9 +199,12 @@ const selectRows = (source: readonly (Row | string)[], view: PageRequest) => {
 /** Query the owner's parsed historical observations without reopening the target. */
 export const projectNativeLoadImageView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
-  if (view.kind !== "summary" && view.kind !== "native-load-image")
+  admitted: AdmittedView,
+) => {
+  const view = ownedView<
+    SummaryAnalysisView | z.output<typeof nativeLoadImageViewRequestSchema>
+  >(admitted, "summary", "native-load-image");
+  if (view === undefined)
     return err(
       analysisViewInputError([
         {
@@ -257,7 +260,7 @@ export const projectNativeLoadImageView = (
   if (view.kind === "summary")
     return ok({
       ...shared,
-      kind: "summary",
+      kind: "summary" as const,
       view,
       summary: {
         verification: smallVerification,
@@ -289,7 +292,7 @@ export const projectNativeLoadImageView = (
   const page = selectRows(selected ?? [], view);
   return ok({
     ...shared,
-    kind: "native-load-image",
+    kind: "native-load-image" as const,
     verification_status: report.status,
     view,
     items: nativeLoadImageViewItemsSchema.parse({

@@ -20,7 +20,7 @@
 
 **[網站](https://rea.tools/zh-TW/) · [指南](https://rea.tools/zh-TW/guides/) · [案例](https://rea.tools/zh-TW/showcase/)**
 
-[快速開始](#快速開始) · [REA 的工作原理](#rea-的工作原理) · [可以分析什麼](#可以分析什麼) · [案例](#案例) · [建立 RL 環境](#build-rl-environments) · [常見問題](#常見問題) · [GNU objdump 與 Rizin 工具](../reverse-engineering-tools.md) · [文件](#文件)
+[快速開始](#快速開始) · [REA 的工作原理](#rea-的工作原理) · [可以分析什麼](#可以分析什麼) · [案例](#案例) · [建立 RL 環境](#build-rl-environments) · [常見問題](#常見問題) · [文件](#文件)
 
 <code>npx rea-agents setup</code>
 
@@ -60,7 +60,7 @@
 
 REA 將 AI 代理連接到分析工具，用於檢查原生二進位檔案、JavaScript 和 Electron 應用、.NET 程式集以及網站。你也可以在終端中使用同樣的工具。分析在本機執行，結果包含支撐各項結論的證據和相關限制。
 
-設定流程會向 AI 代理註冊 REA，並安裝對應的工作流程指引。原生分析可以使用已有的 Hopper、Ghidra 或 IDA；設定流程也可以在你核准後安裝 Hopper。靜態 JavaScript 分析不需要原生分析引擎。
+設定流程會向 AI 代理註冊 REA，並安裝對應的工作流程指引。原生分析可以使用已有的 Hopper、Ghidra、IDA 或 Kuna；設定流程也可以在你核准後安裝 Hopper。靜態 JavaScript 分析不需要原生分析引擎。
 
 > **[訪問 REA 網站](https://rea.tools/zh-TW/)**，查看設定說明、圖解指南和真實案例。
 
@@ -149,7 +149,7 @@ REA 需要 Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）或 26+ (>=26.12.1)�
 
 | 目標                  | REA 返回的內容                                                               | 要求與指南                                                                                                         |
 | --------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| 原生二進位檔案        | 偽程式碼、組合語言、字串、符號、呼叫和引用                                   | Hopper、Ghidra 或 IDA；[原生分析](../native-investigation.md)                                                      |
+| 原生二進位檔案        | 偽程式碼、組合語言、字串、符號、呼叫和引用                                   | Hopper、Ghidra、IDA 或 Kuna；[原生分析](../native-investigation.md)                                                |
 | 離線 ELF 佈局         | 節、段、原始符號/重定位資訊及靜態防護機制候選項                              | Linux x64 上由呼叫方提供的 pwntools；[二進位診斷](../binary-diagnostics.md)                                        |
 | Go 二進位檔案         | 內嵌編譯器版本、模組、替換項和建置設定                                       | 內建靜態 ELF/PE/thin Mach-O 檢查；無需安裝 Go                                                                      |
 | WASM 工件             | 驗證、節、精確的匯入/匯出 WAT 形式及解碼後的 WAT                             | 呼叫方提供的 WABT 1.0.42；`inspect_wasm_artifact`                                                                  |
@@ -187,6 +187,8 @@ REA 需要 Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）或 26+ (>=26.12.1)�
 | APK 簽章              | v1/v2/v3/v3.1 簽署者、憑證指紋、金鑰輪換和摘要自洽性                         | 內建靜態檢查; `inspect_apk_signature`                                                                              |
 
 靜態 JavaScript 和 .NET 檢查讀取提供的檔案，不執行應用。執行階段擷取會以你的使用者權限執行目標或與之互動；各執行階段指南說明瞭具體影響。
+
+若要離線檢查原生二進位檔，REA 也支援由呼叫端自行提供的 GNU objdump 和 Rizin。[逆向工程工具指南](../reverse-engineering-tools.md)說明了分析提供者的設定、CLI 指令及 Evidence 的限制。REA 不會安裝或更新這兩個分析提供者。
 
 <a id="choosing-a-deep-analysis-provider"></a>
 
@@ -278,9 +280,9 @@ REA 匯出可直接執行的環境，並附帶基本測試，檢查環境能否�
 </details>
 
 <details>
-<summary><strong>需要 Hopper、Ghidra 或 IDA 嗎？</strong></summary>
+<summary><strong>需要 Hopper、Ghidra、IDA 或 Kuna 嗎？</strong></summary>
 
-深入的原生分析需要其中一個引擎。靜態 JavaScript 和 .NET 檢查不需要原生分析引擎。設定流程可以在你核准後安裝 Hopper；Ghidra 和 IDA 則使用已有安裝。見[提供者設定](../installation.md#hopper)。
+深入的原生分析需要其中一個引擎。靜態 JavaScript 和 .NET 檢查不需要原生分析引擎。設定流程可以在你核准後安裝 Hopper；Ghidra、IDA 和 Kuna 則使用已有安裝。見[提供者設定](../installation.md#hopper)。
 
 </details>
 
@@ -348,7 +350,7 @@ npx rea-agents@latest setup
 
 ## Star 歷史
 
-🎉 **GitHub Star 達到 300,000 個，感謝大家！**
+🎉 **GitHub Star 達到 400,000 個，感謝大家！**
 
 感謝每一位使用 REA、報告錯誤、提出功能需求、測試建置和貢獻修復的朋友。
 

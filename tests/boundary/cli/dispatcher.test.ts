@@ -105,7 +105,7 @@ describe("doctor configuration dispatch", () => {
       const imported = "CLI command runtime imported";
       await installCliRuntime(
         workspace,
-        `process.stderr.write(${JSON.stringify(`${imported}\n`)}); export const closeCliJavaScriptResources = () => {}; export const createCli = () => ({ serve: (args, options) => options.stdout(JSON.stringify({ adapter: "cli", args })) });\n`,
+        `process.stderr.write(${JSON.stringify(`${imported}\n`)}); export const closeCliResources = () => {}; export const createCli = () => ({ serve: (args, options) => options.stdout(JSON.stringify({ adapter: "cli", args })) });\n`,
       );
       // Both token ownership and output/configuration admission use production code.
       await workspace.write(
@@ -194,7 +194,7 @@ describe("executable dispatcher", () => {
     async ({ processes, workspace }) => {
       await installCliRuntime(
         workspace,
-        'export const closeCliJavaScriptResources = () => {}; export const createCli = () => ({ serve: (_args, options) => { options.stdout("first document\\n"); throw new RangeError("Invalid string length"); } });\n',
+        'export const closeCliResources = () => {}; export const createCli = () => ({ serve: (_args, options) => { options.stdout("first document\\n"); throw new RangeError("Invalid string length"); } });\n',
         'export const createCliResultOutput = () => ({ handled: false, failed: false, captureSdkOutput: () => false, finishSdkOutput: async () => {}, recoverFormattingFailure: () => { process.stdout.write("unexpected second document"); return true; } });\n',
       );
       const result = await processes.run(
@@ -213,7 +213,7 @@ describe("executable dispatcher", () => {
     async ({ processes, workspace }) => {
       await installCliRuntime(
         workspace,
-        'export const closeCliJavaScriptResources = () => {}; export const createCli = () => ({ serve: (args) => process.stdout.write(JSON.stringify({ adapter: "cli", args })) });\n',
+        'export const closeCliResources = () => {}; export const createCli = () => ({ serve: (args) => process.stdout.write(JSON.stringify({ adapter: "cli", args })) });\n',
       );
       const scripts = workspace.path("scripts");
       await workspace.mkdir("dist/mcp");
@@ -335,7 +335,7 @@ describe("executable dispatcher JavaScript shutdown", () => {
     async (cleanupFails, { processes, workspace }) => {
       await installCliRuntime(
         workspace,
-        `export const closeCliJavaScriptResources = async () => { ${cleanupFails ? 'throw new Error("worker still owned");' : ""} }; export const createCli = () => ({ serve: () => { throw Object.assign(new Error("broken pipe"), { code: "EPIPE" }); } });\n`,
+        `export const closeCliResources = async () => { ${cleanupFails ? 'throw new Error("worker still owned");' : ""} }; export const createCli = () => ({ serve: () => { throw Object.assign(new Error("broken pipe"), { code: "EPIPE" }); } });\n`,
       );
       const result = await processes.run(
         process.execPath,
@@ -368,7 +368,7 @@ describe("executable dispatcher JavaScript shutdown", () => {
             : 'process.stdout.write("complete document\\n");';
       await installCliRuntime(
         workspace,
-        `export const closeCliJavaScriptResources = () => { globalThis.cleaned = true; ${cleanupFails ? 'return Promise.reject(new Error("worker still owned"));' : ""} }; export const createCli = () => ({ serve: (_args, options) => { options.stdout("pending document"); options.exit(0); } });\n`,
+        `export const closeCliResources = () => { globalThis.cleaned = true; ${cleanupFails ? 'return Promise.reject(new Error("worker still owned"));' : ""} }; export const createCli = () => ({ serve: (_args, options) => { options.stdout("pending document"); options.exit(0); } });\n`,
         `export const createCliResultOutput = () => ({ handled: false, failed: false, captureSdkOutput: () => true, finishSdkOutput: async () => { if (!globalThis.cleaned) throw new Error("output preceded cleanup"); await new Promise(resolve => setTimeout(resolve, 10)); ${finish} } });\n`,
       );
       const result = await processes.run(
@@ -395,7 +395,7 @@ describe("executable dispatcher JavaScript shutdown", () => {
     async ({ processes, workspace }) => {
       await installCliRuntime(
         workspace,
-        'export const closeCliJavaScriptResources = () => Promise.reject(new Error("worker still owned")); export const createCli = () => ({ serve: (_args, options) => { options.exit(0); } });\n',
+        'export const closeCliResources = () => Promise.reject(new Error("worker still owned")); export const createCli = () => ({ serve: (_args, options) => { options.exit(0); } });\n',
       );
       const result = await processes.run(
         process.execPath,
@@ -412,7 +412,7 @@ describe("executable dispatcher JavaScript shutdown", () => {
     async ({ processes, workspace }) => {
       await installCliRuntime(
         workspace,
-        'export const closeCliJavaScriptResources = () => Promise.reject(new Error("worker still owned")); export const createCli = () => ({ serve: (_args, options) => { process.stdout.emit("error", Object.assign(new Error("broken pipe"), { code: "EPIPE" })); options.exit(0); } });\n',
+        'export const closeCliResources = () => Promise.reject(new Error("worker still owned")); export const createCli = () => ({ serve: (_args, options) => { process.stdout.emit("error", Object.assign(new Error("broken pipe"), { code: "EPIPE" })); options.exit(0); } });\n',
       );
       const result = await processes.run(
         process.execPath,

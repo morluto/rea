@@ -5,6 +5,7 @@ import {
   localPathStringSchema,
 } from "../localPath.js";
 import { canonicalBase64Schema } from "../stringPatterns.js";
+import { firstDeclaringTypeCycle } from "./il2cppDeclaringTypes.js";
 
 /** Unsigned little-endian signature observed at file offset zero. */
 export const IL2CPP_METADATA_MAGIC = 0xfab11baf;
@@ -452,7 +453,29 @@ const validateMetadataFacts = (
           "Only a code row carries an address and RVA; both are then present.",
       });
   });
-  for (const collection of ["fields", "properties", "events"] as const)
+  report.types.forEach((row, index) => {
+    if (row.declaring_type >= report.types.length)
+      context.addIssue({
+        code: "custom",
+        path: ["types", index, "declaring_type"],
+        message: "Enclosing type is outside the retained type definitions.",
+      });
+  });
+  const cycleWalk = firstDeclaringTypeCycle(report.types);
+  let cycle = cycleWalk.next();
+  while (!cycle.done) cycle = cycleWalk.next();
+  if (cycle.value !== null)
+    context.addIssue({
+      code: "custom",
+      path: ["types", cycle.value, "declaring_type"],
+      message: "Enclosing type relationships contain a cycle.",
+    });
+  for (const collection of [
+    "methods",
+    "fields",
+    "properties",
+    "events",
+  ] as const)
     report[collection]?.forEach((row, index) => {
       if (row.declaring_type >= report.types.length)
         context.addIssue({

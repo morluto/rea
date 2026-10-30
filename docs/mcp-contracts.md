@@ -26,8 +26,21 @@ can be passed directly to `compare_functions`, and `inspect_artifact` Evidence
 to `compare_artifacts`. Use `get_evidence_bundle` when the task needs broader
 retained session history or an explicit bundle for transfer.
 
+`compare_artifacts` does not need that Evidence sent back. Name each side once
+with a source that `inspect_analysis_view` also accepts:
+`{"kind": "retained-evidence", "evidence_id": "<id>"}` for a record retained in
+this session, or `{"kind": "evidence-file", "path": "/absolute/evidence.json"}`
+for a saved record or bundle. Add `evidence_id` to select one record from a
+bundle that holds more than one. Complete inline Evidence is still accepted as
+the third form. The comparison cites the records that the sources resolve to,
+so all three forms give the same comparison Evidence. A retained reference that
+the session cannot resolve is refused with `evidence_integrity_mismatch` and
+`details.reason: "missing"`.
+
 `compare_artifacts` can also resolve an artifact summary to its exact retained
-parent in the session. Supported historical summaries keep their original
+parent in the session, or from the authenticated bundle containing a file-selected
+summary. File-local records take precedence over the session lookup. Unrelated
+records are not retained by the file resolver. Supported historical summaries keep their original
 Evidence identity and omissions; a missing or mismatched parent is rejected.
 
 `analyze_function` does not deliver its complete record by default. Without
@@ -56,13 +69,14 @@ the same Evidence authentication failures: an admitted source that fails
 authentication is `evidence_integrity_mismatch`, while an authenticated source with an unsupported
 workflow role or invalid selector is `invalid_request`.
 
-Ghidra inventories and function replies use `raw_result: null` when their facts
-are already preserved in `normalized_result`, limitations, locations and
-relationship coverage. Distinct overview details, measured load-image
-observations, file-offset selection roles and database types supplemented with
-derived metadata keep their upstream representation. Read function results from
-`normalized_result`; older retained Evidence keeps its original representation
-and identity.
+Ghidra inventories, measured load-image observations and function replies use
+`raw_result: null` when their useful facts are already preserved in
+`normalized_result`, limitations, locations and relationship coverage. Distinct
+overview details, file-offset selection roles and database types supplemented
+with derived metadata keep their upstream representation. Native load-image
+attestation continues to use the bridge reply locally before Evidence
+projection. Read function results from `normalized_result`; older retained
+Evidence keeps its original representation and identity.
 
 Artifact source-map filename relationships require a unique, identified regular
 file at the sibling path. A known directory cannot be the mapped file; the map
@@ -163,8 +177,13 @@ if retention is unavailable or fails, the diagnostic reports that reason.
 SDK-generated input validation failures are normalized into the same canonical
 `invalid_request` text when the bounded diagnostic fits the response budget.
 The complete field/type diagnostic is preserved when normalization fits the
-response budget, including request-specific rejected fields and reasons. Oversized
-SDK diagnostics keep the existing retained-Evidence recovery path. An unknown
+response budget, including request-specific rejected fields and reasons. Zod
+input issues retain their field paths and available type and range constraints.
+SDK diagnostic parts may be distributed between field issues and the main
+message so each retained explanation appears once.
+If their conservative projection allowance is exhausted, the response states
+that field-level detail was omitted and retains the original SDK diagnostic.
+Oversized SDK diagnostics keep the existing retained-Evidence recovery path. An unknown
 tool remains an MCP JSON-RPC `-32602` error, but its message directs the caller
 to `tools/list` and an advertised operation instead of repeating the unknown
 name.
@@ -301,6 +320,15 @@ unknown metadata. Missing omission counts remain null. Summary output carries
 every matching record; actual transport admission still applies. Omitted
 `detail` preserves complete canonical bundle delivery; filters require summary.
 
+Residual-unknown mutations reject missing Evidence or unknown references and
+unproven verified resolutions with nonretryable `invalid_request` diagnostics.
+`details.constraint` carries the validator's `kind`, owning `unknown_id`, and
+missing `evidence_id` or `related_unknown_id` where applicable. Correct the
+reported input or supply the required retained Evidence; unchanged retries do
+not repair these constraints. Rejected mutations leave retained state unchanged.
+Revision conflicts remain retryable `revision_conflict`; broken revision histories
+remain `evidence_integrity_mismatch`.
+
 `list_unknowns` returns every matching current head by default. For a smaller
 inline response, supply `offset` and `limit`, then follow `next_offset` until it
 is null. `total` counts all matching heads; each page preserves complete records
@@ -320,8 +348,11 @@ When `record_unknown` or `update_unknown` commits but its complete reply exceeds
 the response budget, `details.reported_limits.committed_unknown` identifies the
 exact unknown ID, committed revision and mutation Evidence IDs. Its retained
 Evidence reference remains available on the same connection. Export the bundle
-or page `list_unknowns` to recover the result; do not repeat the committed
-mutation. A delivery failure does not undo that revision.
+to recover the result; do not repeat the committed mutation. A single unknown
+may be too large for a `list_unknowns` page. A delivery failure does not undo
+that revision. If a list response overflows, retry on the same connection with
+the same filters and offset and a smaller limit; export if one head still cannot
+fit.
 
 For a portable exported bundle, the CLI shares this projection:
 `rea inspect-evidence-bundle '{"path":"/tmp/evidence.json","detail":"summary","filters":{"operation":"analyze_function"}}' --format json`.
@@ -341,6 +372,38 @@ that buffer. It does not raise REA's reserved single-string limit, which is
 1024 UTF-16 code units below Node's single-string ceiling, and it does not
 raise that Node ceiling. It does not change analysis coverage or retained
 content. Ordinary responses keep their existing complete result contract.
+
+### Input validation resource allowance
+
+Both HTTP and stdio admit at most 1,024 combined array elements and object
+members in one tool's arguments by default. The pinned SDK counts them before
+canonical schema validation or lazy runtime materialization. Oversized calls
+return a bounded, nonretryable `resource_constraint` with resource `transport`
+and `reported_limits.max_input_elements`; the full element count is not claimed.
+No provider or tool handler starts for a refused call. Subsequent calls remain
+usable.
+
+Set `REA_MCP_MAX_INPUT_ELEMENTS` to a positive decimal safe integer and restart
+REA to select another allowance for a larger complete observation or batch.
+Where a tool supports retained-Evidence or Evidence-file selectors, prefer
+those selectors to resending large inline records. Admission never truncates
+the caller's selected input or removes retained Evidence.
+This is a configurable transport admission policy, not a per-array `maxItems`
+contract or an exact heap guarantee. Missing required fields can amplify one
+input element into many issues: on the pinned Evidence array schema,
+1,024 empty objects produced 16,384 issues and about 26 MiB heapUsed delta
+before SDK formatting. The default therefore admits at most 1,023 such objects
+plus the root member, rather than extrapolating the scalar case to larger batches;
+actual memory also depends on schema branches, runtime state and concurrent
+work. HTTP's separate request-byte limit and the client's receive limit still
+apply.
+
+Canonical schemas and CLI/application analysis semantics remain shared and
+unchanged. Admitted arguments retain the same values and ordinary validation
+diagnostics. SDK embedders can select `maxToolInputElements` in the server
+options; the common REA MCP server supplies the finite default to eager and
+deferred registrations alike. This does not impose the separate semantic
+batch-workload limit tracked in issue #5930.
 
 ### Error recovery and deadline ownership
 
@@ -377,10 +440,12 @@ result's `_meta`, whether the call succeeded or failed:
 ```
 
 The marker is declared once per tool contract (`returnsTargetContent`) and is
-on by default: only `export_evidence_bundle` and `record_unknown`, whose
-results and errors contain only REA session state or caller-supplied values,
-omit it. Tools whose results or errors can include provider, launcher, or
-device output stay marked, including `binary_session` (provider failure
+on by default: `export_evidence_bundle`, `record_unknown`, `search_guidance`,
+and `read_guidance_section` omit it. The first two contain only REA session
+state or caller-supplied values; the guidance tools return REA's own installed
+documentation, not text from an analysis target. Tools whose results or errors
+can include provider, launcher, or device output stay marked, including
+`binary_session` (provider failure
 reasons and availability diagnostics), `close_binary` (provider cleanup
 diagnostics with captured launcher output), `inspect_adb_client` and
 `inspect_apktool_client` (version output and stderr excerpts), and
@@ -532,10 +597,12 @@ reach WABT or change the original source Evidence ID.
 Completed `inspect_macho` Evidence supports a summary and
 `view: {kind: "macho", facet: "exports", offset: 0, limit: 64}`. Facets are
 `entrypoints`, `architectures`, `build_metadata`, `load_commands`,
-`dependencies`, `imports`, `exports`, `segments`, and `provenance`; pages return
-the original rows. The summary keeps the selected slice, header fields and UUID,
-and replaces each collection with its returned count, reported total and
-`exhaustive` flag. Each page repeats the paged collection's `source_total` and
+`dependencies`, `imports`, `exports`, `segments`, `encryption`, and
+`provenance`; pages return the original rows. Evidence retained before
+`encryption` was reported pages no encryption rows and reports that collection
+as non-exhaustive with an unknown status. The summary keeps the selected
+slice, header fields and UUID, and replaces each collection with its returned
+count, reported total and `exhaustive` flag. Each page repeats the paged collection's `source_total` and
 `source_exhaustive`; exhausting a non-exhaustive collection does not establish
 that unreturned symbols are absent. Large frameworks return megabytes of
 symbols (Electron Framework: 2.5 MB of imports and exports, 3.3 KB as a
@@ -732,6 +799,22 @@ File cleanup can also remain after snapshot publication or after profile
 inspection fails or is cancelled before a provider client exists. If no client
 remains, no provider run or health observation is available; follow the cleanup
 error's reported resources.
+
+## Initial target at startup
+
+MCP normally starts without a target; use `open_binary` to select one during the
+session. To open a target before serving MCP, set `HOPPER_TARGET_PATH` to the
+selected path in REA's launch environment. `HOPPER_TARGET_KIND` accepts
+`executable` (the default) or `database`. Despite the names, these are initial
+session settings; the configured provider still determines how the target is
+opened. If the initial open fails, REA reports the failure and exits with code 1
+without serving MCP. Shutdown during startup cancels and cleans up the open as
+described below.
+
+The source-checkout helper `node scripts/print-mcp-config.mjs /path/to/target`
+prints a registration containing these settings; `--kind database` selects the
+database kind. The helper is not part of the installed npm package. `rea setup`
+does not copy these one-shot target settings into generated registrations.
 
 ## Transports
 

@@ -1,3 +1,4 @@
+import type { AnalysisWorkScope } from "./AnalysisWorkScope.js";
 import type { AnalysisObservation } from "../domain/analysisObservation.js";
 import type { ProviderInspectionScope } from "./ProviderInspectionScope.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
@@ -26,6 +27,8 @@ import {
 } from "../domain/relationshipCoverage.js";
 
 export interface ExecutionOptions {
+  /** Ephemeral state shared only by one composed workflow. */
+  readonly workScope?: AnalysisWorkScope;
   readonly signal?: AbortSignal;
   readonly progress?: ProgressReporter;
   /**

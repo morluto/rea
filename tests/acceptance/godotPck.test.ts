@@ -7,6 +7,7 @@ import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import {
   buildAliasedGodotPck,
   buildGodotPck,
+  buildGodotPck1,
   pckU64,
 } from "../fixtures/godotPck.js";
 import { elf } from "../../src/domain/binaryTarget.fixture.js";
@@ -33,12 +34,15 @@ const graphFrom = (reply: unknown) => {
   );
 };
 
-cliTest.for([2, 3, 4] as const)(
+cliTest.for([1, 2, 3, 4] as const)(
   "inspects and safely extracts format %s PCK through the compiled CLI",
   async (version, { cli }) => {
     const root = await createTestTempDirectory("rea-pck-cli-");
     const source = join(root, "game.pck");
-    await writeFile(source, buildGodotPck(version, members));
+    await writeFile(
+      source,
+      version === 1 ? buildGodotPck1(members) : buildGodotPck(version, members),
+    );
     const inspected = await cli.run({
       arguments: ["inspect-artifact", source, "--json"],
     });
@@ -86,13 +90,16 @@ cliTest.for([2, 3, 4] as const)(
   },
 );
 
-cliTest(
-  "reads an embedded pack while preserving the native carrier's content classification",
-  async ({ cli }) => {
+cliTest.for([1, 4] as const)(
+  "reads an embedded format %s pack while preserving the native carrier's content classification",
+  async (version, { cli }) => {
     const root = await createTestTempDirectory("rea-pck-embedded-cli-");
     const source = join(root, "game.x86_64");
-    const pack = buildGodotPck(4, members);
     const carrier = elf(2, 1, 62);
+    const pack =
+      version === 1
+        ? buildGodotPck1(members, { carrierBytes: carrier.length })
+        : buildGodotPck(4, members);
     const bytes = Buffer.concat([
       carrier,
       pack,
@@ -165,7 +172,7 @@ cliTest(
     const root = await createTestTempDirectory("rea-pck-confirmed-malformed-");
     const source = join(root, "unsupported.x86_64");
     const pack = buildGodotPck(4, members);
-    pack.writeUInt32LE(1, 4);
+    pack.writeUInt32LE(5, 4);
     await writeFile(
       source,
       Buffer.concat([
@@ -184,7 +191,7 @@ cliTest(
       code: "artifact_operation_failed",
       details: {
         reason: "unavailable",
-        detail: expect.stringContaining("Godot PCK format 1 is unsupported"),
+        detail: expect.stringContaining("Godot PCK format 5 is unsupported"),
       },
     });
   },

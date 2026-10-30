@@ -8,7 +8,7 @@ import {
 } from "../domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { SetupPluginClient } from "./SetupPluginClient.js";
-import { launchRegistrationRunnerCommand } from "./SetupRegistrationPrewarm.js";
+import { launchSetupPluginCommand } from "./SetupPluginCommand.js";
 import { runSetup } from "./Setup.js";
 import { FakeSetupHost, options } from "./Setup.fixture.js";
 import { withPluginSetup } from "./SetupPluginHost.js";
@@ -21,7 +21,7 @@ it("reports an explicit capture limit for valid inventory above 64 KiB", async (
     process.env,
     resources,
     (_command, _args, launchOptions) =>
-      launchRegistrationRunnerCommand(
+      launchSetupPluginCommand(
         process.execPath,
         [
           "-e",

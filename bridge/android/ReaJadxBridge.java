@@ -16,6 +16,7 @@ import jadx.api.plugins.input.insns.Opcode;
 import jadx.core.codegen.TypeGen;
 import jadx.core.dex.info.MethodInfo;
 import jadx.core.dex.nodes.*;
+import jadx.core.xmlgen.BinaryXMLParser;
 import java.io.PrintStream;
 import java.io.StringReader;
 import java.io.InputStream;
@@ -400,15 +401,29 @@ class ReaJadxBridge {
         selected = resource;
       }
       if (selected == null) throw new IllegalArgumentException("Root AndroidManifest.xml not found");
-      var content = selected.loadContent();
-      if (content == null || content.getDataType() != jadx.core.xmlgen.ResContainer.DataType.TEXT)
-        throw new IllegalArgumentException("Root AndroidManifest.xml did not decode as text");
-      String xml = content.getText().getCodeStr();
+      String xml = manifestText(selected);
       ManifestSnapshot snapshot = new ManifestSnapshot(xml, manifestSummary(xml));
       manifestSnapshot = snapshot;
       manifestSession = current;
     }
     return manifestSnapshot;
+  }
+
+  /** Decode with resource names but without JADX's class alias substitution. */
+  static String manifestText(ResourceFile resource) {
+    var decompiler = resource.getDecompiler();
+    // BinaryXMLParser resolves android:name against its root's class identities
+    // and replaces raw '$' and relative names with Java-style aliases. A fresh
+    // root owns no classes, while its resource-name table preserves reference
+    // rendering from the loaded target.
+    RootNode root = new RootNode(decompiler.getArgs());
+    root.getConstValues().setResourcesNames(decompiler.getRoot().getConstValues().getResourcesNames());
+    try {
+      return ResourcesLoader.decodeStream(resource,
+          (size, input) -> new BinaryXMLParser(root).parse(input).getCodeStr());
+    } catch (jadx.core.utils.exceptions.JadxException failure) {
+      throw new IllegalArgumentException("Root AndroidManifest.xml did not decode as text", failure);
+    }
   }
 
   /** One parsed XML owner supplies namespace-aware values alongside the exact decoded text. */

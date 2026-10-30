@@ -22,6 +22,10 @@ import { ManagedReaderFailure } from "../dotnet/ManagedReaderFailure.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import { abortIfNeeded } from "./ArtifactHash.js";
 import { hasMachoMagic } from "../domain/apple/machoContainer.js";
+import {
+  hasUnityFsHeader,
+  readUnityFsHeaderFacts,
+} from "../domain/unityfsFormat.js";
 
 export interface DesktopReadBudget {
   bytes: number;
@@ -134,6 +138,23 @@ export const inspectDesktopFile = async (
         placement: "standalone",
       },
     });
+  }
+  if (prefix.length >= 20 && hasUnityFsHeader(prefix)) {
+    const unityfsHeader = readUnityFsHeaderFacts(prefix);
+    if (unityfsHeader !== undefined)
+      fact({
+        kind: "unityfs-header",
+        offset: 0,
+        value: {
+          format_version: unityfsHeader.formatVersion,
+          engine_version: unityfsHeader.engineVersion,
+          flags: unityfsHeader.flags,
+          declared_size:
+            unityfsHeader.declaredSize <= BigInt(Number.MAX_SAFE_INTEGER)
+              ? Number(unityfsHeader.declaredSize)
+              : null,
+        },
+      });
   }
   if (
     prefix.length >= 16 &&

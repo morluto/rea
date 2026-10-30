@@ -701,7 +701,7 @@
                 "calculated_sha256",
                 "unpacked"
               ],
-              "additionalProperties": false
+              "additionalProperties": {}
             },
             {
               "type": "object",
@@ -727,7 +727,7 @@
                 "calculated_md5",
                 "unpacked"
               ],
-              "additionalProperties": false
+              "additionalProperties": {}
             }
           ]
         }

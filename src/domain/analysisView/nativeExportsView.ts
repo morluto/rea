@@ -5,13 +5,13 @@ import {
   elfNativeExportsSchema as elf,
   type NativeExports,
 } from "../native/nativeExports.js";
-import type { AnalysisError } from "../analysisErrorBase.js";
-import { err, ok, type Result } from "../result.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import { err, ok } from "../result.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import {
+  assertOwnedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
@@ -88,8 +88,8 @@ const readReport = createAnalysisViewResultReader(nativeExportsSchema);
 /** Read selected export facts without reopening the artifact or reinterpreting its tables. */
 export const projectNativeExportsView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
+  view: AdmittedView,
+) => {
   const invalid = (message: string) =>
     err(
       analysisViewInputError([
@@ -100,6 +100,9 @@ export const projectNativeExportsView = (
     return invalid(
       "Native export Evidence supports summary and native-exports views.",
     );
+  assertOwnedView<
+    SummaryAnalysisView | z.output<typeof nativeExportsViewRequestSchema>
+  >(view, "summary", "native-exports");
   const parsed = readReport(parent);
   if (!parsed.ok) return parsed;
   const report = parsed.value;
@@ -131,7 +134,7 @@ export const projectNativeExportsView = (
   if (view.kind === "summary")
     return ok({
       ...shared,
-      kind: "summary",
+      kind: "summary" as const,
       view,
       summary,
       coverage: completeWithinViewCoverage(exports.length, exports.length),
@@ -158,7 +161,7 @@ export const projectNativeExportsView = (
           );
     return ok({
       ...shared,
-      kind: "native-exports",
+      kind: "native-exports" as const,
       view,
       exports: summary,
       items: selected.rows,
@@ -246,7 +249,7 @@ export const projectNativeExportsView = (
         );
   return ok({
     ...shared,
-    kind: "native-exports",
+    kind: "native-exports" as const,
     view,
     exports: summary,
     items: selected.rows,

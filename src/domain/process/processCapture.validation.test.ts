@@ -7,7 +7,10 @@ import {
   type ProcessCapture,
 } from "./processCaptureParsing.js";
 import type { UnverifiedProcessCapture } from "./processCapture.js";
-import { partialProcessCaptureObservationSchema } from "./processCapture.js";
+import {
+  processCaptureSchema,
+  partialProcessCaptureObservationSchema,
+} from "./processCapture.js";
 import {
   FINALIZED_PROCESS_CAPTURE_EXAMPLE,
   compareUnverifiedProcessCaptures as compareProcessCaptures,
@@ -1207,4 +1210,30 @@ it("requires interaction dispatch times to follow their sequence", () => {
       message: expect.stringContaining("dispatch timestamps must be ordered"),
     },
   ]);
+});
+
+it("validates private interaction fields together while retaining legacy captures", () => {
+  const event = {
+    sequence: 0,
+    scheduled_at_ms: 0,
+    dispatched_at_ms: 0,
+    type: "input",
+    data: "",
+    outcome: "dispatched",
+  };
+  const shape = processCaptureSchema.shape.interaction_events;
+  expect(
+    shape.safeParse([{ ...event, sensitive: true, input_bytes: 6 }]).success,
+  ).toBe(true);
+  expect(
+    shape.safeParse([{ ...event, data: "<redacted-input:6-bytes>" }]).success,
+  ).toBe(true);
+  for (const invalid of [
+    { ...event, sensitive: true },
+    { ...event, input_bytes: 6 },
+    { ...event, sensitive: true, input_bytes: 6, data: "original" },
+    { ...event, sensitive: true, input_bytes: 6, type: "signal" },
+  ])
+    expect(shape.safeParse([invalid]).success).toBe(false);
+  expect(() => parseProcessCapture(emptyCapture())).not.toThrow();
 });

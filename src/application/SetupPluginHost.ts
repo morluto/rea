@@ -3,7 +3,7 @@ import { ok } from "../domain/result.js";
 import { SetupCleanupOwner } from "./SetupCleanupOwner.js";
 import type { DoctorCheck } from "./Doctor.js";
 import type { SetupHost, SetupAction } from "./SetupTypes.js";
-import type { RegistrationRunnerLauncher } from "./SetupRegistrationPrewarm.js";
+import type { SetupPluginCommandLauncher } from "./SetupPluginCommand.js";
 import {
   SetupPluginClient,
   REA_PLUGIN_ID,
@@ -28,7 +28,6 @@ class PluginSetupHost {
     { close: () => this.resources.close() },
   ]);
   private providerSettings = false;
-  private configuredDirectClient = false;
   private readonly approvedPluginClients = new Set<string>();
   private readonly pending = new Map<string, Promise<ClientRoute>>();
   private readonly routes = new Map<string, ClientRoute>();
@@ -36,7 +35,7 @@ class PluginSetupHost {
     private readonly host: SetupHost,
     private readonly environment: Readonly<NodeJS.ProcessEnv>,
     private readonly preferPlugins: boolean,
-    private readonly launch?: RegistrationRunnerLauncher,
+    private readonly launch?: SetupPluginCommandLauncher,
   ) {}
   private directRegistrationMissing = async (id: string): Promise<boolean> => {
     const report = await this.host.doctor({
@@ -181,11 +180,8 @@ class PluginSetupHost {
     command,
   ) => {
     const selected = await this.route(client.name);
-    if (selected.mode === "direct") {
-      const result = await this.host.configureClient(client, settings, command);
-      this.configuredDirectClient ||= result.status === "configured";
-      return result;
-    }
+    if (selected.mode === "direct")
+      return this.host.configureClient(client, settings, command);
     if (selected.mode === "blocked")
       return {
         status: "failed",
@@ -257,14 +253,6 @@ class PluginSetupHost {
       ? ok("unchanged")
       : this.host.installSkill(direct);
   };
-
-  private prewarmRegistrationRunner: NonNullable<
-    SetupHost["prewarmRegistrationRunner"]
-  > = async () =>
-    this.configuredDirectClient &&
-    this.host.prewarmRegistrationRunner !== undefined
-      ? this.host.prewarmRegistrationRunner()
-      : { status: "skipped", reason: "direct_launcher" };
 
   private inspectPluginReadiness = async (
     id: string,
@@ -338,7 +326,6 @@ class PluginSetupHost {
       skillNeedsInstall: this.skillNeedsInstall,
       validateSkillDirectories: this.validateSkillDirectories,
       installSkill: this.installSkill,
-      prewarmRegistrationRunner: this.prewarmRegistrationRunner,
       doctor: this.doctor,
     };
   }
@@ -348,6 +335,6 @@ export const withPluginSetup = (
   host: SetupHost,
   environment: Readonly<NodeJS.ProcessEnv>,
   preferPlugins: boolean,
-  launch?: RegistrationRunnerLauncher,
+  launch?: SetupPluginCommandLauncher,
 ): SetupHost =>
   new PluginSetupHost(host, environment, preferPlugins, launch).asHost();

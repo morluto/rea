@@ -115,6 +115,35 @@ cliTest(
 );
 
 cliTest(
+  "retains distinct Python 3.13 code objects after STORE_SLICE",
+  async ({ cli }) => {
+    // CPython 3.13.17 marshal output: a module with a frozenset of two
+    // compiler-produced functions differing only in the LOAD_FAST operand
+    // immediately after STORE_SLICE. CPython retains both through round-trip.
+    const pyc = Buffer.from(
+      "8w0NCgAAAAAAAAAAAAAAAOMAAAAAAAAAAAAAAAABAAAAAAAAAPMEAAAAlQBnACkCTj4CAAAA4wIAAAAAAAAAAAAAAAQAAAADAAAA8w4AAACVAFgQUwFTAiYAVQAkACkDTukBAAAA6QIAAACpACkC2gFh2gFicwIAAAAgINoKZml4dHVyZS5wedoBZnIKAAAAAQAAAHMQAAAAgADYDQ6AYYgBgEbYCwyASPMAAAAA4wIAAAAAAAAAAAAAAAQAAAADAAAA8w4AAACVAFgQUwFTAiYAVQEkACkDTnIEAAAAcgUAAAByBgAAACkCcgcAAAByCAAAAHMCAAAAICByCQAAAHIKAAAAcgoAAAABAAAAcxAAAACAANgNDoBhiAGARtgLDIBIcgsAAAByBgAAAHIGAAAAcgsAAAByCQAAANoIPG1vZHVsZT5yDgAAAAEAAABzCAAAAPADAQEB2AAEcgsAAAA=",
+      "base64",
+    );
+    const root = await createTestTempDirectory("rea-python-pyc-store-slice-");
+    const path = join(root, "code-set.pyc");
+    await writeFile(path, pyc);
+    const result = await cli.run({
+      arguments: ["inspect-python-pyc", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const evidence = completePycEvidenceSchema.parse(result.json);
+    expect(evidence.normalized_result.code_objects).toHaveLength(3);
+    expect(evidence.normalized_result.code_objects[0]).toMatchObject({
+      consts: [{ kind: "none" }, { kind: "frozenset", length: 2 }],
+      nested_code: [1, 2],
+    });
+    expect(evidence.normalized_result.artifact.sha256).toBe(
+      createHash("sha256").update(pyc).digest("hex"),
+    );
+  },
+);
+
+cliTest(
   "uses magic-specific cache tables for synthetic pyc bytecode equality",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-python-pyc-inline-cache-");
@@ -126,7 +155,7 @@ cliTest(
       { magic: 3550, opcode: 25, cacheUnits: 1 },
       { magic: 3553, opcode: 25, cacheUnits: 1 },
       { magic: 3564, opcode: 58, cacheUnits: 1 },
-      { magic: 3571, opcode: 81, cacheUnits: 9 },
+      { magic: 3571, opcode: 82, cacheUnits: 9 },
     ];
     for (const { magic, opcode, cacheUnits } of cases) {
       const cache = Buffer.alloc(cacheUnits * 2);

@@ -299,7 +299,7 @@ host/provider acceptance run with only the host compiler.
 `--dll`. These static fixtures contain source-owned encoded instructions; they
 are not compiler-produced programs. See the [Windows verification scope](windows-ghidra-p0.md#native-authority-and-target-identity)
 for real-provider coverage and exclusions.
-These lanes check all 26 read-only operations, target/snapshot/import SHA-256 linkage,
+These lanes check all 27 read-only operations, target/snapshot/import SHA-256 linkage,
 and project, endpoint, process, and runtime cleanup. The independent native
 lane checks DACLs, handle admission, cancellation, and Job Object lifecycle.
 `npm run verify:ghidra:windows:package` packs and installs REA into an isolated

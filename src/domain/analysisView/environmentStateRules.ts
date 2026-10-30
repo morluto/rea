@@ -73,6 +73,7 @@ export interface StateBudget {
 
 export type RecordedViewReason =
   | "query-body"
+  | "method-replay"
   | "no-init-recording"
   | "body-unusable"
   | "no-identity"
@@ -268,6 +269,13 @@ export interface ExtractedState {
 }
 
 const WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
+/** HTTP safe methods share read-only classification across state and MCP views. */
+export const isSafeHttpMethod = (method: string): boolean =>
+  method === "GET" ||
+  method === "HEAD" ||
+  method === "OPTIONS" ||
+  method === "TRACE";
 /** A POST whose path names one of these segments queries state rather than changing it. */
 export const QUERY_SEGMENTS = new Set([
   "search",

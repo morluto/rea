@@ -2,7 +2,7 @@ import { launchRegexMatchingLimitation } from "../process/RegexMatcher.js";
 import { AnalysisSettings } from "../application/AnalysisSettings.js";
 import { runtimeAnalysisConfig } from "../config/runtimeAnalysisSettings.js";
 import { describe, expect, it, vi } from "vitest";
-import { rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
@@ -85,6 +85,60 @@ it("keeps a selected valid registration distinct from a live IDA connection", as
     if (!closed.ok) throw closed.error;
   }
 });
+
+it.each(["missing", "file", "directory", "omitted"] as const)(
+  "reports headless workspace readiness without launching IDA: %s",
+  async (kind) => {
+    const root = await createTestTempDirectory("rea-ida-discovery-workspace-");
+    const workspace = join(root, "workspace");
+    if (kind === "file") await writeFile(workspace, "caller data");
+    if (kind === "directory") await mkdir(workspace);
+    const registration = join(root, "registration.json");
+    await writeFile(
+      registration,
+      JSON.stringify({
+        mode: "headless",
+        command: "must-not-launch",
+        ...(kind === "omitted" ? {} : { workspaceRoot: workspace }),
+      }),
+    );
+    const config = parseConfig({ REA_IDA_MCP_CONFIG: registration });
+    if (!config.ok) throw config.error;
+    const connect = vi.fn(() => {
+      throw new Error("Readiness must not connect to IDA");
+    });
+    const provider = new IdaProvider(config.value, {}, connect);
+    const before = await readdir(root);
+    try {
+      const snapshot = await provider.inspectReadinessSnapshot();
+      if (kind === "missing" || kind === "file") {
+        expect(snapshot.availability).toMatchObject({
+          status: "unavailable",
+          code: "open_options_invalid",
+          reason: expect.stringContaining(workspace),
+          diagnostics: {
+            workspace_root: workspace,
+            live_connection_probed: false,
+            configuration_remediation: expect.stringContaining("workspaceRoot"),
+          },
+        });
+        expect(snapshot.capabilities.every(({ available }) => !available)).toBe(
+          true,
+        );
+        expect(
+          snapshot.capabilities.find(
+            ({ operation }) => operation === "procedure_callers",
+          )?.reason,
+        ).toContain("direct call edges");
+      } else expect(snapshot.availability.status).toBe("available");
+      expect(await readdir(root)).toEqual(before);
+      expect(connect).not.toHaveBeenCalled();
+    } finally {
+      const closed = await provider.closeOwnedResources();
+      if (!closed.ok) throw closed.error;
+    }
+  },
+);
 
 describe("IDA provider target support", () => {
   it("declines caller-selected gamecube-dol targets", () => {

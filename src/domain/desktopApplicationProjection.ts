@@ -102,6 +102,12 @@ export const projectDesktopApplication = (
     files.filter((file) => has(file, "godot-pck-header")),
     "A standalone or trailer-located Godot pack header was observed; pack contents and encryption are unexamined.",
   );
+  for (const file of files.filter((file) => has(file, "unityfs-header")))
+    probe(
+      "open_binary",
+      file,
+      "A UnityFS AssetBundle header was observed; member contents and encryption are unexamined.",
+    );
   candidate(
     "gamemaker",
     files.filter((file) => has(file, "gamemaker-form-header")),

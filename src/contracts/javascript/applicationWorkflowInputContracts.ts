@@ -17,6 +17,7 @@ const traceApplicationFeatureFacts = {
   native_observations:
     traceApplicationFeatureInputSchema.shape.native_observations,
   seed: traceApplicationFeatureInputSchema.shape.seed,
+  semantic_page: traceApplicationFeatureInputSchema.shape.semantic_page,
   direction: traceApplicationFeatureInputSchema.shape.direction,
 } as const;
 

@@ -9,20 +9,9 @@ import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
-import {
-  invokingPackageRunner,
-  registrationEntrypointPath,
-  registrationRuntimePath,
-  packageRunnerRegistrationCommand,
-  type PackageRunner,
-} from "./ClientRegistrationIdentity.js";
-import {
-  materializeRegistrationRunnerCache,
-  type SetupRegistrationPrewarm,
-} from "./SetupRegistrationPrewarm.js";
+import { currentClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import {
   SUPPORTED_NODE_VERSION_PROSE,
-  javaScriptRuntime,
   supportsNodeVersion,
 } from "../domain/runtimeVersion.js";
 import {
@@ -83,32 +72,6 @@ import { bindRegularFileCleanup } from "./RegularFileRead.js";
 import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
 import { analysisProviderSelectorSchema } from "../domain/providerSelection.js";
 
-/** Resolve the executable and arguments used in a managed MCP registration. */
-export const setupRegistrationCommand = (
-  platform: NodeJS.Platform,
-  packageRunner: PackageRunner | undefined,
-  entrypointPath: string | undefined,
-  environment: Readonly<NodeJS.ProcessEnv> = {},
-): readonly string[] => {
-  if (packageRunner !== undefined)
-    return packageRunnerRegistrationCommand(packageRunner, platform);
-  if (entrypointPath === undefined || entrypointPath.length === 0) return [];
-  const script = registrationEntrypointPath(
-    entrypointPath,
-    environment,
-    platform,
-  );
-  const runtime = registrationRuntimePath(
-    process.execPath,
-    javaScriptRuntime(process.versions).id,
-    environment,
-    platform,
-  );
-  // The script's env-node shebang depends on the client's PATH, which may
-  // differ from setup's shell. Bind the runtime that is executing setup.
-  return [runtime, script, "mcp"];
-};
-
 /**
  * The launcher setup registers, and why it must not be registered when it
  * exists only inside one MSIX package's private storage.
@@ -118,12 +81,11 @@ const setupRegistration = (
   homeDirectory: string,
   environment: Readonly<NodeJS.ProcessEnv>,
 ): Pick<SetupHost, "registrationCommand" | "registrationCommandBlocker"> => {
-  const registrationCommand = setupRegistrationCommand(
+  const registrationCommand = currentClientRegistrationCommand({
     platform,
-    invokingPackageRunner(environment, platform),
-    CURRENT_ENTRYPOINT_PATH,
+    entrypointPath: CURRENT_ENTRYPOINT_PATH,
     environment,
-  );
+  });
   const registrationCommandBlocker =
     registrationCommand.length === 0
       ? "REA could not determine the current executable entrypoint. Run setup through the installed REA CLI or a supported package runner before configuring clients."
@@ -192,12 +154,6 @@ export const systemSetupHost = (
     },
   };
   const registration = setupRegistration(platform, homeDirectory, environment);
-  const prewarmRegistrationRunner = (): Promise<SetupRegistrationPrewarm> =>
-    materializeRegistrationRunnerCache(
-      registration.registrationCommand,
-      environment,
-      resources,
-    );
   const cleanup = new SetupCleanupOwner([
     macCleanup,
     {
@@ -220,7 +176,6 @@ export const systemSetupHost = (
     skillDestinations: (clientIds) =>
       skillDestinations(homeDirectory, clientIds, environment, platform),
     ...registration,
-    prewarmRegistrationRunner,
     nodeVersion: process.versions.node,
     macosVersion: () => doctorHost.macosVersion(),
     linuxDistribution,

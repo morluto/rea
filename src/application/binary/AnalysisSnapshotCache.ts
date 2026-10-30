@@ -87,8 +87,28 @@ const DOCUMENT_SCOPED_OPERATIONS: ReadonlySet<string> = new Set(
 /** Maximum duplicated result bindings retained across direct and workflow queries. */
 export const SNAPSHOT_CACHE_ENTRY_CEILING = 10_000;
 
-/** Whether an operation is immutable and independent of provider UI state. */
-export const isSnapshotCacheable = (
+const replayDocumentSelected = (
+  operation: AnalysisOperation,
+  parameters: Readonly<Record<string, JsonValue>>,
+): boolean =>
+  !DOCUMENT_SCOPED_OPERATIONS.has(operation) ||
+  typeof parameters.document === "string";
+
+/**
+ * Caller and callee walks omit `document`. Their observations are still
+ * Evidence. Other document-scoped reads, including `procedure_pseudo_code`
+ * from `decompile_all`, already keep each body in the file-backed export.
+ * Copying those bodies into the in-memory ledger would retain the export.
+ */
+const DOCUMENTLESS_SOURCE_EVIDENCE_OPERATIONS: ReadonlySet<AnalysisOperation> =
+  new Set(["procedure_callers", "procedure_callees"]);
+
+/**
+ * Whether a source observation is safe to retain as Evidence.
+ * A missing document selector blocks snapshot replay. Only caller and callee
+ * walks stay in the ledger without one.
+ */
+export const isSourceEvidenceRetainable = (
   operation: AnalysisOperation,
   descriptor: CapabilityDescriptor | undefined,
   parameters: Readonly<Record<string, JsonValue>>,
@@ -96,14 +116,24 @@ export const isSnapshotCacheable = (
   !STATEFUL_OPERATIONS.has(operation) &&
   !RESOURCE_SCOPED_OPERATIONS.has(operation) &&
   (!DOCUMENT_SCOPED_OPERATIONS.has(operation) ||
-    typeof parameters.document === "string") &&
+    typeof parameters.document === "string" ||
+    DOCUMENTLESS_SOURCE_EVIDENCE_OPERATIONS.has(operation)) &&
   (!CURSOR_DEFAULT_OPERATIONS.has(operation) ||
     typeof parameters.address === "string") &&
   descriptor?.effects.mutatesArtifact === false &&
-  descriptor.cachePolicy !== "live" &&
   (descriptor.cachePolicy === "snapshot" ||
     descriptor.effects.mayWriteFilesystem === false) &&
   descriptor.effects.changesPermissions === false;
+
+/** Whether an observation can additionally be replayed as a snapshot. */
+export const isSnapshotCacheable = (
+  operation: AnalysisOperation,
+  descriptor: CapabilityDescriptor | undefined,
+  parameters: Readonly<Record<string, JsonValue>>,
+): descriptor is CapabilityDescriptor =>
+  isSourceEvidenceRetainable(operation, descriptor, parameters) &&
+  replayDocumentSelected(operation, parameters) &&
+  descriptor.cachePolicy !== "live";
 
 /** Windows Ghidra must admit the selected source through its native snapshot owner. */
 export const requiresNativeSourceAdmissionBeforeReplay = (

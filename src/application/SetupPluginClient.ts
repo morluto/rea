@@ -9,9 +9,9 @@ import {
 } from "../process/WindowsBatchCommand.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import {
-  launchRegistrationRunnerCommand,
-  type RegistrationRunnerLauncher,
-} from "./SetupRegistrationPrewarm.js";
+  launchSetupPluginCommand,
+  type SetupPluginCommandLauncher,
+} from "./SetupPluginCommand.js";
 
 export const REA_PLUGIN_ID = "rea@rea";
 const REA_MARKETPLACE = "morluto/rea";
@@ -42,13 +42,13 @@ const claudePlugins = z.array(
   }),
 );
 
-const launchPluginCommand: RegistrationRunnerLauncher = async (
+const launchPluginCommand: SetupPluginCommandLauncher = async (
   command,
   arguments_,
   options,
 ) => {
   if (options.platform !== "win32")
-    return launchRegistrationRunnerCommand(command, arguments_, options);
+    return launchSetupPluginCommand(command, arguments_, options);
   const selectedEnvironment = snapshotEnvironment(options.env, "win32");
   const environment = {
     ...selectedEnvironment,
@@ -100,7 +100,7 @@ const launchPluginCommand: RegistrationRunnerLauncher = async (
       spawnError: "ENOENT: client was not found on the selected PATH",
     };
   if (!isWindowsBatchFile(executable))
-    return launchRegistrationRunnerCommand(executable, arguments_, {
+    return launchSetupPluginCommand(executable, arguments_, {
       ...options,
       env: environment,
     });
@@ -109,15 +109,11 @@ const launchPluginCommand: RegistrationRunnerLauncher = async (
     batchPath: executable,
     arguments: arguments_,
   });
-  return launchRegistrationRunnerCommand(
-    invocation.command,
-    invocation.arguments,
-    {
-      ...options,
-      env: environment,
-      windowsVerbatimArguments: true,
-    },
-  );
+  return launchSetupPluginCommand(invocation.command, invocation.arguments, {
+    ...options,
+    env: environment,
+    windowsVerbatimArguments: true,
+  });
 };
 
 /** Client commands own plugin state; never infer it from a cache directory. */
@@ -126,7 +122,7 @@ export class SetupPluginClient {
     readonly command: PluginClientCommand,
     private readonly environment: Readonly<NodeJS.ProcessEnv>,
     private readonly resources: ArtifactResourceScope,
-    private readonly launch: RegistrationRunnerLauncher = launchPluginCommand,
+    private readonly launch: SetupPluginCommandLauncher = launchPluginCommand,
   ) {}
 
   private async run(arguments_: readonly string[], timeoutMs: number) {

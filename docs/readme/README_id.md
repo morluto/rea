@@ -20,7 +20,7 @@
 
 **[Situs Web](https://rea.tools/id/) · [Panduan](https://rea.tools/id/guides/) · [Contoh Penggunaan](https://rea.tools/id/showcase/)**
 
-[Mulai Cepat](#mulai-cepat) · [Cara Kerja REA](#cara-kerja-rea) · [Hal yang Dapat Anda Analisis](#hal-yang-dapat-anda-analisis) · [Contoh Penggunaan](#contoh-penggunaan) · [Membangun lingkungan RL](#build-rl-environments) · [FAQ](#faq) · [Alat GNU objdump dan Rizin](../reverse-engineering-tools.md) · [Dokumentasi](#dokumentasi)
+[Mulai Cepat](#mulai-cepat) · [Cara Kerja REA](#cara-kerja-rea) · [Hal yang Dapat Anda Analisis](#hal-yang-dapat-anda-analisis) · [Contoh Penggunaan](#contoh-penggunaan) · [Membangun lingkungan RL](#build-rl-environments) · [FAQ](#faq) · [Dokumentasi](#dokumentasi)
 
 <code>npx rea-agents setup</code>
 
@@ -60,7 +60,7 @@ Melihat fitur dalam suatu aplikasi yang ingin Anda hadirkan di produk sendiri? M
 
 REA menghubungkan agen Anda dengan berbagai alat untuk memeriksa biner native, aplikasi JavaScript dan Electron, assembly .NET, serta situs web. Anda juga dapat menggunakan alat yang sama dari terminal. Analisis dijalankan secara lokal, dan hasilnya mencakup bukti serta keterbatasan yang mendasari setiap kesimpulan.
 
-Proses penyiapan mendaftarkan REA ke agen Anda dan memasang instruksi alur kerja yang sesuai. Analisis native dapat menggunakan instalasi Hopper, Ghidra, atau IDA yang sudah ada. Proses penyiapan juga dapat memasang Hopper secara opsional setelah mendapatkan persetujuan. Analisis JavaScript statis tidak memerlukan mesin analisis native.
+Proses penyiapan mendaftarkan REA ke agen Anda dan memasang instruksi alur kerja yang sesuai. Analisis native dapat menggunakan instalasi Hopper, Ghidra, IDA, atau Kuna yang sudah ada. Proses penyiapan juga dapat memasang Hopper secara opsional setelah mendapatkan persetujuan. Analisis JavaScript statis tidak memerlukan mesin analisis native.
 
 > **[Kunjungi situs web REA](https://rea.tools/id/)** untuk mendapatkan petunjuk penyiapan, panduan bergambar, dan studi kasus nyata.
 
@@ -153,18 +153,18 @@ Alat tambahan dan dukungan sistem host bergantung pada target yang dianalisis:
 
 | Target                     | Hasil yang diberikan REA                                                                              | Persyaratan dan panduan                                                                                                        |
 | -------------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| Biner native               | Pseudocode, assembly, string, simbol, pemanggilan, dan referensi                                      | Hopper, Ghidra, atau IDA; [analisis native](../native-investigation.md)                                                        |
+| Biner native               | Pseudocode, assembly, string, simbol, pemanggilan, dan referensi                                      | Hopper, Ghidra, IDA, atau Kuna; [analisis native](../native-investigation.md)                                                  |
 | Tata letak ELF offline     | Bagian, segmen, simbol/relokasi asli, dan kandidat mitigasi statis                                    | pwntools yang disediakan pemanggil pada Linux x64; [diagnostik biner](../binary-diagnostics.md)                                |
 | PE certificates            | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields                          | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                        |
 | PE imports                 | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash                            | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                  |
 | Artefak WASM               | Validasi, bagian, bentuk WAT import/ekspor yang tepat, dan WAT yang didekode                          | WABT 1.0.42 yang disediakan pemanggil; `inspect_wasm_artifact`                                                                 |
-| Bytecode EVM               | Selector dispatch, offset byte, argumen yang disimpulkan, dan sifat mutabilitas                       | Pembawa data raw/hex lokal; [panduan EVM offline](../evm-bytecode.md)                                                          |
+| Bytecode EVM               | Selector dispatch, offset byte, argumen yang disimpulkan, dan sifat mutabilitas                       | Pembawa data raw/hex lokal di Linux x64; [panduan EVM offline](../evm-bytecode.md)                                             |
 | Rust binaries              | Embedded cargo-auditable dependency list                                                              | [Rust binaries](../rust-binaries.md)                                                                                           |
 | ELF notes                  | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                                       | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                   |
 | Apple IPS crashes          | .ips metadata, threads, images, registers and crash classes                                           | Built-in static JSON inspection; [Apple IPS](../apple-ips.md)                                                                  |
 | Linux kernel modules       | .modinfo keys, __versions CRCs, this_module presence, and signature trailer                           | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                         |
 | Erlang BEAM                | IFF chunks, atoms, exports, and tables                                                                | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                              |
-| Crash Linux yang direkam   | Catatan mentah, register/sinyal setiap thread yang direkam, dan kandidat pemetaan opsional            | pwntools yang disediakan pemanggil; GDB/pwndbg opsional; [crash yang direkam](../recorded-crashes.md)                          |
+| Crash Linux yang direkam   | Catatan mentah, register/sinyal setiap thread yang direkam, dan kandidat pemetaan opsional            | pwntools yang disediakan pemanggil di Linux x64; GDB/pwndbg opsional; [crash yang direkam](../recorded-crashes.md)             |
 | Instalasi desktop          | Kandidat runtime, berkas pendukung, penanda komponen, dan langkah berikutnya                          | Pemeriksaan direktori dan header terbatas；[Aplikasi desktop](../desktop-applications.md)                                      |
 | JavaScript / Electron      | Modul, impor, source map, rute, IPC, dan hubungan add-on native                                       | Node.js dan npm; [analisis aplikasi](../javascript-application-workflows.md); Linux: procps `ps`                               |
 | Situs web                  | Struktur halaman, skrip, pengamatan jaringan, dan tangkapan layar yang diminta                        | Peramban berbasis Chrome; [analisis peramban](../browser-observation.md)                                                       |
@@ -191,6 +191,8 @@ Alat tambahan dan dukungan sistem host bergantung pada target yang dianalisis:
 | Tanda tangan APK           | Penanda tangan v1/v2/v3/v3.1, sidik jari sertifikat, rotasi kunci dan konsistensi internal digest     | Pemeriksaan statis bawaan; `inspect_apk_signature`                                                                             |
 
 Pemeriksaan JavaScript dan .NET statis membaca berkas yang disediakan tanpa menjalankan aplikasinya. Perekaman runtime menjalankan atau berinteraksi dengan target yang dipilih menggunakan izin pengguna Anda. Setiap panduan runtime menjelaskan dampaknya.
+
+Untuk pemeriksaan biner native secara offline, REA juga mendukung GNU objdump dan Rizin yang Anda sediakan sendiri. [Panduan alat rekayasa balik](../reverse-engineering-tools.md) menjelaskan penyiapan penyedia, perintah CLI, dan keterbatasan Evidence. REA tidak menginstal atau memperbarui kedua penyedia tersebut.
 
 <a id="choosing-a-deep-analysis-provider"></a>
 
@@ -286,11 +288,11 @@ Agen apa pun yang mendukung server MCP lokal dapat menggunakan REA. Proses penyi
 </details>
 
 <details>
-<summary><strong>Apakah saya memerlukan Hopper, Ghidra, atau IDA?</strong></summary>
+<summary><strong>Apakah saya memerlukan Hopper, Ghidra, IDA, atau Kuna?</strong></summary>
 
-Analisis native mendalam menggunakan salah satu dari ketiganya. Pemeriksaan JavaScript dan .NET statis dapat dilakukan tanpa mesin analisis native.
+Analisis native mendalam menggunakan salah satu dari keempatnya. Pemeriksaan JavaScript dan .NET statis dapat dilakukan tanpa mesin analisis native.
 
-Proses penyiapan dapat memasang Hopper setelah memperoleh persetujuan. Ghidra dan IDA menggunakan instalasi yang sudah tersedia. Lihat [penyiapan penyedia](../installation.md#hopper).
+Proses penyiapan dapat memasang Hopper setelah memperoleh persetujuan. Ghidra, IDA, dan Kuna menggunakan instalasi yang sudah tersedia. Lihat [penyiapan penyedia](../installation.md#hopper).
 
 </details>
 
@@ -366,7 +368,7 @@ Laporkan kerentanan melalui [SECURITY.md](../../SECURITY.md).
 
 ## Riwayat Bintang
 
-🎉 **300.000 bintang GitHub, terima kasih!**
+🎉 **400.000 bintang GitHub, terima kasih!**
 
 Terima kasih kepada semua orang yang menggunakan REA, melaporkan bug, meminta fitur, menguji build, dan berkontribusi dalam perbaikan.
 

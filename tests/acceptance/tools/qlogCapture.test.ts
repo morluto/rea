@@ -45,6 +45,54 @@ const qlog = (events: unknown[]) =>
     ],
   });
 
+it("does not classify hidden custom event data as incomplete transport facts", async () => {
+  const root = await createTestTempDirectory("rea-qlog-hidden-extension-");
+  const path = join(root, "input.qlog");
+  await writeFile(
+    path,
+    qlog([
+      { name: "extension:custom", time: 1, data: { body: "ordinary" } },
+      {
+        ...event,
+        data: {
+          ...event.data,
+          frames: [{ ...event.data.frames[0], fin: false }],
+        },
+      },
+    ]),
+  );
+  const { call } = await connectLocalToolsMcp();
+  for (const sensitive of [[], ["data"]]) {
+    const response = await call("inspect_web_network_capture", {
+      capture_path: path,
+      format: "qlog",
+      sensitive_values: sensitive,
+    });
+    expect(response.isError, JSON.stringify(response)).not.toBe(true);
+    const mcp = parseEvidence(response.structuredContent);
+    const cliResult = await execute(process.execPath, [
+      cli,
+      "inspect-web-network-capture",
+      path,
+      "qlog",
+      ...sensitive.flatMap((value) => ["--sensitive-value", value]),
+      "--json",
+    ]);
+    const cliEvidence = parseEvidence(JSON.parse(cliResult.stdout));
+    expect(cliEvidence.normalized_result).toEqual(mcp.normalized_result);
+    const capture = webNetworkCaptureSchema.parse(mcp.normalized_result);
+    if (capture.format !== "qlog") throw new Error("qlog format required");
+    expect(capture.qlog.traces[0]?.incomplete_fact_records).toEqual(
+      sensitive.length === 0 ? [] : [1],
+    );
+    if (sensitive.length > 0)
+      expect(capture.records[0]?.reported).toEqual({
+        name: "extension:custom",
+        time: 1,
+      });
+  }
+});
+
 const assertAdditionalQlogFacets = async (
   call: Awaited<ReturnType<typeof connectLocalToolsMcp>>["call"],
   retained: { kind: string; evidence_id: string },

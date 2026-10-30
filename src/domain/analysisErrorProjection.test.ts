@@ -65,6 +65,28 @@ describe("agent recovery metadata", () => {
     ).toMatchObject({ code: "revision_conflict", retryable: true });
   });
 
+  it.each(["history_gap", "revision_chain"] as const)(
+    "preserves %s as an integrity failure with producer facts",
+    (kind) => {
+      const constraint = { kind, unknown_id: `unk_${"0".repeat(64)}` };
+      const projected = projectAnalysisError(
+        new UnknownRegistryError(constraint, {
+          cause: new Error("Unrelated private diagnostic"),
+        }),
+      );
+      expect(projected).toMatchObject({
+        code: "evidence_integrity_mismatch",
+        retryable: false,
+        details: { reason: "integrity", constraint },
+      });
+      expect(projected.message).toContain(constraint.unknown_id);
+      expect(JSON.stringify(projected)).not.toContain(
+        "Unrelated private diagnostic",
+      );
+      expect(analysisErrorProjectionSchema.parse(projected)).toEqual(projected);
+    },
+  );
+
   it("keeps retryability for transient conflicts and provider timeouts", () => {
     expect(
       projectAnalysisError(new UnknownRegistryError("revision-conflict")),

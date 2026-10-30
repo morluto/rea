@@ -3,7 +3,7 @@ import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { runSetup } from "./Setup.js";
 import { FakeSetupHost, options } from "./Setup.fixture.js";
 import { withPluginSetup } from "./SetupPluginHost.js";
-import type { RegistrationRunnerLauncher } from "./SetupRegistrationPrewarm.js";
+import type { SetupPluginCommandLauncher } from "./SetupPluginCommand.js";
 
 const fixture = (clientId = "codex", platform: NodeJS.Platform = "win32") => {
   const base = new FakeSetupHost(platform);
@@ -30,7 +30,7 @@ const fixture = (clientId = "codex", platform: NodeJS.Platform = "win32") => {
   let failReadback = false;
   let interruptAt: number | undefined;
   let doctorsAtInterrupt = 0;
-  const launch: RegistrationRunnerLauncher = async (command, args) => {
+  const launch: SetupPluginCommandLauncher = async (command, args) => {
     calls.push({ command, args });
     if (calls.length === interruptAt) {
       doctorsAtInterrupt = base.doctorCalls;

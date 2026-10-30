@@ -516,6 +516,11 @@ names), coverage and per-collection counts. Page rows with
 `view: {kind: "managed-members", collection: "call_edges", offset: 0, limit: 64}`
 over `types`, `exported_types`, `fields`, `methods`, `member_refs`, `call_edges`,
 `field_accesses` or `user_strings`.
+Use exact `names` and `declaring_types` filters before paging supported
+collections. For a compact method lookup, request `fields: ["name",
+"declaring_type", "signature"]`; omit `body` to avoid anchors. Identity tokens,
+original `source_index`, module/MVID and source coverage remain. Check
+`unresolved_filter_rows` before interpreting an empty match as absence.
 
 ### .NET NativeAOT
 
@@ -652,3 +657,58 @@ page cannot prove absence in unknown coverage. Retained views are historical,
 not fresh filesystem checks. No decryption, Godot resource decoding, GDScript
 decompilation or target execution is provided. See
 [Godot PCK](https://github.com/morluto/rea/blob/main/docs/godot-pck.md).
+
+UnityFS AssetBundle containers (`.bundle`, `.ab`, YooAsset packages and other
+byte-identified files) list `CAB-*` SerializedFiles and `.resS` members with
+header and node facts; none/LZ4/LZ4HC member blocks stream on demand. Bundles
+declaring asset-bundle encryption keep header facts with unknown directory
+coverage; LZMA member bytes retain named occurrences with unavailable hashes.
+Virtual member offsets are not physical carrier locations. Format 6–8 readers
+cache one decoded block and support retained filtered/paged views. No
+decryption or SerializedFile object decoding is provided. See
+[UnityFS](https://github.com/morluto/rea/blob/main/docs/unityfs.md).
+
+U-Boot legacy uImages use the same inspection/extraction workflows. Prefer a
+retained summary and selected inventory views for header facts or component
+IDs. Header addresses/CPU/OS are declarations; payloads remain as stored.
+Multi-file components retain their aligned physical ranges; the full payload
+is also materialized. Unknown name text retains its original 32 bytes. See
+[U-Boot uImage](https://github.com/morluto/rea/blob/main/docs/uimage.md).
+
+## ESP images
+
+For an ESP32-family app or bootloader image, `open_binary` then
+`inspect_artifact` with `detail: "summary"`. `root_format_metadata` holds the
+observed `header` and `descriptor` (its `kind` is the app or bootloader role)
+and the derived `chip`, `checksum`, `appended_sha256` and
+`undescribed_trailing` ranges. Segment rows (`segment-NN.bin`) carry
+`load_addr`, `classification` (`mapped`, `loaded`, `not-loaded` or `unknown`,
+per ESP-IDF `should_map`/`should_load`; RAM ranges are not checked) and
+`source_location`; select them with `inspect_analysis_view` and
+`logical_paths`. Signature blocks are `unverified`; `public_key_sha256`
+matches eFuse key digests.
+
+Unknown `source_coverage` means truncation or undescribed trailing bytes, such
+as the flash segments of a `--ram-only-header` image; do not infer absence
+from it. Erased flash is described. Integrity mismatches are facts, not
+refusals. ESP8266 images are refused, and flash-encrypted images are not
+recognized. Segments are not disassembled, and RISC-V or Xtensa segments
+cannot be opened as raw-binary. See
+[ESP images](https://github.com/morluto/rea/blob/main/docs/esp-image.md).
+
+## Bun standalone executables
+
+A `bun build --compile` executable stores its module graph in Mach-O
+`__BUN,__bun`, a PE or ELF `.bun` section, or an appended trailer.
+`open_binary` then `inspect_artifact` reports root format `bun-standalone` with
+the carrier, structural layout, module count, entry point, raw flags and
+compile exec-argv; each module keeps its `/$bunfs/...` source name, loader,
+encoding, sizes and SHA-256, with sourcemap, bytecode and module-info regions as
+separate children. Use summary root metadata `entry_point_logical_path` as the
+exact inventory `logical_paths` selector, then read the selected content node by
+its artifact ID; the reader owns virtual-name normalization and indexed fallback. `extract-artifact` writes stored contents through the safe
+output tree; route extracted JavaScript to `analyze_javascript_application`.
+Layout labels describe record shapes, not a detected compiler version; unknown
+or ambiguous layouts are unsupported. Bytecode is retained, not decoded, and the
+executable is never run. See
+[Bun standalone executables](https://github.com/morluto/rea/blob/main/docs/bun-standalone.md).

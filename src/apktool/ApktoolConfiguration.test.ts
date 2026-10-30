@@ -531,3 +531,16 @@ afterEach(async () => {
   await commands.close();
   commands = new ApktoolCommandCleanup();
 });
+
+it("does not implicitly search CWD when no opt-out flag is present", async () => {
+  await expect(
+    resolveApktoolCommand(
+      { Path: "C:\\Selected Tools;D:\\Other Tools", PathExt: ".EXE" },
+      "win32",
+    ),
+  ).rejects.toMatchObject({ code: "command_missing" });
+  expect(lookup.stat.mock.calls.map(([path]) => path)).toEqual([
+    "C:\\Selected Tools\\apktool.EXE",
+    "D:\\Other Tools\\apktool.EXE",
+  ]);
+});

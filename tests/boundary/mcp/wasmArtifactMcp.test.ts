@@ -141,7 +141,11 @@ it.each(["bin", "hop"])(
         code: "capability_unavailable",
         details: {
           operation: "inspect_wasm_artifact",
-          reason: expect.stringContaining("REA_WABT_BIN_DIRECTORY"),
+          reason: "directory_not_absolute",
+          diagnostics: {
+            code: "directory_not_absolute",
+            setting: "REA_WABT_BIN_DIRECTORY",
+          },
         },
       },
     });
@@ -152,7 +156,13 @@ it.each(["bin", "hop"])(
     expect(parseMcpToolError(summary)).toMatchObject({
       error: {
         code: "capability_unavailable",
-        details: { reason: expect.stringContaining("REA_WABT_BIN_DIRECTORY") },
+        details: {
+          reason: "directory_not_absolute",
+          diagnostics: {
+            code: "directory_not_absolute",
+            setting: "REA_WABT_BIN_DIRECTORY",
+          },
+        },
       },
     });
     await client.ping();

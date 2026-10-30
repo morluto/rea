@@ -1453,3 +1453,55 @@ it("isolates an observed exclusive-create alias using typed facts when diagnosti
     write.mockRestore();
   }
 });
+
+it.each(["basename", "directory"])(
+  "isolates a destination-unrepresentable %s without losing peer scripts",
+  async (kind) => {
+    const long = "b".repeat(kind === "basename" ? 253 : 256);
+    const scripts = [
+      {
+        url: "https://fixture.test/regular.js",
+        bytes: Buffer.from("export const regular = 1;"),
+      },
+      {
+        url: `https://fixture.test/${"c".repeat(252)}.js`,
+        bytes: Buffer.from("export const boundary = 1;"),
+      },
+      {
+        url: `https://fixture.test/${kind === "basename" ? `${long}.js` : `${long}/main.js`}`,
+        bytes: Buffer.from("export const long = 2;"),
+      },
+    ];
+    const { input, resources } = await setup(scriptScenarioFixture(scripts));
+    const exported = await exportWebScripts(input, resources);
+    if (!exported.ok) throw exported.error;
+    const result = webScriptExportResultSchema.parse(
+      exported.value.normalized_result,
+    );
+    expect(result.scripts).toHaveLength(3);
+    expect(result.scripts[0]?.content).toMatchObject({ layout: "url-path" });
+    expect(result.scripts[1]?.content).toMatchObject({ layout: "url-path" });
+    expect(result.scripts[2]?.content).toMatchObject({
+      layout: "isolated",
+      layout_reason: expect.stringContaining("cannot represent"),
+    });
+    for (const [index, script] of result.scripts.entries()) {
+      if (script.content.state !== "exported" || result.analysis_input === null)
+        throw new Error("Missing exported source");
+      expect(script.url).toBe(scripts[index]!.url);
+      expect(
+        (
+          await readFile(
+            join(
+              result.analysis_input.input_path,
+              script.content.relative_path,
+            ),
+          )
+        ).equals(scripts[index]!.bytes),
+      ).toBe(true);
+    }
+    expect(
+      JSON.parse(await readFile(result.manifest.path, "utf8")).scripts,
+    ).toEqual(result.scripts);
+  },
+);

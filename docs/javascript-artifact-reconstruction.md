@@ -364,6 +364,13 @@ Selected bounded text is then parsed as inert data to recover:
   relative to the calling module; string worker and service-worker paths use
   the document base URL or Node's working directory, which static analysis
   does not establish, so they keep their expression and stay unresolved);
+- Vite preload dependency tables (`__vite__mapDeps`): `./` entries resolve
+  relative to the importing chunk; base-relative entries such as
+  `assets/chunk.js` carry a `vite-output:` specifier and resolve under the one
+  ancestor directory of the importer that holds them, the build output
+  directory. A file found there but not analyzed, such as a stylesheet, stays
+  `unavailable` with its path. Selecting only the assets directory leaves them
+  `not-found`;
 - route, network endpoint, storage, and vendor-marker observations;
 - local source-map declarations and original
   source names and content digests;
@@ -553,6 +560,8 @@ alternative object. A traced invocation whose key, API object or world stays
 unresolved or guarded keeps the call's own unresolved observation.
 Unknown spreads, reassigned bindings, accessors,
 dynamic channels and unsupported syntax do not become exact implementations.
+Literal switch cases retain their selection conditions. Possible fallthrough
+remains partial; dynamic case expressions remain unknown.
 This pass neither executes the bundle nor proves that runtime guards pass.
 An ambiguous or unresolved handler retains its channel registration but does
 not acquire a path to one arbitrarily selected callback. Unknown factory

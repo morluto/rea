@@ -44,6 +44,11 @@ import { HopperRegexSearch } from "./HopperRegexSearch.js";
 import { HopperClient } from "./HopperClient.js";
 import { projectHopperNameInventory } from "./HopperNameInventory.js";
 import { hopperMachOImageSchema } from "./HopperMachOImage.js";
+import {
+  reconcileHopperCallers,
+  reconciliationChildOptions,
+} from "./HopperCallerReconciliation.js";
+import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 
 import {
   hopperCapabilities,
@@ -346,10 +351,14 @@ export class HopperProvider implements AnalysisProviderCandidate {
       operation: AnalysisOperation,
       normalized: JsonValue,
       rawResult: JsonValue | null = null,
+      reconciliationReason?: string,
     ) =>
       createAnalysisExecution(normalized, executionProvider, {
         // Retain the source reply when an adapter-owned projection changes it.
         rawResult,
+        ...(reconciliationReason === undefined
+          ? {}
+          : { cachePolicy: "live" as const }),
         ...(profile === undefined ? {} : { analysisProfile: profile }),
         ...(operation === "procedure_callers" ||
         operation === "procedure_callees" ||
@@ -364,11 +373,16 @@ export class HopperProvider implements AnalysisProviderCandidate {
                       ? (["callees"] as const)
                       : (["callers", "callees"] as const),
                 reason:
+                  reconciliationReason ??
                   "Hopper reports caller and callee procedures through independent public API inventories. Their completeness, including resolved tail calls and agreement between reverse and forward relationships, has not been established. Observed relationships are retained.",
               },
             }
           : {}),
         limitations: [
+          ...(reconciliationReason === undefined ||
+          operation !== "procedure_references"
+            ? []
+            : [reconciliationReason]),
           ...(target.kind !== "executable"
             ? []
             : [
@@ -395,13 +409,35 @@ export class HopperProvider implements AnalysisProviderCandidate {
       execute: async (operation, parameters, options) => {
         try {
           return await sourceReads.run(async () => {
+            const willReconcile =
+              operation === "procedure_callers" ||
+              operation === "analyze_function" ||
+              (operation === "procedure_references" &&
+                parameters.direction === "incoming");
             const result =
               (operation === "search_strings" ||
                 operation === "search_procedures") &&
               parameters.mode === "regex"
                 ? await regexSearch.execute(operation, parameters, options)
-                : await client.callTool(operation, parameters, options);
-            if (!result.ok) return result;
+                : await client.callTool(
+                    operation === "procedure_callers"
+                      ? "rea_caller_base"
+                      : operation,
+                    parameters,
+                    willReconcile
+                      ? reconciliationChildOptions(options)
+                      : options,
+                  );
+            if (!result.ok)
+              return operation === "procedure_callers"
+                ? err(
+                    analysisClientFailureForOperation(
+                      result.error,
+                      "hopper",
+                      operation,
+                    ),
+                  )
+                : result;
             const mapped =
               operation === "address_to_file_offset"
                 ? await mapHopperFileOffset(target, result.value, {
@@ -419,15 +455,35 @@ export class HopperProvider implements AnalysisProviderCandidate {
                   })
                 : result;
             if (!mapped.ok) return mapped;
+            const reconciled =
+              operation === "procedure_callers" ||
+              operation === "analyze_function" ||
+              (operation === "procedure_references" &&
+                parameters.direction === "incoming")
+                ? await reconcileHopperCallers(
+                    client,
+                    operation,
+                    parameters,
+                    mapped.value,
+                    options,
+                    this.config.hopperCallerScanBudget,
+                  )
+                : undefined;
+            if (reconciled !== undefined && !reconciled.ok) return reconciled;
+            const reconciledResult = reconciled?.value.result ?? mapped.value;
             const inventory =
               operation === "list_names"
-                ? projectHopperNameInventory(mapped.value)
-                : { result: mapped.value, changed: false };
+                ? projectHopperNameInventory(reconciledResult)
+                : { result: reconciledResult, changed: false };
             return ok(
               projectExecution(
                 operation,
                 inventory.result,
-                inventory.changed || mapped !== result ? result.value : null,
+                reconciled?.value.rawResult ??
+                  (inventory.changed || mapped !== result
+                    ? result.value
+                    : null),
+                reconciled?.value.reason,
               ),
             );
           });

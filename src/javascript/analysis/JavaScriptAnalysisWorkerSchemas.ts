@@ -615,18 +615,24 @@ const scope = z.strictObject({
   bindingsComplete: z.boolean(),
   bindingIds: strings,
 });
-const binding = z.strictObject({
-  bindingId: z.string(),
-  scopeId: z.string(),
-  name: z.string(),
-  kind: definitionKind,
-  mutable: z.boolean(),
-  definitions: z.array(
-    z.strictObject({ kind: definitionKind, location: range }),
-  ),
-  value: semanticValue,
-  provenance,
-});
+const binding = z
+  .strictObject({
+    bindingId: z.string(),
+    scopeId: z.string(),
+    name: z.string(),
+    kind: definitionKind,
+    mutable: z.boolean(),
+    definitions: z.array(
+      z.strictObject({ kind: definitionKind, location: range }),
+    ),
+    value: semanticValue,
+    initializerValue: semanticValue.optional(),
+    provenance,
+  })
+  .transform(({ initializerValue, ...rest }) => ({
+    ...rest,
+    ...(initializerValue === undefined ? {} : { initializerValue }),
+  }));
 const callable = z.strictObject({
   callableId: z.string(),
   kind: z.enum(["function", "class", "method"]),

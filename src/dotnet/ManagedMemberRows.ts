@@ -27,6 +27,7 @@ import {
   type DecodedMethod,
   type MemberCore,
   type SignatureTypeName,
+  type SignatureDisplayTypeName,
   type DeclarationTypeName,
   type TypeRange,
 } from "./ManagedMemberInspectorCore.js";
@@ -65,10 +66,12 @@ export const parseFields = (
   memberLists: TypeMemberListFacts,
   {
     signatureTypeName,
+    displayTypeName,
     declarationTypeName,
     selected = null,
   }: {
     readonly signatureTypeName: SignatureTypeName;
+    readonly displayTypeName: SignatureDisplayTypeName;
     readonly declarationTypeName: DeclarationTypeName;
     readonly selected?: SelectedTypeTokens;
   },
@@ -117,8 +120,9 @@ export const parseFields = (
         sig,
         layout,
         signatureTypeName,
+        displayTypeName,
         issues,
-        { scope: `Field:${token}.signature`, kind: "field" },
+        { scope: `Field:${token}.signature`, kind: "field", artifact: bytes },
       );
       core.set(token, {
         token,
@@ -219,12 +223,14 @@ export const parseMemberRefs = (
   {
     typeName,
     signatureTypeName,
+    displayTypeName,
     declarationTypeName,
   }: {
     readonly typeName: (
       reference: Pick<MetadataTokenFact, "table" | "row" | "token"> | null,
     ) => string | null;
     readonly signatureTypeName: SignatureTypeName;
+    readonly displayTypeName: SignatureDisplayTypeName;
     readonly declarationTypeName: DeclarationTypeName;
   },
 ): {
@@ -268,8 +274,9 @@ export const parseMemberRefs = (
         sig,
         layout,
         signatureTypeName,
+        displayTypeName,
         issues,
-        { scope: `MemberRef:${token}.signature` },
+        { scope: `MemberRef:${token}.signature`, artifact: bytes },
       );
       refs.push({
         token,
@@ -303,6 +310,7 @@ interface ParseMethodsInput {
   readonly pe: ManagedPeLayout;
   readonly ranges: readonly TypeRange[];
   readonly signatureTypeName: SignatureTypeName;
+  readonly displayTypeName: SignatureDisplayTypeName;
   readonly declarationTypeName: DeclarationTypeName;
   readonly memberRefKinds: ReadonlyMap<string, "field" | "method">;
   readonly memberLists: TypeMemberListFacts;
@@ -317,6 +325,7 @@ export const parseMethods = ({
   pe,
   ranges,
   signatureTypeName,
+  displayTypeName,
   declarationTypeName,
   memberRefKinds,
   memberLists,
@@ -396,8 +405,13 @@ export const parseMethods = ({
         sig,
         layout,
         signatureTypeName,
+        displayTypeName,
         issues,
-        { scope: `MethodDef:${token}.signature`, kind: "method" },
+        {
+          scope: `MethodDef:${token}.signature`,
+          kind: "method",
+          artifact: bytes,
+        },
       );
       core.set(token, {
         ...member,
@@ -564,8 +578,14 @@ const budgetedSignature = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
   signatureTypeName: SignatureTypeName,
+  displayTypeName: SignatureDisplayTypeName,
   issues: ManagedParseIssue[],
-  owner: { readonly scope: string; readonly kind?: "field" | "method" },
+  owner: {
+    readonly scope: string;
+    readonly kind?: "field" | "method";
+    /** The artifact the blob was read from, for artifact issue offsets. */
+    readonly artifact: Buffer;
+  },
 ): ReturnType<typeof metadataSignature> => {
   const budget = managedDecodeBudget(layout);
   budget.admitTransient(
@@ -577,9 +597,19 @@ const budgetedSignature = (
       metadataSignature(bytes, {
         rawSha256: budget.digest(bytes, "sha256"),
         typeName: signatureTypeName,
+        displayTypeName: (operand, copies) => {
+          const name = displayTypeName(operand, copies);
+          if (name !== null)
+            budget.admitTransient(
+              (name.length * 6 + 2) * copies,
+              layout.blob?.offset ?? layout.rootOffset,
+            );
+          return name;
+        },
         layout,
         issues,
         scope: owner.scope,
+        blobOffset: bytes.byteOffset - owner.artifact.byteOffset,
         ...(owner.kind === undefined ? {} : { expectedKind: owner.kind }),
       }),
       budget,

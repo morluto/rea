@@ -39,7 +39,9 @@ unverified.
 
 `inspect_android_package` also returns a static inventory of declared
 activities, aliases, services, receivers and providers from the decoded
-manifest. `declared_name` preserves the source attribute; `name` resolves a
+manifest. The binary XML decoder preserves component class spelling, including
+`$` in nested classes, without applying JADX class aliases. `declared_name`
+preserves the decoded source attribute; `name` resolves a
 relative name only when the manifest package is known and the resolved copy
 fits the UTF-8 byte budget. An unresolved package or exhausted name budget
 retains the declared name and marks the inventory partial. Empty component

@@ -79,6 +79,8 @@ export const hopperCapabilities = (
       Object.freeze({
         provider: HOPPER_PROVIDER_IDENTITY,
         operation,
+        // Hopper's GUI can change the document without a revision token.
+        cachePolicy: "live" as const,
         ...(operation === "search_bytes"
           ? {
               available: false as const,

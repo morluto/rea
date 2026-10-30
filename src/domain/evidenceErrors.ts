@@ -33,6 +33,15 @@ export class EvidenceIntegrityError extends AnalysisError {
 /** A valid snapshot belongs to a different target, provider, or analysis profile. */
 export class AnalysisSnapshotMismatchError extends EvidenceIntegrityError {}
 
+/** A resource session cannot import or export a binary analysis snapshot. */
+export class ResourceSnapshotMismatchError extends AnalysisSnapshotMismatchError {
+  constructor(readonly operation: "import" | "export") {
+    super(
+      "Analysis snapshots do not apply to a resource-only app session because it has no executable identity or replay binding.",
+    );
+  }
+}
+
 /** A session Evidence reference is missing or has the wrong semantic identity. */
 export class EvidenceReferenceError extends EvidenceIntegrityError {
   constructor(
@@ -60,6 +69,7 @@ export class EvidenceFileError extends AnalysisError {
   readonly published: PublishedEvidenceFileObservation | undefined;
   /** Schema issues relative to the selected file's JSON root, never the request envelope. */
   readonly contentIssues: readonly AnalysisInputIssue[] | undefined;
+  readonly systemCode: "EFBIG" | "ENOSPC" | "EDQUOT" | undefined;
 
   constructor(
     readonly operation: "read" | "write",
@@ -70,12 +80,15 @@ export class EvidenceFileError extends AnalysisError {
       | "invalid-json"
       | "missing"
       | "path-limit"
+      | "storage-limit"
+      | "symlink-traversal"
       | "io",
     options?: AnalysisErrorOptions & {
       readonly path?: string;
       readonly published?: PublishedEvidenceFileObservation;
       readonly userMessage?: string;
       readonly contentIssues?: readonly AnalysisInputIssue[];
+      readonly systemCode?: "EFBIG" | "ENOSPC" | "EDQUOT";
     },
   ) {
     super(`Evidence bundle ${operation} failed: ${reason}`, options);
@@ -83,5 +96,6 @@ export class EvidenceFileError extends AnalysisError {
     this.published = options?.published;
     this.userMessage = options?.userMessage;
     this.contentIssues = options?.contentIssues;
+    this.systemCode = options?.systemCode;
   }
 }

@@ -180,6 +180,33 @@ it("makes the required gate wait for every CI lane, including future additions",
   );
 });
 
+it("runs architecture guards for fast code feedback before installing dependencies", async () => {
+  const steps = z
+    .array(
+      z
+        .object({
+          run: z.string().optional(),
+          uses: z.string().optional(),
+          if: z.string().optional(),
+        })
+        .passthrough(),
+    )
+    .parse((await workflow()).jobs.static?.steps);
+  const guard = steps.findIndex(
+    (step) => step.run === "node scripts/verify/architecture-guards.mjs",
+  );
+  const setup = steps.findIndex((step) =>
+    step.uses?.startsWith("actions/setup-node@"),
+  );
+  const install = steps.findIndex((step) => step.run === "npm ci");
+  expect(guard).toBeGreaterThanOrEqual(0);
+  expect(setup).toBeGreaterThanOrEqual(0);
+  expect(install).toBeGreaterThan(guard);
+  expect(guard).toBeGreaterThan(setup);
+  expect(steps[guard]?.if).toBe("needs.changes.outputs.code == 'true'");
+  expect(steps[guard]?.["continue-on-error"]).toBeUndefined();
+});
+
 it("holds native and provider fan-out behind static validation while portable feedback stays independent", async () => {
   const { jobs } = await workflow();
   const earlyJobs = new Set([

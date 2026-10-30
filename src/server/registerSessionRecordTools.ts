@@ -6,6 +6,7 @@ import type { BinarySessionPort } from "../application/binary/BinarySessionPort.
 import {
   readImmutableEvidenceBundle,
   writeEvidenceBundle,
+  evidenceBundleExportReceipt,
 } from "../application/EvidenceBundleFiles.js";
 import { toolContract } from "../contracts/toolContracts.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
@@ -60,12 +61,7 @@ const registerExportEvidenceTool = ({
       );
       return written.ok
         ? server.delivery.toCallToolResult(
-            ok({
-              path: written.value.path,
-              bytes: written.value.bytes,
-              records: bundle.records.length,
-              unknowns: bundle.unknowns.length,
-            }),
+            ok(evidenceBundleExportReceipt(bundle, written.value)),
             exportContract,
           )
         : server.delivery.toCallToolResult(written, exportContract);

@@ -20,8 +20,8 @@ const sourceBytes = "selected native bytes";
 const pulledBytes = "pulled fixture";
 const bugreportBytes = "bugreport fixture";
 const png = Buffer.from(
-  "89504e470d0a1a0a0000000d494844520000000400000003",
-  "hex",
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC",
+  "base64",
 );
 const digest = (bytes: string | Buffer) =>
   createHash("sha256").update(bytes).digest("hex");
@@ -97,6 +97,7 @@ const fixture = async () => {
   await mkdir(join(physical, "nested"), { recursive: true });
   await symlink(join(physical, "nested"), join(root, "alias"));
   const binary = join(root, "adb");
+  await writeFile(join(root, "screen-fixture.png"), png);
   const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
   await writeFile(
     binary,
@@ -110,7 +111,7 @@ if [ "$3" = push ] || [ "$3" = install ]; then
   printf 'Success\\n'; exit 0
 fi
 if [ "$3" = pull ]; then printf '${pulledBytes}' > "$5"; exit 0; fi
-if [ "$3" = exec-out ]; then printf '\\211PNG\\r\\n\\032\\n\\0\\0\\0\\rIHDR\\0\\0\\0\\004\\0\\0\\0\\003'; exit 0; fi
+if [ "$3" = exec-out ]; then /bin/cat ${quote(join(root, "screen-fixture.png"))}; exit 0; fi
 if [ "$3" = bugreport ]; then
   printf '${bugreportBytes}' > "$4/bugreport.zip"
   printf 'Bug report copied to %s/bugreport.zip\\n' "$4"; exit 0

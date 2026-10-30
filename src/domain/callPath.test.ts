@@ -1,12 +1,17 @@
 import { describe, expect, it } from "vitest";
 
 import { AnalysisInputError } from "./analysisErrorCore.js";
+import {
+  createAnalysisProfile,
+  type AnalysisProfileCommitment,
+} from "./analysisProfile.js";
 import { buildCallPath } from "./callPath.js";
 import { combineFunctionRelationshipCoverage } from "./functionCallCoverage.js";
 import { callPathResultSchema, type CallPathInput } from "./callPathSchemas.js";
 import { createEvidence, type Evidence } from "./evidence.js";
 import type { JsonValue } from "./jsonValue.js";
 import type { RelationshipCoverage } from "./relationshipCoverage.js";
+import { createFunctionCoordinateContext } from "./native/functionCoordinateContext.js";
 
 const observe = (
   address: string,
@@ -17,6 +22,7 @@ const observe = (
     readonly dossierLimitations?: readonly string[];
     readonly relationshipCoverage?: RelationshipCoverage;
     readonly calleeUnavailable?: string;
+    readonly analysisProfile?: AnalysisProfileCommitment;
   } = {},
 ): Evidence => {
   const value = {
@@ -71,6 +77,9 @@ const observe = (
       result: value,
       confidence: "derived",
       authority: "shipped-artifact",
+      ...(options.analysisProfile === undefined
+        ? {}
+        : { analysisProfile: options.analysisProfile }),
       ...(options.evidenceLimitations === undefined
         ? {}
         : { limitations: options.evidenceLimitations }),
@@ -93,6 +102,63 @@ const run = (
   });
 
 describe("call path reconstruction", () => {
+  it.each([undefined, null, { mapping_sha256: "bad" }])(
+    "rejects an unestablished peer context %j in either input order",
+    (context) => {
+      const provider = {
+        id: "rea-workflow",
+        name: "rea-workflow",
+        version: "1",
+      };
+      const start = observe("0x1000", ["0x2000"], provider.id, {
+        analysisProfile: createAnalysisProfile(provider, {
+          function_coordinate_context: createFunctionCoordinateContext({
+            image_base: "0x1000",
+          }),
+        }),
+      });
+      const middle = observe(
+        "0x2000",
+        ["0x4000"],
+        provider.id,
+        context === undefined
+          ? {}
+          : {
+              analysisProfile: createAnalysisProfile(provider, {
+                function_coordinate_context: context,
+              }),
+            },
+      );
+      for (const functions of [
+        [start, middle],
+        [middle, start],
+      ]) {
+        expect(() => run(functions)).toThrow(AnalysisInputError);
+        expect(() => run(functions)).toThrowError(
+          expect.objectContaining({
+            issues: [
+              expect.objectContaining({
+                path: ["functions"],
+                reason: "invalid_value",
+              }),
+            ],
+          }),
+        );
+      }
+      if (context !== undefined)
+        expect(() => run([middle], { start: { address: "0x2000" } })).toThrow(
+          expect.objectContaining({
+            issues: [
+              expect.objectContaining({
+                path: ["functions"],
+                reason: "invalid_value",
+              }),
+            ],
+          }),
+        );
+    },
+  );
+
   it("returns deterministic shortest-first cited paths", () => {
     const result = run([
       observe("0x1000", ["0x3000", "0x2000"]),

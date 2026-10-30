@@ -73,6 +73,15 @@ const desktopFactSchema = z.discriminatedUnion("kind", [
     }),
   ),
   fact(
+    "unityfs-header",
+    z.strictObject({
+      format_version: byteOffset,
+      engine_version: z.string(),
+      flags: byteOffset,
+      declared_size: byteOffset.nullable(),
+    }),
+  ),
+  fact(
     "gamemaker-form-header",
     z.strictObject({
       container: z.literal("FORM"),

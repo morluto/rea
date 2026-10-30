@@ -432,6 +432,102 @@ it.each([
   },
 );
 
+/** Artifact offset of row 1's signature blob, read with the production heap reader. */
+const memberSignatureBlobOffset = (
+  bytes: Buffer,
+  table: 4 | 6 | 10,
+): number => {
+  const pe = readManagedPeLayout(bytes);
+  if (pe.cli === null) throw new Error("fixture has no CLI header");
+  const layout = readManagedMetadataLayout(
+    bytes,
+    pe.rvaToOffset(pe.cli.metadata.rva, pe.cli.metadata.size, "metadata"),
+    pe.cli.metadata.size,
+  );
+  const row = metadataRowCursor(bytes, layout, table, 1);
+  // ECMA-335 II.22.15 Field, II.22.26 MethodDef and II.22.25 MemberRef
+  // columns before Name.
+  if (table === 4) row.readUInt16();
+  if (table === 6) {
+    row.readUInt32();
+    row.readUInt16();
+    row.readUInt16();
+  }
+  if (table === 10) row.readIndex(layout.codedIndexSize("MemberRefParent"));
+  row.readIndex(layout.stringIndexSize);
+  const blob = readMetadataBlob(
+    bytes,
+    layout,
+    row.readIndex(layout.blobIndexSize),
+    layout.blob?.size ?? 0,
+  );
+  return blob.byteOffset - bytes.byteOffset;
+};
+
+// CLASS (0x12) followed by TypeDefOrRefOrSpec 0x07, whose tag 3 is undefined.
+const INVALID_CLASS_OPERAND = [0x12, 0x07] as const;
+
+it.each([
+  {
+    member: "field",
+    table: 4,
+    scope: "Field:0x04000001.signature",
+    signature: {
+      fieldSignature: Buffer.from([0x06, ...INVALID_CLASS_OPERAND]),
+    },
+    operandOffset: 2,
+  },
+  {
+    member: "method parameter",
+    table: 6,
+    scope: "MethodDef:0x06000001.signature",
+    signature: {
+      methodSignature: Buffer.from([
+        0x00,
+        0x01,
+        0x01,
+        ...INVALID_CLASS_OPERAND,
+      ]),
+    },
+    operandOffset: 4,
+  },
+  {
+    member: "member reference parameter",
+    table: 10,
+    scope: "MemberRef:0x0a000001.signature",
+    signature: {
+      memberRefSignature: Buffer.from([
+        0x20,
+        0x01,
+        0x01,
+        ...INVALID_CLASS_OPERAND,
+      ]),
+    },
+    operandOffset: 4,
+  },
+] as const)(
+  "reports an invalid $member signature operand at its artifact offset",
+  ({ table, scope, signature, operandOffset }) => {
+    const bytes = buildManagedPeFixture(signature);
+    const blobOffset = memberSignatureBlobOffset(bytes, table);
+    expect(bytes[blobOffset + operandOffset]).toBe(0x07);
+
+    const result = inspectManagedMembersBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+
+    expect(result.coverage.state).toBe("partial");
+    expect(result.coverage.issues).toContainEqual({
+      code: "invalid-row",
+      scope,
+      offset: blobOffset + operandOffset,
+      detail:
+        "TypeDefOrRefOrSpec operand 0x7 is invalid: coded index tag 3 is not defined",
+    });
+  },
+);
+
 describe("managed member inspection", () => {
   it("keeps metadata handles distinct from calls and field accesses", () => {
     const il = Buffer.from([
@@ -2408,12 +2504,12 @@ it("decodes generic instantiation member signatures as complete coverage", () =>
   expect(result.methods[0]?.signature).toMatchObject({
     parse_status: "decoded",
     return_type: "void",
-    parameter_types: ["class:9<string>"],
+    parameter_types: ["class:9 (System.Func`1)<string>"],
     issue: null,
   });
   expect(result.fields[0]?.signature).toMatchObject({
     parse_status: "decoded",
-    field_type: "valuetype:13<var:0,mvar:1>",
+    field_type: "valuetype:13 (System.ValueTuple`2)<var:0,mvar:1>",
   });
   expect(result.coverage).toMatchObject({ state: "complete", issues: [] });
 });

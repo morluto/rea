@@ -126,14 +126,14 @@ export class EnhancedTools {
       const parsed = enhancedInputSchemas.trace_native_values.safeParse(input);
       return parsed.success
         ? this.executeValidated({ name, input: parsed.data }, signal)
-        : invalidEnhancedInput(name, parsed.error);
+        : invalidEnhancedInput(name, parsed.error, input);
     }
     if (name === "trace_native_ui_action") {
       const parsed =
         enhancedInputSchemas.trace_native_ui_action.safeParse(input);
       return parsed.success
         ? this.executeValidated({ name, input: parsed.data }, signal)
-        : invalidEnhancedInput(name, parsed.error);
+        : invalidEnhancedInput(name, parsed.error, input);
     }
     if (name === "analyze_function" || name === "inspect_native_api")
       return this.#executeFunctionAnalysis(name, input, signal);
@@ -145,56 +145,56 @@ export class EnhancedTools {
           );
         return parsed.success
           ? this.executeValidated({ name, input: parsed.data }, signal)
-          : invalidEnhancedInput(name, parsed.error);
+          : invalidEnhancedInput(name, parsed.error, input);
       }
       case "get_objc_classes": {
         const parsed = enhancedInputSchemas.get_objc_classes.safeParse(input);
         return parsed.success
           ? this.executeValidated({ name, input: parsed.data }, signal)
-          : invalidEnhancedInput(name, parsed.error);
+          : invalidEnhancedInput(name, parsed.error, input);
       }
       case "get_objc_protocols": {
         const parsed = enhancedInputSchemas.get_objc_protocols.safeParse(input);
         return parsed.success
           ? this.executeValidated({ name, input: parsed.data }, signal)
-          : invalidEnhancedInput(name, parsed.error);
+          : invalidEnhancedInput(name, parsed.error, input);
       }
       case "batch_decompile": {
         const parsed = enhancedInputSchemas.batch_decompile.safeParse(input);
         return parsed.success
           ? this.executeValidated({ name, input: parsed.data }, signal)
-          : invalidEnhancedInput(name, parsed.error);
+          : invalidEnhancedInput(name, parsed.error, input);
       }
       case "decompile_all": {
         const parsed = enhancedInputSchemas.decompile_all.safeParse(input);
         return parsed.success
           ? this.executeValidated({ name, input: parsed.data }, signal)
-          : invalidEnhancedInput(name, parsed.error);
+          : invalidEnhancedInput(name, parsed.error, input);
       }
       case "get_call_graph": {
         const parsed = enhancedInputSchemas.get_call_graph.safeParse(input);
         return parsed.success
           ? this.executeValidated({ name, input: parsed.data }, signal)
-          : invalidEnhancedInput(name, parsed.error);
+          : invalidEnhancedInput(name, parsed.error, input);
       }
       case "analyze_swift_types": {
         const parsed =
           enhancedInputSchemas.analyze_swift_types.safeParse(input);
         return parsed.success
           ? this.executeValidated({ name, input: parsed.data }, signal)
-          : invalidEnhancedInput(name, parsed.error);
+          : invalidEnhancedInput(name, parsed.error, input);
       }
       case "find_xrefs_to_name": {
         const parsed = enhancedInputSchemas.find_xrefs_to_name.safeParse(input);
         return parsed.success
           ? this.executeValidated({ name, input: parsed.data }, signal)
-          : invalidEnhancedInput(name, parsed.error);
+          : invalidEnhancedInput(name, parsed.error, input);
       }
       case "binary_overview": {
         const parsed = enhancedInputSchemas.binary_overview.safeParse(input);
         return parsed.success
           ? this.executeValidated({ name, input: parsed.data }, signal)
-          : invalidEnhancedInput(name, parsed.error);
+          : invalidEnhancedInput(name, parsed.error, input);
       }
     }
   }
@@ -266,11 +266,12 @@ export class EnhancedTools {
   ): EnhancedResult {
     if (name === "trace_call_path") {
       const parsed = enhancedInputSchemas.trace_call_path.safeParse(input);
-      if (!parsed.success) return invalidEnhancedInput(name, parsed.error);
+      if (!parsed.success)
+        return invalidEnhancedInput(name, parsed.error, input);
       return this.executeValidated({ name, input: parsed.data }, signal);
     }
     const parsed = enhancedInputSchemas.trace_feature.safeParse(input);
-    if (!parsed.success) return invalidEnhancedInput(name, parsed.error);
+    if (!parsed.success) return invalidEnhancedInput(name, parsed.error, input);
     return this.executeValidated({ name, input: parsed.data }, signal);
   }
 
@@ -280,7 +281,7 @@ export class EnhancedTools {
     signal?: AbortSignal,
   ): EnhancedResult {
     const parsed = nativeProcedureInputSchema.safeParse(input);
-    if (!parsed.success) return invalidEnhancedInput(name, parsed.error);
+    if (!parsed.success) return invalidEnhancedInput(name, parsed.error, input);
     return this.executeValidated({ name, input: parsed.data }, signal);
   }
 

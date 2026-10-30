@@ -236,7 +236,8 @@ const evidenceFileCode = (
   reason: EvidenceFileError["reason"],
 ): AnalysisErrorProjection["code"] => {
   if (reason === "invalid-json") return "evidence_integrity_mismatch";
-  if (reason === "path-limit") return "resource_constraint";
+  if (reason === "path-limit" || reason === "storage-limit")
+    return "resource_constraint";
   // A missing, non-file or already-existing path is the caller's selection.
   if (reason === "io") return "execution_failure";
   return "invalid_request";
@@ -246,7 +247,8 @@ const unknownRegistryCode = (
   reason: UnknownRegistryError["reason"],
 ): AnalysisErrorProjection["code"] => {
   if (reason === "revision-conflict") return "revision_conflict";
-  if (reason === "already-exists") return "invalid_request";
+  if (reason === "already-exists" || reason === "constraint")
+    return "invalid_request";
   if (reason === "limit") return "truncated";
   if (reason === "integrity") return "evidence_integrity_mismatch";
   return "execution_failure";
@@ -405,12 +407,21 @@ const artifactStateErrorDetails = (
             setting: "REA_ASAR_MAX_HEADER_BYTES",
           }),
     };
-  if (error instanceof UnknownRegistryError) return { reason: error.reason };
+  if (error instanceof UnknownRegistryError)
+    return {
+      reason: error.reason,
+      ...(error.constraint === undefined
+        ? {}
+        : { constraint: error.constraint }),
+    };
   if (error instanceof EvidenceFileError)
     return {
       operation: error.operation,
       reason: error.reason,
       ...(error.reason === "path-limit" ? { boundary: "filesystem-path" } : {}),
+      ...(error.systemCode === undefined
+        ? {}
+        : { system_code: error.systemCode }),
       ...(error.path === undefined ? {} : { path: error.path }),
       ...(error.contentIssues === undefined
         ? {}

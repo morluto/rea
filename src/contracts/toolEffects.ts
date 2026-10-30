@@ -704,6 +704,9 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
   trace_application_feature: evidence,
   trace_javascript_semantics: evidence,
   compare_application_versions: evidence,
+  search_guidance: effects(),
+  read_guidance_section: effects(),
+  guided_workflows: effects(),
   compare_source_to_bundle: evidence,
   compare_javascript_export_shapes: evidence,
   build_reconstruction_obligation_ledger: evidence,
@@ -792,6 +795,9 @@ export const TARGET_CONTENT_FREE_TOOLS: ReadonlySet<string> = new Set([
   "inspect_analysis_settings",
   "update_analysis_settings",
   "export_evidence_bundle",
+  "search_guidance",
+  "read_guidance_section",
+  "guided_workflows",
   "record_unknown",
 ]);
 

@@ -86,6 +86,7 @@ export interface ReferenceSourceReaderError {
   readonly tag: "reference-source-reader";
   readonly code: "cancelled" | "invalid-root" | "io" | "unsupported";
   readonly message: string;
+  readonly remediationAction?: string;
   readonly cleanup?: AnalysisCleanupObservation;
   /** Captured entries before failure; this does not establish complete tree coverage. */
   readonly partial?: ReferenceSourceRead;

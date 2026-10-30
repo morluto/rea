@@ -251,6 +251,7 @@ import type {
 } from "./process/processCapture.js";
 import type { FileOffsetPartialObservation } from "./native/fileOffsetPartialObservation.js";
 import type { NativeCallPartialObservation } from "./native/nativeCallPartialObservation.js";
+import type { HopperCallerReconciliationPartial } from "./native/hopperCallerReconciliation.js";
 import type { ElectronActivePartialObservation } from "./javascript/electronActiveObservation.js";
 import type { JavaScriptRuntimeObservation } from "./javascript/javascriptRuntimeObservation.js";
 import type {
@@ -270,7 +271,10 @@ import type {
   AdbPackagePullPartialObservation,
   AdbDisplayPartialObservation,
 } from "./adb/adbDeviceAnalysis.js";
-import type { InspectSignature } from "./native/nativeInspection.js";
+import type {
+  InspectMacho,
+  InspectSignature,
+} from "./native/nativeInspection.js";
 import type { NativeUiObservationResult } from "./native/nativeUiObservation.js";
 import type { BinaryLayout } from "./native/binaryLayout.js";
 import type {
@@ -314,6 +318,7 @@ export type AnalysisPartialObservation =
   | FileSnapshotPartialObservation
   | PartialProcessCaptureObservation
   | NativeCallPartialObservation
+  | HopperCallerReconciliationPartial
   | FileOffsetPartialObservation
   | ElectronActivePartialObservation
   | BrowserScenarioPartialObservation
@@ -337,6 +342,7 @@ export type AnalysisPartialObservation =
   | FirmwarePartialObservation
   | NativeUiObservationResult
   | InspectSignature
+  | InspectMacho
   | ElectronPagePartialObservation
   | AdbActivityStartPartialObservation
   | AdbAcquiredFilePartialObservation

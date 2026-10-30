@@ -1313,7 +1313,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         flow.addProperty("computed", false);
         if (instruction == null) {
             result.addProperty("status", !currentProgram.getMemory().contains(address) ? "outside-memory" : currentProgram.getListing().getInstructionContaining(address) != null
-                ? "not-instruction-boundary" : currentProgram.getListing().getDefinedDataContaining(address) != null ? "data" : "undecodable");
+                ? "not-instruction-boundary" : currentProgram.getListing().getDefinedDataContaining(address) != null ? "data" : "not-in-listing");
             for (String key : List.of("bytes", "length", "mnemonic", "raw_disassembly")) result.add(key, JsonNull.INSTANCE);
         } else {
             result.addProperty("status", "decoded");
@@ -1385,6 +1385,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             result.add("incoming_references", incomingReferences);
         }
         List<String> limitations = new ArrayList<>(List.of("Operand components are Ghidra Listing decoder tokens; effective memory base/index/displacement roles and per-instruction context mode are unavailable. The mode field is the program language variant."));
+        if (result.get("status").getAsString().equals("not-in-listing")) limitations.add("No listed instruction or defined data covers this in-memory address. REA did not attempt a decode; the memory may be uninitialized or contain valid instructions.");
         if (flow.get("kind").getAsString().equals("terminal")) limitations.add("No RETURN operation was observed in the provider's instruction p-code; terminal classification remains generic.");
         result.add("limitations", GSON.toJsonTree(limitations));
         return result;

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { createJebAnalysisProvider } from "../composition/jeb.js";
 import { JebProvider } from "./JebProvider.js";
+import { decodeJebToolResult } from "./JebMcpConnection.js";
 import type {
   JebMcpConnection,
   JebMcpConnectionTimeouts,
@@ -52,6 +53,40 @@ const providerWith = (connection: JebMcpConnection) =>
   });
 
 describe("JebProvider live availability", () => {
+  it("retains the caller-selected endpoint spelling in results and failures", async () => {
+    const endpoint = "HTTP://127.0.0.1:08425/mcp";
+    const provider = new JebProvider({
+      environment: { REA_JEB_MCP_URL: endpoint },
+      connectionFactory: () =>
+        scriptedConnection({
+          get_client_information: { success: true, version: "5.48.0" },
+          list_units: new Error("connection closed"),
+        }),
+    });
+    try {
+      expect((await provider.inspectAvailability()).diagnostics).toMatchObject({
+        endpoint,
+      });
+      const observation = await provider.execute({
+        operation: "inspect_jeb_client",
+        input: {},
+      });
+      if (!observation.ok) throw observation.error;
+      expect(
+        jebResultSchemas.inspect_jeb_client.parse(observation.value.result)
+          .engine.endpoint,
+      ).toBe(endpoint);
+      const failure = await provider.execute({
+        operation: "list_jeb_units",
+        input: { count: 10, index: 0 },
+      });
+      if (failure.ok) throw new Error("Expected transport failure");
+      expect(failure.error.diagnostics).toMatchObject({ endpoint });
+    } finally {
+      await provider.close();
+    }
+  });
+
   it("passes its validated environment timeout to the production connection", async () => {
     let configured: JebMcpConnectionTimeouts | undefined;
     const provider = createJebAnalysisProvider(
@@ -125,6 +160,59 @@ describe("JebProvider live availability", () => {
   });
 });
 
+describe("JebProvider endpoint diagnostics", () => {
+  it("retains the selected endpoint on malformed MCP results without replacing the protocol failure", async () => {
+    let failure: unknown;
+    try {
+      decodeJebToolResult({ content: [] });
+    } catch (cause) {
+      failure = cause;
+    }
+    if (!(failure instanceof AnalysisProtocolError))
+      throw new Error("Expected a protocol failure");
+    failure.retainDiagnostics({ phase: "decode" });
+    const connection = scriptedConnection({ get_client_information: failure });
+    const provider = providerWith(connection);
+    try {
+      const result = await provider.execute({
+        operation: "inspect_jeb_client",
+        input: {},
+      });
+      if (result.ok) throw new Error("Expected a malformed response failure");
+      expect(result.error).toBe(failure);
+      expect(result.error.diagnostics).toEqual({
+        phase: "decode",
+        endpoint: "http://127.0.0.1:8425/mcp",
+      });
+    } finally {
+      await provider.close();
+    }
+  });
+
+  it("retains the selected endpoint when cancelled before execution", async () => {
+    const connection = scriptedConnection({});
+    const provider = providerWith(connection);
+    const controller = new AbortController();
+    const reason = new Error("caller stopped");
+    controller.abort(reason);
+    try {
+      const result = await provider.execute(
+        { operation: "inspect_jeb_client", input: {} },
+        { signal: controller.signal },
+      );
+      if (result.ok) throw new Error("Expected cancellation");
+      expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+      expect(result.error.cause).toBe(reason);
+      expect(result.error.diagnostics).toEqual({
+        endpoint: "http://127.0.0.1:8425/mcp",
+      });
+      expect(connection.calls).toEqual([]);
+    } finally {
+      await provider.close();
+    }
+  });
+});
+
 describe("JebProvider observations and failures", () => {
   it("normalizes client information and caches engine identity", async () => {
     const connection = scriptedConnection({
@@ -170,6 +258,9 @@ describe("JebProvider observations and failures", () => {
     if (result.ok) return;
     expect(result.error).toBeInstanceOf(AnalysisCapabilityUnavailableError);
     expect(result.error.message).toContain("ECONNREFUSED");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      details: { diagnostics: { endpoint: "http://127.0.0.1:8425/mcp" } },
+    });
   });
 
   it("maps transport failures during an operation to provider unavailability", async () => {
@@ -508,6 +599,7 @@ it("preserves provider-authored timeout guidance when projecting the requested o
   const reason = new Error("selected deadline elapsed");
   const timeout = new AnalysisTimeoutError("list_units", 123, {
     cause: reason,
+    diagnostics: { phase: "request" },
     userMessage: "The selected MCP request budget elapsed.",
     remediationAction: "Increase the selected MCP request budget.",
   });
@@ -523,6 +615,7 @@ it("preserves provider-authored timeout guidance when projecting the requested o
       timeoutMs: 123,
       userMessage: timeout.userMessage,
       remediationAction: timeout.remediationAction,
+      diagnostics: { phase: "request", endpoint: "http://127.0.0.1:8425/mcp" },
     });
     expect(result.error.cause).toBe(reason);
   } finally {

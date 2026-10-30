@@ -1,4 +1,6 @@
 import { expect, it, vi } from "vitest";
+import { z } from "zod";
+import { androidComponentsViewRequestSchema } from "../android/androidPackageQuery.js";
 import { createEvidence } from "../evidence.js";
 import { immutableJsonSnapshotMember } from "../immutableJson.js";
 import {
@@ -7,10 +9,17 @@ import {
   projectAnalysisView,
   type AnalysisViewParent,
 } from "./analysisView.js";
+import type { AdmittedView } from "./analysisViewShape.js";
 import {
   androidClassSummarySchema,
-  projectAndroidSymbolSummary,
+  projectAndroidSymbolSummary as projectAdmittedAndroidSymbolSummary,
 } from "./androidSymbolView.js";
+
+const projectAndroidSymbolSummary = (
+  parent: Parameters<typeof projectAdmittedAndroidSymbolSummary>[0],
+  view: z.input<typeof androidComponentsViewRequestSchema>,
+): ReturnType<typeof projectAdmittedAndroidSymbolSummary> =>
+  projectAdmittedAndroidSymbolSummary(parent, view satisfies AdmittedView);
 
 type Operation = "inspect_android_class" | "inspect_android_method";
 const engine = {

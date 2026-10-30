@@ -11,6 +11,7 @@ import {
   byteSearchResultSchema,
 } from "../domain/native/bytePattern.js";
 import {
+  normalizeNativeLoadImageObservation,
   nativeLoadImageObservationSchema,
   type NativeLoadImageObservation,
 } from "../domain/native/nativeLoadImage.js";
@@ -365,7 +366,7 @@ export function parseGhidraInventoryResult(
   if (operation === "inspect_native_load_image") {
     const parsed = resultSchemas.inspect_native_load_image.safeParse(value);
     return parsed.success
-      ? ok({ value: parsed.data, rawResult: value })
+      ? ok({ value: normalizeNativeLoadImageObservation(parsed.data) })
       : err(inventoryOutputFailure(operation, parsed.error));
   }
   const parsed = resultSchemas[operation].safeParse(value);

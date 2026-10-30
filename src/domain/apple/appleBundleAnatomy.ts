@@ -123,12 +123,13 @@ const applicationRoots = (
   for (const path of directoryPaths(tree)) {
     const segments = path.split("/");
     const app = segments[1];
-    if (
-      anatomyNameIs(segments[0] ?? "", "Payload") &&
-      app !== undefined &&
-      /\.app$/iu.test(app)
-    ) {
-      found.add(`${segments[0]}/${app}`);
+    if (subject.format === "ipa") {
+      if (
+        anatomyNameIs(segments[0] ?? "", "Payload") &&
+        app !== undefined &&
+        /\.app$/iu.test(app)
+      )
+        found.add(`${segments[0]}/${app}`);
       continue;
     }
     const index = segments.findIndex(

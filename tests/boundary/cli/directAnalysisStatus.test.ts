@@ -1,6 +1,6 @@
 import { createCatalogIdentity } from "../../../src/catalogIdentity.js";
 import { contractsForToolFamilies } from "../../../src/contracts/toolFamilies.js";
-import { promptsForToolFamilies } from "../../../src/contracts/promptContracts.js";
+import { promptsForToolFamilies } from "../../../src/contracts/promptToolFamilyScope.js";
 import { Cli } from "incur";
 import { expect, it, vi } from "vitest";
 import { runSessionStatus } from "../../../src/application/DirectAnalysisStatus.js";

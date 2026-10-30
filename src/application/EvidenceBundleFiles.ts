@@ -12,6 +12,7 @@ import {
 import {
   EvidenceFileError,
   EvidenceIntegrityError,
+  type PublishedEvidenceFile,
 } from "../domain/evidenceErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
@@ -35,6 +36,17 @@ type EvidenceWriteFailure =
   | EvidenceFileError
   | EvidenceIntegrityError
   | AnalysisCancelledError;
+
+/** Project a published bundle with record and residual-unknown revision counts. */
+export const evidenceBundleExportReceipt = (
+  bundle: EvidenceBundle,
+  published: PublishedEvidenceFile,
+) => ({
+  path: published.path,
+  bytes: published.bytes,
+  records: bundle.records.length,
+  unknowns: bundle.unknowns.length,
+});
 
 /** Read and validate an evidence bundle at the caller-supplied path. */
 export const readEvidenceBundle = (

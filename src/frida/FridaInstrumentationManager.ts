@@ -32,7 +32,9 @@ import {
   AnalysisInputError,
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
-import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { isValidFridaRemoteAddress } from "../domain/fridaRemoteAddress.js";
+import { redactExplicitFailure } from "../domain/explicitSensitiveFailure.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -215,6 +217,7 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
         cause,
         remote,
         cleanupError,
+        remote === undefined ? undefined : { remote },
       );
       const reference =
         remote === undefined
@@ -285,6 +288,7 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
         cause,
         selector.remote,
         cleanupError,
+        selector,
       );
       const reference =
         selector.remote === undefined
@@ -395,6 +399,7 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
         cause,
         input.remote,
         cleanupFailures.join("; ") || undefined,
+        input,
       );
       if (pendingCleanup !== undefined && failure.cleanupIncomplete)
         this.#retainCleanupFailure(pendingCleanup, failure);
@@ -1597,12 +1602,39 @@ const providerError = (
   cause: unknown,
   remote?: FridaRemoteConnection,
   cleanupReason?: string,
+  selector?: FridaDeviceSelector,
 ): AnalysisError => {
+  const secrets = [remote?.token, remote?.certificate].filter(
+    (secret): secret is string => secret !== undefined && secret.length > 0,
+  );
+  const selection =
+    selector?.remote === undefined
+      ? selector?.deviceId
+      : isValidFridaRemoteAddress(selector.remote.address)
+        ? selector.remote.address
+        : undefined;
+  const selectionKey =
+    selector?.remote === undefined ? "device_id" : "remote_address";
+  const diagnostics = {
+    ...(cause instanceof AnalysisError
+      ? redactExplicitFailure(cause, secrets).diagnostics
+      : {}),
+    ...(selection === undefined
+      ? {}
+      : {
+          [selectionKey]: boundedRedactedString(selection, 4096, secrets).value,
+        }),
+  };
   if (cause instanceof AnalysisInputError)
-    return new AnalysisInputError(operation, { cause }, cause.issues);
+    return new AnalysisInputError(
+      operation,
+      { cause, diagnostics },
+      cause.issues,
+    );
   if (cause instanceof AnalysisTimeoutError)
     return new AnalysisTimeoutError(operation, cause.timeoutMs, {
       cause,
+      diagnostics,
       ...(cause.userMessage === undefined
         ? {}
         : { userMessage: cause.userMessage }),
@@ -1621,6 +1653,7 @@ const providerError = (
   if (cause instanceof AnalysisCancelledError)
     return new AnalysisCancelledError(operation, {
       cause: cause.cause,
+      diagnostics,
       ...(cleanupReason === undefined
         ? {}
         : {
@@ -1633,6 +1666,15 @@ const providerError = (
   const reason = sanitizeError(cause, remote);
   return new AnalysisCapabilityUnavailableError("frida", operation, reason, {
     cause: remote === undefined ? cause : new Error(reason),
+    diagnostics,
+    ...(selector?.remote === undefined ||
+    cleanupReason !== undefined ||
+    reason !== "Unable to connect to remote frida-server"
+      ? {}
+      : {
+          remediationAction:
+            "Confirm the selected Frida server is reachable and its connection options are correct, then retry.",
+        }),
     ...(cleanupReason === undefined
       ? {}
       : {

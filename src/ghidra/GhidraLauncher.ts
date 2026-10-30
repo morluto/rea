@@ -1,3 +1,4 @@
+import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { copyExistingGhidraProject } from "./GhidraProjectSnapshot.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { GHIDRA_BRIDGE_SOURCES } from "./GhidraBridgeSources.js";
@@ -810,41 +811,25 @@ const validateExistingProjectOptions = (
     // The pre-imported project carries its own analysis; every import-time
     // selection is therefore rejected instead of silently ignored.
     if ((options.platform ?? process.platform) === "win32")
-      throw new Error(
-        "An existing Ghidra project cannot be opened on the Windows launch path.",
-      );
+      throw new GhidraAdmissionError("existing_project_windows");
     if (existing.programName.trim() === "")
-      throw new Error(
-        "An existing Ghidra project requires a program name for -process.",
-      );
+      throw new GhidraAdmissionError("existing_project_program_name");
     if (options.psp === true)
-      throw new Error(
-        "An existing Ghidra project cannot be combined with a PSP ELF import.",
-      );
+      throw new GhidraAdmissionError("existing_project_psp");
     if (options.dosMz === true || options.dosCom === true)
-      throw new Error(
-        "An existing Ghidra project cannot be combined with a DOS import.",
-      );
+      throw new GhidraAdmissionError("existing_project_dos");
     if (rawBinary !== undefined)
-      throw new Error(
-        "An existing Ghidra project cannot be combined with a raw-binary import.",
-      );
+      throw new GhidraAdmissionError("existing_project_raw_binary");
     if (override !== undefined)
-      throw new Error(
-        "A Ghidra language override cannot be combined with an existing project.",
-      );
+      throw new GhidraAdmissionError("existing_project_language_override");
     if (options.mipsSoftFloat === true)
-      throw new Error(
-        "MIPS soft-float storage applies only to a fresh import.",
-      );
+      throw new GhidraAdmissionError("existing_project_mips_soft_float");
     if (
       options.seedPath !== undefined ||
       options.analysisSeeds !== undefined ||
       (options.disabledAnalyzers?.length ?? 0) > 0
     )
-      throw new Error(
-        "An existing project opens without analysis; analysis seeds and analyzer overrides do not apply.",
-      );
+      throw new GhidraAdmissionError("existing_project_analysis");
   }
 };
 
@@ -871,22 +856,16 @@ export const ghidraHeadlessArguments = (
       rawBinary !== undefined ||
       override !== undefined)
   )
-    throw new Error(
-      "A GameCube DOL import cannot be combined with another loader, language override, or analysis lane; its language is committed in the gamecubeDol option.",
-    );
+    throw new GhidraAdmissionError("gamecube_dol_combined");
   if (
     options.psp === true &&
     (options.dosMz === true ||
       options.dosCom === true ||
       override !== undefined)
   )
-    throw new Error(
-      "A PSP ELF import cannot be combined with DOS or a generic Ghidra language override.",
-    );
+    throw new GhidraAdmissionError("psp_combined");
   if (options.psp === true && rawBinary !== undefined)
-    throw new Error(
-      "A PSP ELF import cannot be combined with a raw-binary import.",
-    );
+    throw new GhidraAdmissionError("psp_raw_binary");
   if (
     options.mipsSoftFloat === true &&
     (options.psp === true ||
@@ -894,27 +873,19 @@ export const ghidraHeadlessArguments = (
       options.dosCom === true ||
       rawBinary !== undefined)
   )
-    throw new Error(
-      "MIPS soft-float storage applies only to a generic MIPS ELF import.",
-    );
+    throw new GhidraAdmissionError("mips_soft_float_scope");
   if (
     override !== undefined &&
     (options.dosMz === true || options.dosCom === true)
   )
-    throw new Error(
-      "A Ghidra language override cannot be combined with a DOS import.",
-    );
+    throw new GhidraAdmissionError("language_override_dos");
   if (override !== undefined && rawBinary !== undefined)
-    throw new Error(
-      "A Ghidra language override cannot be combined with a raw-binary import.",
-    );
+    throw new GhidraAdmissionError("language_override_raw_binary");
   if (
     rawBinary !== undefined &&
     (options.dosMz === true || options.dosCom === true)
   )
-    throw new Error(
-      "A raw-binary import cannot be combined with a DOS import.",
-    );
+    throw new GhidraAdmissionError("raw_binary_dos");
   return [
     options.projectRoot,
     existing?.projectName ?? "rea-project",

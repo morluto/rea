@@ -306,15 +306,22 @@ export class KunaReferenceQueries {
   }
 
   #parsed<T>(
-    parsed: Result<T, string>,
+    parsed: Result<
+      T,
+      { readonly code: string; readonly field?: string | undefined }
+    >,
     label: string,
   ): Result<T, AnalysisError> {
-    return parsed.ok
-      ? parsed
-      : err(
-          new ProviderAdapterError(KUNA_PROVIDER_ID, "kuna:references", {
-            userMessage: `Kuna's ${label} cannot be used: ${parsed.error}`,
-          }),
-        );
+    if (parsed.ok) return parsed;
+    const { code, field } = parsed.error;
+    return err(
+      new ProviderAdapterError(KUNA_PROVIDER_ID, "kuna:references", {
+        diagnostics: {
+          code,
+          ...(field === undefined ? {} : { field }),
+        },
+        userMessage: `Kuna's ${label} cannot be used: ${code}`,
+      }),
+    );
   }
 }

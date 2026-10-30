@@ -254,6 +254,15 @@ export async function verifyPackagePack({ root, workspace, commands }) {
       throw new Error(
         `Packaged plugin ${path} does not match the exact runtime and canonical skill release`,
       );
+    const icons = path.startsWith(".codex")
+      ? [manifest.interface?.logo, manifest.interface?.composerIcon]
+      : [manifest.icon];
+    for (const icon of icons)
+      if (
+        icon !== "./assets/rea-plugin.png" ||
+        !packedFiles.includes(`package/${icon.slice(2)}`)
+      )
+        throw new Error(`Packaged plugin ${path} is missing its shared icon`);
   }
   if (packedFiles.includes("package/.mcp.json"))
     throw new Error("Plugin metadata must not register a project MCP server");

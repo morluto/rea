@@ -551,7 +551,10 @@ describe("web source-map fetching and validation: fetching maps and following re
     expectInvalidIncludedSourceMaps(result);
   });
 
-  it("reauthorizes every redirect and never contacts a disallowed origin", async () => {
+  it.each([
+    ["another origin", "https://private.example.test/map"],
+    ["same-origin credentials", "https://user:secret@app.example.test/map"],
+  ])("reauthorizes a redirect with %s", async (_case, location) => {
     const calls: string[] = [];
     const result = await fetchWebSourceMapsOk([request], input(), undefined, {
       fetch: (url) => {
@@ -559,23 +562,33 @@ describe("web source-map fetching and validation: fetching maps and following re
         return Promise.resolve(
           new Response(null, {
             status: 302,
-            headers: { location: "https://private.example.test/map" },
+            headers: { location },
           }),
         );
       },
     });
 
     expect(calls).toEqual([request.fetchUrl]);
+    expect(JSON.stringify(result)).not.toContain("user:secret");
     expect(result).toMatchObject({
       status: "unavailable",
-      items: [{ status: "policy_filtered", effective_url: request.fetchUrl }],
+      items: [
+        {
+          status: "policy_filtered",
+          effective_url: request.fetchUrl,
+          limitation:
+            "Each source-map redirect must be a credential-free HTTP(S) URL on an approved exact origin.",
+        },
+      ],
     });
     expectInvalidSourceMaps({
       ...result,
       items: [{ ...result.items[0], limitation: null }],
     });
   });
+});
 
+describe("source-map declared URL policy", () => {
   it.each([
     ["embedded credentials", "https://user:secret@app.example.test/a.map"],
     ["a different scheme on the same host", "http://app.example.test/a.map"],
@@ -602,7 +615,14 @@ describe("web source-map fetching and validation: fetching maps and following re
       expect(calls).toEqual([]);
       expect(result).toMatchObject({
         status: "unavailable",
-        items: [{ status: "policy_filtered", effective_url: null }],
+        items: [
+          {
+            status: "policy_filtered",
+            effective_url: null,
+            limitation:
+              "Declared source-map URL must be a credential-free HTTP(S) URL on an approved exact origin.",
+          },
+        ],
       });
     },
   );

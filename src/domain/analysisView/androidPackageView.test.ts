@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import { createEvidence } from "../evidence.js";
+import { projectAnalysisError } from "../analysisErrorProjection.js";
 import type { JsonValue } from "../jsonValue.js";
 import {
   analysisViewRequestSchema,
@@ -219,15 +220,18 @@ it("bounds selected row serialization and lets field selection recover without c
       component("large.Class", { process: "x".repeat(2 * 1024 * 1024) }),
     ]),
   );
-  expect(
-    projectAnalysisView(
-      source,
-      analysisViewRequestSchema.parse({ kind: "android", facet: "components" }),
-    ),
-  ).toMatchObject({
+  const wide = projectAnalysisView(
+    source,
+    analysisViewRequestSchema.parse({ kind: "android", facet: "components" }),
+  );
+  expect(wide).toMatchObject({
     ok: false,
     error: { _tag: "AnalysisResourceConstraintError" },
   });
+  if (wide.ok) throw new Error("Expected an oversized-row refusal");
+  expect(projectAnalysisError(wide.error).remediation.action).toContain(
+    "select fewer fields",
+  );
   const small = androidComponentsViewResultSchema.parse(
     project(source, { kind: "android", facet: "components", fields: ["name"] }),
   );

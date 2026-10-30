@@ -181,7 +181,12 @@ describe("optional Ghidra extension boundary", () => {
       snapshotGhidraExtensions([extension], await root(), resources),
     ).rejects.toMatchObject({
       _tag: "ProviderAdapterError",
-      diagnostics: { reason: expect.stringContaining("digest differs") },
+      diagnostics: {
+        code: "digest_differs",
+        id: extension.id,
+        reason: "digest_differs",
+        path: extension.path,
+      },
     });
   });
   it("rejects nonexistent, empty and non-JAR artifacts with useful reasons", async () => {
@@ -268,18 +273,19 @@ describe("optional Ghidra extension boundary", () => {
     if (!resolved.ok)
       expect(resolved.error._tag).toBe("AnalysisCancelledError");
   });
-  it("refuses traversal identities in an imported extension profile", () => {
-    expect(
-      ghidraExtensionSchema.safeParse({
-        id: "../escape",
-        path: "/fixture.jar",
-        configured_path: "/fixture.jar",
-        sha256: "a".repeat(64),
-        integration_api: 1,
-        entry_class: "ignored",
-      }).success,
-    ).toBe(false);
-  });
+});
+
+it("refuses traversal identities in an imported extension profile", () => {
+  expect(
+    ghidraExtensionSchema.safeParse({
+      id: "../escape",
+      path: "/fixture.jar",
+      configured_path: "/fixture.jar",
+      sha256: "a".repeat(64),
+      integration_api: 1,
+      entry_class: "ignored",
+    }).success,
+  ).toBe(false);
 });
 
 describe("Ghidra extension profile and producer validation", () => {
@@ -384,7 +390,11 @@ describe("Ghidra extension profile and producer validation", () => {
       ),
     ).rejects.toMatchObject({
       _tag: "ProviderAdapterError",
-      diagnostics: { reason: expect.stringContaining("resolved path differs") },
+      diagnostics: {
+        code: "path_differs",
+        id: second.extension.id,
+        reason: "path_differs",
+      },
     });
   });
   it("rejects unregistered descriptors before snapshot filesystem writes", async () => {
@@ -398,7 +408,11 @@ describe("Ghidra extension profile and producer validation", () => {
       ),
     ).rejects.toMatchObject({
       _tag: "ProviderAdapterError",
-      diagnostics: { reason: expect.stringContaining("Unregistered") },
+      diagnostics: {
+        code: "unregistered",
+        id: "unknown",
+        reason: "unregistered",
+      },
     });
   });
 });

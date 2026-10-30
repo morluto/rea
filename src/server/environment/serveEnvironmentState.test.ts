@@ -879,7 +879,71 @@ const withClient = async (
   }
 };
 
+it("loads a padded inline state file and keeps the RPC result compact", async () => {
+  const environment = await serveState({ source, state });
+  const document = JSON.stringify(renamedDocument()).padEnd(
+    2 * 1024 * 1024,
+    " ",
+  );
+  const added = await fetch(new URL(ENVIRONMENT_RPC_PATH, environment.url), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "data/add",
+      params: {
+        parts: [
+          {
+            kind: "file",
+            file: { bytes: Buffer.from(document).toString("base64") },
+          },
+        ],
+      },
+    }),
+  });
+  expect(added.status).toBe(200);
+  const reply = await added.text();
+  expect(JSON.parse(reply)).toEqual({ jsonrpc: "2.0", id: 1, result: {} });
+  expect(Buffer.byteLength(reply)).toBeLessThan(128);
+  await withClient(environment, async (client) => {
+    const read = await client.callTool({
+      name: "get_users_by_id",
+      arguments: { id: "2" },
+    });
+    expect(read.isError).toBeFalsy();
+    expect(read.structuredContent).toMatchObject({
+      body: { login: "renamed" },
+    });
+  });
+  await expect(environment.close()).resolves.toBeUndefined();
+});
+
 describe("serveEnvironment with a state", () => {
+  it("replays safe non-GET methods with the recorded-view reason", async () => {
+    const environment = await serveState(
+      environmentStateServeInputs(
+        environmentStateServeFixture(
+          timedCaptureEvidence([
+            ["GET", "/api/items", [{ id: 1 }]],
+            ["HEAD", "/api/items"],
+            ["OPTIONS", "/api/items", { allow: "GET, HEAD, OPTIONS" }],
+            ["TRACE", "/api/items", { trace: true }],
+          ]),
+        ),
+      ),
+    );
+    await withClient(environment, async (client) => {
+      for (const name of ["head_items", "options_items", "trace_items"]) {
+        const response = await client.callTool({ name, arguments: {} });
+        expect(response.isError).not.toBe(true);
+        expect(response.structuredContent).toMatchObject({
+          state: { source: "recording", reason: "method-replay" },
+        });
+      }
+    });
+  });
+
   it("declares the data plane, serves read tools from the state and reflects data/add in the next answer", async () => {
     const environment = await serveState({ source, state });
     const url = new URL(environment.url);

@@ -55,6 +55,7 @@ import {
   GENERATED,
 } from "./environmentStateWriteGenerated.js";
 import {
+  createdMadeObject,
   createdNestedClock,
   createdToken,
   isClockNear,
@@ -281,7 +282,10 @@ const generatedRule = (
     return { field, rule: "unique" };
   if (createdToken(field, evidence.entity, evidence.type) === "independent")
     return { field, rule: "unique" };
-  return createdNestedClock(field, value, evidence);
+  return (
+    createdNestedClock(field, value, evidence) ??
+    createdMadeObject(field, value, evidence)
+  );
 };
 
 /** Pinned members less those a reference reads: it rebuilds the object they name for any held entity. */
@@ -518,6 +522,8 @@ export const explainUpdate = (
   const rules: FieldRule[] = [];
   const echoed = new Set<string>();
   const unexplained: string[] = [];
+  // A whole-object PUT clears a member it leaves out: that value is the member's default.
+  const defaults: { readonly member: string; readonly value: JsonValue }[] = [];
   // A member the application replaces with a value it generates is accepted with any value.
   const generated = new Set<string>();
   let identity: string | null = null;
@@ -589,8 +595,14 @@ export const explainUpdate = (
       body,
       knownEntities,
     );
-    if (rule === undefined) unexplained.push(field);
-    else rules.push(rule);
+    if (rule !== undefined) rules.push(rule);
+    else if (
+      evidence.method === "PUT" &&
+      isBlankValue(ownMember(evidence.after, field)) &&
+      !isBlankValue(ownMember(evidence.before, field))
+    )
+      defaults.push({ member: field, value: evidence.after[field]! });
+    else unexplained.push(field);
   }
   rules.push(...pairedStamps(evidence, rules));
   // A member a reference reads names an entity, which any held one may be.
@@ -610,7 +622,11 @@ export const explainUpdate = (
   );
   return {
     rules,
-    body: { ...shaped, identity },
+    body: {
+      ...shaped,
+      identity,
+      ...(defaults.length === 0 ? {} : { defaults }),
+    },
     unexplained,
     unstamped: sameSecondClocks(evidence),
   };

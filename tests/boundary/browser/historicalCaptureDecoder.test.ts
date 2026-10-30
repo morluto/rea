@@ -1,3 +1,4 @@
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import type { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { ProviderProcessSupervisor } from "../../../src/process/ProviderProcess.js";
 import { createDeferred } from "../../fixtures/binarySession.js";
@@ -1331,3 +1332,69 @@ it.each([
     }
   },
 );
+
+it("excludes normalized native numbers before retaining a completed decoder reply", async () => {
+  const root = await createTestTempDirectory("rea-native-number-redaction-");
+  const capturePath = join(root, "capture.mitm");
+  const original = "controlled native decoder input";
+  await writeFile(capturePath, original);
+  const payload = decodeHarCapture(JSON.stringify(historicalHar()), []);
+  payload.decoder = MITMPROXY_CAPTURE_PROVIDER_IDENTITY;
+  const record = payload.records[0]!;
+  record.reported = { metadata: { small: 1e-7, large: 1e20, ordinary: 42 } };
+  record.binary_fields = [];
+  record.redactions = [];
+  record.numeric_literals = [
+    { pointer: "/metadata/small", producer_type: "float", literal: "1e-07" },
+    { pointer: "/metadata/large", producer_type: "float", literal: "1e+20" },
+  ];
+  const decoder = new HistoricalCaptureDecoder(
+    [
+      {
+        format: "mitmproxy",
+        identity: MITMPROXY_CAPTURE_PROVIDER_IDENTITY,
+        command: async (_, runtime) => ({
+          command: process.execPath,
+          arguments: [
+            "-e",
+            "require('node:fs').writeFileSync(process.argv[1], process.argv[2])",
+            join(runtime, "reply.json"),
+            JSON.stringify({ ok: true, value: payload }),
+          ],
+        }),
+      },
+    ],
+    process.env,
+  );
+  onTestFinished(() => decoder.close());
+  for (const marked of [false, true]) {
+    const result = await decoder.inspect(
+      inspectWebNetworkCaptureInputSchema.parse({
+        capture_path: capturePath,
+        format: "mitmproxy",
+        sensitive_values: marked ? ["1e-7", "000000"] : [],
+      }),
+    );
+    if (!result.ok) throw result.error;
+    const retained = result.value.records[0]!;
+    expect(retained.reported).toEqual({
+      metadata: {
+        small: marked ? null : 1e-7,
+        large: marked ? null : 1e20,
+        ordinary: 42,
+      },
+    });
+    expect(retained.numeric_literals).toEqual(
+      marked ? [] : record.numeric_literals,
+    );
+    expect(retained.redactions).toEqual(
+      marked
+        ? [
+            { pointer: "/metadata/small", reason: "explicit-sensitive-value" },
+            { pointer: "/metadata/large", reason: "explicit-sensitive-value" },
+          ]
+        : [],
+    );
+    expect(await readFile(capturePath, "utf8")).toBe(original);
+  }
+});

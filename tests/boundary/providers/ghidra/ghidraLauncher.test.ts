@@ -260,7 +260,12 @@ describe("Ghidra GameCube DOL loader", () => {
           sectionFilePath: "/tmp/gamecube-dol-sections.txt",
         },
       }),
-    ).toThrow(/cannot be combined with another loader, language override/u);
+    ).toThrow(
+      expect.objectContaining({
+        _tag: "GhidraAdmissionError",
+        code: "gamecube_dol_combined",
+      }),
+    );
   });
 });
 
@@ -346,7 +351,12 @@ describe("Ghidra headless launcher", () => {
     ])
       expect(() =>
         ghidraHeadlessArguments({ ...base, mipsSoftFloat: true, ...conflict }),
-      ).toThrow(/generic MIPS ELF/u);
+      ).toThrow(
+        expect.objectContaining({
+          _tag: "GhidraAdmissionError",
+          code: "mips_soft_float_scope",
+        }),
+      );
   });
 });
 
@@ -395,7 +405,12 @@ describe("Ghidra configured import language and seeds", () => {
         dosMz: true,
         languageOverride: { languageId: "x86:LE:32:default" },
       }),
-    ).toThrow(/cannot be combined with a DOS import/u);
+    ).toThrow(
+      expect.objectContaining({
+        _tag: "GhidraAdmissionError",
+        code: "language_override_dos",
+      }),
+    );
   });
 
   it("never combines a configured language with a raw-binary import", () => {
@@ -409,7 +424,12 @@ describe("Ghidra configured import language and seeds", () => {
           baseAddr: "0x8000000",
         },
       }),
-    ).toThrow(/cannot be combined with a raw-binary import/u);
+    ).toThrow(
+      expect.objectContaining({
+        _tag: "GhidraAdmissionError",
+        code: "language_override_raw_binary",
+      }),
+    );
   });
 
   it.each(["darwin", "win32"] as const)(
@@ -579,30 +599,41 @@ describe("Ghidra existing project", () => {
   });
 
   it.each([
-    { dosMz: true as const },
-    { dosCom: true as const },
-    {
-      rawBinary: {
-        languageId: "ARM:LE:32:v7",
-        compilerSpecId: "default",
-        baseAddr: "0x8000000",
+    [{ dosMz: true as const }, "existing_project_dos"],
+    [{ dosCom: true as const }, "existing_project_dos"],
+    [
+      {
+        rawBinary: {
+          languageId: "ARM:LE:32:v7",
+          compilerSpecId: "default",
+          baseAddr: "0x8000000",
+        },
       },
-    },
-    { languageOverride: { languageId: "x86:LE:32:default" } },
-    { psp: true as const },
-    { mipsSoftFloat: true as const },
-    { seedPath: "/tmp/runtime/seeds/seeds.tsv" },
-    { disabledAnalyzers: ["Decompiler Parameter ID"] },
-  ])(
+      "existing_project_raw_binary",
+    ],
+    [
+      { languageOverride: { languageId: "x86:LE:32:default" } },
+      "existing_project_language_override",
+    ],
+    [{ psp: true as const }, "existing_project_psp"],
+    [{ mipsSoftFloat: true as const }, "existing_project_mips_soft_float"],
+    [{ seedPath: "/tmp/runtime/seeds/seeds.tsv" }, "existing_project_analysis"],
+    [
+      { disabledAnalyzers: ["Decompiler Parameter ID"] },
+      "existing_project_analysis",
+    ],
+  ] as const)(
     "rejects the import-only option %o with an existing project",
-    (conflict) => {
+    (conflict, code) => {
       expect(() =>
         ghidraHeadlessArguments({
           ...base,
           existingProject: { programName: "game.exe" },
           ...conflict,
         }),
-      ).toThrow(/existing (Ghidra )?project|fresh import/u);
+      ).toThrow(
+        expect.objectContaining({ _tag: "GhidraAdmissionError", code }),
+      );
     },
   );
 
@@ -618,7 +649,12 @@ describe("Ghidra existing project", () => {
         ),
         existingProject: { programName: "game.exe" },
       }),
-    ).toThrow(/Windows/u);
+    ).toThrow(
+      expect.objectContaining({
+        _tag: "GhidraAdmissionError",
+        code: "existing_project_windows",
+      }),
+    );
   });
 
   it("requires a program name for -process", () => {
@@ -627,7 +663,12 @@ describe("Ghidra existing project", () => {
         ...base,
         existingProject: { programName: "   " },
       }),
-    ).toThrow(/program name/u);
+    ).toThrow(
+      expect.objectContaining({
+        _tag: "GhidraAdmissionError",
+        code: "existing_project_program_name",
+      }),
+    );
   });
 });
 

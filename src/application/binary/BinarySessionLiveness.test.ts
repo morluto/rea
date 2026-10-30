@@ -73,6 +73,47 @@ it("preserves an explicitly unbound provider observation", async () => {
   }
 });
 
+it("retains live source Evidence without replaying a prior observation", async () => {
+  const { session, deep } = openSession({ live: true });
+  try {
+    expect((await session.open(process.execPath)).ok).toBe(true);
+    expect(
+      (
+        await session.execute("address_name", {
+          document: "0",
+          address: "0x9999",
+        })
+      ).ok,
+    ).toBe(true);
+    const child = deep.created[0];
+    if (child === undefined) throw new Error("expected provider child");
+    let reads = 0;
+    child.execute = () =>
+      Promise.resolve(
+        ok(createAnalysisExecution(`live ${++reads}`, deepIdentity)),
+      );
+    const parameters = { document: "0", address: "0x1000" };
+    const first = await session.execute("address_name", parameters);
+    const second = await session.execute("address_name", parameters);
+    expect(first.ok && first.value.result).toBe("live 1");
+    expect(second.ok && second.value.result).toBe("live 2");
+    if (!first.ok || !second.ok) return;
+    expect(first.value.evidenceId).toBeDefined();
+    expect(second.value.evidenceId).toBeDefined();
+    expect(first.value.evidenceId).not.toBe(second.value.evidenceId);
+    expect(session.exportEvidenceBundle().records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ normalized_result: "live 1" }),
+        expect.objectContaining({ normalized_result: "live 2" }),
+      ]),
+    );
+    const snapshot = session.exportAnalysisSnapshot();
+    if (snapshot.ok) expect(snapshot.value.entries).toHaveLength(0);
+  } finally {
+    await session.close();
+  }
+});
+
 it("keeps unbound observations out of persisted target snapshots", async () => {
   const { session, deep } = openSession();
   const directory = await createTestTempDirectory("rea-unbound-snapshot-");
@@ -458,6 +499,7 @@ const openSession = (
     failOperationInitially?: boolean;
     beforeFirstClose?: () => Promise<void>;
     explicitNullSubject?: boolean;
+    live?: boolean;
   } = {},
 ): {
   session: BinarySession;
@@ -493,6 +535,7 @@ const killableDeepProvider = (options: {
   failOperationInitially?: boolean;
   beforeFirstClose?: () => Promise<void>;
   explicitNullSubject?: boolean;
+  live?: boolean;
 }): {
   provider: AnalysisProviderCandidate;
   created: KillableChild[];
@@ -503,7 +546,12 @@ const killableDeepProvider = (options: {
   const withOperationHealth = options.operationHealth !== false;
   const provider: AnalysisProviderCandidate = {
     identity: () => deepIdentity,
-    capabilities: () => [capability(deepIdentity, "address_name")],
+    capabilities: () => [
+      {
+        ...capability(deepIdentity, "address_name"),
+        ...(options.live ? { cachePolicy: "live" as const } : {}),
+      },
+    ],
     inspectAvailability: (): ProviderAvailability => ({
       status: "available",
       code: null,

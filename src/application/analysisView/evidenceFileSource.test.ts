@@ -9,18 +9,72 @@ import {
 } from "../../../tests/fixtures/analysisView.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import {
-  AnalysisCancelledError,
-  AnalysisResourceConstraintError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import { JsonInputPhysicalReadFailure } from "../JsonInputFile.js";
 import { failFileReadAfterAbort } from "../../../tests/support/failFileReadAfterAbort.js";
 import { holdFirstFileRead } from "../../../tests/support/holdFirstFileRead.js";
 import { createEvidence } from "../../domain/evidence.js";
+import { readEvidence } from "../../domain/evidenceValidation.js";
+import { isImmutableJsonSnapshot } from "../../domain/immutableJson.js";
+import { ok } from "../../domain/result.js";
 import { createEvidenceBundle } from "../../domain/evidenceBundle.js";
 import { readEvidenceFileSource } from "./evidenceFileSource.js";
 
 describe("evidence-file source reads", () => {
+  it("owns immutable authentication proofs for selected records and related bundle parents", async () => {
+    const root = await createTestTempDirectory("rea-evidence-file-proof-");
+    const single = join(root, "single.json");
+    const source = analysisViewNativeEvidence();
+    const related = analysisViewCaptureEvidence();
+    await writeFile(single, JSON.stringify(source));
+    const selected = await readEvidenceFileSource(single);
+    if (!selected.ok) throw selected.error;
+    expect(isImmutableJsonSnapshot(selected.value)).toBe(true);
+    const checked = readEvidence(selected.value);
+    if (!checked.ok) throw checked.error;
+    expect(checked.value).toBe(selected.value);
+
+    const bundle = join(root, "bundle.json");
+    await writeFile(
+      bundle,
+      JSON.stringify(createEvidenceBundle([source, related])),
+    );
+    let parentChecked = false;
+    const fromBundle = await readEvidenceFileSource(
+      bundle,
+      {},
+      source.evidence_id,
+      {
+        operation: "compare_artifacts",
+        path: ["left"],
+        resolveSelected: (record, lookup) => {
+          const parent = lookup(related.evidence_id);
+          if (parent === undefined)
+            throw new Error("Missing admitted related record");
+          expect(isImmutableJsonSnapshot(record)).toBe(true);
+          expect(isImmutableJsonSnapshot(parent)).toBe(true);
+          const authenticated = readEvidence(parent);
+          if (!authenticated.ok) throw authenticated.error;
+          expect(authenticated.value).toBe(parent);
+          parentChecked = true;
+          return ok(record);
+        },
+      },
+    );
+    if (!fromBundle.ok) throw fromBundle.error;
+    expect(parentChecked).toBe(true);
+
+    // A later read must authenticate new bytes rather than reuse a path-based proof.
+    await writeFile(
+      single,
+      JSON.stringify({ ...source, normalized_result: { changed: true } }),
+    );
+    expect(await readEvidenceFileSource(single)).toMatchObject({
+      ok: false,
+      error: { _tag: "EvidenceFileError", reason: "wrong-kind" },
+    });
+  });
+
   it("refuses a cancelled request before reading and reads within the caller's resource scope", async () => {
     const controller = new AbortController();
     const reason = new JsonInputPhysicalReadFailure(

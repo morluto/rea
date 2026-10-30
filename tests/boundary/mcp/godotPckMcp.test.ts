@@ -7,7 +7,7 @@ import { expect, it } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
-import { buildGodotPck } from "../../fixtures/godotPck.js";
+import { buildGodotPck, buildGodotPck1 } from "../../fixtures/godotPck.js";
 import { ArtifactProvider } from "../../../src/artifacts/ArtifactProvider.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
@@ -90,15 +90,21 @@ const assertInvalidNodeField = async (
 };
 
 const profiles = ["full", "compact"] as const;
-it.each(profiles)("reuses retained PCK inventory (%s)", async (profile) => {
+const inventoryCases = profiles.flatMap((profile) => [
+  { profile, version: 1 as const },
+  { profile, version: 4 as const },
+]);
+it.each(inventoryCases)("retains PCK ($profile/v$version)", async (input) => {
+  const { profile, version } = input;
   const root = await createTestTempDirectory("rea-pck-mcp-");
   const path = join(root, "game.pck");
+  const members = [
+    { path: "res://a.txt", data: "a" },
+    { path: "res://b.txt", data: "b" },
+  ];
   await writeFile(
     path,
-    buildGodotPck(4, [
-      { path: "res://a.txt", data: "a" },
-      { path: "res://b.txt", data: "b" },
-    ]),
+    version === 1 ? buildGodotPck1(members) : buildGodotPck(4, members),
   );
   const session = createTestBinarySession(new ArtifactProvider({}));
   const server = createServer(
@@ -129,7 +135,7 @@ it.each(profiles)("reuses retained PCK inventory (%s)", async (profile) => {
     );
     expect(summary.summary.root_format_metadata).toMatchObject({
       kind: "godot-pck",
-      format_version: 4,
+      format_version: version,
       declared_file_count: 2,
     });
     const parent = session.evidenceForAnalysis(summary.parent_evidence_id);

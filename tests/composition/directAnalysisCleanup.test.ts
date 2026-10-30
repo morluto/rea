@@ -7,7 +7,7 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { createPackageWithOptions } from "@electron/asar";
 import { createArtifactBinarySession } from "../../src/composition/binary.js";
@@ -29,7 +29,11 @@ import {
   projectAnalysisError,
   projectAnalysisErrorWithoutCapturedOutput,
 } from "../../src/domain/analysisErrorProjection.js";
-import { parseEvidence, type Evidence } from "../../src/domain/evidence.js";
+import {
+  createEvidence,
+  parseEvidence,
+  type Evidence,
+} from "../../src/domain/evidence.js";
 import { jsonObjectSchema } from "../../src/domain/jsonValue.js";
 import { artifactInspectionResultSchema } from "../../src/domain/artifactInspection.js";
 import { ProviderCleanupError } from "../../src/domain/providerCleanupError.js";
@@ -240,6 +244,39 @@ it("retains both execution and final-close resources in one-shot failures", asyn
     },
   });
 });
+
+it.each([false, true])(
+  "binds the exact caller path to provider failure Evidence (session cleanup fails: %s)",
+  async (closeFails) => {
+    const [path] = await createBinarySessionTargets();
+    const callerPath = `${dirname(path)}/./${basename(path)}`;
+    const original = createEvidence(
+      { path, sha256: "a".repeat(64), format: "mach-o", architecture: "arm64" },
+      { id: "fixture", name: "Fixture", version: null },
+      { operation: "read_bytes", parameters: {}, result: { byte: 42 } },
+    );
+    const failure = new AnalysisCancelledError("read_bytes", {
+      partialObservation: original,
+    });
+    const { dependencies } = factories({
+      executionError: failure,
+      ...(closeFails ? { cleanupError } : {}),
+    });
+    const result = analysisCliErrorEnvelopeSchema.parse(
+      await runDirectAnalysis(dependencies, callerPath, "read_bytes", {}).then(
+        projectCliAnalysisResult,
+      ),
+    );
+    const observation = parseEvidence(
+      jsonObjectSchema.parse(result.details).partial_observation,
+    );
+    expect(observation.caller_input_path).toBe(callerPath);
+    expect(observation.subject?.local_path).toBe(path);
+    expect(observation.evidence_id).toBe(original.evidence_id);
+    expect(observation.normalized_result).toEqual({ byte: 42 });
+    expect(original.caller_input_path).toBeUndefined();
+  },
+);
 
 describe("one-shot finalization cancellation", () => {
   it.each(["read_bytes", "analyze_function"] as const)(

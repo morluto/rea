@@ -144,6 +144,9 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc
+      - name: Validate source architecture before dependency installation
+        if: needs.changes.outputs.code == 'true'
+        run: node scripts/verify/architecture-guards.mjs
       - name: Cache npm package downloads
         id: npm-cache
         uses: ./.github/actions/npm-cache
@@ -753,6 +756,11 @@ jobs:
       - name: Run native Apple and process boundary regressions
         run: >-
           npm run test:focused --
+          tests/boundary/providers/hopper/hopperMacLaunchArguments.test.ts
+          tests/acceptance/providers/hopperStartupRecovery.test.ts
+          tests/boundary/providers/hopper/hopperClient.helperFailure.test.ts
+          tests/boundary/providers/hopper/bridgeBootstrapCleanup.test.ts
+          tests/boundary/providers/hopper/bridgeTargetLease.integration.test.ts
           tests/acceptance/artifactDmgAttachmentRecoveryCli.test.ts
           tests/boundary/providers/native/nativeDmgArtifactReader.test.ts
           tests/process-global/dmgCancellationReason.test.ts
@@ -768,6 +776,7 @@ jobs:
           tests/boundary/providers/native/nativeSignatureTargetBinding.test.ts
           tests/boundary/cli/nativeSignatureCli.test.ts
           tests/boundary/cli/nativeMachoArm64_32Cli.test.ts
+          tests/boundary/cli/nativeMachoEncryptionCli.test.ts
           tests/boundary/mcp/nativeSignatureTargetBindingMcp.test.ts
           src/process/capture/FilesystemSnapshot.test.ts
           tests/process-global/filesystemSnapshotFallbackCancellation.test.ts
@@ -901,6 +910,7 @@ jobs:
           tests/boundary/process/packageNpmInvocation.test.ts
           tests/boundary/process/packedBridgeVerification.test.ts
           tests/boundary/process/windowsOutputCapture.test.ts
+          tests/boundary/process/windowsExecutableSelection.test.ts
           tests/acceptance/webModuleCli.test.ts
           tests/acceptance/webSourceLocationCli.test.ts
           tests/boundary/cli/referenceSourceImportStatus.test.ts
