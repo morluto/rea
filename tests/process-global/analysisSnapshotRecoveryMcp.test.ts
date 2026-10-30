@@ -138,6 +138,20 @@ it("recovers a retained snapshot descriptor through close_binary on the same con
       details: { operation: "open_binary", resources: [injected.path] },
     });
     expect(gated.error.remediation.action).toContain("close_binary");
+    const bundleGated = parseMcpToolError(
+      await client.callTool({
+        name: "open_bundle_resources",
+        arguments: { path: root },
+      }),
+    );
+    expect(bundleGated.error).toMatchObject({
+      code: "cleanup_incomplete",
+      details: {
+        operation: "open_bundle_resources",
+        resources: [injected.path],
+      },
+    });
+    expect(bundleGated.error.remediation.action).toContain("close_binary");
     expect(session.activeTarget()).toBeUndefined();
     const retry = parseMcpToolError(
       await client.callTool({

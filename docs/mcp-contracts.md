@@ -605,8 +605,11 @@ remains, no provider run or health observation is available; follow the cleanup
 error's reported resources.
 Snapshot imports retain failed file descriptors under the session as well.
 Call `close_binary` to retry their cleanup on the same connection; while cleanup
-still fails, `open_binary` does not start a replacement provider. Server and
-transport shutdown also retry these descriptors. Cancellation during final close
+still fails, `open_binary` and `open_bundle_resources` do not replace the active
+target. Their cleanup errors name the requested operation and direct the caller
+to `close_binary`. Server and transport shutdown also retry these descriptors.
+Transport shutdown logs each rejected process or session-file cleanup.
+Cancellation during final close
 retains the caller's reason alongside incomplete cleanup, and an existing read
 or JSON syntax or snapshot integrity failure remains primary.
 

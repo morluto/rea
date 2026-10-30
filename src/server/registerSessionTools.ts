@@ -405,14 +405,19 @@ export const registerSessionTools = (
     try {
       previousOnclose?.();
     } finally {
-      void Promise.all([processResources.close(), closeSessionFiles()]).catch(
-        (cause: unknown) => {
+      void Promise.allSettled([
+        processResources.close(),
+        closeSessionFiles(),
+      ]).then((results) => {
+        for (const result of results) {
+          if (result.status !== "rejected") continue;
+          const cause: unknown = result.reason;
           logger.error(
             { error: cause instanceof Error ? cause.message : String(cause) },
             "Session resource cleanup failed during server shutdown",
           );
-        },
-      );
+        }
+      });
     }
   };
   registerProcessComparisonTool(server, session, compareContract);

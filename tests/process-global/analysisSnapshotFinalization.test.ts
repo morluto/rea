@@ -290,7 +290,7 @@ it.each(
           reason: input === "read-error" ? "io" : "invalid-json",
         });
       }
-      expect(await readFile(path)).toEqual(before);
+      expect((await readFile(path)).equals(before)).toBe(true);
     } finally {
       injected.failCloseRemaining = 0;
       injected.onClose = undefined;
