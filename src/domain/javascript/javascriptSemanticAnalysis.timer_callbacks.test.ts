@@ -3,13 +3,21 @@ import { expect, it } from "vitest";
 import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
 
 /**
- * A timer schedule requires a function in argument 0. Node validates it before
- * creating a handle, so a provable literal that is not a function throws
- * `ERR_INVALID_ARG_TYPE: The "callback" argument must be of type function`
- * synchronously and no timer exists. Only exactly readable literals are decided:
- * an identifier or a call may still be a function at runtime.
+ * A schedule imported from Node's `timers` module requires a function in
+ * argument 0. Node validates it before creating a handle, so a provable literal
+ * that is not a function throws `ERR_INVALID_ARG_TYPE: The "callback" argument
+ * must be of type function` synchronously and no timer exists.
+ *
+ * Only exactly readable literals are decided: an identifier or a call may still
+ * be a function at runtime.
  */
-const schedulesFor = (call: string) =>
+const nodeTimersCalls = (call: string) =>
+  analyzeJavaScriptSemantics(
+    `import { setTimeout, setInterval, setImmediate } from "node:timers"; function g(fn) { ${call}; }`,
+  ).timerOperations.map(({ kind, method }) => ({ kind, method }));
+
+/** A bare global timer may belong to a browser, where a string is evaluated. */
+const globalTimerCalls = (call: string) =>
   analyzeJavaScriptSemantics(`function g(fn) { ${call}; }`).timerOperations.map(
     ({ kind, method }) => ({ kind, method }),
   );
@@ -27,28 +35,39 @@ it.each([
   ["no arguments at all", `setTimeout()`],
   ["a setImmediate string callback", `setImmediate("code")`],
   ["a setInterval string callback", `setInterval("code", 0)`],
-] as const)("emits no timer for %s", (_name, call) => {
-  expect(schedulesFor(call)).toEqual([]);
+] as const)("emits no node timers schedule for %s", (_name, call) => {
+  expect(nodeTimersCalls(call)).toEqual([]);
 });
 
 it.each([
-  ["a function expression", `setTimeout(function () {}, 0)`],
-  ["an arrow function", `setTimeout(() => {}, 0)`],
-  ["an identifier", `setTimeout(fn, 0)`],
-  ["an identifier without a delay", `setTimeout(fn)`],
-  ["a call result", `setTimeout(select(), 0)`],
-  ["a class expression", `setTimeout(class {}, 0)`],
-] as const)("keeps the timer for %s", (_name, call) => {
-  expect(schedulesFor(call)).toEqual([
-    {
-      kind: "schedule",
-      method: call.startsWith("setImmediate") ? "setImmediate" : "setTimeout",
-    },
-  ]);
+  ["a function expression", `setTimeout(function () {}, 0)`, "setTimeout"],
+  ["an arrow function", `setTimeout(() => {}, 0)`, "setTimeout"],
+  ["an identifier", `setTimeout(fn, 0)`, "setTimeout"],
+  ["an identifier without a delay", `setTimeout(fn)`, "setTimeout"],
+  ["a call result", `setTimeout(select(), 0)`, "setTimeout"],
+  ["a class expression", `setTimeout(class {}, 0)`, "setTimeout"],
+  ["a resolved setImmediate", `setImmediate(fn)`, "setImmediate"],
+  ["a resolved setInterval", `setInterval(fn, 10)`, "setInterval"],
+] as const)("keeps the node timers schedule for %s", (_name, call, method) => {
+  expect(nodeTimersCalls(call)).toEqual([{ kind: "schedule", method }]);
+});
+
+/**
+ * Browser and Electron renderer sources reach this analysis without a
+ * Node/browser distinction, and there a string callback is evaluated by the
+ * host. A bare global timer therefore keeps its schedule whatever the argument.
+ */
+it.each([
+  ["a string callback", `setTimeout("code", 0)`],
+  ["a string setInterval callback", `setInterval("code", 0)`],
+  ["a null callback", `setTimeout(null, 0)`],
+] as const)("keeps the bare global timer for %s", (_name, call) => {
+  expect(globalTimerCalls(call)).toHaveLength(1);
 });
 
 it("keeps a cancellation whose handle is a real timer", () => {
   const operations = analyzeJavaScriptSemantics(`
+    import { setTimeout } from "node:timers";
     const handle = setTimeout(() => {}, 10);
     clearTimeout(handle);
   `).timerOperations;

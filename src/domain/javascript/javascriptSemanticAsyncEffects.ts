@@ -8,7 +8,6 @@ import type {
 } from "./javascriptSemanticIr.js";
 import { createSemanticCallableIdStack } from "./javascriptSemanticCallableStack.js";
 import {
-  readExactJavaScriptLiteral,
   semanticStaticPropertyName,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
@@ -287,11 +286,27 @@ const emitterIdentity = (
 };
 
 /**
- * A timer schedule requires a function in argument 0. Node validates it before
- * creating a handle, so a provable literal that is not a function throws
- * ERR_INVALID_ARG_TYPE synchronously and no timer exists. Only literals the
- * analyzer can read exactly are decided; an identifier or call may still be a
- * function at runtime.
+ * A timer proven to come from the Node `timers` module rather than a bare
+ * global. Browser and Electron renderer sources reach this analysis without a
+ * Node/browser distinction, and there `setTimeout("refresh()", 0)` is a real
+ * timer: the string is evaluated by the host. Node's callback rule therefore
+ * applies only when the timer is imported from `node:timers`, where that form
+ * cannot exist.
+ */
+const nodeBuiltinTimerMethod = (
+  callee: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): JavaScriptSemanticTimerOperation["method"] | null =>
+  admittedTimerMethod(
+    builtinDataEffectMethod(callee, state, ["timers", "node:timers"]) ?? "",
+  );
+
+/**
+ * A schedule imported from Node's `timers` module requires a function in
+ * argument 0. Node validates it before creating a handle, so a provable literal
+ * that is not a function throws ERR_INVALID_ARG_TYPE synchronously and no timer
+ * exists. Only literals the analyzer can read exactly are decided; an identifier
+ * or call may still be a function at runtime.
  */
 const schedulesWithNonFunctionCallback = (node: t.Node): boolean => {
   if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
@@ -325,6 +340,7 @@ const collectTimer = (input: TimerCollectionInput): void => {
   if (method === null) return;
   if (
     TIMER_SCHEDULE_METHODS.some((candidate) => candidate === method) &&
+    nodeBuiltinTimerMethod(node.callee, state) !== null &&
     schedulesWithNonFunctionCallback(node)
   )
     return;
