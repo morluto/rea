@@ -155,27 +155,31 @@ it("requires absolute bundle paths without changing server-cwd semantics", async
         },
       });
     const relativeCases = [
-      ["left.json", "right.json", "left_bundle_path"],
-      ["left.json", join(root, "right.json"), "left_bundle_path"],
-      [join(root, "left.json"), "right.json", "right_bundle_path"],
+      ["left.json", "right.json", ["left_bundle_path", "right_bundle_path"]],
+      ["left.json", join(root, "right.json"), ["left_bundle_path"]],
+      [join(root, "left.json"), "right.json", ["right_bundle_path"]],
     ] as const;
-    for (const [leftPath, rightPath, rejectedField] of relativeCases) {
+    for (const [leftPath, rightPath, rejectedFields] of relativeCases) {
       const result = await compare(leftPath, rightPath);
-      expect(parseMcpToolError(result).error).toMatchObject({
+      const { error } = parseMcpToolError(result);
+      expect(error).toMatchObject({
         code: "invalid_request",
         category: "invalid_input",
         details: {
           operation: "compare_bundles",
-          issues: expect.arrayContaining([
-            expect.objectContaining({
-              path: [rejectedField],
-              reason: "invalid_format",
-              expected: "regex",
-            }),
-          ]),
+          issues: expect.arrayContaining(
+            rejectedFields.map((field) =>
+              expect.objectContaining({
+                path: [field],
+                reason: "invalid_format",
+                expected: "regex",
+              }),
+            ),
+          ),
         },
       });
     }
+    expect(connected.session.exportEvidenceBundle().records).toEqual([]);
     expect(
       bundleComparisonInputSchema.parse({
         left_bundle_path: "left.json",

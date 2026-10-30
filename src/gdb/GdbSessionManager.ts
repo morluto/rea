@@ -18,7 +18,7 @@ import {
 } from "../domain/analysisErrorBase.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
 import type { GdbCommandResult } from "../domain/commandObservation.js";
-import { DEBUGGER_CONTROL_REPLY_BYTES } from "../domain/analysisResourceLimits.js";
+import { DEFAULT_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES } from "../domain/analysisResourceLimits.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   ProviderProcessSupervisor,
@@ -645,8 +645,9 @@ export class GdbSessionManager {
       options.maxCommandOutputBytes,
     );
     this.#maxCommandOutputBytes = this.#commandOutput.value;
+    // Control replies keep the fixed allowance even when caller output is capped lower.
     this.#controlReplyBytes =
-      options.controlReplyBytes ?? DEBUGGER_CONTROL_REPLY_BYTES;
+      options.controlReplyBytes ?? DEFAULT_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES;
   }
 
   async start(
