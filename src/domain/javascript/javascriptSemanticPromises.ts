@@ -8,6 +8,7 @@ import type {
 import { semanticCallableIdForNode } from "./javascriptSemanticProjection.js";
 import { createSemanticCallableIdStack } from "./javascriptSemanticCallableStack.js";
 import {
+  readExactJavaScriptLiteral,
   semanticStaticPropertyName,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
@@ -100,6 +101,36 @@ export const collectJavaScriptSemanticPromises = (
   });
 };
 
+/**
+ * Node's `Promise` constructor calls the executor synchronously and throws a
+ * `TypeError` when it is not callable, before any promise object exists. An
+ * exactly readable literal that cannot be a function — or a missing argument —
+ * is therefore not a promise construction, while an identifier, a call result or
+ * a spread may still supply a function and keeps its operation.
+ *
+ * A class expression is callable enough to pass Node's own check, so it is kept.
+ */
+const rejectsPromiseExecutor = (node: t.Node): boolean => {
+  if (!t.isNewExpression(node)) return false;
+  const executor = node.arguments[0];
+  if (executor === undefined) return true;
+  if (t.isSpreadElement(executor)) return false;
+  const value = unwrapJavaScriptExpression(executor).node;
+  if (t.isFunctionExpression(value) || t.isArrowFunctionExpression(value))
+    return false;
+  if (t.isClassExpression(value)) return false;
+  // Every unary operator yields a primitive, and a primitive is never callable.
+  return (
+    t.isUnaryExpression(value) ||
+    readExactJavaScriptLiteral(value).found ||
+    t.isTemplateLiteral(value) ||
+    t.isBigIntLiteral(value) ||
+    t.isRegExpLiteral(value) ||
+    t.isArrayExpression(value) ||
+    t.isObjectExpression(value)
+  );
+};
+
 const collectCandidates = (
   program: t.Program,
   state: JavaScriptSemanticAnalysisState,
@@ -115,7 +146,7 @@ const collectCandidates = (
     enter: (node, parent) => {
       callableStack.enter(node, parent);
       const details = promiseCandidateDetails(node, state);
-      if (details !== null) {
+      if (details !== null && !rejectsPromiseExecutor(node)) {
         output.push({
           node,
           ...details,
