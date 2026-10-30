@@ -1882,7 +1882,14 @@ exit 0`,
 
 const packageVerdictCases = [
   {
-    name: "empty",
+    name: "empty stdout and stderr",
+    stdout: "",
+    stderr: "",
+    exit: 0,
+    verdict: "unknown",
+  },
+  {
+    name: "stderr-only diagnostic",
     stdout: "",
     stderr: "diagnostic-only\n",
     exit: 0,
@@ -1890,7 +1897,7 @@ const packageVerdictCases = [
   },
   {
     name: "progress",
-    stdout: "Performing Streamed Install\n",
+    stdout: "Performing Streamed Install ✓\n",
     stderr: "diagnostic-only\n",
     exit: 0,
     verdict: "unknown",
@@ -1937,6 +1944,13 @@ const packageVerdictCases = [
     exit: 1,
     verdict: "failure",
   },
+  {
+    name: "nonzero without a verdict",
+    stdout: "Performing Streamed Install\n",
+    stderr: "transport closed\n",
+    exit: 2,
+    verdict: "unreadable",
+  },
 ] as const;
 
 for (const operation of [
@@ -1970,6 +1984,13 @@ exit 1`,
       );
       if (scenario.verdict === "success") {
         expect(result.ok).toBe(true);
+        if (!result.ok) throw result.error;
+        expect(result.value.result).toMatchObject({
+          serial: "emulator-5554",
+          ...(operation === "install_adb_package"
+            ? { replace_requested: false, replaced: null }
+            : { package_name: "com.example" }),
+        });
         return;
       }
       expect(result.ok).toBe(false);
@@ -1980,6 +2001,10 @@ exit 1`,
           code: "unsupported_target",
           details: { reason: "DENIED" },
         });
+      } else if (scenario.verdict === "unreadable") {
+        expect(projected).toMatchObject({ code: "unreadable_output" });
+        expect(result.error.message).toContain("transport closed");
+        expect(projected.message).not.toContain("refused");
       } else {
         expect(projected).toMatchObject({
           code: "unreadable_output",
