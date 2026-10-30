@@ -14,6 +14,28 @@ import {
 
 const realSetTimeout = globalThis.setTimeout;
 
+const inlineJavaScriptCharMap: Record<string, string> = {
+  "<": "\\u003C",
+  ">": "\\u003E",
+  "/": "\\u002F",
+  "\\": "\\\\",
+  "\b": "\\b",
+  "\f": "\\f",
+  "\n": "\\n",
+  "\r": "\\r",
+  "\t": "\\t",
+  "\0": "\\0",
+  "\u2028": "\\u2028",
+  "\u2029": "\\u2029",
+};
+
+function escapeUnsafeCharsForInlineJavaScript(value: string): string {
+  return value.replace(
+    /[<>/\\\b\f\n\r\t\0\u2028\u2029]/g,
+    (character) => inlineJavaScriptCharMap[character] ?? character,
+  );
+}
+
 const waitForFile = async (path: string): Promise<boolean> => {
   for (let attempt = 0; attempt < 500; attempt += 1) {
     if (
@@ -300,8 +322,8 @@ describe("execFileOutput cancellation lifecycle", () => {
       const interrupted = join(directory, "interrupted");
       const script = [
         'const fs = require("node:fs");',
-        `process.on("SIGINT", () => fs.writeFileSync(${JSON.stringify(interrupted)}, ""));`,
-        `fs.writeFileSync(${JSON.stringify(ready)}, "");`,
+        `process.on("SIGINT", () => fs.writeFileSync(${escapeUnsafeCharsForInlineJavaScript(JSON.stringify(interrupted))}, ""));`,
+        `fs.writeFileSync(${escapeUnsafeCharsForInlineJavaScript(JSON.stringify(ready))}, "");`,
         "setInterval(() => {}, 1000);",
       ].join("\n");
       const controller = new AbortController();
