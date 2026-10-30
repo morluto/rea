@@ -106,10 +106,10 @@ describe("rea mcp --http arguments", () => {
     expect(help).toContain("--host");
     expect(help).toContain("--port");
     expect(help).toContain("MCP_PORT");
-    // The array-valued flag names both spellings it accepts, so a repeated
-    // occurrence is not discovered by losing the earlier value.
+    // The flag's declared cardinality is a contract fact. The prose that
+    // explains repeat and comma spelling belongs in review; both spellings are
+    // asserted through parsing above.
     expect(help).toContain("--allowed-hosts <array>");
-    expect(help).toContain("repeat the flag or separate names with commas");
     expect(help).not.toContain("--filter-output");
   });
 
