@@ -16,7 +16,7 @@ Without the skill the tools exist but get used poorly.
 1. [Setup](#setup)
    - [Prerequisites](#prerequisites)
    - [Windows setup](#windows-setup)
-   - [Linux install example (Debian 13)](#linux-install-example-debian-13)
+   - [Linux install example (Debian 13, historical)](#linux-install-example-debian-13-historical)
 2. [Usage](#usage)
    - [Best way to use REA (agent-driven)](#best-way-to-use-rea-agent-driven)
    - [CLI Evidence patterns](#cli-evidence-patterns)
@@ -46,7 +46,7 @@ Without the skill the tools exist but get used poorly.
 
 ### Prerequisites
 
-- Node.js 22.19+, 24.11+, or 26+ with npm.
+- Node.js `^22.23.4 || ^24.22.1 || >=26.12.1` with npm.
 - A supported agent that accepts local MCP servers.
 - Native binaries: existing Ghidra (12.1.x; bridge verified with 12.1.4) + 64-bit full JDK 21+, or Hopper, or IDA. Static JS/Electron and .NET need nothing extra.
 - Linux: a procps-compatible `ps` on PATH (required for Ghidra/JADX/firmware and static JS launches).
@@ -70,7 +70,9 @@ rea setup
 
 Note: Windows Ghidra support is REA's "experimental P0 boundary" (see [docs/windows-ghidra-p0.md](./windows-ghidra-p0.md)). Setup never installs Ghidra, Java or Python.
 
-### Linux install example (Debian 13)
+### Linux install example (Debian 13, historical)
+
+Historical example. Node.js v24.22.0 in this table is outside the current engines range above and is not a current setup target.
 
 | Component  | Version                  | Notes                                                                   |
 | ---------- | ------------------------ | ----------------------------------------------------------------------- |
