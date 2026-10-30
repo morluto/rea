@@ -509,3 +509,43 @@ describe("Windows output backpressure and cleanup", () => {
     }
   });
 });
+
+describe("Windows output poll failure", () => {
+  it("keeps polling after failed native polls and reports the run once", async () => {
+    vi.useFakeTimers();
+    try {
+      const { native, calls } = authority({
+        polls: [
+          { malformed: true },
+          { malformed: true },
+          {
+            stdout: Buffer.from("frame\n"),
+            stderr: Buffer.alloc(0),
+            stdoutEnded: false,
+            stderrEnded: false,
+            exitCode: null,
+            activeProcesses: 1,
+          },
+          { ...settledPoll, stderr: Buffer.alloc(0), exitCode: 0 },
+        ],
+      });
+      const child = launch(native);
+      const errors: unknown[] = [];
+      child.on("error", (error) => errors.push(error));
+      const output: Buffer[] = [];
+      child.stdout.on("data", (chunk: Buffer) => output.push(chunk));
+      let closed = false;
+      child.once("close", () => (closed = true));
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(
+        calls.filter((call) => call.operation === "process_poll"),
+      ).toHaveLength(4);
+      expect(errors).toHaveLength(1);
+      expect(Buffer.concat(output).toString()).toBe("frame\n");
+      expect(child.exitCode).toBe(0);
+      expect(closed).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
