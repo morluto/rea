@@ -1,5 +1,6 @@
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ok } from "../domain/result.js";
+import { explicitSetupRegistrationEnvironment } from "./SetupRegistrationEnvironment.js";
 import { SetupCleanupOwner } from "./SetupCleanupOwner.js";
 import type { DoctorCheck } from "./Doctor.js";
 import type { SetupHost, SetupAction } from "./SetupTypes.js";
@@ -78,6 +79,9 @@ class PluginSetupHost {
       this.resources,
       this.launch,
     );
+    const runtimeFailure = await manager.inspectRuntime();
+    if (runtimeFailure !== undefined)
+      return { mode: "blocked", remediation: runtimeFailure };
     // Claude's inventory command can migrate settings, so defer it until approval.
     if (command === "claude")
       return { mode: "plugin", manager, installed: false, enabled: false };
@@ -140,7 +144,10 @@ class PluginSetupHost {
     installHopper,
     settings,
   ) => {
-    const providerSettings = installHopper || Object.keys(settings).length > 0;
+    const providerSettings =
+      installHopper ||
+      Object.keys(explicitSetupRegistrationEnvironment(this.environment))
+        .length > 0;
     if (providerSettings !== this.providerSettings) {
       this.pending.clear();
       this.routes.clear();
@@ -204,13 +211,16 @@ class PluginSetupHost {
         detail:
           "Client configuration changed after the plugin plan was approved. Rerun setup to avoid adding a duplicate server.",
       };
+    const runtimeFailure = await selected.manager.inspectRuntime();
+    if (runtimeFailure !== undefined)
+      return { status: "failed", reason: "plugin", detail: runtimeFailure };
     this.approvedPluginClients.add(client.name);
     const state = await selected.manager.inspect();
     const failure =
       state.status === "invalid"
         ? state.remediation
         : state.status === "unsupported"
-          ? "The client does not support plugin commands. Update the client, or explicitly choose direct setup with --skill=false."
+          ? `${state.remediation} Update the client, or explicitly choose direct setup with --skill=false.`
           : state.installed && state.enabled
             ? undefined
             : await selected.manager.install(state.installed);
@@ -263,7 +273,10 @@ class PluginSetupHost {
       (id === "claude_code" && !this.approvedPluginClients.has(id))
     )
       return undefined;
-    return selected.manager.inspect();
+    const runtimeFailure = await selected.manager.inspectRuntime();
+    return runtimeFailure === undefined
+      ? selected.manager.inspect()
+      : { status: "invalid", remediation: runtimeFailure };
   };
 
   private doctor: NonNullable<SetupHost["doctor"]> = async (scope) => {
@@ -299,7 +312,9 @@ class PluginSetupHost {
         detail:
           state === undefined
             ? "Plugin inventory was not inspected because this client was not approved."
-            : `${REA_PLUGIN_ID} must be installed and enabled in the client.`,
+            : state.status !== "available"
+              ? state.remediation
+              : `${REA_PLUGIN_ID} must be installed and enabled in the client.`,
       });
     }
     return {

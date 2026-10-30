@@ -16,7 +16,7 @@ import { BoundedOutputExcerpt } from "../process/BoundedOutputExcerpt.js";
 const PLUGIN_COMMAND_CAPTURE_LIMIT = 64 * 1024;
 
 /** Facts of one supervised client plugin command. */
-interface SetupPluginCommandResult {
+export interface SetupPluginCommandResult {
   readonly exitCode: string | number | null;
   readonly signal: string | null;
   readonly stdout: string;

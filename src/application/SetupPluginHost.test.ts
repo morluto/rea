@@ -22,6 +22,8 @@ const fixture = (clientId = "codex", platform: NodeJS.Platform = "win32") => {
   ];
   base.doctorHealthy = true;
   const calls: Array<{ command: string; args: readonly string[] }> = [];
+  let nodeVersion: string | undefined = "v24.22.1";
+  let dropNodeOnInstall = false;
   let installed = false;
   let enabled = false;
   let failure: string | undefined;
@@ -31,6 +33,17 @@ const fixture = (clientId = "codex", platform: NodeJS.Platform = "win32") => {
   let interruptAt: number | undefined;
   let doctorsAtInterrupt = 0;
   const launch: SetupPluginCommandLauncher = async (command, args) => {
+    if (command === "node")
+      return {
+        exitCode: nodeVersion === undefined ? 1 : 0,
+        signal: null,
+        stdout: nodeVersion ?? "",
+        stderr: "",
+        timedOut: false,
+        ...(nodeVersion === undefined
+          ? { spawnError: "ENOENT: node missing" }
+          : {}),
+      };
     calls.push({ command, args });
     if (calls.length === interruptAt) {
       doctorsAtInterrupt = base.doctorCalls;
@@ -64,6 +77,7 @@ const fixture = (clientId = "codex", platform: NodeJS.Platform = "win32") => {
     if (!listing && args[1] !== "marketplace") {
       installed = true;
       enabled = true;
+      if (dropNodeOnInstall) nodeVersion = undefined;
     }
     const entries =
       installed && !failReadback
@@ -87,8 +101,16 @@ const fixture = (clientId = "codex", platform: NodeJS.Platform = "win32") => {
   return {
     base,
     calls,
-    host: (preferPlugins = true) =>
-      withPluginSetup(base, {}, preferPlugins, launch),
+    host: (
+      preferPlugins = true,
+      environment: Readonly<NodeJS.ProcessEnv> = {},
+    ) => withPluginSetup(base, environment, preferPlugins, launch),
+    nodeDisappearsOnInstall: () => {
+      dropNodeOnInstall = true;
+    },
+    node: (version: string | undefined) => {
+      nodeVersion = version;
+    },
     setupOptions: {
       ...options(true),
       clientIds: [clientId],
@@ -384,7 +406,14 @@ it.each([
 it("preserves custom provider registration settings", async () => {
   const f = fixture();
   f.base.ghidra = "/custom/ghidra";
-  expect((await runSetup(f.setupOptions, f.host())).status).toBe("ready");
+  expect(
+    (
+      await runSetup(
+        f.setupOptions,
+        f.host(true, { GHIDRA_INSTALL_DIR: "/custom/ghidra" }),
+      )
+    ).status,
+  ).toBe("ready");
   expect(f.mutations()).toEqual([]);
   expect(f.base.configurations).toBe(1);
   expect(f.base.configuredProviderEnvironments[0]).toMatchObject({
@@ -435,4 +464,45 @@ it("selects the plugin after an interactive user declines the optional Hopper in
     f.base.hopperInstalls + f.base.configurations + f.base.skillInstalls,
   ).toBe(0);
   expect(f.mutations()).toHaveLength(2);
+});
+
+it.each(["codex", "claude_code"])(
+  "keeps an installed %s plugin after Hopper is discovered on a rerun",
+  async (id) => {
+    const f = fixture(id);
+    expect((await runSetup(f.setupOptions, f.host())).status).toBe("ready");
+    f.base.hopper = "/Applications/Hopper.app/Contents/MacOS/Hopper";
+    expect((await runSetup(f.setupOptions, f.host())).status).toBe("ready");
+    expect(f.base.configurations + f.base.skillInstalls).toBe(0);
+    expect(f.mutations()).toHaveLength(2);
+  },
+);
+it.each([undefined, "v20.0.0", "invalid"])(
+  "does not install a plugin or report readiness without a supported standalone Node (%s)",
+  async (version) => {
+    const f = fixture("claude_code");
+    f.node(version);
+    const result = await runSetup(f.setupOptions, f.host());
+    expect(result.status).toBe("needs_human");
+    expect(result.remediation).toContain("Node");
+    expect(f.calls).toEqual([]);
+    expect(f.base.configurations + f.base.skillInstalls).toBe(0);
+  },
+);
+it("reports a plugin's Node prerequisite disappearing after installation", async () => {
+  const f = fixture();
+  expect((await runSetup(f.setupOptions, f.host())).status).toBe("ready");
+  f.node(undefined);
+  const result = await runSetup(f.setupOptions, f.host());
+  expect(result.status).toBe("needs_human");
+  expect(f.base.configurations).toBe(0);
+});
+
+it("readiness retains the Node failure when it disappears during plugin installation", async () => {
+  const f = fixture();
+  f.nodeDisappearsOnInstall();
+  const result = await runSetup(f.setupOptions, f.host());
+  expect(result.status).toBe("needs_human");
+  expect(result.doctor.healthy).toBe(false);
+  expect(f.base.configurations + f.base.skillInstalls).toBe(0);
 });

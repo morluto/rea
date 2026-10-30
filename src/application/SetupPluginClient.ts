@@ -1,23 +1,28 @@
 import { z } from "zod";
-import { stat } from "node:fs/promises";
-import { win32 } from "node:path";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import {
   isWindowsBatchFile,
   windowsBatchCommand,
 } from "../process/WindowsBatchCommand.js";
+import { BoundedOutputExcerpt } from "../process/BoundedOutputExcerpt.js";
+import { findWindowsExecutable } from "../process/WindowsExecutable.js";
+import {
+  supportsNodeVersion,
+  SUPPORTED_NODE_VERSION_PROSE,
+} from "../domain/runtimeVersion.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import {
   launchSetupPluginCommand,
   type SetupPluginCommandLauncher,
+  type SetupPluginCommandResult,
 } from "./SetupPluginCommand.js";
 
 export const REA_PLUGIN_ID = "rea@rea";
 const REA_MARKETPLACE = "morluto/rea";
 type PluginClientCommand = "codex" | "claude";
 export type PluginInspection =
-  | { readonly status: "unsupported" }
+  | { readonly status: "unsupported"; readonly remediation: string }
   | { readonly status: "invalid"; readonly remediation: string }
   | {
       readonly status: "available";
@@ -54,51 +59,30 @@ const launchPluginCommand: SetupPluginCommandLauncher = async (
     ...selectedEnvironment,
     PATHEXT: selectedEnvironment.PATHEXT ?? ".COM;.EXE;.BAT;.CMD",
   };
-  // Resolve PATH explicitly: cmd would otherwise prefer a file in the project CWD.
-  let executable: string | undefined;
-  for (const entry of (selectedEnvironment.PATH ?? "").split(";")) {
-    if (entry === "") continue;
-    const directory =
-      entry.startsWith('"') && entry.endsWith('"') ? entry.slice(1, -1) : entry;
-    if (directory === "") continue;
-    for (const extension of environment.PATHEXT.split(";")) {
-      if (![".com", ".exe", ".bat", ".cmd"].includes(extension.toLowerCase()))
-        continue;
-      const candidate = win32.resolve(
-        options.cwd,
-        directory,
-        `${command}${extension}`,
-      );
-      try {
-        if ((await stat(candidate)).isFile()) {
-          executable = candidate;
-          break;
-        }
-      } catch (cause: unknown) {
-        const code =
-          cause instanceof Error && "code" in cause ? cause.code : undefined;
-        if (code !== "ENOENT" && code !== "ENOTDIR")
-          return {
-            exitCode: null,
-            signal: null,
-            stdout: "",
-            stderr:
-              "Client PATH lookup failed. Check access to the selected PATH directories.",
-            timedOut: false,
-          };
-      }
-    }
-    if (executable !== undefined) break;
-  }
-  if (executable === undefined)
+  const found = await findWindowsExecutable(command, environment, {
+    signal: AbortSignal.timeout(options.timeoutMs),
+    cwd: options.cwd,
+    allowBatch: command !== "node",
+  });
+  if (!found.ok) {
+    const failure = found.error;
     return {
       exitCode: null,
       signal: null,
       stdout: "",
       stderr: "",
-      timedOut: false,
-      spawnError: "ENOENT: client was not found on the selected PATH",
+      timedOut: failure.kind === "interrupted",
+      spawnError:
+        failure.kind === "missing"
+          ? `ENOENT: ${command} was not found on the selected PATH`
+          : failure.kind === "inspection"
+            ? `Client PATH lookup failed at ${failure.path} (${failure.code ?? "unknown filesystem error"}).`
+            : failure.kind === "invalid_extension"
+              ? `Client PATH lookup rejected PATHEXT entry ${failure.extension}.`
+              : "Client PATH lookup reached its deadline.",
     };
+  }
+  const executable = found.value;
   if (!isWindowsBatchFile(executable))
     return launchSetupPluginCommand(executable, arguments_, {
       ...options,
@@ -116,6 +100,28 @@ const launchPluginCommand: SetupPluginCommandLauncher = async (
   });
 };
 
+const pluginCommandFailure = (result: SetupPluginCommandResult): string => {
+  const excerpt = new BoundedOutputExcerpt(2048);
+  excerpt.append(
+    Buffer.from(
+      [
+        result.timedOut
+          ? "command timed out"
+          : `exit ${result.exitCode ?? "unknown"}`,
+        result.spawnError,
+        result.cleanupFailure === undefined
+          ? undefined
+          : `child cleanup incomplete: ${result.cleanupFailure}`,
+        result.stderr.trim(),
+        result.stdout.trim(),
+      ]
+        .filter((value) => value !== undefined && value !== "")
+        .join("; "),
+    ),
+  );
+  return excerpt.text;
+};
+
 /** Client commands own plugin state; never infer it from a cache directory. */
 export class SetupPluginClient {
   constructor(
@@ -125,8 +131,12 @@ export class SetupPluginClient {
     private readonly launch: SetupPluginCommandLauncher = launchPluginCommand,
   ) {}
 
-  private async run(arguments_: readonly string[], timeoutMs: number) {
-    const result = await this.launch(this.command, arguments_, {
+  private async run(
+    arguments_: readonly string[],
+    timeoutMs: number,
+    command: string = this.command,
+  ) {
+    const result = await this.launch(command, arguments_, {
       env: this.environment,
       cwd: process.cwd(),
       timeoutMs,
@@ -141,12 +151,24 @@ export class SetupPluginClient {
     return result;
   }
 
+  async inspectRuntime(): Promise<string | undefined> {
+    const result = await this.run(["--version"], 10_000, "node");
+    return result.exitCode === 0 &&
+      result.spawnError === undefined &&
+      !result.timedOut &&
+      result.cleanupFailure === undefined &&
+      result.stdoutTruncated !== true &&
+      supportsNodeVersion(result.stdout.trim())
+      ? undefined
+      : `REA plugins require standalone ${SUPPORTED_NODE_VERSION_PROSE} on the client's PATH. Install a supported Node.js runtime or explicitly choose direct setup with --skill=false. Node check: ${pluginCommandFailure(result)}`;
+  }
+
   async inspect(): Promise<PluginInspection> {
     const result = await this.run(["plugin", "list", "--json"], 30_000);
     if (result.cleanupFailure !== undefined || result.timedOut)
       return {
         status: "invalid",
-        remediation: `${this.command} plugin inspection did not finish safely. Check the client and rerun setup.`,
+        remediation: `${this.command} plugin inspection did not finish safely: ${pluginCommandFailure(result)}. Check the client and rerun setup.`,
       };
     if (result.stdoutTruncated === true)
       return {
@@ -159,10 +181,13 @@ export class SetupPluginClient {
           `${result.spawnError ?? ""} ${result.stderr}`,
         )
       )
-        return { status: "unsupported" };
+        return {
+          status: "unsupported",
+          remediation: `${this.command} plugin commands are unavailable: ${pluginCommandFailure(result)}`,
+        };
       return {
         status: "invalid",
-        remediation: `${this.command} plugin list failed. Run ${this.command} plugin list --json, resolve the reported error, and rerun setup.`,
+        remediation: `${this.command} plugin list failed: ${pluginCommandFailure(result)}. Resolve the reported error and rerun setup.`,
       };
     }
     try {
@@ -193,7 +218,7 @@ export class SetupPluginClient {
     } catch {
       return {
         status: "invalid",
-        remediation: `${this.command} returned an unreadable plugin inventory. No registration was added; update the client or inspect its plugin list.`,
+        remediation: `${this.command} returned an unreadable plugin inventory: ${pluginCommandFailure(result)}. No registration was added; update the client or inspect its plugin list.`,
       };
     }
   }
@@ -227,9 +252,10 @@ export class SetupPluginClient {
         result.timedOut ||
         result.cleanupFailure !== undefined
       )
-        return `${this.command} ${arguments_.join(" ")} did not complete. Run the command in your terminal, resolve its error, then rerun setup. Any successfully added marketplace is retained; no direct MCP registration was created.`;
+        return `${this.command} ${arguments_.join(" ")} did not complete: ${pluginCommandFailure(result)}. Resolve the reported error, then rerun setup. Any successfully added marketplace is retained; no direct MCP registration was created.`;
     }
     const verified = await this.inspect();
+    if (verified.status !== "available") return verified.remediation;
     return verified.status === "available" &&
       verified.installed &&
       verified.enabled

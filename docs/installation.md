@@ -1576,7 +1576,12 @@ also applies when choosing those clients in interactive setup. The plan shows
 the exact marketplace and install commands, and requires the usual approval
 before either command runs. Setup verifies that the client reports `rea@rea`
 installed and enabled, and skips the separate MCP registration and skill copy.
-Rerunning setup leaves an enabled plugin installed without repeating the install.
+Rerunning setup leaves an enabled plugin installed without repeating the install,
+including when setup discovers an existing Hopper installation automatically.
+Plugin setup checks for a supported standalone `node` on the selected client
+PATH before installation and readiness checks, even when REA itself runs on Bun.
+A missing or unsupported Node runtime stops plugin setup with installation
+guidance; setup does not install or upgrade Node.
 Claude Code's inventory command can migrate client settings, so setup defers that
 command until approval. Its plan includes the inventory and conditional install
 or enable commands even on reruns; an already enabled plugin needs no reinstall.
@@ -1588,11 +1593,13 @@ Inventories larger than the 64 KiB capture limit report that limit explicitly;
 use the client plugin manager directly for those inventories.
 
 Existing direct registrations remain direct. Older Codex clients without plugin
-commands, custom provider environment settings, a Hopper installation plan,
+commands, explicitly selected provider environment settings, a Hopper installation plan,
 `--skill=false`, `--skill-client`, or `--tool-families` retain direct setup.
 These explicit direct paths do not invoke the plugin manager; remove an existing
 REA plugin in the client before deliberately selecting a direct installation.
-An unreadable plugin list or failed plugin installation stops with remediation;
+An unreadable plugin list or failed plugin installation stops with remediation
+that retains a bounded excerpt of the command output and timeout or cleanup
+details, including failures during installation readback;
 setup never hides that failure by creating another MCP server. Resolve a plugin
 from another source or scope in the client's plugin manager before rerunning.
 For Claude Code versions without plugin commands, update the client or explicitly

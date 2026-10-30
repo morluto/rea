@@ -1,4 +1,8 @@
 import { expect, it, onTestFinished } from "vitest";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import type { SetupPluginCommandLauncher } from "./SetupPluginCommand.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
@@ -102,3 +106,73 @@ it("preserves cancellation and retained cleanup ownership through setup and retr
   expect(cleanupAttempts).toBe(2);
   expect(failure.cleanupIncomplete).toBe(false);
 });
+
+it.runIf(process.platform === "win32")(
+  "resolves a client in a quoted Windows PATH containing a semicolon",
+  async () => {
+    const root = await createTestTempDirectory("rea-plugin-quoted-path-");
+    const bin = join(root, "tools;clients");
+    await mkdir(bin);
+    const script = join(bin, "client.mjs");
+    await writeFile(
+      script,
+      "process.stdout.write(JSON.stringify({installed:[]}));",
+    );
+    await writeFile(
+      join(bin, "codex.cmd"),
+      `@"${process.execPath}" "${script}" %*\r\n`,
+    );
+    const resources = new ArtifactResourceScope();
+    onTestFinished(() => resources.close());
+    const client = new SetupPluginClient(
+      "codex",
+      { ...process.env, PATH: `"${bin}"`, PATHEXT: ".CMD" },
+      resources,
+    );
+    expect(await client.inspect()).toMatchObject({
+      status: "available",
+      installed: false,
+    });
+  },
+);
+it.each(["inventory", "install", "readback"] as const)(
+  "preserves bounded command failure details during %s",
+  async (stage) => {
+    const resources = new ArtifactResourceScope();
+    onTestFinished(() => resources.close());
+    const launch: SetupPluginCommandLauncher = async (_command, args) => {
+      const failed =
+        stage === "inventory" ||
+        (stage === "install" ? args[1] !== "list" : args[1] === "list");
+      return {
+        exitCode: failed ? 1 : 0,
+        signal: null,
+        stdout: "",
+        stderr: failed
+          ? "Sign in to the marketplace before installing. " +
+            "x".repeat(10000) +
+            " END-OF-FAILURE"
+          : "",
+        timedOut: failed,
+        ...(failed
+          ? { cleanupFailure: "controlled child cleanup failure" }
+          : {}),
+      };
+    };
+    const client = new SetupPluginClient("claude", {}, resources, launch);
+    const failure =
+      stage === "inventory"
+        ? await client.inspect()
+        : await client.install(false);
+    const message =
+      typeof failure === "string"
+        ? failure
+        : failure?.status === "invalid"
+          ? failure.remediation
+          : "";
+    expect(message).toContain("Sign in to the marketplace");
+    expect(message).toContain("controlled child cleanup failure");
+    expect(message).toContain("END-OF-FAILURE");
+    expect(message.length).toBeLessThan(3000);
+  },
+);
