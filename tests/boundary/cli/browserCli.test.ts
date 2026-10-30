@@ -37,6 +37,91 @@ afterEach(async () => {
 });
 
 cliTest(
+  "compares source-map declaration omissions through the public CLI",
+  async ({ cli }) => {
+    const cdn = "https://cdn.example.test";
+    const browser = await startFakeCdpBrowser({
+      commandEvents: ({ method }, origin) =>
+        method === "Debugger.enable"
+          ? [
+              {
+                method: "Debugger.scriptParsed",
+                sessionId: "session-1",
+                params: {
+                  scriptId: "map-script",
+                  url: `${origin}/app.js`,
+                  hash: "a".repeat(64),
+                  length: 10,
+                  isModule: false,
+                  scriptLanguage: "JavaScript",
+                  sourceMapURL: `${cdn}/app.map`,
+                },
+              },
+            ]
+          : undefined,
+    });
+    browsers.push(browser);
+    const inspect = async (broad: boolean) => {
+      const result = await cli.run({
+        arguments: [
+          "inspect-web-page",
+          browser.endpoint,
+          "allowed-page",
+          "--observation-ms",
+          "0",
+          "--allowed-origins",
+          browser.allowedOrigin,
+          ...(broad ? ["--allowed-origins", cdn] : []),
+          "--json",
+        ],
+        environment: process.env,
+      });
+      expect(result.exitCode, result.stderr).toBe(0);
+      return normalizedResult(result.json);
+    };
+    const known = await inspect(true);
+    const omitted = await inspect(false);
+    expect(known).toMatchObject({
+      scripts: {
+        items: [expect.objectContaining({ source_map_url: `${cdn}/app.map` })],
+      },
+    });
+    expect(omitted).toMatchObject({
+      scripts: { items: [expect.objectContaining({ source_map_url: null })] },
+      completeness: {
+        excluded: expect.arrayContaining([
+          expect.objectContaining({
+            section: "source_maps",
+            reason: "disallowed_origin",
+          }),
+        ]),
+      },
+    });
+    for (const [before, after] of [
+      [known, omitted],
+      [omitted, known],
+      [omitted, omitted],
+    ] as const) {
+      const result = await cli.run({
+        arguments: [
+          "compare-web-captures",
+          JSON.stringify({ inspection: before }),
+          JSON.stringify({ inspection: after }),
+          "--json",
+        ],
+      });
+      expect(result.exitCode, result.stderr).toBe(0);
+      expect(result.json).toMatchObject({
+        normalized_result: {
+          dimensions: { scripts: { status: "unknown", total_changes: 0 } },
+        },
+      });
+    }
+  },
+  INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+cliTest(
   "browser CLI parity returns the same Evidence discovery and inspection contracts",
   async ({ cli }) => {
     const browser = await startFakeCdpBrowser({

@@ -281,8 +281,19 @@ cliTest(
     const semanticEvidence = toolContract(
       "trace_javascript_semantics",
     ).outputSchema.parse(semantic.structuredContent);
+    const argument = result.semantic_graph.nodes.find(
+      (node) =>
+        node.kind === "expression" &&
+        node.properties.literal_argument_value === "proc_named" &&
+        node.properties.literal_argument_call_site_node_id === callSite.node_id,
+    );
+    if (argument === undefined)
+      throw new Error("Expected literal argument node");
     expect(semanticEvidence.normalized_result).toMatchObject({
-      seed_node_ids: expect.arrayContaining([callSite.node_id]),
+      seed_node_ids: expect.arrayContaining([argument.node_id]),
+      nodes: expect.arrayContaining([
+        expect.objectContaining({ node_id: callSite.node_id }),
+      ]),
     });
   },
 );

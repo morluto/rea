@@ -1040,7 +1040,10 @@ it.skipIf(process.platform === "win32")(
         throw new Error("closed reader compilation unexpectedly succeeded");
       expect(outcome.cause).toMatchObject({ name: "AbortError" });
       await expect(access(state.root)).rejects.toThrow();
-      await expect(reader.prepare()).rejects.toThrow(/reader is closed/u);
+      await expect(reader.prepare()).rejects.toMatchObject({
+        _tag: "ProcessAdmissionError",
+        code: "reader_closed",
+      });
       await expect(reader.close()).resolves.toBeUndefined();
     } finally {
       await Promise.allSettled([preparation]);

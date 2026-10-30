@@ -1256,3 +1256,8 @@ rea inspect-pe-load-config /absolute/path/to/application.exe --json
 Reports TLS callbacks and size-covered load-config fields without execution.
 Use `--max-callbacks` and `--max-file-bytes` to set read budgets. See
 [PE TLS and load configuration](pe-load-config.md).
+
+Bun standalone executables use the existing `inspect-artifact` and
+`extract-artifact` commands to inventory and materialize embedded source,
+sourcemaps and bytecode without running the executable. See
+[Bun standalone executables](bun-standalone.md) for layout coverage and limits.

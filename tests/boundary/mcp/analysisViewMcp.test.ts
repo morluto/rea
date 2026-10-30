@@ -1596,6 +1596,19 @@ it("advertises Mach-O pages whose selected facet owns their exact rows", async (
     ]),
     exports: coverage([symbol]),
     segments: coverage([]),
+    encryption: coverage([
+      {
+        architecture: "arm64",
+        cpu_type: 16777228,
+        cpu_subtype: 0,
+        container_file_offset: 0,
+        size: 4096,
+        status: "absent",
+        reason: null,
+        commands: [],
+        range: null,
+      },
+    ]),
     provenance: [],
     limitations: [],
   });
@@ -1611,6 +1624,7 @@ it("advertises Mach-O pages whose selected facet owns their exact rows", async (
     "imports",
     "exports",
     "segments",
+    "encryption",
   ] as const) {
     for (const offset of [0, 999]) {
       const response = await client.callTool({

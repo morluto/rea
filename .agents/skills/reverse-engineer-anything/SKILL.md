@@ -2,7 +2,7 @@
 name: reverse-engineer-anything
 description: Reverse engineer native, managed, Electron/JavaScript, packaged, firmware, and browser targets with REA, and build agent environments (AgentEnv bundles) of web applications from a live instance or a capture. Use shipped-artifact or requested runtime evidence to explain features, compare versions, decompile code, or guide a reconstruction. Skip REA for ordinary source-repository architecture analysis.
 metadata:
-  version: "53"
+  version: "55"
 ---
 
 # REA
@@ -94,6 +94,9 @@ explicit path or endpoint and do not need it.
   than extra calls and schemas. Runtime options are metadata, not files.
   Compact delivery still inventories and hashes members. See the
   [Python packaged applications guide](https://github.com/morluto/rea/blob/main/docs/python-packaged-applications.md).
+- Bun `--compile` executable: `open_binary`, then `inspect_artifact`; the Bun
+  module graph is the application layer. Extract stored modules and analyze the
+  JavaScript. See [Bun standalone executables](https://github.com/morluto/rea/blob/main/docs/bun-standalone.md).
 - Apple app plist, Interface Builder, asset catalog, or keyed archive resources:
   `open_bundle_resources`, then the selected resource tool. This does not
   require `CFBundleExecutable` or a deep provider. Resource sessions have no

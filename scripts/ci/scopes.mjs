@@ -107,6 +107,7 @@ export const SCOPES = {
     "tests/boundary/providers/native/nativeSignatureTargetBinding.test.ts",
     "tests/boundary/cli/nativeSignatureCli.test.ts",
     "tests/boundary/cli/nativeMachoArm64_32Cli.test.ts",
+    "tests/boundary/cli/nativeMachoEncryptionCli.test.ts",
     "tests/boundary/mcp/nativeSignatureTargetBindingMcp.test.ts",
     "src/process/capture/FilesystemSnapshot.test.ts",
     "tests/process-global/filesystemSnapshotFallbackCancellation.test.ts",

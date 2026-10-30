@@ -47,7 +47,7 @@ export interface BinarySessionPort
     _path: string | undefined,
     signal: AbortSignal | undefined,
     operation: () => Promise<Result<Value, AnalysisError>>,
-    retirementFailure: (
+    completionFailure: (
       value: Result<Value, AnalysisError>,
       error: AnalysisError,
     ) => AnalysisError,

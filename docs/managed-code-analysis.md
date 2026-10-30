@@ -243,12 +243,16 @@ authenticates the saved bundle; the full source is retained on disk.
 
 The canonical parser admits PE/CLI bytes and their metadata/CIL without loading
 an assembly. It reports observed implementation markers and unavailable facts;
-it does not unpack .NET single-file hosts or infer a NativeAOT identity from an
-ordinary native PE. It does not decode IL2CPP; use
+it does not itself unpack .NET single-file hosts or infer a NativeAOT identity
+from an ordinary native PE. It does not decode IL2CPP; use
 [IL2CPP metadata](il2cpp-metadata.md) for the image, type and method names in a
 Unity `global-metadata.dat`. Inputs without admitted CLI metadata do not
 become managed assemblies through naming or routing guesses.
 Inspect separately obtained components explicitly and preserve their identities.
+
+For ordinary .NET single-file hosts, use the existing artifact tools to
+[inventory and extract bundle members](dotnet-bundles.md), then inspect the
+extracted assembly explicitly with the managed tools.
 
 A valid implementation marker establishes a candidate native boundary, not
 recovered native semantics or runtime behavior.

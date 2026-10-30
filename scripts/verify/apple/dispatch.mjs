@@ -10,10 +10,14 @@ import { ArtifactResourceScope } from "../../../dist/artifacts/ArtifactResourceS
 import { inspectAppleDispatchMetadata } from "../../../dist/native/AppleDispatchMetadata.js";
 import {
   artifactCliEvidence,
+  artifactMcpCall,
   artifactMcpResult,
   withArtifactMcp,
 } from "../../lib/artifact-e2e.mjs";
 import { nativeDispatchMetadataResultSchema } from "../../../dist/domain/native/objcSwiftMetadata.js";
+import { analysisErrorProjectionSchema } from "../../../dist/contracts/errorSchemas.js";
+import { cliOperationFailurePayload } from "../../../dist/cliLogging.js";
+import { requireMcpToolError } from "../../lib/mcp-verifier-results.mjs";
 
 if (process.platform !== "darwin")
   throw new Error(
@@ -344,6 +348,74 @@ try {
     commands,
     target_sha256: cliResult.target_sha256,
   });
+  for (const { section, size, reason } of [
+    {
+      section: "__objc_classlist",
+      size: 12,
+      reason: "Misaligned Objective-C class-list size",
+    },
+    {
+      section: "__swift5_types",
+      size: 6,
+      reason: "Misaligned Swift type section",
+    },
+  ]) {
+    const bytes = Buffer.alloc(4096);
+    bytes.writeUInt32LE(0xfeedfacf);
+    bytes.writeUInt32LE(0x0100000c, 4);
+    bytes.writeUInt32LE(2, 12);
+    bytes.writeUInt32LE(1, 16);
+    bytes.writeUInt32LE(152, 20);
+    bytes.writeUInt32LE(0x19, 32); // LC_SEGMENT_64
+    bytes.writeUInt32LE(152, 36);
+    bytes.write("__DATA", 40);
+    bytes.writeBigUInt64LE(0x100000000n, 56);
+    bytes.writeBigUInt64LE(4096n, 64);
+    bytes.writeBigUInt64LE(4096n, 80);
+    bytes.writeUInt32LE(7, 88);
+    bytes.writeUInt32LE(5, 92);
+    bytes.writeUInt32LE(1, 96);
+    bytes.write(section, 104);
+    bytes.write("__DATA", 120);
+    bytes.writeBigUInt64LE(0x100000200n, 136);
+    bytes.writeBigUInt64LE(BigInt(size), 144);
+    bytes.writeUInt32LE(512, 152);
+    const path = join(root, `malformed-${section}.macho`);
+    await writeFile(path, bytes);
+    const target = await parseBinaryTarget(path);
+    assert.ok(
+      target.ok,
+      "Malformed section fixture must pass target admission",
+    );
+    let cliFailure;
+    try {
+      await artifactCliEvidence("inspect-native-dispatch-metadata", path);
+      assert.fail("Malformed metadata unexpectedly succeeded");
+    } catch (cause) {
+      assert.equal(cause.code, 1);
+      cliFailure = analysisErrorProjectionSchema.parse(
+        cliOperationFailurePayload(JSON.parse(cause.stdout)),
+      );
+    }
+    assert.equal(cliFailure.code, "unsupported_target");
+    assert.equal(cliFailure.category, "unsupported_target");
+    assert.deepEqual(cliFailure.details, {
+      operation: "inspect_native_dispatch_metadata",
+      path: target.value.path,
+      reason,
+    });
+    await withArtifactMcp(path, async (client) => {
+      const failure = requireMcpToolError(
+        await artifactMcpCall(client, {
+          name: "inspect_native_dispatch_metadata",
+          arguments: {},
+        }),
+      );
+      assert.equal(failure.code, cliFailure.code);
+      assert.deepEqual(failure.details, cliFailure.details);
+    });
+    results.push({ variant: `malformed-${section}`, reason });
+  }
   for (const mode of LINK_MODES) {
     const objcPath = join(root, `fixture-${mode.mode}`);
     await exec("/usr/bin/xcrun", [

@@ -42,8 +42,11 @@ import type { EvidenceWriter } from "../application/investigation/InvestigationR
 import {
   AnalysisInputError,
   AnalysisResourceConstraintError,
+  type AnalysisInputIssue,
 } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { projectInputIssueGroupsWithinBudget } from "../domain/inputIssueProjection.js";
+import type { z } from "zod";
 import { createEvidence } from "../domain/evidence.js";
 import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
 import {
@@ -60,6 +63,46 @@ import {
 import { RequestTrackingMcpServer } from "./RequestTrackingMcpServer.js";
 
 const currentRequestSignal = new AsyncLocalStorage<AbortSignal>();
+interface ToolValidationContext {
+  readonly tool: string;
+  validation?: {
+    readonly issues: readonly z.core.$ZodIssue[];
+    readonly input: unknown;
+  };
+}
+const currentToolValidation = new AsyncLocalStorage<ToolValidationContext>();
+
+/** Capture structured issues from the canonical validation the SDK already performs. */
+const captureInputValidation = <Schema extends StandardSchemaWithJSON>(
+  tool: string,
+  schema: Schema,
+): Schema => {
+  const standard = schema["~standard"];
+  if (standard.vendor !== "zod") return schema;
+  return {
+    ...schema,
+    "~standard": {
+      ...standard,
+      validate: (value: unknown) => {
+        const context = currentToolValidation.getStore();
+        const capture = (
+          result: Awaited<ReturnType<typeof standard.validate>>,
+        ) => {
+          if (context?.tool === tool && result.issues !== undefined)
+            context.validation = {
+              issues: result.issues as readonly z.core.$ZodIssue[],
+              input: value,
+            };
+          return result;
+        };
+        const result = standard.validate(value);
+        return result instanceof Promise
+          ? result.then(capture)
+          : capture(result);
+      },
+    },
+  } as Schema;
+};
 
 /** Signal for the completion request currently being dispatched by the SDK. */
 export const currentMcpRequestSignal = (): AbortSignal | undefined =>
@@ -91,6 +134,73 @@ const sdkInputValidationDiagnostic = (
   if (!text.startsWith(prefix) || text[prefix.length] !== ":") return undefined;
   const diagnostic = text.slice(prefix.length + 1).trimStart();
   return diagnostic.length === 0 ? undefined : diagnostic;
+};
+
+/** Place an SDK diagnostic at a field only when that same issue produced it. */
+const partitionSdkDiagnostic = (
+  validation: ToolValidationContext["validation"],
+  groups: readonly (readonly AnalysisInputIssue[])[] | undefined,
+  diagnostic: string,
+):
+  | { issues: readonly AnalysisInputIssue[]; remaining: string | undefined }
+  | undefined => {
+  if (
+    validation === undefined ||
+    groups === undefined ||
+    validation.issues.length !== groups.length
+  )
+    return undefined;
+  let offset = 0;
+  const consume = (text: string): boolean => {
+    if (!diagnostic.startsWith(text, offset)) return false;
+    offset += text.length;
+    return true;
+  };
+  const mapped: AnalysisInputIssue[] = [];
+  const remaining: string[] = [];
+  for (let index = 0; index < validation.issues.length; index += 1) {
+    const raw = validation.issues[index];
+    const group = groups[index];
+    if (raw === undefined || group === undefined) return undefined;
+    if (index > 0 && !consume(", ")) return undefined;
+    const start = offset;
+    for (let part = 0; part < raw.path.length; part += 1) {
+      if (part > 0 && !consume(".")) return undefined;
+      if (!consume(String(raw.path[part]))) return undefined;
+    }
+    if (raw.path.length > 0 && !consume(": ")) return undefined;
+    if (!consume(raw.message)) return undefined;
+    const issue = group.length === 1 ? group[0] : undefined;
+    const sameField =
+      issue !== undefined &&
+      raw.path.length === issue.path.length &&
+      raw.path.every((part, i) => part === issue.path[i]);
+    const sameMessage =
+      issue?.message !== undefined && issue.message === raw.message;
+    const direct =
+      raw.code !== "invalid_union" &&
+      raw.code !== "invalid_key" &&
+      raw.code !== "unrecognized_keys";
+    if (
+      sameField &&
+      issue !== undefined &&
+      (sameMessage || (direct && issue.message === undefined))
+    ) {
+      mapped.push(
+        issue.message === undefined
+          ? { ...issue, message: raw.message }
+          : issue,
+      );
+    } else {
+      for (const issue of group) mapped.push(issue);
+      remaining.push(diagnostic.slice(start, offset));
+    }
+  }
+  if (offset !== diagnostic.length) return undefined;
+  return {
+    issues: mapped,
+    remaining: remaining.length === 0 ? undefined : remaining.join(", "),
+  };
 };
 
 /** Replace the tool payload after the SDK codec while retaining its envelope. */
@@ -295,8 +405,17 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
               presentAdvertisedInputSchema(projected, { budgetBytes: budget }),
           )
         : undefined;
+    const presentedSchema = inputSchema ?? config.inputSchema;
     const registeredConfig =
-      inputSchema === undefined ? config : { ...config, inputSchema };
+      presentedSchema === undefined
+        ? config
+        : {
+            ...config,
+            inputSchema: captureInputValidation(
+              name,
+              presentedSchema as StandardSchemaWithJSON,
+            ),
+          };
     const scoped = (input: never, context: never) =>
       this.analysisSettings === undefined
         ? callback(input, context)
@@ -351,6 +470,10 @@ class ErrorEvidenceTransport implements Transport {
   onmessage: Transport["onmessage"];
   readonly hasPerRequestStream?: boolean;
   private readonly pendingTools = new Map<RequestId, string>();
+  private readonly pendingValidation = new Map<
+    RequestId,
+    ToolValidationContext
+  >();
   private readonly pendingToolLists = new Set<RequestId>();
   private readonly pendingCompletions = new Map<RequestId, AbortController>();
 
@@ -402,12 +525,16 @@ class ErrorEvidenceTransport implements Transport {
           return;
         }
       }
+      let validation: ToolValidationContext | undefined;
       if (
         isJSONRPCRequest(message) &&
         message.method === "tools/call" &&
         typeof message.params?.["name"] === "string"
-      )
+      ) {
         this.pendingTools.set(message.id, message.params["name"]);
+        validation = { tool: message.params["name"] };
+        this.pendingValidation.set(message.id, validation);
+      }
       if (isJSONRPCRequest(message) && message.method === "tools/list")
         this.pendingToolLists.add(message.id);
       if (isJSONRPCRequest(message) && message.method === "completion/complete")
@@ -419,19 +546,25 @@ class ErrorEvidenceTransport implements Transport {
         message.method === "notifications/cancelled"
       ) {
         const id = message.params?.["requestId"];
-        if (typeof id === "string" || typeof id === "number")
+        if (typeof id === "string" || typeof id === "number") {
+          this.pendingValidation.delete(id);
           forgetPendingMcpRequest(
             this.pendingTools,
             this.pendingToolLists,
             this.pendingCompletions,
             id,
           );
+        }
       }
       const completion =
         isJSONRPCRequest(message) && message.method === "completion/complete"
           ? this.pendingCompletions.get(message.id)
           : undefined;
-      if (completion === undefined) this.onmessage?.(message, extra);
+      if (validation !== undefined)
+        currentToolValidation.run(validation, () =>
+          this.onmessage?.(message, extra),
+        );
+      else if (completion === undefined) this.onmessage?.(message, extra);
       else
         currentRequestSignal.run(completion.signal, () =>
           this.onmessage?.(message, extra),
@@ -440,6 +573,7 @@ class ErrorEvidenceTransport implements Transport {
     transport.onerror = (error) => this.onerror?.(error);
     transport.onclose = () => {
       this.pendingTools.clear();
+      this.pendingValidation.clear();
       this.pendingToolLists.clear();
       for (const completion of this.pendingCompletions.values())
         completion.abort();
@@ -464,6 +598,7 @@ class ErrorEvidenceTransport implements Transport {
       await this.transport.close();
     } finally {
       this.pendingTools.clear();
+      this.pendingValidation.clear();
       this.pendingToolLists.clear();
       for (const completion of this.pendingCompletions.values())
         completion.abort();
@@ -527,6 +662,7 @@ class ErrorEvidenceTransport implements Transport {
       } else await this.transport.send(advertised, options);
     } finally {
       if (!isJSONRPCRequest(message) && id !== undefined) {
+        this.pendingValidation.delete(id);
         forgetPendingMcpRequest(
           this.pendingTools,
           this.pendingToolLists,
@@ -579,7 +715,13 @@ class ErrorEvidenceTransport implements Transport {
         ? encodeToolResult(structured, budget, "error-text", targetContent)
         : measureMcpResultWithinBudget(sdkResultWithMarker, budget);
     const normalized = encoded.ok
-      ? this.normalizeSdkInputError(message, tool, targetContent, sdkDiagnostic)
+      ? this.normalizeSdkInputError(
+          message,
+          tool,
+          targetContent,
+          sdkDiagnostic,
+          this.pendingValidation.get(message.id)?.validation,
+        )
       : undefined;
     if (
       normalized !== undefined &&
@@ -742,6 +884,7 @@ class ErrorEvidenceTransport implements Transport {
     tool: string | undefined,
     targetContent: boolean,
     text: string | undefined,
+    validation: ToolValidationContext["validation"],
   ): JSONRPCMessage | undefined {
     if (
       tool === undefined ||
@@ -750,7 +893,6 @@ class ErrorEvidenceTransport implements Transport {
       !isCallToolResult(message.result)
     )
       return undefined;
-    let error: AnalysisInputError | AnalysisResourceConstraintError;
     // The SDK owns counting and refusal before Standard Schema validation.
     // Recognize its exact wire refusal using our configured fact, without
     // reparsing the arguments or manufacturing a complete element count.
@@ -758,7 +900,7 @@ class ErrorEvidenceTransport implements Transport {
       text ===
       `Invalid arguments for tool ${tool}: arguments contain more than the maximum of ${String(this.maximumInputElements)} elements`
     ) {
-      error = new AnalysisResourceConstraintError(
+      const error = new AnalysisResourceConstraintError(
         tool,
         "transport",
         "The MCP tool arguments exceed the configured input element allowance; schema validation and tool execution did not start.",
@@ -768,17 +910,51 @@ class ErrorEvidenceTransport implements Transport {
             "Reduce the combined array elements and object members in the arguments, or restart REA with a larger REA_MCP_MAX_INPUT_ELEMENTS allowance for this workload.",
         },
       );
-    } else {
-      const diagnostic = sdkInputValidationDiagnostic(text, tool);
-      if (diagnostic === undefined) return undefined;
-      error = new AnalysisInputError(
-        tool,
-        {
-          userMessage: `The arguments for MCP tool ${tool} do not match its advertised input schema.`,
-        },
-        [{ path: [], reason: "invalid_value", message: diagnostic }],
-      );
+      const result = this.delivery.toErrorToolResult(error, targetContent);
+      return {
+        ...message,
+        result: replaceToolResultPayload(message.result, result),
+      };
     }
+    const diagnostic = sdkInputValidationDiagnostic(text, tool);
+    if (diagnostic === undefined) return undefined;
+    const groups =
+      validation === undefined
+        ? undefined
+        : projectInputIssueGroupsWithinBudget(
+            validation.issues,
+            validation.input,
+            this.delivery.resultBudgetBytes,
+          );
+    const projectionLimited = validation !== undefined && groups === undefined;
+    const summary = `The arguments for MCP tool ${tool} do not match its advertised input schema.`;
+    const partitioned = partitionSdkDiagnostic(validation, groups, diagnostic);
+    const issues = partitioned?.issues ?? groups?.flat();
+    const error = new AnalysisInputError(
+      tool,
+      {
+        userMessage:
+          issues === undefined
+            ? projectionLimited
+              ? `${summary} Field-level issue projection exceeded its response-derived allowance.`
+              : summary
+            : partitioned !== undefined
+              ? partitioned.remaining === undefined
+                ? summary
+                : `${summary} ${partitioned.remaining}`
+              : `${summary} ${diagnostic}`,
+      },
+      issues ?? [
+        {
+          path: [],
+          reason: "invalid_value",
+          message: diagnostic,
+          ...(projectionLimited
+            ? { observed: { field_details: "omitted" } }
+            : {}),
+        },
+      ],
+    );
     const result = this.delivery.toErrorToolResult(error, targetContent);
     return {
       ...message,

@@ -6,6 +6,7 @@ import {
 import type { Segment, Section } from "./AppleMachoSelection.js";
 import { boundClassName, decodeObjcCategories } from "./AppleObjcCategories.js";
 import { readObjcPropertiesOf } from "./AppleObjcProperties.js";
+import { BinaryFormatFailure } from "./metadata/BinaryContainer.js";
 import type { DecodeIssue } from "./AppleDispatchDecodeFacts.js";
 import { createObjcProtocolReader } from "./AppleObjcProtocols.js";
 import type {
@@ -250,7 +251,10 @@ export const decodeObjcDispatchFacets = (input: {
     ({ name }) => name === "__objc_protolist",
   )) {
     if (section.size % 8 !== 0)
-      throw new RangeError("Misaligned Objective-C protocol list");
+      throw new BinaryFormatFailure(
+        "malformed",
+        "Misaligned Objective-C protocol list",
+      );
     for (let index = 0; index < section.size / 8; index++) {
       if (budget.isFull()) {
         budget.markTruncated();
@@ -406,7 +410,10 @@ export const decodeObjcDispatchFacets = (input: {
     ({ name }) => name === "__objc_classlist",
   )) {
     if (section.size % 8 !== 0)
-      throw new RangeError("Misaligned Objective-C class-list size");
+      throw new BinaryFormatFailure(
+        "malformed",
+        "Misaligned Objective-C class-list size",
+      );
     for (let index = 0; index < section.size / 8; index++) {
       if (budget.isFull()) {
         budget.markTruncated();

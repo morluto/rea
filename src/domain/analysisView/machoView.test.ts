@@ -140,6 +140,36 @@ const report = {
       sections: coverage([]),
     },
   ]),
+  encryption: coverage([
+    {
+      architecture: "arm64",
+      cpu_type: 16777228,
+      cpu_subtype: 0,
+      container_file_offset: 0,
+      size: 4096,
+      status: "not-encrypted",
+      reason: null,
+      commands: [
+        {
+          kind: "LC_ENCRYPTION_INFO_64",
+          index: 1,
+          cmdsize: 24,
+          cryptoff: 16384,
+          cryptsize: 0,
+          cryptid: 0,
+          pad: 0,
+        },
+      ],
+      range: {
+        content: "plaintext",
+        slice_start: 16384,
+        slice_end: 16384,
+        container_start: 16384,
+        container_end: 16384,
+        mapping: { status: "mapped", fragments: [], sections: [] },
+      },
+    },
+  ]),
   provenance: [
     {
       tool: "nm",
@@ -295,11 +325,12 @@ describe("Mach-O analysis views", () => {
           imports: { returned: 3, total: null, exhaustive: false },
           exports: { returned: 1, total: 1, exhaustive: true },
           segments: { returned: 1, total: 1, exhaustive: true },
+          encryption: { returned: 1, total: 1, exhaustive: true },
         },
         provenance_count: 1,
         limitation_count: 3,
       },
-      coverage: { status: "complete-within-view", examined: 10, total: 10 },
+      coverage: { status: "complete-within-view", examined: 11, total: 11 },
       limitations: [
         "Imports and exports combine dyld_info and nm.",
         "Parent limitation.",
@@ -329,7 +360,7 @@ describe("Mach-O analysis views", () => {
       "nm output may omit stripped symbols.",
     );
     // Rows whose keys include an earlier row shape's keys stay whole.
-    for (const facet of ["architectures", "segments"] as const) {
+    for (const facet of ["architectures", "segments", "encryption"] as const) {
       const page = projectAnalysisView(parent(), {
         kind: "macho",
         facet,
@@ -365,6 +396,23 @@ describe("Mach-O analysis views", () => {
       status: "empty",
       exhausted: true,
     });
+  });
+
+  it("keeps encryption unknown for Evidence retained before it was reported", () => {
+    const { encryption: _omitted, ...legacy } = report;
+    const projected = projectAnalysisView(parent(legacy), { kind: "summary" });
+    if (!projected.ok) throw projected.error;
+    expect(projected.value).toMatchObject({
+      summary: {
+        collections: {
+          encryption: { returned: 0, total: null, exhaustive: false },
+        },
+      },
+      unknowns: [expect.stringContaining("exhaustive imports, encryption;")],
+    });
+    expect(projected.value.limitations).toContain(
+      "This inspect_macho Evidence predates encryption reporting; slice encryption status is unknown.",
+    );
   });
 
   it("keeps a missing subject unknown instead of inventing identity", () => {

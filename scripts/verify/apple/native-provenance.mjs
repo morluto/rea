@@ -134,6 +134,15 @@ export async function verifyNativeProvenance(app, executable) {
         ]);
 
       if (operation === "inspect_macho") {
+        const encryption = cli.normalized_result.encryption;
+        assert.equal(encryption.exhaustive, true);
+        assert.ok(encryption.total > 0);
+        assert.equal(encryption.items.length, encryption.total);
+        for (const slice of encryption.items) {
+          assert.equal(slice.status, "absent");
+          assert.deepEqual(slice.commands, []);
+          assert.equal(slice.range, null);
+        }
         const delayed = cli.normalized_result.load_commands.items.find(
           ({ fields }) => fields.name === "@rpath/libdelay.dylib (offset 28)",
         );

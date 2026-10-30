@@ -21,6 +21,7 @@ import {
   EvidenceIntegrityError,
   EvidenceReferenceError,
   AnalysisSnapshotMismatchError,
+  ResourceSnapshotMismatchError,
 } from "./evidenceErrors.js";
 import {
   HopperRemoteError,
@@ -79,6 +80,10 @@ export const analysisErrorRemediationAction = (
     error.remediationAction !== undefined
   )
     return error.remediationAction;
+  if (error instanceof ResourceSnapshotMismatchError)
+    return error.operation === "export"
+      ? "Call close_binary without snapshot_path to close this resource-only session."
+      : "Open an executable analysis target before importing a binary analysis snapshot.";
   if (error instanceof AnalysisSnapshotMismatchError)
     return "Run analysis without this snapshot, then save a fresh snapshot using the intended artifact, provider, and analysis profile.";
   if (error instanceof AnalysisUnsupportedTargetError)
@@ -260,7 +265,10 @@ export const analysisErrorCategory = (
     return "unavailable";
   if (error instanceof ArtifactOperationError)
     return artifactErrorCategory(error.reason);
-  if (error instanceof EvidenceFileError && error.reason === "path-limit")
+  if (
+    error instanceof EvidenceFileError &&
+    (error.reason === "path-limit" || error.reason === "storage-limit")
+  )
     return "resource_constraint";
   if (
     error instanceof EvidenceFileError &&
@@ -565,11 +573,18 @@ const evidenceFileMessage = ({
   operation,
   reason,
   published,
+  systemCode,
 }: EvidenceFileError): string => {
   if (published !== undefined)
     return "The output file was published, but staging cleanup remains incomplete.";
   if (reason === "path-limit")
     return "Filesystem path-length constraints prevented reading or atomic publication at the selected path. Choose a shorter local path.";
+  if (reason === "storage-limit")
+    return systemCode === "EFBIG"
+      ? "The host file-size limit prevented Evidence publication. Increase the inherited file-size allowance and retry."
+      : systemCode === undefined
+        ? "A host filesystem resource limit prevented Evidence publication. Check the file-size allowance, filesystem space and quota before retrying."
+        : "The filesystem lacks space or quota for Evidence publication. Free space or increase quota and retry.";
   if (reason === "symlink-traversal")
     return "The selected path cannot be resolved because its symbolic-link chain loops or exceeds the host traversal limit. Repair the chain or select another path.";
   if (reason === "missing")

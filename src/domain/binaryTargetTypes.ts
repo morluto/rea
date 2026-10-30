@@ -116,6 +116,12 @@ export interface UniversalMachOSlice {
   readonly size: number;
 }
 
+/** FAT-table identity; CPU family alone cannot identify a universal slice. */
+export interface UniversalMachOSliceIdentity extends UniversalMachOSlice {
+  readonly cpuType: number;
+  readonly cpuSubtype: number;
+}
+
 interface BinaryTargetIdentity {
   readonly path: string;
   readonly sourcePath?: string;
@@ -200,6 +206,8 @@ export type BinaryTarget =
       readonly format: "mach-o-universal";
       /** Selected slice range a provider must analyze instead of the container. */
       readonly universalSlice: UniversalMachOSlice;
+      /** Exact validated FAT declarations, when supplied by target admission. */
+      readonly universalSlices?: readonly UniversalMachOSliceIdentity[];
       readonly executableRole?: never;
       readonly managed?: never;
     })

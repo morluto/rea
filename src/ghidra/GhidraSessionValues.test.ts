@@ -52,14 +52,16 @@ describe("Ghidra DOS import commitment", () => {
     });
   });
   it("rejects a 32-bit interpretation even when artifact and profile hashes match", () => {
-    expect(rejectedHandshake(session("x86:LE:32:default")).message).toBe(
-      "Ghidra bridge handshake identity is invalid",
-    );
+    expect(rejectedHandshake(session("x86:LE:32:default"))).toMatchObject({
+      _tag: "GhidraAdmissionError",
+      code: "handshake_identity",
+    });
   });
   it("rejects compiler drift independently of the language", () => {
-    expect(rejectedHandshake(session(undefined, "windows")).message).toBe(
-      "Ghidra bridge handshake identity is invalid",
-    );
+    expect(rejectedHandshake(session(undefined, "windows"))).toMatchObject({
+      _tag: "GhidraAdmissionError",
+      code: "handshake_identity",
+    });
   });
 });
 

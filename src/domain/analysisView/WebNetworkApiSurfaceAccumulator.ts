@@ -7,7 +7,8 @@ import {
   type WebNetworkCaptureRecord,
 } from "../webNetworkCapture.js";
 import { pageViewCoverage } from "./analysisViewCoverage.js";
-import type { UnsignedAnalysisView } from "./analysisView.js";
+import { z } from "zod";
+import { apiSurfaceFields } from "./apiSurfaceSchema.js";
 import { WebNetworkProjectionAccumulator } from "./WebNetworkProjectionAccumulator.js";
 import {
   CAPTURE_CONTAINER_BYTES,
@@ -23,9 +24,13 @@ import {
   type RouteTemplate,
 } from "./webNetworkRouteTemplates.js";
 
-type Surface = Extract<UnsignedAnalysisView, { kind: "api-surface" }>;
-type Group = Surface["groups"][number];
-type Exclusion = Surface["excluded_records"][number];
+type ApiSurfaceFields = {
+  [Key in keyof typeof apiSurfaceFields]: z.output<
+    (typeof apiSurfaceFields)[Key]
+  >;
+};
+type Group = ApiSurfaceFields["groups"][number];
+type Exclusion = ApiSurfaceFields["excluded_records"][number];
 interface GroupState {
   readonly method: string;
   readonly origin: string;
@@ -181,18 +186,7 @@ export class WebNetworkApiSurfaceAccumulator extends WebNetworkProjectionAccumul
     return ok(undefined);
   }
 
-  page(
-    offset: number,
-    limit: number,
-  ): Pick<
-    Surface,
-    | "coverage"
-    | "groups"
-    | "templated_groups"
-    | "excluded_records"
-    | "limitations"
-    | "unknowns"
-  > {
+  page(offset: number, limit: number) {
     this.#groups.sort(
       (a, b) =>
         compare(a.origin, b.origin) ||

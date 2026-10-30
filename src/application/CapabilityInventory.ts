@@ -42,6 +42,7 @@ import type { JebAnalysisAvailability } from "./jeb/JebAnalysisPort.js";
 import { FRIDA_TOOL_CONTRACTS } from "../contracts/fridaToolContracts.js";
 import { TOOL_CONTRACTS } from "../contracts/toolContracts.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
+import { isBundleResourceOperation } from "./binary/BundleResourceSession.js";
 
 const FRIDA_OPERATION_NAMES: ReadonlySet<string> = new Set(
   FRIDA_TOOL_CONTRACTS.map(({ name }) => name),
@@ -49,6 +50,7 @@ const FRIDA_OPERATION_NAMES: ReadonlySet<string> = new Set(
 
 const statusSchema = z.object({
   open: z.boolean(),
+  session_kind: z.literal("bundle_resources").optional(),
   kind: z.enum(["executable", "database", "archive", "artifact"]).optional(),
   format: z.string().optional(),
   capabilities: z
@@ -128,6 +130,7 @@ type AvailabilityContext = {
   readonly name: string;
   readonly kind: ToolKind;
   readonly targetOpen: boolean;
+  readonly resourceSession: boolean;
   readonly requiresActiveTarget: boolean;
   readonly targetKind:
     | "executable"
@@ -260,6 +263,7 @@ export const buildCapabilityInventory = (
       name: contract.name,
       kind: contract.kind,
       targetOpen: status.open,
+      resourceSession: status.session_kind === "bundle_resources",
       requiresActiveTarget:
         "requiresActiveTarget" in contract &&
         contract.requiresActiveTarget === true,
@@ -380,6 +384,19 @@ export function compactToolAvailability(
 }
 
 const availabilityFor = (context: AvailabilityContext): Availability => {
+  const workflowAvailability = workflowAvailabilityFor(context);
+  if (
+    context.targetOpen &&
+    context.resourceSession &&
+    context.requiresActiveTarget &&
+    !isBundleResourceOperation(context.name) &&
+    (workflowAvailability === null || context.kind === "session")
+  )
+    return {
+      reason: "target_unsupported",
+      remediation:
+        "This resource-only session cannot execute this operation. Call open_binary with an executable analysis target.",
+    };
   // These built-in workflows accept a caller-selected endpoint; they do not load the optional passive provider.
   if (
     context.name === "inspect_byte_entropy" ||
@@ -403,7 +420,6 @@ const availabilityFor = (context: AvailabilityContext): Availability => {
       reason: "provider_unavailable",
       remediation: `Adapter ${failure.providerId} could not load: ${failure.reason}. Repair the adapter installation and restart REA; other capabilities remain available.`,
     };
-  const workflowAvailability = workflowAvailabilityFor(context);
   if (workflowAvailability !== null) return workflowAvailability;
   const hostDecision = hostAvailability(context);
   if (hostDecision !== null) return hostDecision;
@@ -453,6 +469,7 @@ const workflowAvailabilityFor = ({
       "Run persistent debugger sessions on Linux with /proc descriptor readback.",
     );
   if (
+    name === "inspect_apk_signature" ||
     name === "inspect_desktop_application" ||
     name === "inspect_go_binary" ||
     name === "inspect_il2cpp_metadata" ||

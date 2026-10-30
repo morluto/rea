@@ -107,7 +107,7 @@ it("intersects exact filters before paging and preserves identity while omitting
     request,
   );
   if (!result.ok) throw result.error;
-  if (result.value.kind !== "managed-members") throw new Error("Wrong view");
+  if (!("page" in result.value)) throw new Error("Wrong view");
   expect(result.value.page).toEqual({
     collection: "methods",
     source_count: 4,
@@ -161,7 +161,7 @@ it("keeps unresolved exact-filter candidates unknown under complete and partial 
       }),
     );
     if (!result.ok) throw result.error;
-    if (result.value.kind !== "managed-members") throw new Error("Wrong view");
+    if (!("page" in result.value)) throw new Error("Wrong view");
     expect(result.value).toMatchObject({
       source_coverage: { state },
       coverage: { total: 1 },
@@ -220,7 +220,7 @@ it("distinguishes empty selectors from omitted selectors and pages projections w
   expect(full.value).toMatchObject({
     page: { collection: "methods", rows: report.methods.slice(1, 3) },
   });
-  if (full.value.kind !== "managed-members") throw new Error("Wrong view");
+  if (!("page" in full.value)) throw new Error("Wrong view");
   expect(full.value.page.rows).toEqual(report.methods.slice(1, 3));
 });
 

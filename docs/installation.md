@@ -928,7 +928,12 @@ selected only when it is the arm64 family's only candidate. REA checks the
 entire source's SHA-256 while copying the slice; source identity and reported
 offsets still refer to the original container. Any other ambiguous architecture
 subtype requires an explicitly extracted thin image; REA does not guess.
-Configured loader arguments remain explicit overrides.
+Set `HOPPER_LOADER_ARGS_JSON` in REA's launch environment to a JSON array of
+strings to override the derived Hopper loader arguments, for example
+`["-l","Mach-O"]`. Empty string elements are preserved; NUL bytes are not
+accepted. An omitted setting or empty array uses the derived arguments. `rea
+setup` forwards an explicitly selected setting to supported registrations;
+restart the MCP server to apply a change. These arguments are Hopper-specific.
 FAT64 is distinct from the CPU architecture: FAT32 containers can contain 64-bit
 executable images. This preparation avoids the Raw Binary loader dialog observed
 with native FAT64 loading on Hopper 6.1.0-demo.

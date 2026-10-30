@@ -224,6 +224,25 @@ resulting value. Deferred callback bodies do not become inputs to the enclosing
 assignment. Computed method keys belong to the enclosing callable; parameter
 defaults and method bodies belong to the method. Uncertain later property reads
 remain opt-in through `include_ambiguous_dynamic_edges`.
+
+Binary, logical, unary, template, conditional, and sequence expressions retain
+`influences` edges from supported immediate inputs to the result, then to a
+direct declaration, assignment, call argument, or return. These are static
+dependencies, not aliases or proof that the expression executed; conditional
+operands and logical-assignment writes carry `conditional: true`. Unsupported
+operand dependencies, unmodeled receiving containers, dynamic call results,
+and sequence side effects remain unknown. An applicable
+unknown makes the trace status `partial` even when a seed was found. Literal
+operator operands, direct call arguments and directly returned scalar literals
+can also be seeds. Older graphs that only recorded a call-site literal remain
+searchable. The offered per-file node capacity also bounds the producer's
+expression and operand collections before graph projection.
+Expression nodes and unknowns share the existing per-file graph admission
+budgets; omitted facts make graph coverage truncated and the trace partial.
+Consumers that previously treated `found` as compatible with a relevant
+unknown should handle `partial` and inspect the returned unknowns. Retained
+graphs without `influences` edges remain readable but do not gain edges until
+the application is analyzed again.
 Global timer, `fetch`, `WebSocket`, `JSON.parse`, and coercion calls receive
 these built-in effects only when the file has no visible possible write to that
 global, including a computed write through a global object. The check does not

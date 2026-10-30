@@ -3,12 +3,18 @@ import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import type { NativeCommandCapture } from "./CommandRunner.js";
 import { withoutEchoedPathHeader } from "./parsers/echoedPath.js";
 
+/** Path the command received. Diagnostics echo this operand, not the selected subject. */
+export const nativeCommandOperand = (
+  capture: NativeCommandCapture,
+): string | undefined => capture.arguments.at(-1);
+
 /** Recognize vtool's sole settled container-format refusal without hiding other failures. */
 export const isVtoolContainerRefusal = (
   capture: NativeCommandCapture,
-  operandPath: string,
 ): boolean => {
+  const operandPath = nativeCommandOperand(capture);
   if (
+    operandPath === undefined ||
     capture.tool !== "vtool" ||
     capture.exitCode !== 1 ||
     capture.signal !== null ||

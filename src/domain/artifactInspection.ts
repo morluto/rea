@@ -423,6 +423,24 @@ const directoryProbes = (
 const probesForFormat = (
   format: ArtifactInventoryResult["manifest"]["root_format"],
 ): ArtifactInspectionResult["next_probes"] => {
+  if (format === "bun-standalone")
+    return [
+      {
+        operation: "extract_artifact",
+        authority: "artifact-bytes",
+        rationale:
+          "Extract the stored module regions into a fresh owned directory, then inspect compatible source separately. Bytecode and source-map regions remain stored evidence; they are not decoded or executed.",
+      },
+    ];
+  if (format === "dotnet-bundle")
+    return [
+      {
+        operation: "extract_artifact",
+        rationale:
+          "Extract members into a fresh owned directory, then inspect candidate files separately; bundle declarations do not establish their format.",
+        authority: "artifact-bytes",
+      },
+    ];
   if (["asar", "javascript-bundle"].includes(format))
     return [
       {

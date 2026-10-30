@@ -1,15 +1,80 @@
 import { createHash } from "node:crypto";
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import {
+  access,
+  lstat,
+  mkdir,
+  readFile,
+  readlink,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
+import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import { Ajv2020 } from "ajv/dist/2020.js";
+import type { AnySchema } from "ajv";
+import { FIRMWARE_TOOL_CONTRACTS } from "../../../src/contracts/firmware/firmwareToolContracts.js";
+import { toolOutputSchemaWithMetadata } from "../../../src/contracts/toolSchemaMetadata.js";
+import { createEvidence } from "../../../src/domain/evidence.js";
+import { RequestTrackingMcpServer } from "../../../src/server/RequestTrackingMcpServer.js";
 import { FirmwareProvider } from "../../../src/firmware/FirmwareProvider.js";
 import { FirmwareAnalysisService } from "../../../src/application/firmware/FirmwareAnalysisService.js";
-import { FirmwareFileAccess } from "../../../src/firmware/FirmwareFiles.js";
+import {
+  FirmwareFileAccess,
+  inventoryFirmwareOutput,
+} from "../../../src/firmware/FirmwareFiles.js";
 import { publishFirmwareExtraction } from "../../../src/firmware/FirmwarePublication.js";
 import { normalizeUnblobReport } from "../../../src/firmware/FirmwareReports.js";
 import { startFirmwareDeadline } from "../../../src/firmware/FirmwareDeadline.js";
 import { SafeOutputTree } from "../../../src/artifacts/SafeOutputTree.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+
+const validateAdvertisedFirmwareOutput = async (
+  result: Awaited<ReturnType<typeof publishFirmwareExtraction>>,
+): Promise<void> => {
+  const contract = FIRMWARE_TOOL_CONTRACTS.find(
+    (item) => item.name === "extract_firmware",
+  );
+  if (contract === undefined)
+    throw new Error("Missing extract_firmware contract");
+  const server = new RequestTrackingMcpServer({
+    name: "schema",
+    version: "1",
+  });
+  const client = new Client({ name: "schema-client", version: "1" });
+  server.registerTool(
+    contract.name,
+    { outputSchema: toolOutputSchemaWithMetadata(contract) },
+    () => ({ content: [] }),
+  );
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const schema = (await client.listTools()).tools.find(
+      (tool) => tool.name === contract.name,
+    )?.outputSchema;
+    if (schema === undefined) throw new Error("Missing firmware output schema");
+    const ajv = new Ajv2020({ strict: false, validateFormats: false });
+    expect(ajv.validateSchema(schema as AnySchema)).toBe(true);
+    const validate = ajv.compile(schema as AnySchema);
+    const evidence = createEvidence(
+      undefined,
+      { id: "fixture", name: "fixture", version: null },
+      {
+        operation: "extract_firmware",
+        parameters: {},
+        result,
+        confidence: "observed",
+      },
+    );
+    expect(validate(evidence), JSON.stringify(validate.errors)).toBe(true);
+  } finally {
+    await client.close();
+    await server.close();
+  }
+};
 
 it.each(["existing", "missing-parent", "relative"] as const)(
   "refuses %s destinations before selecting or launching a firmware engine",
@@ -70,6 +135,14 @@ it("publishes the writer's normalized path while retaining source spelling and u
   const bytes = Buffer.from("child");
   const path = join(staging, name);
   await writeFile(path, bytes);
+  if (process.platform !== "win32") {
+    await symlink(
+      Buffer.from([0x73, 0x61, 0x6d, 0x70, 0x6c, 0x65, 0xff]),
+      join(staging, "raw-link"),
+    );
+    await symlink("sample\ufffd", join(staging, "unicode-link"));
+    await symlink("sample", join(staging, "control-link"));
+  }
   const sha256 = createHash("sha256").update(bytes).digest("hex");
   const inputPath = join(root, "input");
   const inputHash = "a".repeat(64);
@@ -111,15 +184,12 @@ it("publishes the writer's normalized path while retaining source spelling and u
       deadline: startFirmwareDeadline("publication", 120_000),
       analysisTimeoutMs: 120_000,
       outputDirectory: output,
-      entries: [
-        {
-          path,
-          relativePath: name,
-          size: bytes.length,
-          kind: "file",
-          linkTarget: null,
-        },
-      ],
+      entries: await inventoryFirmwareOutput(
+        staging,
+        1024,
+        10,
+        "extract_firmware",
+      ),
       normalized,
       selection: { offset: 7, length: 1, sha256: inputHash },
       maxDepth: 3,
@@ -144,18 +214,46 @@ it("publishes the writer's normalized path while retaining source spelling and u
     const published = result.files[0];
     if (published === undefined) throw new Error("Expected published child");
     expect(Buffer.compare(await readFile(published.path), bytes)).toBe(0);
+    if (process.platform !== "win32") {
+      expect(result.unpublished_entries).toEqual([
+        {
+          relative_path: "control-link",
+          kind: "symlink",
+          link_target: "sample",
+          link_target_hex: "73616d706c65",
+        },
+        {
+          relative_path: "raw-link",
+          kind: "symlink",
+          link_target: null,
+          link_target_hex: "73616d706c65ff",
+        },
+        {
+          relative_path: "unicode-link",
+          kind: "symlink",
+          link_target: "sample\ufffd",
+          link_target_hex: "73616d706c65efbfbd",
+        },
+      ]);
+      const rawLink = join(output, "raw-link");
+      await expect(lstat(rawLink)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(readlink(rawLink)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      await validateAdvertisedFirmwareOutput(result);
+    }
     expect(result).toMatchObject({
       coverage: "partial",
-      extraction_gaps: [
-        {
+      extraction_gaps: expect.arrayContaining([
+        expect.objectContaining({
           kind: "unclassified-range",
           input_path: "$input",
           provider_id: null,
           handler: null,
           range: { offset: 0, length: 1 },
           root_file_range: { offset: 7, length: 1 },
-        },
-      ],
+        }),
+      ]),
     });
     expect(retainCleanup).not.toHaveBeenCalled();
   } finally {

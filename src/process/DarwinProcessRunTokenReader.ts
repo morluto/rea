@@ -1,3 +1,4 @@
+import { ProcessAdmissionError } from "./ProcessAdmissionError.js";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -579,10 +580,10 @@ export const createDarwinProcessRunTokenReader = (
   };
 
   const compile = async (signal?: AbortSignal): Promise<string> => {
-    if (closed) throw new Error("Darwin process token reader is closed");
+    if (closed) throw new ProcessAdmissionError("reader_closed");
     signal?.throwIfAborted();
     while (true) {
-      if (closed) throw new Error("Darwin process token reader is closed");
+      if (closed) throw new ProcessAdmissionError("reader_closed");
       signal?.throwIfAborted();
       if (executable !== undefined) return executable;
       if (compilation === undefined && root !== undefined) {
@@ -642,7 +643,7 @@ export const createDarwinProcessRunTokenReader = (
     signal?: AbortSignal,
   ): Promise<string> => {
     if (closed)
-      return Promise.reject(new Error("Darwin process token reader is closed"));
+      return Promise.reject(new ProcessAdmissionError("reader_closed"));
     const pending = (async () => {
       const binary = await compile(signal);
       const { stdout } = await execFileOutput(binary, arguments_, {
@@ -670,25 +671,21 @@ export const createDarwinProcessRunTokenReader = (
     const stdout = await runHelper(pids, signal);
     const decoded = safeParseJson(stdout);
     if (!decoded.ok)
-      throw new Error(
-        `macOS process token helper returned invalid JSON: ${decoded.error}`,
+      throw new ProcessAdmissionError(
+        "token_json_invalid",
+        { parser: decoded.error },
         { cause: decoded.cause },
       );
     const parsed = responseSchema.safeParse(decoded.value);
     if (!parsed.success)
-      throw new Error(
-        "macOS process token helper returned an invalid response",
-        {
-          cause: parsed.error,
-        },
-      );
+      throw new ProcessAdmissionError("token_response_invalid", undefined, {
+        cause: parsed.error,
+      });
     const requested = new Set(processes.map(({ pid }) => pid));
     const observations = new Map<number, ProcessRunTokenObservation>();
     for (const result of parsed.data.results) {
       if (!requested.has(result.pid) || observations.has(result.pid))
-        throw new Error(
-          "macOS process token helper returned an unexpected PID set",
-        );
+        throw new ProcessAdmissionError("token_pid_set");
       observations.set(
         result.pid,
         result.state === "readable"
@@ -701,9 +698,7 @@ export const createDarwinProcessRunTokenReader = (
       );
     }
     if (observations.size !== requested.size)
-      throw new Error(
-        "macOS process token helper returned an incomplete PID set",
-      );
+      throw new ProcessAdmissionError("token_pid_incomplete");
     return observations;
   };
 
@@ -716,25 +711,21 @@ export const createDarwinProcessRunTokenReader = (
     const stdout = await runHelper(["--identities", ...pids], signal);
     const decoded = safeParseJson(stdout);
     if (!decoded.ok)
-      throw new Error(
-        `macOS process identity helper returned invalid JSON: ${decoded.error}`,
+      throw new ProcessAdmissionError(
+        "identity_json_invalid",
+        { parser: decoded.error },
         { cause: decoded.cause },
       );
     const parsed = identityResponseSchema.safeParse(decoded.value);
     if (!parsed.success)
-      throw new Error(
-        "macOS process identity helper returned an invalid response",
-        {
-          cause: parsed.error,
-        },
-      );
+      throw new ProcessAdmissionError("identity_response_invalid", undefined, {
+        cause: parsed.error,
+      });
     const requested = new Set(processes.map(({ pid }) => pid));
     const observations = new Map<number, ProcessIdentityObservation>();
     for (const result of parsed.data.results) {
       if (!requested.has(result.pid) || observations.has(result.pid))
-        throw new Error(
-          "macOS process identity helper returned an unexpected PID set",
-        );
+        throw new ProcessAdmissionError("identity_pid_set");
       observations.set(
         result.pid,
         result.state === "readable"
@@ -768,9 +759,7 @@ export const createDarwinProcessRunTokenReader = (
       );
     }
     if (observations.size !== requested.size)
-      throw new Error(
-        "macOS process identity helper returned an incomplete PID set",
-      );
+      throw new ProcessAdmissionError("identity_pid_incomplete");
     return observations;
   };
 

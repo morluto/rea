@@ -82,6 +82,11 @@ Published file `relative_path` preserves producer spelling for lineage; `path`
 uses the writer's actual normalized filename. An extracted filename that cannot
 be represented losslessly as UTF-8 fails publication explicitly with its raw
 name bytes in hexadecimal instead of silently omitting the entry.
+Unpublished symlinks retain the extracted tree's target bytes in lowercase
+`link_target_hex`; `link_target` is null when those bytes are not valid UTF-8.
+Older retained Evidence may omit the hexadecimal field. Unblob may have rewritten
+the target before REA observed it, so these bytes are not necessarily those stored
+in the firmware image.
 
 ## CLI and MCP
 
