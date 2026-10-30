@@ -14,6 +14,29 @@ import {
 const scriptUrl = (path: string) =>
   JSON.stringify(pathToFileURL(resolve("scripts/lib", path)).href);
 
+for (const missing of ["registerHooks", "stripTypeScriptTypes"]) {
+  processTest(
+    `explains the development runtime requirement when ${missing} is unavailable`,
+    async ({ processes }) => {
+      const source = `
+import module from "node:module";
+module[${JSON.stringify(missing)}] = undefined;
+module.syncBuiltinESMExports();
+const { importVerifierSource } = await import(${scriptUrl("verifier-source-loader.mjs")});
+await importVerifierSource(new URL("./src/domain/skillManifest.ts", import.meta.url));
+`;
+      const result = await processes.run(
+        process.execPath,
+        ["--input-type=module", "--eval", source],
+        { timeoutMs: 20_000 },
+      );
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("Node.js version pinned in .nvmrc");
+      expect(result.stderr).toContain("source build and verifier scripts");
+    },
+  );
+}
+
 // Windows' root lineage observer explicitly reports unavailable; its command
 // owners and source loading are covered by the native Windows boundary lane.
 processTest.skipIf(process.platform === "win32")(

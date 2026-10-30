@@ -8,6 +8,7 @@ import {
   AnalysisCancelledError,
 } from "../domain/analysisErrorCore.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
+import { KunaDocumentError } from "./KunaDocumentError.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
@@ -135,7 +136,7 @@ export class KunaTargetCommands {
           const process = new AnalysisCleanupLease(async () => {
             const stopped = await outcome.owner?.stop();
             if (stopped === undefined || stopped.status === "incomplete")
-              throw new Error("Kuna process stop remains unproven");
+              throw new KunaDocumentError("stop_unproven");
             releaseRun?.();
           }, outcome.processResources);
           new AnalysisCleanupLeaseGroup(outcome.error, [

@@ -26,7 +26,7 @@ export const safeResponseMetadata = (
   // RFC 9110 section 5.3: repeated field lines combine as one comma-separated value.
   const field = (name: string): string | undefined =>
     headers.get(name)?.join(", ");
-  const responseUrl = response.url ?? url;
+  const responseUrl = response.url?.source ?? url;
   const parsedLinks = parseLinks(
     headers.get("link"),
     responseUrl,
@@ -103,7 +103,8 @@ const normalizedHeaders = (
 /**
  * Each field line is a CSP3 serialized policy list, with policies separated by
  * commas. Directives of every policy are returned in order; the schema does not
- * record which policy a directive came from.
+ * record which policy a directive came from. Within one policy, CSP3 keeps the
+ * first directive of each name and ignores its repeats.
  */
 const parseCsp = (
   lines: readonly string[] | undefined,
@@ -114,29 +115,37 @@ const parseCsp = (
   let nonceCount = 0;
   let hashCount = 0;
   const policies = (lines ?? []).flatMap((line) => line.split(","));
-  for (const rawDirective of policies.flatMap((policy) => policy.split(";"))) {
-    const [rawName, ...tokens] = rawDirective.trim().split(/\s+/u);
-    const name = (rawName ?? "").toLowerCase();
-    if (!/^[a-z][a-z0-9\x2d]*$/u.test(name)) continue;
-    const sources: ResponseMetadata["csp"]["directives"][number]["sources"] =
-      [];
-    for (const token of tokens) {
-      const lower = token.toLowerCase();
-      if (lower.startsWith("'nonce-")) {
-        nonceCount += 1;
-        continue;
+  for (const policy of policies) {
+    const names = new Set<string>();
+    for (const rawDirective of policy.split(";")) {
+      // CSP3 rejects non-ASCII directives and uses Infra ASCII whitespace.
+      if (/[^\x00-\x7f]/u.test(rawDirective)) continue;
+      const [rawName, ...tokens] = rawDirective
+        .replace(/^[\t\n\f\r ]+|[\t\n\f\r ]+$/gu, "")
+        .split(/[\t\n\f\r ]+/u);
+      const name = (rawName ?? "").toLowerCase();
+      if (!/^[a-z][a-z0-9\x2d]*$/u.test(name) || names.has(name)) continue;
+      names.add(name);
+      const sources: ResponseMetadata["csp"]["directives"][number]["sources"] =
+        [];
+      for (const token of tokens) {
+        const lower = token.toLowerCase();
+        if (lower.startsWith("'nonce-")) {
+          nonceCount += 1;
+          continue;
+        }
+        if (
+          lower.startsWith("'sha256-") ||
+          lower.startsWith("'sha384-") ||
+          lower.startsWith("'sha512-")
+        ) {
+          hashCount += 1;
+          continue;
+        }
+        sources.push(cspSource(token, baseUrl, allowedOrigins));
       }
-      if (
-        lower.startsWith("'sha256-") ||
-        lower.startsWith("'sha384-") ||
-        lower.startsWith("'sha512-")
-      ) {
-        hashCount += 1;
-        continue;
-      }
-      sources.push(cspSource(token, baseUrl, allowedOrigins));
+      directives.push({ name, sources });
     }
-    directives.push({ name, sources });
   }
   return { directives, nonce_count: nonceCount, hash_count: hashCount };
 };
@@ -219,7 +228,7 @@ const parseLinks = (
   // Quoted delimiters belong to one field line.
   for (const line of lines ?? []) {
     for (const entry of splitLinkHeader(line)) {
-      const match = /^\s*<([^>]*)>(.*)$/u.exec(entry);
+      const match = /^[\t ]*<([^>]*)>(.*)$/u.exec(entry);
       if (match === null) continue;
       const parameters = linkParameters(match[2] ?? "");
       const anchor = firstLinkParameter(parameters, "anchor");
@@ -240,7 +249,11 @@ const parseLinks = (
           destination_scope: destination.scope,
           context_url: context.url,
           context_scope: context.scope,
-          rel: rel.toLowerCase().split(/\s+/u).filter(Boolean),
+          // RFC 8288 Appendix B.2 uses HTTP RWS (SP / HTAB), not HTML whitespace.
+          rel: rel
+            .toLowerCase()
+            .split(/[\t ]+/u)
+            .filter(Boolean),
           as: boundedHeader(lastLinkParameter(parameters, "as")?.value),
           type: mediaTypeDeclaration(
             firstLinkParameter(parameters, "type")?.value,
@@ -287,15 +300,20 @@ const splitLinkHeader = (
   return entries;
 };
 
+// HTTP OWS/BWS never includes Unicode or HTML-only whitespace.
+const trimHttpWhitespace = (value: string): string =>
+  value.replace(/^[\t ]+|[\t ]+$/gu, "");
+
 const linkParameters = (value: string): readonly LinkParameter[] => {
   const parameters: LinkParameter[] = [];
   for (const raw of splitLinkHeader(value, ";").slice(1)) {
     const separator = raw.indexOf("=");
-    const name = (separator < 0 ? raw : raw.slice(0, separator))
-      .trim()
-      .toLowerCase();
+    const name = trimHttpWhitespace(
+      separator < 0 ? raw : raw.slice(0, separator),
+    ).toLowerCase();
     if (!/^[a-z][a-z0-9\x2d]*$/u.test(name)) continue;
-    const parameter = separator < 0 ? "" : raw.slice(separator + 1).trim();
+    const parameter =
+      separator < 0 ? "" : trimHttpWhitespace(raw.slice(separator + 1));
     parameters.push({ name, value: decodeLinkParameter(parameter) });
   }
   return parameters;
@@ -348,7 +366,9 @@ const permissionFeatures = (value: string | undefined): string[] =>
     ...new Set(
       (value ?? "")
         .split(",")
-        .map((entry) => entry.split("=", 1)[0]?.trim().toLowerCase() ?? "")
+        .map((entry) =>
+          trimHttpWhitespace(entry.split("=", 1)[0] ?? "").toLowerCase(),
+        )
         .filter((feature) => /^[a-z][a-z0-9\x2d]*$/u.test(feature)),
     ),
   ].sort();
@@ -394,34 +414,36 @@ const referrerPolicies = new Set([
 const referrerPolicy = (value: string | undefined): string | null => {
   let policy: string | null = null;
   for (const raw of (value ?? "").split(",")) {
-    const token = raw.trim().toLowerCase();
+    const token = trimHttpWhitespace(raw);
     if (token === "") continue;
-    if (!/^[a-z\x2d]+$/u.test(token)) return null;
+    // Fetch header extraction first validates Referrer-Policy's ABNF;
+    // only syntactically valid extension tokens can be ignored as unknown.
+    if (!/^[A-Za-z\x2d]+$/u.test(token)) return null;
     if (referrerPolicies.has(token)) policy = token;
   }
   return policy;
 };
 
 const policyToken = (value: string | undefined): string | null => {
-  const token = (value ?? "").trim().toLowerCase();
+  const token = trimHttpWhitespace(value ?? "").toLowerCase();
   return /^[a-z][a-z0-9_.\x2d]*$/u.test(token) ? token : null;
 };
 
 // RFC 9110 section 8.6: Content-Length = 1*DIGIT. Other spellings declare no length.
 const contentLength = (value: string | undefined): number | null => {
-  const token = (value ?? "").trim();
+  const token = trimHttpWhitespace(value ?? "");
   if (!/^[0-9]+$/u.test(token)) return null;
   const length = Number(token);
   return Number.isSafeInteger(length) ? length : null;
 };
 
 const boundedHeader = (value: string | undefined): string | null =>
-  value === undefined ? null : value.trim().toLowerCase();
+  value === undefined ? null : trimHttpWhitespace(value).toLowerCase();
 
 // RFC 9110 section 8.3.1: type/subtype are case-insensitive; parameters may not be.
 const mediaTypeDeclaration = (value: string | undefined): string | null => {
   if (value === undefined) return null;
-  const declaration = value.trim();
+  const declaration = trimHttpWhitespace(value);
   const separator = declaration.indexOf(";");
   return separator < 0
     ? declaration.toLowerCase()

@@ -17,6 +17,7 @@ export const staticCheckpointFacts = {
     sender_validations: [],
     utility_processes: [],
     native_addon_bindings: [],
+    protocols: [],
   },
   limitations: [],
 };

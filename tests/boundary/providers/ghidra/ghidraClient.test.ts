@@ -2481,3 +2481,48 @@ it("preserves a producer failure while its result waits for the startup deadline
     error: { kind: "start", cause: physical },
   });
 });
+
+it.each(["search_procedures", "search_strings"] as const)(
+  "%s retains native candidate rows for normal and ready-only dispatch",
+  async (operation) => {
+    const client = clientFor(new FixtureLauncher("unicode_search"));
+    const query = {
+      pattern: "source",
+      mode: "literal",
+      case_sensitive: false,
+      document: null,
+    };
+    const expected = {
+      ok: true,
+      value: [
+        { address: "0x1000", value: "ſource" },
+        { address: "0x1001", value: "SOURCE" },
+        { address: "0x1002", value: "İource" },
+        { address: "0x1003", value: "unrelated" },
+      ],
+    };
+    await expect(client.callTool(operation, query)).resolves.toEqual(expected);
+    await expect(client.callToolIfReady(operation, query)).resolves.toEqual(
+      expected,
+    );
+    for (const pattern of ["ſOURCE", "Σ"]) {
+      await expect(
+        client.callTool(operation, { ...query, pattern }),
+      ).resolves.toEqual(expected);
+      await expect(
+        client.callToolIfReady(operation, { ...query, pattern }),
+      ).resolves.toEqual(expected);
+    }
+    const regex = await client.callTool(operation, { ...query, mode: "regex" });
+    expect(regex.ok && Array.isArray(regex.value) && regex.value.length).toBe(
+      4,
+    );
+    const sensitive = await client.callTool(operation, {
+      ...query,
+      case_sensitive: true,
+    });
+    expect(
+      sensitive.ok && Array.isArray(sensitive.value) && sensitive.value.length,
+    ).toBe(4);
+  },
+);

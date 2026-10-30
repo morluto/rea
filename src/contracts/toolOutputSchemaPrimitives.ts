@@ -12,13 +12,12 @@ import { jsonObjectSchema } from "../domain/jsonValue.js";
 import {
   PROVIDER_REJECTION_CODES,
   type ProviderRejectionCode,
-} from "./providerSelection.js";
+} from "../domain/providerSelection.js";
 import {
   PROVIDER_FAILURE_STAGES,
   PROVIDER_OPERATION_STATES,
   PROVIDER_RETRY_ACTIONS,
 } from "../domain/providerOperationHealth.js";
-import { analysisErrorProjectionSchema } from "./errorSchemas.js";
 import {
   objcClassDiscoveryCoverageSchema,
   objcClassImportIdentitySchema,
@@ -623,12 +622,6 @@ export const sessionStatusDetailShapes = [
     tool_availability: toolAvailabilityInventory,
   },
 ] as const;
-
-/** Session status for either detail level, keyed by `detail`. */
-export const sessionProvider = z.discriminatedUnion("detail", [
-  sessionProviderFacts.extend(sessionStatusDetailShapes[0]),
-  sessionProviderFacts.extend(sessionStatusDetailShapes[1]),
-]);
 
 export const nullableText = z.string().nullable();
 export const addressedEntry = z.object({

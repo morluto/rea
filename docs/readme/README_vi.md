@@ -20,7 +20,7 @@
 
 **[Trang web](https://rea.tools/vi/) · [Hướng dẫn](https://rea.tools/vi/guides/) · [Các nghiên cứu điển hình](https://rea.tools/vi/showcase/)**
 
-[Bắt đầu nhanh](#bắt-đầu-nhanh) · [Cách REA hoạt động](#cách-rea-hoạt-động) · [Những gì bạn có thể phân tích](#những-gì-bạn-có-thể-phân-tích) · [Các nghiên cứu điển hình](#các-nghiên-cứu-điển-hình) · [Xây dựng môi trường RL](#build-rl-environments) · [Câu hỏi thường gặp](#câu-hỏi-thường-gặp) · [Công cụ GNU objdump và Rizin](../reverse-engineering-tools.md) · [Tài liệu](#tài-liệu)
+[Bắt đầu nhanh](#bắt-đầu-nhanh) · [Cách REA hoạt động](#cách-rea-hoạt-động) · [Những gì bạn có thể phân tích](#những-gì-bạn-có-thể-phân-tích) · [Các nghiên cứu điển hình](#các-nghiên-cứu-điển-hình) · [Xây dựng môi trường RL](#build-rl-environments) · [Câu hỏi thường gặp](#câu-hỏi-thường-gặp) · [Tài liệu](#tài-liệu)
 
 <code>npx rea-agents setup</code>
 
@@ -60,7 +60,7 @@ Bạn thấy một tính năng trong ứng dụng và muốn đưa nó vào sả
 
 REA kết nối tác nhân của bạn với các công cụ kiểm tra tệp nhị phân mã máy, ứng dụng JavaScript và Electron, assembly .NET và trang web. Bạn cũng có thể dùng các công cụ đó từ terminal. Việc phân tích chạy cục bộ; kết quả bao gồm bằng chứng và giới hạn làm cơ sở cho từng kết luận.
 
-Thiết lập đăng ký REA với tác nhân và cài hướng dẫn công việc tương ứng. Phân tích native dùng Hopper, Ghidra hoặc IDA có sẵn; có thể cài Hopper sau khi bạn chấp thuận. Phân tích tĩnh JavaScript không cần công cụ phân tích native.
+Thiết lập đăng ký REA với tác nhân và cài hướng dẫn công việc tương ứng. Phân tích native dùng Hopper, Ghidra, IDA hoặc Kuna có sẵn; có thể cài Hopper sau khi bạn chấp thuận. Phân tích tĩnh JavaScript không cần công cụ phân tích native.
 
 > **[Truy cập trang web REA](https://rea.tools/vi/)** để xem cách thiết lập, hướng dẫn có hình minh họa và các nghiên cứu điển hình thực tế.
 
@@ -151,7 +151,7 @@ REA yêu cầu Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) hoặc 26+ (>=26.12.1)
 
 | Mục tiêu                          | REA trả về gì                                                                                                   | Yêu cầu và hướng dẫn                                                                                                                            |
 | --------------------------------- | --------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| Tệp nhị phân mã máy               | Mã giả, hợp ngữ, chuỗi, ký hiệu, lời gọi và tham chiếu                                                          | Hopper, Ghidra hoặc IDA; [phân tích mã máy](../native-investigation.md)                                                                         |
+| Tệp nhị phân mã máy               | Mã giả, hợp ngữ, chuỗi, ký hiệu, lời gọi và tham chiếu                                                          | Hopper, Ghidra, IDA hoặc Kuna; [phân tích mã máy](../native-investigation.md)                                                                   |
 | Bố cục ELF ngoại tuyến            | Các section, segment, ký hiệu/thông tin tái định vị gốc và các biện pháp giảm thiểu có thể có từ phân tích tĩnh | pwntools do bên gọi cung cấp trên Linux x64; [chẩn đoán tệp nhị phân](../binary-diagnostics.md)                                                 |
 | Bytecode EVM                      | Bộ chọn điều phối, độ lệch byte, tham số suy luận và khả năng thay đổi trạng thái                               | Đầu vào cục bộ chứa byte thô hoặc dạng thập lục phân trên Linux x64; [hướng dẫn EVM ngoại tuyến](../evm-bytecode.md)                            |
 | Rust binaries                     | Embedded cargo-auditable dependency list                                                                        | [Rust binaries](../rust-binaries.md)                                                                                                            |
@@ -189,6 +189,8 @@ REA yêu cầu Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) hoặc 26+ (>=26.12.1)
 | Chữ ký APK                        | Bên ký v1/v2/v3/v3.1, dấu vân tay chứng chỉ, xoay vòng khóa và tính nhất quán nội bộ của digest                 | Kiểm tra tĩnh tích hợp; `inspect_apk_signature`                                                                                                 |
 
 Kiểm tra tĩnh JavaScript và .NET đọc các tệp được cung cấp mà không chạy ứng dụng. Ghi lại khi chạy sẽ khởi chạy hoặc tương tác với mục tiêu đã chọn bằng quyền người dùng của bạn; từng hướng dẫn mô tả tác động của nó.
+
+Để kiểm tra tệp nhị phân native ngoại tuyến, REA cũng hỗ trợ GNU objdump và Rizin do bạn tự cung cấp. [Hướng dẫn công cụ dịch ngược](../reverse-engineering-tools.md) trình bày cách thiết lập nhà cung cấp, các lệnh CLI và giới hạn của Evidence. REA không cài đặt hoặc cập nhật hai nhà cung cấp này.
 
 <a id="choosing-a-deep-analysis-provider"></a>
 
@@ -278,9 +280,9 @@ Bất kỳ tác nhân nào hỗ trợ máy chủ MCP cục bộ. Quá trình thi
 </details>
 
 <details>
-<summary><strong>Tôi có cần Hopper, Ghidra hoặc IDA không?</strong></summary>
+<summary><strong>Tôi có cần Hopper, Ghidra, IDA hoặc Kuna không?</strong></summary>
 
-Phân tích mã máy chuyên sâu sử dụng một trong những công cụ đó. Kiểm tra tĩnh JavaScript và .NET hoạt động mà không cần bộ máy phân tích mã máy. Quá trình thiết lập có thể cài Hopper sau khi được chấp thuận; Ghidra và IDA dùng bản cài đặt sẵn có. Xem [thiết lập trình phân tích](../installation.md#hopper).
+Phân tích mã máy chuyên sâu sử dụng một trong những công cụ đó. Kiểm tra tĩnh JavaScript và .NET hoạt động mà không cần bộ máy phân tích mã máy. Quá trình thiết lập có thể cài Hopper sau khi được chấp thuận; Ghidra, IDA và Kuna dùng bản cài đặt sẵn có. Xem [thiết lập trình phân tích](../installation.md#hopper).
 
 </details>
 
@@ -348,7 +350,7 @@ Báo cáo lỗ hổng theo [SECURITY.md](../../SECURITY.md).
 
 ## Lịch sử sao
 
-🎉 **300.000 sao trên GitHub — xin cảm ơn!**
+🎉 **400.000 sao trên GitHub — xin cảm ơn!**
 
 Cảm ơn mọi người đã sử dụng REA, báo lỗi, đề xuất tính năng, kiểm thử bản dựng và đóng góp bản sửa lỗi.
 

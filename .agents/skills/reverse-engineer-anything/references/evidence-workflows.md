@@ -46,7 +46,10 @@ Use comparisons with complete, compatible page sets when claiming equivalence
 or absence:
 
 - `compare_artifacts` compares inventory pages by occurrence path, content,
-  metadata, and graph relations.
+  metadata, and graph relations. Name each side as
+  `{kind: "retained-evidence", evidence_id}` (an `inspect_artifact` result,
+  its nested inventory or its summary) or
+  `{kind: "evidence-file", path, evidence_id?}` instead of resending Evidence.
 - `compare_functions` compares explicit function Evidence, not fuzzy
   whole-binary matches. It rejects an `analyze_function` summary reply; pass
   the summary's `parent_evidence_id` as a `retained-evidence` reference or

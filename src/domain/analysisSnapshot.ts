@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import canonicalize from "canonicalize";
 import { z } from "zod";
 
-import { evidenceSubjectDeclarationShapes } from "./evidenceSubject.js";
+import { withEvidenceSubjectDeclaration } from "./evidenceSubject.js";
 
 import {
   compareUnicodeCodePoints,
@@ -15,6 +15,7 @@ import {
   analysisProfileSchema,
   analysisProfilesEqual,
   committedProviderSchema,
+  committedProvidersEqual,
   type AnalysisProfileCommitment,
 } from "./analysisProfile.js";
 import {
@@ -73,22 +74,24 @@ const formatSchema = z.enum([
   "app-pack",
   "asar",
   "godot-pck",
+  "unityfs",
   "dmg",
   "pkg",
+  "intel-hex",
+  "srec",
+  "esp-image",
+  "fit",
   "plist",
   "javascript",
   "source-map",
+  "uimage",
 ]);
 const kindSchema = z.enum(["executable", "database", "archive", "artifact"]);
 const subjectBaseSchema = z.object({
   path: localPathStringSchema,
   sha256: digestSchema,
 });
-const subjectSchema = z.discriminatedUnion("format", [
-  subjectBaseSchema.extend(evidenceSubjectDeclarationShapes[0]),
-  subjectBaseSchema.extend(evidenceSubjectDeclarationShapes[1]),
-  subjectBaseSchema.extend(evidenceSubjectDeclarationShapes[2]),
-]);
+const subjectSchema = withEvidenceSubjectDeclaration(subjectBaseSchema);
 const targetIdentitySchema = z.object({
   sha256: digestSchema,
   kind: kindSchema,
@@ -125,9 +128,10 @@ const bindingSchema = z
   })
   .superRefine((binding, context) => {
     if (
-      binding.provider.id !== binding.analysis_profile.provider.id ||
-      binding.provider.name !== binding.analysis_profile.provider.name ||
-      binding.provider.version !== binding.analysis_profile.provider.version
+      !committedProvidersEqual(
+        binding.provider,
+        binding.analysis_profile.provider,
+      )
     )
       context.addIssue({
         code: "custom",
@@ -421,9 +425,7 @@ export const snapshotMatchesProfile = (
   binding: AnalysisSnapshotBinding,
   profile: AnalysisProfileCommitment,
 ): boolean =>
-  binding.provider.id === profile.provider.id &&
-  binding.provider.name === profile.provider.name &&
-  binding.provider.version === profile.provider.version &&
+  committedProvidersEqual(binding.provider, profile.provider) &&
   analysisProfilesEqual(binding.analysis_profile, profile);
 
 /** Require an exact target and selected provider/profile cache partition. */
@@ -477,9 +479,7 @@ export const snapshotEvidenceForQuery = (
       !(
         record.subject?.digest.sha256 === target.sha256 &&
         record.operation === operation &&
-        record.provider.id === provider.id &&
-        record.provider.name === provider.name &&
-        record.provider.version === provider.version &&
+        committedProvidersEqual(record.provider, provider) &&
         record.analysis_profile !== null &&
         analysisProfilesEqual(record.analysis_profile, evidenceProfile) &&
         canonicalJson(record.parameters) === encodedParameters &&
@@ -513,9 +513,10 @@ export const createAnalysisSnapshotWorkflowEntry = (input: {
 }): AnalysisSnapshotWorkflowEntry => {
   const { target, binding, operation, parameters, execution } = input;
   if (
-    execution.provider.id !== execution.analysisProfile.provider.id ||
-    execution.provider.name !== execution.analysisProfile.provider.name ||
-    execution.provider.version !== execution.analysisProfile.provider.version
+    !committedProvidersEqual(
+      execution.provider,
+      execution.analysisProfile.provider,
+    )
   )
     throw new TypeError(
       "Workflow snapshot execution provider does not match its profile",
@@ -569,9 +570,7 @@ export const createAnalysisSnapshotEntry = (input: {
   if (
     execution.analysisProfile === undefined ||
     !snapshotMatchesProfile(binding, execution.analysisProfile) ||
-    execution.provider.id !== binding.provider.id ||
-    execution.provider.name !== binding.provider.name ||
-    execution.provider.version !== binding.provider.version
+    !committedProvidersEqual(execution.provider, binding.provider)
   )
     throw new TypeError(
       "Snapshot execution does not match its provider/profile binding",
@@ -721,9 +720,10 @@ const restoreSnapshot = (
   };
   const entries = providerRows.map(({ entry, digest }) => {
     if (
-      entry.execution.provider.id !== header.binding.provider.id ||
-      entry.execution.provider.name !== header.binding.provider.name ||
-      entry.execution.provider.version !== header.binding.provider.version
+      !committedProvidersEqual(
+        entry.execution.provider,
+        header.binding.provider,
+      )
     )
       throw new TypeError("Analysis snapshot entry provider does not match");
     checkId(entry, false);
@@ -744,11 +744,7 @@ const restoreSnapshot = (
   });
   const workflow_entries = workflowRows.map(({ entry, digest }) => {
     const provider = entry.execution.analysis_profile.provider;
-    if (
-      entry.execution.provider.id !== provider.id ||
-      entry.execution.provider.name !== provider.name ||
-      entry.execution.provider.version !== provider.version
-    )
+    if (!committedProvidersEqual(entry.execution.provider, provider))
       throw new TypeError(
         "Analysis snapshot workflow entry provider does not match its profile",
       );
@@ -881,9 +877,7 @@ const isWorkflowEvidence = (
     evidence.analysis_profile,
     entry.execution.analysis_profile,
   ) &&
-  evidence.provider.id === entry.execution.provider.id &&
-  evidence.provider.name === entry.execution.provider.name &&
-  evidence.provider.version === entry.execution.provider.version;
+  committedProvidersEqual(evidence.provider, entry.execution.provider);
 
 /** Match an authenticated Evidence record to one exact composed cache binding. */
 export const evidenceMatchesWorkflowEntry = (

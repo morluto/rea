@@ -1,3 +1,5 @@
+import { createOwnedArtifactClient } from "../../../support/artifactClientScope.js";
+import { projectCliAnalysisResult } from "../../../../src/cli/projectCliAnalysisResult.js";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -8,7 +10,6 @@ import { describe, expect, it } from "vitest";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
 import { createDirectAnalysis } from "../../../../src/composition/directAnalysis.js";
-import { ArtifactProvider } from "../../../../src/artifacts/ArtifactProvider.js";
 import { artifactInventoryResultSchema } from "../../../../src/domain/artifactGraph.js";
 import { artifactInspectionResultSchema } from "../../../../src/domain/artifactInspection.js";
 import type { BinaryTarget } from "../../../../src/domain/binaryTargetTypes.js";
@@ -34,7 +35,9 @@ describe("artifact archive inventory", () => {
       zipResult.occurrences.map(({ artifact_kind }) => artifact_kind),
     ).toEqual(expect.arrayContaining(["javascript", "dynamic-library"]));
     const cliEvidence = parseEvidence(
-      await runProviderAnalysis(zipPath, "inventory_artifact", {}),
+      await runProviderAnalysis(zipPath, "inventory_artifact", {}).then(
+        projectCliAnalysisResult,
+      ),
     );
     expect(cliEvidence).toMatchObject({
       operation: "inventory_artifact",
@@ -42,7 +45,9 @@ describe("artifact archive inventory", () => {
       subject: { format: "apk" },
     });
     const inspectionEvidence = parseEvidence(
-      await runProviderAnalysis(zipPath, "inspect_artifact", {}),
+      await runProviderAnalysis(zipPath, "inspect_artifact", {}).then(
+        projectCliAnalysisResult,
+      ),
     );
     const inspection = artifactInspectionResultSchema.parse(
       inspectionEvidence.normalized_result,
@@ -81,7 +86,7 @@ describe("artifact archive inventory", () => {
         {},
         undefined,
         cancellation.signal,
-      ),
+      ).then(projectCliAnalysisResult),
     ).resolves.toMatchObject({ code: "cancelled" });
     await expect(
       runProviderAnalysis(
@@ -90,7 +95,7 @@ describe("artifact archive inventory", () => {
         {},
         undefined,
         cancellation.signal,
-      ),
+      ).then(projectCliAnalysisResult),
     ).resolves.toMatchObject({ code: "cancelled" });
 
     const source = join(root, "asar-source");
@@ -120,9 +125,9 @@ describe("artifact archive inventory", () => {
       join(`${unpackedPath}.unpacked`, "main.js"),
       "changed();\n",
     );
-    const corrupted = await new ArtifactProvider(process.env)
-      .createClient(await target(unpackedPath))
-      .execute("inventory_artifact", {});
+    const corrupted = await createOwnedArtifactClient(
+      await target(unpackedPath),
+    ).execute("inventory_artifact", {});
     expect(corrupted).toMatchObject({
       ok: false,
       error: {
@@ -134,9 +139,9 @@ describe("artifact archive inventory", () => {
         },
       },
     });
-    const failedInspection = await new ArtifactProvider(process.env)
-      .createClient(await target(unpackedPath))
-      .execute("inspect_artifact", {});
+    const failedInspection = await createOwnedArtifactClient(
+      await target(unpackedPath),
+    ).execute("inspect_artifact", {});
     expect(failedInspection).toMatchObject({
       ok: false,
       error: { _tag: "ArtifactOperationError", reason: "integrity" },
@@ -144,9 +149,10 @@ describe("artifact archive inventory", () => {
   });
 });
 const inventory = async (targetValue: BinaryTarget) => {
-  const result = await new ArtifactProvider(process.env)
-    .createClient(targetValue)
-    .execute("inventory_artifact", {});
+  const result = await createOwnedArtifactClient(targetValue).execute(
+    "inventory_artifact",
+    {},
+  );
   if (!result.ok) throw result.error;
   return artifactInventoryResultSchema.parse(result.value.result);
 };

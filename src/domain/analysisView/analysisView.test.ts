@@ -625,6 +625,69 @@ it("projects layout summary, facet, item, and stable pages", () => {
   });
 });
 
+it.each(["sections", "symbols"] as const)(
+  "selects %s by exact source bytes and preserves opaque names by index",
+  (collection) => {
+    const layout = analysisViewLayoutFixture();
+    const rows = layout[collection];
+    const original = rows[0];
+    if (original === undefined) throw new Error("missing layout row");
+    const opaque = {
+      ...original,
+      name: {
+        ...original.name,
+        display: "�name",
+        bytes_base64: Buffer.from([0xff, ...Buffer.from("name")]).toString(
+          "base64",
+        ),
+      },
+    };
+    const valid = {
+      ...rows[1],
+      name: {
+        ...original.name,
+        display: "provider-formatted-name",
+        bytes_base64: Buffer.from("�name").toString("base64"),
+      },
+    };
+    const parent = {
+      ...layoutParent(),
+      normalizedResult: {
+        ...layout,
+        [collection]: [opaque, valid],
+      },
+    };
+    const selected = projectAnalysisView(parent, {
+      kind: "item",
+      collection,
+      selector: { name: "�name" },
+    });
+    expect(selected).toMatchObject({ ok: true, value: { item: valid } });
+    expect(
+      projectAnalysisView(parent, {
+        kind: "item",
+        collection,
+        selector: { name: "\ud800name" },
+      }).ok,
+    ).toBe(false);
+    expect(
+      projectAnalysisView(parent, {
+        kind: "item",
+        collection,
+        selector: { name: "provider-formatted-name" },
+      }).ok,
+    ).toBe(false);
+    expect(
+      projectAnalysisView(parent, {
+        kind: "item",
+        collection,
+        selector: { index: 0 },
+      }),
+    ).toMatchObject({ ok: true, value: { item: opaque } });
+    expect(parent.normalizedResult[collection]).toEqual([opaque, valid]);
+  },
+);
+
 it("rejects ambiguous layout names with candidate indexes", () => {
   const parent = layoutParent();
   const result = projectAnalysisView(parent, {

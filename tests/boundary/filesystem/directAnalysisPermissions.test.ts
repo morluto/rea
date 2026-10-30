@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisResult.js";
 import { chmod, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -39,14 +40,16 @@ describe("direct analysis snapshot files", () => {
     vi.stubEnv("REA_ANALYSIS_PROVIDER", "environment-provider");
 
     await expect(
-      createDirectAnalysis(process.env).runDirectAnalysis(
-        targetPath,
-        "binary_overview",
-        {},
-        {
-          providerId: "request-provider",
-        },
-      ),
+      createDirectAnalysis(process.env)
+        .runDirectAnalysis(
+          targetPath,
+          "binary_overview",
+          {},
+          {
+            providerId: "request-provider",
+          },
+        )
+        .then(projectCliAnalysisResult),
     ).resolves.toMatchObject({
       error: "Analysis failed",
       code: "capability_unavailable",
@@ -96,14 +99,16 @@ describe("direct analysis snapshot files", () => {
     vi.stubEnv("HOPPER_LAUNCHER_PATH", launcherPath);
 
     await expect(
-      createDirectAnalysis(process.env).runDirectAnalysis(
-        process.execPath,
-        "binary_overview",
-        {},
-        {
-          snapshotPath,
-        },
-      ),
+      createDirectAnalysis(process.env)
+        .runDirectAnalysis(
+          process.execPath,
+          "binary_overview",
+          {},
+          {
+            snapshotPath,
+          },
+        )
+        .then(projectCliAnalysisResult),
     ).resolves.not.toEqual(evidence);
   });
 });

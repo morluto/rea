@@ -1,11 +1,33 @@
 import { describe, expect, it } from "vitest";
 
-import { addressDistance } from "./addressCoordinate.js";
+import { addressCoordinate, addressDistance } from "./addressCoordinate.js";
 import { parseDocuments } from "./nativeDocument.js";
 import { parseRelatedAddresses } from "./nativeObservation.js";
 import { parseSegments } from "./nativeSegments.js";
 
 describe("native provider boundary values", () => {
+  it.each([
+    "ram space:0x1",
+    "ram:extra:0x1",
+    "ram%zz:0x1",
+    ":0x1",
+    "ram%2f:0x1",
+    "0X1",
+    "0xA",
+  ])("leaves malformed or non-observed coordinate %s unknown", (address) => {
+    expect(addressCoordinate(address)).toBeNull();
+    expect(addressDistance(address, address)).toBeNull();
+  });
+
+  it("preserves encoded space identity and padded observed offsets", () => {
+    expect(addressCoordinate("ram%2Fbank:0x000a")).toEqual({
+      space: "ram%2Fbank",
+      offset: 10n,
+    });
+    expect(addressDistance("ram%2Fbank:0x000a", "ram%2Fbank:0xb")).toBe(1);
+    expect(addressDistance("ram%2Fbank:0xa", "ram%252Fbank:0xb")).toBeNull();
+  });
+
   it("distinguishes measured zero, malformed, incomparable, reversed, and oversized extents", () => {
     expect(addressDistance("not-an-address", "0x2000")).toBeNull();
     expect(addressDistance("ram:0x1000", "rom:0x2000")).toBeNull();

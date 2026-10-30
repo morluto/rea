@@ -1,4 +1,11 @@
-import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  readFile,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -12,6 +19,9 @@ import {
 import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
 import { EnhancedTools } from "../EnhancedTools.js";
 import { DecompileExport } from "./exportTree.js";
+import { ExportResources } from "./exportResources.js";
+import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
+import { OwnedStagedOutput } from "../../filesystem/OwnedStagedOutput.js";
 import {
   composedLimitationBudget,
   createWorkflowEvidence,
@@ -1865,4 +1875,113 @@ describe("decompile_all mixed cleanup ownership", () => {
     await providerLease.release();
     expect(result.error.cleanupIncomplete).toBe(false);
   });
+});
+
+describe("decompile_all publication cleanup", () => {
+  const directory = useOutputDirectory();
+  afterEach(() => vi.restoreAllMocks());
+
+  it.each(["function", "index"])(
+    "retains a %s publication cleanup failure after final cleanup succeeds",
+    async (publication) => {
+      const cleanupFailure = new Error("staging removal denied");
+      const originalPublish = ExportResources.prototype.publish;
+      const originalClose = OwnedStagedOutput.prototype.close;
+      const destination = join(
+        directory(),
+        publication === "function"
+          ? "functions/0x1000.c"
+          : DECOMPILE_DIRECTORY_INDEX_NAME,
+      );
+      let selected = false;
+      let failed = false;
+      vi.spyOn(ExportResources.prototype, "publish").mockImplementation(
+        async function (this: ExportResources, bytes, path, mode) {
+          selected = path === destination;
+          return originalPublish.call(this, bytes, path, mode);
+        },
+      );
+      vi.spyOn(OwnedStagedOutput.prototype, "close").mockImplementation(
+        async function (this: OwnedStagedOutput) {
+          if (selected && !failed) {
+            failed = true;
+            throw cleanupFailure;
+          }
+          return originalClose.call(this);
+        },
+      );
+      const { tools } = harness();
+      const result = await run(tools, directory());
+      expect(failed).toBe(true);
+      expect(
+        await readFile(join(directory(), "functions/0x1000.c"), "utf8"),
+      ).toContain(sentinel);
+      if (publication === "index")
+        expect(
+          JSON.parse(
+            await readFile(
+              join(directory(), DECOMPILE_DIRECTORY_INDEX_NAME),
+              "utf8",
+            ),
+          ),
+        ).toMatchObject({ functions: expect.any(Array) });
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toBeInstanceOf(AnalysisOutputError);
+      expect(result.error.message).toContain(
+        `decompile ${publication} publication cleanup failed`,
+      );
+      expect(result.error.cause).toMatchObject({
+        message: "staging removal denied",
+      });
+      expect(result.error.cleanupIncomplete).toBe(false);
+    },
+  );
+});
+
+describe("decompile_all resumed file cleanup", () => {
+  const directory = useOutputDirectory();
+  afterEach(() => vi.restoreAllMocks());
+  it.each(["journaled", "unjournaled"])(
+    "reports a %s file verification close failure after final cleanup succeeds",
+    async (kind) => {
+      const { tools } = harness();
+      expect((await run(tools, directory())).ok).toBe(true);
+      if (kind === "unjournaled") {
+        const journal = join(directory(), DECOMPILE_DIRECTORY_JOURNAL_NAME);
+        const header = (await readFile(journal, "utf8")).split("\n")[0];
+        await writeFile(journal, `${header}\n`);
+      }
+      const identity = await stat(join(directory(), "functions/0x1000.c"));
+      const close = OwnedFileHandle.prototype.close;
+      let failed = false;
+      vi.spyOn(OwnedFileHandle.prototype, "close").mockImplementation(
+        async function (this: OwnedFileHandle) {
+          const observed = await this.handle.stat();
+          if (
+            !failed &&
+            observed.dev === identity.dev &&
+            observed.ino === identity.ino
+          ) {
+            failed = true;
+            throw new Error("verification close denied");
+          }
+          return close.call(this);
+        },
+      );
+      const result = await run(tools, directory(), { resume: true });
+      expect(failed).toBe(true);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.message).toContain("verification cleanup failed");
+      expect(result.error.cleanupIncomplete).toBe(false);
+      expect(
+        await readFile(join(directory(), "functions/0x1000.c"), "utf8"),
+      ).toContain(sentinel);
+      const resumed = await run(tools, directory(), { resume: true });
+      expect(resumed.ok).toBe(true);
+      if (resumed.ok)
+        expect(resumed.value).toMatchObject({ counts: { skipped: 3 } });
+    },
+  );
 });

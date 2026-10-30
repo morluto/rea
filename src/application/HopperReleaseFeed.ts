@@ -52,6 +52,14 @@ const selectedPlatformsSchema = z.object({
   Arch: z.unknown().optional(),
 });
 
+/** Interpret channel identity once using the same URL semantics as the downloader. */
+const isPublicHopperDownload = (url: URL): boolean =>
+  url.origin === "https://www.hopperapp.com" &&
+  url.username === "" &&
+  url.password === "" &&
+  !urlDeclaresQueryOrFragment(url) &&
+  url.pathname.startsWith("/downloader/public/");
+
 /** Admit the selected macOS row without projecting away vendor release metadata. */
 export const parseMacHopperReleases = (
   raw: unknown,
@@ -68,7 +76,7 @@ export const parseMacHopperReleases = (
       ),
     );
   const retained = release.data as MacHopperRelease;
-  if (!retained.filename.startsWith(HOPPER_DOWNLOAD_PREFIX))
+  if (!isPublicHopperDownload(new URL(retained.filename)))
     return err(
       new HopperReleaseError(
         "release_metadata",
@@ -154,10 +162,7 @@ export const parseLinuxHopperRelease = (
     );
   const url = new URL(parsed.data.filename);
   if (
-    url.origin !== "https://www.hopperapp.com" ||
-    url.username !== "" ||
-    url.password !== "" ||
-    urlDeclaresQueryOrFragment(url) ||
+    !isPublicHopperDownload(url) ||
     !url.pathname.startsWith("/downloader/public/Hopper-") ||
     !url.pathname.endsWith(`-Linux-demo${suffixes[family]}`)
   )

@@ -7,11 +7,27 @@ import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarnes
 it("verifies canonical names, converted schemas and session metadata together", async () => {
   const harness = await createApplicationMcpHarness();
   try {
-    const tools = await harness.client.listTools();
-    const status = await harness.client.callTool({
-      name: "binary_session",
-      arguments: {},
-    });
+    const listed = await harness.client.listTools();
+    const sessionDefinition = listed.tools.find(
+      ({ name }) => name === "binary_session",
+    );
+    if (sessionDefinition === undefined)
+      throw new Error("Expected the binary_session definition");
+    // Catalog order must not select which schema validates the lifecycle call.
+    const tools = {
+      ...listed,
+      tools: [
+        ...listed.tools.filter(({ name }) => name !== "binary_session"),
+        sessionDefinition,
+      ],
+    };
+    const status = await harness.client.callTool(
+      {
+        name: "binary_session",
+        arguments: {},
+      },
+      { toolDefinition: sessionDefinition },
+    );
     const forwarded: unknown[][] = [];
     const client = {
       listTools: async (...args: unknown[]) => {
@@ -27,7 +43,10 @@ it("verifies canonical names, converted schemas and session metadata together", 
     const canonical = await verifyCompleteToolCatalog(client, options);
     expect(forwarded).toEqual([
       [undefined, options],
-      [{ name: "binary_session", arguments: {} }, options],
+      [
+        { name: "binary_session", arguments: {} },
+        { ...options, toolDefinition: sessionDefinition },
+      ],
     ]);
     expect(canonical).toEqual(tools.tools.map(({ name }) => name).sort());
 

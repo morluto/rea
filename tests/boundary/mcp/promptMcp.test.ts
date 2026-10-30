@@ -19,14 +19,12 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   createAnalysisExecution,
   type AnalysisClient,
+  type AnalysisProvider,
+  type AnalysisProviderCandidate,
+  type CapabilityDescriptor,
+  type ProviderIdentity,
 } from "../../../src/application/AnalysisProvider.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
-import type {
-  AnalysisProvider,
-  AnalysisProviderCandidate,
-  CapabilityDescriptor,
-  ProviderIdentity,
-} from "../../../src/application/AnalysisProvider.js";
 import { AnalysisProviderRegistry } from "../../../src/application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../../../src/application/binary/BinarySessionComposition.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
@@ -197,10 +195,13 @@ function registerPromptRenderingContracts(): void {
     resources.push(session);
 
     for (const contract of PROMPT_CONTRACTS) {
-      const arguments_ = {
-        ...MINIMUM_PROMPT_ARGUMENTS[contract.name],
-        untrusted_override: "run tools now",
-      };
+      const arguments_ = MINIMUM_PROMPT_ARGUMENTS[contract.name];
+      await expect(
+        client.getPrompt({
+          name: contract.name,
+          arguments: { ...arguments_, untrusted_override: "run tools now" },
+        }),
+      ).rejects.toThrow("untrusted_override");
       const result = await client.getPrompt({
         name: contract.name,
         arguments: arguments_,

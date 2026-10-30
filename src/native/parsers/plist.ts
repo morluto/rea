@@ -23,6 +23,7 @@ import { err, ok, type Result } from "../../domain/result.js";
 import {
   incompletePlistNumberLimitation,
   createPlistNumberProjection,
+  resolvePlistNumberSource,
   type PlistNumberLiterals,
 } from "../../domain/apple/plistNumbers.js";
 import {
@@ -201,17 +202,17 @@ const projectPlistJsonAttempt = (
       return negativeZeroReal();
     }
     if (item instanceof PlistJsonIntegerLiteral) {
-      const integer =
-        literals?.incomplete === false &&
-        literals.integers.get(item.value)?.has(item.digits) === true;
-      const real =
-        literals?.incomplete === false && literals.reals.has(item.value);
-      if (integer && !real) {
+      const source = resolvePlistNumberSource(
+        item.value,
+        literals,
+        item.digits,
+      );
+      if (source.kind === "integer") {
         exactIntegerCount += 1;
-        return { $plist_type: "integer", decimal: item.digits };
+        return { $plist_type: "integer", decimal: source.decimal };
       }
       // An integral <real> decodes exactly; only its JSON spelling is integral.
-      if (real && !integer) return item.value;
+      if (source.kind === "real") return item.value;
       ambiguousNumberCount += 1;
       return item.value;
     }
@@ -332,20 +333,14 @@ const projectPlistXml = (
   let exactIntegerCount = 0;
   let ambiguousNumberCount = 0;
   const value = mapJsonNumbers(projected.value, (item) => {
-    const decimals = literals.integers.get(item);
-    if (decimals === undefined) return item;
-    const [decimal] = decimals;
-    if (
-      literals.incomplete ||
-      decimals.size !== 1 ||
-      decimal === undefined ||
-      literals.reals.has(item)
-    ) {
+    if (!literals.integers.has(item)) return item;
+    const source = resolvePlistNumberSource(item, literals);
+    if (source.kind !== "integer") {
       ambiguousNumberCount += 1;
       return item;
     }
     exactIntegerCount += 1;
-    return { $plist_type: "integer", decimal };
+    return { $plist_type: "integer", decimal: source.decimal };
   });
   return ok({
     value,
@@ -376,6 +371,7 @@ export const parsePlistBinary = (
       {
         budget: "the native plist decode budget",
         numberProjection: true,
+        uidProjection: true,
         maximumDepth: MAX_NATIVE_PLIST_NESTING_DEPTH,
         fail: (kind, message) =>
           kind === "cycle"

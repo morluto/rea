@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { open as openFile, writeFile } from "node:fs/promises";
+import { open as openFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it, vi } from "vitest";
@@ -45,6 +45,46 @@ it("rejects a real extent change after admission instead of replacing its baseli
     expect(failure.cause).toBeInstanceOf(regularFile.RegularFileChangedError);
     expect(descriptor?.initial.size).toBe(original.length);
     expect(descriptor?.handle.fd).toBe(-1);
+  } finally {
+    open.mockRestore();
+    if (descriptor !== undefined && descriptor.handle.fd >= 0)
+      await descriptor.handle.close();
+  }
+});
+
+it("classifies a selected name removed at final validation as a changed file and closes its descriptor", async () => {
+  const root = await createTestTempDirectory("rea-stable-name-removed-");
+  const path = join(root, "input.bin");
+  await writeFile(path, "admitted bytes");
+  const nativeOpen = regularFile.openRegularFile;
+  let descriptor: regularFile.StableRegularFileDescriptor | undefined;
+  const open = vi
+    .spyOn(regularFile, "openRegularFile")
+    .mockImplementationOnce(async (...args) => {
+      descriptor = await nativeOpen(...args);
+      const nativeStat = descriptor.handle.stat.bind(descriptor.handle);
+      vi.spyOn(descriptor.handle, "stat").mockImplementationOnce(async () => {
+        const metadata = await nativeStat();
+        await unlink(path);
+        return metadata;
+      });
+      return descriptor;
+    });
+  try {
+    const retainFailedClose = vi.fn();
+    const failure: unknown = await hashStableFile(path, {
+      retainFailedClose,
+    }).catch((cause: unknown) => cause);
+    expect(failure).toMatchObject({
+      _tag: "StableFileHashFailure",
+      cause: {
+        name: "RegularFileChangedError",
+        code: "ESTALE",
+        cause: { code: "ENOENT" },
+      },
+    });
+    expect(descriptor?.handle.fd).toBe(-1);
+    expect(retainFailedClose).not.toHaveBeenCalled();
   } finally {
     open.mockRestore();
     if (descriptor !== undefined && descriptor.handle.fd >= 0)

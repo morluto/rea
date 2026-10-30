@@ -13,6 +13,44 @@ import {
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("native export stable filesystem boundary", () => {
+  it("retains source identity and usable exports when a forwarder leaves its declared directory", async () => {
+    const root = await createTestTempDirectory("rea-native-export-forwarder-");
+    const path = join(root, "truncated-forwarder.dll");
+    const bytes = peExportImage({
+      functions: [{ rva: 0x11fc }, { rva: 0x2000 }],
+      names: [{ name: "Kept", index: 1 }],
+    });
+    bytes.write("DLL.Target\0", 0x5fc, "latin1");
+    await writeFile(path, bytes);
+    const service = createNativeExportsService();
+    try {
+      const result = await service.inspect({ path });
+      if (!result.ok) throw new Error(JSON.stringify(result.error));
+      const evidence = parseEvidence(result.value);
+      const sha256 = createHash("sha256").update(bytes).digest("hex");
+      expect(evidence.subject).toMatchObject({
+        local_path: path,
+        digest: { sha256 },
+      });
+      expect(
+        nativeExportsSchema.parse(evidence.normalized_result),
+      ).toMatchObject({
+        artifact: { path, sha256, bytes: bytes.length },
+        exports: [{ name: "Kept", ordinal: 2 }],
+        issues: [
+          {
+            code: "malformed_entry",
+            location: "0x11fc",
+            message: expect.stringContaining("Forwarder of ordinal 1"),
+          },
+        ],
+        coverage: { status: "partial", examined_entries: 2, exports: 1 },
+      });
+    } finally {
+      await service.close();
+    }
+  });
+
   it("bounds retained PE aliases before interpreting their target", async () => {
     const root = await createTestTempDirectory("rea-native-export-aliases-");
     const service = createNativeExportsService();

@@ -42,7 +42,10 @@ it("resolves enabled builtin scopes in the same tree as registered commands", ()
   expect(complete(["rea", "mcp"], 2)).toEqual(["add", "doctor"]);
   expect(complete(["rea", ""])).toEqual(["instructions", "mcp", "completions"]);
   expect(complete(["rea", "completions", "b"])).toEqual(["bash"]);
-  expect(complete(["rea", "mcp", "add", "--c"])).toEqual(["--command"]);
+  expect(complete(["rea", "mcp", "add", "--c"])).toEqual([
+    "--command",
+    "--columns",
+  ]);
 });
 
 it("uses canonical global flag metadata and retains command options and enum hints", () => {
@@ -66,7 +69,25 @@ it("uses canonical global flag metadata and retains command options and enum hin
     "yaml",
     "md",
     "jsonl",
+    "csv",
+    "tsv",
   ]);
+  expect(complete(["rea", "mcp", "doctor", "--format", ""])).toEqual([
+    "toon",
+    "json",
+    "yaml",
+    "md",
+    "jsonl",
+  ]);
+  expect(complete(["rea", "mcp", "doctor", "--"])).toEqual([
+    "--format",
+    "--json",
+    "--full-output",
+    "--help",
+    "--timings",
+  ]);
+  expect(complete(["rea", "mcp", "doctor", "--t"])).toEqual(["--timings"]);
+  expect(complete(["rea", "mcp", "doctor", "-h"])).toEqual(["-h"]);
   expect(complete(["rea", "--filter-output", "mcp", ""])).toEqual([
     "instructions",
     "mcp",
@@ -104,6 +125,65 @@ it("shares Bash registration across ordinary and protocol routes while retaining
   expect(ordinary(["completions", "bash", "--schema"], {})).toBe(false);
 });
 
+workspaceCliTest(
+  "explains zsh completion initialization in public help",
+  async ({ processes, workspace }) => {
+    const environment = {
+      ...process.env,
+      ...workspace.environment,
+      REA_LOG_LEVEL: "silent",
+      REA_TEST_NODE: process.execPath,
+      REA_TEST_DISPATCHER: resolve("scripts/rea.mjs"),
+    };
+    for (const arguments_ of [
+      ["completions", "--help"],
+      ["--json", "completions", "--help"],
+      ["completions"],
+    ]) {
+      const help = await processes.run(
+        process.execPath,
+        [resolve("scripts/rea.mjs"), ...arguments_],
+        { env: environment },
+      );
+      expect(help.exitCode, help.stderr).toBe(0);
+      expect(help.stdout).toContain(
+        "initialize completion with `autoload -Uz compinit; compinit` before evaluating the zsh hook",
+      );
+    }
+  },
+);
+
+workspaceCliTest.skipIf(process.platform !== "darwin")(
+  "registers zsh completion after compinit",
+  async ({ processes, workspace }) => {
+    const environment = {
+      ...process.env,
+      ...workspace.environment,
+      REA_LOG_LEVEL: "silent",
+      REA_TEST_NODE: process.execPath,
+      REA_TEST_DISPATCHER: resolve("scripts/rea.mjs"),
+    };
+    const result = await processes.run(
+      "zsh",
+      [
+        "-f",
+        "-c",
+        `
+rea() { "$REA_TEST_NODE" "$REA_TEST_DISPATCHER" "$@"; }
+autoload -Uz compinit
+compinit -i -D
+eval "$(rea completions zsh)" || exit
+print -r -- "association=\${+_comps[rea]}"
+`,
+      ],
+      { env: environment },
+    );
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("association=1\n");
+  },
+);
+
 workspaceCliTest.skipIf(process.platform === "win32")(
   "runs generated Bash completion with valid MCP scope and incomplete global values through the public launcher",
   async ({ processes, workspace }) => {
@@ -124,6 +204,10 @@ COMP_WORDS=(rea instructions --format "")
 COMP_CWORD=3
 _incur_complete_rea || exit
 printf 'format=%s\\n' "\${COMPREPLY[*]}"
+COMP_WORDS=(rea mcp doctor --)
+COMP_CWORD=3
+_incur_complete_rea || exit
+printf 'doctor=%s\\n' "\${COMPREPLY[*]}"
 `,
       ],
       {
@@ -139,6 +223,9 @@ printf 'format=%s\\n' "\${COMPREPLY[*]}"
     expect(result.exitCode, result.stderr).toBe(0);
     expect(result.stderr).toBe("");
     expect(result.stdout).toContain("mcp=add doctor\n");
-    expect(result.stdout).toContain("format=toon json yaml md jsonl\n");
+    expect(result.stdout).toContain("format=toon json yaml md jsonl csv tsv\n");
+    expect(result.stdout).toContain(
+      "doctor=--format --json --full-output --help --timings\n",
+    );
   },
 );

@@ -132,7 +132,12 @@ export const machoImageSlices = (
 /** One observed path below the analyzed root. Symlink targets are not followed by the view. */
 export type DylibTreeEntry =
   | { readonly kind: "file" | "directory" }
-  | { readonly kind: "symlink"; readonly target: string };
+  | { readonly kind: "symlink"; readonly target: string }
+  | {
+      readonly kind: "symlink";
+      readonly target: null;
+      readonly targetHex: string;
+    };
 
 /** Read-only, lazily probed view of the analyzed root. Paths are root-relative. */
 export interface DylibTreeView {
@@ -264,6 +269,7 @@ interface ProcessContext {
   readonly searchOverrides: readonly DyldSearchOverride[];
   readonly environmentRoots: Set<string>;
   readonly unknownPlatformCandidates: Set<string>;
+  readonly undecodableSymlinkTargets: Map<string, string>;
   readonly implicitMacOSPlatformCandidates: Set<string>;
   readonly platforms: readonly number[];
   readonly executable: string | null;
@@ -359,6 +365,10 @@ const evaluateCandidate = async (
   );
   if (lookup.kind === "escapes")
     return { ...base, outcome: "escapes-target", resolved_path: null };
+  if (lookup.kind === "undetermined") {
+    context.undecodableSymlinkTargets.set(lookup.path, lookup.targetHex);
+    return { ...base, outcome: "undetermined", resolved_path: null };
+  }
   if (lookup.kind !== "file")
     return { ...base, outcome: "absent", resolved_path: null };
   const facts = await imageFacts(context, lookup.path);
@@ -663,6 +673,7 @@ const projectTraceResult = (input: {
   readonly withoutArchitecture: readonly string[];
   readonly environmentRoots: ReadonlySet<string>;
   readonly unknownPlatformCandidates: ReadonlySet<string>;
+  readonly undecodableSymlinkTargets: ReadonlyMap<string, string>;
   readonly implicitMacOSPlatformCandidates: ReadonlySet<string>;
   readonly rootEnumeration: DylibRootEnumeration | undefined;
 }): DylibTrace => {
@@ -695,6 +706,7 @@ const projectTraceResult = (input: {
         input.withoutArchitecture.length === 0 &&
         input.environmentRoots.size === 0 &&
         input.unknownPlatformCandidates.size === 0 &&
+        input.undecodableSymlinkTargets.size === 0 &&
         input.rootEnumeration?.status !== "unknown"
           ? "complete"
           : "partial",
@@ -704,6 +716,11 @@ const projectTraceResult = (input: {
     limitations: [
       ...DYLIB_RESOLUTION_LIMITATIONS,
       ...(input.rootEnumeration?.limitations ?? []),
+      ...(input.undecodableSymlinkTargets.size === 0
+        ? []
+        : [
+            `Symlink targets cannot be represented as UTF-8; their paths and stored target bytes (hex) are ${JSON.stringify(Object.fromEntries(input.undecodableSymlinkTargets))}. Affected dependency resolution remains undetermined.`,
+          ]),
       ...(input.environmentRoots.size === 0
         ? []
         : [
@@ -744,6 +761,7 @@ export const traceDylibLoading = async (
   const withoutArchitecture: string[] = [];
   const environmentRoots = new Set<string>();
   const unknownPlatformCandidates = new Set<string>();
+  const undecodableSymlinkTargets = new Map<string, string>();
   const implicitMacOSPlatformCandidates = new Set<string>();
   for (const root of request.roots) {
     const facts = await view.image(root);
@@ -785,6 +803,7 @@ export const traceDylibLoading = async (
             searchOverrides,
             environmentRoots,
             unknownPlatformCandidates,
+            undecodableSymlinkTargets,
             implicitMacOSPlatformCandidates,
             platforms: slice.platforms,
             executable,
@@ -806,6 +825,7 @@ export const traceDylibLoading = async (
     withoutArchitecture,
     environmentRoots,
     unknownPlatformCandidates,
+    undecodableSymlinkTargets,
     implicitMacOSPlatformCandidates,
     rootEnumeration: request.rootEnumeration,
   });

@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisResult.js";
 import { parseConfig } from "../../../src/config/parseConfig.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { describe, expect, it, onTestFinished } from "vitest";
@@ -86,7 +87,9 @@ describe("official operation arguments", () => {
       ],
     ] as const) {
       const cli = parseEvidence(
-        await runDirectAnalysis(dependencies, path, name, cliParameters),
+        await runDirectAnalysis(dependencies, path, name, cliParameters).then(
+          projectCliAnalysisResult,
+        ),
       );
       const mcp = await client.callTool({ name, arguments: mcpParameters });
       expect(mcp.isError).not.toBe(true);

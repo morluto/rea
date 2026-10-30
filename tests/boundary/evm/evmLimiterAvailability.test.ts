@@ -82,8 +82,12 @@ it("rejects a relative override and non-file without probing an alternate comman
   );
   expect(relative).toMatchObject({
     status: "unavailable",
-    diagnostics: { limiter_path: "prlimit" },
-    reason: expect.stringContaining("absolute executable path"),
+    reason: "prlimit_not_absolute",
+    diagnostics: {
+      limiter_path: "prlimit",
+      code: "prlimit_not_absolute",
+      setting: "REA_EVM_PRLIMIT_COMMAND",
+    },
   });
 
   const directory = await evmLimiterAvailability(
@@ -98,7 +102,8 @@ it("rejects a relative override and non-file without probing an alternate comman
   );
   expect(directory).toMatchObject({
     status: "unavailable",
-    reason: expect.stringContaining("regular executable file"),
+    reason: "prlimit_not_file",
+    diagnostics: expect.objectContaining({ code: "prlimit_not_file" }),
   });
 });
 

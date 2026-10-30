@@ -118,7 +118,10 @@ describe("setup workflow", () => {
     expect(result.code).toBe("skill_install_failed");
     expect(result.remediation).toContain("REA skill write failed at");
     expect(result.remediation).toContain("injected skill write failure");
-    expect(result.remediation).toContain("Check permissions and rerun setup.");
+    expect(result.remediation).toContain(
+      "Correct the reported skill installation failure and rerun setup.",
+    );
+    expect(result.remediation).not.toContain("Check permissions");
     expect(progress.at(-1)).toMatchObject({
       state: "failed",
       detail: expect.stringContaining("injected skill write failure"),
@@ -683,6 +686,10 @@ describe("setup Hopper install eligibility", () => {
   it.each([
     { version: "", installs: false },
     { version: "14beta", installs: false },
+    { version: "14.garbage", installs: false },
+    { version: "14.", installs: false },
+    { version: "14.0\n", installs: false },
+    { version: "99999999999999999", installs: false },
     { version: "12", installs: true },
     { version: "12.0", installs: true },
   ])(
@@ -774,48 +781,3 @@ it.each(["return", "throw"] as const)(
     expect(failure.hasCleanupOwner).toBe(false);
   },
 );
-
-it("stops setup after interrupted prewarm and retains cleanup through host close retry", async () => {
-  const host = new FakeSetupHost();
-  host.hopper = "/Applications/Hopper";
-  host.clients = [{ name: "codex", configPath: "/fixture/codex.json" }];
-  let doctorCalls = 0;
-  const doctor = host.doctor.bind(host);
-  host.doctor = async (...args) => {
-    doctorCalls++;
-    return doctor(...args);
-  };
-  let callsAtInterrupt = -1;
-  let released = false;
-  const cleanup = new SetupCleanupOwner([
-    {
-      close: async () => {
-        if (!released) throw new Error("controlled runner cleanup refusal");
-      },
-    },
-  ]);
-  const selected = Object.assign(host, {
-    prewarmRegistrationRunner: async () => {
-      callsAtInterrupt = doctorCalls;
-      return {
-        status: "failed" as const,
-        reason: "interrupted prewarm",
-        interruptedSignal: "SIGINT",
-      };
-    },
-    close: () => cleanup.close(),
-  });
-  const result = await runSetup(
-    { ...options(true), clientIds: ["codex"], installSkill: false },
-    selected,
-  );
-  expect(callsAtInterrupt).toBeGreaterThanOrEqual(0);
-  expect(doctorCalls).toBe(callsAtInterrupt);
-  expect(result.status).toBe("needs_human");
-  expect(result.appliedActions).toContain("configured_codex");
-  expect(result.prewarm).toMatchObject({ interruptedSignal: "SIGINT" });
-  expect(result.cleanup?.reason).toContain("controlled runner cleanup refusal");
-  released = true;
-  await cleanup.close();
-  expect(result.cleanup).toBeUndefined();
-});

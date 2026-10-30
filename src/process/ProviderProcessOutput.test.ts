@@ -752,9 +752,15 @@ it("unreferences process and stream handles when stop reports incomplete cleanup
   }
 });
 
-it.each(["close", "abort"] as const)(
-  "awaits output without a deadline until %s",
-  async (outcome) => {
+it.each([
+  { outcome: "close", timeoutMs: undefined },
+  { outcome: "abort", timeoutMs: undefined },
+  { outcome: "close", timeoutMs: 5000 },
+  { outcome: "abort", timeoutMs: 5000 },
+] as const)(
+  "releases output wait resources after $outcome with timeout $timeoutMs",
+  async ({ outcome, timeoutMs }) => {
+    vi.useFakeTimers();
     const producer = Object.assign(new EventEmitter(), {
       stdout: new PassThrough(),
       stderr: new PassThrough(),
@@ -770,7 +776,7 @@ it.each(["close", "abort"] as const)(
     const removeListener = vi.spyOn(controller.signal, "removeEventListener");
     let settled = false;
     const pending = owner
-      .waitForOutputClose(undefined, controller.signal)
+      .waitForOutputClose(timeoutMs, controller.signal)
       .then((result) => {
         settled = true;
         return result;
@@ -781,11 +787,13 @@ it.each(["close", "abort"] as const)(
       if (outcome === "close") producer.emit("close", 0, null);
       else controller.abort();
       expect(await pending).toBe(outcome === "close");
+      expect(vi.getTimerCount()).toBe(0);
       expect(removeListener).toHaveBeenCalledWith(
         "abort",
         expect.any(Function),
       );
     } finally {
+      vi.useRealTimers();
       removeListener.mockRestore();
       owner.dispose();
       producer.stdout.destroy();

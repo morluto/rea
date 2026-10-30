@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 
+import { err, ok, type Result } from "../domain/result.js";
+
 import {
   appendManagedParseIssues,
   managedFailure,
@@ -575,11 +577,16 @@ const readTypeSignature = (
   {
     layout,
     operands,
+    onElement,
+    displayTypeName,
   }: {
     /** Validate each type operand against these tables, as specs require. */
     readonly layout?: ManagedMetadataLayout;
     /** Collect each type operand, to resolve it by name. */
     readonly operands?: TypeOperand[];
+    /** Observe parsed element kinds without reinterpreting signature bytes. */
+    readonly onElement?: (kind: number) => void;
+    readonly displayTypeName?: SignatureDisplayTypeName | undefined;
   } = {},
 ): {
   readonly value: string;
@@ -587,6 +594,15 @@ const readTypeSignature = (
   readonly nominalGenericType: NominalGenericType | null;
 } => {
   const stack: TypeContinuation[] = [];
+  const namedOperand = (
+    kind: string,
+    operand: Parameters<SignatureTypeName>[0],
+  ): string => {
+    // Enclosing continuations copy names during rendering; admit first.
+    const name = displayTypeName?.(operand, (stack.length + 1) * 2);
+    const raw = `${kind}:${String(operand.value)}`;
+    return name === undefined || name === null ? raw : `${raw} (${name})`;
+  };
   let cursor = offset;
   let nominalGenericType: NominalGenericType | null = null;
   let pinned = false;
@@ -595,6 +611,7 @@ const readTypeSignature = (
     const kind = blob[cursor];
     if (kind === undefined)
       return malformedSignature("truncated type signature", cursor);
+    onElement?.(kind);
     if (kind === 0x41) {
       const signature = stack.at(-1);
       if (signature?.kind !== "list" || !signature.signatureItems)
@@ -670,7 +687,7 @@ const readTypeSignature = (
         );
       const token = readTypeOperand(blob, cursor + 1, layout);
       operands?.push({ offset: cursor + 1, ...token });
-      const modifier = `${kind === 0x1f ? "modreq" : "modopt"}:${String(token.value)}`;
+      const modifier = namedOperand(kind === 0x1f ? "modreq" : "modopt", token);
       // A modifier frame on top was pushed by the directly preceding byte;
       // keep an adjacent run together and in source order.
       const top = stack.at(-1);
@@ -680,7 +697,7 @@ const readTypeSignature = (
     } else if (kind === 0x11 || kind === 0x12) {
       const token = readTypeOperand(blob, cursor + 1, layout);
       operands?.push({ offset: cursor + 1, ...token });
-      value = `${kind === 0x11 ? "valuetype" : "class"}:${String(token.value)}`;
+      value = namedOperand(kind === 0x11 ? "valuetype" : "class", token);
       cursor = token.next;
     } else if (kind === 0x1e || kind === 0x13) {
       const variable = readCompressed(blob, cursor + 1);
@@ -725,7 +742,10 @@ const readTypeSignature = (
           "generic instantiation has no type arguments",
           token.next,
         );
-      const head = `${generic === 0x11 ? "valuetype" : "class"}:${String(token.value)}`;
+      const head = namedOperand(
+        generic === 0x11 ? "valuetype" : "class",
+        token,
+      );
       stack.push({
         kind: "list",
         remaining: argumentCount.value,
@@ -787,8 +807,22 @@ const readTypeSignature = (
   }
 };
 
-/** Validate a StandAloneSig LocalVarSig without projecting local type identities. */
-export const validateLocalSignature = (
+/**
+ * Signature decoders report blob-relative offsets; coverage issues use
+ * artifact file offsets.
+ */
+const artifactSignatureIssue = (
+  issue: ManagedParseIssue,
+  scope: string,
+  blobOffset: number,
+): ManagedParseIssue => ({
+  ...issue,
+  scope,
+  offset: issue.offset === null ? blobOffset : blobOffset + issue.offset,
+});
+
+/** Read validated LocalVarSig identity facts without projecting local type identities. */
+export const readLocalSignatureFacts = (
   layout: ManagedMetadataLayout,
   blob: Buffer,
   {
@@ -796,7 +830,10 @@ export const validateLocalSignature = (
     blobOffset,
   }: { readonly scope: string; readonly blobOffset: number },
   budget: ManagedDecodeBudget,
-): ManagedParseIssue | null => {
+): Result<
+  NonNullable<ManagedMethodBody["local_var_signature"]>,
+  ManagedParseIssue
+> => {
   budget.admitTransient(blob.length * 256, blobOffset);
   try {
     if (blob[0] !== 0x07)
@@ -808,13 +845,24 @@ export const validateLocalSignature = (
         1,
       );
     let cursor = count.next;
+    let contextDependent = false;
     for (let index = 0; index < count.value; index += 1) {
-      const local = readTypeSignature(blob, cursor, "local", { layout });
+      const local = readTypeSignature(blob, cursor, "local", {
+        layout,
+        onElement: (kind) => {
+          // Named types, generic variables and modifiers require metadata or declaring context.
+          if ([0x11, 0x12, 0x13, 0x15, 0x1e, 0x1f, 0x20].includes(kind))
+            contextDependent = true;
+        },
+      });
       cursor = local.next;
     }
     if (cursor !== blob.length)
       malformedSignature("Trailing LocalVarSig data", cursor);
-    return null;
+    return ok({
+      raw_sha256: sha256Bytes(blob),
+      has_context_dependent_types: contextDependent,
+    });
   } catch (cause: unknown) {
     if (
       !(cause instanceof ManagedReaderFailure) ||
@@ -823,14 +871,7 @@ export const validateLocalSignature = (
         cause.issue.code !== "unsupported-signature")
     )
       throw cause;
-    return {
-      ...cause.issue,
-      scope,
-      offset:
-        cause.issue.offset === null
-          ? blobOffset
-          : blobOffset + cause.issue.offset,
-    };
+    return err(artifactSignatureIssue(cause.issue, scope, blobOffset));
   }
 };
 
@@ -948,6 +989,7 @@ const decodeSignature = (
   operands: TypeOperand[] = [],
   issueSink?: (issue: ManagedParseIssue) => void,
   scope = "signature",
+  displayTypeName?: SignatureDisplayTypeName,
 ): DecodedSignature => {
   let kind: DecodedSignature["kind"] = "unknown";
   try {
@@ -960,6 +1002,7 @@ const decodeSignature = (
       kind = "field";
       const fieldType = readTypeSignature(blob, 1, "field", {
         operands,
+        displayTypeName,
         ...(layout === undefined ? {} : { layout }),
       });
       return {
@@ -979,6 +1022,7 @@ const decodeSignature = (
     kind = "method";
     const returnType = readTypeSignature(blob, header.next, "return", {
       operands,
+      displayTypeName,
       ...(layout === undefined ? {} : { layout }),
     });
     let offset = returnType.next;
@@ -998,6 +1042,7 @@ const decodeSignature = (
       }
       const parameter = readTypeSignature(blob, offset, "parameter", {
         operands,
+        displayTypeName,
         ...(layout === undefined ? {} : { layout }),
       });
       parameters.push(parameter.value);
@@ -1083,6 +1128,12 @@ export type SignatureTypeName = (
 
 export type DeclarationTypeName = (table: 1 | 2, row: number) => Buffer | null;
 
+/** Display an already decoded operand, admitting its transient copies first. */
+export type SignatureDisplayTypeName = (
+  operand: Parameters<SignatureTypeName>[0],
+  copies: number,
+) => string | null;
+
 /**
  * Each type operand is replaced by 0xff, which never starts a compressed
  * coded index, then the 32-byte name digest; a blob without type operands
@@ -1138,13 +1189,21 @@ export const signature = (
   blob: Buffer,
   rawSha256?: string,
   typeName: SignatureTypeName = () => null,
+  displayTypeName?: SignatureDisplayTypeName,
 ): ManagedSignature => {
   const operands: TypeOperand[] = [];
   return projectSignature(
     blob,
     rawSha256,
     typeName,
-    decodeSignature(blob, undefined, operands),
+    decodeSignature(
+      blob,
+      undefined,
+      operands,
+      undefined,
+      "signature",
+      displayTypeName,
+    ),
     operands,
   );
 };
@@ -1158,14 +1217,19 @@ export const metadataSignature = (
     layout,
     issues,
     scope,
+    blobOffset,
     expectedKind,
+    displayTypeName,
   }: {
     readonly rawSha256: string;
     readonly typeName: SignatureTypeName;
     readonly layout: ManagedMetadataLayout;
     readonly issues: ManagedParseIssue[];
     readonly scope: string;
+    /** Artifact file offset of the blob's first byte. */
+    readonly blobOffset: number;
     readonly expectedKind?: "field" | "method";
+    readonly displayTypeName?: SignatureDisplayTypeName | undefined;
   },
 ): ManagedSignature => {
   const operands: TypeOperand[] = [];
@@ -1173,8 +1237,9 @@ export const metadataSignature = (
     blob,
     layout,
     operands,
-    (issue) => issues.push(issue),
+    (issue) => issues.push(artifactSignatureIssue(issue, scope, blobOffset)),
     scope,
+    displayTypeName,
   );
   if (
     expectedKind !== undefined &&

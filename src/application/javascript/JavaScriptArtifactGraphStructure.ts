@@ -156,6 +156,7 @@ export const addJavaScriptArtifactFiles = (
       file,
       analyzed.javascript,
       jsonValue,
+      packagesByPath.get(file.path),
       isSkippedJavaScriptAnalysis(analyzed),
     );
     if (
@@ -553,8 +554,6 @@ export const addJavaScriptPackageNodes = (
             version: packageValue.version,
             main: packageValue.main,
             main_status: packageValue.main_status,
-            // Legacy derived candidate; source fields live in renderer_declarations.
-            renderer: packageValue.renderer_entrypoint?.path ?? null,
             renderer_declarations: packageValue.renderer_declarations,
             parse_status: packageValue.status,
           },
@@ -634,6 +633,7 @@ const createFileTarget = (
   file: JavaScriptArtifactFile,
   javascript: JavaScriptArtifactAnalysis["files"][number]["javascript"],
   json: JavaScriptArtifactAnalysis["json_modules"][number] | undefined,
+  packageValue: JavaScriptArtifactAnalysis["packages"][number] | undefined,
   skipped: boolean,
 ): ApplicationNode => {
   const kind = artifactFileNodeKind(file.kind);
@@ -673,6 +673,9 @@ const createFileTarget = (
                 }
               : {}),
           json_parse_status: json?.status ?? null,
+          ...(file.kind === "package-json"
+            ? { package_parse_status: packageValue?.status ?? null }
+            : {}),
           json_top_level_keys: json?.top_level_keys ?? [],
           omitted_json_top_level_keys:
             json === undefined

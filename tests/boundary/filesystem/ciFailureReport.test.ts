@@ -40,7 +40,7 @@ const context = (
   turboVersion: "2.11.7",
   platform: "linux",
   architecture: "x64",
-  taskHashes: { "lint:built": taskHash },
+  taskHashes: { lint: taskHash },
 });
 const run = (overrides: Partial<CiRun> = {}) =>
   normalizeWorkflowRun({
@@ -120,6 +120,26 @@ it("attributes only an identical structured lint failure with matching task, con
   });
 });
 
+it.each(["context", "mainContext"] as const)(
+  "keeps mixed legacy and canonical lint receipts unknown when %s uses the old task",
+  (side) => {
+    const input = comparison();
+    const receipt = input[side]!;
+    expect(
+      classifyFailure({
+        ...input,
+        [side]: {
+          ...receipt,
+          taskHashes: { "lint:built": "a".repeat(16) },
+        },
+      }),
+    ).toEqual({
+      classification: "unknown",
+      reason: "owning_task_hash_differs",
+    });
+  },
+);
+
 it.each([
   ...[
     "nodeVersion",
@@ -131,7 +151,7 @@ it.each([
   ["optional head hash", { prHeadSha: "bad" }],
   [
     "unrelated task hash",
-    { taskHashes: { "lint:built": "a".repeat(16), typecheck: "bad" } },
+    { taskHashes: { lint: "a".repeat(16), typecheck: "bad" } },
   ],
 ] as const)(
   "keeps malformed %s provenance unknown on either side",

@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { Cli, z } from "incur";
 import { createWebRuntimeService } from "../composition/webRuntime.js";
 import { browserCliError } from "./browserCliError.js";
@@ -70,7 +71,7 @@ export const registerWebRuntimeCommands = (
             service.provider.identity().id,
             "observe_web_execution",
             signal,
-          );
+          ).then(projectCliAnalysisResult);
         }),
       ),
   });
@@ -111,7 +112,7 @@ export const registerWebRuntimeCommands = (
             service.provider.identity().id,
             "inspect_web_event_listeners",
             signal,
-          );
+          ).then(projectCliAnalysisResult);
         }),
       ),
   });

@@ -42,6 +42,7 @@ interface ComparisonItemContext {
   readonly scope: ManagedComparisonScope;
   /** Whether matching keyed signatures by resolved digests, not raw bytes. */
   readonly signatureResolutionExamined: boolean;
+  readonly sameArtifact: boolean;
   readonly leftAssembly: ManagedMemberInspection["assembly"];
   readonly rightAssembly: ManagedMemberInspection["assembly"];
   readonly leftCallEdgesByCaller: CallEdgesByCaller;
@@ -704,6 +705,30 @@ const ambiguityLimitation = (
           ? "Multiple managed methods share the same structural shape; REA did not guess a token remap."
           : "Multiple managed fields share the same signature; REA did not guess a token remap.";
 
+/** Local signature bytes prove identity only without metadata or declaring-context dependencies. */
+const compareLocalSignatures = (
+  left: Method,
+  right: Method,
+  sameArtifact: boolean,
+): { readonly changed: boolean; readonly unknown: boolean } => {
+  const leftPresent = left.body.local_var_sig_token !== null;
+  const rightPresent = right.body.local_var_sig_token !== null;
+  if (!leftPresent || !rightPresent) return { changed: false, unknown: false };
+  // The same method row of the same authenticated artifact names the same source bytes.
+  if (sameArtifact && left.token === right.token)
+    return { changed: false, unknown: false };
+  const a = left.body.local_var_signature;
+  const b = right.body.local_var_signature;
+  if (
+    a === null ||
+    b === null ||
+    a.has_context_dependent_types ||
+    b.has_context_dependent_types
+  )
+    return { changed: false, unknown: true };
+  return { changed: a.raw_sha256 !== b.raw_sha256, unknown: false };
+};
+
 export const buildMethodItems = (
   matches: ManagedMethodMatches,
   context: ComparisonItemContext,
@@ -714,6 +739,11 @@ export const buildMethodItems = (
       pair.left.item,
       pair.right.item,
       context.signatureResolutionExamined,
+    );
+    const locals = compareLocalSignatures(
+      pair.left.item,
+      pair.right.item,
+      context.sameArtifact,
     );
     const {
       dimensions: observedDimensions,
@@ -731,10 +761,15 @@ export const buildMethodItems = (
       context.leftAssembly,
       context.rightAssembly,
     );
+    if (locals.changed && !observedDimensions.includes("metadata"))
+      observedDimensions.push("metadata");
     const dimensions = [
       ...observedDimensions,
       ...(bodyUnknown ? (["body-coverage"] as const) : []),
-      ...(callTargetUnknown || fieldTargetUnknown || exceptionTargetUnknown
+      ...(callTargetUnknown ||
+      fieldTargetUnknown ||
+      exceptionTargetUnknown ||
+      locals.unknown
         ? (["availability"] as const)
         : []),
     ];
@@ -754,6 +789,7 @@ export const buildMethodItems = (
             callTargetUnknown ||
             fieldTargetUnknown ||
             exceptionTargetUnknown ||
+            locals.unknown ||
             signatureLimitations.length > 0
           ? "unknown"
           : "unchanged",
@@ -770,6 +806,16 @@ export const buildMethodItems = (
       evidence_links: [context.leftEvidenceId, context.rightEvidenceId],
       limitations: [
         ...signatureLimitations,
+        ...(locals.unknown
+          ? [
+              "Local variable signature identity is unknown because validated context-free signature facts are unavailable or the signature requires metadata or declaring context; build-local tokens and raw bytes do not establish equivalent local types across artifacts.",
+            ]
+          : []),
+        ...(locals.changed
+          ? [
+              "The validated context-free LocalVarSig bytes changed; this records an encoding difference without asserting a semantic type change.",
+            ]
+          : []),
         ...(bodyUnknown
           ? [
               "Method body facets are unknown because at least one side has unavailable or partial body data.",

@@ -1,7 +1,7 @@
 import { basename } from "node:path";
 import { z } from "zod";
 
-import { evidenceSubjectDeclarationShapes } from "./evidenceSubject.js";
+import { withEvidenceSubjectDeclaration } from "./evidenceSubject.js";
 
 import { digestCanonicalValue } from "./canonicalDigest.js";
 import { canonicalJsonDigestSteps } from "./canonicalJsonDigestSteps.js";
@@ -43,11 +43,7 @@ const subjectBaseSchema = z.strictObject({
   digest: z.strictObject({ sha256: digestSchema }),
   local_path: nulFreeStringSchema,
 });
-const subjectSchema = z.discriminatedUnion("format", [
-  subjectBaseSchema.extend(evidenceSubjectDeclarationShapes[0]),
-  subjectBaseSchema.extend(evidenceSubjectDeclarationShapes[1]),
-  subjectBaseSchema.extend(evidenceSubjectDeclarationShapes[2]),
-]);
+const subjectSchema = withEvidenceSubjectDeclaration(subjectBaseSchema);
 /** Source location attached to an evidence observation. */
 /** Source-location schema shared by evidence-bearing persistence formats. */
 export const evidenceLocationSchema = z.discriminatedUnion("kind", [
@@ -276,6 +272,16 @@ export const parseEvidence = (input: unknown): Evidence => {
       : undefined;
   if (immutable !== undefined) return immutable;
   return authenticatedEvidenceSchema.parse(input);
+};
+
+/** Recognize authenticated Evidence in a union of partial observations. */
+export const tryParseEvidence = (input: unknown): Evidence | undefined => {
+  if (typeof input !== "object" || input === null || !("evidence_id" in input))
+    return undefined;
+  const immutable = immutableEvidenceSnapshots.get(input);
+  if (immutable !== undefined) return immutable;
+  const parsed = authenticatedEvidenceSchema.safeParse(input);
+  return parsed.success ? parsed.data : undefined;
 };
 
 /** Authenticate and seal a ledger-owned snapshot; external mutable values are copied first. */

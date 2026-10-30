@@ -307,3 +307,19 @@ it.each([false, true])(
     expect(host.installs).toBe(1);
   },
 );
+
+it("refuses release URLs that normalize outside the public channel before package download", async () => {
+  const host = new FakeMacHopperHost();
+  const feed = await host.download("files-api");
+  const row = JSON.parse(new TextDecoder().decode(feed.bytes));
+  row["OS X"].filename =
+    "https://www.hopperapp.com:443/downloader/public/%2e%2e/private/Hopper-demo.dmg";
+  host.feedBytes = new TextEncoder().encode(JSON.stringify(row));
+
+  expect(await installMacHopper({}, host)).toMatchObject({
+    status: "failed",
+    reason: "release_metadata",
+  });
+  expect(host.packageDownloads).toBe(0);
+  expect(host.mounts).toBe(0);
+});

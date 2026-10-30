@@ -378,7 +378,7 @@ function blobIdentityStatus(diagnostics, blobs) {
 }
 function sameTaskHashes(diagnostics, left, right) {
   return diagnostics.every((diagnostic) => {
-    const task = diagnostic.kind === "jscpd" ? "jscpd" : "lint:built";
+    const task = diagnostic.kind === "jscpd" ? "jscpd" : "lint";
     return (
       TASK_HASH.test(left.taskHashes[task] ?? "") &&
       left.taskHashes[task] === right.taskHashes[task]

@@ -32,6 +32,7 @@ import {
   AnalysisSnapshotCache,
   SNAPSHOT_CACHE_ENTRY_CEILING,
   isSnapshotCacheable,
+  isSourceEvidenceRetainable,
 } from "./AnalysisSnapshotCache.js";
 import { EvidenceLedger } from "../investigation/EvidenceLedger.js";
 import { enhancedOutputSchemas } from "../../contracts/toolOutputSchemaGroups.js";
@@ -716,6 +717,26 @@ describe("analysis snapshot cache policy", () => {
       effects: { changesPermissions: true },
       cacheable: false,
     },
+    {
+      policy: "snapshot",
+      operation: "decode_interface_builder",
+      cacheable: false,
+    },
+    {
+      policy: "snapshot",
+      operation: "inspect_asset_catalog",
+      cacheable: false,
+    },
+    {
+      policy: "snapshot",
+      operation: "inspect_keyed_archive",
+      cacheable: false,
+    },
+    {
+      policy: "snapshot",
+      operation: "trace_dylib_resolution",
+      cacheable: false,
+    },
     { policy: "snapshot", operation: "list_documents", cacheable: false },
     { policy: "snapshot", operation: "list_strings", cacheable: false },
     {
@@ -756,6 +777,59 @@ describe("analysis snapshot cache policy", () => {
       );
     },
   );
+
+  it("retains caller observations without a document while refusing to replay them", () => {
+    const descriptor: CapabilityDescriptor = {
+      operation: "procedure_callers",
+      provider: ANALYSIS_SNAPSHOT_PROVIDER,
+      available: true,
+      reason: null,
+      effects: {
+        mutatesArtifact: false,
+        launchesProcess: false,
+        mayShowUi: false,
+        mayAccessNetwork: false,
+        mayWriteFilesystem: false,
+        changesPermissions: false,
+        requiresRoot: false,
+      },
+      limitations: [],
+    };
+    const parameters = { procedure: "0x1000" };
+    expect(
+      isSourceEvidenceRetainable("procedure_callers", descriptor, parameters),
+    ).toBe(true);
+    expect(
+      isSnapshotCacheable("procedure_callers", descriptor, parameters),
+    ).toBe(false);
+    expect(
+      isSnapshotCacheable("procedure_callers", descriptor, {
+        ...parameters,
+        document: "fixture",
+      }),
+    ).toBe(true);
+    const callees = { ...descriptor, operation: "procedure_callees" as const };
+    expect(
+      isSourceEvidenceRetainable("procedure_callees", callees, parameters),
+    ).toBe(true);
+    const pseudocode = {
+      ...descriptor,
+      operation: "procedure_pseudo_code" as const,
+    };
+    expect(
+      isSourceEvidenceRetainable(
+        "procedure_pseudo_code",
+        pseudocode,
+        parameters,
+      ),
+    ).toBe(false);
+    expect(
+      isSourceEvidenceRetainable("procedure_pseudo_code", pseudocode, {
+        ...parameters,
+        document: "fixture",
+      }),
+    ).toBe(true);
+  });
 });
 
 describe("analysis snapshot cache partitioning", () => {

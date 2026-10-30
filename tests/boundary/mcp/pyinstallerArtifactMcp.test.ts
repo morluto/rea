@@ -3,8 +3,8 @@ import { createHash } from "node:crypto";
 import { join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { Ajv2020 } from "ajv/dist/2020.js";
-import { expect, it } from "vitest";
+import { afterAll, expect, it } from "vitest";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 import { createArtifactBinarySession } from "../../../src/composition/binary.js";
 import {
@@ -20,6 +20,9 @@ import { analysisViewResultSchema } from "../../../src/domain/analysisView/analy
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
+const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
+
 const assertMetadataQueries = async (
   client: Client,
   parent: Evidence,
@@ -29,11 +32,9 @@ const assertMetadataQueries = async (
     (tool) => tool.name === "inspect_analysis_view",
   );
   expect(definition?.outputSchema).toBeDefined();
-  const ajv = new Ajv2020({ strict: false, validateFormats: false });
+  const ajv = schemaValidation.assertions;
   const inputSchema: Record<string, unknown> = definition!.inputSchema;
   const outputSchema: Record<string, unknown> = definition!.outputSchema!;
-  const input = ajv.compile(inputSchema);
-  const output = ajv.compile(outputSchema);
   const ids: string[] = [];
   const selected: unknown[] = [];
   for (const offset of [0, 1, 2, 3]) {
@@ -48,15 +49,18 @@ const assertMetadataQueries = async (
         limit: 1,
       },
     };
-    expect(input(args), JSON.stringify(input.errors)).toBe(true);
+    expect(ajv.validate(inputSchema, args), JSON.stringify(ajv.errors)).toBe(
+      true,
+    );
     const reply = await client.callTool({
       name: "inspect_analysis_view",
       arguments: args,
     });
     expect(reply.isError).not.toBe(true);
-    expect(output(reply.structuredContent), JSON.stringify(output.errors)).toBe(
-      true,
-    );
+    expect(
+      ajv.validate(outputSchema, reply.structuredContent),
+      JSON.stringify(ajv.errors),
+    ).toBe(true);
     const evidence = parseEvidence(reply.structuredContent);
     const view = analysisViewResultSchema.parse(evidence.normalized_result);
     if (view.kind !== "inventory") throw new Error("Expected inventory page");
@@ -201,7 +205,10 @@ it.each([false, true])(
     const path = await writeExecutable(opaque);
     const session = await createArtifactBinarySession(process.env);
     const server = createServer({ kind: "session", session });
-    const client = new Client({ name: "pyinstaller-mcp-test", version: "1" });
+    const client = new Client(
+      { name: "pyinstaller-mcp-test", version: "1" },
+      { jsonSchemaValidator: schemaValidation },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {
@@ -333,10 +340,13 @@ it("preserves legacy CArchive identities and modern bytecode derivation through 
   await writeFile(path, fixture.archive);
   const session = await createArtifactBinarySession(process.env);
   const server = createServer({ kind: "session", session });
-  const client = new Client({
-    name: "pyinstaller-bytecode-mcp-test",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "pyinstaller-bytecode-mcp-test",
+      version: "1",
+    },
+    { jsonSchemaValidator: schemaValidation },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {
@@ -391,10 +401,13 @@ it("preserves surrogatepass PYZ module names through inspect_artifact", async ()
   const path = await writeSurrogateNamespaceExecutable();
   const session = await createArtifactBinarySession(process.env);
   const server = createServer({ kind: "session", session });
-  const client = new Client({
-    name: "pyinstaller-surrogate-mcp-test",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "pyinstaller-surrogate-mcp-test",
+      version: "1",
+    },
+    { jsonSchemaValidator: schemaValidation },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {
@@ -514,10 +527,13 @@ it.each([
     );
     const session = await createArtifactBinarySession(process.env);
     const server = createServer({ kind: "session", session });
-    const client = new Client({
-      name: "opaque-pyz-metadata-test",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "opaque-pyz-metadata-test",
+        version: "1",
+      },
+      { jsonSchemaValidator: schemaValidation },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {
@@ -643,7 +659,10 @@ it.each([false, true])(
     );
     const session = await createArtifactBinarySession(process.env);
     const server = createServer({ kind: "session", session });
-    const client = new Client({ name: "pyz-role-test", version: "1" });
+    const client = new Client(
+      { name: "pyz-role-test", version: "1" },
+      { jsonSchemaValidator: schemaValidation },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     let outputRoot: string | undefined;

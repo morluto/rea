@@ -37,6 +37,7 @@ import {
 import { updatedFields } from "./environmentStateWriteApply.js";
 import {
   retainFixed,
+  retainCreateExemplar,
   type EffectContext,
 } from "./environmentStateWriteEffects.js";
 
@@ -2300,14 +2301,8 @@ describe("entities an unmodelled write made", () => {
     ["GET", "/api/books/3", BOOK_NOT_FOUND, 404] as TimedCaptureRow,
   ];
 
-  it("serves a delete of a book an unmodelled import made, which a later item read showed", () => {
-    // The rename ends the initial reads, so the third book is no initial one.
-    expect(
-      gated(deletedAfterRead([RENAME, IMPORT]), "delete_books_by_id"),
-    ).toMatchObject({ served: true, checked_record_ordinals: [7] });
-  });
-
   it("takes a book the state never held only when a write the gate does not model came first", () => {
+    // The rename ends the initial reads, so the third book is no initial one.
     expect(
       gated(deletedAfterRead([RENAME, IMPORT]), "delete_books_by_id"),
     ).toMatchObject({ served: true, checked_record_ordinals: [7] });
@@ -3113,6 +3108,61 @@ it("learns omitted fields using the raw ID resolved by the item owner", () => {
   });
 });
 
+describe("create exemplar retention", () => {
+  const facts = () => {
+    const snapshot = { id: "held", payload: "p".repeat(1_000_000) };
+    const held = Array.from({ length: 1000 }, () => snapshot);
+    return {
+      entity: { id: "new", url: "/new" },
+      call: {
+        path: "/items",
+        pathValues: new Map<string, string>(),
+        body: { payload: "x".repeat(10_000) },
+      },
+      idField: "id",
+      startMs: undefined,
+      collection: held,
+      type: held,
+    };
+  };
+  it("charges temporary request facts and shared snapshot references without rebilling owned entity payloads", () => {
+    let retained = 0;
+    const context = {
+      io: {
+        retain: (bytes: number) => {
+          retained += bytes;
+        },
+      },
+    } as unknown as EffectContext;
+    const input = facts();
+    expect(retainCreateExemplar(context, input, [])).toBe(input);
+    expect(retained).toBeGreaterThan(28_000);
+    expect(retained).toBeLessThan(40_000);
+  });
+  it("retains no exemplar when every string field is already explained", () => {
+    const retain = vi.fn();
+    const context = { io: { retain } } as unknown as EffectContext;
+    expect(
+      retainCreateExemplar(context, facts(), [
+        { field: "id", rule: "echo" },
+        { field: "url", rule: "echo" },
+      ]),
+    ).toBeUndefined();
+    expect(retain).not.toHaveBeenCalled();
+  });
+  it("does not adopt request facts when the retained budget refuses them", () => {
+    const context = {
+      io: {
+        retain: () => {
+          throw new Error("budget exhausted");
+        },
+      },
+    } as unknown as EffectContext;
+    expect(() => retainCreateExemplar(context, facts(), [])).toThrow(
+      "budget exhausted",
+    );
+  });
+});
 it.each([
   {
     label: "point read with simultaneous unknown action",

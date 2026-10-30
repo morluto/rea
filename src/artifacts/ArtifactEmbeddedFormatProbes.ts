@@ -1,3 +1,7 @@
+import {
+  probeBunStandaloneGraph,
+  type BunStandaloneProbe,
+} from "./bun/BunModuleGraphLayout.js";
 import type {
   StableRegularFileDescriptor,
   RegularFileState,
@@ -6,6 +10,7 @@ import {
   regularFileState,
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
+import { findDotnetBundleHeader } from "./dotnet/DotnetBundle.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import { abortIfNeeded } from "./ArtifactHash.js";
 import { locateGodotPck, type GodotPckLocation } from "./GodotPckLocation.js";
@@ -13,14 +18,20 @@ import {
   locateNodeSea,
   type NodeSeaLocation,
 } from "./nodeSea/NodeSeaLocation.js";
-import { containsPyInstallerArchive } from "./pyinstaller/CArchiveLayout.js";
+import {
+  observePyInstallerCookie,
+  type PyInstallerCookie,
+  type PyInstallerCookieObservation,
+} from "./pyinstaller/CArchiveLayout.js";
 
-/** Completed observations only; null means examined absence, omission means unexamined. */
+/** Completed observations only; omission means unexamined, and null is examined absence. */
 export interface ArtifactEmbeddedFormatProbeFacts {
   readonly sourceState: RegularFileState;
+  readonly bunStandalone?: BunStandaloneProbe;
   readonly godotPck?: GodotPckLocation | null;
   readonly nodeSea?: NodeSeaLocation | null;
-  readonly pyInstaller?: boolean;
+  readonly dotnetBundleHeaderOffset?: number | null;
+  readonly pyInstaller?: PyInstallerCookieObservation;
 }
 
 /** Share format observations only across admissions of the same unchanged regular file. */
@@ -72,17 +83,53 @@ export class ArtifactEmbeddedFormatProbes {
     return location;
   }
 
-  async pyInstaller(): Promise<boolean> {
+  async pyInstaller(): Promise<PyInstallerCookie | undefined> {
     abortIfNeeded(this.signal);
-    if (this.#facts.pyInstaller !== undefined) return this.#facts.pyInstaller;
-    const found = await containsPyInstallerArchive(
+    if (this.#facts.pyInstaller !== undefined)
+      return this.#facts.pyInstaller.state === "located"
+        ? this.#facts.pyInstaller.cookie
+        : undefined;
+    const found = await observePyInstallerCookie(
       this.source.handle,
       this.source.initial.size,
       this.signal,
     );
     abortIfNeeded(this.signal);
-    this.#facts = { ...this.#facts, pyInstaller: found };
-    return found;
+    if (!found.ok)
+      throw new ArtifactReaderFailure(found.error.reason, found.error.message);
+    this.#facts = { ...this.#facts, pyInstaller: found.value };
+    return found.value.state === "located" ? found.value.cookie : undefined;
+  }
+
+  async dotnetBundle(): Promise<number | undefined> {
+    abortIfNeeded(this.signal);
+    if (this.#facts.dotnetBundleHeaderOffset !== undefined)
+      return this.#facts.dotnetBundleHeaderOffset ?? undefined;
+    // An apphost inside a recognized CArchive cannot claim its outer carrier.
+    const packaged = await this.pyInstaller();
+    const header = await findDotnetBundleHeader(
+      this.source.handle,
+      this.source.initial.size,
+      this.signal,
+      packaged?.archiveStart ?? this.source.initial.size,
+    );
+    abortIfNeeded(this.signal);
+    this.#facts = { ...this.#facts, dotnetBundleHeaderOffset: header ?? null };
+    return header;
+  }
+
+  async bunStandalone(): Promise<BunStandaloneProbe> {
+    abortIfNeeded(this.signal);
+    if (this.#facts.bunStandalone !== undefined)
+      return this.#facts.bunStandalone;
+    const observed = await probeBunStandaloneGraph(
+      this.source.handle,
+      this.source.initial.size,
+      this.signal,
+    );
+    abortIfNeeded(this.signal);
+    this.#facts = { ...this.#facts, bunStandalone: observed };
+    return observed;
   }
 
   completedFacts(): ArtifactEmbeddedFormatProbeFacts {

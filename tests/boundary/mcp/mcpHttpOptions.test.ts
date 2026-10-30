@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { fileURLToPath } from "node:url";
+import { processTest } from "../../support/process/processFixture.js";
 
 import {
   parseMcpHttpEndpoint,
@@ -60,6 +62,56 @@ describe("rea mcp --http arguments", () => {
     expect(help).not.toContain("--filter-output");
   });
 
+  it("combines repeated allowlists before normalization and explicit override", () => {
+    const parsed = parseMcpHttpArguments([
+      "--http",
+      "--allowed-hosts",
+      "REA.LAN,bücher.example",
+      "--allowed-hosts=rea.lan,[::1]",
+      "--allowed-hosts",
+      "b.example",
+    ]);
+    expect(parsed).toEqual({
+      ok: true,
+      allowedHosts: ["rea.lan", "xn--bcher-kva.example", "[::1]", "b.example"],
+    });
+    if (!parsed.ok) throw new Error("Expected valid repeated host lists");
+    expect(
+      parseMcpHttpEndpoint(
+        { MCP_ALLOWED_HOSTS: "environment.example" },
+        parsed,
+      ),
+    ).toEqual({
+      ok: true,
+      value: { host: "127.0.0.1", port: 0, allowedHosts: parsed.allowedHosts },
+    });
+  });
+
+  it.each(["", "a.example,", "https://a.example", "a.example:80"])(
+    "rejects invalid earlier allowlist %j instead of discarding it",
+    (invalidHosts) => {
+      expect(
+        parseMcpHttpArguments([
+          "--http",
+          `--allowed-hosts=${invalidHosts}`,
+          "--allowed-hosts=b.example",
+        ]),
+      ).toMatchObject({
+        ok: false,
+        help: false,
+        message: expect.stringContaining("Invalid --allowed-hosts"),
+      });
+      expect(
+        parseMcpHttpArguments([
+          "--http",
+          `--allowed-hosts=${invalidHosts}`,
+          "--allowed-hosts=b.example",
+          "--help",
+        ]),
+      ).toEqual({ ok: false, help: true });
+    },
+  );
+
   it("writes help as one newline-terminated stdout block and rejections to stderr", async () => {
     const io = () => {
       const stdout: string[] = [];
@@ -86,6 +138,45 @@ describe("rea mcp --http arguments", () => {
     expect(rejected.exitCodes).toEqual([1]);
   });
 });
+
+processTest(
+  "rejects an invalid earlier host list before the compiled CLI opens a listener",
+  async ({ processes }) => {
+    const child = processes.spawn(process.execPath, [
+      fileURLToPath(new URL("../../../scripts/rea.mjs", import.meta.url)),
+      "mcp",
+      "--http",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "0",
+      "--allowed-hosts=https://a.example",
+      "--allowed-hosts=b.example",
+    ]);
+    child.stdin.end();
+    let stdout = "";
+    let stderr = "";
+    const result = await new Promise<{
+      listening: boolean;
+      code?: number | null;
+    }>((resolve, reject) => {
+      child.stdout.on("data", (chunk: Buffer) => {
+        stdout += chunk.toString("utf8");
+      });
+      child.stderr.on("data", (chunk: Buffer) => {
+        stderr += chunk.toString("utf8");
+        if (stderr.includes("MCP transport listening"))
+          resolve({ listening: true });
+      });
+      child.once("error", reject);
+      child.once("close", (code) => resolve({ listening: false, code }));
+    });
+    expect(result, stderr).toEqual({ listening: false, code: 1 });
+    expect(stdout).toBe("");
+    expect(stderr).toContain("Invalid --allowed-hosts");
+    expect(stderr).not.toContain("MCP transport listening");
+  },
+);
 
 describe("MCP_HOST and MCP_PORT", () => {
   it("defaults to loopback and an ephemeral port", () => {

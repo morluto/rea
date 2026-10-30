@@ -220,6 +220,88 @@ function resolveReference(schema: unknown, reference: string): unknown {
   return value;
 }
 
+/** Follow SDK-shared local definitions at each schema path component. */
+function schemaAt(
+  root: unknown,
+  path: readonly string[],
+  node: unknown = root,
+): unknown {
+  const resolve = (value: unknown): unknown => {
+    while (isRecord(value) && typeof value.$ref === "string")
+      value = resolveReference(root, value.$ref);
+    return value;
+  };
+  for (const key of path) {
+    node = resolve(node);
+    if (!isRecord(node)) return undefined;
+    node = node[key];
+  }
+  return resolve(node);
+}
+
+/** Validate retained locals facts through the output schema the SDK actually advertised. */
+function expectManagedLocalSignatureSchema(
+  tool: ToolSchemas | undefined,
+): void {
+  const managedOutput = tool?.outputSchema;
+  if (managedOutput === undefined)
+    throw new Error("Missing managed member output schema");
+  const managedAlternatives = schemaAt(managedOutput, [
+    "properties",
+    "normalized_result",
+    "anyOf",
+  ]);
+  if (!Array.isArray(managedAlternatives))
+    throw new Error("Missing managed result alternatives");
+  const inventory = managedAlternatives.find(
+    (alternative: unknown) =>
+      schemaAt(managedOutput, ["properties", "methods"], alternative) !==
+      undefined,
+  );
+  const locals = schemaAt(
+    managedOutput,
+    [
+      "properties",
+      "methods",
+      "items",
+      "properties",
+      "body",
+      "properties",
+      "local_var_signature",
+    ],
+    inventory,
+  );
+  if (!isRecord(locals))
+    throw new Error("Missing advertised local signature facts");
+  const validateLocals = new Ajv2020({
+    strict: false,
+    validateFormats: false,
+  }).compile({
+    ...locals,
+    $defs: managedOutput.$defs,
+  });
+  expect(validateLocals(null)).toBe(true);
+  expect(
+    validateLocals({
+      raw_sha256: "a".repeat(64),
+      has_context_dependent_types: false,
+    }),
+  ).toBe(true);
+  expect(
+    validateLocals({
+      raw_sha256: "a".repeat(64),
+      has_context_dependent_types: true,
+    }),
+  ).toBe(true);
+  expect(
+    validateLocals({
+      raw_sha256: "a".repeat(64),
+      has_context_dependent_types: "false",
+    }),
+  ).toBe(false);
+  expect(validateLocals({ has_context_dependent_types: false })).toBe(false);
+}
+
 function recursiveReferences(tools: readonly ToolSchemas[]): string[] {
   return tools.flatMap((tool) =>
     (["inputSchema", "outputSchema"] as const).flatMap((kind) => {
@@ -499,34 +581,17 @@ describe("MCP JSON Schema validity", () => {
       expect(recursiveReferences(tools)).toEqual([]);
       expectKnownAuthorityHints(tools);
       const byName = new Map(tools.map((tool) => [tool.name, tool]));
+      expectManagedLocalSignatureSchema(byName.get("inspect_managed_members"));
+      const comparison = byName.get("compare_web_captures")?.inputSchema;
       for (const side of ["before", "after"])
-        expect(byName.get("compare_web_captures")?.inputSchema).toHaveProperty(
-          [
-            "properties",
-            side,
-            "properties",
-            "inspection",
-            "properties",
-            "scripts",
-            "properties",
-            "items",
-            "items",
-            "properties",
-            "source",
-            "anyOf",
-          ],
-          expect.arrayContaining([
-            expect.objectContaining({
-              properties: expect.objectContaining({
-                reason: { type: "string" },
-              }),
-            }),
-            expect.objectContaining({
-              properties: expect.objectContaining({
-                artifact: expect.objectContaining({ type: "object" }),
-              }),
-            }),
-          ]),
+        expect(comparison).toHaveProperty(
+          ["properties", side, "properties", "inspection"],
+          {
+            type: "object",
+            description: expect.stringContaining(
+              "complete canonical observation",
+            ),
+          },
         );
       const catalogProjection = tools.map((tool) => ({
         name: tool.name,

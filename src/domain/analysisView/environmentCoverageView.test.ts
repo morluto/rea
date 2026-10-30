@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 import {
   analysisViewCaptureEvidence,
   environmentStateCaptureFixture,
+  timedCaptureEvidence,
 } from "../../../tests/fixtures/analysisView.js";
 import {
   SCENARIO_EXCHANGES,
@@ -165,6 +166,40 @@ it("summarizes the state the environment-state view derives with the same rules"
     expect.arrayContaining([
       ...state.limitations,
       expect.stringContaining("does not run the environment"),
+    ]),
+  );
+});
+
+it("does not claim reads are missing when a literal delete has no modelled target", () => {
+  const evidence = timedCaptureEvidence([
+    ["GET", "/api/folders", [{ uid: "f1", title: "General" }]],
+    ["GET", "/api/folders/f1", { uid: "f1", title: "General" }],
+    ["DELETE", "/api/folders/f1", null, 204],
+    ["GET", "/api/folders/f1", { message: "not found" }, 404],
+    ["GET", "/api/folders", []],
+  ]);
+  const parent = parentOf(evidence);
+  const state = project("environment-state", parent);
+  const coverage = project("environment-coverage", parent);
+  if (
+    state.kind !== "environment-state" ||
+    coverage.kind !== "environment-coverage"
+  )
+    throw new Error("Expected state and coverage views");
+  expect(state.views).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ tool: "get_folders", shape: "list" }),
+      expect.objectContaining({ tool: "get_folders_f1", shape: "document" }),
+    ]),
+  );
+  expect(coverage.writes.withheld).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        reason: "no-state-target",
+        hint: expect.stringContaining(
+          "could not be linked to a modelled state target",
+        ),
+      }),
     ]),
   );
 });

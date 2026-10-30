@@ -3,6 +3,31 @@ import { parseOpenStep } from "plist";
 import { MAX_PLIST_DEPTH, PlistNestingLimitError } from "./apple/plistValue.js";
 import { markPlistDictionary } from "./apple/plistUid.js";
 
+const OPEN_STEP_SYNTAX_CODES = [
+  "unterminated_block_comment",
+  "unexpected_end",
+  "unterminated_dictionary",
+  "expected_equals",
+  "unterminated_array",
+  "expected_separator",
+  "unexpected_character",
+] as const;
+
+export type OpenStepPropertyListCode = (typeof OPEN_STEP_SYNTAX_CODES)[number];
+
+/** OpenStep syntax refusal. `code` is the contract; `position` is the source offset. */
+export class OpenStepPropertyListError extends Error {
+  readonly _tag = "OpenStepPropertyListError";
+
+  constructor(
+    readonly code: OpenStepPropertyListCode,
+    readonly position?: number,
+  ) {
+    super(code);
+    this.name = "OpenStepPropertyListError";
+  }
+}
+
 /** Locate the first value for the XML owner's existing OpenStep autodetection. */
 export const startsOpenStepPropertyList = (text: string): boolean => {
   const cursor = skipTrivia(text, 0, false);
@@ -14,12 +39,22 @@ const skipTrivia = (text: string, start: number, strict = true): number => {
   while (cursor < text.length) {
     if (/\s/u.test(text[cursor]!)) cursor += 1;
     else if (text.startsWith("//", cursor)) {
-      const end = text.indexOf("\n", cursor + 2);
-      cursor = end < 0 ? text.length : end + 1;
+      cursor += 2;
+      // CoreFoundation line comments end at LF, CR, LS or PS. Do not consume
+      // subsequent data merely because the producer used another line ending.
+      while (
+        cursor < text.length &&
+        !"\n\r\u2028\u2029".includes(text[cursor]!)
+      )
+        cursor += 1;
     } else if (text.startsWith("/*", cursor)) {
       const end = text.indexOf("*/", cursor + 2);
       if (end < 0) {
-        if (strict) throw new Error("Unterminated block comment");
+        if (strict)
+          throw new OpenStepPropertyListError(
+            "unterminated_block_comment",
+            cursor,
+          );
         return text.length;
       }
       cursor = end + 2;
@@ -45,7 +80,8 @@ export const decodeOpenStepPropertyList = (
   };
   const value = (depth: number, dictionaryKey = false): unknown => {
     trivia();
-    if (cursor >= text.length) throw new Error("Unexpected end of input");
+    if (cursor >= text.length)
+      throw new OpenStepPropertyListError("unexpected_end", cursor);
     const character = text[cursor]!;
     if (character === "{") {
       assertDepth(depth);
@@ -54,7 +90,11 @@ export const decodeOpenStepPropertyList = (
       markPlistDictionary(dictionary);
       while (true) {
         trivia();
-        if (cursor >= text.length) throw new Error("Unterminated dictionary");
+        if (cursor >= text.length)
+          throw new OpenStepPropertyListError(
+            "unterminated_dictionary",
+            cursor,
+          );
         if (text[cursor] === "}") {
           cursor += 1;
           return dictionary;
@@ -62,9 +102,7 @@ export const decodeOpenStepPropertyList = (
         const key = value(depth + 1, true);
         trivia();
         if (text[cursor] !== "=")
-          throw new Error(
-            `Expected '=' after key "${String(key)}" at position ${cursor}`,
-          );
+          throw new OpenStepPropertyListError("expected_equals", cursor);
         cursor += 1;
         const entry = value(depth + 1);
         Object.defineProperty(dictionary, String(key), {
@@ -89,13 +127,14 @@ export const decodeOpenStepPropertyList = (
       while (true) {
         array.push(value(depth + 1));
         trivia();
-        if (cursor >= text.length) throw new Error("Unterminated array");
+        if (cursor >= text.length)
+          throw new OpenStepPropertyListError("unterminated_array", cursor);
         if (text[cursor] === ")") {
           cursor += 1;
           return array;
         }
         if (text[cursor] !== ",")
-          throw new Error(`Expected ',' or ')' in array at position ${cursor}`);
+          throw new OpenStepPropertyListError("expected_separator", cursor);
         cursor += 1;
         trivia();
         if (text[cursor] === ")") {
@@ -119,9 +158,7 @@ export const decodeOpenStepPropertyList = (
       while (cursor < text.length && /[a-zA-Z0-9._/$:-]/u.test(text[cursor]!))
         cursor += 1;
       if (cursor === start)
-        throw new Error(
-          `Unexpected character '${character}' at position ${cursor}`,
-        );
+        throw new OpenStepPropertyListError("unexpected_character", cursor);
     }
     // Scalar dictionary keys do not add source-value nesting; compound keys do.
     if (!dictionaryKey) assertDepth(depth);

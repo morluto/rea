@@ -7,7 +7,7 @@ import { describe, expect } from "vitest";
 
 import { parseHistoricalSourceGraph } from "../../../src/domain/referenceSourceGraph.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest } from "../../support/cli/cliFixture.js";
+import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
 
 describe.skipIf(process.platform === "win32")(
   "compiled historical-source summaries",
@@ -58,11 +58,22 @@ describe.skipIf(process.platform === "win32")(
           manifest_id: `hsm_${createHash("sha256").update(semanticJson).digest("hex")}`,
         };
         expect((await run("--detail", "full")).stdout).toBe(complete.stdout);
-        for (const depth of [undefined, 0, 1, 10]) {
+        for (const { depth, token } of [
+          { depth: undefined, token: undefined },
+          { depth: 0, token: "0" },
+          { depth: 1, token: "1" },
+          { depth: 2, token: "2" },
+          { depth: 2, token: "02" },
+          { depth: 10, token: "10" },
+          {
+            depth: Number.MAX_SAFE_INTEGER,
+            token: String(Number.MAX_SAFE_INTEGER),
+          },
+        ]) {
           const result = await run(
             "--detail",
             "summary",
-            ...(depth === undefined ? [] : ["--outline-depth", String(depth)]),
+            ...(token === undefined ? [] : ["--outline-depth", token]),
           );
           expect(result.exitCode).toBe(0);
           expect(result.json).toHaveProperty("manifest", expectedManifest);
@@ -155,12 +166,59 @@ describe("compiled historical-source summary input boundaries", () => {
     },
   );
 
+  for (const [label, options] of [
+    ["--outline-depth=", ["--detail", "summary", "--outline-depth="]],
+    [
+      "an empty outline-depth argument",
+      ["--detail", "summary", "--outline-depth", ""],
+    ],
+    ...[
+      " ",
+      "\t",
+      "1\n",
+      "0x1",
+      "0b1",
+      "1e0",
+      "+1",
+      "1.0",
+      "-0",
+      "-1",
+      "1.5",
+      "NaN",
+      "9007199254740992",
+    ].map((value) => [
+      JSON.stringify(value),
+      ["--detail", "summary", "--outline-depth", value],
+    ]),
+  ] as const) {
+    cliTest(`rejects ${label} as an outline depth`, async ({ cli }) => {
+      const root = await createTestTempDirectory(
+        "rea-reference-summary-input-",
+      );
+      const invocation = {
+        arguments: ["import-reference-source", root, ...options, "--json"],
+        cwd: root,
+      };
+      const result =
+        label === "--outline-depth="
+          ? await cli.run(invocation)
+          : await runFileCli(cli, invocation);
+      expect(result.exitCode).toBe(1);
+      expect(result.json).toMatchObject({
+        code: "VALIDATION_ERROR",
+        fieldErrors: expect.arrayContaining([
+          expect.objectContaining({
+            path: expect.stringContaining("outlineDepth"),
+          }),
+        ]),
+      });
+      expect(result.stdout).not.toContain("HistoricalSourceGraph");
+      expect(result.stdout).not.toContain("HistoricalSourceSummary");
+    });
+  }
+
   for (const options of [
     ["--detail", "summry"],
-    ["--detail", "summary", "--outline-depth", "-1"],
-    ["--detail", "summary", "--outline-depth", "1.5"],
-    ["--detail", "summary", "--outline-depth", "NaN"],
-    ["--detail", "summary", "--outline-depth", "9007199254740992"],
     ["--outline-depth", "1"],
     ["--detail", "full", "--outline-depth", "1"],
   ]) {
@@ -168,7 +226,7 @@ describe("compiled historical-source summary input boundaries", () => {
       const root = await createTestTempDirectory(
         "rea-reference-summary-input-",
       );
-      const result = await cli.run({
+      const result = await runFileCli(cli, {
         arguments: ["import-reference-source", root, ...options, "--json"],
         cwd: root,
       });

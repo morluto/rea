@@ -4,6 +4,7 @@ import { err, ok } from "../../../src/domain/result.js";
 import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { connect, closeEnhancedToolResources } from "./enhancedToolsHarness.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 
 afterEach(closeEnhancedToolResources);
 
@@ -50,11 +51,12 @@ it("retains provider coverage caveats in a composed MCP overview without repeate
   expect(calls.length).toBe(new Set(calls).size);
 });
 
-it("counts all own inventory dictionary entries in the composed overview", async () => {
-  const procedures = JSON.parse(
-    '{"__proto__":"observed procedure","0x1000":"ordinary procedure"}',
-  );
-  const strings = JSON.parse('{"__proto__":"observed string"}');
+it("counts canonical inventory rows in the composed overview without altering labels", async () => {
+  const procedures = [
+    { address: "0x1000", value: "__proto__" },
+    { address: "0x2000", value: "ordinary procedure" },
+  ];
+  const strings = [{ address: "0x3000", value: "__proto__" }];
   const before = [JSON.stringify(procedures), JSON.stringify(strings)];
   const client = await connect({
     execute: async (operation) => {
@@ -70,7 +72,7 @@ it("counts all own inventory dictionary entries in the composed overview", async
         operation === "current_document"
           ? "fixture"
           : operation === "list_procedures"
-            ? { procedures }
+            ? procedures
             : operation === "list_strings"
               ? strings
               : [];
@@ -91,8 +93,46 @@ it("counts all own inventory dictionary entries in the composed overview", async
   const evidence = parseEvidence(response.structuredContent);
   expect(evidence.normalized_result).toMatchObject({
     document: "fixture",
-    procedure_count: Object.keys(procedures).length,
-    string_count: Object.keys(strings).length,
+    procedure_count: procedures.length,
+    string_count: strings.length,
   });
   expect([JSON.stringify(procedures), JSON.stringify(strings)]).toEqual(before);
 });
+
+it.each(["list_procedures", "list_strings"])(
+  "refuses legacy %s dictionaries instead of declaring a complete overview",
+  async (invalidOperation) => {
+    const client = await connect({
+      execute: async (operation) => {
+        if (operation === "read_binary_inventory_summary")
+          return err(
+            new AnalysisCapabilityUnavailableError(
+              "fixture",
+              operation,
+              "No native overview",
+            ),
+          );
+        return ok(
+          createAnalysisExecution(
+            operation === "current_document"
+              ? "fixture"
+              : operation === invalidOperation
+                ? { "0x1000": "legacy" }
+                : [],
+            { id: "fixture", name: "Fixture", version: "1" },
+          ),
+        );
+      },
+    });
+    const response = await client.callTool({
+      name: "binary_overview",
+      arguments: {},
+    });
+    expect(parseMcpToolError(response).error).toMatchObject({
+      code: "unreadable_output",
+      details: {
+        operation: invalidOperation,
+      },
+    });
+  },
+);

@@ -1,3 +1,4 @@
+import type { CallToolResult } from "@modelcontextprotocol/server";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -7,6 +8,21 @@ import { observed } from "../../fixtures/analysisExecution.js";
 import { closeEnhancedToolResources, connect } from "./enhancedToolsHarness.js";
 
 afterEach(closeEnhancedToolResources);
+
+const expectDossierFailure = (result: CallToolResult) => {
+  const error = parseMcpToolError(result);
+  expect(error.error).toMatchObject({
+    code: "unreadable_output",
+    details: {
+      operation: "analyze_function",
+      reason: "provider output did not match the dossier contract",
+    },
+  });
+  expect(result.content).toContainEqual({
+    type: "text",
+    text: JSON.stringify(error),
+  });
+};
 
 describe("analyze_function MCP producer validation", () => {
   it("rejects an incomplete function dossier", async () => {
@@ -21,14 +37,10 @@ describe("analyze_function MCP producer validation", () => {
     });
     const result = await client.callTool({
       name: "analyze_function",
-      arguments: { procedure: "0x1" },
+      arguments: { procedure: "0x1", detail: "complete" },
     });
 
-    expect(result.isError).toBe(true);
-    expect(result.content).toContainEqual({
-      type: "text",
-      text: JSON.stringify(parseMcpToolError(result)),
-    });
+    expectDossierFailure(result);
   });
 
   it.each([
@@ -53,14 +65,10 @@ describe("analyze_function MCP producer validation", () => {
     });
     const result = await client.callTool({
       name: "analyze_function",
-      arguments: { procedure: "0x1" },
+      arguments: { procedure: "0x1", detail: "complete" },
     });
 
-    expect(result.isError).toBe(true);
-    expect(result.content).toContainEqual({
-      type: "text",
-      text: JSON.stringify(parseMcpToolError(result)),
-    });
+    expectDossierFailure(result);
   });
 
   it("rejects a malformed collection in an otherwise complete dossier", async () => {
@@ -82,13 +90,9 @@ describe("analyze_function MCP producer validation", () => {
     });
     const result = await client.callTool({
       name: "analyze_function",
-      arguments: { procedure: "0x1" },
+      arguments: { procedure: "0x1", detail: "complete" },
     });
 
-    expect(result.isError).toBe(true);
-    expect(result.content).toContainEqual({
-      type: "text",
-      text: JSON.stringify(parseMcpToolError(result)),
-    });
+    expectDossierFailure(result);
   });
 });
