@@ -1,4 +1,5 @@
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { CursorLocalPlugin } from "./CursorLocalPlugin.js";
 import { ok } from "../domain/result.js";
 import { explicitSetupRegistrationEnvironment } from "./SetupRegistrationEnvironment.js";
 import { SetupCleanupOwner } from "./SetupCleanupOwner.js";
@@ -16,7 +17,7 @@ type ClientRoute =
   | { readonly mode: "blocked"; readonly remediation: string }
   | {
       readonly mode: "plugin";
-      readonly manager: SetupPluginClient;
+      readonly manager: SetupPluginClient | CursorLocalPlugin;
       readonly installed: boolean;
       readonly enabled: boolean;
     };
@@ -54,8 +55,12 @@ class PluginSetupHost {
   private inspectRoute = async (id: string): Promise<ClientRoute> => {
     // Explicit direct setup must not launch a client that can migrate its settings.
     if (!this.preferPlugins || this.providerSettings) return { mode: "direct" };
-    const command =
-      id === "codex" ? "codex" : id === "claude_code" ? "claude" : undefined;
+    const commands: Readonly<Record<string, "codex" | "claude" | "cursor">> = {
+      codex: "codex",
+      claude_code: "claude",
+      cursor: "cursor",
+    };
+    const command = commands[id];
     if (command === undefined) return { mode: "direct" };
     const client = (await this.host.supportedClients()).find(
       ({ name }) => name === id,
@@ -73,14 +78,22 @@ class PluginSetupHost {
       !(await this.directRegistrationMissing(id))
     )
       return { mode: "direct" };
-    const manager = new SetupPluginClient(
-      command,
-      this.environment,
-      this.resources,
-      this.launch,
-    );
-    // Claude inventory can migrate settings; only Codex support is inspected before approval.
-    const state = command === "codex" ? await manager.inspect() : undefined;
+    const manager =
+      command === "cursor"
+        ? new CursorLocalPlugin(
+            this.host.homeDirectory,
+            this.environment,
+            this.resources,
+            this.launch,
+          )
+        : new SetupPluginClient(
+            command,
+            this.environment,
+            this.resources,
+            this.launch,
+          );
+    // Claude inventory can migrate settings; the other inventory paths are read-only.
+    const state = command !== "claude" ? await manager.inspect() : undefined;
     if (state?.status === "unsupported") return { mode: "direct" };
     if (state?.status === "invalid")
       return { mode: "blocked", remediation: state.remediation };
@@ -114,6 +127,21 @@ class PluginSetupHost {
   private pluginAction = (id: string): SetupAction | undefined => {
     const selected = this.routes.get(id);
     if (selected?.mode !== "plugin") return undefined;
+    if (selected.manager instanceof CursorLocalPlugin)
+      return {
+        id: `configure_client:${id}`,
+        kind: "configure_client",
+        label: "REA local plugin for Cursor",
+        target: selected.manager.directory,
+        detail:
+          "Download the exact REA npm release into a private staging directory, verify its bundled runtime and skill, then publish a local Cursor plugin. Existing local plugins are preserved; no direct MCP registration or separate skill copy is created. Restart Cursor or reload its window. Local imports must be permitted by Enterprise policy; an existing marketplace plugin takes precedence. This is a local installation and does not sync through a Cursor account.",
+        external: true,
+        operation: "install",
+        commands: selected.manager
+          .commands(false)
+          .map((args) => [selected.manager.command, ...args].join(" ")),
+        networkOrigins: ["https://registry.npmjs.org"],
+      };
     return {
       id: `configure_client:${id}`,
       kind: "configure_client",
@@ -312,7 +340,7 @@ class PluginSetupHost {
             ? "Plugin inventory was not inspected because this client was not approved."
             : state.status !== "available"
               ? state.remediation
-              : `${REA_PLUGIN_ID} must be installed and enabled in the client.`,
+              : "REA plugin must be installed and enabled. Restart the client to load it; local package verification does not establish live client policy or tool availability.",
       });
     }
     return {

@@ -88,7 +88,9 @@ npx rea-agents setup
 
 Choose your agents, review the proposed changes, and approve them. Setup adds
 REA's MCP server and matching workflow instructions, with backups of existing
-configuration. Restart your agent afterward. Setup records the selected runtime and REA
+configuration. New Codex and Claude Code integrations use their marketplace
+plugins; Cursor downloads a local plugin with its own pinned runtime and skill.
+Restart your agent afterward. Direct setup records the selected runtime and REA
 entry script directly. If acquired through a package runner, keep its cache entry
 available. Run package acquisition from a trusted directory outside the target
 project. Installation and recovery details are in the setup guide below.
@@ -96,7 +98,7 @@ project. Installation and recovery details are in the setup guide below.
 Setup supports Claude Code, Codex, Cursor, Gemini CLI, Grok Build and
 [other agents](docs/installation.md#supported-agents). See
 [installation and setup](docs/installation.md) for provider configuration and
-manual MCP registration and Claude Code/Codex plugin installation.
+manual MCP registration, marketplace plugins, and automatic Cursor local installation.
 
 MCP uses compact input schemas by default to reduce context overhead. Set
 `REA_MCP_INPUT_SCHEMA_PROFILE=full` in your MCP registration when you need the

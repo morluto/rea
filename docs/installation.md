@@ -853,7 +853,7 @@ and can remain idle until the socket is ready. Cleanup work reports `busy` at
 stage `connection`.
 
 If macOS denies Apple Events, allow the application that starts REA under
-**System Settings Ã¢â€ â€™ Privacy & Security Ã¢â€ â€™ Automation**, then retry. REA releases
+**System Settings → Privacy & Security → Automation**, then retry. REA releases
 the target reservation when the native helper reports its complete authorization
 rejection after literal argument admission. Before application handoff, REA refuses
 double quotes, backslashes, or line breaks in the final launcher path or arguments,
@@ -1261,7 +1261,7 @@ is already running stops the Ghidra session, so one function whose
 decompilation runs past the MCP client's deadline costs the whole import.
 `REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS` (an integer from 1 to 2,147,483; absent by
 default, which leaves decompilation unbounded) bounds each native decompile
-instead. This maximum keeps GhidraÃ¢â‚¬â„¢s signed 32-bit seconds-to-milliseconds
+instead. This maximum keeps Ghidra’s signed 32-bit seconds-to-milliseconds
 conversion from overflowing. The client must still support a deadline covering
 startup, that limit and operation headroom. Ghidra stops that one decompile and starts a fresh decompiler process
 for the next request. `analyze_function` still returns the function's assembly,
@@ -1616,8 +1616,37 @@ Claude chat/Cowork app. Account-level Claude plugins must be added through
 Claude's supported app or organization flow. Claude Desktop's direct MCP
 integration remains separate; setup does not change account-level plugins.
 
+`rea setup --client cursor` automatically downloads a local Cursor plugin after
+approval. It installs the exact `rea-agents` version running setup, with its
+runtime dependencies and generated skill, under
+`~/.cursor/plugins/local/rea/node_modules/rea-agents`. The local Cursor manifest
+uses that release's shared plugin metadata and launches its bundled Node
+bootstrap directly. Startup does not invoke npm or depend on an `npx` cache.
+Setup uses an existing npm and supported standalone Node; it does not install
+or upgrade either. Package lifecycle scripts are disabled during acquisition.
+
+The plan shows the package, destination and registry before downloading. Setup
+stages and verifies the package before publishing it, and writes no separate
+Cursor MCP registration or skill copy. A matching installation is left in place
+on reruns. Existing direct integrations stay direct; foreign, edited, linked,
+incomplete or differently versioned local plugin directories stop with
+remediation and are preserved. Move an old local installation aside deliberately
+before installing a different version. Interrupted downloads retain their owned
+cleanup until the installer process has stopped.
+
+Restart Cursor or use Developer: Reload Window, then check Customize and MCP
+settings. This is a local import, not an account-synced marketplace install.
+Enterprise policy must permit local imports, and an installed marketplace plugin
+of the same name takes precedence. Setup verifies the local package and
+configuration, not Cursor's live policy or tool connection. See
+[Cursor's local plugin instructions](https://cursor.com/docs/plugins#test-plugins-locally).
+The released npm artifact must contain the shared plugin manifest, runtime,
+icon and generated skill; a source change does not modify earlier npm releases.
+
 Remove a plugin using its owning client, for example `codex plugin remove rea@rea`
-or `claude plugin uninstall rea@rea --scope user`. `rea uninstall` manages direct
+or `claude plugin uninstall rea@rea --scope user`. For a local Cursor plugin,
+move or remove its `~/.cursor/plugins/local/rea` directory after stopping Cursor.
+`rea uninstall` manages direct
 registrations and skill copies, not client-owned plugins.
 
 ### Manual plugin installation

@@ -146,20 +146,24 @@ it.each([true, false])(
     const f = fixture("claude_code");
     f.base.clients = [
       ...f.base.clients,
-      { name: "cursor", configPath: "/fixture/cursor.json", format: "json" },
+      {
+        name: "gemini_cli",
+        configPath: "/fixture/gemini.json",
+        format: "json",
+      },
     ];
-    f.base.clientInspections.set("cursor", {
+    f.base.clientInspections.set("gemini_cli", {
       status: "invalid",
-      remediation: "Malformed Cursor configuration",
+      remediation: "Malformed Gemini configuration",
     });
     const result = await runSetup(
       {
         ...f.setupOptions,
         approved: false,
         dryRun,
-        clientIds: ["claude_code", "cursor"],
+        clientIds: ["claude_code", "gemini_cli"],
         readinessScope: {
-          clients: ["claude_code", "cursor"],
+          clients: ["claude_code", "gemini_cli"],
           providers: [],
           skill: true,
         },
@@ -167,7 +171,7 @@ it.each([true, false])(
       f.host(),
     );
     expect(result.status).toBe("needs_human");
-    expect(result.remediation).toContain("Malformed Cursor");
+    expect(result.remediation).toContain("Malformed Gemini");
     expect(f.calls).toEqual([]);
   },
 );
@@ -188,10 +192,10 @@ it("retains the private-launcher blocker for mixed plugin and direct setup", asy
   f.base.registrationCommandBlocker = "Install REA outside the package.";
   f.base.clients = [
     ...f.base.clients,
-    { name: "cursor", configPath: "/fixture/cursor.json", format: "json" },
+    { name: "gemini_cli", configPath: "/fixture/gemini.json", format: "json" },
   ];
   const result = await runSetup(
-    { ...f.setupOptions, clientIds: ["claude_code", "cursor"] },
+    { ...f.setupOptions, clientIds: ["claude_code", "gemini_cli"] },
     f.host(),
   );
   expect(result.status).toBe("needs_human");
@@ -206,7 +210,11 @@ it.each([1, 2, 3, 4, 5])(
     const f = fixture("claude_code");
     f.base.clients = [
       ...f.base.clients,
-      { name: "cursor", configPath: "/fixture/cursor.json", format: "json" },
+      {
+        name: "gemini_cli",
+        configPath: "/fixture/gemini.json",
+        format: "json",
+      },
     ];
     let closed = false;
     const host = f.host();
@@ -218,14 +226,14 @@ it.each([1, 2, 3, 4, 5])(
     f.interrupt(at);
     await expect(
       runSetup(
-        { ...f.setupOptions, clientIds: ["claude_code", "cursor"] },
+        { ...f.setupOptions, clientIds: ["claude_code", "gemini_cli"] },
         host,
       ),
     ).rejects.toBeInstanceOf(AnalysisCancelledError);
     expect(closed).toBe(true);
     expect(f.calls).toHaveLength(at);
     expect(f.base.doctorCalls).toBe(f.doctorsAtInterrupt());
-    // The final verification happens after the earlier approved Cursor write.
+    // The final verification happens after the earlier approved Gemini write.
     expect(f.base.configurations).toBe(at === 5 ? 1 : 0);
   },
 );
@@ -350,17 +358,17 @@ it("keeps other clients' skill installations when a plugin client shares setup",
   const f = fixture();
   f.base.clients = [
     ...f.base.clients,
-    { name: "cursor", configPath: "/fixture/cursor.json", format: "json" },
+    { name: "gemini_cli", configPath: "/fixture/gemini.json", format: "json" },
   ];
   const result = await runSetup(
-    { ...f.setupOptions, clientIds: ["codex", "cursor"] },
+    { ...f.setupOptions, clientIds: ["codex", "gemini_cli"] },
     f.host(),
   );
   expect(result.status).toBe("ready");
   expect(f.base.configurations).toBe(1);
   expect(f.base.skillInstalls).toBe(1);
-  expect(f.base.skillDirectoryValidations).toContainEqual(["cursor"]);
-  expect(f.base.doctorScopes.at(-1)?.clients).toEqual(["cursor"]);
+  expect(f.base.skillDirectoryValidations).toContainEqual(["gemini_cli"]);
+  expect(f.base.doctorScopes.at(-1)?.clients).toEqual(["gemini_cli"]);
 });
 
 it("enables a disabled installation without reinstalling its marketplace", async () => {
