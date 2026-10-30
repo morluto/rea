@@ -482,6 +482,9 @@ session retention refuses summary detail with `capability_unavailable`;
 For `inspect_artifact`, omission also keeps the original request parameters and
 complete output shape. Delivery selection never reaches the inventory engine;
 the complete inspection and its atomic inventory Evidence remain retained.
+A view is never more certain than its parent: a summary or other view of
+`inferred` Evidence is `inferred`. Other views are `derived`, unless the
+view kind itself infers, as described below.
 
 `inspect_analysis_view` also accepts `api-surface` for retained HAR capture Evidence,
 grouping request lines by method, origin and format-rule path template. Templated
