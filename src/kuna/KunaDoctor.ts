@@ -182,11 +182,12 @@ const installationFailure = (
   code: failure.code,
   detail: failure.reason,
   remediation:
-    failure.code === "unsupported_host"
+    failure.remediation ??
+    (failure.code === "unsupported_host"
       ? KUNA_UNSUPPORTED_HOST_REMEDIATION
       : failure.code === "version_unresolved"
         ? KUNA_VERSION_PROBE_REMEDIATION
-        : KUNA_COMMAND_REMEDIATION,
+        : KUNA_COMMAND_REMEDIATION),
   classification:
     failure.code === "unsupported_host"
       ? "unsupported_host"

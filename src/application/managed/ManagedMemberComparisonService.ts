@@ -1,3 +1,4 @@
+import { parseAnalysisInput } from "../AnalysisInput.js";
 import { z } from "zod";
 
 import {
@@ -11,8 +12,8 @@ import {
   AnalysisInputError,
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
-import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import {
   classifyBinaryTargetFilesystemFailure,
@@ -20,12 +21,15 @@ import {
 } from "../BinaryTargetResolver.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { inspectManagedMembersBytes } from "../../dotnet/ManagedMemberInspector.js";
-import { readManagedSnapshot } from "../../dotnet/ManagedSnapshot.js";
+import {
+  readManagedSnapshot,
+  verifyManagedSourceIdentity,
+} from "../../dotnet/ManagedSnapshot.js";
+import { managedInspectionInputFailure } from "../../dotnet/ManagedReaderFailure.js";
 import {
   MANAGED_STATIC_PROVIDER,
   MANAGED_WORKFLOW_PROVIDER,
 } from "../../domain/investigationProviders.js";
-import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 
 const managedMemberComparisonRequestSchema = z.strictObject({
   left: z.unknown(),
@@ -43,16 +47,15 @@ export const executeManagedMemberComparison = (
   input: unknown,
 ): Result<ManagedMemberComparisonExecution, AnalysisError> => {
   const operation = "compare_managed_members";
-  const request = managedMemberComparisonRequestSchema.safeParse(input);
-  if (!request.success)
-    return err(
-      analysisInputErrorFromIssues(operation, request.error.issues, input, {
-        cause: request.error,
-      }),
-    );
-  const left = readManagedMemberEvidence(request.data.left, "left");
+  const request = parseAnalysisInput(
+    operation,
+    input,
+    managedMemberComparisonRequestSchema,
+  );
+  if (!request.ok) return request;
+  const left = readManagedMemberEvidence(request.value.left, "left");
   if (!left.ok) return left;
-  const right = readManagedMemberEvidence(request.data.right, "right");
+  const right = readManagedMemberEvidence(request.value.right, "right");
   if (!right.ok) return right;
   if (left.value.evidence.evidence_id === right.value.evidence.evidence_id)
     return err(
@@ -106,39 +109,64 @@ export const compareManagedMemberPaths = async (
   let partialEvidence: Evidence | undefined;
   try {
     const [leftTarget, rightTarget] = await Promise.all([
-      resolveTarget(input.leftPath),
-      resolveTarget(input.rightPath),
+      resolveTarget(
+        input.leftPath,
+        resources === undefined ? {} : { resources },
+      ),
+      resolveTarget(
+        input.rightPath,
+        resources === undefined ? {} : { resources },
+      ),
     ]);
     // Report an unopenable path like every other path-based command does,
     // with the failed path and constraint, rather than a bare input error.
-    if (!leftTarget.ok) return err(leftTarget.error);
+    if (!leftTarget.ok) {
+      if (!rightTarget.ok && rightTarget.error.cleanupIncomplete)
+        return err(
+          analysisErrorWithCleanupFailure(
+            leftTarget.error,
+            rightTarget.error,
+            operation,
+          ).bindCleanupDependencies([leftTarget.error, rightTarget.error]),
+        );
+      return err(leftTarget.error);
+    }
     if (!rightTarget.ok) return err(rightTarget.error);
     const inspectTarget = async (
       target: BinaryTarget,
-      selectedPath: string,
+      inputField: "leftPath" | "rightPath",
     ) => {
       const { path } = target;
+      const selectedPath = input[inputField];
       let snapshot: Awaited<ReturnType<typeof readManagedSnapshot>>;
       try {
-        snapshot = await readSnapshot(
-          path,
-          operation,
-          resources === undefined ? {} : { resources },
-        );
+        snapshot = await readSnapshot(path, operation, {
+          expectedSha256: target.sha256,
+          ...(resources === undefined ? {} : { resources }),
+        });
       } catch (cause: unknown) {
         const failure = classifyBinaryTargetFilesystemFailure(path, cause);
         if (failure !== undefined) throw failure;
         throw cause;
       }
-      if (snapshot.sha256 !== target.sha256)
-        throw new EvidenceIntegrityError(
-          `Managed artifact digest changed after open: expected ${target.sha256}, observed ${snapshot.sha256} at ${target.path}`,
+      const admitted = verifyManagedSourceIdentity(target, snapshot, operation);
+      if (!admitted.ok) throw admitted.error;
+      // Member comparison never reads literals or spends their decode budget.
+      let inspection: ReturnType<typeof inspectManagedMembersBytes>;
+      try {
+        inspection = inspectManagedMembersBytes(snapshot.bytes, target, {
+          userStrings: false,
+        });
+      } catch (cause: unknown) {
+        throw (
+          managedInspectionInputFailure(
+            operation,
+            selectedPath,
+            cause,
+            inputField,
+          ) ?? cause
         );
-      // Member comparison never reads literals, so it does not spend the
-      // decode budget on them.
-      const inspection = inspectManagedMembersBytes(snapshot.bytes, target, {
-        userStrings: false,
-      });
+      }
       const evidence = createEvidence(target, MANAGED_STATIC_PROVIDER, {
         operation: "inspect_managed_members",
         parameters: {},
@@ -149,9 +177,9 @@ export const compareManagedMemberPaths = async (
       });
       return { inspection, evidence };
     };
-    const left = await inspectTarget(leftTarget.value, input.leftPath);
+    const left = await inspectTarget(leftTarget.value, "leftPath");
     partialEvidence = left.evidence;
-    const right = await inspectTarget(rightTarget.value, input.rightPath);
+    const right = await inspectTarget(rightTarget.value, "rightPath");
     const result = compareManagedMembers(
       {
         evidenceId: left.evidence.evidence_id,

@@ -9,6 +9,7 @@ import type {
 } from "../domain/reconstructionObligationLedgerSchemas.js";
 import { parseApplicationGraphEvidence } from "./javascript/JavaScriptApplicationEvidenceGraph.js";
 import { parseProcessCaptureEvidence } from "./process/ProcessEvidence.js";
+import { evidenceSupportsOriginalAuthority } from "./ReconstructionObligationAuthority.js";
 import {
   applicationObligationPolicy,
   semanticObligationPolicy,
@@ -396,12 +397,7 @@ const graphReference = (
 const reviewedEvidenceState = (
   evidence: Evidence,
 ): ReconstructionObligation["authority_references"][number]["state"] => {
-  if (
-    evidence.operation === "capture_process_scenario" &&
-    evidence.predicate_type === "rea.process-capture" &&
-    evidence.confidence === "observed"
-  )
-    return "observed";
+  if (evidenceSupportsOriginalAuthority(evidence, "process")) return "observed";
   if (
     evidence.authority === "external-service" &&
     evidence.confidence === "observed"

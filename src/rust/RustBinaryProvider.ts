@@ -1,14 +1,16 @@
+import {
+  projectStableArtifactFailure,
+  projectArtifactCloseFailure,
+} from "../artifacts/StableArtifactFailure.js";
 import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
 import { readStableArtifact } from "../artifacts/readStableArtifact.js";
 import {
-  artifactFilePrimaryFailure,
+  artifactFilePrimaryFacts,
+  type ArtifactFilePrimaryFacts,
   artifactFileCancellationCause,
   assertArtifactReadActive,
-  bindArtifactFileCleanup,
 } from "../artifacts/ArtifactFileOperation.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import type { ExecutionOptions } from "../application/AnalysisProvider.js";
 import type { RustBinaryPort } from "../application/rust/RustBinaryPort.js";
@@ -60,19 +62,11 @@ export class RustBinaryProvider implements RustBinaryPort {
     try {
       await this.#resources.close();
     } catch (cause: unknown) {
-      if (
-        !(cause instanceof ArtifactReaderFailure) ||
-        cause.cleanup === undefined
-      )
-        throw cause;
-      const error = new ProviderCleanupError(
+      throw projectArtifactCloseFailure(
+        cause,
         RUST_BINARY_PROVIDER_IDENTITY.id,
-        cause.cleanup.resources,
-        { reason: cause.cleanup.reason },
-        { cause, operation: OPERATION },
+        OPERATION,
       );
-      bindArtifactFileCleanup(cause, error);
-      throw error;
     }
   }
 
@@ -238,8 +232,13 @@ const rustcLimitation = (
   ];
 };
 
-const failureForPrimary = (cause: unknown, path: string): AnalysisError => {
-  if (cause instanceof AnalysisError) return cause;
+const failureForPrimary = (
+  facts: ArtifactFilePrimaryFacts,
+  path: string,
+): AnalysisError => {
+  const { cause, origin } = facts;
+  if (origin === "owned-or-classified" && cause instanceof AnalysisError)
+    return cause;
   if (cause instanceof RustAuditableResourceFailure)
     return new AnalysisResourceConstraintError(
       OPERATION,
@@ -274,26 +273,29 @@ const failureForPrimary = (cause: unknown, path: string): AnalysisError => {
             message: `Selected artifact ${path}: ${cause.message}`,
           },
         ]);
-  return artifactFailure(cause, path);
+  return artifactFailure(facts, path);
 };
 
 const failureFor = (cause: unknown, path: string): AnalysisError => {
-  const primary = failureForPrimary(artifactFilePrimaryFailure(cause), path);
-  if (!(cause instanceof ArtifactReaderFailure) || cause.cleanup === undefined)
-    return primary;
-  const cleanup = new ProviderCleanupError(
+  const primary = failureForPrimary(artifactFilePrimaryFacts(cause), path);
+  return projectStableArtifactFailure(
+    cause,
+    primary,
+    path,
     RUST_BINARY_PROVIDER_IDENTITY.id,
-    cause.cleanup.resources,
-    { reason: cause.cleanup.reason },
-    { cause, operation: OPERATION },
+    OPERATION,
   );
-  const error = analysisErrorWithCleanupFailure(primary, cleanup, OPERATION);
-  bindArtifactFileCleanup(cause, error);
-  return error;
 };
 
-const artifactFailure = (cause: unknown, path: string): AnalysisError => {
-  if (cause instanceof ArtifactReaderFailure)
+const artifactFailure = (
+  facts: ArtifactFilePrimaryFacts,
+  path: string,
+): AnalysisError => {
+  const { cause, origin } = facts;
+  if (
+    origin === "owned-or-classified" &&
+    cause instanceof ArtifactReaderFailure
+  )
     return artifactReaderFailure(cause, path);
   if (cause instanceof Error && "code" in cause) {
     if (cause.code === "EACCES" || cause.code === "EPERM")

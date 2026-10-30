@@ -9,16 +9,16 @@ import {
 import type { EvidenceMcpServer } from "../EvidenceMcpServer.js";
 import { runAdmittedToolOperation } from "../admittedToolOperation.js";
 import { resolveApplicationEvidenceRequest } from "../../application/EvidenceInputResolver.js";
-import { recordSessionEvidenceSources } from "../sessionEvidence.js";
+import { recordEvidenceSources } from "../../application/investigation/recordEvidenceSources.js";
 
 import { compareSourceToBundleEvidence } from "../../application/javascript/JavaScriptApplicationWorkflowService.js";
-import { applicationToolContract } from "../../contracts/applicationToolContracts.js";
+import { toolContract } from "../../contracts/toolContracts.js";
 import { logToolExecution } from "../toolLogging.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
 import { recordApplicationResult } from "./helpers.js";
 import type { ApplicationToolRegistration } from "./types.js";
 
-const contract = applicationToolContract("compare_source_to_bundle");
+const contract = toolContract("compare_source_to_bundle");
 
 /** Register conservative historical-source to bundle comparison. */
 export const registerCompareSourceToBundleTool = (
@@ -96,7 +96,7 @@ export const registerCompareSourceToBundleTool = (
             );
           if (!selected.ok)
             return server.delivery.toCallToolResult(selected, contract);
-          const recorded = recordSessionEvidenceSources(
+          const recorded = recordEvidenceSources(
             options.recordEvidence,
             result.value.sources,
           );

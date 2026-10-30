@@ -4,6 +4,19 @@ import type {
   ProcessTableEntry,
 } from "./ProcessOwnership.js";
 
+/** Structured native token availability, distinct from failed reads and caller cancellation. */
+export class ProcessRunTokenReadError extends Error {
+  readonly _tag = "ProcessRunTokenReadError";
+  constructor(
+    readonly pid: number,
+    readonly availability: "absent" | "unavailable",
+    readonly reason: string,
+  ) {
+    super(`Run token for PID ${String(pid)}: ${reason}`);
+    this.name = "ProcessRunTokenReadError";
+  }
+}
+
 const errorMessage = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
 
@@ -55,8 +68,15 @@ export async function* readProcessRunTokens(
       } catch (cause: unknown) {
         signal?.throwIfAborted();
         const reason = errorMessage(cause);
+        const code =
+          cause instanceof Error &&
+          "code" in cause &&
+          typeof cause.code === "string"
+            ? cause.code
+            : undefined;
         observation = {
           state: "unavailable",
+          ...(code === undefined ? {} : { code }),
           reason:
             batchFailure === undefined
               ? reason

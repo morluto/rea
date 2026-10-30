@@ -12,6 +12,7 @@ import { TestReverseEngineeringService as ReverseEngineeringService } from "../s
 import { providerSnapshot } from "../support/reverseEngineeringCompositionFixtures.js";
 import { createReverseEngineeringService } from "../../src/composition/reverseEngineering.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
+import { AnalysisCancelledError } from "../../src/domain/analysisErrorCore.js";
 import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "../../src/contracts/reverseEngineeringToolContracts.js";
 
 describe("reverse engineering command services", () => {
@@ -574,11 +575,46 @@ it("shares one preflight deadline across stat and digest", async () => {
   expect(performance.now() - started).toBeLessThan(280);
 });
 
+it("retains an explicit null reason when digest admission is already cancelled", async () => {
+  const controller = new AbortController();
+  controller.abort(null);
+  await expect(
+    digestFile("/tmp/rea-cancelled-digest", controller.signal),
+  ).rejects.toMatchObject({
+    _tag: "AnalysisCancelledError",
+    cause: null,
+  });
+});
+
+it("retains an object reason when cancellation interrupts an active digest stream", async () => {
+  const controller = new AbortController();
+  const reason = { source: "caller digest cancellation" };
+  const stat = async (): Promise<Stats> => ({ isFile: () => true }) as Stats;
+  const open = () => {
+    const stream = new PassThrough();
+    queueMicrotask(() => controller.abort(reason));
+    return stream as unknown as ReturnType<
+      typeof import("node:fs").createReadStream
+    >;
+  };
+  const failure: unknown = await digestFile(
+    "/tmp/rea-cancelled-stream",
+    controller.signal,
+    stat,
+    1_000,
+    open,
+  ).catch((cause: unknown) => cause);
+  expect(failure).toBeInstanceOf(AnalysisCancelledError);
+  if (!(failure instanceof AnalysisCancelledError))
+    throw new Error("Expected digest cancellation");
+  expect(failure.cause).toBe(reason);
+});
+
 it("forwards selected and omitted deadlines through the production command runner", async () => {
   const directory = await mkdtemp(join(tmpdir(), "rea-owned-timeout-"));
   const path = join(directory, "fixture.bin");
   await writeFile(path, "before");
-  const timeouts: number[] = [];
+  const timeouts: (number | null)[] = [];
   const service = new ReverseEngineeringService({
     runOwned: async (_spawn, limits) => {
       timeouts.push(limits.timeoutMs);

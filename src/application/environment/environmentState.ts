@@ -25,7 +25,11 @@ import {
 } from "./environmentSource.js";
 import { STATE_INTAKE_LIMIT_BYTES } from "./environmentStateDocument.js";
 import { initialStateBytes } from "./environmentStateStore.js";
-import { describeWrite } from "./environmentStateWriteDescription.js";
+import {
+  describeWrite,
+  writeBody,
+  writeQuery,
+} from "./environmentStateWriteDescription.js";
 import {
   environmentToolDefinitions,
   type EnvironmentDataPlane,
@@ -51,16 +55,22 @@ export interface EnvironmentState {
   readonly writeClock: string | null;
 }
 
-/** The write plans a catalog serves from: none before a state is derived. */
-type ServedWrites = Pick<EnvironmentState, "writes">;
+/** The write plans a catalog serves from, and the views naming calls that only read: none before a state is derived. */
+type ServedWrites = Pick<EnvironmentState, "writes"> &
+  Partial<Pick<EnvironmentState, "views">>;
 
-/** Serving from the state serves read tools and the write tools whose effect the capture confirmed. */
+/** Serving from the state serves read tools, calls the capture shows reading only, and the write tools whose effect it confirmed. */
 const servedFromState = (
   tool: EnvironmentManifestTool,
   state: ServedWrites,
-): boolean =>
-  !changesState(tool.method, tool.path_template) ||
-  state.writes.get(tool.name)?.served === true;
+): boolean => {
+  const view = state.views?.get(tool.name);
+  return (
+    !changesState(tool.method, tool.path_template) ||
+    (view?.shape === "recorded" && view.reason === "query-body") ||
+    state.writes.get(tool.name)?.served === true
+  );
+};
 
 /** The tools an environment serves and the data plane its card declares. */
 export interface ServedCatalog {
@@ -95,7 +105,16 @@ export const servedCatalog = (
       dataPlane,
       ...(state === undefined
         ? {}
-        : { describe: (tool) => describeWrite(state.writes.get(tool.name)) }),
+        : {
+            describe: (tool) =>
+              describeWrite(
+                state.writes.get(tool.name),
+                writeQuery(state.writes.get(tool.name), source),
+              ),
+            body: (tool, recorded) =>
+              writeBody(state.writes.get(tool.name), recorded),
+            query: (tool) => writeQuery(state.writes.get(tool.name), source),
+          }),
     },
   );
   return tools.ok ? ok({ tools: tools.value, dataPlane }) : tools;

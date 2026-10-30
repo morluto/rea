@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
 import { COMPACT_INPUT_SCHEMA_BUDGET_BYTES } from "../../../src/config/mcpInputSchemaProfile.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
-import { ToolResultDelivery } from "../../../src/server/toolResult.js";
+import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 
 const createServer = (profile: "full" | "compact"): EvidenceMcpServer =>
@@ -14,7 +14,7 @@ const createServer = (profile: "full" | "compact"): EvidenceMcpServer =>
     { name: "tool-input-admission-test", version: "0" },
     { capabilities: {} },
     undefined,
-    new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE),
+    createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE),
     profile === "compact"
       ? { budgetBytes: COMPACT_INPUT_SCHEMA_BUDGET_BYTES }
       : undefined,

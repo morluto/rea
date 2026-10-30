@@ -1,4 +1,4 @@
-import { ok as javaProbeOk } from "../../../src/domain/result.js";
+import { ok as javaProbeOk, ok } from "../../../src/domain/result.js";
 import type { GhidraJavaObservation } from "../../../src/ghidra/GhidraJavaProbe.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
@@ -13,7 +13,6 @@ import { composeBinarySession } from "../../../src/application/binary/BinarySess
 import { LazyAnalysisProvider } from "../../../src/application/binary/LazyAnalysisProvider.js";
 import { parseConfig } from "../../../src/config/parseConfig.js";
 import { elf } from "../../../src/domain/binaryTarget.fixture.js";
-import { ok } from "../../../src/domain/result.js";
 import { GhidraClient } from "../../../src/ghidra/GhidraClient.js";
 import type { GhidraInstallationHost } from "../../../src/ghidra/GhidraInstallation.js";
 import type {
@@ -186,7 +185,7 @@ const connectGhidra = async () => {
       }
     }
     for (const launched of launcher.launches) await expectReleased(launched);
-    expect(await readFile(target)).toEqual(source);
+    expect(Buffer.compare(await readFile(target), source)).toBe(0);
   };
   try {
     await server.connect(serverTransport);

@@ -17,6 +17,7 @@
  * conflated with malformed input.
  */
 import { type Result, err, ok } from "../result.js";
+import { decodeAsn1Oid } from "../asn1Oid.js";
 import { Asn1BerFailure, Asn1BerReader, type Asn1BerNode } from "../asn1Ber.js";
 
 export type ApkV1BlockError =
@@ -152,24 +153,11 @@ const expectOctetString = (
 
 /** Dotted OID text; arcs are accumulated as BigInt so no arc overflows. */
 const oidText = (content: Uint8Array): string => {
-  if (content.length === 0 || content.length > 64)
-    throw malformed(`object identifier of ${String(content.length)} bytes`);
-  const arcs: bigint[] = [];
-  let value = 0n;
-  for (const [index, byte] of content.entries()) {
-    value = (value << 7n) | BigInt(byte & 0x7f);
-    if ((byte & 0x80) !== 0) {
-      if (index === content.length - 1)
-        throw malformed("object identifier is truncated");
-      continue;
-    }
-    if (arcs.length === 0) {
-      const first = value < 80n ? value / 40n : 2n;
-      arcs.push(first, value - first * 40n);
-    } else arcs.push(value);
-    value = 0n;
-  }
-  return arcs.join(".");
+  const decoded = decodeAsn1Oid(content, { bytes: 64, arcBytes: 64 });
+  if (decoded.ok) return decoded.value;
+  if (decoded.error.kind === "truncated")
+    throw malformed("object identifier is truncated");
+  throw malformed(`object identifier of ${String(content.length)} bytes`);
 };
 
 const algorithmOid = (tlv: Asn1BerNode | undefined, what: string) =>
@@ -184,10 +172,82 @@ const algorithmOid = (tlv: Asn1BerNode | undefined, what: string) =>
 const equalBytes = (a: Uint8Array, b: Uint8Array): boolean =>
   a.length === b.length && a.every((byte, i) => byte === b[i]);
 
+/**
+ * apksig compares serials as signed INTEGER values, tolerating redundant sign
+ * octets even though DER requires minimal encoding. Normalize each parsed
+ * identity once; retain the original certificate encoding independently.
+ */
+const integerIdentityContents = (bytes: Uint8Array): Uint8Array => {
+  let start = 0;
+  while (start < bytes.length - 1) {
+    const first = bytes[start];
+    const nextHigh = ((bytes[start + 1] ?? 0) & 0x80) !== 0;
+    if (!((first === 0x00 && !nextHigh) || (first === 0xff && nextHigh))) break;
+    start += 1;
+  }
+  return start === 0 ? bytes : bytes.subarray(start);
+};
+
+/**
+ * RFC 5280 §7.1: RDN order matters; attributes in one SET do not. This
+ * comparison profile admits ASCII PrintableString/UTF8String for common
+ * caseIgnore DirectoryString attributes. Other name rules remain unknown;
+ * exact encoded identity is still available independently of normalization.
+ */
+const directoryNameKey = (name: Asn1BerNode): string | null => {
+  try {
+    const attributes = new Set([
+      "2.5.4.3",
+      "2.5.4.6",
+      "2.5.4.7",
+      "2.5.4.8",
+      "2.5.4.10",
+      "2.5.4.11",
+    ]);
+    const rdns: string[][] = [];
+    for (const rdn of name.children) {
+      if (rdn.tag !== TAG.set || rdn.children.length === 0) return null;
+      const values: string[] = [];
+      for (const attribute of rdn.children) {
+        if (attribute.tag !== TAG.sequence || attribute.children.length !== 2)
+          return null;
+        const [id, value] = attribute.children;
+        if (
+          id?.tag !== TAG.oid ||
+          value === undefined ||
+          ![0x0c, 0x13].includes(value.tag)
+        )
+          return null;
+        const oid = oidText(id.content);
+        if (
+          !attributes.has(oid) ||
+          value.content.some((byte) => byte < 0x20 || byte > 0x7e)
+        )
+          return null;
+        const text = Buffer.from(value.content)
+          .toString("ascii")
+          .trim()
+          .replace(/ +/gu, " ")
+          .toLowerCase();
+        if (value.tag === 0x13 && !/^[a-z0-9 '()+,./:=?-]*$/iu.test(text))
+          return null;
+        values.push(JSON.stringify([oid, text]));
+      }
+      rdns.push(values.sort());
+    }
+    return JSON.stringify(rdns);
+  } catch (cause) {
+    if (cause instanceof BlockFailure && cause.error.kind === "malformed-pkcs7")
+      return null;
+    throw cause;
+  }
+};
+
 /** The X.509 facts a SignerInfo can name: issuer Name DER, serial and SKI. */
 interface CertificateIdentity {
   readonly issuer: Uint8Array;
-  readonly serial: Uint8Array;
+  readonly issuerKey: string | null;
+  readonly serialIdentity: Uint8Array;
   readonly subjectKeyIdentifier: Uint8Array | null;
 }
 
@@ -233,7 +293,8 @@ const certificateIdentity = (
     }
     return {
       issuer: reader.rawEncodedSpan(issuer),
-      serial: serial.content,
+      issuerKey: directoryNameKey(issuer),
+      serialIdentity: integerIdentityContents(serial.content),
       subjectKeyIdentifier,
     };
   } catch (cause: unknown) {
@@ -257,20 +318,19 @@ const signerInfo = (
   let certificateIndex: number;
   if (sid?.tag === TAG.sequence) {
     const parts = sid.children;
-    const issuer = reader.rawEncodedSpan(
-      expectTag(parts[0], TAG.sequence, `${what} issuer`),
+    const issuerNode = expectTag(parts[0], TAG.sequence, `${what} issuer`);
+    const issuer = reader.rawEncodedSpan(issuerNode);
+    const issuerKey = directoryNameKey(issuerNode);
+    const serialIdentity = integerIdentityContents(
+      expectTag(parts[1], TAG.integer, `${what} serialNumber`).content,
     );
-    const serial = expectTag(
-      parts[1],
-      TAG.integer,
-      `${what} serialNumber`,
-    ).content;
     identifiedBy = "issuer-and-serial";
     certificateIndex = identities.findIndex(
       (identity) =>
         identity !== null &&
-        equalBytes(identity.issuer, issuer) &&
-        equalBytes(identity.serial, serial),
+        (equalBytes(identity.issuer, issuer) ||
+          (issuerKey !== null && identity.issuerKey === issuerKey)) &&
+        equalBytes(identity.serialIdentity, serialIdentity),
     );
   } else if (sid?.tag === TAG.context0Primitive) {
     const keyId = sid.content;

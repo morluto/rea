@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
-import { createEvidence } from "../../domain/evidence.js";
+import {
+  createEvidence,
+  withEvidenceCallerInputPath,
+} from "../../domain/evidence.js";
 import { createEvidenceBundle } from "../../domain/evidenceBundle.js";
 import { recordUnknownInputSchema } from "../../domain/residualUnknown.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
@@ -16,6 +19,32 @@ const TARGET: BinaryTarget = {
   availableArchitectures: ["arm64"],
 };
 const PROVIDER = { id: "fixture", name: "Fixture provider", version: "1" };
+
+it("accepts and replaces caller path metadata for the same semantic record", () => {
+  const original = createEvidence(TARGET, PROVIDER, {
+    operation: "health",
+    parameters: {},
+    result: true,
+  });
+  const selected = withEvidenceCallerInputPath(original, "./selected-alias");
+  const ledger = new EvidenceLedger();
+  expect(ledger.record(original)).toEqual({ ok: true, value: "added" });
+  expect(ledger.record(selected)).toEqual({ ok: true, value: "duplicate" });
+  expect(ledger.import(createEvidenceBundle([selected]))).toEqual({
+    ok: true,
+    value: {
+      recordsAdded: 0,
+      unknownsAdded: 0,
+      changed: true,
+      replacements: [
+        { kind: "metadata", previous: original, current: selected },
+      ],
+    },
+  });
+  expect(ledger.get(original.evidence_id)?.caller_input_path).toBe(
+    "./selected-alias",
+  );
+});
 
 describe("evidence ledger recording", () => {
   it("deduplicates and atomically imports bundles", () => {
@@ -62,7 +91,7 @@ describe("evidence ledger recording", () => {
         changed: true,
         replacements: [
           {
-            kind: "subject-display",
+            kind: "metadata",
             previous: evidence,
             current: relocatedBundleRecord,
           },
@@ -202,7 +231,7 @@ describe("evidence ledger metadata imports", () => {
         changed: true,
         replacements: [
           {
-            kind: "subject-display",
+            kind: "metadata",
             previous: mutation,
             current: relocatedMutation,
           },

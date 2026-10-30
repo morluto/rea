@@ -71,6 +71,10 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 });
 
 import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+import {
+  ArtifactFileCleanupFailure,
+  artifactFilePrimaryFacts,
+} from "../../src/artifacts/ArtifactFileOperation.js";
 import { observeGhidraEndpoint } from "../../src/ghidra/GhidraTransport.js";
 import { GhidraClient } from "../../src/ghidra/GhidraClient.js";
 import {
@@ -182,11 +186,38 @@ it.skipIf(process.platform === "win32").each(["released", "failed"] as const)(
     });
     if (result.ok) throw new Error("Expected IO failure");
     expect(result.error.kind).toBe("start");
-    expect(result.error.cause).toBe(cause);
-    if (closing === "failed")
+    expect(controller.signal.aborted).toBe(true);
+    expect(controller.signal.reason).toBe(null);
+    const endpointCause = result.error.cause;
+    expect(artifactFilePrimaryFacts(endpointCause).cause).toBe(cause);
+    if (closing === "failed") {
+      if (!(endpointCause instanceof ArtifactFileCleanupFailure))
+        throw new Error("Expected the retained endpoint descriptor owner");
+      expect(endpointCause.reason).toBe("io");
+      expect(endpointCause.cancellation).toBeUndefined();
+      // The descriptor reader retains native EIO directly, without an opaque
+      // callback marker; the wrapper still owns the failed operation and close.
+      expect(artifactFilePrimaryFacts(endpointCause).origin).toBe(
+        "owned-or-classified",
+      );
+      expect(endpointCause.fileCleanupFailure.owner.handle).toBe(
+        fault.handles[0],
+      );
+      expect(endpointCause.cleanupLease.released).toBe(false);
+      expect(resources.hasPending).toBe(true);
       expect(result.error.cleanupFailure?.cleanupIncomplete).toBe(true);
+      expect(result.error.cleanupFailure?.cleanupResources).toEqual([
+        endpoint.path,
+      ]);
+    } else {
+      expect(endpointCause).toBe(cause);
+      expect(resources.hasPending).toBe(false);
+    }
     fault.blocked = false;
     await resources.retryCleanup();
+    if (endpointCause instanceof ArtifactFileCleanupFailure)
+      expect(endpointCause.cleanupLease.released).toBe(true);
+    expect(resources.hasPending).toBe(false);
     expect(result.error.cleanupFailure?.cleanupIncomplete ?? false).toBe(false);
     expect(fault.handles.every((handle) => handle.fd === -1)).toBe(true);
   },

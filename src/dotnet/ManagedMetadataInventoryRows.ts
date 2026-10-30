@@ -1,8 +1,9 @@
+import { readMemberReferenceRowFacts } from "./ManagedMemberReferenceRows.js";
+import { readTypeDefinitionRowFacts } from "./ManagedTypeDefinitionRows.js";
 import { managedDecodeBudget } from "./ManagedDecodeBudget.js";
 import { managedTypeReferences } from "./ManagedTypeReferences.js";
-import { MAX_TYPE_NESTING_DEPTH } from "./ManagedTypeNameDigests.js";
+import { MAX_TYPE_NESTING_DEPTH } from "./ManagedSignatureTypeNames.js";
 import { readManagedTypeNesting } from "./ManagedTypeNesting.js";
-import type { ManagedTypeNesting } from "./ManagedTypeNesting.js";
 import { memberDeclaringTypeRowLookup } from "./ManagedMemberOwnership.js";
 import type { TypeMemberListFacts } from "./ManagedTypeMemberLists.js";
 
@@ -11,6 +12,7 @@ import type {
   ManagedParseIssue,
 } from "../domain/managed/managedArtifact.js";
 import {
+  MANAGED_CODED_INDEXES,
   metadataRowOffset,
   type ManagedMetadataLayout,
 } from "./ManagedMetadataLayout.js";
@@ -27,20 +29,13 @@ import {
 import { managedFailure, readManagedValue } from "./ManagedReaderFailure.js";
 import type { ManagedTypeReferenceLookup } from "./ManagedTypeReferences.js";
 import type { ManagedResourceDirectory } from "./ManagedMetadataInventory.js";
-import type { ManagedType } from "./ManagedMemberInspectorCore.js";
+import type { ManagedType, parseTypes } from "./ManagedMemberInspectorCore.js";
 
 type ModuleIdentity = NonNullable<ManagedArtifactInspection["module"]>;
 type AssemblyIdentity = NonNullable<ManagedArtifactInspection["assembly"]>;
 type AssemblyReference = ManagedArtifactInspection["references"][number];
 type ManagedResource = ManagedArtifactInspection["resources"][number];
 type CustomAttribute = ManagedArtifactInspection["attributes"][number];
-
-const HAS_CUSTOM_ATTRIBUTE_TABLES = [
-  6, 4, 1, 2, 8, 9, 10, 0, 14, 23, 20, 17, 26, 27, 32, 35, 38, 39, 40, 42, 44,
-  43,
-] as const;
-
-const CUSTOM_ATTRIBUTE_TYPE_TABLES = [undefined, undefined, 6, 10] as const;
 
 const publicKeyIdentity = (
   bytes: Buffer,
@@ -246,10 +241,7 @@ export const managedMetadataTypeNames = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
   issues: ManagedParseIssue[],
-  parsedTypes?: {
-    readonly types: readonly ManagedType[];
-    readonly nesting: ManagedTypeNesting;
-  },
+  parsedTypes?: Pick<ReturnType<typeof parseTypes>, "types" | "nesting">,
   parsedReferences?: ManagedTypeReferenceLookup,
 ): ManagedMetadataTypeNameLookup => {
   const nesting =
@@ -259,8 +251,7 @@ export const managedMetadataTypeNames = (
   const definitions = new Map<number, ManagedType>();
   if (parsedTypes !== undefined) {
     managedDecodeBudget(layout).reserve(parsedTypes.types.length * 128, null);
-    for (const type of parsedTypes.types)
-      definitions.set(Number.parseInt(type.token.slice(4), 16), type);
+    for (const { row, type } of parsedTypes.types) definitions.set(row, type);
   }
   const cache = new Map<
     string,
@@ -320,18 +311,18 @@ export const managedMetadataTypeNames = (
         namespace = parsed.namespace;
         flags = parsed.flags;
       } else {
-        const cursor = metadataRowCursor(bytes, layout, table, row);
-        flags = cursor.readUInt32();
+        const source = readTypeDefinitionRowFacts(bytes, layout, row);
+        flags = source.flags;
         name = readMetadataString(
           bytes,
           layout,
-          cursor.readIndex(layout.stringIndexSize),
+          source.nameIndex,
           layout.strings.size,
         );
         namespace = readMetadataString(
           bytes,
           layout,
-          cursor.readIndex(layout.stringIndexSize),
+          source.namespaceIndex,
           layout.strings.size,
         );
       }
@@ -412,13 +403,7 @@ const attributeTypeName = (
   const { table, row } = constructor;
   if (table === 6)
     return declaringTypeForMethod(bytes, layout, row, memberLists, typeName);
-  const cursor = metadataRowCursor(bytes, layout, 10, row);
-  const parent = decodeMetadataCodedIndex(
-    cursor.readIndex(layout.codedIndexSize("MemberRefParent")),
-    3,
-    [2, 1, 26, 6, 27],
-    layout.rowCounts,
-  );
+  const { parent } = readMemberReferenceRowFacts(bytes, layout, row);
   if (parent.kind === "null") return null;
   if (parent.table === 2 || parent.table === 1)
     return typeName(parent.table, parent.row);
@@ -484,8 +469,8 @@ export const readCustomAttribute = (
   );
   const parent = decodeMetadataCodedIndex(
     parentRaw,
-    5,
-    HAS_CUSTOM_ATTRIBUTE_TABLES,
+    MANAGED_CODED_INDEXES.HasCustomAttribute.bits,
+    MANAGED_CODED_INDEXES.HasCustomAttribute.tables,
     layout.rowCounts,
   );
   if (parent.kind !== "valid") {
@@ -498,8 +483,8 @@ export const readCustomAttribute = (
   }
   const constructor = decodeMetadataCodedIndex(
     typeRaw,
-    3,
-    CUSTOM_ATTRIBUTE_TYPE_TABLES,
+    MANAGED_CODED_INDEXES.CustomAttributeType.bits,
+    MANAGED_CODED_INDEXES.CustomAttributeType.tables,
     layout.rowCounts,
   );
   if (constructor.kind !== "valid") {
@@ -566,8 +551,8 @@ export const readResource = ({
   );
   const implementation = decodeMetadataCodedIndex(
     implementationRaw,
-    2,
-    [38, 35, 39],
+    MANAGED_CODED_INDEXES.Implementation.bits,
+    MANAGED_CODED_INDEXES.Implementation.tables,
     layout.rowCounts,
   );
   if (implementation.kind === "invalid")

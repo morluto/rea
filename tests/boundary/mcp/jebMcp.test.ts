@@ -1,6 +1,7 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it, onTestFinished } from "vitest";
+import { z } from "zod";
 
 import type {
   JebAnalysisPort,
@@ -12,7 +13,10 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { ok } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
-import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
+import {
+  expandToolAvailability,
+  toolAvailabilityInventory,
+} from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 
 import { JebProvider } from "../../../src/jeb/JebProvider.js";
 import {
@@ -60,14 +64,14 @@ it("discovers current JEB operation support and recovery through binary_session"
   const read = async () => {
     const result = await client.callTool({
       name: "binary_session",
-      arguments: {},
+      arguments: { detail: "complete" },
     });
     const status = toolContract("binary_session").outputSchema.parse(
       result.structuredContent,
     ).result;
-    return expandToolAvailability(status.tool_availability).filter(
-      (tool) => tool.surface === "jeb-provider",
-    );
+    return expandToolAvailability(
+      toolAvailabilityInventory.parse(status.tool_availability),
+    ).filter((tool) => tool.surface === "jeb-provider");
   };
   const unavailable = await read();
   expect(unavailable).toHaveLength(4);
@@ -323,11 +327,20 @@ it.each(
   "preserves requested $operation through MCP with metadata $metadata",
   async ({ operation, tool, input, metadata }) => {
     let informationCalls = 0;
+    const refusal = {
+      success: false,
+      message: "Client information temporarily refused",
+      error: {
+        code: "future_metadata_code",
+        recovery_required_before_retry: true,
+        recovery_tool: "get_client_information",
+      },
+    };
     const fixture = await startJebMcpFixture((name) => {
       if (name !== "get_client_information") return jebPrimaryResponses[name]!;
       informationCalls++;
       return metadata === "refusal" || informationCalls > 1
-        ? { success: false, message: "Client information temporarily refused" }
+        ? refusal
         : { success: true, gui_client: false };
     });
     const provider = new JebProvider({
@@ -373,12 +386,38 @@ it.each(
           .join("");
         expect(JSON.parse(text)).toMatchObject({
           error: {
-            code: "unsupported_target",
+            code: "execution_failure",
+            message: refusal.message,
             details: {
+              provider_id: "jeb",
               operation,
-              reason: "Client information temporarily refused",
+              diagnostics: {
+                endpoint: fixture.endpoint,
+                upstream_response: refusal,
+              },
+              partial_observation: {
+                kind: "retained-evidence",
+                evidence_id: expect.any(String),
+              },
             },
           },
+        });
+        const partial = z
+          .object({
+            error: z.object({
+              details: z.object({
+                partial_observation: z.object({
+                  kind: z.literal("retained-evidence"),
+                  evidence_id: z.string(),
+                }),
+              }),
+            }),
+          })
+          .parse(JSON.parse(text)).error.details.partial_observation;
+        expect(session.evidenceById(partial.evidence_id)).toMatchObject({
+          evidence_id: partial.evidence_id,
+          operation,
+          raw_result: jebPrimaryResponses[tool],
         });
         expect(fixture.calls).toEqual([tool, "get_client_information"]);
       }

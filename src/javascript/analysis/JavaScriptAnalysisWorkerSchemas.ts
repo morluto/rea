@@ -1,20 +1,22 @@
-import { javaScriptSemanticUnknownOmissionsSchema } from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
-import { z } from "zod";
-import { digestSchema } from "../../domain/digests.js";
-import type { JavaScriptStaticAnalysis } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
-import { javaScriptRouteSourceFactsSchema } from "../../domain/javascript/javascriptRouteFacts.js";
-import { JAVASCRIPT_AST_FINGERPRINT_ALGORITHM } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
-import type {
-  JavaScriptSemanticProperty,
-  JavaScriptSemanticValue,
-} from "../../domain/javascript/javascriptSemanticValueTypes.js";
 import {
+  javaScriptSemanticUnknownOmissionsSchema,
   javaScriptSemanticNodeSchema,
   javaScriptSemanticRelationSchema,
   javaScriptSemanticUnknownSchema,
   javaScriptSemanticFingerprintSchema,
   javaScriptSemanticEvidenceContextSchema,
 } from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
+import { z } from "zod";
+import { digestSchema } from "../../domain/digests.js";
+import type { JavaScriptStaticAnalysis } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
+import { javaScriptRouteSourceFactsSchema } from "../../domain/javascript/javascriptRouteFacts.js";
+import { javaScriptStaticCoverageSchema } from "../../domain/javascript/javascriptStaticCoverage.js";
+import { JAVASCRIPT_AST_FINGERPRINT_ALGORITHM } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
+import type {
+  JavaScriptSemanticProperty,
+  JavaScriptSemanticValue,
+} from "../../domain/javascript/javascriptSemanticValueTypes.js";
+import { javaScriptSemanticResourceLimitSchema } from "../../domain/javascript/javascriptSemanticValueTypes.js";
 
 const range =
   javaScriptSemanticNodeSchema.shape.identity.shape.source_range.unwrap();
@@ -67,10 +69,17 @@ const locatedHandler = {
   ]),
   handler_location: range,
 };
+const ipcReceiver = z
+  .strictObject({
+    kind: z.enum(["web-contents", "main-frame"]),
+    owner_location: range,
+  })
+  .exactOptional();
 const ipcChannel = <Shape extends z.ZodRawShape>(shape: Shape) =>
   z.union([
     z.strictObject({
       ...findingContext,
+      receiver: ipcReceiver,
       invocation_location: range.optional(),
       resolution_basis: z.literal("wrapper-substitution").optional(),
       ...shape,
@@ -79,6 +88,7 @@ const ipcChannel = <Shape extends z.ZodRawShape>(shape: Shape) =>
     }),
     z.strictObject({
       ...findingContext,
+      receiver: ipcReceiver,
       invocation_location: range.optional(),
       resolution_basis: z.literal("wrapper-substitution").optional(),
       ...shape,
@@ -311,6 +321,7 @@ const referenceShape = {
 export const javaScriptWorkerStaticAnalysisSchema = z
   .strictObject({
     parse_status: z.enum(["complete", "partial", "failed"]),
+    analysis_coverage: javaScriptStaticCoverageSchema.exactOptional(),
     routes: javaScriptRouteSourceFactsSchema.exactOptional(),
     parse_error_count: count,
     visited_ast_nodes: count,
@@ -390,6 +401,7 @@ export const javaScriptWorkerStaticAnalysisSchema = z
         ...findingContext,
         role: z.enum(["preload", "renderer"]),
         path: z.string(),
+        path_base: z.literal("source-directory").exactOptional(),
         resolution_context: pathContext,
         mechanism: z.string(),
       }),
@@ -425,13 +437,6 @@ export const javaScriptWorkerStaticAnalysisSchema = z
     },
   })) satisfies z.ZodType<JavaScriptStaticAnalysis>;
 
-const resourceLimit = z.enum([
-  "primitive-candidates",
-  "primitive-bytes",
-  "expression-depth",
-  "getter-expansion",
-  "alias-selections",
-]);
 const primitive = z.union([z.string(), z.number(), z.boolean(), z.null()]);
 const property: z.ZodType<JavaScriptSemanticProperty> = z.lazy(() =>
   z.strictObject({
@@ -479,7 +484,7 @@ const semanticValue: z.ZodType<JavaScriptSemanticValue> = z.lazy(() =>
       z.strictObject({
         status: z.enum(["unknown", "ambiguous", "cycle"]),
         reason: z.string(),
-        resourceLimit: resourceLimit.optional(),
+        resourceLimit: javaScriptSemanticResourceLimitSchema.optional(),
       }),
     ])
     .transform((value) => {
@@ -536,19 +541,19 @@ const coverage = z
     z.strictObject({
       status: z.literal("complete"),
       omittedCount: z.literal(0),
-      resourceLimits: z.array(resourceLimit).optional(),
+      resourceLimits: z.array(javaScriptSemanticResourceLimitSchema).optional(),
       widenedReturnedReferences: z.array(range).optional(),
     }),
     z.strictObject({
       status: z.literal("partial"),
       omittedCount: z.union([z.literal(0), z.null()]),
-      resourceLimits: z.array(resourceLimit).optional(),
+      resourceLimits: z.array(javaScriptSemanticResourceLimitSchema).optional(),
       widenedReturnedReferences: z.array(range).optional(),
     }),
     z.strictObject({
       status: z.literal("failed"),
       omittedCount: z.null(),
-      resourceLimits: z.array(resourceLimit).optional(),
+      resourceLimits: z.array(javaScriptSemanticResourceLimitSchema).optional(),
       widenedReturnedReferences: z.array(range).optional(),
     }),
   ])
@@ -610,18 +615,24 @@ const scope = z.strictObject({
   bindingsComplete: z.boolean(),
   bindingIds: strings,
 });
-const binding = z.strictObject({
-  bindingId: z.string(),
-  scopeId: z.string(),
-  name: z.string(),
-  kind: definitionKind,
-  mutable: z.boolean(),
-  definitions: z.array(
-    z.strictObject({ kind: definitionKind, location: range }),
-  ),
-  value: semanticValue,
-  provenance,
-});
+const binding = z
+  .strictObject({
+    bindingId: z.string(),
+    scopeId: z.string(),
+    name: z.string(),
+    kind: definitionKind,
+    mutable: z.boolean(),
+    definitions: z.array(
+      z.strictObject({ kind: definitionKind, location: range }),
+    ),
+    value: semanticValue,
+    initializerValue: semanticValue.optional(),
+    provenance,
+  })
+  .transform(({ initializerValue, ...rest }) => ({
+    ...rest,
+    ...(initializerValue === undefined ? {} : { initializerValue }),
+  }));
 const callable = z.strictObject({
   callableId: z.string(),
   kind: z.enum(["function", "class", "method"]),
@@ -629,6 +640,7 @@ const callable = z.strictObject({
   containerScopeId: z.string(),
   bodyScopeId: z.string().nullable(),
   location: range,
+  computedKeyLocation: range.nullable(),
   returnSites: z.array(
     z.strictObject({
       returnSiteId: z.string(),

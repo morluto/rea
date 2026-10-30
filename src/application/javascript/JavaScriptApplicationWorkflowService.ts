@@ -3,6 +3,7 @@ import {
   type EvidenceLookup,
 } from "../EvidenceInputResolver.js";
 import { retainedEvidenceReferenceSchema } from "../../domain/evidenceReference.js";
+import { parseAnalysisInput } from "../AnalysisInput.js";
 import type { ResolvedSourceToBundleReference } from "./SourceToBundleReference.js";
 import { z } from "zod";
 
@@ -121,16 +122,15 @@ export const traceApplicationFeatureEvidence = (
   AnalysisError
 > => {
   const operation = "trace_application_feature";
-  const request = featureTraceFrameSchema.safeParse(rawInput);
-  if (!request.success)
-    return err(
-      analysisInputErrorFromIssues(operation, request.error.issues, rawInput, {
-        cause: request.error,
-      }),
-    );
-  const selected = resolveWorkflowEvidence(request.data.application, lookup);
+  const request = parseAnalysisInput(
+    operation,
+    rawInput,
+    featureTraceFrameSchema,
+  );
+  if (!request.ok) return request;
+  const selected = resolveWorkflowEvidence(request.value.application, lookup);
   if (!selected.ok) return selected;
-  const input = { ...request.data, application: selected.value };
+  const input = { ...request.value, application: selected.value };
   const sourceResult = parseApplicationGraphEvidence(input.application, [
     "application",
   ]);
@@ -158,6 +158,10 @@ export const traceApplicationFeatureEvidence = (
   const result = traceApplicationFeature({
     sourceEvidenceId: source.evidence.evidence_id,
     graph: source.graph,
+    semanticGraph: source.semanticGraph,
+    ...(input.semantic_page === undefined
+      ? {}
+      : { semanticPage: input.semantic_page }),
     nativeEvidence,
     seed: input.seed,
     direction: input.direction,
@@ -168,6 +172,9 @@ export const traceApplicationFeatureEvidence = (
       native_evidence_ids: nativeEvidence.map(({ evidence_id: id }) => id),
       seed: input.seed,
       direction: input.direction,
+      ...(input.semantic_page === undefined
+        ? {}
+        : { semantic_page: input.semantic_page }),
     },
     result,
   );
@@ -187,17 +194,16 @@ export const compareApplicationVersionsEvidence = (
   AnalysisError
 > => {
   const operation = "compare_application_versions";
-  const request = versionComparisonFrameSchema.safeParse(rawInput);
-  if (!request.success)
-    return err(
-      analysisInputErrorFromIssues(operation, request.error.issues, rawInput, {
-        cause: request.error,
-      }),
-    );
-  const pair = resolveApplicationGraphPair(operation, request.data, lookup);
+  const request = parseAnalysisInput(
+    operation,
+    rawInput,
+    versionComparisonFrameSchema,
+  );
+  if (!request.ok) return request;
+  const pair = resolveApplicationGraphPair(operation, request.value, lookup);
   if (!pair.ok) return pair;
   const { left, right } = pair.value;
-  const input = { ...request.data, ...pair.value.selected };
+  const input = { ...request.value, ...pair.value.selected };
   const leftNativeResult = parseNativeApplicationEvidence(
     input.left_native_observations,
     ["left_native_observations"],
@@ -306,17 +312,16 @@ export const compareJavaScriptExportShapesEvidence = (
   AnalysisError
 > => {
   const operation = "compare_javascript_export_shapes";
-  const request = exportShapeFrameSchema.safeParse(rawInput);
-  if (!request.success)
-    return err(
-      analysisInputErrorFromIssues(operation, request.error.issues, rawInput, {
-        cause: request.error,
-      }),
-    );
-  const pair = resolveApplicationGraphPair(operation, request.data, lookup);
+  const request = parseAnalysisInput(
+    operation,
+    rawInput,
+    exportShapeFrameSchema,
+  );
+  if (!request.ok) return request;
+  const pair = resolveApplicationGraphPair(operation, request.value, lookup);
   if (!pair.ok) return pair;
   const { left, right } = pair.value;
-  const input = { ...request.data, ...pair.value.selected };
+  const input = { ...request.value, ...pair.value.selected };
   const identities = javaScriptExportShapeIdentitiesSchema.safeParse({
     left: left.evidence,
     right: right.evidence,

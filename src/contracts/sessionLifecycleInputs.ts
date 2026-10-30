@@ -6,7 +6,7 @@ import {
   rawBinarySelectionError,
 } from "../domain/rawBinary.js";
 import { z } from "zod";
-import { analysisProviderSelectorSchema } from "./providerSelection.js";
+import { analysisProviderSelectorSchema } from "../domain/providerSelection.js";
 
 /** Caller-supplied analysis snapshot path; must name its destination absolutely. */
 const snapshotPathSchema = absoluteLocalPathStringSchema.describe(
@@ -25,17 +25,17 @@ export const openBinaryInputSchema = z
     format: executableFormatHintSchema
       .optional()
       .describe(
-        "Explicit headerless interpretation: dos-com or raw-binary. Omission preserves header-based detection.",
+        "Explicit interpretation: dos-com or raw-binary (headerless), or gamecube-dol (GameCube/Wii DOL, never auto-detected). Omission preserves header-based detection.",
       ),
     architecture: binaryArchitectureSchema
       .optional()
       .describe(
-        "Caller-supplied CPU family. Required with format=raw-binary; rejected otherwise.",
+        "Caller-supplied CPU family. Required with format=raw-binary; rejected otherwise. format=gamecube-dol takes powerpc from the header, so it must be omitted.",
       ),
     entry_point: rawBinaryEntryPointSchema
       .optional()
       .describe(
-        "Caller-supplied load and entry address (0xhex). File offset 0 is mapped here. Required with format=raw-binary; rejected otherwise.",
+        "Caller-supplied load and entry address (0xhex). File offset 0 is mapped here. Required with format=raw-binary; rejected otherwise. Optional with format=gamecube-dol; must equal the DOL header entry.",
       ),
     provider_id: analysisProviderSelectorSchema.optional(),
     snapshot_path: snapshotPathSchema.optional(),

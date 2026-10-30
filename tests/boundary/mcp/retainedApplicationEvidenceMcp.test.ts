@@ -2,6 +2,7 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterEach, expect, it } from "vitest";
 import { Ajv2020 } from "ajv/dist/2020.js";
+import type { AnySchema } from "ajv";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createServer } from "../../../src/server/createServer.js";
 import {
@@ -40,6 +41,30 @@ async function connect(profile?: "full" | "compact") {
   return { client, session };
 }
 
+it("advertises semantic discovery paging and validates the returned Evidence", async () => {
+  const { client } = await connect();
+  const { tools } = await client.listTools();
+  const tool = tools.find(({ name }) => name === "trace_application_feature");
+  if (tool?.outputSchema === undefined)
+    throw new Error("Missing feature trace output schema");
+  const input = {
+    application,
+    seed: { kind: "string", value: "missing-semantic-name", match: "exact" },
+    semantic_page: { offset: 0, limit: 1 },
+  };
+  const ajv = new Ajv2020({ strict: false, validateFormats: false });
+  const outputSchema = tool.outputSchema as AnySchema;
+  expect(ajv.validateSchema(tool.inputSchema)).toBe(true);
+  expect(ajv.validateSchema(outputSchema)).toBe(true);
+  expect(ajv.compile(tool.inputSchema)(input)).toBe(true);
+  const result = await client.callTool({ name: tool.name, arguments: input });
+  expect(result.isError).not.toBe(true);
+  expect(ajv.compile(outputSchema)(result.structuredContent)).toBe(true);
+  expect(result.structuredContent).toMatchObject({
+    normalized_result: { semantic_discovery: { total: 0, next_offset: null } },
+  });
+});
+
 it.each(["full", "compact"] as const)(
   "advertises the primitive literal seeds accepted by semantic tracing (%s)",
   async (profile) => {
@@ -53,8 +78,16 @@ it.each(["full", "compact"] as const)(
       strict: false,
       validateFormats: false,
     }).compile(tool.inputSchema);
-    for (const value of ["literal", 42, true, null, {}, []]) {
-      const primitive = value === null || typeof value !== "object";
+    const cases = [
+      { value: "literal", expectedPrimitive: true },
+      { value: 42, expectedPrimitive: true },
+      { value: true, expectedPrimitive: true },
+      { value: null, expectedPrimitive: true },
+      { value: {}, expectedPrimitive: false },
+      { value: [], expectedPrimitive: false },
+    ] as const;
+    let malformedChecks = 0;
+    for (const { value, expectedPrimitive } of cases) {
       const arguments_ = {
         application,
         query: {
@@ -62,15 +95,24 @@ it.each(["full", "compact"] as const)(
           direction: "backward-provenance",
         },
       };
-      if (primitive || profile === "full")
-        expect(validate(arguments_), JSON.stringify(value)).toBe(primitive);
+      if (expectedPrimitive || profile === "full")
+        expect(validate(arguments_), JSON.stringify(value)).toBe(
+          expectedPrimitive,
+        );
       const result = await client.callTool({
         name: tool.name,
         arguments: arguments_,
       });
-      if (primitive) expect(result.isError).not.toBe(true);
-      else expect(result.isError).toBe(true);
+      if (expectedPrimitive) expect(result.isError).not.toBe(true);
+      else {
+        malformedChecks += 1;
+        expect(parseMcpToolError(result).error).toMatchObject({
+          code: "invalid_request",
+          category: "invalid_input",
+        });
+      }
     }
+    expect(malformedChecks).toBe(2);
   },
 );
 

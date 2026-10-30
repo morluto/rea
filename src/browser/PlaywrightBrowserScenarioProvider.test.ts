@@ -1,4 +1,10 @@
-import { failBrowserScenarioOperation } from "./PlaywrightScenarioBrowser.js";
+import type { BrowserContext, Page } from "playwright-core";
+import { capturePlaywrightStepArtifacts } from "./PlaywrightScenarioArtifacts.js";
+import { resolveScenarioSecrets } from "../../tests/fixtures/browserScenarioSecrets.js";
+import {
+  failBrowserScenarioOperation,
+  PlaywrightScenarioBrowserCleanupOwner,
+} from "./PlaywrightScenarioBrowser.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 // Fake-backed composition coverage; real browser verification lives in
 // `npm run verify:browser`.
@@ -7,7 +13,6 @@ import { describe, expect, it, vi } from "vitest";
 import type { BrowserScenarioSessionPort } from "./BrowserScenarioSessionPort.js";
 import { PlaywrightBrowserScenarioProvider } from "./PlaywrightBrowserScenarioProvider.js";
 import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
-import { PlaywrightScenarioBrowserCleanupOwner } from "./PlaywrightScenarioBrowser.js";
 import {
   browserScenarioSchema,
   type BrowserScenario,
@@ -128,6 +133,7 @@ class FakeSession implements BrowserScenarioSessionPort {
   onPerform: (() => void) | undefined;
   onClose: (() => void) | undefined;
   eventGaps: readonly string[] = [];
+  storageGaps: readonly string[] = [];
   eventItems: readonly BrowserScenarioEvent[] = [];
 
   constructor(
@@ -170,6 +176,10 @@ class FakeSession implements BrowserScenarioSessionPort {
 
   eventLimitations(): readonly string[] {
     return this.eventGaps;
+  }
+
+  storageLimitations(): readonly string[] {
+    return this.storageGaps;
   }
 
   async perform(_action: BrowserScenarioAction, signal?: AbortSignal) {
@@ -233,45 +243,47 @@ class FakeSession implements BrowserScenarioSessionPort {
   }
 }
 
+const capturedResponseBodyEvents = (): readonly BrowserScenarioEvent[] => [
+  {
+    sequence: 1,
+    step_index: 0,
+    kind: "response",
+    transaction_id: "request-1",
+    redirected_from_transaction_id: null,
+    method: "GET",
+    url: sanitizeBrowserUrl("https://app.example.test/main.js"),
+    resource_type: "script",
+    header_names: [],
+    status: 200,
+    failure: null,
+  },
+  {
+    sequence: 2,
+    step_index: 0,
+    kind: "network-content",
+    transaction_id: "request-1",
+    source_event_sequence: 1,
+    phase: "response",
+    headers: { state: "not_requested" },
+    body: {
+      state: "captured",
+      representation: "playwright-response-body-bytes",
+      encoding: "base64",
+      content: "",
+      bytes: 0,
+      sha256:
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      media_type: "text/javascript",
+      redacted: false,
+    },
+  },
+];
+
 describe("PlaywrightBrowserScenarioProvider", () => {
   it("reports response-body provenance uncertainty without marking event coverage missing", async () => {
     const session = new FakeSession("launch");
     const selected = scenario();
-    session.eventItems = [
-      {
-        sequence: 1,
-        step_index: 0,
-        kind: "response",
-        transaction_id: "request-1",
-        redirected_from_transaction_id: null,
-        method: "GET",
-        url: sanitizeBrowserUrl("https://app.example.test/main.js"),
-        resource_type: "script",
-        header_names: [],
-        status: 200,
-        failure: null,
-      },
-      {
-        sequence: 2,
-        step_index: 0,
-        kind: "network-content",
-        transaction_id: "request-1",
-        source_event_sequence: 1,
-        phase: "response",
-        headers: { state: "not_requested" },
-        body: {
-          state: "captured",
-          representation: "playwright-response-body-bytes",
-          encoding: "base64",
-          content: "",
-          bytes: 0,
-          sha256:
-            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-          media_type: "text/javascript",
-          redacted: false,
-        },
-      },
-    ];
+    session.eventItems = capturedResponseBodyEvents();
     const input = browserScenarioSchema.parse({
       ...selected,
       capture: {
@@ -314,6 +326,28 @@ describe("PlaywrightBrowserScenarioProvider", () => {
       missing_sections: ["events"],
     });
     expect(result.value.limitations).toContain(session.eventGaps[0]);
+  });
+
+  it("retains completed observations while popup initial-storage coverage remains unknown", async () => {
+    const session = new FakeSession("launch");
+    session.storageGaps = [
+      "First-script seed coverage is unknown for popup top-level contexts",
+    ];
+    const provider = new PlaywrightBrowserScenarioProvider(() =>
+      Promise.resolve(session),
+    );
+    const result = await provider.captureScenario(scenario());
+    if (!result.ok) throw result.error;
+    expect(result.value.completeness).toMatchObject({
+      status: "incomplete",
+      equality_eligible: false,
+      missing_sections: ["storage"],
+    });
+    expect(result.value.steps.map(({ status }) => status)).toEqual([
+      "completed",
+      "completed",
+    ]);
+    expect(result.value.limitations).toContain(session.storageGaps[0]);
   });
 
   it("returns an initial state and every step beyond the former action ceiling", async () => {
@@ -1242,3 +1276,58 @@ it("keeps an earlier physical failure primary when final cleanup also observes c
     await provider.close();
   }
 });
+
+it.each([false, true])(
+  "keeps planned secret screenshots unavailable through success and cleanup failure (failure: %s)",
+  async (cleanupFailure) => {
+    const input = browserScenarioSchema.parse({
+      ...scenario({ captures: ["screenshot"] }),
+      actions: [
+        {
+          step_id: "request",
+          action: "request",
+          method: "POST",
+          path: "/api/items",
+          save: [{ name: "token", json_pointer: "/token", secret: true }],
+        },
+      ],
+    });
+    const secrets = resolveScenarioSecrets(input, {});
+    const screenshot = vi.fn(async () =>
+      Buffer.from("private screenshot pixels"),
+    );
+    const session = new FakeSession(
+      "launch",
+      cleanupFailure ? { close: new Error("cleanup failed") } : {},
+    );
+    session.capture = async (requested) =>
+      capturePlaywrightStepArtifacts({
+        context: {} as BrowserContext,
+        page: { screenshot } as unknown as Page,
+        secrets,
+        requested,
+      });
+    session.onPerform = () =>
+      secrets.save("request.token", "token", "late-pixel-token", true);
+    const provider = new PlaywrightBrowserScenarioProvider(async () => session);
+    const result = await provider.captureScenario(input);
+    const step = {
+      artifacts: { screenshot: { state: "missing" } },
+      completeness: {
+        equality_eligible: false,
+        missing_sections: ["screenshot"],
+      },
+    };
+    if (cleanupFailure)
+      expect(result).toMatchObject({
+        ok: false,
+        error: { partialObservation: { capture: { steps: [step, step] } } },
+      });
+    else {
+      if (!result.ok) throw result.error;
+      expect(result.value.steps).toMatchObject([step, step]);
+      expect(result.value.completeness.equality_eligible).toBe(false);
+    }
+    expect(screenshot).not.toHaveBeenCalled();
+  },
+);

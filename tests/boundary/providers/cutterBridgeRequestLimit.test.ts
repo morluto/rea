@@ -1,3 +1,4 @@
+import { bridgeMaxRequestBytesRecovery } from "../../../src/config/bridgeMaxRequestBytes.js";
 import { createServer } from "node:net";
 import { chmod, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -181,13 +182,15 @@ it("reports a Cutter ceiling mismatch before opening a command socket", async ()
   ).rejects.toSatisfy((error: unknown) => {
     expect(error).toBeInstanceOf(AnalysisResourceConstraintError);
     if (!(error instanceof AnalysisResourceConstraintError)) return false;
-    expect(error.reason).toContain("REA_BRIDGE_MAX_REQUEST_BYTES");
-    expect(error.reason).toContain("33554432");
-    expect(error.reason).toContain("16777216");
-    expect(error.reason).toContain("No command was sent.");
-    expect(error.reason).not.toContain("no runtime override");
-    expect(error.remediationAction).toContain(
-      "Set REA_BRIDGE_MAX_REQUEST_BYTES",
+    expect(error.reportedLimits).toMatchObject({
+      bridge_max_request_bytes: 16777216,
+      client_max_request_bytes: 33554432,
+    });
+    expect(error.remediationAction).toBe(
+      bridgeMaxRequestBytesRecovery(
+        { maximumBytes: 33554432, source: "setting" },
+        "Cutter",
+      ),
     );
     return true;
   });
@@ -224,10 +227,13 @@ it("lowers the Cutter command ceiling for both the refusal and a live command", 
   ).rejects.toSatisfy((error: unknown) => {
     expect(error).toBeInstanceOf(AnalysisResourceConstraintError);
     if (!(error instanceof AnalysisResourceConstraintError)) return false;
-    expect(error.reason).toContain("authenticated frame limit of 8192 bytes");
-    expect(error.reason).toContain("no command was sent");
-    expect(error.reason).toContain("REA_BRIDGE_MAX_REQUEST_BYTES");
-    expect(error.reason).not.toContain("no runtime override");
+    expect(error.reportedLimits).toMatchObject({ max_request_bytes: 8192 });
+    expect(error.remediationAction).toBe(
+      bridgeMaxRequestBytesRecovery(
+        { maximumBytes: 8192, source: "setting" },
+        "Cutter",
+      ),
+    );
     return true;
   });
   expect(connections).toBe(0);

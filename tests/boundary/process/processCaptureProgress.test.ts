@@ -260,9 +260,9 @@ itWithCaptureCapability(
       operation: "capture_process_scenario",
       predicate_type: "rea.process-capture",
     });
-    expect(recorded.frames.map(({ data }) => data).join("")).toContain(
-      "SPARSE_CHILD_STARTED",
-    );
+    const terminalText = recorded.frames.map(({ data }) => data).join("");
+    expect(terminalText).toContain("SPARSE_CHILD_STARTED");
+    expect(terminalText).toContain("SPARSE_CHILD_DONE");
     expect(capture.stderr).not.toContain("SPARSE_CHILD_STARTED");
     expect(capture.stderr).not.toContain("SPARSE_CHILD_DONE");
     const updates = capture.lines.map(({ update }) => update);
@@ -273,15 +273,27 @@ itWithCaptureCapability(
     expect(Math.max(...elapsed) - Math.min(...elapsed)).toBeGreaterThanOrEqual(
       1_000,
     );
-    expect(
-      running.every(({ details }) => details.frames <= 2),
-      `running progress details: ${JSON.stringify(running.map(({ details }) => details))}`,
-    ).toBe(true);
+    // Frames count retained PTY chunks; child writes may be split or coalesced.
+    for (const [index, update] of running.entries()) {
+      expect(update.details.frames).toBeLessThanOrEqual(recorded.frames.length);
+      const previous = running[index - 1];
+      if (previous !== undefined)
+        expect(update.details.frames).toBeGreaterThanOrEqual(
+          previous.details.frames,
+        );
+    }
+    assertRateBound(
+      updates.filter(({ terminal }) => terminal !== true).length,
+      updates.at(-1)?.details.elapsed_ms ?? 0,
+    );
     expect(updates.at(-1)).toMatchObject({
       phase: "cleanup",
       terminal: true,
       details: {
         disposition: "exited",
+        frames: recorded.frames.length,
+        samples: recorded.process_samples.length,
+        interactions: recorded.interaction_events.length,
         owned_process_group: "cleaned",
         terminal_renderer: "cleaned",
         temporary_root: "cleaned",

@@ -31,7 +31,7 @@ export const analysisErrorWithCleanupFailure = (
         ? {}
         : { partialObservation: primary.partialObservation }),
       cleanup: {
-        reason: projected.message,
+        reason: cleanup.cleanup?.reason ?? projected.message,
         resources: [
           ...new Set([
             ...(primary.cleanupIncomplete ? primary.cleanupResources : []),

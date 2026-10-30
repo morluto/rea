@@ -28,11 +28,15 @@ afterEach(() => {
 
 it("passes the selected environment and ownership token to Electron launch", async () => {
   vi.stubEnv("LANG", "ambient-language");
+  vi.stubEnv("XAUTHORITY", "/ambient/.Xauthority");
   let launchedEnvironment: unknown;
   const provider = new PlaywrightElectronActiveProvider(
     {
       LANG: "selected-language",
       PATH: "/selected/bin",
+      DISPLAY: ":selected-display",
+      XAUTHORITY: "/selected/display-authorization",
+      WAYLAND_DISPLAY: "selected-wayland",
       REA_PRIVATE_VALUE: "not-a-launch-setting",
     },
     async (options) => {
@@ -52,6 +56,9 @@ it("passes the selected environment and ownership token to Electron launch", asy
   expect(launchedEnvironment).toEqual({
     LANG: "selected-language",
     PATH: "/selected/bin",
+    DISPLAY: ":selected-display",
+    XAUTHORITY: "/selected/display-authorization",
+    WAYLAND_DISPLAY: "selected-wayland",
     REA_PROCESS_RUN_ID: expect.any(String),
   });
 });
@@ -511,6 +518,11 @@ it("records actions after a failed action as not executed and keeps the capture"
     process: () => ({ pid: 424242 }),
     close: vi.fn(async () => undefined),
     windows: () => [page],
+    browserWindow: async () => ({
+      evaluate: async (read: (window: { id: number }) => unknown) =>
+        read({ id: 42 }),
+      dispose: async () => {},
+    }),
     firstWindow: async () => page,
   };
 
@@ -538,7 +550,7 @@ it("records actions after a failed action as not executed and keeps the capture"
       step_id: "fail",
       kind: "click",
       window_index: 0,
-      target: "window:0",
+      target: "window:42",
       status: "failed",
       elapsed_ms: expect.any(Number),
       error: "strict mode violation",
@@ -859,7 +871,7 @@ it.each(["process", "transport"] as const)(
     vi.spyOn(electronActions, "runElectronActions").mockImplementation(
       async () => {
         controller.abort(reason);
-        return [];
+        return { actions: [] };
       },
     );
     if (failure === "process") {

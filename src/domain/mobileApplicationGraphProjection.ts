@@ -11,8 +11,7 @@ import { AnalysisInputError } from "./analysisErrorCore.js";
 import { EvidenceIntegrityError } from "./evidenceErrors.js";
 import { analysisInputErrorFromIssues } from "./inputIssueProjection.js";
 import { err, ok, type Result } from "./result.js";
-import { digestSchema } from "./digests.js";
-import { prefixedDigestSchema } from "./digests.js";
+import { digestSchema, prefixedDigestSchema } from "./digests.js";
 
 /** Evidence-scoped identifier schemas shared by application graph projections. */
 export const projectionEvidenceIdSchema = prefixedDigestSchema("ev");

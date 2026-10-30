@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { FakeSetupHost, options } from "./Setup.fixture.js";
 import { runSetup } from "./Setup.js";
-import { setupRegistrationCommand } from "./SetupHost.js";
+import { currentClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
 import { discoverSetupState } from "./SetupPlan.js";
 import type { MsixPackageView } from "./MsixPackageStorage.js";
@@ -286,6 +286,38 @@ describe("configured Linux Hopper selection", () => {
   });
 });
 
+it("offers shared skill intent when the detected personal copy is current", async () => {
+  const host = new FakeSetupHost();
+  host.hopper = "/Applications/Hopper";
+  host.clients = [{ name: "claude_code", configPath: "/claude.json" }];
+  host.skillNeedsInstall = (clients) => Promise.resolve(clients.length === 0);
+  const result = await runSetup(
+    { ...options(false), structured: false },
+    host,
+    async (actions, context) => {
+      if (context?.stage !== "select") return true;
+      expect(actions).toContainEqual(
+        expect.objectContaining({ id: "install_skill" }),
+      );
+      return { approved: false, selectedActionIds: ["install_skill"] };
+    },
+  );
+  expect(result.status).toBe("ready");
+  expect(result.plannedActions).toEqual([
+    expect.objectContaining({
+      id: "install_skill",
+      target: join(
+        host.homeDirectory,
+        ".agents",
+        "skills",
+        "reverse-engineer-anything",
+      ),
+    }),
+  ]);
+  expect(host.configurations).toBe(0);
+  expect(host.skillInstalls).toBe(1);
+});
+
 describe("setup workflow action selection", () => {
   it("executes only actions selected by the interactive adapter", async () => {
     const host = new FakeSetupHost();
@@ -382,15 +414,27 @@ describe("setup workflow action selection", () => {
 
     expect(result.status).toBe("ready");
     expect(host.configuredCommands).toEqual([
-      setupRegistrationCommand("win32", undefined, CURRENT_ENTRYPOINT_PATH),
+      currentClientRegistrationCommand({
+        platform: "win32",
+        entrypointPath: CURRENT_ENTRYPOINT_PATH,
+      }),
     ]);
     expect(
-      setupRegistrationCommand("win32", undefined, CURRENT_ENTRYPOINT_PATH),
+      currentClientRegistrationCommand({
+        platform: "win32",
+        entrypointPath: CURRENT_ENTRYPOINT_PATH,
+      }),
     ).toEqual([process.execPath, CURRENT_ENTRYPOINT_PATH, "mcp"]);
-    expect(setupRegistrationCommand("win32", undefined, undefined)).toEqual([]);
-    expect(setupRegistrationCommand("win32", "npx", undefined)).not.toEqual([]);
+    expect(
+      currentClientRegistrationCommand({
+        platform: "win32",
+        entrypointPath: undefined,
+      }),
+    ).toEqual([]);
   });
+});
 
+describe("setup configuration failure recovery", () => {
   it.each([
     [
       "path",
@@ -413,13 +457,33 @@ describe("setup workflow action selection", () => {
     host.hopper = "/Applications/Hopper";
     host.clients = [{ name: "internal_client_key", configPath: "/agent.json" }];
     host.clientResults.set("internal_client_key", { status: "failed", reason });
+    // Exercise registration recovery without selecting a synthetic skill client.
     const result = await runSetup(
-      { ...options(true), clientIds: ["internal_client_key"] },
+      {
+        ...options(true),
+        clientIds: ["internal_client_key"],
+        installSkill: false,
+      },
       host,
     );
     expect(result.status).toBe("needs_human");
     expect(result.remediation).toBe(message);
     expect(result.remediation).not.toContain("internal_client_key");
+    expect(result.plannedActions).toEqual([
+      expect.objectContaining({
+        id: "configure_client:internal_client_key",
+        kind: "configure_client",
+        target: "/agent.json",
+      }),
+    ]);
+    expect(result.clients).toEqual({
+      internal_client_key: { status: "failed", reason },
+    });
+    expect(result.appliedActions).toEqual([]);
+    expect(host.configurations).toBe(1);
+    expect(host.skillDirectoryValidations).toEqual([]);
+    expect(host.skillInstalls).toBe(0);
+    expect(host.hopperInstalls).toBe(0);
   });
 
   it("names the recovery backup that holds the restored original after a readback failure", async () => {
@@ -532,5 +596,62 @@ describe("MSIX Claude Desktop setup", () => {
     );
     expect(skillOnly.status).toBe("ready");
     expect(host.skillInstalls).toBe(1);
+  });
+});
+
+describe("setup tool family scope", () => {
+  it("writes the requested scope into the registration environment", async () => {
+    const host = new FakeSetupHost();
+    host.doctorHealthy = true;
+    host.skill = "unchanged";
+    host.clients = [{ name: "cursor", configPath: "/cursor.json" }];
+
+    const plan = await runSetup(
+      {
+        ...options(false),
+        clientIds: ["cursor"],
+        toolFamilies: "session,application",
+      },
+      host,
+    );
+    expect(plan.plannedActions[0]?.detail).toContain(
+      "REA_MCP_TOOL_FAMILIES=session,application",
+    );
+
+    const applied = await runSetup(
+      {
+        ...options(true),
+        clientIds: ["cursor"],
+        toolFamilies: "session,application",
+      },
+      host,
+    );
+    expect(applied.status).toBe("ready");
+    expect(host.configuredProviderEnvironments).toContainEqual({
+      REA_MCP_TOOL_FAMILIES: "session,application",
+    });
+  });
+
+  it("still offers Hopper on an unconfigured machine when a scope is set", async () => {
+    const host = new FakeSetupHost("darwin");
+    host.version = "14.5";
+    host.skill = "unchanged";
+    host.clients = [{ name: "cursor", configPath: "/cursor.json" }];
+
+    const result = await runSetup(
+      {
+        ...options(false),
+        clientIds: ["cursor"],
+        toolFamilies: "session",
+        proposeHopper: true,
+      },
+      host,
+    );
+
+    // The advertised family scope is a registration setting, not provider
+    // discovery; it must not suppress the Hopper installation offer.
+    expect(result.plannedActions.map(({ kind }) => kind)).toContain(
+      "install_hopper",
+    );
   });
 });

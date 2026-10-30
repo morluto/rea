@@ -114,7 +114,14 @@ type ElectronIpcHandler =
       readonly handler_location: JavaScriptSourceRange;
     };
 
+export interface ElectronIpcReceiver {
+  readonly kind: "web-contents" | "main-frame";
+  /** Constructor syntax allocation, never a runtime frame identifier. */
+  readonly owner_location: JavaScriptSourceRange;
+}
+
 interface ElectronIpcFindingContext {
+  readonly receiver?: ElectronIpcReceiver;
   /** Absent on direct syntax observations; wrappers require inferred evidence. */
   readonly resolution_basis?: "wrapper-substitution";
   readonly module_key: string | null;

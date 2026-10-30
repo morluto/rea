@@ -49,20 +49,22 @@ cliTest.for(scenarios)(
         ? "<plist><dict><key>CFBundle<![CDATA[Executable]]></key><string>Fixture</string></dict></plist>"
         : build({ CFBundleExecutable: "Fixture" }),
     );
+    const uid = (value: number) =>
+      scenario === "binary" ? { UID: value } : { CF$UID: value };
     const source = {
       $archiver: "NSKeyedArchiver",
       $version: 100000,
-      $top: { root: { CF$UID: 1 } },
+      $top: { root: uid(1) },
       $objects: [
         "$null",
         {
-          $class: { CF$UID: 3 },
+          $class: uid(3),
           large: scenario === "binary" ? 9007199254740992 : "__INTEGER__",
           safe: 42,
-          children: [{ CF$UID: 2 }],
+          children: [uid(2)],
           ...(scenario.includes("collision") ? { other: "__OTHER__" } : {}),
         },
-        { $class: { CF$UID: 3 }, label: "Child" },
+        { $class: uid(3), label: "Child" },
         { $classname: "UIView", $classes: ["UIView", "NSObject"] },
       ],
     };

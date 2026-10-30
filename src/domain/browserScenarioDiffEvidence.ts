@@ -4,9 +4,10 @@ import type {
   BrowserScenarioStep,
   BrowserStepArtifacts,
 } from "./browserScenarioCaptureValues.js";
-import type { BrowserScenarioCapture } from "./browserScenarioCapture.js";
+import type { RetainedBrowserScenarioCapture } from "./browserScenarioCapture.js";
 import {
   fingerprintScenarioNetworkTransactions,
+  ScenarioNetworkFingerprintError,
   scenarioNetworkTransactions,
   scenarioNetworkCoverageReason,
 } from "./browserScenarioNetworkComparison.js";
@@ -73,7 +74,7 @@ const EVENT_SECTIONS = [
 
 /** Project event evidence through capture- and step-level completeness. */
 export const eventEvidenceState = (
-  capture: BrowserScenarioCapture,
+  capture: RetainedBrowserScenarioCapture,
   step: BrowserScenarioStep,
 ): BrowserScenarioEvidenceState => {
   const listed = (collection: "missing_sections" | "truncated_sections") =>
@@ -143,7 +144,7 @@ export interface ScenarioStepEvents {
 
 /** Build one graph and fingerprint index per capture, then select in linear total work. */
 export const prepareScenarioEvents = (
-  capture: BrowserScenarioCapture,
+  capture: RetainedBrowserScenarioCapture,
   rules: readonly BrowserScenarioNormalizationRule[],
 ): {
   readonly coverageReason: string | undefined;
@@ -163,8 +164,7 @@ export const prepareScenarioEvents = (
   for (const [index, node] of nodes.entries()) {
     const step = networkByStep.get(node.step_index) ?? [];
     const fingerprint = fingerprints[index];
-    if (fingerprint === undefined)
-      throw new Error("Network comparison node has no fingerprint");
+    if (fingerprint === undefined) throw new ScenarioNetworkFingerprintError();
     step.push(fingerprint);
     networkByStep.set(node.step_index, step);
   }
@@ -181,8 +181,8 @@ export const prepareScenarioEvents = (
 
 /** Different content selection is missing comparability, not an observed website change. */
 export const networkContentCoverageReason = (
-  before: BrowserScenarioCapture,
-  after: BrowserScenarioCapture,
+  before: RetainedBrowserScenarioCapture,
+  after: RetainedBrowserScenarioCapture,
 ): string | undefined => {
   const left = before.scenario.network_content;
   const right = after.scenario.network_content;
@@ -195,11 +195,13 @@ export const networkContentCoverageReason = (
 
 /** Different event-family selection is missing comparability, not an observed website change. */
 export const eventFamilyCoverageReason = (
-  before: BrowserScenarioCapture,
-  after: BrowserScenarioCapture,
+  before: RetainedBrowserScenarioCapture,
+  after: RetainedBrowserScenarioCapture,
 ): string | undefined => {
   const left = before.scenario.event_families;
   const right = after.scenario.event_families;
+  if (left === undefined || right === undefined)
+    return "Event family selection was not recorded in at least one retained capture; event evidence remains unknown. Recapture both sides with explicit matching selections.";
   const leftFamilies = new Set(left);
   const rightFamilies = new Set(right);
   return leftFamilies.size === rightFamilies.size &&

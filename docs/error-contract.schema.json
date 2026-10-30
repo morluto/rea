@@ -691,12 +691,8 @@
               "type": "object",
               "properties": {
                 "logical_path": { "type": "string" },
-                "declared_sha256": {
-                  "anyOf": [{ "type": "string" }, { "type": "null" }]
-                },
-                "calculated_sha256": {
-                  "anyOf": [{ "type": "string" }, { "type": "null" }]
-                },
+                "declared_sha256": { "type": ["string", "null"] },
+                "calculated_sha256": { "type": ["string", "null"] },
                 "unpacked": { "type": "boolean" }
               },
               "required": [
@@ -705,7 +701,7 @@
                 "calculated_sha256",
                 "unpacked"
               ],
-              "additionalProperties": false
+              "additionalProperties": {}
             },
             {
               "type": "object",
@@ -731,7 +727,7 @@
                 "calculated_md5",
                 "unpacked"
               ],
-              "additionalProperties": false
+              "additionalProperties": {}
             }
           ]
         }

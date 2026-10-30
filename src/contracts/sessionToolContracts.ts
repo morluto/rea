@@ -1,8 +1,8 @@
+import { requireOutputSchema } from "./toolOutputSchemaPrimitives.js";
 import { matchNativeFunctionsInputSchema } from "./native/functionMatchingContracts.js";
 import { z } from "zod";
 
 import { absoluteLocalPathStringSchema } from "../domain/localPath.js";
-import { artifactComparisonInputSchema } from "../domain/artifactComparison.js";
 import { callPathInputSchema } from "../domain/callPathSchemas.js";
 import { changedBehaviorInputSchema } from "../domain/changedBehavior.js";
 import { functionComparisonInputSchema } from "../domain/functionComparisonSchemas.js";
@@ -14,7 +14,6 @@ import {
 import { reconstructionVerificationInputSchema } from "../domain/reconstructionVerificationSchemas.js";
 import { staticRuntimeCorrelationInputSchema } from "../domain/staticRuntimeCorrelation.js";
 import { sessionOutputSchemas } from "./toolOutputSchemaGroups.js";
-import { requireOutputSchema } from "./toolOutputSchemaPrimitives.js";
 import {
   closeBinaryInputSchema,
   openBundleResourcesInputSchema,
@@ -23,6 +22,7 @@ import {
 import { binarySessionInputSchema } from "./sessionStatusContract.js";
 import {
   addressContextInputSchema,
+  artifactComparisonInputSchema,
   bundleComparisonMcpInputSchema,
   importEvidenceBundleInputSchema,
   listUnknownsInputSchema,
@@ -80,7 +80,7 @@ export const SESSION_TOOL_CONTRACTS = [
   ),
   session(
     "binary_session",
-    "Report the active binary target or resource-only app root, provider and capability availability when applicable, client-feature, analysis, and server-identity status without starting analysis.",
+    'Report the active binary target or resource-only app root, provider and capability availability when applicable, client-feature, analysis, and server-identity status without starting analysis. The default summary lists omitted_fields; detail: "complete" adds provider diagnostics, candidate capabilities and static tool flags.',
     binarySessionInputSchema,
   ),
   session(
@@ -105,7 +105,7 @@ export const SESSION_TOOL_CONTRACTS = [
   ),
   session(
     "compare_artifacts",
-    "Compare complete artifact inventories by logical occurrence path, content identity, metadata, and graph relations. Pass the inventory Evidence nested in each inspect_artifact result as left and right, or pass its inspect_analysis_view summary while the complete parent Evidence remains retained in this session. Summary facts are not treated as a complete inventory; comparison resolves the exact retained parent. Every delta cites both complete inputs, and gaps yield truncated or unknown, never equivalence. Returns every change inline.",
+    'Compare complete artifact inventories by logical occurrence path, content identity, metadata, and graph relations. Name each side once without resending Evidence: {kind: "retained-evidence", evidence_id} selects an inspect_artifact result, its nested inventory, or its inspect_analysis_view summary retained in this session; {kind: "evidence-file", path, evidence_id?} reads one record from a local Evidence file or bundle at an absolute path. Complete inline Evidence is also accepted. Summary facts are not treated as a complete inventory; comparison resolves the exact complete parent from the same source bundle or the retained session. Every delta cites both complete inputs, and gaps yield truncated or unknown, never equivalence. Returns every change inline.',
     artifactComparisonInputSchema,
   ),
   session(
@@ -168,11 +168,14 @@ export const SESSION_TOOL_CONTRACTS = [
     "Return every retained Evidence record and residual unknown as a complete canonical bundle by default. detail=summary discovers retained records without copying or transferring their payloads; optionally filter by exact Evidence ID, operation, target SHA-256, analysis-profile digest or canonical native procedure address. Metadata distinguishes complete record retention from native value-flow truncation or unavailable/unknown coverage. Use a discovered evidence_id with inspect_analysis_view without restarting a provider. Filters apply only to summary delivery.",
     getEvidenceBundleInputSchema,
   ),
-  session(
-    "get_navigation_context",
-    "Return the selected document, current address, and containing/current procedure in one provider-neutral result. The result reflects sequential provider observations, not an atomic cursor snapshot; a cursor outside any procedure returns procedure: null.",
-    navigationContextInputSchema,
-  ),
+  {
+    ...session(
+      "get_navigation_context",
+      "Return the selected document, current address, and containing/current procedure in one provider-neutral result. The result reflects sequential provider observations, not an atomic cursor snapshot; a cursor outside any procedure returns procedure: null.",
+      navigationContextInputSchema,
+    ),
+    requiresActiveTarget: true,
+  },
   session(
     "inspect_address_context",
     "Inspect one explicit reproducible address for its analyzed name, containing procedure, regular and inline comments, and matching bookmarks. Each unsupported facet returns a typed unavailable outcome; use xrefs, assembly, or pseudocode for those deeper views.",

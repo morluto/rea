@@ -3,11 +3,7 @@ import { expect, it } from "vitest";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { createEvidenceBundle } from "../../domain/evidenceBundle.js";
 import { InvestigationRecords } from "./InvestigationRecords.js";
-import {
-  investigationEvidenceBundle,
-  investigationEvidenceLookup,
-  resolveInvestigationEvidenceClosure,
-} from "./InvestigationEvidence.js";
+import { resolveInvestigationEvidenceClosure } from "./InvestigationEvidence.js";
 
 const observation = (path: string, links: readonly string[] = []): Evidence =>
   createEvidence(
@@ -21,51 +17,33 @@ const observation = (path: string, links: readonly string[] = []): Evidence =>
     },
   );
 
-it.each(["immutable", "detached"] as const)(
-  "reads current metadata through a %s reader while preserving earlier snapshots",
-  (mode) => {
-    const records = new InvestigationRecords();
-    const first = observation("/original");
-    const added = records.recordEvidence(first);
-    if (!added.ok) throw added.error;
-    const reader =
-      mode === "immutable"
-        ? records
-        : {
-            evidenceById: records.evidenceById.bind(records),
-            exportEvidenceBundle: records.exportEvidenceBundle.bind(records),
-          };
-    const lookup = investigationEvidenceLookup(reader);
-    const snapshot = investigationEvidenceBundle(reader);
-    const replacement = observation("/moved");
-    expect(replacement.evidence_id).toBe(first.evidence_id);
-    const merged = records.mergeEvidenceBundle(
-      createEvidenceBundle([replacement]),
-    );
-    if (!merged.ok) throw merged.error;
-    expect(merged.value.replacements).toEqual([
-      { kind: "subject-display", previous: first, current: replacement },
-    ]);
-    expect(lookup(first.evidence_id)?.subject?.local_path).toBe("/moved");
-    expect(
-      investigationEvidenceBundle(reader).records[0]?.subject?.local_path,
-    ).toBe("/moved");
-    expect(snapshot.records[0]?.subject?.local_path).toBe("/original");
-    if (mode === "immutable") {
-      expect(Object.isFrozen(snapshot.records[0]?.subject)).toBe(true);
-    } else {
-      const subject = snapshot.records[0]?.subject;
-      if (subject === undefined || subject === null)
-        throw new Error("Expected detached subject");
-      subject.local_path = "/caller-edited";
-      expect(lookup(first.evidence_id)?.subject?.local_path).toBe("/moved");
-    }
-    records.clear();
-    expect(lookup(first.evidence_id)).toBeUndefined();
-    expect(investigationEvidenceBundle(reader).records).toEqual([]);
-    expect(snapshot.records).toHaveLength(1);
-  },
-);
+it("reads current immutable metadata while preserving earlier snapshots", () => {
+  const records = new InvestigationRecords();
+  const first = observation("/original");
+  const added = records.recordEvidence(first);
+  if (!added.ok) throw added.error;
+  const lookup = records.evidenceForAnalysis.bind(records);
+  const snapshot = records.immutableEvidenceBundle();
+  const replacement = observation("/moved");
+  expect(replacement.evidence_id).toBe(first.evidence_id);
+  const merged = records.mergeEvidenceBundle(
+    createEvidenceBundle([replacement]),
+  );
+  if (!merged.ok) throw merged.error;
+  expect(merged.value.replacements).toEqual([
+    { kind: "metadata", previous: first, current: replacement },
+  ]);
+  expect(lookup(first.evidence_id)?.subject?.local_path).toBe("/moved");
+  expect(
+    records.immutableEvidenceBundle().records[0]?.subject?.local_path,
+  ).toBe("/moved");
+  expect(snapshot.records[0]?.subject?.local_path).toBe("/original");
+  expect(Object.isFrozen(snapshot.records[0]?.subject)).toBe(true);
+  records.clear();
+  expect(lookup(first.evidence_id)).toBeUndefined();
+  expect(records.immutableEvidenceBundle().records).toEqual([]);
+  expect(snapshot.records).toHaveLength(1);
+});
 
 it("keeps a selected transitive closure distinct from unrelated records and rejects a missing dependency", () => {
   const records = new InvestigationRecords();
@@ -98,7 +76,7 @@ it("rejects a lookup that returns another semantic Evidence identity", () => {
   const record = observation("/source");
   const selectedId = `ev_${"0".repeat(64)}`;
   expect(
-    resolveInvestigationEvidenceClosure({ evidenceById: () => record }, [
+    resolveInvestigationEvidenceClosure({ evidenceForAnalysis: () => record }, [
       selectedId,
     ]),
   ).toMatchObject({

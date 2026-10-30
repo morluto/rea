@@ -59,6 +59,21 @@ const answer = (
   return result.value;
 };
 
+it("finds state entities using the recorded path's repeated separators", () => {
+  const serving = servingFrom([
+    ["GET", "/api//books/1", { id: 1, title: "Book" }],
+  ]);
+  const tool = serving.source.manifest.tools.find(
+    (candidate) => candidate.path_template === "/api//books/{numeric}",
+  );
+  if (tool === undefined) throw new Error("Missing double-separator item tool");
+  const result = answerFromState(serving, tool, { id: "1" });
+  expect(result).toMatchObject({
+    ok: true,
+    value: { body: { id: 1, title: "Book" }, state: { source: "state" } },
+  });
+});
+
 const refusal = (
   serving: StateServing,
   name: string,

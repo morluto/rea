@@ -396,7 +396,11 @@ describe("enhanced MCP batch cancellation", () => {
     {
       stage: "entry-label lookup",
       cancelAt: "address_name",
-      expectedCalls: ["procedure_address:0x1", "address_name:0x1"],
+      expectedCalls: [
+        "procedure_address:0x1",
+        "procedure_address:0x2",
+        "address_name:0x1",
+      ],
       operation: "address_name",
     },
     {
@@ -404,7 +408,9 @@ describe("enhanced MCP batch cancellation", () => {
       cancelAt: "procedure_pseudo_code",
       expectedCalls: [
         "procedure_address:0x1",
+        "procedure_address:0x2",
         "address_name:0x1",
+        "address_name:0x2",
         "procedure_pseudo_code:0x1",
       ],
       operation: "procedure_pseudo_code",
@@ -430,7 +436,7 @@ describe("enhanced MCP batch cancellation", () => {
 
       const response = await client.callTool({
         name: "batch_decompile",
-        arguments: { addresses: ["0x1"] },
+        arguments: { addresses: ["0x1", "0x2"] },
       });
 
       expect(response.isError).toBe(true);
@@ -472,7 +478,6 @@ describe("enhanced MCP batch cancellation", () => {
       "procedure_address:0x1",
       "procedure_address:0x2",
       "address_name:0x1",
-      "address_name:0x2",
     ]);
   });
 });
@@ -483,16 +488,24 @@ describe("enhanced MCP batches", () => {
       { length: 37 },
       (_, index) => `0x${index.toString(16)}`,
     );
+    let active = 0;
+    let peakActive = 0;
     const analysis: AnalysisOperationPort = {
       execute: async (name, arguments_) => {
-        if (name === "procedure_address")
-          return ok(String(arguments_.procedure));
-        if (name === "address_name")
-          return ok(`name for ${String(arguments_.address)}`);
-        if (name !== "procedure_pseudo_code")
-          throw new Error(`Unexpected operation: ${name}`);
+        active++;
+        peakActive = Math.max(peakActive, active);
         await new Promise((resolve) => setImmediate(resolve));
-        return ok(`pseudo for ${String(arguments_.procedure)}`);
+        try {
+          if (name === "procedure_address")
+            return ok(String(arguments_.procedure));
+          if (name === "address_name")
+            return ok(`name for ${String(arguments_.address)}`);
+          if (name !== "procedure_pseudo_code")
+            throw new Error(`Unexpected operation: ${name}`);
+          return ok(`pseudo for ${String(arguments_.procedure)}`);
+        } finally {
+          active--;
+        }
       },
     };
     const client = await connect(analysis);
@@ -503,6 +516,8 @@ describe("enhanced MCP batches", () => {
       },
     });
     expect(result.isError).not.toBe(true);
+    expect(peakActive).toBe(1);
+    expect(active).toBe(0);
     expect(result.structuredContent).toMatchObject({
       normalized_result: {
         items: addresses.map((address) => ({

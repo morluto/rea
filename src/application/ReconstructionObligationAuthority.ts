@@ -1,4 +1,5 @@
 import { err, ok, type Result } from "../domain/result.js";
+import { parseProcessCaptureEvidence } from "./process/ProcessEvidence.js";
 import {
   reconstructionObligationProofSchema,
   type ReconstructionObligationProof,
@@ -166,8 +167,8 @@ export const evidenceSupportsOriginalAuthority = (
     );
   if (authority === "process")
     return (
-      evidence.operation === "capture_process_scenario" &&
-      evidence.predicate_type === "rea.process-capture"
+      evidence.authority === "controlled-replay" &&
+      parseProcessCaptureEvidence(evidence).ok
     );
   return evidence.authority === "external-service";
 };

@@ -12,6 +12,9 @@ export type SetupFailureCode =
   | "unsupported_hopper_build"
   | "setup_cancelled"
   | "destination_exists"
+  | "destination_inspection_failed"
+  | "archive_write_failed"
+  | "launcher_inspection_failed"
   | "mount_failed"
   | "bundle_invalid"
   | "publisher_verification_failed"
@@ -48,6 +51,9 @@ export type HopperInstallFailureReason =
   | "unsupported_hopper_build"
   | "cancelled"
   | "destination_exists"
+  | "destination_inspection"
+  | "archive_write"
+  | "launcher_inspection"
   | "mount"
   | "bundle"
   | "publisher_verification_failed"
@@ -151,6 +157,27 @@ export const setupInstallFailure = (
         code: "setup_cancelled",
         remediation:
           "Setup was cancelled. Run rea doctor to inspect the current state before retrying.",
+      };
+    case "destination_inspection":
+      return {
+        status: "failed",
+        code: "destination_inspection_failed",
+        remediation:
+          "REA could not inspect the Hopper installation destination. Check access to the reported path before retrying; an existing installation has not been established.",
+      };
+    case "archive_write":
+      return {
+        status: "failed",
+        code: "archive_write_failed",
+        remediation:
+          "The Hopper download completed, but REA could not stage its local archive. Check the reported path, permissions and free space, then retry setup.",
+      };
+    case "launcher_inspection":
+      return {
+        status: "failed",
+        code: "launcher_inspection_failed",
+        remediation:
+          "REA could not verify the installed Hopper launcher. Repair the reported inspection failure before retrying; launcher absence has not been established.",
       };
     case "destination_exists":
       return {

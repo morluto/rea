@@ -7,9 +7,13 @@ import type { BrowserScenarioCaptureLimits } from "../../domain/browserScenarioC
 import type {
   BrowserScenarioEventAdmission,
   BrowserScenarioEventBudgetReason,
+  BrowserScenarioEvent,
 } from "../../domain/browserScenarioCaptureValues.js";
-import type { BrowserScenarioEvent } from "../../domain/browserScenarioCaptureValues.js";
 import type { BrowserScenarioSecrets } from "../BrowserScenarioSecrets.js";
+import {
+  readBoundedResponseBody,
+  MAX_SAVED_RESPONSE_BYTES,
+} from "../BrowserScenarioResponseValues.js";
 import {
   captureNetworkBody,
   captureNetworkHeaders,
@@ -26,7 +30,27 @@ export interface ScenarioNetworkRequest extends NetworkHeadersSource {
   postDataBuffer(): Buffer | null;
   redirectedFrom(): ScenarioNetworkRequest | null;
   failure(): { errorText: string } | null;
+  /** Browser resource timing: `startTime` in epoch milliseconds (0 until known), `responseEnd` after it (-1 when unknown). */
+  timing?(): { readonly startTime: number; readonly responseEnd: number };
+  sizes?(): Promise<{ readonly responseBodySize: number }>;
 }
+
+/** The browser's own start and duration for a finished or failed request, as far as it reported them. */
+const browserTiming = (
+  request: ScenarioNetworkRequest,
+): { readonly started_at?: string; readonly elapsed_ms?: number } => {
+  const timing = request.timing?.();
+  if (timing === undefined) return {};
+  const { startTime, responseEnd } = timing;
+  return {
+    ...(Number.isFinite(startTime) && startTime > 0
+      ? { started_at: new Date(startTime).toISOString() }
+      : {}),
+    ...(Number.isFinite(responseEnd) && responseEnd >= 0
+      ? { elapsed_ms: responseEnd }
+      : {}),
+  };
+};
 
 /** A response's body becomes eligible for reading only after requestfinished. */
 export interface ScenarioNetworkResponse extends NetworkHeadersSource {
@@ -155,13 +179,20 @@ export class PlaywrightScenarioNetwork {
       return;
     }
     if (transaction.requestObserved) return;
-    if (!this.admitMetadata(transaction, "request", request)) return;
+    const observedAt = new Date().toISOString();
+    if (
+      !this.admitMetadata(transaction, "request", request, undefined, [
+        observedAt,
+      ])
+    )
+      return;
     transaction.requestObserved = true;
     const admission = this.options.emit({
       ...this.metadata(request, transaction),
       kind: "request",
       status: null,
       failure: null,
+      observed_at: observedAt,
     });
     if (admission.status === "omitted") {
       this.options.omitNetwork(transaction.id, "request", admission.reason);
@@ -172,33 +203,12 @@ export class PlaywrightScenarioNetwork {
       this.options.selection.request_body ||
       this.options.selection.header_values
     )
-      this.collect(
+      this.collect({
         transaction,
         sequence,
-        "request",
-        request,
-        (headers) =>
-          this.options.selection.request_body
-            ? captureNetworkBody(
-                async () => request.postDataBuffer(),
-                "request",
-                request,
-                this.options.secrets,
-                this.readOptions,
-                (body) =>
-                  this.options.admitContentBody({
-                    transactionId: transaction.id,
-                    sourceEventSequence: sequence,
-                    phase: "request",
-                    headers,
-                    observedBytes: body.observedBytes,
-                    allocationBytes: body.allocationBytes,
-                    mediaType: body.mediaType,
-                  }),
-              )
-            : Promise.resolve({ state: "not_requested" }),
-        this.options.selection.header_values,
-      );
+        phase: "request",
+        source: request,
+      });
   }
 
   /** Observe response metadata without starting a potentially unfinished body read. */
@@ -252,13 +262,24 @@ export class PlaywrightScenarioNetwork {
       this.omitOmittedTransactionPhase(request, "request-finished");
       return;
     }
-    if (!this.admitMetadata(transaction, "request-finished", request)) return;
     transaction.terminal = "finished";
+    const timing = browserTiming(request);
+    if (
+      !this.admitMetadata(
+        transaction,
+        "request-finished",
+        request,
+        undefined,
+        timing.started_at === undefined ? [] : [timing.started_at],
+      )
+    )
+      return;
     const admission = this.options.emit({
       ...this.metadata(request, transaction),
       kind: "request-finished",
       status: null,
       failure: null,
+      ...timing,
     });
     if (admission.status === "omitted") {
       this.options.omitNetwork(
@@ -282,9 +303,11 @@ export class PlaywrightScenarioNetwork {
     }
     transaction.terminal = "failed";
     const failure = request.failure()?.errorText || "Unknown request failure";
+    const timing = browserTiming(request);
     if (
       !this.admitMetadata(transaction, "request-failed", request, undefined, [
         failure,
+        ...(timing.started_at === undefined ? [] : [timing.started_at]),
       ])
     )
       return;
@@ -294,6 +317,7 @@ export class PlaywrightScenarioNetwork {
       kind: "request-failed",
       status: null,
       failure: message,
+      ...timing,
     });
     if (admission.status === "omitted") {
       this.options.omitNetwork(
@@ -369,6 +393,22 @@ export class PlaywrightScenarioNetwork {
   /** Missing selected content contributes to aggregate completeness. */
   limitations(): readonly string[] {
     return [...this.gaps];
+  }
+
+  /** Source identity and readiness for the retained-event owner's final privacy pass. */
+  sourcePrivacy(): ReadonlyMap<string, boolean> {
+    return new Map(
+      [...this.transactions].flatMap(([request, transaction]) =>
+        this.options.secrets.hasResponseProtection(request)
+          ? [
+              [
+                transaction.id,
+                this.options.secrets.responseSecretsReady(request),
+              ] as const,
+            ]
+          : [],
+      ),
+    );
   }
 
   omittedTransactionRange(): {
@@ -567,62 +607,112 @@ export class PlaywrightScenarioNetwork {
     )
       return;
     transaction.responseScheduled = true;
-    this.collect(
+    this.collect({
       transaction,
-      response.sequence,
-      "response",
-      response.source,
-      (headers) =>
-        this.options.selection.response_body
-          ? unavailable === undefined
-            ? captureNetworkBody(
-                () => response.source.body(),
-                "response",
-                response.source,
-                this.options.secrets,
-                this.readOptions,
-                (body) =>
-                  this.options.admitContentBody({
-                    transactionId: transaction.id,
-                    sourceEventSequence: response.sequence,
-                    phase: "response",
-                    headers,
-                    observedBytes: body.observedBytes,
-                    allocationBytes: body.allocationBytes,
-                    mediaType: body.mediaType,
-                  }),
-              )
-            : Promise.resolve(unavailable)
-          : Promise.resolve({ state: "not_requested" }),
-      this.options.selection.header_values,
-    );
+      sequence: response.sequence,
+      phase: "response",
+      source: response.source,
+      ...(unavailable === undefined ? {} : { unavailable }),
+    });
   }
 
   private collect(
-    transaction: Transaction,
-    sequence: number,
-    phase: "request" | "response",
-    source: NetworkHeadersSource,
-    body: (headers: BrowserNetworkHeaders) => Promise<NetworkBodyCapture>,
-    includeHeaders: boolean,
+    input: {
+      readonly transaction: Transaction;
+      readonly sequence: number;
+    } & (
+      | { readonly phase: "request"; readonly source: ScenarioNetworkRequest }
+      | {
+          readonly phase: "response";
+          readonly source: ScenarioNetworkResponse;
+          readonly unavailable?: BrowserNetworkBody;
+        }
+    ),
   ): void {
+    const { transaction, sequence, phase, source } = input;
     const collect = async (): Promise<void> => {
-      const retainedHeaders = includeHeaders
-        ? await captureNetworkHeaders(
-            source,
-            this.options.secrets,
-            this.readOptions,
-          )
-        : { state: "not_requested" as const };
-      const retainedBody = await body(retainedHeaders);
-      if (retainedBody.state === "omitted") {
+      const includeBody =
+        phase === "request"
+          ? this.options.selection.request_body
+          : this.options.selection.response_body;
+      const includeHeaders = this.options.selection.header_values;
+      const request =
+        input.phase === "response" ? input.source.request() : undefined;
+      const protection =
+        request !== undefined &&
+        this.options.secrets.hasResponseProtection(request)
+          ? { request, retainBody: includeBody }
+          : undefined;
+      const protectedResponse = protection !== undefined;
+      const privacyOnly = protectedResponse && !includeBody && includeHeaders;
+      const readOptions = privacyOnly
+        ? { ...this.readOptions, maxBodyBytes: MAX_SAVED_RESPONSE_BYTES }
+        : this.readOptions;
+      let headers: Promise<BrowserNetworkHeaders> | undefined;
+      const getHeaders = (): Promise<BrowserNetworkHeaders> =>
+        (headers ??= includeHeaders
+          ? captureNetworkHeaders(source, this.options.secrets, readOptions)
+          : Promise.resolve({ state: "not_requested" }));
+      // Existing reads keep their order. Marked responses establish secret
+      // spellings before either their headers or their body can be retained.
+      if (!protectedResponse && includeHeaders) await getHeaders();
+      const unavailable =
+        input.phase === "response" ? input.unavailable : undefined;
+      const observedBody: NetworkBodyCapture =
+        unavailable ??
+        (includeBody || privacyOnly
+          ? await captureNetworkBody(
+              async () => {
+                if (input.phase === "request")
+                  return input.source.postDataBuffer();
+                if (!protectedResponse) return input.source.body();
+                const bounded = await readBoundedResponseBody(
+                  input.source,
+                  Math.min(readOptions.maxBodyBytes, MAX_SAVED_RESPONSE_BYTES),
+                );
+                if (!bounded.ok) throw new Error(bounded.error.message);
+                return bounded.value;
+              },
+              phase,
+              source,
+              this.options.secrets,
+              readOptions,
+              async (body) =>
+                this.options.admitContentBody({
+                  transactionId: transaction.id,
+                  sourceEventSequence: sequence,
+                  phase,
+                  headers: await getHeaders(),
+                  observedBytes: body.observedBytes,
+                  allocationBytes: body.allocationBytes,
+                  mediaType: body.mediaType,
+                }),
+              protection,
+            )
+          : { state: "not_requested" });
+      if (observedBody.state === "omitted") {
         this.options.omitNetwork(
           transaction.id,
           "network-content",
-          retainedBody.reason,
+          observedBody.reason,
         );
         return;
       }
+      const protectedReadFailed =
+        protectedResponse &&
+        (observedBody.state === "unavailable" ||
+          observedBody.state === "not_exposed");
+      const retainedHeaders: BrowserNetworkHeaders =
+        protectedReadFailed && includeHeaders
+          ? {
+              state: "unavailable",
+              message:
+                "Response header values were withheld because marked source values could not be read safely.",
+            }
+          : await getHeaders();
+      const retainedBody = includeBody
+        ? observedBody
+        : { state: "not_requested" as const };
       if (
         retainedHeaders.state === "unavailable" ||
         retainedBody.state === "unavailable" ||

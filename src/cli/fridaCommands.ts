@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { z } from "incur";
 
 import { FridaInstrumentationService } from "../application/frida/FridaInstrumentationService.js";
@@ -12,11 +13,15 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { ok } from "../domain/result.js";
 import { FRIDA_KEEPALIVE_INTERVAL_DESCRIPTION } from "../contracts/fridaToolContracts.js";
-import { isValidFridaRemoteAddress } from "../contracts/fridaRemoteAddress.js";
+import { isValidFridaRemoteAddress } from "../domain/fridaRemoteAddress.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+
+/** Script sources stay optional in the options schema; exactly one is required. */
+const exactlyOneScriptSource =
+  "Provide exactly one of --script or --script-file.";
 
 /** Register Frida discovery and one-shot instrumentation CLI operations. */
 export const registerFridaCommands = (
@@ -92,7 +97,7 @@ export const registerFridaCommands = (
             "frida",
             "list_frida_devices",
             signal,
-          ),
+          ).then(projectCliAnalysisResult),
         ),
       ),
   });
@@ -131,12 +136,12 @@ export const registerFridaCommands = (
             "frida",
             "list_frida_processes",
             signal,
-          );
+          ).then(projectCliAnalysisResult);
         }),
       ),
   });
   cli.command(CLI_COMMANDS.instrumentWithFrida, {
-    description: "Run one Frida script against a selected process and detach",
+    description: `Run one Frida script against a selected process and detach. ${exactlyOneScriptSource}`,
     args: z.object({
       mode: z
         .enum(["attach", "spawn"])
@@ -153,12 +158,17 @@ export const registerFridaCommands = (
           .min(1)
           .optional()
           .describe("Frida device identifier"),
-        script: z.string().optional().describe("Inline JavaScript to load"),
+        script: z
+          .string()
+          .optional()
+          .describe(`Inline JavaScript to load. ${exactlyOneScriptSource}`),
         scriptFile: z
           .string()
           .min(1)
           .optional()
-          .describe("Path to JavaScript source file"),
+          .describe(
+            `Path to JavaScript source file. ${exactlyOneScriptSource}`,
+          ),
         argument: z
           .array(z.string())
           .optional()
@@ -275,7 +285,7 @@ export const registerFridaCommands = (
             "frida",
             "instrument_with_frida",
             signal,
-          );
+          ).then(projectCliAnalysisResult);
         }),
       ),
   });

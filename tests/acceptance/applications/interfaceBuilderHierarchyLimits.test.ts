@@ -167,7 +167,7 @@ cliTest.for(cases)(
       expect(report.graph.coverage).toContainEqual({
         facet: `connections:Contents/Resources/${document}`,
         status: "partial",
-        reason: "connection_limit_reached",
+        reason: "object_limit_reached",
         examined: 1,
         omitted: testCase.omittedConnections,
       });

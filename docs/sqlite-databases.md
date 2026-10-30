@@ -131,6 +131,7 @@ SQL statements and the complete worker JSON reply each have a 16 MiB limit.
 Schema names count by their returned JSON text, including escaping, for UTF-8,
 UTF-16le and UTF-16be databases. Internal raw-byte lookup keys do not consume
 the reply allowance; exact name identity still comes from those stored bytes.
+Actual row byte/hex expansion still counts toward the reply.
 The owned worker has a 256 MiB JavaScript heap limit and defaults to a 30,000 ms
 deadline. Select optional MCP `worker_timeout_ms`, or CLI
 `--worker-timeout-ms <milliseconds>`, to change the budget for that call. Values
@@ -182,6 +183,11 @@ completed observation. If subsequent private-root cleanup fails, the error
 retains the completed Evidence and the resource owner for cleanup retry. MCP
 records that Evidence before delivering the error, which carries its retained
 evidence ID for later retrieval or export.
+
+If a worker fails and cleanup remains incomplete, the error retains the original
+cancellation, timeout, diagnostic overflow or memory failure. Successful cleanup
+retry restores that failure's classification; it does not make the inspection
+successful.
 
 Changed input identities, special files, malformed databases, unsupported
 formats and resource failures are reported as errors with the selected path and

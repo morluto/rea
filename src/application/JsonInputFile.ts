@@ -457,7 +457,7 @@ const jsonTokenizers = (
           // The pinned tokenizer reports grammar violations with plain Error;
           // native runtime failures keep their distinct types and identities.
           if (cause instanceof Error && cause.constructor === Error)
-            throw invalidJson(operation, cause.message, cause);
+            throw invalidJson(operation, cause.message, { cause });
           throw cause;
         }
       };
@@ -669,7 +669,9 @@ async function* decodedChunks(
     if (leading && text.length > 0) {
       leading = false;
       if (text.startsWith("\uFEFF"))
-        throw invalidJson(operation, JSON_BYTE_ORDER_MARK_MESSAGE);
+        throw invalidJson(operation, JSON_BYTE_ORDER_MARK_MESSAGE, {
+          userMessage: JSON_BYTE_ORDER_MARK_MESSAGE,
+        });
     }
     return text;
   };
@@ -685,7 +687,9 @@ async function* decodedChunks(
         "code" in cause &&
         cause.code === "ERR_ENCODING_INVALID_ENCODED_DATA"
       )
-        throw invalidJson(operation, "JSON input is not valid UTF-8", cause);
+        throw invalidJson(operation, "JSON input is not valid UTF-8", {
+          cause,
+        });
       throw cause;
     }
   };
@@ -756,16 +760,21 @@ const readNativeJson = async (
   );
   return parsed.ok
     ? ok(parsed.value)
-    : err(invalidJson(operation, parsed.error, parsed.cause));
+    : err(
+        invalidJson(operation, parsed.error, {
+          cause: parsed.cause,
+          ...(parsed.userMessage === undefined
+            ? {}
+            : { userMessage: parsed.userMessage }),
+        }),
+      );
 };
 
 const invalidJson = (
   operation: string,
   message: string,
-  cause?: unknown,
+  options?: { readonly cause?: unknown; readonly userMessage?: string },
 ): AnalysisInputError =>
-  new AnalysisInputError(
-    operation,
-    cause === undefined ? undefined : { cause },
-    [{ path: [], reason: "invalid_format", expected: "JSON", message }],
-  );
+  new AnalysisInputError(operation, options, [
+    { path: [], reason: "invalid_format", expected: "JSON", message },
+  ]);

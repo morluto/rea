@@ -1,3 +1,4 @@
+import { InvalidResidualUnknownGraphError } from "../../domain/residualUnknownGraphError.js";
 import canonicalize from "canonicalize";
 import { z } from "zod";
 
@@ -5,14 +6,16 @@ import {
   createEvidenceBundle,
   createImmutableEvidenceBundle,
   safeParseImmutableEvidenceBundle,
-  InvalidResidualUnknownGraphError,
   validateResidualUnknownAddition,
   type EvidenceBundle,
 } from "../../domain/evidenceBundle.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import { UnknownRegistryError } from "../../domain/unknownRegistryError.js";
-import type { Evidence } from "../../domain/evidence.js";
+import {
+  evidenceSemanticContent,
+  type Evidence,
+} from "../../domain/evidence.js";
 import { safeParseImmutableEvidence } from "../../domain/evidenceValidation.js";
 import {
   createResidualUnknown,
@@ -30,9 +33,9 @@ import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.
 type EvidenceLedgerFailure = EvidenceIntegrityError;
 type RecordResult = Result<"added" | "duplicate", EvidenceLedgerFailure>;
 
-/** Same authenticated semantic identity with new subject display metadata. */
-export interface EvidenceDisplayReplacement {
-  readonly kind: "subject-display";
+/** Same authenticated semantic identity with new local display/request metadata. */
+export interface EvidenceMetadataReplacement {
+  readonly kind: "metadata";
   readonly previous: Evidence;
   readonly current: Evidence;
 }
@@ -42,7 +45,7 @@ export interface EvidenceImportDelta {
   readonly recordsAdded: number;
   readonly unknownsAdded: number;
   readonly changed: boolean;
-  readonly replacements: readonly EvidenceDisplayReplacement[];
+  readonly replacements: readonly EvidenceMetadataReplacement[];
 }
 
 type ImportResult = Result<
@@ -97,55 +100,43 @@ export class EvidenceLedger {
       );
     }
     const bundle = parsed.value;
-    // A record-only bundle cannot change the already-valid unknown graph. The
-    // bundle parser has validated every incoming record and its manifests, so
-    // checking ID conflicts and committing only the additions preserves the
-    // atomic merge without rebuilding and reparsing the entire ledger.
-    if (bundle.unknowns.length === 0) {
-      const additions = new Map<string, Evidence>();
-      const replacements: EvidenceDisplayReplacement[] = [];
-      for (const evidence of bundle.records) {
-        const existing = this.#records.get(evidence.evidence_id);
-        if (existing !== undefined) {
-          if (!recordsAgree(existing, evidence))
-            return err(
-              new EvidenceIntegrityError("Conflicting evidence record"),
-            );
-          if (!displaySubjectsAgree(existing, evidence)) {
-            replacements.push({
-              kind: "subject-display",
-              previous: existing,
-              current: evidence,
-            });
-          }
-          continue;
-        }
-        additions.set(evidence.evidence_id, evidence);
+    // Stage record conflicts and display metadata once, before either commit
+    // path. Unknown history additionally requires validating the merged graph.
+    const recordChanges = new Map<string, Evidence>();
+    let recordsAdded = 0;
+    const replacements: EvidenceMetadataReplacement[] = [];
+    for (const evidence of bundle.records) {
+      const existing = this.#records.get(evidence.evidence_id);
+      if (existing === undefined) {
+        recordChanges.set(evidence.evidence_id, evidence);
+        recordsAdded += 1;
+        continue;
       }
-      for (const { current } of replacements)
-        this.#records.set(current.evidence_id, current);
-      for (const [id, evidence] of additions) this.#records.set(id, evidence);
+      if (!recordsAgree(existing, evidence))
+        return err(new EvidenceIntegrityError("Conflicting evidence record"));
+      if (!displayMetadataAgree(existing, evidence)) {
+        recordChanges.set(evidence.evidence_id, evidence);
+        replacements.push({
+          kind: "metadata",
+          previous: existing,
+          current: evidence,
+        });
+      }
+    }
+    // A record-only bundle cannot change the already-valid unknown graph.
+    if (bundle.unknowns.length === 0) {
+      for (const evidence of recordChanges.values())
+        this.#records.set(evidence.evidence_id, evidence);
       return ok({
-        recordsAdded: additions.size,
+        recordsAdded,
         unknownsAdded: 0,
-        changed: additions.size > 0 || replacements.length > 0,
+        changed: recordChanges.size > 0,
         replacements,
       });
     }
     const pending = new Map(this.#records);
-    const replacements: EvidenceDisplayReplacement[] = [];
-    for (const evidence of bundle.records) {
-      const existing = pending.get(evidence.evidence_id);
-      if (existing !== undefined && !recordsAgree(existing, evidence))
-        return err(new EvidenceIntegrityError("Conflicting evidence record"));
-      if (existing !== undefined && !displaySubjectsAgree(existing, evidence))
-        replacements.push({
-          kind: "subject-display",
-          previous: existing,
-          current: evidence,
-        });
+    for (const evidence of recordChanges.values())
       pending.set(evidence.evidence_id, evidence);
-    }
     const pendingUnknowns = new Map(this.#unknownRevisions);
     let unknownsAdded = 0;
     for (const unknown of bundle.unknowns) {
@@ -155,7 +146,16 @@ export class EvidenceLedger {
         existing !== undefined &&
         existing.revision_digest !== unknown.revision_digest
       )
-        return err(new EvidenceIntegrityError("Conflicting unknown revision"));
+        return err(
+          new EvidenceIntegrityError("Conflicting unknown revision", {
+            userMessage:
+              "The incoming residual-unknown history conflicts with a revision retained in this session. Inspect each history in a separate session; importing the unchanged bundle into this session cannot reconcile them.",
+            diagnostics: {
+              unknown_id: unknown.unknown_id,
+              revision: unknown.revision,
+            },
+          }),
+        );
       pendingUnknowns.set(key, unknown);
       if (existing === undefined) unknownsAdded += 1;
     }
@@ -167,12 +167,11 @@ export class EvidenceLedger {
         }),
       );
     }
-    const added = pending.size - this.#records.size;
     this.#commit(checked.value);
     return ok({
-      recordsAdded: added,
+      recordsAdded,
       unknownsAdded,
-      changed: added > 0 || unknownsAdded > 0 || replacements.length > 0,
+      changed: recordChanges.size > 0 || unknownsAdded > 0,
       replacements,
     });
   }
@@ -193,6 +192,11 @@ export class EvidenceLedger {
       [...this.#records.values()],
       [...this.#unknownRevisions.values()],
     );
+  }
+
+  /** Borrow immutable source records without constructing or hashing a bundle. */
+  recordsForAnalysis(): readonly Evidence[] {
+    return [...this.#records.values()];
   }
 
   /** Check whether one immutable Evidence ID is present in this ledger. */
@@ -445,7 +449,7 @@ export class EvidenceLedger {
         );
       } catch (cause: unknown) {
         if (!(cause instanceof InvalidResidualUnknownGraphError)) throw cause;
-        return err(new UnknownRegistryError("integrity", { cause }));
+        return err(new UnknownRegistryError(cause.constraint, { cause }));
       }
     for (const [id, evidence] of additions) this.#records.set(id, evidence);
     if (unknown !== undefined && unknownKey !== undefined) {
@@ -473,7 +477,14 @@ export class EvidenceLedger {
         !(cause instanceof InvalidResidualUnknownGraphError)
       )
         throw cause;
-      return err(new UnknownRegistryError("integrity", { cause }));
+      return err(
+        new UnknownRegistryError(
+          cause instanceof InvalidResidualUnknownGraphError
+            ? cause.constraint
+            : "integrity",
+          { cause },
+        ),
+      );
     }
   }
 
@@ -514,21 +525,10 @@ const unknownRevisionKey = (unknown: ResidualUnknown): string =>
   `${unknown.unknown_id}:${String(unknown.revision)}`;
 
 const recordsAgree = (left: Evidence, right: Evidence): boolean =>
-  canonicalize(withoutLocalPath(left)) ===
-  canonicalize(withoutLocalPath(right));
+  canonicalize(evidenceSemanticContent(left)) ===
+  canonicalize(evidenceSemanticContent(right));
 
-const withoutLocalPath = (evidence: Evidence): Evidence => ({
-  ...evidence,
-  subject:
-    evidence.subject === null
-      ? null
-      : {
-          ...evidence.subject,
-          name: "<non-identity-name>",
-          local_path: "<non-identity-local-path>",
-        },
-});
-
-const displaySubjectsAgree = (left: Evidence, right: Evidence): boolean =>
+const displayMetadataAgree = (left: Evidence, right: Evidence): boolean =>
   left.subject?.name === right.subject?.name &&
-  left.subject?.local_path === right.subject?.local_path;
+  left.subject?.local_path === right.subject?.local_path &&
+  left.caller_input_path === right.caller_input_path;

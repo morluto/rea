@@ -88,7 +88,10 @@ describe("ordinary MCP progress and cancellation", () => {
       await server.connect(serverTransport);
       await client.connect(clientTransport);
       const result = await client.callTool(
-        { name: "analyze_function", arguments: { procedure: "main" } },
+        {
+          name: "analyze_function",
+          arguments: { procedure: "main", detail: "complete" },
+        },
         { onprogress: (update) => progress.push(update.progress) },
       );
 

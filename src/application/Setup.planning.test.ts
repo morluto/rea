@@ -105,7 +105,7 @@ describe("selected skill admission", () => {
     { decision: "the offered skill ID", acceptAll: false },
     { decision: "accept all", acceptAll: true },
   ])(
-    "keeps a CLI-only skill choice offered under a client-specific ID ($decision)",
+    "keeps a CLI-only skill choice independent of detected personal copies ($decision)",
     async ({ acceptAll }) => {
       const host = new FakeSetupHost();
       host.hopper = "/Applications/Hopper";
@@ -127,7 +127,7 @@ describe("selected skill admission", () => {
           return true;
         },
       );
-      expect(offered).toEqual(["install_skill:claude_code"]);
+      expect(offered).toEqual(["install_skill"]);
       expect(result.status).toBe("ready");
       expect(
         result.plannedActions.map(({ id, target }) => ({ id, target })),

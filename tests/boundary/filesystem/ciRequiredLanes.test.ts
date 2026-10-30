@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
+import { minVersion, subset } from "semver";
 import { parse } from "yaml";
 import { z } from "zod";
 import { executeWorkflowFixture } from "../../support/workflowGit.js";
@@ -34,6 +35,34 @@ const scopeFlags = async () =>
         new URL("../../../scripts/ci/scopes.mjs", import.meta.url).href
       ),
     ).CI_FLAGS;
+
+it("keeps every SQLite runtime selector inside the published package engine range", async () => {
+  const { engines } = z
+    .object({ engines: z.object({ node: z.string() }) })
+    .parse(
+      JSON.parse(
+        await readFile(
+          new URL("../../../package.json", import.meta.url),
+          "utf8",
+        ),
+      ),
+    );
+  const { strategy } = z
+    .object({
+      strategy: z.object({ matrix: z.object({ node: z.array(z.string()) }) }),
+    })
+    .parse((await workflow("sqlite-runtime.yml")).jobs.sqlite);
+  const selectors = strategy.matrix.node;
+  const pinned = (
+    await readFile(new URL("../../../.nvmrc", import.meta.url), "utf8")
+  ).trim();
+  expect(selectors).toContain(pinned);
+  expect(
+    new Set(selectors.map((selector) => minVersion(selector)?.major)),
+  ).toEqual(new Set([22, 24, 26]));
+  for (const selector of selectors)
+    expect(subset(selector, engines.node), selector).toBe(true);
+});
 
 it("binds SQLite compatibility jobs to the build's prepared runtime artifact and root layout", async () => {
   expect((await workflow()).jobs["sqlite-runtime"]?.if).toBe(
@@ -149,6 +178,33 @@ it("makes the required gate wait for every CI lane, including future additions",
   expect(new Set(needs)).toEqual(
     new Set(Object.keys(jobs).filter((name) => name !== "required")),
   );
+});
+
+it("runs architecture guards for fast code feedback before installing dependencies", async () => {
+  const steps = z
+    .array(
+      z
+        .object({
+          run: z.string().optional(),
+          uses: z.string().optional(),
+          if: z.string().optional(),
+        })
+        .passthrough(),
+    )
+    .parse((await workflow()).jobs.static?.steps);
+  const guard = steps.findIndex(
+    (step) => step.run === "node scripts/verify/architecture-guards.mjs",
+  );
+  const setup = steps.findIndex((step) =>
+    step.uses?.startsWith("actions/setup-node@"),
+  );
+  const install = steps.findIndex((step) => step.run === "npm ci");
+  expect(guard).toBeGreaterThanOrEqual(0);
+  expect(setup).toBeGreaterThanOrEqual(0);
+  expect(install).toBeGreaterThan(guard);
+  expect(guard).toBeGreaterThan(setup);
+  expect(steps[guard]?.if).toBe("needs.changes.outputs.code == 'true'");
+  expect(steps[guard]?.["continue-on-error"]).toBeUndefined();
 });
 
 it("holds native and provider fan-out behind static validation while portable feedback stays independent", async () => {

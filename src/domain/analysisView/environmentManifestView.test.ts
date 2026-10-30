@@ -888,7 +888,7 @@ it("refuses a path whose templated representation exceeds projection capacity", 
   });
 });
 
-it("omits a __proto__ body key explicitly instead of publishing a prototype", () => {
+it("preserves every own body key while publishing only its observed type", () => {
   const projected = manifest(
     [],
     syntheticCapture([
@@ -903,12 +903,14 @@ it("omits a __proto__ body key explicitly instead of publishing a prototype", ()
   const shape = projected.tools[0]?.body_shape;
   expect(shape).toEqual({
     type: "object",
-    properties: { constructor: "string", name: "number" },
+    properties: {
+      ["__proto__"]: "object",
+      constructor: "string",
+      name: "number",
+    },
   });
   expect(Object.getPrototypeOf(shape?.properties)).toBe(Object.prototype);
-  expect(projected.limitations).toContain(
-    "A top-level __proto__ key in a recorded JSON body is omitted from body_shape; it cannot be an own property of the published object.",
-  );
+  expect(Object.hasOwn(shape!.properties, "__proto__")).toBe(true);
   expect(JSON.stringify(projected)).not.toContain("admin");
 });
 
@@ -1102,7 +1104,55 @@ it("keeps a write answered with no body as a tool whatever its content type, but
   ]);
 });
 
-it("refuses a parent whose subject is absent or names another path or digest", () => {
+it("keeps opaque or redacted empty response text unknown when selecting bodiless writes", () => {
+  const capture = syntheticCapture([
+    ["POST", "https://s.test/opaque/1", "text/html"],
+    ["POST", "https://s.test/hidden/1", "text/html"],
+    ["POST", "https://s.test/base64/1", "text/html"],
+  ]);
+  for (const [index, record] of capture.records.entries()) {
+    record.reported = {
+      ...(record.reported as Record<string, unknown>),
+      response: {
+        status: 200,
+        content: {
+          mimeType: "text/html",
+          text: "",
+          ...(index === 0 ? { encoding: "opaque" } : {}),
+          ...(index === 2 ? { encoding: "base64" } : {}),
+        },
+      },
+    };
+    if (index === 1)
+      record.redactions = [
+        {
+          pointer: "/response/content",
+          reason: "explicit-sensitive-value",
+          scope: "property-name",
+        },
+      ];
+    if (index === 2)
+      record.binary_fields = [
+        {
+          pointer: "/response/content/text",
+          representation: "har-base64-content",
+          state: "retained",
+          content_base64: "",
+          bytes: 0,
+          sha256:
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        },
+      ];
+  }
+  const projected = manifest([], capture);
+  expect(projected.tools.map(line)).toEqual(["POST /base64/{numeric}"]);
+  expect(projected.excluded.map((entry) => entry.path_template)).toEqual([
+    "/hidden/{numeric}",
+    "/opaque/{numeric}",
+  ]);
+});
+
+it("refuses a parent whose subject is absent or names another digest", () => {
   const parent = parentOf();
   const refusal = {
     ok: false,
@@ -1117,15 +1167,6 @@ it("refuses a parent whose subject is absent or names another path or digest", (
     projectAnalysisView({ ...withoutSubject, subject: null }, view()),
   ).toMatchObject(refusal);
   if (subject == null) throw new Error("Fixture evidence carries a subject");
-  expect(
-    projectAnalysisView(
-      {
-        ...parent,
-        subject: { ...subject, local_path: "/elsewhere/capture.har" },
-      },
-      view(),
-    ),
-  ).toMatchObject(refusal);
   expect(
     projectAnalysisView(
       {

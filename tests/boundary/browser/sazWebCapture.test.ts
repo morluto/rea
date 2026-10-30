@@ -239,6 +239,7 @@ it("checks trailer credentials before hidden metadata blocks analysis and withho
     ],
   ]);
   const path = await fixture(bytes);
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
   const { call } = await connectLocalToolsMcp();
   const base = {
     capture_path: path,
@@ -267,11 +268,35 @@ it("checks trailer credentials before hidden metadata blocks analysis and withho
       ...base,
       record_ordinals: ordinals,
     });
-    const error = parseMcpToolError(response).error;
+    const failure = parseMcpToolError(response);
+    const error = failure.error;
     expect(error.code).toBe("capability_unavailable");
     expect(JSON.stringify(response)).not.toContain("content_base64");
-    expect(error.details).not.toHaveProperty("partial_observation");
+    expect(error.details?.partial_observation).toEqual({
+      kind: "file-snapshot-hash",
+      path,
+      sha256,
+      bytes: bytes.length,
+    });
+    expect(failure).not.toHaveProperty("normalized_result");
   }
+  const excludedResponse = await call("inspect_web_network_capture", {
+    ...base,
+    record_ordinals: [0, 1],
+    sensitive_values: ["X-Debug", path, sha256],
+  });
+  const excludedFailure = parseMcpToolError(excludedResponse);
+  const excludedError = excludedFailure.error;
+  expect(excludedError.code).toBe("capability_unavailable");
+  expect(excludedError.details?.partial_observation).toEqual({
+    kind: "file-snapshot-hash",
+    path: null,
+    sha256: null,
+    bytes: bytes.length,
+  });
+  expect(excludedFailure).not.toHaveProperty("normalized_result");
+  for (const excluded of [path, sha256, "content_base64", "fixture-only"])
+    expect(JSON.stringify(excludedResponse)).not.toContain(excluded);
   const opaqueReply = await call("inspect_web_network_capture", {
     capture_path: path,
     format: "saz",
@@ -286,7 +311,7 @@ it("checks trailer credentials before hidden metadata blocks analysis and withho
   );
   expect(opaque.records[0]?.protobuf).toBeUndefined();
   expect(opaque.protobuf_coverage?.status).toBe("partial");
-  expect(await readFile(path)).toEqual(bytes);
+  expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
 });
 
 it("keeps automatic framing applicability unknown when SAZ Content-Type is excluded or conflicting", async () => {
@@ -394,7 +419,7 @@ it("keeps automatic framing applicability unknown when SAZ Content-Type is exclu
   expect(explicit.records[0]?.protobuf).toMatchObject([
     { status: "complete", fields: [{ number: 1, value: "1" }] },
   ]);
-  expect(await readFile(path)).toEqual(bytes);
+  expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
 });
 
 it("inspects native SAZ through the public CLI and MCP with equal evidence, bytes and archive coordinates", async () => {
@@ -470,7 +495,7 @@ it("inspects native SAZ through the public CLI and MCP with equal evidence, byte
   expect(capture.artifact.sha256).toBe(
     createHash("sha256").update(bytes).digest("hex"),
   );
-  expect(await readFile(path)).toEqual(bytes);
+  expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
 
   const { client, call } = await connectLocalToolsMcp();
   const tool = (await client.listTools()).tools.find(
@@ -485,10 +510,7 @@ it("inspects native SAZ through the public CLI and MCP with equal evidence, byte
   expect(response.isError, JSON.stringify(response)).not.toBe(true);
   const fromMcp = parseEvidence(response.structuredContent);
   expect(fromMcp.normalized_result).toEqual(evidence.normalized_result);
-  const bundle = await client.callTool({
-    name: "get_evidence_bundle",
-    arguments: { detail: "complete" },
-  });
+  const bundle = await call("get_evidence_bundle", { detail: "complete" });
   const records = z
     .object({ result: z.object({ records: z.array(z.unknown()) }) })
     .parse(bundle.structuredContent)
@@ -624,7 +646,7 @@ it("keeps CRLF separators inside a body after LF-only HTTP headers", async () =>
       bytes: body.length,
       sha256: createHash("sha256").update(body).digest("hex"),
     });
-  expect(await readFile(path)).toEqual(bytes);
+  expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
 });
 
 it("reports zero-byte SAZ HTTP members as null instead of rejecting the archive", async () => {
@@ -640,13 +662,18 @@ it("reports zero-byte SAZ HTTP members as null instead of rejecting the archive"
     (await cli(path)).normalized_result,
   );
   expect(capture.total_records).toBe(2);
+  expect(capture.limitations).toContainEqual(
+    expect.stringMatching(
+      /\babsent\b[^.]*\bzero-byte\b[^.]*\bHTTP members\b[^.]*\bnull\b/iu,
+    ),
+  );
   expect(capture.records[0]?.reported).toMatchObject({
-    request: { method: "GET" },
+    request: { method: "GET", body: "" },
     response: null,
   });
   expect(capture.records[1]?.reported).toMatchObject({
     request: null,
-    response: { status: "204" },
+    response: { status: "204", body: "" },
     websocket: { member: "raw/2_w.txt" },
   });
   expect(capture.records[0]?.location).toEqual({
@@ -882,10 +909,18 @@ it.each([
       },
     });
     expect(error).not.toHaveProperty("normalized_result");
-    expect(error.details).not.toHaveProperty("partial_observation");
+    const sourceObservation = {
+      kind: "file-snapshot-hash",
+      path,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      bytes: bytes.length,
+    };
+    expect(error.details.partial_observation).toEqual(sourceObservation);
     expect(mcpFailure).not.toHaveProperty("normalized_result");
-    expect(mcpFailure.error.details).not.toHaveProperty("partial_observation");
-    expect(await readFile(path)).toEqual(bytes);
+    expect(mcpFailure.error.details?.partial_observation).toEqual(
+      sourceObservation,
+    );
+    expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
   }
   expect(JSON.stringify(result)).not.toContain("malformed-private-input");
 });

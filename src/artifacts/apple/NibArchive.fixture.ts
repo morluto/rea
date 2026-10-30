@@ -1,34 +1,44 @@
+type NibFixtureValue =
+  | number
+  | string
+  | boolean
+  | null
+  | { ref: number }
+  | { data: Uint8Array }
+  | { float32: number }
+  | { float64: number };
+type NibFixtureFields =
+  | Readonly<Record<string, NibFixtureValue>>
+  | readonly (readonly [string, NibFixtureValue])[];
+const fieldEntries = (
+  values: NibFixtureFields,
+): readonly (readonly [string, NibFixtureValue])[] =>
+  Array.isArray(values) ? values : Object.entries(values);
+
 /** Encode a minimal NIBArchive object table for decoder and projection tests. */
 export const encodeNibArchiveFixture = (input: {
   readonly classes: readonly string[];
   readonly objects: readonly {
     readonly classIndex: number;
-    readonly values: Readonly<
-      Record<
-        string,
-        | number
-        | string
-        | boolean
-        | null
-        | { ref: number }
-        | { float32: number }
-        | { float64: number }
-      >
-    >;
+    readonly values: NibFixtureFields;
   }[];
 }): Buffer => {
   const keys = [
-    ...new Set(input.objects.flatMap(({ values }) => Object.keys(values))),
+    ...new Set(
+      input.objects.flatMap(({ values }) =>
+        fieldEntries(values).map(([key]) => key),
+      ),
+    ),
   ];
   const keyIndex = new Map(keys.map((key, index) => [key, index]));
   const valueRecords = input.objects.flatMap(({ values }) =>
-    Object.entries(values).map(([key, value]) =>
+    fieldEntries(values).map(([key, value]) =>
       Buffer.concat([varint(keyIndex.get(key) ?? 0), encodeValue(value)]),
     ),
   );
   let valueStart = 0;
   const records = input.objects.map(({ classIndex, values }) => {
-    const count = Object.keys(values).length;
+    const count = fieldEntries(values).length;
     const result = Buffer.concat([
       varint(classIndex),
       varint(valueStart),
@@ -88,6 +98,7 @@ const encodeValue = (
     | boolean
     | null
     | { ref: number }
+    | { data: Uint8Array }
     | { float32: number }
     | { float64: number },
 ): Buffer => {
@@ -101,6 +112,12 @@ const encodeValue = (
     return bytes;
   }
   if (typeof value === "object") {
+    if ("data" in value)
+      return Buffer.concat([
+        Buffer.from([8]),
+        varint(value.data.length),
+        value.data,
+      ]);
     if ("float32" in value) {
       const bytes = Buffer.alloc(5);
       bytes[0] = 6;

@@ -17,11 +17,12 @@ const armSlices = async (
     readonly size?: number;
     readonly alignment?: number;
   } = {},
+  cpuType = 12,
 ) => {
   const root = await createTestTempDirectory("rea-arm-slice-identity-");
   const path = join(root, "fat");
-  const cpu = { type: 12, subtype };
-  const bytes = machoImage({ cpu, wide: false });
+  const cpu = { type: cpuType, subtype };
+  const bytes = machoImage({ cpu, wide: cpuType !== 12 });
   await writeFile(path, fatImage([{ cpu, bytes }]));
   const reader = new MachOSliceArtifactReader(
     path,
@@ -103,6 +104,28 @@ it.each([
   { alignment: 11 },
 ])("still rejects physical metadata disagreement %j", async (reported) => {
   await expect(armSlices("armv7", 9, reported)).rejects.toMatchObject({
+    reason: "integrity",
+  });
+});
+
+it.each([
+  ["arm64v8", 1],
+  ["arm64", 1],
+  ["arm64e.x1", 12],
+  ["arm64e", 12],
+  ["arm64e.v1", 0x81000002],
+] as const)(
+  "reconciles ARM64 source name %s with subtype %i",
+  async (name, subtype) => {
+    const entries = await armSlices(name, subtype, {}, 0x0100000c);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.path).toBe(`slices/${name}`);
+    expect(entries[0]?.limitations).toEqual([]);
+  },
+);
+
+it("does not accept an ARM64 subtype label from a different slice", async () => {
+  await expect(armSlices("arm64v8", 0, {}, 0x0100000c)).rejects.toMatchObject({
     reason: "integrity",
   });
 });

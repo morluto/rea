@@ -10,8 +10,10 @@ import {
   type ParsedRuntimeCapture,
 } from "./javascriptRuntimeReconciliationCaptureParsing.js";
 import { createJavaScriptRuntimeReconciliationResult } from "./javascriptRuntimeReconciliationResult.js";
-import type { JavaScriptRuntimeReconciliationResult } from "./javascriptRuntimeReconciliationSchemas.js";
-import type { ReconcileJavaScriptRuntimeInput } from "./javascriptRuntimeReconciliationSchemas.js";
+import type {
+  JavaScriptRuntimeReconciliationResult,
+  ReconcileJavaScriptRuntimeInput,
+} from "./javascriptRuntimeReconciliationSchemas.js";
 import { projectRuntimeCaptures } from "./javascriptRuntimeReconciliationRuntime.js";
 import { collectStaticRuntimeCandidates } from "./javascriptRuntimeStaticCandidates.js";
 import { AnalysisInputError } from "../analysisErrorCore.js";
@@ -56,6 +58,7 @@ export const reconcileJavaScriptRuntime = (
   });
   const loadStates = classifyStaticLoadStates(
     layers,
+    captures,
     runtime.entities,
     matching.items,
     {

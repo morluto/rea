@@ -1,3 +1,4 @@
+import type { DolHeader } from "./gamecubeDol.js";
 import type { ZipPackageFormat } from "./zipPackageFormat.js";
 
 /** Provider-neutral CPU families detected from headers or explicitly selected raw loads. */
@@ -109,24 +110,23 @@ export interface MipsGnuAttributes {
   readonly msa: number | null;
 }
 
-/**
- * ELF class and flags retain the width and ABI declarations used by this lane.
- * ISA extensions in `.riscv.attributes` are not inspected by this header parser.
- */
-export type RiscvElfMetadata = ElfFamilyMetadata;
-
-/** Raw PowerPC declarations; family identity does not select a processor variant. */
-export type PowerPcElfMetadata = ElfFamilyMetadata;
-
 /** Byte range of the selected slice inside its universal Mach-O container. */
 export interface UniversalMachOSlice {
   readonly offset: number;
   readonly size: number;
 }
 
+/** FAT-table identity; CPU family alone cannot identify a universal slice. */
+export interface UniversalMachOSliceIdentity extends UniversalMachOSlice {
+  readonly cpuType: number;
+  readonly cpuSubtype: number;
+}
+
 interface BinaryTargetIdentity {
   readonly path: string;
   readonly sourcePath?: string;
+  /** Selected artifact spelling determines name-based format hints and external companions. */
+  readonly artifactSelectedPath?: string;
   /** Info.plist of the app bundle the target was resolved from. */
   readonly bundleInfoPlist?: string;
   readonly sha256: string;
@@ -164,7 +164,8 @@ export type BinaryTarget =
       readonly format: "elf";
       readonly architecture: "riscv";
       readonly availableArchitectures: readonly "riscv"[];
-      readonly riscv: RiscvElfMetadata;
+      /** ISA extensions in `.riscv.attributes` are not inspected by the header parser. */
+      readonly riscv: ElfFamilyMetadata;
       readonly executableRole?: never;
       readonly managed?: never;
     })
@@ -173,7 +174,8 @@ export type BinaryTarget =
       readonly format: "elf";
       readonly architecture: "powerpc";
       readonly availableArchitectures: readonly "powerpc"[];
-      readonly powerpc: PowerPcElfMetadata;
+      /** Family identity does not select a processor variant. */
+      readonly powerpc: ElfFamilyMetadata;
       readonly executableRole?: never;
       readonly managed?: never;
     })
@@ -204,6 +206,8 @@ export type BinaryTarget =
       readonly format: "mach-o-universal";
       /** Selected slice range a provider must analyze instead of the container. */
       readonly universalSlice: UniversalMachOSlice;
+      /** Exact validated FAT declarations, when supplied by target admission. */
+      readonly universalSlices?: readonly UniversalMachOSliceIdentity[];
       readonly executableRole?: never;
       readonly managed?: never;
     })
@@ -217,6 +221,22 @@ export type BinaryTarget =
       )[];
       readonly entryPoint: string;
       readonly entryPointSource: string;
+      readonly executableRole?: never;
+      readonly managed?: never;
+    })
+  | (BinaryTargetIdentity & {
+      readonly kind: "executable";
+      readonly format: "gamecube-dol";
+      /** Fixed by the DOL selection; the header does not carry a CPU family. */
+      readonly architecture: "powerpc";
+      readonly availableArchitectures: readonly ["powerpc"];
+      readonly byteOrder: "big";
+      readonly bits: 32;
+      /** Canonical hex entry taken from the DOL header. */
+      readonly entryPoint: string;
+      readonly entryPointSource: "dol-header";
+      /** Validated header: used sections, BSS, and BSS-overlapping data slots. */
+      readonly dol: DolHeader;
       readonly executableRole?: never;
       readonly managed?: never;
     })
@@ -246,8 +266,14 @@ export type BinaryTarget =
           | ZipPackageFormat
           | "asar"
           | "godot-pck"
+          | "unityfs"
+          | "uimage"
           | "dmg"
-          | "pkg";
+          | "pkg"
+          | "intel-hex"
+          | "srec"
+          | "esp-image"
+          | "fit";
       })
   | (BinaryTargetIdentity &
       NonExecutableMetadata & {
@@ -260,3 +286,9 @@ export const isMachOFormat = (
   format: unknown,
 ): format is "mach-o" | "mach-o-universal" =>
   format === "mach-o" || format === "mach-o-universal";
+
+/** Result-affecting artifact selection; canonical packed identity remains target.path. */
+export const artifactTargetSelectedPath = (target: BinaryTarget): string =>
+  target.kind === "archive" || target.kind === "artifact"
+    ? (target.artifactSelectedPath ?? target.sourcePath ?? target.path)
+    : (target.sourcePath ?? target.path);

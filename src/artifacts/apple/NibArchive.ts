@@ -29,11 +29,36 @@ export interface NibArchiveDocument {
   readonly objects: readonly {
     readonly id: number;
     readonly class_name: string;
+    /** Single-valued fields. Repeated serialized keys are disjoint below. */
     readonly values: Readonly<Record<string, JsonValue>>;
+    readonly repeated_values?: Readonly<Record<string, readonly JsonValue[]>>;
   }[];
   readonly classes: readonly string[];
   readonly limitations: readonly string[];
 }
+
+/** Serialized collection members in source order; metadata fields are not members. */
+export const nibCollectionMembers = (
+  object: NibArchiveDocument["objects"][number] | undefined,
+): readonly JsonValue[] | undefined => {
+  if (
+    object === undefined ||
+    !/^(?:NS|NSMutable)(?:Array|Set)$/u.test(
+      object.class_name.replace(/\0+$/u, ""),
+    )
+  )
+    return undefined;
+  const keys = ["UINibEncoderEmptyKey", "NS.objects"];
+  const populated = keys.filter(
+    (key) =>
+      Object.hasOwn(object.values, key) ||
+      Object.hasOwn(object.repeated_values ?? {}, key),
+  );
+  if (populated.length > 1) return undefined;
+  const key = populated[0];
+  if (key === undefined) return [];
+  return object.repeated_values?.[key] ?? [object.values[key]!];
+};
 
 /** Decode Apple's length-prefixed NIBArchive representation without loading UI classes. */
 export const decodeNibArchive = (
@@ -127,6 +152,7 @@ export const decodeNibArchive = (
     const className = classes[object.class_index];
     if (className === undefined) return [];
     const fields: Record<string, JsonValue> = {};
+    const repeated: Record<string, JsonValue[]> = {};
     for (
       let index = object.value_start;
       index < object.value_start + object.value_count;
@@ -135,7 +161,26 @@ export const decodeNibArchive = (
       const value = values.get(index);
       if (value === undefined) continue;
       const key = keys[value.key_index];
-      if (key !== undefined)
+      if (key === undefined) continue;
+      if (Object.hasOwn(repeated, key)) {
+        budget.reserve(
+          16,
+          "NIBArchive repeated fields exceed the decode budget",
+        );
+        repeated[key]!.push(value.value);
+      } else if (Object.hasOwn(fields, key)) {
+        budget.reserve(
+          96,
+          "NIBArchive repeated fields exceed the decode budget",
+        );
+        Object.defineProperty(repeated, key, {
+          value: [fields[key]!, value.value],
+          enumerable: true,
+          configurable: true,
+          writable: true,
+        });
+        delete fields[key];
+      } else
         // Archive keys are data, including the legacy __proto__ setter name.
         Object.defineProperty(fields, key, {
           value: value.value,
@@ -144,7 +189,16 @@ export const decodeNibArchive = (
           writable: true,
         });
     }
-    return [{ id, class_name: className, values: fields }];
+    return [
+      {
+        id,
+        class_name: className,
+        values: fields,
+        ...(Object.keys(repeated).length === 0
+          ? {}
+          : { repeated_values: repeated }),
+      },
+    ];
   });
   let connectionObjectCount = 0;
   for (const object of objects)

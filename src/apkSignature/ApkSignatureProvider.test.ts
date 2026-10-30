@@ -451,7 +451,7 @@ describe("ApkSignatureProvider v1 signers", () => {
   });
 });
 
-describe("ApkSignatureProvider failure surfaces", () => {
+const registerSignatureInputAdmissionCases = () => {
   it("keeps only a non-regular path as input; reader I/O and defects are adapter errors", () => {
     const tagOf = (cause: unknown): string =>
       apkSignatureFailure(cause, "/x.apk")._tag;
@@ -484,6 +484,70 @@ describe("ApkSignatureProvider failure surfaces", () => {
     expect(result.error._tag).toBe("AnalysisUnsupportedTargetError");
   });
 
+  it("reports a damaged supported Zip64 end record as input failure while accepting the intact and restored controls", async () => {
+    const classic = Buffer.from(await zipOf(["entry.txt"]));
+    const endOffset = classic.length - 22;
+    expect(classic.readUInt32LE(endOffset)).toBe(0x06054b50);
+    const count = classic.readUInt16LE(endOffset + 10);
+    const size = classic.readUInt32LE(endOffset + 12);
+    const offset = classic.readUInt32LE(endOffset + 16);
+    const record = Buffer.from([
+      ...u32(0x06064b50),
+      ...u64(44),
+      ...u16(45),
+      ...u16(45),
+      ...u32(0),
+      ...u32(0),
+      ...u64(count),
+      ...u64(count),
+      ...u64(size),
+      ...u64(offset),
+    ]);
+    const locator = Buffer.from([
+      ...u32(0x07064b50),
+      ...u32(0),
+      ...u64(endOffset),
+      ...u32(1),
+    ]);
+    const end = Buffer.from(classic.subarray(endOffset));
+    end.writeUInt16LE(0xffff, 8);
+    end.writeUInt16LE(0xffff, 10);
+    end.writeUInt32LE(0xffffffff, 12);
+    end.writeUInt32LE(0xffffffff, 16);
+    const valid = Buffer.concat([
+      classic.subarray(0, endOffset),
+      record,
+      locator,
+      end,
+    ]);
+    const corrupt = Buffer.from(valid);
+    corrupt.writeUInt32LE(0x06064b51, endOffset);
+    const restored = Buffer.from(corrupt);
+    restored.writeUInt32LE(0x06064b50, endOffset);
+    expect(Buffer.compare(restored, valid)).toBe(0);
+    for (const [name, bytes] of [
+      ["valid", valid],
+      ["restored", restored],
+    ] as const) {
+      const result = await provider.inspect({
+        path: await write(`${name}.zip`, bytes),
+      });
+      expect(result.ok).toBe(true);
+    }
+    const damaged = await provider.inspect({
+      path: await write("damaged.zip", corrupt),
+    });
+    expect(damaged.ok).toBe(false);
+    if (!damaged.ok) {
+      expect(damaged.error._tag).toBe("AnalysisInputError");
+      expect(JSON.stringify(damaged.error)).toContain(
+        "invalid Zip64 EOCD signature",
+      );
+    }
+  });
+};
+
+const registerSigningStructureFailureCases = () => {
   it("reports a malformed signing block as an input error", async () => {
     const result = await provider.inspect({
       path: await write(
@@ -598,6 +662,11 @@ describe("ApkSignatureProvider failure surfaces", () => {
     expect(result.error._tag).toBe("AnalysisResourceConstraintError");
     expect(result.error.message).toContain("output budget");
   });
+};
+
+describe("ApkSignatureProvider failure surfaces", () => {
+  registerSignatureInputAdmissionCases();
+  registerSigningStructureFailureCases();
 });
 
 describe("ApkSignatureProvider output budget", () => {

@@ -12,6 +12,22 @@ import {
 } from "./scenarioCaptureRecords.js";
 import { EnvironmentManifestAccumulator } from "./EnvironmentManifestAccumulator.js";
 
+const manifestLimitations = (
+  projected: ReturnType<typeof scenarioCaptureRecords>,
+) => {
+  const accumulator = new EnvironmentManifestAccumulator();
+  for (const record of projected.records) {
+    const added = accumulator.add(
+      record,
+      projected.responseBodies.get(record.ordinal),
+    );
+    if (!added.ok) throw added.error;
+  }
+  const result = accumulator.finish();
+  if (!result.ok) throw result.error;
+  return result.value.limitations;
+};
+
 describe("scenarioCaptureRecords", () => {
   it("projects each transaction, in request order, as a HAR-shaped record with its retained bytes", () => {
     const projected = scenarioCaptureRecords(
@@ -24,7 +40,11 @@ describe("scenarioCaptureRecords", () => {
     ]);
     const user = projected.records[1];
     expect(user?.reported).toEqual({
-      request: { method: "GET", url: "http://127.0.0.1:3101/api/users/2" },
+      request: {
+        method: "GET",
+        url: "http://127.0.0.1:3101/api/users/2",
+        bodySize: -1,
+      },
       response: {
         status: 200,
         content: {
@@ -55,11 +75,35 @@ describe("scenarioCaptureRecords", () => {
       request: { url: null },
     });
     expect(projected.records[7]?.reported).toEqual({
-      request: { method: "GET", url: "http://127.0.0.1:3101/api/slow" },
+      request: {
+        method: "GET",
+        url: "http://127.0.0.1:3101/api/slow",
+        bodySize: -1,
+      },
     });
-    expect(projected.limitations).toContain(
+    expect(manifestLimitations(projected)).toContain(
       "1 of 7 scenario transactions with a usable request line retained no response body; tools citing them replay only the recorded status and content type, either of which may be absent.",
     );
+  });
+
+  it("records a hidden request body as absent only when the request names no Content-Type", () => {
+    const toggle = {
+      method: "PUT",
+      url: "/api/entries/1/bookmark",
+      status: 204,
+      requestBodyHidden: true,
+    } as const;
+    const projected = scenarioCaptureRecords(
+      scenarioCaptureFixture([
+        { ...toggle, requestHeaderNames: ["accept", "authorization"] },
+        { ...toggle, requestHeaderNames: ["accept", "Content-Type"] },
+      ]),
+      "manifest",
+    );
+    expect(projected.records.map((entry) => entry.reported)).toMatchObject([
+      { request: { bodySize: 0 } },
+      { request: { bodySize: -1 } },
+    ]);
   });
 
   it("leaves a transaction that cannot be attributed to one request and response unrepresented", () => {
@@ -77,10 +121,10 @@ describe("scenarioCaptureRecords", () => {
     };
     const projected = scenarioCaptureRecords(duplicated, "manifest");
     expect(projected.records[0]?.reported).toEqual({});
-    // No manifest tool can cite it, so it is not counted among bodiless tools.
+    // The shared request-line owner rejects this ambiguous transaction before body counting.
     expect(
-      projected.limitations.some((limitation) =>
-        limitation.includes("retained no response body"),
+      manifestLimitations(projected).some((limitation) =>
+        limitation.includes("scenario transactions with a usable request line"),
       ),
     ).toBe(false);
   });
@@ -128,7 +172,7 @@ describe("scenarioCaptureRecords", () => {
       "response.content.text",
     );
     expect(projected.records[1]?.binary_fields).toEqual([]);
-    expect(projected.limitations).toEqual(
+    expect(manifestLimitations(projected)).toEqual(
       expect.arrayContaining([
         "1 of 2 scenario transactions with a usable request line retained no response body; tools citing them replay only the recorded status and content type, either of which may be absent.",
         "1 of 2 scenario transactions with a usable request line retained a response body with declared secret values replaced by redaction markers; tools citing them replay the redacted bytes.",
@@ -235,4 +279,41 @@ it("does not decode request text when projecting replay records", () => {
   } finally {
     decoder.mockRestore();
   }
+});
+
+it("distinguishes a retained empty request from missing or redacted request bytes", () => {
+  const captured = scenarioCaptureFixture([
+    {
+      method: "POST",
+      url: "/api/items/1/archive",
+      status: 204,
+      requestBody: "",
+      requestMediaType: "application/json",
+    },
+  ]);
+  expect(
+    scenarioCaptureRecords(captured, "manifest").records[0]?.reported,
+  ).toMatchObject({ request: { bodySize: 0 } });
+  const redacted = {
+    ...captured,
+    events: {
+      ...captured.events,
+      items: captured.events.items.map((event) =>
+        event.kind === "network-content" &&
+        event.phase === "request" &&
+        event.body.state === "captured"
+          ? { ...event, body: { ...event.body, redacted: true } }
+          : event,
+      ),
+    },
+  };
+  expect(
+    scenarioCaptureRecords(redacted, "manifest").records[0]?.reported,
+  ).toMatchObject({ request: { bodySize: -1 } });
+  const missing = scenarioCaptureFixture([
+    { method: "POST", url: "/api/items/1/archive", status: 204 },
+  ]);
+  expect(
+    scenarioCaptureRecords(missing, "manifest").records[0]?.reported,
+  ).toMatchObject({ request: { bodySize: -1 } });
 });

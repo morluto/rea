@@ -18,7 +18,8 @@ import { ToolResultDelivery } from "../server/ToolResultDelivery.js";
 import { createLogger } from "../logger.js";
 import { reportMcpShutdownFailure } from "./shutdown.js";
 import type { McpServerHandle, RuntimeDependencies } from "./types.js";
-import { MCP_CONNECTION_LOST, SERVER_START_FAILED } from "./messages.js";
+import { SERVER_START_FAILED } from "./messages.js";
+import { reportMcpTransportError } from "./reportMcpTransportError.js";
 import { OwnedMcpServers } from "./OwnedMcpServers.js";
 
 /** Verify the build-owned artifact before trusting its exact typed projection. */
@@ -79,6 +80,9 @@ const initializeRuntime = async (
   const result = await runEager(
     {
       ...dependencies,
+      // The outer SDK transport already owns and frames this stream. Eager
+      // materialization owns providers only, never another copy of raw input.
+      stdin: undefined,
       registerShutdown: () => () => undefined,
       captureShutdown: (close) => {
         shutdown = close;
@@ -201,6 +205,7 @@ export const runDeferred = async (
                   dependencies.setExitCode(1);
                   throw cause;
                 }),
+              config.mcpMaxInputElements,
             );
             return server;
           });
@@ -212,10 +217,12 @@ export const runDeferred = async (
           return server;
         },
         {
-          onerror: () => {
-            serverLogger.error(MCP_CONNECTION_LOST);
-            dependencies.writeStderr(`${MCP_CONNECTION_LOST}\n`);
-          },
+          onerror: (error) =>
+            reportMcpTransportError(
+              error,
+              serverLogger,
+              dependencies.writeStderr,
+            ),
         },
       );
     } finally {

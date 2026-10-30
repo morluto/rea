@@ -26,7 +26,7 @@ const INSTALL_NAME_CASES = [
 export async function verifyNativeProvenance(app, executable) {
   const original = await readFile(executable);
   const sha256 = createHash("sha256").update(original).digest("hex");
-  const symbols = ["$s4main3FooV", "plain_symbol"];
+  const symbols = ["_", "$s4main3FooV", "_", "plain_symbol", "__"];
   const operations = [
     ["inspect_macho", []],
     ["inspect_signature", []],
@@ -120,12 +120,34 @@ export async function verifyNativeProvenance(app, executable) {
       assert.equal(mcp.raw_result, null);
       assert.ok(cli.normalized_result.provenance.length > 0);
       assert.deepEqual(mcp.normalized_result, cli.normalized_result);
+      if (operation === "demangle_swift")
+        assert.deepEqual(cli.normalized_result.symbols, [
+          { input: "_", output: "", status: "invalid" },
+          { input: "$s4main3FooV", output: "main.Foo", status: "demangled" },
+          { input: "_", output: "", status: "invalid" },
+          {
+            input: "plain_symbol",
+            output: "plain_symbol",
+            status: "unchanged",
+          },
+          { input: "__", output: "_", status: "unchanged" },
+        ]);
+
       if (operation === "inspect_macho") {
+        const encryption = cli.normalized_result.encryption;
+        assert.equal(encryption.exhaustive, true);
+        assert.ok(encryption.total > 0);
+        assert.equal(encryption.items.length, encryption.total);
+        for (const slice of encryption.items) {
+          assert.equal(slice.status, "absent");
+          assert.deepEqual(slice.commands, []);
+          assert.equal(slice.range, null);
+        }
         const delayed = cli.normalized_result.load_commands.items.find(
           ({ fields }) => fields.name === "@rpath/libdelay.dylib (offset 28)",
         );
         assert.equal(delayed?.kind, "LC_LOAD_DYLIB");
-        assert.equal(delayed.fields.options, "delay-init");
+        assert.equal(delayed.fields.options, 8); // DYLIB_USE_DELAYED_INIT
         assert.equal(delayed.fields["time stamp"], undefined);
         assert.ok(
           cli.normalized_result.dependencies.items.some(
@@ -234,7 +256,7 @@ async function verifyInstallNames() {
           ?.source,
         importSource,
       );
-      assert.ok(result.provenance.some(({ tool }) => tool === "otool"));
+      assert.ok(result.provenance.some(({ tool }) => tool === "dyld_info"));
       await withArtifactMcp(consumer, async (client) => {
         const response = await artifactMcpCall(client, {
           name: "inspect_macho",

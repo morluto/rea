@@ -11,7 +11,7 @@ import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceSc
 import { silentLogger } from "../../../src/logger.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { registerWebScriptTool } from "../../../src/server/registerWebScriptTool.js";
-import { ToolResultDelivery } from "../../../src/server/toolResult.js";
+import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { readWithoutFifoWriter } from "../../fixtures/fifoInput.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -33,7 +33,7 @@ it.skipIf(process.platform === "win32")(
       { name: "script-selection", version: "1" },
       {},
       undefined,
-      new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE),
+      createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE),
     );
     const artifactResources = new ArtifactResourceScope();
     registerWebScriptTool(server, {
@@ -97,7 +97,7 @@ it("refuses an existing output directory as invalid output_directory input", asy
     { name: "script-export-existing", version: "1" },
     {},
     undefined,
-    new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE),
+    createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE),
   );
   const artifactResources = new ArtifactResourceScope();
   registerWebScriptTool(server, {
@@ -133,7 +133,7 @@ it("refuses an existing output directory as invalid output_directory input", asy
         {
           path: ["output_directory"],
           reason: "invalid_value",
-          message: "Extraction output root already exists",
+          message: "Output root already exists",
         },
       ],
     },
@@ -189,10 +189,13 @@ it("publishes script bytes and retains the returned Evidence without starting an
   if (exported.analysis_input === null)
     throw new Error("published script bytes have no analysis input root");
   expect(
-    await readFile(
-      join(exported.analysis_input.input_path, content.relative_path),
+    Buffer.compare(
+      await readFile(
+        join(exported.analysis_input.input_path, content.relative_path),
+      ),
+      bytes,
     ),
-  ).toEqual(bytes);
+  ).toBe(0);
   expect(
     JSON.parse(await readFile(exported.manifest.path, "utf8")),
   ).toMatchObject({

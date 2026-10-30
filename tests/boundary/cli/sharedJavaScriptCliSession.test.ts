@@ -1,7 +1,8 @@
 import { EventEmitter, PassThrough } from "node:stream";
-import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
-import { expect, test } from "vitest";
+import { expect, onTestFinished, test } from "vitest";
 import { z } from "zod";
 
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
@@ -126,8 +127,13 @@ test("stops an unready shared CLI process when the session closes", async () => 
     command(["--version"], { PATH: "/usr/bin", REA_LOG_LEVEL: "silent" }),
   );
   await waitFor(() => spawned !== undefined);
-  await session.close();
-  await expect(pending).rejects.toThrow("Shared CLI session is closed");
+  const rejected = expect(pending).rejects.toThrow(
+    "Shared CLI session is closed",
+  );
+  const closing = session.close();
+  spawned?.stdout.write(encodeCliSessionFrame({ ready: true }));
+  await closing;
+  await rejected;
   expect(spawned?.signalCode).toBe("SIGTERM");
   await expect(
     session.run(
@@ -155,8 +161,11 @@ test("stops an in-flight shared CLI command when the session closes", async () =
     command(["--version"], { PATH: "/usr/bin", REA_LOG_LEVEL: "silent" }),
   );
   await waitFor(() => received);
+  const rejected = expect(pending).rejects.toThrow(
+    "Shared CLI session is closed",
+  );
   await session.close();
-  await expect(pending).rejects.toThrow("Shared CLI session is closed");
+  await rejected;
   expect(spawned?.signalCode).toBe("SIGTERM");
 });
 
@@ -248,6 +257,369 @@ const respondingProcess = (
   });
   return child;
 };
+
+test("recovers after a shared CLI command exceeds its selected deadline", async () => {
+  const children: FakeCliProcess[] = [];
+  const session = createCliCommandSession({
+    requestTimeoutMs: 20,
+    shutdownGraceMs: 20,
+    spawnWorker: () => {
+      const child = respondingProcess(
+        130 + children.length,
+        (request, current) => {
+          if (children.length > 1)
+            reply(current, request.id, { stdout: "recovered" });
+        },
+      );
+      children.push(child);
+      return asCliProcess(child);
+    },
+  });
+  await expect(
+    session.run(command(["stuck"], { PATH: "/usr/bin" })),
+  ).rejects.toThrow(/did not respond/);
+  expect(children[0]?.signalCode).not.toBeNull();
+  await expect(
+    session.run(command(["next"], { PATH: "/usr/bin" })),
+  ).resolves.toMatchObject({ stdout: "recovered" });
+  expect(children).toHaveLength(2);
+  await session.close();
+});
+
+test("times out a shared CLI command whose stdin write callback stays pending", async () => {
+  const children: FakeCliProcess[] = [];
+  let releaseWrite: (() => void) | undefined;
+  let observeWrite: (() => void) | undefined;
+  const writing = new Promise<void>((resolve) => {
+    observeWrite = resolve;
+  });
+  const session = createCliCommandSession({
+    requestTimeoutMs: 20,
+    shutdownGraceMs: 20,
+    spawnWorker: () => {
+      const child = respondingProcess(
+        135 + children.length,
+        (request, current) =>
+          reply(current, request.id, { stdout: "recovered" }),
+      );
+      if (children.length === 0) {
+        child.stdin._write = (_chunk, _encoding, callback) => {
+          releaseWrite = () => callback();
+          observeWrite?.();
+        };
+      }
+      children.push(child);
+      return asCliProcess(child);
+    },
+  });
+  const failed = expect(
+    session.run(command(["stuck"], { PATH: "/usr/bin" })),
+  ).rejects.toThrow(/did not respond/);
+  await writing;
+  expect(releaseWrite).toEqual(expect.any(Function));
+  await failed;
+  expect(children[0]?.signalCode).not.toBeNull();
+  releaseWrite?.();
+  await expect(
+    session.run(command(["next"], { PATH: "/usr/bin" })),
+  ).resolves.toMatchObject({ stdout: "recovered" });
+  expect(children).toHaveLength(2);
+  await session.close();
+});
+
+test("recovers after a shared CLI worker misses its selected readiness deadline", async () => {
+  const children: FakeCliProcess[] = [];
+  const session = createCliCommandSession({
+    startTimeoutMs: 20,
+    shutdownGraceMs: 20,
+    spawnWorker: () => {
+      const child =
+        children.length === 0
+          ? fakeProcess(140)
+          : respondingProcess(141, (request, current) =>
+              reply(current, request.id, { stdout: "ready" }),
+            );
+      children.push(child);
+      return asCliProcess(child);
+    },
+  });
+  await expect(
+    session.run(command(["stuck"], { PATH: "/usr/bin" })),
+  ).rejects.toThrow(/did not become ready/);
+  expect(children[0]?.signalCode).not.toBeNull();
+  await expect(
+    session.run(command(["next"], { PATH: "/usr/bin" })),
+  ).resolves.toMatchObject({ stdout: "ready" });
+  expect(children).toHaveLength(2);
+  await session.close();
+});
+
+test("waits for the timed-out shared CLI worker to exit before starting its replacement", async () => {
+  const children: FakeCliProcess[] = [];
+  let releaseExit: (() => void) | undefined;
+  let observeStop: (() => void) | undefined;
+  const stopping = new Promise<void>((resolve) => {
+    observeStop = resolve;
+  });
+  const session = createCliCommandSession({
+    requestTimeoutMs: 20,
+    shutdownGraceMs: 100,
+    spawnWorker: () => {
+      const child = respondingProcess(
+        150 + children.length,
+        (request, current) => {
+          if (children.length > 1)
+            reply(current, request.id, { stdout: "next" });
+        },
+      );
+      if (children.length === 0) {
+        const stop = child.kill.bind(child);
+        child.kill = (signal: NodeJS.Signals = "SIGTERM") => {
+          releaseExit = () => stop(signal);
+          observeStop?.();
+          return true;
+        };
+      }
+      children.push(child);
+      return asCliProcess(child);
+    },
+  });
+  const stalled = expect(
+    session.run(command(["stuck"], { PATH: "/usr/bin" })),
+  ).rejects.toThrow(/did not respond/);
+  const next = session.run(command(["next"], { PATH: "/usr/bin" }));
+  await stopping;
+  expect(children).toHaveLength(1);
+  releaseExit?.();
+  await stalled;
+  await expect(next).resolves.toMatchObject({ stdout: "next" });
+  expect(children).toHaveLength(2);
+  await session.close();
+});
+
+test("retains a shared CLI worker that survives SIGKILL and retries its exact owner on close", async () => {
+  const children: FakeCliProcess[] = [];
+  const signals: NodeJS.Signals[] = [];
+  const session = createCliCommandSession({
+    shutdownGraceMs: 20,
+    spawnWorker: () => {
+      const child = respondingProcess(
+        160 + children.length,
+        (request, current) => {
+          reply(current, request.id, {
+            exitCode: 1,
+            stderr: "fatal",
+            fatal: true,
+          });
+        },
+      );
+      child.kill = (signal: NodeJS.Signals = "SIGTERM") => {
+        signals.push(signal);
+        return true;
+      };
+      children.push(child);
+      return asCliProcess(child);
+    },
+  });
+  await expect(
+    session.run(command(["fatal"], { PATH: "/usr/bin" })),
+  ).rejects.toThrow(/did not exit after SIGKILL/);
+  await expect(
+    session.run(command(["blocked"], { PATH: "/usr/bin" })),
+  ).rejects.toThrow(/did not exit after SIGKILL/);
+  expect(children).toHaveLength(1);
+  await expect(session.close()).rejects.toThrow(/did not exit after SIGKILL/);
+  const retained = children[0];
+  if (retained === undefined) throw new Error("missing retained worker");
+  const stopsBeforeRecovery = signals.length;
+  retained.kill = (signal: NodeJS.Signals = "SIGTERM") => {
+    signals.push(signal);
+    retained.signalCode = signal;
+    retained.emit("exit", null, signal);
+    retained.emit("close", null, signal);
+    return true;
+  };
+  await session.close();
+  expect(signals.length).toBeGreaterThan(stopsBeforeRecovery);
+  expect(retained.signalCode).not.toBeNull();
+  expect(children).toHaveLength(1);
+  await session.close();
+});
+
+test.each([
+  {
+    phase: "command",
+    reason: /did not respond/,
+  },
+  {
+    phase: "startup",
+    reason: /did not become ready/,
+  },
+])(
+  "preserves the $phase timeout when shared CLI cleanup also fails",
+  async ({ phase, reason }) => {
+    const children: FakeCliProcess[] = [];
+    const signals: NodeJS.Signals[] = [];
+    const session = createCliCommandSession({
+      ...(phase === "command"
+        ? { requestTimeoutMs: 20 }
+        : { startTimeoutMs: 20 }),
+      shutdownGraceMs: 20,
+      spawnWorker: () => {
+        const child =
+          phase === "command"
+            ? respondingProcess(190, () => undefined)
+            : fakeProcess(190);
+        child.kill = (signal: NodeJS.Signals = "SIGTERM") => {
+          signals.push(signal);
+          return true;
+        };
+        children.push(child);
+        return asCliProcess(child);
+      },
+    });
+    const failure: unknown = await session
+      .run(command(["stuck"], { PATH: "/usr/bin" }))
+      .catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(AggregateError);
+    if (!(failure instanceof AggregateError))
+      throw new Error("missing combined command and cleanup failure", {
+        cause: failure,
+      });
+    expect(failure.message).toMatch(reason);
+    expect(failure.message).toMatch(/did not exit after SIGKILL/);
+    expect(failure.errors).toHaveLength(2);
+    expect(failure.errors[0]).toBeInstanceOf(Error);
+    expect(failure.errors[0]).toHaveProperty(
+      "message",
+      expect.stringMatching(reason),
+    );
+    expect(failure.errors[1]).toHaveProperty(
+      "message",
+      expect.stringMatching(/did not exit after SIGKILL/),
+    );
+    expect(failure.cause).toBe(failure.errors[0]);
+    expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+    await expect(
+      session.run(command(["blocked"], { PATH: "/usr/bin" })),
+    ).rejects.toThrow(/did not exit after SIGKILL/);
+    expect(children).toHaveLength(1);
+    await expect(session.close()).rejects.toThrow(/did not exit after SIGKILL/);
+    const retained = children[0];
+    if (retained === undefined) throw new Error("missing retained worker");
+    retained.kill = (signal: NodeJS.Signals = "SIGTERM") => {
+      signals.push(signal);
+      retained.signalCode = signal;
+      retained.emit("exit", null, signal);
+      retained.emit("close", null, signal);
+      return true;
+    };
+    await session.close();
+    expect(retained.signalCode).not.toBeNull();
+    expect(children).toHaveLength(1);
+  },
+);
+
+test("confirms shared CLI shutdown after escalating an ignored SIGTERM", async () => {
+  let child: FakeCliProcess | undefined;
+  const signals: NodeJS.Signals[] = [];
+  const session = createCliCommandSession({
+    shutdownGraceMs: 20,
+    spawnWorker: () => {
+      const started = respondingProcess(170, (request, current) =>
+        reply(current, request.id, { stdout: "done" }),
+      );
+      const stop = started.kill.bind(started);
+      started.kill = (signal: NodeJS.Signals = "SIGTERM") => {
+        signals.push(signal);
+        return signal === "SIGKILL" ? stop(signal) : true;
+      };
+      child = started;
+      return asCliProcess(started);
+    },
+  });
+  await expect(
+    session.run(command(["once"], { PATH: "/usr/bin" })),
+  ).resolves.toMatchObject({ stdout: "done" });
+  await session.close();
+  expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+  expect(child?.signalCode).toBe("SIGKILL");
+  await session.close();
+});
+
+test("lets the shared CLI worker finish its resource cleanup before signaling", async () => {
+  const events: string[] = [];
+  const session = createCliCommandSession({
+    spawnWorker: () => {
+      const child = respondingProcess(180, (request, current) =>
+        reply(current, request.id, { stdout: "done" }),
+      );
+      child.stdin.once("finish", () => {
+        events.push("stdin closed", "resources released");
+        child.exitCode = 0;
+        child.emit("exit", 0, null);
+        child.emit("close", 0, null);
+      });
+      const stop = child.kill.bind(child);
+      child.kill = (signal: NodeJS.Signals = "SIGTERM") => {
+        events.push(signal);
+        return stop(signal);
+      };
+      return asCliProcess(child);
+    },
+  });
+  await expect(
+    session.run(command(["once"], { PATH: "/usr/bin" })),
+  ).resolves.toMatchObject({ stdout: "done" });
+  await session.close();
+  expect(events).toEqual(["stdin closed", "resources released"]);
+  await session.close();
+  expect(events).toHaveLength(2);
+});
+
+test("shares one shared CLI cleanup attempt across concurrent close calls", async () => {
+  let cleanupStarts = 0;
+  let releaseExit: (() => void) | undefined;
+  let observeCleanup: (() => void) | undefined;
+  const cleaning = new Promise<void>((resolve) => {
+    observeCleanup = resolve;
+  });
+  const signals: NodeJS.Signals[] = [];
+  const session = createCliCommandSession({
+    spawnWorker: () => {
+      const child = respondingProcess(185, (request, current) =>
+        reply(current, request.id, { stdout: "done" }),
+      );
+      child.stdin.once("finish", () => {
+        cleanupStarts += 1;
+        releaseExit = () => {
+          child.exitCode = 0;
+          child.emit("exit", 0, null);
+          child.emit("close", 0, null);
+        };
+        observeCleanup?.();
+      });
+      const stop = child.kill.bind(child);
+      child.kill = (signal: NodeJS.Signals = "SIGTERM") => {
+        signals.push(signal);
+        return stop(signal);
+      };
+      return asCliProcess(child);
+    },
+  });
+  await session.run(command(["once"], { PATH: "/usr/bin" }));
+  const first = session.close();
+  const second = session.close();
+  expect(second).toBe(first);
+  await cleaning;
+  expect(cleanupStarts).toBe(1);
+  expect(signals).toEqual([]);
+  releaseExit?.();
+  await Promise.all([first, second]);
+  await session.close();
+  expect(cleanupStarts).toBe(1);
+  expect(signals).toEqual([]);
+});
 
 test("starts another process after the shared CLI process exits", async () => {
   const children: FakeCliProcess[] = [];
@@ -455,6 +827,81 @@ test("starts a new process after the real worker reports a fatal failure", async
   expect(recovered.stdout.length).toBeGreaterThan(0);
   expect(session.processId()).toEqual(expect.any(Number));
   await session.close();
+});
+
+test("keeps a malformed JSON command's failure status and serves the next command", async () => {
+  const session = createCliCommandSession();
+  onTestFinished(() => session.close());
+  const environment = {
+    PATH: process.env.PATH ?? "",
+    REA_LOG_LEVEL: "silent",
+  };
+  const failed = await session.run(
+    command(["compare-javascript-export-shapes", "{", "--json"], environment),
+  );
+  expect(failed.exitCode).toBe(1);
+  expect(failed.stdout).toContain("invalid_request");
+  const worker = session.processId();
+  expect(worker).toEqual(expect.any(Number));
+  const root = await createTestTempDirectory("rea-warm-cli-status-");
+  await writeFixtureFiles(root, {
+    "app.mjs": "export function current() { return 1; }\n",
+  });
+  const recovered = await session.run(
+    command(["analyze-javascript-application", root, "--json"], environment),
+  );
+  expect(recovered.exitCode, recovered.stderr).toBe(0);
+  expect(recovered.json).toMatchObject({
+    normalized_result: expect.any(Object),
+  });
+  expect(session.processId()).toBe(worker);
+  await session.close();
+});
+
+test("closes the real JavaScript CLI worker through its resource cleanup", async () => {
+  let worker: ChildProcessWithoutNullStreams | undefined;
+  const session = createCliCommandSession({
+    spawnWorker: (environment) => {
+      worker = spawn(
+        process.execPath,
+        [
+          fileURLToPath(
+            new URL(
+              "../../support/cli/cliCommandSessionWorker.mjs",
+              import.meta.url,
+            ),
+          ),
+        ],
+        {
+          cwd: process.cwd(),
+          env: environment,
+          stdio: ["pipe", "pipe", "pipe"],
+        },
+      );
+      return worker;
+    },
+  });
+  onTestFinished(() => session.close());
+  const root = await createTestTempDirectory("rea-warm-cli-graceful-");
+  await writeFixtureFiles(root, {
+    "app.mjs": "export function current() { return 1; }\n",
+  });
+  const analyzed = await session.run(
+    command(["analyze-javascript-application", root, "--json"], {
+      PATH: process.env.PATH ?? "",
+      REA_LOG_LEVEL: "silent",
+    }),
+  );
+  expect(analyzed.exitCode, analyzed.stderr).toBe(0);
+  expect(analyzed.json).toMatchObject({
+    normalized_result: expect.any(Object),
+  });
+  expect(worker?.exitCode).toBeNull();
+  expect(worker?.signalCode).toBeNull();
+  await session.close();
+  expect(worker?.exitCode).toBe(0);
+  expect(worker?.signalCode).toBeNull();
+  expect(session.processId()).toBeUndefined();
 });
 
 const requireSharedCli = (cli: {

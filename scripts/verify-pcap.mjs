@@ -8,8 +8,11 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { toolContract } from "../dist/contracts/toolContracts.js";
 import { ArtifactResourceScope } from "../dist/artifacts/ArtifactResourceScope.js";
-import { mcpTextValue } from "./lib/mcp-verifier-results.mjs";
-import { closeVerifierResources } from "./lib/verifier-cleanup.mjs";
+import { requireMcpOutput } from "./lib/mcp-verifier-results.mjs";
+import {
+  closeVerifierResources,
+  withVerifierCleanup,
+} from "./lib/verifier-cleanup.mjs";
 import { hashVerifierFile } from "./lib/verifier-file-resources.mjs";
 
 const args = process.argv.slice(2);
@@ -44,8 +47,7 @@ const transport = new StdioClientTransport({
   stderr: "pipe",
 });
 transport.stderr?.resume();
-let primaryError;
-try {
+await withVerifierCleanup(async () => {
   await client.connect(transport);
   const readiness = await run("inspect_pcap_client", {});
   assert(readiness.client.tshark_version && readiness.client.capinfos_version);
@@ -87,29 +89,21 @@ try {
       `[ok] ${result.packet_count} packets; ${result.endpoint_count} addresses; coverage=${result.coverage}`,
     );
   }
-} catch (cause) {
-  primaryError = cause;
-  throw cause;
-} finally {
-  await closeVerifierResources(
-    [
-      async () => {
-        await closeVerifierResources([
-          () => client.close(),
-          () => transport.close(),
-          () => resources.close(),
-        ]);
-        assert.deepEqual(
-          await readdir(root),
-          [],
-          `Owned capture resources remain under ${root}`,
-        );
-        await rmdir(root);
-      },
-    ],
-    primaryError,
-  );
-}
+}, [
+  async () => {
+    await closeVerifierResources([
+      () => client.close(),
+      () => transport.close(),
+      () => resources.close(),
+    ]);
+    assert.deepEqual(
+      await readdir(root),
+      [],
+      `Owned capture resources remain under ${root}`,
+    );
+    await rmdir(root);
+  },
+]);
 console.log("All asserted pcap CLI/MCP checks passed");
 
 async function run(name, input) {
@@ -129,8 +123,7 @@ async function run(name, input) {
     { name, arguments: input },
     { timeout: 360_000 },
   );
-  assert.notEqual(response.isError, true, mcpTextValue(response));
-  const mcp = contract.outputSchema.parse(JSON.parse(mcpTextValue(response)));
+  const mcp = requireMcpOutput(response, name, contract);
   assert.deepEqual(mcp.normalized_result, cli.normalized_result);
   assert.deepEqual(mcp.subject, cli.subject);
   if (input.path !== undefined) {

@@ -2,6 +2,12 @@ import { z } from "zod";
 import { localPathStringSchema } from "../localPath.js";
 import { digestSchema } from "../digests.js";
 
+/** Summary capture admission and discovery share this native-bound host profile. */
+export const pcapCaptureHostSupported = (platform: string): boolean =>
+  platform === "linux" || platform === "win32";
+export const PCAP_CAPTURE_UNSUPPORTED_HOST_REASON =
+  "Packet summaries require an enforceable native memory bound: Linux with util-linux prlimit, or Windows with owned Job Objects. This host's capture boundary remains unsupported.";
+
 /**
  * Caller intent for packet-capture analysis through caller-supplied tshark
  * and capinfos. REA never installs Wireshark or its tools.
@@ -74,6 +80,13 @@ const endpoint = z.strictObject({
 
 const dnsQuery = z.strictObject({
   query: z.string().min(1),
+  query_labels_hex: z
+    .array(z.string().regex(/^(?:[0-9a-f]{2}){1,63}$/u))
+    .nullable()
+    .optional()
+    .describe(
+      "Original DNS wire label bytes in order, as lowercase hex strings; the root terminator is excluded. Null or omission means unknown wire identity; display text alone does not establish identity.",
+    ),
   response_addresses: z.array(z.string().min(1)),
   response_address_count: z.int().nonnegative(),
 });

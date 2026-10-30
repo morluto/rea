@@ -18,6 +18,7 @@ import {
 } from "../../../src/javascript/analysis/JavaScriptAnalysisWorkerProtocol.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
 import type { JavaScriptArtifactFile } from "../../../src/domain/javascript/javascriptArtifactFiles.js";
+import { staticCheckpointFacts } from "../../fixtures/javascriptWorkerCheckpoint.js";
 
 const observeWorkerFrames = (
   stdout: Readable | null | undefined,
@@ -76,27 +77,6 @@ const ready =
   'process.stdout.write(JSON.stringify({kind:"ready",heap_limit_bytes:require("node:v8").getHeapStatistics().heap_size_limit})+"\\n");';
 const phaseAfterRequest =
   'process.stdin.once("data", chunk => { const request=JSON.parse(String(chunk)); process.stdout.write(JSON.stringify({kind:"phase",id:request.id,phase:"parse"})+"\\n");';
-const staticCheckpointFacts = {
-  parse_status: "complete",
-  parse_error_count: 0,
-  visited_ast_nodes: 1,
-  references: [],
-  endpoints: [],
-  storage: [],
-  bundler_registrations: [],
-  role_paths: [],
-  source_map_urls: [],
-  vendors: [],
-  electron: {
-    browser_windows: [],
-    context_bridge_apis: [],
-    ipc: [],
-    sender_validations: [],
-    utility_processes: [],
-    native_addon_bindings: [],
-  },
-  limitations: [],
-};
 
 it.each([
   {

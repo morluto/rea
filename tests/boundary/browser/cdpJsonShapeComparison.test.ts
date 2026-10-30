@@ -11,6 +11,7 @@ import {
 } from "../../../src/domain/browserObservationSchemas.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { webCaptureDiffSchema } from "../../../src/domain/webCaptureDiffSchemas.js";
+import { passiveNetworkCapture } from "../../fixtures/passiveNetworkCapture.js";
 
 const ORIGIN = "https://example.test";
 const CAPTURE_TIME = "2026-01-01T00:00:00.000Z";
@@ -104,6 +105,16 @@ it("captures all repeated array rows and empty arrays without retaining payload 
 describe.each<BodySource>(["request", "response", "base64 response"])(
   "CDP %s JSON shape comparison",
   (source) => {
+    it("keeps differing retained shapes unknown when both request inventories are attach-limited", async () => {
+      const [before, after] = comparableCaptures(source, "[123]", '["a"]');
+      expect(
+        (await compareCaptures(before, after)).dimensions.network,
+      ).toMatchObject({
+        status: "unknown",
+        total_changes: 0,
+      });
+    });
+
     it.each(equivalentBodies)(
       "does not report a network modification for reordered $name",
       async ({ before: beforeBody, after: afterBody }) => {
@@ -144,7 +155,16 @@ describe.each<BodySource>(["request", "response", "base64 response"])(
         before + " ".repeat(length - Buffer.byteLength(before)),
         after + " ".repeat(length - Buffer.byteLength(after)),
       );
-      const result = await compareCaptures(...captures);
+      expect(
+        (await compareCaptures(...captures)).dimensions.network,
+      ).toMatchObject({
+        status: "unknown",
+        total_changes: 0,
+      });
+      const result = await compareCaptures(
+        completeNormalizedCapture(captures[0]),
+        completeNormalizedCapture(captures[1]),
+      );
       expect(result.dimensions.network).toMatchObject({
         status: "changed",
         total_changes: 1,
@@ -167,7 +187,16 @@ describe.each<BodySource>(["request", "response", "base64 response"])(
           Buffer.byteLength(beforeBody) - Buffer.byteLength(changedBody),
         );
       const [before, after] = comparableCaptures(source, beforeBody, afterBody);
-      const result = await compareCaptures(before, after);
+      expect(
+        (await compareCaptures(before, after)).dimensions.network,
+      ).toMatchObject({
+        status: "unknown",
+        total_changes: 0,
+      });
+      const result = await compareCaptures(
+        completeNormalizedCapture(before),
+        completeNormalizedCapture(after),
+      );
 
       expect(result.overall_status).toBe("changed");
       expect(result.dimensions.network).toEqual({
@@ -369,6 +398,16 @@ const compareCaptures = async (
   const evidence = parseEvidence(JSON.parse(JSON.stringify(result.value)));
   expect(evidence.operation).toBe("compare_web_captures");
   return webCaptureDiffSchema.parse(evidence.normalized_result);
+};
+
+/** Authored complete comparison inventories reuse parsed request facts, not live CDP coverage. */
+const completeNormalizedCapture = (
+  source: WebPageInspection,
+): WebPageInspection => {
+  const normalized = passiveNetworkCapture([]);
+  normalized.target = source.target;
+  normalized.network = source.network;
+  return normalized;
 };
 
 const captureBody = (

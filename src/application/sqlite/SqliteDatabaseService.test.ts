@@ -1,8 +1,7 @@
 import { expect, it } from "vitest";
 import { SqliteDatabaseService } from "./SqliteDatabaseService.js";
 import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
-import { err } from "../../domain/result.js";
-import { ok } from "../../domain/result.js";
+import { err, ok } from "../../domain/result.js";
 import { createAnalysisExecution } from "../AnalysisProvider.js";
 import { sqliteDatabaseSchema } from "../../domain/sqlite/sqliteDatabase.js";
 

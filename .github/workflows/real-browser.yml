@@ -48,7 +48,8 @@ jobs:
       - uses: ./.github/actions/portable-build-cache
         with:
           build_cache_artifact: ${{ inputs.build_cache_artifact }}
-      - run: npm run verify:browser
+      # Own a fresh bus so Chromium never depends on an inherited session address.
+      - run: dbus-run-session -- npm run verify:browser
         env:
           REA_BROWSER_EXECUTABLE: /usr/bin/google-chrome
           REA_BROWSER_NO_SANDBOX: "true"

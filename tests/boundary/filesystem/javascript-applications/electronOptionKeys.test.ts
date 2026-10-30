@@ -45,8 +45,10 @@ describe("Electron option keys in reconstructed application graphs", () => {
       expect(result.electron_summary.preload_entrypoints).toBe(0);
       expect(result.electron_summary.explicit_web_preferences).toBe(0);
 
-      // The independent property:preload heuristic can still discover the nested
-      // literal. It must not carry a BrowserWindow-specific observation or edge.
+      // A nested literal cannot bypass the unresolved options owner.
+      expect(
+        result.graph.nodes.filter(({ kind }) => kind === "electron-preload"),
+      ).toEqual([]);
       expect(windowPreloadNodes(result)).toEqual([]);
       expect(
         result.graph.edges.filter(

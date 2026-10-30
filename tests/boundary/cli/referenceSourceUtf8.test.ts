@@ -185,8 +185,11 @@ cliTest.skipIf(process.platform === "win32")(
       }),
     );
     expect(
-      await readlink(join(root, "alias.ts"), { encoding: "buffer" }),
-    ).toEqual(rawTarget);
+      Buffer.compare(
+        await readlink(join(root, "alias.ts"), { encoding: "buffer" }),
+        rawTarget,
+      ),
+    ).toBe(0);
   },
 );
 

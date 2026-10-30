@@ -2,7 +2,15 @@ import { z } from "zod";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import type { AndroidOperation } from "../domain/android/androidAnalysis.js";
-import { dexDescriptorSchema } from "../domain/android/androidAnalysis.js";
+import { dexStaticValueSchema } from "../domain/android/androidAnalysis.js";
+import {
+  dexDescriptorSchema,
+  dexTypeSchema,
+} from "../domain/android/dexTypes.js";
+import { androidNativeDeclarationsSchema } from "../domain/android/androidNativeDeclarations.js";
+
+/** Native-only raw DEX facts authored before decompiler deduplication. */
+export const jadxNativeDeclarationsSchema = androidNativeDeclarationsSchema;
 
 const count = z.int().nonnegative();
 /** Typed allocation failures authored before upstream erases the JVM exception. */
@@ -80,7 +88,8 @@ export const parseJadxClassPage = (value: JsonValue): JadxClassPage => {
 };
 
 export const jadxClassSchema = z.object({
-  full_name: z.string(),
+  full_name: z.string().min(1),
+  raw_name: z.string().min(1),
   name: z.string(),
   method_count: count,
   field_count: count,
@@ -88,6 +97,7 @@ export const jadxClassSchema = z.object({
   methods: z.array(
     z.object({
       name: z.string(),
+      raw_name: z.string().min(1),
       signature: z.string(),
       dex_descriptor: dexDescriptorSchema,
       is_constructor: z.boolean(),
@@ -95,9 +105,18 @@ export const jadxClassSchema = z.object({
     }),
   ),
   fields: z.array(
-    z.object({ name: z.string(), type: z.string(), def_pos: z.int() }),
+    z.object({
+      name: z.string(),
+      raw_name: z.string().min(1),
+      type: z.string(),
+      dex_type: dexTypeSchema,
+      def_pos: z.int(),
+      dex_static_value: dexStaticValueSchema.optional(),
+    }),
   ),
   inner_classes: z.array(z.string()),
+  /** Original binary names, index-aligned with the display names above. */
+  inner_class_raw_names: z.array(z.string()),
 });
 export const jadxMethodSchema = z.object({
   class_name: z.string(),

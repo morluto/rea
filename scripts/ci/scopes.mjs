@@ -1,7 +1,21 @@
+// These boundaries require native Windows launch verification even where
+// broad process ownership would otherwise suppress host fanout on the fast tier.
+export const WINDOWS_EXECUTABLE_SELECTION_INPUTS = [
+  "src/process/WindowsExecutable*.ts",
+  "src/adb/AdbConfiguration.ts",
+  "src/apktool/ApktoolConfiguration.ts",
+  "src/application/UpdateCommandRunner.ts",
+  "tests/boundary/process/windowsExecutableSelection.test.ts",
+];
+
 // Ownership of the native-host, real-provider and website verification lanes.
 // Shared build inputs are classified once in plan.mjs rather than repeated in
 // every workflow.
 export const SCOPES = {
+  readiness: [
+    "tests/conformance/readiness/**",
+    "scripts/verify-reconstruction-readiness.mjs",
+  ],
   reverse_tools: [
     ".github/workflows/mutation.yml",
     "src/application/reverse/**",
@@ -63,6 +77,14 @@ export const SCOPES = {
   ],
   // Apple artifact CLI/MCP lane on macOS, including its focused regressions.
   apple: [
+    "src/hopper/BridgeLauncher.ts",
+    "src/domain/hopperErrors.ts",
+    "tests/boundary/providers/hopper/hopperMacLaunchArguments.test.ts",
+    "tests/acceptance/providers/hopperStartupRecovery.test.ts",
+    "tests/boundary/providers/hopper/hopperClient.helperFailure.test.ts",
+    "tests/boundary/providers/hopper/bridgeBootstrapCleanup.test.ts",
+    "tests/boundary/providers/hopper/bridgeTargetLease.integration.test.ts",
+    "src/artifacts/NativeDmg*.ts",
     "src/native/Apple*",
     "src/native/NativeMacOS*",
     "src/native/NativeUi*",
@@ -70,6 +92,9 @@ export const SCOPES = {
     "bridge/native/**",
     "bridge/process/**",
     "scripts/verify/apple/**",
+    "tests/acceptance/artifactDmgAttachmentRecoveryCli.test.ts",
+    "tests/boundary/providers/native/nativeDmgArtifactReader.test.ts",
+    "tests/process-global/dmgCancellationReason.test.ts",
     "tests/boundary/filesystem/installScript.test.ts",
     "tests/boundary/filesystem/nibNativeHierarchy.test.ts",
     "tests/boundary/filesystem/interfaceBuilderBundle.test.ts",
@@ -82,6 +107,7 @@ export const SCOPES = {
     "tests/boundary/providers/native/nativeSignatureTargetBinding.test.ts",
     "tests/boundary/cli/nativeSignatureCli.test.ts",
     "tests/boundary/cli/nativeMachoArm64_32Cli.test.ts",
+    "tests/boundary/cli/nativeMachoEncryptionCli.test.ts",
     "tests/boundary/mcp/nativeSignatureTargetBindingMcp.test.ts",
     "src/process/capture/FilesystemSnapshot.test.ts",
     "tests/process-global/filesystemSnapshotFallbackCancellation.test.ts",
@@ -93,6 +119,7 @@ export const SCOPES = {
   ],
   // Four-host installed-package matrix and the Windows curated lane.
   package: [
+    ...WINDOWS_EXECUTABLE_SELECTION_INPUTS,
     // Both host compilers must be exercised when their installation, options,
     // or entrypoints change; Linux's accelerated checker cannot stand in for Go.
     "scripts/run-typescript.*",
@@ -115,12 +142,22 @@ export const SCOPES = {
     "scripts/ci/npm-release-state.*",
     "scripts/verify-release-artifact.mjs",
     "scripts/lib/release-package-canary.mjs",
+    "scripts/lib/verify-package-core.*",
+    "tests/boundary/mcp/packageCatalogVerification.test.ts",
     "scripts/verify-published-package.mjs",
     "tests/boundary/filesystem/releaseRecovery.test.ts",
     "tests/boundary/filesystem/mcpRegistryPublication.test.ts",
     "tests/boundary/filesystem/npmRelease.test.ts",
     "tests/boundary/process/releaseArtifactCanary.test.ts",
     "src/windows/**",
+    "src/domain/windowsNativeArtifact*.ts",
+    "src/domain/dosMz*.ts",
+    "src/domain/peCoffHeader*.ts",
+    "src/domain/result.ts",
+    "scripts/lib/verifier-source-loader.mjs",
+    "tests/boundary/process/windowsNativeArtifactVerifier.test.ts",
+    "scripts/lib/windows-native-inspection-workspace.*",
+    "tests/boundary/process/windowsNativeInspectionWorkspace.test.ts",
     "scripts/lib/windows-owned-command.mjs",
     "scripts/run-exclusive-command.mjs",
     "tests/process-global/runnerCancellation.test.ts",
@@ -140,7 +177,11 @@ export const SCOPES = {
     "scripts/windows-capabilities.mjs",
     "scripts/prepack.mjs",
     "scripts/prepare.mjs",
+    "scripts/lib/release-proposal.mjs",
+    "patches/release-please+17.3.0.patch",
+    "tests/boundary/filesystem/releaseProposal.test.ts",
     "scripts/rea.mjs",
+    "scripts/lib/cli-process-environment.mjs",
     "install.sh",
     "src/config/**",
     "src/application/Setup*.ts",
@@ -160,6 +201,7 @@ export const SCOPES = {
     "tests/boundary/providers/native/artifactProvider.extractionCompleteness.test.ts",
     "tests/boundary/filesystem/setupUnavailableProvider.test.ts",
     "tests/boundary/filesystem/windowsNpxRegistration.test.ts",
+    "tests/boundary/filesystem/claudeDesktopSkillUninstallWindows.test.ts",
     "tests/boundary/filesystem/clientConfigurationEnvironment.test.ts",
     "tests/boundary/filesystem/clientConfigurationLayeredEnvironment.test.ts",
     "tests/acceptance/setup/registrationRuntimeEnvironmentCli.test.ts",
@@ -373,6 +415,7 @@ export const SCOPES = {
     "src/contracts/toolContracts.ts",
     "src/contracts/toolEffects.ts",
     "scripts/rea.mjs",
+    "scripts/lib/cli-process-environment.mjs",
     "src/process/**",
     "src/artifacts/SafeOutputTree.ts",
     "scripts/verify/javascript/recovery.mjs",

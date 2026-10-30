@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { readRecordedResponseBody } from "../../domain/analysisView/recordedResponseBody.js";
 import { expect, it } from "vitest";
 import {
   historicalHar,
@@ -10,6 +11,7 @@ import { decodeHarCapture } from "./HarCapture.js";
 
 it.each([
   { timings: null, field: "" },
+  { timings: [], field: "" },
   { timings: { send: 0, receive: 0 }, field: "" },
   ...["send", "wait", "receive"].map((field) => ({
     timings: { send: 0, wait: 0, receive: 0, [field]: -1 },
@@ -93,7 +95,7 @@ it.each(["onContentLoad", "onLoad"])(
   "rejects invalid negative HAR page timing %s",
   (field) => {
     const fixture = historicalHar();
-    for (const value of [-2, -0.5]) {
+    for (const value of [-2, -0.5, null]) {
       const pages = [
         {
           startedDateTime: fixture.log.entries[0]!.startedDateTime,
@@ -187,6 +189,44 @@ it("retains valid timing measurements, optional omission and -1 without inventin
     timings: entry.timings,
   });
 });
+
+it.each([
+  [undefined, "hello", { bodyText: "hello" }],
+  ["base64", "aGVsbG8=", { bodyText: "hello" }],
+  ["hex", "68656c6c6f", { bodyText: null }],
+  ["base64url", "aGVsbG8", { bodyText: null }],
+] as const)(
+  "keeps HAR body encoding %s distinct from decoded text",
+  (encoding, text, expected) => {
+    const fixture = historicalHar();
+    const first = fixture.log.entries[0]!;
+    const content = {
+      size: 5,
+      mimeType: "text/plain",
+      text,
+      ...(encoding === undefined ? {} : { encoding }),
+    };
+    const decoded = decodeHarCapture(
+      JSON.stringify({
+        log: {
+          ...fixture.log,
+          entries: [{ ...first, response: { ...first.response, content } }],
+        },
+      }),
+      [],
+    );
+    const record = decoded.records[0]!;
+    expect(record.reported).toMatchObject({
+      response: {
+        content: {
+          ...(encoding === undefined ? {} : { encoding }),
+          ...(encoding === "base64" ? {} : { text }),
+        },
+      },
+    });
+    expect(readRecordedResponseBody(record, 262_144)).toEqual(expected);
+  },
+);
 
 it("interprets HTTP fields only within HAR entries, preserving document lookalikes", () => {
   const fixture = harWithContainerLookalikes();

@@ -103,7 +103,10 @@ cliTest(
       const ajv = new Ajv2020({ strict: false, validateFormats: false });
       expect(ajv.validate(tool.inputSchema, input)).toBe(true);
       expect(ajv.validate(tool.inputSchema, { left, right })).toBe(false);
-      const mcp = await client.callTool({ name: tool.name, arguments: input });
+      const mcp = await client.callTool(
+        { name: tool.name, arguments: input },
+        { toolDefinition: tool },
+      );
       expect(mcp.isError, JSON.stringify(mcp)).not.toBe(true);
       expect(
         ajv.validate(outputSchema, mcp.structuredContent),
@@ -116,22 +119,31 @@ cliTest(
         left.evidence_id,
         right.evidence_id,
       ]);
-      const retained = await client.callTool({
-        name: tool.name,
-        arguments: {
-          scope: "both",
-          left: { kind: "retained-evidence", evidence_id: left.evidence_id },
-          right: { kind: "retained-evidence", evidence_id: right.evidence_id },
+      const retained = await client.callTool(
+        {
+          name: tool.name,
+          arguments: {
+            scope: "both",
+            left: { kind: "retained-evidence", evidence_id: left.evidence_id },
+            right: {
+              kind: "retained-evidence",
+              evidence_id: right.evidence_id,
+            },
+          },
         },
-      });
+        { toolDefinition: tool },
+      );
       expect(retained.isError).not.toBe(true);
       expect(parseEvidence(retained.structuredContent).evidence_id).toBe(
         mcpEvidence.evidence_id,
       );
-      const invalid = await client.callTool({
-        name: tool.name,
-        arguments: { ...input, scope: "all" },
-      });
+      const invalid = await client.callTool(
+        {
+          name: tool.name,
+          arguments: { ...input, scope: "all" },
+        },
+        { toolDefinition: tool },
+      );
       expect(invalid.isError).toBe(true);
     } finally {
       await client.close();

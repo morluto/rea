@@ -369,6 +369,7 @@ const verifyKuna = async (
       );
       const dossier = await cold.call("analyze_function", {
         procedure: address,
+        detail: "complete",
       });
       assert.deepEqual(
         dossier.structured.relationship_coverage,

@@ -1,4 +1,5 @@
-import { createServer } from "node:http";
+import { createVerifierHttpServer } from "../../../scripts/lib/verifier-http-server.mjs";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { expect } from "vitest";
 import { z } from "zod";
 import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
@@ -34,129 +35,160 @@ type StartupMode =
   | "connect-timeout"
   | "catalog-timeout"
   | "catalog-refused"
+  | "headless-input-mismatch"
+  | "unexpected-worker"
   | "success";
 
+type StartupSupervisorState = {
+  readonly mode: StartupMode;
+  readonly calls: string[];
+  database: string | undefined;
+  input: string | undefined;
+};
+const handleStartupRequest = async (
+  state: StartupSupervisorState,
+  request: IncomingMessage,
+  response: ServerResponse,
+) => {
+  if (request.method !== "POST") {
+    response.writeHead(405).end();
+    return;
+  }
+  let body = "";
+  for await (const chunk of request) body += String(chunk);
+  const rpc = requestSchema.parse(JSON.parse(body));
+  if (rpc.id === undefined) {
+    response.writeHead(202).end();
+    return;
+  }
+  const send = (result: unknown) =>
+    response
+      .writeHead(200, { "Content-Type": "application/json" })
+      .end(JSON.stringify({ jsonrpc: "2.0", id: rpc.id, result }));
+  if (rpc.method === "initialize") {
+    if (state.mode === "connect-timeout") return;
+    send({
+      protocolVersion: rpc.params?.protocolVersion,
+      capabilities: { tools: {} },
+      serverInfo: { name: "ida-startup-fixture", version: "1" },
+    });
+    return;
+  }
+  if (rpc.method === "tools/list") {
+    if (state.mode === "catalog-timeout") return;
+    if (state.mode === "catalog-refused") {
+      response.writeHead(200, { "Content-Type": "application/json" }).end(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: rpc.id,
+          error: { code: -32603, message: "fixture catalog refused" },
+        }),
+      );
+      return;
+    }
+    send({
+      tools: tools
+        .filter(
+          (name) => state.mode !== "missing-profile" || name !== "list_funcs",
+        )
+        .map((name) => ({
+          name,
+          inputSchema: { type: "object", properties: {} },
+        })),
+    });
+    return;
+  }
+  const name = rpc.params?.name;
+  const args = rpc.params?.arguments;
+  if (name === undefined || args === undefined)
+    throw new Error("Unexpected RPC");
+  state.calls.push(name);
+  let result: unknown;
+  if (name === "idb_open") {
+    state.database = z.string().parse(args.preferred_session_id);
+    state.input = z.string().parse(args.input_path);
+    result = {
+      success: true,
+      session: {
+        session_id:
+          state.mode === "unexpected-worker"
+            ? "unexpected-worker"
+            : state.database,
+        input_path: state.input,
+      },
+    };
+  } else if (name === "idb_list")
+    result = {
+      sessions:
+        state.database === undefined
+          ? []
+          : [
+              {
+                session_id: state.database,
+                input_path: state.input,
+                owned: true,
+                backend: "worker",
+                is_active: true,
+              },
+            ],
+    };
+  else if (name === "idb_close") {
+    result = {
+      success: true,
+      session_id: state.database,
+      saved: null,
+      owned: true,
+      backend: "worker",
+    };
+    state.database = undefined;
+  } else if (name === "server_health")
+    result = {
+      status: "ok",
+      input_path:
+        state.mode === "headless-input-mismatch"
+          ? state.input + ".other"
+          : state.input,
+      idb_path: state.input + ".i64",
+      module: "target.elf",
+      imagebase: "0x1000",
+      auto_analysis_ready: true,
+    };
+  else if (name === "lookup_funcs")
+    result = z
+      .array(z.string())
+      .parse(args.queries)
+      .map((query) => ({
+        query,
+        fn: { addr: "0x1000", name: "main", size: "0x20" },
+        error: null,
+      }));
+  else if (name === "decompile")
+    result = {
+      code: "int main(void) { return 42; }",
+      cursor: { done: true },
+    };
+  else throw new Error("Unexpected tool: " + name);
+  send({ content: [{ type: "text", text: JSON.stringify(result) }] });
+};
+
 const createStartupSupervisor = async (mode: StartupMode) => {
-  const calls: string[] = [];
-  let database: string | undefined;
-  let input: string | undefined;
-  const server = createServer(async (request, response) => {
-    if (request.method !== "POST") {
-      response.writeHead(405).end();
-      return;
-    }
-    let body = "";
-    for await (const chunk of request) body += String(chunk);
-    const rpc = requestSchema.parse(JSON.parse(body));
-    if (rpc.id === undefined) {
-      response.writeHead(202).end();
-      return;
-    }
-    const send = (result: unknown) =>
-      response
-        .writeHead(200, { "Content-Type": "application/json" })
-        .end(JSON.stringify({ jsonrpc: "2.0", id: rpc.id, result }));
-    if (rpc.method === "initialize") {
-      if (mode === "connect-timeout") return;
-      send({
-        protocolVersion: rpc.params?.protocolVersion,
-        capabilities: { tools: {} },
-        serverInfo: { name: "ida-startup-fixture", version: "1" },
-      });
-      return;
-    }
-    if (rpc.method === "tools/list") {
-      if (mode === "catalog-timeout") return;
-      if (mode === "catalog-refused") {
-        response.writeHead(200, { "Content-Type": "application/json" }).end(
-          JSON.stringify({
-            jsonrpc: "2.0",
-            id: rpc.id,
-            error: { code: -32603, message: "fixture catalog refused" },
-          }),
-        );
-        return;
-      }
-      send({
-        tools: tools
-          .filter((name) => mode !== "missing-profile" || name !== "list_funcs")
-          .map((name) => ({
-            name,
-            inputSchema: { type: "object", properties: {} },
-          })),
-      });
-      return;
-    }
-    const name = rpc.params?.name;
-    const args = rpc.params?.arguments;
-    if (name === undefined || args === undefined)
-      throw new Error("Unexpected RPC");
-    calls.push(name);
-    let result: unknown;
-    if (name === "idb_open") {
-      database = z.string().parse(args.preferred_session_id);
-      input = z.string().parse(args.input_path);
-      result = {
-        success: true,
-        session: { session_id: database, input_path: input },
-      };
-    } else if (name === "idb_list")
-      result = {
-        sessions:
-          database === undefined
-            ? []
-            : [
-                {
-                  session_id: database,
-                  input_path: input,
-                  owned: true,
-                  backend: "worker",
-                  is_active: true,
-                },
-              ],
-      };
-    else if (name === "idb_close") {
-      result = {
-        success: true,
-        session_id: database,
-        saved: null,
-        owned: true,
-        backend: "worker",
-      };
-      database = undefined;
-    } else if (name === "server_health")
-      result = {
-        status: "ok",
-        input_path: input,
-        idb_path: input + ".i64",
-        module: "target.elf",
-        imagebase: "0x1000",
-        auto_analysis_ready: true,
-      };
-    else if (name === "lookup_funcs")
-      result = z
-        .array(z.string())
-        .parse(args.queries)
-        .map((query) => ({
-          query,
-          fn: { addr: "0x1000", name: "main", size: "0x20" },
-          error: null,
-        }));
-    else if (name === "decompile")
-      result = {
-        code: "int main(void) { return 42; }",
-        cursor: { done: true },
-      };
-    else throw new Error("Unexpected tool: " + name);
-    send({ content: [{ type: "text", text: JSON.stringify(result) }] });
-  });
+  const state: StartupSupervisorState = {
+    mode,
+    calls: [],
+    database: undefined,
+    input: undefined,
+  };
+  const { server, close } = createVerifierHttpServer((request, response) =>
+    handleStartupRequest(state, request, response),
+  );
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   return {
     server,
-    calls,
+    calls: state.calls,
     get database() {
-      return database;
+      return state.database;
     },
+    close,
   };
 };
 
@@ -165,6 +197,8 @@ workspaceCliTest.for([
   "connect-timeout",
   "catalog-timeout",
   "catalog-refused",
+  "headless-input-mismatch",
+  "unexpected-worker",
   "success",
 ] as const)(
   "attributes selected IDA startup to the public analysis: %s",
@@ -208,6 +242,36 @@ workspaceCliTest.for([
         return;
       }
       expect(result.exitCode).toBe(1);
+      if (mode === "headless-input-mismatch" || mode === "unexpected-worker") {
+        expect(calls).not.toContain("decompile");
+        expect(calls).toContain("idb_close");
+        expect(result.json).toMatchObject({
+          code: "unreadable_output",
+          retryable: false,
+          message: expect.stringContaining(
+            mode === "headless-input-mismatch"
+              ? "input identity changed"
+              : "unexpected session",
+          ),
+          remediation: {
+            action: expect.stringContaining(
+              mode === "headless-input-mismatch" ? "reopen" : "session ID",
+            ),
+          },
+          details: {
+            operation: "procedure_pseudo_code",
+            diagnostics: {
+              identity_check:
+                mode === "headless-input-mismatch"
+                  ? "headless_input"
+                  : "worker_session",
+              reason: expect.any(String),
+              recovery: expect.any(String),
+            },
+          },
+        });
+        return;
+      }
       expect(calls).toEqual([]);
       expect(result.json).toMatchObject({
         code: mode.endsWith("timeout")
@@ -239,12 +303,7 @@ workspaceCliTest.for([
           },
         });
     } finally {
-      server.closeAllConnections();
-      await new Promise<void>((resolve, reject) =>
-        server.close((error) =>
-          error === undefined ? resolve() : reject(error),
-        ),
-      );
+      await supervisor.close();
     }
   },
 );

@@ -608,9 +608,6 @@ const verifyManagedTypeSelection = async (
   expect(
     validate({ path, type_names: ["Fixture.Program", "Missing.Type"] }),
   ).toBe(true);
-  expect(
-    validate({ path, type_names: ["Fixture.Program", "Fixture.Program"] }),
-  ).toBe(false);
   const selected = structured(
     await client.callTool({
       name: "inspect_managed_members",
@@ -632,7 +629,9 @@ const verifyManagedTypeSelection = async (
     name: "inspect_managed_members",
     arguments: { path, type_names: ["Fixture.Program", "Fixture.Program"] },
   });
-  expect(repeatedSelection.isError).toBe(true);
+  expect(parseMcpToolError(repeatedSelection).error.code).toBe(
+    "invalid_request",
+  );
   const reselectedOtherTarget = structured(
     await client.callTool({
       name: "inspect_managed_artifact",

@@ -18,7 +18,7 @@ import { parseProcessCaptureEvidence } from "../application/process/ProcessEvide
 import type { RecordUnknownInput } from "../domain/residualUnknown.js";
 import { err, type Result } from "../domain/result.js";
 import { recordDerivedEvidence } from "./recordDerivedEvidence.js";
-import { recordSessionEvidenceSources } from "./sessionEvidence.js";
+import { recordEvidenceSources } from "../application/investigation/recordEvidenceSources.js";
 import { runDerivedOperation } from "./runDerivedOperation.js";
 import { PROCESS_PROVIDER } from "../domain/process/processEvidenceProvider.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
@@ -120,7 +120,7 @@ export const registerProcessComparisonTool = (
           if (!computed.ok)
             return server.delivery.toCallToolResult(computed, contract);
           const { comparison, evidence } = computed.value;
-          const recordedSources = recordSessionEvidenceSources(
+          const recordedSources = recordEvidenceSources(
             (evidence) => session.recordEvidence(evidence),
             [leftRecord, rightRecord],
           );

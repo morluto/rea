@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { parseMcpHttpEndpoint } from "../../../src/config/mcpHttpEndpoint.js";
+import {
+  parseMcpHttpEndpoint,
+  mcpAllowedHostsTextSchema,
+} from "../../../src/config/mcpHttpEndpoint.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { runMcpHttpEntrypoint } from "../../../src/main.js";
 import {
@@ -114,5 +117,113 @@ describe("MCP_HOST and MCP_PORT", () => {
     const projected = JSON.stringify(projectAnalysisError(result.error));
     expect(projected).toContain("MCP_PORT must be a decimal integer");
     expect(projected).not.toContain("65536");
+  });
+});
+
+describe("MCP_ALLOWED_HOSTS", () => {
+  it.each([
+    "not a host",
+    "127.0.0.1@evil.example",
+    "rea.lan/path",
+    "rea.lan\\path",
+    "rea.lan?query",
+    "rea.lan#fragment",
+    "rea.lan:80",
+    "https://rea.lan",
+    "rea.\tlan",
+    "rea.%6Can",
+  ])(
+    "rejects malformed hostname %j at both configuration inputs",
+    (invalidHost) => {
+      const endpoint = parseMcpHttpEndpoint({
+        MCP_HOST: "0.0.0.0",
+        MCP_ALLOWED_HOSTS: invalidHost,
+      });
+      expect(endpoint.ok).toBe(false);
+      if (endpoint.ok) throw new Error("Expected a configuration refusal");
+      expect(endpoint.error.settings.map(({ setting }) => setting)).toEqual([
+        "MCP_ALLOWED_HOSTS",
+      ]);
+      expect(
+        parseMcpHttpArguments(["--http", "--allowed-hosts", invalidHost]),
+      ).toMatchObject({
+        ok: false,
+        message: expect.stringContaining("without URL components or ports"),
+      });
+    },
+  );
+
+  it("passes canonical host identities downstream and deduplicates after normalization", () => {
+    expect(
+      parseMcpHttpEndpoint({
+        MCP_ALLOWED_HOSTS:
+          "REA.LAN,rea.lan,[0:0:0:0:0:0:0:1],::1,bücher.example",
+      }),
+    ).toEqual({
+      ok: true,
+      value: {
+        host: "127.0.0.1",
+        port: 0,
+        allowedHosts: ["rea.lan", "[::1]", "xn--bcher-kva.example"],
+      },
+    });
+  });
+
+  it("parses comma-separated allowlist text and lets an explicit value win", () => {
+    expect(
+      parseMcpHttpEndpoint({ MCP_ALLOWED_HOSTS: "rea.lan, 10.0.0.5" }),
+    ).toEqual({
+      ok: true,
+      value: {
+        host: "127.0.0.1",
+        port: 0,
+        allowedHosts: ["rea.lan", "10.0.0.5"],
+      },
+    });
+    expect(
+      parseMcpHttpEndpoint(
+        { MCP_ALLOWED_HOSTS: "env.example" },
+        { allowedHosts: mcpAllowedHostsTextSchema.parse("flag.example") },
+      ),
+    ).toEqual({
+      ok: true,
+      value: { host: "127.0.0.1", port: 0, allowedHosts: ["flag.example"] },
+    });
+  });
+
+  it("rejects an empty or blank allowlist by setting name without echoing it", () => {
+    for (const text of ["", "  ", "rea.lan,,10.0.0.5"]) {
+      const result = parseMcpHttpEndpoint({ MCP_ALLOWED_HOSTS: text });
+      expect(result.ok).toBe(false);
+      if (result.ok) continue;
+      expect(result.error.settings.map(({ setting }) => setting)).toEqual([
+        "MCP_ALLOWED_HOSTS",
+      ]);
+      expect(JSON.stringify(projectAnalysisError(result.error))).toContain(
+        "MCP_ALLOWED_HOSTS",
+      );
+    }
+  });
+
+  it("accepts --allowed-hosts with either flag spelling and rejects empty entries", () => {
+    expect(
+      parseMcpHttpArguments(["--http", "--allowed-hosts=rea.lan, 10.0.0.5"]),
+    ).toEqual({ ok: true, allowedHosts: ["rea.lan", "10.0.0.5"] });
+    expect(
+      parseMcpHttpArguments(["--http", "--allowed-hosts", "rea.lan"]),
+    ).toEqual({ ok: true, allowedHosts: ["rea.lan"] });
+    for (const text of ["", " ", "rea.lan,,10.0.0.5"])
+      expect(
+        parseMcpHttpArguments(["--http", `--allowed-hosts=${text}`]),
+      ).toMatchObject({
+        ok: false,
+        message: expect.stringContaining("--allowed-hosts"),
+      });
+  });
+
+  it("lists --allowed-hosts and MCP_ALLOWED_HOSTS in the rendered help", () => {
+    const help = renderMcpHttpHelp();
+    expect(help).toContain("--allowed-hosts");
+    expect(help).toContain("MCP_ALLOWED_HOSTS");
   });
 });

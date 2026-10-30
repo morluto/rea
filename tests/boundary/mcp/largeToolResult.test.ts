@@ -22,18 +22,18 @@ import {
 import { ok } from "../../../src/domain/result.js";
 import { silentLogger } from "../../../src/logger.js";
 import { registerOfficialTools } from "../../../src/server/registerOfficialTools.js";
-import { ToolResultDelivery } from "../../../src/server/toolResult.js";
+import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { mcpResponseOverflowProjection } from "../../../src/server/ToolResultDelivery.js";
 import { MINIMUM_RESPONSE_BYTES } from "../../../src/config/mcpResponseBudget.js";
 import {
   MCP_RESULT_STRING_LIMIT,
   NODE_MAX_STRING_LENGTH,
+  encodeToolResult,
 } from "../../../src/server/toolResultEncoding.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
-import { encodeToolResult } from "../../../src/server/toolResultEncoding.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 
-const delivery = new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
+const delivery = createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
 
 const provider = { id: "fixture", name: "Fixture", version: "1" };
 
@@ -167,7 +167,7 @@ describe("MCP response budget recovery", () => {
   });
 
   it("keeps summary discovery when a complete evidence bundle exceeds the budget", () => {
-    const tight = new ToolResultDelivery(2048);
+    const tight = createToolResultDelivery(2048);
     const delivered = tight.toCallToolResult(
       ok({ records: "x".repeat(1500) }),
       toolContract("get_evidence_bundle"),
@@ -186,7 +186,7 @@ describe("MCP response budget recovery", () => {
   });
 
   it("keeps export advice when the evidence summary itself exceeds the budget", () => {
-    const tight = new ToolResultDelivery(2048);
+    const tight = createToolResultDelivery(2048);
     const delivered = tight.toCallToolResult(
       ok({
         kind: "evidence-bundle-summary",

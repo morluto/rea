@@ -43,6 +43,7 @@ import { ProviderSelectionError } from "./providerSelectionError.js";
 import { UnknownRegistryError } from "./unknownRegistryError.js";
 import { providerRetryAction } from "./providerOperationHealth.js";
 import {
+  primaryAnalysisError,
   resolvedAnalysisError,
   type AnalysisError,
   type AnalysisErrorTag,
@@ -74,16 +75,35 @@ const projectError = (
   const capturedOutput = composed.capturedOutput ?? error.capturedOutput;
   const partialObservation =
     composed.partialObservation ?? error.partialObservation;
+  // A finalizer can add a report above the semantic primary, including while
+  // its cleanup is pending or beneath another cleanup composition.
+  let cleanupReport = composed.cleanupReport;
+  for (
+    let owner = composed.cleanupPrimary;
+    cleanupReport === undefined && owner !== undefined;
+    owner = owner.cleanupPrimary
+  )
+    cleanupReport = owner.cleanupReport;
   assertKnownAnalysisErrorTag(error._tag);
-  const underlyingCode = underlyingErrorCode(error);
+  const primary = primaryAnalysisError(error);
+  assertKnownAnalysisErrorTag(primary._tag);
+  const underlyingCode = underlyingErrorCode(primary);
   const code = error.cleanupIncomplete ? "cleanup_incomplete" : underlyingCode;
-  const primaryDetails = errorDetails(error);
+  const primaryDetails = errorDetails(primary);
   const details = {
     ...primaryDetails,
-    ...(composed === error || composed.cleanupReport === undefined
+    ...(primary.limit === undefined ? {} : { limit: { ...primary.limit } }),
+    ...(cleanupReport === undefined
       ? {}
-      : { cleanup_report: jsonValueSchema.parse(composed.cleanupReport) }),
-    ...(diagnostics === undefined ? {} : { diagnostics }),
+      : { cleanup_report: jsonValueSchema.parse(cleanupReport) }),
+    ...(diagnostics === undefined
+      ? {}
+      : {
+          diagnostics,
+          ...(primaryDetails?.diagnostics === undefined
+            ? {}
+            : { provider_diagnostics: primaryDetails.diagnostics }),
+        }),
     ...(composed === error || composed.diagnostics === undefined
       ? {}
       : { cleanup_history: composed.diagnostics }),
@@ -200,7 +220,6 @@ const BROWSER_ERROR_CODES: Readonly<
   cleanup_failed: "execution_failure",
   cancelled: "cancelled",
   timeout: "provider_timeout",
-  secret_unavailable: "unreadable_output",
 };
 
 const artifactOperationCode = (
@@ -217,6 +236,8 @@ const evidenceFileCode = (
   reason: EvidenceFileError["reason"],
 ): AnalysisErrorProjection["code"] => {
   if (reason === "invalid-json") return "evidence_integrity_mismatch";
+  if (reason === "path-limit" || reason === "storage-limit")
+    return "resource_constraint";
   // A missing, non-file or already-existing path is the caller's selection.
   if (reason === "io") return "execution_failure";
   return "invalid_request";
@@ -225,8 +246,9 @@ const evidenceFileCode = (
 const unknownRegistryCode = (
   reason: UnknownRegistryError["reason"],
 ): AnalysisErrorProjection["code"] => {
-  if (reason === "revision-conflict" || reason === "already-exists")
-    return "revision_conflict";
+  if (reason === "revision-conflict") return "revision_conflict";
+  if (reason === "already-exists" || reason === "constraint")
+    return "invalid_request";
   if (reason === "limit") return "truncated";
   if (reason === "integrity") return "evidence_integrity_mismatch";
   return "execution_failure";
@@ -348,6 +370,7 @@ const requestErrorDetails = (
         reason: issue.reason,
         ...(issue.message === undefined ? {} : { message: issue.message }),
         ...(issue.expected === undefined ? {} : { expected: issue.expected }),
+        ...(issue.observed === undefined ? {} : { observed: issue.observed }),
         ...(issue.minimum === undefined ? {} : { minimum: issue.minimum }),
         ...(issue.maximum === undefined ? {} : { maximum: issue.maximum }),
       })),
@@ -374,6 +397,7 @@ const artifactStateErrorDetails = (
       reason: error.reason,
       ...(error.reason === "limit" ? { truncated: true } : {}),
       ...(error.detail === undefined ? {} : { detail: error.detail }),
+      ...(error.boundary === undefined ? {} : { boundary: error.boundary }),
       ...(error.admission === undefined
         ? {}
         : {
@@ -383,11 +407,21 @@ const artifactStateErrorDetails = (
             setting: "REA_ASAR_MAX_HEADER_BYTES",
           }),
     };
-  if (error instanceof UnknownRegistryError) return { reason: error.reason };
+  if (error instanceof UnknownRegistryError)
+    return {
+      reason: error.reason,
+      ...(error.constraint === undefined
+        ? {}
+        : { constraint: error.constraint }),
+    };
   if (error instanceof EvidenceFileError)
     return {
       operation: error.operation,
       reason: error.reason,
+      ...(error.reason === "path-limit" ? { boundary: "filesystem-path" } : {}),
+      ...(error.systemCode === undefined
+        ? {}
+        : { system_code: error.systemCode }),
       ...(error.path === undefined ? {} : { path: error.path }),
       ...(error.contentIssues === undefined
         ? {}
@@ -402,7 +436,9 @@ const artifactStateErrorDetails = (
         : {
             published: true,
             bytes: error.published.bytes,
-            published_path: error.published.path,
+            ...(error.published.path === undefined
+              ? {}
+              : { published_path: error.published.path }),
           }),
     };
   return undefined;
@@ -425,6 +461,7 @@ const providerErrorDetails = (
       candidate_ids: [...error.candidateIds],
       rejections: error.rejections.map((rejection) => ({
         provider_id: rejection.providerId,
+        origin: rejection.origin,
         code: rejection.code,
         reason: rejection.reason,
         diagnostics: rejection.diagnostics,

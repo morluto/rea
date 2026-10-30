@@ -14,6 +14,7 @@ import { expect, it, onTestFinished } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { GENERATED_MCP_TOOL_CATALOG } from "../../fixtures/mcpToolCatalog.js";
 import { PROMPT_CONTRACTS } from "../../../src/contracts/promptContracts.js";
+import { TOOL_FAMILY_DEFINITIONS } from "../../../src/contracts/toolFamilies.js";
 import { evidenceSchema } from "../../../src/domain/evidence.js";
 import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
 import { SERVER_START_FAILED } from "../../../src/main/messages.js";
@@ -217,6 +218,29 @@ it.each([
     expect(stderr()).toBe("");
   },
 );
+
+it("composes a scoped registration instead of serving the recorded catalog", async () => {
+  const { client, stderr } = await connect("legacy", {
+    REA_MCP_TOOL_FAMILIES: "session",
+  });
+  const advertised = (await client.listTools()).tools
+    .map(({ name }) => name)
+    .sort();
+  expect(advertised).toEqual(
+    TOOL_FAMILY_DEFINITIONS.filter(({ id }) => id === "session")
+      .flatMap(({ contracts }) => contracts.map(({ name }) => name))
+      .sort(),
+  );
+  expect(advertised).not.toContain("inspect_macho");
+  // The recorded catalog cannot verify a scoped identity, so the scope must
+  // serve real calls instead of failing every one after materialization.
+  const status = await client.callTool({
+    name: "binary_session",
+    arguments: {},
+  });
+  expect(status.isError).not.toBe(true);
+  expect(stderr()).toBe("");
+});
 
 it("preserves connection creation time across deferred materialization", async () => {
   const directory = await createTestTempDirectory("rea-mcp-started-at-");
@@ -619,8 +643,13 @@ it("runs the real static artifact workflow after deferred initialization", async
 const copyCompiledPackage = async (prefix: string): Promise<string> => {
   const directory = await createTestTempDirectory(prefix);
   await cp(resolve("dist"), join(directory, "dist"), { recursive: true });
-  await mkdir(join(directory, "scripts"));
+  await mkdir(join(directory, "scripts/lib"), { recursive: true });
   await cp(resolve("scripts/rea.mjs"), join(directory, "scripts/rea.mjs"));
+  // The launcher imports its process-environment owner, as the package ships it.
+  await cp(
+    resolve("scripts/lib/cli-process-environment.mjs"),
+    join(directory, "scripts/lib/cli-process-environment.mjs"),
+  );
   await cp(resolve("package.json"), join(directory, "package.json"));
   await symlink(
     resolve("node_modules"),
@@ -793,4 +822,78 @@ it("rejects a corrupted build-owned catalog before starting the connection", asy
   expect(child.status).toBe(1);
   expect(child.stdout).toBe("");
   expect(child.stderr).toBe(`${SERVER_START_FAILED}\n`);
+});
+
+it("keeps the outer SDK as the only raw-input owner during deferred materialization", () => {
+  const child = spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "--eval",
+      `
+import assert from "node:assert/strict";
+import { PassThrough } from "node:stream";
+import { serveStdio, StdioServerTransport } from "@modelcontextprotocol/server/stdio";
+import { runDeferred } from "./dist/main/deferredRuntime.js";
+import { parseConfig } from "./dist/config/parseConfig.js";
+const parsed = parseConfig({ REA_LOG_LEVEL: "silent" });
+assert.equal(parsed.ok, true);
+const input = new PassThrough();
+const output = new PassThrough();
+const received = [];
+input.on("data", chunk => received.push(Buffer.from(chunk)));
+const writes = [];
+const responses = [];
+let pendingOutput = "";
+output.on("data", chunk => {
+  pendingOutput += chunk.toString("utf8");
+  for (;;) {
+    const boundary = pendingOutput.indexOf("\\n");
+    if (boundary < 0) break;
+    responses.push(JSON.parse(pendingOutput.slice(0, boundary)));
+    pendingOutput = pendingOutput.slice(boundary + 1);
+  }
+});
+const until = async (predicate) => {
+  const deadline = Date.now() + 10000;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error("Deferred SDK control did not settle");
+    await new Promise(resolve => setTimeout(resolve, 5));
+  }
+};
+let entered = false;
+let release;
+const held = new Promise(resolve => { release = resolve; });
+let close;
+const result = await runDeferred({
+  env: { REA_LOG_LEVEL: "silent" }, stdin: input,
+  serve: (factory, options) => serveStdio(factory, { ...options, transport: new StdioServerTransport(input, output) }),
+  loadOptionalProviders: async () => { entered = true; await held; return {}; },
+  captureShutdown: owned => { close = owned; },
+  registerShutdown: () => () => {}, writeStderr: text => { throw new Error(text); }, setExitCode: () => {},
+}, parsed.value);
+assert.equal(result, 0);
+const send = value => { const bytes = Buffer.from(JSON.stringify(value) + "\\n"); writes.push(bytes); input.write(bytes); };
+try {
+  send({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "deferred-input-owner", version: "1" } } });
+  await until(() => responses.some(value => value.id === 1));
+  send({ jsonrpc: "2.0", method: "notifications/initialized" });
+  send({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "list_unknowns", arguments: {} } });
+  await until(() => entered);
+  send({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "list_unknowns", arguments: { limit: 1 } } });
+  release();
+  await until(() => responses.some(value => value.id === 2) && responses.some(value => value.id === 3));
+  await close();
+  assert.deepEqual(Buffer.concat(received), Buffer.concat(writes));
+  assert.equal(responses.filter(value => value.id === 2).length, 1);
+  assert.equal(responses.filter(value => value.id === 3).length, 1);
+  console.log("ONE_INPUT_OWNER");
+} finally { release(); await close?.(); input.destroy(); output.destroy(); }
+`,
+    ],
+    { cwd: process.cwd(), encoding: "utf8", timeout: 15000 },
+  );
+  expect(child.error).toBeUndefined();
+  expect(child.status, child.stderr).toBe(0);
+  expect(child.stdout).toBe("ONE_INPUT_OWNER\n");
 });

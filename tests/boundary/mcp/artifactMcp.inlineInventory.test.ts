@@ -1,4 +1,5 @@
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../../scripts/lib/mcp-verification-environment.mjs";
 import { readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -20,7 +21,7 @@ import {
 } from "../../../src/domain/evidence.js";
 import { artifactInspectionResultSchema } from "../../../src/domain/artifactInspection.js";
 import { artifactInventoryResultSchema } from "../../../src/domain/artifactGraph.js";
-import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
+
 import {
   analysisViewResultSchema,
   type AnalysisViewResult,
@@ -350,7 +351,11 @@ it.each(["full", "compact"] as const)(
     const server = createServer(
       { kind: "session", session },
       {
-        environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: profile },
+        environment: {
+          ...process.env,
+          ...INLINE_EVIDENCE_MCP_ENVIRONMENT,
+          REA_MCP_INPUT_SCHEMA_PROFILE: profile,
+        },
       },
     );
     const client = new Client({ name: "artifact-inline-test", version: "1" });
@@ -446,10 +451,10 @@ it.each(["full", "compact"] as const)(
         {
           operation: "inventory_artifact",
           parameters: {},
-          result: jsonValueSchema.parse({
+          result: {
             ...graph,
             occurrences: graph.occurrences.slice(0, 1),
-          }),
+          },
         },
       );
       const partialReply = await client.callTool({

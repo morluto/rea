@@ -24,7 +24,8 @@ specific unsupported constraint rather than guessing a compatible profile.
 
 A second admission covers recordless legacy firmware images
 ([#1620](https://github.com/morluto/rea/issues/1620)): ELF32 `ET_EXEC` headers
-declaring `EF_MIPS_ARCH_32` or `EF_MIPS_ARCH_32R2` with an unspecified ABI
+declaring `EF_MIPS_ARCH_1` (MIPS-I, a zero ISA field), `EF_MIPS_ARCH_32` or
+`EF_MIPS_ARCH_32R2` with an unspecified ABI
 field, `EF_MIPS_ABI2` clear, and an _inspected_ absence of any ABI flags
 record (a target whose record was merely not observed stays refused). For
 these images o32 is an analysis assumption derived from the ELF32/ET_EXEC
@@ -40,9 +41,17 @@ refusal. A header that declares an ABI field but carries no record is still
 refused. Two further boundaries apply: an inspection that could not examine
 every ABI declaration source (for example a carved ELF whose section table
 extends past the captured bytes without a program-header record) does not
-establish the recordless admission, and an `EF_MIPS_ARCH_32` header that
-_declares_ an ABI is refused rather than relabeled, because the declared-ABI
-lane is verified for `EF_MIPS_ARCH_32R2` headers only.
+establish the recordless admission, and an `EF_MIPS_ARCH_1` or
+`EF_MIPS_ARCH_32` header that _declares_ an ABI is refused rather than
+relabeled, because the declared-ABI lane is verified for
+`EF_MIPS_ARCH_32R2` headers only. The recordless MIPS-I lane pins the same
+generic 32-bit language, which also decodes later MIPS32 instructions; the
+session states that conformance to the MIPS-I subset is not established from
+the header alone, and names the committed language when the caller selected a
+variant instead of the pin. A committed profile is bound to the current
+target's lane and captured ELF metadata before startup; reusing a profile
+resolved for the other recordless lane is refused rather than exporting
+attribution for a target it did not describe.
 
 Explicit `EF_MIPS_FP64` and `EF_MIPS_NAN2008` declarations are refused. Their
 absence is insufficient: Clang can emit identical `e_flags` for FP32, FP64 and

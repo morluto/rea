@@ -1,3 +1,4 @@
+import { EvmAdmissionError } from "./EvmAdmissionError.js";
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { z } from "zod";
@@ -5,7 +6,7 @@ import {
   decodeEvmBytecodeCarrier,
   EvmCarrierFailure,
 } from "./EvmBytecodeCarrier.js";
-import { projectEvmoleInterface } from "./EvmoleInterfaceAdapter.js";
+import { evmoleInterfaceReplySchema } from "./EvmoleInterfaceAdapter.js";
 import { inspectSolidityMetadata } from "./SolidityMetadata.js";
 import {
   EVM_INTERFACE_LIMITS,
@@ -23,7 +24,7 @@ class UnsupportedContainer extends Error {}
 const main = async (): Promise<void> => {
   const requestPath = process.argv[2];
   if (requestPath === undefined)
-    throw new Error("Owned worker request path missing.");
+    throw new EvmAdmissionError("request_path_missing");
   const request = requestSchema.parse(
     JSON.parse(await readFile(requestPath, "utf8")),
   );
@@ -51,7 +52,7 @@ const main = async (): Promise<void> => {
         new URL(import.meta.resolve("evmole/evmole_bg.wasm")),
       ),
     });
-    const inferred = projectEvmoleInterface(
+    const raw = evmoleInterfaceReplySchema.parse(
       engine.contractInfo(Buffer.from(bytes).toString("hex"), {
         selectors: true,
         arguments: true,
@@ -67,7 +68,7 @@ const main = async (): Promise<void> => {
         hex: Buffer.from(bytes).toString("hex"),
         metadata: inspectSolidityMetadata(bytes),
       },
-      raw: inferred.raw,
+      raw,
     };
   } catch (cause: unknown) {
     reply = {

@@ -1,5 +1,35 @@
 import { expect, it } from "vitest";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  copyArtifactEntry,
+  sameArtifactEntry,
+  type ArtifactEntry,
+} from "./ArtifactReader.js";
+
+it("preserves an observed empty source key separately from missing or changed keys", () => {
+  const entry: ArtifactEntry = {
+    path: "__node_sea__/assets/0",
+    sourcePath: "",
+    kind: "file",
+    declaredSize: 5,
+    compressedSize: null,
+    executable: false,
+    encrypted: false,
+    byteOffset: 64,
+    declaredIntegrity: null,
+    unpacked: false,
+    limitations: [],
+    adapterKey: "asset:0",
+  };
+  const copied = copyArtifactEntry(entry);
+  expect(copied.sourcePath).toBe("");
+  expect(sameArtifactEntry(copied, entry)).toBe(true);
+  expect(sameArtifactEntry({ ...copied, sourcePath: "changed" }, entry)).toBe(
+    false,
+  );
+  const { sourcePath: _sourcePath, ...withoutSource } = copied;
+  expect(sameArtifactEntry(withoutSource, entry)).toBe(false);
+});
 
 it.each([
   undefined,

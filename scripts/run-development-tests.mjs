@@ -61,8 +61,10 @@ try {
         process.execPath,
         resolve("scripts/run-turbo.mjs"),
         "run",
-        ...(plan.needsBuild ? ["artifacts:skills"] : []),
-        ...plan.artifactTasks,
+        ...new Set([
+          ...(plan.needsBuild ? ["artifacts:skills"] : []),
+          ...plan.artifactTasks,
+        ]),
       ]);
       if (prepared.code !== 0) process.exitCode = prepared.code;
     }

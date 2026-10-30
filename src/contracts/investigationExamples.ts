@@ -1,5 +1,4 @@
 import { createEvidence } from "../domain/evidence.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
 import { FUNCTION_COMPARISON_PROVIDER } from "../domain/comparisonEvidenceIdentity.js";
 import { compareProcessCaptureEvidence } from "../domain/process/processComparisonEvidence.js";
 import { PROCESS_PROVIDER } from "../domain/process/processEvidenceProvider.js";
@@ -31,7 +30,7 @@ export const FUNCTION_COMPARISON_EVIDENCE = createEvidence(
       left_evidence_id: left.value.evidence.evidence_id,
       right_evidence_id: right.value.evidence.evidence_id,
     },
-    result: jsonValueSchema.parse(comparison),
+    result: comparison,
     confidence: "derived",
     authority: "analyst-inference",
     limitations: comparison.limitations,
@@ -48,7 +47,7 @@ const captureEvidence = (scenario: string) =>
     predicateType: "rea.process-capture",
     operation: "capture_process_scenario",
     parameters: { scenario },
-    result: jsonValueSchema.parse(capture),
+    result: capture,
     confidence: "observed",
     authority: "controlled-replay",
     environment: {

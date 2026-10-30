@@ -1,4 +1,5 @@
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { err, ok, type Result } from "../../domain/result.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import {
   AnalysisCancelledError,
@@ -25,43 +26,27 @@ import {
   parseProcessCaptureEvidence,
 } from "./ProcessEvidence.js";
 import { readJsonFile } from "../JsonFiles.js";
-import { RegularFileCleanupFailure } from "../../filesystem/OwnedRegularFile.js";
+import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 
 /** Safe process-command failure returned to the CLI adapter. */
 export interface ProcessCliErrorOutput extends AnalysisErrorProjection {
   readonly error: "Process command failed";
 }
 
-/** Identify the process workflow's typed diagnostic result for CLI exit status. */
-export const isProcessCliFailure = (
-  value: unknown,
-): value is ProcessCliErrorOutput =>
-  typeof value === "object" &&
-  value !== null &&
-  "error" in value &&
-  value.error === "Process command failed" &&
-  "category" in value &&
-  typeof value.category === "string" &&
-  "message" in value &&
-  typeof value.message === "string" &&
-  "code" in value &&
-  typeof value.code === "string" &&
-  "retryable" in value &&
-  typeof value.retryable === "boolean" &&
-  "remediation" in value &&
-  typeof value.remediation === "object" &&
-  value.remediation !== null &&
-  "action" in value.remediation &&
-  typeof value.remediation.action === "string";
-
 /** Capture one JSON scenario through the shared process harness and Evidence contract. */
 export const captureProcessScenarioFile = async (
   path: string,
   environment: Readonly<Record<string, string | undefined>> = process.env,
   signal?: AbortSignal,
-) => {
-  try {
-    const input = await readJson(path, "capture_process_scenario", signal);
+) =>
+  withProcessInputResources("capture_process_scenario", async (resources) => {
+    const input = await readJson(
+      path,
+      "capture_process_scenario",
+      signal,
+      resources,
+    );
     const parsed = processScenarioSchema.safeParse(input);
     if (!parsed.success)
       throw analysisInputErrorFromIssues(
@@ -104,11 +89,7 @@ export const captureProcessScenarioFile = async (
     }
     if (!captured.ok) return cliAnalysisError(captured.error);
     return createProcessCaptureEvidence(parsed.data, captured.value);
-  } catch (cause: unknown) {
-    if (cause instanceof RegularFileCleanupFailure) throw cause;
-    return projectProcessCliError(cause, "capture_process_scenario");
-  }
-};
+  });
 
 /** Compare two capture Evidence files and emit derived comparison Evidence. */
 export const compareProcessEvidenceFiles = async (
@@ -116,32 +97,33 @@ export const compareProcessEvidenceFiles = async (
   rightPath: string,
   traceSpecPath?: string,
   signal?: AbortSignal,
-) => {
-  try {
+) =>
+  withProcessInputResources("compare_process_captures", async (resources) => {
     const left = parseCaptureEvidence(
-      await readJson(leftPath, "compare_process_captures", signal),
+      await readJson(leftPath, "compare_process_captures", signal, resources),
       "left",
     );
     const right = parseCaptureEvidence(
-      await readJson(rightPath, "compare_process_captures", signal),
+      await readJson(rightPath, "compare_process_captures", signal, resources),
       "right",
     );
     const traceSpecification =
       traceSpecPath === undefined
         ? undefined
         : parseTraceSpecification(
-            await readJson(traceSpecPath, "compare_process_captures", signal),
+            await readJson(
+              traceSpecPath,
+              "compare_process_captures",
+              signal,
+              resources,
+            ),
           );
     return compareProcessCaptureEvidence(
       left,
       right,
       traceSpecification === undefined ? {} : { traceSpecification },
     ).evidence;
-  } catch (cause: unknown) {
-    if (cause instanceof RegularFileCleanupFailure) throw cause;
-    return projectProcessCliError(cause, "compare_process_captures");
-  }
-};
+  });
 
 const parseCaptureEvidence = (input: unknown, side: "left" | "right") => {
   const parsed = parseProcessCaptureEvidence(input);
@@ -200,11 +182,12 @@ const invalidCaptureEvidence = (cause: unknown, side: "left" | "right") =>
 const readJson = async (
   path: string,
   operation: "capture_process_scenario" | "compare_process_captures",
-  signal?: AbortSignal,
+  signal: AbortSignal | undefined,
+  resources: ArtifactResourceScope,
 ): Promise<unknown> => {
   if (signal?.aborted)
     throw new AnalysisCancelledError(operation, { cause: signal.reason });
-  const loaded = await readJsonFile(path, signal);
+  const loaded = await readJsonFile(path, signal, resources, operation);
   if (!loaded.ok && loaded.error instanceof AnalysisCancelledError)
     throw new AnalysisCancelledError(operation, { cause: loaded.error.cause });
   if (loaded.ok) {
@@ -219,7 +202,9 @@ const readJson = async (
     operation,
     loaded.error.reason === "invalid-json"
       ? `Process input file is not valid UTF-8 JSON: ${path} (${detail}). Repair the file, then try again.`
-      : `Process input file could not be read: ${path} (${detail}). Check the reported filesystem constraint and retry.`,
+      : loaded.error.reason === "symlink-traversal"
+        ? `Process input file could not be read: ${path} (${detail}). Repair the symbolic-link chain or select another file.`
+        : `Process input file could not be read: ${path} (${detail}). Check the reported filesystem constraint and retry.`,
     ["input_file"],
     "invalid_value",
   );
@@ -261,4 +246,35 @@ const projectProcessCliError = (
       remediationAction: PROCESS_UNEXPECTED_FAILURE_REMEDIATION,
     }),
   );
+};
+
+/** One invocation owns every input descriptor through final cleanup and retry. */
+const withProcessInputResources = async <Value>(
+  operation: "capture_process_scenario" | "compare_process_captures",
+  run: (resources: ArtifactResourceScope) => Promise<Value>,
+): Promise<Value | ProcessCliErrorOutput> => {
+  const resources = new ArtifactResourceScope();
+  let outcome: Result<Value, unknown>;
+  try {
+    outcome = ok(await run(resources));
+  } catch (cause: unknown) {
+    outcome = err(cause);
+  }
+  try {
+    await resources.close();
+  } catch (cause: unknown) {
+    const cleanup = ArtifactReaderFailure.cleanupObservation(
+      cause,
+      resources.cleanupResources,
+    );
+    throw ArtifactReaderFailure.withCleanup(
+      outcome.ok ? cause : outcome.error,
+      cleanup,
+      undefined,
+      cause instanceof ArtifactReaderFailure ? cause.cleanupLeases : undefined,
+    );
+  }
+  return outcome.ok
+    ? outcome.value
+    : projectProcessCliError(outcome.error, operation);
 };

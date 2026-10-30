@@ -184,3 +184,26 @@ describe("NIBArchive decoder", () => {
     );
   });
 });
+
+it("retains repeated serialized collection fields in source order", () => {
+  const decoded = decodeNibArchive(
+    encodeArchive({
+      classes: ["NSArray", "NSButton"],
+      objects: [
+        {
+          classIndex: 0,
+          values: [
+            ["UINibEncoderEmptyKey", { ref: 2 }],
+            ["UINibEncoderEmptyKey", { ref: 1 }],
+          ],
+        },
+        { classIndex: 1, values: {} },
+        { classIndex: 1, values: {} },
+      ],
+    }),
+  );
+  expect(decoded.objects[0]?.values).toEqual({});
+  expect(decoded.objects[0]?.repeated_values).toEqual({
+    UINibEncoderEmptyKey: [{ $nib_object_ref: 2 }, { $nib_object_ref: 1 }],
+  });
+});

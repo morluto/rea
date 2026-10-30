@@ -1,7 +1,4 @@
-import {
-  investigationEvidenceBundle,
-  resolveInvestigationEvidenceClosure,
-} from "../application/investigation/InvestigationEvidence.js";
+import { resolveInvestigationEvidenceClosure } from "../application/investigation/InvestigationEvidence.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
@@ -9,7 +6,6 @@ import { toolContract } from "../contracts/toolContracts.js";
 import { buildCallPath } from "../domain/callPath.js";
 import { findChangedBehavior } from "../domain/changedBehavior.js";
 import { createEvidence } from "../domain/evidence.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
 import { correlateStaticAndRuntime } from "../domain/staticRuntimeCorrelation.js";
 import {
   comparisonClosure,
@@ -91,7 +87,7 @@ const registerChangedBehavior = (
           parameters: {
             comparison_evidence_ids: [...comparisonEvidenceIds],
           },
-          result: jsonValueSchema.parse(result),
+          result,
           confidence: "derived",
           authority: "analyst-inference",
           limitations: result.limitations,
@@ -164,7 +160,7 @@ const registerCallPath = (
               start: input.start.address,
               goal: input.goal.address,
             },
-            result: jsonValueSchema.parse(result),
+            result,
             confidence: "derived",
             authority: "analyst-inference",
             limitations: result.limitations,
@@ -239,7 +235,7 @@ const registerStaticRuntime = (
             parameters: {
               mapping_count: input.mappings.length,
             },
-            result: jsonValueSchema.parse(result),
+            result,
             confidence: "inferred",
             authority: "analyst-inference",
             limitations: result.limitations,
@@ -289,7 +285,7 @@ const registerReconstruction = (
         contract.name,
         context.mcpReq.signal,
         async () => {
-          const owned = investigationEvidenceBundle(session);
+          const owned = session.immutableEvidenceBundle();
           const computed = await runDerivedOperation(
             context,
             contract.name,
@@ -314,7 +310,7 @@ const registerReconstruction = (
                 ({ claim_id: id }) => id,
               ),
             },
-            result: jsonValueSchema.parse(result),
+            result,
             confidence: "derived",
             authority: "analyst-inference",
             limitations: result.limitations,

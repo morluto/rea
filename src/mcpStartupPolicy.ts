@@ -1,4 +1,4 @@
-import type { AnalysisProviderSelector } from "./contracts/providerSelection.js";
+import type { AnalysisProviderSelector } from "./domain/providerSelection.js";
 import {
   mcpPhaseBudgetRecovery,
   type McpPhaseBudget,
@@ -24,6 +24,8 @@ export const mcpDoctorDeadlineRecovery = (budget: McpPhaseBudget): string =>
 export interface McpToolTimeoutInputs {
   readonly analysisProvider: AnalysisProviderSelector;
   readonly ghidraStartupTimeoutMs: number;
+  /** One configured Ghidra decompile allowance; bulk cardinality is unknown here. */
+  readonly ghidraDecompileTimeoutMs?: number;
   readonly hopperStartupTimeoutMs: number;
   readonly jebMcpTimeoutMs?: number;
   readonly providerRequestTimeoutMs?: number;
@@ -34,15 +36,15 @@ export const mcpProviderDeadlineAllowanceMs = (
   inputs: McpToolTimeoutInputs,
 ): number => {
   const selectedProvider = inputs.analysisProvider;
+  // A bounded decompile can run right after a cold import in the same call.
+  const ghidraAllowance =
+    inputs.ghidraStartupTimeoutMs + (inputs.ghidraDecompileTimeoutMs ?? 0);
   const selectedTimeout =
     selectedProvider === "ghidra"
-      ? inputs.ghidraStartupTimeoutMs
+      ? ghidraAllowance
       : selectedProvider === "hopper"
         ? inputs.hopperStartupTimeoutMs
-        : Math.max(
-            inputs.ghidraStartupTimeoutMs,
-            inputs.hopperStartupTimeoutMs,
-          );
+        : Math.max(ghidraAllowance, inputs.hopperStartupTimeoutMs);
   return Math.max(
     selectedTimeout,
     inputs.jebMcpTimeoutMs ?? 0,
@@ -50,7 +52,7 @@ export const mcpProviderDeadlineAllowanceMs = (
   );
 };
 
-/** Add operation headroom to the parsed provider deadline allowance. */
+/** Add headroom to the single-request estimate; this is not a bulk-workflow bound. */
 export const recommendedMcpToolTimeoutMs = (
   inputs: McpToolTimeoutInputs,
 ): number =>

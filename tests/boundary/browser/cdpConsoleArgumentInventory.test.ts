@@ -207,6 +207,57 @@ describe("CdpBrowserProvider: console argument inventory", () => {
   });
 });
 
+it("retains console and initiator events with invalid coordinates unknown", async () => {
+  const { inspection } = await inspect((command, origin) => {
+    const frame = {
+      url: `${origin}/app.js`,
+      lineNumber: -3,
+      columnNumber: 7.5,
+    };
+    if (command.method === "Runtime.enable")
+      return [
+        sessionEvent(command, "Runtime.consoleAPICalled", {
+          type: "log",
+          timestamp: 1,
+          args: [],
+          stackTrace: { callFrames: [frame] },
+        }),
+      ];
+    if (command.method === "Network.enable")
+      return [
+        sessionEvent(command, "Network.requestWillBeSent", {
+          requestId: "bad-location",
+          type: "Fetch",
+          request: { url: `${origin}/data.json`, method: "GET" },
+          initiator: { type: "script", stack: { callFrames: [frame] } },
+          timestamp: 1,
+        }),
+      ];
+    return undefined;
+  });
+  expect(inspection.console.events[0]).toMatchObject({
+    line: null,
+    column: null,
+  });
+  expect(
+    inspection.network.requests.find(
+      (item) => item.request_id === "bad-location",
+    )?.initiator,
+  ).toMatchObject({ line: null, column: null });
+  expect(inspection.completeness.excluded).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        section: "console_events",
+        reason: "invalid_protocol_value",
+      }),
+      expect.objectContaining({
+        section: "network_initiators",
+        reason: "invalid_protocol_value",
+      }),
+    ]),
+  );
+});
+
 describe("CdpBrowserProvider: WebMCP registration stacks", () => {
   const discover = async (
     stackTrace: (origin: string) => JsonValue | undefined,
@@ -234,6 +285,14 @@ describe("CdpBrowserProvider: WebMCP registration stacks", () => {
 
   it.each<[string, (origin: string) => JsonValue]>([
     [
+      "invalid coordinates",
+      (origin) => ({
+        callFrames: [
+          { url: `${origin}/app.js`, lineNumber: -3, columnNumber: 7.5 },
+        ],
+      }),
+    ],
+    [
       "a malformed top frame",
       (origin) => ({
         callFrames: [
@@ -258,6 +317,19 @@ describe("CdpBrowserProvider: WebMCP registration stacks", () => {
       expect(discovery.completeness.excluded).toContainEqual(invalidToolValue);
     },
   );
+
+  it("preserves valid registration coordinates", async () => {
+    const { discovery } = await discover((origin) => ({
+      callFrames: [{ url: `${origin}/app.js`, lineNumber: 0, columnNumber: 4 }],
+    }));
+    expect(discovery.tools.items[0]?.registration_source).toMatchObject({
+      line: 0,
+      column: 4,
+    });
+    expect(discovery.completeness.excluded).not.toContainEqual(
+      invalidToolValue,
+    );
+  });
 
   it.each<[string, JsonValue | undefined]>([
     ["an omitted", undefined],

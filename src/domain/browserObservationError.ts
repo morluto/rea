@@ -98,6 +98,8 @@ const observationFailureMessage = (
     return `${operation} could not find the selected target at the debugging endpoint. Refresh target discovery for that endpoint and retry with a returned target ID.`;
   if (reason === "target_session_detached")
     return `${operation} lost its debugging session while the target may still exist. Refresh target discovery and attach to the selected target again.`;
+  if (reason === "target_changed")
+    return `${operation} could not retain a stable document because the target changed during observation. Retry after navigation settles; refresh target discovery if the selected page was replaced.`;
   if (reason === "service_worker_blocked")
     return `${operation} refused the selected page because it is controlled by or has a registered service worker while the service-worker policy is block. Set environment.service_workers to allow to permit observation, or remove the service worker registration through the browser.`;
   if (reason === "disconnected")

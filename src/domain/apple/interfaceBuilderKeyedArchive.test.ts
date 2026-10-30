@@ -4,9 +4,40 @@ import {
   buildInterfaceBuilderAnalysis,
   interfaceBuilderLimitsSchema,
 } from "./interfaceBuilderGraph.js";
-import { parseInterfaceBuilderRecords } from "./interfaceBuilderKeyedArchive.js";
+import {
+  parseInterfaceBuilderRecords,
+  record,
+} from "./interfaceBuilderKeyedArchive.js";
+import { markPlistDictionary, plistUidValue } from "./plistUid.js";
 
-const uid = (value: number) => ({ UID: value });
+const uid = (value: number) => ({ CF$UID: value });
+
+it("borrows decoded dictionary identity and keeps authored prototype-named fields", () => {
+  const decoded = JSON.parse('{"CF$UID":2,"__proto__":{"kept":true}}');
+  markPlistDictionary(decoded);
+  expect(record(decoded)).toBe(decoded);
+  expect(plistUidValue(record(decoded))).toBeUndefined();
+  expect(Object.hasOwn(record(decoded), "__proto__")).toBe(true);
+  expect(record(new Date(0))).toEqual({});
+  expect(record(new Uint8Array([1]))).toEqual({});
+});
+
+it("preserves ibtool object IDs and attributes that match inherited member names", () => {
+  const object = JSON.parse(
+    '{"class":"NSView","__proto__":{"kept":true},"constructor":"authored"}',
+  );
+  const result = parseInterfaceBuilderRecords({
+    "com.apple.ibtool.document.objects": Object.fromEntries([
+      ["__proto__", object],
+    ]),
+    "com.apple.ibtool.document.connections": {},
+  });
+  expect(result.objects[0]).toMatchObject({
+    id: "__proto__",
+    attributes: { ["__proto__"]: { kept: true }, constructor: "authored" },
+  });
+  expect(Object.hasOwn(result.objects[0]!.attributes, "__proto__")).toBe(true);
+});
 
 const archive = (
   fields: Record<string, unknown> = {},
@@ -33,6 +64,20 @@ const archive = (
     { $classname: "NSArray", $classes: ["NSArray", "NSObject"] },
   ] as unknown[],
   $top: top,
+});
+
+it("preserves keyed object fields while resolving references and removing only $class", () => {
+  const attributes = JSON.parse(
+    '{"__proto__":{"kept":true},"constructor":"authored"}',
+  );
+  const result = parseInterfaceBuilderRecords(archive(attributes));
+  const first = result.objects.find(({ id }) => id === "1");
+  expect(first?.attributes).toMatchObject({
+    ["__proto__"]: { kept: true },
+    constructor: "authored",
+  });
+  expect(Object.hasOwn(first!.attributes, "__proto__")).toBe(true);
+  expect(Object.hasOwn(first!.attributes, "$class")).toBe(false);
 });
 
 it.each([
@@ -151,8 +196,8 @@ it.each([
   { id: "2" },
   { archiveUID: 2 },
   { archiveUID: 2, className: "NSView" },
-  { UID: 2, archiveUID: 2 },
-  { UID: "2" },
+  { CF$UID: 2, archiveUID: 2 },
+  { CF$UID: "2" },
   uid(-1),
   uid(99),
   uid(0),
@@ -341,4 +386,59 @@ it("counts a dangling named root without substituting a valid generic root", () 
   );
   expect(parsed.hierarchy).toEqual([]);
   expect(parsed.omittedHierarchyReferences).toBe(1);
+});
+
+it("distinguishes an unrecognized plist from an explicitly empty Interface Builder document", () => {
+  expect(() =>
+    parseInterfaceBuilderRecords({ CFBundleIdentifier: "sample" }),
+  ).toThrow(/not a recognized/);
+  expect(
+    parseInterfaceBuilderRecords({ "com.apple.ibtool.document.objects": {} }),
+  ).toMatchObject({ objects: [], connections: [], objectCount: 0 });
+});
+
+it.each([
+  ["NSImageView", "view"],
+  ["UIImageView", "view"],
+  ["NSColorWell", "control"],
+  ["NSImage", "resource"],
+])("keeps %s UI identity separate from resource names", (className, kind) => {
+  expect(
+    parseInterfaceBuilderRecords({
+      "com.apple.ibtool.document.objects": { item: { class: className } },
+    }).objects[0]?.kind,
+  ).toBe(kind);
+});
+
+it.each(["NSCustomObject", "NSClassSwapper", "UIClassSwapper"])(
+  "uses the guarded authored class on %s and retains the archived class",
+  (archivedClass) => {
+    const source = archive({
+      [archivedClass === "UIClassSwapper" ? "UIClassName" : "NSClassName"]:
+        "FixtureWindowController",
+    });
+    source.$objects[4] = {
+      $classname: archivedClass,
+      $classes: [archivedClass, "NSObject"],
+    };
+    expect(parseInterfaceBuilderRecords(source).objects[0]).toMatchObject({
+      class_name: "FixtureWindowController",
+      kind: "view_controller",
+      attributes: { interface_builder_archived_class_name: archivedClass },
+    });
+  },
+);
+it("retains action connectors as serialized helpers without inventing UI controls", () => {
+  const source = archive();
+  source.$objects[5] = {
+    $classname: "NSNibControlConnector",
+    $classes: ["NSNibControlConnector", "NSNibConnector", "NSObject"],
+  };
+  const parsed = parseInterfaceBuilderRecords(source);
+  expect(parsed.objects.find(({ id }) => id === "3")?.kind).toBe("other");
+  expect(parsed.connections[0]).toMatchObject({
+    kind: "action",
+    source_id: "2",
+    destination_id: "1",
+  });
 });

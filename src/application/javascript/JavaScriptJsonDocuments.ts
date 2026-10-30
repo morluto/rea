@@ -15,6 +15,7 @@ interface JavaScriptJsonDocumentFactBase {
 export type JavaScriptJsonDocumentFacts =
   | (JavaScriptJsonDocumentFactBase & {
       readonly status: "included";
+      readonly nextDependency: "declared" | "unproven";
       readonly packageFields: Readonly<
         Partial<Record<(typeof PACKAGE_PROPERTIES)[number], unknown>>
       > | null;
@@ -127,6 +128,7 @@ const parseDocument = (
     return Object.freeze({
       source: snapshot.source,
       status: "included",
+      nextDependency: "unproven",
       packageFields: null,
       topLevelKeys: Object.freeze([]),
     });
@@ -145,9 +147,24 @@ const parseDocument = (
         packageFields[key] = Reflect.get(record, key);
     Object.freeze(packageFields);
   }
+  const nextDeclared =
+    snapshot.kind === "package-json" &&
+    ["dependencies", "devDependencies", "peerDependencies"].some((key) => {
+      const dependencies: unknown = record[key];
+      if (
+        typeof dependencies !== "object" ||
+        dependencies === null ||
+        Array.isArray(dependencies) ||
+        !Object.hasOwn(dependencies, "next")
+      )
+        return false;
+      const version: unknown = Reflect.get(dependencies, "next");
+      return typeof version === "string" && version.length > 0;
+    });
   return Object.freeze({
     source: snapshot.source,
     status: "included",
+    nextDependency: nextDeclared ? "declared" : "unproven",
     packageFields,
     topLevelKeys,
   });

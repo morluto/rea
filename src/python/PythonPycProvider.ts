@@ -1,13 +1,16 @@
+import {
+  projectStableArtifactFailure,
+  projectArtifactCloseFailure,
+} from "../artifacts/StableArtifactFailure.js";
 import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
 import {
   artifactFileCancellationCause,
-  artifactFilePrimaryFailure,
-  bindArtifactFileCleanup,
+  artifactFilePrimaryFacts,
+  type ArtifactFilePrimaryFacts,
 } from "../artifacts/ArtifactFileOperation.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { readStableArtifact } from "../artifacts/readStableArtifact.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import type { PythonPycPort } from "../application/python/PythonPycPort.js";
 import type { ExecutionOptions } from "../application/AnalysisProvider.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -19,9 +22,11 @@ import {
   AnalysisResourceConstraintError,
   AnalysisUnsupportedTargetError,
 } from "../domain/analysisErrorCore.js";
-import type { InspectPythonPycInput } from "../domain/python/pythonPyc.js";
+import {
+  PYTHON_PYC_LIMIT_MAXIMA,
+  type InspectPythonPycInput,
+} from "../domain/python/pythonPyc.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
-import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok } from "../domain/result.js";
 import {
   PythonPycFormatFailure,
@@ -38,16 +43,53 @@ export const PYTHON_PYC_PROVIDER_IDENTITY = {
 
 const OPERATION = "inspect_python_pyc";
 
-const failureForPrimary = (cause: unknown, input: InspectPythonPycInput) => {
-  if (cause instanceof AnalysisError) return cause;
-  if (cause instanceof ArtifactReaderFailure && cause.reason === "integrity")
+const parserLimitRecovery = (
+  limits: PythonPycResourceFailure["reported_limits"],
+) => {
+  const actions = (
+    Object.keys(
+      PYTHON_PYC_LIMIT_MAXIMA,
+    ) as (keyof typeof PYTHON_PYC_LIMIT_MAXIMA)[]
+  ).flatMap((field) => {
+    const selected = limits[field];
+    if (selected === undefined) return [];
+    const maximum = PYTHON_PYC_LIMIT_MAXIMA[field];
+    const option = `--${field.replaceAll("_", "-")}`;
+    return [
+      selected < maximum
+        ? `Raise ${field} (${option}) above ${selected}, up to ${maximum}, on the next call.`
+        : `${field} (${option}) is at this operation's maximum of ${maximum}; select a complete artifact within that bound.`,
+    ];
+  });
+  return {
+    retryable: false as const,
+    remediationAction: `${actions.join(" ")} Repeating the unchanged request fails the same way; waiting or adding host memory does not raise these parser limits.`,
+  };
+};
+
+const failureForPrimary = (
+  facts: ArtifactFilePrimaryFacts,
+  input: InspectPythonPycInput,
+) => {
+  const { cause, origin } = facts;
+  if (origin === "owned-or-classified" && cause instanceof AnalysisError)
+    return cause;
+  if (
+    origin === "owned-or-classified" &&
+    cause instanceof ArtifactReaderFailure &&
+    cause.reason === "integrity"
+  )
     return new AnalysisArtifactChangedError(
       OPERATION,
       input.path,
       cause.message,
       { cause },
     );
-  if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
+  if (
+    origin === "owned-or-classified" &&
+    cause instanceof ArtifactReaderFailure &&
+    cause.reason === "cancelled"
+  )
     return new AnalysisCancelledError(OPERATION, {
       cause: artifactFileCancellationCause(cause),
     });
@@ -57,7 +99,7 @@ const failureForPrimary = (cause: unknown, input: InspectPythonPycInput) => {
       cause.boundary === "depth" ? "capacity" : "memory",
       cause.message,
       cause.reported_limits,
-      { cause },
+      { cause, ...parserLimitRecovery(cause.reported_limits) },
     );
   if (cause instanceof PythonPycFormatFailure)
     return cause.kind === "unsupported"
@@ -74,14 +116,20 @@ const failureForPrimary = (cause: unknown, input: InspectPythonPycInput) => {
             message: `Selected pyc ${input.path}: ${cause.message}`,
           },
         ]);
-  if (cause instanceof ArtifactReaderFailure) {
+  if (
+    origin === "owned-or-classified" &&
+    cause instanceof ArtifactReaderFailure
+  ) {
     if (cause.reason === "limit")
       return new AnalysisResourceConstraintError(
         OPERATION,
         "file-size",
         cause.message,
         { max_file_bytes: input.max_file_bytes },
-        { cause },
+        {
+          cause,
+          ...parserLimitRecovery({ max_file_bytes: input.max_file_bytes }),
+        },
       );
     if (cause.reason === "path" || cause.reason === "format")
       return new AnalysisInputError(OPERATION, { cause }, [
@@ -116,18 +164,14 @@ const failureForPrimary = (cause: unknown, input: InspectPythonPycInput) => {
 };
 
 const failureFor = (cause: unknown, input: InspectPythonPycInput) => {
-  const primary = failureForPrimary(artifactFilePrimaryFailure(cause), input);
-  if (!(cause instanceof ArtifactReaderFailure) || cause.cleanup === undefined)
-    return primary;
-  const cleanup = new ProviderCleanupError(
+  const primary = failureForPrimary(artifactFilePrimaryFacts(cause), input);
+  return projectStableArtifactFailure(
+    cause,
+    primary,
+    input.path,
     PYTHON_PYC_PROVIDER_IDENTITY.id,
-    cause.cleanup.resources,
-    { reason: cause.cleanup.reason },
-    { operation: OPERATION, cause },
+    OPERATION,
   );
-  const error = analysisErrorWithCleanupFailure(primary, cleanup, OPERATION);
-  bindArtifactFileCleanup(cause, error);
-  return error;
 };
 
 /** Portable parser over one bounded, identity-checked regular file. */
@@ -135,8 +179,16 @@ export class PythonPycProvider implements PythonPycPort {
   readonly identity = PYTHON_PYC_PROVIDER_IDENTITY;
   readonly #resources = new ArtifactResourceScope();
 
-  close(): Promise<void> {
-    return this.#resources.close();
+  async close(): Promise<void> {
+    try {
+      await this.#resources.close();
+    } catch (cause: unknown) {
+      throw projectArtifactCloseFailure(
+        cause,
+        PYTHON_PYC_PROVIDER_IDENTITY.id,
+        OPERATION,
+      );
+    }
   }
 
   async inspect(input: InspectPythonPycInput, options?: ExecutionOptions) {

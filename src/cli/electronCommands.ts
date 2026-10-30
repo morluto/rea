@@ -1,4 +1,6 @@
-import { parseJavaScriptRouteDelivery } from "./javascriptRouteDelivery.js";
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
+import { parseCliAnalysisEvidenceDelivery } from "./analysisEvidenceDelivery.js";
+import { javaScriptRoutesDeliverySchema } from "../domain/analysisView/javascriptRoutesView.js";
 import { isAbsolute, resolve, sep } from "node:path";
 
 import { Cli, z } from "incur";
@@ -22,7 +24,10 @@ import {
   javascriptApplicationOptions,
   selectedCommandTimeout,
 } from "../cliObservationOptions.js";
-import { runCliJavaScriptApplicationAnalysis } from "./javascriptApplicationAnalysis.js";
+import {
+  cliJavaScriptSourcePaths,
+  runCliJavaScriptApplicationAnalysis,
+} from "./javascriptApplicationAnalysis.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
@@ -74,7 +79,7 @@ const registerElectronFuseCommand = (
             service.provider.identity.id,
             "inspect_electron_fuses",
             signal,
-          );
+          ).then(projectCliAnalysisResult);
         }),
       ),
   });
@@ -118,6 +123,7 @@ const registerElectronActiveCommand = (
             const input = await parseCliJsonInput(
               args.inputJson,
               "capture_electron_scenario",
+              signal,
             );
             if (!input.ok) return input.error;
             const parsed = electronActiveObservationInputSchema.safeParse(
@@ -153,9 +159,9 @@ const registerElectronActiveCommand = (
               "capture_electron_scenario",
               signal,
             );
-            return "code" in result
-              ? { error: "Electron analysis failed", ...result }
-              : result;
+            return result.ok
+              ? result.value
+              : { error: "Electron analysis failed", ...result.error };
           },
         ),
       ),
@@ -244,7 +250,7 @@ const registerElectronTargetList = (
             provider.identity().id,
             "list_electron_targets",
             signal,
-          );
+          ).then(projectCliAnalysisResult);
         }),
       ),
   });
@@ -293,7 +299,7 @@ const registerElectronPageInspection = (
             provider.identity().id,
             "inspect_electron_page",
             signal,
-          );
+          ).then(projectCliAnalysisResult);
         }),
       ),
   });
@@ -317,11 +323,18 @@ const registerJavaScriptApplicationCommand = (
           logger,
           CLI_COMMANDS.analyzeJavaScriptApplication,
           async () => {
-            const delivery = parseJavaScriptRouteDelivery(
+            const delivery = parseCliAnalysisEvidenceDelivery(
               "analyze_javascript_application",
               options,
+              javaScriptRoutesDeliverySchema,
             );
             if (!delivery.ok) return projectAnalysisError(delivery.error);
+            const sourcePaths = await cliJavaScriptSourcePaths(
+              options.sourcePath,
+              options.sourcePathsJson,
+              signal,
+            );
+            if (!sourcePaths.ok) return sourcePaths.error;
             return runCliJavaScriptApplicationAnalysis(
               {
                 // An empty path names no file; leave it for input validation.
@@ -347,9 +360,9 @@ const registerJavaScriptApplicationCommand = (
                       max_semantic_unknowns_per_file:
                         options.maxSemanticUnknownsPerFile,
                     }),
-                ...(options.sourcePath === undefined
+                ...(sourcePaths.value === undefined
                   ? {}
-                  : { source_paths: options.sourcePath }),
+                  : { source_paths: sourcePaths.value }),
                 ...(options.maxHeapMb === undefined
                   ? {}
                   : { max_heap_mb: options.maxHeapMb }),

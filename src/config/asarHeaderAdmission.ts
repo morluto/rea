@@ -1,3 +1,7 @@
+import {
+  DEFAULT_ASAR_MAX_HEADER_BYTES,
+  MAXIMUM_ASAR_MAX_HEADER_BYTES,
+} from "../domain/analysisResourceLimits.js";
 import { z } from "zod";
 
 import { ConfigurationError } from "../domain/configurationErrors.js";
@@ -5,21 +9,10 @@ import { err, ok, type Result } from "../domain/result.js";
 
 export const ASAR_HEADER_ADMISSION_SETTING = "REA_ASAR_MAX_HEADER_BYTES";
 
-/** Header/index bytes admitted when the setting is unset. */
-export const DEFAULT_ASAR_MAX_HEADER_BYTES = 16 * 1024 * 1024;
-
-/**
- * Largest configurable admission. The header JSON is decoded into one string
- * and parsed in memory; 256 MiB keeps that text and its parse copy well below
- * Node's single-string ceiling of about 512 Mi UTF-16 code units. A lower value
- * only refuses more archives, so the setting has no floor.
- */
-export const MAXIMUM_ASAR_MAX_HEADER_BYTES = 256 * 1024 * 1024;
-
 /** Effective ASAR header/index admission and where its value came from. */
 export interface AsarHeaderAdmission {
   readonly maximumBytes: number;
-  readonly source: "default" | "setting";
+  readonly source: "default" | "setting" | "runtime";
 }
 
 export const DEFAULT_ASAR_HEADER_ADMISSION: AsarHeaderAdmission = {

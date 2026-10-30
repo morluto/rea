@@ -1,9 +1,6 @@
 import { z } from "zod";
 
-import type {
-  ProjectedComponent as Component,
-  ProjectedInventoryEntry,
-} from "../mobileApplicationGraphProjection.js";
+import type { ProjectedInventoryEntry } from "../mobileApplicationGraphProjection.js";
 import { compareUnicodeCodePoints as compare } from "../unicodeCodePointOrder.js";
 
 const pathSchema = z.string().min(1);
@@ -126,12 +123,13 @@ const applicationRoots = (
   for (const path of directoryPaths(tree)) {
     const segments = path.split("/");
     const app = segments[1];
-    if (
-      anatomyNameIs(segments[0] ?? "", "Payload") &&
-      app !== undefined &&
-      /\.app$/iu.test(app)
-    ) {
-      found.add(`${segments[0]}/${app}`);
+    if (subject.format === "ipa") {
+      if (
+        anatomyNameIs(segments[0] ?? "", "Payload") &&
+        app !== undefined &&
+        /\.app$/iu.test(app)
+      )
+        found.add(`${segments[0]}/${app}`);
       continue;
     }
     const index = segments.findIndex(
@@ -176,13 +174,14 @@ const detectBundles = (tree: Tree, roots: readonly string[]): Bundle[] => {
 /** Keep directory identity separate from authenticated file content before name selection. */
 interface Tree {
   readonly directories: ReadonlyMap<string, ReadonlySet<string>>;
-  readonly files: ReadonlyMap<string, ReadonlyMap<string, Component>>;
+  readonly files: ReadonlyMap<string, ReadonlyMap<string, Entry>>;
 }
 
 const indexTree = (entries: readonly Entry[]): Tree => {
   const directories = new Map<string, Set<string>>();
-  const files = new Map<string, Map<string, Component>>();
-  for (const { path, kind, component } of entries) {
+  const files = new Map<string, Map<string, Entry>>();
+  for (const entry of entries) {
+    const { path, kind } = entry;
     if (isSidecar(path)) continue;
     const segments = path.split("/");
     let parent = "";
@@ -192,9 +191,9 @@ const indexTree = (entries: readonly Entry[]): Tree => {
         const names = directories.get(parent) ?? new Set<string>();
         names.add(segment);
         directories.set(parent, names);
-      } else if (kind === "file" && component !== undefined) {
-        const children = files.get(parent) ?? new Map<string, Component>();
-        children.set(segment, component);
+      } else if (kind === "file") {
+        const children = files.get(parent) ?? new Map<string, Entry>();
+        children.set(segment, entry);
         files.set(parent, children);
       }
       parent = joinPath(parent, segment);
@@ -260,7 +259,7 @@ const bundleRole = (bundle: string): Bundle["role"] => {
 };
 
 /** Files directly inside one directory; nested bundles are deeper paths. */
-const directFiles = (directory: string, tree: Tree): Component[] =>
+const directFiles = (directory: string, tree: Tree): Entry[] =>
   [...(tree.files.get(directory)?.values() ?? [])].sort((left, right) =>
     compare(left.path, right.path),
   );
@@ -340,7 +339,10 @@ const executableCandidates = (
         ? []
         : directFiles(executableDirectory, tree);
     })
-    .filter(({ format }) => isMachOFormat(format))
+    .filter(
+      ({ component }) =>
+        component !== undefined && isMachOFormat(component.format),
+    )
     .map(({ path }) => path);
 
 const signingPaths = (

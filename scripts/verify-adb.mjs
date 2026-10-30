@@ -438,10 +438,7 @@ try {
   verifierFailure = cause;
 } finally {
   try {
-    await closeVerifierResources(
-      [() => provider.close()],
-      verifierFailed ? verifierFailure : undefined,
-    );
+    await closeVerifierResources([() => provider.close()]);
   } catch (cause) {
     process.stderr.write(`[FAIL] verifier cleanup — ${formatFailure(cause)}\n`);
     failures += 1;

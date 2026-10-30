@@ -119,7 +119,7 @@ const createShouldExclude =
         : kind === "unknown"
           ? [path, `${path}/`]
           : [path];
-    const firstMatch = (matcher: typeof secrets) => {
+    const firstMatch = (matcher: Pick<typeof secrets, "test">) => {
       const results = patternPaths.map((patternPath) =>
         matcher.test(patternPath),
       );
@@ -181,6 +181,7 @@ export const importReferenceSource = async (
     readReferenceSource(root, resources, {
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       shouldExclude,
+      beforeDirectory: prepared.value.beforeDirectory,
     }),
     readReferenceSourceVcs(root, resources, options.signal),
   ]);
@@ -203,14 +204,8 @@ export const importReferenceSource = async (
   if (isAborted(options.signal)) return err(cancelled(readResult.value));
 
   const read = readResult.value;
-  const filePaths = new Set(
-    read.entries
-      .filter((entry) => entry.status === "read" && entry.kind === "file")
-      .map((entry) => entry.path),
-  );
-
   const { entries, relationships, parseFailures, limitations } =
-    parseReferenceSourceEntries(read, filePaths, exclusions, options.signal);
+    parseReferenceSourceEntries(read, exclusions, options.signal);
 
   if (isAborted(options.signal)) return err(cancelled(read));
 
@@ -288,6 +283,9 @@ const combineReadFailures = (
         );
   return {
     ...failure(code, message),
+    ...(primary.remediationAction === undefined || code !== primary.code
+      ? {}
+      : { remediationAction: primary.remediationAction }),
     ...(cleanup === undefined ? {} : { cleanup }),
     ...(partial === undefined ? {} : { partial }),
     ...(cause === undefined ? {} : { cause }),

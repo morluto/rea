@@ -8,8 +8,7 @@ import {
   javaScriptSemanticEvidenceContextSchema,
   javaScriptSemanticUnknownSchema,
 } from "./javascriptSemanticGraphSchemas.js";
-import { digestSchema } from "../digests.js";
-import { prefixedDigestSchema } from "../digests.js";
+import { digestSchema, prefixedDigestSchema } from "../digests.js";
 
 const semanticNodeIdSchema = prefixedDigestSchema("jsrg_node");
 const literalValueSchema = z.union([
@@ -49,7 +48,7 @@ export const javaScriptSemanticQuerySeedSchema = z.discriminatedUnion("kind", [
   }),
   z.strictObject({
     kind: z.literal("event"),
-    name: z.string().min(1),
+    name: z.string(),
   }),
   z.strictObject({
     kind: z.literal("boundary-field"),

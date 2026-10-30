@@ -53,7 +53,7 @@ Every collection supports `fields`, `offset` and `limit`; its stable row ID is
 always included. Selection changes delivery, not source inspection. Pages keep
 source coverage and parent Evidence links. Page exhaustion does not establish
 absence in a partial source. Complete Evidence remains accessible through
-`get_evidence` and Evidence bundle export.
+`get_evidence_bundle` and Evidence bundle export.
 
 The summary's `probe_issues` counts files with reported issues and their retained
 issue entries. It previews at most two such files, including stable `file_id`,

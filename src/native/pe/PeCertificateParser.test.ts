@@ -21,7 +21,10 @@ import {
   PeCertificateAsn1Failure,
   readAsn1,
 } from "./PeCertificateAsn1.js";
-import { parsePeCertificates } from "./PeCertificateParser.js";
+import {
+  parsePeCertificates,
+  UNSIGNED_ATTRIBUTES_LIMITATION,
+} from "./PeCertificateParser.js";
 
 const defaults = inspectPeCertificatesInputSchema.parse({
   path: "/artifacts/app.exe",
@@ -70,6 +73,114 @@ it("reads PE32 and PE32+ PKCS#7 certificate tables", () => {
       certificates: 1,
     });
   }
+});
+
+it("reports unsigned attribute OIDs and incomplete nested coverage", () => {
+  const types = [
+    [1, 3, 6, 1, 4, 1, 311, 3, 3, 1],
+    [1, 3, 6, 1, 4, 1, 311, 2, 4, 1],
+  ];
+  for (const plus of [false, true]) {
+    const report = peCertificatesSchema.parse(
+      parse(
+        peCertificateFixture(
+          plus,
+          pkcs7SignedDataFixture(undefined, undefined, undefined, types),
+        ),
+      ),
+    );
+    expect(
+      report.entries[0]?.pkcs7?.signers[0]?.unsigned_attribute_oids,
+    ).toEqual(["1.3.6.1.4.1.311.3.3.1", "1.3.6.1.4.1.311.2.4.1"]);
+    expect(report.coverage).toMatchObject({
+      status: "partial",
+      certificates: 1,
+    });
+    expect(report.limitations).toContain(UNSIGNED_ATTRIBUTES_LIMITATION);
+    const control = parse(peCertificateFixture(plus));
+    expect(
+      control.entries[0]?.pkcs7?.signers[0]?.unsigned_attribute_oids,
+    ).toBeNull();
+    expect(control.coverage.status).toBe("complete");
+  }
+});
+
+it("accepts only zero eight-byte alignment padding included in dwLength", () => {
+  for (const plus of [false, true]) {
+    const bytes = peCertificateFixture(plus, undefined, undefined, true);
+    const originalDigest = createHash("sha256").update(bytes).digest("hex");
+    const encodedPayload = pkcs7SignedDataFixture();
+    const report = parse(bytes);
+    expect(report.artifact.sha256).toBe(originalDigest);
+    expect(report.artifact.bytes).toBe(bytes.length);
+    expect(report.format).toBe(plus ? "pe32-plus" : "pe32");
+    expect(report.entries[0]).toMatchObject({
+      location: { offset: 0x200, bytes: bytes.readUInt32LE(0x200) },
+      length: bytes.readUInt32LE(0x200),
+      payload: {
+        location: { offset: 0x208, bytes: encodedPayload.length },
+        bytes: encodedPayload.length,
+        sha256: createHash("sha256").update(encodedPayload).digest("hex"),
+      },
+    });
+    expect(report.coverage).toEqual({
+      status: "complete",
+      examined_entries: 1,
+      certificates: 1,
+    });
+    expect(report.entries[0]?.pkcs7?.certificates).toHaveLength(1);
+    expect(report.entries[0]?.pkcs7?.signers).toHaveLength(1);
+  }
+});
+
+it.each([false, true])(
+  "reads all counted alignment gaps and consecutive entries (PE32+ = %s)",
+  (plus) => {
+    const gaps = new Set<number>();
+    for (let size = 1; size <= 32; size += 1) {
+      const payload = pkcs7SignedDataFixture("x".repeat(size));
+      const gap = (8 - ((8 + payload.length) % 8)) % 8;
+      if (gaps.has(gap)) continue;
+      gaps.add(gap);
+      const single = peCertificateFixture(plus, payload, 2, true);
+      const table = single.subarray(0x200);
+      const bytes = Buffer.concat([single, table]);
+      const directoryAt = 0x98 + (plus ? 112 : 96) + 4 * 8;
+      bytes.writeUInt32LE(table.length * 2, directoryAt + 4);
+      const report = peCertificatesSchema.parse(parse(bytes));
+      expect(report.coverage).toEqual({
+        status: "complete",
+        examined_entries: 2,
+        certificates: 2,
+      });
+      for (const [index, entry] of report.entries.entries()) {
+        expect(entry.location).toEqual({
+          offset: 0x200 + index * table.length,
+          bytes: table.length,
+        });
+        expect(entry.payload.bytes).toBe(payload.length);
+        expect(entry.payload.sha256).toBe(
+          createHash("sha256").update(payload).digest("hex"),
+        );
+        expect(entry.pkcs7?.signers).toHaveLength(1);
+      }
+    }
+    expect([...gaps].sort()).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+  },
+);
+
+it("rejects nonzero or excessive bytes after the encoded PKCS#7 value", () => {
+  const payload = pkcs7SignedDataFixture();
+  const nonzero = peCertificateFixture(false, payload, 2, true);
+  nonzero[0x200 + 8 + payload.length] = 1;
+  expect(() => parse(nonzero)).toThrow(/invalid PKCS#7 alignment padding/u);
+
+  const extra = peCertificateFixture(
+    false,
+    Buffer.concat([payload, Buffer.alloc(8)]),
+    2,
+  );
+  expect(() => parse(extra)).toThrow(/invalid PKCS#7 alignment padding/u);
 });
 
 it("reads BER indefinite constructed ContentInfo and preserves certificate bytes", () => {
@@ -179,14 +290,22 @@ it("reports an absent security directory without claiming the image is unsigned"
   );
 });
 
+const securityDirectoryAt = 0x98 + 96 + 4 * 8;
+
 it("fails truncated WIN_CERTIFICATE payloads without partial success", () => {
   const bytes = peCertificateFixture();
   const tableOffset = bytes.readUInt32LE(0x80 + 24 + 96 + 32);
   bytes.writeUInt32LE(4, tableOffset);
   expect(() => parse(bytes)).toThrow(ArtifactReaderFailure);
-});
 
-const securityDirectoryAt = 0x98 + 96 + 4 * 8;
+  const overlong = peCertificateFixture();
+  const overlongTableOffset = overlong.readUInt32LE(securityDirectoryAt);
+  const tableSize = overlong.readUInt32LE(securityDirectoryAt + 4);
+  overlong.writeUInt32LE(tableSize + 1, overlongTableOffset);
+  expect(() => parse(overlong)).toThrow(
+    /dwLength exceeds the certificate table/u,
+  );
+});
 
 it("rejects a short security table instead of reporting it complete", () => {
   for (const size of [4, 7]) {
@@ -444,6 +563,7 @@ it("rejects an oversized OBJECT IDENTIFIER before growing an arc", () => {
     /OBJECT IDENTIFIER exceeds/u,
   );
   const arc = Buffer.alloc(MAX_OID_ARC_BYTES + 1, 0x80);
+  arc[0] = 0x81;
   arc[arc.length - 1] = 0x00;
   expect(() => decodeOid(Buffer.concat([Buffer.from([0x2a]), arc]))).toThrow(
     /arc exceeds/u,
@@ -463,6 +583,42 @@ const namedCertificate = (issuer: Buffer, subject: Buffer) =>
     SHA256_ALG,
     der(0x03, Buffer.from([0])),
   );
+
+it.each(["signature", "public-key", "issuer-id", "subject-id"] as const)(
+  "validates BIT STRING padding for %s at the shared certificate boundary",
+  (field) => {
+    const name = directoryName(der(0x0c, Buffer.from("Fixture")));
+    const certificate = (content: number[]) =>
+      readAsn1(
+        derSeq(
+          derSeq(
+            derInt(1),
+            SHA256_ALG,
+            name,
+            validity,
+            name,
+            field === "public-key"
+              ? derSeq(SHA256_ALG, der(0x03, Buffer.from(content)))
+              : spki,
+            ...(field === "issuer-id" ? [der(0x81, Buffer.from(content))] : []),
+            ...(field === "subject-id"
+              ? [der(0x82, Buffer.from(content))]
+              : []),
+          ),
+          SHA256_ALG,
+          der(0x03, Buffer.from(field === "signature" ? content : [0])),
+        ),
+      );
+    for (const invalid of [[1], [7], [1, 1], [7, 0x81]])
+      expect(() => parseCertificate(certificate(invalid))).toThrow(
+        PeCertificateAsn1Failure,
+      );
+    for (const valid of [[0], [0, 0xff], [1, 0xfe], [7, 0x80]])
+      expect(parseCertificate(certificate(valid)).subject.text).toBe(
+        "commonName=Fixture",
+      );
+  },
+);
 
 it("rejects a certificate missing subjectPublicKeyInfo or signatureValue", () => {
   const issuer = directoryName(der(0x0c, Buffer.from("A")));
@@ -646,4 +802,30 @@ it("decodes UniversalString names as UTF-32BE", () => {
   expect(() => parseCertificate(broken)).toThrow(
     /UniversalString length is not a multiple of 4/u,
   );
+});
+
+it.each([0xd800, 0xdfff])(
+  "rejects BMPString surrogate code unit %i in certificate names",
+  (codeUnit) => {
+    const content = Buffer.alloc(2);
+    content.writeUInt16BE(codeUnit);
+    const certificate = readAsn1(
+      namedCertificate(
+        directoryName(der(0x1e, content)),
+        directoryName(der(0x0c, Buffer.from("Subject"))),
+      ),
+    );
+    expect(() => parseCertificate(certificate)).toThrow(
+      PeCertificateAsn1Failure,
+    );
+  },
+);
+
+it("preserves valid BMPString code units on both sides of the surrogate range", () => {
+  const name = directoryName(
+    der(0x1e, Buffer.from([0xd7, 0xff, 0xe0, 0, 0xfe, 0xff])),
+  );
+  expect(
+    parseCertificate(readAsn1(namedCertificate(name, name))).subject.text,
+  ).toBe("commonName=\ud7ff\ue000\ufeff");
 });

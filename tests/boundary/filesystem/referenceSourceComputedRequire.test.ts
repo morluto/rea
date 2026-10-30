@@ -20,17 +20,27 @@ const hashedSourceEntry = (path: string, source: string) => ({
   limitations: [],
 });
 
+const memberFixtures = [
+  "require",
+  "require.resolve",
+  'require["resolve"]',
+  "require.main",
+  'require["main"]',
+  'require[("resolve")]',
+  'require["res\\u006flve"]',
+  "require?.",
+  "require.resolve?.",
+  'require["resolve"]?.',
+  "require?.resolve",
+  'require?.["resolve"]',
+  "(require?.resolve)",
+].map((callee, index, callees) => ({
+  callee,
+  path: `member-${String(index).padStart(String(callees.length - 1).length, "0")}.cjs`,
+}));
+
 it("distinguishes computed require member values from literal members in source evidence", async () => {
   const root = await createTestTempDirectory("rea-reference-require-members-");
-  const literalCallees = [
-    "require",
-    "require.resolve",
-    'require["resolve"]',
-    "require.main",
-    'require["main"]',
-    'require[("resolve")]',
-    'require["res\\u006flve"]',
-  ];
   const ignoredSources = [
     'require[resolve]("./dep.js");',
     'require[main]("./dep.js");',
@@ -42,18 +52,12 @@ it("distinguishes computed require member values from literal members in source 
     'require[`resolve`]("./dep.js");',
     'require["re" + "solve"]("./dep.js");',
     ...[
-      "require?.",
-      "require.resolve?.",
-      'require["resolve"]?.',
       "require.main?.",
       'require["main"]?.',
-      "require?.resolve",
-      'require?.["resolve"]',
       "require?.[resolve]",
       "require?.main",
       'require?.["main"]',
       "require?.[main]",
-      "(require?.resolve)",
       "require.resolve.call",
       "require.main.require",
       "module.require",
@@ -76,7 +80,7 @@ it("distinguishes computed require member values from literal members in source 
     "ignored.cjs": ignoredSources.map((source) => `{ ${source} }`).join("\n"),
     "unknown.cjs": [
       "function load(target) {",
-      ...literalCallees.flatMap((callee) => [
+      ...memberFixtures.flatMap(({ callee }) => [
         `  ${callee}(target);`,
         `  ${callee}(\`./dep.js\`);`,
         `  ${callee}(getTarget());`,
@@ -86,8 +90,8 @@ it("distinguishes computed require member values from literal members in source 
       "}",
     ].join("\n"),
   };
-  for (const [index, callee] of literalCallees.entries())
-    sources[`member-${index}.cjs`] = `${callee}("./dep.js");\n`;
+  for (const { path, callee } of memberFixtures)
+    sources[path] = `${callee}("./dep.js");\n`;
   await Promise.all(
     Object.entries(sources).map(([path, source]) =>
       writeFile(join(root, path), source),
@@ -132,12 +136,12 @@ it("distinguishes computed require member values from literal members in source 
       resolution: "internal",
       parse_state: "parsed",
     },
-    ...literalCallees.flatMap((callee, index) =>
+    ...memberFixtures.flatMap(({ callee, path }) =>
       callee === "require.main" || callee === 'require["main"]'
         ? []
         : [
             {
-              from_path: `member-${index}.cjs`,
+              from_path: path,
               to: "dep.js",
               kind: "requires",
               resolution: "internal",

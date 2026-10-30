@@ -1,3 +1,4 @@
+import { observePythonBytecodePrefix } from "../domain/python/pythonBytecodeIdentity.js";
 import { createHash } from "node:crypto";
 import { decodeMarshalUtf8 } from "../domain/python/marshalUtf8.js";
 import {
@@ -6,7 +7,7 @@ import {
   PYTHON_PYC_HASH_BASED,
   PYTHON_PYC_HEADER_BYTES,
   PYTHON_PYC_INT_PREVIEW_BITS,
-  pythonPycMagicEntry,
+  pythonPycMarshalProfile,
   type InspectPythonPycInput,
   type PythonPyc,
   type PythonPycCodeLayout,
@@ -80,6 +81,7 @@ type MarshalValue =
       readonly bytes: number;
       /** Marshal bytes. JavaScript strings merge lone surrogates with pairs. */
       readonly raw: Buffer;
+      readonly previewEnd: number;
     }
   | { readonly kind: "tuple"; readonly items: MarshalValue[] }
   | { readonly kind: "list"; readonly items: MarshalValue[] }
@@ -204,20 +206,24 @@ export const parsePythonPyc = (
 ): PythonPyc => {
   if (bytes.length !== artifact.bytes)
     malformed("Selected artifact length disagrees with the retained bytes.");
-  if (bytes.length < 4) malformed("Selected file is shorter than a pyc magic.");
-  if (bytes[2] !== 0x0d || bytes[3] !== 0x0a)
-    malformed("Pyc magic is not a little-endian integer followed by CR LF.");
-  const magic = bytes.readUInt16LE(0);
-  const mapped = pythonPycMagicEntry(magic);
-  if (mapped !== null && mapped.header_bytes !== PYTHON_PYC_HEADER_BYTES)
+  const prefix = observePythonBytecodePrefix(bytes);
+  if (prefix.state === "incomplete")
+    return malformed("Selected file is shorter than a pyc magic.");
+  if (prefix.state === "invalid-crlf")
+    return malformed(
+      "Pyc magic is not a little-endian integer followed by CR LF.",
+    );
+  const { magic, identity } = prefix;
+  const mapped = pythonPycMarshalProfile(magic);
+  if (identity !== null && identity.headerBytes !== PYTHON_PYC_HEADER_BYTES)
     return unsupported(
-      `Pyc magic ${magic} uses an unsupported ${mapped.header_bytes}-byte CPython header.`,
+      `Pyc magic ${magic} uses an unsupported ${identity.headerBytes}-byte CPython header.`,
     );
   if (bytes.length < PYTHON_PYC_HEADER_BYTES)
     malformed(
       "Selected file is shorter than a 16-byte CPython 3.7+ pyc header.",
     );
-  if (mapped === null)
+  if (mapped === null || identity === null)
     return unsupported(
       `Pyc magic ${magic} is outside the pinned CPython 3.7–3.13 table.`,
     );
@@ -225,7 +231,7 @@ export const parsePythonPyc = (
   const hashBased = (flags & PYTHON_PYC_HASH_BASED) !== 0;
   const header = {
     magic,
-    python_version: mapped.python_version,
+    python_version: identity.pythonVersion,
     code_layout: mapped.code_layout,
     flags,
     hash_based: hashBased,
@@ -413,26 +419,49 @@ class MarshalReader {
         return { kind: "int", value: decoded.value, bits: decoded.bits };
       }
       case TYPE_BYTES:
-        return { kind: "bytes", value: this.blob(this.u32()) };
+        return {
+          kind: "bytes",
+          value: this.blob(this.nonNegativeInt32("Marshal string length")),
+        };
       case TYPE_INTERNED:
       case TYPE_UNICODE:
-        return this.utf8(this.u32(), false);
+        return this.utf8(this.nonNegativeInt32("Marshal string length"), false);
       case TYPE_ASCII:
       case TYPE_ASCII_INTERNED:
-        return this.utf8(this.u32(), true);
+        return this.utf8(this.nonNegativeInt32("Marshal string length"), true);
       case TYPE_SHORT_ASCII:
       case TYPE_SHORT_ASCII_INTERNED:
         return this.utf8(this.u8(), true);
       case TYPE_TUPLE:
-        return this.sequenceValue("tuple", this.u32(), depth, slot);
+        return this.sequenceValue(
+          "tuple",
+          this.nonNegativeInt32("Marshal tuple length"),
+          depth,
+          slot,
+        );
       case TYPE_SMALL_TUPLE:
         return this.sequenceValue("tuple", this.u8(), depth, slot);
       case TYPE_LIST:
-        return this.sequenceValue("list", this.u32(), depth, slot);
+        return this.sequenceValue(
+          "list",
+          this.nonNegativeInt32("Marshal list length"),
+          depth,
+          slot,
+        );
       case TYPE_SET:
-        return this.setValue("set", this.u32(), depth, slot);
+        return this.setValue(
+          "set",
+          this.nonNegativeInt32("Marshal set length"),
+          depth,
+          slot,
+        );
       case TYPE_FROZENSET:
-        return this.setValue("frozenset", this.u32(), depth, slot);
+        return this.setValue(
+          "frozenset",
+          this.nonNegativeInt32("Marshal frozenset length"),
+          depth,
+          slot,
+        );
       case TYPE_DICT:
         return this.dict(depth, slot);
       case TYPE_CODE:
@@ -1460,15 +1489,17 @@ class MarshalReader {
       return {
         kind: "str",
         value: bytes.toString("latin1"),
+        previewEnd: Math.min(length, PYTHON_PYC_CONST_PREVIEW_LIMIT),
         bytes: length,
         raw: bytes,
       };
     }
-    const decoded = decodeMarshalUtf8(bytes);
+    const decoded = decodeMarshalUtf8(bytes, PYTHON_PYC_CONST_PREVIEW_LIMIT);
     if (!decoded.ok) return malformed("Marshal string is not valid UTF-8.");
     return {
       kind: "str",
-      value: decoded.value,
+      value: decoded.value.text,
+      previewEnd: decoded.value.prefixEnd,
       bytes: length,
       raw: bytes,
     };
@@ -1546,15 +1577,17 @@ class MarshalReader {
   }
 }
 
-/** JSON has no non-finite numbers; keep CPython's repr for them. */
-const jsonFloat = (value: number): number | "inf" | "-inf" | "nan" =>
+/** Keep values whose identity JSON numbers cannot preserve as Python repr. */
+const jsonFloat = (value: number): number | "inf" | "-inf" | "nan" | "-0.0" =>
   Number.isNaN(value)
     ? "nan"
     : value === Infinity
       ? "inf"
       : value === -Infinity
         ? "-inf"
-        : value;
+        : Object.is(value, -0)
+          ? "-0.0"
+          : value;
 
 /**
  * Emit each distinct code object once, the top-level object first. A child
@@ -1644,9 +1677,7 @@ const buildConstSummary = (value: MarshalValue): PythonPycConst => {
         kind: "str",
         bytes: value.bytes,
         truncated,
-        value: truncated
-          ? value.value.slice(0, PYTHON_PYC_CONST_PREVIEW_LIMIT)
-          : value.value,
+        value: truncated ? value.value.slice(0, value.previewEnd) : value.value,
       };
     }
     case "bytes":

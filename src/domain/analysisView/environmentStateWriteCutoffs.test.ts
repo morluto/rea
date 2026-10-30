@@ -4,6 +4,7 @@ import {
   rootOf,
   type StateRecordFacts,
 } from "./environmentStateRules.js";
+import { offsetDateTimeInstantFromEpochMilliseconds } from "../offsetDateTime.js";
 import { StateWriteCutoffs } from "./environmentStateWriteCutoffs.js";
 
 const write = (path: string, ordinal: number): StateRecordFacts => ({
@@ -12,8 +13,13 @@ const write = (path: string, ordinal: number): StateRecordFacts => ({
   method: "POST",
   query: undefined,
   status: 200,
-  start: ordinal,
-  end: ordinal,
+  timing: {
+    start: {
+      instant: offsetDateTimeInstantFromEpochMilliseconds(ordinal),
+      ms: ordinal,
+    },
+    endMs: ordinal,
+  },
 });
 
 it("matches prefix and parameter semantics against an independent linear oracle", () => {
@@ -46,12 +52,12 @@ it("matches prefix and parameter semantics against an independent linear oracle"
     const index = new StateWriteCutoffs(
       selection,
       bases,
-      (a, b) => a.start < b.start,
+      (a, b) => a.timing.start!.ms < b.timing.start!.ms,
       () => {},
     );
     for (const root of patterns) {
       const expected = [...selection]
-        .sort((a, b) => a.start - b.start)
+        .sort((a, b) => a.timing.start!.ms - b.timing.start!.ms)
         .find((record) => {
           const candidate = rootOf(record.path, bases);
           const shared = Math.min(root.length, candidate.length);

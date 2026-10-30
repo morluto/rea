@@ -1,6 +1,10 @@
 import type { ExecutableFormatHint } from "../../domain/dosCom.js";
-import type { BinaryArchitecture } from "../../domain/binaryTargetTypes.js";
-import type { AnalysisProviderSelector } from "../../contracts/providerSelection.js";
+import type {
+  BinaryArchitecture,
+  BinaryTarget,
+} from "../../domain/binaryTargetTypes.js";
+import { artifactTargetSelectedPath } from "../../domain/binaryTargetTypes.js";
+import type { AnalysisProviderSelector } from "../../domain/providerSelection.js";
 import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js";
 import {
   snapshotMatchesBinding,
@@ -10,7 +14,6 @@ import {
 import type { AnalysisSnapshot } from "../../domain/analysisSnapshot.js";
 import { parseBinaryTarget } from "../BinaryTargetResolver.js";
 import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import {
   EvidenceIntegrityError,
   AnalysisSnapshotMismatchError,
@@ -149,6 +152,8 @@ const sameSessionTarget = (
   current.path === target.path &&
   // Native admission is bound to the requested path, not just its realpath.
   (current.sourcePath ?? current.path) === (target.sourcePath ?? target.path) &&
+  // Artifact name hints and companions depend on the selected spelling.
+  artifactTargetSelectedPath(current) === artifactTargetSelectedPath(target) &&
   snapshotMatchesTarget(snapshotTarget(current), target);
 
 interface ValidateSnapshotInput {

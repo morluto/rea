@@ -110,7 +110,7 @@ it("keeps exact integers when two object-table entries share one record", async 
   expect(result.limitations).not.toContainEqual(
     expect.stringMatching(/metadata could not be completely observed/u),
   );
-  expect(await readFile(fixture.path)).toEqual(fixture.bytes);
+  expect(Buffer.compare(await readFile(fixture.path), fixture.bytes)).toBe(0);
 });
 
 cliTest(

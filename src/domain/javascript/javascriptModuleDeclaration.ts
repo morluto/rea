@@ -27,10 +27,19 @@ export const isTypeOnlyExportDeclaration = (
 ): boolean =>
   node.exportKind === "type" ||
   (t.isExportNamedDeclaration(node) &&
-    node.declaration !== null &&
-    (t.isTSInterfaceDeclaration(node.declaration) ||
-      t.isTSTypeAliasDeclaration(node.declaration) ||
-      t.isTSDeclareFunction(node.declaration)));
+    node.declaration != null &&
+    isErasedJavaScriptDeclaration(node.declaration));
+
+/** Runtime static module source, shared by source and captured-script consumers. */
+export const semanticStaticModuleSource = (
+  node: t.Node,
+): t.StringLiteral | null => {
+  if (t.isImportDeclaration(node))
+    return isTypeOnlyImportDeclaration(node) ? null : node.source;
+  if (t.isExportAllDeclaration(node) || t.isExportNamedDeclaration(node))
+    return isTypeOnlyExportDeclaration(node) ? null : (node.source ?? null);
+  return null;
+};
 
 /**
  * Runtime external-module target for a value import-equals declaration;

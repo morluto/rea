@@ -7,7 +7,8 @@ import {
   getDefaultEnvironment,
 } from "@modelcontextprotocol/client/stdio";
 import { fileURLToPath } from "node:url";
-import { mkdir, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { webSourceLocationFixture } from "../fixtures/webSourceLocation.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
@@ -17,12 +18,26 @@ cliTest(
   "accepts numeric UTF-16 coordinates and runs the actual owned source-map codec without a browser",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-source-map-cli-");
-    const fixture = webSourceLocationFixture();
+    const fixture = webSourceLocationFixture(
+      JSON.stringify({
+        version: 3,
+        sources: ["dir/original.ts", "dir//original.ts"],
+        sourcesContent: ["original", "second"],
+        names: [],
+        mappings: "AAAA,ACAA",
+      }),
+    );
     await mkdir(join(root, "files", "modules"), { recursive: true });
     await writeFile(join(root, "files", "modules", "main.js"), fixture.source);
-    const manifest = join(root, "manifest.json").replaceAll("\\", "/");
+    let manifest = join(root, "manifest.json").replaceAll("\\", "/");
     const map = join(root, "app.js.map");
     await writeFile(manifest, JSON.stringify(fixture.manifest));
+    if (process.platform !== "win32") {
+      await mkdir(join(root, "lexical"));
+      await mkdir(join(root, "nested"));
+      await symlink(join(root, "nested"), join(root, "lexical", "link"));
+      manifest = `${root}/lexical/link/../manifest.json`;
+    }
     await writeFile(map, fixture.sourceMap.text);
     const response = await cli.run({
       arguments: [
@@ -45,15 +60,39 @@ cliTest(
     expect(response.exitCode, response.stdout + response.stderr).toBe(0);
     expect(response.json).toMatchObject({
       normalized_result: {
-        source: { script_index: 0 },
+        manifest: {
+          path: manifest,
+          reported_output_directory: fixture.manifest.output_directory,
+        },
+        source: {
+          script_index: 0,
+          path: join(root, "files", "modules", "main.js"),
+        },
         source_map: { association: "caller-selected" },
         generated_offset: 0,
         execution: "unknown",
-        matches: [{ content: { text: "original" } }],
+        matches: [
+          {
+            source_index: 0,
+            resolved_url: "https://app.test/dir/original.ts",
+            content: { text: "original" },
+          },
+          {
+            source_index: 1,
+            resolved_url: "https://app.test/dir//original.ts",
+            content: { text: "second" },
+          },
+        ],
         runtime: {
           id: process.versions.bun === undefined ? "node-v8" : "bun",
         },
       },
+    });
+    const limitation =
+      "Source names and sourceRoot are reported declarations. REA derives resolved URLs using WHATWG URL resolution; the pinned upstream codec decodes mappings. No original source is fetched or executed.";
+    expect(response.json).toMatchObject({
+      limitations: expect.arrayContaining([limitation]),
+      normalized_result: { limitations: expect.arrayContaining([limitation]) },
     });
     const transport = new StdioClientTransport({
       command: process.execPath,
@@ -108,7 +147,21 @@ cliTest(
     expect(invalid.exitCode).toBe(1);
     expect(invalid.json).toMatchObject({
       code: "invalid_request",
-      details: { issues: [{ path: ["generated_position"] }] },
+      details: {
+        issues: [{ path: ["generated_position"] }],
+        partial_observation: {
+          kind: "web-trace-observation",
+          analysis: "incomplete",
+          manifest: { path: manifest },
+          source: { path: join(root, "files", "modules", "main.js") },
+          source_map: {
+            path: map,
+            sha256: createHash("sha256")
+              .update(fixture.sourceMap.text)
+              .digest("hex"),
+          },
+        },
+      },
     });
   },
   // Allow cold CLI and MCP ownership preparation across the full parity sequence.
@@ -185,6 +238,27 @@ cliTest(
         const failure = {
           code: "invalid_request",
           details: {
+            partial_observation: {
+              kind: "web-trace-observation",
+              analysis: "incomplete",
+              manifest: {
+                path: manifest,
+                sha256: createHash("sha256")
+                  .update(JSON.stringify(fixture.manifest))
+                  .digest("hex"),
+              },
+              source: {
+                path: join(root, "files", "modules", "main.js"),
+                sha256: createHash("sha256")
+                  .update(fixture.source)
+                  .digest("hex"),
+              },
+              source_map: {
+                path,
+                sha256: createHash("sha256").update(text).digest("hex"),
+                bytes: Buffer.byteLength(text),
+              },
+            },
             issues: [
               {
                 path: ["source_map", "path"],

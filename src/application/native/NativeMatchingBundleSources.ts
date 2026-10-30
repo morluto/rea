@@ -14,6 +14,8 @@ import { readImmutableEvidenceBundle } from "../EvidenceBundleFiles.js";
 import type { EvidenceLookup } from "../EvidenceInputResolver.js";
 import type { NativeMatchingAdmission } from "./NativeMatchingAdmission.js";
 
+import { nativeMatchingInputError } from "./NativeMatchingInputError.js";
+
 interface SourceEntry {
   readonly file: number;
   readonly links: readonly string[];
@@ -61,18 +63,32 @@ export const loadNativeMatchingBundleSources = async ({
   const records = new Map<string, Evidence>(),
     index = new Map<string, SourceEntry>();
   const rootIds: string[] = [];
-  for (const value of [
-    input.left,
-    input.right,
-    ...input.left_observations,
-    ...input.right_observations,
-  ]) {
+  const selected: readonly (readonly [
+    unknown,
+    readonly (string | number)[],
+  ])[] = [
+    [input.left, ["left"]],
+    [input.right, ["right"]],
+    ...input.left_observations.map(
+      (value, index) => [value, ["left_observations", index]] as const,
+    ),
+    ...input.right_observations.map(
+      (value, index) => [value, ["right_observations", index]] as const,
+    ),
+  ];
+  for (const [value, path] of selected) {
     const parsed = retainedEvidenceReferenceSchema.safeParse(value);
     if (parsed.success) rootIds.push(parsed.data.evidence_id);
     else {
       await admission.admit(value);
       const checked = readImmutableEvidence(value);
-      if (!checked.ok) throw checked.error;
+      if (!checked.ok)
+        throw nativeMatchingInputError(
+          value,
+          path,
+          admission.operation,
+          checked.error,
+        );
       const record = checked.value;
       rootIds.push(record.evidence_id);
       records.set(record.evidence_id, record);

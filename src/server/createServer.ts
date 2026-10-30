@@ -1,7 +1,13 @@
+import { registerToolFamilies } from "../contracts/toolFamilyIds.js";
+import { AnalysisSettings } from "../application/AnalysisSettings.js";
+import { parseMcpInputBudget } from "../config/mcpInputBudget.js";
+import { registerAnalysisSettingsTools } from "./registerAnalysisSettingsTools.js";
+import { registerDevicetreeTool } from "./registerDevicetreeTool.js";
+import { pcapCaptureHostSupported } from "../domain/pcap/pcapAnalysis.js";
 import { createGpuCodeObjectsService } from "../composition/gpu.js";
 import { registerGpuCodeObjectsTools } from "./registerGpuCodeObjectsTools.js";
 import type { PacketCaptureService } from "../application/captures/PacketCaptureService.js";
-import { UNTRUSTED_CONTENT_INSTRUCTIONS } from "./toolResultEncoding.js";
+import { serverInstructions } from "./serverInstructions.js";
 import {
   createPacketCaptureService,
   tsharkHostSupported,
@@ -23,16 +29,25 @@ import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { captureProviderEnvironment } from "./providerEnvironment.js";
 import {
   createElfNotesService,
+  createAppleIpsService,
+  createDevicetreeService,
+  createKernelModuleService,
+  createPeLoadConfigService,
   createPeCertificatesService,
+  createPeImportsService,
   createNativeExportsService,
   createPeResourcesService,
+  createRecordedCrashService,
+  createByteEntropyService,
+  createBinaryLayoutService,
+  pwntoolsHostSupported,
 } from "../composition/binaryDiagnostics.js";
-import type { ElfNotesService } from "../application/binaryDiagnostics/ElfNotesService.js";
-import type { PeCertificatesService } from "../application/binaryDiagnostics/PeCertificatesService.js";
-import type { PeResourcesService } from "../application/binaryDiagnostics/PeResourcesService.js";
-import type { NativeExportsService } from "../application/binaryDiagnostics/NativeExportsService.js";
 import { registerElfNotesTool } from "./registerElfNotesTool.js";
+import { registerAppleIpsTool } from "./registerAppleIpsTool.js";
+import { registerKernelModuleTool } from "./registerKernelModuleTool.js";
+import { registerPeLoadConfigTool } from "./registerPeLoadConfigTool.js";
 import { registerPeCertificatesTool } from "./registerPeCertificatesTool.js";
+import { registerPeImportsTool } from "./registerPeImportsTool.js";
 import { registerPeResourcesTool } from "./registerPeResourcesTool.js";
 import { registerNativeExportsTool } from "./registerNativeExportsTool.js";
 import type { EvmInterfaceService } from "../application/evm/EvmInterfaceService.js";
@@ -46,7 +61,6 @@ import type { SqliteDatabaseService } from "../application/sqlite/SqliteDatabase
 import { createSqliteDatabaseService } from "../composition/sqlite.js";
 import { registerSqliteTools } from "./registerSqliteTools.js";
 import { registerRecordedCrashTools } from "./registerRecordedCrashTools.js";
-import { createRecordedCrashService } from "../composition/binaryDiagnostics.js";
 import { createDesktopApplicationService } from "../composition/desktop.js";
 import { registerDesktopApplicationTool } from "./registerDesktopApplicationTool.js";
 import { createGoBinaryService } from "../composition/go.js";
@@ -73,29 +87,25 @@ import { registerAnalysisViewTool } from "./registerAnalysisViewTool.js";
 import { registerBinaryDiagnosticsTools } from "./registerBinaryDiagnosticsTools.js";
 import { FridaInstrumentationManager } from "../frida/FridaInstrumentationManager.js";
 import { registerFridaTools } from "./registerFridaTools.js";
-import {
-  createByteEntropyService,
-  createBinaryLayoutService,
-  pwntoolsHostSupported,
-} from "../composition/binaryDiagnostics.js";
 import type { BinaryLayoutService } from "../application/binaryDiagnostics/BinaryLayoutService.js";
-import { createCatalogIdentity } from "../catalogIdentity.js";
 import { EvidenceMcpServer } from "./EvidenceMcpServer.js";
-import {
-  createToolResultDelivery,
-  type ToolResultDelivery,
-} from "./toolResult.js";
+import { catalogIdentityForToolFamilies } from "../catalogIdentity.js";
+import { parseMcpToolFamilies } from "../config/mcpToolFamilies.js";
+import { createToolResultDelivery } from "./toolResult.js";
+import type { ToolResultDelivery } from "./ToolResultDelivery.js";
 import { parseMcpResponseBudget } from "../config/mcpResponseBudget.js";
-import { parseMcpOutputSchemaProfile } from "../config/mcpOutputSchemaProfile.js";
+import {
+  parseMcpOutputSchemaProfile,
+  type McpOutputSchemaProfile,
+} from "../config/mcpOutputSchemaProfile.js";
 import {
   compactPresentationForMcpInputSchemaProfile,
   parseMcpInputSchemaProfile,
 } from "../config/mcpInputSchemaProfile.js";
-import type { CompactInputSchemaPresentation } from "./EvidenceMcpServer.js";
+import type { CompactInputSchemaPresentation } from "../contracts/compactInputSchema.js";
 import { isAbsolute } from "node:path";
 
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
-import { investigationEvidenceLookup } from "../application/investigation/InvestigationEvidence.js";
 import type { BrowserObservationPort } from "../application/BrowserObservationPort.js";
 import type { BrowserScenarioCapturePort } from "../application/BrowserScenarioCapturePort.js";
 import type { ElectronActiveObservationPort } from "../application/javascript/ElectronActiveObservationPort.js";
@@ -181,29 +191,19 @@ import {
   withAdmittedAnalysis,
   type ServerAnalysisSource,
 } from "./analysisAdmission.js";
-import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
 import { createReverseEngineeringService } from "../composition/reverseEngineering.js";
 import { registerReverseEngineeringTools } from "./registerReverseEngineeringTools.js";
 import { CutterBridgeClient } from "../cutter/CutterBridgeClient.js";
 import { CutterBridgeService } from "../cutter/CutterBridgeService.js";
 import { registerCutterTools } from "./registerCutterTools.js";
 import { GdbSessionManager } from "../gdb/GdbSessionManager.js";
+import { persistentDebuggerHostSupported } from "../process/PersistentDebuggerHost.js";
 import { registerGdbTools } from "./registerGdbTools.js";
 import { RizinDebugSessionManager } from "../rizin/RizinDebugSessionManager.js";
 import { registerRizinDebugTools } from "./registerRizinDebugTools.js";
 
-const TARGET_FREE_INSTRUCTIONS =
-  "REA provides reverse-engineering tools for local artifacts, native binaries, managed code, browser pages, and runtimes. Use the tool that directly answers the question; discover targets or inspect inventory only when needed. Tool results include inline Evidence and report their coverage and limitations. An opened target persists across turns. When finished, export needed Evidence and call close_binary; its snapshot_path can retain analysis.";
-
-const ACTIVE_TARGET_INSTRUCTIONS =
-  "REA analyzes the active reverse-engineering target. Use the analysis tool that answers the question directly. Search or list symbols when discovery is needed; analyze_function provides a function dossier, and focused procedure tools return individual facets.";
-
-// A host deadline can discard the response before error remediation reaches the
-// agent. Teach that distinction at initialization, not just in returned errors.
-const RECOVERY_INSTRUCTIONS =
-  "Recovery: For invalid arguments, read the connected tool's input schema (refresh tools/list if stale), fix the reported fields and do not repeat the unchanged call. If the MCP connection drops, retry that call once only when it is safe to repeat or known not to have started. If it may already have changed the target, or it fails again, tell the user and ask them to restart the MCP client. If REA could not start its connection, retry once, then tell the user and ask them to restart the MCP client. Do not retry a startup failure that returns the same unchanged result. Run `rea doctor` when REA could not start or tools stay missing after that restart. A returned REA provider_timeout is a server/provider deadline: follow its remediation and reuse accessible partial Evidence. Change a request field or REA_* setting only when the returned remediation explicitly recommends that change. Restart REA when that text says the value is read at startup. A mention that a control does not raise the deadline is not a recommendation to change it. A host error such as 'timed out awaiting tools/call' without a REA result is a client deadline, not proof that work or cleanup stopped. Do not repeat the unchanged analysis. Increase the host's tool deadline with execution/cleanup/delivery headroom; when configuration is not editable, report the required setting (Codex: mcp_servers.<server>.tool_timeout_sec, seconds). Server analysis_timeout_ms, when advertised, is a separate millisecond budget; raising it cannot fix a shorter client deadline. Session state does not establish completion of every target-free operation.";
-
 export interface CreateServerOptions {
+  readonly analysisSettings?: AnalysisSettings;
   /** Preserve the connection's creation time when materializing its runtime. */
   readonly startedAt?: string;
   /** Existing SDK server whose deferred registrations are being materialized. */
@@ -276,6 +276,7 @@ const installSessionToolAvailability = (
   // Each provider owns its verified host; discovery and execution share it.
   const verifiedHost = {
     packetCapture: tsharkHostSupported(platform),
+    pcapCapture: pcapCaptureHostSupported(platform),
     signalRecording: sigrokHostSupported(platform),
     evmInterface: evmHostSupported(platform, arch),
     pwntools: pwntoolsHostSupported(platform, arch),
@@ -291,6 +292,11 @@ const installSessionToolAvailability = (
   const basePolicy = sessionAvailabilityPolicy(options.availabilityPolicy, {
     optionalProviderLoadFailures: options.optionalProviderLoadFailures,
     hostUnsupported: {
+      persistentDebugger: !persistentDebuggerHostSupported(platform),
+      pcapCapture: outsideVerifiedHost(
+        options.pcapAnalysis,
+        verifiedHost.pcapCapture,
+      ),
       packetCapture: outsideVerifiedHost(
         options.packetCapture,
         verifiedHost.packetCapture,
@@ -393,32 +399,39 @@ const createMcpServer = (
   session: BinarySessionPort | undefined,
   delivery: ToolResultDelivery,
   compactPresentation: CompactInputSchemaPresentation | undefined,
-  omitOutputSchemas: boolean,
-): EvidenceMcpServer =>
-  new EvidenceMcpServer(
+  outputSchemaProfile: McpOutputSchemaProfile,
+  advertisedToolFamilies: ReadonlySet<string> | undefined,
+  inputElementBudget: string | undefined,
+): EvidenceMcpServer => {
+  const configured = parseMcpInputBudget(inputElementBudget);
+  if (!configured.ok) throw configured.error;
+  return new EvidenceMcpServer(
     {
       name: PRODUCT_IDENTITY.mcpServerKey,
       version: PRODUCT_IDENTITY.packageVersion,
     },
     {
       capabilities: {},
-      instructions: `${
-        session === undefined
-          ? ACTIVE_TARGET_INSTRUCTIONS
-          : TARGET_FREE_INSTRUCTIONS
-      } ${RECOVERY_INSTRUCTIONS} ${UNTRUSTED_CONTENT_INSTRUCTIONS}`,
+      maxToolInputElements: configured.value,
+      instructions: serverInstructions(
+        session !== undefined,
+        advertisedToolFamilies,
+      ),
     },
     session === undefined
       ? undefined
       : (evidence) => session.recordEvidence(evidence),
     delivery,
     compactPresentation,
-    omitOutputSchemas,
-    createCatalogIdentity(
+    outputSchemaProfile,
+    catalogIdentityForToolFamilies(
       compactPresentation,
-      omitOutputSchemas ? "off" : "full",
+      outputSchemaProfile,
+      advertisedToolFamilies,
     ),
+    advertisedToolFamilies,
   );
+};
 
 /**
  * Construct one MCP server without acquiring subprocess resources.
@@ -432,7 +445,12 @@ export const createServer = (
   const session = source.kind === "session" ? source.session : undefined;
   const analysis = source.kind === "session" ? source.session : source.analysis;
   const environment = snapshotEnvironment(options.environment ?? process.env);
-  const omitOutputSchemas = outputSchemasOmitted(environment);
+  const analysisSettings =
+    options.analysisSettings ?? new AnalysisSettings(environment);
+  const compactInputPresentation =
+    selectCompactInputSchemaPresentation(environment);
+  const selectedOutputSchemaProfile = outputSchemaProfile(environment);
+  const advertisedToolFamilies = selectAdvertisedToolFamilies(environment);
   const providerEnvironment = captureProviderEnvironment(
     options.providerEnvironment,
     environment,
@@ -460,12 +478,18 @@ export const createServer = (
     options.il2cppMetadata ?? createIl2cppMetadataService();
   const peResources = createPeResourcesService();
   const nativeExports = createNativeExportsService();
+  const devicetree = createDevicetreeService();
   const elfNotes = createElfNotesService();
+  const appleIps = createAppleIpsService();
+  const kernelModule = createKernelModuleService();
+  const peLoadConfig = createPeLoadConfigService();
   const peCertificates = createPeCertificatesService();
+  const peImports = createPeImportsService();
   const electronFuses = options.electronFuses ?? createElectronFuseService();
   const pythonPyc = options.pythonPyc ?? createPythonPycService();
   const webNetworkCapture =
-    options.webNetworkCapture ?? createWebNetworkCaptureService(environment);
+    options.webNetworkCapture ??
+    createWebNetworkCaptureService(environment, analysisSettings.read);
   const javascriptRecovery =
     options.javascriptRecovery ?? createJavaScriptRecoveryProvider(environment);
   const artifactResources = new ArtifactResourceScope();
@@ -493,18 +517,22 @@ export const createServer = (
     createMcpServer(
       session,
       delivery,
-      selectCompactInputSchemaPresentation(environment),
-      omitOutputSchemas,
+      compactInputPresentation,
+      selectedOutputSchemaProfile,
+      advertisedToolFamilies,
+      environment.REA_MCP_MAX_INPUT_ELEMENTS,
     );
+  server.analysisSettings = analysisSettings;
   if (options.mcpServer !== undefined) {
     server.attachRuntime(
       session === undefined
         ? undefined
         : (evidence) => session.recordEvidence(evidence),
       delivery,
-      createCatalogIdentity(
-        selectCompactInputSchemaPresentation(environment),
-        omitOutputSchemas ? "off" : "full",
+      catalogIdentityForToolFamilies(
+        compactInputPresentation,
+        selectedOutputSchemaProfile,
+        advertisedToolFamilies,
       ),
     );
   }
@@ -513,7 +541,12 @@ export const createServer = (
   });
   const rizinDebugSessions = new RizinDebugSessionManager(providerEnvironment);
   const android =
-    options.androidAnalysis ?? createAndroidAnalysisProvider(environment);
+    options.androidAnalysis ??
+    createAndroidAnalysisProvider(
+      environment,
+      undefined,
+      analysisSettings.read,
+    );
   const pcap = options.pcapAnalysis ?? createPcapAnalysisProvider(environment);
   const flutter =
     options.flutterAnalysis ?? createFlutterBuildAnalysisProvider();
@@ -522,6 +555,7 @@ export const createServer = (
   const wasmArtifact = wasmArtifactModule.create(
     environment,
     options.wasmArtifact,
+    analysisSettings.read,
   );
   const apkSignature = apkSignatureModule.create(
     environment,
@@ -571,8 +605,13 @@ export const createServer = (
       gpuCodeObjects.close(),
       peResources.close(),
       nativeExports.close(),
+      devicetree.close(),
       elfNotes.close(),
+      appleIps.close(),
+      kernelModule.close(),
+      peLoadConfig.close(),
       peCertificates.close(),
+      peImports.close(),
       electronFuses.close(),
       pythonPyc.close(),
       webNetworkCapture.close(),
@@ -621,119 +660,14 @@ export const createServer = (
     recordEvidenceWithUnknown,
   } = createSessionRecorders(server, session);
   const analysisAdmission = withAdmittedAnalysis(source);
-  const toolContext: ServerToolContext = {
-    server,
-    session,
-    options: selectedOptions,
-    environment,
-    logger: toolLogger,
-    evidenceById,
-    activeTarget,
-    recordEvidence,
-    recordEvidenceWithUnknown,
-    withAdmittedAnalysis: analysisAdmission,
-    artifactResources,
-    goBinary,
-    rustBinary,
-    erlangBeam,
-    il2cppMetadata,
-    peResources,
-    nativeExports,
-    elfNotes,
-    peCertificates,
-    electronFuses,
-    pythonPyc,
-    webNetworkCapture,
-  };
-  registerDesktopApplicationTool(
-    server,
-    desktopApplication,
-    toolLogger,
-    recordEvidence,
-    analysisAdmission,
-    evidenceById,
-  );
-  registerModelArtifactTools(
-    server,
-    modelArtifact,
-    toolLogger,
-    recordEvidence,
-    analysisAdmission,
-    evidenceById,
-  );
-  registerGpuCodeObjectsTools(
-    server,
-    gpuCodeObjects,
-    toolLogger,
-    recordEvidence,
-    analysisAdmission,
-    evidenceById,
-  );
-  registerBinaryAnalysisTools(toolContext);
-  registerReverseEngineeringTools(
-    server,
-    reverseEngineering,
-    toolLogger,
-    delivery,
+  const recordSessionEvidence =
     session === undefined
       ? undefined
-      : (evidence) => session.recordEvidence(evidence),
-    analysisAdmission,
-    session === undefined
-      ? undefined
-      : () => session.invalidateSnapshotForExternalMutation(),
-    session === undefined
-      ? undefined
-      : (path, signal, operation, rebindFailure) =>
-          session.withAdmittedExternalMutation(
-            path,
-            signal,
-            operation,
-            rebindFailure,
-          ),
-    evidenceById,
-  );
-  registerFridaTools(
-    server,
-    fridaInstrumentation,
-    toolLogger,
-    delivery,
-    session === undefined
-      ? undefined
-      : (evidence) => session.recordEvidence(evidence),
-    evidenceById,
-  );
-  registerCutterTools(
-    server,
-    cutter,
-    toolLogger,
-    delivery,
-    session === undefined
-      ? undefined
-      : (evidence) => session.recordEvidence(evidence),
-    session,
-  );
-  registerGdbTools(
-    server,
-    gdbSessions,
-    toolLogger,
-    delivery,
-    session === undefined
-      ? undefined
-      : (evidence) => session.recordEvidence(evidence),
-    session,
-    evidenceById,
-  );
-  registerRizinDebugTools(
-    server,
-    rizinDebugSessions,
-    toolLogger,
-    delivery,
-    session === undefined
-      ? undefined
-      : (evidence) => session.recordEvidence(evidence),
-    session,
-  );
+      : (
+          evidence: Parameters<
+            NonNullable<typeof session>["recordEvidence"]
+          >[0],
+        ) => session.recordEvidence(evidence);
   const previousOnclose = server.server.onclose;
   server.server.onclose = () => {
     previousOnclose?.();
@@ -747,85 +681,502 @@ export const createServer = (
   const closeServer = server.close.bind(server);
   server.close = async () => {
     const results = await Promise.allSettled([closeServer(), closeProviders()]);
-    for (const result of results)
-      if (result.status === "rejected") throw result.reason;
+    const failures = results.flatMap((result) =>
+      result.status === "rejected" ? [result.reason as unknown] : [],
+    );
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1)
+      throw new AggregateError(failures, "REA server cleanup failed");
   };
-  registerCaptureTools(
-    server,
-    packetCapture,
-    toolLogger,
+  const recordUnknown =
+    session === undefined
+      ? undefined
+      : (input: Parameters<NonNullable<typeof session>["recordUnknown"]>[0]) =>
+          session.recordUnknown(input);
+  const analysisOptions = {
+    logger: toolLogger,
+    activeTarget,
     recordEvidence,
-    analysisAdmission,
-  );
-  registerSignalTools(
-    server,
-    signalRecording,
-    toolLogger,
-    recordEvidence,
-    analysisAdmission,
-  );
-  registerConfiguredAnalysisTools(
-    toolContext,
-    android,
-    wasmArtifact,
-    apkSignature,
-    evmInterface,
-    jeb,
-    firmwareAnalysis,
-    webRuntime,
-  );
-  registerAdbTools(
-    server,
-    new AdbDeviceAnalysisService(adbDevice),
-    toolLogger,
-    recordEvidence,
-    analysisAdmission,
-  );
-  registerPcapTools(
-    server,
-    new PcapAnalysisService(pcap),
-    toolLogger,
-    recordEvidence,
-    analysisAdmission,
+    recordUnknown,
     evidenceById,
-  );
-  registerFlutterTools(
-    server,
-    new FlutterBuildAnalysisService(flutter),
-    toolLogger,
+    withAdmittedAnalysis: analysisAdmission,
+  };
+  const evidenceOptions = {
+    logger: toolLogger,
+    activeTarget,
     recordEvidence,
-    analysisAdmission,
-    evidenceById,
-  );
-  registerApktoolTools(
-    server,
-    new ApktoolResourceAnalysisService(apktool),
-    toolLogger,
+    withAdmittedAnalysis: analysisAdmission,
+  };
+  const common = {
+    logger: toolLogger,
     recordEvidence,
-    analysisAdmission,
-  );
-  registerObservationTools(toolContext);
+    withAdmittedAnalysis: analysisAdmission,
+  };
+  registerToolFamilies({
+    direct: () => registerOfficialTools(server, analysisOptions),
+    enhanced: () =>
+      registerEnhancedTools(server, {
+        ...analysisOptions,
+        analysisProfile:
+          session === undefined
+            ? undefined
+            : (operation) =>
+                session.analysisProfile() ?? session.analysisProfile(operation),
+        allowsSnapshotReplay:
+          session === undefined
+            ? undefined
+            : (operation) => session.allowsSnapshotReplay(operation),
+        recordWorkflowSnapshot:
+          session === undefined
+            ? undefined
+            : (input) => session.recordWorkflowSnapshot(input),
+      }),
+    native: () => {
+      registerNativeTools(server, { ...evidenceOptions, evidenceById });
+      registerReverseEngineeringTools(
+        server,
+        reverseEngineering,
+        toolLogger,
+        delivery,
+        recordSessionEvidence,
+        analysisAdmission,
+        session === undefined
+          ? undefined
+          : () => session.invalidateSnapshotForExternalMutation(),
+        session === undefined
+          ? undefined
+          : (path, signal, operation, rebindFailure) =>
+              session.withAdmittedExternalMutation(
+                path,
+                signal,
+                operation,
+                rebindFailure,
+              ),
+        evidenceById,
+      );
+      registerCutterTools(
+        server,
+        cutter,
+        toolLogger,
+        delivery,
+        recordSessionEvidence,
+        session,
+      );
+      registerGdbTools(
+        server,
+        gdbSessions,
+        toolLogger,
+        delivery,
+        recordSessionEvidence,
+        session,
+        evidenceById,
+      );
+      registerRizinDebugTools(
+        server,
+        rizinDebugSessions,
+        toolLogger,
+        delivery,
+        recordSessionEvidence,
+        session,
+      );
+      registerBinaryDiagnosticsTools(
+        server,
+        selectedOptions.binaryLayout ?? createBinaryLayoutService(environment),
+        createByteEntropyService(artifactResources),
+        toolLogger,
+        recordEvidence,
+        evidenceById,
+        analysisAdmission,
+      );
+      registerPeResourcesTool(
+        server,
+        peResources,
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+      );
+      registerNativeExportsTool(
+        server,
+        nativeExports,
+        toolLogger,
+        recordEvidence,
+        evidenceById,
+        analysisAdmission,
+      );
+      registerDevicetreeTool(
+        server,
+        devicetree,
+        toolLogger,
+        recordEvidence,
+        evidenceById,
+        analysisAdmission,
+      );
+      registerElfNotesTool(
+        server,
+        elfNotes,
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+      );
+      registerAppleIpsTool(
+        server,
+        appleIps,
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+      );
+      registerKernelModuleTool(
+        server,
+        kernelModule,
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+      );
+      registerPeLoadConfigTool(
+        server,
+        peLoadConfig,
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+      );
+      registerPeCertificatesTool(
+        server,
+        peCertificates,
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+      );
+      registerPeImportsTool(
+        server,
+        peImports,
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+      );
+      registerRecordedCrashTools(
+        server,
+        selectedOptions.recordedCrash ??
+          createRecordedCrashService(environment),
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+      );
+    },
+    artifact: () => {
+      registerArtifactTools(server, { ...evidenceOptions, evidenceById });
+      registerDesktopApplicationTool(
+        server,
+        desktopApplication,
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+        evidenceById,
+      );
+      registerModelArtifactTools(
+        server,
+        modelArtifact,
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+        evidenceById,
+      );
+      registerGpuCodeObjectsTools(
+        server,
+        gpuCodeObjects,
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+        evidenceById,
+      );
+      registerEvmTools(
+        server,
+        evmInterface,
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+        evidenceById,
+      );
+      registerGoTools(
+        server,
+        goBinary,
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+        evidenceById,
+      );
+      registerIl2cppTools(
+        server,
+        il2cppMetadata,
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+        evidenceById,
+      );
+      registerRustTools(
+        server,
+        rustBinary,
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+        evidenceById,
+      );
+      registerPythonPycTool(
+        server,
+        pythonPyc,
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+        evidenceById,
+      );
+      registerErlangTools(
+        server,
+        erlangBeam,
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+        evidenceById,
+      );
+      registerWasmTools(
+        server,
+        wasmArtifact,
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+        evidenceById,
+      );
+      registerApkSignatureTools(
+        server,
+        apkSignature,
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+        evidenceById,
+      );
+      registerSqliteTools(
+        server,
+        selectedOptions.sqliteDatabase ??
+          createSqliteDatabaseService(environment),
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+      );
+      registerCaptureTools(
+        server,
+        packetCapture,
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+      );
+      registerSignalTools(
+        server,
+        signalRecording,
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+      );
+    },
+    managed: () => {
+      registerManagedTools(server, { ...evidenceOptions, evidenceById });
+      if (session !== undefined)
+        registerManagedWorkflowTools(server, {
+          logger: toolLogger,
+          recordEvidence,
+          recordEvidenceWithUnknown,
+          session,
+          withAdmittedAnalysis: analysisAdmission,
+        });
+    },
+    firmware: () =>
+      registerFirmwareTools(
+        server,
+        firmwareAnalysis,
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+      ),
+    android: () =>
+      registerAndroidTools(
+        server,
+        new AndroidAnalysisService(android, recordEvidence),
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+        evidenceById,
+      ),
+    pcap: () =>
+      registerPcapTools(
+        server,
+        new PcapAnalysisService(pcap),
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+        evidenceById,
+      ),
+    flutter: () =>
+      registerFlutterTools(
+        server,
+        new FlutterBuildAnalysisService(flutter),
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+        evidenceById,
+      ),
+    frida: () =>
+      registerFridaTools(
+        server,
+        fridaInstrumentation,
+        toolLogger,
+        delivery,
+        recordSessionEvidence,
+        evidenceById,
+      ),
+    apktool: () =>
+      registerApktoolTools(
+        server,
+        new ApktoolResourceAnalysisService(apktool),
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+      ),
+    jeb: () =>
+      registerJebTools(
+        server,
+        new JebAnalysisService(jeb),
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+      ),
+    adb: () =>
+      registerAdbTools(
+        server,
+        new AdbDeviceAnalysisService(adbDevice),
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+      ),
+    browser: () => {
+      registerBrowserTools(server, {
+        ...common,
+        evidenceById,
+        browser: selectedOptions.browserObservation,
+        loadFailure:
+          selectedOptions.optionalProviderLoadFailures?.browserObservation,
+      });
+      registerBrowserScenarioTool(server, {
+        ...common,
+        evidenceById,
+        provider: selectedOptions.browserScenarioCapture,
+        loadFailure:
+          selectedOptions.optionalProviderLoadFailures?.browserScenarioCapture,
+      });
+      registerWebRuntimeTools(
+        server,
+        webRuntime,
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+      );
+      registerWebNetworkCaptureTool(
+        server,
+        webNetworkCapture,
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+        evidenceById,
+      );
+    },
+    electron: () =>
+      registerElectronTools(server, {
+        ...common,
+        artifactResources,
+        environment,
+        evidenceById,
+        electron: selectedOptions.electronObservation,
+        electronActive: selectedOptions.electronActiveObservation,
+        electronFuses,
+        observationLoadFailure:
+          selectedOptions.optionalProviderLoadFailures?.electronObservation,
+        activeLoadFailure:
+          selectedOptions.optionalProviderLoadFailures
+            ?.electronActiveObservation,
+      }),
+    "javascript-runtime": () =>
+      registerJavaScriptRuntimeObservationTools(server, {
+        ...common,
+        runtime: selectedOptions.javascriptRuntimeObservation,
+        loadFailure:
+          selectedOptions.optionalProviderLoadFailures
+            ?.javascriptRuntimeObservation,
+      }),
+    application: () => {
+      registerAnalysisSettingsTools(server, analysisSettings);
+      registerAnalysisViewTool(
+        server,
+        toolLogger,
+        evidenceById,
+        recordEvidence,
+        analysisAdmission,
+        artifactResources,
+      );
+      registerWebScriptTool(server, { ...common, artifactResources });
+      registerWebModuleTool(
+        server,
+        selectedOptions.webModuleTrace ??
+          createWebModuleTraceService(environment),
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+      );
+      registerWebSourceLocationTool(
+        server,
+        selectedOptions.webSourceLocation ??
+          createWebSourceLocationService(environment),
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+      );
+      registerJavaScriptRecoveryTool(
+        server,
+        new JavaScriptRecoveryService(
+          selectedOptions.javascriptRecovery ??
+            createJavaScriptRecoveryProvider(environment),
+        ),
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+      );
+      registerApplicationTools(server, {
+        artifactResources,
+        evidenceById,
+        logger: toolLogger,
+        recordEvidence,
+        recordEvidenceWithUnknown,
+        withAdmittedAnalysis: analysisAdmission,
+      });
+    },
+    session: () => {
+      if (session === undefined) return;
+      registerSessionTools(server, session, toolLogger, {
+        ...selectedOptions,
+        artifactResources,
+        ...(availability === undefined
+          ? {}
+          : { availabilityPolicy: availability.policy }),
+        ...(availability?.evmLimiterAvailability === undefined
+          ? {}
+          : { evmLimiterAvailability: availability.evmLimiterAvailability }),
+        androidAnalysisAvailability: (signal) =>
+          android.inspectAvailability(signal),
+        adbAnalysisAvailability: (signal) =>
+          adbDevice.inspectAvailability(signal),
+        apktoolAnalysisAvailability: (signal) =>
+          apktool.inspectAvailability(signal),
+        jebAnalysisAvailability: (signal) => jeb.inspectAvailability(signal),
+        startedAt,
+      });
+    },
+  });
   registerGuidedPrompts(server, analysis, session);
-  if (session !== undefined) {
-    registerSessionTools(server, session, toolLogger, {
-      ...selectedOptions,
-      artifactResources,
-      ...(availability === undefined
-        ? {}
-        : { availabilityPolicy: availability.policy }),
-      ...(availability?.evmLimiterAvailability === undefined
-        ? {}
-        : { evmLimiterAvailability: availability.evmLimiterAvailability }),
-      androidAnalysisAvailability: (signal) =>
-        android.inspectAvailability(signal),
-      adbAnalysisAvailability: (signal) =>
-        adbDevice.inspectAvailability(signal),
-      apktoolAnalysisAvailability: (signal) =>
-        apktool.inspectAvailability(signal),
-      jebAnalysisAvailability: (signal) => jeb.inspectAvailability(signal),
-      startedAt,
-    });
-  }
   return server;
 };
 
@@ -841,14 +1192,14 @@ const selectToolResultDelivery = (
   return createToolResultDelivery(configured.value);
 };
 
-const outputSchemasOmitted = (
+const outputSchemaProfile = (
   environment: Readonly<NodeJS.ProcessEnv>,
-): boolean => {
+): McpOutputSchemaProfile => {
   const configured = parseMcpOutputSchemaProfile(
     environment.REA_MCP_OUTPUT_SCHEMA_PROFILE,
   );
   if (!configured.ok) throw configured.error;
-  return configured.value === "off";
+  return configured.value ?? "full";
 };
 
 const selectCompactInputSchemaPresentation = (
@@ -861,226 +1212,14 @@ const selectCompactInputSchemaPresentation = (
   return compactPresentationForMcpInputSchemaProfile(configured.value);
 };
 
-const registerConfiguredAnalysisTools = (
-  {
-    server,
-    options,
-    environment,
-    logger: toolLogger,
-    evidenceById,
-    recordEvidence,
-    withAdmittedAnalysis,
-    goBinary,
-    rustBinary,
-    erlangBeam,
-    il2cppMetadata,
-    peResources,
-    nativeExports,
-    elfNotes,
-    peCertificates,
-    pythonPyc,
-    webNetworkCapture,
-    artifactResources,
-  }: ServerToolContext,
-  android: AndroidAnalysisPort,
-  wasmArtifact: Pick<WasmArtifactService, "inspect" | "close">,
-  apkSignature: Pick<ApkSignatureService, "inspect" | "close">,
-  evmInterface: EvmInterfaceService,
-  jeb: JebAnalysisPort,
-  firmwareAnalysis: FirmwareAnalysisService,
-  webRuntime: WebRuntimeService,
-): void => {
-  registerAndroidTools(
-    server,
-    new AndroidAnalysisService(android, recordEvidence),
-    toolLogger,
-    recordEvidence,
-    withAdmittedAnalysis,
-    evidenceById,
-  );
-  registerJebTools(
-    server,
-    new JebAnalysisService(jeb),
-    toolLogger,
-    recordEvidence,
-    withAdmittedAnalysis,
-  );
-  registerBinaryDiagnosticsTools(
-    server,
-    options.binaryLayout ?? createBinaryLayoutService(environment),
-    createByteEntropyService(artifactResources),
-    toolLogger,
-    recordEvidence,
-    evidenceById,
-    withAdmittedAnalysis,
-  );
-  registerAnalysisViewTool(
-    server,
-    toolLogger,
-    evidenceById,
-    recordEvidence,
-    withAdmittedAnalysis,
-    artifactResources,
-  );
-  registerPeResourcesTool(
-    server,
-    peResources,
-    toolLogger,
-    recordEvidence,
-    withAdmittedAnalysis,
-  );
-  registerNativeExportsTool(
-    server,
-    nativeExports,
-    toolLogger,
-    recordEvidence,
-    evidenceById,
-    withAdmittedAnalysis,
-  );
-  registerElfNotesTool(
-    server,
-    elfNotes,
-    toolLogger,
-    recordEvidence,
-    withAdmittedAnalysis,
-  );
-  registerPeCertificatesTool(
-    server,
-    peCertificates,
-    toolLogger,
-    recordEvidence,
-    withAdmittedAnalysis,
-  );
-  registerGoTools(
-    server,
-    goBinary,
-    toolLogger,
-    recordEvidence,
-    withAdmittedAnalysis,
-    evidenceById,
-  );
-  registerIl2cppTools(
-    server,
-    il2cppMetadata,
-    toolLogger,
-    recordEvidence,
-    withAdmittedAnalysis,
-    evidenceById,
-  );
-  registerRustTools(
-    server,
-    rustBinary,
-    toolLogger,
-    recordEvidence,
-    withAdmittedAnalysis,
-    evidenceById,
-  );
-  registerPythonPycTool(
-    server,
-    pythonPyc,
-    toolLogger,
-    recordEvidence,
-    withAdmittedAnalysis,
-  );
-  registerErlangTools(
-    server,
-    erlangBeam,
-    toolLogger,
-    recordEvidence,
-    withAdmittedAnalysis,
-  );
-  registerWasmTools(
-    server,
-    wasmArtifact,
-    toolLogger,
-    recordEvidence,
-    withAdmittedAnalysis,
-    evidenceById,
-  );
-  registerApkSignatureTools(
-    server,
-    apkSignature,
-    toolLogger,
-    recordEvidence,
-    withAdmittedAnalysis,
-    evidenceById,
-  );
-  registerEvmTools(
-    server,
-    evmInterface,
-    toolLogger,
-    recordEvidence,
-    withAdmittedAnalysis,
-    evidenceById,
-  );
-  registerSqliteTools(
-    server,
-    options.sqliteDatabase ?? createSqliteDatabaseService(environment),
-    toolLogger,
-    recordEvidence,
-    withAdmittedAnalysis,
-  );
-  registerRecordedCrashTools(
-    server,
-    options.recordedCrash ?? createRecordedCrashService(environment),
-    toolLogger,
-    recordEvidence,
-    withAdmittedAnalysis,
-  );
-  registerFirmwareTools(
-    server,
-    firmwareAnalysis,
-    toolLogger,
-    recordEvidence,
-    withAdmittedAnalysis,
-  );
-  registerWebModuleTool(
-    server,
-    options.webModuleTrace ?? createWebModuleTraceService(environment),
-    toolLogger,
-    recordEvidence,
-    withAdmittedAnalysis,
-  );
-  registerWebSourceLocationTool(
-    server,
-    options.webSourceLocation ?? createWebSourceLocationService(environment),
-    toolLogger,
-    recordEvidence,
-    withAdmittedAnalysis,
-  );
-  registerWebRuntimeTools(
-    server,
-    webRuntime,
-    toolLogger,
-    recordEvidence,
-    withAdmittedAnalysis,
-  );
-  registerWebNetworkCaptureTool(
-    server,
-    webNetworkCapture,
-    toolLogger,
-    recordEvidence,
-    withAdmittedAnalysis,
-    evidenceById,
-  );
-  registerJavaScriptRecoveryTool(
-    server,
-    new JavaScriptRecoveryService(
-      options.javascriptRecovery ??
-        createJavaScriptRecoveryProvider(environment),
-    ),
-    toolLogger,
-    recordEvidence,
-    withAdmittedAnalysis,
-  );
-};
-
 const createSessionRecorders = (
   server: EvidenceMcpServer,
   session: BinarySessionPort | undefined,
 ) => ({
   evidenceById:
-    session === undefined ? undefined : investigationEvidenceLookup(session),
+    session === undefined
+      ? undefined
+      : session.evidenceForAnalysis.bind(session),
   activeTarget:
     session === undefined ? undefined : () => session.activeTarget(),
   recordEvidence:
@@ -1097,136 +1236,10 @@ const createSessionRecorders = (
         ) => session.recordEvidenceWithUnknown(evidence, input),
 });
 
-interface ServerToolContext extends ReturnType<typeof createSessionRecorders> {
-  readonly goBinary: GoBinaryService;
-  readonly rustBinary: RustBinaryService;
-  readonly erlangBeam: BeamService;
-  readonly il2cppMetadata: Il2cppMetadataService;
-  readonly peResources: PeResourcesService;
-  readonly nativeExports: NativeExportsService;
-  readonly elfNotes: ElfNotesService;
-  readonly peCertificates: PeCertificatesService;
-  readonly electronFuses: ElectronFuseService;
-  readonly pythonPyc: PythonPycService;
-  readonly webNetworkCapture: WebNetworkCaptureService;
-  readonly artifactResources: ArtifactResourceScope;
-  readonly server: EvidenceMcpServer;
-  readonly session: BinarySessionPort | undefined;
-  readonly options: CreateServerOptions;
-  readonly environment: Readonly<NodeJS.ProcessEnv>;
-  readonly logger: Logger;
-  readonly withAdmittedAnalysis: WithAdmittedAnalysis;
-}
-
-const registerBinaryAnalysisTools = ({
-  server,
-  session,
-  logger,
-  activeTarget,
-  recordEvidence,
-  recordEvidenceWithUnknown,
-  evidenceById,
-  withAdmittedAnalysis,
-}: ServerToolContext): void => {
-  const recordUnknown =
-    session === undefined
-      ? undefined
-      : (input: Parameters<typeof session.recordUnknown>[0]) =>
-          session.recordUnknown(input);
-  const analysisOptions = {
-    logger,
-    activeTarget,
-    recordEvidence,
-    recordUnknown,
-    evidenceById,
-    withAdmittedAnalysis,
-  };
-  registerOfficialTools(server, analysisOptions);
-  registerEnhancedTools(server, {
-    ...analysisOptions,
-    analysisProfile:
-      session === undefined
-        ? undefined
-        : (operation) =>
-            session.analysisProfile() ?? session.analysisProfile(operation),
-    allowsSnapshotReplay:
-      session === undefined
-        ? undefined
-        : (operation) => session.allowsSnapshotReplay(operation),
-    recordWorkflowSnapshot:
-      session === undefined
-        ? undefined
-        : (input) => session.recordWorkflowSnapshot(input),
-  });
-  const evidenceOptions = {
-    logger,
-    activeTarget,
-    recordEvidence,
-    withAdmittedAnalysis,
-  };
-  registerNativeTools(server, { ...evidenceOptions, evidenceById });
-  registerArtifactTools(server, { ...evidenceOptions, evidenceById });
-  registerManagedTools(server, { ...evidenceOptions, evidenceById });
-  if (session !== undefined)
-    registerManagedWorkflowTools(server, {
-      logger,
-      recordEvidence,
-      recordEvidenceWithUnknown,
-      session,
-      withAdmittedAnalysis,
-    });
-};
-
-const registerObservationTools = ({
-  electronFuses,
-  evidenceById,
-  server,
-  options,
-  logger,
-  recordEvidence,
-  recordEvidenceWithUnknown,
-  withAdmittedAnalysis,
-  artifactResources,
-  environment,
-}: ServerToolContext): void => {
-  const common = { logger, recordEvidence, withAdmittedAnalysis };
-  registerWebScriptTool(server, { ...common, artifactResources });
-  registerBrowserTools(server, {
-    ...common,
-    evidenceById,
-    browser: options.browserObservation,
-    loadFailure: options.optionalProviderLoadFailures?.browserObservation,
-  });
-  registerBrowserScenarioTool(server, {
-    ...common,
-    provider: options.browserScenarioCapture,
-    loadFailure: options.optionalProviderLoadFailures?.browserScenarioCapture,
-  });
-  registerElectronTools(server, {
-    ...common,
-    artifactResources,
-    environment,
-    evidenceById,
-    electron: options.electronObservation,
-    electronActive: options.electronActiveObservation,
-    electronFuses,
-    observationLoadFailure:
-      options.optionalProviderLoadFailures?.electronObservation,
-    activeLoadFailure:
-      options.optionalProviderLoadFailures?.electronActiveObservation,
-  });
-  registerJavaScriptRuntimeObservationTools(server, {
-    ...common,
-    runtime: options.javascriptRuntimeObservation,
-    loadFailure:
-      options.optionalProviderLoadFailures?.javascriptRuntimeObservation,
-  });
-  registerApplicationTools(server, {
-    artifactResources,
-    evidenceById,
-    logger,
-    recordEvidence,
-    recordEvidenceWithUnknown,
-    withAdmittedAnalysis,
-  });
+const selectAdvertisedToolFamilies = (
+  environment: Readonly<NodeJS.ProcessEnv>,
+): ReadonlySet<string> | undefined => {
+  const configured = parseMcpToolFamilies(environment.REA_MCP_TOOL_FAMILIES);
+  if (!configured.ok) throw configured.error;
+  return configured.value === undefined ? undefined : new Set(configured.value);
 };

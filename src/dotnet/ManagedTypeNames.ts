@@ -11,6 +11,7 @@ import {
 } from "./ManagedMetadataLayout.js";
 import {
   metadataRowCursor,
+  type MetadataTokenFact,
   metadataToken,
   readMetadataBlob,
 } from "./ManagedMetadataHeaps.js";
@@ -29,7 +30,9 @@ export const typeNameLookup = (
   ranges: readonly TypeRange[],
   issues: ManagedParseIssue[],
   references: ManagedTypeReferenceLookup,
-): ((token: string | null) => string | null) => {
+): ((
+  reference: Pick<MetadataTokenFact, "table" | "row" | "token"> | null,
+) => string | null) => {
   const names = new Map<string, string | null>();
   const definitionName = (table: 1 | 2, row: number): string | null => {
     if (table === 2) {
@@ -59,11 +62,10 @@ export const typeNameLookup = (
       ? null
       : definitionName(nominalGenericType.table, nominalGenericType.row);
   };
-  return (token) => {
-    if (token === null) return null;
+  return (reference) => {
+    if (reference === null) return null;
+    const { token, table, row } = reference;
     if (names.has(token)) return names.get(token) ?? null;
-    const table = Number.parseInt(token.slice(2, 4), 16);
-    const row = Number.parseInt(token.slice(4), 16);
     const name =
       readManagedValue(
         () =>

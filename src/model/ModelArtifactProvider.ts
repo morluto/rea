@@ -30,7 +30,7 @@ import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   withArtifactRegularFile,
   bindArtifactFileCleanup,
-  artifactFilePrimaryFailure,
+  artifactFilePrimaryFacts,
   artifactFileCancellationCause,
   artifactFileCompletion,
 } from "../artifacts/ArtifactFileOperation.js";
@@ -40,8 +40,6 @@ import { GgufHeader } from "./GgufHeader.js";
 import { readSafetensorsHeader } from "./SafetensorsHeader.js";
 import {
   ModelFormatFailure,
-  rejectModel,
-  rejectPickle,
   MODEL_REPORT_BYTES,
   modelCapacityRemediation,
   modelCapacityReportedLimits,
@@ -103,7 +101,7 @@ export class ModelArtifactProvider implements ModelArtifactPort {
             input.path,
             this.#resources,
             options?.signal,
-            (file) =>
+            ({ handle: file }) =>
               this.#read(file, input, options?.signal, (progress) => {
                 partialProgress = progress;
               }),
@@ -111,9 +109,10 @@ export class ModelArtifactProvider implements ModelArtifactPort {
         ),
       );
     } catch (cause) {
-      const primary = artifactFilePrimaryFailure(cause);
+      const { cause: primary, origin } = artifactFilePrimaryFacts(cause);
       let error: AnalysisError;
-      if (primary instanceof AnalysisError) error = primary;
+      if (origin === "owned-or-classified" && primary instanceof AnalysisError)
+        error = primary;
       else if (primary instanceof ModelFormatFailure) {
         const limit = primary.kind === "capacity" ? primary.limit : undefined;
         error =
@@ -141,6 +140,7 @@ export class ModelArtifactProvider implements ModelArtifactPort {
                   constraint: "file_format_rejected",
                 });
       } else if (
+        origin === "owned-or-classified" &&
         primary instanceof ArtifactReaderFailure &&
         primary.reason === "cancelled"
       )
@@ -148,6 +148,7 @@ export class ModelArtifactProvider implements ModelArtifactPort {
           cause: artifactFileCancellationCause(primary),
         });
       else if (
+        origin === "owned-or-classified" &&
         primary instanceof ArtifactReaderFailure &&
         primary.reason === "integrity"
       )
@@ -169,6 +170,7 @@ export class ModelArtifactProvider implements ModelArtifactPort {
           { cause: primary },
         );
       else if (
+        origin === "owned-or-classified" &&
         primary instanceof ArtifactReaderFailure &&
         primary.reason === "limit"
       )
@@ -251,7 +253,6 @@ export class ModelArtifactProvider implements ModelArtifactPort {
       );
     const reader = new ModelHeaderReader(file, Number(initial.size), signal);
     const first = await reader.take(4);
-    if (first.equals(Buffer.from([0x50, 0x4b, 3, 4]))) rejectPickle();
     const format = first.equals(Buffer.from("GGUF")) ? "gguf" : "safetensors";
     const partial: ModelArtifactPartial = {
       kind: "model-artifact-partial",
@@ -307,15 +308,6 @@ export class ModelArtifactProvider implements ModelArtifactPort {
             onLimitation: (message) => partial.limitations.push(message),
           })
         : await readSafetensorsHeader(reader, first);
-    const intervals = parsed.tensors
-      .filter((row) => row.byte_length !== null)
-      .sort((a, b) => a.file_offset - b.file_offset);
-    let end = parsed.tensor_data_offset;
-    for (const row of intervals) {
-      if (row.file_offset < end && row.byte_length !== 0)
-        rejectModel(`Overlapping tensor byte ranges at ${row.name}`);
-      end = Math.max(end, row.file_offset + (row.byte_length ?? 0));
-    }
     partial.version = parsed.version;
     partial.byte_order = parsed.byte_order;
     partial.alignment = parsed.alignment;

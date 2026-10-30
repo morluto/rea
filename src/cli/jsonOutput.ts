@@ -18,7 +18,7 @@ export const writeJsonOutput = async (
 ): Promise<void> => {
   await writeOutputParts(
     destination,
-    jsonOutputParts(value, format, isTerminal(destination)),
+    jsonOutputParts(value, format, isTerminalOutput(destination)),
   );
 };
 
@@ -31,7 +31,7 @@ export const writeOutputParts = async (
     await writeOutputText(destination, part);
 };
 
-const isTerminal = (destination: Writable): boolean =>
+export const isTerminalOutput = (destination: Writable): boolean =>
   "isTTY" in destination && destination.isTTY === true;
 
 export const writeOutputText = (

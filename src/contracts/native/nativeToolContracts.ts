@@ -1,3 +1,4 @@
+import { requireOutputSchema } from "../toolOutputSchemaPrimitives.js";
 import { z } from "zod";
 import { nativeCallObservationInputSchema } from "../../domain/native/nativeCallObservation.js";
 import {
@@ -10,14 +11,13 @@ import { nativeOutputSchemas } from "../toolOutputSchemaGroups.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
 import { localPathStringSchema } from "../../domain/localPath.js";
 import { toolContractMetadata } from "../toolEffects.js";
-import { requireOutputSchema } from "../toolOutputSchemaPrimitives.js";
 import { analysisDetailSchema } from "../analysisDetail.js";
 import { nativeCommandTimeoutField } from "../../domain/native/nativeDeadlines.js";
 
 const examples: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {
   inspect_macho: {},
   inspect_signature: {},
-  inspect_plist: { path: "/Applications/Example.app/Contents/Info.plist" },
+  inspect_plist: {},
   list_architectures: {},
   observe_native_ui: { pid: 123, window_id: 456 },
   capture_native_ui_scenario: {
@@ -41,10 +41,14 @@ const examples: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {
   },
 };
 
-const native = <Name extends string, Schema extends z.ZodObject>(
+const native = <
+  Name extends keyof typeof nativeOutputSchemas,
+  Schema extends z.ZodObject,
+>(
   name: Name,
   description: string,
   inputSchema: Schema,
+  retainedSummary?: ToolContract["retainedSummary"],
 ) => {
   const outputSchema = requireOutputSchema(nativeOutputSchemas, name);
   const strictInputSchema = inputSchema.strict();
@@ -53,6 +57,8 @@ const native = <Name extends string, Schema extends z.ZodObject>(
     ...toolContractMetadata(name),
     description,
     kind: "native-provider",
+    requiresActiveTarget: true,
+    ...(retainedSummary === undefined ? {} : { retainedSummary }),
     inputSchema: strictInputSchema,
     outputSchema,
     examples: [
@@ -104,19 +110,24 @@ export const NATIVE_TOOL_CONTRACTS = [
         ),
       native_command_timeout_ms: nativeCommandTimeoutField,
     }),
+    { evidenceParameters: "omit-detail" },
   ),
   native(
     "inspect_signature",
-    "Inspect the active Mach-O executable's code-signing identity, hashes, authorities, requirements, entitlements, hardened-runtime state, and exact command provenance. native_command_timeout_ms is each codesign command's wall clock (omitted means 60000 ms). It does not raise the fixed 67108864-byte output allowance.",
+    "Inspect the selected Mach-O architecture's code-signing identity, hashes, authorities, designated requirement, entitlements and hardened-runtime state from a temporary digest-verified byte snapshot. Other slices are checked for unsigned state, with their metadata coverage stated separately. Exact command provenance is retained. native_command_timeout_ms is each codesign command's wall clock (omitted means 60000 ms). It does not raise the fixed 67108864-byte output allowance.",
     z.object({
       native_command_timeout_ms: nativeCommandTimeoutField,
     }),
   ),
   native(
     "inspect_plist",
-    "Parse Info.plist from the active artifact by default, or pass any local plist path. Returns normalized JSON rather than plutil text. native_command_timeout_ms is each file or plutil command's wall clock (omitted means 60000 ms). The 67108864-byte plist input and decode allowances and the 128-level nesting allowance have no runtime override. The 4096-byte markup probe is a probe window, not a document cap, and has no runtime override.",
+    "Requires an open binary or bundle-resource session; use open_binary or open_bundle_resources first. Parse its Info.plist by default, or select a local plist with path within that session. Supplying path does not open a session. Returns normalized JSON rather than plutil text. native_command_timeout_ms is each file or plutil command's wall clock (omitted means 60000 ms). The 67108864-byte plist input and decode allowances and the 998-level nesting allowance have no runtime override. XML sources also require native plutil validation, which can refuse shallower inputs with its own diagnostics. The 4096-byte markup probe is a probe window, not a document cap, and has no runtime override.",
     z.object({
-      path: localPathStringSchema.optional(),
+      path: localPathStringSchema
+        .optional()
+        .describe(
+          "Optional plist selection for an already open binary or bundle-resource session; this does not open a session.",
+        ),
       native_command_timeout_ms: nativeCommandTimeoutField,
     }),
   ),
@@ -129,7 +140,7 @@ export const NATIVE_TOOL_CONTRACTS = [
   ),
   native(
     "demangle_swift",
-    "Demangle an ordered list of single-line Swift symbols without requiring Hopper. Each input returns demangled, unchanged, or invalid status. native_command_timeout_ms is the swift-demangle wall clock (omitted means 60000 ms) and does not raise the fixed 67108864-byte output allowance.",
+    "Demangle an ordered list of single-line Swift symbols without requiring Hopper. Each input returns demangled, unchanged, or invalid status. An exact underscore input skipped by swift-demangle is invalid with empty output; it does not discard valid companion results. native_command_timeout_ms is the swift-demangle wall clock (omitted means 60000 ms) and does not raise the fixed 67108864-byte output allowance.",
     z.object({
       symbols: swiftSymbolsSchema,
       native_command_timeout_ms: nativeCommandTimeoutField,

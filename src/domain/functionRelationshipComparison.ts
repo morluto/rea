@@ -1,11 +1,11 @@
 import { functionCoordinateContextsEqual } from "./native/functionCoordinateContext.js";
 import { canonicalJson } from "./comparisonSemantics.js";
 import type { FunctionSnapshot } from "./functionDossierEvidence.js";
+import { sorted } from "./functionComparisonNormalization.js";
 import {
-  hasStableFunctionName,
-  isAutoName,
-  sorted,
-} from "./functionComparisonNormalization.js";
+  hasStableNativeSymbol,
+  nativeSymbolOrigin,
+} from "./native/nativeSymbol.js";
 import {
   referenceFactsCompatible,
   type ReferenceCompatibilityRow,
@@ -30,6 +30,7 @@ type Endpoint =
         | "unparsed_address"
         | "missing_name"
         | "generated_name"
+        | "symbol_origin"
         | "coordinate_context";
       readonly reported_address: string;
       readonly reported_name: string | null;
@@ -115,13 +116,18 @@ const endpoint = (
       reported_address: address,
       reported_name: procedure?.name ?? null,
     };
-  if (procedure === null || !hasStableFunctionName(procedure.name))
+  if (
+    procedure === null ||
+    !hasStableNativeSymbol(procedure.name, procedure.symbol)
+  )
     return {
       kind: "unknown",
       reason:
-        procedure !== null && isAutoName(procedure.name)
-          ? "generated_name"
-          : "missing_name",
+        procedure === null || procedure.name.length === 0
+          ? "missing_name"
+          : nativeSymbolOrigin(procedure.symbol) === "generated"
+            ? "generated_name"
+            : "symbol_origin",
       reported_address: address,
       reported_name: procedure?.name ?? null,
     };
@@ -272,7 +278,7 @@ const compareRelationshipFacts = (
     limitations.push(
       coordinateContext === "common"
         ? "Relationship endpoint coordinates could not be parsed, so their identity remains unknown."
-        : "Unnamed relationship endpoints and generated procedure names have no stable identity outside a common executable coordinate context.",
+        : "Unnamed relationship endpoints, generated symbols and unknown symbol origins have no stable identity outside a common executable coordinate context.",
     );
   if (coordinateContext === "unknown" && (unknownIdentity || ambiguousIdentity))
     limitations.push(

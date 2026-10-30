@@ -6,8 +6,8 @@ import { describe, expect, it } from "vitest";
 import {
   completeReconstructionCoverageData,
   reconstructionCoverageEvidenceId,
+  reconstructionCoverageDataFixture,
 } from "../../../src/domain/reconstructionCoverage.fixture.js";
-import { createReconstructionCoverageData } from "../../../src/domain/reconstructionCoverage.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
@@ -47,7 +47,7 @@ describe("reconstruction coverage inline Evidence", () => {
           confidence: "inferred",
         },
       );
-      const weakCoverage = createReconstructionCoverageData({
+      const weakCoverage = reconstructionCoverageDataFixture({
         ...coverage,
         evidence_bundle: createEvidenceBundle([
           ...coverage.evidence_bundle.records,
@@ -85,7 +85,7 @@ describe("reconstruction coverage inline Evidence", () => {
           confidence: "inferred",
         },
       );
-      const weakCoverage = createReconstructionCoverageData({
+      const weakCoverage = reconstructionCoverageDataFixture({
         ...coverage,
         evidence_bundle: createEvidenceBundle([
           ...coverage.evidence_bundle.records,
@@ -165,7 +165,7 @@ describe("reconstruction coverage selection", () => {
       const latest = coverage.verifier_results[0];
       if (latest === undefined)
         throw new Error("Expected fixture verifier result");
-      const ambiguousCoverage = createReconstructionCoverageData({
+      const ambiguousCoverage = reconstructionCoverageDataFixture({
         ...coverage,
         verifier_results: [
           latest,
@@ -295,7 +295,7 @@ const withCoverageMcp = async <T>(
 
 const currentFixtureCoverage = () => {
   const coverage = completeReconstructionCoverageData();
-  return createReconstructionCoverageData({
+  return reconstructionCoverageDataFixture({
     ...coverage,
     verifier_results: coverage.verifier_results.map((result) => ({
       ...result,

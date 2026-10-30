@@ -1,5 +1,12 @@
+import {
+  existingGhidraAnalysisProfile,
+  ghidraPinnedLanguage,
+  resolveGhidraAnalysisProfile,
+} from "./GhidraAnalysisProfile.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
+import { resolveGhidraProject } from "./GhidraProjectSnapshot.js";
 import { DeferredAnalysisClient } from "../providers/DeferredAnalysisClient.js";
-import type { ProviderInspectionScope } from "../providers/ProviderInspectionScope.js";
+import type { ProviderInspectionScope } from "../application/ProviderInspectionScope.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import {
@@ -49,7 +56,6 @@ import {
   type GhidraInstallationHost,
   type GhidraInstallationInspection,
 } from "./GhidraInstallation.js";
-import { resolveGhidraAnalysisProfile } from "./GhidraAnalysisProfile.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { resolveGhidraAnalysisSeeds } from "./GhidraAnalysisSeeds.js";
 import {
@@ -64,6 +70,8 @@ import {
 import { resolveGhidraExtensions } from "./extensions/GhidraExtensions.js";
 import {
   CAPABILITIES,
+  existingProjectCapabilities,
+  EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
   windowsP0Capabilities,
   GHIDRA_PROVIDER_IDENTITY,
   WINDOWS_P0_NATIVE_PE_ARCHITECTURES,
@@ -92,7 +100,7 @@ const SUPPORTED_ARCHITECTURES = new Set([
   "hexagon",
 ]);
 
-/** Ghidra candidate backed by an isolated ephemeral headless import. */
+/** Ghidra candidate backed by an isolated ephemeral headless Program session. */
 export class GhidraProvider implements AnalysisProviderCandidate {
   readonly #inspectionResources = new ArtifactResourceScope();
   readonly #inspectionWork = new Set<Promise<unknown>>();
@@ -138,9 +146,12 @@ export class GhidraProvider implements AnalysisProviderCandidate {
   }
 
   capabilities(): readonly CapabilityDescriptor[] {
-    return (this.installationHost?.platform ?? process.platform) === "win32"
-      ? windowsP0Capabilities()
-      : CAPABILITIES;
+    const platform = this.installationHost?.platform ?? process.platform;
+    return this.config.ghidraExistingProject !== undefined
+      ? existingProjectCapabilities(platform)
+      : platform === "win32"
+        ? windowsP0Capabilities()
+        : CAPABILITIES;
   }
 
   async inspectAvailability(
@@ -180,9 +191,11 @@ export class GhidraProvider implements AnalysisProviderCandidate {
     return {
       availability,
       capabilities:
-        readiness === undefined
-          ? CAPABILITIES
-          : windowsP0Capabilities(readiness),
+        this.config.ghidraExistingProject !== undefined
+          ? existingProjectCapabilities(installation.platform)
+          : readiness === undefined
+            ? CAPABILITIES
+            : windowsP0Capabilities(readiness),
     };
   }
 
@@ -191,6 +204,16 @@ export class GhidraProvider implements AnalysisProviderCandidate {
     readiness: WindowsNativeReadiness | undefined,
   ): ProviderAvailability {
     const diagnostics = ghidraInstallationDiagnostics(installation);
+    if (
+      this.config.ghidraExistingProject !== undefined &&
+      installation.platform === "win32"
+    )
+      return {
+        status: "unavailable",
+        code: "unsupported_host",
+        reason: EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
+        diagnostics,
+      };
     if (installation.status === "available" && readiness?.available === false)
       return {
         status: "unavailable",
@@ -382,6 +405,38 @@ export class GhidraProvider implements AnalysisProviderCandidate {
       "resolve_analysis_profile",
       options?.scope,
     );
+    if (
+      this.config.ghidraExistingProject !== undefined &&
+      target.kind === "executable" &&
+      installation.status === "available"
+    ) {
+      if (
+        installation.platform === "win32" ||
+        ghidraPinnedLanguage(target) !== undefined ||
+        !(
+          target.format === "elf" ||
+          target.format === "pe" ||
+          isMachOFormat(target.format)
+        )
+      )
+        return err(existingProjectUnsupported());
+      const project = await resolveGhidraProject(
+        this.config.ghidraExistingProject,
+        target,
+        this.#inspectionResources,
+        options?.signal,
+      );
+      return ok({
+        profile: existingGhidraAnalysisProfile(
+          target,
+          {
+            ...GHIDRA_PROVIDER_IDENTITY,
+            version: installation.providerVersion,
+          },
+          jsonValueSchema.parse(project),
+        ),
+      });
+    }
     const resolved = await resolveGhidraAnalysisProfile(
       target,
       GHIDRA_PROVIDER_IDENTITY,
@@ -609,6 +664,15 @@ export class GhidraProvider implements AnalysisProviderCandidate {
   }
 }
 
+/** The selected project, not the target or provider, is what this host cannot serve. */
+const existingProjectUnsupported = (): ConfigurationError => {
+  const constraint =
+    "Existing-project mode supports native ELF/PE/Mach-O programs on POSIX without fresh-import loader preparation or pinned language overrides; unset REA_GHIDRA_PROJECT_PATH to use fresh import for this target/host.";
+  return new ConfigurationError(constraint, {
+    settings: [{ setting: "REA_GHIDRA_PROJECT_PATH", constraint }],
+  });
+};
+
 const providerFailureText = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
 
@@ -619,6 +683,15 @@ const inspectWindowsP0TargetSupport = (
   // The raw 6502 lane uses the same immutable snapshot and native ownership boundary.
   if (target.format === "raw-binary" && target.architecture === "6502")
     return { status: "supported", code: null, reason: null, diagnostics };
+  // DOL is verified on POSIX hosts only; Windows P0 does not admit it, like the other non-PE lanes.
+  if (target.format === "gamecube-dol")
+    return {
+      status: "unsupported",
+      code: "target_format_unsupported",
+      reason:
+        "GameCube DOL analysis is not part of Windows Ghidra P0; it is verified on POSIX hosts only.",
+      diagnostics,
+    };
   if (target.format !== "pe")
     return {
       status: "unsupported",

@@ -42,6 +42,10 @@ const injected = vi.hoisted(() => ({
       }
     | undefined,
   handles: [] as import("node:fs/promises").FileHandle[],
+  nativeCloses: new Map<
+    import("node:fs/promises").FileHandle,
+    () => Promise<void>
+  >(),
 }));
 
 afterEach(async () => {
@@ -56,8 +60,10 @@ afterEach(async () => {
   injected.failReadStage = undefined;
   injected.abortOnReadFailure = undefined;
   injected.abortOnClose = undefined;
-  for (const handle of injected.handles.splice(0))
-    if (handle.fd >= 0) await handle.close();
+  for (const [handle, close] of injected.nativeCloses)
+    if (handle.fd >= 0) await close();
+  injected.nativeCloses.clear();
+  injected.handles.length = 0;
 });
 
 vi.mock("../../../../src/filesystem/RegularFile.js", async (importOriginal) => {
@@ -69,7 +75,12 @@ vi.mock("../../../../src/filesystem/RegularFile.js", async (importOriginal) => {
     ...original,
     openRegularFile: vi.fn(
       async (...args: Parameters<typeof original.openRegularFile>) => {
-        const handle = await original.openRegularFile(...args);
+        const descriptor = await original.openRegularFile(...args);
+        const { handle } = descriptor;
+        // Test teardown retains native release separately from the producer's
+        // injected close behavior, including when an assertion fails early.
+        const nativeClose = handle.close.bind(handle);
+        injected.nativeCloses.set(handle, nativeClose);
         const isInstallation = String(args[0]) === injected.installationPath;
         injected.handles.push(handle);
         const failNextClose = injected.failNextClose;
@@ -83,7 +94,7 @@ vi.mock("../../../../src/filesystem/RegularFile.js", async (importOriginal) => {
           !failReadStage &&
           !abortOnClose
         )
-          return handle;
+          return descriptor;
         injected.failNextClose = false;
         let readStageMatched = false;
         let failedClose = false;
@@ -103,13 +114,17 @@ vi.mock("../../../../src/filesystem/RegularFile.js", async (importOriginal) => {
             stage === "fingerprint" ||
             stage === "identity",
         );
-        return {
-          get fd() {
-            return handle.fd;
-          },
-          stat: (...statArgs: Parameters<typeof handle.stat>) =>
-            handle.stat(...statArgs),
-          read: (
+        const positional: {
+          read(
+            buffer: Buffer,
+            offset: number,
+            length: number,
+            position: number,
+          ): Promise<{ bytesRead: number; buffer: Buffer }>;
+        } = handle;
+        const nativeRead = positional.read.bind(handle);
+        vi.spyOn(positional, "read").mockImplementation(
+          (
             buffer: Buffer,
             offset: number,
             length: number,
@@ -144,22 +159,23 @@ vi.mock("../../../../src/filesystem/RegularFile.js", async (importOriginal) => {
               failCloseReadStage === readStage
             )
               readStageMatched = true;
-            return handle.read(buffer, offset, length, position);
+            return nativeRead(buffer, offset, length, position);
           },
-          close: async () => {
-            injected.closeCalls += 1;
-            if (abortCloseMatched) abortOnClose?.abort();
-            if (
-              (failNextClose && !failedClose) ||
-              (readStageMatched && injected.failReadClose && !failedClose) ||
-              (injected.holdCloseFailures && !injected.releaseCloseFailures)
-            ) {
-              failedClose = true;
-              throw new Error("injected close fault");
-            }
-            await handle.close();
-          },
-        } as unknown as typeof handle;
+        );
+        vi.spyOn(handle, "close").mockImplementation(async () => {
+          injected.closeCalls += 1;
+          if (abortCloseMatched) abortOnClose?.abort();
+          if (
+            (failNextClose && !failedClose) ||
+            (readStageMatched && injected.failReadClose && !failedClose) ||
+            (injected.holdCloseFailures && !injected.releaseCloseFailures)
+          ) {
+            failedClose = true;
+            throw new Error("injected close fault");
+          }
+          await nativeClose();
+        });
+        return descriptor;
       },
     ),
   };
@@ -844,7 +860,7 @@ it.skipIf(process.platform === "win32").each(
     };
     const client = consumer === "health" ? fixture.open() : undefined;
     injected.fingerprintReads = 0;
-    injected.installationPath = fixture.kuna;
+    injected.installationPath = command;
     injected.abortOnClose = { stage, abort: () => controller.abort(reason) };
     injected.failCloseReadStage = closeRefusal ? stage : undefined;
     let failure: AnalysisError | undefined;

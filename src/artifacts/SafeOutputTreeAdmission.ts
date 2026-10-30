@@ -4,7 +4,8 @@ import { ArtifactReaderFailure } from "./ArtifactReader.js";
 /**
  * `SafeOutputTree.create` refused the caller's selected destination itself:
  * a relative or reserved root, an existing root, or an accepted existing root
- * that is not an empty directory.
+ * that is not an empty directory, or an unavailable parent observed during
+ * destination admission.
  * Setup failures after a tree is acquired are not refusals of the selection.
  */
 export class SafeOutputTreeDestinationRefusal extends ArtifactReaderFailure {

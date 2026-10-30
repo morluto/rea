@@ -38,7 +38,7 @@ import { AnalysisCancelledError } from "../../src/domain/analysisErrorCore.js";
 import { AnalysisError } from "../../src/domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { runCliJson } from "../fixtures/cliJsonProcess.js";
+import { cliTest } from "../support/cli/cliFixture.js";
 
 beforeEach(() => {
   fault.root = "";
@@ -74,19 +74,25 @@ const descriptor = async (root: string, index: number) => {
   return path;
 };
 
-it.skipIf(process.platform === "win32")(
+cliTest.skipIf(process.platform === "win32")(
   "public CLI skips a named-pipe descriptor without waiting for a writer",
-  async () => {
+  async ({ cli }) => {
     const root = await createTestTempDirectory("rea-cutter-fifo-");
     const fifo = join(
       root,
       "cutter-1-00000000-0000-4000-8000-000000000001.json",
     );
     await promisify(execFile)("mkfifo", [fifo]);
-    const result = await runCliJson(["list-cutter-sessions", "--json"], {
-      ...process.env,
-      REA_CUTTER_BRIDGE_DIR: root,
+    const resultInvocation = await cli.run({
+      arguments: ["list-cutter-sessions", "--json"],
+      environment: {
+        ...process.env,
+        REA_CUTTER_BRIDGE_DIR: root,
+      },
     });
+    expect(resultInvocation.exitCode, resultInvocation.stderr).toBe(0);
+    expect(resultInvocation.signal).toBeNull();
+    const result = resultInvocation.json;
     expect(result).toMatchObject({
       sessions: [],
       discovery_status: "no_live_bridge_found",
@@ -249,9 +255,10 @@ it("does not assign a peer's later cancellation to a descriptor that already fai
         error.cause.errors[0] instanceof AnalysisCancelledError,
     );
     expect(cancelled).toHaveLength(1);
-    expect((cancelled[0]?.cause as AggregateError).errors[0].cause).toBe(
-      reason,
-    );
+    const cancelledCause = cancelled[0]?.cause;
+    if (!(cancelledCause instanceof AggregateError))
+      throw new Error("Expected descriptor cancellation failure");
+    expect(cancelledCause.errors[0].cause).toBe(reason);
     expect(failure.cleanupIncomplete).toBe(true);
     fault.blocked.clear();
     await client.close();

@@ -35,6 +35,7 @@ if (${JSON.stringify(mode)} !== 'input-operand' && inputFileArgument !== undefin
 if (process.argv.includes('--version')) {
   if (${JSON.stringify(mode)} === 'invalid-version-stdout') process.stdout.write(Buffer.concat([Buffer.from('sigrok-cli 0.7.2\\nlibsigrokdecode 0.5.3\\n'), Buffer.from([0xff])]));
   else console.log(${JSON.stringify(mode)} === 'bad-version' ? 'sigrok-cli 0.7.1' : 'sigrok-cli 0.7.2\\nlibsigrokdecode 0.5.3');
+  if (${JSON.stringify(mode)} === 'nonzero-version') process.exitCode = 1;
   if (${JSON.stringify(mode)} === 'invalid-version-stderr') process.stderr.write(Buffer.from([0xfe]));
   else console.error('version warning');
 }
@@ -320,16 +321,21 @@ it("stages a long source basename without expanding it before decoding", async (
   ).toEqual([]);
 });
 
-it.each(["control.vcd", "-"])(
-  "opens the complete private recording for %s rather than stdin",
-  async (recordingName) => {
+it.each([
+  ["control.vcd", null],
+  ["control.vcd", "vcd"],
+  ["-", null],
+  ["-", "vcd"],
+] as const)(
+  "opens the complete private recording for %s rather than stdin with input_format=%s",
+  async (recordingName, inputFormat) => {
     // Model only the tagged sigrok input operand rule, not protocol decoding.
     const f = await fixture("input-operand", false, recordingName);
     const source = await readFile(f.path);
     const result = await f.service.decode({
       path: f.path,
       decoders: "uart",
-      input_format: "vcd",
+      input_format: inputFormat,
     });
     if (!result.ok) throw result.error;
     const report = signalRecordingSchema.parse(result.value.normalized_result);
@@ -340,11 +346,12 @@ it.each(["control.vcd", "-"])(
     });
     expect(report.selection).toMatchObject({
       path: f.path,
-      input_format: "vcd",
+      input_format: inputFormat,
     });
     expect(report.annotations_text).toBe(`${source.toString("hex")}\n`);
+    expect(report.tool.arguments).toContain(`--input-file=./${recordingName}`);
     expect(report.tool.arguments).not.toContain("--input-file=-");
-    expect(await readFile(f.path)).toEqual(source);
+    expect(Buffer.compare(await readFile(f.path), source)).toBe(0);
     expect((await readdir(f.directory)).sort()).toEqual(
       [recordingName, "producer.mjs"].sort(),
     );
@@ -1385,3 +1392,26 @@ it.each(
     expect(primary?.cause).toBe(f.controller.signal.reason);
   },
 );
+
+it("classifies completed nonzero version probes as configuration failures for both signal operations", async () => {
+  const f = await fixture("nonzero-version");
+  for (const task of [
+    () => f.service.decode({ path: f.path, decoders: "uart" }),
+    () => f.service.inspectDecoders({}),
+  ]) {
+    const result = await task();
+    if (result.ok) throw new Error("Expected version admission refusal");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "capability_unavailable",
+      message: expect.stringContaining("REA_SIGROK_COMMAND"),
+      details: {
+        captured_output: {
+          exit_code: 1,
+          stdout: expect.stringContaining("sigrok-cli 0.7.2"),
+          stderr: "version warning\n",
+        },
+      },
+    });
+  }
+  expect(f.calls()).toBe(2);
+});

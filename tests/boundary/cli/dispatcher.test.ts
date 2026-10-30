@@ -1,4 +1,4 @@
-import { copyFile } from "node:fs/promises";
+import { copyFile, cp } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -8,17 +8,25 @@ import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
 import type { TestWorkspace } from "../../support/workspace/workspaceFixture.js";
 
 const CLI_OUTPUT_RUNTIME =
-  "export const cliConfigurationError = () => undefined; export const normalizeCliArguments = (args) => args; export const parseCliOutputArguments = () => ({ validation: { ok: true } }); export const renderCliOutputArgumentError = () => ''; export const renderEmptyFilteredCliOutput = () => undefined; export const renderVersionReport = () => undefined;\n";
+  "export const cliConfigurationError = () => undefined; export const parseCliOutputArguments = () => ({ validation: { ok: true } }); export const renderCliOutputArgumentError = () => ''; export const renderEmptyFilteredCliOutput = () => undefined; export const renderVersionReport = () => undefined;\n";
 
 const installCliRuntime = async (
   workspace: TestWorkspace,
   cliSource: string,
   resultOutput = "export const createCliResultOutput = () => undefined;\n",
 ): Promise<void> => {
-  await workspace.mkdir("scripts");
-  await workspace.mkdir("dist/cli-runtime");
+  await workspace.mkdir("scripts/lib");
+  await workspace.mkdir("dist");
+  // The bundle's entrypoints and shared chunks form one emitted runtime.
+  await cp("dist/cli-runtime", workspace.path("dist/cli-runtime"), {
+    recursive: true,
+  });
   await Promise.all([
     copyFile("scripts/rea.mjs", workspace.path("scripts/rea.mjs")),
+    copyFile(
+      "scripts/lib/cli-process-environment.mjs",
+      workspace.path("scripts/lib/cli-process-environment.mjs"),
+    ),
     workspace.write(
       "package.json",
       JSON.stringify({ type: "module", version: "1.0.0" }),
@@ -90,13 +98,103 @@ describe("version report dispatch", () => {
   );
 });
 
+describe("doctor configuration dispatch", () => {
+  workspaceCliTest(
+    "exempts only the production root doctor tokens from invalid logging configuration",
+    async ({ processes, workspace }) => {
+      const imported = "CLI command runtime imported";
+      await installCliRuntime(
+        workspace,
+        `process.stderr.write(${JSON.stringify(`${imported}\n`)}); export const closeCliResources = () => {}; export const createCli = () => ({ serve: (args, options) => options.stdout(JSON.stringify({ adapter: "cli", args })) });\n`,
+      );
+      // Both token ownership and output/configuration admission use production code.
+      await workspace.write(
+        "dist/cli-runtime/cliOutput.js",
+        `export * from ${JSON.stringify(pathToFileURL(resolve("dist/cli-runtime/cliOutput.js")).href)};\n`,
+      );
+      const invoke = (args: readonly string[], completion = "") =>
+        processes.run(
+          process.execPath,
+          [workspace.path("scripts/rea.mjs"), ...args],
+          {
+            cwd: workspace.root,
+            env: {
+              ...process.env,
+              REA_LOG_LEVEL: "invalid-level",
+              COMPLETE: completion,
+            },
+          },
+        );
+
+      for (const [args, normalized] of [
+        [["doctor"], ["doctor"]],
+        [
+          ["--json", "doctor"],
+          ["--json", "doctor"],
+        ],
+        [
+          ["--format=json", "doctor"],
+          ["--format", "json", "doctor"],
+        ],
+        [
+          ["--filter-output", "healthy", "doctor"],
+          ["--filter-output", "healthy", "doctor"],
+        ],
+        [
+          ["--token-limit", "10", "doctor"],
+          ["--token-limit", "10", "doctor"],
+        ],
+        [
+          ["--token-offset", "1", "doctor"],
+          ["--token-offset", "1", "doctor"],
+        ],
+      ] as const) {
+        const result = await invoke(args);
+        expect(
+          result.exitCode,
+          `${JSON.stringify(args)}: ${result.stderr}`,
+        ).toBe(0);
+        expect(result.stderr).toBe(`${imported}\n`);
+        expect(JSON.parse(result.stdout)).toEqual({
+          adapter: "cli",
+          args: normalized,
+        });
+      }
+
+      for (const args of [
+        ["--filter-output", "doctor", "providers"],
+        ["providers", "doctor"],
+        ["--format", "", "doctor"],
+        ["--filter-output", "", "doctor"],
+        ["--token-limit", "", "doctor"],
+        ["--token-offset", "", "doctor"],
+        ["--unknown", "doctor"],
+        ["--version", "doctor"],
+        ["--", "doctor"],
+      ]) {
+        const result = await invoke(args);
+        expect(result.exitCode, JSON.stringify(args)).toBe(1);
+        expect(result.stdout, JSON.stringify(args)).toBe("");
+        expect(result.stderr, JSON.stringify(args)).toContain("REA_LOG_LEVEL");
+        expect(result.stderr, JSON.stringify(args)).not.toContain(imported);
+      }
+
+      const completion = await invoke(["doctor"], "bash");
+      expect(completion.exitCode).toBe(1);
+      expect(completion.stdout).toBe("");
+      expect(completion.stderr).toContain("REA_LOG_LEVEL");
+      expect(completion.stderr).not.toContain(imported);
+    },
+  );
+});
+
 describe("executable dispatcher", () => {
   workspaceCliTest(
     "does not append recovery output after delegated stdout has begun",
     async ({ processes, workspace }) => {
       await installCliRuntime(
         workspace,
-        'export const closeCliJavaScriptResources = () => {}; export const createCli = () => ({ serve: (_args, options) => { options.stdout("first document\\n"); throw new RangeError("Invalid string length"); } });\n',
+        'export const closeCliResources = () => {}; export const createCli = () => ({ serve: (_args, options) => { options.stdout("first document\\n"); throw new RangeError("Invalid string length"); } });\n',
         'export const createCliResultOutput = () => ({ handled: false, failed: false, captureSdkOutput: () => false, finishSdkOutput: async () => {}, recoverFormattingFailure: () => { process.stdout.write("unexpected second document"); return true; } });\n',
       );
       const result = await processes.run(
@@ -113,28 +211,16 @@ describe("executable dispatcher", () => {
   workspaceCliTest(
     "reserves production MCP routing for bare mode arguments",
     async ({ processes, workspace }) => {
-      const scripts = await workspace.mkdir("scripts");
-      await workspace.mkdir("dist");
-      await workspace.mkdir("dist/cli-runtime");
+      await installCliRuntime(
+        workspace,
+        'export const closeCliResources = () => {}; export const createCli = () => ({ serve: (args) => process.stdout.write(JSON.stringify({ adapter: "cli", args })) });\n',
+      );
+      const scripts = workspace.path("scripts");
       await workspace.mkdir("dist/mcp");
       await Promise.all([
-        copyFile("scripts/rea.mjs", join(scripts, "rea.mjs")),
-        workspace.write(
-          "package.json",
-          JSON.stringify({ type: "module", version: "1.0.0" }),
-        ),
         workspace.write(
           "dist/mcp/main.js",
           'export const runEntrypoint = () => process.stdout.write(JSON.stringify({ adapter: "mcp" })); export const runMcpHttpEntrypoint = (args) => process.stdout.write(JSON.stringify({ adapter: "mcp-http", args }));\n',
-        ),
-        workspace.write(
-          "dist/cli-runtime/cli.js",
-          'export const closeCliJavaScriptResources = () => {}; export const createCli = () => ({ serve: (args) => process.stdout.write(JSON.stringify({ adapter: "cli", args })) });\n',
-        ),
-        workspace.write("dist/cli-runtime/cliOutput.js", CLI_OUTPUT_RUNTIME),
-        workspace.write(
-          "dist/cli-runtime/cliResultOutput.js",
-          "export const createCliResultOutput = () => undefined;\n",
         ),
         workspace.write(
           "dist/cli-runtime/mcpDoctor.js",
@@ -154,10 +240,24 @@ describe("executable dispatcher", () => {
 
       await expect(invoke(["mcp"])).resolves.toEqual({ adapter: "mcp" });
       await expect(invoke(["--mcp"])).resolves.toEqual({ adapter: "mcp" });
-      await expect(invoke(["mcp", "doctor", "--json"])).resolves.toEqual({
-        adapter: "mcp-doctor",
-        args: ["--json"],
-        stdoutIsTerminal: false,
+      for (const args of [
+        ["mcp", "doctor", "--json"],
+        ["--json", "mcp", "doctor"],
+        ["mcp", "--json", "doctor"],
+        ["--format", "json", "mcp", "doctor"],
+        ["mcp", "--format=json", "doctor"],
+      ]) {
+        await expect(invoke(args)).resolves.toEqual({
+          adapter: "mcp-doctor",
+          args: args.includes("--json") ? ["--json"] : ["--format", "json"],
+          stdoutIsTerminal: false,
+        });
+      }
+      await expect(
+        invoke(["--filter-output", "mcp", "doctor"]),
+      ).resolves.toEqual({
+        adapter: "cli",
+        args: ["--filter-output", "mcp", "doctor"],
       });
       await expect(invoke(["mcp", "add"])).resolves.toEqual({
         adapter: "cli",
@@ -193,8 +293,13 @@ describe("executable dispatcher", () => {
     "explains how to restore a missing compiled runtime",
     async ({ processes, workspace }) => {
       const scripts = await workspace.mkdir("scripts");
+      await workspace.mkdir("scripts/lib");
       await Promise.all([
         copyFile("scripts/rea.mjs", join(scripts, "rea.mjs")),
+        copyFile(
+          "scripts/lib/cli-process-environment.mjs",
+          workspace.path("scripts/lib/cli-process-environment.mjs"),
+        ),
         workspace.write(
           "package.json",
           JSON.stringify({ type: "module", version: "1.0.0" }),
@@ -225,6 +330,27 @@ describe("executable dispatcher", () => {
 });
 
 describe("executable dispatcher JavaScript shutdown", () => {
+  workspaceCliTest.for([false, true])(
+    "handles a thrown pipe error while preserving mixed cleanup failure: %s",
+    async (cleanupFails, { processes, workspace }) => {
+      await installCliRuntime(
+        workspace,
+        `export const closeCliResources = async () => { ${cleanupFails ? 'throw new Error("worker still owned");' : ""} }; export const createCli = () => ({ serve: () => { throw Object.assign(new Error("broken pipe"), { code: "EPIPE" }); } });\n`,
+      );
+      const result = await processes.run(
+        process.execPath,
+        [workspace.path("scripts/rea.mjs"), "fixture"],
+        { cwd: workspace.root },
+      );
+      expect(result.exitCode).toBe(cleanupFails ? 1 : 141);
+      expect(result.stdout).toBe("");
+      if (cleanupFails) {
+        expect(result.stderr).toContain("broken pipe");
+        expect(result.stderr).toContain("worker still owned");
+      } else expect(result.stderr).toBe("");
+    },
+  );
+
   workspaceCliTest.for([
     "success",
     "cleanup-failure",
@@ -242,7 +368,7 @@ describe("executable dispatcher JavaScript shutdown", () => {
             : 'process.stdout.write("complete document\\n");';
       await installCliRuntime(
         workspace,
-        `export const closeCliJavaScriptResources = () => { globalThis.cleaned = true; ${cleanupFails ? 'return Promise.reject(new Error("worker still owned"));' : ""} }; export const createCli = () => ({ serve: (_args, options) => { options.stdout("pending document"); options.exit(0); } });\n`,
+        `export const closeCliResources = () => { globalThis.cleaned = true; ${cleanupFails ? 'return Promise.reject(new Error("worker still owned"));' : ""} }; export const createCli = () => ({ serve: (_args, options) => { options.stdout("pending document"); options.exit(0); } });\n`,
         `export const createCliResultOutput = () => ({ handled: false, failed: false, captureSdkOutput: () => true, finishSdkOutput: async () => { if (!globalThis.cleaned) throw new Error("output preceded cleanup"); await new Promise(resolve => setTimeout(resolve, 10)); ${finish} } });\n`,
       );
       const result = await processes.run(
@@ -269,7 +395,7 @@ describe("executable dispatcher JavaScript shutdown", () => {
     async ({ processes, workspace }) => {
       await installCliRuntime(
         workspace,
-        'export const closeCliJavaScriptResources = () => Promise.reject(new Error("worker still owned")); export const createCli = () => ({ serve: (_args, options) => { options.exit(0); } });\n',
+        'export const closeCliResources = () => Promise.reject(new Error("worker still owned")); export const createCli = () => ({ serve: (_args, options) => { options.exit(0); } });\n',
       );
       const result = await processes.run(
         process.execPath,
@@ -286,7 +412,7 @@ describe("executable dispatcher JavaScript shutdown", () => {
     async ({ processes, workspace }) => {
       await installCliRuntime(
         workspace,
-        'export const closeCliJavaScriptResources = () => Promise.reject(new Error("worker still owned")); export const createCli = () => ({ serve: (_args, options) => { process.stdout.emit("error", Object.assign(new Error("broken pipe"), { code: "EPIPE" })); options.exit(0); } });\n',
+        'export const closeCliResources = () => Promise.reject(new Error("worker still owned")); export const createCli = () => ({ serve: (_args, options) => { process.stdout.emit("error", Object.assign(new Error("broken pipe"), { code: "EPIPE" })); options.exit(0); } });\n',
       );
       const result = await processes.run(
         process.execPath,

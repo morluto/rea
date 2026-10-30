@@ -1,5 +1,5 @@
-import { rm } from "node:fs/promises";
-import { relative, resolve } from "node:path";
+import { rm, writeFile } from "node:fs/promises";
+import { join, relative, resolve } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -14,7 +14,7 @@ import {
 import { reconcileJavaScriptRuntimeEvidence } from "../../../src/application/javascript/JavaScriptRuntimeReconciliationService.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
-import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
+
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import {
   applicationVersionComparisonResultSchema,
@@ -23,7 +23,11 @@ import {
 import { javascriptRuntimeReconciliationResultSchema } from "../../../src/domain/javascript/javascriptRuntimeReconciliationSchemas.js";
 import { electronPageInspectionSchema } from "../../../src/domain/javascript/electronObservation.js";
 import { compareJavaScriptApplicationVersions } from "../../../src/domain/javascript/javascriptApplicationVersionComparison.js";
-import { createJavaScriptApplicationGraph } from "../../../src/domain/javascript/javascriptApplicationGraph.js";
+import { createJavaScriptSemanticGraph } from "../../../src/domain/javascript/javascriptSemanticGraph.js";
+import {
+  createJavaScriptApplicationNode,
+  createJavaScriptApplicationGraph,
+} from "../../../src/domain/javascript/javascriptApplicationGraph.js";
 import { traceApplicationFeature } from "../../../src/domain/javascript/javascriptFeatureTrace.js";
 import { applicationFeatureTraceResultSchema } from "../../../src/domain/javascript/javascriptFeatureTraceSchemas.js";
 import {
@@ -48,6 +52,37 @@ afterEach(async () => {
 });
 
 describe("JavaScript application workflows", () => {
+  it("preserves source-owned requested native members across trace directions", () => {
+    const graph = buildSyntheticJavaScriptApplicationGraph();
+    const addon = graph.nodes.find(({ kind }) => kind === "native-addon");
+    if (addon === undefined) throw new Error("Expected native fixture node");
+    const traces = (["incoming", "outgoing", "both"] as const).map(
+      (direction) =>
+        traceApplicationFeature({
+          sourceEvidenceId: `ev_${"a".repeat(64)}`,
+          graph,
+          nativeEvidence: [],
+          seed: {
+            kind: "node-id",
+            value: addon.node_id,
+            match: "exact",
+            case_sensitive: true,
+          },
+          direction,
+        }),
+    );
+    for (const trace of traces)
+      expect(trace.native_handoffs).toMatchObject([
+        {
+          native_node_id: addon.node_id,
+          requested_exports: ["openProject"],
+          export_node_ids: [expect.any(String)],
+        },
+      ]);
+    expect(traces[0]!.native_handoffs).toEqual(traces[1]!.native_handoffs);
+    expect(traces[0]!.graph?.edges).not.toEqual(traces[1]!.graph?.edges);
+  });
+
   it("traces a contextBridge API through IPC into linked native evidence", () => {
     const graph = buildSyntheticJavaScriptApplicationGraph();
     const nativeEvidence = createEvidence(
@@ -184,6 +219,98 @@ describe("JavaScript application comparison workflows", () => {
     expect(
       compareApplicationVersionsRequestSchema.safeParse(input).success,
     ).toBe(true);
+  });
+});
+
+describe("historical native comparison projections", () => {
+  it("keeps historical native member omission distinct through authenticated comparison", async () => {
+    const root = await createTestTempDirectory(
+      "rea-historical-native-members-",
+    );
+    temporary.push(root);
+    await writeFile(
+      join(root, "main.js"),
+      'const { open } = require("./addon.node"); open();',
+    );
+    await writeFile(join(root, "addon.node"), "inert fixture; never executed");
+    const source = await analyzeFixture(root);
+    const original = javascriptApplicationAnalysisResultSchema.parse(
+      source.normalized_result,
+    );
+    const binding = original.graph.nodes.find(
+      ({ kind }) => kind === "native-export",
+    );
+    if (binding === undefined || source.subject === null)
+      throw new Error("Missing fixture binding");
+    const historical = (name: string, explicitEmpty = false) => {
+      const artifact = binding.observations[0]!.evidence.artifact;
+      if (!artifact.available)
+        throw new Error("Missing binding source artifact");
+      const node = createJavaScriptApplicationNode({
+        kind: binding.kind,
+        identity: {
+          strategy: "artifact-local-key",
+          stability: "artifact-version",
+          artifact_sha256: artifact.sha256,
+          namespace: "historical-native-binding-fixture",
+          key: `${name}-${String(explicitEmpty)}`,
+        },
+        observations: binding.observations.map((observation) => {
+          const { requested_members: _requested, ...properties } =
+            observation.properties;
+          return {
+            label: name,
+            properties: {
+              ...properties,
+              ...(explicitEmpty
+                ? { requested_members: [] }
+                : { members: [name] }),
+            },
+            evidence: observation.evidence,
+          };
+        }),
+      });
+      const { graph_id: _graphId, ...graphContent } = original.graph;
+      const graph = createJavaScriptApplicationGraph({
+        ...graphContent,
+        nodes: [...original.graph.nodes, node],
+      });
+      const { graph_id: _semanticId, ...semanticContent } =
+        original.semantic_graph;
+      const semantic_graph = createJavaScriptSemanticGraph({
+        ...semanticContent,
+        application_graph_id: graph.graph_id,
+      });
+      return createEvidence(
+        {
+          path: source.subject!.local_path,
+          sha256: source.subject!.digest.sha256,
+          format: source.subject!.format,
+        },
+        source.provider,
+        {
+          predicateType: source.predicate_type,
+          operation: source.operation,
+          parameters: source.parameters,
+          authority: source.authority,
+          confidence: source.confidence,
+          result: { ...original, graph, semantic_graph },
+        },
+      );
+    };
+    const left = historical("open");
+    const before = JSON.stringify(left);
+    for (const right of [historical("close"), historical("open", true)]) {
+      const compared = compareApplicationVersionsEvidence({ left, right });
+      if (!compared.ok) throw compared.error;
+      const bindings = compared.value.result.items.filter(
+        ({ node_kind, match }) =>
+          node_kind === "native-export" && match.status === "unmatched",
+      );
+      expect(bindings).toHaveLength(2);
+      expect(compared.value.sources).toEqual([left, right]);
+    }
+    expect(JSON.stringify(left)).toBe(before);
   });
 });
 
@@ -346,10 +473,10 @@ describe("Application graph Evidence envelopes", () => {
         predicateType: source.predicate_type,
         operation: source.operation,
         parameters: source.parameters,
-        result: jsonValueSchema.parse({
+        result: {
           ...result,
           evidence_links: [...result.evidence_links, extraLink],
-        }),
+        },
         rawResult: source.raw_result,
         confidence: source.confidence,
         authority: source.authority,
@@ -448,7 +575,7 @@ describe("JavaScript application workflow error diagnostics", () => {
         predicateType: evidence.predicate_type,
         operation: evidence.operation,
         parameters: evidence.parameters,
-        result: jsonValueSchema.parse(malformedResult),
+        result: malformedResult,
         confidence: evidence.confidence,
         authority: evidence.authority,
         limitations: evidence.limitations,

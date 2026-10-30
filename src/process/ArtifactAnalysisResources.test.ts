@@ -1,6 +1,8 @@
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
-import { ArtifactResourceRetryFailure } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import {
+  ArtifactResourceRetryFailure,
+  ArtifactResourceScope,
+} from "../artifacts/ArtifactResourceScope.js";
 import { withArtifactRegularFile } from "../artifacts/ArtifactFileOperation.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -514,14 +516,19 @@ it.each([false, true])(
       });
       if (!failedClose) throw primary;
       if (scope === undefined) throw new Error("Expected retained file scope");
-      return withArtifactRegularFile(path, scope, _signal, async (file) => {
-        const close = file.close.bind(file);
-        file.close = async () => {
-          if (!mayClose) throw new Error("injected descriptor close failure");
-          await close();
-        };
-        throw primary;
-      });
+      return withArtifactRegularFile(
+        path,
+        scope,
+        _signal,
+        async ({ handle: file }) => {
+          const close = file.close.bind(file);
+          file.close = async () => {
+            if (!mayClose) throw new Error("injected descriptor close failure");
+            await close();
+          };
+          throw primary;
+        },
+      );
     };
     const resources = new ArtifactAnalysisResources(
       "fixture",
@@ -1017,7 +1024,7 @@ it("retains producer output when a completed read is cancelled during failed clo
       path,
       scope,
       caller.signal,
-      async (file) => {
+      async ({ handle: file }) => {
         const close = file.close.bind(file);
         file.close = async () => {
           caller.abort(reason);

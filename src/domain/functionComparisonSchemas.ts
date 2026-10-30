@@ -2,8 +2,7 @@ import { z } from "zod";
 import { overallStatus, summarize } from "./functionComparisonResults.js";
 import { canonicalJson } from "./comparisonSemantics.js";
 import { evidenceInputSchema } from "./evidenceReference.js";
-import { digestSchema } from "./../domain/digests.js";
-import { prefixedDigestSchema } from "./../domain/digests.js";
+import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
 
 const comparisonStatusSchema = z.enum(["unchanged", "changed", "unknown"]);
 export const functionComparisonDimensionNameSchema = z.enum([

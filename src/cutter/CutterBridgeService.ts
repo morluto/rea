@@ -11,13 +11,13 @@ import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { cutterCommandInputSchema } from "../contracts/cutterToolContracts.js";
+import type { CutterBridgeDiscovery } from "../domain/cutterDiscovery.js";
 import {
   CutterBridgeClient,
-  type CutterBridgeDiscovery,
   type CutterBridgeExecution,
   type CutterDiscoveryOptions,
+  CUTTER_PROVIDER_IDENTITY,
 } from "./CutterBridgeClient.js";
-import { CUTTER_PROVIDER_IDENTITY } from "./CutterBridgeClient.js";
 
 interface CutterBridgePort {
   listSessions(
@@ -73,7 +73,15 @@ export class CutterBridgeService {
         requestId,
         pending.completionToken,
       );
-      if (!receipt.ok || !receipt.value) return err(pending.failure);
+      if (!receipt.ok)
+        return err(
+          analysisErrorWithCleanupFailure(
+            pending.failure,
+            receipt.error,
+            "cutter_command",
+          ).bindCleanupDependencies([pending.failure, receipt.error]),
+        );
+      if (!receipt.value) return err(pending.failure);
       const { failure } = pending;
       failure.resolveCleanup();
       this.#pendingCleanup.delete(requestId);

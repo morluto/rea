@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisResult.js";
 import { parseConfig } from "../../../src/config/parseConfig.js";
 import { access, chmod, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -341,9 +342,10 @@ describe("MCP composed workflow snapshot replay", () => {
       "binary_overview",
       {},
       { snapshotPath },
-    );
+    ).then(projectCliAnalysisResult);
 
-    expect(replay).toEqual(output);
+    expect(output).not.toHaveProperty("caller_input_path");
+    expect(replay).toEqual({ ...output, caller_input_path: targetPath });
     expect(calls).toEqual(afterAnalysisCalls);
     expect(starts).toEqual(afterAnalysisStarts);
   });
@@ -641,9 +643,7 @@ const makeProvider = (
                   ]
                 : operation === "list_documents"
                   ? ["fixture"]
-                  : operation === "list_procedures"
-                    ? ["0x1000"]
-                    : [{ address: "0x1000", value: "fixture" }];
+                  : [{ address: "0x1000", value: "fixture" }];
           return ok(createAnalysisExecution(result, identity));
         },
         close: () => Promise.resolve(ok(null)),

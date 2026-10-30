@@ -660,3 +660,44 @@ it("keeps unrelated exports after an aliased prebound key write", () => {
     `);
   expect(analysis.electron.browser_windows).toHaveLength(1);
 });
+
+describe("Electron member syntax ownership", () => {
+  it.each([
+    "electron as typeof electron",
+    "electron!",
+    "electron satisfies typeof electron",
+  ])("preserves lexical API identity through %s", (receiver) => {
+    const source = `const electron = require("electron");
+      new ((${receiver}).BrowserWindow as typeof electron.BrowserWindow)({webPreferences:{preload:"./wrapped.js"}});
+      ((${receiver}).ipcMain as typeof electron.ipcMain).handle("wrapped:ping", () => "pong");
+      (${receiver}).contextBridge.exposeInMainWorld("wrappedApi", {ping:true});`;
+    const { electron } = analyzeJavaScriptStaticSource(source);
+    expect(electron.browser_windows).toMatchObject([
+      { preload_path: "./wrapped.js" },
+    ]);
+    expect(electron.ipc).toMatchObject([{ channel: "wrapped:ping" }]);
+    expect(electron.context_bridge_apis).toMatchObject([
+      { api_key: "wrappedApi" },
+    ]);
+  });
+
+  it.each([
+    'const electron = require("other");',
+    'function require() { return unknown; } const electron = require("electron");',
+    'const electron = require("electron"); electron.BrowserWindow = replacement;',
+  ])(
+    "retains rejected lexical identity through erased wrappers: %s",
+    (setup) => {
+      const result = analyzeJavaScriptStaticSource(`${setup}
+      new (electron.BrowserWindow as typeof electron.BrowserWindow)({webPreferences:{preload:"./bad.js"}});`);
+      expect(result.electron.browser_windows).toEqual([]);
+    },
+  );
+
+  it("keeps computed unknown member selections unresolved", () => {
+    const result =
+      analyzeJavaScriptStaticSource(`const electron = require("electron");
+      new (electron as typeof electron)[runtimeKey]({webPreferences:{preload:"./bad.js"}});`);
+    expect(result.electron.browser_windows).toEqual([]);
+  });
+});

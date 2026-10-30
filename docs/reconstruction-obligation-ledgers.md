@@ -17,6 +17,11 @@ input Evidence bundle. Contradictions, duplicate definitions or owners,
 residual unknowns, missing dependencies, and unavailable authority keep closure
 open or failed.
 
+Original process authority requires observed `controlled-replay` Evidence with
+a supported process-capture provider and a valid capture payload. A matching
+operation or predicate alone does not establish that authority, including for
+reviewed obligations and manifest original cases.
+
 Every fixture and verifier proof must bind its outcome to the exact owner
 implementation digest and obligation revision being evaluated. See
 [proof applicability](#proof-applicability) for the caller-produced contract.

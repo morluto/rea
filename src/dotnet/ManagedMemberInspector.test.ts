@@ -15,7 +15,14 @@ import { readManagedPeLayout } from "./ManagedPeReader.js";
 import { memberListIndexSize } from "./ManagedMemberPointers.js";
 import { edges } from "./ManagedMemberRows.js";
 import { parseUserStrings } from "./ManagedUserStrings.js";
-import { signature, type ManagedMethod } from "./ManagedMemberInspectorCore.js";
+import {
+  readCompressed,
+  signature,
+  isParsedTokenInstruction,
+  type DecodedMethod,
+  type ManagedMethod,
+} from "./ManagedMemberInspectorCore.js";
+import { decodeInstructions } from "./ManagedMemberInstructionDecoder.js";
 import { ManagedReaderFailure } from "./ManagedReaderFailure.js";
 import { managedTypeReferences } from "./ManagedTypeReferences.js";
 import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
@@ -31,6 +38,19 @@ import {
   managedPeFixtureTarget,
 } from "./ManagedPe.fixture.js";
 
+/** Decode real token operands for capacity tests that do not need a PE method body. */
+const decodedTokenInstructions = (
+  opcode: number,
+  tokens: readonly number[],
+) => {
+  const il = Buffer.alloc(tokens.length * 5);
+  for (const [index, token] of tokens.entries()) {
+    il.writeUInt8(opcode, index * 5);
+    il.writeUInt32LE(token, index * 5 + 1);
+  }
+  return decodeInstructions(il).parsed.filter(isParsedTokenInstruction);
+};
+
 /** A tiny-header body that loads each `ldstr` token, discards it, and returns. */
 const ldstrBody = (tokens: readonly string[]): Buffer => {
   const il = Buffer.concat([
@@ -43,6 +63,66 @@ const ldstrBody = (tokens: readonly string[]): Buffer => {
   ]);
   return Buffer.concat([Buffer.from([(il.length << 2) | 2]), il]);
 };
+
+it.each([
+  {
+    options: { methodSignature: Buffer.from([0x06, 0x08]) },
+    collection: "methods",
+    expected: "method",
+  },
+  {
+    options: { fieldSignature: Buffer.from([0x00, 0x00, 0x01]) },
+    collection: "fields",
+    expected: "field",
+  },
+] as const)(
+  "rejects a wrong-kind $expected signature at its metadata owner",
+  ({ options, collection, expected }) => {
+    const bytes = buildManagedPeFixture(options);
+    const result = inspectManagedMembersBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+    expect(result[collection][0]?.signature).toMatchObject({
+      parse_status: "malformed",
+      resolved_sha256: null,
+      issue: expect.stringContaining(`Expected ${expected} signature`),
+    });
+    expect(result.coverage).toMatchObject({
+      state: "partial",
+      issues: expect.arrayContaining([
+        expect.objectContaining({
+          code: "invalid-blob",
+          detail: expect.stringContaining(`Expected ${expected} signature`),
+        }),
+      ]),
+    });
+  },
+);
+
+describe("managed compressed integer framing", () => {
+  it.each([[0x80], [0xc0], [0xc0, 1], [0xc0, 1, 2]])(
+    "keeps an incomplete width %j distinct from a reserved prefix",
+    (...value) => {
+      expect(() => readCompressed(Buffer.from(value), 0)).toThrow(
+        "truncated compressed integer",
+      );
+    },
+  );
+  it("preserves complete widths and rejects reserved leading bits", () => {
+    expect(readCompressed(Buffer.from([0x80, 1]), 0)).toEqual({
+      value: 1,
+      next: 2,
+    });
+    expect(readCompressed(Buffer.from([0xc0, 1, 2, 3]), 0)).toEqual({
+      value: 0x010203,
+      next: 4,
+    });
+    expect(() => readCompressed(Buffer.from([0xe0, 1, 2, 3]), 0)).toThrow(
+      "reserved compressed integer",
+    );
+  });
+});
 
 describe("managed method body anchors", () => {
   it.each([
@@ -160,6 +240,49 @@ it.each([0x06000001, 0x11000001])(
         expect.objectContaining({ code: "invalid-row", offset: offset + 8 }),
       ],
     });
+  },
+);
+
+it.each([
+  ["CIL", false, "Two-byte CIL opcode"],
+  ["exception section", true, "section"],
+] as const)(
+  "preserves malformed %s alongside an unsupported local signature",
+  (_name, hasSection, issue) => {
+    const body = Buffer.alloc(hasSection ? 20 : 14);
+    body.writeUInt16LE(hasSection ? 0x300b : 0x3003, 0);
+    body.writeUInt16LE(8, 2);
+    body.writeUInt32LE(2, 4);
+    body.writeUInt32LE(0x11000001, 8);
+    body[12] = 0x00; // A usable nop precedes the malformed instruction.
+    body[13] = hasSection ? 0x2a : 0xfe; // ret or truncated two-byte opcode.
+    if (hasSection) {
+      body[16] = 2; // Unsupported extra-section kind.
+      body[17] = 4;
+    }
+    const bytes = buildManagedPeFixture({
+      ilBody: body,
+      standaloneSignatures: [Buffer.from([0x07, 0x01, 0xff])],
+    });
+    const result = inspectManagedMembersBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+    expect(result.methods[0]?.body).toMatchObject({
+      status: "malformed",
+      normalized_il_sha256: null,
+      anchors: expect.arrayContaining([
+        expect.objectContaining({ opcode: "nop" }),
+      ]),
+      issue: expect.stringContaining(issue),
+    });
+    expect(result.methods[0]?.body.issue).toContain("unsupported element type");
+    expect(result.coverage.state).toBe("partial");
+    expect(result.coverage.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "unsupported-signature" }),
+      ]),
+    );
   },
 );
 
@@ -305,6 +428,102 @@ it.each([
           offset: blobOffset + localOffset,
         }),
       ],
+    });
+  },
+);
+
+/** Artifact offset of row 1's signature blob, read with the production heap reader. */
+const memberSignatureBlobOffset = (
+  bytes: Buffer,
+  table: 4 | 6 | 10,
+): number => {
+  const pe = readManagedPeLayout(bytes);
+  if (pe.cli === null) throw new Error("fixture has no CLI header");
+  const layout = readManagedMetadataLayout(
+    bytes,
+    pe.rvaToOffset(pe.cli.metadata.rva, pe.cli.metadata.size, "metadata"),
+    pe.cli.metadata.size,
+  );
+  const row = metadataRowCursor(bytes, layout, table, 1);
+  // ECMA-335 II.22.15 Field, II.22.26 MethodDef and II.22.25 MemberRef
+  // columns before Name.
+  if (table === 4) row.readUInt16();
+  if (table === 6) {
+    row.readUInt32();
+    row.readUInt16();
+    row.readUInt16();
+  }
+  if (table === 10) row.readIndex(layout.codedIndexSize("MemberRefParent"));
+  row.readIndex(layout.stringIndexSize);
+  const blob = readMetadataBlob(
+    bytes,
+    layout,
+    row.readIndex(layout.blobIndexSize),
+    layout.blob?.size ?? 0,
+  );
+  return blob.byteOffset - bytes.byteOffset;
+};
+
+// CLASS (0x12) followed by TypeDefOrRefOrSpec 0x07, whose tag 3 is undefined.
+const INVALID_CLASS_OPERAND = [0x12, 0x07] as const;
+
+it.each([
+  {
+    member: "field",
+    table: 4,
+    scope: "Field:0x04000001.signature",
+    signature: {
+      fieldSignature: Buffer.from([0x06, ...INVALID_CLASS_OPERAND]),
+    },
+    operandOffset: 2,
+  },
+  {
+    member: "method parameter",
+    table: 6,
+    scope: "MethodDef:0x06000001.signature",
+    signature: {
+      methodSignature: Buffer.from([
+        0x00,
+        0x01,
+        0x01,
+        ...INVALID_CLASS_OPERAND,
+      ]),
+    },
+    operandOffset: 4,
+  },
+  {
+    member: "member reference parameter",
+    table: 10,
+    scope: "MemberRef:0x0a000001.signature",
+    signature: {
+      memberRefSignature: Buffer.from([
+        0x20,
+        0x01,
+        0x01,
+        ...INVALID_CLASS_OPERAND,
+      ]),
+    },
+    operandOffset: 4,
+  },
+] as const)(
+  "reports an invalid $member signature operand at its artifact offset",
+  ({ table, scope, signature, operandOffset }) => {
+    const bytes = buildManagedPeFixture(signature);
+    const blobOffset = memberSignatureBlobOffset(bytes, table);
+    expect(bytes[blobOffset + operandOffset]).toBe(0x07);
+
+    const result = inspectManagedMembersBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+
+    expect(result.coverage.state).toBe("partial");
+    expect(result.coverage.issues).toContainEqual({
+      code: "invalid-row",
+      scope,
+      offset: blobOffset + operandOffset,
+      detail:
+        "TypeDefOrRefOrSpec operand 0x7 is invalid: coded index tag 3 is not defined",
     });
   },
 );
@@ -490,6 +709,56 @@ const memberRefOnTypeSpec = (signature: Buffer) =>
 const genericRef = Buffer.from([0x30, 0x01, 0x00, 0x01]);
 // GENERIC, one generic parameter, no parameters, void.
 const genericDef = Buffer.from([0x10, 0x01, 0x00, 0x01]);
+
+it.each([
+  { badName: true, parent: 0, expectedHeap: "#Strings" },
+  { badName: false, parent: 0, expectedHeap: "#Blob" },
+  { badName: true, parent: 17, expectedHeap: "#Strings" },
+  { badName: false, parent: 17, expectedHeap: "#Blob" },
+])(
+  "reports $expectedHeap before invalid MemberRef parent $parent (bad name $badName)",
+  ({ badName, parent, expectedHeap }) => {
+    const bytes = buildManagedPeFixture({ memberRefParentRaw: parent });
+    const pe = readManagedPeLayout(bytes);
+    if (pe.cli === null) throw new Error("fixture has no CLI header");
+    const { rva, size } = pe.cli.metadata;
+    const layout = readManagedMetadataLayout(
+      bytes,
+      pe.rvaToOffset(rva, size, "metadata"),
+      size,
+    );
+    const nameColumn =
+      metadataRowOffset(layout, 10, 1) +
+      layout.codedIndexSize("MemberRefParent");
+    if (badName) {
+      if (layout.stringIndexSize === 2) bytes.writeUInt16LE(0xffff, nameColumn);
+      else bytes.writeUInt32LE(0xffffffff, nameColumn);
+    }
+    const signatureColumn = nameColumn + layout.stringIndexSize;
+    if (layout.blobIndexSize === 2)
+      bytes.writeUInt16LE(0xffff, signatureColumn);
+    else bytes.writeUInt32LE(0xffffffff, signatureColumn);
+    const result = inspectManagedMembersBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+    expect(result.member_refs).toEqual([]);
+    expect(result.coverage.state).toBe("partial");
+    expect(
+      result.coverage.issues.filter(
+        ({ scope }) =>
+          scope === "metadata.#Strings" ||
+          scope === "metadata.#Blob" ||
+          scope === "metadata.MemberRef:0x0a000001",
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        code: "invalid-heap-index",
+        scope: `metadata.${expectedHeap}`,
+      }),
+    ]);
+  },
+);
 
 describe("managed TypeSpec declaring names", () => {
   it("names a generic TypeSpec parent by its generic type and leaves other TypeSpecs unknown", () => {
@@ -874,6 +1143,55 @@ describe("managed MethodSpec call targets", () => {
       ["invalid-blob", "metadata.MethodSpec:0x2b000002"],
     ]);
   });
+});
+
+it("reads MethodSpec arity from an unnamed MemberRef independently of parent admission", () => {
+  const bytes = buildManagedPeFixture({
+    memberRefSignature: genericRef,
+    memberRefParentRaw: 17,
+    methodSpecMethods: [(1 << 1) | 1],
+    methodSpecInstantiation: Buffer.from([0x0a, 0x01, 0x0e]),
+    ilBody: tokenBody([[call, 0x2b00_0001]]),
+  });
+  const pe = readManagedPeLayout(bytes);
+  if (pe.cli === null) throw new Error("fixture has no CLI header");
+  const { rva, size } = pe.cli.metadata;
+  const layout = readManagedMetadataLayout(
+    bytes,
+    pe.rvaToOffset(rva, size, "metadata"),
+    size,
+  );
+  const nameColumn =
+    metadataRowOffset(layout, 10, 1) + layout.codedIndexSize("MemberRefParent");
+  if (layout.stringIndexSize === 2) bytes.writeUInt16LE(0xffff, nameColumn);
+  else bytes.writeUInt32LE(0xffffffff, nameColumn);
+  const result = inspectManagedMembersBytes(
+    bytes,
+    managedPeFixtureTarget(bytes),
+  );
+  expect(result.member_refs).toEqual([]);
+  expect(result.call_edges).toMatchObject([
+    {
+      target_token: "0x2b000001",
+      target_kind: "method-spec",
+      target_name: null,
+      target_declaring_type: null,
+    },
+  ]);
+  expect(result.coverage).toMatchObject({
+    state: "partial",
+    issues: [
+      expect.objectContaining({
+        code: "invalid-heap-index",
+        scope: "metadata.#Strings",
+      }),
+    ],
+  });
+  expect(
+    result.coverage.issues.some(({ scope }) =>
+      scope.startsWith("metadata.MethodSpec:"),
+    ),
+  ).toBe(false);
 });
 
 describe("managed MethodDef heap admission", () => {
@@ -1265,16 +1583,14 @@ describe("managed user strings", () => {
     const layout = { userStrings: null } as unknown as ManagedMetadataLayout;
     // Leave 1 KiB of the 64 MiB budget: too little for 100 distinct tokens.
     managedDecodeBudget(layout).reserve(64 * 1024 * 1024 - 1024, null);
-    const method = {
-      body: {
-        anchors: Array.from({ length: 100 }, (_, index) => ({
-          il_offset: index * 5,
-          opcode: "ldstr",
-          operand_kind: "string",
-          operand: `0x70${(index + 1).toString(16).padStart(6, "0")}`,
-        })),
-      },
-    } as unknown as ManagedMethod;
+    const method: DecodedMethod = {
+      method: {} as ManagedMethod,
+      tokenInstructions: decodedTokenInstructions(
+        0x72,
+        Array.from({ length: 100 }, (_, index) => 0x70000001 + index),
+      ),
+      catchTokens: new Map(),
+    };
 
     expect(() =>
       parseUserStrings(Buffer.alloc(0), layout, {
@@ -1448,16 +1764,14 @@ describe("managed user string issues", () => {
     } as unknown as ManagedMetadataLayout;
     // Leave 24 KiB: enough for the failures, not for 512 bytes leaked each.
     managedDecodeBudget(layout).reserve(64 * 1024 * 1024 - 24 * 1024, null);
-    const method = {
-      body: {
-        anchors: Array.from({ length: 64 }, (_, index) => ({
-          il_offset: index * 5,
-          opcode: "ldstr",
-          operand_kind: "string",
-          operand: `0x70${(1 + index * 2).toString(16).padStart(6, "0")}`,
-        })),
-      },
-    } as unknown as ManagedMethod;
+    const method: DecodedMethod = {
+      method: {} as ManagedMethod,
+      tokenInstructions: decodedTokenInstructions(
+        0x72,
+        Array.from({ length: 64 }, (_, index) => 0x70000001 + index * 2),
+      ),
+      catchTokens: new Map(),
+    };
 
     expect(
       parseUserStrings(heap, layout, { methods: [method], unscannedMethods: 0 })
@@ -1737,23 +2051,25 @@ describe("managed member decoding budget", () => {
 
 describe("managed derived edges", () => {
   it("admits call edges before the derived graph exceeds the budget", () => {
-    const anchor = {
-      il_offset: 0,
-      opcode: "call",
-      operand_kind: "method",
-      operand: "0x0a000001",
-    };
     const method = {
       token: "0x06000001",
       declaring_type: "T".repeat(2000),
       name: "m",
-      body: { anchors: Array.from({ length: 16 }, () => anchor) },
     } as unknown as ManagedMethod;
+
+    const decoded: DecodedMethod = {
+      method,
+      tokenInstructions: decodedTokenInstructions(
+        0x28,
+        Array(16).fill(0x0a000001),
+      ),
+      catchTokens: new Map(),
+    };
 
     const budget = new ManagedDecodeBudget();
     // Exercise the same capacity boundary without constructing 64 MiB of edges.
     budget.reserve(64 * 1024 * 1024 - 16 * 1024, null);
-    expect(() => edges([method], new Map(), budget)).toThrow(
+    expect(() => edges([decoded], new Map(), budget)).toThrow(
       ManagedReaderFailure,
     );
   });
@@ -1775,22 +2091,18 @@ describe("managed derived caller names", () => {
       token: "0x06000001",
       declaring_type: declaringType,
       name: "m",
-      body: {
-        anchors: [
-          {
-            il_offset: 0,
-            opcode: "call",
-            operand_kind: "method",
-            operand: "0x0a000001",
-          },
-        ],
-      },
     } as unknown as ManagedMethod;
+
+    const decoded: DecodedMethod = {
+      method,
+      tokenInstructions: decodedTokenInstructions(0x28, [0x0a000001]),
+      catchTokens: new Map(),
+    };
 
     const budget = new ManagedDecodeBudget();
     // Only the remaining capacity matters to refusal before interpolation.
     budget.reserve(64 * 1024 * 1024 - 1024, null);
-    expect(() => edges([method], new Map(), budget)).toThrow(
+    expect(() => edges([decoded], new Map(), budget)).toThrow(
       ManagedReaderFailure,
     );
     expect(built).toBe(false);
@@ -1857,6 +2169,16 @@ describe("managed TypeDef list ownership bounds", () => {
           detail: expect.stringContaining("TypeDef MethodList start 0"),
         }),
       ],
+    });
+    const selected = inspectManagedMembersBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+      { typeNames: ["Fixture.Program"] },
+    );
+    expect(selected.methods).toEqual([]);
+    expect(selected.user_strings).toMatchObject({
+      state: "partial",
+      literals: [],
     });
   });
 
@@ -2095,8 +2417,8 @@ it.each([
 
 it.each([
   [[], "truncated compressed integer"],
-  [[0x80], "reserved compressed integer"],
-  [[0xc0, 0, 0], "reserved compressed integer"],
+  [[0x80], "truncated compressed integer"],
+  [[0xc0, 0, 0], "truncated compressed integer"],
   [[0xe0], "reserved compressed integer"],
 ] as const)(
   "retains TypeSpec prefix failure %j at its owning row",
@@ -2182,12 +2504,12 @@ it("decodes generic instantiation member signatures as complete coverage", () =>
   expect(result.methods[0]?.signature).toMatchObject({
     parse_status: "decoded",
     return_type: "void",
-    parameter_types: ["class:9<string>"],
+    parameter_types: ["class:9 (System.Func`1)<string>"],
     issue: null,
   });
   expect(result.fields[0]?.signature).toMatchObject({
     parse_status: "decoded",
-    field_type: "valuetype:13<var:0,mvar:1>",
+    field_type: "valuetype:13 (System.ValueTuple`2)<var:0,mvar:1>",
   });
   expect(result.coverage).toMatchObject({ state: "complete", issues: [] });
 });
@@ -2680,3 +3002,74 @@ describe("managed member method paging", () => {
     ).toThrow(RangeError);
   });
 });
+
+it("retains names of unselected fields without admitting their malformed signatures", () => {
+  const bytes = buildManagedNestedTypeFixture({ topLevelTypes: true });
+  const pe = readManagedPeLayout(bytes);
+  if (pe.cli === null) throw new Error("Expected CLI fixture");
+  const { rva, size } = pe.cli.metadata;
+  const layout = readManagedMetadataLayout(
+    bytes,
+    pe.rvaToOffset(rva, size, "cli.metadata"),
+    size,
+  );
+  const field = metadataRowOffset(layout, 4, 1);
+  bytes.writeUIntLE(
+    layout.blobIndexSize === 2 ? 0xffff : 0xffffffff,
+    field + 2 + layout.stringIndexSize,
+    layout.blobIndexSize,
+  );
+  const method = metadataRowOffset(layout, 6, 2);
+  const methodRva = bytes.readUInt32LE(method);
+  const body = tokenBody([[ldsfld, 0x04000001]]);
+  bytes.set(body, pe.rvaToOffset(methodRva, body.length, "fixture CIL"));
+  const result = inspectManagedMembersBytes(
+    bytes,
+    managedPeFixtureTarget(bytes),
+    {
+      typeNames: ["OtherInner"],
+    },
+  );
+  expect(result.fields).toMatchObject([{ token: "0x04000002", name: "F" }]);
+  expect(result.methods).toMatchObject([{ token: "0x06000002", name: "M" }]);
+  expect(result.field_accesses).toMatchObject([
+    {
+      field_token: "0x04000001",
+      field_name: "F",
+      field_declaring_type: "Inner",
+    },
+  ]);
+  expect(
+    result.coverage.issues.filter(
+      ({ scope }) =>
+        scope === "metadata.#Blob" || scope === "Field:0x04000001.signature",
+    ),
+  ).toEqual([]);
+});
+
+it.each([false, true])(
+  "keeps ordinary TypeSpec operands distinct from GENERICINST heads (generic=%s)",
+  (generic) => {
+    const bytes = buildManagedPeFixture({
+      typeSpecSignatures: [Buffer.from([0x15, 0x12, 0x05, 0x01, 0x0e])],
+      fieldSignature: Buffer.from(
+        generic ? [0x06, 0x15, 0x12, 0x06, 0x01, 0x0e] : [0x06, 0x12, 0x06],
+      ),
+    });
+    const result = inspectManagedMembersBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+    expect(result.fields[0]?.signature).toMatchObject({
+      kind: "field",
+      parse_status: generic ? "malformed" : "decoded",
+      field_type: generic ? null : "class:6",
+    });
+    const issues = result.coverage.issues.filter(
+      ({ scope }) => scope === "Field:0x04000001.signature",
+    );
+    expect(issues).toEqual(
+      generic ? [expect.objectContaining({ code: "invalid-row" })] : [],
+    );
+  },
+);

@@ -1,15 +1,15 @@
 import { workflowUnknownInput } from "../../application/investigation/WorkflowUnknown.js";
 import type { EvidenceMcpServer } from "../EvidenceMcpServer.js";
 import { runAdmittedToolOperation } from "../admittedToolOperation.js";
-import { recordSessionEvidenceSources } from "../sessionEvidence.js";
+import { recordEvidenceSources } from "../../application/investigation/recordEvidenceSources.js";
 
 import { executeManagedNativeBoundaries } from "../../application/managed/ManagedNativeVerificationService.js";
 import { logToolExecution } from "../toolLogging.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
-import { managedWorkflowContract } from "./contract.js";
+import { toolContract } from "../../contracts/toolContracts.js";
 import type { ManagedWorkflowToolRegistration } from "./types.js";
 
-const nativeVerificationContract = managedWorkflowContract(
+const nativeVerificationContract = toolContract(
   "verify_managed_native_boundaries",
 );
 
@@ -39,7 +39,7 @@ export const registerVerifyManagedNativeBoundaries = (
               nativeVerificationContract,
             );
           const execution = result.value;
-          const recordedSources = recordSessionEvidenceSources(
+          const recordedSources = recordEvidenceSources(
             options.recordEvidence,
             execution.sourceEvidence,
           );
@@ -48,12 +48,7 @@ export const registerVerifyManagedNativeBoundaries = (
               recordedSources,
               nativeVerificationContract,
             );
-          const summary = execution.summary;
-          const unknown =
-            summary.unresolved > 0 ||
-            summary.contradicted > 0 ||
-            summary.native_body_unresolved > 0;
-          const unknownInput = unknown
+          const unknownInput = execution.hasUnknowns
             ? workflowUnknownInput(execution.evidence.evidence_id, {
                 question:
                   "Which managed/native boundaries remain unresolved or contradicted by the supplied native Evidence?",

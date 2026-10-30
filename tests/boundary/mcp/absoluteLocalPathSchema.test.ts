@@ -74,6 +74,8 @@ const standaloneAnalysisCases = (
 ): readonly PathInputCase[] =>
   [
     { name: "inspect_go_binary", input: {} },
+    { name: "inspect_recorded_crash", input: {} },
+    { name: "inspect_binary_layout", input: {} },
     { name: "inspect_rust_binary", input: {} },
     { name: "inspect_evm_interface", input: { encoding: "hex" } },
     { name: "inspect_sqlite_database", input: {} },
@@ -107,6 +109,12 @@ const inputCases = (
   return [
     pathCase("open_binary", "path", { path: absolute }, { path: relative }),
     pathCase(
+      "analyze_javascript_application",
+      "input_path",
+      { input_path: absolute, detail: "complete" },
+      { input_path: relative, detail: "complete" },
+    ),
+    pathCase(
       "open_binary",
       "snapshot_path",
       { path: absolute, snapshot_path: absolute },
@@ -123,6 +131,24 @@ const inputCases = (
       "path",
       { path: absolute },
       { path: relative },
+    ),
+    pathCase(
+      "import_evidence_bundle",
+      "path",
+      { path: absolute },
+      { path: relative },
+    ),
+    pathCase(
+      "compare_bundles",
+      "left_bundle_path",
+      { left_bundle_path: absolute, right_bundle_path: absolute },
+      { left_bundle_path: relative, right_bundle_path: absolute },
+    ),
+    pathCase(
+      "compare_bundles",
+      "right_bundle_path",
+      { left_bundle_path: absolute, right_bundle_path: absolute },
+      { left_bundle_path: absolute, right_bundle_path: relative },
     ),
     pathCase(
       "binary_session",
@@ -215,10 +241,36 @@ it("advertises full host-absolute path constraints after SDK schema conversion",
     const absolute = resolve("rea-absolute-input");
     const relative = "relative-input";
 
-    for (const { name, field, valid, invalid } of inputCases(
-      absolute,
-      relative,
-    )) {
+    for (const { name, field, valid, invalid } of [
+      ...inputCases(absolute, relative),
+      {
+        name: "inspect_go_binary",
+        field: "path NUL",
+        valid: { path: absolute },
+        invalid: { path: `${absolute}\0` },
+      },
+      {
+        name: "import_evidence_bundle",
+        field: "path NUL",
+        valid: { path: absolute },
+        invalid: { path: `${absolute}\0` },
+      },
+      {
+        name: "compare_bundles",
+        field: "left_bundle_path empty",
+        valid: { left_bundle_path: absolute, right_bundle_path: absolute },
+        invalid: { left_bundle_path: "", right_bundle_path: absolute },
+      },
+      {
+        name: "compare_bundles",
+        field: "left_bundle_path NUL",
+        valid: { left_bundle_path: absolute, right_bundle_path: absolute },
+        invalid: {
+          left_bundle_path: `${absolute}\0`,
+          right_bundle_path: absolute,
+        },
+      },
+    ]) {
       const schema = listed.tools.find(
         (tool) => tool.name === name,
       )?.inputSchema;

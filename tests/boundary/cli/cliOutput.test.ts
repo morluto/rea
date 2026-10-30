@@ -6,23 +6,110 @@ import { describe, expect, it } from "vitest";
 
 import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
 
+import { normalizeCliArguments } from "../../../src/cliBuiltinArguments.js";
 import {
-  normalizeCliArguments,
   renderCliOutputArgumentError,
   renderCliDocument,
   renderEmptyFilteredCliOutput,
   renderVersionReport,
   parseCliOutputArguments,
 } from "../../../src/cliOutput.js";
+import { adaptCliOutputArgumentsForIncur } from "../../../src/cliBuiltinArguments.js";
 
 const CLI_INTEGRATION_TIMEOUT_MS = 60_000;
 
 describe("CLI output argument boundary", () => {
+  it("requires an exact row selector and explicit columns for delimited formats", () => {
+    expect(
+      parseCliOutputArguments(["rows", "--format", "csv"]).validation,
+    ).toMatchObject({
+      ok: false,
+      code: "UNSUPPORTED_OUTPUT_COMBINATION",
+    });
+    expect(
+      parseCliOutputArguments([
+        "rows",
+        "--format",
+        "tsv",
+        "--filter-output",
+        "normalized_result.items",
+        "--columns",
+        "name, version",
+      ]),
+    ).toMatchObject({
+      columns: ["name", "version"],
+      validation: { ok: true },
+    });
+    for (const fields of ["name,,version", "name,name"])
+      expect(
+        parseCliOutputArguments([
+          "rows",
+          "--format",
+          "csv",
+          "--filter-output",
+          "items",
+          "--columns",
+          fields,
+        ]).validation,
+      ).toMatchObject({ ok: false, code: "INVALID_OUTPUT_VALUE" });
+    expect(
+      parseCliOutputArguments([
+        "rows",
+        "--format",
+        "csv",
+        "--filter-output",
+        "items",
+        "--columns",
+        "",
+      ]).validation,
+    ).toMatchObject({ ok: false, code: "MISSING_OUTPUT_VALUE" });
+    expect(
+      parseCliOutputArguments([
+        "rows",
+        "--format",
+        "csv",
+        "--filter-output",
+        "items",
+        "--columns",
+        "name",
+        "--token-count",
+      ]).validation,
+    ).toMatchObject({ ok: false, code: "UNSUPPORTED_OUTPUT_COMBINATION" });
+  });
+
+  it("adapts REA-owned delimited options only at the Incur boundary", () => {
+    expect(
+      adaptCliOutputArgumentsForIncur([
+        "inspect-analysis-view",
+        "--format",
+        "csv",
+        "--columns",
+        "name,version",
+        "--filter-output",
+        "normalized_result.items",
+      ]),
+    ).toEqual([
+      "inspect-analysis-view",
+      "--format",
+      "json",
+      "--filter-output",
+      "normalized_result.items",
+    ]);
+  });
+
   it("uses the shared Markdown table formatter for standalone reports", () => {
     const value = { text: "left|right\\path\nnext" };
     expect(renderCliDocument(value, "md", false)).toContain(
       "left\\|right\\\\path<br>next",
     );
+    expect(JSON.parse(renderCliDocument(value, "json", false))).toEqual(value);
+  });
+
+  it("preserves literal HTML and entity text in Markdown table headers and cells", () => {
+    const value = [{ "List<T>": "&copy; <br>\r\nnext" }];
+    const markdown = renderCliDocument(value, "md", false);
+    expect(markdown).toContain("List&lt;T&gt;");
+    expect(markdown).toContain("&amp;copy; &lt;br&gt;<br>next");
     expect(JSON.parse(renderCliDocument(value, "json", false))).toEqual(value);
   });
 
@@ -76,6 +163,110 @@ describe("CLI output argument boundary", () => {
       parseCliOutputArguments(["providers", "--token-count", "--json"])
         .validation,
     ).toEqual({ ok: true });
+  });
+});
+
+it("formats arrays of empty objects without column keys as JSON in Markdown", () => {
+  expect(renderCliDocument([{}], "md", false)).toBe("\\[\\{\\}\\]\n");
+  expect(renderCliDocument([{}, {}], "md", false)).toBe(
+    "\\[\\{\\},\\{\\}\\]\n",
+  );
+  expect(renderCliDocument({ empty: [{}] }, "md", false)).toBe(
+    "## empty\n\n\\[\\{\\}\\]\n",
+  );
+});
+
+it("preserves flag-shaped values consumed by valued output options", () => {
+  expect(
+    adaptCliOutputArgumentsForIncur([
+      "--filter-output",
+      "--columns",
+      "providers",
+      "--json",
+    ]),
+  ).toEqual(["--filter-output", "--columns", "providers", "--json"]);
+});
+
+describe("CLI output value admission", () => {
+  it.each(["--token-limit", "--token-offset"])(
+    "rejects invalid %s values before dispatch and preserves later JSON selection",
+    (flag) => {
+      for (const value of [
+        "-1",
+        "0.5",
+        "NaN",
+        "Infinity",
+        "9007199254740992",
+      ]) {
+        const validation = parseCliOutputArguments([
+          "providers",
+          flag,
+          value,
+          "--json",
+        ]).validation;
+        expect(validation).toMatchObject({
+          ok: false,
+          format: "json",
+          code: "INVALID_OUTPUT_VALUE",
+        });
+        if (!validation.ok)
+          expect(
+            JSON.parse(renderCliOutputArgumentError(validation)),
+          ).toMatchObject({
+            ok: false,
+            error: { code: "INVALID_OUTPUT_VALUE" },
+          });
+      }
+      for (const value of ["0", "1", "9007199254740991"])
+        expect(
+          parseCliOutputArguments(["providers", flag, value]).validation,
+        ).toEqual({ ok: true });
+    },
+  );
+
+  it("excludes explicitly declared literals from early output diagnostics", () => {
+    const validation = parseCliOutputArguments([
+      "--format",
+      "private-marker",
+      "--sensitive-value=private-marker",
+      "--json",
+    ]).validation;
+    expect(validation).toMatchObject({
+      ok: false,
+      format: "json",
+      code: "INVALID_OUTPUT_VALUE",
+      message: expect.stringContaining("[REDACTED]"),
+    });
+    expect(JSON.stringify(validation)).not.toContain("private-marker");
+  });
+
+  it("retains valid output selections on either side of a malformed value", () => {
+    for (const arguments_ of [
+      ["--json", "--format", "invalid"],
+      ["--format", "invalid", "--json"],
+      ["--token-limit", "invalid", "--json"],
+    ])
+      expect(parseCliOutputArguments(arguments_).validation).toMatchObject({
+        ok: false,
+        format: "json",
+        code: "INVALID_OUTPUT_VALUE",
+      });
+    expect(
+      parseCliOutputArguments(["--format", "jsonl", "--format", "invalid"])
+        .validation,
+    ).toMatchObject({
+      ok: false,
+      format: "jsonl",
+      code: "INVALID_OUTPUT_VALUE",
+    });
+    expect(
+      parseCliOutputArguments(["--format", "yaml", "--token-offset", "-1"])
+        .validation,
+    ).toMatchObject({
+      ok: false,
+      format: "yaml",
+      code: "INVALID_OUTPUT_VALUE",
+    });
   });
 });
 
@@ -180,8 +371,6 @@ describe("unclosed CLI output filter slices", () => {
       ],
       ["--filter-output", "capabilities[-1,].provider.id"],
       ["--filter-output", "capabilities[[0,1]"],
-      ["--format", "invalid", "--filter-output", "providers["],
-      ["--token-limit", "invalid", "--filter-output", "providers["],
     ])
       expect(parseCliOutputArguments(arguments_).validation).toEqual({
         ok: true,
@@ -356,7 +545,10 @@ describe("CLI output valued-flag parsing", () => {
       ]) {
         const result = await cli.run({ arguments: arguments_ });
         expect(result.exitCode).toBe(1);
-        expect(result.stdout).not.toContain("UNSUPPORTED_OUTPUT_COMBINATION");
+        expect(result.json).toMatchObject({
+          ok: false,
+          error: { code: "INVALID_OUTPUT_VALUE" },
+        });
         expect(result.stdout).not.toContain("[truncated:");
       }
     },
@@ -457,7 +649,8 @@ describe("compiled CLI output boundary", () => {
         exitCode: 1,
         json: {
           code: "VALIDATION_ERROR",
-          message: expect.stringContaining("expected string"),
+          message:
+            "REA could not read the command arguments. Check the named argument and its expected type, then try again.",
           fieldErrors: [
             {
               path: "path",

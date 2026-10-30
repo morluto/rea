@@ -1,3 +1,4 @@
+import { ProcessAdmissionError } from "./ProcessAdmissionError.js";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -7,9 +8,9 @@ import { z } from "zod";
 
 import {
   DEFAULT_SWIFTC_COMPILE_TIMEOUT_MS,
-  MAX_PROVIDER_STARTUP_TIMEOUT_MS,
   providerStartupTimeoutSchema,
 } from "../config/providerStartupTimeout.js";
+import { MAX_PROVIDER_STARTUP_TIMEOUT_MS } from "../domain/analysisResourceLimits.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type {
@@ -19,7 +20,12 @@ import type {
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { safeParseJson } from "../domain/safeJson.js";
 import { boundedUtf8Text } from "./boundedUtf8Text.js";
-import { execFileOutput, execFileOutputFailure } from "./ExecFileOutput.js";
+import { snapshotEnvironment } from "./snapshotEnvironment.js";
+import {
+  execFileOutput,
+  execFileOutputFailure,
+  execFileFailureCapturedOutput,
+} from "./ExecFileOutput.js";
 import type {
   ProcessIdentityObservation,
   ProcessRunTokenObservation,
@@ -256,18 +262,11 @@ const compilerFailureFacts = (
       ...(outcome === "timed_out" ? { timeoutMs } : {}),
     },
     capturedOutput: {
+      ...execFileFailureCapturedOutput(failure),
       stdout: stdout.text,
       stderr: stderr.text,
       truncated:
         stdout.truncated || stderr.truncated || failure.outputTruncated,
-      ...(failure.stdoutBytes === undefined
-        ? {}
-        : { stdout_bytes: failure.stdoutBytes }),
-      ...(failure.stderrBytes === undefined
-        ? {}
-        : { stderr_bytes: failure.stderrBytes }),
-      exit_code: typeof failure.code === "number" ? failure.code : null,
-      signal: failure.signal,
     },
   };
 };
@@ -410,7 +409,7 @@ export const createDarwinProcessRunTokenReader = (
     readonly compiler?: DarwinProcessReaderCompiler;
     /** Deadline for helper compilation, independent of provider execution. */
     readonly compileTimeoutMs?: number;
-    /** Environment consulted when `compileTimeoutMs` is omitted. */
+    /** Captured compiler/helper environment and default compile deadline. */
     readonly environment?: Readonly<Record<string, string | undefined>>;
     /**
      * Caller-owned directory holding the compiler's module cache. Unset keeps
@@ -424,7 +423,11 @@ export const createDarwinProcessRunTokenReader = (
     kind: "xcrun",
     executable: "/usr/bin/xcrun",
   };
-  const compilerTimeoutMs = resolveSwiftcCompileTimeoutMs(options);
+  const environment = snapshotEnvironment(options.environment ?? process.env);
+  const compilerTimeoutMs = resolveSwiftcCompileTimeoutMs({
+    ...options,
+    environment,
+  });
   const moduleCachePath = options.moduleCachePath ?? "";
   let root: ProcessReaderRoot | undefined;
   let executable: string | undefined;
@@ -499,7 +502,7 @@ export const createDarwinProcessRunTokenReader = (
       const compilerTemporary = join(operationRoot.path, "tmp");
       await mkdir(compilerTemporary);
       const compilerEnvironment: NodeJS.ProcessEnv = {
-        ...process.env,
+        ...environment,
         TMPDIR: compilerTemporary,
       };
       const compilerArguments =
@@ -521,6 +524,7 @@ export const createDarwinProcessRunTokenReader = (
           maxBuffer: 1024 * 1024,
           signal,
           stopSignal: SWIFTC_INTERRUPT,
+          lifetimePipe: true,
           env: compilerEnvironment,
         });
       } catch (cause: unknown) {
@@ -533,9 +537,9 @@ export const createDarwinProcessRunTokenReader = (
     } catch (cause: unknown) {
       operation.primaryFailure = { cause };
       if (operationRoot !== undefined) {
-        // execFileOutput has settled, so inherited compiler pipes are closed.
-        // That is not proof for a child that did not inherit them; this owner
-        // does not signal processes it did not launch.
+        // The extra pipe keeps settlement pending for Swift frontend writers
+        // that inherit it after the driver and its standard streams close.
+        // It cannot establish completion of a child that did not inherit it.
         try {
           await cleanupRoot(operationRoot);
         } catch (cleanup: unknown) {
@@ -576,10 +580,10 @@ export const createDarwinProcessRunTokenReader = (
   };
 
   const compile = async (signal?: AbortSignal): Promise<string> => {
-    if (closed) throw new Error("Darwin process token reader is closed");
+    if (closed) throw new ProcessAdmissionError("reader_closed");
     signal?.throwIfAborted();
     while (true) {
-      if (closed) throw new Error("Darwin process token reader is closed");
+      if (closed) throw new ProcessAdmissionError("reader_closed");
       signal?.throwIfAborted();
       if (executable !== undefined) return executable;
       if (compilation === undefined && root !== undefined) {
@@ -639,10 +643,11 @@ export const createDarwinProcessRunTokenReader = (
     signal?: AbortSignal,
   ): Promise<string> => {
     if (closed)
-      return Promise.reject(new Error("Darwin process token reader is closed"));
+      return Promise.reject(new ProcessAdmissionError("reader_closed"));
     const pending = (async () => {
       const binary = await compile(signal);
       const { stdout } = await execFileOutput(binary, arguments_, {
+        env: environment,
         timeout: 15_000,
         stopSignal: "SIGTERM",
         ...(signal === undefined ? {} : { signal }),
@@ -666,25 +671,21 @@ export const createDarwinProcessRunTokenReader = (
     const stdout = await runHelper(pids, signal);
     const decoded = safeParseJson(stdout);
     if (!decoded.ok)
-      throw new Error(
-        `macOS process token helper returned invalid JSON: ${decoded.error}`,
+      throw new ProcessAdmissionError(
+        "token_json_invalid",
+        { parser: decoded.error },
         { cause: decoded.cause },
       );
     const parsed = responseSchema.safeParse(decoded.value);
     if (!parsed.success)
-      throw new Error(
-        "macOS process token helper returned an invalid response",
-        {
-          cause: parsed.error,
-        },
-      );
+      throw new ProcessAdmissionError("token_response_invalid", undefined, {
+        cause: parsed.error,
+      });
     const requested = new Set(processes.map(({ pid }) => pid));
     const observations = new Map<number, ProcessRunTokenObservation>();
     for (const result of parsed.data.results) {
       if (!requested.has(result.pid) || observations.has(result.pid))
-        throw new Error(
-          "macOS process token helper returned an unexpected PID set",
-        );
+        throw new ProcessAdmissionError("token_pid_set");
       observations.set(
         result.pid,
         result.state === "readable"
@@ -697,9 +698,7 @@ export const createDarwinProcessRunTokenReader = (
       );
     }
     if (observations.size !== requested.size)
-      throw new Error(
-        "macOS process token helper returned an incomplete PID set",
-      );
+      throw new ProcessAdmissionError("token_pid_incomplete");
     return observations;
   };
 
@@ -712,25 +711,21 @@ export const createDarwinProcessRunTokenReader = (
     const stdout = await runHelper(["--identities", ...pids], signal);
     const decoded = safeParseJson(stdout);
     if (!decoded.ok)
-      throw new Error(
-        `macOS process identity helper returned invalid JSON: ${decoded.error}`,
+      throw new ProcessAdmissionError(
+        "identity_json_invalid",
+        { parser: decoded.error },
         { cause: decoded.cause },
       );
     const parsed = identityResponseSchema.safeParse(decoded.value);
     if (!parsed.success)
-      throw new Error(
-        "macOS process identity helper returned an invalid response",
-        {
-          cause: parsed.error,
-        },
-      );
+      throw new ProcessAdmissionError("identity_response_invalid", undefined, {
+        cause: parsed.error,
+      });
     const requested = new Set(processes.map(({ pid }) => pid));
     const observations = new Map<number, ProcessIdentityObservation>();
     for (const result of parsed.data.results) {
       if (!requested.has(result.pid) || observations.has(result.pid))
-        throw new Error(
-          "macOS process identity helper returned an unexpected PID set",
-        );
+        throw new ProcessAdmissionError("identity_pid_set");
       observations.set(
         result.pid,
         result.state === "readable"
@@ -764,9 +759,7 @@ export const createDarwinProcessRunTokenReader = (
       );
     }
     if (observations.size !== requested.size)
-      throw new Error(
-        "macOS process identity helper returned an incomplete PID set",
-      );
+      throw new ProcessAdmissionError("identity_pid_incomplete");
     return observations;
   };
 

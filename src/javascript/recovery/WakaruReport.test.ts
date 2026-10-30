@@ -1,10 +1,14 @@
-import { truncate, writeFile } from "node:fs/promises";
+import { readFile, truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
-import { parseWakaruReports } from "./WakaruReport.js";
+import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
+import {
+  parseWakaruReports,
+  validateRecoverySourceMap,
+} from "./WakaruReport.js";
 import { RECOVERY_LIMITS } from "./WakaruRelease.js";
 
 const reportStdout = JSON.stringify({
@@ -72,4 +76,57 @@ it("keeps a malformed provenance report distinct from the fixed report allowance
   expect(projected.remediation.action).toBe(projected.message);
   expect(JSON.stringify(projected)).not.toContain("report allowance");
   expect(JSON.stringify(projected)).not.toContain("no runtime override");
+});
+
+it("rejects malformed UTF-8 provenance bytes and retains literal replacement characters", async () => {
+  const root = await createTestTempDirectory("rea-wakaru-provenance-utf8-");
+  const provenancePath = join(root, "provenance.json");
+  const prefix = Buffer.from('{"format":"');
+  const suffix = Buffer.from('","strategy":"safe","modules":{}}');
+  await writeFile(
+    provenancePath,
+    Buffer.concat([prefix, Buffer.from([0xff]), suffix]),
+  );
+  const context = {
+    execution,
+    provenancePath,
+    snapshots: new Map<string, Buffer>(),
+    files: [{ relativePath: "provenance.json" }],
+  };
+  const refusal: unknown = await parseWakaruReports(context).catch(
+    (cause: unknown) => cause,
+  );
+  expect(refusal).toBeInstanceOf(ProviderAdapterError);
+  if (!(refusal instanceof ProviderAdapterError))
+    throw new Error("Expected provider wrapper");
+  expect(refusal.cause).toBeInstanceOf(TypeError);
+  await writeFile(
+    provenancePath,
+    Buffer.concat([prefix, Buffer.from("�"), suffix]),
+  );
+  const accepted = await parseWakaruReports(context);
+  expect(accepted.provenance.format).toBe("�");
+});
+
+it("rejects malformed UTF-8 emitted source maps without rejecting literal replacement characters", async () => {
+  const root = await createTestTempDirectory("rea-wakaru-sourcemap-utf8-");
+  const mapPath = join(root, "module.js.map");
+  const prefix = Buffer.from('{"version":3,"sources":["');
+  const suffix = Buffer.from('"],"names":[],"mappings":""}');
+  await writeFile(
+    mapPath,
+    Buffer.concat([prefix, Buffer.from([0xff]), suffix]),
+  );
+  let refusal: unknown;
+  try {
+    validateRecoverySourceMap(await readFile(mapPath), "module.js");
+  } catch (cause: unknown) {
+    refusal = cause;
+  }
+  expect(refusal).toBeInstanceOf(AnalysisOutputError);
+  if (!(refusal instanceof AnalysisOutputError))
+    throw new Error("Expected source-map wrapper");
+  expect(refusal.cause).toBeInstanceOf(TypeError);
+  await writeFile(mapPath, Buffer.concat([prefix, Buffer.from("�"), suffix]));
+  validateRecoverySourceMap(await readFile(mapPath), "module.js");
 });

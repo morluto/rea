@@ -2,7 +2,10 @@ import { z } from "zod";
 
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import { digestSchema } from "../digests.js";
-import type { AnalysisProfileCommitment } from "../analysisProfile.js";
+import {
+  committedProvidersEqual,
+  type AnalysisProfileCommitment,
+} from "../analysisProfile.js";
 import type { JsonValue } from "../jsonValue.js";
 import {
   machoTargetSelectionSchema,
@@ -39,9 +42,7 @@ export const functionCoordinateContextsEqual = (
   if (
     left === null ||
     right === null ||
-    left.provider.id !== right.provider.id ||
-    left.provider.name !== right.provider.name ||
-    left.provider.version !== right.provider.version
+    !committedProvidersEqual(left.provider, right.provider)
   )
     return false;
   const leftContext = functionCoordinateContextSchema.safeParse(

@@ -1,3 +1,4 @@
+import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { ghidraSeedReportSchema } from "./GhidraAnalysisSeeds.js";
 import { ghidraDisabledAnalyzerReportSchema } from "./GhidraDisabledAnalyzers.js";
 import { z } from "zod";
@@ -12,7 +13,7 @@ import { GHIDRA_FUNCTION_OPERATIONS } from "./GhidraFunctionValues.js";
 import { ghidraExtensionResultSchema } from "./extensions/GhidraExtensions.js";
 import { GHIDRA_MIPS_SOFT_FLOAT_STORAGE } from "./GhidraMipsProfile.js";
 
-/** Exact methods proved by the bridge handshake after auto-analysis. */
+/** Exact methods proved by the selected Program bridge handshake. */
 export const GHIDRA_SESSION_CAPABILITIES = [
   "ping",
   "shutdown",
@@ -47,7 +48,8 @@ const sessionInfoSchema = z
       })
       .strict(),
     read_only: z.boolean(),
-    analysis_complete: z.boolean(),
+    analysis_complete: z.boolean().nullable(),
+    existing_project: z.literal(true).optional(),
     analysis_timed_out: z.boolean(),
     /** Program Information attributes; absent load state remains unknown. */
     pdb: z
@@ -107,7 +109,7 @@ const sessionInfoSchema = z
   })
   .strict();
 
-/** Authenticated metadata produced after Ghidra finishes auto-analysis. */
+/** Authenticated Program metadata; original analysis can remain unknown. */
 export type GhidraSessionInfo = z.infer<typeof sessionInfoSchema>;
 
 /** Describe missing PDB authority without claiming all names are generated. */
@@ -155,6 +157,7 @@ export const parseGhidraSessionInfo = (
     readonly profileDigest: string;
     readonly targetSha256: string;
     readonly expectedReadOnly?: boolean;
+    readonly expectedExistingProject?: boolean;
     readonly expectedLanguageId?: string;
     readonly expectedCompilerSpecId?: string;
   },
@@ -181,9 +184,15 @@ export const parseGhidraSessionInfo = (
     expectedCapabilities.some(
       (capability) => !parsed.data.capabilities.includes(capability),
     ) ||
-    parsed.data.analysis_complete === parsed.data.analysis_timed_out
+    (expected.expectedExistingProject === true
+      ? parsed.data.existing_project !== true ||
+        parsed.data.analysis_complete !== null ||
+        parsed.data.analysis_timed_out
+      : parsed.data.existing_project !== undefined ||
+        parsed.data.analysis_complete === null ||
+        parsed.data.analysis_complete === parsed.data.analysis_timed_out)
   )
-    return err(new Error("Ghidra bridge handshake identity is invalid"));
+    return err(new GhidraAdmissionError("handshake_identity"));
   return ok(parsed.data);
 };
 

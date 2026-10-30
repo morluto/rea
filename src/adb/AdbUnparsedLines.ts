@@ -1,5 +1,5 @@
 /** Most unrecognized output lines a parser retains as source evidence. */
-const UNPARSED_LINE_SAMPLE_LIMIT = 10;
+export const UNPARSED_LINE_SAMPLE_LIMIT = 10;
 
 /**
  * Unrecognized output lines one parser observed: the first lines verbatim, up

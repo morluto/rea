@@ -105,13 +105,21 @@ describe("empty URL component publication", () => {
     for (const [index, script] of result.scripts.entries()) {
       if (script.content.state !== "exported")
         throw new Error("Missing source bytes");
-      expect(script.url).toBe(scripts[index]?.url);
+      const expected = scripts[index];
+      if (expected === undefined) throw new Error("Missing expected source");
+      expect(script.url).toBe(expected.url);
       expect(script.content.layout).toBe(index === 0 ? "url-path" : "isolated");
       expect(
-        await readFile(
-          join(result.analysis_input.input_path, script.content.relative_path),
+        Buffer.compare(
+          await readFile(
+            join(
+              result.analysis_input.input_path,
+              script.content.relative_path,
+            ),
+          ),
+          expected.bytes,
         ),
-      ).toEqual(scripts[index]?.bytes);
+      ).toBe(0);
     }
     const manifest = JSON.parse(await readFile(result.manifest.path, "utf8"));
     expect(manifest.scripts).toEqual(result.scripts);
@@ -158,15 +166,16 @@ describe("captured script publication boundary", () => {
       const bytes = await readFile(
         join(result.analysis_input.input_path, script.content.relative_path),
       );
-      expect(bytes).toEqual(
-        capture.events.items
-          .filter(({ kind }) => kind === "network-content")
-          .map((event) =>
-            event.kind === "network-content" && event.body.state === "captured"
-              ? Buffer.from(event.body.content, "base64")
-              : Buffer.alloc(0),
-          )[index],
-      );
+      const expected = capture.events.items
+        .filter(({ kind }) => kind === "network-content")
+        .map((event) =>
+          event.kind === "network-content" && event.body.state === "captured"
+            ? Buffer.from(event.body.content, "base64")
+            : Buffer.alloc(0),
+        )[index];
+      if (expected === undefined)
+        throw new Error("Missing expected script bytes");
+      expect(bytes.equals(expected)).toBe(true);
     }
     const analyzed = await analyzeJavaScriptApplication(result.analysis_input);
     if (!analyzed.ok) throw analyzed.error;
@@ -239,11 +248,10 @@ describe("captured script publication boundary", () => {
       expect(persisted.limitations).toContain(
         PLAYWRIGHT_RESPONSE_BODY_PROVENANCE_LIMITATION,
       );
-      expect(
-        await readFile(
-          join(parsed.analysis_input.input_path, first.content.relative_path),
-        ),
-      ).toEqual(binary);
+      const exportedBytes = await readFile(
+        join(parsed.analysis_input.input_path, first.content.relative_path),
+      );
+      expect(exportedBytes.equals(binary)).toBe(true);
       expect(
         await readFile(
           join(parsed.analysis_input.input_path, second.content.relative_path),
@@ -753,7 +761,9 @@ describe("captured script final commit cancellation", () => {
       });
     },
   );
+});
 
+describe("captured script path validation", () => {
   it("identifies a missing capture file and rejected host path syntax", async () => {
     const { input, resources } = await setup();
     const missing = await exportWebScripts(
@@ -776,15 +786,67 @@ describe("captured script final commit cancellation", () => {
         ],
       },
     });
-    const relative = await exportWebScripts(
+    const relativeCapture = await exportWebScripts(
       {
         ...input,
         capture_path: "capture.json",
       },
       resources,
     );
-    if (relative.ok) throw new Error("Expected host path error");
-    expect(relative.error._tag).toBe("AnalysisInputError");
+    if (relativeCapture.ok) throw new Error("Expected host path error");
+    expect(relativeCapture.error).toMatchObject({
+      _tag: "AnalysisInputError",
+      issues: [
+        {
+          path: ["capture_path"],
+          reason: "invalid_format",
+          message:
+            "capture_path must be an absolute filesystem path on this host.",
+        },
+      ],
+    });
+
+    const relativeOutput = await exportWebScripts(
+      {
+        ...input,
+        output_directory: "dist",
+      },
+      resources,
+    );
+    if (relativeOutput.ok) throw new Error("Expected host path error");
+    expect(relativeOutput.error).toMatchObject({
+      _tag: "AnalysisInputError",
+      issues: [
+        {
+          path: ["output_directory"],
+          reason: "invalid_format",
+          message:
+            "output_directory must be an absolute filesystem path on this host.",
+        },
+      ],
+    });
+
+    const bothRelative = await exportWebScripts(
+      {
+        capture_path: "capture.json",
+        output_directory: "dist",
+      },
+      resources,
+    );
+    if (bothRelative.ok) throw new Error("Expected host path error");
+    expect(bothRelative.error).toMatchObject({
+      _tag: "AnalysisInputError",
+      issues: [
+        {
+          path: ["capture_path"],
+          reason: "invalid_format",
+        },
+        {
+          path: ["output_directory"],
+          reason: "invalid_format",
+        },
+      ],
+    });
   });
 });
 
@@ -1372,14 +1434,74 @@ it("isolates an observed exclusive-create alias using typed facts when diagnosti
     for (const [index, script] of result.scripts.entries()) {
       if (script.content.state !== "exported")
         throw new Error("Missing script bytes");
-      expect(script.url).toBe(scripts[index]?.url);
+      const expected = scripts[index];
+      if (expected === undefined) throw new Error("Missing expected script");
+      expect(script.url).toBe(expected.url);
       expect(
-        await readFile(
-          join(result.analysis_input.input_path, script.content.relative_path),
+        Buffer.compare(
+          await readFile(
+            join(
+              result.analysis_input.input_path,
+              script.content.relative_path,
+            ),
+          ),
+          expected.bytes,
         ),
-      ).toEqual(scripts[index]?.bytes);
+      ).toBe(0);
     }
   } finally {
     write.mockRestore();
   }
 });
+
+it.each(["basename", "directory"])(
+  "isolates a destination-unrepresentable %s without losing peer scripts",
+  async (kind) => {
+    const long = "b".repeat(kind === "basename" ? 253 : 256);
+    const scripts = [
+      {
+        url: "https://fixture.test/regular.js",
+        bytes: Buffer.from("export const regular = 1;"),
+      },
+      {
+        url: `https://fixture.test/${"c".repeat(252)}.js`,
+        bytes: Buffer.from("export const boundary = 1;"),
+      },
+      {
+        url: `https://fixture.test/${kind === "basename" ? `${long}.js` : `${long}/main.js`}`,
+        bytes: Buffer.from("export const long = 2;"),
+      },
+    ];
+    const { input, resources } = await setup(scriptScenarioFixture(scripts));
+    const exported = await exportWebScripts(input, resources);
+    if (!exported.ok) throw exported.error;
+    const result = webScriptExportResultSchema.parse(
+      exported.value.normalized_result,
+    );
+    expect(result.scripts).toHaveLength(3);
+    expect(result.scripts[0]?.content).toMatchObject({ layout: "url-path" });
+    expect(result.scripts[1]?.content).toMatchObject({ layout: "url-path" });
+    expect(result.scripts[2]?.content).toMatchObject({
+      layout: "isolated",
+      layout_reason: expect.stringContaining("cannot represent"),
+    });
+    for (const [index, script] of result.scripts.entries()) {
+      if (script.content.state !== "exported" || result.analysis_input === null)
+        throw new Error("Missing exported source");
+      expect(script.url).toBe(scripts[index]!.url);
+      expect(
+        (
+          await readFile(
+            join(
+              result.analysis_input.input_path,
+              script.content.relative_path,
+            ),
+          )
+        ).equals(scripts[index]!.bytes),
+      ).toBe(true);
+    }
+    expect(
+      JSON.parse(await readFile(result.manifest.path, "utf8")).scripts,
+    ).toEqual(result.scripts);
+  },
+);

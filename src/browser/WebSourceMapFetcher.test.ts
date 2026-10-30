@@ -4,6 +4,7 @@ import { expect, it } from "vitest";
 
 import { fetchWebSourceMaps } from "./WebSourceMapFetcher.js";
 import { analyzeWebBundleInputSchema } from "../domain/webBundleAnalysis.js";
+import { fetchWebSourceMapsOk } from "../../tests/fixtures/fetchWebSourceMapsOk.js";
 
 const input = analyzeWebBundleInputSchema.parse({
   cdp_endpoint: "http://127.0.0.1:9222",
@@ -18,7 +19,7 @@ const request = {
 };
 
 it("reports an empty selected request set without starting fetch work", async () => {
-  const result = await fetchWebSourceMaps([], input, undefined, {
+  const result = await fetchWebSourceMapsOk([], input, undefined, {
     fetch: async () => {
       throw new Error("No source-map request should be made");
     },
@@ -37,9 +38,9 @@ it("honors cancellation before returning an empty request set", async () => {
   const reason = new Error("cancelled before fetching");
   controller.abort(reason);
 
-  await expect(fetchWebSourceMaps([], input, controller.signal)).rejects.toBe(
-    reason,
-  );
+  const result = await fetchWebSourceMaps([], input, controller.signal);
+  expect(result.ok).toBe(false);
+  if (!result.ok) expect(result.error.cause).toBe(reason);
 });
 
 it("cancels a response body that arrives after its fetch host aborts synchronously", async () => {
@@ -73,7 +74,9 @@ it("cancels a response body that arrives after its fetch host aborts synchronous
     },
   });
 
-  await expect(pending).rejects.toBe(reason);
+  const result = await pending;
+  expect(result.ok).toBe(false);
+  if (!result.ok) expect(result.error.cause).toBe(reason);
   resolveFetch(new Response(body));
   await cancelled;
   expect(cancellationReason).toBe(reason);
@@ -106,7 +109,9 @@ it("observes a fetch rejection that arrives after its host aborts synchronously"
   process.on("unhandledRejection", onUnhandled);
 
   try {
-    await expect(pending).rejects.toBe(reason);
+    const result = await pending;
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.cause).toBe(reason);
     rejectFetch(lateFailure);
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(unhandled).toBeUndefined();
@@ -149,7 +154,7 @@ it.each([
       declaredUrl: "https://app.example.test/maps/app.js.map",
       fetchUrl: "https://app.example.test/maps/app.js.map",
     };
-    const result = await fetchWebSourceMaps(
+    const result = await fetchWebSourceMapsOk(
       [selectedRequest],
       fetchInput,
       undefined,

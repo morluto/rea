@@ -107,7 +107,10 @@ cliTest(
           code: "invalid_request",
           details: {
             issues: [
-              { path: ["protobuf", "schema"], reason: "invalid_format" },
+              {
+                path: ["protobuf", "schema", "descriptor_set_path"],
+                reason: "invalid_format",
+              },
             ],
           },
         };
@@ -146,7 +149,9 @@ cliTest(
           parseMcpToolError(response).error,
           `${scope}-${reverse}`,
         ).toMatchObject(expected);
-        expect(await readFile(descriptor)).toEqual(Buffer.from(bytes));
+        expect(
+          Buffer.compare(await readFile(descriptor), Buffer.from(bytes)),
+        ).toBe(0);
       }
     expect(await readFile(capture, "utf8")).toBe(text);
   },
@@ -213,6 +218,8 @@ cliTest(
         { number: 1, schema_name: fieldName, schema_value: "1" },
       ]);
     }
-    expect(await readFile(descriptor)).toEqual(Buffer.from(bytes));
+    expect(Buffer.compare(await readFile(descriptor), Buffer.from(bytes))).toBe(
+      0,
+    );
   },
 );

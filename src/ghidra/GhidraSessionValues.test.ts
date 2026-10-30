@@ -52,14 +52,16 @@ describe("Ghidra DOS import commitment", () => {
     });
   });
   it("rejects a 32-bit interpretation even when artifact and profile hashes match", () => {
-    expect(rejectedHandshake(session("x86:LE:32:default")).message).toBe(
-      "Ghidra bridge handshake identity is invalid",
-    );
+    expect(rejectedHandshake(session("x86:LE:32:default"))).toMatchObject({
+      _tag: "GhidraAdmissionError",
+      code: "handshake_identity",
+    });
   });
   it("rejects compiler drift independently of the language", () => {
-    expect(rejectedHandshake(session(undefined, "windows")).message).toBe(
-      "Ghidra bridge handshake identity is invalid",
-    );
+    expect(rejectedHandshake(session(undefined, "windows"))).toMatchObject({
+      _tag: "GhidraAdmissionError",
+      code: "handshake_identity",
+    });
   });
 });
 
@@ -238,4 +240,33 @@ describe("Ghidra mutation handshake", () => {
       ).toBe(false);
     }
   });
+});
+
+it("admits unknown analysis completeness only for a committed read-only existing project", () => {
+  const value = {
+    ...session(),
+    existing_project: true,
+    read_only: true,
+    analysis_complete: null,
+    capabilities: GHIDRA_SESSION_CAPABILITIES.filter(
+      (name) => !GHIDRA_MUTATING_OPERATIONS.has(name),
+    ),
+  };
+  const project = {
+    ...expected,
+    expectedReadOnly: true,
+    expectedExistingProject: true,
+  };
+  expect(parseGhidraSessionInfo(value, project).ok).toBe(true);
+  expect(parseGhidraSessionInfo(value, expected).ok).toBe(false);
+  for (const analysis_complete of [false, true])
+    expect(
+      parseGhidraSessionInfo({ ...value, analysis_complete }, project).ok,
+    ).toBe(false);
+  expect(
+    parseGhidraSessionInfo(
+      { ...value, capabilities: [...GHIDRA_SESSION_CAPABILITIES] },
+      project,
+    ).ok,
+  ).toBe(false);
 });

@@ -25,8 +25,12 @@ metadata retains the original name, table index, type, compression flag,
 relative offset and known directory record extent. Logical paths follow the
 carrier's path dialect: backslashes separate components for PE carriers, while
 they remain literal filename characters for POSIX carriers. The source name
-always retains its stored spelling. If the carrier dialect is unconfirmed, REA
-preserves backslashes verbatim instead of inferring POSIX semantics.
+always retains its stored spelling in occurrence `source_path` and
+`format_metadata.source_name`. For PYZ rows, that source is the exact module or
+data key in the PYZ table, not a reconstructed filesystem name;
+`format_metadata.container_name` identifies the containing PYZ image. If the
+carrier dialect is unconfirmed, REA preserves backslashes verbatim instead of
+inferring POSIX semantics.
 `relative_offset` is relative to the CArchive start for CArchive rows, or to
 the decoded PYZ image for PYZ rows. A CArchive directory record starts at
 `archive_start + toc_offset + directory_record_offset`; its size is
@@ -44,6 +48,9 @@ they do not claim a destination directory. Their `relative_offset` and
 `compressed_size` preserve any payload declared by older producers, while
 `declared_size` is zero because no bytecode is materialized for a namespace.
 Every declared span must end before the PYZ table of contents.
+Malformed CArchive TOC rows identify their zero-based table index and byte offset
+within the TOC, including truncated headers, invalid names, compression flags,
+and type codes. The failure retains its original format reason.
 PYZ `compression_flag` is derived from storage: nonempty payloads are compressed,
 including legacy namespaces; an empty namespace has no compressed payload.
 
@@ -117,6 +124,10 @@ Outer-compressed PYZ images have a separate per-reader capacity of 128 private
 files, bounding retained inodes and image identities. The complete image count
 is admitted before any temporary file is created; excess images return a
 capacity failure. This is a resource policy, not a PyInstaller format limit.
+Artifact errors retain this distinction as `details.boundary: "capacity"`, with
+the actual allowance in the diagnosis and `details.detail`. Changing output
+detail does not reduce that allowance's input scope; these operations do not
+select a narrower member path during inventory.
 Only a zero-byte read establishes EOF; short successful descriptor reads fill
 the bounded range. Compressed members must consume their complete declared
 input span; trailing junk and concatenated streams are refused.

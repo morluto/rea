@@ -322,8 +322,13 @@ it.skipIf(process.platform === "win32")(
     setTimeout(() => abort.abort(), 30);
     const result = await execution;
     expect(result.ok).toBe(false);
-    if (!result.ok)
-      expect(result.error.message).toContain("injected stop uncertainty");
+    if (!result.ok) {
+      expect(result.error._tag).toBe("AnalysisCancelledError");
+      expect(result.error.cause).toBe(abort.signal.reason);
+      expect(result.error.cleanup?.reason).toContain(
+        "injected stop uncertainty",
+      );
+    }
   },
 );
 

@@ -49,10 +49,11 @@ const browserEvidence = effects({
   mutatesSession: true,
   accessesNetwork: true,
 });
-const sessionEvidence = effects({ mutatesSession: true });
 
 /** Explicit effect audit for every public tool. */
 export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
+  inspect_analysis_settings: effects(),
+  update_analysis_settings: effects({ mutatesSession: true }),
   list_cutter_sessions: effects({ accessesNetwork: true }),
   cutter_command: effects({
     mutatesTarget: true,
@@ -244,6 +245,7 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
     mutatesSession: true,
     launchesProcess: true,
     accessesNetwork: true,
+    executesForeignCode: true,
     idempotent: false,
   }),
   instrument_with_frida: effects({
@@ -257,8 +259,13 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
   inspect_byte_entropy: evidence,
   inspect_pe_resources: evidence,
   inspect_pe_certificates: evidence,
+  inspect_pe_imports: evidence,
   inspect_native_exports: evidence,
   inspect_elf_notes: evidence,
+  inspect_apple_ips: evidence,
+  inspect_devicetree: evidence,
+  inspect_kernel_module: evidence,
+  inspect_pe_load_config: evidence,
   inspect_analysis_view: evidence,
   inspect_firmware_regions: effects({
     mutatesSession: true,
@@ -481,6 +488,11 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
     launchesProcess: true,
     writesFilesystem: true,
   }),
+  inspect_android_jni_bindings: effects({
+    mutatesSession: true,
+    launchesProcess: true,
+    writesFilesystem: true,
+  }),
   trace_android_references: effects({
     mutatesSession: true,
     launchesProcess: true,
@@ -603,7 +615,7 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
     idempotent: false,
   }),
   inspect_macho: nativeEvidence,
-  inspect_signature: nativeEvidence,
+  inspect_signature: { ...nativeEvidence, writesFilesystem: true },
   inspect_plist: nativeEvidence,
   list_architectures: nativeEvidence,
   demangle_swift: nativeEvidence,
@@ -625,18 +637,22 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
   inspect_managed_artifact: evidence,
   inspect_managed_members: evidence,
   inspect_managed_native_boundaries: evidence,
-  compare_managed_members: sessionEvidence,
-  verify_managed_native_boundaries: sessionEvidence,
-  import_managed_reconstruction: sessionEvidence,
-  project_managed_application_graph: sessionEvidence,
+  compare_managed_members: evidence,
+  verify_managed_native_boundaries: evidence,
+  import_managed_reconstruction: evidence,
+  project_managed_application_graph: evidence,
   list_browser_targets: browserEvidence,
   inspect_web_page: browserEvidence,
-  analyze_web_bundle: browserEvidence,
+  analyze_web_bundle: effects({
+    ...browserEvidence,
+    launchesProcess: true,
+    writesFilesystem: true,
+  }),
   observe_web_session: browserEvidence,
   discover_webmcp_tools: browserEvidence,
-  compare_web_captures: sessionEvidence,
+  compare_web_captures: evidence,
   capture_web_screenshot: browserEvidence,
-  compare_web_screenshots: sessionEvidence,
+  compare_web_screenshots: evidence,
   capture_browser_scenario: effects({
     mutatesTarget: true,
     mutatesSession: true,
@@ -674,6 +690,10 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
     writesFilesystem: true,
     idempotent: false,
   }),
+  export_environment_bundle: effects({
+    writesFilesystem: true,
+    idempotent: false,
+  }),
   reconcile_javascript_runtime: evidence,
   recover_javascript_sources: effects({
     mutatesSession: true,
@@ -684,6 +704,9 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
   trace_application_feature: evidence,
   trace_javascript_semantics: evidence,
   compare_application_versions: evidence,
+  search_guidance: effects(),
+  read_guidance_section: effects(),
+  guided_workflows: effects(),
   compare_source_to_bundle: evidence,
   compare_javascript_export_shapes: evidence,
   build_reconstruction_obligation_ledger: evidence,
@@ -716,16 +739,16 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
     executesForeignCode: true,
     idempotent: false,
   }),
-  compare_process_captures: sessionEvidence,
-  compare_artifacts: sessionEvidence,
-  compare_wasm_interfaces: sessionEvidence,
-  compare_functions: sessionEvidence,
-  match_native_functions: sessionEvidence,
+  compare_process_captures: evidence,
+  compare_artifacts: evidence,
+  compare_wasm_interfaces: evidence,
+  compare_functions: evidence,
+  match_native_functions: evidence,
   compare_bundles: effects({ mutatesSession: true }),
-  find_changed_behavior: sessionEvidence,
-  build_call_path: sessionEvidence,
-  correlate_static_and_runtime: sessionEvidence,
-  verify_reconstruction: sessionEvidence,
+  find_changed_behavior: evidence,
+  build_call_path: evidence,
+  correlate_static_and_runtime: evidence,
+  verify_reconstruction: evidence,
   list_unknowns: effects(),
   record_unknown: effects({ mutatesSession: true, idempotent: false }),
   update_unknown: effects({ mutatesSession: true, idempotent: false }),
@@ -769,7 +792,12 @@ export const annotationsFromEffects = (
  * client probes (version output and stderr excerpts) can.
  */
 export const TARGET_CONTENT_FREE_TOOLS: ReadonlySet<string> = new Set([
+  "inspect_analysis_settings",
+  "update_analysis_settings",
   "export_evidence_bundle",
+  "search_guidance",
+  "read_guidance_section",
+  "guided_workflows",
   "record_unknown",
 ]);
 

@@ -479,13 +479,13 @@ def authorize_display(
         authorized = subprocess.run(
             [
                 xauth_path,
+                "-q",
                 "-f",
                 str(authority),
-                "add",
-                display_name,
-                ".",
-                secrets.token_hex(16),
+                "source",
+                "-",
             ],
+            input=("add %s . %s\n" % (display_name, secrets.token_hex(16))).encode("ascii"),
             check=False,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,

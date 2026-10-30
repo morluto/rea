@@ -1,4 +1,5 @@
 import {
+  ownMember,
   allLines,
   collectionPathOf,
   collectionMatch,
@@ -28,16 +29,14 @@ export const callSegments = (
   const names = environmentToolArguments(tool).path;
   const params = new Map(tool.params.map((param) => [param.index, param]));
   const segments: SuppliedSegment[] = [];
-  // Split through segmentsOf, the owner used for the held collection, so an
-  // internal empty segment (a repeated separator such as /api//books) is kept
-  // on both sides and the call still matches its extracted collection.
+  // Use the collection's path parser so repeated separators remain meaningful.
   for (const [index, text] of segmentsOf(tool.path_template).entries()) {
     const param = params.get(index);
     if (param === undefined) {
       segments.push({ text, supplied: false });
       continue;
     }
-    const value = args[names.get(param.name) ?? param.name];
+    const value = ownMember(args, names.get(param.name) ?? param.name);
     if (typeof value !== "string") return undefined;
     segments.push({ text: value, supplied: true });
   }
@@ -76,7 +75,9 @@ export const unfilteredLine = (
   const segments = callSegments(tool, args);
   if (
     segments === undefined ||
-    [...query.values()].some((argument) => args[argument] !== undefined)
+    [...query.values()].some(
+      (argument) => ownMember(args, argument) !== undefined,
+    )
   )
     return undefined;
   const lines = new Map<number, RecordedExchange>();
@@ -100,7 +101,7 @@ export const callQuery = (
   new Map(
     [...environmentToolArguments(tool).query].flatMap(
       ([name, argument]): [string, string][] => {
-        const value = args[argument];
+        const value = ownMember(args, argument);
         return value === undefined ? [] : [[name, String(value)]];
       },
     ),

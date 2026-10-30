@@ -1,5 +1,6 @@
 import type * as t from "@babel/types";
-import type { JavaScriptOpenReceiverFact } from "./javascriptSemanticAnalysis.js";
+import type { JavaScriptBundlerFactoryRoles } from "./javascriptBundlerFactoryRoles.js";
+import type { JavaScriptOpenReceiverFact } from "./javascriptSemanticReceiverFacts.js";
 import type { JavaScriptRpcScan } from "./javascriptRpcEndpoints.js";
 import type { JavaScriptStaticPathIntrinsicQuery } from "./javascriptStaticAnalysisHelpers.js";
 import type { JavaScriptExpressionShapeResolver } from "./javascriptSemanticExpressionShapes.js";
@@ -41,6 +42,13 @@ export interface LocatedJavaScriptFinding<Value> {
 
 /** Mutable collections used during one inert AST traversal. */
 export interface JavaScriptAnalysisAccumulator {
+  readonly pendingBundlerExports: {
+    readonly factory: t.Node;
+    readonly roles: JavaScriptBundlerFactoryRoles;
+    readonly exports: string[];
+  }[];
+  /** Factory parameter defaults the bundler calling convention never runs. */
+  readonly unusedFactoryDefaults: Set<t.Node>;
   readonly pendingModuleRequireCalls: (
     | t.CallExpression
     | t.OptionalCallExpression
@@ -77,20 +85,33 @@ export interface JavaScriptAnalysisAccumulator {
   readonly senderValidations: LocatedJavaScriptFinding<ElectronSenderValidationFinding>[];
   readonly utilityProcesses: LocatedJavaScriptFinding<ElectronUtilityProcessFinding>[];
   readonly nativeAddonBindings: LocatedJavaScriptFinding<ElectronNativeAddonBindingFinding>[];
+  readonly pendingNativeAddonBindings: (
+    | t.VariableDeclarator
+    | t.AssignmentExpression
+  )[];
   readonly moduleRangeIndex: JavaScriptModuleRangeIndex;
   /** Binding identities proven as third-parameter loaders of recovered factories. */
   readonly factoryRequireBindingIds: Set<string>;
-  /** `preload` attributes of audio and video elements, which are not scripts. */
-  readonly mediaElementPreloads: WeakSet<t.Node>;
   readonly seen: Set<string>;
+  bundlerExportHelpersObserved: boolean;
   visitedNodes: number;
   unknownFindings: number;
 }
 
 /** Shared source and accumulator for helper inspections. */
 export interface JavaScriptFindingContext {
-  /** Node path.resolve identity established by shared callee and mutation owners. */
-  readonly nodePathResolve?: JavaScriptStaticPathIntrinsicQuery;
+  /** Native path/URL identities established by shared lexical and mutation owners. */
+  readonly pathIntrinsics?: JavaScriptStaticPathIntrinsicQuery;
+  readonly electronExportIntact?: (path: readonly string[]) => boolean;
+  readonly browserWindowReceiver?: (
+    node: t.Node,
+    site: t.Node,
+    suffix: readonly string[],
+  ) =>
+    | { readonly owner: t.NewExpression; readonly path: readonly string[] }
+    | undefined;
+  readonly xhrOpenRequest?: (node: t.Node) => boolean;
+  readonly rendererLoad?: (callee: t.Node, site: t.Node) => boolean;
   readonly rpcScan: JavaScriptRpcScan;
   /** Shared bounded argv/nullish argument shapes for optional-slot signatures. */
   readonly expressionShapes: JavaScriptExpressionShapeResolver;
@@ -141,6 +162,8 @@ export interface LocatedJavaScriptFindingInput<
 export const createJavaScriptAnalysisAccumulator = (
   sourceLength: number,
 ): JavaScriptAnalysisAccumulator => ({
+  pendingBundlerExports: [],
+  unusedFactoryDefaults: new Set(),
   pendingModuleRequireCalls: [],
   appPathChanges: [],
   references: [],
@@ -158,10 +181,11 @@ export const createJavaScriptAnalysisAccumulator = (
   senderValidations: [],
   utilityProcesses: [],
   nativeAddonBindings: [],
+  pendingNativeAddonBindings: [],
   moduleRangeIndex: new JavaScriptModuleRangeIndex(sourceLength),
   factoryRequireBindingIds: new Set(),
-  mediaElementPreloads: new WeakSet(),
   seen: new Set(),
+  bundlerExportHelpersObserved: false,
   visitedNodes: 0,
   unknownFindings: 0,
 });

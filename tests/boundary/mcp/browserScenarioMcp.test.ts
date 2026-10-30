@@ -1,5 +1,5 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, onTestFinished, test } from "vitest";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { z } from "zod";
 
@@ -177,6 +177,86 @@ const scenario = (origin = "https://app.example.test") => ({
     },
   ],
 });
+
+test.each(["full", "compact"] as const)(
+  "advertises portable browser action patterns (%s)",
+  async (profile) => {
+    const provider = new FakeBrowserScenarioProvider();
+    const session = createTestBinarySession(() => {
+      throw new Error("Schema discovery must not start a deep provider");
+    });
+    const server = createServer(
+      { kind: "session", session },
+      {
+        browserScenarioCapture: provider,
+        environment: { REA_MCP_INPUT_SCHEMA_PROFILE: profile },
+      },
+    );
+    const client = new Client({
+      name: "browser-action-patterns",
+      version: "1",
+    });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    onTestFinished(async () => {
+      await Promise.all([client.close(), server.close(), session.close()]);
+    });
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const tool = (await client.listTools()).tools.find(
+      ({ name }) => name === "capture_browser_scenario",
+    );
+    if (tool === undefined) throw new Error("Missing browser scenario tool");
+    const properties = z
+      .record(z.string(), z.unknown())
+      .parse(tool.inputSchema.properties);
+    const pending = [{ value: properties.actions, where: "actions" }];
+    const patterns: Array<{ where: string; pattern: string }> = [];
+    while (pending.length > 0) {
+      const selected = pending.pop();
+      if (
+        selected === undefined ||
+        selected.value === null ||
+        typeof selected.value !== "object"
+      )
+        continue;
+      for (const [key, value] of Object.entries(selected.value)) {
+        const where = `${selected.where}/${key}`;
+        if (key === "pattern" && typeof value === "string")
+          patterns.push({ where, pattern: value });
+        pending.push({ value, where });
+      }
+    }
+    if (profile === "full") {
+      expect(
+        patterns.some(({ where }) => where.endsWith("/path/pattern")),
+      ).toBe(true);
+      expect(
+        patterns.some(
+          ({ where }) =>
+            where.includes("/headers/") && where.endsWith("/name/pattern"),
+        ),
+      ).toBe(true);
+    }
+    const failures = patterns.flatMap(({ where, pattern }) =>
+      ["", "u", "v"].flatMap((flags) => {
+        try {
+          new RegExp(pattern, flags);
+          return [];
+        } catch (cause: unknown) {
+          return [`${where} /${pattern}/${flags}: ${String(cause)}`];
+        }
+      }),
+    );
+    expect(failures).toEqual([]);
+    expect(
+      patterns.filter(({ pattern }) =>
+        /\(\?<?[=!]|\\[1-9]|\\k</u.test(pattern),
+      ),
+    ).toEqual([]);
+    expect(provider.scenarios).toEqual([]);
+  },
+);
 
 describe("browser scenario MCP tool", () => {
   const resources: Array<{ close(): Promise<unknown> }> = [];
@@ -363,6 +443,114 @@ test("records a completed late-close cancellation as server Evidence", async () 
       ),
     ).toBe(true);
     await expect(client.ping()).resolves.toEqual({});
+  } finally {
+    await Promise.all([client.close(), server.close(), session.close()]);
+  }
+});
+
+test("delivers a retained summary and pages its exact steps and events", async () => {
+  const provider = new FakeBrowserScenarioProvider();
+  const session = createTestBinarySession(() => ({
+    execute: () => Promise.resolve(observed(null)),
+    close: () => Promise.resolve(ok(null)),
+  }));
+  const server = createServer(
+    { kind: "session", session },
+    {
+      browserScenarioCapture: provider,
+      availabilityPolicy: () => ({
+        processCaptureEnabled: false,
+        investigationInputRoots: 0,
+      }),
+    },
+  );
+  const client = new Client({ name: "scenario-summary", version: "1" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  try {
+    const tools = (await client.listTools()).tools;
+    const advertised = tools.find(
+      ({ name }) => name === "capture_browser_scenario",
+    );
+    if (advertised?.outputSchema === undefined)
+      throw new Error("Missing advertised scenario output schema");
+    const ajv = new Ajv2020({ strict: false, validateFormats: false });
+    const validateInput = ajv.compile(advertised.inputSchema);
+    const validateOutput = ajv.compile(
+      z.record(z.string(), z.unknown()).parse(advertised.outputSchema),
+    );
+    const request = { ...minimalScenario(), detail: "summary" };
+    expect(validateInput(request), JSON.stringify(validateInput.errors)).toBe(
+      true,
+    );
+
+    const response = await client.callTool({
+      name: "capture_browser_scenario",
+      arguments: request,
+    });
+    expect(response.isError, JSON.stringify(response)).not.toBe(true);
+    expect(
+      validateOutput(response.structuredContent),
+      JSON.stringify(validateOutput.errors),
+    ).toBe(true);
+    const summary = z
+      .object({
+        normalized_result: z.object({
+          kind: z.literal("summary"),
+          parent_evidence_id: z.string(),
+          summary: z.object({
+            steps: z.array(z.object({ step_id: z.string() })),
+          }),
+        }),
+      })
+      .parse(response.structuredContent).normalized_result;
+    expect(summary.summary.steps.map(({ step_id }) => step_id)).toEqual([
+      "scenario_start",
+      "settle",
+    ]);
+    // Delivery detail is neither sent to the provider nor recorded as a scenario parameter.
+    expect(provider.scenarios[0]).not.toHaveProperty("detail");
+    const parent = session.evidenceById(summary.parent_evidence_id);
+    expect(parent?.operation).toBe("capture_browser_scenario");
+    expect(parent?.parameters).not.toHaveProperty("detail");
+
+    const page = await client.callTool({
+      name: "inspect_analysis_view",
+      arguments: {
+        source: {
+          kind: "retained-evidence",
+          evidence_id: summary.parent_evidence_id,
+        },
+        view: {
+          kind: "browser-scenario",
+          collection: "steps",
+          step_indices: [1],
+        },
+      },
+    });
+    expect(page.isError, JSON.stringify(page)).not.toBe(true);
+    expect(page.structuredContent).toMatchObject({
+      normalized_result: {
+        kind: "browser-scenario",
+        parent_evidence_id: summary.parent_evidence_id,
+        items: {
+          collection: "steps",
+          rows: [{ step_index: 1, step_id: "settle", artifacts: {} }],
+        },
+        coverage: { total: 1, exhausted: true },
+      },
+    });
+
+    const invalid = await client.callTool({
+      name: "capture_browser_scenario",
+      arguments: { ...minimalScenario(), detail: "brief" },
+    });
+    expect(parseMcpToolError(invalid)).toMatchObject({
+      error: { code: "invalid_request" },
+    });
+    expect(provider.scenarios).toHaveLength(1);
   } finally {
     await Promise.all([client.close(), server.close(), session.close()]);
   }

@@ -1,3 +1,5 @@
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { requireAuthenticationHeadroom } from "./JsonAuthenticationHeadroom.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 
@@ -6,11 +8,11 @@ import {
   safeParseImmutableEvidenceBundle,
   safeParseEvidenceBundle,
   type EvidenceBundle,
-  type EvidenceBundleFailure,
 } from "../domain/evidenceBundle.js";
 import {
   EvidenceFileError,
   EvidenceIntegrityError,
+  type PublishedEvidenceFile,
 } from "../domain/evidenceErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
@@ -35,6 +37,17 @@ type EvidenceWriteFailure =
   | EvidenceIntegrityError
   | AnalysisCancelledError;
 
+/** Project a published bundle with record and residual-unknown revision counts. */
+export const evidenceBundleExportReceipt = (
+  bundle: EvidenceBundle,
+  published: PublishedEvidenceFile,
+) => ({
+  path: published.path,
+  bytes: published.bytes,
+  records: bundle.records.length,
+  unknowns: bundle.unknowns.length,
+});
+
 /** Read and validate an evidence bundle at the caller-supplied path. */
 export const readEvidenceBundle = (
   path: string,
@@ -42,7 +55,7 @@ export const readEvidenceBundle = (
   resources?: ArtifactResourceScope,
   operation = "import_evidence_bundle",
 ): Promise<Result<EvidenceBundle, EvidenceReadFailure>> =>
-  readBundle(path, safeParseEvidenceBundle, signal, resources, operation);
+  readBundle(path, false, signal, resources, operation);
 
 /** Read an authenticated immutable snapshot for a subsequent session import. */
 export const readImmutableEvidenceBundle = (
@@ -51,19 +64,43 @@ export const readImmutableEvidenceBundle = (
   resources?: ArtifactResourceScope,
   operation = "import_evidence_bundle",
 ): Promise<Result<EvidenceBundle, EvidenceReadFailure>> =>
-  readBundle(
-    path,
-    safeParseImmutableEvidenceBundle,
-    signal,
-    resources,
-    operation,
-  );
+  readBundle(path, true, signal, resources, operation);
+
+/** Join both comparison reads and preserve cleanup owned by either failed input. */
+export const readComparisonEvidenceBundles = async (
+  leftPath: string,
+  rightPath: string,
+  signal?: AbortSignal,
+  resources?: ArtifactResourceScope,
+  operation = "compare_bundles",
+): Promise<
+  Result<
+    { readonly left: EvidenceBundle; readonly right: EvidenceBundle },
+    AnalysisError
+  >
+> => {
+  const [left, right] = await Promise.all([
+    readImmutableEvidenceBundle(leftPath, signal, resources, operation),
+    readImmutableEvidenceBundle(rightPath, signal, resources, operation),
+  ]);
+  if (!left.ok) {
+    if (!right.ok && right.error.cleanupIncomplete)
+      return err(
+        analysisErrorWithCleanupFailure(
+          left.error,
+          right.error,
+          operation,
+        ).bindCleanupDependencies([left.error, right.error]),
+      );
+    return left;
+  }
+  if (!right.ok) return right;
+  return ok({ left: left.value, right: right.value });
+};
 
 const readBundle = async (
   path: string,
-  parseBundle: (
-    input: unknown,
-  ) => Result<EvidenceBundle, EvidenceBundleFailure>,
+  immutable: boolean,
   signal?: AbortSignal,
   resources?: ArtifactResourceScope,
   operation = "import_evidence_bundle",
@@ -82,14 +119,30 @@ const readBundle = async (
         cause: signal.reason,
       }),
     );
-  const headroom = requireAuthenticationHeadroom(loaded.value, {
+  return authenticateEvidenceBundleValue(loaded.value, path, {
+    operation,
+    immutable,
+  });
+};
+
+/** Authenticate a loaded bundle once, preserving file-reader failure and process-capture semantics. */
+export const authenticateEvidenceBundleValue = (
+  value: unknown,
+  path: string,
+  options: { readonly operation: string; readonly immutable?: boolean },
+): Result<EvidenceBundle, EvidenceReadFailure> => {
+  const { operation } = options;
+  const headroom = requireAuthenticationHeadroom(value, {
     operation,
     path: absoluteCallerPath(path),
     description:
       "Insufficient heap headroom to authenticate the Evidence bundle",
   });
   if (!headroom.ok) return headroom;
-  const parsed = parseBundle(loaded.value);
+  const parsed =
+    options.immutable === true
+      ? safeParseImmutableEvidenceBundle(value)
+      : safeParseEvidenceBundle(value);
   if (!parsed.ok) {
     const failure = parsed.error;
     if (failure.kind === "single-record")
@@ -107,7 +160,13 @@ const readBundle = async (
       }),
     );
   }
-  const bundle = parsed.value;
+  return validateBundlePayloads(parsed.value);
+};
+
+/** Validate typed payloads without restricting historical workflow or provider identities. */
+const validateBundlePayloads = (
+  bundle: EvidenceBundle,
+): Result<EvidenceBundle, EvidenceIntegrityError> => {
   for (const record of bundle.records) {
     if (record.predicate_type !== "rea.process-capture") continue;
     const parsedCapture = safeParseProcessCapture(record.normalized_result);
@@ -151,8 +210,10 @@ export const writeEvidenceBundle = async (
       }),
     );
   }
+  const validated = validateBundlePayloads(checked.value);
+  if (!validated.ok) return validated;
   return writeTextParts(
-    bufferedJsonParts(canonicalJsonParts(checked.value)),
+    bufferedJsonParts(canonicalJsonParts(validated.value)),
     path,
     overwrite,
     resources,

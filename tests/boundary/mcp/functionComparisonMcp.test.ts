@@ -9,7 +9,6 @@ import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarnes
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { compareFunctions } from "../../../src/domain/functionComparison.js";
-import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
 
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { FUNCTION_COMPARISON_EXAMPLE } from "../../../src/contracts/functionComparisonExample.js";
@@ -17,7 +16,7 @@ import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { observed } from "../../fixtures/analysisExecution.js";
 import { reconstructionVerificationResultSchema } from "../../../src/domain/reconstructionVerificationSchemas.js";
-import { functionDossierSchema } from "../../../src/domain/hopperValues.js";
+import { functionDossierSchema } from "../../../src/domain/native/functionDossier.js";
 
 it.each([
   { leftSpace: "ram", rightSpace: "ram" },
@@ -74,7 +73,7 @@ it.each([
         {
           operation: "analyze_function",
           parameters: { procedure: entry },
-          result: jsonValueSchema.parse(value),
+          result: value,
           confidence: "derived",
           relationshipCoverage: { status: "complete" },
         },
@@ -258,6 +257,20 @@ it.each([
   },
 );
 
+const wrongKindFunctionEvidence = (mismatch: "operation" | "predicate") =>
+  createEvidence(
+    undefined,
+    { id: "fixture", name: "Fixture", version: "1" },
+    {
+      operation:
+        mismatch === "operation" ? "inventory_artifact" : "analyze_function",
+      predicateType:
+        mismatch === "predicate" ? "rea.artifact-inventory" : "rea.analysis",
+      parameters: {},
+      result: {},
+    },
+  );
+
 describe("function comparison MCP integration", () => {
   it("records linked comparison Evidence and its residual unknown", async () => {
     const session = createTestBinarySession(() => ({
@@ -353,50 +366,116 @@ describe("function comparison MCP integration", () => {
       ]);
     }
   });
+});
 
-  it("rejects inline Evidence with the wrong operation", async () => {
-    const session = createTestBinarySession(() => ({
-      health: () => Promise.resolve(),
-      execute: () => Promise.resolve(observed(null)),
-      close: () => Promise.resolve(resultOk(null)),
-    }));
-    const wrong = createEvidence(
-      undefined,
-      { id: "fixture", name: "Fixture", version: "1" },
-      {
-        operation: "inventory_artifact",
-        parameters: {},
-        result: {},
-      },
-    );
-    session.recordEvidence(wrong);
-    session.recordEvidence(FUNCTION_COMPARISON_EXAMPLE.right);
-    const server = createServer({ kind: "session", session });
-    const client = new Client({
-      name: "function-authority-test",
-      version: "1",
-    });
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
-    try {
-      await server.connect(serverTransport);
-      await client.connect(clientTransport);
-      const result = await client.callTool({
+describe("function comparison input-kind diagnostics", () => {
+  it.each([
+    { side: "left", mismatch: "operation" },
+    { side: "right", mismatch: "operation" },
+    { side: "left", mismatch: "predicate" },
+    { side: "right", mismatch: "predicate" },
+  ] as const)(
+    "rejects inline $side Evidence with the wrong $mismatch as an input-selection error",
+    async ({ side, mismatch }) => {
+      const session = createTestBinarySession(() => {
+        throw new Error("Wrong-kind function input must not launch a provider");
+      });
+      const harness = await createApplicationMcpHarness({ session });
+      onTestFinished(harness.close);
+      const wrong = wrongKindFunctionEvidence(mismatch);
+      const good =
+        FUNCTION_COMPARISON_EXAMPLE[side === "left" ? "right" : "left"];
+      const result = await harness.client.callTool({
         name: "compare_functions",
-        arguments: {
-          left: wrong,
-          right: FUNCTION_COMPARISON_EXAMPLE.right,
+        arguments:
+          side === "left"
+            ? { left: wrong, right: good }
+            : { left: good, right: wrong },
+      });
+      expect(parseMcpToolError(result).error).toMatchObject({
+        code: "invalid_request",
+        category: "invalid_input",
+        recovery: {
+          kind: "inspect_input_contract",
+          operation: "compare_functions",
+        },
+        details: {
+          operation: "compare_functions",
+          issues: [
+            {
+              path: [side],
+              reason: "invalid_value",
+              message: `Function analysis requires analyze_function Evidence with the rea.analysis predicate; the ${side} Evidence has operation ${wrong.operation} and predicate ${wrong.predicate_type}.`,
+              expected: {
+                operation: "analyze_function",
+                predicate_type: "rea.analysis",
+              },
+            },
+          ],
         },
       });
-      expect(result.isError).toBe(true);
-      expect(session.exportEvidenceBundle().records).toHaveLength(2);
-    } finally {
-      await Promise.allSettled([
-        client.close(),
-        server.close(),
-        session.close(),
-      ]);
-    }
+    },
+  );
+
+  it("names the retained wrong-kind Evidence side", async () => {
+    const session = createTestBinarySession(() => {
+      throw new Error("Wrong-kind retained input must not launch a provider");
+    });
+    const wrong = wrongKindFunctionEvidence("operation");
+    expect(session.recordEvidence(wrong).ok).toBe(true);
+    expect(session.recordEvidence(FUNCTION_COMPARISON_EXAMPLE.right).ok).toBe(
+      true,
+    );
+    const harness = await createApplicationMcpHarness({ session });
+    onTestFinished(harness.close);
+    const result = await harness.client.callTool({
+      name: "compare_functions",
+      arguments: {
+        left: { kind: "retained-evidence", evidence_id: wrong.evidence_id },
+        right: {
+          kind: "retained-evidence",
+          evidence_id: FUNCTION_COMPARISON_EXAMPLE.right.evidence_id,
+        },
+      },
+    });
+    expect(parseMcpToolError(result).error).toMatchObject({
+      code: "invalid_request",
+      category: "invalid_input",
+      details: {
+        issues: [
+          {
+            path: ["left"],
+            message: expect.stringContaining(
+              "the left Evidence has operation inventory_artifact",
+            ),
+          },
+        ],
+      },
+    });
+    expect(session.exportEvidenceBundle().records).toHaveLength(2);
+  });
+
+  it("keeps tampered function Evidence an integrity failure", async () => {
+    const session = createTestBinarySession(() => {
+      throw new Error("Tampered function input must not launch a provider");
+    });
+    const harness = await createApplicationMcpHarness({ session });
+    onTestFinished(harness.close);
+    const tampered = {
+      ...FUNCTION_COMPARISON_EXAMPLE.left,
+      limitations: [
+        ...FUNCTION_COMPARISON_EXAMPLE.left.limitations,
+        "tampered",
+      ],
+    };
+    const result = await harness.client.callTool({
+      name: "compare_functions",
+      arguments: { left: tampered, right: FUNCTION_COMPARISON_EXAMPLE.right },
+    });
+    expect(parseMcpToolError(result).error).toMatchObject({
+      code: "evidence_integrity_mismatch",
+      category: "integrity_mismatch",
+    });
   });
 });
 
@@ -452,14 +531,14 @@ it.each([
     };
     const consistent = createEvidence(undefined, provider, {
       ...observation,
-      result: jsonValueSchema.parse(result),
+      result: result,
     });
     const inconsistent =
       status === "unchanged"
         ? null
         : createEvidence(undefined, provider, {
             ...observation,
-            result: jsonValueSchema.parse({ ...result, status: "unchanged" }),
+            result: { ...result, status: "unchanged" },
           });
     const directory = await createTestTempDirectory("rea-function-status-");
     const path = join(directory, "bundle.json");

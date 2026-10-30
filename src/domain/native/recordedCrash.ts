@@ -19,6 +19,15 @@ const diagnostics = z.strictObject({
 // Exact b"CORE\0"; a lossy display label cannot establish the Linux note ABI.
 const LINUX_CORE_OWNER_BASE64 = "Q09SRQA=";
 
+/** Source identity controls interpretation; decoder labels are display facts. */
+export const isLinuxCoreNote = (
+  note:
+    | { readonly owner_bytes_base64: string; readonly type_id: number }
+    | undefined,
+  type: number,
+): boolean =>
+  note?.owner_bytes_base64 === LINUX_CORE_OWNER_BASE64 && note.type_id === type;
+
 /** Complete register identities in the supported Linux amd64 PRSTATUS ABI order. */
 const RECORDED_LINUX_AMD64_REGISTERS: readonly string[] = [
   "r15",
@@ -206,6 +215,7 @@ const recordedCrashObjectSchema = z.strictObject({
     z.strictObject({
       index,
       type: z.union([z.string(), index]),
+      type_id: index.max(0xffffffff),
       header_location: range,
       offset: hex,
       file_size: hex,
@@ -222,6 +232,7 @@ const recordedCrashObjectSchema = z.strictObject({
       index,
       segment_index: index,
       type: z.union([z.string(), index]),
+      type_id: index.max(0xffffffff),
       location: range,
       owner_location: range,
       owner_bytes_base64: base64,
@@ -298,6 +309,8 @@ export const recordedCrashSchema = recordedCrashObjectSchema.superRefine(
     ))
       fail(issue);
     for (const [position, segment] of value.segments.entries()) {
+      if (typeof segment.type === "number" && segment.type !== segment.type_id)
+        fail("Numeric segment type differs from its source identity.");
       if (position !== segment.index || !within(segment.header_location))
         fail("Invalid original segment identity or header range.");
       if (
@@ -306,20 +319,39 @@ export const recordedCrashSchema = recordedCrashObjectSchema.superRefine(
       )
         fail("Recorded segment exceeds artifact bytes.");
       if (
-        segment.type === "PT_LOAD" &&
+        segment.type_id === 1 &&
         BigInt(segment.file_size) > BigInt(segment.memory_size)
       )
         fail("Recorded PT_LOAD file size exceeds memory size.");
     }
     for (const [position, note] of value.notes.entries()) {
       const segment = value.segments[note.segment_index];
-      if (position !== note.index || segment?.type !== "PT_NOTE") {
+      if (position !== note.index || segment?.type_id !== 4) {
         fail("Invalid original note identity or segment reference.");
         continue;
       }
+      const ownerBytes = Buffer.from(note.owner_bytes_base64, "base64");
+      const terminator = ownerBytes.indexOf(0);
+      const ownerDisplay =
+        ownerBytes.length === 0
+          ? null
+          : ownerBytes.subarray(0, terminator).toString("utf8");
       if (
-        BigInt(Buffer.byteLength(note.owner_bytes_base64, "base64")) !==
-          BigInt(note.owner_location.bytes) ||
+        (ownerBytes.length > 0 && terminator < 0) ||
+        note.owner_display !== ownerDisplay
+      )
+        fail("Note owner display differs from its retained bytes.");
+      if (typeof note.type === "number" && note.type !== note.type_id)
+        fail("Numeric note type differs from its source identity.");
+      if (
+        note.owner_bytes_base64 !== LINUX_CORE_OWNER_BASE64 &&
+        note.type !== note.type_id
+      )
+        fail(
+          "Uninterpreted note owners must retain their numeric type identity.",
+        );
+      if (
+        BigInt(ownerBytes.length) !== BigInt(note.owner_location.bytes) ||
         BigInt(Buffer.byteLength(note.descriptor_bytes_base64, "base64")) !==
           BigInt(note.descriptor_location.bytes)
       )
@@ -344,7 +376,7 @@ export const recordedCrashSchema = recordedCrashObjectSchema.superRefine(
     for (const padding of value.note_padding) {
       const segment = value.segments[padding.segment_index];
       if (
-        segment?.type !== "PT_NOTE" ||
+        segment?.type_id !== 4 ||
         !within(
           padding.location,
           BigInt(segment.offset),
@@ -354,13 +386,11 @@ export const recordedCrashSchema = recordedCrashObjectSchema.superRefine(
         fail("Invalid recorded note padding range.");
     }
     for (const [kind, rows] of [
-      ["NT_PRSTATUS", value.threads],
-      ["NT_SIGINFO", value.signals],
+      [1, value.threads],
+      [0x53494749, value.signals],
     ] as const) {
-      const matchingNotes = value.notes.filter(
-        (note) =>
-          note.type === kind &&
-          note.owner_bytes_base64 === LINUX_CORE_OWNER_BASE64,
+      const matchingNotes = value.notes.filter((note) =>
+        isLinuxCoreNote(note, kind),
       );
       if (
         rows.length !== matchingNotes.length ||
@@ -374,11 +404,7 @@ export const recordedCrashSchema = recordedCrashObjectSchema.superRefine(
     const profileRegisters = recordedCoreRegisterSets[value.architecture];
     for (const thread of value.threads) {
       const note = value.notes[thread.note_index];
-      if (
-        note?.type !== "NT_PRSTATUS" ||
-        note.owner_display !== "CORE" ||
-        note.owner_bytes_base64 !== LINUX_CORE_OWNER_BASE64
-      ) {
+      if (note === undefined || !isLinuxCoreNote(note, 1)) {
         fail("Thread references a different note kind.");
         continue;
       }
@@ -404,12 +430,7 @@ export const recordedCrashSchema = recordedCrashObjectSchema.superRefine(
           fail("Register source exceeds its descriptor.");
     }
     for (const signal of value.signals) {
-      if (
-        value.notes[signal.note_index]?.type !== "NT_SIGINFO" ||
-        value.notes[signal.note_index]?.owner_display !== "CORE" ||
-        value.notes[signal.note_index]?.owner_bytes_base64 !==
-          LINUX_CORE_OWNER_BASE64
-      )
+      if (!isLinuxCoreNote(value.notes[signal.note_index], 0x53494749))
         fail("Signal references a different note kind.");
       const known =
         signal.number === 11 && (signal.code === 1 || signal.code === 2);

@@ -7,6 +7,7 @@ import {
   timedCaptureEvidence,
 } from "../../../tests/fixtures/analysisView.js";
 import { scenarioCaptureEvidence } from "../../../tests/fixtures/browserScenarioCapture.js";
+import { readRecordedRequestLine } from "../../domain/analysisView/webNetworkRouteTemplates.js";
 import {
   environmentServeFixture,
   environmentServeSource,
@@ -67,8 +68,10 @@ it.each([
       redactions: [],
       limitations: [],
     };
-    const exchange = recordedExchange(record);
-    if (exchange === undefined) throw new Error("Expected a recorded exchange");
+    const line = readRecordedRequestLine(record.reported, true, () => true);
+    if (line?.kind !== "line")
+      throw new Error("Expected a recorded request line");
+    const exchange = recordedExchange(record, line);
     expect(exchange.bodyText).toBe(expected);
     expect(replayedBody(exchange)).toEqual(
       expected === null ? { kind: "none" } : { kind: "text", text: expected },
@@ -84,7 +87,7 @@ it.each([
         reason: "explicit-sensitive-value",
         scope: "property-name",
       });
-      expect(recordedExchange(record)?.bodyText).toBeNull();
+      expect(recordedExchange(record, line).bodyText).toBeNull();
     }
   },
 );

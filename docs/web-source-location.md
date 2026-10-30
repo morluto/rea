@@ -95,8 +95,17 @@ heap limit is established. Cleanup may extend the deadline and an unconfirmed
 cleanup overrides success with `cleanup_incomplete` and the owning
 operation/resources.
 
-Complete evidence is bounded by a 4 MiB map, 32 MiB codec reply, 262144 decoded
-rows/segments and 64 nested section levels. Those structural budgets and the
+The decoder releases its owned codec process before removing the private request
+directory. A cleanup failure reports only the owners still pending: the process
+run token while process release is unconfirmed, and the directory until removal
+succeeds. A later successful retry settles every error bound to that command;
+historical failure diagnostics remain available.
+
+Complete evidence is bounded by a 4 MiB map, 32 MiB codec reply and a shared
+262144-record decoder budget. Generated rows, mapping segments, leaf maps,
+source and name declarations, `sourcesContent` entries and indexed sections all
+consume this budget. Generated rows and mapping segments also each have a
+262144 limit; indexed maps allow at most 64 nested section levels. Those budgets and the
 192 MiB codec heap have no runtime override. Exceeding a budget returns an explicit
 failure, without partial results. The existing 32 MiB manifest and 16 MiB selected
 script boundaries also apply. No global toolchain or browser configuration changes
@@ -105,11 +114,20 @@ are made.
 ## Verification
 
 Browser bundle collection uses absolute section offsets for nested inline maps.
+If caller cancellation stops browser map fetching after some items complete,
+the failed bundle request retains those items with the captured page in partial
+Evidence and marks bundle analysis `not_performed`. This is distinct from the
+local source-map decoder's failure semantics above.
 An enclosing column offset contributes only when the nested section starts on
 that enclosing section's first generated line. Parent boundaries still clip
 preceding browser mappings when a nested section starts with a gap or has no
 child leaves. Raw map text, original source identities and the dedicated decoder
 profile are preserved.
+
+Browser `original_module_edges` carry a `declaration_index` joining each edge to
+its `original_sources` declaration, including repeated source URLs across indexed
+sections. Imports are deduplicated within each declaration. Older observations
+may omit the index; their edge declaration identity remains unknown.
 
 Browser collection accepts up to 64 MiB of map responses per inspection and
 preflights indexed sections, sources, names, generated rows and mapping segments
@@ -130,6 +148,17 @@ requests are left unprocessed and reported as unknown through the top-level
 items.
 Malformed UTF-8 map responses are reported as invalid rather than repaired with
 replacement characters.
+For browser fetching, an `invalid` map or structural or decoder capacity
+failure has `artifact: null`, empty decoded arrays, and an explicit limitation.
+When its bounded response body was read in full, optional `response_identity`
+records that body's SHA-256 digest and byte count after HTTP content decoding
+and before UTF-8 decoding. It is not a digest of partial reads or a claim that
+the map was valid; historical items may omit it. Malformed text is omitted so
+it does not consume the 32 MiB inline budget needed by later valid maps. A
+response whose text cannot fit that budget is refused before JSON parsing and
+source-map decoding, and retains the same
+completed-body identity. Successful and partial maps keep their full original
+text, including BOM and XSSI framing; only their parsing view removes it.
 
 Focused tests cover duplicate mappings, indexed offsets/overlap/local indexes,
 32-bit VLQ overflow, nullable content, UTF-16/CRLF positions, immutable artifact

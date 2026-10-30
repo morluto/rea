@@ -99,7 +99,9 @@ nodes. REA evaluates compatible static candidates conservatively:
    content digest can match. Whole-asset digests and reconstructed module-factory source
    digests remain distinguishable in the reported basis.
 3. Without captured bytes, one unique mapped artifact path can produce a
-   medium-confidence location match.
+   medium-confidence location match. A proven factory module contained within
+   the located asset is not a competing whole-file location; separate assets
+   and independently plausible modules remain candidates.
 4. Multiple candidates remain `ambiguous`; no `observed_as` edge is emitted.
    With captured source and mapped candidates, only mapped content matches
    qualify; unrelated content matches elsewhere are excluded.
@@ -139,6 +141,15 @@ classification:
   unknown even when another prefix in the same static layer was observed.
   Nodes beneath a mapped artifact prefix also stay unknown when a runtime
   script or worker under that mapping has no artifact path.
+
+Script inventory completeness remains a separate reported fact. Unavailable,
+truncated, or attach-limited worker inventory prevents negative code-presence
+claims even when the selected page's script inventory is complete. Accepted
+positive script correspondences remain loaded.
+An Electron script's explicit unknown `frame_scope` preserves its reported
+frame ID and sourceURL provenance as node properties, but does not link that
+script to the current frame inventory. Attach-limited script coverage cannot
+establish negative code-presence claims.
 
 None of these states proves feature execution, initialization order,
 reachability, or causality. In particular, `not-observed-in-capture` never means

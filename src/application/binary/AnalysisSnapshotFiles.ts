@@ -19,6 +19,7 @@ import type { JsonObjectMemberReader } from "../JsonInputFile.js";
 import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 
 type SnapshotFailure = EvidenceFileError | EvidenceIntegrityError;
+const READ_OPERATION = "open_binary";
 
 /** Read and validate an analysis snapshot from the caller's path. */
 export const readAnalysisSnapshot = async (
@@ -63,6 +64,7 @@ export const readAnalysisSnapshot = async (
       ],
       signal,
       resources,
+      READ_OPERATION,
     );
     if (!loaded.ok) return loaded;
     signal?.throwIfAborted();
@@ -77,7 +79,9 @@ export const readAnalysisSnapshot = async (
     return ok(snapshot);
   } catch (cause: unknown) {
     if (signal?.aborted === true)
-      return err(new AnalysisCancelledError("read_evidence_file", { cause }));
+      return err(
+        new AnalysisCancelledError(READ_OPERATION, { cause: signal.reason }),
+      );
     return err(
       new EvidenceIntegrityError(snapshotValidationMessage(cause), { cause }),
     );

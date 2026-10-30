@@ -10,17 +10,18 @@ import {
 } from "../filesystem/OwnedRegularFile.js";
 import {
   bindRegularFileCleanup,
-  withRegularFile,
+  withRegularFileCompletion,
   type RegularFileReadOptions,
 } from "../application/RegularFileRead.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
+  AnalysisArtifactChangedError,
   AnalysisCancelledError,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
-import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
+import { err, ok, type Result } from "../domain/result.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { RegularFileChangedError } from "../filesystem/RegularFile.js";
@@ -39,6 +40,33 @@ interface ManagedSnapshot extends ManagedSourceObservation {
   readonly bytes: Buffer;
 }
 
+interface ManagedSnapshotReadOptions extends RegularFileReadOptions {
+  readonly expectedSha256?: string;
+}
+
+/** Admit one observed source digest before any parser or cache consumes its bytes. */
+export const verifyManagedSourceIdentity = (
+  target: { readonly path: string; readonly sha256: string },
+  observed: Pick<ManagedSourceObservation, "sha256" | "byteLength">,
+  operation: string,
+): Result<null, AnalysisArtifactChangedError> =>
+  observed.sha256 === target.sha256
+    ? ok(null)
+    : err(
+        new AnalysisArtifactChangedError(
+          operation,
+          target.path,
+          `Managed artifact digest changed after open: expected ${target.sha256}, observed ${observed.sha256} at ${target.path}`,
+          {
+            diagnostics: {
+              expected_sha256: target.sha256,
+              observed_sha256: observed.sha256,
+              observed_bytes: observed.byteLength,
+            },
+          },
+        ),
+      );
+
 const managedSnapshotCapacityError = (
   operation: string,
 ): AnalysisResourceConstraintError =>
@@ -53,7 +81,7 @@ const managedSnapshotCapacityError = (
 export const readManagedSnapshot = async (
   path: string,
   operation: string,
-  options: RegularFileReadOptions = {},
+  options: ManagedSnapshotReadOptions = {},
 ): Promise<ManagedSnapshot> => {
   return readManagedFile(
     path,
@@ -82,7 +110,7 @@ export const readManagedSnapshot = async (
 export const hashManagedSource = async (
   path: string,
   operation: string,
-  options: RegularFileReadOptions = {},
+  options: ManagedSnapshotReadOptions = {},
 ): Promise<ManagedSourceObservation> =>
   readManagedFile(
     path,
@@ -114,15 +142,47 @@ export const hashManagedSource = async (
     options,
   );
 
-const readManagedFile = <Value>(
+const readManagedFile = <Value extends ManagedSourceObservation>(
   path: string,
   operation: string,
   read: (handle: FileHandle, metadata: Stats) => Promise<Value>,
-  options: RegularFileReadOptions,
+  options: ManagedSnapshotReadOptions,
 ): Promise<Value> =>
-  withRegularFile(path, read, options).catch((cause: unknown) => {
-    throw normalizeManagedReadFailure(cause, path, operation, options.signal);
-  });
+  withRegularFileCompletion(path, read, options)
+    .then(({ value, cancellation }) => {
+      if (cancellation !== undefined) {
+        const identity =
+          options.expectedSha256 === undefined
+            ? undefined
+            : verifyManagedSourceIdentity(
+                { path, sha256: options.expectedSha256 },
+                value,
+                operation,
+              );
+        const failure =
+          identity !== undefined && !identity.ok
+            ? identity.error
+            : new AnalysisCancelledError(operation, {
+                cause: cancellation.reason,
+              });
+        throw failure.retainPartialObservation({
+          kind: "file-snapshot-hash",
+          path,
+          bytes: value.byteLength,
+          sha256: value.sha256,
+        });
+      }
+      return value;
+    })
+    .catch((cause: unknown) => {
+      throw normalizeManagedReadFailure(
+        cause,
+        path,
+        operation,
+        options.signal,
+        options.expectedSha256,
+      );
+    });
 
 /** Keep cleanup ownership and the original typed read failure at this boundary. */
 const normalizeManagedReadFailure = (
@@ -130,6 +190,7 @@ const normalizeManagedReadFailure = (
   fallbackPath: string,
   operation: string,
   signal?: AbortSignal,
+  expectedSha256?: string,
 ): unknown => {
   // An exact caller reason is opaque, even if it resembles a cleanup record.
   if (signal?.aborted === true && cause === signal.reason)
@@ -139,6 +200,7 @@ const normalizeManagedReadFailure = (
     fallbackPath,
     operation,
     signal,
+    expectedSha256,
   );
   if (cleanupError !== undefined) return cleanupError;
   return normalizeReadFailure(cause, fallbackPath, operation, signal);
@@ -150,6 +212,7 @@ export const managedCleanupError = (
   fallbackPath: string,
   operation: string,
   signal?: AbortSignal,
+  expectedSha256?: string,
 ): AnalysisError | undefined => {
   if (cause instanceof RegularFileCleanupFailure) {
     const cancellation = regularFileCancellation(cause);
@@ -160,6 +223,14 @@ export const managedCleanupError = (
       { cause, operation },
     );
     bindRegularFileCleanup(cause, cleanup);
+    const identity =
+      cause.outcome.kind === "completed" && expectedSha256 !== undefined
+        ? verifyManagedSourceIdentity(
+            { path: cause.path, sha256: expectedSha256 },
+            cause.outcome.value as ManagedSourceObservation,
+            operation,
+          )
+        : undefined;
     const failure =
       cause.outcome.kind === "failed"
         ? normalizeReadFailure(
@@ -168,11 +239,13 @@ export const managedCleanupError = (
             operation,
             signal,
           )
-        : cancellation === undefined
-          ? undefined
-          : new AnalysisCancelledError(operation, {
-              cause: cancellation.reason,
-            });
+        : identity !== undefined && !identity.ok
+          ? identity.error
+          : cancellation === undefined
+            ? undefined
+            : new AnalysisCancelledError(operation, {
+                cause: cancellation.reason,
+              });
     // This boundary produces only these snapshot facts. The descriptor owner
     // confirms completion independently of a failed final close.
     if (cause.outcome.kind === "completed") {
@@ -233,10 +306,9 @@ const normalizeReadFailure = (
   if (signal?.aborted === true && cause === signal.reason)
     return new AnalysisCancelledError(operation, { cause });
   if (cause instanceof RegularFileChangedError)
-    return new EvidenceIntegrityError(
-      `Managed source changed while ${operation} was reading ${path}.`,
-      { cause },
-    );
+    return new AnalysisArtifactChangedError(operation, path, cause.message, {
+      cause,
+    });
   if (cause instanceof AnalysisError) return cause;
   return (
     classifyBinaryTargetFilesystemFailure(path, cause) ??

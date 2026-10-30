@@ -1,3 +1,4 @@
+import { hasStableNativeSymbol } from "./native/nativeSymbol.js";
 import { canonicalJson } from "./comparisonSemantics.js";
 import {
   compareFunctionRelationships,
@@ -9,11 +10,11 @@ import type { FunctionSnapshot } from "./functionDossierEvidence.js";
 import {
   commentProjection,
   identityProjection,
-  hasStableFunctionName,
   nameAndSwiftProjection,
   normalizeCfg,
   referencedStringProjection,
   sorted,
+  swiftLiteralCoverage,
   swiftLiteralSitesConflict,
 } from "./functionComparisonNormalization.js";
 import type {
@@ -101,7 +102,9 @@ const facetLimitations = (
     strings_names: [
       [
         "strings_names",
-        dossier.referenced_strings.length + dossier.referenced_names.length,
+        dossier.referenced_strings.length +
+          dossier.referenced_names.length +
+          (dossier.swift_string_literals?.length ?? 0),
       ],
     ],
     cfg: [["cfg", dossier.basic_blocks.length]],
@@ -515,15 +518,6 @@ const groupStringsByOffset = (
   return groups;
 };
 
-const swiftLiteralCoverage = (
-  snapshot: FunctionSnapshot,
-): "absent" | "complete" | "partial" =>
-  (snapshot.dossier.swift_string_literal_omissions ?? []).length > 0
-    ? "partial"
-    : snapshot.dossier.swift_string_literals === undefined
-      ? "absent"
-      : "complete";
-
 const compareReferences = (
   compared: FunctionRelationshipComparison,
   context: ComparisonContext,
@@ -550,8 +544,14 @@ const compareIdentity = (
   context: ComparisonContext,
 ): FunctionDimension => {
   if (
-    !hasStableFunctionName(left.dossier.procedure.name) ||
-    !hasStableFunctionName(right.dossier.procedure.name)
+    !hasStableNativeSymbol(
+      left.dossier.procedure.name,
+      left.dossier.procedure.symbol,
+    ) ||
+    !hasStableNativeSymbol(
+      right.dossier.procedure.name,
+      right.dossier.procedure.symbol,
+    )
   )
     return unresolvedDimension({
       dimension: "identity",
@@ -559,7 +559,7 @@ const compareIdentity = (
       leftCount: null,
       rightCount: null,
       limitations: [
-        "Empty or address-derived function names are not stable cross-version identity.",
+        "Empty names, generated symbols and unknown symbol origins do not establish cross-version identity.",
       ],
     });
   return compareValues(

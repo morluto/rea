@@ -10,7 +10,7 @@ import {
   runScenarioCli,
   scenarioProfiles,
 } from "./browser-scenario-verifier.mjs";
-import { closeVerifierResources } from "./verifier-cleanup.mjs";
+import { withVerifierCleanup } from "./verifier-cleanup.mjs";
 
 const scenarioFor = (browser, origin) =>
   browserScenarioSchema.parse({
@@ -203,7 +203,7 @@ export async function verifyScenarioStorage({
   targetId,
 }) {
   const site = await startStorageSite();
-  try {
+  return withVerifierCleanup(async () => {
     await verifyLaunchStorage(executable, site.origin);
     await verifyConnectedStorage(endpoint, targetId, site.origin);
     return {
@@ -217,9 +217,7 @@ export async function verifyScenarioStorage({
       externalTargetSurvives: true,
       cancellationCleanup: true,
     };
-  } finally {
-    await site.close();
-  }
+  }, [() => site.close()]);
 }
 
 const verifyLaunchStorage = async (executable, origin) => {
@@ -300,8 +298,7 @@ const verifyConnectedStorage = async (endpoint, targetId, origin) => {
     target.webSocketDebuggerUrl,
     "capture_browser_scenario",
   );
-  let failure;
-  try {
+  return withVerifierCleanup(async () => {
     await assertStorageKeyPartition(observer, origin);
     const result = await runScenarioCli(scenario);
     const capture = result.normalized_result;
@@ -315,15 +312,7 @@ const verifyConnectedStorage = async (endpoint, targetId, origin) => {
     assert.equal(capture.browser.cleanup, "disconnected-external");
     await verifyCallerDebuggerPause(observer, origin, scenario);
     await verifyCancelledStorage(observer, endpoint, targetId, scenario);
-  } catch (cause) {
-    failure = cause;
-    throw cause;
-  } finally {
-    await closeVerifierResources(
-      [() => restoreTarget(observer, target.url), () => observer.close()],
-      failure,
-    );
-  }
+  }, [() => restoreTarget(observer, target.url), () => observer.close()]);
 };
 
 const assertStorageKeyPartition = async (connection, origin) => {
@@ -349,7 +338,7 @@ const assertStorageKeyPartition = async (connection, origin) => {
     waitForDebuggerOnStart: false,
     flatten: true,
   });
-  try {
+  return withVerifierCleanup(async () => {
     const start = await connection.send("Runtime.evaluate", {
       expression: "performance.timeOrigin",
       returnByValue: true,
@@ -412,14 +401,15 @@ const assertStorageKeyPartition = async (connection, origin) => {
       topLevel.storageKey,
       `Chrome did not expose distinct partition keys: child=${JSON.stringify(child)} top=${JSON.stringify(topLevel)} rootBefore=${JSON.stringify(beforeRoot)}`,
     );
-  } finally {
-    unsubscribe();
-    await connection.send("Target.setAutoAttach", {
-      autoAttach: false,
-      waitForDebuggerOnStart: false,
-      flatten: true,
-    });
-  }
+  }, [
+    () => unsubscribe(),
+    () =>
+      connection.send("Target.setAutoAttach", {
+        autoAttach: false,
+        waitForDebuggerOnStart: false,
+        flatten: true,
+      }),
+  ]);
 };
 
 const waitForPagePath = async (connection, path, priorTimeOrigin) => {
@@ -515,88 +505,90 @@ const verifyCallerDebuggerPause = async (caller, origin, scenario) => {
       settled = true;
       unsubscribe();
     });
-  try {
-    const callFrameId = await raceWithTimeout(paused, 10_000, () => {
-      throw new Error(
-        `Caller debugger pause was not observed at ${debuggerUrl}; settled=${String(settled)} events=${JSON.stringify(protocolTrace)}`,
+  return withVerifierCleanup(async () => {
+    try {
+      const callFrameId = await raceWithTimeout(paused, 10_000, () => {
+        throw new Error(
+          `Caller debugger pause was not observed at ${debuggerUrl}; settled=${String(settled)} events=${JSON.stringify(protocolTrace)}`,
+        );
+      });
+      const pausedState = await caller.send("Debugger.evaluateOnCallFrame", {
+        callFrameId,
+        expression: "window.reaDebuggerAfter === true",
+        returnByValue: true,
+      });
+      assert.equal(
+        pausedState.result.value,
+        false,
+        "Caller-owned debugger frame resumed before the caller inspected it",
       );
-    });
-    const pausedState = await caller.send("Debugger.evaluateOnCallFrame", {
-      callFrameId,
-      expression: "window.reaDebuggerAfter === true",
-      returnByValue: true,
-    });
-    assert.equal(
-      pausedState.result.value,
-      false,
-      "Caller-owned debugger frame resumed before the caller inspected it",
-    );
-    await delay(100);
-    assert.equal(
-      settled,
-      false,
-      "Storage observer resumed a caller-owned debugger pause",
-    );
-    await caller.send("Debugger.resume");
-    pauseObserved = false;
-    const result = await pending;
-    if (!result.ok) throw result.error;
-    const debuggerState = await caller.send("Runtime.evaluate", {
-      expression: "window.reaDebuggerAfter === true",
-      returnByValue: true,
-    });
-    assert.equal(debuggerState.result.value, true);
-  } catch (cause) {
-    if (!pauseObserved) controller.abort(cause);
-    else await caller.send("Debugger.resume").catch(() => undefined);
-    const completion = await raceWithTimeout(
-      pending.catch((pendingCause) => ({ ok: false, error: pendingCause })),
-      5_000,
-    );
-    if (completion === undefined)
-      throw new Error("Capture remained pending after cancellation", { cause });
-    const completionError =
-      typeof completion === "object" &&
-      completion !== null &&
-      "error" in completion
-        ? completion.error
-        : typeof completion === "object" &&
-            completion !== null &&
-            "ok" in completion &&
-            completion.ok === false
+      await delay(100);
+      assert.equal(
+        settled,
+        false,
+        "Storage observer resumed a caller-owned debugger pause",
+      );
+      await caller.send("Debugger.resume");
+      pauseObserved = false;
+      const result = await pending;
+      if (!result.ok) throw result.error;
+      const debuggerState = await caller.send("Runtime.evaluate", {
+        expression: "window.reaDebuggerAfter === true",
+        returnByValue: true,
+      });
+      assert.equal(debuggerState.result.value, true);
+    } catch (cause) {
+      if (!pauseObserved) controller.abort(cause);
+      else await caller.send("Debugger.resume").catch(() => undefined);
+      const completion = await raceWithTimeout(
+        pending.catch((pendingCause) => ({ ok: false, error: pendingCause })),
+        5_000,
+      );
+      if (completion === undefined)
+        throw new Error("Capture remained pending after cancellation", {
+          cause,
+        });
+      const completionError =
+        typeof completion === "object" &&
+        completion !== null &&
+        "error" in completion
           ? completion.error
-          : undefined;
-    const completionDetail =
-      completionError === undefined
-        ? "capture did not report an error"
-        : (() => {
-            const causes = [];
-            let current = completionError;
-            for (
-              let depth = 0;
-              depth < 4 && current !== undefined;
-              depth += 1
-            ) {
-              causes.push({
-                name: current.name,
-                tag: current._tag,
-                reason: current.reason,
-                message: current.message,
-              });
-              current = current.cause;
-            }
-            return JSON.stringify(causes);
-          })();
-    throw new Error(`${String(cause)}; capture=${completionDetail}`, {
-      cause,
-    });
-  } finally {
-    unsubscribe();
-    await closeVerifierResources([
-      () => caller.send("Debugger.disable"),
-      () => provider.close(),
-    ]);
-  }
+          : typeof completion === "object" &&
+              completion !== null &&
+              "ok" in completion &&
+              completion.ok === false
+            ? completion.error
+            : undefined;
+      const completionDetail =
+        completionError === undefined
+          ? "capture did not report an error"
+          : (() => {
+              const causes = [];
+              let current = completionError;
+              for (
+                let depth = 0;
+                depth < 4 && current !== undefined;
+                depth += 1
+              ) {
+                causes.push({
+                  name: current.name,
+                  tag: current._tag,
+                  reason: current.reason,
+                  message: current.message,
+                });
+                current = current.cause;
+              }
+              return JSON.stringify(causes);
+            })();
+      throw new Error(`${String(cause)}; capture=${completionDetail}`, {
+        cause,
+      });
+    }
+  }, [
+    () => unsubscribe(),
+    () => caller.send("Debugger.disable"),
+    () => provider.close(),
+  ]);
 };
 
 const verifyCancelledStorage = async (
@@ -626,8 +618,7 @@ const verifyCancelledStorage = async (
   const pending = provider.captureScenario(cancelledScenario, {
     signal: controller.signal,
   });
-  let failure;
-  try {
+  return withVerifierCleanup(async () => {
     await waitForNewDocument(
       observer,
       "/storage-main",
@@ -657,13 +648,10 @@ const verifyCancelledStorage = async (
       targets.some(({ id }) => id === targetId),
       "Cancelled connect-mode storage cleanup closed the external target",
     );
-  } catch (cause) {
-    failure = cause;
-    throw cause;
-  } finally {
-    controller.abort(new Error("cancel failed storage verification"));
-    await closeVerifierResources([() => provider.close()], failure);
-  }
+  }, [
+    () => controller.abort(new Error("cancel failed storage verification")),
+    () => provider.close(),
+  ]);
 };
 
 const waitForNewDocument = async (connection, path, priorTimeOrigin) => {

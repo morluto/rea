@@ -4,6 +4,7 @@ import { CdpWebRuntimeProvider } from "../../../src/browser/execution/CdpWebRunt
 import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
 import { observeWebSessionInputSchema } from "../../../src/domain/browserSession.js";
 import { observeWebExecutionInputSchema } from "../../../src/domain/webExecution.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { startRuntimeBrowser } from "../../fixtures/webRuntime.js";
 import type { FakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
 import { trackBrowser } from "./cdpBrowserProvider.support.js";
@@ -101,10 +102,18 @@ it.each(
       },
     });
     trackBrowser(browser);
-    expect(await run(browser, operation)).toMatchObject({
+    const result = await run(browser, operation);
+    expect(result).toMatchObject({
       ok: false,
       error: { reason: foreign ? "target_not_allowed" : "protocol_error" },
     });
+    if (foreign && !result.ok)
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: "target_unavailable",
+        message: expect.stringContaining("permitted HTTP(S) origin scope"),
+        remediation: { action: expect.stringContaining("allowed_origins") },
+        details: { reason: "target_not_allowed" },
+      });
     expect(reads).toBe(1);
   },
 );
@@ -123,10 +132,15 @@ it("bounds unsupported malformed frame retries without authorizing execution", a
     },
   });
   trackBrowser(browser);
-  expect(await run(browser, "runtime")).toMatchObject({
+  const result = await run(browser, "runtime");
+  expect(result).toMatchObject({
     ok: false,
     error: { reason: "target_not_allowed" },
   });
+  if (result.ok) throw new Error("Expected unresolved frame refusal");
+  expect(JSON.stringify(projectAnalysisError(result.error))).not.toContain(
+    "outside the permitted HTTP(S) origin scope",
+  );
   expect(reads).toBe(80);
   expect(browser.commands.map(({ method }) => method)).not.toContain(
     "Debugger.enable",

@@ -5,12 +5,13 @@ import { traverseJavaScriptAst } from "../domain/javascript/javascriptSemanticTr
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 
 /**
- * Query/fragment content may contain line terminators. With dotAll, the first
- * `.wasm?` or `.wasm#` consumes the rest without retrying overlapping suffixes;
- * absent that qualifier, each candidate requires only a fixed suffix check.
+ * Only the path before the first query/fragment delimiter determines the suffix.
+ * Query/fragment content can contain any line terminator; one bounded scan suffices.
  */
-const endsWithWasmReference = (value: string): boolean =>
-  /\.wasm(?:[?#].*)?$/isu.test(value);
+const endsWithWasmReference = (value: string): boolean => {
+  const delimiter = value.search(/[?#]/u);
+  return /\.wasm$/iu.test(delimiter < 0 ? value : value.slice(0, delimiter));
+};
 
 /** Associate visible literals with selected candidates without asserting data flow or URL identity. */
 export const associateWasmGlue = (

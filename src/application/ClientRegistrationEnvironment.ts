@@ -18,7 +18,7 @@ import {
 } from "../process/snapshotEnvironment.js";
 import { dshDocument } from "./DshCordisPatch.js";
 import type { McpToolTimeoutInputs } from "../mcpStartupPolicy.js";
-import type { AnalysisProviderSelector } from "../contracts/providerSelection.js";
+import type { AnalysisProviderSelector } from "../domain/providerSelection.js";
 
 export type ProviderRequestBudgetResolver = (
   analysisProvider: AnalysisProviderSelector,
@@ -37,6 +37,7 @@ interface ResolvedClientRegistrationEnvironmentDetails extends ClientRegistratio
 
 const TIMEOUT_INPUT_SETTINGS: ReadonlySet<string> = new Set([
   "REA_ANALYSIS_PROVIDER",
+  "REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS",
   "REA_GHIDRA_STARTUP_TIMEOUT_MS",
   "REA_HOPPER_STARTUP_TIMEOUT_MS",
   "REA_JEB_MCP_TIMEOUT_MS",
@@ -65,14 +66,6 @@ export const clientRegistrationEnvironment = (
   validation: "fragment" | "effective" = "effective",
   platform: NodeJS.Platform = process.platform,
 ): Result<Readonly<Record<string, string>>, ConfigurationError> => {
-  if (parsed?.dialect === "dsh") {
-    const environment = dshDocument(parsed.document).environment(
-      overrides,
-      validation,
-      platform,
-    );
-    return environment.ok ? ok(environment.value.values) : environment;
-  }
   const details = clientRegistrationEnvironmentDetails(
     parsed,
     overrides,
@@ -104,10 +97,7 @@ export const clientRegistrationEnvironmentDetails = (
       ),
     );
   }
-  const key =
-    parsed?.dialect === "opencode" || parsed?.dialect === "opencode_v2"
-      ? "environment"
-      : "env";
+  const key = parsed?.environmentKey ?? "env";
   const registration =
     parsed === undefined
       ? undefined
@@ -212,6 +202,12 @@ const environmentDetails = (
     : {
         analysisProvider: configuration.REA_ANALYSIS_PROVIDER,
         ghidraStartupTimeoutMs: configuration.REA_GHIDRA_STARTUP_TIMEOUT_MS,
+        ...(configuration.REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS === undefined
+          ? {}
+          : {
+              ghidraDecompileTimeoutMs:
+                configuration.REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS * 1000,
+            }),
         hopperStartupTimeoutMs: configuration.REA_HOPPER_STARTUP_TIMEOUT_MS,
         ...(configuration.REA_JEB_MCP_TIMEOUT_MS === undefined
           ? {}

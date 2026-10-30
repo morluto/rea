@@ -1,8 +1,12 @@
+import {
+  projectAnalysisView,
+  analysisViewResultSchema,
+} from "../../domain/analysisView/analysisView.js";
+import { nativeFunctionMatchingSchema } from "../../domain/native/functionMatching.js";
 import { expect, it } from "vitest";
 import { matchNativeFunctions } from "./NativeFunctionMatchingService.js";
 import { inspectAnalysisView } from "../analysisView/AnalysisViewService.js";
-import { nativeMatchingInventory } from "../../../tests/fixtures/nativeFunctionMatching.js";
-import { analysisViewResultSchema } from "../../domain/analysisView/analysisView.js";
+import { nativeMatchingNamedInventory as nativeMatchingInventory } from "../../../tests/fixtures/nativeFunctionMatching.js";
 
 it("pages individual function facts without transferring an entire ambiguous alias group, preserving mandatory identity and source coverage", async () => {
   const entries = Array.from({ length: 500 }, (_, i) => ({
@@ -102,4 +106,39 @@ it("pages individual function facts without transferring an entire ambiguous ali
       right: { functions: 500 },
     },
   });
+});
+
+it("rebuilds native row selection when a caller's sealed flag covers only a shallow freeze", async () => {
+  const matched = await matchNativeFunctions({
+    left: nativeMatchingInventory("1", [{ address: "0x100", value: "same" }]),
+    right: nativeMatchingInventory("2", [{ address: "0x200", value: "same" }]),
+  });
+  if (!matched.ok) throw matched.error;
+  const report = nativeFunctionMatchingSchema.parse(
+    matched.value.evidence.normalized_result,
+  );
+  Object.freeze(report);
+  const parent = {
+    evidenceId: matched.value.evidence.evidence_id,
+    operation: matched.value.evidence.operation,
+    normalizedResult: report,
+    sealedResult: true,
+    limitations: [],
+  };
+  const request: Parameters<typeof projectAnalysisView>[1] = {
+    kind: "function-matches",
+    collection: "functions",
+    names: ["same"],
+    sides: ["left"],
+    fields: ["name"],
+    offset: 0,
+    limit: 1,
+  };
+  const first = projectAnalysisView(parent, request);
+  expect(first).toMatchObject({ ok: true, value: { coverage: { total: 1 } } });
+  const member = report.matches[0]?.left[0];
+  if (member === undefined) throw new Error("Expected matched left member");
+  member.name = "changed";
+  const second = projectAnalysisView(parent, request);
+  expect(second).toMatchObject({ ok: true, value: { coverage: { total: 0 } } });
 });

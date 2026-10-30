@@ -12,7 +12,7 @@ import { historicalSourceGraphSchema } from "../../src/domain/referenceSourceGra
 import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
 import { SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE } from "../../src/contracts/javascript/javascriptApplicationWorkflowExamples.js";
 import { createServer } from "../../src/server/createServer.js";
-import { ToolResultDelivery } from "../../src/server/toolResult.js";
+import { ToolResultDelivery } from "../../src/server/ToolResultDelivery.js";
 import { createTestBinarySession } from "../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 

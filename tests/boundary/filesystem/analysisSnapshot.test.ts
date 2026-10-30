@@ -276,6 +276,7 @@ describe("analysis snapshot member decoding", () => {
       `${" ".repeat(9 * 1024 * 1024)}${JSON.stringify(snapshot)}`,
     );
     const controller = new AbortController();
+    const reason = { request: "cancel snapshot import" };
     const reads = await holdFirstFileRead(path);
     onTestFinished(() => {
       controller.abort();
@@ -283,12 +284,16 @@ describe("analysis snapshot member decoding", () => {
     });
     const pending = readAnalysisSnapshot(path, controller.signal);
     await reads.firstRead;
-    controller.abort();
+    controller.abort(reason);
     reads.release();
     try {
       expect(await pending).toMatchObject({
         ok: false,
-        error: { _tag: "AnalysisCancelledError" },
+        error: {
+          _tag: "AnalysisCancelledError",
+          operation: "open_binary",
+          cause: reason,
+        },
       });
       expect(reads.readCount).toBe(1);
     } finally {

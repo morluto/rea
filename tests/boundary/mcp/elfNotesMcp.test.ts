@@ -9,6 +9,7 @@ import {
   elfExtendedSectionCountFixture,
   compressedElfNoteSectionFixture,
   elfNoteFixture,
+  elfNoteWithUnreadableSectionNameFixture,
 } from "../../../src/native/elf/ElfNotes.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { mcpTest, type TestMcp } from "../../support/mcp/mcpFixture.js";
@@ -74,6 +75,42 @@ mcpTest("requires an absolute path for inspect_elf_notes", async ({ mcp }) => {
 });
 
 mcpTest(
+  "keeps GNU notes when a section name is not NUL-terminated",
+  async ({ mcp }) => {
+    const { client, session } = await connect(mcp);
+    try {
+      const root = await createTestTempDirectory("rea-elf-notes-name-mcp-");
+      const path = join(root, "program");
+      const bytes = elfNoteWithUnreadableSectionNameFixture("unterminated");
+      await writeFile(path, bytes);
+      const response = await client.callTool({
+        name: "inspect_elf_notes",
+        arguments: { path },
+      });
+      expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
+      const evidence = toolContract("inspect_elf_notes").outputSchema.parse(
+        response.structuredContent,
+      );
+      expect(evidence.normalized_result.tables[0]?.name).toBeNull();
+      expect(evidence.normalized_result.limitations).toContain(
+        "ELF section names are incomplete because a name is not NUL-terminated.",
+      );
+      expect(evidence.normalized_result.entries[0]?.gnu?.build_id_hex).toBe(
+        "0123456789abcdef0123456789abcdef01234567",
+      );
+      expect(evidence.normalized_result.coverage).toMatchObject({
+        status: "complete",
+        examined_tables: 1,
+        examined_entries: 1,
+      });
+      expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
+    } finally {
+      await session.close();
+    }
+  },
+);
+
+mcpTest(
   "reports compressed note storage as unsupported without mutation",
   async ({ mcp }) => {
     const { client, session } = await connect(mcp);
@@ -93,7 +130,7 @@ mcpTest(
           "Compressed ELF note sections are unsupported",
         ),
       });
-      expect(await readFile(path)).toEqual(bytes);
+      expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
     } finally {
       await session.close();
     }
@@ -120,7 +157,55 @@ mcpTest(
           "ELF extended numbering is unsupported",
         ),
       });
-      expect(await readFile(path)).toEqual(before);
+      expect((await readFile(path)).equals(before)).toBe(true);
+    } finally {
+      await session.close();
+    }
+  },
+);
+
+mcpTest(
+  "rejects dangling section-name references and recovers in the same session",
+  async ({ mcp }) => {
+    const { client, session } = await connect(mcp);
+    try {
+      const root = await createTestTempDirectory("rea-elf-notes-presence-mcp-");
+      const path = join(root, "program");
+      const bytes = elfNoteFixture({ ownership: "program" });
+      bytes.writeUInt16LE(5, 62);
+      await writeFile(path, bytes);
+      const rejected = await client.callTool({
+        name: "inspect_elf_notes",
+        arguments: { path },
+      });
+      expect(rejected.isError).toBe(true);
+      expect(parseMcpToolError(rejected).error).toMatchObject({
+        code: "invalid_request",
+        category: "invalid_input",
+        details: {
+          issues: [
+            expect.objectContaining({
+              path: ["path"],
+              reason: "invalid_format",
+              message: "ELF section table is missing",
+            }),
+          ],
+        },
+      });
+      expect((await readFile(path)).equals(bytes)).toBe(true);
+      bytes.writeUInt16LE(0, 62);
+      await writeFile(path, bytes);
+      const accepted = await client.callTool({
+        name: "inspect_elf_notes",
+        arguments: { path },
+      });
+      expect(accepted.isError).not.toBe(true);
+      const evidence = toolContract("inspect_elf_notes").outputSchema.parse(
+        accepted.structuredContent,
+      );
+      expect(evidence.normalized_result.entries[0]?.gnu?.build_id_hex).toBe(
+        "0123456789abcdef0123456789abcdef01234567",
+      );
     } finally {
       await session.close();
     }

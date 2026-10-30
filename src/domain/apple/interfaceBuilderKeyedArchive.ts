@@ -1,8 +1,7 @@
+import { plistUidValue } from "./plistUid.js";
 import { z } from "zod";
 
-import { jsonValueSchema } from "../jsonValue.js";
-
-const recordSchema = z.record(z.string(), z.unknown());
+import { jsonObjectSchema, jsonValueSchema } from "../jsonValue.js";
 
 const objectNode = z.strictObject({
   id: z.string().min(1),
@@ -19,7 +18,7 @@ const objectNode = z.strictObject({
   ]),
   class_name: z.string().nullable(),
   name: z.string().min(1),
-  attributes: z.record(z.string(), jsonValueSchema),
+  attributes: jsonObjectSchema,
 });
 
 const connection = z.strictObject({
@@ -28,7 +27,7 @@ const connection = z.strictObject({
   source_id: z.string().min(1),
   destination_id: z.string().nullable(),
   label: z.string().nullable(),
-  attributes: z.record(z.string(), jsonValueSchema),
+  attributes: jsonObjectSchema,
 });
 
 type InterfaceBuilderObject = z.infer<typeof objectNode>;
@@ -65,6 +64,39 @@ export const interfaceBuilderConnectionFieldNames = (className: string) =>
     ? { source: "UISource", destination: "UIDestination", label: "UILabel" }
     : { source: "NSSource", destination: "NSDestination", label: "NSLabel" };
 
+/** Only Interface Builder's known placeholder records establish an authored class override. */
+export const interfaceBuilderRuntimeClassName = (
+  archivedClass: string | null,
+  authoredName: (field: string) => string | null,
+): string | null => {
+  switch (archivedClass) {
+    case "NSClassSwapper":
+    case "NSCustomObject":
+    case "NSCustomResource":
+      return authoredName("NSClassName") ?? archivedClass;
+    case "UIClassSwapper":
+      return authoredName("UIClassName") ?? archivedClass;
+    default:
+      return archivedClass;
+  }
+};
+
+/** A decoded plist is not an Interface Builder document merely because it is named .nib. */
+export const requireInterfaceBuilderArchive = (value: unknown): void => {
+  const root = record(value);
+  if (root.$archiver === "NSKeyedArchiver" && Array.isArray(root.$objects))
+    return;
+  if (
+    ["objects", "connections", "hierarchy", "classes"].some((facet) =>
+      Object.hasOwn(root, `com.apple.ibtool.document.${facet}`),
+    )
+  )
+    return;
+  throw new TypeError(
+    "Property list is not a recognized Interface Builder archive",
+  );
+};
+
 /** Parse ibtool dictionaries or compiled keyed archives into typed records. */
 export const parseInterfaceBuilderRecords = (
   value: unknown,
@@ -79,6 +111,7 @@ export const parseInterfaceBuilderRecords = (
   readonly unresolvedConnections: number;
   readonly omittedHierarchyReferences: number;
 } => {
+  requireInterfaceBuilderArchive(value);
   const root = record(value);
   const keyed = parseKeyedArchive(root);
   if (keyed !== null) return keyed;
@@ -162,19 +195,10 @@ export const parseInterfaceBuilderRecords = (
   };
 };
 
-/**
- * A UID decodes as a one-key `UID` (binary) or `CF$UID` (XML) dictionary with
- * an integer value. Any other dictionary is ordinary archive data.
- */
+/** Archive references retain their binary marker identity through plist projection. */
 const archiveUid = (value: unknown): number | undefined => {
-  if (typeof value !== "object" || value === null || Array.isArray(value))
-    return undefined;
-  if (Object.keys(value).length !== 1) return undefined;
-  const item = record(value);
-  const marker = Object.hasOwn(item, "UID") ? item.UID : item["CF$UID"];
-  return typeof marker === "number" && Number.isInteger(marker)
-    ? marker
-    : undefined;
+  const uid = plistUidValue(value);
+  return uid !== undefined && Number.isInteger(uid) ? uid : undefined;
 };
 
 const HIERARCHY_KEY =
@@ -276,14 +300,14 @@ const keyedArchiveTable = (objectTable: readonly unknown[]) => {
     if (uid !== undefined) return reference(uid);
     if (Array.isArray(value)) return value.map(resolve);
     if (typeof value !== "object" || value === null) return value;
-    const output: Record<string, unknown> = {};
-    for (const [key, child] of Object.entries(value)) {
-      // `$class` describes the archived object's type. Keep that derived fact
-      // outside its serialized fields so an authored `className` key remains
-      // ordinary application data.
-      if (key !== "$class") output[key] = resolve(child);
-    }
-    return output;
+    return Object.fromEntries(
+      Object.entries(value).flatMap(([key, child]) => {
+        // `$class` describes the archived object's type. Keep that derived fact
+        // outside its serialized fields so an authored `className` key remains
+        // ordinary application data.
+        return key === "$class" ? [] : [[key, resolve(child)]];
+      }),
+    );
   };
   const hierarchy = (start: unknown) => {
     let omittedReferences = 0;
@@ -406,13 +430,20 @@ const parseKeyedArchive = (
   for (const [index, raw] of objectTable.entries()) {
     if (index === 0) continue;
     const resolved = record(resolve(raw));
-    const className = classNameOf(raw);
+    const archivedClassName = classNameOf(raw);
     // An archived object names its class with its own `$class` reference;
     // when that reference cannot be resolved the object is still observed,
     // with an unknown class. Scalars and class descriptors are not objects.
-    if (className === null && !Object.hasOwn(record(raw), "$class")) continue;
+    if (archivedClassName === null && !Object.hasOwn(record(raw), "$class"))
+      continue;
     objectCount += 1;
     const fields = { ...resolved };
+    const className = interfaceBuilderRuntimeClassName(
+      archivedClassName,
+      (field) => firstString(fields[field]),
+    );
+    if (className !== archivedClassName)
+      fields.interface_builder_archived_class_name = archivedClassName;
     // Keep the unresolvable class reference itself, e.g. a dangling UID.
     if (className === null) fields.$class = record(raw).$class;
     // Authored objectID, object-id, id and archiveUID fields are data. Only
@@ -513,9 +544,15 @@ const parseKeyedArchive = (
   };
 };
 
-/** Coerce unknown values to a string-keyed record; non-objects become `{}`. */
+/** Borrow decoded dictionaries without copying away keys or UID source identity. */
 export const record = (value: unknown): Record<string, unknown> =>
-  recordSchema.safeParse(value).data ?? {};
+  value !== null &&
+  typeof value === "object" &&
+  !Array.isArray(value) &&
+  (Object.getPrototypeOf(value) === Object.prototype ||
+    Object.getPrototypeOf(value) === null)
+    ? (value as Record<string, unknown>)
+    : {};
 
 /** First non-empty string among the candidates, otherwise null. */
 export const firstString = (...values: unknown[]): string | null => {
@@ -549,6 +586,11 @@ const classifyObject = (
   className: string | null,
   classChain: readonly string[] = [],
 ): InterfaceBuilderObject["kind"] => {
+  if (
+    isInterfaceBuilderConnectionClass(className ?? "") ||
+    classChain.includes("NSNibConnector")
+  )
+    return "other";
   for (const [kind, bases] of archivedKindBases)
     if (bases.some((base) => classChain.includes(base))) return kind;
   const value = className?.toLowerCase() ?? "";
@@ -560,12 +602,6 @@ const classifyObject = (
     value === "uiproxyobject"
   )
     return "placeholder";
-  if (
-    value.includes("image") ||
-    value.includes("color") ||
-    value.includes("font")
-  )
-    return "resource";
   if (value.includes("external")) return "external_object";
   if (value.includes("viewcontroller") || value.includes("windowcontroller"))
     return "view_controller";
@@ -574,7 +610,8 @@ const classifyObject = (
     value.includes("control") ||
     value.includes("textfield") ||
     value.includes("slider") ||
-    value.includes("menuitem")
+    value.includes("menuitem") ||
+    value.includes("colorwell")
   )
     return "control";
   if (
@@ -583,6 +620,12 @@ const classifyObject = (
     value.includes("cell")
   )
     return "view";
+  if (
+    value.includes("image") ||
+    value.includes("color") ||
+    value.includes("font")
+  )
+    return "resource";
   return "other";
 };
 

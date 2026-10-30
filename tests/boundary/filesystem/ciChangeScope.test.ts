@@ -626,6 +626,12 @@ it.each([
     "tests/module/example.test.ts",
     { code: true, runtime: false, browser: false, package: false },
   ],
+  ["scripts/lib/release-proposal.mjs", { code: true, package: true }],
+  ["patches/release-please+17.3.0.patch", { code: true, package: true }],
+  [
+    "tests/boundary/filesystem/releaseProposal.test.ts",
+    { code: true, package: true },
+  ],
   ["website/src/index.ts", { code: false, website: true, package: false }],
   [
     "website/public/examples/notes-electron/preload.js",
@@ -725,12 +731,81 @@ it.each([
     { code: true, runtime: true, apple: true, package: false, evm: false },
   ],
   [
+    "src/artifacts/NativeDmgArtifactReader.ts",
+    { code: true, runtime: true, apple: true, package: false, evm: false },
+  ],
+  [
+    "tests/acceptance/artifactDmgAttachmentRecoveryCli.test.ts",
+    { code: true, apple: true, package: false, runtime: false },
+  ],
+  [
+    "tests/process-global/dmgCancellationReason.test.ts",
+    { code: true, apple: true, package: false, runtime: false },
+  ],
+  [
+    "tests/boundary/providers/native/nativeDmgArtifactReader.test.ts",
+    { code: true, apple: true, package: false, runtime: false },
+  ],
+  [
     "scripts/verify/apple/example.mjs",
     { code: true, apple: true, package: false, runtime: false },
   ],
   [
+    "src/process/WindowsExecutable.ts",
+    { code: true, runtime: true, package: true },
+  ],
+  [
+    "src/process/WindowsExecutable.test.ts",
+    { code: true, runtime: true, package: true },
+  ],
+  ["src/adb/AdbConfiguration.ts", { code: true, runtime: true, package: true }],
+  [
+    "src/apktool/ApktoolConfiguration.ts",
+    { code: true, runtime: true, package: true },
+  ],
+  [
+    "src/application/UpdateCommandRunner.ts",
+    { code: true, runtime: true, package: true },
+  ],
+  [
+    "tests/boundary/process/windowsExecutableSelection.test.ts",
+    { code: true, runtime: true, package: true },
+  ],
+  ["src/hopper/BridgeLauncher.ts", { code: true, apple: true }],
+  ["src/domain/hopperErrors.ts", { code: true, apple: true }],
+  [
+    "tests/boundary/providers/hopper/hopperMacLaunchArguments.test.ts",
+    { code: true, apple: true },
+  ],
+  [
+    "tests/boundary/providers/hopper/hopperClient.helperFailure.test.ts",
+    { code: true, apple: true },
+  ],
+  [
     "src/windows/Example.ts",
     { code: true, runtime: true, package: true, apple: false, evm: false },
+  ],
+  [
+    "src/domain/windowsNativeArtifact.ts",
+    { code: true, runtime: true, package: true },
+  ],
+  ["src/domain/peCoffHeader.ts", { code: true, runtime: true, package: true }],
+  ["src/domain/dosMz.ts", { code: true, runtime: true, package: true }],
+  [
+    "scripts/lib/verifier-source-loader.mjs",
+    { code: true, runtime: true, package: true },
+  ],
+  [
+    "tests/boundary/process/windowsNativeArtifactVerifier.test.ts",
+    { code: true, package: true },
+  ],
+  [
+    "scripts/lib/windows-native-inspection-workspace.mjs",
+    { code: true, package: true },
+  ],
+  [
+    "tests/boundary/process/windowsNativeInspectionWorkspace.test.ts",
+    { code: true, package: true },
   ],
   [
     "src/domain/javascript/javascriptRuntimeStaticCandidates.ts",
@@ -1239,12 +1314,68 @@ it.each([
     { code: true, fixtures: true, readiness: true, package: false },
   ],
   [
+    "scripts/lib/conformance-fixtures.mjs",
+    { code: true, fixtures: true, readiness: true, package: false },
+  ],
+  [
+    "scripts/build-conformance-fixtures.mjs",
+    { code: true, fixtures: true, readiness: true, package: false },
+  ],
+  [
+    "scripts/verify-conformance-fixtures.mjs",
+    { code: true, fixtures: true, readiness: true, package: false },
+  ],
+  [
     "tests/conformance/swift/fixture.swift",
     { code: true, fixtures: true, readiness: true, package: false },
   ],
   [
     "tests/conformance/readiness/javascript-cli/package.json",
     { code: true, fixtures: false, readiness: true, package: false },
+  ],
+  [
+    "scripts/verify-reconstruction-readiness.mjs",
+    {
+      code: true,
+      readiness: true,
+      fixtures: false,
+      runtime: false,
+      package: false,
+    },
+  ],
+  [
+    "scripts/lib/cli-process-environment.mjs",
+    {
+      code: true,
+      package: true,
+      runtime: true,
+      javascript_recovery: true,
+      readiness: false,
+    },
+  ],
+  [
+    "tests/conformance/readiness/report/reconstructionReadiness.ts",
+    {
+      code: true,
+      readiness: true,
+      fixtures: false,
+      runtime: false,
+      package: false,
+    },
+  ],
+  [
+    "tests/conformance/readiness/report/reconstructionReadinessExample.ts",
+    {
+      code: true,
+      readiness: true,
+      fixtures: false,
+      runtime: false,
+      package: false,
+    },
+  ],
+  [
+    "tests/conformance/readiness/report/reconstructionReadiness.test.ts",
+    { code: true, readiness: false, runtime: false, package: false },
   ],
   [
     "tests/conformance/ghidra/no-return.c",
@@ -1312,6 +1443,30 @@ it.each([
     expect(await classify(directory, base, head)).toMatchObject({
       code: true,
       ...expected,
+    });
+  },
+);
+
+it.each(["knip:production", "lint:typed"])(
+  "keeps the %s analysis command within static checks",
+  async (script) => {
+    const { directory } = await fixture();
+    const base = await change(
+      directory,
+      ["package.json"],
+      JSON.stringify({ scripts: { [script]: "node scripts/old.mjs" } }),
+    );
+    const head = await change(
+      directory,
+      ["package.json"],
+      JSON.stringify({ scripts: { [script]: "node scripts/new.mjs" } }),
+    );
+    expect(await classify(directory, base, head)).toMatchObject({
+      code: true,
+      runtime: false,
+      package: false,
+      evm: false,
+      browser: false,
     });
   },
 );

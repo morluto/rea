@@ -4,7 +4,10 @@ import {
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
-import { semanticCallableResultExpressions } from "./javascriptSemanticCallableResults.js";
+import {
+  semanticCallableResultExpressions,
+  semanticCallableResultKind,
+} from "./javascriptSemanticCallableResults.js";
 import {
   javaScriptSourceInvocationContext,
   javaScriptGenericInvocationMethod,
@@ -669,10 +672,12 @@ export const createSemanticReturnedReferences = (
       // A direct generator/async call produces a fresh iterator/Promise, not
       // the yielded/resolved contents. Escape analysis still retains those
       // potential references for their eventual consumers.
+      const resultKind = semanticCallableResultKind(callable);
       if (
         consumption !== "potential-reference" &&
-        (callable.generator ||
-          (consumption === "direct-call" && callable.async))
+        (resultKind === "iterator" ||
+          resultKind === "async-iterator" ||
+          (consumption === "direct-call" && resultKind === "promise"))
       )
         return [];
       return semanticCallableResultExpressions(callable).flatMap(

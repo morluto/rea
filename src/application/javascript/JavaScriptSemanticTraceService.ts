@@ -7,7 +7,7 @@ import {
   parseApplicationGraphEvidence,
 } from "./JavaScriptApplicationEvidenceGraph.js";
 import type { Evidence } from "../../domain/evidence.js";
-import { queryJavaScriptSemanticGraphValidated } from "../../domain/javascript/javascriptSemanticQuery.js";
+import { queryJavaScriptSemanticGraph } from "../../domain/javascript/javascriptSemanticQuery.js";
 import {
   traceJavaScriptSemanticsInputSchema,
   type JavaScriptSemanticTraceResult,
@@ -40,10 +40,7 @@ export const traceJavaScriptSemanticsEvidenceValidated = (
         },
       ]),
     );
-  const query = queryJavaScriptSemanticGraphValidated(
-    source.semanticGraph,
-    input.query,
-  );
+  const query = queryJavaScriptSemanticGraph(source.semanticGraph, input.query);
   const result: JavaScriptSemanticTraceResult = {
     ...query,
     source_evidence_id: source.evidence.evidence_id,

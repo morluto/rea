@@ -1,8 +1,9 @@
 import type { z } from "zod";
 
-import { AnalysisInputError } from "../domain/analysisErrorCore.js";
+import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import type { ContainingProcedureResolution } from "../domain/native/nativeObservation.js";
 import { err, type Result } from "../domain/result.js";
 import {
   enhancedInputSchemas,
@@ -10,15 +11,10 @@ import {
 } from "../contracts/enhancedInputs.js";
 
 export type EnhancedResult = Promise<Result<JsonValue, AnalysisError>>;
-export type TraceMatch = {
-  readonly type: string;
-  readonly address: string;
-  readonly value: string;
-};
 export type TraceReference = {
   readonly target_address: string;
   readonly source_address: string;
-  readonly containing_procedure: JsonValue;
+  readonly containing_procedure: ContainingProcedureResolution;
 };
 
 /** One enhanced call whose input was parsed at its owning adapter boundary. */
@@ -31,6 +27,9 @@ export type ValidatedEnhancedCall = {
 
 export const invalidEnhancedInput = (
   name: EnhancedToolName,
-  cause: Error,
+  cause: z.ZodError,
+  input: unknown,
 ): EnhancedResult =>
-  Promise.resolve(err(new AnalysisInputError(name, { cause })));
+  Promise.resolve(
+    err(analysisInputErrorFromIssues(name, cause.issues, input, { cause })),
+  );

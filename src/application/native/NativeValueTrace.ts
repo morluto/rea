@@ -1,10 +1,10 @@
-import { functionDossierSchema } from "../../domain/hopperValues.js";
+import { functionDossierSchema } from "../../domain/native/functionDossier.js";
 import { nativeCallTargetsSchema } from "../../domain/native/nativeInstruction.js";
 import {
   nativeValueTraceInputSchema,
   nativeValueTraceSchema,
 } from "../../domain/native/nativeValueTrace.js";
-import { createEvidence } from "../../domain/evidence.js";
+import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
 import {
   AnalysisCancelledError,
   AnalysisOutputError,
@@ -73,7 +73,11 @@ export const traceNativeValues = async (
   };
   while (pending.length > 0) {
     if (signal?.aborted)
-      return err(new AnalysisCancelledError("trace_native_values"));
+      return err(
+        new AnalysisCancelledError("trace_native_values", {
+          cause: signal.reason,
+        }),
+      );
     const next = pending.shift();
     if (
       next === undefined ||
@@ -103,7 +107,9 @@ export const traceNativeValues = async (
     );
     decompilations++;
     if (!execution.ok) {
-      if (execution.error._tag === "AnalysisCancelledError")
+      // A seed failure has no trace to qualify. Preserve the provider's typed
+      // refusal; failures after a validated seed remain partial observations.
+      if (next.depth === 0 || execution.error._tag === "AnalysisCancelledError")
         return err(execution.error);
       unknowns.push({
         procedure: next.procedure,
@@ -112,13 +118,20 @@ export const traceNativeValues = async (
       });
       continue;
     }
+    const evidence = createAnalysisExecutionEvidence(
+      "analyze_function",
+      { procedure: next.procedure },
+      execution.value,
+      "observed",
+    );
     const parsed = functionDossierSchema.safeParse(execution.value.result);
     if (!parsed.success || execution.value.subject == null)
       return err(
         new AnalysisOutputError(
           "trace_native_values",
           "Function dossier lacks validated facts or artifact identity",
-        ),
+          parsed.success ? undefined : { cause: parsed.error },
+        ).retainPartialObservation(evidence),
       );
     const dossier = parsed.data;
     const address = dossier.procedure.address;
@@ -131,23 +144,8 @@ export const traceNativeValues = async (
         new AnalysisOutputError(
           "trace_native_values",
           "Cross-function target digest mismatch",
-        ),
+        ).retainPartialObservation(evidence),
       );
-    const evidence = createEvidence(
-      execution.value.subject,
-      execution.value.provider,
-      {
-        operation: "analyze_function",
-        parameters: { procedure: next.procedure },
-        result: execution.value.result,
-        rawResult: execution.value.rawResult,
-        limitations: execution.value.limitations,
-        locations: execution.value.locations,
-        ...(execution.value.analysisProfile === undefined
-          ? {}
-          : { analysisProfile: execution.value.analysisProfile }),
-      },
-    );
     const evidenceId = evidence.evidence_id;
     procedures.push({
       address,
@@ -283,6 +281,14 @@ export const traceNativeValues = async (
           new AnalysisOutputError(
             "resolve_native_call_targets",
             "Invalid static call resolution",
+            { cause: targets.error },
+          ).retainPartialObservation(
+            createAnalysisExecutionEvidence(
+              "resolve_native_call_targets",
+              { address: operation.address },
+              resolved.value,
+              "observed",
+            ),
           ),
         );
       sourceLimitations.push(

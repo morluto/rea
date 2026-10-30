@@ -1,7 +1,10 @@
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { ok, type Result } from "../../domain/result.js";
-import { verifyManagedNativeVerificationSource } from "../../domain/managed/managedNativeVerification.js";
+import {
+  managedNativeVerificationHasUnknowns,
+  verifyManagedNativeVerificationSource,
+} from "../../domain/managed/managedNativeVerification.js";
 import {
   readManagedNativeVerificationSource,
   type ManagedNativeVerificationSource,
@@ -15,6 +18,7 @@ export interface ManagedNativeVerificationExecution {
   readonly evidence: Evidence;
   readonly summary: ManagedNativeVerificationResult["summary"];
   readonly sourceEvidence: readonly Evidence[];
+  readonly hasUnknowns: boolean;
 }
 
 /** Resolve untrusted source Evidence, then execute over the trusted parsed source. */
@@ -31,6 +35,7 @@ export const executeManagedNativeBoundaries = (
   return ok({
     evidence,
     summary: result.summary,
+    hasUnknowns: managedNativeVerificationHasUnknowns(result),
     sourceEvidence: [
       source.value.managedEvidence,
       ...source.value.nativeObservations.map(
@@ -38,14 +43,6 @@ export const executeManagedNativeBoundaries = (
       ),
     ],
   });
-};
-
-/** Return only derived Evidence for callers that do not need source observations. */
-export const verifyManagedNativeBoundariesEvidence = (
-  rawInput: unknown,
-): Result<Evidence, AnalysisError> => {
-  const execution = executeManagedNativeBoundaries(rawInput);
-  return execution.ok ? ok(execution.value.evidence) : execution;
 };
 
 const createManagedNativeVerificationEvidence = (

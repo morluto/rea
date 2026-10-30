@@ -1,8 +1,8 @@
-import { writeFile } from "node:fs/promises";
+import { stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { InMemoryTransport, Client } from "@modelcontextprotocol/client";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { z } from "zod";
 
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../../src/contracts/artifactComparisonExample.js";
@@ -28,6 +28,9 @@ import { managedReconstructionImportResultSchema } from "../../src/domain/manage
 
 import { captureProcessScenarioFile } from "../../src/application/process/ProcessCli.js";
 import { compareManagedMemberPaths } from "../../src/application/managed/ManagedMemberComparisonService.js";
+import { RetainedRegularFileCleanupFailure } from "../../src/application/RegularFileRead.js";
+import { OwnedFileHandle } from "../../src/filesystem/OwnedFileHandle.js";
+import { primaryAnalysisError } from "../../src/domain/analysisErrorBase.js";
 import { buildManagedPeFixture } from "../../src/dotnet/ManagedPe.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { ProcessCaptureError } from "../../src/process/capture/ProcessCaptureError.js";
@@ -38,7 +41,10 @@ import {
   processEvidence,
 } from "../../src/application/ReconstructionObligationLedger.fixture.js";
 import { processCaptureSchema } from "../../src/domain/process/processCapture.js";
-import { JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE } from "../../src/contracts/javascript/javascriptRuntimeReconciliationExample.js";
+import {
+  JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE,
+  JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE,
+} from "../../src/contracts/javascript/javascriptRuntimeReconciliationExample.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { javaScriptSemanticQueryResultSchema } from "../../src/domain/javascript/javascriptSemanticQuerySchemas.js";
 import {
@@ -51,7 +57,6 @@ import { applicationFeatureTraceResultSchema } from "../../src/domain/javascript
 import { ownedApplicationVersionComparisonResultSchema } from "../../src/domain/javascript/javascriptApplicationVersionComparisonSchemas.js";
 import { javaScriptExportShapeComparisonResultSchema } from "../../src/domain/javascript/javascriptExportShapeComparisonSchemas.js";
 import { sourceToBundleComparisonResultSchema } from "../../src/domain/javascript/sourceToBundleComparisonSchemas.js";
-import { JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE } from "../../src/contracts/javascript/javascriptRuntimeReconciliationExample.js";
 import { javascriptRuntimeReconciliationResultSchema } from "../../src/domain/javascript/javascriptRuntimeReconciliationSchemas.js";
 import { browserCompletenessSchema } from "../../src/domain/browserCompleteness.js";
 import { createElectronActiveEvidence } from "../../src/application/javascript/ElectronActiveEvidence.js";
@@ -640,6 +645,62 @@ describe("managed comparison output failure with completed source reads", () => 
     });
   });
 });
+
+it.each(["missing", "invalid", "cleanup"])(
+  "retains both managed admission cleanup owners when the left has a %s failure",
+  async (leftFailure) => {
+    const root = await createTestTempDirectory(
+      "rea-managed-admission-cleanup-",
+    );
+    const leftPath = join(root, "left.dll");
+    const rightPath = join(root, "right.dll");
+    await writeFile(rightPath, buildManagedPeFixture());
+    if (leftFailure === "invalid") await writeFile(leftPath, "invalid PE");
+    if (leftFailure === "cleanup")
+      await writeFile(leftPath, buildManagedPeFixture());
+    const rightIdentity = await stat(rightPath);
+    const original = OwnedFileHandle.prototype.close;
+    const owners = new Set<OwnedFileHandle>();
+    const close = vi
+      .spyOn(OwnedFileHandle.prototype, "close")
+      .mockImplementation(async function (this: OwnedFileHandle) {
+        const identity = await this.handle.stat();
+        if (identity.ino === rightIdentity.ino || leftFailure === "cleanup") {
+          owners.add(this);
+          throw new Error("injected managed admission close failure");
+        }
+        await original.call(this);
+      });
+    onTestFinished(async () => {
+      close.mockRestore();
+      for (const owner of owners) await owner.close();
+    });
+
+    const result = await compareManagedMemberPaths({ leftPath, rightPath });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(result.error.cleanupResources).toContain(rightPath);
+    expect(primaryAnalysisError(result.error)).toMatchObject({
+      path: leftPath,
+    });
+    if (leftFailure === "cleanup")
+      expect(result.error.cleanupResources).toContain(leftPath);
+    expect([...owners].every((owner) => owner.handle.fd >= 0)).toBe(true);
+
+    close.mockRestore();
+    const retry = async (cause: unknown): Promise<void> => {
+      if (cause instanceof RetainedRegularFileCleanupFailure)
+        await cause.cleanupLease.release();
+      else if (cause instanceof AggregateError)
+        for (const nested of cause.errors) await retry(nested);
+      else if (cause instanceof Error) await retry(cause.cause);
+    };
+    await retry(result.error);
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect([...owners].every((owner) => owner.handle.fd < 0)).toBe(true);
+  },
+);
 
 describe("ledger generation failure ownership through the public SDK", () => {
   afterEach(() => vi.restoreAllMocks());

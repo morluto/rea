@@ -100,6 +100,39 @@ it("routes bundle resource MCP calls with null executable identity and retained 
 
   await expectResourceSchemaBranches(client);
 
+  const unbound = await client.callTool({
+    name: "inspect_plist",
+    arguments: { path: plistPath },
+  });
+  expect(unbound.isError).toBe(true);
+  const unboundError = unbound.content.find((item) => item.type === "text");
+  if (unboundError?.type !== "text") throw new Error("Expected error text");
+  expect(JSON.parse(unboundError.text)).toMatchObject({
+    error: { code: "target_unavailable", category: "unavailable" },
+  });
+  const unopened = await client.callTool({
+    name: "binary_session",
+    arguments: {},
+  });
+  expect(
+    toolContract("binary_session").outputSchema.parse(
+      unopened.structuredContent,
+    ),
+  ).toMatchObject({
+    result: {
+      open: false,
+      tool_availability: {
+        groups: expect.arrayContaining([
+          expect.objectContaining({
+            names: expect.arrayContaining(["inspect_plist"]),
+            available: false,
+            reason: "target_required",
+          }),
+        ]),
+      },
+    },
+  });
+
   const opened = await client.callTool({
     name: "open_bundle_resources",
     arguments: { path: bundle },
@@ -319,6 +352,15 @@ const expectResourceSchemaBranches = async (client: Client): Promise<void> => {
       validResult: jsonObjectSchema.parse({
         target_sha256: "a".repeat(64),
         catalogs: [],
+        inventory_coverage: { scope: "container-entries", status: "unknown" },
+        catalog_coverage: {
+          status: "unknown",
+          reason: "catalog_coverage_not_reported",
+        },
+        resource_key_coverage: {
+          status: "unknown",
+          reason: "resource_key_coverage_not_reported",
+        },
         total_records: 0,
         offset: 0,
         limit: 1,

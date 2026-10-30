@@ -163,6 +163,7 @@ export const buildInterfaceBuilderAnalysis = (input: {
     let connectionEdgeCount = 0;
     let hierarchyEdgeCount = 0;
     let documentOmittedConnections = 0;
+    let connectionObjectLimit = false;
     let documentOmittedHierarchyEdges = 0;
     let hierarchyTruncated = false;
     const objectNodeId = (objectId: string): string =>
@@ -208,6 +209,7 @@ export const buildInterfaceBuilderAnalysis = (input: {
         } else {
           omittedConnections += 1;
           documentOmittedConnections += 1;
+          connectionObjectLimit = true;
         }
         return;
       }
@@ -216,6 +218,7 @@ export const buildInterfaceBuilderAnalysis = (input: {
       if (unresolvedEndpoint) {
         truncated = true;
         if (isHierarchy) hierarchyTruncated = true;
+        else connectionObjectLimit = true;
       }
       const edgeTo = unresolvedEndpoint ? null : to;
       const edgeReason = unresolvedEndpoint
@@ -523,12 +526,14 @@ export const buildInterfaceBuilderAnalysis = (input: {
         status:
           connectionsTruncated ||
           documentOmittedConnections > 0 ||
+          connectionObjectLimit ||
           connectionsUnresolved ||
           unsupportedConnections
             ? "partial"
             : "complete",
-        reason:
-          connectionsTruncated || documentOmittedConnections > 0
+        reason: connectionObjectLimit
+          ? "object_limit_reached"
+          : connectionsTruncated || documentOmittedConnections > 0
             ? "connection_limit_reached"
             : connectionsUnresolved
               ? "connection_unresolved"

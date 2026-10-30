@@ -3,6 +3,7 @@ import { analyzeJavaScriptStaticSource } from "../javascript/javascriptStaticAna
 import { completeSemanticSteps } from "../javascript/javascriptSemanticTraversal.js";
 import { buildJavaScriptRouteInventorySteps } from "../javascript/javascriptRouteInventory.js";
 import { freezeJsonSnapshot } from "../immutableJson.js";
+import { projectAnalysisError } from "../analysisErrorProjection.js";
 import {
   projectAnalysisView,
   analysisViewRequestSchema,
@@ -179,7 +180,7 @@ it("checks subject identity again after warming an immutable parent", () => {
       subject: {
         name: "app",
         local_path: "/different",
-        digest: { sha256: "c".repeat(64) },
+        digest: { sha256: "d".repeat(64) },
         format: "javascript-bundle",
         architecture: null,
       },
@@ -267,6 +268,47 @@ it("returns a typed retained-parent resource error when even a summary identity 
   expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected a resource error");
   expect(result.error.message).toContain("cannot fit");
+});
+
+it("explains how to recover an oversized route row without changing the parent", () => {
+  const source = {
+    ...parent(),
+    normalizedResult: {
+      input_path: "/gone/app",
+      root_artifact_sha256: "c".repeat(64),
+      route_inventory: inventory(`router.push('/${"a".repeat(1_100_000)}');`),
+    },
+  };
+  const selection = { collection: "routes", limit: 1 };
+  const result = projectAnalysisView(
+    source,
+    analysisViewRequestSchema.parse({
+      kind: "javascript-routes",
+      ...selection,
+    }),
+  );
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("Expected an oversized-row refusal");
+  const projected = projectAnalysisError(result.error);
+  expect(projected).toMatchObject({
+    code: "resource_constraint",
+    retryable: false,
+    details: {
+      reported_limits: {
+        parent_evidence_id: source.evidenceId,
+        limit_bytes: 1024 * 1024,
+      },
+    },
+  });
+  expect(projected.remediation.action).toContain("select fewer fields");
+  expect(projected.remediation.action).toContain("no runtime override");
+  expect(projected.remediation.action).toContain("caller-supplied bundle");
+  const narrow = query(source, {
+    ...selection,
+    fields: ["classification", "confidence"],
+  });
+  expect(narrow.items).toHaveLength(1);
+  expect(narrow.items[0]).not.toHaveProperty("path");
 });
 
 it.each(["summary", "routes"] as const)(

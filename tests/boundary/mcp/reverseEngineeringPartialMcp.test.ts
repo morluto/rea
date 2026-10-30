@@ -7,7 +7,12 @@ import { dirname, join } from "node:path";
 import { expect, it, vi } from "vitest";
 
 import { TestReverseEngineeringService as ReverseEngineeringService } from "../../support/reverseEngineeringService.js";
-import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisInputError,
+} from "../../../src/domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import type { FridaDeviceList } from "../../../src/domain/fridaDiscovery.js";
 import {
   createBinarySessionTargets,
   createCacheProvider,
@@ -36,6 +41,50 @@ const createTimedOutRizinService = (): ReverseEngineeringService =>
       });
     },
   });
+
+it("keeps a non-Evidence partial with a caller-selected evidence_id inline in a reverse tool error", async () => {
+  const { server, handler } = createReverseEngineeringMcpHarness();
+  const partial = {
+    devices: [],
+    cleanup_error: null,
+    evidence_id: "caller-selected",
+  };
+  const observation: FridaDeviceList = partial;
+  const reason = { request: "cancel inspection" };
+  const failure = new AnalysisCancelledError("inspect_with_objdump", {
+    cause: reason,
+    partialObservation: observation,
+  });
+  const service = new ReverseEngineeringService();
+  vi.spyOn(service, "inspectWithObjdump").mockResolvedValue(err(failure));
+  const recordEvidence = vi.fn(() => ok("added" as const));
+  registerReverseEngineeringTools(
+    server,
+    service,
+    pino({ enabled: false }),
+    createToolResultDelivery(2 * 1024 * 1024),
+    recordEvidence,
+  );
+
+  const result = (await invokeWithLiveSignal(handler("inspect_with_objdump"), {
+    path: "package.json",
+    operation: "file_headers",
+  })) as CallToolResult;
+  const projected = parseMcpToolError(result);
+  expect(projected.error).toMatchObject({
+    code: "cancelled",
+    message: projectAnalysisError(failure).message,
+    details: { operation: "inspect_with_objdump" },
+  });
+  expect(projected.error.details?.partial_observation).toEqual(partial);
+  expect(result.structuredContent).toEqual(projected);
+  expect(recordEvidence).not.toHaveBeenCalled();
+  expect(failure.cause).toBe(reason);
+  expect(failure.partialObservation).toBe(partial);
+  expect(result._meta).toEqual({
+    provenance: { untrusted_content: true, source: "analysis_target" },
+  });
+});
 
 it("records partial Evidence and references it in the original MCP error", async () => {
   const { server, handler } = createReverseEngineeringMcpHarness();

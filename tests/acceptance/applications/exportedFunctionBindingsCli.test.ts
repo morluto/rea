@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../../scripts/lib/mcp-verification-environment.mjs";
 import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -15,9 +16,9 @@ import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/j
 import { javaScriptExportShapeComparisonResultSchema } from "../../../src/domain/javascript/javascriptExportShapeComparisonSchemas.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
-  startCompiledCliSession,
-  type CompiledCliSession,
-} from "../../support/cli/compiledCliSession.js";
+  createCliCommandSession,
+  type CliCommandSession,
+} from "../../support/cli/cliCommandSession.js";
 
 const execute = promisify(execFile);
 const requireFixture = createRequire(import.meta.url);
@@ -27,11 +28,10 @@ const comparisonEnvelope = z.object({
 const applicationEnvelope = z.object({
   normalized_result: javascriptApplicationAnalysisResultSchema,
 });
-let cliSession: CompiledCliSession | undefined;
+let cliSession: CliCommandSession | undefined;
 
-// Source semantics use one real stdio MCP session. Cases that also check the
-// compiled CLI adapter share one warm process: it loads the production command
-// runtime once and serves the same JSON commands as scripts/rea.mjs.
+// Source semantics use one real stdio MCP session. CLI parity uses the shared
+// file-scoped session, including its worker rotation and cleanup policy.
 let mcpConnection:
   | {
       readonly client: Client;
@@ -1207,8 +1207,22 @@ const expectCountChange = (
 };
 
 const runCli = async (args: readonly string[]): Promise<unknown> => {
-  cliSession ??= startCompiledCliSession();
-  return cliSession.run(args);
+  cliSession ??= createCliCommandSession({
+    startTimeoutMs: 20_000,
+    requestTimeoutMs: 20_000,
+  });
+  const environment = Object.fromEntries(
+    Object.entries({ ...process.env, REA_LOG_LEVEL: "silent" }).filter(
+      (entry): entry is [string, string] => entry[1] !== undefined,
+    ),
+  );
+  const result = await cliSession.run({
+    arguments: args,
+    cwd: process.cwd(),
+    environment,
+  });
+  expect(result.exitCode, result.stderr || result.stdout).toBe(0);
+  return result.json;
 };
 
 const analyzeVersions = async (
@@ -1297,7 +1311,11 @@ const getMcpClient = async (): Promise<Client> => {
       command: process.execPath,
       args: [resolve("scripts/rea.mjs"), "mcp"],
       cwd: process.cwd(),
-      env: { PATH: process.env.PATH ?? "", REA_LOG_LEVEL: "silent" },
+      env: {
+        PATH: process.env.PATH ?? "",
+        REA_LOG_LEVEL: "silent",
+        ...INLINE_EVIDENCE_MCP_ENVIRONMENT,
+      },
       stderr: "pipe",
     });
     transport.stderr?.on("data", () => undefined);

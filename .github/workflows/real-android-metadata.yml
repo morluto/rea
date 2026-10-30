@@ -1,0 +1,55 @@
+name: Real Android metadata bridge
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - .github/workflows/real-android-metadata.yml
+      - bridge/android/**
+      - src/android/JadxRelease.ts
+      - scripts/fixtures/android/**
+      - tests/conformance/android/**
+      - tests/fixtures/android/static-initializers/**
+      - tests/fixtures/android/direct-invokes/**
+      - .nvmrc
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-metadata-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android-metadata:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+      - name: Fetch checksum-pinned engine and public APK fixture
+        run: node scripts/fixtures/android/fetch.mjs "$RUNNER_TEMP/rea-android"
+      - name: Compile and exercise the real metadata bridge
+        shell: bash
+        run: |
+          export JAVA_HOME="$JAVA_HOME_21_X64"
+          android_root="$RUNNER_TEMP/rea-android"
+          classes="$android_root/classes"
+          jar="$android_root/jadx-headless-mcp-0.7.1-all.jar"
+          mkdir -p "$classes"
+          "$JAVA_HOME/bin/javac" -J-Xmx512m -J-XX:ActiveProcessorCount=2 \
+            -classpath "$jar" -d "$classes" \
+            bridge/android/ReaJadxBridge.java \
+            tests/conformance/android/ReaJadxMetadataRegression.java
+          "$JAVA_HOME/bin/java" -Xmx512m -XX:ActiveProcessorCount=2 \
+            -classpath "$classes:$jar" ReaJadxMetadataRegression \
+            "$android_root/ApiDemos-debug.apk" \
+            "$GITHUB_WORKSPACE/tests/fixtures/android/static-initializers" \
+            "$classes" "$GITHUB_WORKSPACE/tests/fixtures/android/direct-invokes" \
+            | tee "$android_root/metadata.log"
+          grep -F 'RAW_CLASS_SELECTOR_REGRESSION_PASS nested=true metadata=true references=true' \
+            "$android_root/metadata.log"

@@ -5,6 +5,7 @@ import {
   open,
   realpath,
   rename,
+  stat,
   type FileHandle,
 } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
@@ -43,6 +44,7 @@ import {
 } from "../artifacts/AnalysisCleanupLease.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { OwnedStagedOutput } from "../filesystem/OwnedStagedOutput.js";
+import { StagedOutputError } from "../filesystem/StagedOutputError.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 
 /** Request control and its owning operation for an interruptible atomic write. */
@@ -103,6 +105,7 @@ export const readJsonObjectMembersFile = (
   scans: readonly ReadonlyMap<string, JsonObjectMemberReader>[],
   signal?: AbortSignal,
   resources?: ArtifactResourceScope,
+  operation = "read_evidence_file",
 ): Promise<
   Result<
     void,
@@ -112,14 +115,9 @@ export const readJsonObjectMembersFile = (
   readJsonFileInput(
     path,
     (selected) =>
-      readJsonObjectFile(
-        selected,
-        "read_evidence_file",
-        scans,
-        signal,
-        resources,
-      ),
+      readJsonObjectFile(selected, operation, scans, signal, resources),
     signal,
+    operation,
   );
 
 type JsonFileReadFailure =
@@ -197,6 +195,10 @@ const decodedJsonFileResult = <Value>(
           decoded.error.issues[0]?.message ?? decoded.error.message,
         ),
       path,
+      ...(decoded.error.userMessage === undefined
+        ? {}
+        : { userMessage: decoded.error.userMessage }),
+      contentIssues: decoded.error.issues,
     }),
   );
 };
@@ -219,7 +221,9 @@ const jsonFileReadFailure = (
     return new AnalysisCancelledError(operation, { cause: signal?.reason });
   return new EvidenceFileError(
     "read",
-    cause instanceof NonRegularFileReadError ? "not-file" : missingOrIo(cause),
+    cause instanceof NonRegularFileReadError
+      ? "not-file"
+      : fileAccessFailureReason(cause),
     { cause, path },
   );
 };
@@ -351,20 +355,27 @@ const writeTextPartsOwned = async (
       return err(
         new EvidenceFileError("write", "not-file", { path: requestedPath }),
       );
-    const canonicalParent = await realpath(dirname(requestedPath));
+    const selectedParent = dirname(requestedPath);
+    // Native lookup must accept the parent before realpath can collapse it.
+    // On macOS realpath(file/..) succeeds even though that traversal is ENOTDIR.
+    if (!(await stat(selectedParent)).isDirectory())
+      return err(
+        new EvidenceFileError("write", "missing", { path: requestedPath }),
+      );
+    const canonicalParent = await realpath(selectedParent);
     const destination = resolve(canonicalParent, basename(requestedPath));
     const existing = await lstat(destination).catch((cause: unknown) => {
       if (fileErrorCode(cause) === "ENOENT") return undefined;
       throw cause;
     });
     if (existing !== undefined) {
-      if (!overwrite)
-        return err(
-          new EvidenceFileError("write", "exists", { path: requestedPath }),
-        );
       if (!existing.isFile() || existing.isSymbolicLink())
         return err(
           new EvidenceFileError("write", "not-file", { path: requestedPath }),
+        );
+      if (!overwrite)
+        return err(
+          new EvidenceFileError("write", "exists", { path: requestedPath }),
         );
     }
     assertWriteActive(cancellation);
@@ -389,6 +400,7 @@ const writeTextPartsOwned = async (
             path: requestedPath,
             cleanup,
             published: { ...cause.outcome.value, path: requestedPath },
+            ...stagedOutputDiagnostics(cause.cleanupCause),
           }),
           cause.lease,
         );
@@ -401,11 +413,21 @@ const writeTextPartsOwned = async (
           }),
           cause.lease,
         );
+      const failure = classifyWriteFailure(cause.outcome.error);
       return stagedCleanupFailure(
-        new EvidenceFileError("write", missingOrIo(cause.outcome.error), {
+        new EvidenceFileError("write", failure.reason, {
           cause,
           path: requestedPath,
           cleanup,
+          ...(failure.systemCode === undefined
+            ? {}
+            : { systemCode: failure.systemCode }),
+          ...stagedOutputDiagnostics(
+            !cause.outcome.ok &&
+              cause.outcome.error instanceof StagedOutputError
+              ? cause.outcome.error
+              : cause.cleanupCause,
+          ),
         }),
         cause.lease,
       );
@@ -423,13 +445,31 @@ const writeTextPartsOwned = async (
           path: requestedPath,
         }),
       );
+    const failure = classifyWriteFailure(cause);
     return err(
-      new EvidenceFileError("write", missingOrIo(cause), {
+      new EvidenceFileError("write", failure.reason, {
         cause,
         path: requestedPath,
+        ...(failure.systemCode === undefined
+          ? {}
+          : { systemCode: failure.systemCode }),
+        ...stagedOutputDiagnostics(cause),
       }),
     );
   }
+};
+
+/** Recognize only host codes that establish a publication resource refusal. */
+const classifyWriteFailure = (
+  cause: unknown,
+): {
+  readonly reason: EvidenceFileError["reason"];
+  readonly systemCode?: "EFBIG" | "ENOSPC" | "EDQUOT";
+} => {
+  const code = fileErrorCode(cause);
+  return code === "EFBIG" || code === "ENOSPC" || code === "EDQUOT"
+    ? { reason: "storage-limit", systemCode: code }
+    : { reason: fileAccessFailureReason(cause) };
 };
 
 /** The retained staging lease clears this error only when a retry confirms release. */
@@ -444,8 +484,12 @@ const stagedCleanupFailure = <
 };
 
 /** A missing path or parent is a selection error, not a permission failure. */
-const missingOrIo = (cause: unknown): "missing" | "io" => {
+const fileAccessFailureReason = (
+  cause: unknown,
+): "missing" | "io" | "path-limit" | "symlink-traversal" => {
   const code = fileErrorCode(cause);
+  if (code === "ENAMETOOLONG") return "path-limit";
+  if (code === "ELOOP") return "symlink-traversal";
   return code === "ENOENT" || code === "ENOTDIR" ? "missing" : "io";
 };
 
@@ -456,15 +500,13 @@ const publishFile = async (
   resources: ArtifactResourceScope,
   cancellation?: TextWriteCancellation,
 ): Promise<number> => {
-  const stagingDirectory = await mkdtemp(
-    resolve(dirname(destination), ".rea-write-"),
+  const { owner, staged, file } = await acquireStagedFile(
+    dirname(destination),
+    resources,
+    cancellation,
   );
-  const owner = await OwnedStagedOutput.create(stagingDirectory);
   let outcome: Result<PublishedEvidenceFile, unknown>;
-  const staged = resolve(stagingDirectory, "content");
   try {
-    const file = await open(staged, "wx", 0o600);
-    owner.setFile(new OwnedFileHandle(file));
     let written: Result<number, unknown>;
     try {
       const bytes = await writeStagedParts(file, parts, cancellation);
@@ -512,6 +554,60 @@ const publishFile = async (
   return outcome.value.bytes;
 };
 
+/** Keep staging on the destination filesystem without imposing a shorter path ceiling. */
+const acquireStagedFile = async (
+  destinationParent: string,
+  resources: ArtifactResourceScope,
+  cancellation?: TextWriteCancellation,
+): Promise<{
+  readonly owner: OwnedStagedOutput;
+  readonly staged: string;
+  readonly file: FileHandle;
+}> => {
+  const destinationDevice = (await lstat(destinationParent)).dev;
+  let parent = destinationParent;
+  for (;;) {
+    assertWriteActive(cancellation);
+    let failure: unknown;
+    let directory: string | undefined;
+    try {
+      directory = await mkdtemp(resolve(parent, ".rea-write-"));
+    } catch (cause: unknown) {
+      if (fileErrorCode(cause) !== "ENAMETOOLONG") throw cause;
+      failure = cause;
+    }
+    if (directory !== undefined) {
+      const owner = await OwnedStagedOutput.create(directory);
+      const staged = resolve(directory, "content");
+      try {
+        const file = await open(staged, "wx", 0o600);
+        owner.setFile(new OwnedFileHandle(file));
+        return { owner, staged, file };
+      } catch (cause: unknown) {
+        const released = await resources.release({
+          kind: "staged-output",
+          resource: owner.directory,
+          output: owner,
+        });
+        if (released.kind === "failed")
+          throw new StagedOutputCleanupFailure(
+            err(cause),
+            released.cause,
+            owner,
+            released.lease,
+          );
+        if (fileErrorCode(cause) !== "ENAMETOOLONG") throw cause;
+        failure = cause;
+      }
+    }
+    const ancestor = dirname(parent);
+    if (ancestor === parent) throw failure;
+    const metadata = await lstat(ancestor);
+    if (metadata.dev !== destinationDevice) throw failure;
+    parent = ancestor;
+  }
+};
+
 class StagedOutputCleanupFailure extends Error {
   constructor(
     readonly outcome: Result<PublishedEvidenceFile, unknown>,
@@ -524,6 +620,15 @@ class StagedOutputCleanupFailure extends Error {
     });
   }
 }
+
+const stagedOutputDiagnostics = (
+  cause: unknown,
+): {
+  readonly diagnostics?: Readonly<Record<string, string | number>>;
+} => {
+  if (!(cause instanceof StagedOutputError)) return {};
+  return { diagnostics: { code: cause.code, ...cause.detail } };
+};
 
 const failureMessage = (cause: unknown): string =>
   cause instanceof Error ? cause.message || cause.name : String(cause);

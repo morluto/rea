@@ -3,12 +3,14 @@ import { expect, it } from "vitest";
 
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
+import { AnalysisTimeoutError } from "../../../src/domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../../src/domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { observed } from "../../fixtures/analysisExecution.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import {
   createBinarySessionTargets,
   createCacheProvider,
@@ -247,6 +249,78 @@ it("keeps a retired run and its lineage visible over MCP until cleanup succeeds"
     });
   } finally {
     allowed = true;
+    await client.close();
+    await server.close();
+    await session.close();
+  }
+});
+
+it("keeps provider tools available after one request reaches its deadline", async () => {
+  const [path] = await createBinarySessionTargets();
+  const provider = createCacheProvider([]);
+  let calls = 0;
+  provider.createClient = () => ({
+    execute: (operation) => {
+      calls += 1;
+      return Promise.resolve(
+        calls === 1
+          ? err(
+              new AnalysisTimeoutError(operation, 5000, {
+                userMessage:
+                  "Fixture decompilation exceeded its 5-second limit. The session remains usable.",
+              }),
+            )
+          : observed("after-timeout"),
+      );
+    },
+    close: () => Promise.resolve(ok(null)),
+  });
+  const session = createTestBinarySession(provider);
+  const server = createServer(
+    { kind: "session", session },
+    { environment: {}, logger: silentLogger },
+  );
+  const client = new Client({ name: "request-timeout", version: "1" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  const availability = async () => {
+    const reply = await client.callTool({
+      name: "binary_session",
+      arguments: {},
+    });
+    return expandToolAvailability(
+      toolContract("binary_session").outputSchema.parse(reply.structuredContent)
+        .result.tool_availability,
+    );
+  };
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    expect(
+      (await client.callTool({ name: "open_binary", arguments: { path } }))
+        .isError,
+    ).not.toBe(true);
+    const before = await availability();
+    const query = { address: "0x1000", document: "fixture" };
+    const timedOut = await client.callTool({
+      name: "address_name",
+      arguments: query,
+    });
+    expect(timedOut.isError).toBe(true);
+    expect(parseMcpToolError(timedOut)).toMatchObject({
+      error: { code: "provider_timeout", retryable: true },
+    });
+    // A request-level deadline is not a provider failure: nothing is marked
+    // unavailable, unlike the ProviderAdapterError case above.
+    expect(await availability()).toEqual(before);
+    const retried = await client.callTool({
+      name: "address_name",
+      arguments: query,
+    });
+    expect(retried.structuredContent).toMatchObject({
+      normalized_result: "after-timeout",
+    });
+  } finally {
     await client.close();
     await server.close();
     await session.close();

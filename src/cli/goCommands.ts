@@ -9,6 +9,7 @@ import {
   analysisEvidenceDeliveryOptions,
   deliverCliAnalysisEvidence,
 } from "./analysisEvidenceDelivery.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { machoSliceArchitectureSchema } from "../domain/apple/machoTargetSelection.js";
 
@@ -18,9 +19,9 @@ export const registerGoCommands = (cli: CliInstance, logger: Logger): void => {
     description:
       "Inspect embedded Go compiler, modules and build settings without target execution",
     args: z.object({
-      path: z
-        .string()
-        .describe("Local ELF, PE, thin Mach-O or universal Mach-O image"),
+      path: localPathStringSchema.describe(
+        "Local ELF, PE, thin Mach-O or universal Mach-O image",
+      ),
     }),
     options: z.object({
       ...analysisEvidenceDeliveryOptions,
@@ -38,6 +39,7 @@ export const registerGoCommands = (cli: CliInstance, logger: Logger): void => {
           CLI_COMMANDS.inspectGoBinary,
           async () =>
             deliverCliAnalysisEvidence({
+              callerInputPath: args.path,
               run: () =>
                 service.inspect(
                   {

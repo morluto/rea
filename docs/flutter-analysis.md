@@ -62,6 +62,12 @@ server; older servers keep the complete request after schema discovery.
   [Dart 2.14 layout](https://github.com/dart-lang/sdk/blob/2.14.0/runtime/vm/snapshot.h).
   Kind numbers vary across Dart releases; other values are preserved with
   partial coverage, without guessing their interpretation.
+  Unified `_kDartSnapshotData` / `_kDartSnapshotText` exports are a different
+  unsupported profile. The [upstream VM-isolate removal](https://github.com/dart-lang/sdk/commit/d36adbacafee01d9852cf8e960cf2d8654d91e7e)
+  changes both the source layout and the FullAOT kind value. REA reports the
+  observed export names and library identity with a typed unsupported-profile
+  refusal when only unified exports are available; it does not alias one header
+  into two independent sources.
   Address resolution examines every overlapping `PT_LOAD` interpretation,
   including partial overlaps. Equivalent mappings are coalesced; conflicting
   mappings leave affected symbols unresolved and qualify coverage. Dynamic
@@ -94,6 +100,8 @@ server; older servers keep the complete request after schema discovery.
   operation, and when they **disagree** the distinct values are
   kept in `snapshot_hash_candidates` with `snapshot_hash: null` and
   `coverage: "partial"` rather than silently picking one.
+  Identification can retain a single byte-scanned hash from a unified payload;
+  its partial status does not establish truncation or support for that profile.
 - **`elf_header_valid`** checks the supported little-endian ELF32/ELF64
   header, table entry widths, and full table extents against the library's
   actual byte length. Truncated, malformed, or unsupported headers report
@@ -139,8 +147,9 @@ server; older servers keep the complete request after schema discovery.
 - **Bounded reads.** APK snapshots are bounded at 2 GiB, including while
   copying. Identification permits 768 MiB of cumulative library extraction;
   declared sizes are checked before extraction. Library reads are bounded at 256 MiB each and ZIP
-  metadata at 8 MiB; the AOT image buffer is allocated at exactly the
-  declared size before reading. Exceeded budgets report
+  metadata at 8 MiB. Before reading, the AOT image buffer reserves the
+  admitted declared size plus one byte; the reported byte count is the number
+  actually read. Exceeded budgets report
   `resource_constraint`.
 - **Engine notes.** Engine libraries are spooled into the owned root. ELF
   headers, note tables and note payloads share an 8 MiB metadata budget;

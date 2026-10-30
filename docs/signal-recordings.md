@@ -55,7 +55,9 @@ a selected `input_format` option, REA returns `invalid_request`, even on exit ze
 Fallback output and the diagnostic remain in `captured_output`; unrelated
 option warnings stay visible without rejecting the request. Matching keeps
 the complete diagnostic caption, including an LF inside a selected key;
-embedded warning substrings do not establish a refusal. See the
+embedded warning substrings do not establish a refusal. A completed nonzero
+`--version` probe is a configuration refusal with its captured output and the
+selected sigrok/prlimit configuration guidance. See the
 [upstream manual](https://sigrok.org/wiki/Sigrok-cli) for formats, decoder
 stacking and annotation selectors. No arbitrary command flags are accepted.
 

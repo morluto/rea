@@ -73,5 +73,10 @@
     "file": "licenses/protobuf-es-v2.16.0-LICENSE.txt",
     "source": "https://raw.githubusercontent.com/bufbuild/protobuf-es/b3b232f7f466eda27c66e8f63c82f930578b6cc6/LICENSE",
     "sha256": "c04b4216f1cd4c5a4f7fb2f2a1b0ae70d847e9e0cac7c9dee9bf8cc03177c449"
+  },
+  {
+    "file": "licenses/pefile-2024.8.26-LICENSE.txt",
+    "source": "https://raw.githubusercontent.com/erocarrera/pefile/4b3b1e2e568a88d4f1897d694d684f23d9e270c4/LICENSE",
+    "sha256": "b44409c067c6da52bfb54bb6624fb11a7b52157c3a13ae1400232f8196e86ad3"
   }
 ]

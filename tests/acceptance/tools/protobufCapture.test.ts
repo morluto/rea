@@ -156,6 +156,15 @@ captureTest(
     });
     const missingError = parseMcpToolError(missing).error;
     expect(missingError.code).toBe("invalid_request");
+    expect(missingError.details).toMatchObject({
+      issues: [
+        {
+          path: ["protobuf", "schema", "message_type"],
+          reason: "invalid_value",
+          message: expect.stringContaining("capture.Missing"),
+        },
+      ],
+    });
     const retainedSource = retainedCaptureDetailsSchema.parse(
       missingError.details,
     ).partial_observation;

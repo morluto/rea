@@ -1,4 +1,4 @@
-import { copyFile, mkdir, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
@@ -63,6 +63,7 @@ globalThis.__nativeShellCalls = [];
 const shell = {
   openExternal: () => Promise.resolve(),
   openPath: () => Promise.resolve(),
+  trashItem: (path) => require("node:fs/promises").unlink(path),
   showItemInFolder: (path) => { globalThis.__nativeShellCalls.push(["showItemInFolder", path]); },
   writeShortcutLink: (path) => { globalThis.__nativeShellCalls.push(["writeShortcutLink", path]); return true; },
 };
@@ -298,6 +299,42 @@ process.stdout.write(JSON.stringify({
   expect(JSON.stringify(result.snapshot)).not.toContain("secret-folder");
   expect(JSON.stringify(result.snapshot)).not.toContain("payload.exe");
   electronActiveTimelineEventSchema.array().parse(result.snapshot.events);
+});
+
+it("blocks trashItem asynchronously, records the attempt, and preserves the selected file", async () => {
+  const root = await createTestTempDirectory("rea-electron-hook-trash-");
+  temporary.push(root);
+  await writeElectronFixture(root);
+  const selected = join(root, "retained.txt");
+  await writeFile(selected, "must remain");
+  const script = join(root, "trash.cjs");
+  await writeFile(
+    script,
+    `const { shell } = require("electron");
+const result = shell.trashItem(${JSON.stringify(selected)});
+const promise = result instanceof Promise;
+result.then(
+  () => { throw new Error("trashItem unexpectedly succeeded"); },
+  error => process.stdout.write(JSON.stringify({ promise, message: error.message, snapshot: globalThis.__reaElectronActiveSnapshot() }) + "\\n"),
+);
+`,
+  );
+  const execution = await runNode(script, root);
+  expect(execution.code, execution.stderr).toBe(0);
+  const result = JSON.parse(execution.stdout.trim());
+  expect(result.promise).toBe(true);
+  expect(result.message).toBe("External shell effects are blocked");
+  expect(await readFile(selected, "utf8")).toBe("must remain");
+  expect(result.snapshot.events).toContainEqual(
+    expect.objectContaining({
+      kind: "shell-attempt",
+      event: "trashItem",
+      phase: "blocked",
+      argument_shapes: ["string"],
+      error: true,
+    }),
+  );
+  expect(JSON.stringify(result.snapshot)).not.toContain(selected);
 });
 
 it("classifies a dropped browser preload as preload configuration at capture", async () => {
@@ -969,7 +1006,7 @@ it("matches native once dispatch and retains only established invocations", asyn
   await copyFile(
     fileURLToPath(
       new URL(
-        "../../../experiments/analysis-efficiency/electron-once-runtime.mjs",
+        "../../../tests/support/analysis-efficiency/electron-once-runtime.mjs",
         import.meta.url,
       ),
     ),

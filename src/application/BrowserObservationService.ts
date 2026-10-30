@@ -4,6 +4,7 @@ import type {
   ListBrowserTargetsInput,
 } from "../domain/browserObservation.js";
 import {
+  webBundleAcquisitionPartialObservationSchema,
   webBundleAnalysisSchema,
   type AnalyzeWebBundleInput,
 } from "../domain/webBundleAnalysis.js";
@@ -287,26 +288,71 @@ const retainBrowserObservation = (
   provider: BrowserObservationPort,
   errorOperation: "inspect_web_page" | "analyze_web_bundle",
 ): Result<Evidence, AnalysisError> => {
-  const partial = error.partialObservation;
+  const seen = new Set<AnalysisError>();
+  const promoted = new Map<object, Evidence>();
+  let current: AnalysisError | undefined = error;
+  while (current !== undefined && !seen.has(current)) {
+    seen.add(current);
+    const partial = current.partialObservation;
+    if (partial !== undefined) {
+      const evidence =
+        promoted.get(partial) ??
+        promoteBrowserObservation(partial, input, provider, errorOperation);
+      if (evidence !== undefined) {
+        promoted.set(partial, evidence);
+        current.partialObservation = evidence;
+      }
+    }
+    current = current.cleanupPrimary;
+  }
+  return err(
+    keepIncompleteObservation(
+      error,
+      errorOperation,
+      NON_JSON_BROWSER_OBSERVATION,
+    ),
+  );
+};
+
+/** Each cleanup owner can become the selected error after cleanup succeeds. */
+const promoteBrowserObservation = (
+  partial: NonNullable<AnalysisError["partialObservation"]>,
+  input: InspectWebPageInput | AnalyzeWebBundleInput,
+  provider: BrowserObservationPort,
+  errorOperation: "inspect_web_page" | "analyze_web_bundle",
+): Evidence | undefined => {
   if (
     errorOperation === "analyze_web_bundle" &&
-    partial !== undefined &&
+    "kind" in partial &&
+    partial.kind === "web-bundle-acquisition"
+  ) {
+    const acquisition =
+      webBundleAcquisitionPartialObservationSchema.safeParse(partial);
+    if (acquisition.success) {
+      return createBrowserEvidence(
+        "analyze_web_bundle",
+        input,
+        acquisition.data,
+        provider.identity(),
+      );
+    }
+  }
+  if (
+    errorOperation === "analyze_web_bundle" &&
     !("evidence_id" in partial) &&
     "observations" in partial &&
     "capture" in partial
   ) {
     const bundle = webBundleAnalysisSchema.safeParse(partial);
     if (bundle.success) {
-      error.partialObservation = createBrowserEvidence(
+      return createBrowserEvidence(
         "analyze_web_bundle",
         input,
         bundle.data,
         provider.identity(),
       );
-      return err(error);
     }
   } else if (
-    partial !== undefined &&
     !("evidence_id" in partial) &&
     "target" in partial &&
     "network" in partial &&
@@ -318,20 +364,13 @@ const retainBrowserObservation = (
         "fetch_source_maps" in input
           ? (({ fetch_source_maps: _fetchSourceMaps, ...page }) => page)(input)
           : input;
-      error.partialObservation = createBrowserEvidence(
+      return createBrowserEvidence(
         "inspect_web_page",
         pageInput,
         inspection.data,
         provider.identity(),
       );
-      return err(error);
     }
   }
-  return err(
-    keepIncompleteObservation(
-      error,
-      errorOperation,
-      NON_JSON_BROWSER_OBSERVATION,
-    ),
-  );
+  return undefined;
 };

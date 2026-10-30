@@ -9,7 +9,10 @@ import {
   AnalysisResourceConstraintError,
 } from "./analysisErrorCore.js";
 import { ArtifactOperationError } from "./artifactOperationError.js";
-import { BinaryTargetError } from "./configurationErrors.js";
+import {
+  BinaryTargetError,
+  ConfigurationError,
+} from "./configurationErrors.js";
 import { BrowserObservationError } from "./browserObservationError.js";
 import { EvidenceFileError, EvidenceIntegrityError } from "./evidenceErrors.js";
 import {
@@ -42,6 +45,47 @@ describe("agent recovery metadata", () => {
     });
     expect(analysisErrorProjectionSchema.parse(projected)).toEqual(projected);
   });
+
+  it("distinguishes deterministic duplicate identities from stale update revisions", () => {
+    const duplicate = projectAnalysisError(
+      new UnknownRegistryError("already-exists"),
+    );
+    expect(duplicate).toMatchObject({
+      code: "invalid_request",
+      category: "invalid_input",
+      retryable: false,
+      details: { reason: "already-exists" },
+      remediation: {
+        action: expect.stringContaining("do not repeat record_unknown"),
+      },
+    });
+    expect(analysisErrorProjectionSchema.parse(duplicate)).toEqual(duplicate);
+    expect(
+      projectAnalysisError(new UnknownRegistryError("revision-conflict")),
+    ).toMatchObject({ code: "revision_conflict", retryable: true });
+  });
+
+  it.each(["history_gap", "revision_chain"] as const)(
+    "preserves %s as an integrity failure with producer facts",
+    (kind) => {
+      const constraint = { kind, unknown_id: `unk_${"0".repeat(64)}` };
+      const projected = projectAnalysisError(
+        new UnknownRegistryError(constraint, {
+          cause: new Error("Unrelated private diagnostic"),
+        }),
+      );
+      expect(projected).toMatchObject({
+        code: "evidence_integrity_mismatch",
+        retryable: false,
+        details: { reason: "integrity", constraint },
+      });
+      expect(projected.message).toContain(constraint.unknown_id);
+      expect(JSON.stringify(projected)).not.toContain(
+        "Unrelated private diagnostic",
+      );
+      expect(analysisErrorProjectionSchema.parse(projected)).toEqual(projected);
+    },
+  );
 
   it("keeps retryability for transient conflicts and provider timeouts", () => {
     expect(
@@ -999,6 +1043,7 @@ describe("analysis error projection: evidence files", () => {
     ["read", "not-file", "invalid_request", "invalid_input"],
     ["write", "missing", "invalid_request", "invalid_input"],
     ["write", "exists", "invalid_request", "invalid_input"],
+    ["write", "path-limit", "resource_constraint", "resource_constraint"],
     [
       "read",
       "invalid-json",
@@ -1091,3 +1136,83 @@ it.each([false, true])(
     );
   },
 );
+
+it("retains Hopper startup diagnostics beside generic and secondary context", () => {
+  const diagnostic = {
+    component: "hopper_private_display",
+    operation: "launch",
+    reason: "fixture_denial",
+    socket_directory: "/tmp/.X11-unix",
+    socket_directory_mode: null,
+    mount_read_only: null,
+    effective_socket_directory_mode: null,
+    effective_mount_read_only: null,
+    wsl: false,
+    strategy: "unavailable",
+    fallback_reason: null,
+    xvfb_stderr_bytes: 0,
+    status: "error",
+    failure_code: "private_display_unavailable",
+  } as const;
+  expect(
+    projectAnalysisError(new HopperProcessError(null, { diagnostic })).details
+      ?.diagnostics,
+  ).toEqual(diagnostic);
+  const generic = { caller_context: "retained" };
+  expect(
+    projectAnalysisError(
+      new HopperProcessError(null, { diagnostic, diagnostics: generic }),
+    ),
+  ).toMatchObject({
+    code: "provider_unavailable",
+    details: { diagnostics: generic, provider_diagnostics: diagnostic },
+  });
+  const secondary = new HopperProcessError(null, {
+    diagnostic,
+  }).retainSecondaryFailure(new HopperProcessError(null), {
+    retirement_error: "retained",
+  });
+  expect(projectAnalysisError(secondary).details).toMatchObject({
+    provider_diagnostics: diagnostic,
+    diagnostics: { retirement_error: "retained" },
+  });
+});
+
+it("does not offer entry-policy retries for integrity refusals without a declared-versus-observed entry contradiction", () => {
+  const native = projectAnalysisError(
+    new ArtifactOperationError(
+      "inspect_artifact",
+      "integrity",
+      undefined,
+      "hdiutil verify failed: invalid checksum",
+    ),
+  );
+  expect(native.category).toBe("integrity_mismatch");
+  expect(native.details).toMatchObject({
+    reason: "integrity",
+    detail: "hdiutil verify failed: invalid checksum",
+  });
+  expect(native.message).not.toContain("record-and-continue");
+  expect(native.remediation.action).not.toContain("record-and-continue");
+});
+
+it("preserves ordinary configuration recovery and projects a producer-owned session repair", () => {
+  const settings = [{ setting: "REA_EXAMPLE", constraint: "must be positive" }];
+  const original = projectAnalysisError(
+    new ConfigurationError("Invalid setting", { settings }),
+  );
+  const repairing = projectAnalysisError(
+    new ConfigurationError("Invalid setting", {
+      settings,
+      remediationAction: "Repair the running session, then retry.",
+    }),
+  );
+  expect(original.remediation.action).toBe(
+    "Correct REA_EXAMPLE in the environment that starts REA (your shell or the MCP client's registration), then rerun.",
+  );
+  expect(repairing).toEqual({
+    ...original,
+    remediation: { action: "Repair the running session, then retry." },
+  });
+  expect(repairing.code).toBe("configuration_invalid");
+});

@@ -1,10 +1,8 @@
 import type { Evidence } from "../evidence.js";
-import type { FunctionDossier } from "../hopperValues.js";
+import type { FunctionDossier } from "../native/functionDossier.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
-import {
-  hasStableFunctionName,
-  normalizeCfg,
-} from "../functionComparisonNormalization.js";
+import { normalizeCfg } from "../functionComparisonNormalization.js";
+import { hasStableNativeSymbol } from "./nativeSymbol.js";
 import { assessFunctionCallCoverage } from "../functionCallCoverage.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 
@@ -29,7 +27,9 @@ export const functionStructuralCandidate = (
   if (
     cfg === null ||
     cfg.length === 0 ||
-    dossier.callees.some((callee) => !hasStableFunctionName(callee.name))
+    dossier.callees.some(
+      (callee) => !hasStableNativeSymbol(callee.name, callee.symbol),
+    )
   )
     return null;
   const calls = dossier.callees

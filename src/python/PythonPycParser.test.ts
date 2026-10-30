@@ -139,6 +139,54 @@ it("fails unknown magics and truncated marshal without partial success", () => {
   );
 });
 
+it.each([
+  { magic: 3571, layout: "py311", version: "3.13" },
+  { magic: 3401, layout: "py37", version: "3.8" },
+] as const)(
+  "decodes supported standalone magic $magic with its own marshal layout",
+  ({ magic, layout, version }) => {
+    const result = parse(
+      Buffer.concat([pythonPycHeader(magic), marshalCode(layout)]),
+    );
+    expect(result.header).toMatchObject({
+      magic,
+      python_version: version,
+      code_layout: layout,
+    });
+    expect(root(result).name).toBe("<module>");
+  },
+);
+
+it("keeps a known newer CPython identity outside standalone decoder coverage", () => {
+  expect(() => parse(pythonPycHeader(3627))).toThrow(
+    expect.objectContaining({
+      kind: "unsupported",
+      message: expect.stringContaining(
+        "outside the pinned CPython 3.7–3.13 table",
+      ),
+    }),
+  );
+});
+
+it("reports a short unknown header before unsupported magic, and bad CR LF before either", () => {
+  const unknown = pythonPycHeader(1).subarray(0, 4);
+  expect(() => parse(unknown)).toThrow(
+    expect.objectContaining({
+      kind: "malformed",
+      message:
+        "Selected file is shorter than a 16-byte CPython 3.7+ pyc header.",
+    }),
+  );
+  const badTrailer = Buffer.from(unknown);
+  badTrailer[3] = 0;
+  expect(() => parse(badTrailer)).toThrow(
+    expect.objectContaining({
+      kind: "malformed",
+      message: "Pyc magic is not a little-endian integer followed by CR LF.",
+    }),
+  );
+});
+
 it("classifies the 12-byte 3.7 alpha header as unsupported", () => {
   for (const magic of [3390, 3391]) {
     const header = Buffer.alloc(12);
@@ -146,6 +194,12 @@ it("classifies the 12-byte 3.7 alpha header as unsupported", () => {
     header[2] = 0x0d;
     header[3] = 0x0a;
     expect(() => parse(Buffer.concat([header, marshalCode("py37")]))).toThrow(
+      expect.objectContaining({
+        kind: "unsupported",
+        message: expect.stringContaining("unsupported 12-byte CPython header"),
+      }),
+    );
+    expect(() => parse(header.subarray(0, 4))).toThrow(
       expect.objectContaining({
         kind: "unsupported",
         message: expect.stringContaining("unsupported 12-byte CPython header"),
@@ -335,21 +389,56 @@ it("decodes marshal strings with CPython surrogatepass rules", () => {
   ).toThrow(PythonPycFormatFailure);
 });
 
-it("keeps non-finite float and complex constants JSON-safe", () => {
+it.each([0x73, 0x74, 0x75, 0x61, 0x41, 0x28, 0x5b, 0x3c, 0x3e])(
+  "classifies a negative signed marshal count (tag %i) before applying limits",
+  (tag) => {
+    expect(() =>
+      parse(withConsts([Buffer.concat([Buffer.from([tag]), i32(-1)])])),
+    ).toThrow(PythonPycFormatFailure);
+  },
+);
+
+it("keeps signed zero and non-finite float and complex constants JSON-safe", () => {
   const report = parse(
     withConsts([
       Buffer.concat([Buffer.from([0x67]), f64(Infinity)]),
       Buffer.concat([Buffer.from([0x79]), f64(0), f64(-Infinity)]),
       Buffer.concat([Buffer.from([0x67]), f64(Number.NaN)]),
+      Buffer.concat([Buffer.from([0x67]), f64(-0)]),
+      Buffer.concat([Buffer.from([0x67]), f64(0)]),
+      Buffer.concat([Buffer.from([0x79]), f64(-0), f64(-0)]),
     ]),
   );
   expect(root(report).consts).toEqual([
     { kind: "float", value: "inf" },
     { kind: "complex", real: 0, imag: "-inf" },
     { kind: "float", value: "nan" },
+    { kind: "float", value: "-0.0" },
+    { kind: "float", value: 0 },
+    { kind: "complex", real: "-0.0", imag: "-0.0" },
   ]);
   expect(pythonPycSchema.safeParse(report).success).toBe(true);
   expect(JSON.parse(JSON.stringify(report))).toEqual(report);
+});
+
+it("truncates string previews without introducing a lone surrogate", () => {
+  const prefix = "x".repeat(79);
+  const report = parse(
+    withConsts([
+      marshalUnicode(Buffer.from(`${prefix}😀tail`)),
+      marshalUnicode(
+        Buffer.concat([
+          Buffer.from(prefix),
+          Buffer.from("eda080", "hex"),
+          Buffer.from("tail"),
+        ]),
+      ),
+    ]),
+  );
+  expect(root(report).consts).toEqual([
+    { kind: "str", bytes: 87, truncated: true, value: prefix },
+    { kind: "str", bytes: 86, truncated: true, value: `${prefix}\ud800` },
+  ]);
 });
 
 it("accepts an empty co_filename", () => {
@@ -1590,3 +1679,21 @@ it("leaves 3.11 alpha magics with other code layouts unsupported", () => {
     parse(pythonPycFixture("py311", { magic: 3495 })).header,
   ).toMatchObject({ python_version: "3.11", code_layout: "py311" });
 });
+
+it.each([false, true])(
+  "preserves a source-encoded lone surrogate at the preview boundary (truncated=%s)",
+  (truncated) => {
+    const text = Buffer.concat([
+      Buffer.from("a".repeat(79)),
+      Buffer.from([0xed, 0xa0, 0x80]),
+      ...(truncated ? [Buffer.from("z")] : []),
+    ]);
+    const report = parse(withConsts([marshalUnicode(text)]));
+    expect(root(report).consts[0]).toEqual({
+      kind: "str",
+      value: "a".repeat(79) + "\ud800",
+      bytes: truncated ? 83 : 82,
+      truncated,
+    });
+  },
+);

@@ -111,7 +111,7 @@ it.each(["before", "after"] as const)(
         format: "json",
       }),
     ).toMatchObject({ status: "failed", reason: "conflict" });
-    expect(await readFile(path)).toEqual(changed);
+    expect(Buffer.compare(await readFile(path), changed)).toBe(0);
     expect(await readFile(`${path}.rea.backup`, "utf8")).toBe(original);
     expect(await readdir(root)).toEqual([
       "config.json",
@@ -442,7 +442,15 @@ it("releases a failed setup transaction so a queued request can configure the fi
   releaseWriter();
   const [failed, queued] = await Promise.all([first, second]);
 
-  expect(failed).toEqual({ status: "failed", reason: "write" });
+  expect(failed).toMatchObject({
+    status: "failed",
+    reason: "write",
+    failure: {
+      operation: "publish",
+      path,
+      detail: "The first writer could not stage its configuration",
+    },
+  });
   expect(queued.status).toBe("configured");
   expect(JSON.parse(await readFile(path, "utf8")).mcpServers.rea.env).toEqual({
     SECOND: "2",

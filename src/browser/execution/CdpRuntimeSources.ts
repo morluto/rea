@@ -4,17 +4,19 @@ import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { sanitizeBrowserUrl } from "../../domain/browserObservation.js";
 import { jsonObjectSchema } from "../../domain/jsonValue.js";
-import {
-  WEB_RUNTIME_LIMITS,
-  type WebRuntimeSource,
-  type webRuntimeLocationSchema,
+import type {
+  WebRuntimeSource,
+  webRuntimeLocationSchema,
 } from "../../domain/webRuntime.js";
 import type { CdpEvent } from "../CdpConnection.js";
 import type { CdpRuntimeSession } from "./CdpRuntimeSession.js";
 import {
   runtimeContextSchema,
   runtimeScriptParsedSchema,
-} from "./CdpRuntimeProtocol.js";
+  cdpContextFrameClaim,
+  selectCdpScriptFrame,
+} from "../CdpScriptContextFacts.js";
+import { assertRuntimeRetention } from "./CdpRuntimeRetention.js";
 
 const scriptIdentitySchema = runtimeScriptParsedSchema.pick({ scriptId: true });
 const contextIdentitySchema = z.object({
@@ -49,10 +51,11 @@ export class CdpRuntimeSources {
     try {
       if (event.method === "Runtime.executionContextCreated") {
         this.#retainedBytes += Buffer.byteLength(JSON.stringify(event.params));
-        if (this.#retainedBytes > WEB_RUNTIME_LIMITS.retainedEventBytes)
-          throw new Error(
-            "Context/script metadata exceeds the complete 8 MiB event budget.",
-          );
+        assertRuntimeRetention(
+          this.session.operation,
+          "metadata",
+          this.#retainedBytes,
+        );
         const context = runtimeContextSchema.parse(event.params).context;
         const previous = this.#contexts.get(context.id);
         if (
@@ -66,10 +69,11 @@ export class CdpRuntimeSources {
         if (retainNewMetadata) this.#contexts.set(context.id, context);
       } else if (event.method === "Debugger.scriptParsed") {
         this.#retainedBytes += Buffer.byteLength(JSON.stringify(event.params));
-        if (this.#retainedBytes > WEB_RUNTIME_LIMITS.retainedEventBytes)
-          throw new Error(
-            "Script metadata exceeds the complete 8 MiB event budget.",
-          );
+        assertRuntimeRetention(
+          this.session.operation,
+          "metadata",
+          this.#retainedBytes,
+        );
         const script = runtimeScriptParsedSchema.parse(event.params);
         const previous = this.scripts.get(script.scriptId);
         if (
@@ -83,10 +87,13 @@ export class CdpRuntimeSources {
         if (retainNewMetadata) this.scripts.set(script.scriptId, script);
       }
     } catch (cause: unknown) {
-      this.#failure = new AnalysisOutputError(
-        this.session.operation,
-        cause instanceof Error ? cause.message : String(cause),
-      );
+      this.#failure =
+        cause instanceof AnalysisError
+          ? cause
+          : new AnalysisOutputError(
+              this.session.operation,
+              cause instanceof Error ? cause.message : String(cause),
+            );
     }
   }
 
@@ -131,13 +138,14 @@ export class CdpRuntimeSources {
       )
     )
       return false;
-    const reported = scriptContext?.frameId;
-    const contextFrame = context?.frameId;
+    const frame = selectCdpScriptFrame(
+      cdpContextFrameClaim(scriptContext),
+      cdpContextFrameClaim(context),
+    );
     return (
-      (reported === undefined ||
-        contextFrame === undefined ||
-        reported === contextFrame) &&
-      (reported ?? contextFrame) === this.session.target.frame_id
+      !frame.invalid &&
+      !frame.conflicting &&
+      frame.frameId === this.session.target.frame_id
     );
   }
 
@@ -264,11 +272,11 @@ export class CdpRuntimeSources {
     const text = source.data.scriptSource;
     const bytes = Buffer.byteLength(text);
     this.#sourceBytes += bytes;
-    if (this.#sourceBytes > WEB_RUNTIME_LIMITS.sourceBytes)
-      throw new AnalysisOutputError(
-        this.session.operation,
-        "Complete runtime source evidence exceeds its 32 MiB budget; no partial evidence is returned.",
-      );
+    assertRuntimeRetention(
+      this.session.operation,
+      "sources",
+      this.#sourceBytes,
+    );
     return {
       state: "captured",
       text,

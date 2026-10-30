@@ -16,8 +16,10 @@ import { evidenceSchema, type Evidence } from "./evidence.js";
 import { hasComparisonEvidenceIdentity } from "./comparisonEvidenceIdentity.js";
 import { functionComparisonDimensionNameSchema } from "./functionComparisonSchemas.js";
 import type { JsonValue } from "./jsonValue.js";
-import { comparisonStatusSchema } from "./process/processComparison.js";
-import { PROCESS_COMPARISON_DIMENSIONS } from "./process/processComparison.js";
+import {
+  comparisonStatusSchema,
+  PROCESS_COMPARISON_DIMENSIONS,
+} from "./process/processComparison.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
@@ -258,7 +260,7 @@ const correlate = (
   );
   const process = runtimeEvidence.result;
   const runtimeStatus = process[mapping.runtime.dimension];
-  const pattern = observedPattern(selectedStatic.status, runtimeStatus);
+  const pattern = observedPattern(selectedStatic, runtimeStatus);
   const classification =
     pattern === "unknown" || pattern === "truncated"
       ? "unresolved_branch"
@@ -413,12 +415,18 @@ const assertComparisonIdentity = (evidence: Evidence): void => {
 };
 
 const observedPattern = (
-  staticStatus: ComparisonStatus,
+  staticFinding: Pick<CorrelationItem["static"], "status" | "conclusion_kind">,
   runtimeStatus: ComparisonStatus,
 ): z.infer<typeof observedPatternSchema> => {
+  const staticStatus = staticFinding.status;
   if (staticStatus === "truncated" || runtimeStatus === "truncated")
     return "truncated";
-  if (staticStatus === "unknown" || runtimeStatus === "unknown")
+  if (
+    staticStatus === "unknown" ||
+    runtimeStatus === "unknown" ||
+    staticFinding.conclusion_kind !== "derived_relationship" ||
+    runtimeStatus === "contradiction"
+  )
     return "unknown";
   const staticChanged = staticStatus !== "unchanged";
   const runtimeChanged = runtimeStatus !== "unchanged";

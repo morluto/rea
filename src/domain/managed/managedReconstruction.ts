@@ -330,12 +330,3 @@ export const executeManagedReconstructionImport = (
     )}`,
   });
 };
-
-/** Authenticate decompiler reconstruction against static IL Evidence. */
-export const importManagedReconstruction = (
-  input: ManagedReconstructionImportInput,
-): ManagedReconstructionImportResult => {
-  const resolved = resolveManagedReconstructionImport(input);
-  if (!resolved.ok) throw resolved.error;
-  return executeManagedReconstructionImport(resolved.value);
-};

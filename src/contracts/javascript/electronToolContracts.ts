@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { absoluteLocalPathStringSchema } from "../../domain/localPath.js";
 import type { ToolContract } from "../toolContractTypes.js";
 import { toolContractMetadata } from "../toolEffects.js";
 import { electronFuseOutputSchemas } from "../toolOutputSchemaGroups.js";
@@ -35,13 +36,19 @@ import { JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE } from "./javascriptRuntimeRe
 
 const listOutputSchema = evidenceResultOf(electronTargetListSchema);
 const inspectionOutputSchema = evidenceResultOf(electronPageInspectionSchema);
+const javascriptApplicationMcpInputSchema =
+  analyzeJavaScriptApplicationInputSchema.extend({
+    input_path: absoluteLocalPathStringSchema.describe(
+      "Absolute path to the JavaScript application on the machine running REA.",
+    ),
+  });
 /** Caller-selected delivery of a completed JavaScript application analysis. */
 export const analyzeJavaScriptApplicationRequestSchema = z
   .discriminatedUnion("detail", [
-    analyzeJavaScriptApplicationInputSchema.extend(
+    javascriptApplicationMcpInputSchema.extend(
       javaScriptRoutesCompleteDeliveryShape,
     ),
-    analyzeJavaScriptApplicationInputSchema.extend(
+    javascriptApplicationMcpInputSchema.extend(
       javaScriptRoutesSummaryDeliveryShape,
     ),
   ])
@@ -167,6 +174,7 @@ export const ELECTRON_TOOL_CONTRACTS = [
     name: "inspect_electron_fuses",
     ...toolContractMetadata("inspect_electron_fuses"),
     kind: "artifact-provider",
+    requiresActiveTarget: true,
     description:
       "Inspect packaged Electron fuse bytes in one local macOS app bundle, Electron Framework binary, Windows PE executable, or Linux ELF executable. Returns the artifact digest, per-slice wire version, fuse index, version-1 name, state, and raw byte, plus derived implications for Inspector flags, ELECTRON_RUN_AS_NODE, embedded ASAR integrity, and app.asar-only loading. A missing sentinel is unknown fuse state. Reads artifact bytes only and does not modify the selected file or open a runtime target.",
     inputSchema: inspectElectronFusesInputSchema,

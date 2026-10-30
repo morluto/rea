@@ -1,5 +1,17 @@
+import {
+  inspectDevicetreeInputSchema,
+  devicetreeSchema,
+} from "../../domain/firmware/devicetree.js";
+import {
+  devicetreeSummaryViewResultSchema,
+  binaryLayoutSummaryViewResultSchema,
+  nativeExportsSummaryViewResultSchema,
+} from "../../domain/analysisView/analysisView.js";
+import {
+  inspectPeLoadConfigInputSchema,
+  peLoadConfigSchema,
+} from "../../domain/native/peLoadConfig.js";
 import { inspectByteEntropyInputSchema } from "../../domain/native/byteEntropy.js";
-import { publicInputStrictObject } from "../../domain/publicInput.js";
 import { byteEntropyOutputSchema } from "../toolOutputSchemaGroups.js";
 import {
   inspectRecordedCrashInputSchema,
@@ -9,10 +21,6 @@ import {
   inspectBinaryLayoutInputSchema,
   binaryLayoutSchema,
 } from "../../domain/native/binaryLayout.js";
-import {
-  binaryLayoutSummaryViewResultSchema,
-  nativeExportsSummaryViewResultSchema,
-} from "../../domain/analysisView/analysisView.js";
 import {
   analysisDetailOutputSchemaOf,
   analysisDetailSchema,
@@ -33,9 +41,21 @@ import {
   peCertificatesSchema,
 } from "../../domain/native/peCertificates.js";
 import {
+  inspectPeImportsInputSchema,
+  peImportsSchema,
+} from "../../domain/native/peImports.js";
+import {
   inspectElfNotesInputSchema,
   elfNotesSchema,
 } from "../../domain/native/elfNotes.js";
+import {
+  inspectAppleIpsInputSchema,
+  appleIpsSchema,
+} from "../../domain/native/appleIps.js";
+import {
+  inspectKernelModuleInputSchema,
+  kernelModuleSchema,
+} from "../../domain/native/kernelModule.js";
 
 /** Caller-selected delivery of completed binary layout Evidence. */
 export const inspectBinaryLayoutRequestSchema =
@@ -44,16 +64,48 @@ export const inspectBinaryLayoutRequestSchema =
 export const inspectNativeExportsRequestSchema =
   inspectNativeExportsInputSchema.extend({ detail: analysisDetailSchema });
 
-/**
- * Public `inspect_byte_entropy` input. The shared constructor runs before
- * `detail` is added so the advertised input stays closed.
- */
-export const inspectByteEntropyRequestSchema = publicInputStrictObject(
-  inspectByteEntropyInputSchema.shape,
-).extend({ detail: analysisDetailSchema });
+/** Public byte-entropy input retains the producer schema's closed-object policy. */
+export const inspectByteEntropyRequestSchema =
+  inspectByteEntropyInputSchema.extend({ detail: analysisDetailSchema });
 
 /** Offline binary diagnostics are independent of macOS process/UI providers. */
 export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
+  {
+    name: "inspect_devicetree",
+    ...toolContractMetadata("inspect_devicetree"),
+    kind: "native-provider",
+    description:
+      "Inspect an explicit local flattened devicetree blob (FDT v16/v17) without execution or external tools. Returns validated header, memory reservations, full node/property tree with bounded raw hex, derived standard strings, cells and parent-sized reg tuples, aliases and selected single-cell phandle references with unresolved targets. Binding-specific arrays, overlays and runtime hardware remain unknown. Malformed structure or exhausted named budgets fails without partial success. Complete detail returns all Evidence inline; summary retains it for inspect_analysis_view kind devicetree, collections nodes, properties (requires exact path), reservations and references, with offset/limit pagination.",
+    inputSchema: inspectDevicetreeInputSchema.extend({
+      detail: analysisDetailSchema,
+    }),
+    outputSchema: analysisDetailOutputSchemaOf(
+      devicetreeSchema,
+      devicetreeSummaryViewResultSchema,
+    ),
+    examples: [
+      {
+        title: "Inspect a firmware hardware description",
+        input: { path: "/artifacts/board.dtb", detail: "summary" },
+      },
+    ],
+  },
+  {
+    name: "inspect_pe_load_config",
+    ...toolContractMetadata("inspect_pe_load_config"),
+    kind: "native-provider",
+    description:
+      "Inspect PE32/PE32+ TLS callbacks and sized load configuration without executing the image. Returns callback VA/RVA/file offsets and sections, security cookie, SafeSEH (PE32), CFG flags and table pointers/counts, EH continuation and XFG fields. Flag-derived mitigation claims are labeled inferred. Absent directories are null; malformed structures and exhausted budgets fail without partial success. Reads a stable local regular file without a disassembler.",
+    inputSchema: inspectPeLoadConfigInputSchema,
+    outputSchema: evidenceResultOf(peLoadConfigSchema),
+    examples: [
+      {
+        title: "Inspect PE TLS callbacks and load configuration",
+        input: { path: "/artifacts/program" },
+      },
+    ],
+  },
+
   {
     name: "inspect_elf_notes",
     ...toolContractMetadata("inspect_elf_notes"),
@@ -66,6 +118,37 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
       {
         title: "Inspect ELF GNU build-id and ABI-tag notes",
         input: { path: "/artifacts/program" },
+      },
+    ],
+  },
+  {
+    name: "inspect_apple_ips",
+    ...toolContractMetadata("inspect_apple_ips"),
+    kind: "native-provider",
+    description:
+      "Inspect one explicit local Apple .ips crash report without executing a target, launching atos, or opening a disassembler. Parses the first-line metadata object and, when bug_type is the string 309, the crash body: process identity, exception and termination facts, threads, usedImages, lossless integer registers, and deterministic classification from documented SIGKILL, EXC_GUARD, pointer-authentication and dyld strings. Other bug_type values, including 288 stackshots, return no crash result. A missing or truncated body fails without partial success. Opened Mach-O and dSYM UUID joins remain unobserved. Portable on supported Node hosts; no Xcode or pwntools required.",
+    inputSchema: inspectAppleIpsInputSchema,
+    outputSchema: evidenceResultOf(appleIpsSchema),
+    examples: [
+      {
+        title: "Inspect an Apple .ips crash report",
+        input: { path: "/artifacts/app.ips" },
+      },
+    ],
+  },
+  {
+    name: "inspect_kernel_module",
+    ...toolContractMetadata("inspect_kernel_module"),
+    kind: "native-provider",
+    description:
+      "Inspect one explicit local ELF32/ELF64 ET_REL Linux kernel module without executing it or opening a disassembler. Returns ordered .modinfo key/value entries (duplicates preserved), __versions symbol CRCs, presence of .gnu.linkonce.this_module and __ksymtab sections, observed .init.text and .exit.text sizes, and an appended module signature trailer with its module_signature fields plus a PKCS#7 byte range and SHA-256. Does not execute the module, decode struct module, or validate certificates. A missing section is observed absence when section names are known, not proof the module never carried that metadata. Other ELF types are not applicable. gzip, xz, and zstd containers are unsupported and name external_decompression as the next probe; neither this tool nor extract_artifact decodes those codecs, so decompress with an external utility and inspect the result. Reads a stable regular file; malformed ELF headers and exhausted entry budgets return no partial success. Portable on supported Node hosts.",
+    inputSchema: inspectKernelModuleInputSchema,
+    outputSchema: evidenceResultOf(kernelModuleSchema),
+    examples: [
+      {
+        title:
+          "Inspect Linux kernel module license, vermagic, and dependencies",
+        input: { path: "/artifacts/demo.ko" },
       },
     ],
   },
@@ -110,6 +193,21 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
     ],
   },
   {
+    name: "inspect_pe_imports",
+    ...toolContractMetadata("inspect_pe_imports"),
+    kind: "native-provider",
+    description:
+      "Inspect one explicit local PE32/PE32+ image's IMAGE_DIRECTORY_ENTRY_IMPORT and delay-load tables without executing it or opening a disassembler. Returns DLL names, named and ordinal functions, ILT/IAT RVAs, delay-load descriptors, and the pefile import hash of the standard import table, withheld with a reason when that table is partial or pefile would hash a different row sequence. A missing import directory is observed absence of that table, not proof the image never imported APIs through another table or overlay. Bound snapshots, loaded IAT contents and export-forward resolution remain unobserved. Reads a stable regular file; malformed PE headers and exhausted DLL or function budgets return no partial success. Unreadable names or thunks and descriptors missing a required table are reported as partial coverage with issues. Portable on supported Node hosts; no Windows SDK or engine installation required.",
+    inputSchema: inspectPeImportsInputSchema,
+    outputSchema: evidenceResultOf(peImportsSchema),
+    examples: [
+      {
+        title: "Inspect PE import and delay-load identities",
+        input: { path: "/artifacts/application.exe" },
+      },
+    ],
+  },
+  {
     name: "inspect_pe_resources",
     ...toolContractMetadata("inspect_pe_resources"),
     kind: "native-provider",
@@ -147,7 +245,7 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
     ...toolContractMetadata("inspect_binary_layout"),
     kind: "native-provider",
     description:
-      "Inspect an explicit local binary without launching it as a host process. Returns file-backed section/segment ranges, linked addresses, original symbol/REL/RELA table identities, complete encoded RELR tables and upstream-derived offsets with unknown per-word locations/addends, raw name bytes, dependency/interpreter names and static mitigation inferences inline with artifact SHA-256 Evidence. Initial profile: ELF64 x86-64 little-endian EXEC/DYN/REL on Linux x64 via caller-supplied Python with unchanged pwntools 4.15.0, pyelftools 0.33 and Unicorn 2.1.2. Runtime addresses/library paths, overall relocation inventory completeness and complete derived GOT/PLT coverage remain unknown. Zero executable entry values mean absence; relocatable entries are not applicable. Upstream can emulate PLT instructions with Unicorn for derived static maps. Uses bounded complete output and owned temporary files/processes; malformed, unsupported or oversized objects return no partial success. Select detail summary to retain the complete layout Evidence in this session and receive only its summary view, then inspect sections, symbols, mitigations or linkage with inspect_analysis_view. pwntools_timeout_ms is each owned pwntools command's deadline (omitted means 30000 ms, range 1..2147483647, next call). cpuSeconds 30 and the output, diagnostic, and address-space byte allowances have no runtime override.",
+      "Inspect an explicit local binary without launching it as a host process. Returns file-backed section/segment ranges, linked addresses, original symbol/REL/RELA table identities, complete encoded RELR tables and upstream-derived offsets with unknown per-word locations/addends, raw name bytes, dependency/interpreter names and static mitigation inferences inline with artifact SHA-256 Evidence. Profile: EXEC/DYN/REL ELF64 x86-64, ELF32 i386, ELF32 little-endian ARM and ELF32 little- or big-endian MIPS on Linux x64 via caller-supplied Python with unchanged pwntools 4.15.0, pyelftools 0.33 and Unicorn 2.1.2. Runtime addresses/library paths, overall relocation inventory completeness and complete derived GOT/PLT coverage remain unknown. Zero executable entry values mean absence; relocatable entries are not applicable. Upstream can emulate PLT instructions with Unicorn for derived static maps. Uses bounded complete output and owned temporary files/processes; malformed, unsupported or oversized objects return no partial success. Select detail summary to retain the complete layout Evidence in this session and receive only its summary view, then inspect sections, symbols, mitigations or linkage with inspect_analysis_view. pwntools_timeout_ms is each owned pwntools command's deadline (omitted means 30000 ms, range 1..2147483647, next call). cpuSeconds 30 and the output, diagnostic, and address-space byte allowances have no runtime override.",
     inputSchema: inspectBinaryLayoutRequestSchema,
     outputSchema: analysisDetailOutputSchemaOf(
       binaryLayoutSchema,

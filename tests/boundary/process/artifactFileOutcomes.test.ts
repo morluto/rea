@@ -1,6 +1,6 @@
 import { lstat, writeFile } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { expect, it } from "vitest";
 import { SigrokRecordingProvider } from "../../../src/signals/SigrokRecordingProvider.js";
 import { TsharkCaptureProvider } from "../../../src/captures/TsharkCaptureProvider.js";
@@ -50,6 +50,12 @@ const fileOutcomeControls = (["signal", "capture"] as const).flatMap((kind) =>
       resource: "limiter",
       discovery: true,
     },
+    {
+      stage: "integrity",
+      failure: "integrity",
+      tag: "AnalysisArtifactChangedError",
+      resource: "private-copy",
+    },
   ].map((control) => ({ kind, ...control })),
 );
 
@@ -98,6 +104,7 @@ const createFileOutcomeFixture = async ({
   let launches = 0;
   let handle: FileHandle | undefined;
   let runtimeRoot: PrivateRuntimeRoot | undefined;
+  let privateCopyPath: string | undefined;
   const caller = new AbortController();
   const cancellationReason = {
     request: "late cancellation during failed close",
@@ -123,6 +130,10 @@ const createFileOutcomeFixture = async ({
     },
     async () => {
       runtimeRoot = await PrivateRuntimeRoot.create({ parent: root });
+      privateCopyPath = join(
+        runtimeRoot.path,
+        kind === "signal" ? basename(inputPath) : "capture",
+      );
       return runtimeRoot;
     },
     "linux",
@@ -130,25 +141,36 @@ const createFileOutcomeFixture = async ({
       if (args[0] === command) commandReads++;
       if (args[0] === limiter) limiterReads++;
       const selected =
-        args[0] === selectedPath &&
-        (stage !== "integrity" ||
-          (resource === "limiter" ? limiterReads === 2 : commandReads === 3));
+        resource === "private-copy"
+          ? args[0] === privateCopyPath
+          : args[0] === selectedPath &&
+            (stage !== "integrity" ||
+              (resource === "limiter"
+                ? limiterReads === 2
+                : commandReads === 3));
       if (!selected) return readStableArtifact(...args);
-      if (resource === "limiter") expect(args[2]).toBeUndefined();
+      if (resource === "limiter" || resource === "private-copy")
+        expect(args[2]).toBeUndefined();
       const scope = args[4];
       if (scope === undefined)
         throw new Error("Expected retained artifact scope");
-      return withArtifactRegularFile(args[0], scope, args[2], async (file) => {
-        handle = file;
-        const close = file.close.bind(file);
-        file.close = async () => {
-          // A later abort must not replace the already observed physical failure.
-          caller.abort(cancellationReason);
-          if (!allowed) throw new Error("controlled descriptor close failure");
-          await close();
-        };
-        throw physical;
-      });
+      return withArtifactRegularFile(
+        args[0],
+        scope,
+        args[2],
+        async ({ handle: file }) => {
+          handle = file;
+          const close = file.close.bind(file);
+          file.close = async () => {
+            // A later abort must not replace the already observed physical failure.
+            caller.abort(cancellationReason);
+            if (!allowed)
+              throw new Error("controlled descriptor close failure");
+            await close();
+          };
+          throw physical;
+        },
+      );
     },
     async (limits) => ({ ...limits, file_bytes: 1048576 }),
   );
@@ -173,6 +195,9 @@ const createFileOutcomeFixture = async ({
     },
     get runtimeRoot() {
       return runtimeRoot;
+    },
+    get privateCopyPath() {
+      return privateCopyPath;
     },
     allowClose() {
       allowed = true;
@@ -221,6 +246,38 @@ it.each(fileOutcomeControls)(
       expect(primary).toMatchObject({ _tag: tag, cause: fixture.physical });
       expect(result.error.cleanupIncomplete).toBe(true);
       expect(fixture.handle?.fd).toBeGreaterThanOrEqual(0);
+      if (resource === "private-copy") {
+        if (
+          fixture.runtimeRoot === undefined ||
+          fixture.privateCopyPath === undefined
+        )
+          throw new Error("Expected retained private recording copy");
+        const operation =
+          kind === "signal"
+            ? "decode_signal_recording"
+            : "inspect_packet_capture";
+        const capturedOutput = {
+          stdout: kind === "signal" ? "annotation\n" : "[]\n",
+          stderr: "",
+          truncated: false,
+          exit_code: 0,
+          signal: null,
+        };
+        expect(primary).toMatchObject({
+          operation,
+          path: fixture.privateCopyPath,
+          capturedOutput,
+        });
+        expect(result.error).toMatchObject({ operation, capturedOutput });
+        expect(fixture.caller.signal.reason).toBe(fixture.cancellationReason);
+        expect(fixture.launches).toBe(2);
+        expect(result.error.cleanupResources).toEqual([
+          fixture.privateCopyPath,
+          fixture.runtimeRoot.path,
+        ]);
+        await expect(lstat(fixture.privateCopyPath)).resolves.toBeDefined();
+        await expect(lstat(fixture.inputPath)).resolves.toBeDefined();
+      }
       if (resource === "limiter") {
         const operation =
           kind === "signal"
@@ -258,7 +315,7 @@ it.each(fileOutcomeControls)(
         .close()
         .catch((cause: unknown) => cause);
       expect(failed).toMatchObject({ cleanupIncomplete: true });
-      if (resource === "limiter") {
+      if (resource === "limiter" || resource === "private-copy") {
         expect(fixture.handle?.fd).toBeGreaterThanOrEqual(0);
         await expect(lstat(fixture.runtimeRoot!.path)).resolves.toBeDefined();
       }
@@ -280,13 +337,15 @@ it.each(fileOutcomeControls)(
       );
       expect(failed).toMatchObject({ cleanupIncomplete: false });
       expect(fixture.launches).toBe(launchCount);
-      if (resource === "limiter") {
+      if (resource === "limiter" || resource === "private-copy") {
         expect(result.error.capturedOutput).toEqual(primary?.capturedOutput);
         expect(result.error.cleanupResources).toEqual([]);
         await expect(lstat(fixture.runtimeRoot!.path)).rejects.toMatchObject({
           code: "ENOENT",
         });
-        await expect(lstat(fixture.limiter)).resolves.toBeDefined();
+        await expect(
+          lstat(resource === "limiter" ? fixture.limiter : fixture.inputPath),
+        ).resolves.toBeDefined();
       }
     } finally {
       await fixture.dispose();

@@ -17,7 +17,7 @@ import {
 import { parsePacketOutput } from "./parsePacketOutput.js";
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { access, mkdir, realpath, writeFile } from "node:fs/promises";
+import { access, mkdir, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import {
   createAnalysisExecution,
@@ -33,23 +33,22 @@ import {
 } from "../process/ArtifactAnalysisResources.js";
 import { readStableArtifact } from "../artifacts/readStableArtifact.js";
 import {
+  assertArtifactCommandPath,
+  selectArtifactCommandPath,
+} from "../process/ArtifactCommandPath.js";
+import {
   AnalysisError,
   type AnalysisCapturedOutput,
 } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
-  AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
 import { createEvidence } from "../domain/evidence.js";
-import {
-  fixedAllowanceOptions,
-  fixedProducerInputAllowance,
-} from "../domain/fixedAllowanceRemediation.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import {
   type InspectPacketCaptureInput,
@@ -137,12 +136,8 @@ export class TsharkCaptureProvider implements PacketCapturePort {
     // TShark 4.6.9 emits a 22.3 MB glossary; keep capture output capped at 4 MiB.
     const limits =
       "path" in input ? LIMITS : { ...LIMITS, output_bytes: 32 * 1024 * 1024 };
-    let phase:
-      | "configuration"
-      | "artifact"
-      | "workspace"
-      | "producer"
-      | "integrity" = "configuration";
+    let phase: "configuration" | "workspace" | "producer" | "integrity" =
+      "configuration";
     let capturedOutput: AnalysisCapturedOutput | undefined;
     let resourcePath = "path" in input ? input.path : "TShark field glossary";
     let effectiveLimits: LinuxResourceLimits | undefined;
@@ -164,7 +159,11 @@ export class TsharkCaptureProvider implements PacketCapturePort {
         throw new Error(
           `TShark 4.x was not found on PATH; add it to PATH or set absolute ${TSHARK_COMMAND_ENV}.`,
         );
-      const command = await realpath(configured);
+      const selectedCommand = await selectArtifactCommandPath(
+        configured,
+        options?.signal,
+      );
+      const command = selectedCommand.resolvedPath;
       await access(command, constants.X_OK);
       const toolSnapshot = await this.#resources.read(
         command,
@@ -176,7 +175,11 @@ export class TsharkCaptureProvider implements PacketCapturePort {
         this.environment.REA_TSHARK_PRLIMIT_COMMAND ?? "/usr/bin/prlimit";
       if (!isAbsolute(configuredLimiter))
         throw new Error("REA_TSHARK_PRLIMIT_COMMAND must be absolute.");
-      const limiter = await realpath(configuredLimiter);
+      const selectedLimiter = await selectArtifactCommandPath(
+        configuredLimiter,
+        options?.signal,
+      );
+      const limiter = selectedLimiter.resolvedPath;
       await access(limiter, constants.X_OK);
       const limiterIdentity = await this.#resources.read(
         limiter,
@@ -184,7 +187,10 @@ export class TsharkCaptureProvider implements PacketCapturePort {
         options?.signal,
       );
       effectiveLimits = await this.#resources.readLimits(limits);
-      const limitArguments = prlimitArgumentVector(effectiveLimits, command);
+      const limitArguments = prlimitArgumentVector(
+        effectiveLimits,
+        selectedCommand.invocationPath,
+      );
       phase = "workspace";
       root = await this.createRuntime();
       this.#resources.retain(root, undefined);
@@ -193,9 +199,15 @@ export class TsharkCaptureProvider implements PacketCapturePort {
       await mkdir(configurationPath, { mode: 0o700 });
       const execute = async (args: readonly string[]) => {
         capturedOutput = undefined;
+        await assertArtifactCommandPath(selectedCommand, operation, {
+          signal: options?.signal,
+        });
+        await assertArtifactCommandPath(selectedLimiter, operation, {
+          signal: options?.signal,
+        });
         const output = await runOwnedCommand(
           {
-            command: limiter,
+            command: selectedLimiter.invocationPath,
             arguments: [...limitArguments, ...args],
             ...(root === undefined ? {} : { cwd: root.path }),
             expectedCommand: null,
@@ -218,6 +230,12 @@ export class TsharkCaptureProvider implements PacketCapturePort {
           },
         );
         capturedOutput = artifactCommandOutput(output);
+        await assertArtifactCommandPath(selectedCommand, operation, {
+          capturedOutput,
+        });
+        await assertArtifactCommandPath(selectedLimiter, operation, {
+          capturedOutput,
+        });
         const current = await this.#resources.readCommandAfterRun(
           command,
           { path: limiter, sha256: limiterIdentity.sha256 },
@@ -298,12 +316,13 @@ export class TsharkCaptureProvider implements PacketCapturePort {
           }),
         );
       } else {
-        phase = "artifact";
-        const selected = await this.#resources.read(
-          input.path,
-          LIMITS.input_bytes,
-          options?.signal,
-        );
+        const selected = await this.#resources.readSelectedArtifact({
+          path: input.path,
+          maximumBytes: LIMITS.input_bytes,
+          allowanceName: "the fixed packet-capture input allowance",
+          observedOutput: capturedOutput,
+          signal: options?.signal,
+        });
         phase = "workspace";
         await writeFile(snapshotPath, selected.bytes, {
           flag: "wx",
@@ -428,12 +447,7 @@ export class TsharkCaptureProvider implements PacketCapturePort {
   }
   #failure(
     cause: unknown,
-    phase:
-      | "configuration"
-      | "artifact"
-      | "workspace"
-      | "producer"
-      | "integrity",
+    phase: "configuration" | "workspace" | "producer" | "integrity",
     path: string,
     workspacePath: string | null,
     effectiveLimits: LinuxResourceLimits | undefined,
@@ -521,41 +535,10 @@ export class TsharkCaptureProvider implements PacketCapturePort {
           userMessage: `${reason} On Linux, supply TShark 4.x on PATH or through absolute REA_TSHARK_COMMAND, and util-linux prlimit through REA_TSHARK_PRLIMIT_COMMAND (default /usr/bin/prlimit).`,
         },
       );
-    if (
-      phase === "artifact" &&
-      cause instanceof ArtifactReaderFailure &&
-      cause.reason === "limit"
-    )
-      return new AnalysisResourceConstraintError(
-        operation,
-        "file-size",
-        reason,
-        { input_bytes: LIMITS.input_bytes },
-        {
-          cause,
-          ...fixedProducerInputAllowance(
-            LIMITS.input_bytes,
-            "the fixed packet-capture input allowance",
-          ),
-        },
-      );
     if (cause instanceof ArtifactReaderFailure && cause.reason === "integrity")
       return new AnalysisArtifactChangedError(operation, path, reason, {
         cause,
       });
-    if (
-      phase === "artifact" &&
-      cause instanceof Error &&
-      "code" in cause &&
-      (cause.code === "EACCES" || cause.code === "EPERM")
-    )
-      return new AnalysisAccessDeniedError(operation, path, cause.code, {
-        cause,
-      });
-    if (phase === "artifact")
-      return new AnalysisInputError(operation, { cause }, [
-        { path: ["path"], reason: "invalid_value", message: reason },
-      ]);
     return new AnalysisOutputError(operation, reason, {
       cause,
       ...(observedOutput === undefined

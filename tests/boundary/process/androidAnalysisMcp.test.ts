@@ -1,3 +1,4 @@
+import { AndroidAnalysisService } from "../../../src/application/android/AndroidAnalysisService.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { Ajv2020 } from "ajv/dist/2020.js";
@@ -10,7 +11,7 @@ import { androidPartialObservationSchema } from "../../../src/domain/android/and
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { createServer } from "../../../src/server/createServer.js";
-import { ToolResultDelivery } from "../../../src/server/toolResult.js";
+import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { startMcpTransport } from "../../../src/main/transport.js";
 import type { RuntimeDependencies } from "../../../src/main/types.js";
 import type { AndroidAnalysisPort } from "../../../src/application/android/AndroidAnalysisPort.js";
@@ -22,6 +23,36 @@ import {
   createJadxProtocolFixture,
   verifyJadxFixtureCleanup,
 } from "../../fixtures/android/jadx.js";
+
+test("preserves Android caller field constraints before target or provider access", async () => {
+  let calls = 0;
+  const service = new AndroidAnalysisService({
+    inspectAvailability: () => Promise.reject(new Error("unused")),
+    close: () => Promise.resolve(),
+    execute: () => {
+      calls++;
+      return Promise.reject(new Error("provider must not run"));
+    },
+  });
+  const result = await service.execute("inspect_android_method", {
+    path: "",
+    class_name: "",
+    method_name: "",
+  });
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "invalid_request",
+    details: {
+      issues: [
+        { path: ["path"], reason: "out_of_range", minimum: 1 },
+        { path: ["class_name"], reason: "out_of_range", minimum: 1 },
+        { path: ["method_name"], reason: "out_of_range", minimum: 1 },
+      ],
+    },
+  });
+  expect(calls).toBe(0);
+});
 
 const it = test.skipIf(process.platform === "win32");
 
@@ -52,7 +83,7 @@ it("keeps a replacement server usable after the SDK discards its discovery probe
     logger: silentLogger,
     serverLogger: silentLogger,
     environment: runtime.env,
-    delivery: new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE),
+    delivery: createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE),
     loadOptionalProviders: async () => ({}),
   });
   if (!transport.ok) throw new Error("Transport failed");
@@ -123,6 +154,10 @@ it("publishes and executes all APK contracts with inline Evidence and no active 
     });
     const input = {
       path: apk,
+      // Inline Evidence opts out of any contract's summary delivery default.
+      ...(Object.hasOwn(contract.inputSchema.shape, "detail")
+        ? { detail: "complete" }
+        : {}),
       ...(contract.name === "search_android_classes"
         ? { query: "Target" }
         : {}),

@@ -7,7 +7,7 @@ import {
 } from "./changedBehavior.js";
 import { createEvidence, type Evidence } from "./evidence.js";
 import { functionComparisonResultSchema } from "./functionComparisonSchemas.js";
-import { jsonValueSchema, type JsonValue } from "./jsonValue.js";
+import type { JsonValue } from "./jsonValue.js";
 
 const source = (digit: string): Evidence =>
   createEvidence(
@@ -350,13 +350,11 @@ describe("changed-behavior input and Evidence validation", () => {
       predicateType: base.predicate_type,
       operation: base.operation,
       parameters: base.parameters,
-      result: jsonValueSchema.parse(
-        functionComparisonResultSchema.parse({
-          ...result,
-          dimensions,
-          changes: dimensions.filter(({ status }) => status !== "unchanged"),
-        }),
-      ),
+      result: functionComparisonResultSchema.parse({
+        ...result,
+        dimensions,
+        changes: dimensions.filter(({ status }) => status !== "unchanged"),
+      }),
       confidence: base.confidence,
       authority: base.authority,
       evidenceLinks: base.evidence_links,

@@ -15,7 +15,7 @@ import { writeFixtureFiles } from "../../support/workspace/writeFixtureFiles.js"
 const createPackageSubpathFixture = async () => {
   const root = await createTestTempDirectory("rea-package-subpaths-");
   const source = [
-    'const nearest = require("fixture/parser");',
+    'const {BrowserWindow} = require("electron"); const nearest = require("fixture/parser");',
     'const nested = require("nested/parser");',
     'const parser = require("exported/parser");',
     'const directory = require("exported/parser/");',

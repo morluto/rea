@@ -29,7 +29,7 @@ import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   withArtifactRegularFile,
   bindArtifactFileCleanup,
-  artifactFilePrimaryFailure,
+  artifactFilePrimaryFacts,
   artifactFileCancellationCause,
   artifactFileCompletion,
 } from "../artifacts/ArtifactFileOperation.js";
@@ -102,7 +102,7 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
             input.path,
             this.#resources,
             options?.signal,
-            (file) =>
+            ({ handle: file }) =>
               this.#read(file, input, options?.signal, (value) => {
                 progress = value;
               }),
@@ -110,9 +110,10 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
         ),
       );
     } catch (cause) {
-      const primary = artifactFilePrimaryFailure(cause);
+      const { cause: primary, origin } = artifactFilePrimaryFacts(cause);
       let error: AnalysisError;
-      if (primary instanceof AnalysisError) error = primary;
+      if (origin === "owned-or-classified" && primary instanceof AnalysisError)
+        error = primary;
       else if (primary instanceof BinaryResourceFailure)
         error = new AnalysisResourceConstraintError(
           OPERATION,
@@ -142,6 +143,7 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
                 constraint: "file_format_rejected",
               });
       } else if (
+        origin === "owned-or-classified" &&
         primary instanceof ArtifactReaderFailure &&
         primary.reason === "cancelled"
       )
@@ -149,6 +151,7 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
           cause: artifactFileCancellationCause(primary),
         });
       else if (
+        origin === "owned-or-classified" &&
         primary instanceof ArtifactReaderFailure &&
         primary.reason === "integrity"
       )
@@ -172,6 +175,7 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
       else if (isSelectedRegularFileError(primary))
         error = new BinaryTargetError(input.path, primary.message, { cause });
       else if (
+        origin === "owned-or-classified" &&
         primary instanceof ArtifactReaderFailure &&
         primary.reason === "limit"
       )

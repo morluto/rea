@@ -72,7 +72,7 @@ describe("native_command_timeout_ms", () => {
     const calls: {
       command: string;
       arguments: readonly string[];
-      timeoutMs: number;
+      timeoutMs: number | null;
     }[] = [];
     vi.mocked(runOwnedCommand).mockImplementation(async (spawn, limits) => {
       calls.push({
@@ -99,7 +99,7 @@ describe("native_command_timeout_ms", () => {
   });
 
   it("uses 60000 ms for xcrun resolution when the caller omits the deadline", async () => {
-    const timeouts: number[] = [];
+    const timeouts: (number | null)[] = [];
     vi.mocked(runOwnedCommand).mockImplementation(async (_spawn, limits) => {
       timeouts.push(limits.timeoutMs);
       throw new OwnedCommandFailure("timeout", "Command deadline elapsed.");

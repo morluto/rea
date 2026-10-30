@@ -208,6 +208,7 @@ it("does not interpret a signal through a mislabeled raw owner ABI", () => {
       notes: value.notes.map((note) => ({
         ...note,
         type: "NT_SIGINFO",
+        type_id: 0x53494749,
         owner_bytes_base64: Buffer.from("EVIL\0").toString("base64"),
       })),
       signals: [

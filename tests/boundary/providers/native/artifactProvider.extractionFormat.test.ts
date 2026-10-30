@@ -1,11 +1,15 @@
-import { access, symlink, writeFile } from "node:fs/promises";
+import { access, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { elfExportImage } from "../../../fixtures/binaryDiagnostics/nativeExports.js";
 import { writeOrderedZip } from "../../../fixtures/artifactEntryOrder.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
+import { buildGodotPck, pckU64 } from "../../../fixtures/godotPck.js";
+import { withArtifactClient } from "../../../support/artifactClientScope.js";
 
+import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
 import { ArtifactProvider } from "../../../../src/artifacts/ArtifactProvider.js";
 import {
   CPU,
@@ -20,13 +24,17 @@ describe("artifact extraction format support", () => {
   it("refuses unsupported formats before inventory or output", async () => {
     const root = await createTestTempDirectory("rea-extract-format-");
     const image = join(root, "Image.dmg");
-    await writeFile(image, "not mounted");
+    const udif = Buffer.alloc(512);
+    udif.write("koly");
+    await writeFile(image, udif);
     const alias = join(root, "Alias.dmg");
     await symlink(image, alias);
     const output = join(root, "output");
+    const selected = await admittedTarget(alias);
+    expect(selected.format).toBe("dmg");
     const extract = (signal?: AbortSignal) =>
       new ArtifactProvider(process.env)
-        .createClient(archiveTarget(alias, "dmg"))
+        .createClient(selected)
         .execute(
           "extract_artifact",
           artifactExtractionExecutionSchema.parse({ output_root: output }),
@@ -57,7 +65,7 @@ describe("artifact extraction format support", () => {
     const output = join(root, "output");
     expect(
       await new ArtifactProvider(process.env)
-        .createClient(thinMachOTarget(binary))
+        .createClient(await admittedTarget(binary))
         .execute(
           "extract_artifact",
           artifactExtractionExecutionSchema.parse({ output_root: output }),
@@ -97,7 +105,7 @@ describe("artifact extraction format support", () => {
       ]),
     );
     const result = await new ArtifactProvider(process.env)
-      .createClient(thinMachOTarget(binary))
+      .createClient(await admittedTarget(binary))
       .execute(
         "extract_artifact",
         artifactExtractionExecutionSchema.parse({
@@ -110,6 +118,48 @@ describe("artifact extraction format support", () => {
       extracted.artifacts.map(({ relative_path }) => relative_path),
     ).toContain("hello");
   });
+});
+
+describe("artifact extraction reader selection", () => {
+  it("extracts an embedded PCK using its inventoried format rather than its executable carrier", async () => {
+    const root = await createTestTempDirectory("rea-extract-embedded-pck-");
+    const binary = join(root, "game");
+    const output = join(root, "output");
+    const pack = buildGodotPck(3, [
+      { path: "res://main.gd", data: "extends Node\n" },
+    ]);
+    await writeFile(
+      binary,
+      Buffer.concat([
+        elfExportImage({ symbols: [] }),
+        pack,
+        pckU64(pack.length),
+        Buffer.from("GDPC"),
+      ]),
+    );
+    const selected = await admittedTarget(binary);
+    expect(selected).toMatchObject({
+      kind: "executable",
+      format: "elf",
+      architecture: "x86_64",
+    });
+    await withArtifactClient(await admittedTarget(binary), async (client) => {
+      const result = await client.execute("extract_artifact", {
+        output_root: output,
+      });
+      if (!result.ok) throw result.error;
+      const extracted = artifactExtractionResultSchema.parse(
+        result.value.result,
+      );
+      expect(extracted.manifest.root_format).toBe("godot-pck");
+      expect(
+        extracted.artifacts.map(({ relative_path }) => relative_path),
+      ).toEqual(["main.gd"]);
+      expect(await readFile(join(output, "main.gd"), "utf8")).toBe(
+        "extends Node\n",
+      );
+    });
+  });
 
   it.each(["zip", "hap", "hsp", "app-pack"] as const)(
     "extracts the ZIP-backed %s package family that inventory already supports",
@@ -121,7 +171,7 @@ describe("artifact extraction format support", () => {
       );
       await writeOrderedZip(archive, ["payload.txt"]);
       const result = await new ArtifactProvider(process.env)
-        .createClient(archiveTarget(archive, format))
+        .createClient(await admittedTarget(archive))
         .execute(
           "extract_artifact",
           artifactExtractionExecutionSchema.parse({
@@ -139,23 +189,8 @@ describe("artifact extraction format support", () => {
   );
 });
 
-const archiveTarget = (
-  path: string,
-  format: Extract<BinaryTarget, { kind: "archive" }>["format"],
-): BinaryTarget => ({
-  path,
-  sourcePath: path,
-  sha256: "0".repeat(64),
-  kind: "archive",
-  format,
-});
-
-const thinMachOTarget = (path: string): BinaryTarget => ({
-  path,
-  sourcePath: path,
-  sha256: "0".repeat(64),
-  kind: "executable",
-  format: "mach-o",
-  architecture: "arm64",
-  availableArchitectures: ["arm64"],
-});
+const admittedTarget = async (path: string): Promise<BinaryTarget> => {
+  const parsed = await parseBinaryTarget(path);
+  if (!parsed.ok) throw parsed.error;
+  return parsed.value;
+};

@@ -195,6 +195,7 @@ it.each([
     fixture.segments.push({
       index: 0,
       type: "PT_LOAD",
+      type_id: 1,
       offset: "0x200",
       header_location: { offset: "0x0", bytes: "0x38" },
       file_backing: "file",

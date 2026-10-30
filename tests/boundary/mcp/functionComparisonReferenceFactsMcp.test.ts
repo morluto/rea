@@ -1,3 +1,4 @@
+import type { NativeSymbolMetadata } from "../../../src/domain/native/nativeSymbol.js";
 import type { Client } from "@modelcontextprotocol/client";
 import { expect, it, onTestFinished } from "vitest";
 
@@ -9,8 +10,8 @@ import {
 } from "../../../src/domain/analysisProfile.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { functionComparisonResultSchema } from "../../../src/domain/functionComparisonSchemas.js";
-import { functionDossierSchema } from "../../../src/domain/hopperValues.js";
-import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
+import { functionDossierSchema } from "../../../src/domain/native/functionDossier.js";
+
 import { reconstructionVerificationResultSchema } from "../../../src/domain/reconstructionVerificationSchemas.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
@@ -44,9 +45,20 @@ const createHarness = async () => {
   return harness;
 };
 
-const procedure = (address: string, name: string) => ({
+const procedure = (
+  address: string,
+  name: string,
+  symbol: NativeSymbolMetadata | null = {
+    primary: true,
+    dynamic: false,
+    external: false,
+    type: "function",
+    source: "imported",
+  },
+) => ({
   address,
   name,
+  symbol,
   classification: null,
   body: dossier.procedure.body,
 });
@@ -58,6 +70,7 @@ const reference = (
   options: {
     readonly sourceName?: string;
     readonly targetName?: string | null;
+    readonly targetSymbol?: NativeSymbolMetadata | null;
     readonly sourceEntryAddress?: string;
     readonly targetEntryAddress?: string;
   } = {},
@@ -77,6 +90,7 @@ const reference = (
       : procedure(
           options.targetEntryAddress ?? targetAddress,
           options.targetName ?? "helper",
+          options.targetSymbol,
         ),
   kind:
     classification === "unknown"
@@ -109,11 +123,12 @@ const evidence = (
     readonly incoming?: readonly Reference[];
     readonly procedureAddress?: string;
     readonly procedureName?: string;
+    readonly procedureSymbol?: NativeSymbolMetadata | null;
     readonly architecture?: "arm64" | "x86_64" | null;
     readonly format?: "mach-o" | "mach-o-universal";
     readonly profile?: AnalysisProfileCommitment | null;
-    readonly callees?: readonly ReturnType<typeof procedure>[];
-    readonly callers?: readonly ReturnType<typeof procedure>[];
+    readonly callees?: readonly (typeof dossier.callees)[number][];
+    readonly callers?: readonly (typeof dossier.callers)[number][];
   } = {},
 ) =>
   createEvidence(
@@ -132,18 +147,22 @@ const evidence = (
         ? {}
         : { analysisProfile: options.profile ?? profile }),
       parameters: { ...example.parameters, observation: id },
-      result: jsonValueSchema.parse({
+      result: {
         ...dossier,
         procedure: {
           ...dossier.procedure,
           address: options.procedureAddress ?? dossier.procedure.address,
           name: options.procedureName ?? dossier.procedure.name,
+          symbol:
+            options.procedureSymbol === undefined
+              ? dossier.procedure.symbol
+              : options.procedureSymbol,
         },
         callees: [...(options.callees ?? [])],
         callers: [...(options.callers ?? [])],
         incoming_references: [...(options.incoming ?? [])],
         outgoing_references: [...outgoing],
-      }),
+      },
       confidence: "derived",
       authority: "shipped-artifact",
       relationshipCoverage: { status: "complete" },
@@ -311,16 +330,24 @@ it("preserves reference identity uncertainty and same-artifact coordinates", asy
   expectReferences(await compare(client, namedRight, namedLeft), "unchanged");
 });
 
-it("keeps generated and ambiguous procedure names from proving cross-artifact identity", async () => {
+it("keeps unqualified and ambiguous procedure names from proving cross-artifact identity", async () => {
   const { client } = await createHarness();
   for (const [index, name] of ["sub_1010", "fcn.1010", "FUN_1010"].entries()) {
     const left = evidence(`auto-left-${index}`, "1", [
-      reference("0x1000", "0x1010", "call", { targetName: name }),
+      reference("0x1000", "0x1010", "call", {
+        targetName: name,
+        targetSymbol: null,
+      }),
     ]);
     const right = evidence(
       `auto-right-${index}`,
       "2",
-      [reference("0x2000", "0x2020", "call", { targetName: name })],
+      [
+        reference("0x2000", "0x2020", "call", {
+          targetName: name,
+          targetSymbol: null,
+        }),
+      ],
       { procedureAddress: "0x2000" },
     );
     expectReferences(await compare(client, left, right), "unknown");
@@ -332,7 +359,12 @@ it("keeps generated and ambiguous procedure names from proving cross-artifact id
         evidence(
           `auto-different-${index}`,
           "3",
-          [reference("0x2000", "0x2020", "call", { targetName: otherName })],
+          [
+            reference("0x2000", "0x2020", "call", {
+              targetName: otherName,
+              targetSymbol: null,
+            }),
+          ],
           { procedureAddress: "0x2000" },
         ),
       ),
@@ -370,10 +402,12 @@ it("keeps generated and ambiguous procedure names from proving cross-artifact id
     client,
     evidence("generated-function-left", "7", [], {
       procedureName: "sub_1000",
+      procedureSymbol: null,
     }),
     evidence("generated-function-right", "8", [], {
       procedureAddress: "0x2000",
       procedureName: "FUN_2000",
+      procedureSymbol: null,
     }),
   );
   expect.soft(generatedFunctions.result.function_match).toMatchObject({
@@ -823,7 +857,7 @@ it("retains caller entries and independent contradictions beside unknown endpoin
       callees: [
         procedure("0x1010", name),
         procedure("0x1010", name),
-        procedure("0x1020", "sub_1020"),
+        procedure("0x1020", "sub_1020", null),
       ],
     });
   const mixed = await compare(
@@ -876,3 +910,69 @@ it("keeps equal coordinates in distinct same-architecture universal slices unkno
       );
   }
 });
+
+it.each([null, "default", "imported"] as const)(
+  "native comparison uses observed symbol origin %s for EntryPoint labels",
+  async (source) => {
+    const harness = await createHarness();
+    const edge = (base: "0x1000" | "0x2000", name: string) => {
+      const value = reference(
+        base,
+        base === "0x1000" ? "0x1010" : "0x2010",
+        "call",
+        { targetName: name },
+      );
+      if (value.target_procedure === null)
+        throw new Error("Missing fixture target");
+      value.target_procedure.symbol =
+        source === null
+          ? null
+          : {
+              primary: true,
+              dynamic: false,
+              external: false,
+              type: "function",
+              source,
+            };
+      return value;
+    };
+    const leftEdge = edge(
+      "0x1000",
+      source === "imported" ? "EntryPoint" : "_main",
+    );
+    const rightEdge = edge("0x2000", "EntryPoint");
+    if (
+      leftEdge.target_procedure === null ||
+      rightEdge.target_procedure === null
+    )
+      throw new Error("Missing fixture target");
+    const compared = await compare(
+      harness.client,
+      evidence("origin-left", "1", [leftEdge], {
+        procedureAddress: "0x1000",
+        callees: [leftEdge.target_procedure],
+      }),
+      evidence("origin-right", "2", [rightEdge], {
+        procedureAddress: "0x2000",
+        callees: [rightEdge.target_procedure],
+      }),
+    );
+    const status = source === "imported" ? "unchanged" : "unknown";
+    expectReferences(compared, status);
+    expect(
+      compared.result.dimensions.find((value) => value.dimension === "calls"),
+    ).toMatchObject({ status });
+    await verifyDimension(
+      harness.client,
+      compared.evidence.evidence_id,
+      source === "imported" ? "pass" : "unknown",
+      "references",
+    );
+    await verifyDimension(
+      harness.client,
+      compared.evidence.evidence_id,
+      source === "imported" ? "pass" : "unknown",
+      "calls",
+    );
+  },
+);

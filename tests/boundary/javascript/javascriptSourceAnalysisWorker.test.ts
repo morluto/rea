@@ -8,6 +8,7 @@ import { JavaScriptAnalysisWorker } from "../../../src/javascript/analysis/JavaS
 import { createJavaScriptSourceAnalysis } from "../../../src/artifacts/javascript/JavaScriptSourceAnalysis.js";
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
 import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
+import { ProcessOwnershipEvidenceOwner } from "../../../src/process/ProcessOwnershipEvidence.js";
 import type { OwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
@@ -55,8 +56,23 @@ it("reuses one real owned analyzer while retaining distinct source identities an
       "export function next() { return { observed: 8 }; }",
     );
     for (const [index, file] of [first, second].entries()) {
-      const result = await worker.analyze(file, { nodes: 100, unknowns: 100 });
+      const phases: string[] = [];
+      const result = await worker.analyze(
+        file,
+        { nodes: 100, unknowns: 100 },
+        undefined,
+        async (phase) => {
+          phases.push(phase);
+        },
+      );
       if (!result.ok) throw result.error.error;
+      expect(phases).toEqual([
+        "parse",
+        "static",
+        "semantic",
+        "projection",
+        "transfer",
+      ]);
       expect(result.value.javascript.parse_status).toBe("complete");
       expect(
         result.value.module?.callables[0]?.returnSites[0]?.value,
@@ -534,7 +550,9 @@ const worker = new JavaScriptAnalysisWorker({ heapMb: 128, timeoutMs: 10000 }, a
   ] });
   // The launcher is deliberately orphaned when this host exits; cleanup still
   // requires its run token and executable identity, rather than its old parent.
-  const { expectedParentPid, ...ownership } = launched.ownership;
+  // The live ledger belongs to this host and cannot be serialized. Transfer
+  // only the process facts needed for the independent fixture cleanup.
+  const { expectedParentPid, evidenceOwner, ...ownership } = launched.ownership;
   await writeFile(${JSON.stringify(ownershipPath)}, JSON.stringify(ownership));
   return { ...launched, cleanup: async () => ({ cleaned: false, reason: "fixture inspection unavailable" }) };
 });
@@ -560,9 +578,12 @@ catch (error) {
     const ownership = JSON.parse(
       await readFile(ownershipPath, "utf8"),
     ) as OwnedProcessGroup;
-    expect(await cleanupOwnedProcessGroup(ownership)).toMatchObject({
-      cleaned: true,
-    });
+    expect(
+      await cleanupOwnedProcessGroup({
+        ...ownership,
+        evidenceOwner: new ProcessOwnershipEvidenceOwner(),
+      }),
+    ).toMatchObject({ cleaned: true });
   }
 });
 

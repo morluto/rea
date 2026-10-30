@@ -9,6 +9,7 @@ import {
   openRegularFile,
   RegularFileAdmissionFailure,
   sameRegularFileState,
+  type StableRegularFileDescriptor,
 } from "../../filesystem/RegularFile.js";
 import { ArtifactReaderFailure } from "../ArtifactReader.js";
 import {
@@ -21,9 +22,12 @@ import {
   pyInstallerMemberStream,
   readPyInstallerMemberPrefix,
 } from "./PyInstallerMemberStream.js";
-import type { CArchiveEntry } from "./CArchiveLayout.js";
+import {
+  isCArchivePythonModule,
+  type CArchiveEntry,
+} from "./CArchiveLayout.js";
 import type { PyInstallerMember } from "./CArchiveMembers.js";
-import { pyInstallerFileAdmissionFailure } from "./PyInstallerFileAdmission.js";
+import { artifactFileAdmissionFailure } from "../ArtifactFileAdmission.js";
 import {
   reconstructedPycHeader,
   isHeaderlessPythonCode,
@@ -73,9 +77,9 @@ export class PyInstallerPyzStore {
   ): Promise<CArchiveBytecodeHeader> {
     const unchanged = { header: undefined, limitation: undefined };
     if (magic === undefined) return unchanged;
-    if (entry.typeCode === "s")
+    if (entry.role === "script")
       return { header: reconstructedPycHeader(magic), limitation: undefined };
-    if (entry.typeCode !== "m" && entry.typeCode !== "M") return unchanged;
+    if (!isCArchivePythonModule(entry)) return unchanged;
     const prefix = await readPyInstallerMemberPrefix(
       async (active) =>
         (
@@ -148,8 +152,8 @@ export class PyInstallerPyzStore {
     if (decoded?.status === "rejected") throw decoded.reason;
     await this.release(writer);
     abortIfNeeded(signal);
-    const opened = await this.#admit(path, signal);
-    this.#images.set(opened, { path, initial: await opened.stat() });
+    const { handle: opened, initial } = await this.#admit(path, signal);
+    this.#images.set(opened, { path, initial });
     return { handle: opened, start: 0 };
   }
 
@@ -176,7 +180,7 @@ export class PyInstallerPyzStore {
     let verify: (() => Promise<void>) | undefined;
     let close: ((primary?: unknown) => Promise<void>) | undefined;
     if (image !== undefined) {
-      handle = await this.#admit(image.path, signal);
+      ({ handle } = await this.#admit(image.path, signal));
       const opened = handle;
       verify = () => this.#verifyImage(opened, image);
       close = async (primary) => {
@@ -231,18 +235,21 @@ export class PyInstallerPyzStore {
     this.#images.clear();
   }
 
-  async #admit(path: string, signal?: AbortSignal): Promise<FileHandle> {
+  async #admit(
+    path: string,
+    signal?: AbortSignal,
+  ): Promise<StableRegularFileDescriptor> {
     try {
-      const handle = await openRegularFile(path, {
+      const source = await openRegularFile(path, {
         symlinks: "reject",
         signal,
       });
-      this.#retain(path, new OwnedFileHandle(handle));
-      return handle;
+      this.#retain(path, new OwnedFileHandle(source.handle));
+      return source;
     } catch (cause: unknown) {
       if (cause instanceof RegularFileAdmissionFailure)
         this.#retain(path, cause.owner);
-      throw pyInstallerFileAdmissionFailure(path, cause);
+      throw artifactFileAdmissionFailure(path, "PyInstaller", cause);
     }
   }
 

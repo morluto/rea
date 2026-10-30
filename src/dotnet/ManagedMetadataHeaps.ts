@@ -235,13 +235,14 @@ export const readMetadataBlob = (
 export const readMetadataUserString = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
-  token: string,
+  reference: Pick<MetadataTokenFact, "token" | "row">,
 ): {
   readonly offset: number;
   readonly value: string;
   /** Conformance differences observed beside the readable literal. */
   readonly issues: readonly ManagedParseIssue[];
 } => {
+  const { token, row: index } = reference;
   const heap = layout.userStrings;
   const scope = `metadata.#US:${token}`;
   if (heap === null)
@@ -250,7 +251,6 @@ export const readMetadataUserString = (
       scope,
       "ldstr references #US, but the metadata has no #US stream",
     );
-  const index = Number.parseInt(token.slice(4), 16);
   if (index >= heap.size)
     throw managedFailure(
       "invalid-heap-index",
@@ -377,6 +377,20 @@ export const readMetadataGuid = (
 /** Format one metadata table/row pair as an exact build-local token. */
 export const metadataToken = (table: number, row: number): string =>
   `0x${(table * 0x01_00_00_00 + row).toString(16).padStart(8, "0")}`;
+
+/** Full-token coordinates do not establish that a table row or heap item exists. */
+export interface MetadataTokenFact {
+  readonly raw: number;
+  readonly table: number;
+  readonly row: number;
+  readonly token: string;
+}
+
+export const metadataTokenFact = (raw: number): MetadataTokenFact => {
+  const table = raw >>> 24;
+  const row = raw & 0x00ff_ffff;
+  return { raw, table, row, token: metadataToken(table, row) };
+};
 
 /** Hash bytes without exposing their contents. */
 export const sha256Bytes = (bytes: Buffer): string =>

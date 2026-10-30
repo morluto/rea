@@ -6,8 +6,7 @@ import {
   cliMetadataGuidSchema,
   managedNativeImportSchema,
 } from "./managedArtifact.js";
-import { digestSchema } from "../digests.js";
-import { prefixedDigestSchema } from "../digests.js";
+import { digestSchema, prefixedDigestSchema } from "../digests.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
 const textSchema = z.string().min(1);
@@ -36,7 +35,6 @@ const verifiedManagedDeclarationSchema = managedNativeImportSchema
     call_convention: true,
   })
   .extend({
-    import_name: z.string().min(1),
     declaration_verification: managedNativeImportSchema.shape.verification,
   })
   .strict();
@@ -128,10 +126,6 @@ export const managedNativeVerificationInputSchema = z
     }
   });
 
-export type ManagedNativeVerificationInput = z.infer<
-  typeof managedNativeVerificationInputSchema
->;
-
 const verificationCoverageSchema = z.strictObject({
   status: z.enum(["complete-within-inputs", "partial"]),
 });
@@ -170,6 +164,7 @@ export const managedNativeVerificationResultSchema = z
     }),
     pinvoke_imports: z.array(pinvokeVerificationSchema),
     native_implementations: z.strictObject({
+      runtime_provided: z.int().nonnegative().nullable().default(null),
       unresolved: z.int().min(0),
       reason: textSchema,
     }),
