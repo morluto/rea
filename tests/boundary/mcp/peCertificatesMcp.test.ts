@@ -1,8 +1,7 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect } from "vitest";
-import { Ajv2020 } from "ajv/dist/2020.js";
-import type { AnySchema } from "ajv";
+import { afterAll, expect } from "vitest";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
@@ -15,11 +14,18 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { mcpTest, type TestMcp } from "../../support/mcp/mcpFixture.js";
 import { repeatedCertificateSignedData } from "../../fixtures/peCertificateAllowance.js";
 
+const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
+
 const connect = async (mcp: TestMcp) => {
   const session = createTestBinarySession(() => {
     throw new Error("PE certificate inspection must not start a deep provider");
   });
-  const client = await mcp.connect(createServer({ kind: "session", session }));
+  const client = await mcp.connect(
+    createServer({ kind: "session", session }),
+    undefined,
+    schemaValidation,
+  );
   return { client, session };
 };
 
@@ -33,10 +39,9 @@ mcpTest(
       );
       if (advertised?.outputSchema === undefined)
         throw new Error("PE certificates output schema is missing");
-      const schema = advertised.outputSchema as AnySchema;
-      const ajv = new Ajv2020({ strict: false, validateFormats: false });
+      const schema: Record<string, unknown> = advertised.outputSchema;
+      const ajv = schemaValidation.assertions;
       expect(ajv.validateSchema(schema)).toBe(true);
-      const validate = ajv.compile(schema);
       const root = await createTestTempDirectory("rea-pe-cert-schema-");
       const path = join(root, "timestamped.exe");
       await writeFile(
@@ -54,8 +59,8 @@ mcpTest(
       });
       expect(result.isError).not.toBe(true);
       expect(
-        validate(result.structuredContent),
-        JSON.stringify(validate.errors),
+        ajv.validate(schema, result.structuredContent),
+        JSON.stringify(ajv.errors),
       ).toBe(true);
     } finally {
       await session.close();
