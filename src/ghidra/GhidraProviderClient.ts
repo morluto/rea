@@ -1254,6 +1254,21 @@ const reportsMissingProgram = (text: string, programName: string): boolean =>
     return next === "" || next === " ";
   });
 
+/** Guidance for a `-process` name that selects no root program in the project. */
+export const ghidraMissingProgramGuidance = (
+  programName: string,
+  configured: boolean,
+) => {
+  const origin = configured
+    ? "set by REA_GHIDRA_PROGRAM_NAME"
+    : "defaulted from the target file name because REA_GHIDRA_PROGRAM_NAME is unset";
+  return {
+    constraint: `Ghidra found no root program named ${JSON.stringify(programName)} (${origin}) in the selected REA_GHIDRA_PROJECT_PATH project.`,
+    remediationAction:
+      "Set REA_GHIDRA_PROGRAM_NAME to the exact name of a root program in the selected project, in the environment that starts REA (your shell or the MCP client's registration), then restart REA and open the target again. REA did not modify the project or fall back to a fresh import.",
+  };
+};
+
 /** The selected project is preserved; only the program choice is reported. */
 const missingProjectProgram = (
   programName: string,
@@ -1263,15 +1278,14 @@ const missingProjectProgram = (
     readonly diagnostics: Readonly<Record<string, JsonValue>>;
   },
 ): ConfigurationError => {
-  const origin = configured
-    ? "set by REA_GHIDRA_PROGRAM_NAME"
-    : "defaulted from the target file name because REA_GHIDRA_PROGRAM_NAME is unset";
-  const constraint = `Ghidra found no root program named ${JSON.stringify(programName)} (${origin}) in the selected REA_GHIDRA_PROJECT_PATH project.`;
+  const { constraint, remediationAction } = ghidraMissingProgramGuidance(
+    programName,
+    configured,
+  );
   return new ConfigurationError(constraint, {
     ...context,
     settings: [{ setting: "REA_GHIDRA_PROGRAM_NAME", constraint }],
-    remediationAction:
-      "Set REA_GHIDRA_PROGRAM_NAME to the exact name of a root program in the selected project, in the environment that starts REA (your shell or the MCP client's registration), then restart REA and open the target again. REA did not modify the project or fall back to a fresh import.",
+    remediationAction,
   });
 };
 

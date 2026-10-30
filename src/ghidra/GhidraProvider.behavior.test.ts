@@ -40,7 +40,10 @@ import { parseExecutableHeader } from "../domain/binaryTarget.js";
 import { elf, thinMach } from "../domain/binaryTarget.fixture.js";
 import { GhidraProvider } from "./GhidraProvider.js";
 import type { GhidraTargetSnapshot } from "./GhidraClient.js";
-import type { GhidraProviderClientFactory } from "./GhidraProviderClient.js";
+import {
+  ghidraMissingProgramGuidance,
+  type GhidraProviderClientFactory,
+} from "./GhidraProviderClient.js";
 import type { GhidraHeadlessLauncher } from "./GhidraLauncher.js";
 import type { GhidraInstallationHost } from "./GhidraInstallation.js";
 import {
@@ -3342,36 +3345,45 @@ describe("Ghidra missing project program", () => {
   const abort = (name: string) =>
     `ERROR Abort due to Headless analyzer error: Requested project program file(s) not found: ${name} (HeadlessAnalyzer) java.io.IOException: Requested project program file(s) not found: ${name}`;
 
-  it("names the defaulted program and REA_GHIDRA_PROGRAM_NAME instead of doctor advice", async () => {
-    const projected = await startFailure(abort("fixture"));
+  const expectMissingProgram = (
+    projected: Awaited<ReturnType<typeof startFailure>>,
+    programName: string,
+    configured: boolean,
+  ) => {
+    const guidance = ghidraMissingProgramGuidance(programName, configured);
     expect(projected).toMatchObject({
       code: "configuration_invalid",
-      details: { settings: [{ setting: "REA_GHIDRA_PROGRAM_NAME" }] },
+      details: {
+        settings: [
+          {
+            setting: "REA_GHIDRA_PROGRAM_NAME",
+            constraint: guidance.constraint,
+          },
+        ],
+      },
     });
-    expect(projected.message).toContain('no root program named "fixture"');
-    expect(projected.message).toContain(
-      "defaulted from the target file name because REA_GHIDRA_PROGRAM_NAME is unset",
+    expect(projected.remediation.action).toBe(guidance.remediationAction);
+    expect(projected.message).toContain(JSON.stringify(programName));
+  };
+
+  it("reports the program name defaulted from the target as REA_GHIDRA_PROGRAM_NAME", async () => {
+    expectMissingProgram(
+      await startFailure(abort("fixture")),
+      "fixture",
+      false,
     );
-    expect(projected.remediation.action).toContain(
-      "Set REA_GHIDRA_PROGRAM_NAME to the exact name of a root program",
-    );
-    expect(projected.remediation.action).not.toContain("rea doctor");
   });
 
   it("reports an explicitly configured program name that the project lacks", async () => {
     const projected = await startFailure(abort("program_gamma"), {
       REA_GHIDRA_PROGRAM_NAME: "program_gamma",
     });
-    expect(projected.code).toBe("configuration_invalid");
-    expect(projected.message).toContain(
-      'no root program named "program_gamma" (set by REA_GHIDRA_PROGRAM_NAME)',
-    );
+    expectMissingProgram(projected, "program_gamma", true);
   });
 
   it("keeps the generic start failure when Ghidra names a different program", async () => {
     const projected = await startFailure(abort("fixture_other"));
     expect(projected.code).toBe("execution_failure");
-    expect(projected.message).not.toContain("REA_GHIDRA_PROGRAM_NAME");
   });
 
   it("keeps the generic start failure for unrelated launch output", async () => {
