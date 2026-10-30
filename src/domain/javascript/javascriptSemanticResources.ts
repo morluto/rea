@@ -26,7 +26,7 @@ import {
   traverseDataEffects,
   type DataEffectTraversalContext,
 } from "./javascriptSemanticDataEffectHelpers.js";
-import { range } from "./javascriptStaticAnalysisHelpers.js";
+import { FS_OPEN_FLAGS, range } from "./javascriptStaticAnalysisHelpers.js";
 
 const RELEASE_METHODS = ["close", "destroy", "end"] as const;
 
@@ -75,6 +75,28 @@ export const collectJavaScriptSemanticResources = (
   ];
 };
 
+/**
+ * `fs.open`/`fs.openSync` validate a literal flag string before touching the
+ * filesystem and throw `ERR_INVALID_ARG_VALUE` synchronously, so no descriptor
+ * exists. A numeric flag is a platform bitmask and a computed value may still be
+ * a valid flag, so only an exactly readable non-flag string is decided.
+ */
+const rejectsOpenFlagLiteral = (
+  node: t.CallExpression | t.OptionalCallExpression,
+): boolean => {
+  const flag = node.arguments[1];
+  if (flag === undefined || t.isSpreadElement(flag)) return false;
+  const value = unwrapJavaScriptExpression(flag).node;
+  if (!t.isStringLiteral(value)) return false;
+  return !FS_OPEN_FLAGS.has(value.value);
+};
+
+/** `fs.open`, `fs.openSync` and `fs/promises.open` take the flag in slot 1. */
+const openFlagInFirstArgument = (reference: AcquisitionReference): boolean =>
+  reference.method === "open" || reference.method === "openSync"
+    ? reference.specifier === "fs" || reference.specifier === "fs/promises"
+    : false;
+
 const collectAcquisitions = (
   program: t.Program,
   context: DataEffectTraversalContext,
@@ -84,6 +106,8 @@ const collectAcquisitions = (
     if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node)) return;
     const reference = acquisitionMethod(node.callee, context.state);
     if (reference === null) return;
+    if (openFlagInFirstArgument(reference) && rejectsOpenFlagLiteral(node))
+      return;
     output.push({
       node,
       specifier: reference.specifier,
