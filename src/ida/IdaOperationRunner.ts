@@ -94,6 +94,18 @@ const MISSING_PROCEDURE_ANSWERS: ReadonlySet<string> = new Set([
 const lines = (asm: IdaDisassembly) =>
   asm.lines.map(({ address, instruction }) => `${address}: ${instruction}`);
 
+/**
+ * A headless supervisor whose `decompile` predates paginated output rejects the
+ * `offset` and `max_lines` parameters this profile sends, even though it serves
+ * the documented session model. Recognize that specific upstream parameter
+ * rejection so the caller gets an actionable version message instead of an
+ * opaque tool failure.
+ */
+const rejectsDecompilePagination = (error: AnalysisProtocolError): boolean =>
+  /unexpected parameters/i.test(error.message) &&
+  error.message.includes("offset") &&
+  error.message.includes("max_lines");
+
 /** Translate explicit analyst questions into a closed set of read-only upstream requests. */
 export class IdaOperationRunner {
   readonly raw: IdaRawObservation[] = [];
@@ -440,13 +452,25 @@ export class IdaOperationRunner {
     const result: string[] = [];
     let offset: number | null = 0;
     while (offset !== null) {
-      const page = modernDecompileSchema.parse(
-        await this.call("decompile", {
+      let raw: JsonValue;
+      try {
+        raw = await this.call("decompile", {
           addr: fn.address,
           offset,
           max_lines: 100,
-        }),
-      );
+        });
+      } catch (cause) {
+        if (
+          cause instanceof AnalysisProtocolError &&
+          rejectsDecompilePagination(cause)
+        )
+          throw new AnalysisProtocolError(
+            "The headless IDA supervisor's decompile tool does not accept the offset and max_lines pagination parameters this profile requires. Upgrade the upstream ida-pro-mcp to a build whose decompile paginates (see docs/ida-provider.md) and reconnect.",
+            { cause },
+          );
+        throw cause;
+      }
+      const page = modernDecompileSchema.parse(raw);
       if (page.code === null || page.error !== undefined)
         throw new AnalysisProtocolError(
           `IDA decompilation failed: ${page.error ?? "missing code"}`,
