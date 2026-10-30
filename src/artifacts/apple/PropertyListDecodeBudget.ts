@@ -60,6 +60,15 @@ export const preflightPropertyListDecode = (
   return expansion;
 };
 
+/**
+ * Peak heap of the XML decoder's DOM: each element measured 1,000–1,160
+ * bytes, and each text, comment or CDATA node up to 240 bytes, with
+ * @xmldom/xmldom on 64-bit Node. Number projection adds literal metadata.
+ */
+const XML_ELEMENT_BYTES = 1280;
+const XML_NUMBER_PROJECTION_ELEMENT_BYTES = 256;
+const XML_NODE_BYTES = 384;
+
 const estimateXmlPlistExpansion = (
   bytes: Buffer,
   maxBytes: number,
@@ -72,36 +81,47 @@ const estimateXmlPlistExpansion = (
   ) => Error = propertyListDecodeBudgetFailure,
 ): number => {
   const xml = xmlText ?? decodeXmlPlistText(bytes);
-  const decodedSourceBytes = xml.length * 2;
-  let elementCount = 0;
-  // Reserve room for numeric source metadata and the projected attribute copy.
-  const elementBytes = numberProjection ? 256 : 128;
+  // The decoded text and the DOM's copies of its character data.
+  let estimate = xml.length * 4;
+  const elementBytes =
+    XML_ELEMENT_BYTES +
+    (numberProjection ? XML_NUMBER_PROJECTION_ELEMENT_BYTES : 0);
   // Value nesting is bounded by the shared plist parser, which counts plist
   // value depth; raw element depth would also count the envelope and keys.
   for (const token of xmlPreflightTokens(xml)) {
-    if (token.doctype) {
+    if (token.internalSubset)
       // Only a declaration outside opaque text can introduce an internal
       // subset. Brackets in quoted external identifiers are literal text.
-      if (token.internalSubset)
-        throw fail(
-          "expansion",
-          `XML plist internal entity expansion exceeds ${budget}`,
-        );
-      continue;
-    }
-    elementCount += 1;
-    if (decodedSourceBytes * 2 + elementCount * elementBytes > maxBytes)
-      return maxBytes + 1;
+      throw fail(
+        "expansion",
+        `XML plist internal entity expansion exceeds ${budget}`,
+      );
+    if (token.text) estimate += XML_NODE_BYTES;
+    if (token.kind === "element") estimate += elementBytes;
+    else if (token.kind === "node") estimate += XML_NODE_BYTES;
+    if (estimate > maxBytes) return maxBytes + 1;
   }
-  return decodedSourceBytes * 2 + elementCount * elementBytes;
+  return estimate;
 };
 
-/** Consume each XML span once; malformed tokens cannot restart suffix scans. */
-function* xmlPreflightTokens(xml: string) {
+/**
+ * Consume each XML span once; malformed tokens cannot restart suffix scans.
+ * Each token reports the DOM node it creates (none for an end tag) and
+ * whether character data, which becomes a text node, precedes it.
+ */
+function* xmlPreflightTokens(xml: string): Generator<{
+  readonly kind: "element" | "node" | "none";
+  readonly text: boolean;
+  readonly internalSubset: boolean;
+}> {
   let cursor = 0;
   while (cursor < xml.length) {
     const start = xml.indexOf("<", cursor);
-    if (start < 0) return;
+    if (start < 0) {
+      yield { kind: "none", text: true, internalSubset: false };
+      return;
+    }
+    const text = start > cursor;
     const opaqueEnd = xml.startsWith("<!--", start)
       ? "-->"
       : xml.startsWith("<![CDATA[", start)
@@ -113,10 +133,12 @@ function* xmlPreflightTokens(xml: string) {
       const end = xml.indexOf(opaqueEnd, start + 2);
       if (end < 0) return;
       cursor = end + opaqueEnd.length;
+      yield { kind: "node", text, internalSubset: false };
       continue;
     }
     const doctype = /^<!DOCTYPE\b/iu.test(xml.slice(start, start + 10));
-    const element = /^<\/?[A-Za-z]/u.test(xml.slice(start, start + 4));
+    const element = /^<[A-Za-z]/u.test(xml.slice(start, start + 2));
+    const endTag = /^<\/[A-Za-z]/u.test(xml.slice(start, start + 3));
     let quote: string | undefined;
     let internalSubset = false;
     let end = start + 1;
@@ -130,7 +152,12 @@ function* xmlPreflightTokens(xml: string) {
     }
     if (end === xml.length) return;
     cursor = end + 1;
-    if (doctype || element) yield { doctype, internalSubset };
+    if (doctype || element || endTag)
+      yield {
+        kind: element ? "element" : doctype ? "node" : "none",
+        text,
+        internalSubset,
+      };
   }
 }
 
