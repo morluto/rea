@@ -10,7 +10,9 @@ strings, declared size, dataflags, blocks-and-directory table bounds, the
 producer's 16-byte data hash as declared, and the resolved data-area offset.
 Members (`CAB-*` SerializedFiles, `.resS` resource streams, shared assets)
 retain declared source paths, virtual stream offsets, sizes and raw node flags.
-The directory flag identifies directories. Virtual offsets are not physical
+The directory flag identifies directories. `compare_artifacts` compares each
+member's declared `source_path` and raw `flags`; its index and offset are
+layout. Virtual offsets are not physical
 carrier locations: member `source_location` is null. Member reads only examine
 their covering blocks. Uncompressed ranges stream directly; compressed ranges
 reuse at most one completed decoded block. Independent 64 KiB output chunks
