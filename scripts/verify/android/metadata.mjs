@@ -49,6 +49,10 @@ export const verifyAndroidMetadata = async ({
           repository,
           "tests/conformance/android/ReaJadxMetadataRegression.java",
         ),
+        resolve(
+          repository,
+          "tests/conformance/android/ReaJadxExternalReferencesRegression.java",
+        ),
       ],
       { timeout: 30_000 },
     );

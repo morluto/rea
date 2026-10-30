@@ -319,29 +319,8 @@ export const verifyAndroidExternalReferences = async (options) => {
     environment,
     jvmArguments = [],
   } = options;
-  const javac =
-    process.env.JAVA_HOME === undefined
-      ? "javac"
-      : resolve(
-          process.env.JAVA_HOME,
-          "bin",
-          process.platform === "win32" ? "javac.exe" : "javac",
-        );
-  await execute(
-    javac,
-    [
-      ...jvmArguments.map((argument) => `-J${argument}`),
-      "-classpath",
-      jar,
-      "-d",
-      classes,
-      resolve(
-        repository,
-        "tests/conformance/android/ReaJadxExternalReferencesRegression.java",
-      ),
-    ],
-    { timeout: 30_000 },
-  );
+  // The metadata verifier owns compiler selection and compiles both regressions
+  // into this exact classes directory before invoking this consumer.
   const result = await execute(
     java,
     [
