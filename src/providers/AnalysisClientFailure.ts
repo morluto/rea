@@ -175,6 +175,9 @@ export const analysisClientFailureForOperation = (
       {
         ...outcomeContext,
         operation,
+        ...(cause.completedObservation === undefined
+          ? {}
+          : { completedObservation: cause.completedObservation }),
         ...(cause.remediationAction === undefined
           ? {}
           : { remediationAction: cause.remediationAction }),

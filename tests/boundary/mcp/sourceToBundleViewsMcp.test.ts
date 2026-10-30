@@ -22,6 +22,8 @@ it.each(["full", "compact"] as const)(
       parent.normalized_result,
     );
     expect(full.summary).toMatchObject({ split: 1, unknown: 2 });
+    // Static source-to-bundle mappings are inferences; no view may strengthen them.
+    expect(parent.confidence).toBe("inferred");
     const fileParent = await call("compare_source_to_bundle", {
       ...inputs,
       reference: { kind: "file", path },
@@ -45,6 +47,7 @@ it.each(["full", "compact"] as const)(
       ...inputs,
       view: { kind: "summary" },
     });
+    expect(summary.confidence).toBe("inferred");
     expect(summary.normalized_result).toMatchObject({
       kind: "summary",
       parent_evidence_id: parent.evidence_id,
@@ -80,6 +83,7 @@ it.each(["full", "compact"] as const)(
     });
     const outputSchema: Record<string, unknown> = comparisonTool.outputSchema!;
     expect(ajv.compile(outputSchema)(selected)).toBe(true);
+    expect(selected.confidence).toBe("inferred");
     const page = analysisViewResultSchema.parse(selected.normalized_result);
     expect(page).toMatchObject({
       kind: "source-to-bundle",
@@ -101,6 +105,10 @@ it.each(["full", "compact"] as const)(
       kind: "retained-evidence",
       evidence_id: fileParent.evidence_id,
     };
+    for (const view of [{ kind: "summary" }, request])
+      expect(
+        (await call("inspect_analysis_view", { source, view })).confidence,
+      ).toBe("inferred");
     await assertRetainedPages(call, source, request, full);
     await writeFile(
       path,

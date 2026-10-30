@@ -60,6 +60,7 @@ const workflow = async () =>
         test: z.object({ steps: stepsSchema }),
         build: z.object({ steps: stepsSchema }),
         docs: z.object({ steps: stepsSchema }),
+        python: z.object({ if: z.string(), steps: stepsSchema }),
         static: z.object({ steps: stepsSchema }),
         "static-deep": z.object({
           if: z.string(),
@@ -326,6 +327,55 @@ it("rejects successful shard reports with missing or duplicate portable files", 
   await expect(
     readFile(join(root, ".cache/ci-test-history/test-results.json")),
   ).rejects.toMatchObject({ code: "ENOENT" });
+
+  const empty = await createTestTempDirectory("rea-ci-report-empty-");
+  await workflowGit(empty, ["init"]);
+  await writeFile(
+    join(empty, "test-timings.json"),
+    JSON.stringify({ version: 1, success: true, files: [] }),
+  );
+  await expect(
+    executeTimingReport(empty, { CI_VERIFY_TEST_INVENTORY: "true" }),
+  ).rejects.toMatchObject({
+    stderr: expect.stringContaining("No portable test modules were reported"),
+  });
+});
+
+it("reports skipped modules without treating an entirely skipped suite as successful", async () => {
+  const root = await createTestTempDirectory("rea-ci-report-skips-");
+  await workflowGit(root, ["init"]);
+  await mkdir(join(root, "tests"));
+  for (const name of ["required", "platform"])
+    await writeFile(join(root, `tests/${name}.test.ts`), "// fixture\n");
+  await workflowGit(root, ["add", "tests"]);
+  const run = async (requiredState: string) => {
+    await writeFile(
+      join(root, "test-timings.json"),
+      JSON.stringify({
+        version: 1,
+        success: true,
+        files: [
+          {
+            name: "tests/required.test.ts",
+            durationMs: 1,
+            state: requiredState,
+          },
+          { name: "tests/platform.test.ts", durationMs: 1, state: "skipped" },
+        ],
+      }),
+    );
+    return executeTimingReport(root, { CI_VERIFY_TEST_INVENTORY: "true" });
+  };
+
+  const mixed = await run("passed");
+  expect(mixed.summary).toContain("Skipped test modules: 1");
+  expect(mixed.summary).toContain("- tests/platform.test.ts");
+  await expect(run("skipped")).rejects.toMatchObject({
+    stderr: expect.stringContaining("Every portable test module was skipped"),
+  });
+  await expect(
+    readFile(join(root, ".cache/ci-test-history/test-results.json")),
+  ).rejects.toMatchObject({ code: "ENOENT" });
 });
 
 it("runs the existing onboarding and Python producer guards from their selected CI owners", async () => {
@@ -364,11 +414,29 @@ it("runs the existing onboarding and Python producer guards from their selected 
     "node scripts/run-exclusive.mjs artifacts npm run check:ci:fast:tasks",
   );
   expect(scripts["check:ci:fast:tasks"]).toBe(
-    "node scripts/run-turbo.mjs run typecheck lint:built format:check",
+    "node scripts/run-turbo.mjs run typecheck lint format:check",
   );
-  expect(scripts["test:python"]).toContain(
-    "bridge/native/test_rea_lldb_tracer.py",
+  expect(scripts["test:python"]).toBe("python3 scripts/run-python-tests.py");
+  expect(jobs.python.if).toContain("outputs.python == 'true'");
+  expect(jobs.python.if).toContain("tier == 'fast'");
+  const downloadCache = jobs.python.steps.findIndex(
+    (step) => step.uses === "./.github/actions/npm-cache",
   );
+  const install = jobs.python.steps.findIndex((step) => step.run === "npm ci");
+  const prepare = jobs.python.steps.findIndex(
+    (step) => step.run === "npm run test:prepare",
+  );
+  const suite = jobs.python.steps.findIndex(
+    (step) => step.run === "npm run test:python",
+  );
+  const cache = jobs.python.steps.findIndex(
+    (step) => step.uses === "./.github/actions/portable-build-cache",
+  );
+  expect(downloadCache).toBeGreaterThanOrEqual(0);
+  expect(install).toBeGreaterThan(downloadCache);
+  expect(cache).toBeGreaterThan(install);
+  expect(prepare).toBeGreaterThan(cache);
+  expect(suite).toBeGreaterThan(prepare);
 });
 
 it("exports portable timing history and removes it on a failed, partial, or invalid rerun", async () => {
@@ -663,4 +731,57 @@ it("records failed omissions from full reports without treating partial or unhan
   await expect(
     readFile(join(root, ".cache/ci-test-history/test-results.json")),
   ).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it("discovers Python bridge tests and fails on a newly added failing producer test", async () => {
+  const root = await createTestTempDirectory("rea-python-inventory-");
+  await mkdir(join(root, "scripts"), { recursive: true });
+  await mkdir(join(root, "bridge", "example"), { recursive: true });
+  await mkdir(join(root, "tests", "support", "analysis-efficiency"), {
+    recursive: true,
+  });
+  await writeFile(
+    join(root, "scripts", "run-python-tests.py"),
+    await readFile(
+      new URL("../../../scripts/run-python-tests.py", import.meta.url),
+    ),
+  );
+  const passing =
+    "import unittest\nclass Example(unittest.TestCase):\n def test_case(self): pass\n";
+  for (const family of ["mitmproxy", "native", "pwndbg"]) {
+    await mkdir(join(root, "bridge", family), { recursive: true });
+    await writeFile(join(root, "bridge", family, "capture.py"), "VALUE = 1\n");
+    await writeFile(join(root, "bridge", family, "test_case.py"), passing);
+  }
+  await writeFile(join(root, "bridge", "example", "test_first.py"), passing);
+  await writeFile(
+    join(root, "tests", "support", "analysis-efficiency", "test_example.py"),
+    passing,
+  );
+  const command = ["scripts/run-python-tests.py"];
+  const discovered = await execute("python3", command, { cwd: root });
+  expect(discovered.stderr).toContain("bridge.mitmproxy.test_case");
+  expect(discovered.stderr).toContain("bridge.native.test_case");
+  expect(discovered.stderr).toContain("bridge.pwndbg.test_case");
+  expect(discovered.stderr).toContain("OK");
+  await writeFile(
+    join(root, "bridge", "example", "test_second.py"),
+    "import unittest\nclass Example(unittest.TestCase):\n def test_case(self): self.fail('new test executed')\n",
+  );
+  await expect(
+    execute("python3", command, { cwd: root }),
+  ).rejects.toMatchObject({
+    code: 1,
+    stderr: expect.stringContaining("new test executed"),
+  });
+  await rm(join(root, "bridge", "mitmproxy", "test_case.py"));
+  const missingFamily = await execute("python3", command, { cwd: root }).then(
+    () => undefined,
+    (error: { code?: unknown; stderr?: unknown }) => error,
+  );
+  expect(missingFamily).toMatchObject({ code: 1 });
+  expect(JSON.parse(String(missingFamily?.stderr))).toEqual({
+    code: "missing_bridge_family",
+    families: ["mitmproxy"],
+  });
 });

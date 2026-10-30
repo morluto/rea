@@ -114,18 +114,20 @@ const isoText = (
   return `${pad(year, 4)}-${pad(at.getUTCMonth() + 1, 2)}-${pad(at.getUTCDate(), 2)}${separator}${pad(at.getUTCHours(), 2)}:${pad(at.getUTCMinutes(), 2)}:${pad(at.getUTCSeconds(), 2)}${digits === "" ? "" : `.${digits}`}${zone}`;
 };
 
-/** An instant in a recorded format; undefined outside its four-digit ISO year range. Fraction digits past milliseconds are zeros. */
+/** An instant in a recorded format; undefined outside its four-digit ISO year range. Fraction digits past milliseconds are `subMillisecond`'s, else zeros. */
 export const formatClock = (
   ms: number,
   format: ClockFormat,
+  subMillisecond = 0,
 ): JsonValue | undefined => {
   if (format.kind === "epoch")
     return format.unit === "s" ? Math.floor(ms / 1000) : ms;
   const at = new Date(ms + zoneMinutesForFormat(format.zone) * MINUTE_MS);
-  const digits = `${pad(at.getUTCMilliseconds(), 3)}${"0".repeat(9)}`.slice(
-    0,
-    format.fraction,
-  );
+  const digits =
+    `${pad(at.getUTCMilliseconds(), 3)}${pad(subMillisecond, 6)}`.slice(
+      0,
+      format.fraction,
+    );
   return isoText(
     at,
     format.separator,
@@ -249,6 +251,13 @@ export const nextSequence = (
 ): number =>
   taken === undefined ? (held ?? 1) : Math.max(held ?? taken + 1, taken + 1);
 
+/** The next held integer of a sequence that never goes below its `start`. */
+export const startedSequence = (
+  held: number | undefined,
+  start: number | undefined,
+): number | undefined =>
+  start === undefined ? held : Math.max(held ?? start, start);
+
 /** An integer spelled as the recorded value spells integers: a number, or a string of digits. */
 export const spelledLike = (exemplar: JsonValue, value: number): JsonValue =>
   maskedCount(exemplar) !== undefined
@@ -305,13 +314,24 @@ const fillMask = (mask: string, value: number): string => {
 };
 
 /** Lower case, with every run of other characters joined by one `-` and none at either end. */
-export const slugOf = (text: string): string =>
-  text
+/** How a slug spells `&`: dropped when absent, as Django does, or as the word, as Go's gosimple/slug and JavaScript's slugify do. */
+export type Ampersand = "and";
+
+export const slugOf = (text: string, ampersand?: Ampersand): string =>
+  (ampersand === "and" ? text.replaceAll("&", " and ") : text)
     .normalize("NFKD")
     .replace(/[̀-ͯ]/gu, "")
     .toLowerCase()
     .replace(/[^a-z0-9]+/gu, "-")
     .replace(/^-+|-+$/gu, "");
+
+/** A text's slugs, each with the spelling that gives it: also with `&` as the word when the text holds one. */
+export const slugSpellings = (
+  text: string,
+): readonly { readonly slug: string; readonly ampersand?: Ampersand }[] =>
+  text.includes("&")
+    ? [{ slug: slugOf(text) }, { slug: slugOf(text, "and"), ampersand: "and" }]
+    : [{ slug: slugOf(text) }];
 
 const isAlphanumeric = (character: string | undefined): boolean =>
   character !== undefined && /[\p{L}\p{N}]/u.test(character);

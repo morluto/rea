@@ -22,7 +22,10 @@ import {
   pyInstallerMemberStream,
   readPyInstallerMemberPrefix,
 } from "./PyInstallerMemberStream.js";
-import type { CArchiveEntry } from "./CArchiveLayout.js";
+import {
+  isCArchivePythonModule,
+  type CArchiveEntry,
+} from "./CArchiveLayout.js";
 import type { PyInstallerMember } from "./CArchiveMembers.js";
 import { artifactFileAdmissionFailure } from "../ArtifactFileAdmission.js";
 import {
@@ -74,9 +77,9 @@ export class PyInstallerPyzStore {
   ): Promise<CArchiveBytecodeHeader> {
     const unchanged = { header: undefined, limitation: undefined };
     if (magic === undefined) return unchanged;
-    if (entry.typeCode === "s")
+    if (entry.role === "script")
       return { header: reconstructedPycHeader(magic), limitation: undefined };
-    if (entry.typeCode !== "m" && entry.typeCode !== "M") return unchanged;
+    if (!isCArchivePythonModule(entry)) return unchanged;
     const prefix = await readPyInstallerMemberPrefix(
       async (active) =>
         (

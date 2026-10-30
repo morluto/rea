@@ -138,12 +138,14 @@ export class NodeSeaArtifactReader implements ArtifactReader {
       const output = this.#memberStream(stored, signal);
       output.on("error", () => undefined);
       this.#streams.add(output);
+      // A finished producer can leave source bytes buffered for its consumer.
+      // Keep the readable side owned until it closes as well.
+      output.once("close", () => this.#streams.delete(output));
       void this.#scope
         .run(
           () =>
             new Promise<void>((resolve) => {
               pipeline(source, output, () => {
-                this.#streams.delete(output);
                 resolve();
               });
             }),

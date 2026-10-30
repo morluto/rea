@@ -1,6 +1,6 @@
 import type * as t from "@babel/types";
 import type { JavaScriptBundlerFactoryRoles } from "./javascriptBundlerFactoryRoles.js";
-import type { JavaScriptOpenReceiverFact } from "./javascriptSemanticAnalysis.js";
+import type { JavaScriptOpenReceiverFact } from "./javascriptSemanticReceiverFacts.js";
 import type { JavaScriptRpcScan } from "./javascriptRpcEndpoints.js";
 import type { JavaScriptStaticPathIntrinsicQuery } from "./javascriptStaticAnalysisHelpers.js";
 import type { JavaScriptExpressionShapeResolver } from "./javascriptSemanticExpressionShapes.js";
@@ -110,6 +110,7 @@ export interface JavaScriptFindingContext {
   ) =>
     | { readonly owner: t.NewExpression; readonly path: readonly string[] }
     | undefined;
+  readonly xhrOpenRequest?: (node: t.Node) => boolean;
   readonly rendererLoad?: (callee: t.Node, site: t.Node) => boolean;
   readonly rpcScan: JavaScriptRpcScan;
   /** Shared bounded argv/nullish argument shapes for optional-slot signatures. */

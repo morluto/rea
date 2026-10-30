@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisResult.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it } from "vitest";
 import { createServer } from "../../../src/server/createServer.js";
@@ -9,7 +10,12 @@ import { composedWorkflowFixture } from "../../fixtures/composedWorkflowEvidence
 it("returns the same consumed atomic provenance through CLI application and MCP boundaries", async () => {
   const cli = await composedWorkflowFixture();
   const direct = parseEvidence(
-    await runDirectAnalysis(cli.dependencies, cli.path, "binary_overview", {}),
+    await runDirectAnalysis(
+      cli.dependencies,
+      cli.path,
+      "binary_overview",
+      {},
+    ).then(projectCliAnalysisResult),
   );
   const fixture = await composedWorkflowFixture();
   const server = createServer(

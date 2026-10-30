@@ -241,14 +241,27 @@ describe.skipIf(process.platform === "win32")(
       if (missing.ok) throw new Error("Missing installation was accepted");
       expect(missing.error.message).toContain("PSP_EXTENSION_UNAVAILABLE");
     });
+  },
+);
 
+describe.skipIf(process.platform === "win32")(
+  "PSP extension admission codes",
+  () => {
     it.each([
-      ["name=other\nversion=12.1.3\n", "does not match"],
-      ["name=ghidra-allegrex\nversion=12.1.4\n", "does not match"],
-      ["name=ghidra-allegrex\nversion=12.1.\\uZZZZ\n", "Unicode escape"],
-    ])(
+      ["name=other\nversion=12.1.3\n", "metadata_mismatch", undefined],
+      [
+        "name=ghidra-allegrex\nversion=12.1.4\n",
+        "metadata_mismatch",
+        undefined,
+      ],
+      [
+        "name=ghidra-allegrex\nversion=12.1.\\uZZZZ\n",
+        "properties_invalid",
+        "malformed_unicode_escape",
+      ],
+    ] as const)(
       "rejects mismatched or malformed extension metadata %s",
-      async (properties, reason) => {
+      async (properties, code, parserCode) => {
         const { root } = await installation();
         await writeFile(join(root, "extension.properties"), properties);
         await expect(
@@ -257,7 +270,14 @@ describe.skipIf(process.platform === "win32")(
             "12.1.3",
             new ArtifactResourceScope(),
           ),
-        ).rejects.toThrow(reason);
+        ).rejects.toMatchObject({
+          diagnostics: {
+            code,
+            ...(parserCode === undefined
+              ? { ghidra_version: "12.1.3" }
+              : { parser_code: parserCode }),
+          },
+        });
       },
     );
 
@@ -269,7 +289,12 @@ describe.skipIf(process.platform === "win32")(
       );
       await expect(
         inspectGhidraPspExtension(root, "12.1.3", new ArtifactResourceScope()),
-      ).rejects.toThrow("Module.manifest");
+      ).rejects.toMatchObject({
+        diagnostics: {
+          code: "component_missing",
+          component: "Module.manifest",
+        },
+      });
     });
 
     it("rejects symlinked code instead of hashing an untracked external producer", async () => {
@@ -279,7 +304,9 @@ describe.skipIf(process.platform === "win32")(
       await symlink(join(directory, "external.jar"), path);
       await expect(
         inspectGhidraPspExtension(root, "12.1.3", new ArtifactResourceScope()),
-      ).rejects.toThrow("regular files");
+      ).rejects.toMatchObject({
+        diagnostics: { code: "entry_kind", relative: "lib/extension.jar" },
+      });
     });
 
     it("bounds sparse extension input before reading or allocating its declared extent", async () => {
@@ -287,7 +314,12 @@ describe.skipIf(process.platform === "win32")(
       await truncate(join(root, "lib/extension.jar"), 64 * 1024 * 1024 + 1);
       await expect(
         inspectGhidraPspExtension(root, "12.1.3", new ArtifactResourceScope()),
-      ).rejects.toThrow("inspection limit");
+      ).rejects.toMatchObject({
+        diagnostics: {
+          code: "bytes_exceed_limit",
+          max_bytes: 64 * 1024 * 1024,
+        },
+      });
     });
   },
 );
@@ -314,7 +346,9 @@ describe.skipIf(process.platform === "win32")(
             "12.1.3",
             new ArtifactResourceScope(),
           ),
-        ).rejects.toThrow("inventory exceeds the inspection limit");
+        ).rejects.toMatchObject({
+          diagnostics: { code: "inventory_exceeds_limit", max_entries: 1024 },
+        });
       },
     );
   },
@@ -571,7 +605,12 @@ describe.skipIf(process.platform === "win32")(
       const languageOverride = { languageId: "x86:LE:64:default" };
       expect(() =>
         ghidraHeadlessArguments({ ...paths, psp: true, languageOverride }),
-      ).toThrow("PSP ELF import cannot be combined");
+      ).toThrow(
+        expect.objectContaining({
+          _tag: "GhidraAdmissionError",
+          code: "psp_combined",
+        }),
+      );
       expect(ghidraHeadlessArguments({ ...paths, languageOverride })).toEqual(
         expect.arrayContaining(["-processor", "x86:LE:64:default"]),
       );
@@ -903,11 +942,14 @@ describe.skipIf(process.platform === "win32")(
         const result = await provider.resolveAnalysisProfile(target);
         expect(result.ok).toBe(false);
         if (result.ok) throw new Error("Changed file admitted");
-        expect(result.error.message).toContain(
-          change === "growth"
-            ? "changed during inspection"
-            : "Truncated Allegrex component",
-        );
+        expect(result.error).toMatchObject({
+          diagnostics: {
+            code:
+              change === "growth" ? "component_changed" : "component_truncated",
+            relative:
+              change === "growth" ? "Module.manifest" : "extension.properties",
+          },
+        });
         expect(closes).toBe(1);
         expect(result.error.cleanupIncomplete).toBe(false);
         expect(provider.hasPendingOwnedResources()).toBe(false);

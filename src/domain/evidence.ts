@@ -1,6 +1,8 @@
 import { basename } from "node:path";
 import { z } from "zod";
 
+import { withEvidenceSubjectDeclaration } from "./evidenceSubject.js";
+
 import { digestCanonicalValue } from "./canonicalDigest.js";
 import { canonicalJsonDigestSteps } from "./canonicalJsonDigestSteps.js";
 import { nulFreeStringSchema } from "./localPath.js";
@@ -9,12 +11,7 @@ import {
   analysisProfileSchema,
   type AnalysisProfileCommitment,
 } from "./analysisProfile.js";
-import {
-  BINARY_ARCHITECTURES,
-  RAW_ONLY_ARCHITECTURES,
-  type BinaryArchitecture,
-  type BinaryTarget,
-} from "./binaryTargetTypes.js";
+import type { BinaryArchitecture, BinaryTarget } from "./binaryTargetTypes.js";
 import {
   jsonObjectSchema,
   jsonValueSchema,
@@ -41,63 +38,12 @@ export const providerSchema = z.strictObject({
   name: z.string().min(1),
   version: z.string().nullable(),
 });
-const subjectFormatSchema = z.enum([
-  "hopper",
-  "analysis-database",
-  "mach-o",
-  "elf",
-  "pe",
-  "dos-mz",
-  "dos-com",
-  "raw-binary",
-  "gamecube-dol",
-  "zip",
-  "ipa",
-  "apk",
-  "msix",
-  "appx",
-  "hap",
-  "hsp",
-  "app-pack",
-  "asar",
-  "godot-pck",
-  "dmg",
-  "pkg",
-  "plist",
-  "javascript",
-  "source-map",
-  "directory",
-  "file",
-  "unknown",
-  "mach-o-universal",
-  "javascript-bundle",
-  "entitlements",
-  "pyinstaller",
-  "node-sea",
-]);
 const subjectBaseSchema = z.strictObject({
   name: z.string().min(1),
   digest: z.strictObject({ sha256: digestSchema }),
   local_path: nulFreeStringSchema,
 });
-// The format owns the architecture claim, including nested Evidence subjects.
-const subjectSchema = z.discriminatedUnion("format", [
-  subjectBaseSchema.extend({
-    format: subjectFormatSchema.exclude(["raw-binary", "gamecube-dol"]),
-    architecture: z
-      .enum(BINARY_ARCHITECTURES)
-      .exclude([...RAW_ONLY_ARCHITECTURES])
-      .nullable(),
-  }),
-  subjectBaseSchema.extend({
-    format: z.literal("raw-binary"),
-    architecture: z.enum(BINARY_ARCHITECTURES).nullable(),
-  }),
-  subjectBaseSchema.extend({
-    format: z.literal("gamecube-dol"),
-    architecture: z.literal("powerpc"),
-  }),
-]);
+const subjectSchema = withEvidenceSubjectDeclaration(subjectBaseSchema);
 /** Source location attached to an evidence observation. */
 /** Source-location schema shared by evidence-bearing persistence formats. */
 export const evidenceLocationSchema = z.discriminatedUnion("kind", [
@@ -326,6 +272,16 @@ export const parseEvidence = (input: unknown): Evidence => {
       : undefined;
   if (immutable !== undefined) return immutable;
   return authenticatedEvidenceSchema.parse(input);
+};
+
+/** Recognize authenticated Evidence in a union of partial observations. */
+export const tryParseEvidence = (input: unknown): Evidence | undefined => {
+  if (typeof input !== "object" || input === null || !("evidence_id" in input))
+    return undefined;
+  const immutable = immutableEvidenceSnapshots.get(input);
+  if (immutable !== undefined) return immutable;
+  const parsed = authenticatedEvidenceSchema.safeParse(input);
+  return parsed.success ? parsed.data : undefined;
 };
 
 /** Authenticate and seal a ledger-owned snapshot; external mutable values are copied first. */

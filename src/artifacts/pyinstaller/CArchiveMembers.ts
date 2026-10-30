@@ -1,6 +1,10 @@
 import type { FileHandle } from "node:fs/promises";
 import { copyArtifactEntry, type ArtifactEntry } from "../ArtifactReader.js";
-import { isCArchiveDeclaration, type CArchiveEntry } from "./CArchiveLayout.js";
+import {
+  isCArchiveDeclaration,
+  isCArchivePythonModule,
+  type CArchiveEntry,
+} from "./CArchiveLayout.js";
 import type { PyzArchive, PyzEntry } from "./PyzArchive.js";
 import {
   RECONSTRUCTED_PYTHON_HEADER_LIMITATION,
@@ -54,7 +58,7 @@ export const hasEncryptionMarker = (
   entries.some(
     (entry) =>
       entry.name === CRYPTO_KEY_NAME &&
-      (entry.typeCode === "m" || entry.typeCode === "M") &&
+      isCArchivePythonModule(entry) &&
       entry.uncompressedSize > 0,
   );
 
@@ -67,13 +71,13 @@ export const projectStoredMember = (
   if (isCArchiveDeclaration(entry))
     return {
       entry: projectEntry({
-        path: `__pyinstaller__/${entry.typeCode === "o" ? "runtime-options" : "dependencies"}/${String(entry.index)}`,
+        path: `__pyinstaller__/${entry.role === "runtime-option" ? "runtime-options" : "dependencies"}/${String(entry.index)}`,
         kind: "metadata",
         declaredSize: entry.uncompressedSize,
         compressedSize: entry.compressedSize,
         byteOffset: null,
         limitations:
-          entry.typeCode === "d"
+          entry.role === "dependency"
             ? [
                 "Multipackage dependency bytes belong to another executable and remain unresolved.",
               ]
@@ -85,7 +89,7 @@ export const projectStoredMember = (
     };
   const { header } = bytecode;
   const path = canonicalMemberPath(entry.name, pathDialect);
-  const symlink = entry.typeCode === "n";
+  const symlink = entry.role === "symlink";
   const limitations: string[] = [];
   if (symlink) limitations.push("PyInstaller symlink target was not read.");
   if (header !== undefined)
@@ -98,7 +102,7 @@ export const projectStoredMember = (
       kind: symlink ? "symlink" : "file",
       declaredSize,
       compressedSize: entry.compressedSize,
-      executable: entry.typeCode === "b",
+      executable: entry.role === "binary",
       byteOffset: sourceByteOffset(entry, archiveStart),
       limitations,
       adapterKey: `carchive:${String(entry.index)}:${entry.name}`,

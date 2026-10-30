@@ -16,7 +16,7 @@ import {
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { nativeApiBoundarySchema } from "../domain/native/nativeApiBoundary.js";
 import { projectNativeApiInspection } from "./native/NativeApiInspection.js";
-import { functionDossierSchema } from "../domain/hopperValues.js";
+import { functionDossierSchema } from "../domain/native/functionDossier.js";
 import { ghidraFunctionDossier } from "../domain/ghidraValues.fixture.js";
 import { ANALYSIS_SNAPSHOT_PROFILE } from "../domain/analysisSnapshot.fixture.js";
 import { createEvidence } from "../domain/evidence.js";
@@ -188,7 +188,8 @@ it("retains unique upstream limits in canonical order across concurrent observat
   const analysis: AnalysisOperationPort = {
     execute: async (operation, parameters, forwarded) => {
       expect(parameters).toEqual({ marker: true });
-      expect(forwarded).toBe(options);
+      expect(forwarded).toMatchObject(options);
+      expect(forwarded?.workScope).toBeDefined();
       const call = calls++;
       if (call === 0) await gate;
       else release();
@@ -621,3 +622,60 @@ it.each([
     });
   },
 );
+
+it("shares temporary provider state only within a single completed workflow", async () => {
+  const owner = {};
+  const scopes: Array<
+    NonNullable<import("./AnalysisProvider.js").ExecutionOptions["workScope"]>
+  > = [];
+  const provider = { id: "fixture", name: "Fixture", version: "1" };
+  const analysis: AnalysisOperationPort = {
+    execute: async (_operation, _parameters, options) => {
+      const scope = options?.workScope;
+      if (scope === undefined) throw new Error("workflow scope missing");
+      scopes.push(scope);
+      scope.set(owner, (scope.get<number>(owner) ?? 0) + 1);
+      return ok(createAnalysisExecution(null, provider));
+    },
+  };
+  const run = () =>
+    executeComposedWorkflow(analysis, async (observed) => {
+      await observed.execute("health", {});
+      await observed.execute("health", {});
+      expect(scopes.at(-1)?.get(owner)).toBe(2);
+      return ok(null);
+    });
+  await run();
+  expect(scopes[0]?.get(owner)).toBeUndefined();
+  scopes[0]?.set(owner, "late completion");
+  expect(scopes[0]?.get(owner)).toBeUndefined();
+  await run();
+  expect(scopes[0]).toBe(scopes[1]);
+  expect(scopes[0]).not.toBe(scopes[2]);
+  expect(scopes[2]).toBe(scopes[3]);
+});
+
+it("clears workflow state when its callback throws", async () => {
+  const owner = {};
+  let captured: import("./AnalysisProvider.js").ExecutionOptions["workScope"];
+  const analysis: AnalysisOperationPort = {
+    execute: async (_operation, _parameters, options) => {
+      captured = options?.workScope;
+      captured?.set(owner, "in flight");
+      return ok(
+        createAnalysisExecution(null, {
+          id: "fixture",
+          name: "Fixture",
+          version: "1",
+        }),
+      );
+    },
+  };
+  await expect(
+    executeComposedWorkflow(analysis, async (observed) => {
+      await observed.execute("health", {});
+      throw new Error("failed workflow");
+    }),
+  ).rejects.toThrow("failed workflow");
+  expect(captured?.get(owner)).toBeUndefined();
+});

@@ -13,7 +13,7 @@ import {
   utimes,
   writeFile,
 } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, dirname, join, relative } from "node:path";
 import canonicalize from "canonicalize";
 
 import { expect, it as test, vi } from "vitest";
@@ -86,6 +86,7 @@ const newCache = (installation: KunaInstallation, maxBytes = 64 * 1024 ** 2) =>
 const keyOf = (installation: KunaInstallation, target: Target) =>
   kunaProjectKey({
     targetSha256: target.targetSha256,
+    targetBasename: basename(target.targetPath),
     kunaSha256: installation.sha256,
     kunaCommand: installation.configuration.command,
     kunaExecutable: installation.executable,
@@ -118,84 +119,103 @@ const deferred = <T>() => {
   return { promise, resolve, reject };
 };
 
-it("regenerates an obsolete export once and retires it without touching unrelated cache resources", async () => {
-  const { kuna, installation, cacheRoot, cache, target } = await fixture(
-    "rea-kuna-cache-format-transition-",
-  );
-  const input = await target("program");
-  const initial = await cache.build({ installation, ...input });
-  if (!initial.ok) throw initial.error;
-  expect((await cache.close()).ok).toBe(true);
-  // Seed the previously shipped manifest and content-key format using a real
-  // authored export; omitted launcher identity must never be invented or reused.
-  const legacyKey = createHash("sha256")
-    .update(
-      canonicalize({
-        layout: 1,
-        target_sha256: input.targetSha256,
-        kuna_sha256: installation.sha256,
-        kuna_version: installation.version,
-        export: {
-          command: "decompile-project",
+it.each([1, 2])(
+  "regenerates layout %i once and retires it without touching unrelated cache resources",
+  async (layout) => {
+    const { kuna, installation, cacheRoot, cache, target } = await fixture(
+      "rea-kuna-cache-format-transition-",
+    );
+    const input = await target("program");
+    const initial = await cache.build({ installation, ...input });
+    if (!initial.ok) throw initial.error;
+    expect((await cache.close()).ok).toBe(true);
+    // Seed the previously shipped manifest and content-key format using a real
+    // authored export; omitted launcher identity must never be invented or reused.
+    const legacyKey = createHash("sha256")
+      .update(
+        canonicalize({
+          layout,
+          target_sha256: input.targetSha256,
+          kuna_sha256: installation.sha256,
+          ...(layout === 2
+            ? {
+                kuna_command: installation.configuration.command,
+                kuna_executable: installation.executable,
+              }
+            : {}),
+          kuna_version: installation.version,
+          export: {
+            command: "decompile-project",
+            jobs: installation.configuration.jobs,
+          },
+        }) ?? "",
+      )
+      .digest("hex");
+    const legacyEntry = join(cacheRoot, "projects", legacyKey);
+    await rename(join(cacheRoot, "projects", initial.value.key), legacyEntry);
+    await writeFile(
+      join(legacyEntry, "manifest.json"),
+      JSON.stringify({
+        ...initial.value.manifest,
+        layout,
+        key: legacyKey,
+        inputs: {
+          target_sha256: input.targetSha256,
+          kuna_sha256: installation.sha256,
+          ...(layout === 2
+            ? {
+                kuna_command: installation.configuration.command,
+                kuna_executable: installation.executable,
+              }
+            : {}),
+          kuna_version: installation.version,
           jobs: installation.configuration.jobs,
         },
-      }) ?? "",
-    )
-    .digest("hex");
-  const legacyEntry = join(cacheRoot, "projects", legacyKey);
-  await rename(join(cacheRoot, "projects", initial.value.key), legacyEntry);
-  await writeFile(
-    join(legacyEntry, "manifest.json"),
-    JSON.stringify({
-      ...initial.value.manifest,
-      layout: 1,
-      key: legacyKey,
-      inputs: {
-        target_sha256: input.targetSha256,
-        kuna_sha256: installation.sha256,
-        kuna_version: installation.version,
-        jobs: installation.configuration.jobs,
-      },
-    }),
-  );
-  const unknown = join(cacheRoot, "projects", "unrelated-directory");
-  const unresolved = join(cacheRoot, "staging", "build-unresolved");
-  await mkdir(unknown);
-  await mkdir(unresolved);
-  await writeFile(join(unknown, "sentinel"), "preserve");
-  await writeFile(join(unresolved, "sentinel"), "preserve");
-  const migrated = newCache(installation);
-  try {
-    const built = await migrated.build({ installation, ...input });
-    if (!built.ok) throw built.error;
-    await expect(access(legacyEntry)).rejects.toMatchObject({ code: "ENOENT" });
-    expect(built.value.key).not.toBe(legacyKey);
-    expect(built.value.manifest).toMatchObject({
-      layout: 2,
-      inputs: {
-        kuna_command: installation.configuration.command,
-        kuna_executable: installation.executable,
-      },
-    });
-    expect(await callsOf(kuna, "decompile-project")).toHaveLength(2);
-    const fresh = newCache(installation);
-    try {
-      const reused = await fresh.build({ installation, ...input });
-      if (!reused.ok) throw reused.error;
-      expect(reused.value.manifest).toEqual(built.value.manifest);
-      expect(await callsOf(kuna, "decompile-project")).toHaveLength(2);
-    } finally {
-      expect((await fresh.close()).ok).toBe(true);
-    }
-    expect(await readFile(join(unknown, "sentinel"), "utf8")).toBe("preserve");
-    expect(await readFile(join(unresolved, "sentinel"), "utf8")).toBe(
-      "preserve",
+      }),
     );
-    expect(await entries(cacheRoot, "trash")).toEqual([]);
-  } finally {
-    expect((await migrated.close()).ok).toBe(true);
-  }
-});
+    const unknown = join(cacheRoot, "projects", "unrelated-directory");
+    const unresolved = join(cacheRoot, "staging", "build-unresolved");
+    await mkdir(unknown);
+    await mkdir(unresolved);
+    await writeFile(join(unknown, "sentinel"), "preserve");
+    await writeFile(join(unresolved, "sentinel"), "preserve");
+    const migrated = newCache(installation);
+    try {
+      const built = await migrated.build({ installation, ...input });
+      if (!built.ok) throw built.error;
+      await expect(access(legacyEntry)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      expect(built.value.key).not.toBe(legacyKey);
+      expect(built.value.manifest).toMatchObject({
+        layout: 3,
+        inputs: {
+          kuna_command: installation.configuration.command,
+          kuna_executable: installation.executable,
+        },
+      });
+      expect(await callsOf(kuna, "decompile-project")).toHaveLength(2);
+      const fresh = newCache(installation);
+      try {
+        const reused = await fresh.build({ installation, ...input });
+        if (!reused.ok) throw reused.error;
+        expect(reused.value.manifest).toEqual(built.value.manifest);
+        expect(await callsOf(kuna, "decompile-project")).toHaveLength(2);
+      } finally {
+        expect((await fresh.close()).ok).toBe(true);
+      }
+      expect(await readFile(join(unknown, "sentinel"), "utf8")).toBe(
+        "preserve",
+      );
+      expect(await readFile(join(unresolved, "sentinel"), "utf8")).toBe(
+        "preserve",
+      );
+      expect(await entries(cacheRoot, "trash")).toEqual([]);
+    } finally {
+      expect((await migrated.close()).ok).toBe(true);
+    }
+  },
+);
 
 const causesOf = (cause: unknown): unknown[] => {
   const pending = [cause];
@@ -235,7 +255,7 @@ it("publishes a verified export and serves later requests from the cache", async
     value: {
       key: keyOf(installation, input),
       manifest: {
-        layout: 2,
+        layout: 3,
         inputs: {
           target_sha256: input.targetSha256,
           kuna_sha256: installation.sha256,
@@ -1246,5 +1266,248 @@ it("invalidates a warm export when same-length content changes", async () => {
     await expect(readFile(file)).rejects.toMatchObject({ code: "ENOENT" });
   } finally {
     expect(await cache.close()).toMatchObject({ ok: true });
+  }
+});
+
+it("refuses escaped manifest paths before reading export files and preserves the outside project", async () => {
+  const { installation, cacheRoot, cache, target } = await fixture(
+    "rea-kuna-escaped-manifest-",
+  );
+  const built = await cache.build({
+    installation,
+    ...(await target("program")),
+  });
+  if (!built.ok) throw built.error;
+  expect((await cache.close()).ok).toBe(true);
+  const outside = join(dirname(cacheRoot), "saved-project");
+  await rename(built.value.directory, outside);
+  await mkdir(built.value.directory);
+  const manifest = structuredClone(built.value.manifest);
+  for (const file of Object.values(manifest.files))
+    file.path = relative(built.value.directory, join(outside, file.path));
+  await writeFile(
+    join(dirname(built.value.directory), "manifest.json"),
+    JSON.stringify(manifest),
+  );
+  const hashes = vi.spyOn(stableFileHash, "observeStableFile");
+  const reopened = newCache(installation);
+  try {
+    expect(await reopened.lookup(built.value.key)).toBeUndefined();
+    expect(hashes).not.toHaveBeenCalled();
+    await expect(access(dirname(built.value.directory))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    expect(await readFile(join(outside, "program.c"), "utf8")).toContain(
+      "// Function: main",
+    );
+  } finally {
+    hashes.mockRestore();
+    expect((await reopened.close()).ok).toBe(true);
+  }
+});
+
+it.each(["h", "readme", "inventory"] as const)(
+  "refuses a manifest's mismatched %s role before hashing files",
+  async (role) => {
+    const { installation, cache, target } = await fixture(
+      "rea-kuna-role-manifest-",
+    );
+    const built = await cache.build({
+      installation,
+      ...(await target("program")),
+    });
+    if (!built.ok) throw built.error;
+    expect((await cache.close()).ok).toBe(true);
+    const manifest = structuredClone(built.value.manifest);
+    manifest.files[role].path =
+      role === "h" ? "different.h" : `saved-${manifest.files[role].path}`;
+    await writeFile(
+      join(dirname(built.value.directory), "manifest.json"),
+      JSON.stringify(manifest),
+    );
+    const hashes = vi.spyOn(stableFileHash, "observeStableFile");
+    const reopened = newCache(installation);
+    try {
+      expect(await reopened.lookup(built.value.key)).toBeUndefined();
+      expect(hashes).not.toHaveBeenCalled();
+    } finally {
+      hashes.mockRestore();
+      expect((await reopened.close()).ok).toBe(true);
+    }
+  },
+);
+
+it.each(["entry", "project", "manifest"] as const)(
+  "refuses a symlinked %s on cold and verified lookup without touching its target",
+  async (kind) => {
+    for (const verified of [false, true]) {
+      const { installation, cacheRoot, cache, target } = await fixture(
+        "rea-kuna-linked-entry-",
+      );
+      const built = await cache.build({
+        installation,
+        ...(await target("program")),
+      });
+      if (!built.ok) throw built.error;
+      expect((await cache.close()).ok).toBe(true);
+      const reopened = newCache(installation);
+      if (verified)
+        expect(await reopened.lookup(built.value.key)).toBeDefined();
+      const entry = dirname(built.value.directory);
+      const selected =
+        kind === "entry"
+          ? entry
+          : kind === "project"
+            ? built.value.directory
+            : join(entry, "manifest.json");
+      const outside = join(dirname(cacheRoot), `saved-${kind}`);
+      await rename(selected, outside);
+      await symlink(outside, selected);
+      const preserved =
+        kind === "entry"
+          ? join(outside, "project", "program.c")
+          : kind === "project"
+            ? join(outside, "program.c")
+            : outside;
+      const before = await readFile(preserved);
+      const hashes = vi.spyOn(stableFileHash, "observeStableFile");
+      try {
+        expect(await reopened.lookup(built.value.key)).toBeUndefined();
+        expect(hashes).not.toHaveBeenCalled();
+        expect((await readFile(preserved)).equals(before)).toBe(true);
+        await expect(access(entry)).rejects.toMatchObject({ code: "ENOENT" });
+      } finally {
+        hashes.mockRestore();
+        expect((await reopened.close()).ok).toBe(true);
+      }
+    }
+  },
+);
+
+it("keeps an empty symlinked projects parent outside its removal authority", async () => {
+  const { installation, cacheRoot, cache, target } = await fixture(
+    "rea-kuna-linked-projects-",
+  );
+  const built = await cache.build({
+    installation,
+    ...(await target("program")),
+  });
+  if (!built.ok) throw built.error;
+  expect((await cache.close()).ok).toBe(true);
+  const outside = join(dirname(cacheRoot), "empty-projects");
+  await mkdir(outside);
+  await rename(join(cacheRoot, "projects"), join(cacheRoot, "saved-projects"));
+  await symlink(outside, join(cacheRoot, "projects"));
+  const reopened = newCache(installation);
+  try {
+    await expect(reopened.lookup(built.value.key)).rejects.toMatchObject({
+      _tag: "ProviderAdapterError",
+      userMessage: expect.stringContaining("ownership is unknown"),
+    });
+    expect(await readdir(outside)).toEqual([]);
+    await access(
+      join(cacheRoot, "saved-projects", built.value.key, "manifest.json"),
+    );
+  } finally {
+    expect((await reopened.close()).ok).toBe(true);
+  }
+});
+
+it("preserves a legitimate POSIX backslash in the common export basename", async () => {
+  const { installation, cache, target } = await fixture(
+    "rea-kuna-native-basename-",
+  );
+  const built = await cache.build({
+    installation,
+    ...(await target("program\\name")),
+  });
+  if (!built.ok) throw built.error;
+  expect((await cache.close()).ok).toBe(true);
+  const reopened = newCache(installation);
+  try {
+    expect(await reopened.lookup(built.value.key)).toMatchObject({
+      manifest: {
+        files: {
+          c: { path: "program\\name.c" },
+          h: { path: "program\\name.h" },
+          asm: { path: "program\\name.asm" },
+        },
+      },
+    });
+  } finally {
+    expect((await reopened.close()).ok).toBe(true);
+  }
+});
+
+it.each(["invalid JSON", "changed producing inputs", "valid rewrite"] as const)(
+  "revalidates a warm cache after manifest %s",
+  async (change) => {
+    const { installation, cache, target } = await fixture(
+      "rea-kuna-warm-manifest-",
+    );
+    const built = await cache.build({
+      installation,
+      ...(await target("program")),
+    });
+    if (!built.ok) throw built.error;
+    expect(await cache.lookup(built.value.key)).toBeDefined();
+    const manifest = structuredClone(built.value.manifest);
+    if (change === "changed producing inputs")
+      manifest.inputs.target_sha256 = "f".repeat(64);
+    await writeFile(
+      join(dirname(built.value.directory), "manifest.json"),
+      change === "invalid JSON"
+        ? "{not JSON}"
+        : JSON.stringify(manifest, null, 3),
+    );
+    const hashes = vi.spyOn(stableFileHash, "observeStableFile");
+    try {
+      const found = await cache.lookup(built.value.key);
+      if (change === "valid rewrite") {
+        expect(found).toMatchObject({ key: built.value.key });
+        expect(hashes).toHaveBeenCalledTimes(5);
+      } else {
+        expect(found).toBeUndefined();
+        expect(hashes).not.toHaveBeenCalled();
+      }
+    } finally {
+      hashes.mockRestore();
+      expect((await cache.close()).ok).toBe(true);
+    }
+  },
+);
+
+it("separates equal target bytes whose native basenames change the export", async () => {
+  const { kuna, installation, cache, target } = await fixture(
+    "rea-kuna-basename-key-",
+  );
+  const first = await cache.build({
+    installation,
+    ...(await target("first", "same bytes")),
+  });
+  const secondInput = await target("second", "same bytes");
+  const second = await cache.build({ installation, ...secondInput });
+  if (!first.ok) throw first.error;
+  if (!second.ok) throw second.error;
+  expect(second.value.key).not.toBe(first.value.key);
+  expect(first.value.manifest.inputs.target_basename).toBe("first");
+  expect(second.value.manifest.inputs.target_basename).toBe("second");
+  expect(first.value.manifest.files.c.path).toBe("first.c");
+  expect(second.value.manifest.files.c.path).toBe("second.c");
+  expect(first.value.manifest.files.c.sha256).not.toBe(
+    second.value.manifest.files.c.sha256,
+  );
+  expect(
+    await readFile(join(second.value.directory, "second.c"), "utf8"),
+  ).toContain('#include "second.h"');
+  expect((await cache.close()).ok).toBe(true);
+  const reopened = newCache(installation);
+  try {
+    const reused = await reopened.build({ installation, ...secondInput });
+    if (!reused.ok) throw reused.error;
+    expect(reused.value.manifest).toEqual(second.value.manifest);
+    expect(await callsOf(kuna, "decompile-project")).toHaveLength(2);
+  } finally {
+    expect((await reopened.close()).ok).toBe(true);
   }
 });

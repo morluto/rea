@@ -300,6 +300,17 @@ export const readManagedGraphProjection = (
 
 const OPERATION = "project_managed_application_graph";
 
+/** Validated graph input still had no artifact source. */
+class ManagedGraphSourceError extends Error {
+  readonly _tag = "ManagedGraphSourceError";
+  readonly code = "missing_source" as const;
+
+  constructor() {
+    super("missing_source");
+    this.name = "ManagedGraphSourceError";
+  }
+}
+
 const chooseArtifact = (
   parsed: ParsedManagedGraphInput,
 ): { readonly sha256: string; readonly path: string } => {
@@ -307,8 +318,7 @@ const chooseArtifact = (
     parsed.artifact?.result ??
     parsed.members?.result ??
     parsed.boundaries?.result;
-  if (result === undefined)
-    throw new Error("Validated managed graph projection has no source");
+  if (result === undefined) throw new ManagedGraphSourceError();
   return { sha256: result.artifact.sha256, path: result.artifact.path };
 };
 
@@ -395,6 +405,15 @@ const projectionLimitations = (
     : [
         `Managed member Evidence selected only these declaring types: ${omissions.selectedTypes.join(", ")}; type, method, and field nodes of other types are omitted, not absent.`,
       ]),
+  ...(omissions.methodRows === undefined
+    ? []
+    : omissions.methodRows === null
+      ? [
+          "Managed member Evidence did not record its MethodDef row scope; coverage of methods and their relations outside the supplied observations is unknown.",
+        ]
+      : [
+          `Managed member Evidence examined MethodDef rows at offset ${omissions.methodRows.offset} with count ${omissions.methodRows.count} of ${omissions.methodRows.total} total rows; methods outside that interval and their relations are omitted, not absent.`,
+        ]),
   ...(omissions.unscopedTokenRelationships
     ? [
         "Managed boundary tokens were not linked to member nodes because matching module MVID scope was not established.",

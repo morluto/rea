@@ -153,6 +153,57 @@ it.each([undefined, "", "/selected/cache", "relative/cache"])(
   },
 );
 
+portableTar.each(["HOME", "XDG_CACHE_HOME"] as const)(
+  "retains and reads signed packages under the selected %s symlink traversal",
+  async (setting) => {
+    const f = await fixture("arch");
+    admitFixturePublisher(f.fingerprint);
+    const directory = await createTestTempDirectory(
+      "rea-linux-selected-cache-",
+    );
+    const physical = join(directory, "physical");
+    await mkdir(join(physical, "child"), { recursive: true });
+    await symlink(join(physical, "child"), join(directory, "alias"), "dir");
+    const selected = `${directory}/alias/..`;
+    const suffix =
+      setting === "HOME" ? ".cache/rea/hopper-releases" : "rea/hopper-releases";
+    const expected = `${physical}/${suffix}/${f.release.main_exe_hash}`;
+    const decoy = `${directory}/${suffix}/${f.release.main_exe_hash}`;
+    await mkdir(decoy, { recursive: true });
+    await writeFile(`${decoy}/release.json`, "caller evidence");
+    const publisher = new LinuxHopperPublisher(
+      { [setting]: selected },
+      async () => "arch",
+    );
+    try {
+      const verified = await verifyFixtureArchive(f, "arch");
+      expect(
+        await publisher.retainVerifiedArchive(verified, f.archive),
+      ).toEqual({
+        ok: true,
+        value: undefined,
+      });
+      expect(
+        (await readFile(`${expected}/archive`)).equals(
+          await readFile(f.archive),
+        ),
+      ).toBe(true);
+      expect(publisher.cacheRoot).toBe(`${selected}/${suffix}`);
+      expect(await publisher.inspectLauncher(f.launcher)).toMatchObject({
+        ok: true,
+        value: { source: "signed_package_cache" },
+      });
+      expect(await readFile(`${decoy}/release.json`, "utf8")).toBe(
+        "caller evidence",
+      );
+      expect(await readdir(decoy)).toEqual(["release.json"]);
+    } finally {
+      await publisher.close();
+      await f.publisher.close();
+    }
+  },
+);
+
 const feedRelease = () => ({
   version: "1.0",
   filename:

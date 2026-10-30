@@ -315,20 +315,33 @@ describe("Cutter CLI command output flags", () => {
     expect(() => JSON.parse(formatted.stdout)).not.toThrow();
 
     for (const [flags, expected] of [
-      [["--json=true"], true],
-      [["--json=false"], false],
-      [["--json=true", "--json-output=false"], false],
-      [["--json=false", "--json-output=true"], true],
-      [["--json-output=false", "--json=true"], false],
-      [["--json-output=true", "--json=false"], true],
+      [["--json-output=true"], true],
+      [["--json-output=false"], false],
+      [["--json", "--json-output=false"], false],
+      [["--json", "--json-output=true"], true],
+      [["--json-output=false", "--json"], false],
+      [["--json-output=true", "--json"], true],
     ] as const) {
-      const compatible = await serveCli(
+      const selected = await serveCli(
         ["cutter-command", SESSION_ID, "0", "pdi", ...flags],
         { REA_CUTTER_BRIDGE_DIR: directory },
       );
-      expect(compatible.exitCode).toBe(0);
+      expect(selected.exitCode).toBe(0);
       expect(commandJsonModes.at(-1)).toBe(expected);
+      if (flags.some((flag) => flag === "--json"))
+        expect(() => JSON.parse(selected.stdout)).not.toThrow();
     }
+
+    const commandsBeforeRejectedFlags = commandJsonModes.length;
+    for (const flag of ["--json=true", "--json=false"]) {
+      const rejected = await serveCli(
+        ["cutter-command", SESSION_ID, "0", "pdi", flag],
+        { REA_CUTTER_BRIDGE_DIR: directory },
+      );
+      expect(rejected.exitCode).toBe(1);
+      expect(rejected.stdout).toContain("Unknown flag: --json");
+    }
+    expect(commandJsonModes).toHaveLength(commandsBeforeRejectedFlags);
 
     await assertRealVerifierJsonInspection(directory, commandJsonModes);
   });

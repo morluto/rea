@@ -10,7 +10,10 @@ import { z } from "zod";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
-import type { ProviderAvailability } from "../../../src/application/AnalysisProvider.js";
+import type {
+  ProviderAvailability,
+  AnalysisProvider,
+} from "../../../src/application/AnalysisProvider.js";
 import type { AndroidAnalysisPort } from "../../../src/application/android/AndroidAnalysisPort.js";
 import type { AdbDeviceAnalysisPort } from "../../../src/application/adb/AdbDeviceAnalysisPort.js";
 import type { ApktoolResourceAnalysisPort } from "../../../src/application/apktool/ApktoolResourceAnalysisPort.js";
@@ -21,7 +24,6 @@ import {
 import { ok } from "../../../src/domain/result.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createServer } from "../../../src/server/createServer.js";
-import type { AnalysisProvider } from "../../../src/application/AnalysisProvider.js";
 
 const SNAPSHOT_PROFILE = createAnalysisProfile(
   { id: "fixture", name: "Fixture analysis provider", version: "1" },
@@ -71,6 +73,7 @@ export const createSessionMcpHarness = async (
   root: string,
   provider: (closed: string[]) => AnalysisProvider,
   resources: Array<{ close(): Promise<unknown> }>,
+  maximumInputElements?: number,
 ): Promise<SessionMcpHarness> => {
   const first = join(root, "first.hop");
   const second = join(root, "second.hop");
@@ -87,6 +90,14 @@ export const createSessionMcpHarness = async (
       adbDeviceAnalysis,
       apktoolAnalysis,
       logger: silentLogger,
+      ...(maximumInputElements === undefined
+        ? {}
+        : {
+            environment: {
+              ...process.env,
+              REA_MCP_MAX_INPUT_ELEMENTS: String(maximumInputElements),
+            },
+          }),
     },
   );
   const mcp = new Client({ name: "session-test", version: "1.0.0" });

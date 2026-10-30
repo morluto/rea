@@ -1,3 +1,8 @@
+import {
+  artifactNameForClassification,
+  namedArtifactFormat,
+} from "../domain/artifactNameSelection.js";
+import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import { readPeCoffHeader } from "../domain/peCoffHeader.js";
 import {
   regularFileCancellation,
@@ -42,9 +47,14 @@ import { err, ok, type Result } from "../domain/result.js";
 import { readMipsElfMetadata } from "./MipsElfMetadata.js";
 import { validateElfDeclaredRanges } from "../domain/elfDeclaredRanges.js";
 import {
-  resolveAppBundleExecutable,
+  resolveAppleBundleExecutable,
   type ResolvedAppBundle,
 } from "./AppBundleExecutable.js";
+import {
+  OPENABLE_APPLE_BUNDLE_TYPES_TEXT,
+  isUnopenedAppleBundleExtension,
+  openableAppleBundleExtension,
+} from "../domain/apple/appleBundleTypes.js";
 import {
   validateDosComLength,
   type ExecutableFormatHint,
@@ -70,6 +80,14 @@ import {
 } from "../domain/apple/appleArchiveFormat.js";
 import { hasDiskImageSignature } from "../domain/apple/diskImageFormat.js";
 import { hasGodotPckHeader } from "../domain/godotPckFormat.js";
+import { hasUImageMagic } from "../domain/uimageFormat.js";
+import { hasUnityFsHeader } from "../domain/unityfsFormat.js";
+import { detectHexRecordEncoding } from "../domain/firmware/hexRecords.js";
+import { hasFitImagesNode } from "../domain/firmware/fitImage.js";
+import {
+  ESP8266_REFUSAL,
+  recognizeEspImage,
+} from "../domain/firmware/espImage.js";
 import {
   hasZipSignature,
   locateTrailingZipArchive,
@@ -165,7 +183,7 @@ export const parseBinaryTarget = async (
         try {
           return await readOpenedBinaryTarget(
             source,
-            { path, sourcePath, ...bundle },
+            { path, sourcePath, selectedPath: candidate, ...bundle },
             options,
           );
         } catch (cause: unknown) {
@@ -244,12 +262,13 @@ const readOpenedBinaryTarget = async (
   selected: {
     readonly path: string;
     readonly sourcePath: string;
+    readonly selectedPath: string;
     readonly bundleInfoPlist?: string;
   },
   options: BinaryTargetResolverOptions,
 ): Promise<TargetResolution> => {
   const { handle, initial: metadata } = source;
-  const { path, sourcePath, bundleInfoPlist } = selected;
+  const { path, sourcePath, selectedPath, bundleInfoPlist } = selected;
   const bundle = bundleInfoPlist === undefined ? {} : { bundleInfoPlist };
   const hostArchitecture = options.hostArchitecture ?? process.arch;
   const { targetKind, formatHint, signal, architecture, entryPoint } = options;
@@ -370,10 +389,11 @@ const readOpenedBinaryTarget = async (
   }
   // Probe WASM content before suffix-only database routing; an explicit
   // database selection keeps the caller's chosen interpretation.
+  const classificationPath = artifactNameForClassification(selectedPath, path);
   const artifactFormat =
     targetKind === "database"
       ? undefined
-      : await detectArtifactFormat(path, source, signal);
+      : await detectArtifactFormat(classificationPath, source, signal);
   if (
     targetKind === "database" ||
     (targetKind === undefined && path.toLowerCase().endsWith(".hop"))
@@ -389,6 +409,7 @@ const readOpenedBinaryTarget = async (
     const identity = {
       path,
       sourcePath,
+      artifactSelectedPath: selectedPath,
       sha256: await sha256Handle(handle, path, metadata, signal),
     };
     return isArchiveFormat(artifactFormat)
@@ -414,7 +435,8 @@ const readOpenedBinaryTarget = async (
         sourcePath,
         sha256: await sha256Handle(handle, path, metadata, signal),
         kind: "archive",
-        format: zipRootPackageFormat(path),
+        format: zipRootPackageFormat(classificationPath),
+        artifactSelectedPath: selectedPath,
       });
     const reason =
       typeof detected.error === "string"
@@ -656,10 +678,22 @@ const detectArtifactFormat = async (
     );
   if (hasZipSignature(magic)) return zipRootPackageFormat(lower);
   if (hasGodotPckHeader(magic)) return "godot-pck";
+  if (hasUnityFsHeader(magic)) return "unityfs";
+  if (hasUImageMagic(magic)) return "uimage";
+  const hexRecords = detectHexRecordEncoding(magic);
+  if (hexRecords !== undefined) return hexRecords;
+  const esp = recognizeEspImage(magic, initial.size);
+  if (esp === "esp8266")
+    throw new BinaryTargetError(path, ESP8266_REFUSAL, {
+      constraint: "file_format_rejected",
+    });
+  if (esp === "esp-image") return "esp-image";
+  if (hasFitImagesNode(magic)) return "fit";
   // Binary plists, including keyed archives, often use other extensions.
   if (hasBinaryPlistSignature(magic)) return "plist";
   const named = namedArtifactFormat(lower);
-  if (named !== undefined) return named;
+  if (named !== undefined && !claimsExecutableHeader(magic, initial.size))
+    return named;
   if (
     lower.endsWith(".pkg") &&
     magic.length >= 4 &&
@@ -707,15 +741,6 @@ const detectArtifactFormat = async (
   return undefined;
 };
 
-const namedArtifactFormat = (
-  lowerPath: string,
-): "asar" | "plist" | "source-map" | "javascript" | undefined => {
-  if (lowerPath.endsWith(".asar")) return "asar";
-  if (lowerPath.endsWith(".plist")) return "plist";
-  if (lowerPath.endsWith(".map")) return "source-map";
-  return /\.(?:m?js|cjs)$/u.test(lowerPath) ? "javascript" : undefined;
-};
-
 const isArchiveFormat = (
   format: Exclude<
     BinaryTarget["format"],
@@ -731,7 +756,18 @@ const isArchiveFormat = (
   >,
 ): format is Extract<BinaryTarget, { kind: "archive" }>["format"] =>
   isZipPackageFormat(format) ||
-  ["asar", "godot-pck", "dmg", "pkg"].includes(format);
+  [
+    "asar",
+    "godot-pck",
+    "unityfs",
+    "uimage",
+    "dmg",
+    "pkg",
+    "intel-hex",
+    "srec",
+    "esp-image",
+    "fit",
+  ].includes(format);
 
 /** Whether the leading bytes begin any executable header family, valid or not. */
 const claimsLeadingExecutableHeader = async (
@@ -750,23 +786,12 @@ const readHandleRange = async (
   position: number,
   length: number,
   signal?: AbortSignal,
-): Promise<Uint8Array> => {
+): Promise<Buffer> => {
+  const bytes = await readFileHandleRange(handle, position, length, () =>
+    throwIfTargetResolutionCancelled(signal),
+  );
   throwIfTargetResolutionCancelled(signal);
-  const bytes = Buffer.alloc(length);
-  let filled = 0;
-  while (filled < length) {
-    if (filled > 0) throwIfTargetResolutionCancelled(signal);
-    const observed = await handle.read(
-      bytes,
-      filled,
-      length - filled,
-      position + filled,
-    );
-    throwIfTargetResolutionCancelled(signal);
-    if (observed.bytesRead === 0) break;
-    filled += observed.bytesRead;
-  }
-  return bytes.subarray(0, filled);
+  return bytes;
 };
 
 /** Read exactly `size` bytes by offset; a short read means the file changed or ended early. */
@@ -833,17 +858,27 @@ const resolveAppBundle = async (
 ): Promise<Result<ResolvedAppBundle, BinaryTargetError>> => {
   const metadata = await stat(path);
   if (!metadata.isDirectory()) return ok({ executable: path });
-  if (extname(path).toLowerCase() !== ".app")
+  if (openableAppleBundleExtension(extname(path)) !== undefined)
+    return resolveAppleBundleExecutable(path);
+  // Another Apple bundle type, such as a driver or kernel extension, is not
+  // an application directory and has no JavaScript route.
+  if (isUnopenedAppleBundleExtension(extname(path)))
     return err(
       new BinaryTargetError(
         path,
-        "this opening route requires a file or app bundle",
-        {
-          constraint: "directory_requires_file",
-        },
+        `${extname(path)} bundle directories are not opened by this route; it opens ${OPENABLE_APPLE_BUNDLE_TYPES_TEXT} bundle directories`,
+        { constraint: "bundle_type_unsupported" },
       ),
     );
-  return resolveAppBundleExecutable(path);
+  return err(
+    new BinaryTargetError(
+      path,
+      "this opening route requires a file or a supported Apple bundle directory",
+      {
+        constraint: "directory_requires_file",
+      },
+    ),
+  );
 };
 
 const readExecutableMetadata = async (
@@ -853,10 +888,7 @@ const readExecutableMetadata = async (
 ): Promise<Result<ExecutableMetadata, ExecutableMetadataFailure>> => {
   const { handle, initial } = source;
   throwIfTargetResolutionCancelled(signal);
-  const prefix = Buffer.alloc(4096);
-  const prefixRead = await handle.read(prefix, 0, prefix.length, 0);
-  throwIfTargetResolutionCancelled(signal);
-  const bytes = prefix.subarray(0, prefixRead.bytesRead);
+  const bytes = await readHandleRange(handle, 0, 4096, signal);
   // Header commitments such as Mach-O load commands and FAT slices are
   // checked against the whole file, not the probed prefix.
   const fileSize = initial.size;
@@ -867,17 +899,14 @@ const readExecutableMetadata = async (
       | undefined;
     if (evidence.windowsHeader.state === "signature-needed") {
       const { offset } = evidence.windowsHeader;
-      const signature = Buffer.alloc(Math.min(4, fileSize - offset));
-      const observedSignature = await handle.read(
-        signature,
-        0,
-        signature.length,
-        offset,
-      );
-      throwIfTargetResolutionCancelled(signal);
       signatureEvidence = {
         offset,
-        bytes: signature.subarray(0, observedSignature.bytesRead),
+        bytes: await readHandleRange(
+          handle,
+          offset,
+          Math.min(4, fileSize - offset),
+          signal,
+        ),
       };
       evidence = withMzWindowsHeaderSignature(
         bytes,
@@ -908,15 +937,12 @@ const readExecutableMetadata = async (
     // bounds are at most 65535 records inside a 65535-paragraph header.
     const { relocationTableRead } = evidence;
     if (relocationTableRead !== undefined) {
-      const table = Buffer.alloc(relocationTableRead.byteLength);
-      const observed = await handle.read(
-        table,
-        0,
-        table.length,
+      const observedBytes = await readHandleRange(
+        handle,
         relocationTableRead.offset,
+        relocationTableRead.byteLength,
+        signal,
       );
-      throwIfTargetResolutionCancelled(signal);
-      const observedBytes = table.subarray(0, observed.bytesRead);
       evidence = parseMzHeaderEvidence(
         observedBytes,
         fileSize,
@@ -1150,16 +1176,13 @@ const readMachoCommandFrames = async (
       offset + 8 <= input.fileSize &&
       (offset < windowOffset || offset + 8 > windowOffset + window.length)
     ) {
-      window = Buffer.alloc(Math.min(4096, input.fileSize - offset));
       windowOffset = offset;
-      const observed = await handle.read(
-        window,
-        0,
-        window.length,
+      window = await readHandleRange(
+        handle,
         (input.fileOffset ?? 0) + offset,
+        Math.min(4096, input.fileSize - offset),
+        input.signal,
       );
-      throwIfTargetResolutionCancelled(input.signal);
-      window = window.subarray(0, observed.bytesRead);
     }
     const relative = offset - windowOffset;
     const frame = commands.read(
@@ -1176,10 +1199,12 @@ const readMachoSliceCommandFrames = async (
   slice: UniversalMachOSlice,
   signal?: AbortSignal,
 ): Promise<Result<null, string>> => {
-  const prefix = Buffer.alloc(Math.min(4096, slice.size));
-  const observed = await handle.read(prefix, 0, prefix.length, slice.offset);
-  throwIfTargetResolutionCancelled(signal);
-  const bytes = prefix.subarray(0, observed.bytesRead);
+  const bytes = await readHandleRange(
+    handle,
+    slice.offset,
+    Math.min(4096, slice.size),
+    signal,
+  );
   const table = readMachoLoadCommandTableHeader(bytes, slice.size);
   if (!table.ok) return table;
   if (table.value === null)
@@ -1203,21 +1228,13 @@ const readFatSliceHeaderEvidence = async (
   if (header.state === "needs-data") {
     // readFatContainerHeader enforces the 128-entry format bound before this
     // allocation; this is only the table, never a synthesized file image.
-    const table = Buffer.alloc(header.requiredBytes);
-    let bytesRead = 0;
-    while (bytesRead < table.length) {
-      throwIfTargetResolutionCancelled(signal);
-      const read = await handle.read(
-        table,
-        bytesRead,
-        table.length - bytesRead,
-        bytesRead,
-      );
-      throwIfTargetResolutionCancelled(signal);
-      if (read.bytesRead === 0) break;
-      bytesRead += read.bytesRead;
-    }
-    header = readFatContainerHeader(table.subarray(0, bytesRead), fileSize);
+    const table = await readHandleRange(
+      handle,
+      0,
+      header.requiredBytes,
+      signal,
+    );
+    header = readFatContainerHeader(table, fileSize);
   }
   if (header.state !== "parsed") return undefined;
 
@@ -1233,23 +1250,15 @@ const readFatSliceHeaderEvidence = async (
       continue;
     }
     const observedLength = Math.min(12, slice.size);
-    const thinHeader = Buffer.alloc(observedLength);
-    let bytesRead = 0;
-    while (bytesRead < thinHeader.length) {
-      throwIfTargetResolutionCancelled(signal);
-      const read = await handle.read(
-        thinHeader,
-        bytesRead,
-        thinHeader.length - bytesRead,
-        slice.offset + bytesRead,
-      );
-      throwIfTargetResolutionCancelled(signal);
-      if (read.bytesRead === 0) break;
-      bytesRead += read.bytesRead;
-    }
+    const thinHeader = await readHandleRange(
+      handle,
+      slice.offset,
+      observedLength,
+      signal,
+    );
     sliceHeadersByOffset.set(
       slice.offset,
-      readMachoHeaderPrefixFacts(thinHeader.subarray(0, bytesRead)),
+      readMachoHeaderPrefixFacts(thinHeader),
     );
   }
   return { header, sliceHeadersByOffset };
@@ -1271,16 +1280,8 @@ const readPeMetadata = async (
   },
 ): Promise<Result<ExecutableMetadata, string>> => {
   throwIfTargetResolutionCancelled(signal);
-  const fileHeader = Buffer.alloc(24);
-  const fileHeaderRead = await handle.read(
-    fileHeader,
-    0,
-    fileHeader.length,
-    offset,
-  );
-  throwIfTargetResolutionCancelled(signal);
-  if (fileHeaderRead.bytesRead !== fileHeader.length)
-    return err("invalid or truncated PE header");
+  const fileHeader = await readHandleRange(handle, offset, 24, signal);
+  if (fileHeader.length !== 24) return err("invalid or truncated PE header");
   const { windowsHeader } = withMzWindowsHeaderSignature(
     mzPrefix,
     fileSize,
@@ -1296,10 +1297,13 @@ const readPeMetadata = async (
   const optionalHeaderSize = coff.value.optionalHeaderSize;
   if (optionalHeaderSize > 4096) return err("invalid PE optional header size");
   const numberOfSections = coff.value.sectionCount;
-  const record = Buffer.alloc(24 + optionalHeaderSize);
-  const recordRead = await handle.read(record, 0, record.length, offset);
-  throwIfTargetResolutionCancelled(signal);
-  if (recordRead.bytesRead !== record.length)
+  const record = await readHandleRange(
+    handle,
+    offset,
+    24 + optionalHeaderSize,
+    signal,
+  );
+  if (record.length !== 24 + optionalHeaderSize)
     return err("invalid or truncated PE header");
   const codeView = await readPeCodeView(
     handle,
@@ -1326,15 +1330,13 @@ const readPeCodeView = async (
   if (debugDir === undefined || numberOfSections > 96) return undefined;
   const sectionTableOffset = peOffset + 24 + optionalHeaderSize;
   const sectionTableSize = numberOfSections * 40;
-  const sectionTable = Buffer.alloc(sectionTableSize);
-  const sectionRead = await handle.read(
-    sectionTable,
-    0,
-    sectionTableSize,
+  const sectionTable = await readHandleRange(
+    handle,
     sectionTableOffset,
+    sectionTableSize,
+    signal,
   );
-  throwIfTargetResolutionCancelled(signal);
-  if (sectionRead.bytesRead !== sectionTableSize) return undefined;
+  if (sectionTable.length !== sectionTableSize) return undefined;
   const debugFileOffset = peRvaToFileOffset(
     debugDir.debugRva,
     sectionTable,
@@ -1344,36 +1346,29 @@ const readPeCodeView = async (
   );
   if (debugFileOffset === undefined) return undefined;
   const maxDebugSize = Math.min(debugDir.debugSize, 4096);
-  const debugDirectoryBuffer = Buffer.alloc(maxDebugSize);
-  const debugDirRead = await handle.read(
-    debugDirectoryBuffer,
-    0,
-    maxDebugSize,
+  const debugDirectoryBuffer = await readHandleRange(
+    handle,
     debugFileOffset,
+    maxDebugSize,
+    signal,
   );
-  throwIfTargetResolutionCancelled(signal);
   for (const {
     fileOffset: pointerToRawData,
     declaredSize: sizeOfData,
   } of peCodeViewDataRanges(
-    debugDirectoryBuffer.subarray(0, debugDirRead.bytesRead),
+    debugDirectoryBuffer,
     sectionTable,
     numberOfSections,
     debugDir.sizeOfHeaders,
   )) {
     const maxCodeViewRead = Math.min(sizeOfData, 4096);
-    const codeViewBuffer = Buffer.alloc(maxCodeViewRead);
-    const codeViewRead = await handle.read(
-      codeViewBuffer,
-      0,
-      maxCodeViewRead,
+    const codeViewBuffer = await readHandleRange(
+      handle,
       pointerToRawData,
+      maxCodeViewRead,
+      signal,
     );
-    throwIfTargetResolutionCancelled(signal);
-    const parsed = parseCodeViewData(
-      codeViewBuffer.subarray(0, codeViewRead.bytesRead),
-      sizeOfData,
-    );
+    const parsed = parseCodeViewData(codeViewBuffer, sizeOfData);
     if (parsed !== undefined) return parsed;
   }
   return undefined;

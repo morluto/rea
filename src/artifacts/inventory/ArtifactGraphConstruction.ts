@@ -1,4 +1,10 @@
+import { artifactFormatDescriptor } from "../artifactFormats.js";
 import { hasGodotPckHeader } from "../../domain/godotPckFormat.js";
+import { hasUImageMagic } from "../../domain/uimageFormat.js";
+import { hasUnityFsHeader } from "../../domain/unityfsFormat.js";
+import { detectHexRecordEncoding } from "../../domain/firmware/hexRecords.js";
+import { recognizeEspImage } from "../../domain/firmware/espImage.js";
+import { hasFitImagesNode } from "../../domain/firmware/fitImage.js";
 import type { ArtifactClassificationEvidence } from "../ArtifactClassificationProbe.js";
 import { asarHeaderAdmissionFailure } from "../AsarHeader.js";
 import { hasDestinationPath } from "../ArtifactPaths.js";
@@ -15,7 +21,7 @@ import {
   occurrenceIdForLocation,
   logicalPathNfc,
 } from "../../domain/artifactIdentity.js";
-import type { ArtifactEntry } from "../ArtifactReader.js";
+import type { ArtifactEntry, ArtifactReader } from "../ArtifactReader.js";
 import type {
   ArtifactCommand,
   ArtifactEdge,
@@ -24,7 +30,6 @@ import type {
 } from "../../domain/artifactGraph.js";
 import {
   hasZipSignature,
-  isZipPackageFormat,
   zipPackageFormatForPath,
   type ZipPackageFormat,
 } from "../../domain/zipPackageFormat.js";
@@ -48,7 +53,7 @@ export interface MutableOccurrence {
   compressed_size: number | null;
   executable: boolean;
   encrypted: boolean;
-  unpacked?: true;
+  unpacked?: boolean;
   hash_status: ArtifactOccurrence["hash_status"];
   source_location: ArtifactOccurrence["source_location"];
   source_path?: string;
@@ -81,8 +86,12 @@ export const createOccurrence = (
   entry: ArtifactEntry,
   path: string,
   parent: string | null,
-  duplicateOrdinal = 0,
+  options: {
+    readonly duplicateOrdinal?: number;
+    readonly sourceFormat?: ArtifactReader["format"];
+  } = {},
 ): MutableOccurrence => {
+  const duplicateOrdinal = options.duplicateOrdinal ?? 0;
   const role =
     entry.kind === "metadata"
       ? { kind: "package-metadata" as const, format: "unknown" as const }
@@ -117,14 +126,20 @@ export const createOccurrence = (
     compressed_size: entry.compressedSize,
     executable: entry.executable,
     encrypted: entry.encrypted,
-    ...(entry.unpacked ? { unpacked: true as const } : {}),
+    ...(entry.unpacked ||
+    (options.sourceFormat === "asar" && entry.kind === "file")
+      ? { unpacked: entry.unpacked }
+      : {}),
     hash_status: entry.encrypted ? "unavailable" : "not-hashed",
     source_location:
       entry.encrypted ||
       entry.byteOffset === null ||
       entry.declaredSize === null
         ? null
-        : { offset: entry.byteOffset, length: entry.declaredSize },
+        : {
+            offset: entry.byteOffset,
+            length: entry.byteLength ?? entry.declaredSize,
+          },
     limitations: [...entry.limitations],
     ...(entry.declaredIntegrity === null
       ? {}
@@ -266,11 +281,7 @@ export const rootOccurrenceFor = (
   logical_path: ".",
   entry_kind: metadata.format === "directory" ? "directory" : "file",
   artifact_kind:
-    metadata.format === "directory" ||
-    isZipPackageFormat(metadata.format) ||
-    ["asar", "godot-pck", "dmg", "pkg", "pyinstaller", "node-sea"].includes(
-      metadata.format,
-    )
+    artifactFormatDescriptor(metadata.format)?.occurrenceContainer === true
       ? "container"
       : artifactRoleForFormat(metadata.path, metadata.format).kind,
   artifact_format: metadata.format,
@@ -278,7 +289,8 @@ export const rootOccurrenceFor = (
   compressed_size: null,
   executable: metadata.executable,
   encrypted:
-    metadata.formatMetadata?.kind === "godot-pck" &&
+    (metadata.formatMetadata?.kind === "godot-pck" ||
+      metadata.formatMetadata?.kind === "unityfs") &&
     metadata.formatMetadata.directory_status === "encrypted",
   hash_status: "verified",
   source_location: null,
@@ -560,7 +572,8 @@ const artifactRoleForFormat = (
       format: zipPackageFormatForPath(path) ?? format,
     };
   if (format === "plist") return { kind: "plist", format };
-  if (format === "godot-pck") return { kind: "container", format };
+  if (artifactFormatDescriptor(format)?.roleContainer === true)
+    return { kind: "container", format };
   return {
     kind: ["native-addon", "dynamic-library"].includes(byPath.kind)
       ? byPath.kind
@@ -577,6 +590,12 @@ export const classifyArtifactBytes = (
   const { prefix, mzWindowsHeaderSignature } = evidence;
   if (hasZipSignature(prefix)) return "zip";
   if (hasGodotPckHeader(prefix)) return "godot-pck";
+  if (hasUnityFsHeader(prefix)) return "unityfs";
+  if (hasUImageMagic(prefix)) return "uimage";
+  const hexRecords = detectHexRecordEncoding(prefix);
+  if (hexRecords !== undefined) return hexRecords;
+  if (recognizeEspImage(prefix, fileSize) === "esp-image") return "esp-image";
+  if (hasFitImagesNode(prefix)) return "fit";
   if (hasBinaryPlistSignature(prefix)) return "plist";
   if (hasXmlPlistSignature(prefix)) return "plist";
   const fatFormat = classifyFatArtifact(evidence, fileSize);

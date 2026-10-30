@@ -16,7 +16,6 @@ import { silentLogger } from "../../../src/logger.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { withAdmittedAnalysis } from "../../../src/server/analysisAdmission.js";
 import { registerEvidenceTools } from "../../../src/server/registerEvidenceTools.js";
-import { withoutDeliveryDetail } from "../../../src/server/retainedSummaryDelivery.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -152,12 +151,6 @@ for (const missingSource of [false, true])
             kind: "session",
             session,
           }),
-          parametersForExecution: withoutDeliveryDetail(
-            new Set(["inspect_managed_artifact"]),
-          ),
-          parametersForEvidence: withoutDeliveryDetail(
-            new Set(["inspect_managed_artifact"]),
-          ),
         },
       );
       const client = await mcp.connect(server);

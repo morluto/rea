@@ -1,15 +1,16 @@
+import {
+  projectStableArtifactFailure,
+  projectArtifactCloseFailure,
+} from "../../artifacts/StableArtifactFailure.js";
 import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
 import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
-  bindArtifactFileCleanup,
   artifactFileCancellationCause,
 } from "../../artifacts/ArtifactFileOperation.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
-import { completedStableArtifactObservation } from "../../artifacts/StableArtifactObservation.js";
 import type { ElfNotesPort } from "../../application/binaryDiagnostics/ElfNotesPort.js";
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
@@ -28,7 +29,6 @@ import {
   type InspectElfNotesInput,
 } from "../../domain/native/elfNotes.js";
 import { err, ok } from "../../domain/result.js";
-import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { ELF_NOTES_PROVIDER } from "../../domain/investigationProviders.js";
 import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
 import {
@@ -47,19 +47,11 @@ export class ElfNotesProvider implements ElfNotesPort {
     try {
       await this.#resources.close();
     } catch (cause: unknown) {
-      if (
-        !(cause instanceof ArtifactReaderFailure) ||
-        cause.cleanup === undefined
-      )
-        throw cause;
-      const error = new ProviderCleanupError(
+      throw projectArtifactCloseFailure(
+        cause,
         ELF_NOTES_PROVIDER.id,
-        cause.cleanup.resources,
-        { reason: cause.cleanup.reason },
-        { cause, operation: OPERATION },
+        OPERATION,
       );
-      bindArtifactFileCleanup(cause, error);
-      throw error;
     }
   }
 
@@ -241,17 +233,11 @@ const elfNotesFailure = (cause: unknown, input: InspectElfNotesInput) => {
     artifactFilePrimaryFacts(cause),
     input,
   );
-  const observation = completedStableArtifactObservation(cause, input.path);
-  if (observation !== undefined) primary.retainPartialObservation(observation);
-  if (!(cause instanceof ArtifactReaderFailure) || cause.cleanup === undefined)
-    return primary;
-  const cleanup = new ProviderCleanupError(
+  return projectStableArtifactFailure(
+    cause,
+    primary,
+    input.path,
     ELF_NOTES_PROVIDER.id,
-    cause.cleanup.resources,
-    { reason: cause.cleanup.reason },
-    { operation: OPERATION, cause },
+    OPERATION,
   );
-  const error = analysisErrorWithCleanupFailure(primary, cleanup, OPERATION);
-  bindArtifactFileCleanup(cause, error);
-  return error;
 };

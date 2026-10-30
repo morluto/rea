@@ -1,3 +1,7 @@
+import {
+  projectStableArtifactFailure,
+  projectArtifactCloseFailure,
+} from "../../artifacts/StableArtifactFailure.js";
 import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
@@ -5,15 +9,12 @@ import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   assertArtifactReadActive,
-  bindArtifactFileCleanup,
   artifactFileCancellationCause,
 } from "../../artifacts/ArtifactFileOperation.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import type { PeLoadConfigPort } from "../../application/binaryDiagnostics/PeLoadConfigPort.js";
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { completedStableArtifactObservation } from "../../artifacts/StableArtifactObservation.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
@@ -30,7 +31,6 @@ import {
   type InspectPeLoadConfigInput,
 } from "../../domain/native/peLoadConfig.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
-import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { err, ok } from "../../domain/result.js";
 import { PE_LOAD_CONFIG_PROVIDER } from "../../domain/investigationProviders.js";
 import {
@@ -54,19 +54,11 @@ export class PeLoadConfigProvider implements PeLoadConfigPort {
     try {
       await this.#resources.close();
     } catch (cause: unknown) {
-      if (
-        !(cause instanceof ArtifactReaderFailure) ||
-        cause.cleanup === undefined
-      )
-        throw cause;
-      const error = new ProviderCleanupError(
+      throw projectArtifactCloseFailure(
+        cause,
         PE_LOAD_CONFIG_PROVIDER.id,
-        cause.cleanup.resources,
-        { reason: cause.cleanup.reason },
-        { cause, operation: OPERATION },
+        OPERATION,
       );
-      bindArtifactFileCleanup(cause, error);
-      throw error;
     }
   }
 
@@ -223,17 +215,11 @@ const peLoadConfigFailure = (
     artifactFilePrimaryFacts(cause),
     input,
   );
-  const observation = completedStableArtifactObservation(cause, input.path);
-  if (observation !== undefined) primary.retainPartialObservation(observation);
-  if (!(cause instanceof ArtifactReaderFailure) || cause.cleanup === undefined)
-    return primary;
-  const cleanup = new ProviderCleanupError(
+  return projectStableArtifactFailure(
+    cause,
+    primary,
+    input.path,
     PE_LOAD_CONFIG_PROVIDER.id,
-    cause.cleanup.resources,
-    { reason: cause.cleanup.reason },
-    { operation: OPERATION, cause },
+    OPERATION,
   );
-  const error = analysisErrorWithCleanupFailure(primary, cleanup, OPERATION);
-  bindArtifactFileCleanup(cause, error);
-  return error;
 };

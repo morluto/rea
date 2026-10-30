@@ -14,23 +14,30 @@ export interface RecordedResponseBody {
 const responseDeclarationSchema = z.object({
   response: z.object({
     status: z.unknown().optional(),
-    content: z
-      .object({
-        text: z.unknown().optional(),
-        encoding: z.unknown().optional(),
-        size: z.unknown().optional(),
-      })
-      .nullable()
-      .optional(),
+    content: z.unknown().optional(),
   }),
 });
+const responseContentDeclarationSchema = z.object({
+  text: z.unknown().optional(),
+  encoding: z.unknown().optional(),
+  size: z.unknown().optional(),
+  mimeType: z.unknown().optional(),
+});
 
-/** Retained response declarations shared by decoding and consumer-specific empty-body policies. */
-export const readRecordedResponseDeclaration = (
-  record: WebNetworkCaptureRecord,
-) => {
-  const parsed = responseDeclarationSchema.safeParse(record.reported);
-  return parsed.success ? parsed.data.response : undefined;
+/** Retain response facts independently: malformed content does not erase a reported status. */
+export const readRecordedResponseDeclaration = (reported: unknown) => {
+  const parsed = responseDeclarationSchema.safeParse(reported);
+  if (!parsed.success) return undefined;
+  const { status, content } = parsed.data.response;
+  const parsedContent = responseContentDeclarationSchema.safeParse(content);
+  return {
+    status,
+    content: parsedContent.success
+      ? parsedContent.data
+      : content === null
+        ? null
+        : undefined,
+  };
 };
 
 export type RecordedResponseDeclaration = ReturnType<
@@ -71,7 +78,7 @@ export const readRecordedResponseBody = (
   record: WebNetworkCaptureRecord,
   limitBytes: number,
   declaration: RecordedResponseDeclaration = readRecordedResponseDeclaration(
-    record,
+    record.reported,
   ),
 ): RecordedResponseBody => {
   const content = declaration?.content;
@@ -101,7 +108,7 @@ export const readRecordedResponseBody = (
 export const recordedResponseBodyIsEmpty = (
   record: WebNetworkCaptureRecord,
   declaration: RecordedResponseDeclaration = readRecordedResponseDeclaration(
-    record,
+    record.reported,
   ),
 ): boolean => {
   const body = readRecordedResponseBody(record, 0, declaration);

@@ -74,6 +74,7 @@ export const registerApkSignatureCommands = (
             );
           const service = apkSignatureModule.create(environment);
           return deliverCliAnalysisEvidence({
+            callerInputPath: args.path,
             run: () =>
               service.inspect(
                 { path: input.data.path, detail: "complete" },

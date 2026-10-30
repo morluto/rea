@@ -1,3 +1,4 @@
+import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
 import { describe, expect, it } from "vitest";
 import { traceNativeValues } from "./NativeValueTrace.js";
 import {
@@ -5,7 +6,7 @@ import {
   type AnalysisOperationPort,
 } from "../AnalysisProvider.js";
 import { ghidraFunctionDossier } from "../../domain/ghidraValues.fixture.js";
-import { functionDossierSchema } from "../../domain/hopperValues.js";
+import { functionDossierSchema } from "../../domain/native/functionDossier.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
 import { nativeValueTraceSchema } from "../../domain/native/nativeValueTrace.js";
 import {
@@ -988,4 +989,55 @@ describe("native value byte-bound call bindings", () => {
       }),
     );
   });
+});
+
+describe("native value validation failure provenance", () => {
+  it.each(["call-targets", "target-digest"] as const)(
+    "retains the exact provider observation for invalid %s",
+    async (failure) => {
+      let expected:
+        | ReturnType<typeof createAnalysisExecutionEvidence>
+        | undefined;
+      const result = await traceNativeValues(
+        {
+          execute: async (operation, parameters, options) => {
+            const execution = await analysis.execute(
+              operation,
+              parameters,
+              options,
+            );
+            if (!execution.ok) return execution;
+            if (
+              (failure === "call-targets" &&
+                operation === "resolve_native_call_targets") ||
+              (failure === "target-digest" && parameters.procedure === "0x2000")
+            ) {
+              const observation = {
+                ...execution.value,
+                ...(failure === "call-targets"
+                  ? { result: { malformed: "call targets" } }
+                  : { subject: { ...subject, sha256: "b".repeat(64) } }),
+                rawResult: { original: "provider output" },
+                limitations: ["Provider coverage is partial"],
+              };
+              expected = createAnalysisExecutionEvidence(
+                operation,
+                parameters,
+                observation,
+                "observed",
+              );
+              return ok(observation);
+            }
+            return execution;
+          },
+        },
+        { procedure: "0x1000" },
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error._tag).toBe("AnalysisOutputError");
+      expect(expected).toBeDefined();
+      expect(result.error.partialObservation).toEqual(expected);
+    },
+  );
 });

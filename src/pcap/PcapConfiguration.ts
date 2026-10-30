@@ -4,7 +4,7 @@ import { delimiter, isAbsolute } from "node:path";
 import { appendCallerPath } from "../filesystem/callerPath.js";
 
 import type { ProviderAvailability } from "../application/AnalysisProvider.js";
-import type { ProviderRejectionCode } from "../contracts/providerSelection.js";
+import type { ProviderRejectionCode } from "../domain/providerSelection.js";
 import type { AnalysisErrorOptions } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCapabilityUnavailableError,

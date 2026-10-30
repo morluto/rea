@@ -33,6 +33,25 @@ export const hashReadable = async (
   integrityAlgorithm?: "sha256" | "md5",
   asarHeaderAdmission?: AsarHeaderAdmission,
 ): Promise<HashResult> => {
+  const completed = await hashReadableToCompletion(
+    stream,
+    signal,
+    integrityAlgorithm,
+    asarHeaderAdmission,
+  );
+  abortIfNeeded(signal);
+  return completed;
+};
+
+/** Keep a fully delivered digest so its owner can validate before late cancellation.
+ * Source stability remains the stream or caller's responsibility.
+ */
+export const hashReadableToCompletion = async (
+  stream: Readable,
+  signal?: AbortSignal,
+  integrityAlgorithm?: "sha256" | "md5",
+  asarHeaderAdmission?: AsarHeaderAdmission,
+): Promise<HashResult> => {
   const hash = createHash("sha256");
   const md5 = integrityAlgorithm === "md5" ? createHash("md5") : undefined;
   const probe = createArtifactClassificationProbe(asarHeaderAdmission);
@@ -45,7 +64,6 @@ export const hashReadable = async (
     md5?.update(chunk);
     probe.write(chunk);
   }
-  abortIfNeeded(signal);
   return {
     sha256: hash.digest("hex"),
     ...(md5 === undefined ? {} : { md5: md5.digest("hex") }),

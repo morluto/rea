@@ -4,9 +4,11 @@ import {
   access,
   chmod,
   mkdir,
+  open,
   readFile,
   readdir,
   writeFile,
+  type FileHandle,
 } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -129,6 +131,42 @@ const resolveHopperMachOImage = (
   resolveHopperMachOImageWithOwner(target, {
     resourceScope: inspectionResources.owner,
   });
+
+it("retains Hopper FAT selection across short header, table and slice reads", async () => {
+  const root = await createTestTempDirectory("rea-hopper-short-reads-");
+  const fixture = buildFat32Container([
+    { cpuType: CPU_TYPES.arm64, cpuSubtype: 0, little: true },
+  ]);
+  const path = await writeFixture(root, "fat", fixture);
+  const target = fat32Target(path, fixture, "arm64");
+  const expected = await resolveHopperMachOImage(target);
+  expect(expected.ok).toBe(true);
+  let shortReads = 0;
+  const handles: FileHandle[] = [];
+  const actual = await resolveHopperMachOImageWithOwner(target, {
+    resourceScope: inspectionResources.owner,
+    fileSystem: {
+      open: (async (...args: Parameters<typeof open>) => {
+        const handle = await open(...args);
+        handles.push(handle);
+        const read = handle.read.bind(handle);
+        vi.spyOn(handle, "read").mockImplementation((async (
+          ...readArgs: unknown[]
+        ) => {
+          if (typeof readArgs[2] === "number" && readArgs[2] > 3) {
+            readArgs[2] = 3;
+            shortReads += 1;
+          }
+          return Reflect.apply(read, handle, readArgs);
+        }) as typeof handle.read);
+        return handle;
+      }) as typeof open,
+    },
+  });
+  expect(actual).toEqual(expected);
+  expect(shortReads).toBeGreaterThan(5);
+  expect(handles.every((handle) => handle.fd === -1)).toBe(true);
+});
 
 it.skipIf(process.platform === "win32")(
   "reports a FAT64 source that became unreadable as a host read denial",

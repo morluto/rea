@@ -22,6 +22,7 @@ import type { ArtifactResourceScope } from "../ArtifactResourceScope.js";
 import { readArtifactFileChunks } from "../readArtifactFileChunks.js";
 import { hasMachoMagic } from "../../domain/apple/machoContainer.js";
 import { readMachoImage } from "./MachoLoadCommandReader.js";
+import { readFileHandleRange } from "../../filesystem/readFileHandleRange.js";
 
 /** One owner for dyld descriptor admission, physical identity and finalization. */
 export class DylibFileAccess {
@@ -35,9 +36,11 @@ export class DylibFileAccess {
     return this.#read(entry.adapterKey, async (file, initial) => {
       if (!sameArtifactSourceIdentity(entry.sourceIdentity, initial))
         throw changed(entry.adapterKey);
-      const bytes = new Uint8Array(4);
-      const { bytesRead } = await file.read(bytes, 0, bytes.length, 0);
-      return hasMachoMagic(bytes.subarray(0, bytesRead));
+      const bytes = await readFileHandleRange(file, 0, 4, () =>
+        assertArtifactReadActive(this.signal),
+      );
+      assertArtifactReadActive(this.signal);
+      return hasMachoMagic(bytes);
     });
   }
 
@@ -50,13 +53,14 @@ export class DylibFileAccess {
           `Mach-O file extent is not safely addressable: ${path}`,
         );
       const facts = await readMachoImage(async (offset, length) => {
-        assertArtifactReadActive(this.signal);
-        const bytes = new Uint8Array(
+        const bytes = await readFileHandleRange(
+          file,
+          offset,
           Math.max(0, Math.min(length, size - offset)),
+          () => assertArtifactReadActive(this.signal),
         );
-        const { bytesRead } = await file.read(bytes, 0, bytes.length, offset);
         assertArtifactReadActive(this.signal);
-        return bytes.subarray(0, bytesRead);
+        return bytes;
       }, size);
       return { facts, identity };
     });

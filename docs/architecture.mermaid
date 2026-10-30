@@ -21,14 +21,14 @@ graph TD
     subgraph "Application Layer"
         APP["src/application/<br/>Shared CLI/MCP workflows<br/>enhanced analysis and investigations"]
         SESSION["SessionProviderRouter + BinarySession<br/>one immutable deep binding per target<br/>disjoint auxiliary routing"]
-        REGISTRY["AnalysisProviderRegistry<br/>sorted deep candidates<br/>deterministic selection, no fallback"]
+        REGISTRY["AnalysisProviderRegistry<br/>sorted deep candidates<br/>deterministic selection, no fallback<br/>ProviderInspectionScope: prerequisite observation lifetime"]
         RECORDS["src/application/investigation/<br/>composed InvestigationRecords + narrow ports<br/>EvidenceLedger and Unknown ownership"]
         SNAPSHOT["BinarySessionRecords + AnalysisSnapshotCache<br/>binary target/profile snapshots and session file ownership<br/>record coordination and post-commit notifications"]
         JS_RECON["src/application/javascript/ + src/artifacts/javascript/<br/>JavaScript artifact reconstruction<br/>directory/ASAR reads<br/>AST-only bundle projection"]
     end
 
     subgraph "Provider Layers (selected adapters)"
-        PROVIDER_OWNERS["src/providers/<br/>shared deferred client and inspection owners<br/>exact cleanup retry and attributed failures"]
+        PROVIDER_OWNERS["src/providers/<br/>shared deferred client owners<br/>exact cleanup retry and attributed failures"]
         PWNTOOLS["src/native/pwntools/ + src/native/pwndbg/<br/>BYO offline ELF/core adapters<br/>owned snapshots/Python and optional core-only GDB<br/>unchanged upstream parsers, ABI structures and mapping API"]
         WASM["src/wasm/<br/>caller-supplied WABT; immutable artifact inspection<br/>owned process supervision and retryable workspace cleanup"]
         APKSIG["src/apkSignature/<br/>in-process APK Signing Block + v1 reader<br/>bounded single read, no device or execution"]
@@ -75,7 +75,7 @@ graph TD
     end
 
     subgraph "Domain Layer"
-        DOMAIN["src/domain/<br/>Pure side-effect-free modules<br/>format declarations, Evidence, comparisons, application graphs"]
+        DOMAIN["src/domain/<br/>Pure side-effect-free modules<br/>format declarations, provider selection, Evidence, comparisons, application graphs"]
     end
 
     subgraph "Configuration"

@@ -26,6 +26,7 @@ cliTest(
     const config = join(home, ".qwen/settings.json");
     const selected = {
       HOPPER_LAUNCHER_PATH: join(home, "missing-hopper"),
+      HOPPER_LOADER_ARGS_JSON: '["", "--loader", "Mach-O"]',
       GHIDRA_INSTALL_DIR: join(home, "offline-ghidra"),
       GHIDRA_HEADLESS_MAXMEM: "512M",
       GHIDRA_MAXMEM: "3G",
@@ -73,6 +74,7 @@ cliTest(
       REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
       REA_MCP_OUTPUT_SCHEMA_PROFILE: "off",
       REA_MCP_MAX_RESPONSE_BYTES: "20971520",
+      REA_MCP_TOOL_FAMILIES: "session",
     };
     const environment = {
       HOME: home,
@@ -106,8 +108,12 @@ cliTest(
     });
     expect(configured).not.toContain("do not copy");
     // A later setup must update a selection rather than retaining the first value.
+    selected.REA_MCP_TOOL_FAMILIES = "session,application";
+    environment.REA_MCP_TOOL_FAMILIES = selected.REA_MCP_TOOL_FAMILIES;
     selected.REA_OBJDUMP_COMMAND = join(home, "replacement-objdump");
     environment.REA_OBJDUMP_COMMAND = selected.REA_OBJDUMP_COMMAND;
+    selected.HOPPER_LOADER_ARGS_JSON = "[]";
+    environment.HOPPER_LOADER_ARGS_JSON = selected.HOPPER_LOADER_ARGS_JSON;
     // Empty headless heap explicitly selects the lower-priority caller value.
     selected.GHIDRA_HEADLESS_MAXMEM = "";
     selected.GHIDRA_MAXMEM = "768M";
@@ -449,8 +455,8 @@ for (const scenario of scenarios)
       };
       const registration = (env: Readonly<Record<string, string>>) => {
         const server = {
-          command: "stale-launcher",
-          args: ["mcp"],
+          command: "npx",
+          args: ["-y", "rea-agents@6.6.0", "mcp"],
           env: {
             CALLER_SETTING: "keep exactly",
             ["__proto__"]: "retain caller key",
@@ -945,3 +951,66 @@ for (const invalidSetting of [
     },
     120_000,
   );
+
+cliTest(
+  "public VS Code setup registers in VSCODE_APPDATA without changing the default configuration",
+  async ({ cli }) => {
+    const home = await createTestTempDirectory("rea-vscode-appdata-cli-");
+    const selectedData = join(home, "selected data");
+    const config = join(selectedData, "Code", "User", "mcp.json");
+    const defaultData =
+      process.platform === "win32"
+        ? join(home, "AppData", "Roaming")
+        : process.platform === "darwin"
+          ? join(home, "Library", "Application Support")
+          : join(home, ".config");
+    const defaultConfig = join(defaultData, "Code", "User", "mcp.json");
+    const original = JSON.stringify({
+      servers: { foreign: { command: "keep" } },
+    });
+    const defaultOriginal = JSON.stringify({
+      servers: { defaultServer: { command: "untouched" } },
+    });
+    await mkdir(dirname(config), { recursive: true });
+    await mkdir(dirname(defaultConfig), { recursive: true });
+    await writeFile(config, original);
+    await writeFile(defaultConfig, defaultOriginal);
+    const setup = await cli.run({
+      arguments: [
+        "setup",
+        "--client",
+        "vscode",
+        "--skill=false",
+        "--yes",
+        "--json",
+      ],
+      cwd: home,
+      environment: {
+        HOME: home,
+        USERPROFILE: home,
+        APPDATA: join(home, "AppData", "Roaming"),
+        XDG_CONFIG_HOME: join(home, ".config"),
+        VSCODE_APPDATA: selectedData,
+        VSCODE_PORTABLE: "",
+        ...missingHopperAndGhidraEnvironment(home),
+      },
+    });
+    expect(setup.exitCode, setup.stdout + setup.stderr).toBe(0);
+    expect(setup.json).toMatchObject({ status: "ready" });
+    expect(JSON.parse(await readFile(config, "utf8"))).toMatchObject({
+      servers: {
+        foreign: { command: "keep" },
+        rea: {
+          command: process.execPath,
+          args: [resolve("scripts/rea.mjs"), "mcp"],
+        },
+      },
+    });
+    expect(await readFile(`${config}.rea.backup`, "utf8")).toBe(original);
+    expect(await readFile(defaultConfig, "utf8")).toBe(defaultOriginal);
+    await expect(access(`${defaultConfig}.rea.backup`)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  },
+  120_000,
+);

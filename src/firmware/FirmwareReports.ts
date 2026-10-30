@@ -144,11 +144,6 @@ const known = new Set([
   "MultiFileReport",
 ]);
 
-const dependencyFailure = z.object({
-  __typename__: z.literal("ExtractorDependencyNotFoundReport"),
-  dependencies: z.array(z.string().min(1)).min(1),
-});
-
 /** Collect the named extractors from any dependency report nested in one value. */
 const diagnosticDependencyNames = (value: unknown): string[] => {
   // Producer-controlled name volume must not make deduplication quadratic;
@@ -160,11 +155,16 @@ const diagnosticDependencyNames = (value: unknown): string[] => {
       return;
     }
     if (typeof node !== "object" || node === null) return;
-    const failure = dependencyFailure.safeParse(node);
+    const failure = missingDependency.safeParse(node);
     if (failure.success) {
-      for (const dependency of failure.data.dependencies) found.add(dependency);
-      return;
+      // Empty names carry unknown identity, not evidence against the known
+      // names in the same declaration. Ownership facts retain that unknown;
+      // diagnostics project only names and keep the complete source report.
+      for (const dependency of failure.data.dependencies)
+        if (dependency !== "") found.add(dependency);
     }
+    // A declaration may also carry nested producer diagnostics. Its own
+    // admission does not determine whether those independent reports exist.
     for (const child of Object.values(node)) visit(child);
   };
   visit(value);

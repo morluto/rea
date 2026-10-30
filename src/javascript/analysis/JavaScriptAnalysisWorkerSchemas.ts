@@ -91,6 +91,8 @@ const ipcChannel = <Shape extends z.ZodRawShape>(shape: Shape) =>
       receiver: ipcReceiver,
       invocation_location: range.optional(),
       resolution_basis: z.literal("wrapper-substitution").optional(),
+      invocation_channels: z.literal("literal").exactOptional(),
+      guarded_invocation_channels: strings.exactOptional(),
       ...shape,
       channel: z.null(),
       channel_expression: z.string(),
@@ -401,6 +403,7 @@ export const javaScriptWorkerStaticAnalysisSchema = z
         ...findingContext,
         role: z.enum(["preload", "renderer"]),
         path: z.string(),
+        path_base: z.literal("source-directory").exactOptional(),
         resolution_context: pathContext,
         mechanism: z.string(),
       }),
@@ -614,18 +617,24 @@ const scope = z.strictObject({
   bindingsComplete: z.boolean(),
   bindingIds: strings,
 });
-const binding = z.strictObject({
-  bindingId: z.string(),
-  scopeId: z.string(),
-  name: z.string(),
-  kind: definitionKind,
-  mutable: z.boolean(),
-  definitions: z.array(
-    z.strictObject({ kind: definitionKind, location: range }),
-  ),
-  value: semanticValue,
-  provenance,
-});
+const binding = z
+  .strictObject({
+    bindingId: z.string(),
+    scopeId: z.string(),
+    name: z.string(),
+    kind: definitionKind,
+    mutable: z.boolean(),
+    definitions: z.array(
+      z.strictObject({ kind: definitionKind, location: range }),
+    ),
+    value: semanticValue,
+    initializerValue: semanticValue.optional(),
+    provenance,
+  })
+  .transform(({ initializerValue, ...rest }) => ({
+    ...rest,
+    ...(initializerValue === undefined ? {} : { initializerValue }),
+  }));
 const callable = z.strictObject({
   callableId: z.string(),
   kind: z.enum(["function", "class", "method"]),

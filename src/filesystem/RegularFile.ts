@@ -207,3 +207,33 @@ export const sameRegularFileState = (
       expected.ctimeNs === observed.ctimeNs
     : expected.mtimeMs === observed.mtimeMs &&
       expected.ctimeMs === observed.ctimeMs);
+
+/** Validate an admitted descriptor and selected name at the same precision as admission. */
+export const assertStableRegularFileIdentity = async (
+  file: FileHandle,
+  path: string,
+  before: Stats | BigIntStats,
+  options: {
+    readonly symlinks: "follow" | "reject";
+    readonly signal?: AbortSignal;
+  },
+): Promise<void> => {
+  assertRegularFileActive(options.signal);
+  const bigint = typeof before.dev === "bigint";
+  const named = async () => {
+    try {
+      const lookup = options.symlinks === "follow" ? stat : lstat;
+      return bigint ? await lookup(path, { bigint: true }) : await lookup(path);
+    } catch (cause: unknown) {
+      if (isSelectedRegularFileError(cause))
+        throw new RegularFileChangedError(path, { cause });
+      throw cause;
+    }
+  };
+  if (
+    !sameRegularFileState(before, await file.stat({ bigint })) ||
+    !sameRegularFileState(before, await named())
+  )
+    throw new RegularFileChangedError(path);
+  assertRegularFileActive(options.signal);
+};

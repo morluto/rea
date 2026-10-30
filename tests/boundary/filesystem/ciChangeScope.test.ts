@@ -103,6 +103,27 @@ async function classify(
   return z.record(z.string(), z.unknown()).parse(JSON.parse(result.stdout));
 }
 
+it.each([
+  ["bridge/native/rea_lldb_tracer.py", "python"],
+  ["bridge/pwndbg/test_core_context.py", "python"],
+  ["tests/support/analysis-efficiency/test_signal_oracle.py", "python"],
+  ["scripts/run-python-tests.py", "python"],
+  ["src/captures/CaptureProvider.ts", "packet_capture"],
+  ["tests/boundary/mcp/packetCaptureMcp.test.ts", "packet_capture"],
+  ["src/signals/RecordingProvider.ts", "signal_recording"],
+  ["tests/boundary/mcp/signalRecordingMcp.test.ts", "signal_recording"],
+  ["src/process/LinuxResourceLimits.ts", "packet_capture"],
+  ["src/process/LinuxResourceLimits.ts", "signal_recording"],
+  ["scripts/ci/require-provider-tests.mjs", "packet_capture"],
+  ["scripts/ci/require-provider-tests.mjs", "signal_recording"],
+])("selects %s for %s", async (path, scope) => {
+  const { directory, base } = await fixture();
+  const head = await change(directory, [path]);
+  expect(await classify(directory, base, head)).toMatchObject({
+    [scope]: true,
+  });
+});
+
 it("reuses only scheduled qualification and preserves every explicit full request", async () => {
   const { directory, base } = await fixture();
   const reused = await classify(directory, base, base, "schedule", false, true);
@@ -731,8 +752,55 @@ it.each([
     { code: true, runtime: true, apple: true, package: false, evm: false },
   ],
   [
+    "src/artifacts/NativeDmgArtifactReader.ts",
+    { code: true, runtime: true, apple: true, package: false, evm: false },
+  ],
+  [
+    "tests/acceptance/artifactDmgAttachmentRecoveryCli.test.ts",
+    { code: true, apple: true, package: false, runtime: false },
+  ],
+  [
+    "tests/process-global/dmgCancellationReason.test.ts",
+    { code: true, apple: true, package: false, runtime: false },
+  ],
+  [
+    "tests/boundary/providers/native/nativeDmgArtifactReader.test.ts",
+    { code: true, apple: true, package: false, runtime: false },
+  ],
+  [
     "scripts/verify/apple/example.mjs",
     { code: true, apple: true, package: false, runtime: false },
+  ],
+  [
+    "src/process/WindowsExecutable.ts",
+    { code: true, runtime: true, package: true },
+  ],
+  [
+    "src/process/WindowsExecutable.test.ts",
+    { code: true, runtime: true, package: true },
+  ],
+  ["src/adb/AdbConfiguration.ts", { code: true, runtime: true, package: true }],
+  [
+    "src/apktool/ApktoolConfiguration.ts",
+    { code: true, runtime: true, package: true },
+  ],
+  [
+    "src/application/UpdateCommandRunner.ts",
+    { code: true, runtime: true, package: true },
+  ],
+  [
+    "tests/boundary/process/windowsExecutableSelection.test.ts",
+    { code: true, runtime: true, package: true },
+  ],
+  ["src/hopper/BridgeLauncher.ts", { code: true, apple: true }],
+  ["src/domain/hopperErrors.ts", { code: true, apple: true }],
+  [
+    "tests/boundary/providers/hopper/hopperMacLaunchArguments.test.ts",
+    { code: true, apple: true },
+  ],
+  [
+    "tests/boundary/providers/hopper/hopperClient.helperFailure.test.ts",
+    { code: true, apple: true },
   ],
   [
     "src/windows/Example.ts",

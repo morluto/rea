@@ -22,7 +22,7 @@ import {
 import { constants, accessSync, realpathSync, statSync } from "node:fs";
 import { delimiter as pathDelimiter, dirname, posix, win32 } from "node:path";
 
-import type { ProviderRejectionCode } from "../contracts/providerSelection.js";
+import type { ProviderRejectionCode } from "../domain/providerSelection.js";
 import {
   parseExecutableHeader,
   readFatArchitectureFamilies,
@@ -1092,13 +1092,14 @@ export const discoverGhidraInstallationOnPath = (
   if (platform !== process.platform) return undefined;
   const path = platform === "win32" ? win32 : posix;
   const pathValue = environment.PATH;
-  if (pathValue === undefined || pathValue.length === 0) return undefined;
+  if (pathValue === undefined) return undefined;
   const launchers =
     platform === "win32"
       ? ["ghidra.bat", "ghidraRun.bat", "ghidra.exe", "ghidraRun.exe"]
       : ["ghidra", "ghidraRun"];
   for (const directory of pathValue.split(pathDelimiter)) {
-    if (directory.length === 0) continue;
+    // POSIX empty PATH entries select cwd, including an entirely empty PATH.
+    if (directory.length === 0 && platform === "win32") continue;
     for (const launcher of launchers) {
       let resolved: string;
       try {

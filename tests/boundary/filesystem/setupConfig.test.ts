@@ -1,3 +1,4 @@
+import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import {
   chmod,
   lstat,
@@ -7,7 +8,7 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parse as parseToml } from "smol-toml";
 
@@ -24,9 +25,9 @@ import { resolveWindowsClaudeDesktopLocation } from "../../../src/application/Cl
 import { supportedClients } from "../../../src/application/SupportedClients.js";
 import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
 import { failedConfigurationMessage } from "../../../src/application/SetupClients.js";
-import { PRODUCT_IDENTITY } from "../../../src/identity.js";
+import { CURRENT_ENTRYPOINT_PATH } from "../../../src/process/CurrentEntrypointPath.js";
 
-const pinnedPackage = PRODUCT_IDENTITY.registrationPackageSpecifier;
+const registrationCommand = currentClientRegistrationCommand();
 
 it.skipIf(process.platform === "win32")(
   "preserves an aligned caller launcher alias without writes or a backup",
@@ -34,9 +35,9 @@ it.skipIf(process.platform === "win32")(
     const home = await createTestTempDirectory(
       "rea-config-equivalent-launcher-",
     );
-    const real = join(home, "rea-current");
+    const real = CURRENT_ENTRYPOINT_PATH;
+    if (real === undefined) throw new Error("missing current entrypoint");
     const alias = join(home, "rea-alias");
-    await writeFile(real, "current launcher\n");
     await symlink(real, alias);
     await mkdir(join(home, ".cursor"));
     const configPath = join(home, ".cursor", "mcp.json");
@@ -76,9 +77,9 @@ it.skipIf(process.platform === "win32")(
     const home = await createTestTempDirectory(
       "rea-config-timeout-launcher-alias-",
     );
-    const real = join(home, "rea-current");
+    const real = CURRENT_ENTRYPOINT_PATH;
+    if (real === undefined) throw new Error("missing current entrypoint");
     const alias = join(home, "rea-alias");
-    await writeFile(real, "current launcher\n");
     await symlink(real, alias);
     await mkdir(join(home, ".codex"));
     const configPath = join(home, ".codex", "config.toml");
@@ -143,7 +144,7 @@ it.skipIf(process.platform === "win32").each([false, true])(
       }),
     ).toMatchObject({ status: "configured" });
     expect(JSON.parse(await readFile(selected, "utf8"))).toMatchObject({
-      mcpServers: { rea: { command: "npx" } },
+      mcpServers: { rea: { command: registrationCommand[0] } },
     });
     expect(await readFile(unrelated, "utf8")).toBe(original);
     await expect(lstat(`${unrelated}.rea.backup`)).rejects.toMatchObject({
@@ -154,6 +155,37 @@ it.skipIf(process.platform === "win32").each([false, true])(
     expect(
       await resolveClientConfigTransactionPath(`${root}/absent/../config.json`),
     ).toBeUndefined();
+  },
+);
+
+it
+  .skipIf(process.platform === "win32")
+  .each(
+    ["/", "/."].flatMap((suffix) =>
+      [false, true].map((relativePath) => ({ suffix, relativePath })),
+    ),
+  )(
+  "rejects a missing configuration with directory suffix $suffix and relative=$relativePath",
+  async ({ suffix, relativePath }) => {
+    const root = await createTestTempDirectory("rea-config-directory-suffix-");
+    const path = join(root, "config.json");
+    const requested = `${relativePath ? relative(process.cwd(), path) : path}${suffix}`;
+    expect(await resolveClientConfigTransactionPath(requested)).toBe(
+      `${path}/`,
+    );
+    expect(
+      await configureClientConfiguration({
+        name: "cursor",
+        format: "json",
+        configPath: requested,
+      }),
+    ).toMatchObject({ status: "failed" });
+    const selected = await lstat(path).catch((cause: unknown) => {
+      if (cause instanceof Error && "code" in cause && cause.code === "ENOENT")
+        return undefined;
+      throw cause;
+    });
+    expect(selected?.isFile() ?? false).toBe(false);
   },
 );
 
@@ -231,8 +263,8 @@ describe("JSON client configuration transaction: writing configuration through s
       mcpServers: {
         other: { command: "other" },
         rea: {
-          command: "npx",
-          args: ["-y", pinnedPackage, "mcp"],
+          command: registrationCommand[0],
+          args: registrationCommand.slice(1),
         },
       },
     });
@@ -259,8 +291,8 @@ describe("JSON client configuration transaction: writing configuration through s
       theme: "dark",
       mcpServers: {
         rea: {
-          command: "npx",
-          args: ["-y", pinnedPackage, "mcp"],
+          command: registrationCommand[0],
+          args: registrationCommand.slice(1),
         },
       },
     });
@@ -303,7 +335,7 @@ describe("JSON client configuration transaction: keeping matching configuration 
     const configPath = join(directory, "mcp.json");
     await writeFile(
       configPath,
-      `${JSON.stringify({ mcpServers: { rea: { command: "npx", args: ["-y", pinnedPackage, "mcp"] } } })}\n`,
+      `${JSON.stringify({ mcpServers: { rea: { command: registrationCommand[0], args: registrationCommand.slice(1) } } })}\n`,
     );
     expect(
       await configureClientConfiguration({
@@ -331,8 +363,8 @@ describe("JSON client configuration transaction: keeping matching configuration 
               JAVA_HOME: "/usr/lib/jvm/jdk-21",
               GHIDRA_INSTALL_DIR: "/opt/ghidra",
             },
-            args: ["-y", pinnedPackage, "mcp"],
-            command: "npx",
+            args: registrationCommand.slice(1),
+            command: registrationCommand[0],
           },
         },
       })}\n`,
@@ -373,8 +405,8 @@ describe("JSON client configuration migration and provider paths", () => {
       theme: "dark",
       mcpServers: {
         rea: {
-          command: "npx",
-          args: ["-y", pinnedPackage, "mcp"],
+          command: registrationCommand[0],
+          args: registrationCommand.slice(1),
         },
         other: { command: "other" },
       },
@@ -399,8 +431,8 @@ describe("JSON client configuration migration and provider paths", () => {
     expect(JSON.parse(await readFile(configPath, "utf8"))).toMatchObject({
       mcpServers: {
         rea: {
-          command: "npx",
-          args: ["-y", pinnedPackage, "mcp"],
+          command: registrationCommand[0],
+          args: registrationCommand.slice(1),
           env: { HOPPER_LAUNCHER_PATH: hopperPath },
         },
       },

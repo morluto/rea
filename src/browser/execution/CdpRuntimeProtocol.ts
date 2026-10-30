@@ -39,22 +39,6 @@ export const runtimeStackSchema = z.object({
     .object({ id: z.string(), debuggerId: z.string().optional() })
     .optional(),
 });
-/** Request evidence contains metadata and producer initiators; bodies and headers are outside this tool. */
-export const runtimeRequestSchema = z.object({
-  requestId: z.string().min(1),
-  frameId: z.string().optional(),
-  timestamp: z.number().min(0),
-  request: z.object({ url: z.string(), method: z.string() }),
-  initiator: z
-    .object({
-      type: z.string(),
-      stack: z.unknown().optional(),
-      url: z.string().optional(),
-      lineNumber: integer.optional(),
-      columnNumber: integer.optional(),
-    })
-    .passthrough(),
-});
 /** Native listener descriptors omit live remote handles from portable evidence. */
 export const runtimeListenersSchema = z.object({
   listeners: z.array(

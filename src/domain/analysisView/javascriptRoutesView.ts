@@ -21,12 +21,12 @@ import {
   type JavaScriptRouteInventorySource,
 } from "../javascript/javascriptRouteInventory.js";
 import { javaScriptRouteMechanismSchema } from "../javascript/javascriptRouteFacts.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import { assertOwnedView, type AdmittedView } from "./analysisViewShape.js";
+import {
+  ANALYSIS_VIEW_PAGE_BUDGET_RECOVERY,
+  analysisViewInputError,
+} from "./analysisViewErrors.js";
 import {
   boundedViewMessages,
   completeWithinViewCoverage,
@@ -191,8 +191,6 @@ export const javaScriptRoutesViewSummarySchema = z.strictObject({
     unknown: z.int().nonnegative(),
   }),
 });
-export const javaScriptRoutesSourceReferenceSchema =
-  javaScriptRouteInventorySourceSchema;
 
 type Request = z.output<typeof javaScriptRoutesViewRequestSchema>;
 type Gap = z.infer<typeof javaScriptRouteGapSchema>;
@@ -318,10 +316,14 @@ const captureIdentity = z.object({
 /** Historical projection: no source file reads, browser connection or reanalysis. */
 export const projectJavaScriptRoutesView = (
   parent: AnalysisViewParent,
-  selected: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
+  selected: AdmittedView,
+) => {
   if (selected.kind !== "javascript-routes")
     return err(inputError("Select a javascript-routes view."));
+  assertOwnedView<z.output<typeof javaScriptRoutesViewRequestSchema>>(
+    selected,
+    "javascript-routes",
+  );
   const operation = parent.operation;
   if (
     operation !== "analyze_javascript_application" &&
@@ -346,11 +348,8 @@ export const projectJavaScriptRoutesView = (
       path: identity.data.input_path,
       sha256: identity.data.root_artifact_sha256,
     };
-    if (
-      parent.subject != null &&
-      (parent.subject.local_path !== artifact.path ||
-        parent.subject.digest.sha256 !== artifact.sha256)
-    )
+    const subject = parent.subject;
+    if (subject != null && subject.digest.sha256 !== artifact.sha256)
       return err(
         inputError(
           "Parent subject does not match its application artifact identity.",
@@ -409,6 +408,7 @@ export const projectJavaScriptRoutesView = (
           limit_bytes: PAGE_BYTES,
           collection: view.collection,
         },
+        ANALYSIS_VIEW_PAGE_BUDGET_RECOVERY,
       ),
     );
   if (view.collection === "summary") {
@@ -453,7 +453,7 @@ export const projectJavaScriptRoutesView = (
       item: Record<string, JsonValue>;
       sources: readonly string[];
     },
-  ): Result<UnsignedAnalysisView, AnalysisError> => {
+  ) => {
     const rows = candidates(source, ids).filter(predicate),
       items: Record<string, JsonValue>[] = [],
       refs = new Map<string, JavaScriptRouteInventorySource>();

@@ -4,11 +4,13 @@ import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
+import { CPU_ARM64, universalMacho } from "../../../fixtures/universalMacho.js";
+import { thinMach } from "../../../../src/domain/binaryTarget.fixture.js";
+import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
 
 import { ArtifactProvider } from "../../../../src/artifacts/ArtifactProvider.js";
 import { ArtifactReaderFailure } from "../../../../src/artifacts/ArtifactReader.js";
 import { artifactExtractionExecutionSchema } from "../../../../src/contracts/artifactToolContracts.js";
-import type { BinaryTarget } from "../../../../src/domain/binaryTargetTypes.js";
 
 const sliceReader = vi.hoisted(() => ({
   reached: vi.fn(),
@@ -41,10 +43,21 @@ it("routes universal Mach-O extraction through slice inventory", async () => {
   );
   const root = await createTestTempDirectory("rea-extract-universal-");
   const image = join(root, "Universal");
-  await writeFile(image, Buffer.from([0xca, 0xfe, 0xba, 0xbe, 0, 0, 0, 0]));
+  await writeFile(
+    image,
+    universalMacho([
+      {
+        bytes: thinMach(0xfeedfacf, CPU_ARM64),
+        cpuType: CPU_ARM64,
+        cpuSubtype: 0,
+      },
+    ]).bytes,
+  );
+  const target = await parseBinaryTarget(image, { hostArchitecture: "arm64" });
+  if (!target.ok) throw target.error;
   const output = join(root, "output");
   const result = await new ArtifactProvider(process.env)
-    .createClient(universalTarget(image))
+    .createClient(target.value)
     .execute(
       "extract_artifact",
       artifactExtractionExecutionSchema.parse({ output_root: output }),
@@ -60,15 +73,4 @@ it("routes universal Mach-O extraction through slice inventory", async () => {
   });
   expect(sliceReader.reached).toHaveBeenCalledOnce();
   await expect(access(output)).rejects.toThrow();
-});
-
-const universalTarget = (path: string): BinaryTarget => ({
-  path,
-  sourcePath: path,
-  sha256: "0".repeat(64),
-  kind: "executable",
-  format: "mach-o-universal",
-  architecture: "arm64",
-  availableArchitectures: ["arm64"],
-  universalSlice: { offset: 0, size: 32 },
 });

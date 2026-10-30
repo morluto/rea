@@ -406,3 +406,208 @@ it("ends an armed observation at a fatal protocol failure without waiting out it
     error: { _tag: "BrowserObservationError", reason: "protocol_error" },
   });
 }, 15_000);
+
+it("does not join an empty document request identity to a later loading failure", async () => {
+  const { observation } = await observeDuringClockSampling(
+    (command, origin) => {
+      if (command.method !== "Performance.getMetrics") return undefined;
+      return [
+        {
+          ...laterInWindowRequest(command, origin),
+          params: {
+            ...laterInWindowRequest(command, origin).params,
+            requestId: "",
+          },
+        },
+        {
+          method: "Network.loadingFailed",
+          sessionId: command.sessionId,
+          params: {
+            requestId: "",
+            timestamp: 22,
+            errorText: "net::ERR_FAILED",
+          },
+        },
+      ];
+    },
+  );
+  expect(observation.window.end_reason).toBe("window_elapsed");
+  expect(observation.timeline).toContainEqual(
+    expect.objectContaining({ type: "redirect", request_id: null }),
+  );
+  expect(observation.timeline).not.toContainEqual(
+    expect.objectContaining({ type: "load_failed" }),
+  );
+  expect(observation.timeline).not.toContainEqual(
+    expect.objectContaining({ request_id: "" }),
+  );
+  expect(observation.completeness.excluded).toContainEqual(
+    expect.objectContaining({
+      section: "timeline",
+      reason: "invalid_protocol_value",
+    }),
+  );
+});
+
+const redirectCases = [
+  ...(
+    [
+      ["string status", "302"],
+      ["null status", null],
+      ["boolean status", false],
+      ["object status", {}],
+    ] as const
+  ).map(([name, status]) => ({
+    name,
+    invalidStatus: true,
+    response: (origin: string) => ({ url: `${origin}/prior`, status }),
+    expected: (origin: string) => ({
+      url: `${origin}/prior`,
+      status: null,
+      scope: "approved",
+    }),
+  })),
+  {
+    name: "malformed URL",
+    response: (_origin: string) => ({ url: "http://%", status: 302 }),
+    expected: (_origin: string) => ({ url: null, status: null, scope: null }),
+  },
+  {
+    name: "empty URL",
+    response: (_origin: string) => ({ url: "", status: 302 }),
+    expected: (_origin: string) => ({ url: null, status: null, scope: null }),
+  },
+
+  {
+    name: "missing URL",
+    response: (_origin: string) => ({ status: 302 }),
+    expected: (_origin: string) => ({ url: null, status: null, scope: null }),
+  },
+  {
+    name: "missing status",
+    response: (origin: string) => ({ url: `${origin}/prior` }),
+    expected: (origin: string) => ({
+      url: `${origin}/prior`,
+      status: null,
+      scope: "approved",
+    }),
+  },
+  {
+    name: "zero status",
+    response: (origin: string) => ({ url: `${origin}/prior`, status: 0 }),
+    expected: (origin: string) => ({
+      url: `${origin}/prior`,
+      status: 0,
+      scope: "approved",
+    }),
+  },
+  {
+    name: "outside origin",
+    response: (_origin: string) => ({
+      url: "https://outside.invalid/previous",
+      status: 302,
+    }),
+    expected: (_origin: string) => ({
+      url: null,
+      status: null,
+      scope: "outside_policy",
+    }),
+  },
+  {
+    name: "unsupported URL",
+    response: (_origin: string) => ({
+      url: "data:text/html,discard-redirect-body",
+      status: 302,
+    }),
+    expected: (_origin: string) => ({
+      url: null,
+      status: null,
+      scope: "unsupported",
+    }),
+  },
+  {
+    name: "credentials",
+    response: (origin: string) => ({
+      url:
+        origin.replace("http://", "http://user:discard-redirect-secret@") +
+        "/prior?token=visible",
+      status: 302,
+    }),
+    expected: (origin: string) => ({
+      url: `${origin}/prior?token=visible`,
+      status: 302,
+      scope: "approved",
+    }),
+  },
+];
+
+it.each(redirectCases)(
+  "preserves scoped redirect response facts with $name",
+  async (testCase) => {
+    const { response, expected } = testCase;
+    const { browser, observation } = await observeDuringClockSampling(
+      (command, origin) => {
+        if (command.method !== "Performance.getMetrics") return undefined;
+        return [
+          {
+            method: "Network.requestWillBeSent",
+            sessionId: command.sessionId,
+            params: {
+              requestId: "redirect-context",
+              timestamp: 21,
+              type: "Document",
+              frameId: "frame-main",
+              request: { url: `${origin}/next`, method: "GET" },
+              redirectResponse: {
+                ...response(origin),
+                headers: { Authorization: "discard-redirect-header" },
+              },
+            },
+          },
+        ];
+      },
+    );
+    expect(observation.timeline).toContainEqual(
+      expect.objectContaining({
+        type: "redirect",
+        request_id: "redirect-context",
+        redirect_response: expected(browser.allowedOrigin),
+      }),
+    );
+    if (
+      expected(browser.allowedOrigin).scope === null ||
+      "invalidStatus" in testCase
+    )
+      expect(observation.completeness.excluded).toContainEqual(
+        expect.objectContaining({
+          section: "timeline",
+          reason: "invalid_protocol_value",
+        }),
+      );
+    else
+      expect(observation.completeness.excluded).not.toContainEqual(
+        expect.objectContaining({
+          section: "timeline",
+          reason: "invalid_protocol_value",
+        }),
+      );
+    const scope = expected(browser.allowedOrigin).scope;
+    if (scope === "outside_policy" || scope === "unsupported") {
+      expect(observation.completeness.excluded).toContainEqual(
+        expect.objectContaining({
+          section: "timeline",
+          reason:
+            scope === "outside_policy"
+              ? "disallowed_origin"
+              : "unsupported_url",
+        }),
+      );
+      expect(observation.completeness.policy_filtered_sections).toContain(
+        "timeline",
+      );
+    }
+    const serialized = JSON.stringify(observation);
+    expect(serialized).not.toContain("discard-redirect-");
+    expect(serialized).not.toContain("outside.invalid");
+  },
+);

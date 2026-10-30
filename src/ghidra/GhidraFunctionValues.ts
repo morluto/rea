@@ -20,16 +20,20 @@ import {
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
 import {
-  functionBodyEntryAgrees,
   functionInstructionWindowSchema,
   functionDossierSchema,
+} from "../domain/native/functionDossier.js";
+import {
   availableReferenceKindSchema,
   unresolvedCallSchema,
+} from "../domain/native/nativeReference.js";
+import {
   swiftSmallStringLiteralSchema,
   swiftLargeStringLiteralSchema,
   swiftSmallStringLiteralOmissionSchema,
   swiftLargeStringLiteralOmissionSchema,
-} from "../domain/hopperValues.js";
+} from "../domain/native/swiftStringLiteral.js";
+import { functionBodyEntryAgrees } from "../domain/native/functionBody.js";
 import {
   jsonObjectSchema,
   jsonValueSchema,

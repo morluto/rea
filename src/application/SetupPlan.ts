@@ -24,6 +24,7 @@ import { redirectedWriteBlocker } from "./MsixPackageStorage.js";
 import type { DoctorReport } from "./Doctor.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
+import { macosMajorVersion } from "../domain/macosVersion.js";
 
 /** Whether automated Hopper installation can run on this host, and why not. */
 export type HopperInstallEligibility =
@@ -408,11 +409,8 @@ const hopperInstallEligibility = (
   linuxDistribution: LinuxDistribution | undefined,
 ): HopperInstallEligibility => {
   if (platform === "darwin") {
-    const major =
-      macosVersion === undefined
-        ? undefined
-        : /^(\d+)(?:\.|$)/u.exec(macosVersion)?.[1];
-    return major !== undefined && Number(major) >= 12
+    const major = macosMajorVersion(macosVersion);
+    return major !== undefined && major >= 12
       ? { supported: true }
       : { supported: false, remediation: "Upgrade to macOS 12 or newer." };
   }

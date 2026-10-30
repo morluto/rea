@@ -54,6 +54,18 @@ export const KUNA_EXPORT_OPERATION = "kuna:decompile-project";
 
 const INVENTORY_FILE = "functions.json";
 
+/** Exact flat file layout emitted for the selected target's native basename. */
+export const kunaExportFileNames = (targetPath: string) => {
+  const stem = basename(targetPath);
+  return {
+    c: `${stem}.c`,
+    h: `${stem}.h`,
+    asm: `${stem}.asm`,
+    readme: "README.md",
+    inventory: INVENTORY_FILE,
+  } as const;
+};
+
 /** Identity of one file an export consists of. */
 export interface KunaExportFile {
   readonly path: string;
@@ -292,14 +304,7 @@ export const exportKunaProject = async (
     return unusable(
       "Kuna did not print its `functions: N ok, M failed` summary.",
     );
-  const stem = basename(request.targetPath);
-  const names = {
-    c: `${stem}.c`,
-    h: `${stem}.h`,
-    asm: `${stem}.asm`,
-    readme: "README.md",
-    inventory: INVENTORY_FILE,
-  } as const;
+  const names = kunaExportFileNames(request.targetPath);
   const files: Partial<Record<keyof KunaExportFiles, KunaExportFile>> = {};
   const fileStates: Partial<
     Record<keyof KunaProjectFileStates, RegularFileState>

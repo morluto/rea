@@ -13,7 +13,10 @@ import { createServer as createNetServer } from "node:net";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createDesktopApplicationService } from "../../../src/composition/desktop.js";
-import { desktopApplicationSchema } from "../../../src/domain/desktopApplication.js";
+import {
+  desktopApplicationSchema,
+  type DesktopFact,
+} from "../../../src/domain/desktopApplication.js";
 import { createDesktopApplicationEvidence } from "../../../src/domain/desktopApplicationEvidence.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { inspectAnalysisView } from "../../../src/application/analysisView/AnalysisViewService.js";
@@ -33,7 +36,9 @@ import {
 import { locateGodotPck } from "../../../src/artifacts/GodotPckLocation.js";
 import { DirectoryArtifactReader } from "../../../src/artifacts/DirectoryArtifactReader.js";
 import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
+import { artifactFilePrimaryFacts } from "../../../src/artifacts/ArtifactFileOperation.js";
 import { DesktopApplicationReader } from "../../../src/artifacts/DesktopApplicationReader.js";
+import { inspectDesktopFile } from "../../../src/artifacts/DesktopFileInspection.js";
 import { DesktopApplicationService } from "../../../src/application/artifacts/DesktopApplicationService.js";
 
 const inspect = async (path: string, extra: Record<string, number> = {}) => {
@@ -54,6 +59,31 @@ const put = async (root: string, path: string, bytes: Buffer | string) => {
   await mkdir(join(destination, ".."), { recursive: true });
   await writeFile(destination, bytes);
 };
+
+it.each(["NE", "LE", "LX", "PE\0\0"])(
+  "admits the MZ signature before interpreting a trailing %j header as PE",
+  async (signature) => {
+    const root = await createTestTempDirectory("rea-desktop-mz-signature-");
+    const bytes = Buffer.alloc(64 + signature.length);
+    bytes.write("MZ");
+    bytes.writeUInt16LE(4, 8);
+    bytes.writeUInt32LE(64, 60);
+    bytes.write(signature, 64, "latin1");
+    await put(root, "legacy.exe", bytes);
+
+    const { report } = await inspect(root);
+    const file = report.files.find((row) => row.path === "legacy.exe");
+    expect(file?.facts).toEqual([]);
+    expect(file?.issues).toEqual(
+      signature.startsWith("PE") ? ["PE COFF header is truncated"] : [],
+    );
+    expect(file?.ranges).toContainEqual({
+      offset: 64,
+      bytes: signature.length,
+      sha256: expect.any(String),
+    });
+  },
+);
 
 it.each(["oversized-header", "prefix-only-section"] as const)(
   "keeps desktop CLR prefix admission distinct from full managed admission: %s",
@@ -675,7 +705,7 @@ it("bounds omitted-entry retention before allocating rows or serializing identit
       reader.entries = async function* (_signal, options) {
         if (typeof options === "function")
           throw new Error("Expected traversal options");
-        for (let index = 0; index < 400; index++) {
+        for (let index = 0; index < 5000; index++) {
           examined++;
           options?.onOmission?.({
             path: `${prefix}/${index}/entry`,
@@ -690,7 +720,7 @@ it("bounds omitted-entry retention before allocating rows or serializing identit
   const result = await service.inspect({ path: root });
   if (!result.ok) throw result.error;
   const report = desktopApplicationSchema.parse(result.value.normalized_result);
-  expect(examined).toBeLessThan(400);
+  expect(examined).toBeLessThan(5000);
   expect(report.omissions).toHaveLength(examined - 1);
   expect(report.coverage).toMatchObject({
     status: "partial",
@@ -700,6 +730,155 @@ it("bounds omitted-entry retention before allocating rows or serializing identit
   expect(report.limitations).toContainEqual(
     expect.stringContaining("representation budget"),
   );
+});
+
+/** Inspect simulated directory rows without creating their filesystem tree. */
+const inspectSimulatedRows = async (
+  count: number,
+  path: (index: number) => string,
+  kind: "file" | "directory" = "directory",
+) => {
+  const root = await createTestTempDirectory("rea-desktop-row-capacity-");
+  let yielded = 0;
+  const service = new DesktopApplicationService(
+    new DesktopApplicationReader((selected) => {
+      const reader = new DirectoryArtifactReader(selected);
+      reader.entries = async function* () {
+        for (let index = 0; index < count; index++) {
+          yielded++;
+          yield {
+            path: path(index),
+            kind,
+            declaredSize: kind === "file" ? 1 : null,
+            compressedSize: null,
+            executable: false,
+            encrypted: false,
+            byteOffset: null,
+            declaredIntegrity: null,
+            unpacked: false,
+            limitations: [],
+            adapterKey: `${root}/${path(index)}`,
+          };
+        }
+      };
+      return reader;
+    }),
+  );
+  onTestFinished(() => service.close());
+  const result = await service.inspect({ path: root, max_entries: count });
+  if (!result.ok) throw result.error;
+  return {
+    yielded,
+    report: desktopApplicationSchema.parse(result.value.normalized_result),
+  };
+};
+
+it("admits bundle-sized rows up to max_entries within the representation budget", async () => {
+  // Localized resources dominate large macOS bundles such as iWork apps.
+  const { report } = await inspectSimulatedRows(
+    20_000,
+    (index) =>
+      `Contents/Resources/${String(index % 40).padStart(2, "0")}.lproj/Localizable${index}.strings`,
+  );
+  expect(report.files).toHaveLength(20_000);
+  expect(report.coverage).toMatchObject({
+    status: "complete-within-scan",
+    entries_examined: 20_000,
+  });
+  expect(report.limitations).not.toContainEqual(
+    expect.stringContaining("representation budget"),
+  );
+});
+
+it("charges escaped JSON expansion before retaining control-character paths", async () => {
+  const { yielded, report } = await inspectSimulatedRows(
+    6000,
+    (index) => `${"\u0001".repeat(1000)}/${index}`,
+  );
+  expect(report.files.length).toBeLessThan(6000);
+  expect(report.files).toHaveLength(yielded - 1);
+  expect(report.coverage).toMatchObject({
+    status: "partial",
+    entries_examined: yielded,
+  });
+  expect(report.limitations).toContainEqual(
+    expect.stringContaining("representation budget"),
+  );
+  // Escaping makes each path six times longer in JSON than in memory.
+  expect(Buffer.byteLength(JSON.stringify(report.files))).toBeLessThan(
+    32 * 1024 * 1024,
+  );
+});
+
+it.each([
+  ["Unreal pack", "Content/Paks/pakchunk0.pak", 0],
+  ["Electron archive", "resources/app.asar", 2],
+])(
+  "charges %s convention facts and probes that repeat control-character paths",
+  async (_name, suffix, probes) => {
+    const { yielded, report } = await inspectSimulatedRows(
+      3000,
+      (index) => `${"\u0001".repeat(1000)}/${index}/${suffix}`,
+      "file",
+    );
+    expect(report.files.length).toBeLessThan(3000);
+    expect(report.files).toHaveLength(yielded - 1);
+    // The fact value and each next probe repeat the escaped path.
+    expect(report.files[0]?.facts).toHaveLength(1);
+    expect(report.next_probes).toHaveLength(probes * report.files.length);
+    expect(report.coverage.status).toBe("partial");
+    expect(report.limitations).toContainEqual(
+      expect.stringContaining("representation budget"),
+    );
+    expect(Buffer.byteLength(JSON.stringify(report))).toBeLessThan(
+      32 * 1024 * 1024,
+    );
+  },
+);
+
+it("charges the next probes a header fact offers before retaining the fact", async () => {
+  const root = await createTestTempDirectory("rea-desktop-fact-probes-");
+  const bytes = buildManagedPeFixture();
+  await put(root, "Managed.dll", bytes);
+  // Each managed fact offers a probe that repeats this escaped local path.
+  const localPath = "\u0001".repeat(100_000);
+  const inspectWithin = async (maximumRetainedBytes: number) => {
+    const row = {
+      file_id: `dsf_${"a".repeat(64)}`,
+      path: "Managed.dll",
+      local_path: localPath,
+      kind: "file" as const,
+      bytes: bytes.length,
+      identity: null,
+      read_status: "not-selected" as const,
+      ranges: [],
+      facts: [] as DesktopFact[],
+      issues: [] as string[],
+    };
+    const file = await open(join(root, "Managed.dll"), "r");
+    try {
+      await inspectDesktopFile(file, row, {
+        bytes: 0,
+        maximum: 1024 * 1024,
+        retainedBytes: 0,
+        maximumRetainedBytes,
+      });
+    } finally {
+      await file.close();
+    }
+    return row;
+  };
+  const refused = await inspectWithin(1024 * 1024);
+  expect(refused.facts).toEqual([]);
+  expect(refused.issues).toEqual([
+    "Directory facts reached the retained metadata budget",
+  ]);
+  const admitted = await inspectWithin(32 * 1024 * 1024);
+  expect(admitted.facts.map((fact) => fact.kind)).toEqual([
+    "native-image-header",
+    "pe-cli-directory",
+  ]);
+  expect(admitted.issues).toEqual([]);
 });
 
 it("preserves the selected root alias and directs follow-ups to the admitted physical root", async () => {
@@ -748,6 +927,164 @@ it("preserves the selected root alias and directs follow-ups to the admitted phy
     await service.close();
   }
 });
+
+it.each(
+  ["physical read", "format"].flatMap((variant) =>
+    ["unavailable", "mismatch"].map((validationState) => ({
+      variant,
+      validationState,
+    })),
+  ),
+)(
+  "keeps $variant failure through $validationState final validation while discarding unverified desktop byte facts",
+  async ({ variant, validationState }) => {
+    const root = await createTestTempDirectory(
+      "rea-desktop-failed-validation-",
+    );
+    const header = Buffer.alloc(20);
+    header.write("GDPC");
+    header.writeUInt32LE(2, 4);
+    header.writeUInt32LE(4, 8);
+    await put(root, "game.pck", header);
+    const primary =
+      variant === "physical read"
+        ? Object.assign(new Error("physical read denied"), { code: "EACCES" })
+        : new ArtifactReaderFailure(
+            "format",
+            "invalid later format declaration",
+          );
+    const validation = Object.assign(
+      new Error("final descriptor stat failed"),
+      { code: "EIO" },
+    );
+    let observed: unknown;
+    const service = new DesktopApplicationService(
+      new DesktopApplicationReader((path) => {
+        const reader = new DirectoryArtifactReader(path);
+        const inspectFile = reader.inspectFile.bind(reader);
+        reader.inspectFile = (entry, inspect, signal) =>
+          inspectFile(
+            entry,
+            async (file) => {
+              await inspect(file);
+              if (validationState === "unavailable")
+                vi.spyOn(file, "stat").mockRejectedValueOnce(validation);
+              else {
+                const changed = await file.stat({ bigint: true });
+                changed.ino += 1n;
+                vi.spyOn(file, "stat").mockResolvedValueOnce(changed);
+              }
+              if (variant === "physical read") {
+                vi.spyOn(file, "read").mockRejectedValueOnce(primary);
+                await file.read(Buffer.alloc(4), 0, 4, 0);
+              }
+              throw primary;
+            },
+            signal,
+          ).catch((cause: unknown) => {
+            observed = cause;
+            throw cause;
+          });
+        return reader;
+      }),
+    );
+    try {
+      const result = await service.inspect({ path: root });
+      expect(observed).toMatchObject({
+        reason: validationState === "unavailable" ? "io" : "integrity",
+      });
+      if (validationState === "unavailable")
+        expect((observed as ArtifactReaderFailure).cause).toMatchObject({
+          errors: [primary, validation],
+        });
+      else expect((observed as ArtifactReaderFailure).cause).toBe(primary);
+      if (!result.ok) throw result.error;
+      const report = desktopApplicationSchema.parse(
+        result.value.normalized_result,
+      );
+      expect(report.coverage.status).toBe("partial");
+      expect(report.files[0]).toMatchObject({
+        read_status: "unavailable",
+        ranges: [],
+      });
+      expect(
+        report.files[0]?.facts.filter((fact) => fact.offset !== null),
+      ).toEqual([]);
+      expect(report.files[0]?.issues.join(" ")).toContain(primary.message);
+      expect(report.files[0]?.issues.join(" ")).toContain(
+        validationState === "unavailable"
+          ? validation.message
+          : "Directory entry changed during inspection",
+      );
+      expect(report.candidates).toEqual([]);
+    } finally {
+      await service.close();
+      vi.restoreAllMocks();
+    }
+  },
+);
+
+it.each([false, true])(
+  "preserves a physical desktop read failure when cancellation arrives during final validation (failed close: %s)",
+  async (failedClose) => {
+    const root = await createTestTempDirectory(
+      "rea-desktop-read-final-validation-",
+    );
+    await put(root, "game.pck", Buffer.from("completed source prefix"));
+    const reader = new DirectoryArtifactReader(root);
+    const entries = [];
+    for await (const entry of reader.entries()) entries.push(entry);
+    const controller = new AbortController();
+    const reason = { phase: "after physical read failure" };
+    const physical = Object.assign(new Error("physical read denied"), {
+      code: "EACCES",
+    });
+    let fileHandle: Awaited<ReturnType<typeof open>> | undefined;
+    let denyClose = failedClose;
+    try {
+      const failure: unknown = await reader
+        .inspectFile(
+          entries[0]!,
+          async (file) => {
+            fileHandle = file;
+            const stat = file.stat.bind(file);
+            file.stat = ((...args: Parameters<typeof file.stat>) => {
+              controller.abort(reason);
+              return stat(...args);
+            }) as typeof file.stat;
+            const close = file.close.bind(file);
+            file.close = async () => {
+              if (denyClose) throw new Error("desktop descriptor close denied");
+              await close();
+            };
+            vi.spyOn(file, "read").mockRejectedValueOnce(physical);
+            await file.read(Buffer.alloc(4), 0, 4, 0);
+          },
+          controller.signal,
+        )
+        .catch((cause: unknown) => cause);
+      expect(controller.signal.reason).toBe(reason);
+      expect(failure).toMatchObject({ reason: "io" });
+      const primary = artifactFilePrimaryFacts(failure).cause;
+      if (failedClose) expect(primary).toBe(physical);
+      else expect(primary).toMatchObject({ cause: physical });
+      if (failedClose) {
+        expect(failure).toMatchObject({
+          cleanup: { resources: [entries[0]!.adapterKey] },
+        });
+        await expect(reader.close()).rejects.toBeDefined();
+        expect(fileHandle!.fd).toBeGreaterThanOrEqual(0);
+      }
+      denyClose = false;
+      await reader.close();
+      expect(fileHandle!.fd).toBe(-1);
+    } finally {
+      denyClose = false;
+      await reader.close();
+      vi.restoreAllMocks();
+    }
+  },
+);
 
 it.each([false, true])(
   "retains verified header facts and exact release authority when file close fails (late cancellation: %s)",

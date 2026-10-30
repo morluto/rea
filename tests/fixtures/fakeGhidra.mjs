@@ -232,12 +232,52 @@ const handleRequest = (socket, server, request, state) => {
   if (request.method !== "shutdown" && handleOutputFailure(socket, state))
     return;
   if (state.mode === "hang_tools" && request.method !== "shutdown") return;
+  if (
+    state.mode === "unicode_search" &&
+    ["search_procedures", "search_strings"].includes(request.method)
+  ) {
+    const params = request.params;
+    const insensitiveLiteral =
+      params.mode === "literal" && params.case_sensitive === false;
+    // Fixed producer expectations deliberately do not reuse the host derivation.
+    const candidates = new Map([
+      ["source", "source"],
+      ["ſOURCE", "source"],
+      ["Σ", null],
+    ]);
+    const valid = insensitiveLiteral
+      ? candidates.has(params.pattern) &&
+        Object.hasOwn(params, "literal_ascii_candidate") &&
+        params.literal_ascii_candidate === candidates.get(params.pattern)
+      : !Object.hasOwn(params, "literal_ascii_candidate");
+    if (!valid) {
+      socket.write(
+        `${JSON.stringify({
+          id: request.id,
+          ok: false,
+          error: {
+            code: "invalid_request",
+            message: "Literal candidate wire fields drifted",
+          },
+        })}\n`,
+      );
+      return;
+    }
+  }
   const inventory =
     request.method === "list_strings" && state.mode === "fragmented"
       ? [stringItem("0x2000", "fixture 雪🦊")]
       : request.method === "list_strings" && state.mode === "oversized_result"
         ? [stringItem("0x2000", "x".repeat(64 * 1024 * 1024 + 1))]
-        : inventoryResultFor(request.method, request.params);
+        : state.mode === "unicode_search" &&
+            ["search_procedures", "search_strings"].includes(request.method)
+          ? [
+              { address: "0x1000", value: "ſource" },
+              { address: "0x1001", value: "SOURCE" },
+              { address: "0x1002", value: "İource" },
+              { address: "0x1003", value: "unrelated" },
+            ]
+          : inventoryResultFor(request.method, request.params);
   if (inventory !== undefined) {
     const response = `${JSON.stringify({ id: request.id, ok: true, result: inventory })}\n`;
     if (state.mode === "fragmented") {

@@ -1,10 +1,52 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
+import { nativeLoadImageObservationFixture } from "../../tests/fixtures/nativeLoadImage.js";
 import {
   parseGhidraInventoryInput,
   parseGhidraInventoryResult,
 } from "./GhidraInventoryValues.js";
+
+it.each(["search_procedures", "search_strings"] as const)(
+  "%s retains bridge document selection and native search defaults",
+  (operation) => {
+    for (const selection of [{}, { document: null }, { document: "fixture" }]) {
+      expect(
+        parseGhidraInventoryInput(operation, {
+          pattern: "entry",
+          ...selection,
+        }),
+      ).toEqual({
+        ok: true,
+        value: {
+          pattern: "entry",
+          mode: "literal",
+          case_sensitive: false,
+          document: selection.document ?? null,
+        },
+      });
+    }
+    expect(
+      parseGhidraInventoryInput(operation, { pattern: "entry", document: "" })
+        .ok,
+    ).toBe(false);
+    expect(
+      parseGhidraInventoryInput(operation, {
+        pattern: "Entry.*",
+        mode: "regex",
+        case_sensitive: true,
+      }),
+    ).toEqual({
+      ok: true,
+      value: {
+        pattern: "Entry.*",
+        mode: "regex",
+        case_sensitive: true,
+        document: null,
+      },
+    });
+  },
+);
 
 it.each(["other", 42, null, {}])(
   "rejects an invalid own destination with value %j before admitting any batch naming subset",
@@ -56,6 +98,40 @@ it.each(["list_procedures", "search_procedures"] as const)(
     });
   },
 );
+
+describe("native load-image result projection", () => {
+  it("omits raw bridge output when the observation keeps every reported fact", () => {
+    const observations = JSON.parse(
+      JSON.stringify(nativeLoadImageObservationFixture()),
+    );
+    const parsed = parseGhidraInventoryResult(
+      "inspect_native_load_image",
+      observations,
+    );
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) throw parsed.error;
+    expect(JSON.stringify(parsed.value.value)).toBe(
+      JSON.stringify(observations),
+    );
+    expect(parsed.value.rawResult).toBeUndefined();
+  });
+
+  it("omits entry-context rows without register observations", () => {
+    const observations = JSON.parse(
+      JSON.stringify({
+        ...nativeLoadImageObservationFixture(),
+        entry_context: [{ address: "ram:0x0010", registers: [] }],
+      }),
+    );
+    const parsed = parseGhidraInventoryResult(
+      "inspect_native_load_image",
+      observations,
+    );
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) throw parsed.error;
+    expect(JSON.stringify(parsed.value.value)).toContain('"entry_context":[]');
+  });
+});
 
 it("validates large masked byte queries at the provider boundary without changing caller spelling", () => {
   const input = {

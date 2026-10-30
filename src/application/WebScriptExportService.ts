@@ -85,16 +85,20 @@ export const exportWebScriptsValidated = async (
   resources: ArtifactResourceScope,
   options: ExecutionOptions = {},
 ): Promise<Result<Evidence, AnalysisError>> => {
-  if (!isAbsolute(input.capture_path) || !isAbsolute(input.output_directory))
+  const invalidPaths = (["capture_path", "output_directory"] as const).filter(
+    (field) => !isAbsolute(input[field]),
+  );
+  if (invalidPaths.length > 0)
     return err(
-      new AnalysisInputError(OPERATION, undefined, [
-        {
-          path: [],
-          reason: "invalid_format",
-          message:
-            "capture_path and output_directory must be absolute filesystem paths on this host.",
-        },
-      ]),
+      new AnalysisInputError(
+        OPERATION,
+        undefined,
+        invalidPaths.map((field) => ({
+          path: [field],
+          reason: "invalid_format" as const,
+          message: `${field} must be an absolute filesystem path on this host.`,
+        })),
+      ),
     );
   try {
     if (options.signal?.aborted)

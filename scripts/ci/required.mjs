@@ -45,6 +45,7 @@ const lanes = {
   readiness: ["reconstruction-readiness"],
   docs: ["docs"],
   workflows: ["static"],
+  python: [outputs.tier === "full" ? "static-deep" : "python"],
 };
 for (const scope of selectedScopes) required.push(...(lanes[scope] ?? [scope]));
 const failed = [...new Set(required)].filter(

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { once } from "node:events";
 import { writeFileSync } from "node:fs";
 import { buffer } from "node:stream/consumers";
 import { createReader } from "./inventory/reader.js";
@@ -618,24 +619,37 @@ it("rejects forged entries and changed carrier identity, then closes idempotentl
   }
 });
 
-it("settles an active member stream when closed", async () => {
-  const path = await writeCarrier(
-    "close",
-    nodeSeaElf({ main: Buffer.alloc(1024 * 1024, 65) }),
-  );
-  const reader = new NodeSeaArtifactReader(path);
-  try {
-    const entries = [];
-    for await (const entry of reader.entries()) entries.push(entry);
-    const entry = entries[0];
-    if (entry === undefined) throw new Error("Missing main script");
-    const stream = await reader.open(entry);
-    await reader.close();
-    expect(stream.destroyed).toBe(true);
-  } finally {
-    await reader.close();
-  }
-});
+it.each([8, 1024 * 1024])(
+  "retires an unread %i-byte member through the shared reader factory",
+  async (size) => {
+    const path = await writeCarrier(
+      "close",
+      nodeSeaElf({ main: Buffer.alloc(size, 65) }),
+    );
+    const reader = createReader(path, "node-sea", {});
+    if (reader === undefined) throw new Error("Missing Node SEA reader");
+    try {
+      const entries = [];
+      for await (const entry of reader.entries()) entries.push(entry);
+      const entry = entries[0];
+      if (entry === undefined) throw new Error("Missing main script");
+      const stream = await reader.open(entry);
+      const produced = size === 8 ? once(stream, "finish") : undefined;
+      await once(stream, "readable");
+      if (produced !== undefined) await produced;
+      expect(stream.destroyed).toBe(false);
+      await reader.close();
+      expect(stream.destroyed).toBe(true);
+      expect(stream.closed).toBe(true);
+      await expect(buffer(stream)).rejects.toMatchObject({
+        reason: "unavailable",
+      });
+      await reader.close();
+    } finally {
+      await reader.close();
+    }
+  },
+);
 
 it("honors cancellation before admitting a carrier", async () => {
   const path = await writeCarrier("cancel", nodeSeaElf());

@@ -77,6 +77,13 @@ export interface UnknownRegistryPort {
   >;
 }
 
+/** Counts from the committed merge, before adapter response projection. */
+export interface EvidenceImportReceipt {
+  readonly recordsAdded: number;
+  readonly unknownsAdded: number;
+  readonly totalRecords: number;
+}
+
 /** Investigation record surface; binary execution and snapshots remain separate. */
 export interface InvestigationRecordPort
   extends
@@ -86,5 +93,5 @@ export interface InvestigationRecordPort
     UnknownRegistryPort {
   importEvidenceBundle(
     bundle: unknown,
-  ): Result<number, EvidenceIntegrityError | AnalysisInputError>;
+  ): Result<EvidenceImportReceipt, EvidenceIntegrityError | AnalysisInputError>;
 }

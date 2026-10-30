@@ -65,8 +65,8 @@ export const historicalCaptureFailure = (
     origin === "owned-or-classified" &&
     cause instanceof OwnedCommandFailure
   ) {
-    if (cause.cleanupFailure !== null)
-      return new ProviderCleanupError(
+    if (cause.cleanupFailure !== null) {
+      const cleanup = new ProviderCleanupError(
         input.format,
         cause.resources,
         {
@@ -83,6 +83,14 @@ export const historicalCaptureFailure = (
         },
         { operation: OPERATION, cause },
       );
+      return cause.cause instanceof OwnedCommandFailure
+        ? analysisErrorWithCleanupFailure(
+            historicalCaptureFailure(input, cause.cause, phase, options, heap),
+            cleanup,
+            OPERATION,
+          )
+        : cleanup;
+    }
     if (cause.reason === "cancelled")
       return new AnalysisCancelledError(OPERATION, {
         cause:

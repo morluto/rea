@@ -1,11 +1,22 @@
 import { execFileSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
 import { matchesGlob } from "node:path";
-import { CI_FLAGS as flags, MANUAL_VERIFIERS, SCOPES } from "./scopes.mjs";
+import {
+  CI_FLAGS as flags,
+  MANUAL_VERIFIERS,
+  SCOPES,
+  WINDOWS_EXECUTABLE_SELECTION_INPUTS,
+} from "./scopes.mjs";
 import { planTestSelection } from "./test-selection.mjs";
 
 // Test files select the host/runtime lanes that execute their focused suites.
-const HOST_TEST_OWNERS = ["apple", "package", "sqlite"];
+const HOST_TEST_OWNERS = [
+  "apple",
+  "package",
+  "sqlite",
+  "packet_capture",
+  "signal_recording",
+];
 // Actionlint validates workflow syntax only. The semantic suite asserts these
 // workflows' release, publication and self-hosted runner safeguards.
 const GUARDED_WORKFLOWS = new Set([
@@ -104,6 +115,10 @@ function classifyPackage(base, head) {
   for (const script of changed) {
     if (/^test:(coverage|mutation):reverse-tools$/.test(script)) {
       selected.reverse_tools = true;
+      continue;
+    }
+    if (script === "test:python") {
+      selected.python = true;
       continue;
     }
     if (script === "test:sqlite" || script === "test:sqlite:run") {
@@ -206,7 +221,20 @@ if (tier === "reused") {
       .split("\0")
       .filter(Boolean);
     for (const file of files) {
+      selected.package ||= matchesAny(
+        file,
+        WINDOWS_EXECUTABLE_SELECTION_INPUTS,
+      );
       if (matchesAny(file, SCOPES.reverse_tools)) selected.reverse_tools = true;
+      if (matchesAny(file, SCOPES.python)) selected.python = true;
+      // Both live capture lanes exercise Linux resource admission.
+      if (
+        matchesAny(file, ["src/process/LinuxResourceLimits*"]) ||
+        file === "scripts/ci/require-provider-tests.mjs"
+      ) {
+        selected.packet_capture = true;
+        selected.signal_recording = true;
+      }
       if (
         /^(README(?:_[^/]+)?\.md|AGENTS\.md|CONTRIBUTING\.md|CHANGELOG\.md|SECURITY\.md|native\/windows\/README\.md|\.github\/pull_request_template\.md)$/.test(
           file,

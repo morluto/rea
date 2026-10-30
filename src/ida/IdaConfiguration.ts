@@ -5,6 +5,7 @@ import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import type { AnalysisInputIssue } from "../domain/analysisErrorCore.js";
 import { projectInputIssues } from "../domain/inputIssueProjection.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
@@ -13,12 +14,15 @@ import {
   RegularFileCleanupFailure,
 } from "../filesystem/OwnedRegularFile.js";
 import {
-  assertRegularFileActive,
+  RegularFileOperationCancelled,
   NonRegularFileReadError,
 } from "../filesystem/RegularFile.js";
+import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 
 /** Omitted registration `timeoutMs` for each upstream IDA MCP request. */
 export const DEFAULT_IDA_REQUEST_TIMEOUT_MS = 300_000;
+/** Shortest valid registration request timeout. */
+const MIN_IDA_REQUEST_TIMEOUT_MS = 1;
 /** Node timer ceiling. Larger registration values would be clamped instead of honored. */
 export const MAX_IDA_REQUEST_TIMEOUT_MS = 2_147_483_647;
 
@@ -33,7 +37,7 @@ const common = {
   protocol: z.literal("native").optional(),
   timeoutMs: z
     .int()
-    .positive()
+    .min(MIN_IDA_REQUEST_TIMEOUT_MS)
     .max(MAX_IDA_REQUEST_TIMEOUT_MS)
     .default(DEFAULT_IDA_REQUEST_TIMEOUT_MS),
   workspaceRoot: z
@@ -77,9 +81,51 @@ const registrationSchema = z
 /** An upstream MCP registration plus REA's database lifecycle selection. */
 export type IdaConfiguration = z.infer<typeof registrationSchema>;
 
-/** Select a protocol without changing existing attached/headless registrations. */
-export const idaProtocol = (config: IdaConfiguration) =>
-  config.protocol ?? (config.mode === "attached" ? "legacy" : "modern");
+/** Render only schema-owned constraints, never rejected registration values. */
+const registrationConstraint = (
+  issue: AnalysisInputIssue,
+): string | undefined => {
+  if (issue.path.length === 1 && issue.path[0] === "timeoutMs")
+    return `timeoutMs must be an integer from ${String(MIN_IDA_REQUEST_TIMEOUT_MS)} to ${String(MAX_IDA_REQUEST_TIMEOUT_MS)} milliseconds`;
+  return issue.message === undefined
+    ? undefined
+    : `${issue.path.join(".") || "registration"}: ${issue.message}`;
+};
+
+/** Resolved compatibility facts; persisted identities and diagnostics intentionally differ. */
+export const IDA_COMPATIBILITY_PROFILES = {
+  legacy: {
+    protocol: "legacy",
+    mode: "attached",
+    identity: "legacy-1.4",
+    diagnosticIdentity: "legacy-1.4",
+    diagnosticLabel: "attached",
+  },
+  modern: {
+    protocol: "modern",
+    mode: "headless",
+    identity: "database-supervisor",
+    diagnosticIdentity: "database-supervisor",
+    diagnosticLabel: "headless",
+  },
+  native: {
+    protocol: "native",
+    mode: "attached",
+    identity: "native-ida-mcp",
+    diagnosticIdentity: "native",
+    diagnosticLabel: "native attached",
+  },
+} as const;
+export type IdaCompatibilityProfile =
+  (typeof IDA_COMPATIBILITY_PROFILES)[keyof typeof IDA_COMPATIBILITY_PROFILES];
+
+/** Preserve existing attached/headless registrations when protocol is omitted. */
+export const idaCompatibilityProfile = (
+  config: IdaConfiguration,
+): IdaCompatibilityProfile =>
+  IDA_COMPATIBILITY_PROFILES[
+    config.protocol ?? (config.mode === "attached" ? "legacy" : "modern")
+  ];
 
 /** Read one explicit registration without starting or installing a provider. */
 export const readIdaConfiguration = (
@@ -112,21 +158,17 @@ export const readIdaConfiguration = (
         async ({ handle, initial: metadata }) => {
           if (metadata.size > MAXIMUM_REGISTRATION_BYTES)
             throw registrationTooLarge();
-          const bytes = Buffer.alloc(MAXIMUM_REGISTRATION_BYTES + 1);
-          let length = 0;
-          while (length < bytes.length) {
-            assertRegularFileActive(options.signal);
-            const { bytesRead } = await handle.read(
-              bytes,
-              length,
-              bytes.length - length,
-              null,
-            );
-            if (bytesRead === 0) break;
-            length += bytesRead;
-          }
-          if (length > MAXIMUM_REGISTRATION_BYTES) throw registrationTooLarge();
-          return bytes.toString("utf8", 0, length);
+          const bytes = await readBoundedFileBytes(
+            handle,
+            MAXIMUM_REGISTRATION_BYTES,
+            {
+              signal: options.signal,
+              cancellationFailure: (reason) =>
+                new RegularFileOperationCancelled(reason),
+            },
+          );
+          if (bytes === undefined) throw registrationTooLarge();
+          return bytes.toString("utf8");
         },
       );
       const input: unknown = JSON.parse(text);
@@ -143,11 +185,10 @@ export const readIdaConfiguration = (
       const constraints = projectInputIssues(
         parsed.error.issues,
         registration,
-      ).flatMap((issue) =>
-        issue.message === undefined
-          ? []
-          : [`${issue.path.join(".") || "registration"}: ${issue.message}`],
-      );
+      ).flatMap((issue) => {
+        const constraint = registrationConstraint(issue);
+        return constraint === undefined ? [] : [constraint];
+      });
       if (constraints.length === 0)
         return err(
           idaConfigurationError(

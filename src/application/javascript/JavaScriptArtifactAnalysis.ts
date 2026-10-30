@@ -82,6 +82,7 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
   readonly interruption: AnalysisError | null;
 }> => {
   const state = emptyArtifactAnalysis();
+  const sourceIndices: number[] = [];
   let interruption: AnalysisError | null = null;
   const selectedFileCount =
     fileSet.files.length - (fileSet.source_selection?.unselected_files ?? 0);
@@ -119,6 +120,22 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
         onPhase === undefined ? undefined : (phase) => onPhase(file, phase),
       );
       const facts = result.ok ? result.value : result.error;
+      for (const revoked of facts.revokedStaticProjections ?? []) {
+        const index = sourceIndices[revoked.sourceIndex];
+        const previous = index === undefined ? undefined : state.files[index];
+        if (previous === undefined)
+          throw new TypeError(
+            "Revoked application projection has no retained source",
+          );
+        state.files[index!] = {
+          ...previous,
+          application_projection_failure: {
+            reason: revoked.error.message,
+            error: projectAnalysisError(revoked.error),
+            limits: revoked.error.reportedLimits,
+          },
+        };
+      }
       const applicationProjectionFailure = facts.applicationProjectionFailure;
       if (facts.projection !== null)
         projection.adoptFileProjection(facts.projection);
@@ -139,6 +156,7 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
               error: projectAnalysisError(error),
               limits,
             };
+      sourceIndices.push(state.files.length);
       state.files.push({
         file,
         javascript: facts.javascript,
@@ -379,6 +397,23 @@ const parsePackage = (
   if (document.packageFields === null)
     return invalidPackage(file, "package.json root is not an object.");
   const value = document.packageFields;
+  const rendererDeclarations: NonNullable<
+    JavaScriptPackageObservation["renderer_declarations"]
+  > = {};
+  let rendererEntrypoint: JavaScriptPackageObservation["renderer_entrypoint"] =
+    null;
+  for (const field of ["renderer", "browser", "module"] as const) {
+    if (!Object.hasOwn(value, field)) continue;
+    const declaration = value[field];
+    rendererDeclarations[field] =
+      typeof declaration === "string" ? declaration : { status: "non-string" };
+    if (
+      rendererEntrypoint === null &&
+      typeof declaration === "string" &&
+      declaration !== ""
+    )
+      rendererEntrypoint = { field, path: declaration };
+  }
   return {
     path: file.path,
     sha256: file.sha256,
@@ -393,10 +428,8 @@ const parsePackage = (
           ? "declared"
           : "invalid",
     main_entrypoint: typeof value.main === "string" ? value.main : "",
-    renderer:
-      optionalString(value.renderer) ??
-      optionalString(value.browser) ??
-      optionalString(value.module),
+    renderer_declarations: rendererDeclarations,
+    renderer_entrypoint: rendererEntrypoint,
     limitation: null,
   };
 };
@@ -421,7 +454,8 @@ const unavailablePackage = (
   main: null,
   main_status: "unavailable",
   main_entrypoint: null,
-  renderer: null,
+  renderer_declarations: null,
+  renderer_entrypoint: null,
   limitation,
 });
 
@@ -435,9 +469,10 @@ const parseHtmlScripts = (
   const { scripts, inlineScripts, inlineScriptCount, baseHref } =
     htmlArtifactReferences(text);
   return {
-    scripts: scripts.map(({ scriptPath, location }) => ({
+    scripts: scripts.map(({ scriptPath, scriptType, location }) => ({
       html_path: path,
       script_path: scriptPath,
+      script_type: scriptType,
       base_href: baseHref,
       location,
     })),

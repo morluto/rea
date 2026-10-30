@@ -150,16 +150,16 @@ describe("browser process startup", () => {
 
   it("keeps one owner for the DevToolsActivePort deadline", async () => {
     expect(BROWSER_DEVTOOLS_STARTUP_TIMEOUT_MS).toBe(60_000);
-    const callers = [
-      "../../../scripts/verify-real-browser.mjs",
-      "../../../scripts/lib/browser-runtime-fixture-lifecycle.mjs",
-    ];
-    for (const caller of callers) {
-      const source = await readFile(new URL(caller, import.meta.url), "utf8");
-      expect(devtoolsPortDeadlines(source)).toEqual([
-        ["BROWSER_DEVTOOLS_STARTUP_TIMEOUT_MS"],
-      ]);
-    }
+    const source = await readFile(
+      new URL(
+        "../../../scripts/lib/browser-runtime-fixture-lifecycle.mjs",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+    expect(devtoolsPortDeadlines(source)).toEqual([
+      ["BROWSER_DEVTOOLS_STARTUP_TIMEOUT_MS"],
+    ]);
   });
 });
 

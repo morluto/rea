@@ -32,6 +32,7 @@ it("retains completed fuse Evidence when the provider completes after abort", as
   const controller = new AbortController();
   const result = await new ElectronFuseService({
     identity,
+    close: async () => {},
     inspect: async () => {
       controller.abort();
       return ok(report);
@@ -58,6 +59,7 @@ it("preserves malformed fuse output ahead of late cancellation", async () => {
   const controller = new AbortController();
   const invalid = await new ElectronFuseService({
     identity,
+    close: async () => {},
     inspect: async () => {
       controller.abort();
       return ok(malformed);

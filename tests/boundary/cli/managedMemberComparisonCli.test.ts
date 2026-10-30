@@ -216,7 +216,10 @@ const registeredComparisonCommand = () => {
       return cli;
     },
   } as unknown as Parameters<typeof registerManagedCommands>[0];
-  registerManagedCommands(cli, silentLogger, async () => null);
+  registerManagedCommands(cli, silentLogger, async () => ({
+    ok: false,
+    error: null,
+  }));
   return commands.get(CLI_COMMANDS.compareManagedMembers)!;
 };
 
@@ -253,9 +256,24 @@ it.each([true, false])(
           partial_observation: { evidence_id: evidence.evidence_id },
         },
       });
-      expect(JSON.stringify(result)).toContain("comparison close denied");
-      if (!success)
-        expect(JSON.stringify(result)).toContain("primary comparison failure");
+      expect(result).toMatchObject({
+        details: {
+          diagnostics: success
+            ? { reason: "comparison close denied" }
+            : {
+                primary_error: {
+                  code: "unreadable_output",
+                  details: { reason: "primary comparison failure" },
+                },
+                cleanup_error: {
+                  code: "cleanup_incomplete",
+                  details: {
+                    diagnostics: { reason: "comparison close denied" },
+                  },
+                },
+              },
+        },
+      });
       expect(close).toHaveBeenCalledOnce();
     } finally {
       run.mockRestore();

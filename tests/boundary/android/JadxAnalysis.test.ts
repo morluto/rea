@@ -10,6 +10,11 @@ import {
   androidResultSchemas,
 } from "../../../src/domain/android/androidAnalysis.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
+import {
+  ANDROID_MAPPING_LIMITS,
+  type AndroidMappingSource,
+} from "../../../src/domain/android/androidMapping.js";
+import { parseProguardMapping } from "../../../src/domain/android/proguardMapping.js";
 
 const summary = {
   full_name: "fixture.Target",
@@ -21,6 +26,7 @@ const summary = {
   methods: [
     {
       name: "choose",
+      raw_name: "choose",
       signature: "choose(String): void",
       dex_descriptor: "(Ljava/lang/String;)V",
       is_constructor: false,
@@ -28,6 +34,7 @@ const summary = {
     },
     {
       name: "choose",
+      raw_name: "choose",
       signature: "choose(int): void",
       dex_descriptor: "(I)V",
       is_constructor: false,
@@ -36,6 +43,7 @@ const summary = {
   ],
   fields: [],
   inner_classes: [],
+  inner_class_raw_names: [],
 };
 
 const engine = {
@@ -102,14 +110,16 @@ it.each([
           input: { path: "/fixture.apk" },
         },
         {
-          state: "LOADED",
-          apk_path: "/snapshot.apk",
-          class_count: 0,
-          resource_count: 1,
-          threads: 1,
-          resources: "full",
+          loaded: {
+            state: "LOADED",
+            apk_path: "/snapshot.apk",
+            class_count: 0,
+            resource_count: 1,
+            threads: 1,
+            resources: "full",
+          },
+          engine,
         },
-        engine,
       ),
     );
     expect(report.target_sdk).toBe(target || null);
@@ -197,12 +207,10 @@ it.each(nestedClassRequests)(
         });
       },
     };
-    const result = await analyzeJadxRequest(
-      tools,
-      request,
-      {} as never,
+    const result = await analyzeJadxRequest(tools, request, {
+      loaded: {} as never,
       engine,
-    );
+    });
     expect(result).toMatchObject({ class_name: fullName });
     expect(calls.map((call) => call.class_name)).toEqual(
       Array.from({ length: calls.length }, () => nestedClassInput.class_name),
@@ -228,8 +236,7 @@ it("rejects a nested class when neither producer identity matches the requested 
           }),
       },
       { operation: "inspect_android_class", input: nestedClassInput },
-      {} as never,
-      engine,
+      { loaded: {} as never, engine },
     ),
   ).rejects.toMatchObject({ _tag: "AnalysisInputError" });
 });
@@ -262,14 +269,16 @@ it("pages filtered matches independently of the examined inventory and preserves
       input: { path: "/fixture.apk", query: "Target" },
     },
     {
-      state: "LOADED",
-      apk_path: "/snapshot.apk",
-      class_count: 10000,
-      resource_count: 0,
-      threads: 1,
-      resources: "full",
+      loaded: {
+        state: "LOADED",
+        apk_path: "/snapshot.apk",
+        class_count: 10000,
+        resource_count: 0,
+        threads: 1,
+        resources: "full",
+      },
+      engine,
     },
-    engine,
   );
   expect(calls).toEqual([
     { query: "Target", offset: 0, limit: 4096 },
@@ -326,14 +335,16 @@ it.each([
           input: { path: "/fixture.apk", query },
         },
         {
-          state: "LOADED",
-          apk_path: "/snapshot.apk",
-          class_count: 10,
-          resource_count: 0,
-          threads: 1,
-          resources: "full",
+          loaded: {
+            state: "LOADED",
+            apk_path: "/snapshot.apk",
+            class_count: 10,
+            resource_count: 0,
+            threads: 1,
+            resources: "full",
+          },
+          engine,
         },
-        engine,
       ),
     ).rejects.toThrow();
   },
@@ -360,14 +371,16 @@ it("accepts an examined empty inventory without requiring cursor progress", asyn
       input: { path: "/fixture.apk", query: "Target" },
     },
     {
-      state: "LOADED",
-      apk_path: "/snapshot.apk",
-      class_count: 0,
-      resource_count: 0,
-      threads: 1,
-      resources: "full",
+      loaded: {
+        state: "LOADED",
+        apk_path: "/snapshot.apk",
+        class_count: 0,
+        resource_count: 0,
+        threads: 1,
+        resources: "full",
+      },
+      engine,
     },
-    engine,
   );
   expect(result).toMatchObject({
     total_classes: 0,
@@ -430,8 +443,7 @@ it("publishes exact DEX prototypes instead of discarding bridge metadata", async
         class_name: "fixture.Target",
       }),
     },
-    {} as never,
-    engine,
+    { loaded: {} as never, engine },
   );
   expect(result).toMatchObject({
     methods: [
@@ -444,23 +456,35 @@ it("publishes exact DEX prototypes instead of discarding bridge metadata", async
 const constantFields = [
   {
     name: "MAX_SIZE",
+    raw_name: "MAX_SIZE",
     type: "int",
+    dex_type: "I",
     def_pos: 0,
     dex_static_value: { type: "int", value: 1024 },
   },
   {
     name: "PACKET_FLAG_CONFIG",
+    raw_name: "PACKET_FLAG_CONFIG",
     type: "long",
+    dex_type: "J",
     def_pos: 0,
     dex_static_value: { type: "long", value: "-9223372036854775808" },
   },
   {
     name: "TAG",
+    raw_name: "TAG",
     type: "java.lang.String",
+    dex_type: "Ljava/lang/String;",
     def_pos: 0,
     dex_static_value: { type: "string", value: "flags" },
   },
-  { name: "INSTANCE", type: "fixture.Target", def_pos: 0 },
+  {
+    name: "INSTANCE",
+    raw_name: "INSTANCE",
+    type: "fixture.Target",
+    dex_type: "Lfixture/Target;",
+    def_pos: 0,
+  },
 ];
 
 const inspectClassWithFields = (fields: JsonValue[]) =>
@@ -479,8 +503,7 @@ const inspectClassWithFields = (fields: JsonValue[]) =>
         class_name: "fixture.Target",
       }),
     },
-    {} as never,
-    engine,
+    { loaded: {} as never, engine },
   );
 
 it("reports DEX static values of static final fields without a static initializer", async () => {
@@ -521,7 +544,14 @@ it.each([
   async (dex_static_value) => {
     await expect(
       inspectClassWithFields([
-        { name: "VALUE", type: "int", def_pos: 0, dex_static_value },
+        {
+          name: "VALUE",
+          raw_name: "VALUE",
+          type: "int",
+          dex_type: "I",
+          def_pos: 0,
+          dex_static_value,
+        },
       ]),
     ).rejects.toThrow("JADX class summary failed or was malformed");
   },
@@ -551,7 +581,14 @@ it.each([
   async (dex_static_value) => {
     await expect(
       inspectClassWithFields([
-        { name: "VALUE", type: "int", def_pos: 0, dex_static_value },
+        {
+          name: "VALUE",
+          raw_name: "VALUE",
+          type: "int",
+          dex_type: "I",
+          def_pos: 0,
+          dex_static_value,
+        },
       ]),
     ).resolves.toMatchObject({ fields: [{ dex_static_value }] });
   },
@@ -575,7 +612,14 @@ it.each([
   async (dex_static_value) => {
     await expect(
       inspectClassWithFields([
-        { name: "VALUE", type: "int", def_pos: 0, dex_static_value },
+        {
+          name: "VALUE",
+          raw_name: "VALUE",
+          type: "int",
+          dex_type: "I",
+          def_pos: 0,
+          dex_static_value,
+        },
       ]),
     ).rejects.toThrow("JADX class summary failed or was malformed");
   },
@@ -641,8 +685,7 @@ it.each([
         operation,
         input: { path: "/fixture.apk", class_name: "fixture.Target", ...input },
       } as never,
-      {} as never,
-      engine,
+      { loaded: {} as never, engine },
     );
     expect(calls[0]).toEqual({
       name: "get_class_summary",
@@ -706,7 +749,10 @@ it("traces only the selected overloaded method and checks the producer identity"
       overload_index: 1,
     }),
   } as const;
-  const result = await analyzeJadxRequest(tools, request, {} as never, engine);
+  const result = await analyzeJadxRequest(tools, request, {
+    loaded: {} as never,
+    engine,
+  });
   expect(result).toMatchObject({
     method_name: "choose",
     overload_index: 1,
@@ -758,8 +804,7 @@ it("rejects an ambiguous method and a producer response for a different overload
         operation: "trace_android_references",
         input,
       },
-      {} as never,
-      engine,
+      { loaded: {} as never, engine },
     ),
   ).rejects.toMatchObject({
     _tag: "AnalysisInputError",
@@ -771,8 +816,7 @@ it("rejects an ambiguous method and a producer response for a different overload
         operation: "trace_android_references",
         input: { ...input, overload_index: 1 },
       },
-      {} as never,
-      engine,
+      { loaded: {} as never, engine },
     ),
   ).rejects.toMatchObject({
     _tag: "AnalysisOutputError",
@@ -826,8 +870,7 @@ const traceWithReference = (fields: Record<string, unknown>) =>
         overload_index: 0,
       },
     },
-    {} as never,
-    engine,
+    { loaded: {} as never, engine },
   );
 
 it.each([
@@ -901,8 +944,7 @@ it.each([
           operation: "inspect_android_class",
           input: { path: "/fixture.apk", class_name: "fixture.Target" },
         },
-        {} as never,
-        engine,
+        { loaded: {} as never, engine },
       ),
     ).rejects.toMatchObject({
       _tag: "AnalysisOutputError",
@@ -916,3 +958,229 @@ it.each([
     });
   },
 );
+
+const parsedMapping = parseProguardMapping(
+  [
+    "com.example.app.LoginActivity -> a.a:",
+    "    com.example.app.Session session -> c",
+    "    1:1:void submit(int):30:30 -> a",
+    "    2:2:void submit(java.lang.String):40:40 -> a",
+    "    void handle() -> do",
+    "com.example.app.LoginActivity$Callback -> a.a$a:",
+    "com.example.app.Session -> a.b:",
+  ].join("\n"),
+  ANDROID_MAPPING_LIMITS,
+);
+if (!parsedMapping.ok) throw new Error(JSON.stringify(parsedMapping.error));
+const mapping: AndroidMappingSource = {
+  file: { path: "/tmp/mapping.txt", sha256: "b".repeat(64), bytes: 256 },
+  mapping: parsedMapping.value,
+};
+const obfuscatedSummary = {
+  full_name: "a.a",
+  raw_name: "a.a",
+  name: "a",
+  method_count: 3,
+  field_count: 2,
+  inner_class_count: 1,
+  methods: [
+    {
+      name: "a",
+      raw_name: "a",
+      signature: "a(String): void",
+      dex_descriptor: "(Ljava/lang/String;)V",
+      is_constructor: false,
+      def_pos: 0,
+    },
+    {
+      name: "a",
+      raw_name: "a",
+      signature: "a(int): void",
+      dex_descriptor: "(I)V",
+      is_constructor: false,
+      def_pos: 0,
+    },
+    {
+      // JADX renames reserved words even with deobfuscation disabled.
+      name: "m0do",
+      raw_name: "do",
+      signature: "m0do(): void",
+      dex_descriptor: "()V",
+      is_constructor: false,
+      def_pos: 0,
+    },
+  ],
+  fields: [
+    { name: "c", raw_name: "c", type: "a.b", dex_type: "La/b;", def_pos: 0 },
+    { name: "f0if", raw_name: "if", type: "int", dex_type: "I", def_pos: 0 },
+  ],
+  inner_classes: ["a.a.a"],
+  inner_class_raw_names: ["a.a$a"],
+};
+const obfuscatedTools = (
+  reply: JsonValue = obfuscatedSummary,
+): JadxToolPort => ({
+  listClasses: () =>
+    Promise.reject(new Error("unexpected class inventory call")),
+  text: () => Promise.reject(new Error("unexpected text call")),
+  json: (name, input) =>
+    Promise.resolve(
+      name === "get_class_summary"
+        ? reply
+        : {
+            class_name: "a.a",
+            method_name: input.method_name ?? null,
+            full_name: `a.a.${String(input.method_name)}`,
+            overload_index: input.overload_index ?? null,
+            overload_count: 2,
+            dex_descriptor: "(I)V",
+            mode: "java",
+            fell_back: false,
+            markers: [],
+            body: "void a(int i) {}",
+          },
+    ),
+});
+const inspectObfuscated = (
+  request: AndroidRequest,
+  tools = obfuscatedTools(),
+) =>
+  analyzeJadxRequest(tools, request, { loaded: {} as never, engine, mapping });
+const classRequest = {
+  operation: "inspect_android_class",
+  input: {
+    path: "/fixture.apk",
+    class_name: "a.a",
+    mapping_path: "/tmp/mapping.txt",
+  },
+} as const;
+
+it("annotates every observed class member through raw DEX identities", async () => {
+  const result = androidResultSchemas.inspect_android_class.parse(
+    await inspectObfuscated(classRequest),
+  );
+  expect(result.methods.map(({ name }) => name)).toEqual(["a", "a", "m0do"]);
+  expect(result.mapping).toMatchObject({
+    association: "caller-selected",
+    file: { path: "/tmp/mapping.txt", sha256: "b".repeat(64), bytes: 256 },
+    records: { classes: 3, fields: 1, methods: 3, malformed: 0 },
+    coverage: { symbols: 7, mapped: 6, ambiguous: 0, unmapped: 1 },
+  });
+  expect(result.mapping?.symbols).toEqual([
+    {
+      kind: "class",
+      name: "a.a",
+      raw_name: "a.a",
+      resolution: {
+        status: "mapped",
+        mapped: { name: "com.example.app.LoginActivity" },
+        verified_by: "class",
+      },
+    },
+    {
+      kind: "class",
+      name: "a.a.a",
+      raw_name: "a.a$a",
+      resolution: expect.objectContaining({
+        mapped: { name: "com.example.app.LoginActivity$Callback" },
+      }),
+    },
+    expect.objectContaining({
+      kind: "method",
+      overload_index: 0,
+      resolution: expect.objectContaining({
+        mapped: expect.objectContaining({
+          name: "submit",
+          parameter_types: ["java.lang.String"],
+        }),
+      }),
+    }),
+    expect.objectContaining({
+      kind: "method",
+      overload_index: 1,
+      resolution: expect.objectContaining({
+        mapped: expect.objectContaining({
+          name: "submit",
+          parameter_types: ["int"],
+        }),
+      }),
+    }),
+    {
+      kind: "method",
+      class_raw_name: "a.a",
+      name: "m0do",
+      overload_index: 0,
+      raw_name: "do",
+      dex_descriptor: "()V",
+      resolution: {
+        status: "mapped",
+        mapped: {
+          class: "com.example.app.LoginActivity",
+          name: "handle",
+          return_type: "void",
+          parameter_types: [],
+        },
+        verified_by: "descriptor",
+      },
+    },
+    expect.objectContaining({
+      kind: "field",
+      raw_name: "c",
+      dex_type: "La/b;",
+      resolution: expect.objectContaining({
+        mapped: expect.objectContaining({ name: "session" }),
+        verified_by: "type",
+      }),
+    }),
+    expect.objectContaining({
+      kind: "field",
+      name: "f0if",
+      raw_name: "if",
+      resolution: { status: "unmapped" },
+    }),
+  ]);
+});
+
+it("maps only the class and the selected method overload", async () => {
+  const result = androidResultSchemas.inspect_android_method.parse(
+    await inspectObfuscated({
+      operation: "inspect_android_method",
+      input: { ...classRequest.input, method_name: "a", overload_index: 1 },
+    }),
+  );
+  expect(result.method).toMatchObject({ name: "a", dex_descriptor: "(I)V" });
+  expect(
+    result.mapping?.symbols.map((symbol) =>
+      symbol.resolution.status === "mapped" ? symbol.resolution.mapped : null,
+    ),
+  ).toEqual([
+    { name: "com.example.app.LoginActivity" },
+    {
+      class: "com.example.app.LoginActivity",
+      name: "submit",
+      return_type: "void",
+      parameter_types: ["int"],
+    },
+  ]);
+});
+
+it("omits the mapping block when no mapping was selected", async () => {
+  const result = await analyzeJadxRequest(
+    obfuscatedTools(),
+    {
+      operation: "inspect_android_class",
+      input: { path: "/fixture.apk", class_name: "a.a" },
+    },
+    { loaded: {} as never, engine },
+  );
+  expect(result).not.toHaveProperty("mapping");
+});
+
+it("refuses inner class raw names that do not align with display names", async () => {
+  await expect(
+    inspectObfuscated(
+      classRequest,
+      obfuscatedTools({ ...obfuscatedSummary, inner_class_raw_names: [] }),
+    ),
+  ).rejects.toMatchObject({ _tag: "AnalysisOutputError" });
+});

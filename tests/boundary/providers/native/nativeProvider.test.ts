@@ -23,6 +23,12 @@ import {
 import { err, ok } from "../../../../src/domain/result.js";
 import { parseLipoOutput } from "../../../../src/native/parsers/lipo.js";
 import {
+  dylibCommand,
+  LC,
+  machoImage,
+} from "../../../../src/artifacts/apple/MachoImage.fixture.js";
+import { inspectionImage } from "../../../../src/native/NativeMachoInspection.fixture.js";
+import {
   inspectPlistSchema,
   inspectSignatureSchema,
 } from "../../../../src/domain/native/nativeInspection.js";
@@ -49,6 +55,41 @@ import {
 /** The file runner identifies selected .plist inputs as XML. */
 const writeFixturePlist = async (path: string): Promise<void> => {
   await writeFile(path, build(JSON.parse(await fixture("plist.json"))));
+};
+
+const inspectionFixture = async (high = false) => {
+  directory = await createTestTempDirectory("rea-native-macho-");
+  const path = join(directory, "fixture");
+  const segment = Buffer.alloc(152);
+  segment.writeUInt32LE(0x19, 0);
+  segment.writeUInt32LE(segment.length, 4);
+  segment.write("__TEXT", 8);
+  segment.writeBigUInt64LE(high ? 0xfffffff007004001n : 0x100000000n, 24);
+  segment.writeBigUInt64LE(4096n, 32);
+  segment.writeBigUInt64LE(185n, 48);
+  segment.writeUInt32LE(7, 56);
+  segment.writeUInt32LE(5, 60);
+  segment.writeUInt32LE(1, 64);
+  segment.write("__text", 72);
+  segment.write("__TEXT", 88);
+  segment.writeBigUInt64LE(high ? 0xfffffff0070040b9n : 0x1000000b9n, 104);
+  segment.writeBigUInt64LE(1n, 112);
+  segment.writeUInt32LE(184, 120);
+  const uuid = Buffer.alloc(24);
+  uuid.writeUInt32LE(0x1b, 0);
+  uuid.writeUInt32LE(24, 4);
+  Buffer.from("0123456789abcdef0123456789abcdef", "hex").copy(uuid, 8);
+  await writeFile(
+    path,
+    machoImage({
+      commands: [
+        segment,
+        dylibCommand(LC.LOAD_DYLIB, "/usr/lib/libSystem.B.dylib"),
+        uuid,
+      ],
+    }),
+  );
+  return nativeMachoTargetForFile(path);
 };
 
 const cleanupOwner = (runId: string): ProviderProcessSupervisor => {
@@ -1235,18 +1276,19 @@ describe("native command failure projection", () => {
 
 describe("native macOS provider inspection", () => {
   it("normalizes comprehensive Mach-O inspection with exact bounded provenance", async () => {
-    const runner = new FixtureRunner();
+    const target = await inspectionFixture();
+    const runner = new FixtureRunner({ lipo: await fixture("lipo-thin.txt") });
     const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
-      machoTarget("/private/fixture"),
+      target,
     );
     const execution = await client.execute("inspect_macho", {});
     if (!execution.ok) throw execution.error;
     expect(execution.value.provider.id).toBe("native-macos");
     expect(execution.value.result).toMatchObject({
-      format: "mach-o-universal",
+      format: "mach-o",
       word_size: 64,
       uuid: "01234567-89AB-CDEF-0123-456789ABCDEF",
-      architectures: { total: 2, exhaustive: true },
+      architectures: { total: 1, exhaustive: true },
       dependencies: {
         items: [{ path: "/usr/lib/libSystem.B.dylib", kind: "LC_LOAD_DYLIB" }],
       },
@@ -1262,22 +1304,15 @@ describe("native macOS provider inspection", () => {
       imports: { exhaustive: false },
       exports: { exhaustive: false },
     });
-    expect(JSON.stringify(execution.value.result)).not.toContain(
-      "/private/fixture",
-    );
-    expect(execution.value.locations).toContainEqual({
-      kind: "file-offset-range",
-      start: 16384,
-      end: 20480,
-    });
+    expect(JSON.stringify(execution.value.result)).not.toContain(target.path);
   });
 
-  it("preserves 64-bit addresses and alignment from captured otool output", async () => {
+  it("preserves 64-bit addresses and alignment from binary section fields", async () => {
     const runner = new FixtureRunner({
-      otool: await fixture("otool-high-address.txt"),
+      lipo: await fixture("lipo-thin.txt"),
     });
     const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
-      machoTarget("/private/fixture"),
+      await inspectionFixture(true),
     );
 
     const execution = await client.execute("inspect_macho", {});
@@ -1312,7 +1347,7 @@ describe("native macOS provider inspection", () => {
       {},
       new VtoolFailingRunner("unavailable"),
       "darwin",
-    ).createClient(machoTarget("/private/fixture"));
+    ).createClient(await inspectionFixture());
 
     const execution = await client.execute("inspect_macho", {});
 
@@ -1321,7 +1356,7 @@ describe("native macOS provider inspection", () => {
       expect.arrayContaining([expect.stringMatching(/vtool.*unavailable/iu)]),
     );
     expect(execution.value.result).toMatchObject({
-      architectures: { total: 2 },
+      architectures: { total: 1 },
       provenance: expect.not.arrayContaining([
         expect.objectContaining({ tool: "vtool" }),
       ]),
@@ -1398,11 +1433,11 @@ describe("native macOS provider raw results", () => {
     const app = join(directory, "Fixture.app");
     const executable = join(app, "Contents/MacOS/Fixture");
     await mkdir(join(app, "Contents/MacOS"), { recursive: true });
-    await writeFile(executable, "fixture");
+    await writeFile(executable, inspectionImage());
     await writeFixturePlist(join(app, "Contents/Info.plist"));
     const client = new NativeMacOSProvider(
       {},
-      new FixtureRunner(),
+      new FixtureRunner({ lipo: await fixture("lipo-thin.txt") }),
       "darwin",
     ).createClient(await nativeMachoTargetForFile(executable, app));
     const requests: readonly (readonly [
@@ -1449,7 +1484,7 @@ describe("native plist defaults for iOS-style bundles", () => {
       new FixtureRunner(),
       "darwin",
     ).createClient({
-      ...machoTarget(executable, app),
+      ...(await nativeMachoTargetForFile(executable, app)),
       bundleInfoPlist: join(app, "Info.plist"),
     });
 
@@ -1804,7 +1839,9 @@ class FailingRunner implements NativeCommandRunner {
 }
 
 class VtoolFailingRunner implements NativeCommandRunner {
-  readonly #fixture = new FixtureRunner();
+  readonly #fixture = new FixtureRunner({
+    lipo: "Non-fat file: fixture is architecture: arm64\n",
+  });
 
   constructor(private readonly reason: NativeCommandFailure["reason"]) {}
 

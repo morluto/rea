@@ -1,7 +1,22 @@
 import { MIMEType } from "node:util";
 import { describe, expect, it } from "vitest";
 
-import { safeResponseMetadata } from "./CdpSafeMetadata.js";
+import { safeResponseMetadata as projectResponseMetadata } from "./CdpSafeMetadata.js";
+import { readCdpResponseFacts } from "./CdpNetworkEventFacts.js";
+import type { UnknownRecord } from "./CdpCaptureValues.js";
+
+/** Admit each raw response fixture through the production field owner. */
+const safeResponseMetadata = (
+  requestId: string,
+  url: string,
+  response: UnknownRecord,
+  allowedOrigins: ReadonlySet<string>,
+) => {
+  const facts = readCdpResponseFacts(response);
+  if (facts === undefined)
+    throw new Error("Expected a response fixture record");
+  return projectResponseMetadata(requestId, url, facts, allowedOrigins);
+};
 
 const origin = "https://app.example.test";
 
@@ -364,6 +379,29 @@ describe("safe CDP response metadata CSP sources", () => {
       { kind: "approved_origin", value: origin },
     ]);
   });
+
+  it("ignores a directive repeated within one policy but not across policies", () => {
+    const captured = safeResponseMetadata(
+      "request-csp-duplicate",
+      `${origin}/api`,
+      {
+        headers: {
+          "Content-Security-Policy":
+            "script-src 'self'; Script-Src 'unsafe-inline' 'nonce-abc', script-src data:",
+        },
+      },
+      new Set([origin]),
+    );
+
+    expect(captured.response.csp).toEqual({
+      directives: [
+        { name: "script-src", sources: [{ kind: "keyword", value: "'self'" }] },
+        { name: "script-src", sources: [{ kind: "scheme", value: "data:" }] },
+      ],
+      nonce_count: 0,
+      hash_count: 0,
+    });
+  });
 });
 
 describe("Link header value delimiters", () => {
@@ -412,6 +450,52 @@ describe("Link header value delimiters", () => {
       });
     },
   );
+
+  it.each(["\u00a0", "\u000b", "\u000c", "\u2003", "\ufeff"])(
+    "preserves non-HTTP whitespace %j without inventing agent relations",
+    (separator) => {
+      for (const declaration of [
+        `"alternate${separator}mcp"`,
+        `${separator}mcp${separator}`,
+        `"${separator}mcp${separator}"`,
+      ]) {
+        const captured = safeResponseMetadata(
+          "owned",
+          "https://owned.test/page",
+          { headers: { Link: `</agent>; rel=${declaration}` } },
+          new Set(["https://owned.test"]),
+        );
+        expect(captured.response.links[0]?.rel).toEqual([
+          declaration.replace(/^"|"$/gu, ""),
+        ]);
+        expect(captured.agentHints).toEqual([]);
+      }
+    },
+  );
+
+  it("does not trim non-HTTP whitespace into link or parameter syntax", () => {
+    expect(captureLinks("\u00a0</agent>; rel=mcp")).toEqual([]);
+    const links = captureLinks(
+      "</agent>; \u00a0rel=mcp; rel\u00a0=service-desc",
+    );
+    expect(links[0]?.rel).toEqual([]);
+  });
+
+  it("uses HTTP spaces and tabs for relation and parameter boundaries", () => {
+    const captured = safeResponseMetadata(
+      "owned",
+      "https://owned.test/page",
+      { headers: { Link: '\t</agent>; \trel\t=\t" MCP\t service-desc "\t' } },
+      new Set(["https://owned.test"]),
+    );
+    expect(captured.response.links[0]?.rel).toEqual(["mcp", "service-desc"]);
+    expect(captured.agentHints).toContainEqual({
+      mechanism: "link_rel",
+      declaration: "mcp service-desc",
+      url: "https://owned.test/agent",
+      trust: "page-declared-untrusted",
+    });
+  });
 
   it("keeps delimiters scoped to each CDP field line", () => {
     const links = captureLinks(
@@ -479,7 +563,7 @@ describe("safe CDP response metadata referrer policy", () => {
     ],
     ["origin, future-policy", "origin"],
     ["future-policy, no-referrer", "no-referrer"],
-    ["unsafe-url, NO-REFERRER", "no-referrer"],
+    ["unsafe-url, NO-REFERRER", "unsafe-url"],
     ["origin,, no-referrer", "no-referrer"],
     // CDP joins repeated field lines with LF.
     ["no-referrer\nstrict-origin", "strict-origin"],
@@ -487,6 +571,18 @@ describe("safe CDP response metadata referrer policy", () => {
     ["future-policy", null],
     ['unsafe-url, "no-referrer"', null],
     ["no-referrer; report-to=x, origin", null],
+    ["origin, no-referrer; report-to=x", null],
+    ["origin, \u00a0no-referrer", null],
+    ["\u00a0no-referrer, origin", null],
+    ["NO-REFERRER", null],
+    ["NO-REFERRER, origin", "origin"],
+    ["origin, \u212a", null],
+    ["origin, \u017f", null],
+    // Legacy meta names do not declare a policy through the response header.
+    ["never, always, default, origin-when-crossorigin", null],
+    ["no-referrer, never, always", "no-referrer"],
+    ['"no-referrer"', null],
+    ["no-referrer; report-to=x", null],
     ["", null],
     [undefined, null],
     ...[
@@ -591,4 +687,82 @@ describe("Link context identity and display", () => {
       expect(JSON.stringify(captured)).not.toContain("secret");
     },
   );
+});
+
+describe("response metadata whitespace boundaries", () => {
+  it.each(["\u00a0", "\u2003", "\ufeff", "\v"])(
+    "keeps %j out of CSP delimiters and HTTP optional whitespace",
+    (whitespace) => {
+      const captured = safeResponseMetadata(
+        "whitespace",
+        `${origin}/page`,
+        {
+          mimeType: `${whitespace}Text/Plain${whitespace}`,
+          headers: {
+            "Content-Security-Policy":
+              `default-src${whitespace}'self'; ` +
+              `script-src 'self'${whitespace}https:; ` +
+              `${whitespace}img-src data:`,
+            "Content-Length": `${whitespace}100${whitespace}`,
+            "Cross-Origin-Resource-Policy": `${whitespace}same-origin${whitespace}`,
+            "X-Content-Type-Options": `${whitespace}nosniff${whitespace}`,
+            "Referrer-Policy": `${whitespace}no-referrer${whitespace}`,
+            "Permissions-Policy": `${whitespace}camera=(), geolocation=()`,
+            "Content-Encoding": `${whitespace}GZip${whitespace}`,
+          },
+        },
+        new Set([origin]),
+      );
+      expect(captured.response.csp).toEqual({
+        directives:
+          whitespace === "\v"
+            ? [
+                {
+                  name: "script-src",
+                  sources: [{ kind: "other", value: null }],
+                },
+              ]
+            : [],
+        nonce_count: 0,
+        hash_count: 0,
+      });
+      expect(captured.response.content_length).toBeNull();
+      expect(captured.response.policies).toMatchObject({
+        corp: null,
+        x_content_type_options: null,
+        referrer_policy: null,
+        permissions_policy_features: ["geolocation"],
+      });
+      expect(captured.response.mime_type).toBe(
+        `${whitespace}text/plain${whitespace}`,
+      );
+      expect(captured.response.content_encoding).toBe(
+        `${whitespace}gzip${whitespace}`,
+      );
+    },
+  );
+
+  it("accepts CSP ASCII whitespace and HTTP SP/HTAB at their owning boundaries", () => {
+    const captured = safeResponseMetadata(
+      "ascii-whitespace",
+      `${origin}/page`,
+      {
+        headers: {
+          "Content-Security-Policy":
+            "\tdefault-src\f'self'\r; script-src\t'data' ",
+          "Content-Length": "\t100 \t",
+          "Cross-Origin-Resource-Policy": "\tsame-origin \t",
+          "Referrer-Policy": "\tno-referrer \t",
+        },
+      },
+      new Set([origin]),
+    );
+    expect(captured.response.csp.directives).toEqual([
+      { name: "default-src", sources: [{ kind: "keyword", value: "'self'" }] },
+      { name: "script-src", sources: [{ kind: "keyword", value: "'data'" }] },
+    ]);
+    expect(captured.response.content_length).toBe(100);
+    expect(captured.response.policies.corp).toBe("same-origin");
+    expect(captured.response.policies.referrer_policy).toBe("no-referrer");
+  });
 });

@@ -1,3 +1,4 @@
+import { StateRecordChronology } from "./StateRecordChronology.js";
 import { jsonByteLength } from "../jsonSerialization.js";
 import type { JsonValue } from "../jsonValue.js";
 import {
@@ -9,15 +10,18 @@ import {
   apiBaseLengths,
   at,
   collectionPathOf,
+  deletedFlag,
   identifies,
   IDENTITY_NAMES,
   identityCandidates,
   isObject,
   isQueryPost,
+  isSafeHttpMethod,
   stateValueRetentionBytes,
   lastSegmentValue,
   STATE_BODY_LIMIT_BYTES,
   listItems,
+  markedDeleted,
   locateItem,
   locateList,
   projectsFields,
@@ -107,14 +111,13 @@ const memberNames = (body: JsonValue, pointer: string): string[] => {
 export class EnvironmentStateExtraction {
   readonly #tools: readonly StateToolFacts[];
   readonly #records: readonly StateRecordFacts[];
-  readonly #timeline: StateTimeline;
+  readonly #chronology: StateRecordChronology;
   readonly #budget: StateBudget;
-  readonly #position: ReadonlyMap<number, number>;
   readonly #byOrdinal: ReadonlyMap<number, StateRecordFacts>;
   /** POST tools whose calls the capture shows read state rather than change it. */
   #readOnly: ReadonlySet<string> = new Set();
   #writes: readonly StateRecordFacts[] = [];
-  #writeWithin: ReturnType<typeof writeSpanCheck> = writeSpanCheck([]);
+  #writeWithin: ReturnType<typeof writeSpanCheck> = () => false;
   readonly #bases: ReadonlyMap<string, number>;
   #writeCutoffs: StateWriteCutoffs | undefined;
   readonly #initLimits = new Map<string, StateRecordFacts | undefined>();
@@ -146,11 +149,8 @@ export class EnvironmentStateExtraction {
   }) {
     this.#tools = input.tools;
     this.#records = input.records;
-    this.#timeline = input.timeline;
+    this.#chronology = new StateRecordChronology(input.records, input.timeline);
     this.#budget = input.budget;
-    this.#position = new Map(
-      input.records.map((record, index) => [record.ordinal, index]),
-    );
     this.#byOrdinal = new Map(
       input.records.map((record) => [record.ordinal, record]),
     );
@@ -169,9 +169,10 @@ export class EnvironmentStateExtraction {
         request: (ordinal) => this.#requestBody(ordinal),
         retain: (bytes) => this.#retain(bytes),
       },
+      this.#chronology,
     ));
     release();
-    this.#writeWithin = writeSpanCheck(this.#writes);
+    this.#writeWithin = writeSpanCheck(this.#writes, this.#chronology);
   }
 
   /** The extracted state, or null when the representation budget is exhausted. */
@@ -183,8 +184,8 @@ export class EnvironmentStateExtraction {
           this.#writes,
           this.#bases,
           (left, right) =>
-            this.#position.get(left.ordinal)! <
-            this.#position.get(right.ordinal)!,
+            this.#chronology.positions.get(left.ordinal)! <
+            this.#chronology.positions.get(right.ordinal)!,
           (bytes) => this.#retain(bytes),
         );
         this.#creations();
@@ -240,7 +241,7 @@ export class EnvironmentStateExtraction {
       const split = withoutVariants(plan, {
         shapeOf: (record) => shapes.get(record.ordinal),
         queryOf: (ordinal) => this.#byOrdinal.get(ordinal)?.query,
-        position: (ordinal) => this.#position.get(ordinal)!,
+        position: (ordinal) => this.#chronology.positions.get(ordinal)!,
         retain: (bytes) => this.#retain(bytes),
         checkpoint: () => this.#budget.checkpoint(),
       });
@@ -259,6 +260,7 @@ export class EnvironmentStateExtraction {
       this.#spans.filter((span) => this.#rewritten.has(span.type)),
       this.#writes,
       this.#byOrdinal,
+      this.#chronology,
     );
     if (this.#cuts.size === 0) return false;
     for (const map of [this.#initLimits, this.#identity, this.#views])
@@ -282,7 +284,7 @@ export class EnvironmentStateExtraction {
         tools: this.#tools,
         records: this.#records,
         readOnly: this.#readOnly,
-        timed: this.#timeline === "recorded-start-time",
+        chronology: this.#chronology,
         volatileOf: (type) => this.#volatileOf(type),
         io: {
           withBody: (ordinal, use) => this.#withBody(ordinal, use),
@@ -330,7 +332,7 @@ export class EnvironmentStateExtraction {
     this.#views.set(tool.name, { tool: tool.name, shape: "recorded", reason });
   }
 
-  /** GET tools may render from state; query POSTs stay recorded. */
+  /** GET tools may render from state; other safe methods and query POSTs replay. */
   #candidates(): Candidate[] {
     const candidates: Candidate[] = [];
     for (const tool of this.#tools) {
@@ -339,6 +341,8 @@ export class EnvironmentStateExtraction {
         this.#readOnly.has(tool.name)
       )
         this.#recorded(tool, "query-body");
+      else if (tool.method !== "GET" && isSafeHttpMethod(tool.method))
+        this.#recorded(tool, "method-replay");
       if (tool.method !== "GET") continue;
       candidates.push({ tool, ...readType(tool.path_template) });
     }
@@ -355,9 +359,10 @@ export class EnvironmentStateExtraction {
         this.#creations(),
         {
           type: template,
+          chronology: this.#chronology,
           tools: this.#tools,
           records: this.#byOrdinal,
-          position: (record) => this.#position.get(record.ordinal)!,
+          position: (record) => this.#chronology.positions.get(record.ordinal)!,
           withBody: (ordinal, use) => this.#withBody(ordinal, use),
           retain: (bytes) => this.#retain(bytes),
         },
@@ -367,7 +372,8 @@ export class EnvironmentStateExtraction {
     const limit =
       cut !== undefined &&
       (bound === undefined ||
-        this.#position.get(cut.ordinal)! < this.#position.get(bound.ordinal)!)
+        this.#chronology.positions.get(cut.ordinal)! <
+          this.#chronology.positions.get(bound.ordinal)!)
         ? cut
         : bound;
     this.#retain(ENTRY_BYTES + textBytes(template.length));
@@ -391,9 +397,9 @@ export class EnvironmentStateExtraction {
   ): boolean {
     return (
       limit === undefined ||
-      (this.#position.get(record.ordinal)! <
-        this.#position.get(limit.ordinal)! &&
-        (this.#timeline === "record-order" || record.end <= limit.start))
+      (this.#chronology.positions.get(record.ordinal)! <
+        this.#chronology.positions.get(limit.ordinal)! &&
+        this.#chronology.completedBefore(record, limit))
     );
   }
 
@@ -412,8 +418,8 @@ export class EnvironmentStateExtraction {
       )
       .sort(
         (left, right) =>
-          this.#position.get(left.ordinal)! -
-          this.#position.get(right.ordinal)!,
+          this.#chronology.positions.get(left.ordinal)! -
+          this.#chronology.positions.get(right.ordinal)!,
       );
   }
 
@@ -438,7 +444,10 @@ export class EnvironmentStateExtraction {
     candidate: Candidate,
     pointer: string,
     recordings: readonly StateRecordFacts[],
-    replayed: Pick<StatePlan, "projected" | "late"> = {},
+    replayed: Pick<
+      StatePlan,
+      "projected" | "late" | "laterFields" | "deletedFlag"
+    > = {},
   ): void {
     this.#plans.push({
       ...candidate,
@@ -447,7 +456,59 @@ export class EnvironmentStateExtraction {
       latest: this.#latestPerLine(recordings),
       projected: replayed.projected ?? [],
       late: replayed.late ?? [],
+      ...(replayed.laterFields === undefined ||
+      replayed.laterFields.length === 0
+        ? {}
+        : { laterFields: replayed.laterFields }),
+      ...(replayed.deletedFlag === undefined
+        ? {}
+        : { deletedFlag: replayed.deletedFlag }),
     });
+  }
+
+  /** The members later plain item reads show of the entity they name, in first-seen order, and the flag any of its reads sets on one the application soft-deleted. */
+  #laterFields(
+    tool: StateToolFacts,
+    type: string,
+    entity: { readonly field: string; readonly pointer: string },
+  ): Pick<StatePlan, "laterFields" | "deletedFlag"> {
+    const limit = this.#initLimit(type);
+    const names: string[] = [];
+    const seen = new Set<string>();
+    let flag: StatePlan["deletedFlag"];
+    if (limit === undefined) return { laterFields: names };
+    for (const ordinal of tool.record_ordinals) {
+      const record = this.#byOrdinal.get(ordinal);
+      if (
+        record === undefined ||
+        record.status === null ||
+        record.status < 200 ||
+        record.status >= 300
+      )
+        continue;
+      // Any read may show the soft-delete flag; only plain later reads add fields.
+      const later =
+        (record.query ?? "") === "" && !this.#beforeInitLimit(record, limit);
+      if (!later && flag !== undefined) continue;
+      this.#withBody(ordinal, (body) => {
+        const object =
+          body === undefined ? undefined : at(body, entity.pointer);
+        if (!isObject(object) || ownMember(object, entity.field) === undefined)
+          return;
+        flag ??= deletedFlag(object);
+        if (!later) return;
+        for (const name of Object.keys(object))
+          if (!seen.has(name)) {
+            seen.add(name);
+            names.push(name);
+            this.#retain(ENTRY_BYTES + textBytes(name.length));
+          }
+      });
+    }
+    if (flag === undefined) return { laterFields: names };
+    // The flag is a field the item view shows, even when only a query read showed it.
+    if (!seen.has(flag)) names.push(flag);
+    return { laterFields: names, deletedFlag: flag };
   }
 
   /**
@@ -553,9 +614,12 @@ export class EnvironmentStateExtraction {
     this.#identity.set(type, { field, basis: "path-parameter" });
     const late = this.#addLateProjections(tool, type, projected);
     projected.sort(
-      (left, right) => this.#position.get(left)! - this.#position.get(right)!,
+      (left, right) =>
+        this.#chronology.positions.get(left)! -
+        this.#chronology.positions.get(right)!,
     );
-    this.#addPlan(candidate, pointer, kept, { projected, late });
+    const later = this.#laterFields(tool, type, { field, pointer });
+    this.#addPlan(candidate, pointer, kept, { projected, late, ...later });
   }
 
   /**
@@ -709,7 +773,7 @@ export class EnvironmentStateExtraction {
     if (id === undefined) return;
     const collection = collectionPathOf(record, plan.item);
     const key = entityKey(plan.type, collection, id);
-    const position = this.#position.get(record.ordinal)!;
+    const position = this.#chronology.positions.get(record.ordinal)!;
     let entity = this.#entities.get(key);
     if (entity === undefined) {
       this.#retain(ENTRY_BYTES * 4 + textBytes(key.length));
@@ -779,6 +843,16 @@ export class EnvironmentStateExtraction {
       entity: (type, collection, id) =>
         this.#merged.get(entityKey(type, collection, id)),
       inCollection: (type, collection) => this.#inCollection(type, collection),
+      heldFields: (type) => {
+        const fields = new Set<string>();
+        for (const entity of this.#merged.values())
+          if (entity.type === type) {
+            for (const name of Object.keys(entity.fields)) fields.add(name);
+            for (const view of entity.view_fields)
+              for (const name of Object.keys(view.fields)) fields.add(name);
+          }
+        return fields;
+      },
       volatileOf: (type) => this.#volatileOf(type),
       idField: (type) => this.#identity.get(type)!.field,
     };
@@ -792,7 +866,9 @@ export class EnvironmentStateExtraction {
     if (this.#collections === undefined) {
       this.#retain(ENTRY_BYTES * (this.#merged.size + 1));
       this.#collections = new Map();
+      // List serving selects live entities; item observations retain deleted entities separately.
       for (const entity of this.#merged.values()) {
+        if (markedDeleted(entity.fields)) continue;
         const key = JSON.stringify([entity.type, entity.collection]);
         const members = this.#collections.get(key);
         if (members === undefined) this.#collections.set(key, [entity]);

@@ -191,9 +191,18 @@ export const swiftLiteralSitesConflict = (
   return false;
 };
 
+/** Omitted literal inventory differs from an observed empty inventory. */
+export const swiftLiteralCoverage = (
+  snapshot: FunctionSnapshot,
+): "absent" | "complete" | "partial" =>
+  (snapshot.dossier.swift_string_literal_omissions ?? []).length > 0
+    ? "partial"
+    : snapshot.dossier.swift_string_literals === undefined
+      ? "absent"
+      : "complete";
+
 const swiftLiteralSites = (snapshot: FunctionSnapshot) => {
   const base = snapshot.dossier.procedure.address;
-  const omissions = snapshot.dossier.swift_string_literal_omissions ?? [];
   const site = (sourceAddress: string, registers: readonly string[]) => {
     const offset = relativeAddress(sourceAddress, base);
     return offset === null ? null : canonicalJson([offset, registers]);
@@ -211,9 +220,7 @@ const swiftLiteralSites = (snapshot: FunctionSnapshot) => {
       ].sort(compareUnicodeCodePoints),
     );
   }
-  const complete =
-    snapshot.dossier.swift_string_literals !== undefined &&
-    omissions.length === 0;
+  const complete = swiftLiteralCoverage(snapshot) === "complete";
   return { values, complete };
 };
 

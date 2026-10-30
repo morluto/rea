@@ -8,6 +8,9 @@ import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
 
 import {
   normalizeCliArguments,
+  adaptCliOutputArgumentsForIncur,
+} from "../../../src/cliBuiltinArguments.js";
+import {
   renderCliOutputArgumentError,
   renderCliDocument,
   renderEmptyFilteredCliOutput,
@@ -18,6 +21,84 @@ import {
 const CLI_INTEGRATION_TIMEOUT_MS = 60_000;
 
 describe("CLI output argument boundary", () => {
+  it("requires an exact row selector and explicit columns for delimited formats", () => {
+    expect(
+      parseCliOutputArguments(["rows", "--format", "csv"]).validation,
+    ).toMatchObject({
+      ok: false,
+      code: "UNSUPPORTED_OUTPUT_COMBINATION",
+    });
+    expect(
+      parseCliOutputArguments([
+        "rows",
+        "--format",
+        "tsv",
+        "--filter-output",
+        "normalized_result.items",
+        "--columns",
+        "name, version",
+      ]),
+    ).toMatchObject({
+      columns: ["name", "version"],
+      validation: { ok: true },
+    });
+    for (const fields of ["name,,version", "name,name"])
+      expect(
+        parseCliOutputArguments([
+          "rows",
+          "--format",
+          "csv",
+          "--filter-output",
+          "items",
+          "--columns",
+          fields,
+        ]).validation,
+      ).toMatchObject({ ok: false, code: "INVALID_OUTPUT_VALUE" });
+    expect(
+      parseCliOutputArguments([
+        "rows",
+        "--format",
+        "csv",
+        "--filter-output",
+        "items",
+        "--columns",
+        "",
+      ]).validation,
+    ).toMatchObject({ ok: false, code: "MISSING_OUTPUT_VALUE" });
+    expect(
+      parseCliOutputArguments([
+        "rows",
+        "--format",
+        "csv",
+        "--filter-output",
+        "items",
+        "--columns",
+        "name",
+        "--token-count",
+      ]).validation,
+    ).toMatchObject({ ok: false, code: "UNSUPPORTED_OUTPUT_COMBINATION" });
+  });
+
+  it("adapts REA-owned delimited options only at the Incur boundary", () => {
+    expect(
+      adaptCliOutputArgumentsForIncur([
+        "inspect-analysis-view",
+        "--format",
+        "csv",
+        "--columns",
+        "name,version",
+        "--filter-output",
+        "normalized_result.items",
+      ]),
+    ).toEqual([
+      "inspect-analysis-view",
+      "--format",
+      "json",
+      "--filter-output",
+      "normalized_result.items",
+    ]);
+  });
+
   it("uses the shared Markdown table formatter for standalone reports", () => {
     const value = { text: "left|right\\path\nnext" };
     expect(renderCliDocument(value, "md", false)).toContain(
@@ -32,14 +113,6 @@ describe("CLI output argument boundary", () => {
     expect(markdown).toContain("List&lt;T&gt;");
     expect(markdown).toContain("&amp;copy; &lt;br&gt;<br>next");
     expect(JSON.parse(renderCliDocument(value, "json", false))).toEqual(value);
-  });
-
-  it("formats arrays of empty objects without column keys as JSON in Markdown", () => {
-    expect(renderCliDocument([{}], "md", false)).toBe("[{}]\n");
-    expect(renderCliDocument([{}, {}], "md", false)).toBe("[{},{}]\n");
-    expect(renderCliDocument({ empty: [{}] }, "md", false)).toBe(
-      "## empty\n\n[{}]\n",
-    );
   });
 
   it("rejects token windows that would corrupt structured output", () => {
@@ -93,6 +166,27 @@ describe("CLI output argument boundary", () => {
         .validation,
     ).toEqual({ ok: true });
   });
+});
+
+it("formats arrays of empty objects without column keys as JSON in Markdown", () => {
+  expect(renderCliDocument([{}], "md", false)).toBe("\\[\\{\\}\\]\n");
+  expect(renderCliDocument([{}, {}], "md", false)).toBe(
+    "\\[\\{\\},\\{\\}\\]\n",
+  );
+  expect(renderCliDocument({ empty: [{}] }, "md", false)).toBe(
+    "## empty\n\n\\[\\{\\}\\]\n",
+  );
+});
+
+it("preserves flag-shaped values consumed by valued output options", () => {
+  expect(
+    adaptCliOutputArgumentsForIncur([
+      "--filter-output",
+      "--columns",
+      "providers",
+      "--json",
+    ]),
+  ).toEqual(["--filter-output", "--columns", "providers", "--json"]);
 });
 
 describe("CLI output value admission", () => {

@@ -3,13 +3,13 @@ import {
   pythonPycSchema,
   type PythonPycCodeObject,
 } from "../python/pythonPyc.js";
-import type { AnalysisError } from "../analysisErrorBase.js";
-import { err, ok, type Result } from "../result.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import { err, ok } from "../result.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import {
+  ownedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
@@ -62,9 +62,12 @@ const readReport = createAnalysisViewResultReader(pythonPycSchema);
 /** Project code-constant references from historical facts, without reopening the pyc. */
 export const projectPythonPycView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
-  if (view.kind !== "summary" && view.kind !== "python-pyc")
+  admitted: AdmittedView,
+) => {
+  const view = ownedView<
+    SummaryAnalysisView | z.output<typeof pythonPycViewRequestSchema>
+  >(admitted, "summary", "python-pyc");
+  if (view === undefined)
     return err(
       analysisViewInputError([
         {
@@ -96,7 +99,7 @@ export const projectPythonPycView = (
   if (view.kind === "summary")
     return ok({
       ...shared,
-      kind: "summary",
+      kind: "summary" as const,
       view,
       summary,
       coverage: completeWithinViewCoverage(
@@ -132,7 +135,7 @@ export const projectPythonPycView = (
         );
   return ok({
     ...shared,
-    kind: "python-pyc",
+    kind: "python-pyc" as const,
     view,
     pyc: summary,
     items: selected.rows,

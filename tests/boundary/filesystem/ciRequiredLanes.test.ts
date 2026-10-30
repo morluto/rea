@@ -180,12 +180,40 @@ it("makes the required gate wait for every CI lane, including future additions",
   );
 });
 
+it("runs architecture guards for fast code feedback before installing dependencies", async () => {
+  const steps = z
+    .array(
+      z
+        .object({
+          run: z.string().optional(),
+          uses: z.string().optional(),
+          if: z.string().optional(),
+        })
+        .passthrough(),
+    )
+    .parse((await workflow()).jobs.static?.steps);
+  const guard = steps.findIndex(
+    (step) => step.run === "node scripts/verify/architecture-guards.mjs",
+  );
+  const setup = steps.findIndex((step) =>
+    step.uses?.startsWith("actions/setup-node@"),
+  );
+  const install = steps.findIndex((step) => step.run === "npm ci");
+  expect(guard).toBeGreaterThanOrEqual(0);
+  expect(setup).toBeGreaterThanOrEqual(0);
+  expect(install).toBeGreaterThan(guard);
+  expect(guard).toBeGreaterThan(setup);
+  expect(steps[guard]?.if).toBe("needs.changes.outputs.code == 'true'");
+  expect(steps[guard]?.["continue-on-error"]).toBeUndefined();
+});
+
 it("holds native and provider fan-out behind static validation while portable feedback stays independent", async () => {
   const { jobs } = await workflow();
   const earlyJobs = new Set([
     "changes",
     "static",
     "static-deep",
+    "python",
     "build",
     "test-shard",
     "test-source",
@@ -355,6 +383,8 @@ it("binds provider build reuse to the current run while keeping standalone dispa
     "web_runtime",
     "web_source_map",
     "agentenv",
+    "packet_capture",
+    "signal_recording",
   ];
   const buildTerms = z
     .string()
@@ -547,6 +577,9 @@ it.each([
       ["workflows", "static"],
       ["ghidra_bridge", "ghidra_bridge"],
       ["agentenv", "agentenv"],
+      ["python", "python"],
+      ["packet_capture", "packet_capture"],
+      ["signal_recording", "signal_recording"],
     ] as const) {
       // GitHub exposes only direct dependencies in the required job's needs context.
       const needs: Record<

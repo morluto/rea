@@ -148,6 +148,11 @@ const addCookies = async (
       run.state.complete = false;
       continue;
     }
+    // CDP Cookie.partitionKeyOpaque means the partition exists but is not
+    // serializable. A missing partitionKey means unpartitioned, so hashing
+    // that absence would align an unresolved partition with a different cookie.
+    // https://chromedevtools.github.io/devtools-protocol/tot/Network/#type-Cookie
+    const partitionOpaque = cookie.partitionKeyOpaque === true;
     addFingerprint(run.state, {
       scope: "cookie",
       identity: {
@@ -155,9 +160,10 @@ const addCookies = async (
         path,
         name,
         partition_key: cookie.partitionKey ?? null,
+        ...(partitionOpaque ? { partition_opaque: true } : {}),
       },
       value,
-      complete: cookie.partitionKeyOpaque !== true,
+      complete: !partitionOpaque,
     });
   }
 };
@@ -313,6 +319,7 @@ const addIndexedDbRecords = async (
       run.state.complete = false;
       return;
     }
+    const examinedCount = result.objectStoreDataEntries.length;
     const entries = recordsValue(result.objectStoreDataEntries);
     if (entries.length !== result.objectStoreDataEntries.length)
       run.state.complete = false;
@@ -335,13 +342,13 @@ const addIndexedDbRecords = async (
     }
     if (result.hasMore !== true) return;
     if (
-      entries.length === 0 ||
-      skipCount > Number.MAX_SAFE_INTEGER - entries.length
+      examinedCount === 0 ||
+      skipCount > Number.MAX_SAFE_INTEGER - examinedCount
     ) {
       run.state.complete = false;
       return;
     }
-    skipCount += entries.length;
+    skipCount += examinedCount;
   }
 };
 
@@ -373,20 +380,21 @@ const addCaches = async (
         run.state.complete = false;
         break;
       }
+      const examinedCount = result.cacheDataEntries.length;
       const entries = recordsValue(result.cacheDataEntries);
       if (entries.length !== result.cacheDataEntries.length)
         run.state.complete = false;
       for (const entry of entries) await addCacheEntry(run, cache, entry);
       returnCount = result.returnCount;
-      if (skipCount + entries.length >= returnCount) break;
+      if (skipCount + examinedCount >= returnCount) break;
       if (
-        entries.length === 0 ||
-        skipCount > Number.MAX_SAFE_INTEGER - entries.length
+        examinedCount === 0 ||
+        skipCount > Number.MAX_SAFE_INTEGER - examinedCount
       ) {
         run.state.complete = false;
         break;
       }
-      skipCount += entries.length;
+      skipCount += examinedCount;
     }
   }
 };

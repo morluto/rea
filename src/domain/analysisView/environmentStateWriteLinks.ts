@@ -1,3 +1,4 @@
+import type { StateRecordChronology } from "./StateRecordChronology.js";
 import type { JsonValue } from "../jsonValue.js";
 import {
   ownMember,
@@ -22,6 +23,7 @@ import {
 import { ENTRY_BYTES, textBytes } from "./webNetworkRouteTemplates.js";
 import {
   pathValuesOf,
+  type FieldRule,
   type WriteEffect,
 } from "./environmentStateWriteRules.js";
 
@@ -43,9 +45,14 @@ const identityValues = (object: JsonValue | undefined): string[] =>
       })
     : [];
 
+/** The one object a one-element array holds, else the value itself. */
+const unwrapped = (value: JsonValue): JsonValue =>
+  Array.isArray(value) && value.length === 1 ? value[0]! : value;
+
 /**
  * The ids a write's response names for an entity it made: an identity-named member of the body or of
- * an object member (an envelope) at any length, or a scalar body or sole scalar member long enough to name one.
+ * an object member (an envelope, or the one object of a one-element array member) at any length, or a
+ * scalar body or sole scalar member long enough to name one.
  */
 export const respondedIds = (body: JsonValue | undefined): string[] => {
   if (body === undefined || body === null) return [];
@@ -59,7 +66,7 @@ export const respondedIds = (body: JsonValue | undefined): string[] => {
     ...new Set([
       ...identityValues(body),
       ...(members.length === 1 ? named(members[0]) : []),
-      ...members.flatMap(identityValues),
+      ...members.flatMap((member) => identityValues(unwrapped(member))),
     ]),
   ];
 };
@@ -140,7 +147,7 @@ const keptIds = (
 /** One read of a type: where it ran, when it finished, whether it reads one item, and the ids it shows. */
 interface ShownRead {
   readonly at: number;
-  readonly end: number;
+  readonly end: number | undefined;
   readonly item: boolean;
   readonly ids: ReadonlySet<string>;
 }
@@ -154,11 +161,14 @@ interface ShownRead {
 const freshIds = (
   ids: readonly string[],
   shown: readonly ShownRead[],
-  post: { readonly at: number; readonly start: number },
+  post: { readonly at: number; readonly start: number | undefined },
   until: number,
 ): string[] => {
   const before = (read: ShownRead): boolean =>
-    read.at < post.at && read.end <= post.start;
+    read.at < post.at &&
+    read.end !== undefined &&
+    post.start !== undefined &&
+    read.end <= post.start;
   const seen = shown.some(before);
   return ids.filter((id) => {
     const short = id.length < MIN_ID_LENGTH;
@@ -215,6 +225,7 @@ export const creationLimit = (
   creations: readonly CreatedIds[],
   reads: {
     readonly type: string;
+    readonly chronology: StateRecordChronology;
     readonly tools: readonly StateToolFacts[];
     readonly records: ReadonlyMap<number, StateRecordFacts>;
     readonly position: (record: StateRecordFacts) => number;
@@ -249,7 +260,7 @@ export const creationLimit = (
       return [
         {
           at,
-          end: record.end,
+          end: reads.chronology.endMs(record),
           item,
           ids: keptIds(ids, returned, reads.retain),
         },
@@ -261,7 +272,7 @@ export const creationLimit = (
   )) {
     const at = reads.position(creation.record);
     if (at >= end) break;
-    const post = { at, start: creation.record.start };
+    const post = { at, start: reads.chronology.startMs(creation.record) };
     if (freshIds(creation.ids, shown, post, end).length > 0)
       return creation.record;
   }
@@ -276,6 +287,7 @@ export const creationLimit = (
  */
 export const linkedCreate = (input: {
   readonly tool: StateToolFacts;
+  readonly chronology: StateRecordChronology;
   readonly records: readonly StateRecordFacts[];
   readonly isWrite: (record: StateRecordFacts) => boolean;
   readonly viewOf: (ordinal: number) => StateView | undefined;
@@ -296,7 +308,7 @@ export const linkedCreate = (input: {
   // Only a read finished before the call began shows what was there before it, as `freshIds` decides.
   const before = records
     .slice(0, first)
-    .filter((record) => record.end <= post.start);
+    .filter((record) => input.chronology.completedBefore(record, post));
   for (const record of records.slice(first + 1)) {
     // Another write may have made what a later read shows, so the search ends there.
     if (!own.has(record.ordinal) && input.isWrite(record)) return undefined;
@@ -389,6 +401,27 @@ export const recordedPathValues = (
   );
 };
 
+/** Whether a linked create may take any path arguments: it creates into its type's own collection, whose path has no parameters, and stores each path value in a field, so none changes where it creates. */
+export const anyLinkedSource = (
+  plan: {
+    readonly target: string | null;
+    readonly collection: string | null;
+    readonly rules: readonly FieldRule[];
+  },
+  template: string,
+): boolean =>
+  plan.target !== null &&
+  plan.collection !== null &&
+  normalizedPath(plan.collection) === plan.target &&
+  !segmentsOf(plan.target).some(isParam) &&
+  segmentsOf(template)
+    .filter(isParam)
+    .every((segment) =>
+      plan.rules.some(
+        (rule) => rule.rule === "path" && rule.from === segment.slice(1, -1),
+      ),
+    );
+
 /**
  * Whether a linked create's call sends the path values its exemplar did, each as recorded or in the
  * other spelling once percent-decoded: the read that linked its target followed only that call. The
@@ -417,6 +450,7 @@ export const linkedTarget = (
   classified: { readonly effect: WriteEffect; readonly target: string | null },
   input: {
     readonly records: readonly StateRecordFacts[];
+    readonly chronology: StateRecordChronology;
     readonly isWrite: (record: StateRecordFacts) => boolean;
     readonly viewOf: (ordinal: number) => StateView | undefined;
     readonly entities: readonly StateEntity[];
@@ -437,6 +471,7 @@ export const linkedTarget = (
       ? linkedCreate({
           tool,
           records: input.records,
+          chronology: input.chronology,
           isWrite: input.isWrite,
           viewOf: input.viewOf,
           entities: input.entities,

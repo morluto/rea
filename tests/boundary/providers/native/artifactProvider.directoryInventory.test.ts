@@ -5,6 +5,11 @@ import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
+import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
+import {
+  CPU,
+  machoImage,
+} from "../../../../src/artifacts/apple/MachoImage.fixture.js";
 import { ArtifactProvider } from "../../../../src/artifacts/ArtifactProvider.js";
 import { artifactInventoryResultSchema } from "../../../../src/domain/artifactGraph.js";
 import type { BinaryTarget } from "../../../../src/domain/binaryTargetTypes.js";
@@ -18,7 +23,11 @@ describe("artifact directory inventory", () => {
     await mkdir(join(app, "Contents", "Frameworks", "Fixture.framework"), {
       recursive: true,
     });
-    const machO = Buffer.from([0xcf, 0xfa, 0xed, 0xfe, 0x0c, 0, 0, 1]);
+    const machO = machoImage({ cpu: CPU.arm64 });
+    await writeFile(
+      join(app, "Contents/Info.plist"),
+      '<plist version="1.0"><dict><key>CFBundleExecutable</key><string>Fixture</string></dict></plist>',
+    );
     await writeFile(join(app, "Contents", "MacOS", "Fixture"), machO, {
       mode: 0o755,
     });
@@ -30,7 +39,7 @@ describe("artifact directory inventory", () => {
     await writeFile(join(app, "Contents", "Resources", "main.js.MAP"), "{}\n");
     await symlink("/etc/passwd", join(app, "Contents", "Resources", "outside"));
     const client = new ArtifactProvider(process.env).createClient(
-      target(app, "directory"),
+      await target(app),
     );
     const input = {};
     const first = await client.execute("inventory_artifact", input);
@@ -72,13 +81,9 @@ describe("artifact directory inventory", () => {
   });
 });
 
-const target = (
-  path: string,
-  format: Extract<BinaryTarget, { kind: "archive" }>["format"] | "directory",
-): BinaryTarget => ({
-  path,
-  sourcePath: path,
-  sha256: "0".repeat(64),
-  kind: "archive",
-  format: format === "directory" ? "asar" : format,
-});
+const target = async (path: string): Promise<BinaryTarget> => {
+  const parsed = await parseBinaryTarget(path);
+  if (!parsed.ok) throw parsed.error;
+  expect(parsed.value.bundleInfoPlist).toBe(join(path, "Contents/Info.plist"));
+  return parsed.value;
+};

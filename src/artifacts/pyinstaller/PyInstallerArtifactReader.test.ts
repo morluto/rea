@@ -970,7 +970,7 @@ it("inventories and extracts a Windows member name under its canonical path", as
   ).toBe(0);
 });
 
-it("preserves distinct POSIX backslash and slash paths in CArchive files and PYZ data", async () => {
+const posixPathFixture = async () => {
   const backslashName = String.raw`a\b.txt`;
   const slashName = "a/b.txt";
   const backslashPayload = Buffer.from("literal-backslash");
@@ -1010,6 +1010,18 @@ it("preserves distinct POSIX backslash and slash paths in CArchive files and PYZ
     }),
   );
   const snapshot = await scanCanonicalArtifactInventory(path);
+  return {
+    path,
+    snapshot,
+    backslashName,
+    slashName,
+    backslashPayload,
+    slashPayload,
+  };
+};
+
+it("preserves distinct POSIX backslash and slash paths in CArchive files and PYZ data", async () => {
+  const { snapshot, backslashName, slashName } = await posixPathFixture();
   const backslashEntry = snapshot.occurrences.find(
     (occurrence) => occurrence.logical_path === backslashName,
   );
@@ -1034,38 +1046,52 @@ it("preserves distinct POSIX backslash and slash paths in CArchive files and PYZ
       },
     });
   expect(snapshot.coverage.status).toBe("complete");
-  if (process.platform === "win32") return;
-
-  const directory = await createTestTempDirectory("rea-pyinstaller-posix-out-");
-  const output = join(directory, "extracted");
-  await materializeArtifactInventory(
-    {
-      inputPath: path,
-      inputFormat: "elf",
-      outputRoot: output,
-      environment: process.env,
-      integrityPolicy: "fail",
-    },
-    path,
-    snapshot,
-  );
-  expect(
-    Buffer.compare(
-      await readFile(join(output, backslashName)),
-      backslashPayload,
-    ),
-  ).toBe(0);
-  expect(
-    Buffer.compare(await readFile(join(output, "a", "b.txt")), slashPayload),
-  ).toBe(0);
-  for (const [name, body] of [
-    [backslashName, backslashPayload],
-    [slashName, slashPayload],
-  ] as const)
-    expect((await readFile(join(output, "PYZ.pyz", name))).equals(body)).toBe(
-      true,
-    );
 });
+
+it.skipIf(process.platform === "win32")(
+  "extracts distinct POSIX backslash and slash paths in CArchive files and PYZ data",
+  async () => {
+    const {
+      path,
+      snapshot,
+      backslashName,
+      slashName,
+      backslashPayload,
+      slashPayload,
+    } = await posixPathFixture();
+    const directory = await createTestTempDirectory(
+      "rea-pyinstaller-posix-out-",
+    );
+    const output = join(directory, "extracted");
+    await materializeArtifactInventory(
+      {
+        inputPath: path,
+        inputFormat: "elf",
+        outputRoot: output,
+        environment: process.env,
+        integrityPolicy: "fail",
+      },
+      path,
+      snapshot,
+    );
+    expect(
+      Buffer.compare(
+        await readFile(join(output, backslashName)),
+        backslashPayload,
+      ),
+    ).toBe(0);
+    expect(
+      Buffer.compare(await readFile(join(output, "a", "b.txt")), slashPayload),
+    ).toBe(0);
+    for (const [name, body] of [
+      [backslashName, backslashPayload],
+      [slashName, slashPayload],
+    ] as const)
+      expect((await readFile(join(output, "PYZ.pyz", name))).equals(body)).toBe(
+        true,
+      );
+  },
+);
 
 it("reads a PE signature beyond the carrier prefix before projecting paths", async () => {
   const path = await writeArchive(
@@ -1627,3 +1653,129 @@ it.each([
     ).toBe("contains");
   },
 );
+
+const mixedCArchiveRoleFixture = () => {
+  const body = Buffer.from("not a marshal code prefix");
+  const pyz = pyzArchive({
+    magic: PYTHON_39_MAGIC,
+    modules: [{ name: "child", typeCode: 0, body }],
+  });
+  const members: CArchiveFixtureMember[] = [
+    {
+      name: "runtime value",
+      typeCode: "o",
+      payload: Buffer.alloc(0),
+      compress: false,
+    },
+    {
+      name: "other-app:assets/data.bin",
+      typeCode: "d",
+      payload: Buffer.alloc(0),
+      compress: false,
+    },
+    { name: "app/script", typeCode: "s", payload: body, compress: true },
+    { name: "app/module", typeCode: "m", payload: body, compress: true },
+    { name: "app/package", typeCode: "M", payload: body, compress: false },
+    { name: "bin/runner", typeCode: "b", payload: body, compress: false },
+    {
+      name: "link",
+      typeCode: "n",
+      payload: Buffer.from("app/module"),
+      compress: false,
+    },
+    { name: "nested/PYZ.pyz", typeCode: "z", payload: pyz, compress: false },
+    { name: "stored.pyz", typeCode: "Z", payload: pyz, compress: true },
+  ];
+  return {
+    body,
+    pyz,
+    members,
+    archive: cArchiveExecutable({ layout: "2.1", pythonVersion: 309, members }),
+  };
+};
+
+it("keeps mixed CArchive roles distinct across declarations, bytecode, and stored PYZ lookalikes", async () => {
+  const fixture = mixedCArchiveRoleFixture();
+  const path = await writeArchive("mixed-roles", fixture.archive);
+  const reader = new PyInstallerArtifactReader(path);
+  try {
+    const entries = [];
+    for await (const entry of reader.entries()) entries.push(entry);
+    expect(reader.formatMetadata()).toMatchObject({
+      entry_count: 9,
+      runtime_option_count: 1,
+      external_dependency_count: 1,
+    });
+    const expected = [
+      {
+        path: "__pyinstaller__/runtime-options/0",
+        type: "o",
+        kind: "metadata",
+        bytecode: "not-bytecode",
+      },
+      {
+        path: "__pyinstaller__/dependencies/1",
+        type: "d",
+        kind: "metadata",
+        bytecode: "not-bytecode",
+      },
+      { path: "app/script", type: "s", kind: "file", bytecode: "derived" },
+      { path: "app/module", type: "m", kind: "file", bytecode: "unknown" },
+      { path: "app/package", type: "M", kind: "file", bytecode: "unknown" },
+      { path: "bin/runner", type: "b", kind: "file", bytecode: "not-bytecode" },
+      { path: "link", type: "n", kind: "symlink", bytecode: "not-bytecode" },
+      {
+        path: "nested/PYZ.pyz",
+        type: "z",
+        kind: "directory",
+        bytecode: "not-bytecode",
+      },
+      { path: "stored.pyz", type: "Z", kind: "file", bytecode: "not-bytecode" },
+    ];
+    for (const [index, row] of expected.entries()) {
+      const entry = entries.find((entry) => entry.path === row.path);
+      if (entry === undefined)
+        throw new Error(`Missing role fixture ${row.type}`);
+      expect(entry).toMatchObject({
+        kind: row.kind,
+        executable: row.type === "b",
+        sourcePath: fixture.members[index]?.name,
+        formatMetadata: { type_code: row.type, bytecode_header: row.bytecode },
+      });
+      if (entry.kind === "file") {
+        const original = row.type === "Z" ? fixture.pyz : fixture.body;
+        expect(
+          (await buffer(await reader.open(entry))).equals(
+            row.type === "s" ? derived(original) : original,
+          ),
+        ).toBe(true);
+      }
+    }
+    const child = entries.find(
+      (entry) => entry.path === "nested/PYZ.pyz/child.pyc",
+    );
+    if (child === undefined)
+      throw new Error("Missing actual nested PYZ module");
+    expect(
+      (await buffer(await reader.open(child))).equals(derived(fixture.body)),
+    ).toBe(true);
+    expect(
+      entries.filter((entry) => entry.path.startsWith("stored.pyz/")),
+    ).toEqual([]);
+    expect(
+      entries.find((entry) => entry.path === "stored.pyz")?.formatMetadata,
+    ).toMatchObject({
+      pyz_status: "not-pyz",
+      type_code: "Z",
+    });
+    expect(
+      entries.find((entry) => entry.path === "nested/PYZ.pyz")?.formatMetadata,
+    ).toMatchObject({
+      pyz_status: "decoded",
+      pyz_python_version: "3.9",
+      pyz_entry_count: 1,
+    });
+  } finally {
+    await reader.close();
+  }
+});

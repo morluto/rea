@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { z } from "incur";
 
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
@@ -87,7 +88,7 @@ export const registerDecompileDirectoryCommand = (
           "decompile_all",
           decompileAllArguments(options),
           directAnalysisOptionsFromCli(logger, options),
-        ),
+        ).then(projectCliAnalysisResult),
       ),
   });
 };

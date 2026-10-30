@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
 import { nativeMacOSCapabilities } from "./NativeMacOSProviderMetadata.js";
 import { NativeMacOSProvider } from "./NativeMacOSProvider.js";
@@ -8,7 +10,10 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   NativeFixtureRunner,
   nativeMachoTarget,
+  nativeMachoTargetForFile,
 } from "../../tests/fixtures/nativeCommands.js";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { inspectionImage } from "./NativeMachoInspection.fixture.js";
 
 describe("native dispatch metadata input boundary", () => {
   it("retains canonical argument failures before attempting target inspection", async () => {
@@ -93,11 +98,14 @@ describe("native dispatch metadata input boundary", () => {
 it.each(["inspect_macho", "list_architectures"] as const)(
   "retains unreadable lipo output as an output failure for %s",
   async (operation) => {
+    const root = await createTestTempDirectory("rea-macho-lipo-output-");
+    const path = join(root, "fixture.macho");
+    await writeFile(path, inspectionImage());
     const client = new NativeMacOSProvider(
       {},
       new NativeFixtureRunner({ lipo: "unrecognized slice record\n" }),
       "darwin",
-    ).createClient(nativeMachoTarget("/fixture"));
+    ).createClient(await nativeMachoTargetForFile(path));
     const result = await client.execute(operation, {});
     expect(result).toMatchObject({
       ok: false,

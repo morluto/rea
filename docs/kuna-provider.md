@@ -125,9 +125,17 @@ REA writes Kuna's exports only inside `REA_KUNA_CACHE_DIR`:
 - `trash/` holds retired builds and evicted exports awaiting removal.
 - `home/` is Kuna's HOME.
 
-The cache key includes the selected launcher and resolved executable paths.
-Older exports without that identity are rebuilt automatically and retired through
-normal cache cleanup; no manual migration is needed.
+The cache key includes the selected launcher and resolved executable paths, plus
+the target's native basename: that name determines the export filenames and
+appears in generated source. REA accepts one current manifest layout. Older
+exports are rebuilt on demand and retired through normal owned-cache cleanup;
+no manual deletion or migration is needed. Manifests must name the producer's
+exact flat file layout, with matching basenames and producing inputs. Replaced
+entry, project or manifest symlinks are refused before their targets are read;
+an unverified `projects/` parent grants no removal authority. Warm reuse checks
+the manifest's file identity as well as the export files. These refusal and
+migration cases are verified with controlled Kuna-format exports; they do not
+establish behavior of an independently installed Kuna release.
 
 Builds publish by one rename, so a reader sees a complete export or none. If later staging retirement fails, the typed cleanup error retains the completed export's key, directory and manifest in `published_export`. The session adopts that verified project; later queries reuse its immutable files while `project_export.cleanup_incomplete` reports the retained owner's live state. `close_binary` retries only the remaining cleanup, and a successful retry resolves prior cleanup errors. A failed export followed by failed staging cleanup retains both failures; it does not invent a publication receipt. A session keeps the export it uses from eviction only within its own REA process. If another REA process sharing the cache evicts it, the session rebuilds it; meanwhile pseudocode falls back to single-function runs. A damaged or edited export is removed and rebuilt. REA retains the file state verified with each digest, checks it before warm-cache reuse, and checks open descriptors before and after reading text. Assembly indexes are checked against the same state; a changed file makes the whole report retry rather than mixing facets from different exports. Staging moves to `trash/` for removal only after REA proves its Kuna process stopped. Staging of a process it cannot prove stopped is never swept; REA keeps it owned, retries the stop on `close_binary`, and reports it until the stop is proven. Failed file removal also stays bound to its export and is retried by `close_binary`; closing does not report success while that cleanup remains. `rea doctor --provider kuna` reports the cache directory without creating it.
 

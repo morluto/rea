@@ -1,8 +1,10 @@
-import { NATIVE_OBSERVATION_OPERATIONS } from "../native/nativeObservation.js";
+import {
+  NATIVE_OBSERVATION_OPERATIONS,
+  containingProcedureResolutionSchema,
+} from "../native/nativeObservation.js";
 import { z } from "zod";
 import { digestSchema } from "../digests.js";
 import { evidenceSchema } from "../evidence.js";
-import { containingProcedureResolutionSchema } from "../hopperValues.js";
 import {
   completeRelationshipCoverageSchema,
   partialRelationshipCoverageSchema,

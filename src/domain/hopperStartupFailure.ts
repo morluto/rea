@@ -1,7 +1,53 @@
+import { MAX_PROVIDER_STARTUP_TIMEOUT_MS } from "./analysisResourceLimits.js";
+
 export type HopperPrivateDisplayStrategy =
   | "direct"
   | "user-mount-namespace"
   | "unavailable";
+
+/** Environment setting that widens the Linux demo-dialog watch. */
+export const HOPPER_DEMO_DIALOG_TIMEOUT_SETTING =
+  "REA_HOPPER_DEMO_DIALOG_TIMEOUT_MS";
+
+/** Watch used when the setting is unset. */
+export const DEFAULT_HOPPER_DEMO_DIALOG_TIMEOUT_MS = 10_000;
+
+/** Smallest accepted dialog watch. Zero is not a deadline. */
+export const MINIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS = 1;
+
+/**
+ * Largest accepted dialog watch. Delays above this signed 32-bit bound are
+ * the same ceiling REA uses for its other millisecond settings.
+ */
+export const MAXIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS =
+  MAX_PROVIDER_STARTUP_TIMEOUT_MS;
+
+/** Rejected dialog-timeout setting retained with the adapter diagnostic. */
+export type DialogTimeoutRejection = {
+  readonly setting: typeof HOPPER_DEMO_DIALOG_TIMEOUT_SETTING;
+  readonly value: string;
+  readonly source: "setting";
+  readonly minimum_ms: typeof MINIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS;
+  readonly maximum_ms: typeof MAXIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS;
+  readonly default_ms: typeof DEFAULT_HOPPER_DEMO_DIALOG_TIMEOUT_MS;
+};
+
+/** Public recovery for a rejected REA_HOPPER_DEMO_DIALOG_TIMEOUT_MS value. */
+export const invalidDialogTimeoutMessage = (
+  setting?: DialogTimeoutRejection,
+): string => {
+  const current =
+    setting === undefined
+      ? "was rejected"
+      : `is ${JSON.stringify(setting.value)} ms`;
+  const floor = String(MINIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS);
+  const maximum = String(MAXIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS);
+  const source = setting?.source ?? "setting";
+  return [
+    `The effective ${HOPPER_DEMO_DIALOG_TIMEOUT_SETTING} value ${current} (source ${source}; default ${String(DEFAULT_HOPPER_DEMO_DIALOG_TIMEOUT_MS)} ms, floor ${floor} ms, maximum ${maximum} ms).`,
+    `Set ${HOPPER_DEMO_DIALOG_TIMEOUT_SETTING} in the environment that starts REA to a positive decimal integer from ${floor} to ${maximum}, then restart REA.`,
+  ].join(" ");
+};
 
 const failures = [
   [
@@ -59,6 +105,12 @@ const failures = [
     "x11_socket_directory_unusable",
     "REA cannot use the host X11 socket directory for a private display. Run rea doctor --provider hopper for exact mount and namespace diagnostics.",
   ],
+  [
+    81,
+    "demo_dialog_absent",
+    "Hopper passed launcher authentication but did not present a registration dialog within the wait window. If this host is slow, raise REA_HOPPER_DEMO_DIALOG_TIMEOUT_MS and retry; otherwise complete Hopper setup or close stale sessions and retry.",
+  ],
+  [82, "invalid_dialog_timeout", invalidDialogTimeoutMessage()],
 ] as const;
 
 export type HopperStartupFailureCode = (typeof failures)[number][1];
@@ -117,6 +169,39 @@ export const hopperStartupExitCode = (
   code: HopperStartupFailureCode,
 ): number | undefined =>
   failures.find(([, candidate]) => candidate === code)?.[0];
+
+const isDialogTimeoutRejection = (
+  value: unknown,
+): value is DialogTimeoutRejection => {
+  if (typeof value !== "object" || value === null) return false;
+  const setting = Reflect.get(value, "setting");
+  const shown = Reflect.get(value, "value");
+  const source = Reflect.get(value, "source");
+  return (
+    setting === HOPPER_DEMO_DIALOG_TIMEOUT_SETTING &&
+    typeof shown === "string" &&
+    shown.length <= 128 &&
+    source === "setting" &&
+    Reflect.get(value, "minimum_ms") ===
+      MINIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS &&
+    Reflect.get(value, "maximum_ms") ===
+      MAXIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS &&
+    Reflect.get(value, "default_ms") === DEFAULT_HOPPER_DEMO_DIALOG_TIMEOUT_MS
+  );
+};
+
+/**
+ * Read a validated dialog-timeout rejection carried beside the diagnostic.
+ * The field stays off the static diagnostic type so an absent rejection is
+ * not an undefined JSON value.
+ */
+export const dialogTimeoutFromDiagnostic = (
+  diagnostic: HopperStartupDiagnostic | undefined,
+): DialogTimeoutRejection | undefined => {
+  if (diagnostic?.status !== "error") return undefined;
+  const value: unknown = Reflect.get(diagnostic, "dialog_timeout");
+  return isDialogTimeoutRejection(value) ? value : undefined;
+};
 
 /** Narrow an untrusted diagnostic field to the public startup code union. */
 export const isHopperStartupFailureCode = (

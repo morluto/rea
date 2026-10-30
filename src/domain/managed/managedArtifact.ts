@@ -228,6 +228,16 @@ const managedMethodBodySchema = z.object({
   max_stack: z.int().min(0).nullable(),
   init_locals: z.boolean().nullable(),
   local_var_sig_token: managedMetadataTokenSchema.nullable(),
+  local_var_signature: z
+    .object({
+      raw_sha256: digestSchema,
+      has_context_dependent_types: z.boolean(),
+    })
+    .nullable()
+    .default(null)
+    .describe(
+      "Validated LocalVarSig blob facts; null when absent or unrecorded. Named types, modifiers and generic variables require metadata or declaring context; equal raw digests do not establish their cross-artifact type identity.",
+    ),
   il_size: z.int().min(0),
   il_sha256: digestSchema
     .nullable()
@@ -504,11 +514,11 @@ export const managedArtifactInspectionSchema = z.object({
 /** Provider-neutral, execution-free metadata/signature/IL member inspection. */
 export const managedMemberInspectionSchema = z.object({
   signature_resolution: z
-    .literal("type-names-v1")
+    .enum(["type-names-v1", "type-names-v2"])
     .nullable()
     .default(null)
     .describe(
-      "Signature type-name resolution was examined, including unresolved operands; null means no attestation, including historical or capacity-limited Evidence.",
+      "Signature type-name resolution was examined, including unresolved operands; v2 also renders readable operand names, v1 retains raw operand text; null means no attestation, including historical or capacity-limited Evidence.",
     ),
   artifact: managedArtifactReferenceSchema,
   module: moduleIdentitySchema.nullable(),

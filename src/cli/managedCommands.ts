@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { z } from "incur";
 
 import { compareManagedMemberPaths } from "../application/managed/ManagedMemberComparisonService.js";
@@ -40,11 +41,18 @@ const registerInspectManagedArtifact = (
   cli.command(CLI_COMMANDS.inspectManagedArtifact, {
     description: "Inspect PE/CLI identity without loading target code",
     args: z.object({
-      path: z.string().describe("Managed PE executable or assembly path"),
+      path: localPathStringSchema.describe(
+        "Managed PE executable or assembly path",
+      ),
     }),
     run: ({ args }) =>
       logCliCommand(logger, "inspect-managed-artifact", () =>
-        runProviderAnalysis(args.path, "inspect_managed_artifact", {}, logger),
+        runProviderAnalysis(
+          args.path,
+          "inspect_managed_artifact",
+          {},
+          logger,
+        ).then(projectCliAnalysisResult),
       ),
   });
 };
@@ -58,7 +66,9 @@ const registerInspectManagedMembers = (
     description:
       "Inspect PE/CLI metadata members, signatures, CIL anchors, and ldstr string literals without loading target code",
     args: z.object({
-      path: z.string().describe("Managed PE executable or assembly path"),
+      path: localPathStringSchema.describe(
+        "Managed PE executable or assembly path",
+      ),
     }),
     options: z.object({
       type: managedMembersInputSchema.shape.type_names.describe(
@@ -90,7 +100,7 @@ const registerInspectManagedMembers = (
                 ? {}
                 : { evidenceBundlePath: options.evidenceBundle }),
             },
-          ),
+          ).then(projectCliAnalysisResult),
         ),
       ),
   });
@@ -105,7 +115,9 @@ const registerInspectManagedNativeBoundaries = (
     description:
       "Inspect PE/CLI PInvoke and native implementation boundary declarations without loading target code",
     args: z.object({
-      path: z.string().describe("Managed PE executable or assembly path"),
+      path: localPathStringSchema.describe(
+        "Managed PE executable or assembly path",
+      ),
     }),
     run: ({ args }) =>
       logCliCommand(logger, "inspect-managed-native-boundaries", () =>
@@ -114,14 +126,18 @@ const registerInspectManagedNativeBoundaries = (
           "inspect_managed_native_boundaries",
           {},
           logger,
-        ),
+        ).then(projectCliAnalysisResult),
       ),
   });
 };
 
 const compareManagedMemberArgs = z.object({
-  leftPath: z.string().describe("Baseline managed PE executable or assembly"),
-  rightPath: z.string().describe("Candidate managed PE executable or assembly"),
+  leftPath: localPathStringSchema.describe(
+    "Baseline managed PE executable or assembly",
+  ),
+  rightPath: localPathStringSchema.describe(
+    "Candidate managed PE executable or assembly",
+  ),
 });
 
 const registerCompareManagedMembers = (
@@ -152,9 +168,9 @@ const registerCompareManagedMembers = (
             signal,
             "Managed member comparison resources",
           );
-          return "evidence_id" in result
-            ? result
-            : { error: "Managed member comparison failed", ...result };
+          return result.ok
+            ? result.value
+            : { error: "Managed member comparison failed", ...result.error };
         }),
       ),
   });

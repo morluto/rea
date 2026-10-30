@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { z } from "incur";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { AdbDeviceAnalysisService } from "../application/adb/AdbDeviceAnalysisService.js";
@@ -6,6 +7,7 @@ import { createAdbDeviceAnalysisProvider } from "../composition/adb.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import {
+  adbInputSchemas,
   MAX_ADB_ACTIVITY_EXTRAS,
   type AdbOperation,
 } from "../domain/adb/adbDeviceAnalysis.js";
@@ -33,14 +35,14 @@ export const registerAdbCommands = (
           "adb",
           operation,
           signal,
-        ),
+        ).then(projectCliAnalysisResult),
       ),
     );
 
-  const serial = z
-    .string()
-    .min(1)
-    .describe("Device serial exactly as `adb devices` reports it");
+  const serial = adbInputSchemas.inspect_adb_device.shape.serial.describe(
+    "Device serial exactly as `adb devices` reports it",
+  );
+  const packageName = adbInputSchemas.pull_adb_package.shape.package;
 
   cli.command(CLI_COMMANDS.inspectAdbClient, {
     description:
@@ -82,7 +84,7 @@ export const registerAdbCommands = (
       "Pull one installed package's complete APK set with SHA-256 digests",
     args: z.object({
       serial,
-      package: z.string().min(1).describe("Installed package name"),
+      package: packageName.describe("Installed package name"),
     }),
     options: z.object({
       "output-directory": z
@@ -132,7 +134,7 @@ export const registerAdbCommands = (
   cli.command(CLI_COMMANDS.inspectAdbPackage, {
     description:
       "Inspect one installed package's version, installer, and flags through dumpsys",
-    args: z.object({ serial, package: z.string().min(1).describe("Package") }),
+    args: z.object({ serial, package: packageName.describe("Package") }),
     run: ({ args }) =>
       execute(CLI_COMMANDS.inspectAdbPackage, "inspect_adb_package", {
         serial: args.serial,
@@ -309,7 +311,7 @@ export const registerAdbCommands = (
     description: "Uninstall one package and its data from the device",
     args: z.object({
       serial,
-      package: z.string().min(1).describe("Installed package to uninstall"),
+      package: packageName.describe("Installed package to uninstall"),
     }),
     run: ({ args }) =>
       execute(CLI_COMMANDS.uninstallAdbPackage, "uninstall_adb_package", {
@@ -322,7 +324,7 @@ export const registerAdbCommands = (
       "Start one installed app by resolving and launching its launcher activity",
     args: z.object({
       serial,
-      package: z.string().min(1).describe("Installed package to start"),
+      package: packageName.describe("Installed package to start"),
     }),
     run: ({ args }) =>
       execute(CLI_COMMANDS.startAdbApp, "start_adb_app", {
@@ -335,15 +337,17 @@ export const registerAdbCommands = (
       "Start an intent with am start (action, URI, component, extras)",
     args: z.object({
       serial,
-      action: z.string().min(1).describe("Intent action to start"),
+      action: adbInputSchemas.start_adb_activity.shape.action.describe(
+        "Intent action to start",
+      ),
     }),
     options: z.object({
-      "data-uri": z.string().min(1).optional().describe("Intent data URI (-d)"),
-      component: z
-        .string()
-        .min(1)
-        .optional()
-        .describe("Explicit component in package/activity form (-n)"),
+      "data-uri": adbInputSchemas.start_adb_activity.shape.data_uri.describe(
+        "Intent data URI (-d)",
+      ),
+      component: adbInputSchemas.start_adb_activity.shape.component.describe(
+        "Explicit component in package/activity form (-n)",
+      ),
       extra: z
         .array(z.string().min(1))
         .max(MAX_ADB_ACTIVITY_EXTRAS)
@@ -404,7 +408,7 @@ export const registerAdbCommands = (
     description: "Force-stop every process of one package",
     args: z.object({
       serial,
-      package: z.string().min(1).describe("Package to force-stop"),
+      package: packageName.describe("Package to force-stop"),
     }),
     run: ({ args }) =>
       execute(CLI_COMMANDS.stopAdbApp, "stop_adb_app", {

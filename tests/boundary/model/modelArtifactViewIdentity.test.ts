@@ -9,7 +9,7 @@ import { freezeJsonSnapshot } from "../../../src/domain/immutableJson.js";
 import { ggufFixture } from "../../fixtures/model/model.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-it("checks each model parent subject independently of cached declarations", async () => {
+it("checks each model parent digest independently of cached declarations and display paths", async () => {
   const root = await createTestTempDirectory("rea-model-view-identity-");
   const path = join(root, "selected.gguf");
   await writeFile(path, ggufFixture().bytes);
@@ -38,9 +38,11 @@ it("checks each model parent subject independently of cached declarations", asyn
       );
     const digest = original.subject.digest.sha256;
     const valid = parent("valid", path, digest);
+    const aliasPath = join(root, "other.gguf");
+    const rebound = parent("rebound-path", aliasPath, digest);
     const conflicting = [
-      parent("wrong-path", join(root, "other.gguf"), digest),
       parent("wrong-digest", path, "00".repeat(32)),
+      parent("wrong-digest-rebound", aliasPath, "00".repeat(32)),
     ];
     const project = (record: typeof valid) =>
       inspectAnalysisView(
@@ -53,7 +55,7 @@ it("checks each model parent subject independently of cached declarations", asyn
         },
         (id) => (id === record.evidence_id ? record : undefined),
       );
-    for (const record of conflicting)
+    for (const record of [...conflicting, rebound])
       expect(record.normalized_result).toBe(report);
     for (const phase of ["cold", "warm"]) {
       for (const record of conflicting) {
@@ -65,12 +67,15 @@ it("checks each model parent subject independently of cached declarations", asyn
           },
         });
       }
-      const projected = await project(valid);
-      if (!projected.ok) throw projected.error;
-      expect(projected.value.subject).toEqual(original.subject);
-      expect(projected.value.normalized_result).toMatchObject({
-        artifact: { path, sha256: digest },
-      });
+      for (const record of [valid, rebound]) {
+        const projected = await project(record);
+        if (!projected.ok) throw projected.error;
+        expect(projected.value.subject).toEqual(record.subject);
+        expect(projected.value.evidence_links).toEqual([record.evidence_id]);
+        expect(projected.value.normalized_result).toMatchObject({
+          artifact: { path, sha256: digest },
+        });
+      }
     }
   } finally {
     await service.close();

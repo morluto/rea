@@ -1,4 +1,9 @@
-import type { RegularFileState } from "../filesystem/RegularFile.js";
+import {
+  regularFileState,
+  sameRegularFileState,
+  type RegularFileState,
+} from "../filesystem/RegularFile.js";
+import type { Stats } from "node:fs";
 import {
   assertKunaProjectState,
   type KunaProjectFileStates,
@@ -6,16 +11,16 @@ import {
 import { createHash, randomUUID } from "node:crypto";
 import {
   mkdir,
+  lstat,
   mkdtemp,
   readdir,
   realpath,
   readFile,
   rename,
   rm,
-  stat,
   utimes,
 } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 import canonicalize from "canonicalize";
 import writeFileAtomic from "write-file-atomic";
@@ -30,6 +35,7 @@ import {
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   observeStableFile,
@@ -43,6 +49,7 @@ import {
 import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import type { KunaInstallation } from "./KunaInstallation.js";
 import {
+  kunaExportFileNames,
   exportKunaProject,
   KUNA_EXPORT_OPERATION,
   kunaExportFailure,
@@ -59,7 +66,7 @@ import type {
 import { KUNA_PROVIDER_ID } from "./KunaRelease.js";
 
 /** Bumped whenever the entry layout or manifest meaning changes. */
-const CACHE_LAYOUT = 2;
+const CACHE_LAYOUT = 3;
 
 /** A manifest names five files and their digests; anything larger is not ours. */
 const MANIFEST_MAX_BYTES = 64 * 1024;
@@ -71,6 +78,7 @@ const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
 /** Inputs that determine an export's content. Each one is part of the cache key. */
 export interface KunaProjectKeyInputs {
   readonly targetSha256: string;
+  readonly targetBasename: string;
   readonly kunaSha256: string;
   readonly kunaCommand: string;
   readonly kunaExecutable: string;
@@ -89,6 +97,7 @@ export const kunaProjectKey = (inputs: KunaProjectKeyInputs): string =>
       canonicalize({
         layout: CACHE_LAYOUT,
         target_sha256: inputs.targetSha256,
+        target_basename: inputs.targetBasename,
         kuna_sha256: inputs.kunaSha256,
         kuna_command: inputs.kunaCommand,
         kuna_executable: inputs.kunaExecutable,
@@ -104,30 +113,74 @@ const fileSchema = z.strictObject({
   sha256: z.string().regex(SHA256_PATTERN),
 });
 
-const manifestSchema = z.strictObject({
-  layout: z.literal(CACHE_LAYOUT),
-  key: z.string().regex(KEY_PATTERN),
-  inputs: z.strictObject({
-    target_sha256: z.string().regex(SHA256_PATTERN),
-    kuna_sha256: z.string().regex(SHA256_PATTERN),
-    kuna_command: z.string(),
-    kuna_executable: z.string(),
-    kuna_version: z.string().min(1),
-    jobs: z.int().positive(),
-  }),
-  files: z.strictObject({
-    c: fileSchema,
-    h: fileSchema,
-    asm: fileSchema,
-    readme: fileSchema,
-    inventory: fileSchema,
-  }),
-  summary: z.strictObject({
-    decompiled: z.int().nonnegative(),
-    failed: z.int().nonnegative(),
-  }),
-  created_at: utcDateTimeSchema,
-});
+const manifestSchema = z
+  .strictObject({
+    layout: z.literal(CACHE_LAYOUT),
+    key: z.string().regex(KEY_PATTERN),
+    inputs: z.strictObject({
+      target_sha256: z.string().regex(SHA256_PATTERN),
+      target_basename: z.string().min(1),
+      kuna_sha256: z.string().regex(SHA256_PATTERN),
+      kuna_command: z.string(),
+      kuna_executable: z.string(),
+      kuna_version: z.string().min(1),
+      jobs: z.int().positive(),
+    }),
+    files: z.strictObject({
+      c: fileSchema,
+      h: fileSchema,
+      asm: fileSchema,
+      readme: fileSchema,
+      inventory: fileSchema,
+    }),
+    summary: z.strictObject({
+      decompiled: z.int().nonnegative(),
+      failed: z.int().nonnegative(),
+    }),
+    created_at: utcDateTimeSchema,
+  })
+  .superRefine(({ files, inputs, key }, context) => {
+    if (
+      key !==
+      kunaProjectKey({
+        targetSha256: inputs.target_sha256,
+        targetBasename: inputs.target_basename,
+        kunaSha256: inputs.kuna_sha256,
+        kunaCommand: inputs.kuna_command,
+        kunaExecutable: inputs.kuna_executable,
+        kunaVersion: inputs.kuna_version,
+        jobs: inputs.jobs,
+      })
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["key"],
+        message: "Export cache key does not match its producing inputs",
+      });
+    const stem = inputs.target_basename;
+    if (
+      stem.length === 0 ||
+      stem === "." ||
+      stem === ".." ||
+      stem.includes("\0") ||
+      basename(stem) !== stem
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["files", "c", "path"],
+        message: "Export source must use the target's native basename",
+      });
+      return;
+    }
+    const expected = kunaExportFileNames(stem);
+    for (const role of Object.keys(expected) as (keyof typeof expected)[])
+      if (files[role].path !== expected[role])
+        context.addIssue({
+          code: "custom",
+          path: ["files", role, "path"],
+          message: "Export file does not match its producer role and basename",
+        });
+  });
 
 /** Immutable description of one published export, written once at publish. */
 export type KunaProjectManifest = z.infer<typeof manifestSchema>;
@@ -287,7 +340,13 @@ export class KunaProjectCache {
   readonly #inflight = new Map<string, InflightBuild>();
   /** Every build not yet settled, including abandoned ones a retry replaced. */
   readonly #unfinished = new Set<InflightBuild>();
-  readonly #verified = new Map<string, KunaProject>();
+  readonly #verified = new Map<
+    string,
+    {
+      readonly project: KunaProject;
+      readonly manifestState: RegularFileState;
+    }
+  >();
   readonly #pins = new Map<string, number>();
   /** One eviction decision at a time; exports themselves remain concurrent. */
   #eviction: Promise<void> = Promise.resolve();
@@ -364,6 +423,11 @@ export class KunaProjectCache {
     key: string,
     signal?: AbortSignal,
   ): Promise<KunaProject | undefined> {
+    if (!KEY_PATTERN.test(key))
+      throw new ProviderAdapterError(KUNA_PROVIDER_ID, KUNA_EXPORT_OPERATION, {
+        userMessage:
+          "Kuna cache lookup requires a content-addressed project key",
+      });
     await this.#retryHashFiles(key);
     const cleanup = this.#cleanupResult(this.#hashCleanupFailures(key));
     if (!cleanup.ok) throw cleanup.error;
@@ -374,13 +438,27 @@ export class KunaProjectCache {
       if (isMissing(cause)) return undefined;
       throw cause;
     }
-    const verified = this.#verified.get(key);
+    const projects = await this.#admitProjects(root);
+    if (projects === undefined) return undefined;
+    const admitted = await this.#admitEntry(projects, key);
+    if (admitted === undefined) {
+      await this.#discard(key);
+      return undefined;
+    }
+    let verified = this.#verified.get(key);
+    if (
+      verified !== undefined &&
+      !sameRegularFileState(verified.manifestState, admitted.manifest)
+    ) {
+      this.#verified.delete(key);
+      verified = undefined;
+    }
     if (verified !== undefined) {
       try {
         await assertKunaProjectState(
-          verified.directory,
-          verified.manifest.files,
-          verified.fileStates,
+          verified.project.directory,
+          verified.project.manifest.files,
+          verified.project.fileStates,
           signal,
         );
       } catch (cause: unknown) {
@@ -388,19 +466,17 @@ export class KunaProjectCache {
         await this.#discard(key);
         return undefined;
       }
-      if (await this.#touch(key)) return verified;
+      if (await this.#touch(key)) return verified.project;
       this.#verified.delete(key);
       return undefined;
     }
     const entry = join(root, "projects", key);
     let text: string;
     try {
-      text = await this.#readBounded(join(entry, "manifest.json"));
+      text = await readFile(join(entry, "manifest.json"), "utf8");
     } catch (cause: unknown) {
       if (isMissing(cause)) return undefined;
-      if (!(cause instanceof RangeError)) throw cause;
-      await this.#discard(key);
-      return undefined;
+      throw cause;
     }
     const manifest = parseManifest(text);
     if (manifest?.key !== key) {
@@ -464,7 +540,10 @@ export class KunaProjectCache {
       ...parsed.value,
     };
     if (!(await this.#touch(key))) return undefined;
-    this.#verified.set(key, project);
+    this.#verified.set(key, {
+      project,
+      manifestState: regularFileState(admitted.manifest),
+    });
     return project;
   }
 
@@ -480,6 +559,7 @@ export class KunaProjectCache {
       return err(new AnalysisCancelledError(KUNA_EXPORT_OPERATION));
     const key = kunaProjectKey({
       targetSha256: request.targetSha256,
+      targetBasename: basename(request.targetPath),
       kunaSha256: request.installation.sha256,
       kunaCommand: request.installation.configuration.command,
       kunaExecutable: request.installation.executable,
@@ -952,6 +1032,7 @@ export class KunaProjectCache {
       key,
       inputs: {
         target_sha256: request.targetSha256,
+        target_basename: basename(request.targetPath),
         kuna_sha256: request.installation.sha256,
         kuna_command: request.installation.configuration.command,
         kuna_executable: request.installation.executable,
@@ -981,6 +1062,9 @@ export class KunaProjectCache {
       `${JSON.stringify(manifest, null, 2)}\n`,
       { mode: 0o600 },
     );
+    const manifestState = regularFileState(
+      await lstat(join(staging, "entry", "manifest.json")),
+    );
     const destination = join(await this.#resolveRoot(), "projects", key);
     try {
       await rename(join(staging, "entry"), destination);
@@ -998,7 +1082,7 @@ export class KunaProjectCache {
       functions: exported.functions,
       inventory: exported.inventory,
     };
-    this.#verified.set(key, project);
+    this.#verified.set(key, { project, manifestState });
     return ok(project);
   }
 
@@ -1043,21 +1127,31 @@ export class KunaProjectCache {
 
   async #evictUnpinned(keep: string | null): Promise<void> {
     const root = await this.#resolveRoot();
+    const projects = await this.#admitProjects(root);
+    if (projects === undefined) {
+      this.#capacity = "within_limit";
+      return;
+    }
     // A successful build must reach its callers before they can pin its entry.
     // Protect every unfinished build while reading this eviction snapshot.
     const building = new Set([...this.#unfinished].map(({ key }) => key));
     const entries: { key: string; bytes: number; mtimeMs: number }[] = [];
-    for (const name of await readdir(join(root, "projects"))) {
+    for (const name of await readdir(projects)) {
       if (!KEY_PATTERN.test(name)) continue;
       const path = join(root, "projects", name);
-      const status = await stat(path).catch(() => undefined);
-      if (status === undefined) continue;
-      const manifest = await this.#readBounded(join(path, "manifest.json"))
-        .then(parseManifest)
-        .catch(() => undefined);
+      const status = await this.#admitEntry(projects, name);
+      const manifest =
+        status === undefined
+          ? undefined
+          : await readFile(join(path, "manifest.json"), "utf8")
+              .then(parseManifest)
+              .catch((cause: unknown) => {
+                if (isMissing(cause)) return undefined;
+                throw cause;
+              });
       // An owned entry without a valid manifest is unusable; evict it first.
       entries.push(
-        manifest === undefined
+        manifest === undefined || status === undefined
           ? { key: name, bytes: 0, mtimeMs: -1 }
           : {
               key: name,
@@ -1090,10 +1184,12 @@ export class KunaProjectCache {
   async #discard(key: string): Promise<void> {
     this.#verified.delete(key);
     const root = await this.#resolveRoot();
+    const projects = await this.#admitProjects(root);
+    if (projects === undefined) return;
     const trash = join(root, "trash", `${key}-${randomUUID()}`);
     try {
       await mkdir(join(root, "trash"), { recursive: true, mode: 0o700 });
-      await rename(join(root, "projects", key), trash);
+      await rename(join(projects, key), trash);
     } catch (cause: unknown) {
       if (isMissing(cause)) return;
       throw cause;
@@ -1126,13 +1222,53 @@ export class KunaProjectCache {
     }
   }
 
-  async #readBounded(path: string): Promise<string> {
-    const status = await stat(path);
-    if (status.size > MANIFEST_MAX_BYTES)
-      throw new RangeError(
-        `${path} exceeds ${String(MANIFEST_MAX_BYTES)} bytes`,
-      );
-    return readFile(path, "utf8");
+  /** A replaced projects parent does not confer ownership of its children. */
+  async #admitProjects(root: string): Promise<string | undefined> {
+    const projects = join(root, "projects");
+    const parent = await lstat(projects).catch((cause: unknown) => {
+      if (isMissing(cause)) return undefined;
+      throw cause;
+    });
+    if (parent === undefined) return undefined;
+    if (!parent.isDirectory() || parent.isSymbolicLink())
+      throw new ProviderAdapterError(KUNA_PROVIDER_ID, KUNA_EXPORT_OPERATION, {
+        userMessage: `Kuna cache project ownership is unknown: ${projects} is not a regular directory`,
+      });
+    return projects;
+  }
+
+  /** Admit the owned entry layout before reading any manifest or project bytes. */
+  async #admitEntry(
+    projects: string,
+    key: string,
+  ): Promise<
+    | {
+        readonly mtimeMs: number;
+        readonly manifest: Stats;
+      }
+    | undefined
+  > {
+    const entry = join(projects, key);
+    try {
+      const status = await lstat(entry);
+      if (!status.isDirectory() || status.isSymbolicLink()) return undefined;
+      const project = await lstat(join(entry, "project"));
+      if (!project.isDirectory() || project.isSymbolicLink()) return undefined;
+      const manifest = await lstat(join(entry, "manifest.json"));
+      if (
+        !manifest.isFile() ||
+        manifest.isSymbolicLink() ||
+        manifest.size > MANIFEST_MAX_BYTES
+      )
+        return undefined;
+      return {
+        mtimeMs: status.mtimeMs,
+        manifest,
+      };
+    } catch (cause: unknown) {
+      if (isMissing(cause)) return undefined;
+      throw cause;
+    }
   }
 
   #retainFileCleanup(

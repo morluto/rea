@@ -41,6 +41,8 @@ import {
   type LineShape,
 } from "./environmentStateVariants.js";
 import { rewriteCuts } from "./environmentStateRewrites.js";
+import { StateRecordChronology } from "./StateRecordChronology.js";
+import { offsetDateTimeInstantFromEpochMilliseconds } from "../offsetDateTime.js";
 import { ENTRY_BYTES } from "./webNetworkRouteTemplates.js";
 
 type State = Extract<AnalysisViewResult, { kind: "environment-state" }>;
@@ -839,8 +841,7 @@ it("leaves every line checked rather than compare more lines than the variant pa
     path: "/api/items",
     query: `?view=${String(ordinal)}`,
     status: 200,
-    start: ordinal,
-    end: ordinal,
+    timing: { start: undefined, endMs: undefined },
   }));
   const shape = {
     entities: new Map(
@@ -867,8 +868,7 @@ it("tells apart member names that hold the separator, so a line spelling them ot
     path: "/api/items/1",
     query,
     status: 200,
-    start: ordinal,
-    end: ordinal,
+    timing: { start: undefined, endMs: undefined },
   });
   const observed = (ordinal: number, object: JsonObject) => ({
     position: ordinal,
@@ -908,8 +908,7 @@ it("leaves every line checked when comparing many mostly empty lines would excee
       method: "GET",
       path: "/api/items",
       status: 200,
-      start: ordinal,
-      end: ordinal,
+      timing: { start: undefined, endMs: undefined },
     };
     return Object.defineProperty(record, "query", {
       enumerable: true,
@@ -950,8 +949,7 @@ const expandedItemLines = (items: number) => {
       path: `/api/items/${String(ordinal % items)}`,
       query: ordinal < items ? undefined : "?expand=shelf",
       status: 200,
-      start: ordinal,
-      end: ordinal,
+      timing: { start: undefined, endMs: undefined },
     }),
   );
   const shapes = new Map(
@@ -1137,11 +1135,21 @@ it("finds each span's earliest write without scanning the writes before it", () 
       path: "/api/log",
       query: undefined,
       status: 200,
+      timing: {
+        start: {
+          instant: offsetDateTimeInstantFromEpochMilliseconds(start),
+          get ms() {
+            reads += 1;
+            return start;
+          },
+        },
+        get endMs() {
+          reads += 1;
+          return end;
+        },
+      },
     };
-    return Object.defineProperties(record, {
-      start: { enumerable: true, get: () => ((reads += 1), start) },
-      end: { enumerable: true, get: () => ((reads += 1), end) },
-    }) as typeof record & { readonly start: number; readonly end: number };
+    return record;
   };
   const count = 2000;
   const writes = Array.from({ length: count }, (_, index) =>
@@ -1162,7 +1170,11 @@ it("finds each span's earliest write without scanning the writes before it", () 
     later: earlier,
   }));
   reads = 0;
-  const cuts = rewriteCuts(spans, writes, reads_);
+  const chronology = new StateRecordChronology(
+    [...writes, ...reads_.values()],
+    "recorded-start-time",
+  );
+  const cuts = rewriteCuts(spans, writes, reads_, chronology);
   expect(cuts.size).toBe(count - 1);
   expect(reads).toBeLessThan(200 * count);
 });
@@ -1422,6 +1434,125 @@ it.each<{
     expect(state.timeline).toBe("recorded-start-time");
   },
 );
+
+it.each([
+  { duration: undefined, redactedWrite: false },
+  { duration: null, redactedWrite: false },
+  { duration: -1, redactedWrite: false },
+  { duration: "0", redactedWrite: false },
+  { duration: undefined, redactedWrite: true },
+  { duration: null, redactedWrite: true },
+])(
+  "retains chronological initial state with duration $duration and redacted write $redactedWrite",
+  ({ duration, redactedWrite }) => {
+    const entry = (
+      method: string,
+      path: string | null,
+      second: string,
+      body: JsonValue,
+    ) => ({
+      startedDateTime: `2026-10-20T09:00:${second}Z`,
+      time: 0,
+      request: {
+        method,
+        url: path === null ? null : `http://app.example${path}`,
+      },
+      response: {
+        status: 200,
+        content: { mimeType: "application/json", text: JSON.stringify(body) },
+      },
+    });
+    const { time: _duration, ...laterRead } = entry(
+      "GET",
+      "/api/settings",
+      "02",
+      { theme: "dark" },
+    );
+    const entries = [
+      entry("GET", "/api/settings", "00", { theme: "light" }),
+      { ...laterRead, ...(duration === undefined ? {} : { time: duration }) },
+      entry("PATCH", redactedWrite ? null : "/api/settings", "01", {
+        theme: "dark",
+      }),
+      entry("GET", "/api/health", "00.1", { healthy: true }),
+      entry("GET", "/api/version", "00.2", { version: "1" }),
+    ];
+    const capture = webNetworkCaptureSchema.parse(
+      environmentManifestCaptureFixture(entries),
+    );
+    const before = structuredClone(capture);
+    const state = stateOf(parentOf(analysisViewCaptureEvidence(capture)));
+    expect(state.timeline).toBe("recorded-start-time");
+    expect(state.limitations).toContain(
+      "Some records carry no usable request duration; their completion and overlap remain unknown.",
+    );
+    expect(state.documents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: "/api/settings",
+          value: { theme: "light" },
+          record_ordinal: 0,
+        }),
+        expect.objectContaining({
+          path: "/api/health",
+          value: { healthy: true },
+          record_ordinal: 3,
+        }),
+        expect.objectContaining({
+          path: "/api/version",
+          value: { version: "1" },
+          record_ordinal: 4,
+        }),
+      ]),
+    );
+    expect(capture).toEqual(before);
+    if (redactedWrite)
+      expect(state.limitations).toContain(
+        "1 of the recorded writes had a redacted URL; each ends the initial state of every type, since its target is unknown.",
+      );
+  },
+);
+
+it("does not confirm completion of an untimed delete while preserving unrelated known reads", () => {
+  const source = captureOf([
+    ["GET", "/api/items", [{ id: 1 }, { id: 2 }]],
+    ["GET", "/api/items/2", { id: 2 }],
+    ["GET", "/api/health", { healthy: true }],
+    ["GET", "/api/version", { version: "1" }],
+    ["DELETE", "/api/items/2", "", 204],
+    ["GET", "/api/items/2", null, 404],
+  ]);
+  const known = stateOf(source);
+  expect(known.writes).toContainEqual(
+    expect.objectContaining({ tool: "delete_items_by_id", served: true }),
+  );
+  const result = structuredClone(source.normalizedResult) as {
+    records: { reported: { time?: JsonValue } }[];
+  };
+  delete result.records[4]!.reported.time;
+  const before = structuredClone(result);
+  const state = stateOf({ ...source, normalizedResult: result });
+  expect(state.timeline).toBe("recorded-start-time");
+  expect(state.limitations).toContain(
+    "Some records carry no usable request duration; their completion and overlap remain unknown.",
+  );
+  expect(state.writes).toContainEqual(
+    expect.objectContaining({ tool: "delete_items_by_id", served: false }),
+  );
+  expect(state.documents).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        path: "/api/health",
+        value: { healthy: true },
+      }),
+      expect.objectContaining({
+        path: "/api/version",
+        value: { version: "1" },
+      }),
+    ]),
+  );
+  expect(result).toEqual(before);
+});
 
 it("bounds a parameterized namespace by concrete writes before publishing new items", () => {
   const result = projectAnalysisView(
@@ -1819,3 +1950,68 @@ it("preserves own prototype-named entity and document fields through capture pro
     expect.objectContaining({ value: document }),
   );
 });
+
+it.each([
+  {
+    starts: [
+      "Tue, 20 Oct 2026 09:00:00 GMT",
+      "Tue, 20 Oct 2026 09:02:00 GMT",
+      "Tue, 20 Oct 2026 09:01:00 GMT",
+    ],
+    missingDuration: false,
+  },
+  {
+    starts: [
+      "Tue, 20 Oct 2026 14:30:00 GMT+0530",
+      "Tue, 20 Oct 2026 14:32:00 GMT+0530",
+      "Tue, 20 Oct 2026 14:31:00 GMT+0530",
+    ],
+    missingDuration: true,
+  },
+  {
+    starts: [
+      "October 20, 2026 09:00:00",
+      "October 20, 2026 09:02:00",
+      "October 20, 2026 09:01:00",
+    ],
+    missingDuration: true,
+  },
+])(
+  "preserves native chronological state and discloses interpretation ($missingDuration)",
+  ({ starts, missingDuration }) => {
+    const entries = starts.map((startedDateTime, ordinal) => ({
+      startedDateTime,
+      ...(missingDuration && ordinal === 2 ? {} : { time: 0 }),
+      request: {
+        method: ordinal === 2 ? "PATCH" : "GET",
+        url: "http://app.example/api/settings",
+      },
+      response: {
+        status: 200,
+        content: {
+          mimeType: "application/json",
+          text: ordinal === 0 ? '{"theme":"light"}' : '{"theme":"dark"}',
+        },
+      },
+    }));
+    const capture = webNetworkCaptureSchema.parse(
+      environmentManifestCaptureFixture(entries),
+    );
+    const original = structuredClone(capture.records);
+    const state = stateOf(parentOf(analysisViewCaptureEvidence(capture)));
+    expect(state.timeline).toBe("recorded-start-time");
+    expect(state.documents).toEqual([
+      {
+        tool: "get_settings",
+        path: "/api/settings",
+        value: { theme: "light" },
+        record_ordinal: 0,
+      },
+    ]);
+    expect(state.limitations).toContain(
+      "Some recorded start spellings use native Date parsing at millisecond precision; spellings without an explicit zone depend on the host timezone.",
+    );
+    expect(capture.records).toEqual(original);
+    if (missingDuration) expect(state.write_clock).toBeNull();
+  },
+);

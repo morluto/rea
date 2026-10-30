@@ -330,12 +330,6 @@ const conflictingRules = (): JsonValue =>
     ]),
   );
 
-const isEvidenceValue = (value: unknown): boolean =>
-  typeof value === "object" &&
-  value !== null &&
-  "evidence_id" in value &&
-  "normalized_result" in value;
-
 /** Inspect a HAR as inspect-web-network-capture does and serialize the Evidence as it prints it; a refusal is the command's output. */
 const inspectBuildHar = async (
   capturePath: string,
@@ -345,7 +339,6 @@ const inspectBuildHar = async (
 ): Promise<Result<EnvironmentExportFile, JsonValue>> => {
   const { createWebNetworkCaptureService } =
     await import("../composition/webNetworkCaptures.js");
-  const { parseEvidence } = await import("../domain/evidence.js");
   const { environmentExportEvidenceFile } =
     await import("../application/environment/environmentExport.js");
   const { ENVIRONMENT_BUILD_OPERATION } =
@@ -368,15 +361,15 @@ const inspectBuildHar = async (
     "inspect_web_network_capture",
     signal,
   );
-  if (!isEvidenceValue(inspected))
+  if (!inspected.ok)
     return err({
       error: "Application workflow failed",
-      ...(inspected as Record<string, JsonValue>),
+      ...inspected.error,
     });
   const file = await environmentExportEvidenceFile(
     "evidence",
     capturePath,
-    parseEvidence(inspected),
+    inspected.value,
     ENVIRONMENT_BUILD_OPERATION,
   );
   return file.ok ? ok(file.value) : err(cliError(file.error));
@@ -436,6 +429,7 @@ const buildEnvironmentCommand = async (
       "evidence",
       capturePath,
       ENVIRONMENT_BUILD_OPERATION,
+      ["capture"],
     );
     if (!read.ok) return cliError(read.error);
     capture = read.value;
