@@ -43,6 +43,84 @@ const observedCleanup = (signaled: boolean, rendererFailure?: () => boolean) =>
 
 const intervention = PROCESS_CAPTURE_CLEANUP_INTERVENTION_UNKNOWN;
 
+it.each(["capture", "observations"] as const)(
+  "retains a producer's known signal after failed cleanup in %s",
+  async (shape) => {
+    let recovered = false;
+    const cleanup = await releaseProcessResources({
+      timers: new Set(),
+      terminal: { pid: 321 },
+      renderer: undefined,
+      runId: "failed-cleanup-signal-fixture",
+      temporaryRoot: "/fixture/root",
+      host: {
+        platform: "linux",
+        cleanupProcessGroup: async () =>
+          recovered
+            ? { cleaned: true, signaled: false }
+            : {
+                cleaned: false,
+                signaled: true,
+                reason: "post-signal verification failed",
+              },
+        removeTemporaryRoot: async () => undefined,
+      },
+    });
+    const observations = createProcessCaptureObservationBuffer({
+      frames: [],
+      interactions: [],
+      samples: [],
+      eventJournal: [],
+      before: undefined,
+    });
+    const failure = new Error("original terminal failure");
+    try {
+      resolveProcessResult(
+        shape === "capture" ? pendingCapture() : undefined,
+        failure,
+        cleanup,
+        shape === "observations" ? observations : undefined,
+      );
+      throw new Error("Expected incomplete cleanup");
+    } catch (cause: unknown) {
+      if (!(cause instanceof ProcessCaptureError)) throw cause;
+      expect(cause.cause).toBe(failure);
+      expect(cause.cleanupIncomplete).toBe(true);
+      expect(cause.cleanupReport?.owned_process_group).toEqual({
+        state: "unverified",
+        reason: "post-signal verification failed",
+      });
+      const partial = cause.partialObservation;
+      if (partial === undefined)
+        throw new Error("Expected partial observations");
+      const facts =
+        "capture" in partial ? partial.capture : partial.observations;
+      expect(facts.residual_unknowns ?? []).toContainEqual(intervention);
+      expect(
+        analysisErrorProjectionSchema.parse(projectAnalysisError(cause)),
+      ).toMatchObject({
+        details: {
+          partial_observation: {
+            [shape]: {
+              residual_unknowns: expect.arrayContaining([intervention]),
+            },
+          },
+        },
+      });
+      if ("capture" in partial)
+        expect(partial.capture.settlement.cleanup_outcome).toBe("failed");
+      const historical = JSON.stringify(partial);
+      recovered = true;
+      await cleanup.cleanupLease?.release();
+      expect(cause.cleanupIncomplete).toBe(false);
+      expect(JSON.stringify(cause.partialObservation)).toBe(historical);
+    } finally {
+      recovered = true;
+      await cleanup.cleanupLease?.release();
+    }
+  },
+);
+
 it("reports cleanup intervention even when settlement had already quiesced", async () => {
   const cleanup = await observedCleanup(true);
   const capture = resolveProcessResult(pendingCapture(), undefined, cleanup);

@@ -1119,8 +1119,9 @@ const releaseCapturedProcessGroup = async (
   try {
     const cleaned = await host.cleanupProcessGroup(ownership);
     unverified.push(...(cleaned.unverified ?? []));
-    if (cleaned.cleaned) signaled = cleaned.signaled;
-    else outcome = { state: "unverified", reason: cleaned.reason };
+    signaled = cleaned.signaled;
+    if (!cleaned.cleaned)
+      outcome = { state: "unverified", reason: cleaned.reason };
   } catch (cause: unknown) {
     outcome = {
       state: "failed",

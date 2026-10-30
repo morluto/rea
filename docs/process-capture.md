@@ -619,6 +619,11 @@ filesystem work. Failed resource cleanup remains `failed` and retains the same
 intervention fact in partial observations. This does not establish how an
 uncaptured run would have continued or change which processes REA may signal.
 
+An observed signal is retained even if a later group signal or final ownership
+verification fails. It does not establish complete cleanup: the failed resource,
+original diagnostic, and retry authority remain visible. A successful retry can
+clear the live cleanup status without rewriting the earlier partial observations.
+
 If capture completion fails before a capture exists, the intervention is retained
 in `partial_observation.observations.residual_unknowns`, alongside the available
 observations and explicit unavailable fields. Older records may omit this optional
