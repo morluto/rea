@@ -4,6 +4,7 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import { bindArtifactFileCleanup } from "./ArtifactFileOperation.js";
 import { completedStableArtifactObservation } from "./StableArtifactObservation.js";
+import type { StableArtifactSnapshot } from "./readStableArtifact.js";
 
 const artifactCleanupFailure = (
   cause: unknown,
@@ -32,15 +33,20 @@ export const projectArtifactCloseFailure = (
   return error;
 };
 
-/** Preserve completed physical identity and exact cleanup ownership around a provider's primary failure. */
+/** Preserve completed physical identity, including a snapshot whose decoding failed, and exact cleanup ownership around a provider's primary failure. */
 export const projectStableArtifactFailure = (
   cause: unknown,
   primary: AnalysisError,
   path: string,
   providerId: string,
   operation: string,
+  completed?: StableArtifactSnapshot,
 ): AnalysisError => {
-  const observation = completedStableArtifactObservation(cause, path);
+  const observation = completedStableArtifactObservation(
+    cause,
+    path,
+    completed,
+  );
   if (observation !== undefined) primary.retainPartialObservation(observation);
   const cleanup = artifactCleanupFailure(cause, providerId, operation);
   if (cleanup === undefined) return primary;

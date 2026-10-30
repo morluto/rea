@@ -443,3 +443,52 @@ it("keeps imports unresolved when two verneed entries share a version index", ()
     expect.objectContaining({ code: "version_unresolved" }),
   );
 });
+
+it("charges every retained reference to one repeated dynamic string", () => {
+  const name = `sym_${"x".repeat(60000)}`;
+  const bytes = elfDependencyFixture({
+    imports: Array.from({ length: 64 }, () => ({ name })),
+    verneed: [],
+    verdef: [],
+  });
+  let failure: unknown;
+  try {
+    parse(bytes);
+  } catch (cause) {
+    failure = cause;
+  }
+  expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+  expect(failure).toMatchObject({ reason: "limit", boundary: "memory" });
+  expect((failure as Error).message).toContain(
+    `${String(bytes.length)}-byte budget fixed by the admitted image length`,
+  );
+});
+
+it("keeps DT_STRTAB names when the linked .dynstr section names other bytes", () => {
+  const bytes = elfDependencyFixture({});
+  const shoff = Number(bytes.readBigUInt64LE(0x28));
+  const width = bytes.readUInt16LE(0x3a);
+  const count = bytes.readUInt16LE(0x3c);
+  const names = bytes.readUInt16LE(0x3e);
+  const header = (index: number) => shoff + index * width;
+  const dynsym = Array.from({ length: count }, (_, index) => index).find(
+    (index) => bytes.readUInt32LE(header(index) + 4) === 11,
+  );
+  if (dynsym === undefined) throw new Error("fixture has no .dynsym");
+  const dynstr = bytes.readUInt32LE(header(dynsym) + 40);
+  // Point the linked string section at .shstrtab while DT_STRTAB is unchanged.
+  bytes.writeBigUInt64LE(
+    bytes.readBigUInt64LE(header(names) + 24),
+    header(dynstr) + 24,
+  );
+  const report = parse(bytes);
+  expect(report.needed.map((entry) => entry.name)).toEqual(defaultNeeded);
+  expect(report.dynamic.soname?.name).toBe("libdemo.so.1");
+  expect(report.coverage.status).toBe("partial");
+  expect(report.issues).toContainEqual(
+    expect.objectContaining({
+      code: "malformed_entry",
+      message: expect.stringContaining(".dynstr section header disagrees"),
+    }),
+  );
+});

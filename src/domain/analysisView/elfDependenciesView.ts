@@ -23,6 +23,10 @@ import { selectViewRows } from "./selectViewRows.js";
 const neededRow = elfDependenciesReportSchema.shape.needed.element;
 const importRow = elfDependenciesReportSchema.shape.imports.element;
 const issueRow = elfDependenciesReportSchema.shape.issues.element;
+const definitionTable = elfDependenciesReportSchema.shape.version_definitions;
+const definitionRow = definitionTable.shape.names.element;
+const maximumRow =
+  elfDependenciesReportSchema.shape.derived_version_maxima.element;
 const sourceIndex = { source_index: z.int().nonnegative() };
 const page = {
   kind: z.literal("elf-dependencies"),
@@ -68,6 +72,30 @@ export const elfDependenciesViewRequestSchema = z.discriminatedUnion(
     }),
     z.strictObject({
       ...page,
+      collection: z.literal("definitions"),
+      names: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "Exact GNU version-definition names. Omitted includes all names; [] matches none.",
+        ),
+      indices: z.array(z.int().nonnegative()).optional(),
+      fields: z.array(definitionRow.keyof()).optional(),
+    }),
+    z.strictObject({
+      ...page,
+      collection: z.literal("maxima"),
+      names: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "Exact version namespaces, such as GLIBC. Omitted includes all namespaces; [] matches none.",
+        ),
+      indices: z.array(z.int().nonnegative()).optional(),
+      fields: z.array(maximumRow.keyof()).optional(),
+    }),
+    z.strictObject({
+      ...page,
       collection: z.literal("imports"),
       names: z
         .array(z.string())
@@ -89,6 +117,8 @@ export const elfDependenciesViewRequestSchema = z.discriminatedUnion(
 export const elfDependenciesViewItemsSchema = z.union([
   z.array(neededRow.partial().extend(sourceIndex)),
   z.array(versionRowSchema.partial().extend(sourceIndex)),
+  z.array(definitionRow.partial().extend(sourceIndex)),
+  z.array(maximumRow.partial().extend(sourceIndex)),
   z.array(importRow.partial().extend(sourceIndex)),
   z.array(issueRow.extend(sourceIndex)),
 ]);
@@ -96,6 +126,8 @@ export const elfDependenciesViewItemsSchema = z.union([
 const counts = {
   needed_count: z.int().nonnegative(),
   version_count: z.int().nonnegative(),
+  definition_count: z.int().nonnegative(),
+  derived_maximum_count: z.int().nonnegative(),
   import_count: z.int().nonnegative(),
   issue_count: z.int().nonnegative(),
   limitation_count: z.int().nonnegative(),
@@ -109,8 +141,13 @@ export const elfDependenciesSummarySchema = elfDependenciesReportSchema
     issues: true,
     limitations: true,
     version_requirements: true,
+    version_definitions: true,
+    derived_version_maxima: true,
   })
-  .extend(counts);
+  .extend({
+    ...counts,
+    version_definitions: definitionTable.omit({ names: true }),
+  });
 
 const readReport = createAnalysisViewResultReader(elfDependenciesSchema);
 
@@ -157,11 +194,15 @@ export const projectElfDependenciesView = (
     type_name: report.type_name,
     interpreter: report.interpreter,
     dynamic: report.dynamic,
-    version_definitions: report.version_definitions,
-    derived_version_maxima: report.derived_version_maxima,
+    version_definitions: {
+      status: report.version_definitions.status,
+      location: report.version_definitions.location,
+    },
     coverage: report.coverage,
     needed_count: report.needed.length,
     version_count: versions.length,
+    definition_count: report.version_definitions.names.length,
+    derived_maximum_count: report.derived_version_maxima.length,
     import_count: report.imports.length,
     issue_count: report.issues.length,
     limitation_count: report.limitations.length,
@@ -229,19 +270,20 @@ export const projectElfDependenciesView = (
     });
   }
   const names = view.names === undefined ? undefined : new Set(view.names);
-  if (view.collection === "needed") {
-    const allowed = neededRow.keyof().options;
-    const fields =
-      view.fields === undefined ? allowed : [...new Set(view.fields)];
+  const pageRows = <Row extends Record<string, unknown>>(
+    rows: readonly Row[],
+    allowed: readonly string[],
+    fieldsOf: readonly string[] | undefined,
+    label: string,
+    nameOf: (row: Row) => string | null,
+  ) => {
+    const fields = fieldsOf === undefined ? allowed : [...new Set(fieldsOf)];
     if (fields.some((field) => !allowed.includes(field)))
       return invalid(
-        `Selected needed fields do not belong to DT_NEEDED rows; available fields: ${allowed.join(", ")}.`,
+        `Selected ${label} fields do not belong to those rows; available fields: ${allowed.join(", ")}.`,
       );
     const columns = new Set<string>(fields);
-    const projectRow = (
-      row: ElfDependencies["needed"][number],
-      source_index: number,
-    ) => ({
+    const projectRow = (row: Row, source_index: number) => ({
       ...Object.fromEntries(
         Object.entries(row).filter(([key]) => columns.has(key)),
       ),
@@ -250,18 +292,21 @@ export const projectElfDependenciesView = (
     const selected =
       names === undefined && indices === undefined
         ? {
-            rows: report.needed
+            rows: rows
               .slice(view.offset, view.offset + view.limit)
               .map((row, index) => projectRow(row, view.offset + index)),
-            total: report.needed.length,
+            total: rows.length,
           }
         : selectViewRows(
-            report.needed,
+            rows,
             view,
-            (row, index) =>
-              (indices === undefined || indices.has(index)) &&
-              (names === undefined ||
-                (row.name !== null && names.has(row.name))),
+            (row, index) => {
+              const name = nameOf(row);
+              return (
+                (indices === undefined || indices.has(index)) &&
+                (names === undefined || (name !== null && names.has(name)))
+              );
+            },
             projectRow,
           );
     return ok({
@@ -276,98 +321,47 @@ export const projectElfDependenciesView = (
         selected.total,
       ),
     });
-  }
-  if (view.collection === "versions") {
-    const allowed = versionRowSchema.keyof().options;
-    const fields =
-      view.fields === undefined ? allowed : [...new Set(view.fields)];
-    if (fields.some((field) => !allowed.includes(field)))
-      return invalid(
-        `Selected version fields do not belong to GNU version-requirement rows; available fields: ${allowed.join(", ")}.`,
+  };
+  switch (view.collection) {
+    case "needed":
+      return pageRows(
+        report.needed,
+        neededRow.keyof().options,
+        view.fields,
+        "needed",
+        (row) => row.name,
       );
-    const columns = new Set<string>(fields);
-    const projectRow = (
-      row: (typeof versions)[number],
-      source_index: number,
-    ) => ({
-      ...Object.fromEntries(
-        Object.entries(row).filter(([key]) => columns.has(key)),
-      ),
-      source_index,
-    });
-    const selected =
-      names === undefined && indices === undefined
-        ? {
-            rows: versions
-              .slice(view.offset, view.offset + view.limit)
-              .map((row, index) => projectRow(row, view.offset + index)),
-            total: versions.length,
-          }
-        : selectViewRows(
-            versions,
-            view,
-            (row, index) =>
-              (indices === undefined || indices.has(index)) &&
-              (names === undefined ||
-                (row.name !== null && names.has(row.name))),
-            projectRow,
-          );
-    return ok({
-      ...shared,
-      kind: "elf-dependencies" as const,
-      view,
-      dependencies: summary,
-      items: selected.rows,
-      coverage: pageViewCoverage(
-        view.offset,
-        selected.rows.length,
-        selected.total,
-      ),
-    });
+    case "versions":
+      return pageRows(
+        versions,
+        versionRowSchema.keyof().options,
+        view.fields,
+        "version",
+        (row) => row.name,
+      );
+    case "definitions":
+      return pageRows(
+        report.version_definitions.names,
+        definitionRow.keyof().options,
+        view.fields,
+        "version-definition",
+        (row) => row.name,
+      );
+    case "maxima":
+      return pageRows(
+        report.derived_version_maxima,
+        maximumRow.keyof().options,
+        view.fields,
+        "derived-maximum",
+        (row) => row.namespace,
+      );
+    case "imports":
+      return pageRows(
+        report.imports,
+        importRow.keyof().options,
+        view.fields,
+        "import",
+        (row) => row.name,
+      );
   }
-  const allowed = importRow.keyof().options;
-  const fields =
-    view.fields === undefined ? allowed : [...new Set(view.fields)];
-  if (fields.some((field) => !allowed.includes(field)))
-    return invalid(
-      `Selected import fields do not belong to undefined-symbol rows; available fields: ${allowed.join(", ")}.`,
-    );
-  const columns = new Set<string>(fields);
-  const projectRow = (
-    row: ElfDependencies["imports"][number],
-    source_index: number,
-  ) => ({
-    ...Object.fromEntries(
-      Object.entries(row).filter(([key]) => columns.has(key)),
-    ),
-    source_index,
-  });
-  const selected =
-    names === undefined && indices === undefined
-      ? {
-          rows: report.imports
-            .slice(view.offset, view.offset + view.limit)
-            .map((row, index) => projectRow(row, view.offset + index)),
-          total: report.imports.length,
-        }
-      : selectViewRows(
-          report.imports,
-          view,
-          (row, index) =>
-            (indices === undefined || indices.has(index)) &&
-            (names === undefined || (row.name !== null && names.has(row.name))),
-          projectRow,
-        );
-  return ok({
-    ...shared,
-    kind: "elf-dependencies" as const,
-    view,
-    dependencies: summary,
-    items: selected.rows,
-    coverage: pageViewCoverage(
-      view.offset,
-      selected.rows.length,
-      selected.total,
-    ),
-  });
 };

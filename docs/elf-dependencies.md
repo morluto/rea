@@ -55,8 +55,12 @@ each import keeps its version index, hidden bit, and a resolved
 
 A missing `PT_DYNAMIC` is an observed empty load-time dependency inventory. It
 is not proof another overlay or container carried dynamic linking metadata.
-When section headers are stripped, tables are located from `PT_DYNAMIC` and
-`DT_*` virtual addresses through `PT_LOAD`. Coverage is `partial` when a table
+`DT_*` entries are the load-time facts. A section header is used for a table
+only when it names the same address, maps to the same file bytes, and agrees
+on any declared size or entry width; a disagreeing section is reported as an
+issue and the `DT_*` declaration is used. When section headers are stripped,
+tables are located from `PT_DYNAMIC` and `DT_*` virtual addresses through
+`PT_LOAD`. Coverage is `partial` when a table
 cannot be located or a string cannot be read. Complete coverage never retains
 issues.
 
@@ -65,7 +69,11 @@ issues.
 The selected file is limited to 64 MiB by default (512 MiB maximum). At most
 1024 `DT_NEEDED` entries, 4096 GNU version records, and 65536 undefined
 dynamic symbols are examined by default (65536 / 65536 / 262144 maximum).
-Exceeding a named budget fails with no partial success. Cyclic `vn_next` /
+Exceeding a named budget fails with no partial success. Decoded dynamic
+strings share one scan and retained-text budget fixed by the admitted image
+length, so names repeated by many rows cannot expand past the input size; this
+budget has no runtime override. A failure after the file was read keeps its
+path, SHA-256, and byte count as a partial observation. Cyclic `vn_next` /
 `vna_next` chains, duplicate unique dynamic tags, malformed ELF headers, and
 unsupported ELF extended numbering return no complete inventory.
 
@@ -77,8 +85,11 @@ Derived version maxima do not establish ABI compatibility.
 Omitted or `complete` detail returns the inventory inline. `detail: "summary"`
 retains the complete Evidence and returns identity, counts, and source
 coverage. Query `inspect_analysis_view` with `kind: "elf-dependencies"` and
-collection `needed`, `versions`, `imports`, or `issues`, using exact names or
-original indices, selected fields, and matching-row pagination. CLI summary
+collection `needed`, `versions`, `definitions`, `maxima`, `imports`, or
+`issues`, using exact names (namespaces for `maxima`) or original indices,
+selected fields, and matching-row pagination. Summaries and pages report
+version-definition and derived-maximum counts; those rows are paged through
+their own collections. CLI summary
 requires `--evidence_output`.
 
 This workflow does not execute the image, invoke the dynamic loader, or resolve

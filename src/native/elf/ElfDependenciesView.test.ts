@@ -136,3 +136,39 @@ it("returns a summary without row bodies and a stable view digest", () => {
   const { view_digest, ...content } = viewed;
   expect(view_digest).toBe(digestCanonicalValue(content, "Analysis view"));
 });
+
+it("pages version definitions and derived maxima instead of repeating them", () => {
+  const report = reportOf();
+  const summary = project(report, { kind: "summary" });
+  expect(summary).toMatchObject({
+    summary: {
+      version_definitions: { status: "present" },
+      definition_count: report.version_definitions.names.length,
+      derived_maximum_count: report.derived_version_maxima.length,
+    },
+  });
+  expect(summary).not.toHaveProperty("summary.derived_version_maxima");
+  expect(summary).not.toHaveProperty("summary.version_definitions.names");
+  expect(
+    project(report, {
+      kind: "elf-dependencies",
+      collection: "definitions",
+      fields: ["name", "base"],
+      limit: 1,
+    }),
+  ).toMatchObject({
+    items: [{ source_index: 0, name: "libdemo.so.1", base: true }],
+    dependencies: { definition_count: 1 },
+  });
+  const maxima = project(report, {
+    kind: "elf-dependencies",
+    collection: "maxima",
+    names: ["GLIBC"],
+    fields: ["maximum"],
+  });
+  expect(maxima).toMatchObject({
+    items: [{ maximum: "GLIBC_2.34" }],
+    coverage: { total: 1 },
+  });
+  expect(maxima).not.toHaveProperty("dependencies.derived_version_maxima");
+});

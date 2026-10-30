@@ -220,24 +220,73 @@ const typeName = (type: number): ElfDependencyImport["type"] => {
   }
 };
 
-const readCString = (
-  table: Buffer,
-  offset: number,
-): { name: string | null; truncated: boolean; outside: boolean } => {
-  const observed = observeElfStringTableEntry(table, offset, 65536);
-  if (observed.state === "outside")
-    return { name: null, truncated: false, outside: true };
-  if (observed.state === "truncated")
-    return { name: null, truncated: true, outside: false };
-  return {
-    name: elfStringTableText(observed),
-    truncated: false,
-    outside: false,
-  };
-};
+interface CString {
+  readonly name: string | null;
+  readonly truncated: boolean;
+  readonly outside: boolean;
+}
+
+/**
+ * Dynamic string table reads share one scan and retained-text budget fixed by
+ * the admitted image length. Each offset is scanned and decoded once; every
+ * retained reference is charged, because each one is serialized again.
+ */
+class DynamicStrings {
+  readonly #cache = new Map<number, CString>();
+  #scanned = 0;
+  #retained = 0;
+
+  constructor(
+    readonly table: Buffer,
+    readonly limit: number,
+  ) {}
+
+  #charge(field: "scanned" | "retained", bytes: number): void {
+    const used = field === "scanned" ? this.#scanned : this.#retained;
+    if (bytes > this.limit - used)
+      throw new ArtifactReaderFailure(
+        "limit",
+        `ELF dependency text exceeds the ${String(this.limit)}-byte budget fixed by the admitted image length.`,
+        { boundary: "memory" },
+      );
+    if (field === "scanned") this.#scanned += bytes;
+    else this.#retained += bytes;
+  }
+
+  /** Charge text a report row repeats from an already decoded string. */
+  retain(...values: readonly (string | null)[]): void {
+    for (const value of values)
+      if (value !== null) this.#charge("retained", value.length);
+  }
+
+  read(offset: number): CString {
+    const cached = this.#cache.get(offset);
+    if (cached !== undefined) {
+      this.retain(cached.name);
+      return cached;
+    }
+    const observed = observeElfStringTableEntry(this.table, offset, 65536);
+    this.#charge("scanned", observed.examinedBytes);
+    let entry: CString;
+    if (observed.state === "outside")
+      entry = { name: null, truncated: false, outside: true };
+    else if (observed.state === "truncated")
+      entry = { name: null, truncated: true, outside: false };
+    else {
+      this.#charge("retained", observed.contentBytes);
+      entry = {
+        name: elfStringTableText(observed),
+        truncated: false,
+        outside: false,
+      };
+    }
+    this.#cache.set(offset, entry);
+    return entry;
+  }
+}
 
 const searchPath = (
-  table: Buffer,
+  strings: DynamicStrings,
   offset: number,
   issues: ElfDependencyIssue[],
   location: string,
@@ -246,7 +295,7 @@ const searchPath = (
   entries: string[];
   tokens: ReturnType<typeof elfSearchPathTokens>;
 } | null => {
-  const observed = readCString(table, offset);
+  const observed = strings.read(offset);
   if (observed.name === null) {
     issues.push({
       code: "name_unreadable",
@@ -257,6 +306,8 @@ const searchPath = (
     });
     return null;
   }
+  // The split entries repeat the raw string's bytes in the report.
+  strings.retain(observed.name);
   return {
     raw: observed.name,
     entries: splitElfSearchPath(observed.name),
@@ -289,6 +340,34 @@ const mappedExtentEnd = (
     )
       return mapping.offset + mapping.size;
   return null;
+};
+
+/**
+ * DT_* entries are the load-time facts. A section header describing the same
+ * table is accepted only when it names the same address, maps to the same file
+ * bytes, and agrees on any declared size; otherwise the dynamic declaration wins.
+ */
+const agreedSection = (
+  section: SectionFacts | undefined,
+  declared: number | undefined,
+  mappings: readonly FileMapping[],
+  label: string,
+  issues: ElfDependencyIssue[],
+  sizeAgrees: (section: SectionFacts) => boolean = () => true,
+): SectionFacts | undefined => {
+  if (section === undefined || declared === undefined) return section;
+  if (
+    section.address === BigInt(declared) &&
+    mapAddress(mappings, BigInt(declared), 1) === section.offset &&
+    sizeAgrees(section)
+  )
+    return section;
+  issues.push({
+    code: "malformed_entry",
+    location: hex(section.offset),
+    message: `${label} section header disagrees with its dynamic-table declaration; using the dynamic declaration`,
+  });
+  return undefined;
 };
 
 const tableFromSection = (
@@ -585,31 +664,49 @@ export const parseElfDependencies = (
     shnum,
     shentsize,
   );
-  const dynsymSection = sectionFacts.find(
-    (section) => section.type === SHT_DYNSYM,
-  );
-  const dynstrSection =
-    dynsymSection === undefined ? undefined : sectionFacts[dynsymSection.link];
-  const versymSection = sectionFacts.find(
-    (section) => section.type === SHT_GNU_VERSYM,
-  );
-  const verneedSection = sectionFacts.find(
-    (section) => section.type === SHT_GNU_VERNEED,
-  );
-  const verdefSection = sectionFacts.find(
-    (section) => section.type === SHT_GNU_VERDEF,
-  );
-  const hashSection = sectionFacts.find((section) => section.type === 5);
-  const gnuHashSection = sectionFacts.find(
-    (section) => section.type === SHT_GNU_HASH,
+  const sectionOf = (type: number, tag: number, label: string) =>
+    agreedSection(
+      sectionFacts.find((section) => section.type === type),
+      unique.get(tag),
+      mappings,
+      label,
+      issues,
+    );
+  const syment = unique.get(DT_SYMENT);
+  const dynsymSection = agreedSection(
+    sectionFacts.find((section) => section.type === SHT_DYNSYM),
+    unique.get(DT_SYMTAB),
+    mappings,
+    ".dynsym",
+    issues,
+    (section) =>
+      syment === undefined ||
+      section.entrySize === 0 ||
+      section.entrySize === syment,
   );
   const strsz = unique.get(DT_STRSZ);
+  const linkedStrings =
+    dynsymSection === undefined ? undefined : sectionFacts[dynsymSection.link];
+  const dynstrSection = agreedSection(
+    linkedStrings?.type === 3 ? linkedStrings : undefined,
+    unique.get(DT_STRTAB),
+    mappings,
+    ".dynstr",
+    issues,
+    (section) => strsz === undefined || section.size === strsz,
+  );
+  const versymSection = sectionOf(SHT_GNU_VERSYM, DT_VERSYM, ".gnu.version");
+  const verneedSection = sectionOf(
+    SHT_GNU_VERNEED,
+    DT_VERNEED,
+    ".gnu.version_r",
+  );
+  const verdefSection = sectionOf(SHT_GNU_VERDEF, DT_VERDEF, ".gnu.version_d");
+  const hashSection = sectionOf(5, DT_HASH, ".hash");
+  const gnuHashSection = sectionOf(SHT_GNU_HASH, DT_GNU_HASH, ".gnu.hash");
   const dynstrTable =
-    tableFromSection(
-      dynstrSection !== undefined && dynstrSection.type === 3
-        ? dynstrSection
-        : undefined,
-    ) ?? tableFromVirtual(mappings, unique.get(DT_STRTAB), strsz ?? 0);
+    tableFromSection(dynstrSection) ??
+    tableFromVirtual(mappings, unique.get(DT_STRTAB), strsz ?? 0);
   if (
     dynstrTable === null &&
     (neededOffsets.length > 0 || unique.has(DT_SONAME))
@@ -620,13 +717,15 @@ export const parseElfDependencies = (
       message:
         "Dynamic string table could not be located from section headers or DT_STRTAB",
     });
-  const dynstr =
+  const dynstr = new DynamicStrings(
     dynstrTable === null
       ? Buffer.alloc(0)
-      : reader.range(dynstrTable.offset, dynstrTable.size, "DT_STRTAB");
+      : reader.range(dynstrTable.offset, dynstrTable.size, "DT_STRTAB"),
+    bytes.length,
+  );
   const needed: ElfDependencyNeeded[] = neededOffsets.map(
     (name_offset, index) => {
-      const observed = readCString(dynstr, name_offset);
+      const observed = dynstr.read(name_offset);
       const name =
         observed.name === null || observed.name.length === 0
           ? null
@@ -708,12 +807,13 @@ export const parseElfDependencies = (
       );
     },
   );
-  const syment = unique.get(DT_SYMENT) ?? (bits === 64 ? 24 : 16);
-  const symbolEntrySize = dynsymSection?.entrySize || syment;
-  if (
-    symbolEntrySize !== (bits === 64 ? 24 : 16) &&
-    dynsymSection === undefined
-  )
+  const classEntrySize = bits === 64 ? 24 : 16;
+  const declaredEntrySize = syment ?? (dynsymSection?.entrySize || undefined);
+  const symbolEntrySize =
+    declaredEntrySize === undefined || declaredEntrySize === 0
+      ? classEntrySize
+      : declaredEntrySize;
+  if (syment !== undefined && syment !== classEntrySize)
     issues.push({
       code: "malformed_entry",
       location: hex(dynamic.offset),
@@ -727,14 +827,10 @@ export const parseElfDependencies = (
     gnuHashSection,
     unique,
     bits,
-    symbolEntrySize === 0 ? (bits === 64 ? 24 : 16) : symbolEntrySize,
+    symbolEntrySize,
     issues,
   );
-  const symbolBytes =
-    symbolCount === null
-      ? 0
-      : symbolCount *
-        (symbolEntrySize === 0 ? (bits === 64 ? 24 : 16) : symbolEntrySize);
+  const symbolBytes = symbolCount === null ? 0 : symbolCount * symbolEntrySize;
   const dynsymTable =
     tableFromSection(dynsymSection) ??
     (symbolCount === null
@@ -775,7 +871,7 @@ export const parseElfDependencies = (
     versymTable,
     dynstr,
     symbolCount,
-    symbolEntrySize === 0 ? (bits === 64 ? 24 : 16) : symbolEntrySize,
+    symbolEntrySize,
     versionNames,
     input.max_imports,
     issues,
@@ -821,12 +917,12 @@ export const parseElfDependencies = (
 };
 
 const namedString = (
-  table: Buffer,
+  strings: DynamicStrings,
   offset: number,
   issues: ElfDependencyIssue[],
   label: string,
 ): string | null => {
-  const observed = readCString(table, offset);
+  const observed = strings.read(offset);
   if (observed.name === null || observed.name.length === 0) {
     issues.push({
       code: "name_unreadable",
@@ -978,7 +1074,7 @@ const parseVerneed = (
   reader: BinaryReader,
   bytes: Buffer,
   mappings: readonly FileMapping[],
-  dynstr: Buffer,
+  dynstr: DynamicStrings,
   section: SectionFacts | undefined,
   address: number | undefined,
   declaredCount: number | undefined,
@@ -1121,7 +1217,7 @@ const parseVerdef = (
   reader: BinaryReader,
   bytes: Buffer,
   mappings: readonly FileMapping[],
-  dynstr: Buffer,
+  dynstr: DynamicStrings,
   section: SectionFacts | undefined,
   address: number | undefined,
   declaredCount: number | undefined,
@@ -1208,7 +1304,7 @@ const parseImports = (
   bits: 32 | 64,
   dynsym: LocatedTable | null,
   versym: LocatedTable | null,
-  dynstr: Buffer,
+  dynstr: DynamicStrings,
   symbolCount: number | null,
   entrySize: number,
   versionNames: ReadonlyMap<
@@ -1309,6 +1405,7 @@ const parseImports = (
         };
       else {
         const resolved = versionNames.get(versionIndex);
+        dynstr.retain(resolved?.name ?? null, resolved?.file ?? null);
         version = {
           index: versionIndex,
           hidden,

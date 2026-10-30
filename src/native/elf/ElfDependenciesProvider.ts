@@ -4,7 +4,10 @@ import {
 } from "../../artifacts/StableArtifactFailure.js";
 import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
+import {
+  readStableArtifact,
+  type StableArtifactSnapshot,
+} from "../../artifacts/readStableArtifact.js";
 import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
@@ -61,6 +64,7 @@ export class ElfDependenciesProvider implements ElfDependenciesPort {
     input: InspectElfDependenciesInput,
     options?: ExecutionOptions,
   ) {
+    let completed: StableArtifactSnapshot | undefined;
     try {
       return await this.#resources.run(async () => {
         const snapshot = await readStableArtifact(
@@ -70,20 +74,23 @@ export class ElfDependenciesProvider implements ElfDependenciesPort {
           undefined,
           this.#resources,
         );
-        return ok(
-          parseElfDependencies(
-            snapshot.bytes,
-            {
-              path: input.path,
-              sha256: snapshot.sha256,
-              bytes: snapshot.bytes.length,
-            },
-            input,
-          ),
+        // Only a parser failure inherits this read's identity; finalization
+        // failures keep their own completion record.
+        completed = snapshot;
+        const report = parseElfDependencies(
+          snapshot.bytes,
+          {
+            path: input.path,
+            sha256: snapshot.sha256,
+            bytes: snapshot.bytes.length,
+          },
+          input,
         );
+        completed = undefined;
+        return ok(report);
       });
     } catch (cause) {
-      return err(elfDependenciesFailure(cause, input));
+      return err(elfDependenciesFailure(cause, input, completed));
     }
   }
 }
@@ -232,6 +239,7 @@ const elfDependenciesFailurePrimary = (
 const elfDependenciesFailure = (
   cause: unknown,
   input: InspectElfDependenciesInput,
+  completed: StableArtifactSnapshot | undefined,
 ) => {
   const primary = elfDependenciesFailurePrimary(
     artifactFilePrimaryFacts(cause),
@@ -243,5 +251,6 @@ const elfDependenciesFailure = (
     input.path,
     ELF_DEPENDENCIES_PROVIDER.id,
     OPERATION,
+    completed,
   );
 };
