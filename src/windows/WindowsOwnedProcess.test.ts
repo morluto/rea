@@ -536,10 +536,22 @@ describe("Windows output poll failure", () => {
       child.stdout.on("data", (chunk: Buffer) => output.push(chunk));
       let closed = false;
       child.once("close", () => (closed = true));
-      await vi.advanceTimersByTimeAsync(1_000);
-      expect(
-        calls.filter((call) => call.operation === "process_poll"),
-      ).toHaveLength(4);
+      const polls = () =>
+        calls.filter((call) => call.operation === "process_poll").length;
+      // Failed polls back off 250 ms instead of retrying at the idle cadence.
+      await vi.advanceTimersByTimeAsync(25);
+      expect(polls()).toBe(1);
+      await vi.advanceTimersByTimeAsync(249);
+      expect(polls()).toBe(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(polls()).toBe(2);
+      await vi.advanceTimersByTimeAsync(249);
+      expect(polls()).toBe(2);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(polls()).toBe(3);
+      // Output resumes the immediate cadence (Node clamps a 0 ms timer to 1 ms).
+      await vi.advanceTimersByTimeAsync(1);
+      expect(polls()).toBe(4);
       expect(errors).toHaveLength(1);
       expect(Buffer.concat(output).toString()).toBe("frame\n");
       expect(child.exitCode).toBe(0);
