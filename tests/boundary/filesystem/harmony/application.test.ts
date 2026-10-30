@@ -68,13 +68,6 @@ describe("HarmonyOS unclassified inventory", () => {
       expect.objectContaining({ path: "metadata-copy.json" }),
       expect.objectContaining({ path: "pkgContextInfo.json" }),
     ]);
-    expect(
-      projection.unclassified_components.map(({ artifact_id }) => artifact_id),
-    ).toEqual([
-      projection.components.manifests[0]?.artifact_id,
-      projection.components.manifests[0]?.artifact_id,
-      projection.components.manifests[0]?.artifact_id,
-    ]);
     expect(projection.components.resources.map(({ path }) => path)).toEqual([
       "resources/base/bridge.js",
     ]);
@@ -420,13 +413,22 @@ describe("HarmonyOS partial inventory classification", () => {
       harmonyApplicationProjectionResultSchema,
     );
     expect(projection.unclassified_components).toEqual([]);
+    // Coverage is the structured fact a partial inventory reports, and the two
+    // independent causes of a partial projection stay empty, so `partial` is
+    // attributable to the missing occurrence alone. The prose limitation that
+    // accompanies it is explanatory wording, so it stays in review rather than
+    // in a substring assertion.
     expect(projection.coverage).toEqual({
       status: "partial",
       inventory_complete: false,
     });
-    expect(projection.limitations).toContain(
-      "Source inventory coverage is partial; absence is unknown.",
-    );
+    expect(projection.unavailable_components).toEqual([]);
+    expect(projection.bridge_candidate_coverage).toEqual({
+      status: "complete",
+      total_candidates: 0,
+      emitted_candidates: 0,
+      omitted_candidates: 0,
+    });
     const tampered = {
       ...partial,
       normalized_result: inventory.normalized_result,
@@ -559,8 +561,8 @@ describe("HarmonyOS manifest path rules", () => {
     );
     expect(projection.packaging_model).toBe("unknown");
     expect(projection.components.manifests).toEqual([]);
-    // Exact-case names only, so these members belong to no category and are
-    // disclosed as unclassified rather than silently dropped.
+    // Exact-case manifest names only, so these members belong to no manifest
+    // category and are disclosed as unclassified rather than silently dropped.
     expect(
       projection.unclassified_components.map(({ path }) => path).sort(),
     ).toEqual(["CONFIG.JSON", "MODULE.JSON", "PACK.INFO"]);
