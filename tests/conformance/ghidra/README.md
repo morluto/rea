@@ -11,6 +11,15 @@ binaries and Ghidra projects are never committed.
   RISC-V Clang/LLD/LLVM readelf; `REA_RISCV_CLANG`, `REA_RISCV_LLD` and
   `REA_RISCV_READELF` select existing tool commands.
 
+- `xtensa-fixture.mjs` writes a windowed-ABI Xtensa ELF from annotated
+  instruction bytes (`entry`, `l32r`, `call8`, `retw.n`), so the base lane needs
+  no Xtensa compiler. `npm run verify:ghidra:xtensa` compares REA with GNU or
+  LLVM readelf and exercises real CLI/MCP decoding, decompilation, output
+  schemas, the pinned language, snapshots, header-mutated refusals, immutable
+  source bytes and owned cleanup. `REA_XTENSA_CC` (for example
+  `xtensa-esp32-elf-gcc`) also builds `../c/xtensa.c`; `REA_XTENSA_READELF`
+  selects the reader. It requires BYO Ghidra 12.1.4/JDK 21+.
+
 - `inventory.c` produces separate x86-64 debug and stripped ELF executables.
   It covers imports, an external `puts` function, linker thunks, source symbols,
   direct calls, a targetless callback call, two referenced strings, and a

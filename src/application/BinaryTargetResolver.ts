@@ -45,6 +45,7 @@ import type {
 } from "../domain/binaryTargetTypes.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { readMipsElfMetadata } from "./MipsElfMetadata.js";
+import { readXtensaElfAbi } from "./XtensaElfMetadata.js";
 import { validateElfDeclaredRanges } from "../domain/elfDeclaredRanges.js";
 import {
   resolveAppBundleExecutable,
@@ -1016,6 +1017,16 @@ const readElfMetadata = async (
   if (!parsed.ok || parsed.value.format !== "elf") return parsed;
   const ranges = await readElfDeclaredRanges(handle, bytes, fileSize, signal);
   if (!ranges.ok) return ranges;
+  if (parsed.value.architecture === "xtensa")
+    return ok({
+      ...parsed.value,
+      xtensa: {
+        ...parsed.value.xtensa,
+        abi: await readXtensaElfAbi(handle, fileSize, () =>
+          throwIfTargetResolutionCancelled(signal),
+        ),
+      },
+    });
   if (parsed.value.architecture !== "mips" || parsed.value.mips.elfClass !== 32)
     return parsed;
   const declarations = await readMipsElfMetadata(

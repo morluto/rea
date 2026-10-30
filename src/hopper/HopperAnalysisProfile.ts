@@ -210,6 +210,7 @@ const HOPPER_DECLINED_ARCHITECTURE_LABELS: Record<
   mips: "MIPS",
   riscv: "RISC-V",
   powerpc: "PowerPC",
+  xtensa: "Xtensa",
   hexagon: "Hexagon",
 };
 
@@ -231,7 +232,7 @@ export const hopperDeclinedArchitectureReason = (
 ): string =>
   architecture === "arm64_32"
     ? "REA's Hopper adapter has no verified arm64_32 lane."
-    : `REA's Hopper adapter does not admit ${HOPPER_DECLINED_ARCHITECTURE_LABELS[architecture]} targets. Select a verified Ghidra ${HOPPER_DECLINED_ARCHITECTURE_LABELS[architecture]} profile instead.`;
+    : `REA's Hopper adapter does not admit ${HOPPER_DECLINED_ARCHITECTURE_LABELS[architecture]} targets. Select a supported Ghidra ${HOPPER_DECLINED_ARCHITECTURE_LABELS[architecture]} profile instead.`;
 
 /** Derive Hopper's complete non-interactive CLI loader selection. */
 export const hopperLoaderArgsForTarget = (

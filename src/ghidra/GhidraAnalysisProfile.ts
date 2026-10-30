@@ -31,6 +31,10 @@ import {
   ghidraPowerPcLanguage,
   ghidraPowerPcProfileParameters,
 } from "./GhidraPowerPcProfile.js";
+import {
+  ghidraXtensaLanguage,
+  ghidraXtensaProfileParameters,
+} from "./GhidraXtensaProfile.js";
 import { ghidraRawBinaryLanguage } from "./GhidraRawBinaryLanguage.js";
 import {
   GHIDRA_GAMECUBE_DOL_LANGUAGE,
@@ -80,7 +84,28 @@ export const ghidraPinnedLanguage = (
 ): GhidraLanguageOverride | undefined =>
   ghidraMipsLanguageOverride(target) ??
   ghidraRiscvLanguageOverride(target) ??
-  ghidraPowerPcLanguage(target);
+  ghidraPowerPcLanguage(target) ??
+  ghidraXtensaLanguage(target);
+
+/**
+ * The language a caller override selects for this target. An override that
+ * names the pinned Xtensa language without a compiler specification keeps the
+ * pin's `default` specification, so the profile, the launch and the session
+ * check commit to one choice. Older pinned lanes keep their committed
+ * `language-default` profiles, which changing would alter persisted identity.
+ */
+export const ghidraEffectiveLanguageOverride = (
+  target: BinaryTarget,
+  override: GhidraLanguageOverride | undefined,
+): GhidraLanguageOverride | undefined => {
+  const pinned = ghidraXtensaLanguage(target);
+  return pinned !== undefined &&
+    override !== undefined &&
+    override.compilerSpecId === undefined &&
+    override.languageId === pinned.languageId
+    ? pinned
+    : override;
+};
 
 /** Policy conflicts belong to the selected settings, not to the target's support. */
 const languageOverrideConflict = (
@@ -260,15 +285,18 @@ export const resolveGhidraAnalysisProfile = async (
     return err(
       languageOverrideConflict(
         languageOverride,
-        `The caller-selected processor or compiler specification is outside the verified ${
+        `The caller-selected processor or compiler specification is outside the ${
           target.architecture === "riscv"
-            ? "generic little-endian RISC-V"
-            : "endian-matched MIPS32"
+            ? "verified generic little-endian RISC-V"
+            : target.architecture === "xtensa"
+              ? "verified little-endian Xtensa"
+              : "verified endian-matched MIPS32"
         } profile. The requested override has not been changed.`,
         pinnedLanguage,
       ),
     );
-  const selectedLanguage = languageOverride ?? pinnedLanguage;
+  const selectedLanguage =
+    ghidraEffectiveLanguageOverride(target, languageOverride) ?? pinnedLanguage;
   // DOS imports already force an admitted loader, language, and context.
   if (dos && languageOverride !== undefined)
     return Promise.resolve(
@@ -374,6 +402,7 @@ export const resolveGhidraAnalysisProfile = async (
         ...ghidraMipsProfileParameters(target, languageOverride),
         ...ghidraRiscvProfileParameters(target),
         ...ghidraPowerPcProfileParameters(target),
+        ...ghidraXtensaProfileParameters(target),
         ...(pspExtension?.ok === true
           ? {
               mips_support_lane: "psp-elf32-exec-eabi32-allegrex-v2",

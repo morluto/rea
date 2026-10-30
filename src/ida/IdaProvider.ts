@@ -9,6 +9,7 @@ import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import {
   isElfMetadataArchitecture,
   type BinaryTarget,
+  type ElfMetadataArchitecture,
 } from "../domain/binaryTargetTypes.js";
 import { err, ok } from "../domain/result.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
@@ -52,6 +53,18 @@ import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { ProviderInspectionScope } from "../application/ProviderInspectionScope.js";
 import type { ProviderRejectionCode } from "../domain/providerSelection.js";
+
+/** Ghidra owns these lanes; IDA names the family it declines rather than guessing. */
+const IDA_DECLINED_ARCHITECTURE_LABELS: Record<
+  ElfMetadataArchitecture | "hexagon",
+  string
+> = {
+  mips: "MIPS",
+  riscv: "RISC-V",
+  powerpc: "PowerPC",
+  xtensa: "Xtensa",
+  hexagon: "Hexagon",
+};
 
 /** Bring-your-own IDA MCP candidate; discovery performs no provider startup. */
 export class IdaProvider implements AnalysisProviderCandidate {
@@ -308,15 +321,7 @@ export class IdaProvider implements AnalysisProviderCandidate {
       return {
         status: "unsupported",
         code: "architecture_unsupported",
-        reason: `REA's IDA adapter has no verified ${
-          target.architecture === "mips"
-            ? "MIPS"
-            : target.architecture === "riscv"
-              ? "RISC-V"
-              : target.architecture === "powerpc"
-                ? "PowerPC"
-                : "Hexagon"
-        } lane. Select a supported Ghidra profile instead.`,
+        reason: `REA's IDA adapter has no verified ${IDA_DECLINED_ARCHITECTURE_LABELS[target.architecture]} lane. Select a supported Ghidra profile instead.`,
         diagnostics,
       };
     if (target.kind === "executable" && target.architecture === "arm64_32")

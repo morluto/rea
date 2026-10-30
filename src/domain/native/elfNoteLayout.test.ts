@@ -1,5 +1,63 @@
 import { expect, it } from "vitest";
-import { readElfNoteHeader } from "./elfNoteLayout.js";
+import {
+  isElfNotePadding,
+  readElfNoteHeader,
+  readElfNoteRecord,
+} from "./elfNoteLayout.js";
+
+const note = (namesz: number, descsz: number, type: number) => {
+  const bytes = Buffer.alloc(12);
+  bytes.writeUInt32LE(namesz, 0);
+  bytes.writeUInt32LE(descsz, 4);
+  bytes.writeUInt32LE(type, 8);
+  return bytes;
+};
+
+// Offsets are stream offsets; each note starts at stream offset 4.
+it.each([
+  { namesz: 4, descsz: 4, alignment: 4, descriptor: 20, next: 24 },
+  // A GNU property note: the descriptor starts at 16 from the note, not 20.
+  { namesz: 4, descsz: 4, alignment: 8, descriptor: 20, next: 28 },
+  // binutils' Xtensa_Info note.
+  { namesz: 12, descsz: 32, alignment: 4, descriptor: 28, next: 60 },
+])(
+  "locates namesz $namesz descsz $descsz alignment $alignment from the note start",
+  ({ alignment, ...expected }) => {
+    const stream = Buffer.concat([
+      Buffer.alloc(4),
+      note(expected.namesz, expected.descsz, 5),
+      Buffer.alloc(64),
+    ]);
+    expect(readElfNoteRecord(stream, 4, true, alignment)).toEqual({
+      ok: true,
+      value: { ...expected, type: 5 },
+    });
+  },
+);
+
+it("refuses a note whose aligned extent leaves the stream", () => {
+  // The 31-byte descriptor ends at the stream end; its padding does not fit.
+  const stream = Buffer.concat([
+    Buffer.alloc(8),
+    note(12, 31, 1),
+    Buffer.alloc(43),
+  ]);
+  expect(readElfNoteRecord(stream, 8, true, 4)).toEqual({
+    ok: false,
+    error: { kind: "malformed", message: "ELF note entry exceeds its table." },
+  });
+  expect(readElfNoteRecord(Buffer.alloc(64), 60, true, 4)).toMatchObject({
+    ok: false,
+    error: { message: "ELF note header is truncated" },
+  });
+});
+
+it("treats only a zero tail shorter than a note header as padding", () => {
+  expect(isElfNotePadding(Buffer.alloc(0))).toBe(true);
+  expect(isElfNotePadding(Buffer.alloc(11))).toBe(true);
+  expect(isElfNotePadding(Buffer.alloc(12))).toBe(false);
+  expect(isElfNotePadding(Buffer.from([0, 1]))).toBe(false);
+});
 
 it.each([false, true])(
   "preserves raw note sizes and type without admission (littleEndian=%s)",

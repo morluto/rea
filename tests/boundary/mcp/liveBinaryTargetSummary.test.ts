@@ -47,6 +47,13 @@ const targets: readonly BinaryTarget[] = [
   {
     ...executable,
     format: "elf",
+    architecture: "xtensa",
+    availableArchitectures: ["xtensa"],
+    xtensa: { ...elf, abi: { status: "declared", abi: "windowed" } },
+  },
+  {
+    ...executable,
+    format: "elf",
     architecture: "hexagon",
     availableArchitectures: ["hexagon"],
   },
@@ -116,11 +123,19 @@ const impossible = [
   { kind: "executable", format: "mach-o", architecture: "hexagon" },
   { kind: "executable", format: "elf", architecture: "arm64_32" },
   { kind: "executable", format: "pe", architecture: "mips" },
+  { kind: "executable", format: "mach-o", architecture: "xtensa" },
+  { kind: "executable", format: "pe", architecture: "xtensa" },
   { kind: "database", format: "hopper", architecture: null },
   {
     kind: "executable",
     format: "raw-binary",
     architecture: "riscv",
+    entry_point: "0x1000",
+  },
+  {
+    kind: "executable",
+    format: "raw-binary",
+    architecture: "xtensa",
     entry_point: "0x1000",
   },
   { kind: "executable", format: "gamecube-dol", architecture: "powerpc" },

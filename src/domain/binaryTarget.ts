@@ -1,11 +1,12 @@
-import type {
-  BinaryArchitecture,
-  ElfFamilyMetadata,
-  HeaderArchitecture,
-  MipsElfMetadata,
-  PeCodeViewRecord,
-  UniversalMachOSlice,
-  UniversalMachOSliceIdentity,
+import {
+  isElfMetadataArchitecture,
+  type ElfFamilyMetadata,
+  type HeaderArchitecture,
+  type MipsElfMetadata,
+  type PeCodeViewRecord,
+  type UniversalMachOSlice,
+  type UniversalMachOSliceIdentity,
+  type XtensaElfMetadata,
 } from "./binaryTargetTypes.js";
 import { err, ok, type Result } from "./result.js";
 import {
@@ -54,6 +55,12 @@ export type ExecutableMetadata =
       readonly architecture: "powerpc";
       readonly availableArchitectures: readonly "powerpc"[];
       readonly powerpc: ElfFamilyMetadata;
+    }
+  | {
+      readonly format: "elf";
+      readonly architecture: "xtensa";
+      readonly availableArchitectures: readonly "xtensa"[];
+      readonly xtensa: XtensaElfMetadata;
     }
   | {
       readonly format: "elf";
@@ -398,37 +405,43 @@ const parseElf = (
   if (!fixedHeader.ok) return fixedHeader;
   const { elfClass, byteOrder, architecture, type, flags } = fixedHeader.value;
   if (architecture === null) return err("unsupported ELF architecture");
-  if (
-    architecture === "mips" ||
-    architecture === "riscv" ||
-    architecture === "powerpc"
-  ) {
+  if (isElfMetadataArchitecture(architecture)) {
     const metadata: ElfFamilyMetadata = {
       elfClass,
       byteOrder,
       type,
       flags,
     };
-    if (architecture === "powerpc")
-      return ok({
-        format: "elf",
-        architecture,
-        availableArchitectures: [architecture],
-        powerpc: metadata,
-      });
-    return architecture === "mips"
-      ? ok({
+    switch (architecture) {
+      case "mips":
+        return ok({
           format: "elf",
           architecture,
           availableArchitectures: [architecture],
           mips: metadata,
-        })
-      : ok({
+        });
+      case "riscv":
+        return ok({
           format: "elf",
           architecture,
           availableArchitectures: [architecture],
           riscv: metadata,
         });
+      case "powerpc":
+        return ok({
+          format: "elf",
+          architecture,
+          availableArchitectures: [architecture],
+          powerpc: metadata,
+        });
+      case "xtensa":
+        return ok({
+          format: "elf",
+          architecture,
+          availableArchitectures: [architecture],
+          xtensa: metadata,
+        });
+    }
   }
   if (architecture === "hexagon")
     return ok({

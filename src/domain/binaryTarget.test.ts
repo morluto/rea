@@ -22,6 +22,7 @@ describe("executable header parsing", () => {
     [elf(1, 1, 62), "elf", "x86_64"],
     [elf(2, 2, 183), "elf", "arm64"],
     [elf(1, 1, 164), "elf", "hexagon"],
+    [elf(1, 1, 94), "elf", "xtensa"],
     [thinMach(0xfeedfacf, 0x0100000c), "mach-o", "arm64"],
     [thinMach(0xcefaedfe, 0x01000007), "mach-o", "x86_64"],
     [thinMach(0xcefaedfe, 0x0200000c), "mach-o", "arm64_32"],
@@ -30,6 +31,26 @@ describe("executable header parsing", () => {
   ] as const)("parses metadata for %s", (bytes, format, architecture) => {
     const result = parseExecutableHeader(bytes, "arm64");
     expect(result.ok && result.value).toMatchObject({ format, architecture });
+  });
+
+  it("keeps Xtensa ELF declarations as facts and leaves the ABI uninspected", () => {
+    const bytes = elf(1, 1, 94);
+    bytes.writeUInt16LE(2, 16);
+    bytes.writeUInt32LE(0x300, 36);
+    expect(parseExecutableHeader(bytes, "x64")).toEqual({
+      ok: true,
+      value: {
+        format: "elf",
+        architecture: "xtensa",
+        availableArchitectures: ["xtensa"],
+        xtensa: { elfClass: 32, byteOrder: "little", type: 2, flags: 0x300 },
+      },
+    });
+    // EM_XTENSA_OLD (0xabc7) predates the assigned machine and stays unrecognized.
+    expect(parseExecutableHeader(elf(1, 1, 0xabc7), "x64")).toEqual({
+      ok: false,
+      error: "unsupported ELF architecture",
+    });
   });
 
   it("retains ELF32 x86-64 identity for the x32 ABI", () => {

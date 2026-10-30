@@ -86,6 +86,7 @@ export default defineConfig({
           { text: "Ghidra raw binary", link: "/raw-binary" },
           { text: "Ghidra NativeAOT", link: "/ghidra-nativeaot" },
           { text: "Ghidra PowerPC", link: "/ghidra-ppc" },
+          { text: "Ghidra Xtensa", link: "/ghidra-xtensa" },
           { text: "Ghidra GameCube DOL", link: "/ghidra-dol" },
           { text: "Ghidra semantics", link: "/ghidra-provider" },
         ],
