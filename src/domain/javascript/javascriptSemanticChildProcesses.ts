@@ -512,10 +512,17 @@ const rejectsOptionsShape = (
  * numeric literal such as `1e400`, and a negated numeric literal such as `-0`.
  * All are primitive literals, so Node's options check rejects them the same way;
  * read the shape directly here rather than widening the shared reader.
+ *
+ * `void <expr>` is the exception: it evaluates to `undefined`, which is the one
+ * options value Node accepts in place of an object, so it must not be dropped.
  */
 const isUnpricedPrimitiveLiteral = (value: t.Node): boolean => {
   if (t.isNumericLiteral(value) || t.isBigIntLiteral(value)) return true;
   if (!t.isUnaryExpression(value)) return false;
+  if (value.operator === "void") return false;
+  // `!` and `~` always yield a primitive, whatever their operand.
+  if (value.operator === "!" || value.operator === "~") return true;
+  if (value.operator !== "+" && value.operator !== "-") return false;
   const argument = unwrapJavaScriptExpression(value.argument).node;
   return t.isNumericLiteral(argument) || t.isBigIntLiteral(argument);
 };

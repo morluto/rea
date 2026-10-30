@@ -38,6 +38,9 @@ it.each([
   ["an omitted options slot", `spawn("tool", [], undefined)`],
   ["options in the second slot", `spawn("tool", { stdio: "pipe" })`],
   ["an unresolved options value", `spawn("tool", [], options)`],
+  // `void <expr>` evaluates to undefined, the one value Node accepts here.
+  ["a void options slot", `spawn("tool", [], void 0)`],
+  ["a void expression with an operand", `spawn("tool", [], void 5)`],
 ] as const)("keeps the spawn for %s", (_name, call) => {
   expect(spawnsFor(call)).toHaveLength(1);
 });
@@ -45,8 +48,19 @@ it.each([
 /** fork and execFile skip a nullish options object; exec validates nothing. */
 it.each([
   ["fork with null options", `fork("worker.js", [], null)`],
+  ["fork with a void options slot", `fork("worker.js", [], void 0)`],
   ["execFile with null options", `execFile("tool", [], null)`],
+  ["execFile with a void options slot", `execFile("tool", [], void 0)`],
   ["exec with a string second argument", `exec("tool", "inherit")`],
 ] as const)("keeps %s", (_name, call) => {
   expect(spawnsFor(call)).toHaveLength(1);
+});
+
+/** `!` and `~` yield a primitive whatever their operand, so Node rejects them. */
+it.each([
+  ["a logical-not options slot", `spawn("tool", [], !0)`],
+  ["a bitwise-not options slot", `spawn("tool", [], ~5)`],
+  ["a unary-plus options slot", `spawn("tool", [], +5)`],
+] as const)("emits no child-process fact for %s", (_name, call) => {
+  expect(spawnsFor(call)).toEqual([]);
 });
