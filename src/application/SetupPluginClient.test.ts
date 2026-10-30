@@ -108,7 +108,7 @@ it("preserves cancellation and retained cleanup ownership through setup and retr
 });
 
 it.runIf(process.platform === "win32")(
-  "resolves a client in a quoted Windows PATH containing a semicolon",
+  "resolves a runnable batch client in a quoted Windows PATH ahead of a PowerShell shim",
   async () => {
     const root = await createTestTempDirectory("rea-plugin-quoted-path-");
     const bin = join(root, "tools;clients");
@@ -122,11 +122,15 @@ it.runIf(process.platform === "win32")(
       join(bin, "codex.cmd"),
       `@"${process.execPath}" "${script}" %*\r\n`,
     );
+    await writeFile(
+      join(bin, "codex.ps1"),
+      "throw 'unsupported shim selected'",
+    );
     const resources = new ArtifactResourceScope();
     onTestFinished(() => resources.close());
     const client = new SetupPluginClient(
       "codex",
-      { ...process.env, PATH: `"${bin}"`, PATHEXT: ".CMD" },
+      { ...process.env, PATH: `"${bin}"`, PATHEXT: ".PS1;.CMD" },
       resources,
     );
     expect(await client.inspect()).toMatchObject({

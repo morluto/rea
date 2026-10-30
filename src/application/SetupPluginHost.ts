@@ -79,21 +79,19 @@ class PluginSetupHost {
       this.resources,
       this.launch,
     );
+    // Claude inventory can migrate settings; only Codex support is inspected before approval.
+    const state = command === "codex" ? await manager.inspect() : undefined;
+    if (state?.status === "unsupported") return { mode: "direct" };
+    if (state?.status === "invalid")
+      return { mode: "blocked", remediation: state.remediation };
     const runtimeFailure = await manager.inspectRuntime();
     if (runtimeFailure !== undefined)
       return { mode: "blocked", remediation: runtimeFailure };
-    // Claude's inventory command can migrate settings, so defer it until approval.
-    if (command === "claude")
-      return { mode: "plugin", manager, installed: false, enabled: false };
-    const state = await manager.inspect();
-    if (state.status === "unsupported") return { mode: "direct" };
-    if (state.status === "invalid")
-      return { mode: "blocked", remediation: state.remediation };
     return {
       mode: "plugin",
       manager,
-      installed: state.installed,
-      enabled: state.enabled,
+      installed: state?.installed ?? false,
+      enabled: state?.enabled ?? false,
     };
   };
   private route = (id: string): Promise<ClientRoute> => {

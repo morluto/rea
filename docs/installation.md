@@ -853,7 +853,7 @@ and can remain idle until the socket is ready. Cleanup work reports `busy` at
 stage `connection`.
 
 If macOS denies Apple Events, allow the application that starts REA under
-**System Settings → Privacy & Security → Automation**, then retry. REA releases
+**System Settings Ã¢â€ â€™ Privacy & Security Ã¢â€ â€™ Automation**, then retry. REA releases
 the target reservation when the native helper reports its complete authorization
 rejection after literal argument admission. Before application handoff, REA refuses
 double quotes, backslashes, or line breaks in the final launcher path or arguments,
@@ -1261,7 +1261,7 @@ is already running stops the Ghidra session, so one function whose
 decompilation runs past the MCP client's deadline costs the whole import.
 `REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS` (an integer from 1 to 2,147,483; absent by
 default, which leaves decompilation unbounded) bounds each native decompile
-instead. This maximum keeps Ghidra’s signed 32-bit seconds-to-milliseconds
+instead. This maximum keeps GhidraÃ¢â‚¬â„¢s signed 32-bit seconds-to-milliseconds
 conversion from overflowing. The client must still support a deadline covering
 startup, that limit and operation headroom. Ghidra stops that one decompile and starts a fresh decompiler process
 for the next request. `analyze_function` still returns the function's assembly,
@@ -1578,7 +1578,9 @@ before either command runs. Setup verifies that the client reports `rea@rea`
 installed and enabled, and skips the separate MCP registration and skill copy.
 Rerunning setup leaves an enabled plugin installed without repeating the install,
 including when setup discovers an existing Hopper installation automatically.
-Plugin setup checks for a supported standalone `node` on the selected client
+Codex clients without plugin commands retain direct setup, which can use REA's
+selected Bun runtime without standalone Node. Codex support is checked first;
+plugin setup checks for a supported standalone `node` on the selected client
 PATH before installation and readiness checks, even when REA itself runs on Bun.
 A missing or unsupported Node runtime stops plugin setup with installation
 guidance; setup does not install or upgrade Node.
@@ -1589,6 +1591,8 @@ Preapproval failure reports also leave Claude's inventory untouched. Interruptin
 a plugin command stops setup before subsequent client writes or readiness probes,
 while retained child cleanup remains retryable. Windows client lookup uses the
 selected PATH rather than implicitly running a same-named file in the project.
+Lookup selects only native or batch launchers (`.exe`, `.com`, `.bat`, `.cmd`);
+other PATHEXT scripts require their own interpreter and are skipped.
 Inventories larger than the 64 KiB capture limit report that limit explicitly;
 use the client plugin manager directly for those inventories.
 

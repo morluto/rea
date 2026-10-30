@@ -326,10 +326,11 @@ it("does not mistake unrelated plugin-manager settings for a direct REA registra
 });
 
 it.each(["spawn codex ENOENT", "unknown subcommand 'plugin'"])(
-  "uses direct setup when plugin commands are unavailable: %s",
+  "uses direct setup without standalone Node when plugin commands are unavailable: %s",
   async (reason) => {
     const f = fixture();
     f.inspectionFailure(reason);
+    f.node(undefined);
     expect((await runSetup(f.setupOptions, f.host())).status).toBe("ready");
     expect(f.mutations()).toEqual([]);
     expect(f.base.configurations).toBe(1);
