@@ -28,13 +28,15 @@ rea inspect-native-load-image /absolute/path/to/ecu.bin --target-format raw-bina
 }
 ```
 
-`architecture` is one of `x86`, `x86_64`, `arm`, `arm64`, `6502`, or `m68k`. `entry_point` is a
+`architecture` is one of `x86`, `x86_64`, `arm`, `arm64`, `6502`, `65816`, or `m68k`. `entry_point` is a
 hexadecimal address of the form `0x…`. The complete file is mapped starting at
 that address, and Ghidra seeds an `entry` function there before auto-analysis.
 ARM and AArch64 entries must be 4-byte aligned; m68k entries must be 2-byte
 aligned; x86 and 6502 entries may be byte-aligned.
 For 6502, the entry and complete mapped file must fit within `0x0000..0xffff`;
 images that cross the 16-bit boundary are rejected before provider startup.
+For 65816, the mapping must fit within the 24-bit address space (`0x0..0xffffff`).
+A community Ghidra 65C816 extension is required; see `docs/ghidra-65816.md`.
 For m68k, the mapping must fit within `0x0..0xffffffff`.
 `open_binary` and an open `binary_session` return the canonical `entry_point`
 for raw targets so callers can verify the selected mapping directly.
@@ -52,6 +54,7 @@ m68k is big-endian and the others are little-endian.
 | arm          | `ARM:LE:32:v7`        | `default`        |
 | arm64        | `AARCH64:LE:64:v8A`   | `default`        |
 | 6502         | `6502:LE:16:default`  | `default`        |
+| 65816        | `65816:LE:24:default` | `default`        |
 | m68k         | `68000:BE:32:default` | `default`        |
 
 Compiler specifications select analysis conventions; they do not identify the
@@ -96,7 +99,7 @@ selected language, entry, file digest, and verified source mapping. Register and
 calling conventions are analysis conventions, not a recovered source ABI.
 
 This lane does not interpret iNES headers, cartridge mappers, bank switching,
-or other console-specific memory layouts. 65C02 and 65816 programs need different
+or other console-specific memory layouts. 65C02 programs need different
 processor semantics and are not admitted as those variants. REA does not infer
 the CPU from the file suffix, guess the reset vector, or emulate the target.
 
@@ -112,6 +115,15 @@ junction path is rejected at snapshot admission through CLI and MCP, with
 unchanged source bytes and complete runtime cleanup. Windows requires the
 matching native addon; the POSIX provider path has not been exercised by the
 Windows run.
+
+## 65C816 / SNES
+
+See `docs/ghidra-65816.md` for SNES-specific notes (community extension required,
+SMC header, load-base vs entry, banked mapping limitations).
+
+```bash
+rea analyze /absolute/path/to/game.sfc --target-format raw-binary --architecture 65816 --entry-point 0x8000 --provider ghidra
+```
 
 ## Motorola 68000
 

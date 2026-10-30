@@ -10,6 +10,7 @@ export const BINARY_ARCHITECTURES = [
   "arm64_32",
   "mips",
   "6502",
+  "65816",
   "riscv",
   "powerpc",
   "m68k",
@@ -23,9 +24,13 @@ export type BinaryArchitecture = (typeof BINARY_ARCHITECTURES)[number];
  */
 export const RAW_ONLY_ARCHITECTURES = [
   "6502",
+  "65816",
   "m68k",
 ] as const satisfies readonly BinaryArchitecture[];
 export type RawOnlyArchitecture = (typeof RAW_ONLY_ARCHITECTURES)[number];
+
+
+
 
 /**
  * ELF header facts for a family whose ISA and ABI are not established by the
