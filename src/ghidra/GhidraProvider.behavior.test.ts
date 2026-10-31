@@ -44,7 +44,12 @@ import {
   ghidraMissingProgramGuidance,
   type GhidraProviderClientFactory,
 } from "./GhidraProviderClient.js";
-import type { GhidraHeadlessLauncher } from "./GhidraLauncher.js";
+import {
+  GhidraLaunchError,
+  type GhidraHeadlessLauncher,
+} from "./GhidraLauncher.js";
+import { AnalysisArtifactChangedError } from "../domain/analysisErrorCore.js";
+import { GHIDRA_PROJECT_PROFILE_MISMATCH } from "./GhidraProjectSnapshot.js";
 import type { GhidraInstallationHost } from "./GhidraInstallation.js";
 import {
   GHIDRA_MUTATING_OPERATIONS,
@@ -3388,6 +3393,79 @@ describe("Ghidra missing project program", () => {
 
   it("keeps the generic start failure for unrelated launch output", async () => {
     const projected = await startFailure("ERROR Unable to lock project");
+    expect(projected.code).toBe("execution_failure");
+  });
+});
+
+describe("Ghidra changed project", () => {
+  const launchFailure = async (cause: unknown) => {
+    const root = await mkdtemp(join(tmpdir(), "rea-changed-project-"));
+    onTestFinished(async () => {
+      await rm(root, { recursive: true, force: true });
+    });
+    await mkdir(join(root, "selected.rep"));
+    await writeFile(join(root, "selected.gpr"), "marker");
+    const failure = new GhidraSessionError(
+      "start",
+      "Ghidra headless launch failed",
+      { failure_kind: "start" },
+      {
+        cause: new GhidraLaunchError("Ghidra headless launch failed", {
+          cause,
+        }),
+      },
+    );
+    const ghidra = provider(
+      installationHost(),
+      () => ({
+        start: async () => err(failure),
+        callTool: async () => err(failure),
+        close: async () => ok(null),
+      }),
+      { REA_GHIDRA_PROJECT_PATH: join(root, "selected.gpr") },
+    );
+    onTestFinished(async () => {
+      await ghidra.closeOwnedResources();
+    });
+    const target = executableTarget("elf", "x86_64");
+    const profile = await ghidra.resolveAnalysisProfile(target);
+    if (!profile.ok || profile.value.profile === null)
+      throw new Error("Expected Ghidra analysis profile");
+    const result = await ghidra
+      .createClient(target, profile.value.profile)
+      .execute("list_documents", {});
+    if (result.ok) throw new Error("Expected a Ghidra start failure");
+    return {
+      error: result.error,
+      projected: projectAnalysisError(result.error),
+    };
+  };
+
+  it("projects a source project changed before its verified copy as artifact_changed", async () => {
+    const path = "/projects/selected";
+    const reason = GHIDRA_PROJECT_PROFILE_MISMATCH;
+    const { error, projected } = await launchFailure(
+      new AnalysisArtifactChangedError("open_binary", path, reason),
+    );
+    expect(projected).toMatchObject({
+      code: "artifact_changed",
+      details: {
+        operation: "list_documents",
+        path,
+        reason,
+        boundary: "stable-artifact-read",
+      },
+    });
+    expect(projected.remediation.action).toBe(
+      projectAnalysisError(
+        new AnalysisArtifactChangedError("list_documents", path, reason),
+      ).remediation.action,
+    );
+    expect(error.cause).toBeInstanceOf(GhidraSessionError);
+  });
+
+  it("keeps the generic start failure for other launch failures", async () => {
+    const { projected } = await launchFailure(new Error("spawn failed"));
     expect(projected.code).toBe("execution_failure");
   });
 });
