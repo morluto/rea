@@ -352,13 +352,21 @@ describe("executable dispatcher JavaScript shutdown", () => {
   );
 
   workspaceCliTest.for([
-    "success",
-    "cleanup-failure",
-    "write-failure",
-    "closed-pipe",
+    { scenario: "success", code: "0", expected: 0 },
+    { scenario: "cleanup-failure", code: "0", expected: 1 },
+    { scenario: "write-failure", code: "0", expected: 1 },
+    { scenario: "closed-pipe", code: "0", expected: 141 },
+    { scenario: "success", code: "", expected: 0 },
+    { scenario: "cleanup-failure", code: "", expected: 1 },
+    { scenario: "write-failure", code: "", expected: 1 },
+    { scenario: "cleanup-failure", code: "undefined", expected: 1 },
+    { scenario: "write-failure", code: "undefined", expected: 1 },
+    { scenario: "success", code: "7", expected: 7 },
+    { scenario: "cleanup-failure", code: "7", expected: 7 },
+    { scenario: "write-failure", code: "7", expected: 7 },
   ] as const)(
-    "awaits SDK output after cleanup and retains finalization status: %s",
-    async (scenario, { processes, workspace }) => {
+    "awaits SDK output after cleanup: $scenario, exit($code)",
+    async ({ scenario, code, expected }, { processes, workspace }) => {
       const cleanupFails = scenario === "cleanup-failure";
       const finish =
         scenario === "closed-pipe"
@@ -368,7 +376,7 @@ describe("executable dispatcher JavaScript shutdown", () => {
             : 'process.stdout.write("complete document\\n");';
       await installCliRuntime(
         workspace,
-        `export const closeCliResources = () => { globalThis.cleaned = true; ${cleanupFails ? 'return Promise.reject(new Error("worker still owned"));' : ""} }; export const createCli = () => ({ serve: (_args, options) => { options.stdout("pending document"); options.exit(0); } });\n`,
+        `export const closeCliResources = () => { globalThis.cleaned = true; ${cleanupFails ? 'return Promise.reject(new Error("worker still owned"));' : ""} }; export const createCli = () => ({ serve: (_args, options) => { options.stdout("pending document"); options.exit(${code}); } });\n`,
         `export const createCliResultOutput = () => ({ handled: false, failed: false, captureSdkOutput: () => true, finishSdkOutput: async () => { if (!globalThis.cleaned) throw new Error("output preceded cleanup"); await new Promise(resolve => setTimeout(resolve, 10)); ${finish} } });\n`,
       );
       const result = await processes.run(
@@ -376,9 +384,7 @@ describe("executable dispatcher JavaScript shutdown", () => {
         [workspace.path("scripts/rea.mjs"), "fixture"],
         { cwd: workspace.root },
       );
-      expect(result.exitCode).toBe(
-        scenario === "closed-pipe" ? 141 : scenario === "success" ? 0 : 1,
-      );
+      expect(result.exitCode).toBe(expected);
       expect(result.stdout).toBe(
         scenario === "success" || cleanupFails ? "complete document\n" : "",
       );
