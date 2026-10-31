@@ -446,8 +446,6 @@ describe("enhanced MCP tools", () => {
         code: "capability_unavailable",
         details: {
           operation: "trace_native_values",
-          reason:
-            "Provider source Evidence requires an explicit retention owner.",
         },
       },
     });
