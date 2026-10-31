@@ -1,5 +1,6 @@
 import { NATIVE_OBSERVATION_OPERATIONS } from "../native/nativeObservation.js";
 import { projectNativeObservationView } from "./nativeObservationView.js";
+import { projectNativeValueTraceView } from "./nativeValueTraceView.js";
 import { projectDevicetreeView } from "./devicetreeView.js";
 import { projectApkSignatureView } from "./apkSignatureView.js";
 import { byteEntropySchema } from "../native/byteEntropy.js";
@@ -287,6 +288,7 @@ const retainedViewProjectors = new Map<string, RetainedViewProjector>([
   ...NATIVE_OBSERVATION_OPERATIONS.map((operation) =>
     retain(operation, projectNativeObservationView),
   ),
+  retain("trace_native_values", projectNativeValueTraceView),
   retain("inspect_erlang_beam", projectErlangBeamView),
   retain("inspect_devicetree", projectDevicetreeView),
   retain("inspect_native_exports", projectNativeExportsView),

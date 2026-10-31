@@ -379,6 +379,9 @@ const requestErrorDetails = (
     return {
       evidence_id: error.evidenceId,
       reason: error.reason,
+      ...(typeof error.diagnostics?.operation === "string"
+        ? { operation: error.diagnostics.operation }
+        : {}),
       ...(error.referenceScope === undefined
         ? {}
         : { reference_scope: error.referenceScope }),
