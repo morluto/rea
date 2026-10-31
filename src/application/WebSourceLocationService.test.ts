@@ -4,6 +4,7 @@ import {
   webSourceLocationFixture,
   webSourceMapDecoderFixture as decoder,
 } from "../../tests/fixtures/webSourceLocation.js";
+import { webModuleArtifactsFixture } from "../../tests/fixtures/webModuleTrace.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { parseEvidence } from "../domain/evidence.js";
 import {
@@ -96,6 +97,52 @@ it.each([
     ).trace(input);
     if (response.ok) throw new Error("expected invalid input");
     expect(projectAnalysisError(response.error).code).toBe("invalid_request");
+  },
+);
+it.each([
+  {
+    position: { line: 3, column: 0 },
+    issue: {
+      path: ["generated_position", "line"],
+      minimum: 1,
+      maximum: 2,
+      message:
+        "No line 3; the retained script ends at line 2 (one-based lines).",
+    },
+  },
+  {
+    position: { line: 1, column: 4 },
+    issue: {
+      path: ["generated_position", "column"],
+      minimum: 0,
+      maximum: 3,
+      message:
+        "No column 4 on line 1; it ends at column 3 (zero-based UTF-16 columns).",
+    },
+  },
+  {
+    position: { line: 2, column: 3 },
+    issue: {
+      path: ["generated_position", "column"],
+      minimum: 0,
+      maximum: 2,
+    },
+  },
+])(
+  "reports a generated position past the retained script as out of range: %j",
+  async ({ position, issue }) => {
+    const { importMap: _importMap, ...script } =
+      webModuleArtifactsFixture("abc\r\nde");
+    const data = { ...webSourceLocationFixture(), ...script };
+    const response = await service(data).trace({
+      ...args,
+      generated_position: position,
+    });
+    if (response.ok) throw new Error("expected invalid input");
+    expect(projectAnalysisError(response.error)).toMatchObject({
+      code: "invalid_request",
+      details: { issues: [{ ...issue, reason: "out_of_range" }] },
+    });
   },
 );
 it.each([

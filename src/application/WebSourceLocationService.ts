@@ -26,7 +26,7 @@ import {
   type WebSourceMapReport,
 } from "../domain/webSourceLocation.js";
 import type { WebTraceObservation } from "../domain/webTraceObservation.js";
-import { webSourceOffset } from "../domain/webSourcePosition.js";
+import { resolveWebSourcePosition } from "../domain/webSourcePosition.js";
 import type { ExecutionOptions } from "./AnalysisProvider.js";
 import {
   capturedWebManifestIdentity,
@@ -144,21 +144,9 @@ export class WebSourceLocationService {
     const pairing = verifyPairing(input, data);
     if (!pairing.ok) return incomplete(pairing.error);
     observation.source_map = map.file;
-    const generatedOffset = webSourceOffset(
-      data.source,
-      input.generated_position,
-    );
-    if (generatedOffset === undefined)
-      return incomplete(
-        new AnalysisInputError(OPERATION, undefined, [
-          {
-            path: ["generated_position"],
-            reason: "invalid_format",
-            message:
-              "Selected generated position is outside the retained script text (one-based lines; zero-based UTF-16 columns).",
-          },
-        ]),
-      );
+    const generated = admitGeneratedOffset(input, data.source);
+    if (!generated.ok) return incomplete(generated.error);
+    const generatedOffset = generated.value;
     if (options?.signal?.aborted)
       return incomplete(
         new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
@@ -249,6 +237,35 @@ const invalid = (
       { path, reason: "invalid_format", message },
     ]),
   );
+
+const admitGeneratedOffset = (
+  input: WebSourceLocationInput,
+  source: string,
+): Result<number, AnalysisError> => {
+  const resolved = resolveWebSourcePosition(source, input.generated_position);
+  if (resolved === undefined)
+    return invalid(
+      ["generated_position"],
+      "Selected generated position is outside the retained script text (one-based lines; zero-based UTF-16 columns).",
+    );
+  if ("offset" in resolved) return ok(resolved.offset);
+  // Valid coordinates past the retained script are a caller selection fault.
+  const { line, column } = input.generated_position;
+  return err(
+    new AnalysisInputError(OPERATION, undefined, [
+      {
+        path: ["generated_position", resolved.field],
+        reason: "out_of_range",
+        minimum: resolved.field === "line" ? 1 : 0,
+        maximum: resolved.maximum,
+        message:
+          resolved.field === "line"
+            ? `No line ${String(line)}; the retained script ends at line ${String(resolved.maximum)} (one-based lines).`
+            : `No column ${String(column)} on line ${String(line)}; it ends at column ${String(resolved.maximum)} (zero-based UTF-16 columns).`,
+      },
+    ]),
+  );
+};
 
 const admitContext = (
   input: WebSourceLocationInput,
