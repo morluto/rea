@@ -11,7 +11,9 @@ export class WindowsShortcutFormatFailure extends Error {
 
 /** Caller-selected budgets that bound Shell Link expansion. */
 export type WindowsShortcutSelectedBoundary =
-  "id_list_items" | "extra_data_blocks" | "string_bytes";
+  | "id_list_items"
+  | "extra_data_blocks"
+  | "string_bytes";
 
 /** Resource boundary exceeded while walking a Shell Link file. */
 export class WindowsShortcutResourceFailure extends Error {
