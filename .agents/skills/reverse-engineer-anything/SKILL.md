@@ -226,6 +226,11 @@ explicit path or endpoint and do not need it.
   binary or disassembler is run. Unrecognized magic (possibly encrypted) and
   other versions are unsupported. Optional matching `binary_path` enables static native addresses and type references; query `method_addresses` with indices or addresses/states, preserving every shared-body method and both artifact identities. Without a linked binary native counts remain unknown. Byte-pattern fallback is inferred; no runtime behavior or same-build pairing is proved. See the
   [IL2CPP metadata guide](https://github.com/morluto/rea/blob/main/docs/il2cpp-metadata.md).
+- Unreal Engine `.pak` contents: `inspect_unreal_pak` with the explicit local
+  file; select `detail: "summary"` first for counts, then page entries through
+  `inspect_analysis_view`. Versions 1 to 12; only the footer and index are read,
+  nothing is extracted, decompressed or decrypted. See the
+  [Unreal pak guide](https://github.com/morluto/rea/blob/main/docs/unreal-pak.md).
 - Embedded cargo-auditable Rust dependency metadata: `inspect_rust_binary`
   with the explicit local ELF, PE, or thin Mach-O file. This built-in
   target-free inspection requires no Rust installation or disassembler. Preserve

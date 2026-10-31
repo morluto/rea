@@ -135,6 +135,7 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
   inspect_apk_signature: evidence,
   inspect_python_pyc: evidence,
   inspect_erlang_beam: evidence,
+  inspect_unreal_pak: evidence,
   inspect_sqlite_database: effects({
     mutatesSession: true,
     writesFilesystem: true,

@@ -99,6 +99,16 @@ is unsupported, not decrypted. Linking names to `GameAssembly` or
 `UnityFramework` code addresses remains a separate native-analysis question.
 See [IL2CPP metadata](https://github.com/morluto/rea/blob/main/docs/il2cpp-metadata.md).
 
+## Unreal pak indexes
+
+Use `inspect_unreal_pak` for an explicit local Unreal Engine `.pak` (versions 1
+to 12) when the question concerns which files a pak holds, where they sit and
+how they are compressed. The CLI equivalent is `inspect-unreal-pak PATH`. Select
+`detail: "summary"` on the first call for counts; page `entries` through
+`inspect_analysis_view`. An encrypted index is reported, not decrypted; no key
+is accepted. File data is never extracted or decompressed, and the pak version
+is not an engine version. See [Unreal pak indexes](https://github.com/morluto/rea/blob/main/docs/unreal-pak.md).
+
 ## Rust dependency metadata
 
 Use `inspect_rust_binary` for an explicit local ELF, PE, or Mach-O (universal

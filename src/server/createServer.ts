@@ -82,6 +82,9 @@ import { registerPythonPycTool } from "./registerPythonPycTool.js";
 import { createBeamService } from "../composition/erlang.js";
 import type { BeamService } from "../application/erlang/BeamService.js";
 import { registerErlangTools } from "./registerErlangTools.js";
+import { createUnrealPakService } from "../composition/unreal.js";
+import type { UnrealPakService } from "../application/unreal/UnrealPakService.js";
+import { registerUnrealTools } from "./registerUnrealTools.js";
 import type { RecordedCrashService } from "../application/binaryDiagnostics/RecordedCrashService.js";
 import { registerAnalysisViewTool } from "./registerAnalysisViewTool.js";
 import { registerBinaryDiagnosticsTools } from "./registerBinaryDiagnosticsTools.js";
@@ -224,6 +227,7 @@ export interface CreateServerOptions {
   readonly rustBinary?: RustBinaryService;
   readonly pythonPyc?: PythonPycService;
   readonly erlangBeam?: BeamService;
+  readonly unrealPak?: UnrealPakService;
   readonly electronFuses?: ElectronFuseService;
   readonly recordedCrash?: RecordedCrashService;
   readonly firmwareAnalysis?: FirmwareAnalysisPort;
@@ -476,6 +480,7 @@ export const createServer = (
   const gpuCodeObjects = createGpuCodeObjectsService();
   const il2cppMetadata =
     options.il2cppMetadata ?? createIl2cppMetadataService();
+  const unrealPak = options.unrealPak ?? createUnrealPakService();
   const peResources = createPeResourcesService();
   const nativeExports = createNativeExportsService();
   const devicetree = createDevicetreeService();
@@ -601,6 +606,7 @@ export const createServer = (
       rustBinary.close(),
       erlangBeam.close(),
       il2cppMetadata.close(),
+      unrealPak.close(),
       modelArtifact.close(),
       gpuCodeObjects.close(),
       peResources.close(),
@@ -907,6 +913,14 @@ export const createServer = (
       registerIl2cppTools(
         server,
         il2cppMetadata,
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+        evidenceById,
+      );
+      registerUnrealTools(
+        server,
+        unrealPak,
         toolLogger,
         recordEvidence,
         analysisAdmission,

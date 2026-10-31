@@ -237,6 +237,10 @@ export const providerCatalog = (sources) => {
       contracts: sources.erlangContracts.ERLANG_BEAM_TOOL_CONTRACTS,
     },
     {
+      identity: sources.unrealProvider.UNREAL_PAK_PROVIDER_IDENTITY,
+      contracts: sources.unrealContracts.UNREAL_TOOL_CONTRACTS,
+    },
+    {
       identity: sources.electronFuseProvider.ELECTRON_FUSE_PROVIDER_IDENTITY,
       contracts: fuseContracts,
     },

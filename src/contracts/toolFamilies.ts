@@ -21,6 +21,7 @@ import { ERLANG_BEAM_TOOL_CONTRACTS } from "./erlang/beamToolContracts.js";
 import { PYTHON_PYC_TOOL_CONTRACTS } from "./python/pythonPycToolContracts.js";
 import { DESKTOP_APPLICATION_TOOL_CONTRACTS } from "./desktopApplicationToolContracts.js";
 import { IL2CPP_TOOL_CONTRACTS } from "./il2cpp/il2cppToolContracts.js";
+import { UNREAL_TOOL_CONTRACTS } from "./unreal/unrealToolContracts.js";
 import { MODEL_TOOL_CONTRACTS } from "./model/modelToolContracts.js";
 import { MANAGED_TOOL_CONTRACTS } from "./managed/managedToolContracts.js";
 import { FIRMWARE_TOOL_CONTRACTS } from "./firmware/firmwareToolContracts.js";
@@ -91,6 +92,7 @@ export const TOOL_FAMILY_DEFINITIONS = [
       ...RUST_TOOL_CONTRACTS,
       ...PYTHON_PYC_TOOL_CONTRACTS,
       ...ERLANG_BEAM_TOOL_CONTRACTS,
+      ...UNREAL_TOOL_CONTRACTS,
       ...WASM_TOOL_CONTRACTS,
       ...APK_SIGNATURE_TOOL_CONTRACTS,
       ...SQLITE_TOOL_CONTRACTS,

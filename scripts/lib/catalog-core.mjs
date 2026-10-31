@@ -82,6 +82,8 @@ const SOURCE_PATHS = {
   pythonPycProvider: "dist/python/PythonPycProvider.js",
   erlangContracts: "dist/contracts/erlang/beamToolContracts.js",
   erlangProvider: "dist/erlang/BeamProvider.js",
+  unrealContracts: "dist/contracts/unreal/unrealToolContracts.js",
+  unrealProvider: "dist/unreal/UnrealPakProvider.js",
   artifactContracts: "dist/contracts/artifactToolContracts.js",
   desktopContracts: "dist/contracts/desktopApplicationToolContracts.js",
   managedContracts: "dist/contracts/managed/managedToolContracts.js",

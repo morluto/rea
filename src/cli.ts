@@ -19,6 +19,7 @@ import { registerIl2cppCommands } from "./cli/il2cppCommands.js";
 import { registerRustCommands } from "./cli/rustCommands.js";
 import { registerPythonPycCommands } from "./cli/pythonPycCommands.js";
 import { registerErlangCommands } from "./cli/erlangCommands.js";
+import { registerUnrealCommands } from "./cli/unrealCommands.js";
 import { registerSqliteCommands } from "./cli/sqliteCommands.js";
 import { registerAnalysisViewCommands } from "./cli/analysisViewCommands.js";
 import { registerBinaryDiagnosticsCommands } from "./cli/binaryDiagnosticsCommands.js";
@@ -201,6 +202,7 @@ export const createCli = (
       registerRustCommands(cli, logger);
       registerPythonPycCommands(cli, logger);
       registerErlangCommands(cli, logger);
+      registerUnrealCommands(cli, logger);
       registerSqliteCommands(cli, logger, environment);
       registerArtifactCommands(cli, logger, analysis.runProviderAnalysis);
     },
