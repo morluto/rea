@@ -862,6 +862,30 @@ it.each([
     { code: true, apple: true, package: false, runtime: false },
   ],
   [
+    "src/artifacts/InesArtifactReader.ts",
+    { code: true, apple: true, package: false, runtime: true },
+  ],
+  [
+    "src/domain/inesContainer.ts",
+    { code: true, apple: true, docs: true, package: false, runtime: true },
+  ],
+  [
+    "tests/fixtures/ines.ts",
+    { code: true, apple: true, package: false, runtime: false },
+  ],
+  [
+    "tests/acceptance/inesContainer.test.ts",
+    { code: true, apple: true, package: false, runtime: false },
+  ],
+  [
+    "tests/boundary/filesystem/inesArtifact.test.ts",
+    { code: true, apple: true, package: false, runtime: false },
+  ],
+  [
+    "tests/boundary/filesystem/inesCancellation.test.ts",
+    { code: true, apple: true, package: false, runtime: false },
+  ],
+  [
     "scripts/ci/qualified-package-envelope.mjs",
     { code: true, package: true, runtime: true, apple: false },
   ],

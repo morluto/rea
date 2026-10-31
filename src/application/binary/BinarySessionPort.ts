@@ -1,3 +1,4 @@
+import type { EspFlashSelection } from "../../domain/firmware/espFlashLocation.js";
 import type { InvestigationRecordPort } from "../investigation/InvestigationRecordPort.js";
 import type { ExecutableFormatHint } from "../../domain/dosCom.js";
 import type {
@@ -64,6 +65,7 @@ export interface BinarySessionPort
       readonly formatHint?: ExecutableFormatHint;
       readonly architecture?: BinaryArchitecture;
       readonly entryPoint?: string;
+      readonly espFlash?: EspFlashSelection;
       readonly snapshot?: AnalysisSnapshot;
       readonly loadSnapshot?: AnalysisSnapshotLoader;
       readonly providerId?: AnalysisProviderSelector;

@@ -1,4 +1,5 @@
 import {
+  artifactDfuCrc32PairSchema,
   artifactIntegrityClaimSchema,
   artifactSha256PairSchema,
   artifactMd5PairSchema,
@@ -6,6 +7,7 @@ import {
 import { artifactFormatMetadataSchema } from "./artifactFormatMetadata.js";
 import { z } from "zod";
 import { prefixedDigestSchema } from "./../domain/digests.js";
+import { inesInventorySchema } from "./inesContainer.js";
 
 /** Entry kinds or subtrees deliberately excluded by an artifact traversal. */
 export const artifactTraversalOmissionKindSchema = z.enum([
@@ -62,6 +64,7 @@ export const ARTIFACT_FORMAT_IDS = [
   "zip",
   "pkg",
   "asar",
+  "ines",
   "godot-pck",
   "unityfs",
   "uimage",
@@ -93,6 +96,9 @@ export const ARTIFACT_FORMAT_IDS = [
   "intel-hex",
   "srec",
   "esp-image",
+  "uf2",
+  "dfuse",
+  "esp-flash-image",
   "fit",
   "unknown",
 ] as const;
@@ -103,6 +109,7 @@ const artifactFormatSchema = z.enum(ARTIFACT_FORMAT_IDS);
 
 /** Formats established from bytes or a virtual directory tree, independent of path roles. */
 const artifactContentFormatSchema = artifactFormatSchema.extract([
+  "ines",
   "zip",
   "godot-pck",
   "unityfs",
@@ -110,6 +117,8 @@ const artifactContentFormatSchema = artifactFormatSchema.extract([
   "intel-hex",
   "srec",
   "esp-image",
+  "uf2",
+  "dfuse",
   "fit",
   "mach-o-universal",
   "mach-o",
@@ -194,6 +203,7 @@ const integrityContradictionBaseSchema = z.object({
 export const integrityContradictionSchema = z.union([
   integrityContradictionBaseSchema.extend(artifactSha256PairSchema.shape),
   integrityContradictionBaseSchema.extend(artifactMd5PairSchema.shape),
+  integrityContradictionBaseSchema.extend(artifactDfuCrc32PairSchema.shape),
 ]);
 
 /**
@@ -245,6 +255,7 @@ export const artifactInventoryResultSchema = z.strictObject({
   occurrences: z.array(artifactOccurrenceSchema),
   edges: z.array(artifactEdgeSchema),
   provenance: z.array(artifactCommandSchema),
+  ines: inesInventorySchema.exactOptional(),
   integrity_contradictions: z.array(integrityContradictionSchema),
   coverage: artifactInventoryCoverageSchema,
   limitations: z.array(z.string()),

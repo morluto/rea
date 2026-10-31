@@ -125,6 +125,12 @@ const PATH_SCOPES = {
   ],
   // Apple artifact CLI/MCP lane on macOS, including its focused regressions.
   apple: [
+    "src/artifacts/InesArtifactReader.ts",
+    "src/domain/inesContainer.ts",
+    "tests/fixtures/ines.ts",
+    "tests/acceptance/inesContainer.test.ts",
+    "tests/boundary/filesystem/inesArtifact.test.ts",
+    "tests/boundary/filesystem/inesCancellation.test.ts",
     "src/hopper/BridgeLauncher.ts",
     "src/domain/hopperErrors.ts",
     "tests/boundary/providers/hopper/hopperMacLaunchArguments.test.ts",
@@ -152,6 +158,7 @@ const PATH_SCOPES = {
     "tests/boundary/cli/nativeDemangleCli.test.ts",
     "tests/boundary/cli/nativeDispatchPropertyAttributes.test.ts",
     "tests/boundary/mcp/nativeDemangleMcp.test.ts",
+    "tests/boundary/mcp/nativeMachoSummaryMcp.test.ts",
     "tests/boundary/providers/native/nativeSignatureTargetBinding.test.ts",
     "tests/boundary/cli/nativeSignatureCli.test.ts",
     "tests/boundary/cli/nativeMachoArm64_32Cli.test.ts",

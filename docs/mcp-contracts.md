@@ -1317,12 +1317,20 @@ bytes and returns the `integrity_contradictions` records for the extracted
 files. An active ASAR unpacked entry whose companion file is absent cannot be
 materialized; extraction fails as `unavailable` with that logical path.
 
+A container can also declare a checksum over its own bytes; today that is the
+DFU suffix CRC of a DfuSe file. A mismatch is a contradiction of the root
+occurrence (logical path `.`), recorded as a `dfu-crc32` pair. Under
+`record-and-continue` the root becomes `mismatched` while its elements stay
+listed and extractable as observed-untrusted bytes, and `extract_artifact`
+returns the root record with the extracted files' records.
+
 If native DMG child traversal is unavailable after carrier identification,
 the typed failure retains a revalidated root-only inventory under
 `details.partial_observation.inventory`, with unknown child coverage and the
 producer's diagnostics/provenance. It does not borrow or detach an existing
 attachment. Native checksum verification failures still refuse traversal;
-`record-and-continue` recovery applies to structured entry contradictions.
+`record-and-continue` recovery applies to structured entry and container
+contradictions.
 
 Occurrences use normalized logical paths for identity and lookup. Optional
 `source_path` retains the original path within the owning reader when Unicode

@@ -9,7 +9,7 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { resolve, join } from "node:path";
+import { resolve, join, dirname } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { GENERATED_MCP_TOOL_CATALOG } from "../../fixtures/mcpToolCatalog.js";
@@ -651,6 +651,33 @@ const copyCompiledPackage = async (prefix: string): Promise<string> => {
   return directory;
 };
 
+// Recorder cleanup tests replace every runtime import through their loader
+// hook. Keep only resolvable sentinels so an unmodeled import fails closed.
+const createRecorderCleanupFixture = async (): Promise<string> => {
+  const directory = await createTestTempDirectory("rea-catalog-cleanup-");
+  await mkdir(join(directory, "scripts"), { recursive: true });
+  await cp(
+    resolve("scripts/record-mcp-catalog.mjs"),
+    join(directory, "scripts/record-mcp-catalog.mjs"),
+  );
+  await cp(resolve("package.json"), join(directory, "package.json"));
+  for (const path of [
+    "server/createServer.js",
+    "composition/binary.js",
+    "config/parseConfig.js",
+    "logger.js",
+    "contracts/promptContracts.js",
+  ]) {
+    const file = join(directory, "dist", path);
+    await mkdir(dirname(file), { recursive: true });
+    await writeFile(
+      file,
+      `throw new Error(${JSON.stringify(`Fixture import not replaced: ${path}`)});\n`,
+    );
+  }
+  return directory;
+};
+
 it("records the canonical catalog without a host account or ambient configuration", async () => {
   const directory = await copyCompiledPackage("rea-catalog-without-account-");
   await cp(
@@ -705,11 +732,7 @@ it.each([
 ])(
   "preserves producer failure=$producerFails and settles every recorder owner with cleanup failures=$failures",
   async ({ failures, producerFails }) => {
-    const directory = await copyCompiledPackage("rea-catalog-cleanup-");
-    await cp(
-      resolve("scripts/record-mcp-catalog.mjs"),
-      join(directory, "scripts/record-mcp-catalog.mjs"),
-    );
+    const directory = await createRecorderCleanupFixture();
     const log = join(directory, "cleanup.jsonl");
     const temporary = join(directory, "temporary");
     await mkdir(temporary);
