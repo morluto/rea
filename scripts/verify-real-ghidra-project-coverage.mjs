@@ -16,10 +16,14 @@ import { isAbsolute, join } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { createAnalysisProfile } from "../dist/domain/analysisProfile.js";
 import { createEvidenceBundle } from "../dist/domain/evidenceBundle.js";
 import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
+import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
+import {
+  createVerifierMcpOwner,
+  VerifierStdioTransport,
+} from "./lib/verifier-mcp-owner.mjs";
 import {
   requireMcpOutput,
   requireMcpToolError,
@@ -47,6 +51,7 @@ const scriptRoot = fileURLToPath(
 );
 const entrypoint = fileURLToPath(new URL("./rea.mjs", import.meta.url));
 const workspace = await mkdtemp(join(tmpdir(), "rea-ghidra-project-coverage-"));
+const connections = createVerifierMcpOwner();
 const target = join(workspace, "fixture");
 const projects = join(workspace, "projects");
 const env = {
@@ -76,17 +81,13 @@ async function connect(environment) {
     name: "selected-project-coverage-verifier",
     version: "1",
   });
-  const transport = new StdioClientTransport({
+  const transport = new VerifierStdioTransport({
     command: process.execPath,
     args: [entrypoint, "mcp"],
     env: environment,
     stderr: "pipe",
   });
-  await client.connect(transport);
-  const definitions = new Map(
-    (await client.listTools()).tools.map((tool) => [tool.name, tool]),
-  );
-  return { client, transport, definitions };
+  return connections.open(client, transport);
 }
 async function call(connection, name, args = {}) {
   const reply = await connection.client.callTool(
@@ -95,11 +96,7 @@ async function call(connection, name, args = {}) {
   );
   return requireMcpOutput(reply, name);
 }
-async function close(connection) {
-  await connection.client.close();
-  await connection.transport.close();
-}
-try {
+await withVerifierCleanup(async () => {
   await mkdir(projects);
   await exec(
     process.env.REA_CC ?? "cc",
@@ -155,7 +152,7 @@ try {
     });
     const bundlePath = join(workspace, `${mode}.json`);
     const paths = [];
-    try {
+    await withVerifierCleanup(async () => {
       await call(connection, "open_binary", {
         path: target,
         provider_id: "ghidra",
@@ -314,11 +311,9 @@ try {
         assert.deepEqual(replay.normalized_result, paths[0].normalized_result);
         await call(connection, "close_binary");
       } else await call(connection, "close_binary");
-    } finally {
-      await close(connection);
-    }
+    }, [() => connections.closeConnection(connection)]);
     const offline = await connect(env);
-    try {
+    await withVerifierCleanup(async () => {
       await call(offline, "import_evidence_bundle", { path: bundlePath });
       const records = (
         await call(offline, "get_evidence_bundle", { detail: "complete" })
@@ -331,9 +326,7 @@ try {
         assert.deepEqual(saved.normalized_result, evidence.normalized_result);
         assert.deepEqual(saved.limitations, evidence.limitations);
       }
-    } finally {
-      await close(offline);
-    }
+    }, [() => connections.closeConnection(offline)]);
     report.push({
       mode,
       statuses: paths.map((evidence) => evidence.normalized_result.goal_status),
@@ -349,6 +342,9 @@ try {
   process.stdout.write(
     `${JSON.stringify({ ok: true, provider: installation.providerVersion, results: report })}\n`,
   );
-} finally {
-  await rm(workspace, { recursive: true, force: true });
-}
+}, [
+  async () => {
+    await connections.close();
+    await rm(workspace, { recursive: true, force: true });
+  },
+]);
