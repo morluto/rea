@@ -6,6 +6,45 @@ const CLI_INTEGRATION_TIMEOUT_MS = 60_000;
 
 describe("MCP doctor help boundary", () => {
   workspaceCliTest(
+    "keeps output options from selecting the CLI-derived MCP doctor",
+    async ({ cli }) => {
+      for (const arguments_ of [
+        ["mcp", "doctor", "--json"],
+        ["--json", "mcp", "doctor"],
+        ["mcp", "--json", "doctor"],
+        ["--format", "json", "mcp", "doctor"],
+        ["mcp", "--format", "json", "doctor"],
+        ["--format=json", "mcp", "doctor"],
+        ["mcp", "--format=json", "doctor"],
+        ["--full-output", "mcp", "--json", "doctor"],
+      ]) {
+        const result = await cli.run({
+          arguments: arguments_,
+          environment: { REA_MCP_DOCTOR_DEADLINE_MS: "0" },
+        });
+        expect(result.exitCode, arguments_.join(" ")).toBe(1);
+        const report = {
+          healthy: false,
+          adapter: "production-stdio",
+          checks: [
+            expect.objectContaining({
+              name: "REA_MCP_DOCTOR_DEADLINE_MS",
+              ok: false,
+            }),
+          ],
+        };
+        expect(result.json).toMatchObject(
+          arguments_.includes("--full-output")
+            ? { ok: false, error: report }
+            : report,
+        );
+        expect(result.stderr).toBe("");
+      }
+    },
+    CLI_INTEGRATION_TIMEOUT_MS,
+  );
+
+  workspaceCliTest(
     "answers the advertised help option instead of validating it",
     async ({ cli }) => {
       const parent = await cli.run({ arguments: ["mcp", "--help"] });
