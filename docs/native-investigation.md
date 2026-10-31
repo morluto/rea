@@ -421,6 +421,15 @@ nodes and edges. Node payloads are bounded to 8 MiB and serialized results to
 32 MiB. Pagination returns edges whose source is on the node page and preserves
 stable IDs for endpoints outside that page.
 
+A call to an analyzed callee with no recovered parameter nodes gets the unknown
+`Parameter bindings for <callee> are unavailable or omitted`, unless the
+callee's `native_api` reports no parameters and a `parameter_list` with
+`basis: "signature"` and `variadic: false`. That provider fact means the
+callee's signature fixes zero parameters, so the call has nothing to bind.
+Recovered, variadic or unreported parameter lists, and callees that were not
+analyzed, keep the unknown. Evidence recorded before `parameter_list` existed
+omits it, and its arity remains unknown.
+
 Within one value trace, each exact procedure selector is attempted at most once,
 including failed analyses. A failed seed returns the provider's original typed
 failure and corrective guidance; it cannot establish a trace or target identity.

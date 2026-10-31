@@ -734,6 +734,63 @@ describe("Ghidra jump-table mapping contract", () => {
   });
 });
 
+describe("Ghidra parameter-list facts", () => {
+  const boundary = () => {
+    const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
+    if (dossier.native_api?.available !== true)
+      throw new TypeError("Ghidra native API fixture is unavailable");
+    return { dossier, boundary: dossier.native_api };
+  };
+
+  it.each([
+    { basis: "signature", variadic: false },
+    { basis: "signature", variadic: true },
+    { basis: "recovered", variadic: false },
+  ])(
+    "admits the bridge's $basis parameter list (variadic $variadic)",
+    (list) => {
+      const { dossier, boundary: api } = boundary();
+      const parsed = parseFunctionValueFixture("analyze_function", {
+        ...dossier,
+        native_api: { ...api, parameter_list: list },
+      });
+      if (!parsed.ok) throw parsed.error;
+      expect(
+        functionDossierSchema.parse(parsed.value).native_api,
+      ).toMatchObject({ parameter_list: list });
+    },
+  );
+
+  it.each([
+    { basis: "declared", variadic: false },
+    { basis: "signature" },
+    { basis: "signature", variadic: "false" },
+    { basis: "signature", variadic: false, complete: true },
+  ])("rejects malformed bridge parameter-list facts %j", (list) => {
+    const { dossier, boundary: api } = boundary();
+    expect(
+      parseFunctionValueFixture(
+        "analyze_function",
+        jsonValueSchema.parse({
+          ...dossier,
+          native_api: { ...api, parameter_list: list },
+        }),
+      ),
+    ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
+  });
+
+  it("requires the facts from the bridge while older retained dossiers stay readable", () => {
+    const { dossier, boundary: api } = boundary();
+    const { parameter_list: omitted, ...older } = api;
+    expect(omitted).toEqual({ basis: "signature", variadic: false });
+    const retained = { ...dossier, native_api: older };
+    expect(
+      parseFunctionValueFixture("analyze_function", retained),
+    ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
+    expect(functionDossierSchema.parse(retained).native_api).toEqual(older);
+  });
+});
+
 describe("Ghidra function-analysis malformed results", () => {
   it.each(malformedOutputs())(
     "rejects malformed %s output",

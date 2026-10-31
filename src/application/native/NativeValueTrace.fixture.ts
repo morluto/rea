@@ -42,13 +42,61 @@ export const pcodeOperation = (
   output: pcodeScalar,
 });
 
+type ParameterFact = { ordinal: number; name: string; data_type: string };
+
+/**
+ * Provider parameter-list facts. Fixtures default to a decompiler-recovered
+ * list; "unreported" omits the facts, as Evidence from older releases does.
+ */
+export type ParameterListFact =
+  | { readonly basis: "signature" | "recovered"; readonly variadic: boolean }
+  | "unreported";
+
+const recoveredParameters: ParameterListFact = {
+  basis: "recovered",
+  variadic: false,
+};
+
+/** An API boundary whose parameters and parameter-list facts match the flow. */
+const nativeApi = (
+  base: ReturnType<typeof functionDossierSchema.parse>,
+  parameters: readonly ParameterFact[],
+  parameterList: ParameterListFact,
+) => {
+  if (base.native_api?.available !== true) throw new Error("Invalid fixture");
+  const boundary = {
+    ...base.native_api,
+    parameters: parameters.map(({ ordinal, name, data_type }) => ({
+      role: "parameter" as const,
+      ordinal,
+      name,
+      data_type,
+      size_bytes: 4,
+      storage: null,
+      confidence: "high" as const,
+      evidence: [
+        {
+          kind: "decompiler-type" as const,
+          source: "ghidra-high-function",
+          detail: `HighFunction recovered data type ${data_type}.`,
+        },
+      ],
+      decompiler_artifacts: [],
+    })),
+  };
+  if (parameterList === "unreported") delete boundary.parameter_list;
+  else boundary.parameter_list = parameterList;
+  return boundary;
+};
+
 export const nativeFlowDossier = (
   base: ReturnType<typeof functionDossierSchema.parse>,
   facts: {
     address: string;
     name: string;
     operations: ReturnType<typeof pcodeOperation>[];
-    parameters: { ordinal: number; name: string; data_type: string }[];
+    parameters: ParameterFact[];
+    parameterList?: ParameterListFact;
   },
 ) => {
   const { address, name, operations, parameters } = facts;
@@ -65,6 +113,11 @@ export const nativeFlowDossier = (
       signature: null,
       locals: [],
     },
+    native_api: nativeApi(
+      base,
+      parameters,
+      facts.parameterList ?? recoveredParameters,
+    ),
     native_value_flow: {
       available: true,
       provenance: "ghidra-high-pcode",
@@ -84,7 +137,8 @@ export const nativeFlowDossier = (
 
 interface StaticProcedure {
   readonly operations: ReturnType<typeof pcodeOperation>[];
-  readonly parameters?: { ordinal: number; name: string; data_type: string }[];
+  readonly parameters?: ParameterFact[];
+  readonly parameterList?: ParameterListFact;
   readonly def_use?: { definition: string; use: string; input_index: number }[];
   readonly pcodeTruncated?: boolean;
 }
@@ -154,6 +208,9 @@ export const staticValueGraph = (
           name: address,
           operations: facts.operations,
           parameters: facts.parameters ?? [],
+          ...(facts.parameterList === undefined
+            ? {}
+            : { parameterList: facts.parameterList }),
         }),
       );
       if (!dossier.native_value_flow?.available)

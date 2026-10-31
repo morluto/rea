@@ -781,6 +781,10 @@ it.each([
     { ghidra_bridge: true, runtime: false, package: false },
   ],
   [
+    "tests/conformance/ghidra/ReaParameterListProbe.java",
+    { ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
     "bridge/ghidra/Example.java",
     {
       code: true,
