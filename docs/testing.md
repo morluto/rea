@@ -584,6 +584,13 @@ metadata size deltas and release budget on reset. Controlled providers and clean
 seams establish ordering and failure semantics; real application/provider runs are
 reported separately.
 
+Hold successful and error replies at the MCP transport boundary while reset
+queues behind their original admission. Verify checkpoint contents and publication
+order, including SDK output validation failure, handler failure and cancellation
+before or during send. Handler cleanup must settle even when the SDK suppresses
+the reply. An outgoing server request with the same numeric ID as an incoming
+tool request must not acknowledge that tool's response.
+
 For changes to resource acquisition, readiness, cancellation, or cleanup, select
 the affected owners and applicable scenarios below. Include temporary snapshots
 and one-shot commands. Use public CLI/MCP workflows where practical and a

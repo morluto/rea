@@ -259,11 +259,12 @@ const registerContextTools = (
 ): void => {
   const navigationContract = toolContract("get_navigation_context");
   const addressContract = toolContract("inspect_address_context");
+  const admission = withAdmittedAnalysis({ kind: "session", session });
   server.registerTool(
     navigationContract.name,
     toolRegistrationOptions(navigationContract),
     async (input, context) => {
-      const admitted = await session.withAdmittedAnalysis(
+      const admitted = await admission(
         navigationContract.name,
         context.mcpReq.signal,
         async (analysis) =>
@@ -281,7 +282,7 @@ const registerContextTools = (
     addressContract.name,
     toolRegistrationOptions(addressContract),
     async (input, context) => {
-      const admitted = await session.withAdmittedAnalysis(
+      const admitted = await admission(
         addressContract.name,
         context.mcpReq.signal,
         async (analysis) =>

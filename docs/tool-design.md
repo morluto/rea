@@ -252,6 +252,13 @@ authentication headroom is checked separately. On refusal, export a checkpoint,
 reset, and import only the required investigation, or start a process with a
 larger heap. Retention does not promise automatic persistence.
 
+An MCP request retains its original session admission until its handler cleanup
+and response send settle. A reset queued behind that request therefore cannot
+invalidate Evidence before its reply is sent. Nested work borrows the same
+admission. Cancellation before sending releases a suppressed reply after handler
+cleanup; cancellation after sending starts still waits for transport settlement.
+Lifecycle tools drain earlier admissions without acquiring one themselves.
+
 `reset_investigation(save_path)` saves the complete cross-domain canonical bundle
 once before clearing. It awaits file sync, atomic publication and staging cleanup;
 failed save, incomplete cleanup or cancellation observed before reset commit

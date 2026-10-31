@@ -13,9 +13,15 @@ import { createEvidence } from "../../../src/domain/evidence.js";
 import { parseEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { OwnedStagedOutput } from "../../../src/filesystem/OwnedStagedOutput.js";
 import { silentLogger } from "../../../src/logger.js";
+import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
+import { withAdmittedAnalysis } from "../../../src/server/analysisAdmission.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
-import { createDeferred } from "../../fixtures/binarySession.js";
+import {
+  createCacheProvider,
+  createDeferred,
+  createTestBinarySession,
+} from "../../fixtures/binarySession.js";
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -52,6 +58,45 @@ const retainedReference = (reply: CallToolResult): string => {
 };
 const readBundle = async (path: string) =>
   parseEvidenceBundle(JSON.parse(await readFile(path, "utf8")));
+
+const authoredRecord = () =>
+  createEvidence(
+    undefined,
+    {
+      id: "fixture",
+      name: "Authored request publication fixture",
+      version: "1",
+    },
+    { operation: "fixture_publication", parameters: {}, result: true },
+  );
+
+const customFixture = () => {
+  const session = createTestBinarySession(createCacheProvider([]));
+  const delivery = createToolResultDelivery(4096);
+  const server = new EvidenceMcpServer(
+    { name: "request-publication-fixture", version: "1" },
+    { capabilities: {} },
+    (evidence) => session.recordEvidence(evidence),
+    delivery,
+  );
+  const admit = withAdmittedAnalysis({ kind: "session", session });
+  return {
+    session,
+    server,
+    admit,
+    delivery,
+    connect: () =>
+      createApplicationMcpHarness({
+        session,
+        serverOptions: {
+          mcpServer: server,
+          delivery,
+          logger: silentLogger,
+          environment: { REA_MCP_INPUT_SCHEMA_PROFILE: "full" },
+        },
+      }),
+  };
+};
 
 it("publishes an oversized validation-error reference only after an earlier reset finishes", async () => {
   const test = await fixture();
@@ -308,6 +353,165 @@ it("cancels queued SDK error recovery before it can write into the next investig
     ]);
     admission.mockRestore();
     close.mockRestore();
+    await test.close();
+  }
+});
+
+it.each(["handler throws", "output fails validation"] as const)(
+  "settles original admission when the SDK reports that %s",
+  async (failure) => {
+    const fixture = customFixture();
+    const record = authoredRecord();
+    fixture.server.registerTool(
+      "fixture_publication",
+      {
+        inputSchema: z.strictObject({}),
+        outputSchema: z.strictObject({ accepted: z.literal(true) }),
+      },
+      async (_input, context) => {
+        const admitted = await fixture.admit(
+          "fixture_publication",
+          context.mcpReq.signal,
+          async () => {
+            const recorded = fixture.session.recordEvidence(record);
+            if (!recorded.ok) throw recorded.error;
+            if (failure === "handler throws")
+              throw new Error("Fixture handler exception");
+            return null;
+          },
+        );
+        if (!admitted.ok)
+          return fixture.delivery.toErrorToolResult(admitted.error, false);
+        return { content: [], structuredContent: { accepted: false } };
+      },
+    );
+    const test = await fixture.connect();
+    const root = await createTestTempDirectory("rea-sdk-error-publication-");
+    const path = join(root, "saved.json");
+    try {
+      const reply = await test.client
+        .callTool({ name: "fixture_publication", arguments: {} })
+        .then(
+          (result) => result,
+          (cause: unknown) => cause,
+        );
+      if (reply instanceof Error)
+        expect(reply.message.length).toBeGreaterThan(0);
+      else expect(reply).toMatchObject({ isError: true });
+      const reset = await test.client.callTool({
+        name: "reset_investigation",
+        arguments: { save_path: path },
+      });
+      expect(reset.isError, JSON.stringify(reset)).not.toBe(true);
+      expect((await readBundle(path)).records).toContainEqual(record);
+      expect(test.session.exportEvidenceBundle().records).toEqual([]);
+    } finally {
+      await test.close();
+    }
+  },
+);
+
+it("waits for handler cleanup when cancellation suppresses its unsent SDK reply", async () => {
+  const fixture = customFixture();
+  const record = authoredRecord();
+  const entered = createDeferred<void>();
+  const cleanupEntered = createDeferred<void>();
+  const release = createDeferred<void>();
+  fixture.server.registerTool(
+    "fixture_publication",
+    { inputSchema: z.strictObject({}) },
+    async (_input, context) => {
+      const admitted = await fixture.admit(
+        "fixture_publication",
+        context.mcpReq.signal,
+        async () => {
+          const recorded = fixture.session.recordEvidence(record);
+          if (!recorded.ok) throw recorded.error;
+          try {
+            // Opposite RPC directions may reuse IDs. Outbound pings are not
+            // publication of this tool's eventual, cancellable response.
+            const requestId = context.mcpReq.id;
+            if (typeof requestId !== "number")
+              throw new Error(
+                "Expected the fixture client's numeric request ID",
+              );
+            for (let index = 0; index <= requestId; index += 1)
+              await context.mcpReq.send({ method: "ping" });
+            entered.resolve();
+            await new Promise<void>((resolve) =>
+              context.mcpReq.signal.addEventListener("abort", () => resolve(), {
+                once: true,
+              }),
+            );
+          } finally {
+            cleanupEntered.resolve();
+            await release.promise;
+          }
+          return null;
+        },
+      );
+      return admitted.ok
+        ? { content: [{ type: "text", text: "completed fixture cleanup" }] }
+        : fixture.delivery.toErrorToolResult(admitted.error, false);
+    },
+  );
+  const test = await fixture.connect();
+  const root = await createTestTempDirectory("rea-cancelled-handler-cleanup-");
+  const path = join(root, "saved.json");
+  const resetEntered = createDeferred<void>();
+  const originalReset = test.session.resetInvestigation.bind(test.session);
+  const reset = vi
+    .spyOn(test.session, "resetInvestigation")
+    .mockImplementation((options) => {
+      const resetting = originalReset(options);
+      resetEntered.resolve();
+      return resetting;
+    });
+  const controller = new AbortController();
+  const operation = test.client
+    .callTool(
+      { name: "fixture_publication", arguments: {} },
+      { signal: controller.signal },
+    )
+    .then(
+      (reply) => reply,
+      (cause: unknown) => cause,
+    );
+  let resetting: Promise<CallToolResult> | undefined;
+  try {
+    await awaitAcknowledgement(
+      entered.promise,
+      operation,
+      "fixture handler admission",
+    );
+    controller.abort(new Error("Cancel before handler cleanup"));
+    await awaitAcknowledgement(
+      cleanupEntered.promise,
+      test.client.ping(),
+      "cancelled handler cleanup",
+    );
+    resetting = test.client.callTool({
+      name: "reset_investigation",
+      arguments: { save_path: path },
+    });
+    await awaitAcknowledgement(
+      resetEntered.promise,
+      resetting,
+      "reset after suppressed reply",
+    );
+    expect(test.session.exportEvidenceBundle().records).toEqual([record]);
+    release.resolve();
+    expect((await resetting).isError).not.toBe(true);
+    expect((await readBundle(path)).records).toEqual([record]);
+    expect(test.session.exportEvidenceBundle().records).toEqual([]);
+  } finally {
+    controller.abort();
+    release.resolve();
+    await Promise.allSettled([
+      operation,
+      ...(resetting === undefined ? [] : [resetting]),
+    ]);
+    reset.mockRestore();
     await test.close();
   }
 });
