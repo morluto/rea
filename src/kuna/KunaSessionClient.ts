@@ -94,6 +94,12 @@ import { KunaReferenceQueries } from "./KunaReferenceQueries.js";
 import { KunaQueryWork } from "./KunaQueryWork.js";
 import { KunaStringQueries } from "./KunaStringQueries.js";
 import { normalizeKunaAddress } from "./KunaAddress.js";
+import {
+  ambiguousKunaNameMessage,
+  KUNA_XREF_AMBIGUOUS_NAME_REMEDIATION,
+  KUNA_XREF_MISSING_NAME_REMEDIATION,
+  missingKunaXrefNameMessage,
+} from "./KunaSelectorGuidance.js";
 import type { RegexMatchingDeadline } from "../config/regexMatchingDeadline.js";
 import type { RegexWorkerHeapRequest } from "../config/regexWorkerHeapRequest.js";
 import { KUNA_FUNCTION_TEXT_BYTES } from "./KunaLimits.js";
@@ -1057,17 +1063,20 @@ export class KunaSessionClient implements AnalysisClient {
         userMessage:
           matches.length === 0 && named.length === 0
             ? field === "address"
-              ? `Kuna's inventory has no entry named ${selector}.`
+              ? missingKunaXrefNameMessage(selector)
               : `Kuna found no procedure named ${selector}; search_procedures finds similar names.`
             : matches.length === 0
               ? `${selector} names ${String(named.length)} Kuna entries that lie in Mach-O data regions (${named.map(({ address }) => address).join(", ")}); they are data, not procedures.`
-              : `${selector} names ${String(matches.length)} Kuna entries (${matches.map(({ address }) => address).join(", ")}); select one by address.`,
+              : ambiguousKunaNameMessage(
+                  selector,
+                  matches.map(({ address }) => address),
+                ),
         ...(field === "address"
           ? {
               remediationAction:
                 matches.length === 0
-                  ? "Inspect target symbols or exports where available, verify address coordinates, and call xrefs with an address. Absence from Kuna's inventory does not establish absence from the target."
-                  : "Select one of the reported addresses and call xrefs again.",
+                  ? KUNA_XREF_MISSING_NAME_REMEDIATION
+                  : KUNA_XREF_AMBIGUOUS_NAME_REMEDIATION,
               conformsToInputContract: true,
             }
           : {}),

@@ -29,6 +29,10 @@ import { inspectKunaInstallation } from "../dist/kuna/KunaInstallation.js";
 import { ArtifactResourceScope } from "../dist/artifacts/ArtifactResourceScope.js";
 import { AnalysisCleanupLease } from "../dist/artifacts/AnalysisCleanupLease.js";
 import {
+  KUNA_XREF_MISSING_NAME_REMEDIATION,
+  missingKunaXrefNameMessage,
+} from "../dist/kuna/KunaSelectorGuidance.js";
+import {
   requireMcpOperationResult,
   requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
@@ -330,8 +334,15 @@ const verifyKuna = async (
         address: "rea_missing_xref_inventory_name",
       });
       assert.equal(missing.code, "invalid_request");
-      assert.match(missing.message, /inventory has no entry/u);
-      assert.match(missing.remediation.action, /does not establish absence/u);
+      assert.equal(
+        missing.message,
+        missingKunaXrefNameMessage("rea_missing_xref_inventory_name"),
+      );
+      assert.equal(
+        missing.remediation.action,
+        KUNA_XREF_MISSING_NAME_REMEDIATION,
+      );
+      assert.ok(missing.message.includes("rea_missing_xref_inventory_name"));
       assert.equal(missing.recovery, undefined);
     }
     for (const [name, address] of functions) {
