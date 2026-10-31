@@ -62,6 +62,55 @@ const NATIVE_PLATFORMS: Readonly<
   win32: { x64: "win_x86_64" },
 };
 
+/**
+ * Native directories absent from official Ghidra release archives; Ghidra's
+ * own `buildNatives` Gradle task writes them under `build/os/`.
+ */
+const USER_BUILT_NATIVE_PLATFORMS: ReadonlySet<string> = new Set([
+  "linux_arm_64",
+  "mac_x86_64",
+  "mac_arm_64",
+]);
+
+/** Remediation for a host without a native decompiler. */
+const nativeDecompilerRemediation = (
+  platform: NodeJS.Platform,
+  architecture: NodeJS.Architecture,
+): string => {
+  const directory = NATIVE_PLATFORMS[platform]?.[architecture];
+  const executable = platform === "win32" ? "decompile.exe" : "decompile";
+  const build =
+    directory !== undefined && USER_BUILT_NATIVE_PLATFORMS.has(directory)
+      ? ` Official Ghidra release archives do not include it; build it once from <GhidraInstallDir>/support/gradle/ with ./gradlew buildNatives (or gradle buildNatives), which writes build/os/${directory}/${executable}.`
+      : "";
+  return `Provide an executable Ghidra/Features/Decompiler/os/${directory ?? "<platform>"}/${executable}, or its build/os equivalent.${build} REA does not build or install native tools.`;
+};
+
+/**
+ * Remediation for a selected native decompiler built for another host.
+ *
+ * Discovery selects `os/` before `build/os/`, so a fresh `buildNatives` output
+ * cannot displace a foreign `os/` executable until that file is removed. A
+ * foreign `build/os/` executable is itself stale `buildNatives` output.
+ */
+const foreignNativeDecompilerRemediation = (
+  path: string,
+  built: boolean,
+  platform: NodeJS.Platform,
+  architecture: NodeJS.Architecture,
+  expected: string,
+): string => {
+  if (built)
+    return `REA selects ${path}, but it is not built for ${expected}. Remove it and rerun ./gradlew buildNatives (or gradle buildNatives) from <GhidraInstallDir>/support/gradle/ to rebuild it for this host. REA does not build or install native tools.`;
+  const directory = NATIVE_PLATFORMS[platform]?.[architecture];
+  const executable = platform === "win32" ? "decompile.exe" : "decompile";
+  const build =
+    directory !== undefined && USER_BUILT_NATIVE_PLATFORMS.has(directory)
+      ? ` To build one with Ghidra's buildNatives task instead, remove it first so REA selects build/os/${directory}/${executable}.`
+      : "";
+  return `REA selects ${path} (os/ takes precedence over build/os/), but it is not built for ${expected}. Remove it or replace it with an executable built for ${expected}.${build} REA does not build or install native tools.`;
+};
+
 /** Executable format each supported host runs its own Ghidra native tools as. */
 const NATIVE_TOOL_FORMATS: Readonly<
   Partial<Record<NodeJS.Platform, ExecutableMetadata["format"]>>
@@ -102,6 +151,7 @@ type NativeDecompilerCompatibility =
  */
 const assessNativeDecompiler = (
   path: string,
+  built: boolean,
   platform: NodeJS.Platform,
   architecture: NodeJS.Architecture,
   probe: GhidraExecutableHeaderProbe | undefined,
@@ -150,12 +200,16 @@ const assessNativeDecompiler = (
       status: "compatible",
       detail: `${path} reports ${observed}, which matches ${platform}/${architecture}`,
     };
-  const nativeDirectory = NATIVE_PLATFORMS[platform]?.[architecture];
-  const executable = platform === "win32" ? "decompile.exe" : "decompile";
   return {
     status: "incompatible",
     detail: `${path} reports ${observed}, but ${platform}/${architecture} requires ${expected}`,
-    remediation: `Provide an executable Ghidra/Features/Decompiler/os/${nativeDirectory ?? "<platform>"}/${executable} built for ${expected}, or its build/os equivalent. REA does not build or install native tools.`,
+    remediation: foreignNativeDecompilerRemediation(
+      path,
+      built,
+      platform,
+      architecture,
+      expected,
+    ),
   };
 };
 
@@ -307,6 +361,8 @@ interface GhidraInstallationCoordinates {
   readonly applicationPropertiesPath: string | null;
   readonly analyzeHeadlessPath: string | null;
   readonly nativeDecompilerPath: string | null;
+  /** Whether the selected decompiler came from `build/os/` rather than `os/`. */
+  readonly nativeDecompilerBuilt: boolean;
   readonly nativeDecompilerHeader: Result<
     GhidraExecutableHeaderProbe | undefined,
     AnalysisError
@@ -472,21 +528,28 @@ const installationCoordinates = async (
   const decompilerPlatform = NATIVE_PLATFORMS[platform]?.[architecture];
   const decompilerExecutable =
     platform === "win32" ? "decompile.exe" : "decompile";
-  const nativeDecompilerPath =
+  const nativeDecompiler =
     installDir === null || decompilerPlatform === undefined
-      ? null
-      : ([
-          appendCallerPath(
-            installDir,
-            `Ghidra/Features/Decompiler/os/${decompilerPlatform}/${decompilerExecutable}`,
-            platform,
-          ),
-          appendCallerPath(
-            installDir,
-            `Ghidra/Features/Decompiler/build/os/${decompilerPlatform}/${decompilerExecutable}`,
-            platform,
-          ),
-        ].find((candidate) => host.executable(candidate)) ?? null);
+      ? undefined
+      : [
+          {
+            path: appendCallerPath(
+              installDir,
+              `Ghidra/Features/Decompiler/os/${decompilerPlatform}/${decompilerExecutable}`,
+              platform,
+            ),
+            built: false,
+          },
+          {
+            path: appendCallerPath(
+              installDir,
+              `Ghidra/Features/Decompiler/build/os/${decompilerPlatform}/${decompilerExecutable}`,
+              platform,
+            ),
+            built: true,
+          },
+        ].find((candidate) => host.executable(candidate.path));
+  const nativeDecompilerPath = nativeDecompiler?.path ?? null;
   const properties =
     applicationPropertiesPath === null
       ? undefined
@@ -623,6 +686,7 @@ const installationCoordinates = async (
     applicationPropertiesPath,
     analyzeHeadlessPath,
     nativeDecompilerPath,
+    nativeDecompilerBuilt: nativeDecompiler?.built ?? false,
     nativeDecompilerHeader,
     properties:
       properties === undefined
@@ -868,6 +932,7 @@ const nativeDecompilerCheck = ({
           }
         : assessNativeDecompiler(
             path,
+            coordinates.nativeDecompilerBuilt,
             platform,
             architecture,
             coordinates.nativeDecompilerHeader.value,
@@ -933,6 +998,21 @@ const nativeDecompilerCheck = ({
         remediation: `Point JAVA_HOME at a JDK whose reported operating system matches the host platform (${platform}). REA does not build or install native tools.`,
       });
   }
+  // A decompiler built under this JVM would target its directory, not the
+  // host's, so the missing-file advice must not lead with buildNatives.
+  if (
+    path === null &&
+    coordinates.java !== undefined &&
+    validatedDirectory !== undefined &&
+    selectedDirectory !== validatedDirectory
+  )
+    return installationCheck({
+      name: "native_decompiler",
+      passed: false,
+      code: "executable_missing",
+      detail: `Matching native decompiler for ${platform}/${architecture} was not found; JVM reports os.arch=${osArch}, so Ghidra would select os/${selectedDirectory}, not ${validatedDirectory}`,
+      remediation: `Point JAVA_HOME at a JDK whose architecture matches this host (${validatedDirectory}) first; Ghidra selects its decompiler from the JVM's directory. Then rerun doctor for the decompiler setup steps. REA does not build or install native tools.`,
+    });
   return installationCheck({
     name: "native_decompiler",
     passed: path !== null && compatibility?.status !== "incompatible",
@@ -943,7 +1023,7 @@ const nativeDecompilerCheck = ({
     remediation:
       compatibility?.status === "incompatible"
         ? compatibility.remediation
-        : `Provide an executable Ghidra/Features/Decompiler/os/${NATIVE_PLATFORMS[platform]?.[architecture] ?? "<platform>"}/${platform === "win32" ? "decompile.exe" : "decompile"}, or its build/os equivalent. REA does not build or install native tools.`,
+        : nativeDecompilerRemediation(platform, architecture),
   });
 };
 

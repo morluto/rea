@@ -1025,12 +1025,18 @@ JDK 21 or newer; Ghidra 12.2 declares JDK 25 or newer. Neither sets a maximum.
 The bridge is verified with Ghidra 12.1.4
 and JDK 21. Each installation must include the native decompiler for the host
 architecture in `Ghidra/Features/Decompiler/os/<platform>/` or the corresponding
-`build/os/<platform>/` directory. Linux ARM64 uses `linux_arm_64`; official
-release archives may require you to build that native component separately.
+`build/os/<platform>/` directory. Official Ghidra release archives include
+native binaries only for Windows and Linux x86-64. On macOS (`mac_arm_64` or
+`mac_x86_64`) and Linux ARM64 (`linux_arm_64`) hosts, build them once with
+Ghidra's own Gradle task: from `<GhidraInstallDir>/support/gradle/`, run
+`./gradlew buildNatives` (or `gradle buildNatives`). This writes
+`Ghidra/Features/Decompiler/build/os/<platform>/`, which REA already accepts.
 REA checks the executable prerequisite by inspecting the file's own executable
 header, so a native component built for another platform or architecture is
 reported as incompatible instead of being admitted from its directory name, and
-a header that cannot be read or recognized is reported as unknown. REA does not
+a header that cannot be read or recognized is reported as unknown. REA selects
+`os/<platform>/` before `build/os/<platform>/`, so remove an incompatible
+`os/<platform>/` executable before relying on `buildNatives`. REA does not
 build or install native tools, or change Gatekeeper quarantine settings.
 
 The adapter exposes 27 read-only operations: fifteen inventory/name/search
@@ -1298,6 +1304,10 @@ pseudocode is never treated as original source or Hopper-equivalent text.
 
 ### Missing macOS native decompiler
 
+Ghidra's own `buildNatives` task (see [Ghidra](#ghidra)) works on both macOS
+architectures and writes to `build/os/<platform>/`. The manual recipes below
+install into `os/<platform>/` instead, which REA selects first.
+
 If `rea doctor --json` reports `native_decompiler` as missing on macOS x64,
 the extracted Ghidra archive may include the decompiler source without the
 macOS executable. For Ghidra 12.1.4, you can build it manually with an existing
@@ -1317,7 +1327,7 @@ The copy step requires the destination to be absent and preserves an existing
 decompiler. This recipe is specific to macOS x64: the
 [Ghidra 12.1.4 Makefile](https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.1.4_build/Ghidra/Features/Decompiler/src/decompile/cpp/Makefile)
 explicitly selects `-arch x86_64` on Darwin. For a Gradle
-build, follow the matching release's
+build, see [Ghidra](#ghidra) or the matching release's
 [native component instructions](https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.1.4_build/GhidraDocs/GettingStarted.md#building-native-components).
 REA accepts the matching executable under either `os/<platform>/` or
 `build/os/<platform>/`; it does not build the component during setup or diagnosis.
