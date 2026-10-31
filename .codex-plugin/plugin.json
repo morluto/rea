@@ -1,6 +1,6 @@
 {
   "name": "rea",
-  "version": "6.8.0",
+  "version": "6.9.0",
   "description": "Reverse engineer anything with agents, from app behavior down to native binaries.",
   "author": {
     "name": "morluto",

@@ -1674,7 +1674,7 @@ terminal, use the package runner at the version the plugin pins:
 <!-- x-release-please-start-version -->
 
 ```bash
-npx -y rea-agents@6.8.0 doctor --provider ghidra --json
+npx -y rea-agents@6.9.0 doctor --provider ghidra --json
 ```
 
 <!-- x-release-please-end -->
