@@ -155,8 +155,9 @@ See
 ## ELF note tables
 
 Use `inspect_elf_notes` for an explicit local ELF32/ELF64 image when the
-question concerns PT_NOTE/SHT_NOTE owners, GNU build-id, or GNU ABI-tag
-fields. No `open_binary` or target execution is required. The CLI equivalent
+question concerns PT_NOTE/SHT_NOTE owners, GNU build-id, GNU ABI-tag
+fields, or the package and dlopen dependencies FDO notes declare. No
+`open_binary` or target execution is required. The CLI equivalent
 is `inspect-elf-notes PATH`. Preserve artifact SHA-256, table file ranges,
 descriptor hashes, and original owner spellings. A missing table is observed
 absence of those declarations, not proof the image never carried notes in

@@ -311,10 +311,210 @@ it("keeps non-GNU owners as unknown types with descriptor hashes", () => {
     owner: "CORE",
     type_name: "unknown",
     gnu: null,
+    fdo: null,
   });
   expect(report.entries[0]?.descriptor.sha256).toBe(
     createHash("sha256").update(payload).digest("hex"),
   );
+});
+
+const fdoDescriptor = (text: string): Buffer => {
+  const bytes = Buffer.from(text, "utf8");
+  // NUL-terminated, then NUL-padded to a multiple of four bytes.
+  return Buffer.concat([bytes, Buffer.alloc(4 - (bytes.length % 4))]);
+};
+
+it("decodes FDO packaging and dlopen metadata from both note tables", () => {
+  const packageJson =
+    '{"type":"rpm","name":"coreutils","version":"9.10-5.fc44","architecture":"x86_64","osCpe":"cpe:/o:fedoraproject:fedora:44"}';
+  const dlopenJson =
+    '[{"feature":"compression","priority":"suggested","soname":["libzstd.so.1"]}]';
+  const report = parse(
+    elfNoteFixture({
+      ownership: "both",
+      notes: Buffer.concat([
+        elfNote("FDO", 0xcafe1a7e, fdoDescriptor(packageJson)),
+        elfNote("FDO", 0x407c0c0a, fdoDescriptor(dlopenJson)),
+      ]),
+    }),
+  );
+  expect(
+    report.entries.map(({ table_kind, type_name }) => [table_kind, type_name]),
+  ).toEqual([
+    ["program", "fdo_packaging_metadata"],
+    ["program", "fdo_dlopen_metadata"],
+    ["section", "fdo_packaging_metadata"],
+    ["section", "fdo_dlopen_metadata"],
+  ]);
+  for (const entry of report.entries) expect(entry.gnu).toBeNull();
+  expect(report.entries[2]?.fdo).toEqual({
+    metadata: JSON.parse(packageJson),
+    issue: null,
+  });
+  expect(report.entries[3]?.fdo).toEqual({
+    metadata: JSON.parse(dlopenJson),
+    issue: null,
+  });
+  expect(report.entries[0]?.fdo).toEqual(report.entries[2]?.fdo);
+  expect(report.limitations).toContain(
+    "FDO packaging and dlopen metadata are the producer's declarations; they are not verified against a package database or the libraries a loader would open.",
+  );
+});
+
+it.each([
+  [
+    "missing NUL terminator",
+    0xcafe1a7e,
+    Buffer.from('{"a":"b"}', "utf8"),
+    "FDO metadata is not NUL-terminated.",
+  ],
+  [
+    "data after the terminator",
+    0xcafe1a7e,
+    Buffer.from("{}\0x\0\0\0\0", "latin1"),
+    "FDO metadata has non-NUL bytes after its terminator.",
+  ],
+  [
+    "invalid UTF-8",
+    0xcafe1a7e,
+    Buffer.from([0x22, 0xff, 0x22, 0]),
+    expect.stringMatching(/^FDO metadata is not UTF-8 JSON: /u),
+  ],
+  [
+    "invalid JSON",
+    0xcafe1a7e,
+    fdoDescriptor('{"type":'),
+    expect.stringMatching(/^FDO metadata is not UTF-8 JSON: /u),
+  ],
+  [
+    "packaging metadata that is not an object",
+    0xcafe1a7e,
+    fdoDescriptor("[]"),
+    "FDO packaging metadata is not a JSON object.",
+  ],
+  [
+    "dlopen metadata that is not an array",
+    0x407c0c0a,
+    fdoDescriptor('{"soname":["libz.so.1"]}'),
+    "FDO dlopen metadata is not a JSON array.",
+  ],
+] as const)(
+  "keeps an FDO note with %s and reports why its metadata is null",
+  (_case, type, descriptor, issue) => {
+    const report = parse(
+      elfNoteFixture({
+        ownership: "program",
+        notes: elfNote("FDO", type, descriptor),
+      }),
+    );
+    expect(report.coverage.status).toBe("complete");
+    expect(report.entries[0]?.fdo).toEqual({ metadata: null, issue });
+    expect(report.limitations.join("\n")).not.toMatch(/FDO packaging/u);
+  },
+);
+
+it("decodes FDO metadata within one 64 KiB allowance per report", () => {
+  // `[{},{},…]`: dense values whose decoded tree far exceeds their bytes.
+  const dense = (bytes: number): Buffer => {
+    const count = Math.floor((bytes - 2) / 3);
+    const json = Buffer.from(`[${"{},".repeat(count - 1)}{}]`, "latin1");
+    return Buffer.concat([json, Buffer.alloc(bytes - json.length)]);
+  };
+  const fdo = (
+    descriptors: Buffer[],
+    ownership: "program" | "both" = "program",
+  ) =>
+    parse(
+      elfNoteFixture({
+        ownership,
+        notes: Buffer.concat(
+          descriptors.map((descriptor) =>
+            elfNote("FDO", 0x407c0c0a, descriptor),
+          ),
+        ),
+      }),
+    ).entries.map((entry) => entry.fdo);
+  const spent = {
+    metadata: null,
+    issue:
+      "FDO metadata exceeds the 65536-byte decode allowance shared by this report.",
+  };
+  expect(dense(65536)).toHaveLength(65536);
+  expect(fdo([dense(65536)])[0]?.metadata).toHaveLength(21844);
+  expect(fdo([Buffer.concat([dense(65536), Buffer.alloc(1)])])).toEqual([
+    spent,
+  ]);
+  // Distinct descriptors share the allowance in table order.
+  const [first, second] = fdo([dense(40000), dense(40000)]);
+  expect(first?.metadata).toHaveLength(13332);
+  expect(second).toEqual(spent);
+  // PT_NOTE and SHT_NOTE declarations of one 40,000-byte range charge the
+  // allowance once; twice would exceed it.
+  const padded = Buffer.concat([Buffer.from("[]"), Buffer.alloc(39998)]);
+  expect(fdo([padded], "both")).toEqual([
+    { metadata: [], issue: null },
+    { metadata: [], issue: null },
+  ]);
+});
+
+it("leaves other FDO note types undecoded", () => {
+  const report = parse(
+    elfNoteFixture({
+      ownership: "program",
+      notes: elfNote("FDO", 1, fdoDescriptor("{}")),
+    }),
+  );
+  expect(report.entries[0]).toMatchObject({
+    owner: "FDO",
+    type_name: "unknown",
+    fdo: null,
+  });
+});
+
+it("decodes a descriptor shared by different FDO note types per type", () => {
+  // A PT_NOTE packaging note whose 20-byte name hides an SHT_NOTE dlopen note
+  // header; both notes end on the same `[]` descriptor.
+  const notes = Buffer.alloc(36);
+  notes.writeUInt32LE(20, 0);
+  notes.writeUInt32LE(4, 4);
+  notes.writeUInt32LE(0xcafe1a7e, 8);
+  notes.write("FDO\0", 12, "latin1");
+  notes.writeUInt32LE(4, 16);
+  notes.writeUInt32LE(4, 20);
+  notes.writeUInt32LE(0x407c0c0a, 24);
+  notes.write("FDO\0[]\0\0", 28, "latin1");
+  const notesOffset = 64 + 56;
+  const shoff = notesOffset + notes.length + 4;
+  const program = Buffer.alloc(56);
+  program.writeUInt32LE(4, 0);
+  program.writeBigUInt64LE(BigInt(notesOffset), 8);
+  program.writeBigUInt64LE(BigInt(notes.length), 32);
+  program.writeBigUInt64LE(4n, 48);
+  const section = Buffer.alloc(64);
+  section.writeUInt32LE(7, 4);
+  section.writeBigUInt64LE(BigInt(notesOffset + 16), 24);
+  section.writeBigUInt64LE(BigInt(notes.length - 16), 32);
+  section.writeBigUInt64LE(4n, 48);
+  const report = parse(
+    Buffer.concat([
+      elf64({ phoff: 64, phnum: 1, shoff, shnum: 2 }),
+      program,
+      notes,
+      Buffer.alloc(4),
+      Buffer.alloc(64),
+      section,
+    ]),
+  );
+  expect(report.entries[0]?.descriptor.location).toEqual(
+    report.entries[1]?.descriptor.location,
+  );
+  expect(report.entries.map(({ type_name, fdo }) => [type_name, fdo])).toEqual([
+    [
+      "fdo_packaging_metadata",
+      { metadata: null, issue: "FDO packaging metadata is not a JSON object." },
+    ],
+    ["fdo_dlopen_metadata", { metadata: [], issue: null }],
+  ]);
 });
 
 it("reads a big-endian ELF32 GNU build-id", () => {
