@@ -140,6 +140,7 @@ it("keeps call-path publication ahead of close_binary record draining", async ()
   const closeReached = createDeferred<void>();
   const releasePreparation = createDeferred<void>();
   const send = serverTransport.send.bind(serverTransport);
+  let preparationToken: string | number | undefined;
   serverTransport.send = async (message, options) => {
     await send(message, options);
     if (
@@ -148,12 +149,16 @@ it("keeps call-path publication ahead of close_binary record draining", async ()
       "params" in message &&
       typeof message.params === "object" &&
       message.params !== null &&
-      "message" in message.params
+      "progressToken" in message.params &&
+      (typeof message.params.progressToken === "string" ||
+        typeof message.params.progressToken === "number")
     ) {
-      if (message.params.message === "prepare: Preparing build_call_path") {
+      if (preparationToken === undefined) {
+        // The first request cannot advance until this notification is released.
+        preparationToken = message.params.progressToken;
         preparationReached.resolve();
         await releasePreparation.promise;
-      } else if (message.params.message === "close_binary: started") {
+      } else if (message.params.progressToken !== preparationToken) {
         closeReached.resolve();
       }
     }

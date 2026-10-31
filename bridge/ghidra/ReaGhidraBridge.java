@@ -928,17 +928,33 @@ public final class ReaGhidraBridge extends HeadlessScript {
         requireKeys(params, Set.of("document", "address"));
         requireDocument(params);
         Address address = requireAddress(params, "address");
+        String at = canonicalAddress(address);
+        // A well-formed address can still lack one exact source offset. Each
+        // outcome has its own code, so REA reports the reason rather than
+        // schema repair. Initialization, not the loaded flag, decides whether
+        // source bytes can exist: file-backed overlays are not loaded.
         MemoryBlock block = currentProgram.getMemory().getBlock(address);
-        if (block == null || !block.isInitialized())
-            throw new RequestFailure("invalid_request", "Address has no initialized file-backed memory: " + canonicalAddress(address));
+        if (block == null)
+            throw new RequestFailure("address_unmapped",
+                "Address " + at + " is outside every Ghidra memory block");
+        if (!block.isInitialized())
+            throw new RequestFailure("address_uninitialized",
+                "Address " + at + " is in uninitialized Ghidra memory block " + block.getName());
         TargetFileOffset mapping = targetFileOffset(block, address);
-        if (mapping.mappings() != 1)
-            throw new RequestFailure("invalid_request", "Address has " + mapping.mappings() + " authoritative target-file mappings: " + canonicalAddress(address));
+        if (mapping.mappings() == 0)
+            throw new RequestFailure("file_mapping_absent",
+                "Address " + at + " in initialized Ghidra memory block " + block.getName() +
+                " has no authoritative mapping to the admitted target file");
+        if (mapping.mappings() > 1)
+            throw new RequestFailure("file_mapping_ambiguous",
+                "Address " + at + " has " + mapping.mappings() +
+                " authoritative mappings to the admitted target file");
         Long fileOffset = mapping.offset();
         if (fileOffset == null)
-            throw new RequestFailure("invalid_request", "Address lacks a safe file offset: " + canonicalAddress(address));
+            throw new RequestFailure("file_offset_unrepresentable",
+                "Address " + at + " maps to an admitted target-file offset beyond the exact JSON integer range");
         JsonObject result = new JsonObject();
-        result.addProperty("address", canonicalAddress(address));
+        result.addProperty("address", at);
         result.addProperty("file_offset", fileOffset);
         return result;
     }

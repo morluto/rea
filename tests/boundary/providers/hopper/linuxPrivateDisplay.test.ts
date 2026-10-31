@@ -196,7 +196,8 @@ describe("Hopper demo dialog timeout outcomes", () => {
         })}\n`,
       );
       expect(parsed.ok).toBe(true);
-      if (!parsed.ok || parsed.value.status !== "error") return;
+      if (!parsed.ok || parsed.value.status !== "error")
+        throw new Error("Expected an error diagnostic for the invalid timeout");
       const projected = projectAnalysisError(
         new HopperProcessError(82, { diagnostic: parsed.value }),
       );

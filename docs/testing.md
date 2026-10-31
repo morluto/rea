@@ -1545,8 +1545,9 @@ real-provider coverage.
 For source-identity boundaries that a normal single-file import cannot create,
 `tests/conformance/ghidra/ReaFileOffsetSourceProbe.java` exercises the production
 bridge against real Ghidra `FileBytes`. It rejects auxiliary and partial sources,
-checks the original target's round trip, and retains ambiguity when duplicate
-target bytes have distinct loaded mappings. Injected decompiler failures and
+keeps distinct outcome codes for uninitialized and unmapped addresses, checks
+the original target's round trip, and retains ambiguity when duplicate target
+bytes have distinct loaded mappings. Injected decompiler failures and
 cancellation verify that completed source/function resolution facts and backend
 failure codes survive; these injections do not establish natural engine failures.
 On Windows, after creating the

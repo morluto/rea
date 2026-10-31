@@ -1,6 +1,8 @@
 import type { FileHandle } from "node:fs/promises";
 import { buffer } from "node:stream/consumers";
 import { expect, it, vi } from "vitest";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import {
   FileReadCancelled,
   readFileHandleChunks,
@@ -36,21 +38,29 @@ it.each(["complete", "fail"])(
       .finally(() => {
         settled = true;
       });
-    await entered;
-    controller.abort(null);
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    expect(settled).toBe(false);
-    expect(source.destroyed).toBe(false);
-    const failure = new Error("controlled native read failure");
-    if (outcome === "fail") reject(failure);
-    else release({ bytesRead: 0, buffer: Buffer.alloc(0) });
-    const error = await result;
-    if (outcome === "fail") expect(error).toBe(failure);
-    else {
-      expect(error).toBeInstanceOf(FileReadCancelled);
-      if (error instanceof FileReadCancelled) expect(error.reason).toBeNull();
-    }
-    expect(read).toHaveBeenCalledTimes(1);
+    await withVerifierCleanup(async () => {
+      await awaitAcknowledgement(entered, result, "descriptor read");
+      controller.abort(null);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(settled).toBe(false);
+      expect(source.destroyed).toBe(false);
+      const failure = new Error("controlled native read failure");
+      if (outcome === "fail") reject(failure);
+      else release({ bytesRead: 0, buffer: Buffer.alloc(0) });
+      const error = await result;
+      if (outcome === "fail") expect(error).toBe(failure);
+      else {
+        expect(error).toBeInstanceOf(FileReadCancelled);
+        if (error instanceof FileReadCancelled) expect(error.reason).toBeNull();
+      }
+      expect(read).toHaveBeenCalledTimes(1);
+    }, [
+      () => controller.abort(null),
+      () => release({ bytesRead: 0, buffer: Buffer.alloc(0) }),
+      async () => {
+        await result;
+      },
+    ]);
   },
 );
 
