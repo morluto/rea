@@ -747,6 +747,11 @@ rea import-reference-source /absolute/path/to/source
 rea import-reference-source /absolute/path/to/source --detail summary --outline-depth 2 --json
 ```
 
+An import retains at most 64 MiB of source bytes. Local `.gitignore` and Git
+metadata reads are limited to 1 MiB each. An oversized source returns a
+`resource_constraint` error with the partial inventory; exclude large files and
+retry.
+
 The default (`--detail full`) returns the complete `HistoricalSourceGraph`.
 Choose `--detail summary` for a `HistoricalSourceSummary` of that same committed
 inventory: its `HistoricalSourceManifest` contains the semantic graph and root

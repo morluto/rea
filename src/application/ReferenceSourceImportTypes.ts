@@ -3,6 +3,7 @@ import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
+  AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
 import {
   projectAnalysisError,
@@ -15,11 +16,21 @@ import type {
 } from "../domain/analysisErrorBase.js";
 import type { ReferenceSourcePolicy } from "../domain/referenceSourcePolicy.js";
 import type { ReferenceSourceRead } from "../reference/ReferenceSourceReaderTypes.js";
+import {
+  REFERENCE_SOURCE_MAX_BYTES,
+  REFERENCE_SOURCE_METADATA_MAX_BYTES,
+} from "../reference/ReferenceSourceLimits.js";
 
 /** Typed expected failure returned by historical-source imports. */
 export interface ReferenceSourceImportError {
   readonly tag: "reference-source-import";
-  readonly code: "cancelled" | "invalid-root" | "unsupported" | "io" | "parse";
+  readonly code:
+    | "cancelled"
+    | "invalid-root"
+    | "unsupported"
+    | "io"
+    | "limit"
+    | "parse";
   readonly message: string;
   readonly remediationAction?: string;
   readonly cleanup?: AnalysisCleanupObservation;
@@ -35,6 +46,7 @@ const IMPORT_FAILURE_GUIDANCE = {
   unsupported:
     "Safe no-follow file opens are unavailable on this host. Import the source tree with REA on Linux (including WSL) or macOS.",
   io: "Reference source files could not be read. Check directory permissions and try again.",
+  limit: "Exclude large files or select a smaller source tree.",
   parse:
     "Reference source could not be indexed. Check that the source tree is readable, then try again.",
 } satisfies Record<ReferenceSourceImportError["code"], string>;
@@ -62,7 +74,12 @@ export const projectReferenceSourceImportError = (
                 : { rootFailure: { ...partial.rootFailure } }),
               entries: partial.entries.map((entry) =>
                 entry.status === "read" && entry.kind === "file"
-                  ? { ...entry, bytes: Array.from(entry.bytes) }
+                  ? {
+                      status: entry.status,
+                      kind: entry.kind,
+                      path: entry.path,
+                      size: entry.size,
+                    }
                   : { ...entry },
               ),
               bytesRead: partial.bytesRead,
@@ -95,6 +112,18 @@ export const projectReferenceSourceImportError = (
         "import_reference_source",
         error.message,
         { ...options, userMessage: message, remediationAction: guidance },
+      );
+      break;
+    case "limit":
+      primary = new AnalysisResourceConstraintError(
+        "import_reference_source",
+        "file-size",
+        error.message,
+        {
+          source_bytes: REFERENCE_SOURCE_MAX_BYTES,
+          metadata_bytes: REFERENCE_SOURCE_METADATA_MAX_BYTES,
+        },
+        { ...options, remediationAction: guidance, retryable: false },
       );
       break;
     case "io":
