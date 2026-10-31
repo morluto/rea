@@ -568,6 +568,44 @@ Measure slow cases before pruning capacity coverage. Retain inputs beyond the
 formerly failing size/depth and distinguish cold runs, warm builds, coverage,
 and toolchain conditions when comparing timings.
 
+### Public output contract regressions
+
+Scripts and agent integrations consume the machine-readable outputs both
+adapters publish, so result-field, enum, and error-representation changes can
+break them even when internal tests pass. A focused contract suite pins the
+declared public contracts through real public workflows:
+
+- The canonical Evidence record and its structured MCP delivery, including
+  required keys (`analysis_profile` is always present), field types, and the
+  documented `confidence` and `authority` enums
+  ([MCP runtime contracts](mcp-contracts.md#tool-results);
+  owner `src/domain/evidence.ts`).
+- The stable error projection shared by every CLI and MCP error surface,
+  generated into `docs/error-contract.schema.json` from
+  `src/contracts/errorSchemas.ts` (`npm run docs:generate`).
+- Result-embedded coverage enums that keep unavailable or incomplete evidence
+  distinguishable from a negative finding, such as native export
+  `coverage.status` (`complete`, `partial`, `unsupported` with a reason) and
+  artifact inventory `coverage.scope`/`coverage.status`
+  (`root`/`container-entries`, `complete`/`unknown`).
+
+The suite lives in `tests/boundary/mcp/publicOutputContractMcp.test.ts` and
+`tests/acceptance/publicOutputContractCli.test.ts`, with shared assertions in
+`tests/fixtures/publicOutputContract.ts`. It also rejects drift between the
+runtime error schema and the committed generated document, so an unintended
+change fails CI rather than an integration. These tests use portable fixtures
+and built-in parsers only; real-provider behavior still belongs to the
+matching verification lanes.
+
+When a public contract intentionally changes, complete the whole change
+together: update the owning schema or contract, regenerate the documented
+schema when it is generated, and update the contract fixtures in the same
+change with an explanation of what changed for integrations. Mark breaking
+changes with `!` or a `BREAKING CHANGE:` footer and add a migration note when
+callers must act. The suite protects the declared public surface above, not
+every internal implementation detail or incidental output field; extend it
+when a new result contract is declared stable.
+
 ## Lifecycle regressions
 
 For changes to resource acquisition, readiness, cancellation, or cleanup, select
