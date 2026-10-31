@@ -1,5 +1,6 @@
 import { rm } from "node:fs/promises";
 import { afterEach, expect, it } from "vitest";
+import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
 import { IdaSessionClient } from "../../../src/ida/IdaSessionClient.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createIdaTarget, RecordingIdaMcp } from "../../fixtures/idaMcp.js";
@@ -43,7 +44,19 @@ it.each([2, 3])(
       target,
       producer,
     );
-    const mcp = await connect(ida);
+    let refusal: AnalysisCapabilityUnavailableError | undefined;
+    const mcp = await connect({
+      execute: async (operation, input, options) => {
+        const result = await ida.execute(operation, input, options);
+        if (
+          operation === "resolve_containing_procedure" &&
+          !result.ok &&
+          result.error instanceof AnalysisCapabilityUnavailableError
+        )
+          refusal = result.error;
+        return result;
+      },
+    });
     try {
       const result = await mcp.callTool({
         name: "trace_feature",
@@ -57,9 +70,8 @@ it.each([2, 3])(
           diagnostics: { auto_analysis_ready: null },
         },
       });
-      expect(error.remediation?.action).toContain(
-        "Inspect the upstream IDA worker",
-      );
+      expect(refusal?.remediationAction).toBeDefined();
+      expect(error.remediation?.action).toBe(refusal?.remediationAction);
       expect(healthAfterXrefs).toBe(failureCheck);
       if (failureCheck === 3) {
         expect(error.details?.partial_observation).toMatchObject({
