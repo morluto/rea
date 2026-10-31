@@ -8,7 +8,9 @@ import { PassThrough } from "node:stream";
 
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { build } from "plist";
+import { withVerifierCleanup } from "../../../../scripts/lib/verifier-cleanup.mjs";
 
+import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
@@ -481,23 +483,16 @@ describe("native command failure capture and limits", () => {
       ],
       { signal: controller.signal },
     );
-    let timeout: ReturnType<typeof setTimeout> | undefined;
-    let result: Awaited<typeof pending>;
-    try {
-      await Promise.race([
-        ready,
-        new Promise<never>((_, reject) => {
-          timeout = setTimeout(
-            () => reject(new Error("Command output handshake timed out")),
-            10_000,
-          );
-        }),
-      ]);
-    } finally {
-      if (timeout !== undefined) clearTimeout(timeout);
+    const result = await withVerifierCleanup(async () => {
+      await awaitAcknowledgement(ready, pending, "command output", 10_000);
       controller.abort();
-      result = await pending;
-    }
+      return await pending;
+    }, [
+      () => controller.abort(),
+      async () => {
+        await pending;
+      },
+    ]);
 
     expect(result.ok).toBe(false);
     if (result.ok) return;

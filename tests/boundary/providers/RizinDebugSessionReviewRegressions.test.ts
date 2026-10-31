@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, expect, it } from "vitest";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 
 import { RizinDebugSessionManager } from "../../../src/rizin/RizinDebugSessionManager.js";
 import {
@@ -13,6 +14,7 @@ import {
 import { evidenceSchema } from "../../../src/domain/evidence.js";
 import { absoluteCallerPath } from "../../../src/filesystem/callerPath.js";
 import { createDeferred } from "../../fixtures/binarySession.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import {
   createRizinTestManager,
   rizinTestInferiorTty,
@@ -769,9 +771,17 @@ it.skipIf(process.platform === "win32")(
       { path: "/tmp/fixture.bin", inferior_tty: await rizinTestInferiorTty() },
       controller.signal,
     );
-    await spawned.promise;
-    controller.abort();
-    const started = await starting;
+    const started = await withVerifierCleanup(async () => {
+      await awaitAcknowledgement(spawned.promise, starting, "Rizin spawn");
+      controller.abort();
+      return await starting;
+    }, [
+      () => controller.abort(),
+      async () => {
+        await starting;
+      },
+      () => manager.closeAll(),
+    ]);
 
     expect(started.ok).toBe(false);
     if (!started.ok) expect(started.error._tag).toBe("AnalysisCancelledError");
