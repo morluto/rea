@@ -28,7 +28,10 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { inspectKunaInstallation } from "../dist/kuna/KunaInstallation.js";
 import { ArtifactResourceScope } from "../dist/artifacts/ArtifactResourceScope.js";
 import { AnalysisCleanupLease } from "../dist/artifacts/AnalysisCleanupLease.js";
-import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
+import {
+  requireMcpOperationResult,
+  requireMcpToolError,
+} from "./lib/mcp-verifier-results.mjs";
 import { verifyKunaReferences } from "./lib/kuna-reference-verifier.mjs";
 import {
   nativeKunaStrings,
@@ -228,6 +231,13 @@ const openServer = async (provider) => {
       structured: result.structuredContent,
     };
   };
+  const callError = async (name, arguments_ = {}) =>
+    requireMcpToolError(
+      await client.callTool(
+        { name, arguments: arguments_ },
+        { timeout: 3_600_000 },
+      ),
+    );
   const close = async (priorFailure) => {
     clearInterval(timer);
     await sample();
@@ -269,7 +279,7 @@ const openServer = async (provider) => {
     // A rejected connection/target still owns its transport and workspace.
     await close(cause);
   }
-  return { call, close };
+  return { call, callError, close };
 };
 
 /** Count structuring and diagnostic markers in provider pseudocode. */
@@ -315,6 +325,15 @@ const verifyKuna = async (
       }),
     });
     const listed = await cold.call("list_procedures");
+    if (verifyNamedTrace) {
+      const missing = await cold.callError("xrefs", {
+        address: "rea_missing_xref_inventory_name",
+      });
+      assert.equal(missing.code, "invalid_request");
+      assert.match(missing.message, /inventory has no entry/u);
+      assert.match(missing.remediation.action, /does not establish absence/u);
+      assert.equal(missing.recovery, undefined);
+    }
     for (const [name, address] of functions) {
       assert.ok(
         listed.value.some((entry) => entry.address === address),

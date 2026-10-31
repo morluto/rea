@@ -69,7 +69,7 @@ export const ENHANCED_TOOL_CONTRACTS = [
   ),
   enhanced(
     "find_xrefs_to_name",
-    "Resolve an exact name against the bound provider's name inventory and return a resolved or unresolved result. Unresolved names use the stable name_not_found reason; this xref workflow returns address-only projections.",
+    "Resolve an exact name against the bound provider's name inventory and return a resolved or unresolved result. Unresolved names use the stable name_not_found reason; this xref workflow returns address-only projections. Kuna lacks this general name inventory; xrefs can instead resolve names present in Kuna's inventory, but unlisted names may still exist in the target.",
     enhancedInputSchemas.find_xrefs_to_name,
   ),
   enhanced(

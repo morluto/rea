@@ -1056,10 +1056,21 @@ export class KunaSessionClient implements AnalysisClient {
       new AnalysisInputError(operation, {
         userMessage:
           matches.length === 0 && named.length === 0
-            ? `Kuna found no procedure named ${selector}; search_procedures finds similar names.`
+            ? field === "address"
+              ? `Kuna's inventory has no entry named ${selector}.`
+              : `Kuna found no procedure named ${selector}; search_procedures finds similar names.`
             : matches.length === 0
               ? `${selector} names ${String(named.length)} Kuna entries that lie in Mach-O data regions (${named.map(({ address }) => address).join(", ")}); they are data, not procedures.`
               : `${selector} names ${String(matches.length)} Kuna entries (${matches.map(({ address }) => address).join(", ")}); select one by address.`,
+        ...(field === "address"
+          ? {
+              remediationAction:
+                matches.length === 0
+                  ? "Inspect target symbols or exports where available, verify address coordinates, and call xrefs with an address. Absence from Kuna's inventory does not establish absence from the target."
+                  : "Select one of the reported addresses and call xrefs again.",
+              conformsToInputContract: true,
+            }
+          : {}),
       }),
     );
   }
