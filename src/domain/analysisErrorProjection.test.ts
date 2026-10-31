@@ -1132,9 +1132,9 @@ describe("analysis error projection: operational diagnostics", () => {
       }),
     );
     expect(unreachable.message).toContain(
-      "If Hopper may have exited, call export_evidence_bundle before close_binary",
+      "close_binary preserves retained Evidence and Unknown history",
     );
-    expect(unreachable.message).toContain("closing clears retained records");
+    expect(unreachable.message).toContain("before ending the REA process");
     expect(unreachable.remediation.action).toContain("export_evidence_bundle");
   });
 });

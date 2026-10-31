@@ -629,7 +629,15 @@ describe("target-free MCP workflow", () => {
     expect(
       structured(await mcp.callTool({ name: "list_unknowns", arguments: {} }))
         .result,
-    ).toMatchObject({ items: [] });
+    ).toMatchObject({
+      items: [
+        {
+          unknown_id: recordedUnknown.unknown_id,
+          revision: 2,
+          status: "resolved",
+        },
+      ],
+    });
     expect(
       (
         await mcp.callTool({

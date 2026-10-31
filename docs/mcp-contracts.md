@@ -675,13 +675,24 @@ advertises a file selector; a retained ID does not authorize a file read.
 References belong to the current connection's Evidence ledger. Opening another
 target or restarting the current target preserves retained records, including
 when provider cleanup fails; records remain available for export and retry.
-`close_binary` clears them, even when no binary is active. A fresh connection
-has its own ledger. A missing reference reports its exact ID and
+`close_binary` releases the engine and replay cache while preserving these records,
+even when no binary is active or cleanup fails. `reset_investigation` explicitly
+clears all records and Unknown revisions after draining earlier work; a healthy
+active engine remains open. Its optional absolute `save_path` saves a complete
+canonical bundle before clearing. Failed save, cancellation observed before clearing or incomplete cleanup
+preserves records, and a published file is reported even if later cleanup fails.
+A fresh connection has its own in-memory ledger; import the saved bundle to restore
+original Evidence IDs and complete Unknown history. A missing reference reports its exact ID and
 `details.reason: "missing"`; the server cannot infer
 whether it was never recorded, cleared, or retained by another connection.
 Supply complete inline Evidence, repeat its producer, or import an exported
-Evidence bundle before referencing that imported record. Export a bundle before
-closing if the investigation needs it later.
+Evidence bundle before referencing that imported record. Export a bundle or use
+`reset_investigation(save_path)` before ending the process if the investigation
+needs it later. Retention has no automatic persistence or silent eviction.
+`binary_session.investigation` reports record/revision/head counts, estimated
+retained representation bytes and the fixed allowance derived from initial V8
+heap headroom. A capacity refusal preserves the existing investigation; checkpoint
+and reset it, or start with a larger Node heap. These byte estimates are not RSS.
 
 CLI workflows that advertise `--evidence-bundle` can resolve the same reference
 JSON from one explicitly selected local bundle, including an MCP export. They

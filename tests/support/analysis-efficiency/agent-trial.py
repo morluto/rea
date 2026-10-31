@@ -197,6 +197,7 @@ def main():
                  'reconcile_javascript_runtime',
                  'inspect_evm_interface', 'get_evidence_bundle', 'export_evidence_bundle',
                  'import_evidence_bundle', 'list_unknowns', 'verify_unknown_resolution',
+                 'record_unknown', 'update_unknown', 'reset_investigation',
                  'capture_browser_scenario',
                  'resolve_containing_procedure', 'analyze_function', 'close_binary']:
         config += '[mcp_servers.rea.tools.' + tool + ']\napproval_mode = "approve"\n'
