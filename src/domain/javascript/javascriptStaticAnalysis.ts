@@ -7,7 +7,7 @@ import { RETURNED_REFERENCE_WIDENING_LIMITATION } from "./javascriptSemanticCove
 import { collectElectronWrappedCallPathsSteps } from "./electronWrappedCallPaths.js";
 import {
   ELECTRON_IDENTITY_LIMITATION,
-  ELECTRON_MODULE,
+  referencesElectronModule,
 } from "./javascriptElectronMemberWrites.js";
 
 import {
@@ -165,6 +165,7 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
     source,
     accumulator,
     electronIdentity,
+    () => completeSemanticSteps(index.indexMemberMutationFactsSteps()),
   );
   addSourceMapDirectives(source, file.comments ?? [], accumulator);
   return finalizeStaticAnalysis(source, file, accumulator, bindings, routes);
@@ -199,10 +200,7 @@ const finalizeStaticAnalysis = (
 ): JavaScriptStaticAnalysis => {
   const parserErrors = file.errors.length;
   const typeOnlySideEffect = hasUncertainTypeOnlyModuleSideEffect(file.program);
-  const electronObserved = accumulator.references.some(
-    ({ value }) =>
-      value.specifier !== null && ELECTRON_MODULE.test(value.specifier),
-  );
+  const electronObserved = referencesElectronModule(accumulator.references);
   const resourceLimits = [...bindings.valueResourceLimits].sort();
   const coverage: JavaScriptStaticCoverage = {
     syntax:
