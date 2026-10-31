@@ -395,6 +395,19 @@ const waitForCompilation = async (
   });
 };
 
+/** The kernel or policy refused to launch the file, before it could answer. */
+const helperLaunchFailed = (cause: unknown): boolean => {
+  const failure = execFileOutputFailure(cause);
+  // spawn rejects with the bare errno before any output exists.
+  const code =
+    failure?.code ??
+    (cause instanceof Error && "code" in cause ? cause.code : undefined);
+  return (
+    ["EACCES", "EPERM", "ENOEXEC", "ENOENT"].includes(String(code)) ||
+    (failure?.signal === "SIGKILL" && !failure.killed)
+  );
+};
+
 /** Explicit tool selection; direct Swift compilation also needs its matching SDK. */
 export type DarwinProcessReaderCompiler =
   | { readonly kind: "xcrun"; readonly executable: string }
@@ -448,6 +461,10 @@ export const createDarwinProcessRunTokenReader = (
         });
   let root: ProcessReaderRoot | undefined;
   let executable: string | undefined;
+  // The shared copy runs while it launches; this reader's own helper is kept.
+  let sharedExecutable: string | undefined;
+  let perRunExecutable: string | undefined;
+  let bypassCache = false;
   let compilation: ProcessReaderCompilation | undefined;
   let closePromise: Promise<void> | undefined;
   let closed = false;
@@ -506,10 +523,13 @@ export const createDarwinProcessRunTokenReader = (
           "Direct Darwin helper compilation requires absolute REA_DARWIN_SWIFTC_PATH and SDKROOT paths selecting a compatible installed Swift compiler and macOS SDK.",
         );
       }
-      const cached = await helperCache?.lookup();
+      const cached = bypassCache
+        ? undefined
+        : await helperCache?.lookup(signal);
       if (signal.aborted || closed) throw abortReason(signal);
       // A verified shared entry needs no per-run root and is never removed.
       if (cached?.kind === "hit") {
+        sharedExecutable = cached.executable;
         executable = cached.executable;
         return cached.executable;
       }
@@ -559,9 +579,11 @@ export const createDarwinProcessRunTokenReader = (
       // The per-run root stays owned until close even when the shared copy runs.
       const shared =
         cached?.kind === "miss"
-          ? await helperCache?.publish(cached.key, output)
+          ? await helperCache?.publish(cached.key, output, signal)
           : undefined;
       if (signal.aborted || closed) throw abortReason(signal);
+      perRunExecutable = output;
+      sharedExecutable = shared;
       executable = shared ?? output;
       return executable;
     } catch (cause: unknown) {
@@ -674,8 +696,7 @@ export const createDarwinProcessRunTokenReader = (
   ): Promise<string> => {
     if (closed)
       return Promise.reject(new ProcessAdmissionError("reader_closed"));
-    const pending = (async () => {
-      const binary = await compile(signal);
+    const execute = async (binary: string) => {
       const { stdout } = await execFileOutput(binary, arguments_, {
         env: environment,
         timeout: 15_000,
@@ -684,6 +705,21 @@ export const createDarwinProcessRunTokenReader = (
       });
       signal?.throwIfAborted();
       return stdout;
+    };
+    const pending = (async () => {
+      const binary = await compile(signal);
+      try {
+        return await execute(binary);
+      } catch (cause: unknown) {
+        if (binary !== sharedExecutable || !helperLaunchFailed(cause))
+          throw cause;
+        // The shared copy cannot run here, for example from a noexec home
+        // volume; this reader keeps its own helper from now on.
+        bypassCache = true;
+        sharedExecutable = undefined;
+        if (executable === binary) executable = perRunExecutable;
+        return execute(await compile(signal));
+      }
     })();
     activeCommands.add(pending);
     return pending.finally(() => {

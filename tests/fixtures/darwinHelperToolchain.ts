@@ -5,7 +5,11 @@ import { join } from "node:path";
  * Fake xcrun: answers toolchain lookups from fixture files and, given
  * `swiftc … -o OUT`, writes a helper that reads every requested PID.
  */
-export const writeFakeXcrun = async (directory: string, blocking = false) => {
+export const writeFakeXcrun = async (
+  directory: string,
+  blocking = false,
+  stalledLookups = false,
+) => {
   const executable = join(directory, "fake-xcrun");
   const swiftc = join(directory, "toolchain", "swiftc");
   const sdk = join(directory, "sdk");
@@ -25,18 +29,21 @@ process.stdout.write(JSON.stringify({ results: pids.map((pid) => ({ pid: Number(
 const fs = process.getBuiltinModule("node:fs");
 const path = process.getBuiltinModule("node:path");
 const args = process.argv.slice(2);
-if (args[0] === "--find") { process.stdout.write(${JSON.stringify(swiftc)} + "\\n"); process.exit(0); }
-if (args[0] === "--show-sdk-path") { process.stdout.write(${JSON.stringify(sdk)} + "\\n"); process.exit(0); }
-const outputIndex = args.indexOf("-o");
-if (outputIndex < 0) process.exit(64);
-const output = args[outputIndex + 1];
-fs.appendFileSync(${JSON.stringify(countPath)}, "x");
-fs.appendFileSync(${JSON.stringify(rootsPath)}, path.dirname(output) + "\\n");
-if (${String(blocking)}) setInterval(() => {}, 1000);
-else {
+const compile = () => {
+  const outputIndex = args.indexOf("-o");
+  if (outputIndex < 0) process.exit(64);
+  const output = args[outputIndex + 1];
+  fs.appendFileSync(${JSON.stringify(countPath)}, "x");
+  fs.appendFileSync(${JSON.stringify(rootsPath)}, path.dirname(output) + "\\n");
+  if (${String(blocking)}) return setInterval(() => {}, 1000);
   fs.writeFileSync(output, ${JSON.stringify(helper)});
   fs.chmodSync(output, 0o755);
-}
+};
+if (args[0] === "swiftc") compile();
+else if (${String(stalledLookups)}) setInterval(() => {}, 1000);
+else if (args[0] === "--find") process.stdout.write(${JSON.stringify(swiftc)} + "\\n");
+else if (args[0] === "--show-sdk-path") process.stdout.write(${JSON.stringify(sdk)} + "\\n");
+else process.exit(64);
 `,
   );
   await chmod(executable, 0o755);

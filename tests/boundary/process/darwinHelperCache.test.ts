@@ -21,6 +21,7 @@ import { writeFakeXcrun } from "../../fixtures/darwinHelperToolchain.js";
 import {
   createDarwinHelperCache,
   darwinHelperCacheDirectory,
+  defaultDarwinHelperCacheDirectory,
 } from "../../../src/process/DarwinHelperCache.js";
 import { createDarwinProcessRunTokenReader } from "../../../src/process/DarwinProcessRunTokenReader.js";
 import { createSystemProcessOwnershipHost } from "../../../src/process/ProcessOwnershipObservation.js";
@@ -244,6 +245,48 @@ it("shares a helper only for the default toolchain and an absolute home", () => 
   expect(select({ home: undefined })).toBeUndefined();
 });
 
+it("keeps the caller's home path segments instead of normalizing them", () => {
+  // A symlink followed by `..` must resolve on the filesystem, not lexically.
+  expect(defaultDarwinHelperCacheDirectory("/Users/analyst/link/../home")).toBe(
+    "/Users/analyst/link/../home/Library/Caches/rea/process-helper",
+  );
+});
+
+it.skipIf(!posix)(
+  "stops stalled toolchain lookups when preparation is cancelled",
+  async () => {
+    const directory = await createTestTempDirectory("rea-helper-cache-stall-");
+    const source = join(directory, "Reader.swift");
+    await writeFile(source, "// helper source\n");
+    const xcrun = await writeFakeXcrun(directory, false, true);
+    const cache = createDarwinHelperCache({
+      directory: join(directory, "process-helper"),
+      sources: [source],
+      xcrun: xcrun.executable,
+      environment: process.env,
+    });
+    const started = Date.now();
+    expect(await cache.lookup(AbortSignal.timeout(200))).toEqual({
+      kind: "unavailable",
+    });
+    // Far below the 15 s lookup deadline: both lookups ended with the signal.
+    expect(Date.now() - started).toBeLessThan(5_000);
+
+    const reader = createDarwinProcessRunTokenReader({
+      compiler: { kind: "xcrun", executable: xcrun.executable },
+      helperCacheDirectory: join(directory, "reader-cache"),
+    });
+    const controller = new AbortController();
+    const prepared = reader.prepare(controller.signal);
+    setTimeout(() => controller.abort(new Error("caller cancelled")), 200);
+    const cancelled = Date.now();
+    await expect(prepared).rejects.toThrow("caller cancelled");
+    await reader.close();
+    expect(Date.now() - cancelled).toBeLessThan(5_000);
+    expect(await xcrun.compilations()).toBe(0);
+  },
+);
+
 const fixtureProcess = {
   pid: 123,
   parentPid: 1,
@@ -293,6 +336,56 @@ it.skipIf(!posix)(
     }
     expect(await xcrun.compilations()).toBe(1);
     expect(await exists(shared)).toBe(true);
+  },
+);
+
+it.skipIf(!posix)(
+  "falls back to its own helper when a verified shared copy cannot launch",
+  async () => {
+    const directory = await createTestTempDirectory("rea-helper-cache-noexec-");
+    const helperCacheDirectory = join(directory, "process-helper");
+    const xcrun = await writeFakeXcrun(directory);
+    const create = () =>
+      createDarwinProcessRunTokenReader({
+        compiler: { kind: "xcrun", executable: xcrun.executable },
+        helperCacheDirectory,
+      });
+    const first = create();
+    let shared: string;
+    try {
+      shared = await first.prepare();
+    } finally {
+      await first.close();
+    }
+    // A consistent entry the kernel refuses to run, as on a noexec volume.
+    const unrunnable = Buffer.from("not a program\n");
+    await writeFile(shared, unrunnable);
+    const manifestPath = join(shared, "..", "manifest.json");
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as {
+      sha256: string;
+      size: number;
+    };
+    const { createHash } = await import("node:crypto");
+    await writeFile(
+      manifestPath,
+      JSON.stringify({
+        ...manifest,
+        sha256: createHash("sha256").update(unrunnable).digest("hex"),
+        size: unrunnable.byteLength,
+      }),
+    );
+    const second = create();
+    try {
+      expect(await second.prepare()).toBe(shared);
+      expect((await second.read([fixtureProcess])).get(123)).toEqual({
+        state: "readable",
+        runId: "fixture",
+      });
+    } finally {
+      await second.close();
+    }
+    expect(await xcrun.compilations()).toBe(2);
+    expect((await readFile(shared)).equals(unrunnable)).toBe(true);
   },
 );
 

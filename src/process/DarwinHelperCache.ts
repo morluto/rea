@@ -19,6 +19,7 @@ import { z } from "zod";
 
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { safeParseJson } from "../domain/safeJson.js";
+import { appendCallerPath } from "../filesystem/callerPath.js";
 import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { withOwnedRegularFile } from "../filesystem/OwnedRegularFile.js";
 import { readStableFileBytes } from "../filesystem/readStableFileBytes.js";
@@ -49,7 +50,7 @@ const sha256 = (value: string | Uint8Array): string =>
 
 /** Per-user namespace REA owns for the compiled Darwin ownership helper. */
 export const defaultDarwinHelperCacheDirectory = (home: string): string =>
-  join(home, "Library/Caches/rea/process-helper");
+  appendCallerPath(home, "Library/Caches/rea/process-helper", "darwin");
 
 /**
  * Only the default toolchain shares a helper: a caller-selected compiler or
@@ -128,14 +129,20 @@ export const createDarwinHelperCache = (options: {
   const uid = process.getuid?.();
   // Failed closes and removals stay owned until close() retries them.
   const retained = new Map<string, () => Promise<void>>();
+  // The first unresolved close failure; later ones depend on it.
+  let cleanupAnchor: ProviderCleanupError | undefined;
   let key: Promise<string> | undefined;
 
-  const xcrun = async (arguments_: readonly string[]): Promise<string> => {
+  const xcrun = async (
+    arguments_: readonly string[],
+    signal: AbortSignal | undefined,
+  ): Promise<string> => {
     const { stdout } = await execFileOutput(options.xcrun, arguments_, {
       env: options.environment,
       timeout: TOOLCHAIN_LOOKUP_TIMEOUT_MS,
       maxBuffer: 64 * 1024,
       stopSignal: "SIGTERM",
+      ...(signal === undefined ? {} : { signal }),
     });
     const path = stdout.trim();
     if (!isAbsolute(path))
@@ -143,32 +150,55 @@ export const createDarwinHelperCache = (options: {
     return path;
   };
 
+  /** Wait for every started read before reporting the first failure. */
+  const settleAll = async <Values extends readonly unknown[]>(pending: {
+    readonly [Index in keyof Values]: Promise<Values[Index]>;
+  }): Promise<Values> => {
+    await Promise.allSettled(pending);
+    return Promise.all(pending) as Promise<Values>;
+  };
+
   /** xcrun owns toolchain selection; key on what it resolves. */
-  const cacheKey = (): Promise<string> => {
-    key ??= (async () => {
-      const [sources, compilerPath, sdkPath] = await Promise.all([
-        Promise.all(
-          options.sources.map(async (source) => sha256(await readFile(source))),
-        ),
-        xcrun(["--find", "swiftc"]),
-        xcrun(["--show-sdk-path"]),
-      ]);
-      const [compiler, sdk] = await Promise.all([
-        fileIdentity(compilerPath),
-        fileIdentity(join(sdkPath, "SDKSettings.json")),
-      ]);
-      return sha256(
-        JSON.stringify({
-          format: CACHE_FORMAT,
-          sources,
-          compiler,
-          sdk,
-          architecture: process.arch,
-          os_release: release(),
-        }),
-      );
-    })();
-    return key;
+  const computeKey = async (signal: AbortSignal | undefined) => {
+    const [sources, compilerPath, sdkPath] = await settleAll<
+      [string[], string, string]
+    >([
+      Promise.all(
+        options.sources.map(async (source) => sha256(await readFile(source))),
+      ),
+      xcrun(["--find", "swiftc"], signal),
+      xcrun(["--show-sdk-path"], signal),
+    ]);
+    const [compiler, sdk] = await settleAll<
+      [
+        Awaited<ReturnType<typeof fileIdentity>>,
+        Awaited<ReturnType<typeof fileIdentity>>,
+      ]
+    >([
+      fileIdentity(compilerPath),
+      fileIdentity(join(sdkPath, "SDKSettings.json")),
+    ]);
+    return sha256(
+      JSON.stringify({
+        format: CACHE_FORMAT,
+        sources,
+        compiler,
+        sdk,
+        architecture: process.arch,
+        os_release: release(),
+      }),
+    );
+  };
+
+  /** A cancelled or failed key computation is retried by the next lookup. */
+  const cacheKey = (signal: AbortSignal | undefined): Promise<string> => {
+    if (key !== undefined) return key;
+    const pending = computeKey(signal);
+    key = pending;
+    pending.catch(() => {
+      if (key === pending) key = undefined;
+    });
+    return pending;
   };
 
   /** The real cache root, created privately, with only trusted ancestors. */
@@ -240,12 +270,12 @@ export const createDarwinHelperCache = (options: {
       : undefined;
   };
 
-  const lookup = async (): Promise<DarwinHelperLookup> => {
+  const lookup = async (signal?: AbortSignal): Promise<DarwinHelperLookup> => {
     if (uid === undefined) return { kind: "unavailable" };
     try {
       const root = await trustedRoot(uid);
       if (root === undefined) return { kind: "unavailable" };
-      const entryKey = await cacheKey();
+      const entryKey = await cacheKey(signal);
       const entry = join(root, entryKey);
       let entryStats: Stats;
       try {
@@ -282,6 +312,7 @@ export const createDarwinHelperCache = (options: {
   const publish = async (
     entryKey: string,
     compiled: string,
+    signal?: AbortSignal,
   ): Promise<string | undefined> => {
     if (uid === undefined) return undefined;
     let staging: string | undefined;
@@ -311,7 +342,7 @@ export const createDarwinHelperCache = (options: {
         return join(entry, HELPER_NAME);
       } catch {
         // A concurrent publisher won; run its entry only once it verifies.
-        const winner = await lookup();
+        const winner = await lookup(signal);
         return winner.kind === "hit" ? winner.executable : undefined;
       }
     } catch {
@@ -325,7 +356,8 @@ export const createDarwinHelperCache = (options: {
   /** Retry every retained close or removal; unresolved ones stay owned. */
   const close = async (): Promise<void> => {
     const failed: string[] = [];
-    for (const [resource, cleanup] of [...retained]) {
+    // Deleting the visited entry while iterating a Map is well defined.
+    for (const [resource, cleanup] of retained) {
       try {
         await cleanup();
         retained.delete(resource);
@@ -333,8 +365,8 @@ export const createDarwinHelperCache = (options: {
         failed.push(resource);
       }
     }
-    if (failed.length > 0)
-      throw new ProviderCleanupError(
+    if (failed.length > 0) {
+      const failure = new ProviderCleanupError(
         "process-ownership",
         failed,
         {
@@ -343,6 +375,13 @@ export const createDarwinHelperCache = (options: {
         },
         { operation: "prepare_owned_process" },
       );
+      // Every returned failure clears once a later retry releases them all.
+      if (cleanupAnchor === undefined) cleanupAnchor = failure;
+      else failure.bindCleanupDependencies([cleanupAnchor]);
+      throw failure;
+    }
+    cleanupAnchor?.resolveCleanup();
+    cleanupAnchor = undefined;
   };
 
   return { lookup, publish, close };

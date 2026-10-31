@@ -44,7 +44,8 @@ it.skipIf(process.platform === "win32")(
     // An occupied, invalid entry makes this publication lose its rename.
     await mkdir(join(root, lookup.key), { mode: 0o700 });
     await writeFile(join(root, lookup.key, "unrelated"), "occupied");
-    fault.removals = 2;
+    // Publication, then two close attempts, fail to remove the staging copy.
+    fault.removals = 3;
     expect(await cache.publish(lookup.key, compiled)).toBeUndefined();
     const staging = (await readdir(root)).filter((name) =>
       name.startsWith(".publish-"),
@@ -65,7 +66,14 @@ it.skipIf(process.platform === "win32")(
       ],
     });
     expect(await readdir(root)).toContain(staging[0]);
+    expect(failed).toMatchObject({ cleanupIncomplete: true });
+    // A second failed attempt depends on the first returned error.
+    const again: unknown = await cache.close().catch((cause: unknown) => cause);
+    expect(again).toMatchObject({ cleanupIncomplete: true });
     await cache.close();
     expect(await readdir(root)).toEqual([lookup.key]);
+    // Every error returned while cleanup was pending now reports release.
+    expect(failed).toMatchObject({ cleanupIncomplete: false });
+    expect(again).toMatchObject({ cleanupIncomplete: false });
   },
 );
