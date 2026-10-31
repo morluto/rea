@@ -3481,11 +3481,14 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
         JsonArray limitations = new JsonArray();
         if (callerLimitation != null) limitations.add(callerLimitation);
+        String computedLimitation = calls == null ? null
+            : computedCallTargetLimitation(calls.computedCallSites());
+        if ((omitted != null && omitted > 0) || computedLimitation != null) directions.add("callees");
         if (omitted != null && omitted > 0) {
             limitations.add("Ghidra's callee inventory omits targets of " + omitted +
                 " call reference(s) or decoded call(s) without destinations.");
-            directions.add("callees");
         }
+        if (computedLimitation != null) limitations.add(computedLimitation);
         if (!limitations.isEmpty()) {
             coverage.addProperty("status", "partial");
             coverage.add("limitations", limitations);
@@ -3503,6 +3506,24 @@ public final class ReaGhidraBridge extends HeadlessScript {
         );
         coverage.add("diagnostics", diagnostics);
         return coverage;
+    }
+
+    /** Name a few sites inline; reference reads and call-target queries recover the rest. */
+    private static final int NAMED_COMPUTED_CALL_SITES = 4;
+
+    /**
+     * A computed call's ReferenceManager targets are static candidates: Ghidra
+     * records no proof that other values cannot reach the call, so the callee
+     * set stays incomplete while the recorded candidates remain observed.
+     */
+    private static String computedCallTargetLimitation(List<String> sites) {
+        if (sites.isEmpty()) return null;
+        int named = Math.min(sites.size(), NAMED_COMPUTED_CALL_SITES);
+        String listed = String.join(", ", sites.subList(0, named)) +
+            (sites.size() > named ? " and " + (sites.size() - named) + " more" : "");
+        return "Ghidra records call reference targets at " + sites.size() +
+            " computed call site(s) (" + listed + "); these static references do not establish" +
+            " every possible target, so additional callees remain unknown.";
     }
 
     private boolean unrepresentedCaller(Reference reference, Set<Function> callers) {
@@ -3539,9 +3560,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
             monitor.checkCancelled();
             calls.observe(reference);
         }
+        List<String> computedCallSites = new ArrayList<>();
         for (Instruction instruction : instructions) {
             boundary.observe(instruction);
-            if (!instruction.getFlowType().isCall()) continue;
+            FlowType flow = instruction.getFlowType();
+            if (!flow.isCall()) continue;
             boolean destination = false;
             for (Reference reference : instruction.getReferencesFrom()) {
                 if (!reference.getReferenceType().isCall()) continue;
@@ -3553,9 +3576,13 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 calls.unresolved(instruction.getAddress(),
                     "Instruction decoder identifies a call but ReferenceManager supplies no call destination");
             }
+            // The same decoded flow classifies resolve_native_call_targets'
+            // mechanism; its recorded targets are candidates, not a closed set.
+            else if (flow.isComputed()) computedCallSites.add(canonicalAddress(instruction.getAddress()));
         }
         return new CallBoundaryObservation(boundary.values(),
-            returnedCallees == null ? null : calls.unrepresented, calls.unresolvedCalls());
+            returnedCallees == null ? null : calls.unrepresented, calls.unresolvedCalls(),
+            List.copyOf(computedCallSites));
     }
 
     private final class FunctionBoundaryLimitations {
@@ -4988,7 +5015,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private record AddressNameRequest(String inputAddress, Address address, String name) {}
     private record FunctionEntry(Function function, InventoryItem item) {}
     private record FunctionAnalysisObservation(JsonObject dossier, List<String> limitations, JsonObject relationshipCoverage, boolean decompilerFailed) {}
-    private record CallBoundaryObservation(List<String> limitations, Integer unrepresentedCalleeCalls, JsonArray unresolvedCalls) {}
+    private record CallBoundaryObservation(List<String> limitations, Integer unrepresentedCalleeCalls, JsonArray unresolvedCalls, List<String> computedCallSites) {}
     private record SwiftStringLiteralDecode(JsonArray literals, JsonArray omissions) {}
     private record SwiftLiteralLayout(
         String representation,

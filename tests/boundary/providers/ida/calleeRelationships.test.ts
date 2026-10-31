@@ -1,6 +1,7 @@
 import { afterEach, expect, it } from "vitest";
 import { z } from "zod";
 import { EnhancedTools } from "../../../../src/application/EnhancedTools.js";
+import { UNCLASSIFIED_CALL_SITE_LIMITATION } from "../../../../src/ida/IdaCallGraph.js";
 import {
   callGraphSession,
   edge,
@@ -37,8 +38,8 @@ it("keeps unknown caller coverage and callee diagnostics in an ARM64 dossier", a
     if (!result.ok) throw result.error;
     expect(result.value.relationshipCoverage).toMatchObject({
       status: "unknown",
-      reason:
-        "Callers: Upstream xrefs do not establish direct caller relationships.",
+      reason: `Callees: ${UNCLASSIFIED_CALL_SITE_LIMITATION} Callers: Upstream xrefs do not establish direct caller relationships.`,
+      limited_directions: ["callers", "callees"],
       diagnostics: expect.arrayContaining([
         expect.stringContaining("targets IDA does not recognize as functions"),
       ]),
@@ -153,16 +154,26 @@ it("traverses every ARM64 callee in a call path without a goal and records no fa
         { source_address: "0x1000", target_address: "0x3000" },
       ],
       failures: [],
-      truncated: false,
+      // Function edges without call sites leave each expansion's computed
+      // call targets unestablished, so the traversal stays limited.
+      truncated: true,
       limitations: expect.arrayContaining([
         "This relationship read does not establish calls to targets IDA does not recognize as functions; imports and other non-function call targets remain unknown.",
       ]),
-      residual_unknowns: [],
-      relationship_coverage: {
-        "0x1000": { status: "complete" },
-        "0x2000": { status: "complete" },
-        "0x3000": { status: "complete" },
-      },
+      residual_unknowns: ["0x1000", "0x2000", "0x3000"].map(
+        (address) =>
+          `Call relationships for ${address} are limited: ${UNCLASSIFIED_CALL_SITE_LIMITATION}`,
+      ),
+      relationship_coverage: Object.fromEntries(
+        ["0x1000", "0x2000", "0x3000"].map((address) => [
+          address,
+          {
+            status: "partial",
+            limitations: [UNCLASSIFIED_CALL_SITE_LIMITATION],
+            limited_directions: ["callees"],
+          },
+        ]),
+      ),
     });
     expect(
       requestedRoots(producer),

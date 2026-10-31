@@ -19,6 +19,7 @@ import {
   type IdaMcpConnection,
 } from "./IdaMcpConnection.js";
 import { parseConfig } from "../config/parseConfig.js";
+import { UNCLASSIFIED_CALL_SITE_LIMITATION } from "./IdaCallGraph.js";
 import { IdaProvider } from "./IdaProvider.js";
 import { idaCapabilities } from "./IdaProviderCapabilities.js";
 import { IdaSessionClient } from "./IdaSessionClient.js";
@@ -384,7 +385,10 @@ describe("native IDA provider observations", () => {
         });
         if (!direct.ok) throw direct.error;
         expect(direct.value.relationshipCoverage).toMatchObject({
-          status: more ? "partial" : "complete",
+          status: "partial",
+          limitations: expect.arrayContaining([
+            UNCLASSIFIED_CALL_SITE_LIMITATION,
+          ]),
         });
         const dossier = await client.execute("analyze_function", {
           procedure: "main",
