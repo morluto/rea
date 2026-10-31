@@ -273,9 +273,10 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
             { capturedOutput, userMessage: rejection.message },
             [rejection],
           );
+        // The probe runs under the limiter, so either program may own the status.
         if (output.exitCode !== 0 && phase === "configuration")
           throw new Error(
-            "The selected sigrok-cli installation failed its --version probe; inspect its captured output.",
+            "The resource-limited sigrok-cli --version probe failed; the status may come from the limiter or from sigrok-cli, so inspect both selected installations and the captured output.",
           );
         if (output.exitCode !== 0)
           throw new ProviderAdapterError(
