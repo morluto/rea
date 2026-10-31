@@ -8,6 +8,10 @@ import type {
   ArtifactReaderAdmission,
   ArtifactFormatAdmission,
 } from "../ArtifactReaderAdmission.js";
+import {
+  locateEspFlashLayout,
+  type EspFlashSelection,
+} from "../../domain/firmware/espFlashLocation.js";
 import { assertArtifactSelectedSource } from "../ArtifactSelectedSource.js";
 import { artifactNameForClassification } from "../../domain/artifactNameSelection.js";
 import type { AsarHeaderAdmission } from "../../config/asarHeaderAdmission.js";
@@ -81,6 +85,7 @@ export const classifyAndHashRootForInventory = async (
     | "asarHeaderAdmission"
     | "selectedPath"
     | "expectedRootSha256"
+    | "espFlashSelection"
   >,
   probeFacts?: ArtifactEmbeddedFormatProbeFacts,
 ): Promise<RootInventoryClassification> => {
@@ -156,6 +161,7 @@ export const classifyAndHashRootForInventory = async (
       options.signal,
       options.asarHeaderAdmission,
       options.selectedPath,
+      options.espFlashSelection,
     );
     const format =
       typeof classified === "string" ? classified : classified.kind;
@@ -208,6 +214,7 @@ const classifyRootFormat = async (
   signal?: AbortSignal,
   asarHeaderAdmission?: AsarHeaderAdmission,
   selectedPath?: string,
+  espFlashSelection?: EspFlashSelection,
 ): Promise<ArtifactOccurrence["artifact_format"] | ArtifactFormatAdmission> => {
   const { handle } = source;
   const probe = createArtifactClassificationProbe(asarHeaderAdmission);
@@ -242,22 +249,6 @@ const classifyRootFormat = async (
       );
     throw cause;
   }
-  if (nesContainerFormat(evidence.prefix) !== undefined) {
-    const parsed = parseInesLayout(evidence.prefix, archiveBytes);
-    if (!parsed.ok) throw new ArtifactReaderFailure("format", parsed.error);
-    return "ines";
-  }
-  const classificationPath = artifactNameForClassification(
-    selectedPath ?? path,
-    path,
-  );
-  const lower = classificationPath.toLowerCase();
-  if (hasZipSignature(evidence.prefix)) return zipRootPackageFormat(lower);
-  if (
-    lower.endsWith(".pkg") &&
-    evidence.prefix.subarray(0, 4).equals(Buffer.from("xar!"))
-  )
-    return "pkg";
   // Fill each range: a short result is end of file, not a partial host read.
   const read = async (position: number, length: number): Promise<Buffer> => {
     const bytes = Buffer.alloc(length);
@@ -276,6 +267,37 @@ const classifyRootFormat = async (
     }
     return bytes.subarray(0, filled);
   };
+  const locateFlash = (selection: EspFlashSelection, explicit: boolean) =>
+    locateEspFlashLayout(archiveBytes, read, selection, {
+      explicit,
+      ...(signal === undefined ? {} : { signal }),
+    });
+  // The caller's format selection decides before any other signature.
+  if (espFlashSelection !== undefined) {
+    const selected = await locateFlash(espFlashSelection, true);
+    if (!selected.ok)
+      throw new ArtifactReaderFailure(
+        "unavailable",
+        `ESP flash image layout is not recognized: ${selected.error}`,
+      );
+    return { kind: "esp-flash-image", source, location: selected.value };
+  }
+  if (nesContainerFormat(evidence.prefix) !== undefined) {
+    const parsed = parseInesLayout(evidence.prefix, archiveBytes);
+    if (!parsed.ok) throw new ArtifactReaderFailure("format", parsed.error);
+    return "ines";
+  }
+  const classificationPath = artifactNameForClassification(
+    selectedPath ?? path,
+    path,
+  );
+  const lower = classificationPath.toLowerCase();
+  if (hasZipSignature(evidence.prefix)) return zipRootPackageFormat(lower);
+  if (
+    lower.endsWith(".pkg") &&
+    evidence.prefix.subarray(0, 4).equals(Buffer.from("xar!"))
+  )
+    return "pkg";
   if (
     lower.endsWith(".dmg") &&
     (await hasDiskImageSignature(archiveBytes, read))
@@ -283,6 +305,11 @@ const classifyRootFormat = async (
     return "dmg";
   const pck = await embeddedProbes.godotPck(evidence.prefix);
   if (pck !== undefined) return { kind: "godot-pck", source, location: pck };
+  // A C3 or S3 dump begins with its bootloader, so the layout is located
+  // before the bytes are read as one ESP image.
+  const flash = await locateFlash({}, false);
+  if (flash.ok)
+    return { kind: "esp-flash-image", source, location: flash.value };
   const fatEvidence = await readRootFatSliceHeaders(handle, evidence, signal);
   const mzWindowsHeaderSignature = await readRootMzWindowsHeaderSignature(
     handle,

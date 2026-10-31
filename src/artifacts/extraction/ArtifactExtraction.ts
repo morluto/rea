@@ -11,6 +11,7 @@ import {
 } from "../inventory/hashStableRootArtifact.js";
 import { absoluteCallerPath } from "../../filesystem/callerPath.js";
 import type { AsarHeaderAdmission } from "../../config/asarHeaderAdmission.js";
+import type { EspFlashSelection } from "../../domain/firmware/espFlashLocation.js";
 import { artifactFormatDescriptor } from "../artifactFormats.js";
 import { createArtifactReader } from "../createArtifactReader.js";
 import { resolveAsarHeaderAdmission } from "../AsarHeader.js";
@@ -63,6 +64,8 @@ import type { ArtifactIntegrityPolicyName } from "../../domain/artifactIntegrity
 /** Local extraction input with the output root chosen by the adapter. */
 export interface ArtifactExtractionInput {
   readonly asarHeaderAdmission?: AsarHeaderAdmission;
+  /** Caller inputs when the target was explicitly selected as an ESP flash image. */
+  readonly espFlashSelection?: EspFlashSelection | undefined;
   readonly inputPath: string;
   readonly expectedRootSha256?: string | undefined;
   /** Selected artifact spelling; packed I/O remains on inputPath. */
@@ -103,6 +106,7 @@ const extractArtifactInScope = async (
         asarHeaderAdmission:
           input.asarHeaderAdmission ??
           resolveAsarHeaderAdmission(input.environment),
+        espFlashSelection: input.espFlashSelection,
         integrity: input.integrityPolicy,
       },
       probeFacts,
@@ -650,6 +654,7 @@ const createReader = async (
     | "environment"
     | "asarHeaderAdmission"
     | "resourceScope"
+    | "espFlashSelection"
   >,
   manifest: ArtifactGraphManifest,
   transferredSource?: ActiveArtifactInventorySource,
@@ -709,6 +714,7 @@ const createReader = async (
             input.selectedPath ?? input.inputPath,
           ),
           admission: transferredSource?.admission,
+          espFlashSelection: input.espFlashSelection,
           asarHeaderAdmission:
             containerFormat === "asar"
               ? (input.asarHeaderAdmission ??

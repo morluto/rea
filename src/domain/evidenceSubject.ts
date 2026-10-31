@@ -46,6 +46,7 @@ export const evidenceSubjectFormatSchema = z.enum([
   "intel-hex",
   "srec",
   "esp-image",
+  "esp-flash-image",
   "fit",
 ]);
 

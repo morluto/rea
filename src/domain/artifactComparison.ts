@@ -14,6 +14,7 @@ import {
   type InventorySet,
 } from "./artifactInventoryEvidence.js";
 import {
+  espFlashPartitionDeclaration,
   espImageSegmentDeclaration,
   fitImageDeclaration,
   nodeSeaEntryDeclaration,
@@ -465,6 +466,7 @@ interface OccurrenceMetadata {
   readonly asarPacking: MetadataComparison;
   readonly nodeSea: MetadataComparison;
   readonly espImageSegment: MetadataComparison;
+  readonly espFlashPartition: MetadataComparison;
   readonly fitImage: MetadataComparison;
   readonly fitImageAvailability: MetadataComparison;
   readonly pyInstaller: MetadataComparison;
@@ -475,6 +477,7 @@ const declarationChanged = (metadata: OccurrenceMetadata): boolean =>
   metadata.asarPacking === "changed" ||
   metadata.nodeSea === "changed" ||
   metadata.espImageSegment === "changed" ||
+  metadata.espFlashPartition === "changed" ||
   metadata.fitImage === "changed";
 
 /** Unknown classifications and absent node metadata cannot establish a difference. */
@@ -580,6 +583,15 @@ const occurrenceMetadata = (input: OccurrencePair): OccurrenceMetadata => {
         ? right.format_metadata
         : undefined,
       espImageSegmentDeclaration,
+    ),
+    espFlashPartition: compareOptionalMetadata(
+      left?.format_metadata?.kind === "esp-flash-partition"
+        ? left.format_metadata
+        : undefined,
+      right?.format_metadata?.kind === "esp-flash-partition"
+        ? right.format_metadata
+        : undefined,
+      espFlashPartitionDeclaration,
     ),
     pyInstaller: compareOptionalMetadata(
       isPyInstallerEntry(left) ? left.format_metadata : undefined,

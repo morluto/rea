@@ -2038,6 +2038,13 @@ tool before building and warns when esptool is not the pinned v5.6.0.
 `REA_XTENSA_ESP32_GCC` adds an ESP32 Xtensa build. See
 [ESP images](esp-image.md).
 
+`npm run verify:esp-flash` needs the same tools and an ESP-IDF checkout
+(`REA_ESP_IDF_PATH`) for `gen_esp32part.py` and `otatool.py`. It builds
+partition tables, assembles dumps with `esptool merge-bin`, writes OTA records
+with otatool through `tests/conformance/esp/flash_file_tool.py`, and compares
+REA's flash facts with `image-info`, the decoded table and
+`otatool read_otadata`. See [ESP flash images](esp-flash-image.md).
+
 ### JavaScript source recovery
 
 Build once with `npm run build:cached`, then run `npm run verify:javascript:recovery`.

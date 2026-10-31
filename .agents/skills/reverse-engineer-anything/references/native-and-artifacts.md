@@ -723,6 +723,32 @@ recognized. Segments are not disassembled, and RISC-V or Xtensa segments
 cannot be opened as raw-binary. See
 [ESP images](https://github.com/morluto/rea/blob/main/docs/esp-image.md).
 
+## ESP flash images
+
+A whole-flash dump opens as `esp-flash-image`. `root_format_metadata` holds
+`partition_table` (its `method`: `default`, `caller` or a derived
+`scan`), `bootloader` and `apps` ESP image facts, the `otadata` records,
+`partitions_outside_dump` and `boot_selection`. Every table has a
+`boot_selection`: its `basis` names the bootloader's branch (`no-otadata`
+without otadata, `none` when the bootloader rejects the table, `unknown`
+when a record is missing), and it lists its `assumptions`;
+`running_partition` is always `unknown`. Each image names its entry
+`path`. With `detail: "summary"` the root kind is `esp-flash-image-summary`
+and each image is a compact `summary` (chip, entry point, segment count,
+classified load ranges, signature block count, descriptor identity,
+integrity); complete detail keeps every segment. Partition rows
+(`partitions/<label>.bin`) carry the declared `type`, `subtype`, names,
+`flash_address`, `size` and flags; `encrypted` is a storage flag, not
+proof of ciphertext. `written_offset`/`written_end` bound the bytes that
+are not erased: an app slot whose facts say `erased` can still hold an older
+image, and a limitation says so. For a dump read from another flash address, call
+`open_binary` with `format: "esp-flash-image"` and `flash_offset`; an
+`esp-image` whose `flash_dump` is set names that offset in a next probe; a
+relocated table can be named with `partition_table_offset`. No table found
+means unknown, often flash encryption. Extraction writes `nvs_keys` as
+ordinary data. See
+[ESP flash images](https://github.com/morluto/rea/blob/main/docs/esp-flash-image.md).
+
 ## Bun standalone executables
 
 A `bun build --compile` executable stores its module graph in Mach-O

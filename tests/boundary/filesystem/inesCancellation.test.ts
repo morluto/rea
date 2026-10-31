@@ -52,6 +52,7 @@ it.each(["default", "caller-error", "failed-close"])(
     const controller = new AbortController();
     let admitted: FileHandle | undefined;
     const cleanupFailure = new Error("descriptor close failed");
+    const callerReason = new Error("caller stopped admission");
     let restoreClose = () => {};
     const stat = vi
       .spyOn(prototype, "stat")
@@ -65,9 +66,7 @@ it.each(["default", "caller-error", "failed-close"])(
           restoreClose = () => close.mockRestore();
         }
         controller.abort(
-          reasonKind === "caller-error"
-            ? new Error("caller stopped admission")
-            : undefined,
+          reasonKind === "caller-error" ? callerReason : undefined,
         );
         return observed;
       });
@@ -87,13 +86,17 @@ it.each(["default", "caller-error", "failed-close"])(
         await retained.cleanupLease.release();
         expect(failure.error.cleanupIncomplete).toBe(false);
       } else {
-        await expect(result).resolves.toMatchObject({
+        const cancelled = await result;
+        expect(cancelled).toMatchObject({
           ok: false,
           error: {
             _tag: "AnalysisCancelledError",
             operation: "resolve_binary_target",
           },
         });
+        if (cancelled.ok) throw new Error("Expected cancellation");
+        if (reasonKind === "caller-error")
+          expect(cancelled.error.cause).toBe(callerReason);
       }
       if (admitted === undefined)
         throw new Error("Admission descriptor was not observed");

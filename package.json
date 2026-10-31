@@ -241,6 +241,7 @@
     "verify:firmware": "npm run build:cached && node scripts/verify/firmware/analysis.mjs",
     "verify:devicetree": "npm run build:cached && node scripts/verify/firmware/devicetree.mjs",
     "verify:esp-images": "npm run build:cached && node scripts/verify/firmware/esp-image.mjs",
+    "verify:esp-flash": "npm run build:cached && node scripts/verify/firmware/esp-flash.mjs",
     "fixtures:firmware": "node scripts/fixtures/firmware/generate.mjs",
     "verify:android": "npm run build:cached && node scripts/verify/android/analysis.mjs",
     "verify:jeb": "npm run build:cached && node scripts/verify-jeb.mjs",

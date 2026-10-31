@@ -1,3 +1,4 @@
+import * as rootHash from "../../../src/artifacts/inventory/hashStableRootArtifact.js";
 import { readFileHandlePrefix } from "../../../src/filesystem/readFileHandlePrefix.js";
 import { abortIfNeeded } from "../../../src/artifacts/ArtifactHash.js";
 import { createHash } from "node:crypto";
@@ -418,57 +419,87 @@ it.each(["inventory", "target"])(
   },
 );
 
-it.each([
-  { route: "inventory", hashPass: 1 },
-  { route: "inventory", hashPass: 2 },
-  { route: "target", hashPass: 1 },
-])(
-  "reports source loss in $route hash pass $hashPass as a changed input",
-  async ({ route, hashPass }) => {
+it.each([1, 2])(
+  "reports source loss during inventory root hash pass %i as a changed input",
+  async (hashPass) => {
     const root = await createTestTempDirectory("rea-ines-hash-loss-");
     const path = join(root, "source.nes");
     await writeFile(path, inesFixture());
-    const prototype = await fileReadPrototype(path);
-    const originalRead = prototype.read;
+    const originalHash = rootHash.hashStableRootArtifactHandle;
     let observedPasses = 0;
-    const read = vi.spyOn(prototype, "read").mockImplementation(async function (
-      this: FileHandle,
-      ...args
-    ) {
-      const result = await originalRead.call(this, ...args);
-      const readArguments: readonly unknown[] = args;
-      const [buffer, , , position] = readArguments;
-      if (
-        Buffer.isBuffer(buffer) &&
-        buffer.byteLength > 8192 &&
-        (position === 0 || position === 0n)
-      ) {
+    let faultInjected = false;
+    const hash = vi
+      .spyOn(rootHash, "hashStableRootArtifactHandle")
+      .mockImplementation(async (...args) => {
         observedPasses += 1;
-        if (observedPasses === hashPass) {
+        if (observedPasses !== hashPass) return originalHash(...args);
+        const handle = args[1];
+        const originalRead = handle.read.bind(handle);
+        const read = vi
+          .spyOn(handle, "read")
+          .mockImplementation(async (...readArgs) => {
+            const result = await originalRead(...readArgs);
+            if (result.bytesRead === 0) {
+              faultInjected = true;
+              await unlink(path);
+            }
+            return result;
+          });
+        try {
+          return await originalHash(...args);
+        } finally {
           read.mockRestore();
-          await unlink(path);
         }
-      }
-      return result;
-    });
+      });
     try {
-      if (route === "inventory") {
-        await expect(inventoryArtifact(path)).rejects.toMatchObject({
-          reason: "integrity",
-          cause: { code: "ENOENT" },
-        });
-      } else {
-        expect(await parseBinaryTarget(path)).toMatchObject({
-          ok: false,
-          error: { reason: expect.stringContaining("changed") },
-        });
-      }
+      await expect(inventoryArtifact(path)).rejects.toMatchObject({
+        reason: "integrity",
+        cause: { code: "ENOENT" },
+      });
       expect(observedPasses).toBe(hashPass);
+      expect(faultInjected).toBe(true);
     } finally {
-      read.mockRestore();
+      hash.mockRestore();
     }
   },
 );
+
+it("reports source loss during target hashing as a changed input", async () => {
+  const root = await createTestTempDirectory("rea-ines-target-hash-loss-");
+  const path = join(root, "source.nes");
+  const bytes = inesFixture();
+  await writeFile(path, bytes);
+  const prototype = await fileReadPrototype(path);
+  const originalRead = prototype.read;
+  let faultInjected = false;
+  const read = vi.spyOn(prototype, "read").mockImplementation(async function (
+    this: FileHandle,
+    ...args
+  ) {
+    const result = await originalRead.call(this, ...args);
+    const readArguments: readonly unknown[] = args;
+    const [buffer, , , position] = readArguments;
+    if (
+      Buffer.isBuffer(buffer) &&
+      buffer.byteLength === 64 * 1024 &&
+      position === bytes.length &&
+      result.bytesRead === 0
+    ) {
+      faultInjected = true;
+      await unlink(path);
+    }
+    return result;
+  });
+  try {
+    expect(await parseBinaryTarget(path)).toMatchObject({
+      ok: false,
+      error: { reason: expect.stringContaining("changed") },
+    });
+    expect(faultInjected).toBe(true);
+  } finally {
+    read.mockRestore();
+  }
+});
 
 it.each(["removed", "directory", "malformed"])(
   "rejects a %s source after inventory before extraction",
