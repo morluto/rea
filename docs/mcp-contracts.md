@@ -205,6 +205,32 @@ visible. When a requested goal is not reached but an expansion is unresolved,
 `goal_status` is `unknown`; `not_reached` means traversal exhausted without
 unresolved relationship reads. Cancellation remains a tool error.
 
+Pass either `goal` or a nonempty `goals` array of procedure symbols or addresses.
+`goal` preserves its existing early stop and top-level `goal_status` /
+`traversal_path`. With `goals`, one breadth-first traversal exhausts the observed
+graph, including when every goal has already been reached. `goal_results` retains
+request order (including duplicate selectors), with each canonical `goal`, its
+`goal_status`, and a shortest `traversal_path` from `start`. The legacy top-level
+fields are `goal: null`, `goal_status: "not_requested"`, and `traversal_path: []`
+for a batch. Selector resolution failures remain typed tool errors.
+
+`roots` lists only backward-trace nodes whose caller read completed with
+`relationship_coverage.status: "complete"` and returned no callers. Partial,
+unknown, unreadable, failed, and unexpanded nodes are not roots; forward traces
+return an empty list. Roots describe the expansions actually read, so an early
+single-goal stop need not find any. Static direct-call absence never proves
+runtime unreachability: unresolved indirect calls remain a limitation.
+
+Roots belong to the provider's observed graph, not necessarily the whole program.
+For example, an ELF library may route calls through a Procedure Linkage Table
+(PLT) jump stub. If the provider keeps the stub and function body separate, the
+body can appear as a root while callers reach the stub. Use exact procedure
+addresses when stub and body names are ambiguous; tracing the body does not
+automatically include the stub's callers.
+
+For example, `{"start":"sink","goals":["export_a","export_b"],"direction":"backward"}`
+answers both selected exports with one traversal and reports any confirmed roots.
+
 `trace_feature` validates each reference's containing-procedure resolution using
 the same contract as navigation context. Explicit absence remains a successful
 negative observation; malformed provider replies return `unreadable_output`

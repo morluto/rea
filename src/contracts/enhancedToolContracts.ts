@@ -85,7 +85,7 @@ export const ENHANCED_TOOL_CONTRACTS = [
   ),
   enhanced(
     "trace_call_path",
-    "Resolve start and optional goal symbols or addresses to canonical procedure entries, then trace direct callers or callees until the graph is exhausted or the goal is reached. Results use canonical addresses; Evidence preserves supplied selectors. Returns visited nodes, direct-call edges, a shortest traversal path, provider failures, and residual unknowns. A requested goal is unknown when unresolved expansions prevent proving it absent; unresolved indirect calls remain unknown.",
+    "Resolve start and an optional goal or nonempty goals array to canonical procedure entries, then trace direct callers or callees. A single goal retains early stopping; goals share one exhaustive traversal with a shortest path and reached, not_reached, or unknown status per goal. Backward roots have complete, empty caller reads. Results use canonical addresses; Evidence preserves supplied selectors. Returns visited nodes, direct-call edges, provider failures, and residual unknowns. Unreached goals remain unknown when expansions are unresolved; static absence does not prove runtime unreachability.",
     enhancedInputSchemas.trace_call_path,
   ),
   enhanced(
