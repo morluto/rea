@@ -5,7 +5,11 @@ import { describe, expect, it, vi } from "vitest";
 
 import { EspFlashImageArtifactReader } from "./EspFlashImageArtifactReader.js";
 import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
-import type { ArtifactEntry } from "./ArtifactReader.js";
+import type {
+  ArtifactEntry,
+  ArtifactReaderTraversal,
+} from "./ArtifactReader.js";
+import { openRegularFile } from "../filesystem/RegularFile.js";
 import { extractArtifact } from "./extraction/ArtifactExtraction.js";
 import * as regionReads from "./EspFlashRegionReads.js";
 import * as espImageDecoding from "../domain/firmware/espImage.js";
@@ -21,7 +25,7 @@ import {
   ESP32C3_BOOTLOADER_SEGMENTS,
   espImage,
   pattern,
-} from "../domain/firmware/espImage.fixture.js";
+} from "../../tests/fixtures/espImage.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
 
@@ -585,14 +589,14 @@ describe("ESP flash layout written-bytes scan lifecycle", () => {
       const scanning = new Promise<void>((resolve) => {
         acknowledge = resolve;
       });
-      const scan = regionReads.writtenExtent;
+      const scan = regionReads.writtenExtents;
       // Count the chunks the scan examines once the reader admits them.
       const observer = vi
-        .spyOn(regionReads, "writtenExtent")
-        .mockImplementation((context, region, assertOpen) =>
-          scan(context, region, () => {
+        .spyOn(regionReads, "writtenExtents")
+        .mockImplementation((context, regions, assertOpen) =>
+          scan(context, regions, () => {
             assertOpen();
-            if (region.length < 0x10_0000) return;
+            if (!regions.some(({ length }) => length >= 0x10_0000)) return;
             scanned += 1;
             if (scanned === 1) acknowledge();
           }),
@@ -630,4 +634,200 @@ describe("ESP flash layout written-bytes scan lifecycle", () => {
       }
     },
   );
+});
+
+describe("ESP flash layout erased-gap scan lifecycle", () => {
+  it.each(["cancel", "close"] as const)(
+    "settles the erased-gap scan when the caller requests %s after its first chunk",
+    async (action) => {
+      // One small partition leaves the rest of a 9 MiB dump as one erased gap.
+      const parts = [
+        { label: "nvs", type: 1, subtype: 2, offset: 0x9000, size: 0x1000 },
+      ];
+      const reader = new EspFlashImageArtifactReader(
+        await writeDump(
+          espFlashDump({
+            size: 0x90_0000,
+            bootloader: { at: 0, bytes: BOOTLOADER },
+            table: partitionTable(parts),
+          }),
+        ),
+      );
+      const controller = new AbortController();
+      const reason = { stage: "erased-gap scan" };
+      let completion: Promise<void> | undefined;
+      let scanned = 0;
+      let acknowledge = (): void => undefined;
+      const scanning = new Promise<void>((resolve) => {
+        acknowledge = resolve;
+      });
+      const scan = regionReads.firstUnerasedInRange;
+      // Count the chunks the scan examines once the reader admits them.
+      const observer = vi
+        .spyOn(regionReads, "firstUnerasedInRange")
+        .mockImplementation((context, range, assertOpen) =>
+          scan(context, range, () => {
+            assertOpen();
+            if (range.length < 0x10_0000) return;
+            scanned += 1;
+            if (scanned === 1) acknowledge();
+          }),
+        );
+      try {
+        const pending = reader
+          .entries(controller.signal)
+          [Symbol.asyncIterator]()
+          .next();
+        await Promise.race([
+          scanning,
+          pending.then(() => {
+            throw new Error("Preparation settled before the scan began");
+          }),
+        ]);
+        const requestedAt = scanned;
+        if (action === "cancel") controller.abort(reason);
+        else completion = reader.close();
+        await expect(pending).rejects.toMatchObject(
+          action === "cancel"
+            ? { reason: "cancelled", cause: reason }
+            : { reason: "unavailable" },
+        );
+        await completion;
+        expect(scanned).toBe(requestedAt);
+      } finally {
+        observer.mockRestore();
+        await reader.close();
+      }
+    },
+  );
+});
+
+describe("ESP flash layout written bytes of overlapping partitions", () => {
+  it("reads the bytes they cover once and keeps each partition's own facts", async () => {
+    // 60 data partitions over one MiB: 40 cover all of it, 20 its first half.
+    const parts = Array.from({ length: 60 }, (_, index) => ({
+      label: `p${String(index)}`,
+      type: 1,
+      subtype: 0x81,
+      offset: 0x1_0000,
+      size: index < 40 ? 0x10_0000 : 0x8_0000,
+    }));
+    const bytes = espFlashDump({
+      size: 0x11_0000,
+      bootloader: { at: 0, bytes: BOOTLOADER },
+      table: partitionTable(parts),
+      parts: [
+        { at: 0x1_0100, bytes: Buffer.alloc(0x100, 0x5a) },
+        { at: 0x9_0000, bytes: Buffer.alloc(0x100, 0x5a) },
+      ],
+    });
+    const path = await writeDump(bytes);
+    const admitted = await openRegularFile(path, { symlinks: "reject" });
+    const nativeRead = admitted.handle.read.bind(admitted.handle);
+    let read = 0;
+    const reads = vi.spyOn(admitted.handle, "read").mockImplementation((async (
+      ...args: unknown[]
+    ) => {
+      const result = (await Reflect.apply(
+        nativeRead,
+        admitted.handle,
+        args,
+      )) as {
+        bytesRead: number;
+      };
+      read += result.bytesRead;
+      return result;
+    }) as typeof admitted.handle.read);
+    const reader = new EspFlashImageArtifactReader(path, admitted);
+    try {
+      let coverage: ArtifactReaderTraversal | undefined;
+      const entries: ArtifactEntry[] = [];
+      for await (const entry of reader.entries(undefined, {
+        onCoverage: (value) => {
+          coverage = value;
+        },
+      }))
+        entries.push(entry);
+      // Each covered byte is read once, not once per partition over it.
+      expect(read).toBeLessThan(2 * bytes.length);
+      expect(
+        entries.flatMap(({ path: entryPath, formatMetadata }) =>
+          formatMetadata?.kind === "esp-flash-partition"
+            ? [[entryPath, formatMetadata]]
+            : [],
+        ),
+      ).toEqual(
+        parts.map((part, index) => [
+          `partitions/${part.label}.bin`,
+          expect.objectContaining({
+            index,
+            label: part.label,
+            flash_address: 0x1_0000,
+            size: part.size,
+            written_offset: 0x100,
+            written_end: index < 40 ? 0x8_0100 : 0x200,
+            written_bytes: index < 40 ? 0x200 : 0x100,
+          }),
+        ]),
+      );
+      expect(
+        coverage?.limitations.filter((text) => text.includes(" overlaps ")),
+      ).toHaveLength(59);
+    } finally {
+      await reader.close();
+      reads.mockRestore();
+      await admitted.handle.close();
+    }
+  });
+});
+
+describe("ESP flash layout app images of overlapping partitions", () => {
+  it("decodes each declared range once and keeps each partition's facts", async () => {
+    // 60 app partitions over one image: 40 hold all of it, 20 cut it short.
+    const image = espImage({
+      segments: [{ address: 0x3c00_0020, data: Buffer.alloc(0xf_0000, 0x5a) }],
+    });
+    const parts = Array.from({ length: 60 }, (_, index) => ({
+      label: `a${String(index)}`,
+      type: 0,
+      subtype: 0x10 + (index % 16),
+      offset: 0x1_0000,
+      size: index < 40 ? 0x10_0000 : 0x8_0000,
+    }));
+    const reader = new EspFlashImageArtifactReader(
+      await writeDump(
+        espFlashDump({
+          size: 0x11_0000,
+          bootloader: { at: 0, bytes: BOOTLOADER },
+          table: partitionTable(parts),
+          parts: [{ at: 0x1_0000, bytes: image }],
+        }),
+      ),
+    );
+    const decode = vi.spyOn(regionReads, "decodeEspFlashImage");
+    try {
+      await list(reader);
+      // The bootloader, the whole image and the image cut at 0x80000.
+      expect(decode).toHaveBeenCalledTimes(3);
+      const apps = reader.formatMetadata()?.apps ?? [];
+      expect(
+        apps.map(({ path, partition_index: index, facts }) => [
+          path,
+          index,
+          facts.status,
+          facts.coverage,
+        ]),
+      ).toEqual(
+        parts.map((part, index) => [
+          `partitions/${part.label}.bin`,
+          index,
+          "esp-image",
+          index < 40 ? "complete" : "unknown",
+        ]),
+      );
+    } finally {
+      decode.mockRestore();
+      await reader.close();
+    }
+  });
 });

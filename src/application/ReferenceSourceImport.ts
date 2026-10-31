@@ -283,6 +283,9 @@ const combineReadFailures = (
         );
   return {
     ...failure(code, message),
+    ...(primary.remediationAction === undefined || code !== primary.code
+      ? {}
+      : { remediationAction: primary.remediationAction }),
     ...(cleanup === undefined ? {} : { cleanup }),
     ...(partial === undefined ? {} : { partial }),
     ...(cause === undefined ? {} : { cause }),

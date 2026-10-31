@@ -3,6 +3,7 @@ import * as t from "@babel/types";
 import {
   BUILTIN_RESOURCE_SPECIFIERS,
   BUILTIN_RESOURCE_METHODS,
+  BUILTIN_RESOURCE_RELEASE_METHODS,
 } from "./javascriptBuiltinResourceMethods.js";
 import type {
   JavaScriptSemanticCallable,
@@ -29,8 +30,23 @@ import { range } from "./javascriptStaticAnalysisHelpers.js";
 
 const RELEASE_METHODS = ["close", "destroy", "end"] as const;
 
+/**
+ * Release methods the value from this acquisition actually has. An unlisted
+ * specifier/method pair admits none, so a call to it emits no release fact.
+ */
+const releaseMethodsFor = (
+  acquisition: ResourceCandidate,
+): readonly ("close" | "destroy" | "end")[] => {
+  const key = `${acquisition.specifier}:${acquisition.method}`;
+  const table: Readonly<
+    Record<string, readonly ("close" | "destroy" | "end")[]>
+  > = BUILTIN_RESOURCE_RELEASE_METHODS;
+  return table[key] ?? [];
+};
+
 interface ResourceCandidate {
   readonly node: t.CallExpression | t.OptionalCallExpression;
+  readonly specifier: string;
   readonly method: JavaScriptSemanticResourceOperation["method"];
   readonly ownerCallableId: string | null;
   readonly resultBindingId: string | null;
@@ -48,7 +64,11 @@ export const collectJavaScriptSemanticResources = (
     callableStack: [],
     ancestors: [],
   };
-  const acquisitions = collectAcquisitions(program, context);
+  const acquisitions = collectAcquisitions(program, context).filter(
+    (candidate) =>
+      !socketPortInFirstArgument(candidate) ||
+      !rejectsSocketPortLiteral(candidate.node, context),
+  );
   return [
     ...acquisitions.map(immutableAcquisition),
     ...collectReleases(program, context, acquisitions),
@@ -62,11 +82,12 @@ const collectAcquisitions = (
   const output: ResourceCandidate[] = [];
   traverseDataEffects(program, context, (node) => {
     if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node)) return;
-    const method = acquisitionMethod(node.callee, context.state);
-    if (method === null) return;
+    const reference = acquisitionMethod(node.callee, context.state);
+    if (reference === null) return;
     output.push({
       node,
-      method,
+      specifier: reference.specifier,
+      method: reference.method,
       ownerCallableId: context.callableStack.at(-1) ?? null,
       resultBindingId: outerDataEffectBinding(node, context),
     });
@@ -102,9 +123,15 @@ const collectReleases = (
       member.object,
       member.object.name,
     );
-    const linked =
+    const candidates =
       binding === undefined ? [] : (byBinding.get(binding.bindingId) ?? []);
-    if (binding === undefined || linked.length === 0) return;
+    if (binding === undefined || candidates.length === 0) return;
+    const linked = candidates.filter((acquisition) =>
+      releaseMethodsFor(acquisition).includes(method),
+    );
+    // No linked acquisition exposes this release method, so the call is not a
+    // release of it at all: Node throws at the call site instead.
+    if (linked.length === 0) return;
     output.push({
       resourceId: `resource:release:${String(node.start ?? -1)}:${String(node.end ?? -1)}`,
       kind: "release",
@@ -169,10 +196,15 @@ const immutableAcquisition = (
   resolution: "complete",
 });
 
+interface AcquisitionReference {
+  readonly specifier: string;
+  readonly method: JavaScriptSemanticResourceOperation["method"];
+}
+
 const acquisitionMethod = (
   callee: t.Node,
   state: JavaScriptSemanticAnalysisState,
-): JavaScriptSemanticResourceOperation["method"] | null => {
+): AcquisitionReference | null => {
   for (const specifier of BUILTIN_RESOURCE_SPECIFIERS) {
     const method = builtinDataEffectMethod(callee, state, [specifier]);
     if (
@@ -183,9 +215,65 @@ const acquisitionMethod = (
         ] as readonly string[]
       ).includes(method)
     )
-      return method as JavaScriptSemanticResourceOperation["method"];
+      return {
+        specifier,
+        method: method as JavaScriptSemanticResourceOperation["method"],
+      };
   }
   return null;
 };
 const resourceCandidateId = (candidate: ResourceCandidate): string =>
   `resource:acquire:${String(candidate.node.start ?? -1)}:${String(candidate.node.end ?? -1)}`;
+
+/**
+ * `net` and `tls` validate a numeric port before creating a socket, so a
+ * literal port outside `[0, 65535]`, a fractional, non-finite, BigInt, boolean
+ * or `null` first argument throws synchronously and no socket exists. A string
+ * is a Unix socket path and an object may carry a path, so only an exactly
+ * readable non-port literal is decided. `""` is a path with no length, which
+ * Node also rejects.
+ *
+ * `undefined` and an empty object throw `ERR_MISSING_ARGS`, but those are a
+ * missing option rather than a bad port, so they stay undecided here.
+ */
+const rejectsSocketPortLiteral = (
+  node: t.CallExpression | t.OptionalCallExpression,
+  context: DataEffectTraversalContext,
+): boolean => {
+  const port = node.arguments[0];
+  if (port === undefined || t.isSpreadElement(port)) return false;
+  const value = unwrapJavaScriptExpression(port).node;
+  if (t.isStringLiteral(value)) return value.value.length === 0;
+  if (
+    t.isNullLiteral(value) ||
+    t.isBigIntLiteral(value) ||
+    t.isBooleanLiteral(value)
+  )
+    return true;
+  if (t.isNumericLiteral(value))
+    return (
+      !Number.isInteger(value.value) || value.value < 0 || value.value > 65535
+    );
+  // `NaN` and `Infinity` are unshadowed globals, and neither is a port.
+  if (
+    t.isIdentifier(value) &&
+    (value.name === "NaN" || value.name === "Infinity") &&
+    isUnmodifiedGlobalReference(value, context.state, value.name)
+  )
+    return true;
+  // `-1` and `-1.5` are unary expressions over numeric literals: always out of
+  // range because a port is never negative.
+  if (t.isUnaryExpression(value)) {
+    const operand = unwrapJavaScriptExpression(value.argument).node;
+    return (
+      t.isNumericLiteral(operand) &&
+      (value.operator === "-" || !Number.isInteger(operand.value))
+    );
+  }
+  return false;
+};
+
+/** Only `net`/`tls` sockets take a port in argument 0. */
+const socketPortInFirstArgument = (
+  candidate: Pick<AcquisitionReference, "specifier">,
+): boolean => candidate.specifier === "net" || candidate.specifier === "tls";

@@ -8,7 +8,7 @@ import {
   ESP32C3_BOOTLOADER_SEGMENTS,
   esp8266Image,
   espImage,
-} from "../../src/domain/firmware/espImage.fixture.js";
+} from "../fixtures/espImage.js";
 import { ESP8266_REFUSAL } from "../../src/domain/firmware/espImage.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { artifactInspectionResultSchema } from "../../src/domain/artifactInspection.js";

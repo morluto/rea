@@ -154,6 +154,10 @@ it("publishes and executes all APK contracts with inline Evidence and no active 
     });
     const input = {
       path: apk,
+      // Inline Evidence opts out of any contract's summary delivery default.
+      ...(Object.hasOwn(contract.inputSchema.shape, "detail")
+        ? { detail: "complete" }
+        : {}),
       ...(contract.name === "search_android_classes"
         ? { query: "Target" }
         : {}),

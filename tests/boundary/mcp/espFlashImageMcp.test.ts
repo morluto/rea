@@ -9,7 +9,7 @@ import {
   ESP32C3_BOOTLOADER_SEGMENTS,
   espImage,
   pattern,
-} from "../../../src/domain/firmware/espImage.fixture.js";
+} from "../../fixtures/espImage.js";
 import {
   espFlashDump,
   otaData,

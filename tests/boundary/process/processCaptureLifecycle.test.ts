@@ -353,7 +353,14 @@ itWithCaptureCapability(
   "retains collected observations when completion and cleanup both fail",
   async () => {
     let snapshotCalls = 0;
-    const captureSnapshot: typeof snapshotRoots = async () => {
+    const snapshotObserverPaths: string[][] = [];
+    const captureSnapshot: typeof snapshotRoots = async (
+      _scenario,
+      _signal,
+      _before,
+      resources,
+    ) => {
+      snapshotObserverPaths.push([...(resources?.observerPaths ?? [])]);
       snapshotCalls += 1;
       if (snapshotCalls === 1)
         return {
@@ -396,12 +403,16 @@ itWithCaptureCapability(
     expect(result.error.executionFailure).toBe(
       "fixture final snapshot failure",
     );
+    const temporaryRoot = snapshotObserverPaths[0]?.[0];
+    if (temporaryRoot === undefined)
+      throw new Error("expected the owned temporary root in snapshot inputs");
+    expect(snapshotObserverPaths).toEqual([[temporaryRoot], [temporaryRoot]]);
     const projected = projectAnalysisError(result.error);
     expect(projected).toMatchObject({
       code: "cleanup_incomplete",
       details: {
         cleanup: "incomplete",
-        resources: ["owned_process_group", "temporary_root"],
+        resources: ["owned_process_group", temporaryRoot],
       },
     });
     expect(projected).not.toHaveProperty("stack");

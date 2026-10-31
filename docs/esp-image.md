@@ -17,6 +17,15 @@ summary's `root_format_metadata` holds the image facts. Use its
 `parent_evidence_id` with `inspect_analysis_view` to select segment rows.
 `extract_artifact` writes one file per segment and per signature block.
 
+For agent sessions, advertise the `session,artifact,application` tool families
+and consider setting both `REA_MCP_INPUT_SCHEMA_PROFILE` and
+`REA_MCP_OUTPUT_SCHEMA_PROFILE` to `compact`. The output profile bounds each
+advertised output schema to 4,096 bytes by relaxing nested client validation;
+REA still validates complete results against the canonical contracts. Pair
+this with retained summaries and selected inventory views to limit the context
+needed for one question. See [MCP contracts](mcp-contracts.md) for the profiles
+and their client compatibility tradeoffs.
+
 The layout facts follow ESP-IDF v6.1 (`esp_app_format.h`, `esp_app_desc.h`,
 `esp_bootloader_desc.h`, `esp_image_format.c`, the ROM `secure_boot.h`
 headers and `docs/en/security/secure-boot-v2.rst`) and esptool v5.6.0
@@ -100,8 +109,14 @@ Strings stop at the first NUL and are omitted, with a limitation, when they
 are not valid UTF-8. The bootloader descriptor's magic is a single byte
 (`0x50`), so its reserved bytes, which ESP-IDF zero-fills, must also be zero.
 A `--ram-only-header` image puts RAM segments first, so its app descriptor is
-not in segment 0 and its role is unknown. `mmu_page_size` is `0` in images
-built before ESP-IDF v5.4.
+not in segment 0 and its role is unknown. `mmu_page_size` keeps ESP-IDF's
+name and value: the MMU page size as a base-2 logarithm, as
+`esp_app_desc_t` declares it, so `16` means 64 KiB. It is `0` in images built
+before ESP-IDF v5.4. `spi_flash_mode` is the next byte, which ESP-IDF v6.1
+names, kept as stored and not interpreted; releases that reserve it leave it
+`0`. A file can end inside the app descriptor: every field it holds in full
+is kept, a field it cuts off is `null`, and `observed_length` gives the
+descriptor bytes the file holds. The segment's truncation is reported as usual.
 
 ## Segments
 
@@ -225,7 +240,9 @@ and a partition table sits where that origin puts `0x8000` (file offset
 `table_file_offset`, a limitation says to reopen the file with
 `format: "esp-flash-image"` and that `flash_offset`, and `inspect_artifact`
 lists the same `open_binary` call as a next probe. `flash_dump` is null for
-every other image.
+every other image. Evidence that REA recorded before it reported the field
+omits it; REA still reads and compares such Evidence, and the omission says
+nothing about where the file was read from.
 
 ## Limits
 

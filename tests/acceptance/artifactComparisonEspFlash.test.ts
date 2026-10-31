@@ -6,7 +6,7 @@ import {
   ESP32C3_APP_SEGMENTS,
   ESP32C3_BOOTLOADER_SEGMENTS,
   espImage,
-} from "../../src/domain/firmware/espImage.fixture.js";
+} from "../fixtures/espImage.js";
 import {
   TWO_OTA_PARTITIONS,
   espFlashDump,
@@ -54,8 +54,13 @@ const comparisonSession = async () => {
     if (inventory === undefined) throw new Error("Missing inventory Evidence");
     return parseEvidence(inventory);
   };
+  // Inline flash-dump inventories exceed the default MCP input element
+  // allowance, so compare the Evidence the session retained.
   const compare = async (left: Evidence, right: Evidence) => {
-    const response = await call("compare_artifacts", { left, right });
+    const response = await call("compare_artifacts", {
+      left: { kind: "retained-evidence", evidence_id: left.evidence_id },
+      right: { kind: "retained-evidence", evidence_id: right.evidence_id },
+    });
     expect(response.isError, JSON.stringify(response)).not.toBe(true);
     return artifactComparisonResultSchema.parse(
       parseEvidence(response.structuredContent).normalized_result,

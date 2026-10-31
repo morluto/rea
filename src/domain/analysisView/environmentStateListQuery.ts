@@ -46,6 +46,9 @@ const LIMIT = new Set([
   "count",
   "itemsperpage",
   "limit",
+  "max_results",
+  "maxresults",
+  "maxsize",
   "page_size",
   "pagesize",
   "per_page",
@@ -601,7 +604,7 @@ export const queryTotalCount = (
 
 /** A query answer: the base line's envelope with the selected entities, counters at the number listed and totals at the number matched. */
 export const renderQueryList = (
-  view: Pick<StateListView, "pointer" | "counters"> & {
+  view: Pick<StateListView, "pointer" | "counters" | "listed_ids"> & {
     readonly query: Pick<ListQuery, "totals">;
   },
   base: JsonValue,
@@ -615,5 +618,5 @@ export const renderQueryList = (
         ? body
         : withCounter(body, name, formatItemCount(total, recorded!));
     },
-    renderStateList(view, base, items),
+    renderStateList(view, base, items, total === items.length),
   );

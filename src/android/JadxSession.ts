@@ -13,6 +13,8 @@ import {
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
+  AnalysisCancelledError,
+  AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import {
@@ -21,8 +23,17 @@ import {
   type JsonValue,
 } from "../domain/jsonValue.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import type { OwnedProviderProcessSpawnOptions } from "../process/ProviderProcess.js";
 import { analyzeJadxRequest, type JadxToolPort } from "./JadxAnalysis.js";
+import { readAndroidNativeInventory } from "./AndroidNativeInventory.js";
+import type { AndroidNativeDeclarations } from "../domain/android/androidNativeDeclarations.js";
+import {
+  readAndroidJniLibraries,
+  type AndroidJniLibraries,
+} from "./AndroidJniLibraries.js";
+import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { jadxOperationTimeoutGuidance } from "./JadxOperationTimeout.js";
 import { JadxMcpTransport, type JadxLauncher } from "./JadxMcpTransport.js";
 import {
   parseJadxClassPage,
@@ -68,6 +79,11 @@ export class JadxSession {
   #serverName: string | null = null;
   #serverVersion: string | null = null;
   #engineVersion: string | null = null;
+  #nativeInventory: AndroidNativeDeclarations | undefined;
+  #nativeLibraries:
+    | { readonly key: string; readonly value: AndroidJniLibraries }
+    | undefined;
+  #jniObservation: NonNullable<AndroidPartialObservation["jni"]> | undefined;
 
   constructor(
     options: Omit<OwnedProviderProcessSpawnOptions, "runId" | "stdin">,
@@ -88,6 +104,8 @@ export class JadxSession {
     readonly timeoutMs: number;
     /** Caller-selected mapping, read before this request reached the queue. */
     readonly mapping?: AndroidMappingSource | undefined;
+    readonly resources: ArtifactResourceScope;
+    readonly deadline: AbortSignal;
   }): Promise<AndroidAnalysisExecution> {
     const { request, target, snapshot, jarHash, signal, timeoutMs, mapping } =
       context;
@@ -99,6 +117,29 @@ export class JadxSession {
       bridgeHash: context.bridgeHash,
     };
     this.#observedCalls = [];
+    this.#jniObservation = undefined;
+    if (request.operation === "inspect_android_jni_bindings") {
+      const selected = request.input;
+      this.#jniObservation = {
+        selection: {
+          ...(selected.class_name === undefined
+            ? {}
+            : { class_name: selected.class_name }),
+          ...(selected.method_names === undefined
+            ? {}
+            : { method_names: selected.method_names }),
+          ...(selected.descriptors === undefined
+            ? {}
+            : { descriptors: selected.descriptors }),
+          ...(selected.abis === undefined ? {} : { abis: selected.abis }),
+          ...(selected.library_paths === undefined
+            ? {}
+            : { library_paths: selected.library_paths }),
+        },
+        native_inventory: null,
+        libraries: null,
+      };
+    }
     this.#serverName = null;
     this.#serverVersion = null;
     this.#engineVersion = null;
@@ -138,20 +179,22 @@ export class JadxSession {
           `Expected engine ${JADX_RELEASE.version}; JAR reported ${runtime.engine_reported_version}.`,
         );
       const loaded =
-        this.#loaded ??
-        jadxLoadSchema.parse(
-          await tools.json("load_apk", {
-            path: snapshot,
-            threads: 1,
-            resources: "full",
-          }),
-        );
-      if (loaded.apk_path !== snapshot)
+        request.operation === "inspect_android_jni_bindings"
+          ? undefined
+          : (this.#loaded ??
+            jadxLoadSchema.parse(
+              await tools.json("load_apk", {
+                path: snapshot,
+                threads: 1,
+                resources: "full",
+              }),
+            ));
+      if (loaded !== undefined && loaded.apk_path !== snapshot)
         throw new AnalysisOutputError(
           request.operation,
           "JADX loaded a different APK path than the admitted snapshot",
         );
-      this.#loaded = loaded;
+      if (loaded !== undefined) this.#loaded = loaded;
       const engine = {
         name: "jadx-headless-mcp",
         version: runtime.engine_reported_version,
@@ -166,12 +209,75 @@ export class JadxSession {
         loaded,
         engine,
         mapping,
+        ...(request.operation !== "inspect_android_jni_bindings"
+          ? {}
+          : {
+              jni: {
+                apkSha256: target.sha256,
+                inventory: async () => {
+                  const inventory =
+                    this.#nativeInventory ??
+                    (await readAndroidNativeInventory(tools, snapshot));
+                  if (this.#jniObservation !== undefined)
+                    this.#jniObservation.native_inventory = inventory;
+                  if (inventory.coverage.status === "complete")
+                    this.#nativeInventory = inventory;
+                  return inventory;
+                },
+                libraries: async () => {
+                  const key = JSON.stringify({
+                    abis: request.input.abis,
+                    library_paths: request.input.library_paths,
+                  });
+                  if (this.#nativeLibraries?.key === key) {
+                    if (this.#jniObservation !== undefined)
+                      this.#jniObservation.libraries = {
+                        scan_state: "completed",
+                        libraries: [...this.#nativeLibraries.value.libraries],
+                        inventory: this.#nativeLibraries.value.inventory,
+                      };
+                    return this.#nativeLibraries.value;
+                  }
+                  const value = await readAndroidJniLibraries({
+                    snapshot,
+                    apkSha256: target.sha256,
+                    selection: request.input,
+                    resources: context.resources,
+                    signal,
+                    onObservation: (checkpoint) => {
+                      if (this.#jniObservation !== undefined)
+                        this.#jniObservation.libraries = checkpoint;
+                    },
+                    interruption: (reason) =>
+                      context.deadline.aborted &&
+                      reason === context.deadline.reason
+                        ? new AnalysisTimeoutError(
+                            request.operation,
+                            timeoutMs,
+                            {
+                              cause: reason,
+                              ...jadxOperationTimeoutGuidance(timeoutMs),
+                            },
+                          )
+                        : new AnalysisCancelledError(request.operation, {
+                            cause: reason,
+                          }),
+                  });
+                  if (
+                    value.inventory.status === "complete" &&
+                    value.libraries.every((library) => library.failure === null)
+                  )
+                    this.#nativeLibraries = { key, value };
+                  return value;
+                },
+              },
+            }),
       });
       const raw = jsonObjectSchema.parse({
         server,
         bridge_sha256: context.bridgeHash,
         jar_sha256: jarHash,
-        loaded,
+        ...(loaded === undefined ? {} : { loaded }),
       });
       const execution = createAnalysisExecution(
         result,
@@ -182,10 +288,10 @@ export class JadxSession {
             calls: this.#observedCalls.map(({ complete }) => complete),
           },
           subject: target,
-          limitations: [
-            ...JADX_LIMITATIONS,
-            ...androidMappingLimitations(mapping),
-          ],
+          limitations:
+            request.operation === "inspect_android_jni_bindings"
+              ? []
+              : [...JADX_LIMITATIONS, ...androidMappingLimitations(mapping)],
           locations:
             request.operation === "inspect_android_package"
               ? [{ kind: "artifact-path", path: "AndroidManifest.xml" }]
@@ -231,6 +337,9 @@ export class JadxSession {
         engine_version: this.#engineVersion,
       },
       calls: this.#observedCalls.map(({ complete }) => complete),
+      ...(this.#jniObservation === undefined
+        ? {}
+        : { jni: this.#jniObservation }),
     };
   }
 
@@ -273,6 +382,17 @@ export class JadxSession {
       if (envelope.isError === true) {
         const failure = parseJadxFailure(text);
         if (failure !== undefined) {
+          if (failure.kind === "reference-output-limit")
+            throw new AnalysisResourceConstraintError(
+              request.operation,
+              "memory",
+              "External DEX reference metadata exceeds the bounded transport representation allowance.",
+              { stage: failure.stage, limit_bytes: failure.limit_bytes },
+              fixedAllowanceOptions(
+                `The external DEX ${failure.stage} representation allowance of ${String(failure.limit_bytes)} bytes`,
+                "report",
+              ),
+            );
           if (name === "load_apk" && failure.kind === "jvm-memory-failure")
             throw new AnalysisResourceConstraintError(
               request.operation,

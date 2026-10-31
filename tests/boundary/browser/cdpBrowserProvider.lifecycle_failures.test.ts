@@ -447,6 +447,11 @@ describe("CdpBrowserProvider: session termination and scope changes", () => {
       type: "redirect",
       url: null,
       destination_scope: "outside_policy",
+      redirect_response: {
+        url: `${browser.allowedOrigin}/reloaded?token=session-secret`,
+        status: 302,
+        scope: "approved",
+      },
     });
     expect(result.value.completeness).toMatchObject({
       status: "policy_filtered",

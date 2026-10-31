@@ -111,6 +111,41 @@ it.each([false, true])(
 );
 
 it.each([
+  { container: "thin", corrupt: false },
+  { container: "thin", corrupt: true },
+  { container: "fat", corrupt: false },
+  { container: "fat", corrupt: true },
+])(
+  "walks the entire selected command table beyond 4096 commands ($container, corrupt=$corrupt)",
+  ({ container, corrupt }) => {
+    const command = Buffer.alloc(16);
+    command.writeUInt32LE(0x2a); // LC_SOURCE_VERSION
+    command.writeUInt32LE(16, 4);
+    const thin = machoImage({
+      commands: Array.from({ length: 4097 }, () => command),
+    });
+    if (corrupt)
+      new DataView(thin.buffer).setUint32(32 + 4096 * 16 + 4, 4, true);
+    const bytes = Buffer.from(
+      container === "fat" ? fatImage([{ cpu: CPU.arm64, bytes: thin }]) : thin,
+    );
+    const decode = () =>
+      decodeAppleDispatchMetadata(bytes, 10, {
+        path: "/many-commands",
+        sha256: "fixture",
+      });
+    if (corrupt) {
+      expect(decode).toThrow(/load command 4096 .*invalid cmdsize 4/u);
+      return;
+    }
+    expect(decode()).toMatchObject({
+      objc_classes: [],
+      target_selection: { container, byte_length: thin.byteLength },
+    });
+  },
+);
+
+it.each([
   { source: "__objc_const\0\nxx", expected: "__objc_const" },
   { source: "abcdefghijklmnop", expected: "abcdefghijklmnop" },
   { source: "\0\nignored", expected: "" },

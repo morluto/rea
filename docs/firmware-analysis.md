@@ -82,6 +82,11 @@ Published file `relative_path` preserves producer spelling for lineage; `path`
 uses the writer's actual normalized filename. An extracted filename that cannot
 be represented losslessly as UTF-8 fails publication explicitly with its raw
 name bytes in hexadecimal instead of silently omitting the entry.
+Unpublished symlinks retain the extracted tree's target bytes in lowercase
+`link_target_hex`; `link_target` is null when those bytes are not valid UTF-8.
+Older retained Evidence may omit the hexadecimal field. Unblob may have rewritten
+the target before REA observed it, so these bytes are not necessarily those stored
+in the firmware image.
 
 ## CLI and MCP
 
@@ -312,3 +317,33 @@ Use [`inspect_devicetree`](devicetree.md) / `rea inspect-devicetree` on an
 extracted DTB for its node/property tree, reservations, hardware summary and
 selected phandle relationships. FDT v16/v17 inspection is portable and requires
 no external tool or disassembler.
+
+## Inspect Intel HEX and S-record images
+
+Use `inspect-artifact` / `inspect_artifact` on an Intel HEX or Motorola S-record
+file for its address regions, declared start address and record facts, then
+`extract-artifact` / `extract_artifact` for one raw file per region. Decoding is
+portable and requires no external tool. See
+[Intel HEX and S-record images](hex-records.md).
+
+## Inspect U-Boot legacy uImages
+
+`inspect-artifact` / `extract-artifact` recognize a legacy uImage by its
+`0x27051956` magic and inventory it without running or decompressing it.
+The root facts record the 64-byte header (architecture, OS, type, and
+compression as raw values and names, load and entry addresses, image name,
+and timestamp) with the header and data CRC32 verified; the stored payload
+is extractable as `payload.bin`, and multi-file and script images additionally
+expose each sub-image as `image-<n>.bin` from the stored size table. Declared
+addresses are facts from the header, not proven entry points, and compressed
+payloads stay as stored. Intel HEX/S-record and FIT images are separate
+readers and are not covered here. See [U-Boot legacy uImage](uimage.md) for
+component padding, preserved names, resource policies and verification scope.
+
+## Inspect U-Boot FIT images
+
+Use `inspect-artifact` / `inspect_artifact` on a U-Boot FIT (`.itb`) for its
+images, declared load and entry addresses, configurations and verified hashes,
+then `extract-artifact` / `extract_artifact` for one raw file per image.
+Decoding is portable and requires no external tool. See
+[U-Boot FIT images](fit-images.md).

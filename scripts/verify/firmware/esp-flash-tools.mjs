@@ -3,7 +3,7 @@ import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   execute,
-  exitOutput,
+  failedCommand,
   options,
   source,
   spell,
@@ -93,7 +93,10 @@ export const otatool = async (image, flashOffset, args) => {
       ...args,
     ],
     { ...options, env: environment() },
-  ).then(({ stdout, stderr }) => `${stdout}${stderr}`, exitOutput);
+  ).then(
+    ({ stdout, stderr }) => `${stdout}${stderr}`,
+    failedCommand(`otatool ${args.join(" ")}`),
+  );
   return run;
 };
 

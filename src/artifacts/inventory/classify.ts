@@ -1,13 +1,13 @@
-import type { GodotPckAdmission } from "../GodotPckLocation.js";
-import type { EspFlashAdmission } from "../EspFlashImageArtifactReader.js";
+import type {
+  ArtifactReaderAdmission,
+  ArtifactFormatAdmission,
+} from "../ArtifactReaderAdmission.js";
 import {
   locateEspFlashLayout,
   type EspFlashSelection,
 } from "../../domain/firmware/espFlashLocation.js";
-import type { PyInstallerAdmission } from "../pyinstaller/PyInstallerAdmission.js";
 import { assertArtifactSelectedSource } from "../ArtifactSelectedSource.js";
 import { artifactNameForClassification } from "../../domain/artifactNameSelection.js";
-import type { NodeSeaAdmission } from "../nodeSea/NodeSeaAdmission.js";
 import type { AsarHeaderAdmission } from "../../config/asarHeaderAdmission.js";
 import {
   ArtifactEmbeddedFormatProbes,
@@ -29,9 +29,9 @@ import type { ArtifactOccurrence } from "../../domain/artifactGraph.js";
 import {
   hasZipSignature,
   locateTrailingZipArchive,
-  isZipPackageFormat,
   zipRootPackageFormat,
 } from "../../domain/zipPackageFormat.js";
+import { artifactFormatDescriptor } from "../artifactFormats.js";
 import { ArtifactReaderFailure } from "../ArtifactReader.js";
 import type { HashResult } from "../ArtifactHash.js";
 import {
@@ -55,13 +55,7 @@ interface RootClassification {
 
 type RootInventoryClassification = RootClassification & {
   readonly rootSource: RootInventorySource | undefined;
-  readonly readerAdmission:
-    | StableRegularFileDescriptor
-    | NodeSeaAdmission
-    | PyInstallerAdmission
-    | GodotPckAdmission
-    | EspFlashAdmission
-    | undefined;
+  readonly readerAdmission: ArtifactReaderAdmission | undefined;
 };
 
 /** The admitted descriptor and the single owner that can confirm its close. */
@@ -170,13 +164,7 @@ export const classifyAndHashRootForInventory = async (
         options.signal,
       ));
     const retainSource =
-      isZipPackageFormat(format) ||
-      format === "mach-o-universal" ||
-      format === "godot-pck" ||
-      format === "pyinstaller" ||
-      format === "node-sea" ||
-      format === "esp-image" ||
-      format === "esp-flash-image";
+      artifactFormatDescriptor(format)?.retainClassifiedSource === true;
     outcome = {
       kind: "completed",
       value: {
@@ -217,13 +205,7 @@ const classifyRootFormat = async (
   asarHeaderAdmission?: AsarHeaderAdmission,
   selectedPath?: string,
   espFlashSelection?: EspFlashSelection,
-): Promise<
-  | ArtifactOccurrence["artifact_format"]
-  | NodeSeaAdmission
-  | PyInstallerAdmission
-  | GodotPckAdmission
-  | EspFlashAdmission
-> => {
+): Promise<ArtifactOccurrence["artifact_format"] | ArtifactFormatAdmission> => {
   const { handle } = source;
   const probe = createArtifactClassificationProbe(asarHeaderAdmission);
   const chunk = Buffer.alloc(64 * 1024);
@@ -332,8 +314,16 @@ const classifyRootFormat = async (
       );
       return { kind: "node-sea", source, location: sea, decoded };
     }
+    const bun = await embeddedProbes.bunStandalone();
+    if (bun.status === "present")
+      return { kind: "bun-standalone", source, probe: bun };
     const packaged = await embeddedProbes.pyInstaller();
     abortIfNeeded(signal);
+    if (format !== "mach-o-universal") {
+      const headerOffset = await embeddedProbes.dotnetBundle();
+      if (headerOffset !== undefined)
+        return { kind: "dotnet-bundle", source, headerOffset };
+    }
     // A valid cookie also proves enough bytes for a thin Mach-O identity;
     // PE and universal Mach-O classification already require stronger proof.
     if (packaged !== undefined)

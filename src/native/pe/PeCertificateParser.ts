@@ -43,6 +43,9 @@ const LIMITATIONS = [
 const TELETEX_LIMITATION =
   "TeletexString values use OpenSSL's ISO-8859-1 compatibility mapping; this is not a full T.61 decoder.";
 
+export const UNSIGNED_ATTRIBUTES_LIMITATION =
+  "Signer unsigned attribute contents are not decoded; nested signatures and timestamp token certificates and times may be omitted.";
+
 const ABSENT_LIMITATIONS = [
   "IMAGE_DIRECTORY_ENTRY_SECURITY is absent. That is not proof the image is unsigned in every catalog or overlay sense.",
   "This workflow does not verify signatures, certificate chains, timestamps, or Authenticode digest coverage of image bytes.",
@@ -82,6 +85,7 @@ export const parsePeCertificates = (
   let at = 0;
   let examined = 0;
   let teletexStringCompatibilityUsed = false;
+  let unsignedAttributesPresent = false;
   while (at < table.length) {
     // Alignment padding sits inside the gap before the next 8-byte boundary.
     // Bytes that remain after that boundary are a short header, including
@@ -123,6 +127,9 @@ export const parsePeCertificates = (
         const parsed = parsePkcs7SignedData(root);
         teletexStringCompatibilityUsed ||=
           parsed.teletexStringCompatibilityUsed;
+        unsignedAttributesPresent ||= parsed.signers.some(
+          (signer) => signer.unsigned_attribute_oids !== null,
+        );
         pkcs7 = {
           content_type_oid: parsed.content_type_oid,
           content_type_name: oidName(parsed.content_type_oid),
@@ -166,10 +173,19 @@ export const parsePeCertificates = (
             serial_hex: signer.serial_hex,
             subject_key_identifier_hex: signer.subject_key_identifier_hex,
             authenticated_attributes: signer.authenticated_attributes,
+            unsigned_attribute_oids:
+              signer.unsigned_attribute_oids === null
+                ? null
+                : [...signer.unsigned_attribute_oids],
           })),
         };
       } catch (cause) {
-        if (cause instanceof PeCertificateAsn1Failure)
+        // An exhausted decoder allowance is not evidence of malformed DER;
+        // the provider reports it as a fixed resource allowance.
+        if (
+          cause instanceof PeCertificateAsn1Failure &&
+          cause.exhausted === null
+        )
           fail(`PKCS#7 signedData is malformed: ${cause.message}`);
         throw cause;
       }
@@ -206,12 +222,14 @@ export const parsePeCertificates = (
     },
     entries,
     coverage: {
-      status: "complete",
+      status: unsignedAttributesPresent ? "partial" : "complete",
       examined_entries: examined,
       certificates,
     },
-    limitations: teletexStringCompatibilityUsed
-      ? [...LIMITATIONS, TELETEX_LIMITATION]
-      : [...LIMITATIONS],
+    limitations: [
+      ...LIMITATIONS,
+      ...(teletexStringCompatibilityUsed ? [TELETEX_LIMITATION] : []),
+      ...(unsignedAttributesPresent ? [UNSIGNED_ATTRIBUTES_LIMITATION] : []),
+    ],
   };
 };

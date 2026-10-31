@@ -191,6 +191,7 @@ it("uses HTTP optional whitespace for SAZ identity codings without changing raw 
       status: "partial",
       inspected_records: 4,
     });
+    expect(report.records.map(({ ordinal }) => ordinal)).toEqual([0, 1, 2, 3]);
     if (sensitive === "gzip")
       expect(report.records[2]?.protobuf).toBeUndefined();
     else
@@ -239,6 +240,7 @@ it("checks trailer credentials before hidden metadata blocks analysis and withho
     ],
   ]);
   const path = await fixture(bytes);
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
   const { call } = await connectLocalToolsMcp();
   const base = {
     capture_path: path,
@@ -267,16 +269,35 @@ it("checks trailer credentials before hidden metadata blocks analysis and withho
       ...base,
       record_ordinals: ordinals,
     });
-    const error = parseMcpToolError(response).error;
+    const failure = parseMcpToolError(response);
+    const error = failure.error;
     expect(error.code).toBe("capability_unavailable");
     expect(JSON.stringify(response)).not.toContain("content_base64");
     expect(error.details?.partial_observation).toEqual({
       kind: "file-snapshot-hash",
       path,
-      sha256: createHash("sha256").update(bytes).digest("hex"),
+      sha256,
       bytes: bytes.length,
     });
+    expect(failure).not.toHaveProperty("normalized_result");
   }
+  const excludedResponse = await call("inspect_web_network_capture", {
+    ...base,
+    record_ordinals: [0, 1],
+    sensitive_values: ["X-Debug", path, sha256],
+  });
+  const excludedFailure = parseMcpToolError(excludedResponse);
+  const excludedError = excludedFailure.error;
+  expect(excludedError.code).toBe("capability_unavailable");
+  expect(excludedError.details?.partial_observation).toEqual({
+    kind: "file-snapshot-hash",
+    path: null,
+    sha256: null,
+    bytes: bytes.length,
+  });
+  expect(excludedFailure).not.toHaveProperty("normalized_result");
+  for (const excluded of [path, sha256, "content_base64", "fixture-only"])
+    expect(JSON.stringify(excludedResponse)).not.toContain(excluded);
   const opaqueReply = await call("inspect_web_network_capture", {
     capture_path: path,
     format: "saz",
@@ -361,6 +382,7 @@ it("keeps automatic framing applicability unknown when SAZ Content-Type is exclu
 
   const known = await inspect(["--record", "2", "--record", "3"]);
   expect(known.protobuf_coverage?.status).toBe("complete");
+  expect(known.records.map(({ ordinal }) => ordinal)).toEqual([2, 3]);
   for (const record of known.records) {
     expect(record.protobuf).toBeUndefined();
     expect(record.limitations).toEqual([]);
@@ -889,13 +911,17 @@ it.each([
       },
     });
     expect(error).not.toHaveProperty("normalized_result");
-    expect(error.details.partial_observation).toEqual({
+    const sourceObservation = {
       kind: "file-snapshot-hash",
       path,
       sha256: createHash("sha256").update(bytes).digest("hex"),
       bytes: bytes.length,
-    });
+    };
+    expect(error.details.partial_observation).toEqual(sourceObservation);
     expect(mcpFailure).not.toHaveProperty("normalized_result");
+    expect(mcpFailure.error.details?.partial_observation).toEqual(
+      sourceObservation,
+    );
     expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
   }
   expect(JSON.stringify(result)).not.toContain("malformed-private-input");

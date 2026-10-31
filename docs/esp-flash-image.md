@@ -20,8 +20,8 @@ A file is a flash image when REA finds a partition table in the entry
 structure ESP-IDF's bootloader verifies (`esp_partition_table_verify`):
 32-byte `0x50AA` entries, at most one `0xEBEB` MD5 entry over the entries
 before it, and a terminating entry within `0xC00` bytes. ESP-IDF accepts a
-table with no entries, but REA requires one so that erased flash is not a
-table. A table whose MD5 does not match, or that has a second MD5 entry, is
+table with no partition entries, but REA requires one, so that neither
+erased flash nor a lone MD5 entry is read as a table. A table whose MD5 does not match, or that has a second MD5 entry, is
 still read, with `md5.status` `invalid` and a limitation, because the
 bootloader would refuse it. The table is located in this order:
 
@@ -90,7 +90,8 @@ The root `format_metadata` (`esp-flash-image`) records:
 - `partition_table`: its flash address, the `method` that found it
   (`default`, `caller` or `scan`), the partition count and the MD5 `status`
   (`valid`, `invalid` or `absent`) with the stored and computed digests;
-- `apps`: ESP image facts for each app partition the dump holds;
+- `apps`: ESP image facts for each app partition the dump holds; app
+  partitions declared over the same bytes share one decode;
 - `otadata`: the otadata partition's records, or null without one;
 - `boot_selection`: the app the bootloader would select, for every table;
 - `partitions_outside_dump`: declared partitions that begin before the
@@ -107,8 +108,9 @@ where its own `chip_id` says the ROM loads it.
 
 Each partition entry is `partitions/<label>.bin` when the label is a safe
 name of up to 16 letters, digits, `.`, `_` and `-` that starts with a
-letter, digit or underscore and has at least one letter or underscore, and
-no other label repeats it, ignoring case as some file systems do; it is
+letter, digit or underscore and has at least one letter or underscore, is
+not a Windows device name such as `NUL` or `COM1`, alone or before a dot,
+and no other label repeats it, ignoring case as some file systems do; it is
 `partitions/<index>.bin` otherwise. `source_path` keeps the label, the
 table's own name for the partition. Its `format_metadata`
 (`esp-flash-partition`) records the table `index`, `label` (null when not
@@ -126,7 +128,8 @@ such byte, and `written_bytes`, how many bytes are not `0xFF`. A partition
 erased throughout has null offsets and `written_bytes` `0`; a partition the
 file holds none of has all three null. The range bounds the written
 bytes and does not say whether erased flash lies between them; extract the
-partition to read them.
+partition to read them. REA reads the bytes the partitions cover once, so
+overlapping partitions share that read however many the table declares.
 
 ESP-IDF 5.3 and later may declare primary `bootloader` and `partition_table`
 entries over the bootloader region and the table sector. They are
@@ -327,9 +330,9 @@ and ESP-IDF v5.5.2's `gen_esp32part.py`, `otatool.py` and `parttool.py`,
 once with esptool v5.6.0 and once with 4.12.0. Its `gen_esp32part.py` is
 identical to v6.1's, and its otatool and parttool differ only in import style
 and esptool command spelling. All checks passed in both runs. With v5.6.0 and
-the build already cached, the run took 21.8 s elapsed, 15.9 s user CPU and
-5.7 s system CPU under `/usr/bin/time -l`; the largest single process peaked
-at a 258 MiB resident set, and the combined peak of all processes was not
+the build already cached, the run took 24.1 s elapsed, 16.9 s user CPU and
+6.3 s system CPU under `/usr/bin/time -l`; the largest single process peaked
+at a 278 MiB resident set, and the combined peak of all processes was not
 measured.
 
 The lane does not establish:

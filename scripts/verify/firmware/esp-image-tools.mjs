@@ -22,6 +22,13 @@ export const exitOutput = (failure) => {
   if (typeof failure?.code !== "number" || failure.code === 0) throw failure;
   return `${failure.snapshot.stdout.text}${failure.snapshot.stderr.text}`;
 };
+
+/** Reject a command that had to succeed, with the output it exited with. */
+export const failedCommand = (label) => (failure) => {
+  throw new Error(`${label} failed: ${exitOutput(failure)}`, {
+    cause: failure,
+  });
+};
 export const source = (name) =>
   fileURLToPath(
     new URL(`../../../tests/conformance/esp/${name}`, import.meta.url),
@@ -205,19 +212,20 @@ export const imageInfo = async (file, chip) => {
   };
 };
 
-/** REA's complete inline inventory for one file through the built CLI. */
-export const inspect = async (file, flags = []) => {
-  const result = await execute(
+const inspectArtifact = (file, flags) =>
+  execute(
     process.execPath,
     [entrypoint, "inspect-artifact", file, ...flags, "--json"],
     { ...options, env: { ...process.env, REA_LOG_LEVEL: "silent" } },
-  ).then(
-    ({ stdout }) => ({ ok: true, stdout }),
-    (failure) => ({ ok: false, stdout: exitOutput(failure) }),
   );
-  if (!result.ok) return { refused: result.stdout };
-  const inventory = JSON.parse(result.stdout).normalized_result.substeps[0]
-    .evidence.normalized_result;
+
+/** REA's complete inline inventory for one file through the built CLI. */
+export const inspect = async (file, flags = []) => {
+  const { stdout } = await inspectArtifact(file, flags).catch(
+    failedCommand(`inspect-artifact ${file}`),
+  );
+  const inventory =
+    JSON.parse(stdout).normalized_result.substeps[0].evidence.normalized_result;
   const rows = inventory.occurrences.filter((row) => row.logical_path !== ".");
   return {
     inventory,
@@ -231,6 +239,12 @@ export const inspect = async (file, flags = []) => {
     ),
   };
 };
+
+/** REA's output for a file it must refuse; opening the file fails the lane. */
+export const refusal = (file, flags = []) =>
+  inspectArtifact(file, flags).then(() => {
+    throw new Error(`inspect-artifact opened ${file}, which it must refuse`);
+  }, exitOutput);
 
 const oracleDescriptorKind = (oracle) => {
   if (oracle.project !== undefined) return "app";

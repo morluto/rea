@@ -719,6 +719,7 @@ describe("json depth bounds over MCP", () => {
       directory,
       provider,
       resources,
+      4_096,
     );
     const input = INVESTIGATION_EXAMPLES.compare_process_captures.input;
     const baseline = await mcp.callTool({
@@ -751,9 +752,9 @@ describe("json depth bounds over MCP", () => {
           operation: "compare_process_captures",
           issues: [
             {
-              path: [],
+              path: ["left", "parameters"],
               reason: "invalid_value",
-              message: `left.parameters: JSON value exceeds maximum nesting depth of ${MAX_JSON_DEPTH}. This release has no runtime override.`,
+              message: expect.stringContaining(String(MAX_JSON_DEPTH)),
             },
           ],
         },

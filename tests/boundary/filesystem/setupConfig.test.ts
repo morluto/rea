@@ -1,3 +1,4 @@
+import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import {
   chmod,
   lstat,
@@ -24,10 +25,9 @@ import { resolveWindowsClaudeDesktopLocation } from "../../../src/application/Cl
 import { supportedClients } from "../../../src/application/SupportedClients.js";
 import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
 import { failedConfigurationMessage } from "../../../src/application/SetupClients.js";
-import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 import { CURRENT_ENTRYPOINT_PATH } from "../../../src/process/CurrentEntrypointPath.js";
 
-const pinnedPackage = PRODUCT_IDENTITY.registrationPackageSpecifier;
+const registrationCommand = currentClientRegistrationCommand();
 
 it.skipIf(process.platform === "win32")(
   "preserves an aligned caller launcher alias without writes or a backup",
@@ -144,7 +144,7 @@ it.skipIf(process.platform === "win32").each([false, true])(
       }),
     ).toMatchObject({ status: "configured" });
     expect(JSON.parse(await readFile(selected, "utf8"))).toMatchObject({
-      mcpServers: { rea: { command: "npx" } },
+      mcpServers: { rea: { command: registrationCommand[0] } },
     });
     expect(await readFile(unrelated, "utf8")).toBe(original);
     await expect(lstat(`${unrelated}.rea.backup`)).rejects.toMatchObject({
@@ -263,8 +263,8 @@ describe("JSON client configuration transaction: writing configuration through s
       mcpServers: {
         other: { command: "other" },
         rea: {
-          command: "npx",
-          args: ["-y", pinnedPackage, "mcp"],
+          command: registrationCommand[0],
+          args: registrationCommand.slice(1),
         },
       },
     });
@@ -291,8 +291,8 @@ describe("JSON client configuration transaction: writing configuration through s
       theme: "dark",
       mcpServers: {
         rea: {
-          command: "npx",
-          args: ["-y", pinnedPackage, "mcp"],
+          command: registrationCommand[0],
+          args: registrationCommand.slice(1),
         },
       },
     });
@@ -335,7 +335,7 @@ describe("JSON client configuration transaction: keeping matching configuration 
     const configPath = join(directory, "mcp.json");
     await writeFile(
       configPath,
-      `${JSON.stringify({ mcpServers: { rea: { command: "npx", args: ["-y", pinnedPackage, "mcp"] } } })}\n`,
+      `${JSON.stringify({ mcpServers: { rea: { command: registrationCommand[0], args: registrationCommand.slice(1) } } })}\n`,
     );
     expect(
       await configureClientConfiguration({
@@ -363,8 +363,8 @@ describe("JSON client configuration transaction: keeping matching configuration 
               JAVA_HOME: "/usr/lib/jvm/jdk-21",
               GHIDRA_INSTALL_DIR: "/opt/ghidra",
             },
-            args: ["-y", pinnedPackage, "mcp"],
-            command: "npx",
+            args: registrationCommand.slice(1),
+            command: registrationCommand[0],
           },
         },
       })}\n`,
@@ -405,8 +405,8 @@ describe("JSON client configuration migration and provider paths", () => {
       theme: "dark",
       mcpServers: {
         rea: {
-          command: "npx",
-          args: ["-y", pinnedPackage, "mcp"],
+          command: registrationCommand[0],
+          args: registrationCommand.slice(1),
         },
         other: { command: "other" },
       },
@@ -431,8 +431,8 @@ describe("JSON client configuration migration and provider paths", () => {
     expect(JSON.parse(await readFile(configPath, "utf8"))).toMatchObject({
       mcpServers: {
         rea: {
-          command: "npx",
-          args: ["-y", pinnedPackage, "mcp"],
+          command: registrationCommand[0],
+          args: registrationCommand.slice(1),
           env: { HOPPER_LAUNCHER_PATH: hopperPath },
         },
       },

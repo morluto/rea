@@ -33,19 +33,12 @@ export const ANALYSIS_RESOURCE_KINDS = [
 /** A measured resource constraint or bounded admission refusal. */
 export class AnalysisResourceConstraintError extends AnalysisError {
   readonly _tag = "AnalysisResourceConstraintError";
-  readonly remediationAction: string | undefined;
   /**
-   * The fixed format, decoder, or capture allowance that refused the request.
-   * Worker limits and host resources do not raise it, so recovery derives from
-   * this allowance rather than from `resource`.
+   * The one recovery this refusal carries. A fixed allowance and a separate
+   * remediation sentence do not co-occur; retryability belongs to that same
+   * object.
    */
-  readonly fixedAllowance: FixedAllowance | undefined;
-  /**
-   * Whether retrying the same request can succeed. A caller-selected bound is
-   * deterministic for the same input, so it is not retryable even when its
-   * resource kind would otherwise be treated as admission capacity.
-   */
-  readonly retryable: boolean | undefined;
+  readonly recovery: ResourceConstraintRecovery;
 
   constructor(
     readonly operation: string,
@@ -55,36 +48,79 @@ export class AnalysisResourceConstraintError extends AnalysisError {
     options?: AnalysisErrorOptions & ResourceConstraintRecovery,
   ) {
     super(`Resource constraint during ${operation}: ${reason}`, options);
-    this.remediationAction = options?.remediationAction;
-    this.fixedAllowance = options?.fixedAllowance;
-    this.retryable = options?.retryable;
+    this.recovery = resourceConstraintRecoveryFrom(options);
+  }
+
+  /** Projection of `recovery`. Absent when recovery names a fixed allowance. */
+  get remediationAction(): string | undefined {
+    return this.recovery.remediationAction;
+  }
+
+  /**
+   * Projection of `recovery`. The fixed format, decoder, or capture allowance
+   * that refused the request. Worker limits and host resources do not raise
+   * it, so recovery derives from this allowance rather than from `resource`.
+   */
+  get fixedAllowance(): FixedAllowance | undefined {
+    return this.recovery.fixedAllowance;
+  }
+
+  /**
+   * Projection of `recovery`. Whether retrying the same request can succeed.
+   * A caller-selected bound is deterministic for the same input, so it is not
+   * retryable even when its resource kind would otherwise be treated as
+   * admission capacity.
+   */
+  get retryable(): boolean | undefined {
+    return this.recovery.retryable;
   }
 }
+
+const resourceConstraintRecoveryFrom = (
+  options: ResourceConstraintRecovery | undefined,
+): ResourceConstraintRecovery => {
+  if (options?.fixedAllowance !== undefined)
+    return {
+      fixedAllowance: options.fixedAllowance,
+      ...(options.retryable === undefined
+        ? {}
+        : { retryable: options.retryable }),
+    };
+  return {
+    ...(options?.remediationAction === undefined
+      ? {}
+      : { remediationAction: options.remediationAction }),
+    ...(options?.retryable === undefined
+      ? {}
+      : { retryable: options.retryable }),
+  };
+};
 
 /** Carry one refusal's recovery to an error re-attributed or redacted elsewhere. */
 export const resourceConstraintRecovery = (
   error: AnalysisResourceConstraintError,
   text: (value: string) => string = (value) => value,
-): ResourceConstraintRecovery =>
-  error.fixedAllowance !== undefined
+): ResourceConstraintRecovery => {
+  const recovery = error.recovery;
+  return recovery.fixedAllowance !== undefined
     ? {
         fixedAllowance: {
-          name: text(error.fixedAllowance.name),
-          kind: error.fixedAllowance.kind,
+          name: text(recovery.fixedAllowance.name),
+          kind: recovery.fixedAllowance.kind,
         },
-        ...retryable(error),
+        ...(recovery.retryable === undefined
+          ? {}
+          : { retryable: recovery.retryable }),
       }
     : {
-        ...(error.remediationAction === undefined
+        ...(recovery.remediationAction === undefined
           ? {}
-          : { remediationAction: text(error.remediationAction) }),
-        ...retryable(error),
+          : { remediationAction: text(recovery.remediationAction) }),
+        ...(recovery.retryable === undefined
+          ? {}
+          : { retryable: recovery.retryable }),
       };
-
-const retryable = (
-  error: AnalysisResourceConstraintError,
-): { readonly retryable?: boolean } =>
-  error.retryable === undefined ? {} : { retryable: error.retryable };
+};
 
 /** Producer-specific recovery, or a fixed allowance whose recovery is derived. */
 export type ResourceConstraintRecovery =

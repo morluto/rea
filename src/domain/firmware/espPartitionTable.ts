@@ -96,8 +96,9 @@ const partition = (
  * are all `0xFF`. A structural fault means the bytes are not a table. An MD5
  * mismatch or a second MD5 entry, which the bootloader rejects, is reported
  * as an integrity fact so that the declared entries stay visible. ESP-IDF
- * accepts an empty table, but REA requires one entry before the terminator
- * so that erased flash is not read as a table.
+ * accepts a table with no partition entries, but REA requires one before
+ * the terminator, so that neither erased flash nor a lone MD5 entry is read
+ * as a table.
  */
 export const decodeEspPartitionTable = (
   bytes: Uint8Array,
@@ -146,17 +147,17 @@ export const decodeEspPartitionTable = (
         );
       continue;
     }
-    if (
-      slot > 0 &&
-      magic === END_MAGIC &&
-      entry[2] === END_TYPE &&
-      entry[3] === END_TYPE
-    )
+    const terminator =
+      magic === END_MAGIC && entry[2] === END_TYPE && entry[3] === END_TYPE;
+    // An MD5 entry is not a partition: a table declares at least one.
+    if (terminator && partitions.length > 0)
       return ok({ partitions, md5, length: at + ENTRY_BYTES, limitations });
     return err(
       slot === 0 && magic === END_MAGIC
         ? "the first entry is empty"
-        : `entry ${String(slot)} at ${offsetText(at)} has magic ${offsetText(magic)}, not a partition, MD5 or terminating entry`,
+        : terminator
+          ? `entry ${String(slot)} at ${offsetText(at)} ends the table before any partition entry`
+          : `entry ${String(slot)} at ${offsetText(at)} has magic ${offsetText(magic)}, not a partition, MD5 or terminating entry`,
     );
   }
   return err(

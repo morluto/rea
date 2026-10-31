@@ -1,7 +1,8 @@
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { afterEach, expect, it } from "vitest";
+import { afterAll, afterEach, expect, it } from "vitest";
 import { Ajv2020 } from "ajv/dist/2020.js";
+import type { AnySchema } from "ajv";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createServer } from "../../../src/server/createServer.js";
 import {
@@ -11,8 +12,11 @@ import {
 } from "../../../src/contracts/javascript/javascriptApplicationWorkflowExamples.js";
 import { JAVASCRIPT_EXPORT_SHAPE_COMPARISON_EXAMPLE } from "../../../src/contracts/javascript/javascriptExportShapeComparisonExample.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const resources: Array<{ close(): Promise<unknown> }> = [];
+const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
 afterEach(async () => {
   for (const resource of resources.splice(0)) await resource.close();
 });
@@ -32,13 +36,40 @@ async function connect(profile?: "full" | "compact") {
     { kind: "session", session },
     { environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: profile } },
   );
-  const client = new Client({ name: "retained-evidence-test", version: "1" });
+  const client = new Client(
+    { name: "retained-evidence-test", version: "1" },
+    { jsonSchemaValidator: schemaValidation },
+  );
   resources.push(client, server, session);
   const [a, b] = InMemoryTransport.createLinkedPair();
   await server.connect(b);
   await client.connect(a);
   return { client, session };
 }
+
+it("advertises semantic discovery paging and validates the returned Evidence", async () => {
+  const { client } = await connect();
+  const { tools } = await client.listTools();
+  const tool = tools.find(({ name }) => name === "trace_application_feature");
+  if (tool?.outputSchema === undefined)
+    throw new Error("Missing feature trace output schema");
+  const input = {
+    application,
+    seed: { kind: "string", value: "missing-semantic-name", match: "exact" },
+    semantic_page: { offset: 0, limit: 1 },
+  };
+  const ajv = new Ajv2020({ strict: false, validateFormats: false });
+  const outputSchema = tool.outputSchema as AnySchema;
+  expect(ajv.validateSchema(tool.inputSchema)).toBe(true);
+  expect(ajv.validateSchema(outputSchema)).toBe(true);
+  expect(ajv.compile(tool.inputSchema)(input)).toBe(true);
+  const result = await client.callTool({ name: tool.name, arguments: input });
+  expect(result.isError).not.toBe(true);
+  expect(ajv.compile(outputSchema)(result.structuredContent)).toBe(true);
+  expect(result.structuredContent).toMatchObject({
+    normalized_result: { semantic_discovery: { total: 0, next_offset: null } },
+  });
+});
 
 it.each(["full", "compact"] as const)(
   "advertises the primitive literal seeds accepted by semantic tracing (%s)",

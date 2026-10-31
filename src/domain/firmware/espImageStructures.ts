@@ -71,6 +71,14 @@ export const cString = (bytes: Uint8Array): string | null => {
   }
 };
 
+/** How a descriptor REA could not read is reported; tests compare with these. */
+export const ESP_DESCRIPTOR_LIMITATIONS = {
+  fieldNotUtf8: (field: string): string =>
+    `ESP image descriptor field ${field} is not valid UTF-8; its text is unknown.`,
+  reservedBytesNotZero:
+    "ESP image segment 0 begins with the bootloader descriptor magic 0x50, but its reserved bytes are not zero; it is not read as an esp_bootloader_desc_t.",
+} as const;
+
 /**
  * Decode the descriptor that begins segment 0: `esp_app_desc_t`, which
  * ESP-IDF's bootloader reads there, or `esp_bootloader_desc_t`, which esptool
@@ -85,35 +93,37 @@ export const decodeEspDescriptor = (
   const text = (from: number, length: number, field: string): string | null => {
     const value = cString(bytes.subarray(from, from + length));
     if (value === null)
-      limitations.push(
-        `ESP image descriptor field ${field} is not valid UTF-8; its value is omitted.`,
-      );
+      limitations.push(ESP_DESCRIPTOR_LIMITATIONS.fieldNotUtf8(field));
     return value;
   };
-  if (bytes.length >= ESP_APP_DESC_BYTES && u32(bytes, 0) === APP_DESC_MAGIC)
+  if (bytes.length >= 4 && u32(bytes, 0) === APP_DESC_MAGIC) {
+    // A file can end inside the descriptor. Each field is kept when the file
+    // holds all of its bytes; a field it cuts off is null.
+    const held = (end: number): boolean => bytes.length >= end;
     return {
       kind: "app",
       offset,
-      secure_version: u32(bytes, 4),
-      version: text(16, 32, "version"),
-      project_name: text(48, 32, "project_name"),
-      time: text(80, 16, "time"),
-      date: text(96, 16, "date"),
-      idf_ver: text(112, 32, "idf_ver"),
-      app_elf_sha256: hex(bytes.subarray(144, 176)),
-      min_efuse_blk_rev_full: u16(bytes, 176),
-      max_efuse_blk_rev_full: u16(bytes, 178),
-      mmu_page_size: bytes[180] ?? 0,
+      observed_length: Math.min(bytes.length, ESP_APP_DESC_BYTES),
+      secure_version: held(8) ? u32(bytes, 4) : null,
+      version: held(48) ? text(16, 32, "version") : null,
+      project_name: held(80) ? text(48, 32, "project_name") : null,
+      time: held(96) ? text(80, 16, "time") : null,
+      date: held(112) ? text(96, 16, "date") : null,
+      idf_ver: held(144) ? text(112, 32, "idf_ver") : null,
+      app_elf_sha256: held(176) ? hex(bytes.subarray(144, 176)) : null,
+      min_efuse_blk_rev_full: held(178) ? u16(bytes, 176) : null,
+      max_efuse_blk_rev_full: held(180) ? u16(bytes, 178) : null,
+      mmu_page_size: bytes[180] ?? null,
+      spi_flash_mode: bytes[181] ?? null,
     };
+  }
   if (
     bytes.length < BOOTLOADER_DESC_BYTES ||
     bytes[0] !== BOOTLOADER_DESC_MAGIC
   )
     return null;
   if (!allZero(bytes.subarray(1, 3)) || !allZero(bytes.subarray(64, 80))) {
-    limitations.push(
-      "ESP image segment 0 begins with the bootloader descriptor magic 0x50, but its reserved bytes are not zero; it is not read as an esp_bootloader_desc_t.",
-    );
+    limitations.push(ESP_DESCRIPTOR_LIMITATIONS.reservedBytesNotZero);
     return null;
   }
   return {

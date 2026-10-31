@@ -703,6 +703,8 @@ export class JadxProvider implements AndroidAnalysisPort {
           signal: activeSignal,
           timeoutMs: timeoutMs.value,
           mapping: mapping.value,
+          resources: this.#prerequisites,
+          deadline: timeout,
         }),
       );
       throwIfJadxInterrupted(activeSignal);

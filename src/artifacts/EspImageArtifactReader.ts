@@ -8,7 +8,10 @@ import {
   createEspImageDecoder,
   type EspImageFailure,
 } from "../domain/firmware/espImage.js";
-import type { EspImage } from "../domain/firmware/espImageFacts.js";
+import {
+  ESP_IMAGE_LIMITATIONS,
+  type EspImage,
+} from "../domain/firmware/espImageFacts.js";
 import {
   ESP_SIGNATURE_BLOCK_BYTES,
   offsetText,
@@ -64,7 +67,11 @@ export class EspImageArtifactReader extends PositionalArtifactReader {
         limitations:
           segment.availableLength < data_len
             ? [
-                `ESP image segment ${String(index)} is truncated: its header declares ${String(data_len)} bytes; the file holds ${String(segment.availableLength)}.`,
+                ESP_IMAGE_LIMITATIONS.segmentEntryTruncated(
+                  index,
+                  data_len,
+                  segment.availableLength,
+                ),
               ]
             : [],
         adapterKey: `esp-image:segment:${String(index)}`,

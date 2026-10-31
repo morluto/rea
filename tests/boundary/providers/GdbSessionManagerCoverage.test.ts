@@ -25,6 +25,11 @@ import type {
   ProviderProcessHandle,
   SpawnedOwnedProviderProcess,
 } from "../../../src/process/ProviderProcess.js";
+import {
+  DEBUGGER_COMMAND_DEADLINE_SETTING,
+  DEBUGGER_MAX_COMMAND_OUTPUT_BYTES_SETTING,
+} from "../../../src/config/debuggerSessionLimits.js";
+import { DEFAULT_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES } from "../../../src/domain/analysisResourceLimits.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { stopOwnedDebuggerProcess } from "../../../src/process/ownedDebuggerSession.js";
 import { parseLinuxProcessStat } from "../../../src/process/LinuxProcessStat.js";
@@ -1509,7 +1514,7 @@ it("rejects a truncated inferior TTY readback before publishing the session", as
     );
   });
   const manager = managerWithFakeSpawner(fake.spawnProcess, {
-    maxCommandOutputBytes: 80,
+    controlReplyBytes: 80,
   });
 
   const started = await manager.start(undefined, { inferiorTty: tty });
@@ -1519,6 +1524,28 @@ it("rejects a truncated inferior TTY readback before publishing the session", as
     error: { _tag: "AnalysisCapabilityUnavailableError" },
   });
   expect(fake.children[0]?.killSignals).toEqual(["SIGTERM"]);
+});
+
+it("keeps inferior TTY readback when the caller output cap is smaller than that reply", async () => {
+  const tty = `/dev/pts/${"x".repeat(200)}`;
+  const fake = createFakeSpawner((child, token, command) => {
+    child.stdout.write(
+      command.includes("inferior-tty-show")
+        ? `${token}^done,inferior_tty_terminal=${JSON.stringify(tty)}\n`
+        : `${token}^done\n`,
+    );
+  });
+  const manager = managerWithFakeSpawner(fake.spawnProcess, {
+    maxCommandOutputBytes: 80,
+  });
+
+  const started = await manager.start(undefined, { inferiorTty: tty });
+
+  if (!started.ok) throw started.error;
+  expect(started.value.mi_version).toMatch(/^mi[23]$/u);
+  expect(started.value.session_id).toMatch(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u,
+  );
 });
 
 it.each([
@@ -1871,13 +1898,22 @@ it("preserves a timeout while startup waits for the automatic-loading response",
 
   const started = await manager.start();
 
-  expect(started.ok).toBe(false);
-  if (!started.ok) {
-    expect(started.error._tag).toBe("AnalysisTimeoutError");
-    expect(started.error).toBeInstanceOf(AnalysisTimeoutError);
-    if (started.error instanceof AnalysisTimeoutError)
-      expect(started.error.operation).toBe("start_gdb_session");
-  }
+  if (started.ok) throw new Error("expected startup to time out");
+  expect(started.error._tag).toBe("AnalysisTimeoutError");
+  if (!(started.error instanceof AnalysisTimeoutError)) throw started.error;
+  expect(started.error.operation).toBe("start_gdb_session");
+  expect(projectAnalysisError(started.error)).toMatchObject({
+    code: "provider_timeout",
+    details: {
+      diagnostics: {
+        setting: DEBUGGER_COMMAND_DEADLINE_SETTING,
+        effective_value: 25,
+        source: "runtime",
+        unit: "ms",
+        restart_required: true,
+      },
+    },
+  });
   expect(fake.children[0]?.killSignals).toEqual(["SIGTERM"]);
 });
 
@@ -3424,10 +3460,15 @@ process.stdin.on('data', (chunk) => {
         completion_status: "unknown",
       },
     });
-    expect(exited.error.partialObservation).toMatchObject({
-      limitations: expect.arrayContaining([
-        expect.stringContaining("16777216 byte or 16384 record cap"),
-      ]),
+    expect(projectAnalysisError(exited.error)).toMatchObject({
+      code: "cleanup_incomplete",
+      details: {
+        diagnostics: {
+          setting: DEBUGGER_MAX_COMMAND_OUTPUT_BYTES_SETTING,
+          effective_value: DEFAULT_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES,
+          source: "default",
+        },
+      },
     });
   }
 });

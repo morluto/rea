@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
+import { nativeLoadImageObservationFixture } from "../../tests/fixtures/nativeLoadImage.js";
 import {
   parseGhidraInventoryInput,
   parseGhidraInventoryResult,
@@ -97,6 +98,40 @@ it.each(["list_procedures", "search_procedures"] as const)(
     });
   },
 );
+
+describe("native load-image result projection", () => {
+  it("omits raw bridge output when the observation keeps every reported fact", () => {
+    const observations = JSON.parse(
+      JSON.stringify(nativeLoadImageObservationFixture()),
+    );
+    const parsed = parseGhidraInventoryResult(
+      "inspect_native_load_image",
+      observations,
+    );
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) throw parsed.error;
+    expect(JSON.stringify(parsed.value.value)).toBe(
+      JSON.stringify(observations),
+    );
+    expect(parsed.value.rawResult).toBeUndefined();
+  });
+
+  it("omits entry-context rows without register observations", () => {
+    const observations = JSON.parse(
+      JSON.stringify({
+        ...nativeLoadImageObservationFixture(),
+        entry_context: [{ address: "ram:0x0010", registers: [] }],
+      }),
+    );
+    const parsed = parseGhidraInventoryResult(
+      "inspect_native_load_image",
+      observations,
+    );
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) throw parsed.error;
+    expect(JSON.stringify(parsed.value.value)).toContain('"entry_context":[]');
+  });
+});
 
 it("validates large masked byte queries at the provider boundary without changing caller spelling", () => {
   const input = {

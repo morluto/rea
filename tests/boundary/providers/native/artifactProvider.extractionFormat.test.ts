@@ -7,10 +7,12 @@ import { elfExportImage } from "../../../fixtures/binaryDiagnostics/nativeExport
 import { writeOrderedZip } from "../../../fixtures/artifactEntryOrder.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { buildGodotPck, pckU64 } from "../../../fixtures/godotPck.js";
-import { withArtifactClient } from "../../../support/artifactClientScope.js";
+import {
+  createOwnedArtifactClient,
+  withArtifactClient,
+} from "../../../support/artifactClientScope.js";
 
 import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
-import { ArtifactProvider } from "../../../../src/artifacts/ArtifactProvider.js";
 import {
   CPU,
   machoImage,
@@ -33,13 +35,11 @@ describe("artifact extraction format support", () => {
     const selected = await admittedTarget(alias);
     expect(selected.format).toBe("dmg");
     const extract = (signal?: AbortSignal) =>
-      new ArtifactProvider(process.env)
-        .createClient(selected)
-        .execute(
-          "extract_artifact",
-          artifactExtractionExecutionSchema.parse({ output_root: output }),
-          signal === undefined ? undefined : { signal },
-        );
+      createOwnedArtifactClient(selected).execute(
+        "extract_artifact",
+        artifactExtractionExecutionSchema.parse({ output_root: output }),
+        signal === undefined ? undefined : { signal },
+      );
     expect(await extract()).toMatchObject({
       ok: false,
       error: {
@@ -64,12 +64,10 @@ describe("artifact extraction format support", () => {
     await writeFile(binary, machoImage({ cpu: CPU.arm64e }));
     const output = join(root, "output");
     expect(
-      await new ArtifactProvider(process.env)
-        .createClient(await admittedTarget(binary))
-        .execute(
-          "extract_artifact",
-          artifactExtractionExecutionSchema.parse({ output_root: output }),
-        ),
+      await createOwnedArtifactClient(await admittedTarget(binary)).execute(
+        "extract_artifact",
+        artifactExtractionExecutionSchema.parse({ output_root: output }),
+      ),
     ).toMatchObject({
       ok: false,
       error: {
@@ -104,14 +102,14 @@ describe("artifact extraction format support", () => {
         }),
       ]),
     );
-    const result = await new ArtifactProvider(process.env)
-      .createClient(await admittedTarget(binary))
-      .execute(
-        "extract_artifact",
-        artifactExtractionExecutionSchema.parse({
-          output_root: join(root, "output"),
-        }),
-      );
+    const result = await createOwnedArtifactClient(
+      await admittedTarget(binary),
+    ).execute(
+      "extract_artifact",
+      artifactExtractionExecutionSchema.parse({
+        output_root: join(root, "output"),
+      }),
+    );
     if (!result.ok) throw result.error;
     const extracted = artifactExtractionResultSchema.parse(result.value.result);
     expect(
@@ -170,14 +168,14 @@ describe("artifact extraction reader selection", () => {
         `Payload.${format === "app-pack" ? "app" : format}`,
       );
       await writeOrderedZip(archive, ["payload.txt"]);
-      const result = await new ArtifactProvider(process.env)
-        .createClient(await admittedTarget(archive))
-        .execute(
-          "extract_artifact",
-          artifactExtractionExecutionSchema.parse({
-            output_root: join(root, "output"),
-          }),
-        );
+      const result = await createOwnedArtifactClient(
+        await admittedTarget(archive),
+      ).execute(
+        "extract_artifact",
+        artifactExtractionExecutionSchema.parse({
+          output_root: join(root, "output"),
+        }),
+      );
       if (!result.ok) throw result.error;
       const extracted = artifactExtractionResultSchema.parse(
         result.value.result,

@@ -84,9 +84,6 @@ export const androidManifestComponentsSchema = z.strictObject({
   items: z.array(androidManifestComponentSchema),
   limitations: z.array(z.string()),
 });
-export type AndroidManifestComponentInventory = Readonly<
-  z.output<typeof androidManifestComponentsSchema>
->;
 
 /** Current producers observe every declaration facet; historical readers accept omissions. */
 export const observedAndroidManifestComponentSchema =

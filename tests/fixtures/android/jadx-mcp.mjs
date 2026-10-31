@@ -102,6 +102,44 @@ register("load_apk", async ({ path }) => {
     resources: "full",
   });
 });
+register("rea_native_declarations", ({ path }) => {
+  if (typeof path !== "string")
+    return { ...text("path must be a string"), isError: true };
+  const methods = [
+    {
+      source_index: 0,
+      class_name: "fixture.Target",
+      method_name: "readNative",
+      descriptor: "(I)I",
+      dex_entry: "classes.dex",
+      dex_entry_index: 0,
+      class_index: 0,
+      method_index: 1,
+    },
+  ];
+  if (mode === "duplicate-native-declaration")
+    methods.push({
+      ...methods[0],
+      source_index: 1,
+      dex_entry: "classes2.dex",
+      dex_entry_index: 1,
+    });
+  return json({
+    scope: "apk-root-dex-declarations",
+    methods,
+    coverage: {
+      status: mode === "partial-native-inventory" ? "partial" : "complete",
+      dex_entries: mode === "partial-native-inventory" ? 2 : methods.length,
+      examined_dex_entries: methods.length,
+      examined_classes: methods.length,
+      examined_methods: methods.length,
+    },
+    unknowns:
+      mode === "partial-native-inventory"
+        ? ["Controlled unreadable second DEX member"]
+        : [],
+  });
+});
 register("get_app_info", () => {
   if (mode === "rpc-disconnect") process.exit(17);
   return json({

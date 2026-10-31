@@ -6,6 +6,7 @@ import { writeFile } from "node:fs/promises";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { join } from "node:path";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
+import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../scripts/lib/mcp-verification-environment.mjs";
 import { asarHeaderBytes } from "../fixtures/asarHeader.js";
 import { nativeMatchingNamedInventory } from "../fixtures/nativeFunctionMatching.js";
 
@@ -189,7 +190,7 @@ it("lowers, restores and seeds the native matching allowance over MCP", async ()
     if (text === undefined) throw new Error("Missing projected error");
     return JSON.parse(text).error.details.limit as unknown;
   };
-  const runtime = await connectLocalToolsMcp();
+  const runtime = await connectLocalToolsMcp(INLINE_EVIDENCE_MCP_ENVIRONMENT);
   try {
     expect(
       (await runtime.call("match_native_functions", request)).isError,
@@ -223,6 +224,7 @@ it("lowers, restores and seeds the native matching allowance over MCP", async ()
     await runtime.client.close();
   }
   const seeded = await connectLocalToolsMcp({
+    ...INLINE_EVIDENCE_MCP_ENVIRONMENT,
     REA_NATIVE_MATCHING_REPRESENTATION_BYTES: "4096",
   });
   try {
@@ -256,6 +258,7 @@ it("lowers, restores and seeds the native matching allowance over MCP", async ()
   // An invalid seed is refused by matching alone; MCP stays available and a
   // runtime override repairs the effective allowance.
   const invalid = await connectLocalToolsMcp({
+    ...INLINE_EVIDENCE_MCP_ENVIRONMENT,
     REA_NATIVE_MATCHING_REPRESENTATION_BYTES: "0",
   });
   try {

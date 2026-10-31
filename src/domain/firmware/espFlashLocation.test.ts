@@ -17,7 +17,7 @@ import {
   ESP32C3_BOOTLOADER_SEGMENTS,
   esp8266Image,
   espImage,
-} from "./espImage.fixture.js";
+} from "../../../tests/fixtures/espImage.js";
 
 const c3Bootloader = espImage({ segments: ESP32C3_BOOTLOADER_SEGMENTS });
 const esp32Bootloader = espImage({
@@ -162,6 +162,19 @@ describe("ESP flash layout location", () => {
       ok: false,
       error:
         "no partition table at the given offset 0x9000: the first entry is empty",
+    });
+  });
+
+  it("does not read a lone MD5 entry as a table", async () => {
+    const md5Only = flashImage(0x2_0000, [
+      { at: 0, bytes: c3Bootloader },
+      { at: 0x8000, bytes: partitionTable([]) },
+    ]);
+    expect((await locate(md5Only)).ok).toBe(false);
+    expect(await locate(md5Only, { partitionTableOffset: 0x8000 })).toEqual({
+      ok: false,
+      error:
+        "no partition table at the given offset 0x8000: entry 1 at 0x20 ends the table before any partition entry",
     });
   });
 

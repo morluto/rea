@@ -61,12 +61,12 @@ it("discovers configuration without probing and admits only verified targets", a
     diagnostics: { version_probed: false },
   });
   expect(await fakeKunaCalls(kuna)).toEqual([]);
+  const capabilities = configured.capabilities();
+  expect(capabilities.length).toBeGreaterThan(0);
   expect(
-    configured
-      .capabilities()
-      .every(
-        ({ available, cachePolicy }) => available && cachePolicy === "live",
-      ),
+    capabilities.every(
+      ({ available, cachePolicy }) => available && cachePolicy === "live",
+    ),
   ).toBe(true);
 
   const executable = (

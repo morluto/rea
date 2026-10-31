@@ -1474,26 +1474,45 @@ it("retains late opening failure cleanup after cancellation until the exact prof
   }
 });
 
-it.each(["launch", "connect"] as const)(
-  "bounds never-settling initial navigation and awaits %s cleanup",
-  async (mode) => {
+it.each([
+  { mode: "launch", selected: undefined, deadline: 20_000 },
+  { mode: "connect", selected: undefined, deadline: 20_000 },
+  { mode: "launch", selected: 250, deadline: 250 },
+  { mode: "connect", selected: 250, deadline: 250 },
+] as const)(
+  "bounds never-settling initial navigation in $mode mode with deadline $deadline and awaits cleanup",
+  async ({ mode, selected, deadline }) => {
     vi.useFakeTimers();
     const { cleanup, page, storage } = fixture();
     const request = browserScenarioSchema.parse({
       ...(mode === "launch" ? scenario : connectedScenario("allow")),
-      command_timeout_ms: 250,
+      ...(selected === undefined ? {} : { command_timeout_ms: selected }),
     });
     page.goto.mockImplementation(() => new Promise<never>(() => {}));
     try {
       const opening = PlaywrightScenarioSession.open(request, {}, {}).catch(
         (cause: unknown) => cause,
       );
-      await vi.advanceTimersByTimeAsync(250);
+      await vi.advanceTimersByTimeAsync(deadline - 1);
+      expect(cleanup.close).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
       const failure = await opening;
       expect(failure).toMatchObject({
         _tag: "AnalysisTimeoutError",
         operation: "capture_browser_scenario",
-        timeoutMs: 250,
+        timeoutMs: deadline,
+        partialObservation: {
+          kind: "browser-scenario-observation",
+          capture: {
+            browser: {
+              cleanup:
+                mode === "launch"
+                  ? "terminated-owned-process"
+                  : "disconnected-external",
+            },
+            steps: [],
+          },
+        },
       });
       expect(cleanup.close).toHaveBeenCalledOnce();
       expect(storage?.close).toHaveBeenCalledWith(true);

@@ -1,33 +1,14 @@
 import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
+import { windowsNativeArtifactFixture } from "../../tests/fixtures/windowsNativeArtifact.js";
 import {
   createWindowsNativeManifest,
   parseWindowsNativeManifest,
   validateWindowsNativeArtifact,
 } from "./windowsNativeArtifact.js";
 
-const fixture = () => {
-  const bytes = Buffer.alloc(152);
-  bytes.write("MZ");
-  bytes.writeUInt32LE(64, 0x3c);
-  bytes.write("PE\0\0", 64, "ascii");
-  bytes.writeUInt16LE(0x8664, 68);
-  bytes.writeUInt16LE(64, 84);
-  bytes.writeUInt16LE(0x20b, 88);
-  const manifest = {
-    packageVersion: "1.0.0",
-    platform: "win32",
-    architecture: "x64",
-    abiVersion: 1,
-    nodeApiVersion: 8,
-    artifact: "rea-windows-x64.node",
-    artifactSha256: createHash("sha256").update(bytes).digest("hex"),
-  };
-  return { bytes, manifest };
-};
-
 it("produces and admits the exact manifest/byte identity", () => {
-  const { bytes, manifest } = fixture();
+  const { bytes, manifest } = windowsNativeArtifactFixture();
   const created = createWindowsNativeManifest("1.0.0", bytes);
   expect(created).toEqual({ ok: true, value: manifest });
   const parsed = parseWindowsNativeManifest(manifest, "1.0.0");
@@ -60,7 +41,7 @@ it.each([null, [], {}, "manifest"])(
 );
 
 it("rejects missing and unknown manifest fields", () => {
-  const { manifest } = fixture();
+  const { manifest } = windowsNativeArtifactFixture();
   expect(
     parseWindowsNativeManifest({ ...manifest, extra: true }, "1.0.0"),
   ).toMatchObject({ ok: false });
@@ -84,7 +65,7 @@ it.each([
   "artifact",
   "artifactSha256",
 ])("rejects unsupported %s", (key) => {
-  const { manifest } = fixture();
+  const { manifest } = windowsNativeArtifactFixture();
   expect(
     parseWindowsNativeManifest({ ...manifest, [key]: "unsupported" }, "1.0.0"),
   ).toMatchObject({ ok: false });
@@ -102,12 +83,12 @@ it.each([0, 63, 64, 89, 128])(
 it.each(["offset", "signature", "machine", "optional magic"])(
   "rejects invalid PE %s with a matching digest",
   (field) => {
-    const { bytes } = fixture();
+    const { bytes } = windowsNativeArtifactFixture();
     if (field === "offset") bytes.writeUInt32LE(0xffff_ffff, 0x3c);
     if (field === "signature") bytes.write("BAD!", 64, "ascii");
     if (field === "machine") bytes.writeUInt16LE(0x14c, 68);
     if (field === "optional magic") bytes.writeUInt16LE(0x10b, 88);
-    const { manifest } = fixture();
+    const { manifest } = windowsNativeArtifactFixture();
     manifest.artifactSha256 = createHash("sha256").update(bytes).digest("hex");
     const parsed = parseWindowsNativeManifest(manifest, "1.0.0");
     if (!parsed.ok) throw parsed.error;
@@ -121,7 +102,7 @@ it.each(["offset", "signature", "machine", "optional magic"])(
 it.each([0, 1, 65, 0xffff])(
   "rejects an unavailable declared optional header of %i bytes",
   (length) => {
-    const { bytes } = fixture();
+    const { bytes } = windowsNativeArtifactFixture();
     bytes.writeUInt16LE(length, 84);
     expect(createWindowsNativeManifest("1.0.0", bytes)).toMatchObject({
       ok: false,
@@ -133,7 +114,7 @@ it.each([0, 1, 65, 0xffff])(
 it.each([2, 32, 63, 64])(
   "admits PE32+ identity in a present declared header of %i bytes",
   (length) => {
-    const { bytes } = fixture();
+    const { bytes } = windowsNativeArtifactFixture();
     bytes.writeUInt16LE(length, 84);
     expect(createWindowsNativeManifest("1.0.0", bytes)).toMatchObject({
       ok: true,

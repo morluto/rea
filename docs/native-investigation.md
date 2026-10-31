@@ -127,7 +127,11 @@ rea inspect-native-data-type <binary> --address <typed-data-address> --provider 
 
 Instruction facts include bytes, length, decoder text, ordered register/scalar/
 address tokens, typed references and flow destinations. Mid-instruction, data,
-outside-memory and undecodable addresses have separate outcomes. Effective
+outside-memory and unlisted addresses have separate outcomes. For Ghidra,
+`not-in-listing` means the address is in memory without a listed instruction or
+defined data. REA does not attempt a decode there: the memory may be uninitialized
+or contain valid instructions. Older Evidence may report `undecodable` for this
+same ambiguous case; it does not establish that a decode failed. Effective
 memory base/index/displacement roles remain unavailable. Ghidra reports its program
 language variant in `mode`; other providers retain their own mode label. Ghidra
 MIPS results additionally expose `decoder_context`
@@ -138,7 +142,7 @@ that do not expose this facet. The context is an analysis observation, not proof
 of a runtime processor state.
 
 `inspect_native_instruction` also returns `incoming_references` to the exact
-queried address, including data, interior-instruction and undecodable addresses.
+queried address, including data, interior-instruction and unlisted addresses.
 Ghidra enumerates its ReferenceManager, excludes synthetic entry-point
 references, and returns deterministic source-address ordering while retaining
 distinct operand references from the same source. `[]` means that enumeration
@@ -339,6 +343,27 @@ Hopper regex mode.
 
 ## Bounded static traces
 
+Hopper caller queries, incoming procedure references and function dossiers
+reconcile reported reverse relationships with forward call observations. Each
+standalone query or composed workflow scans the current document in pages of at
+most 64 procedures and retains at most 4 MiB of encoded scan results. A composed
+workflow reuses its own index and clears it when the workflow finishes. The
+default cooperative scan budget is
+2,000 ms; set `REA_HOPPER_CALLER_SCAN_BUDGET_MS` to a positive integer number of
+milliseconds before starting REA to change it. The default limits additional
+work on the serial Hopper bridge; larger documents may need a higher setting.
+Results report the examined procedure count and any budget interruption.
+An individual page, native caller list, and target instruction list each have
+a 512 KiB encoded allowance. Hitting one reports the incomplete observation.
+Cancellation is checked between pages, but cannot interrupt a Hopper API call
+already executing; Hopper's native API itself materializes its reference arrays
+before REA can bound their copies. Hopper exposes no document revision token, so scans are not
+reused across workflows and coverage and consistency during a live scan remain
+unknown even when every procedure was examined.
+Hopper observations are re-observed rather than replayed from snapshots because
+the provider has no document revision token. Safe observations may still be
+retained as Evidence.
+
 `trace_native_ui_action` / `rea trace-native-ui-action <target> <seed>` accepts
 one authored selector/object ID, native symbol or exact function address. It
 joins UI wiring to uniquely matched class/selector implementations and follows
@@ -487,8 +512,10 @@ output-budget omissions remain omissions.
 
 Source input is limited to 64 MiB. Binary and direct XML decoding reserve an
 estimated 64 MiB decode budget before parsing; this is not a hard process-memory
-bound. JSON decode memory has not been measured and has no equivalent decode
-estimate. A refused input reports non-retryable `resource_constraint` with
+bound. The XML estimate charges every element and every text, comment or CDATA
+node of the decoder's DOM at a measured upper bound, so a plist made of many
+small elements reaches it at a few MiB of source. JSON decode memory has not
+been measured and has no equivalent decode estimate. A refused input reports non-retryable `resource_constraint` with
 `reported_limits.maximum_input_bytes` or `maximum_decoded_bytes` as applicable.
 Ordinary direct-source decoding has a ceiling of 998 source nesting levels,
 derived from the existing 1000-level JSON result capacity by reserving one level
@@ -533,7 +560,21 @@ support for core-dump analysis, historical FVMLIB layouts, or unobserved native
 diagnostic spellings. Unknown or contradictory header values and signalled
 commands remain failures.
 
-`inspect_macho.selected_architecture` identifies the exact selected lipo slice
+`inspect_macho` reads load-command framing and fields from the selected Mach-O
+bytes. It does not use line-delimited tool output to decide where a command,
+section, or embedded string begins. Names whose bytes are not valid UTF-8 have
+a null text value and retain their original bytes as lowercase hexadecimal in
+`name_bytes_hex`, `segment_bytes_hex`, or `path_bytes_hex`; fixed-width names
+stop at the first NUL, and command paths exclude their NUL terminator. Older
+retained Evidence may omit the byte fields. Large binary sizes and offsets that
+cannot be represented as safe JSON integers retain an exact hexadecimal field;
+the corresponding numeric field is null. A section alignment too large to
+represent in bytes retains `alignment_exponent` instead.
+
+Unknown or partially decoded commands retain their selected-slice-relative
+offset and size. Their unexamined fields are described in load-command coverage
+limitations; an exhaustive command inventory does not by itself establish that
+every payload field was decoded. `inspect_macho.selected_architecture` identifies the exact selected lipo slice
 and its `container_file_offset` in the input file. A thin Mach-O has a known
 offset of zero; an unknown universal-slice offset stays null. The Evidence
 subject format describes the input container: `mach-o-universal` for FAT files,
@@ -541,14 +582,48 @@ including those with one slice. The normalized result also reports the container
 in `format`; `selected_architecture` identifies the selected Mach-O image.
 Architecture `file_offset` values are container-relative. Entrypoint, segment
 and section `file_offset` values retain their source meaning and are relative
-to the selected Mach-O slice. Raw load-command fields retain their original values.
-A field otool prints more than once, such as each `LC_BUILD_VERSION` tool, is
-keyed `name #n` in print order. Each `LC_LINKER_OPTION` string is keyed
-`string #n` and checked against the declared `count`. Evidence locations map the LC_MAIN entrypoint and nonempty file-backed segment
+to the selected Mach-O slice. Decoded load-command fields retain their original
+values. Repeated fields, such as each `LC_BUILD_VERSION` tool, are keyed
+`name #n` in order. Each decoded `LC_LINKER_OPTION` string is keyed `string #n`
+and checked against the declared `count`. Evidence locations map the LC_MAIN entrypoint and nonempty file-backed segment
 ranges to container offsets by adding the observed slice offset. Zero-fill
 segments do not produce file ranges. When the selected slice's container offset
 is unknown, those mapped locations are omitted with an explicit limitation;
 architecture inventory locations remain available.
+
+`inspect_macho.encryption` reports the `LC_ENCRYPTION_INFO(_64)` state of every
+slice, not only the selected one. It decodes only the FAT table, slice headers
+and load commands. Like every Mach-O container read, a `0xcafebabe` input of at
+most 16 MiB is first read whole to rule out a JVM class file, so that read
+includes code bytes; larger inputs and thin images read only the structures
+above. A slice is `encrypted` when its single encryption command has a nonzero
+`cryptid`, `not-encrypted` when `cryptid` is zero, and `absent` only when every
+load command was read and none was an encryption command. A command whose width
+or `cmdsize` contradicts the image, more than one such command, or a range past
+the slice is `malformed`; a slice whose commands could not be fully read is
+`malformed` or `unknown` with a reason, keeping any commands seen before the
+failure. A slice with more than two encryption commands keeps the first two
+and states the count in its reason. Range mapping in all slices shares one
+budget of segment and section records (16,384, a sixteenth of the native
+output budget); a slice past it keeps its status and reports its mapping as
+`unknown` with that reason. Framing caps retained segment commands before decoding.
+Only a successful mapping consumes the shared allowance; failed mappings leave
+it available to later slices. Each slice's `range` is end-exclusive in slice and input-file
+coordinates and maps to file-backed segment fragments, VM addresses and the
+overlapping nonempty sections; bytes outside every segment remain unmapped
+fragments. A segment with no VM size keeps its file bytes as fragments with
+null VM addresses, and a segment whose file size exceeds its VM size or whose
+VM range leaves the address space makes the mapping `unknown` with a reason
+while the slice keeps its encryption status. `architecture` is the lipo name of the record at the same offset,
+size and CPU identity, and is null when no single record matches. A ciphertext
+range adds a limitation naming its input-file bytes, because disassembly,
+decompilation, strings and references derived from them do not describe
+program code. Encryption is read through the same regular-file descriptor
+that `inspect_macho` binds for its load-command reads, whose SHA-256 must match
+the session target before and after the native tools run, or the call reports
+`artifact_changed`. A target that cannot be opened, or a symlinked, non-regular
+or changing target, fails the call instead of reporting tool facts without an
+encryption status.
 
 Hopper's `address_to_file_offset` combines the native image-relative mapping with
 original-file coordinates only after checking the source against the session's
@@ -586,6 +661,9 @@ complete observation.
   undecodable filenames and skipped symlinks, as partial coverage. Known
   executable roots remain available; unexamined names and symlink targets
   cannot establish an empty root set or the absence of other roots.
+  A dependency symlink whose target is not valid UTF-8 is undetermined, with
+  its stored target bytes in the limitation and partial coverage; a selected
+  root crossing such a symlink is refused with the same bytes in its diagnostic.
 - `inspect_asset_catalog` / `rea inspect-asset-catalog <app>` reads compiled
   `Assets.car` metadata through macOS `assetutil --info`. Catalog digests, raw
   rendition fields, pagination and exact UI resource-name matches are returned.
@@ -739,6 +817,11 @@ complete observation.
   files and universal slices before metadata decoding. CPU subtypes and
   capability bits remain source facts; an `arm64` request may select an
   `arm64e` image under the existing slice preference policy.
+  Objective-C class, protocol and category lists require eight-byte entries;
+  Swift type and conformance sections require four-byte entries. Misaligned
+  section lengths and unsupported non-PowerPC big-endian CPU declarations return
+  `unsupported_target` with the selected path and precise reason. Recovery
+  selects a well-formed or supported artifact and reopens that target.
   The byte reader holds the whole selected file in memory, so it admits files up
   to 64 MiB / 67108864 bytes by default. Select a larger budget with
   `max_input_bytes` (CLI `--max-input-bytes`), at most 1 GiB / 1073741824
@@ -833,7 +916,11 @@ complete observation.
   and `__objc_catlist` categories are also decoded. Categories record the
   extended class, local or external, plus
   their methods, protocols and properties; category methods appear as
-  implementations with a `category`. Swift field-offset globals that are only
+  implementations with a `category`. A category whose class reference is null,
+  or is bound to a symbol other than `_OBJC_CLASS_$_`, such as the `_$s…CN`
+  metadata symbol of another module's Swift class, keeps a null class, and
+  `objc_properties_categories` coverage names that reference. Swift
+  field-offset globals that are only
   initialized at runtime stay unresolved. Generic, resilient, async and
   coroutine tables, and inherited overrides, have explicit unsupported or
   partial coverage. Other providers retain the

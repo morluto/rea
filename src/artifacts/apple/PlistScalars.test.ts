@@ -4,6 +4,7 @@ import { parseBinary } from "plist";
 
 import { createPlistNumberProjection } from "../../domain/apple/plistNumbers.js";
 import { projectPlistValue } from "../../domain/apple/plistValue.js";
+import { readBinaryPlistLayout } from "./BinaryPlistLayout.js";
 import {
   binaryDateRequiresExactSeconds,
   decodeBinaryPlistScalars,
@@ -267,7 +268,12 @@ describe("binary plist UID widths", () => {
         plan,
       );
       if (normalizedWidth === undefined) expect(compatible).toBe(bytes);
-      else expect(compatible[8 + width + 1]).toBe(0x80 | (normalizedWidth - 1));
+      else {
+        const layout = readBinaryPlistLayout(compatible);
+        if (!layout.ok) throw new Error("Invalid compatible plist layout");
+        const [offset] = layout.value.objectOffsets();
+        expect(compatible[Number(offset)]).toBe(0x80 | (normalizedWidth - 1));
+      }
       expect(parseBinary(compatible)).toEqual({
         UID: Number(value),
       });
@@ -354,7 +360,10 @@ describe("binary plist number rewriting", () => {
     ).toThrow(/budget/u);
     const decoded = decodeBinaryPlistScalars(bytes, metadata, plan);
     expect(decoded).not.toBe(bytes);
-    expect(decoded.readDoubleBE(29)).toBeNaN();
+    const layout = readBinaryPlistLayout(decoded);
+    if (!layout.ok) throw new Error("Invalid compatible plist layout");
+    const offsets = [...layout.value.objectOffsets()];
+    expect(decoded.readDoubleBE(Number(offsets[2]) + 1)).toBeNaN();
     const parsed = projectPlistValue(parseBinary(decoded));
     expect(
       createPlistNumberProjection(metadata.literals).project(parsed.value),

@@ -12,6 +12,7 @@ import {
   normalizeArtifactPath,
 } from "../ArtifactPaths.js";
 import {
+  ArtifactEntryContentUnavailable,
   ArtifactReaderFailure,
   type ArtifactEntry,
   type ArtifactReader,
@@ -40,9 +41,6 @@ export interface PendingIntegrityContradiction {
   readonly entryKind: "file" | "slice";
   readonly unpacked: boolean;
 }
-
-const UNAVAILABLE_UNPACKED_LIMITATION =
-  "ASAR unpacked companion bytes were unavailable; no content hash or child artifact was produced.";
 
 const emptyScan = (): {
   readonly nodes: Map<string, ArtifactNode>;
@@ -179,10 +177,13 @@ const visitArtifactEntries = async (
           : `${frame.prefix}/${entry.path}`,
       );
       const expandableAsar = isExpandableAsar(entry, logicalPath);
-      // PyInstaller TOC rows are source-distinct even when their logical
+      // PyInstaller rows and Bun modules are source-distinct even when their logical
       // destinations collide. Inventory retains those observations; the
       // extraction path registry remains the authority for materialization.
-      if (frame.reader.format !== "pyinstaller")
+      if (
+        frame.reader.format !== "pyinstaller" &&
+        frame.reader.format !== "bun-standalone"
+      )
         context.registry.add(
           logicalPath,
           expandableAsar ? "directory" : entry.kind,
@@ -212,15 +213,21 @@ const visitArtifactEntries = async (
           occurrence,
         );
       } catch (cause: unknown) {
-        let limitation = UNAVAILABLE_UNPACKED_LIMITATION;
-        if (cause instanceof DirectoryArtifactEntryAccessDenied) {
-          abortIfNeeded(context.signal);
-          limitation = cause.message;
-          context.traversal.onCoverage({
-            status: "unknown",
-            limitations: [limitation],
-          });
-        } else if (!isUnavailableUnpackedEntry(cause, entry)) throw cause;
+        if (
+          !(cause instanceof DirectoryArtifactEntryAccessDenied) &&
+          !(cause instanceof ArtifactEntryContentUnavailable)
+        )
+          throw cause;
+        abortIfNeeded(context.signal);
+        const limitation =
+          cause instanceof ArtifactEntryContentUnavailable
+            ? cause.limitation
+            : cause.message;
+        const traversal =
+          cause instanceof ArtifactEntryContentUnavailable
+            ? cause.traversal
+            : { status: "unknown" as const, limitations: [limitation] };
+        if (traversal !== undefined) context.traversal.onCoverage(traversal);
         occurrence.hash_status = "unavailable";
         occurrence.limitations.push(limitation);
       }
@@ -362,11 +369,3 @@ const isExpandableAsar = (entry: ArtifactEntry, logicalPath: string): boolean =>
   entry.kind === "file" &&
   logicalPath.toLowerCase().endsWith(".asar") &&
   isAbsolute(entry.adapterKey);
-
-const isUnavailableUnpackedEntry = (
-  cause: unknown,
-  entry: ArtifactEntry,
-): boolean =>
-  entry.unpacked &&
-  cause instanceof ArtifactReaderFailure &&
-  cause.reason === "unavailable";

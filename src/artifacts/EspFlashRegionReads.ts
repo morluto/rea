@@ -58,12 +58,13 @@ export const readEspFlashRange = async (
 /** The file offset of the first byte in a range that is not erased flash. */
 export const firstUnerasedInRange = async (
   context: EspFlashReadContext,
-  start: number,
-  length: number,
+  range: { readonly start: number; readonly length: number },
+  assertOpen: () => void,
 ): Promise<number | undefined> => {
-  if (length <= 0) return undefined;
-  let position = start;
-  for await (const chunk of chunks(context, start, length)) {
+  if (range.length <= 0) return undefined;
+  let position = range.start;
+  for await (const chunk of chunks(context, range.start, range.length)) {
+    assertOpen();
     const found = firstUnerased(chunk, position);
     if (found !== undefined) return found;
     position += chunk.length;
@@ -71,30 +72,112 @@ export const firstUnerasedInRange = async (
   return undefined;
 };
 
-/** Read every byte of a region once and find where it is not erased. */
-export const writtenExtent = async (
+type FileRange = { readonly start: number; readonly length: number };
+
+/** Bytes between two adjacent region boundaries that are not erased flash. */
+interface WrittenSegment {
+  readonly start: number;
+  readonly end: number;
+  /** File offsets of the first and last byte that is not `0xFF`, or -1. */
+  first: number;
+  last: number;
+  bytes: number;
+}
+
+/** The segments region boundaries cut, kept where some region covers them. */
+const coveredSegments = (ranges: readonly FileRange[]): WrittenSegment[] => {
+  const cuts = [
+    ...new Set(ranges.flatMap(({ start, length }) => [start, start + length])),
+  ].sort((left, right) => left - right);
+  return cuts.slice(1).flatMap((end, index) => {
+    const start = cuts[index]!;
+    const covered = ranges.some(
+      (range) => range.start <= start && end <= range.start + range.length,
+    );
+    return covered ? [{ start, end, first: -1, last: -1, bytes: 0 }] : [];
+  });
+};
+
+const tally = (
+  segment: WrittenSegment,
+  bytes: Uint8Array,
+  position: number,
+): void => {
+  for (let index = 0; index < bytes.length; index += 1)
+    if (bytes[index] !== 0xff) {
+      segment.bytes += 1;
+      segment.last = position + index;
+      if (segment.first < 0) segment.first = segment.last;
+    }
+};
+
+/** Read adjacent segments as one range, tallying each byte in its segment. */
+const readSegments = async (
   context: EspFlashReadContext,
-  region: { readonly start: number; readonly length: number },
+  segments: readonly WrittenSegment[],
   assertOpen: () => void,
-): Promise<EspFlashWrittenExtent> => {
+): Promise<void> => {
+  const start = segments[0]!.start;
+  let position = start;
+  let current = 0;
+  for await (const chunk of chunks(
+    context,
+    start,
+    segments.at(-1)!.end - start,
+  )) {
+    assertOpen();
+    let offset = 0;
+    while (offset < chunk.length) {
+      const segment = segments[current]!;
+      const taken = Math.min(chunk.length - offset, segment.end - position);
+      tally(segment, chunk.subarray(offset, offset + taken), position);
+      offset += taken;
+      position += taken;
+      if (position === segment.end) current += 1;
+    }
+  }
+};
+
+/** One region's extent from the segments inside it, relative to its start. */
+const regionExtent = (
+  { start, length }: FileRange,
+  segments: readonly WrittenSegment[],
+): EspFlashWrittenExtent => {
   let first = -1;
   let last = -1;
   let bytes = 0;
-  let position = 0;
-  if (region.length > 0)
-    for await (const chunk of chunks(context, region.start, region.length)) {
-      assertOpen();
-      for (let index = 0; index < chunk.length; index += 1)
-        if (chunk[index] !== 0xff) {
-          bytes += 1;
-          last = position + index;
-          if (first < 0) first = last;
-        }
-      position += chunk.length;
-    }
+  for (const segment of segments) {
+    if (segment.start < start || segment.end > start + length) continue;
+    bytes += segment.bytes;
+    if (first < 0) first = segment.first;
+    last = Math.max(last, segment.last);
+  }
   return first < 0
     ? { offset: null, end: null, bytes: 0 }
-    : { offset: first, end: last + 1, bytes };
+    : { offset: first - start, end: last + 1 - start, bytes };
+};
+
+/**
+ * Where each region is not erased, reading the bytes the regions cover once.
+ * Region boundaries cut those bytes into segments, so overlapping regions
+ * share their reads however many the table declares.
+ */
+export const writtenExtents = async (
+  context: EspFlashReadContext,
+  regions: readonly FileRange[],
+  assertOpen: () => void,
+): Promise<EspFlashWrittenExtent[]> => {
+  const segments = coveredSegments(regions.filter(({ length }) => length > 0));
+  let run = 0;
+  for (let index = 1; index <= segments.length; index += 1)
+    if (
+      index === segments.length ||
+      segments[index]!.start !== segments[index - 1]!.end
+    ) {
+      await readSegments(context, segments.slice(run, index), assertOpen);
+      run = index;
+    }
+  return regions.map((region) => regionExtent(region, segments));
 };
 
 const noImage = (

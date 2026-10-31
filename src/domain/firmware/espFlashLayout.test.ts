@@ -23,7 +23,7 @@ import {
   ESP32C3_BOOTLOADER_SEGMENTS,
   esp8266Image,
   espImage,
-} from "./espImage.fixture.js";
+} from "../../../tests/fixtures/espImage.js";
 
 const table = (bytes: Uint8Array) => {
   const decoded = decodeEspPartitionTable(bytes);
@@ -98,6 +98,11 @@ describe("ESP partition tables", () => {
 
   it.each([
     ["erased flash", Buffer.alloc(0xc00, 0xff), "the first entry is empty"],
+    [
+      "an MD5 entry alone",
+      partitionTable([]),
+      "entry 1 at 0x20 ends the table before any partition entry",
+    ],
     [
       "a foreign entry",
       Buffer.concat([

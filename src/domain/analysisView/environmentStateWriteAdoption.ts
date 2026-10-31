@@ -3,6 +3,7 @@ import {
   ownMember,
   at,
   isObject,
+  markedDeleted,
   stateValueRetentionBytes,
   scalarText,
   type StateEntity,
@@ -88,6 +89,7 @@ export class UnseenEntities {
     const idField = this.facts.idField(view.type);
     if (
       !isObject(object) ||
+      markedDeleted(object) ||
       idField === undefined ||
       scalarText(ownMember(object, idField)) !== id
     )

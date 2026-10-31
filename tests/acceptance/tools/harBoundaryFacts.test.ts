@@ -9,7 +9,102 @@ import { historicalHar } from "../../fixtures/historicalHar.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest } from "../../support/cli/cliFixture.js";
+import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
+
+cliTest(
+  "omits HAR extension payloads from capture previews while retaining complete records",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-har-preview-");
+    const fixture = historicalHar();
+    const entry = fixture.log.entries[0];
+    if (entry === undefined) throw new Error("fixture missing");
+    const marker = "nested-extension-payload";
+    const scalarMarker = "scalar-extension-value";
+    const path = join(root, "capture.har");
+    await writeFile(
+      path,
+      JSON.stringify({
+        log: {
+          ...fixture.log,
+          entries: [
+            {
+              ...entry,
+              name: { payload: marker },
+              type: { body: marker },
+              request: { ...entry.request, reason: { payload: marker } },
+              response: { ...entry.response, method: { payload: marker } },
+            },
+            {
+              ...entry,
+              name: scalarMarker,
+              type: scalarMarker,
+              request: { ...entry.request, reason: scalarMarker },
+              response: { ...entry.response, method: scalarMarker },
+            },
+          ],
+        },
+      }),
+    );
+    const capture = await cli.run({
+      arguments: ["inspect-web-network-capture", path, "har", "--json"],
+    });
+    expect(capture.exitCode, capture.stderr).toBe(0);
+    const evidence = parseEvidence(capture.json);
+    const { call } = await connectLocalToolsMcp();
+    for (const detail of ["preview", "complete"] as const) {
+      const request = {
+        source: { kind: "inline", evidence },
+        view: { kind: "capture", detail, offset: 0, limit: 2 },
+      };
+      const requestPath = join(root, `${detail}.json`);
+      await writeFile(requestPath, JSON.stringify(request));
+      const output = await cli.run({
+        arguments: ["inspect-analysis-view", requestPath, "--json"],
+      });
+      expect(output.exitCode, output.stderr).toBe(0);
+      const result = parseEvidence(output.json).normalized_result;
+      const reply = await call("inspect_analysis_view", request);
+      expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
+      expect(parseEvidence(reply.structuredContent).normalized_result).toEqual(
+        result,
+      );
+      if (detail === "preview") {
+        expect(JSON.stringify(result)).not.toContain(marker);
+        expect(JSON.stringify(result)).not.toContain(scalarMarker);
+        expect(result).toMatchObject({
+          items: [
+            {
+              reported: {
+                startedDateTime: entry.startedDateTime,
+                request: {
+                  method: entry.request.method,
+                  url: entry.request.url,
+                },
+                response: { status: entry.response.status },
+              },
+            },
+            {},
+          ],
+        });
+      } else {
+        expect(JSON.stringify(result)).toContain(marker);
+        expect(result).toMatchObject({
+          items: [
+            {},
+            {
+              reported: {
+                name: scalarMarker,
+                type: scalarMarker,
+                request: { reason: scalarMarker },
+                response: { method: scalarMarker },
+              },
+            },
+          ],
+        });
+      }
+    }
+  },
+);
 
 cliTest(
   "refuses malformed HAR schema facts before record selection through CLI and MCP",
@@ -55,7 +150,7 @@ cliTest(
       const text = JSON.stringify({ log });
       const path = join(root, `${label}.har`);
       await writeFile(path, text);
-      const output = await cli.run({
+      const invocation = {
         arguments: [
           "inspect-web-network-capture",
           path,
@@ -64,7 +159,11 @@ cliTest(
           "0",
           "--json",
         ],
-      });
+      };
+      const output =
+        label === "null-timings"
+          ? await cli.run(invocation)
+          : await runFileCli(cli, invocation);
       expect(output.exitCode).toBe(1);
       const expected = {
         code: "invalid_request",

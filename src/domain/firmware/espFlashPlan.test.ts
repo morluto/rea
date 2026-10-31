@@ -192,6 +192,45 @@ describe("ESP flash layout plans", () => {
   });
 });
 
+describe("ESP flash layout partition paths", () => {
+  it("falls back to the index for Windows device names and keeps the label", () => {
+    const labels = [
+      "NUL",
+      "con",
+      "Com1",
+      "lpt9",
+      "aux.cfg",
+      "prn.",
+      // Names that only begin like a device name stay names.
+      "console",
+      "com10",
+      "nul_data",
+    ];
+    const parts = labels.map((label, index): EspPartitionFixture => ({
+      label,
+      type: 1,
+      subtype: 2,
+      offset: 0x9000 + index * 0x1000,
+      size: 0x1000,
+    }));
+    const regions = planEspFlashLayout(
+      input({ table: table(parts) }),
+    ).regions.slice(2);
+    expect(regions.map(({ path }) => path)).toEqual([
+      "partitions/0.bin",
+      "partitions/1.bin",
+      "partitions/2.bin",
+      "partitions/3.bin",
+      "partitions/4.bin",
+      "partitions/5.bin",
+      "partitions/console.bin",
+      "partitions/com10.bin",
+      "partitions/nul_data.bin",
+    ]);
+    expect(regions.map(({ partition }) => partition?.label)).toEqual(labels);
+  });
+});
+
 describe("ESP flash layout coverage", () => {
   it("keeps coverage complete for partitions the end of the file cuts short or leaves out", () => {
     const cut = planEspFlashLayout(input({ fileSize: 0x2_8000 }));

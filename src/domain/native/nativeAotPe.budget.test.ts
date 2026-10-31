@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { NativeAotParserLimits } from "./nativeAotPe.js";
+import { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
 import {
   NATIVE_AOT_MAX_REPORT_BYTES,
   parseNativeAotPe,
@@ -29,8 +30,15 @@ describe("NativeAOT parser resource budgets", () => {
     ).summary;
     expect(report).toMatchObject({
       status: "partial",
+      reason: {
+        code: "source_byte_budget",
+        limit_bytes: bytes.length - 1,
+        observed_bytes: bytes.length,
+        runtime_override: false,
+      },
       analysis_artifact_sha256: sha,
       header_address: null,
+      diagnostics: ["source_byte_budget"],
       coverage: {
         source_bytes_examined: 0,
         source_byte_budget_bytes: bytes.length - 1,
@@ -76,17 +84,32 @@ describe("NativeAOT parser report admission", () => {
   it("never returns an over-budget report from early exits", () => {
     const bytes = nativeAotPeFixture();
     const sha = nativeAotPeDigest(bytes);
-    expect(() =>
+    const expectReportBudget = (run: () => void): void => {
+      let caught: unknown;
+      try {
+        run();
+      } catch (cause: unknown) {
+        caught = cause;
+      }
+      expect(caught).toMatchObject({
+        _tag: "AnalysisResourceConstraintError",
+        resource: "capacity",
+        retryable: false,
+        diagnostics: { code: "report_budget_too_small" },
+        reportedLimits: { maximum_summary_bytes: 0 },
+      });
+    };
+    expectReportBudget(() => {
       parseNativeAotPe(bytes, sha, 0, undefined, {
         sourceBytes: bytes.length - 1,
         workUnits: 1024,
         workingMemoryBytes: 1024,
-      }),
-    ).toThrow(/minimum truthful report/iu);
+      });
+    });
     const nonPe = Buffer.from("not a PE image");
-    expect(() => parseNativeAotPe(nonPe, nativeAotPeDigest(nonPe), 0)).toThrow(
-      /minimum truthful report/iu,
-    );
+    expectReportBudget(() => {
+      parseNativeAotPe(nonPe, nativeAotPeDigest(nonPe), 0);
+    });
   });
 
   it("does not claim a missing RTR header when signature coverage hits the work limit", () => {
@@ -113,7 +136,10 @@ describe("NativeAOT parser report admission", () => {
         truncation_reason: "work-unit-budget",
       },
     });
-    expect(report.reason).not.toMatch(/No supported ReadyToRun directory/iu);
+    expect(report.reason).toEqual({
+      code: "rtr_scan_budget",
+      runtime_override: false,
+    });
   });
 
   it("does not claim a missing root when table discovery is incomplete", () => {
@@ -130,10 +156,10 @@ describe("NativeAOT parser report admission", () => {
       },
     ).summary;
     expect(report.truncated).toBe(true);
-    expect(report.reason).toMatch(/before determining whether.*root exists/iu);
-    expect(report.reason).not.toMatch(
-      /no unique System\.Object.*fully examined/iu,
-    );
+    expect(report.reason).toMatchObject({
+      code: "system_object_root_unproven",
+      runtime_override: false,
+    });
   });
 
   it("explains a hydration work budget on the partial report", () => {
@@ -155,18 +181,13 @@ describe("NativeAOT parser report admission", () => {
         workingMemoryBytes: 1024 * 1024,
       },
     ).summary;
-    const visible = [summary.reason ?? "", ...summary.diagnostics].join("\n");
     expect(summary.status).toBe("partial");
-    expect(visible).toContain("NativeAOT parser work budget is exhausted");
-    expect(visible).toContain(
-      "This release has no runtime override for that NativeAOT parser budget",
-    );
-    expect(visible).toContain(
-      "Repeating the unchanged request fails the same way",
-    );
-    expect(summary.diagnostics.join("\n")).toContain(
-      "Read-only hydration stopped:",
-    );
+    expect(summary.reason).toEqual({
+      code: "system_object_root_unproven",
+      runtime_override: false,
+      hydration: { detail: "work_budget", runtime_override: false },
+    });
+    expect(summary.diagnostics).toEqual(["work_budget"]);
   });
 });
 
@@ -195,9 +216,7 @@ describe("NativeAOT detail and summary byte accounting", () => {
       low,
     );
     expect(belowBoundary?.derived_memory ?? null).toBeNull();
-    expect(belowBoundary?.diagnostics.join(" ")).toContain(
-      "omitted because the final serialized report exceeded its byte budget",
-    );
+    expect(belowBoundary?.diagnostics).toContain("detail_rows_omitted");
     expect(
       belowBoundary === undefined
         ? 0
@@ -221,8 +240,10 @@ describe("NativeAOT detail and summary byte accounting", () => {
         }
       } catch (cause: unknown) {
         // Budgets below the fixed report header cannot carry an honest summary.
+        expect(cause).toBeInstanceOf(AnalysisResourceConstraintError);
         expect(cause).toMatchObject({
-          message: "NativeAOT metadata summary exceeds its report-byte budget",
+          diagnostics: { code: "summary_exceeds_budget" },
+          retryable: false,
         });
       }
       budget--;

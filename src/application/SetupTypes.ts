@@ -13,7 +13,6 @@ import type {
   AnalysisError,
 } from "../domain/analysisErrorBase.js";
 import type { SetupClient } from "./SupportedClients.js";
-import type { SetupRegistrationPrewarm } from "./SetupRegistrationPrewarm.js";
 import type {
   SetupFailureCode,
   SetupHopperInstallResult,
@@ -143,10 +142,6 @@ export interface SetupHost {
   ): Promise<Result<void, SetupSkillInstallError>>;
   installSkill(clientIds: readonly string[]): Promise<SkillInstallResult>;
   doctor(scope?: DoctorScope): Promise<Awaited<ReturnType<typeof runDoctor>>>;
-  /** Best-effort materialization of the pinned package-runner cache entry
-   * before the first client start, so a one-time dependency install cannot
-   * consume a client's MCP startup deadline. Absent hosts skip the step. */
-  prewarmRegistrationRunner?(): Promise<SetupRegistrationPrewarm>;
 }
 /** Structured setup outcome carrying remediation instead of prompting. */
 export interface SetupResult {
@@ -166,9 +161,6 @@ export interface SetupResult {
   readonly code?: SetupFailureCode;
   /** Identified resources still retained after finalization; absent after confirmed release. */
   readonly cleanup?: AnalysisCleanupObservation | undefined;
-  /** Best-effort pinned package-runner cache materialization; absent when the
-   * host offers no prewarm capability or setup finished before finalization. */
-  readonly prewarm?: SetupRegistrationPrewarm;
 }
 
 /** Whether the requested setup actions still need approval or human repair. */

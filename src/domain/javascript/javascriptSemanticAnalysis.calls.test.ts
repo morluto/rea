@@ -7,6 +7,44 @@ import {
   topLevelBinding,
 } from "./javascriptSemanticAnalysis.fixture.js";
 
+describe("JavaScript semantic call result use", () => {
+  it.each([
+    'consume("unique");',
+    'consume("unique")!;',
+    'consume("unique") as unknown;',
+    '(consume("unique") as unknown)!;',
+  ])("does not treat %s as a used call result", (source) => {
+    const ir = analyzeJavaScriptSemantics(source);
+    expect(ir.callSites[0]?.resultUsed).toBe(false);
+  });
+
+  it("treats an asserted call initializer as a used result", () => {
+    const used = analyzeJavaScriptSemantics(
+      'const value = consume("unique")!;',
+    );
+    expect(used.callSites[0]?.resultUsed).toBe(true);
+  });
+
+  it.each([
+    'for (notify("token"); running;) {}',
+    'for (; running; notify("token")) {}',
+    'for (notify("token")!; running;) {}',
+  ])("does not treat %s as a used call result", (source) => {
+    const ir = analyzeJavaScriptSemantics(source);
+    const call = ir.callSites.find((site) =>
+      site.arguments.some((argument) => argument.literal === "token"),
+    );
+    expect(call?.resultUsed).toBe(false);
+  });
+
+  it("treats a for-loop variable initializer call as a used result", () => {
+    const ir = analyzeJavaScriptSemantics(
+      'for (const value = notify("token"); running;) {}',
+    );
+    expect(ir.callSites[0]?.resultUsed).toBe(true);
+  });
+});
+
 describe("JavaScript semantic analysis: calls 1", () => {
   it("does not assign computed method-name reads to method closures", () => {
     const ir = analyzeJavaScriptSemantics(`

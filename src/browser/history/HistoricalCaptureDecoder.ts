@@ -219,6 +219,7 @@ export class HistoricalCaptureDecoder {
         input.capture_path,
         runtimeResources,
         options?.signal,
+        input.sensitive_values,
       );
       const reply = decodedReply.value;
       encodedReplyBytes = decodedReply.bytes;

@@ -92,6 +92,74 @@ type ByteRange = EspImageMetadata["undescribed_trailing"][number];
 const hexByte = (value: number): string =>
   `0x${value.toString(16).padStart(2, "0")}`;
 
+/**
+ * How each ESP image fact REA could not establish is reported. Decoding,
+ * inventory and tests use these, so wording has one owner.
+ */
+export const ESP_IMAGE_LIMITATIONS = {
+  /** What an ESP image inventory reads, and what it leaves unverified. */
+  inventoryScope:
+    "ESP image inventory reads the header-declared segments, checksum, appended SHA-256, descriptor and Secure Boot v2 signature blocks. Segment classification follows ESP-IDF v6.1 should_map and should_load for a cold boot and does not check RAM ranges; signatures are not cryptographically verified, and code is not disassembled.",
+  undescribedTrailing: (
+    bytes: number,
+    ranges: number,
+    firstOffset: number,
+  ): string =>
+    `${String(bytes)} bytes after the ESP image, in ${String(ranges)} range(s) from offset ${offsetText(firstOffset)}, are not described by its header, erased flash or a signature sector. They may be other flash contents, a Secure Boot v1 signature, or flash segments that esptool --ram-only-header leaves out of the segment count.`,
+  unknownChip: (chipId: number): string =>
+    `ESP image chip_id 0x${chipId.toString(16).padStart(4, "0")} is not in the ${ESP_CHIP_TABLE_SOURCE} chip table; chip, ISA and segment classification are unknown.`,
+  unclassifiedPages: (target: string, low: number, high: number): string =>
+    `${target} maps flash through 256 MMU pages of the bootloader's configured size, which the image does not record; segments from ${offsetText(low)} to ${offsetText(high)} are unclassified.`,
+  segmentLengthUnaligned: (index: number, length: number): string =>
+    `ESP image segment ${String(index)} length ${offsetText(length)} is not a multiple of 4; ESP-IDF rejects such an image.`,
+  segmentLengthTooLarge: (
+    index: number,
+    length: number,
+    limit: number,
+    target: string,
+  ): string =>
+    `ESP image segment ${String(index)} length ${offsetText(length)} is ${String(limit / 0x10_0000)} MiB or more; ESP-IDF rejects such an image for ${target}.`,
+  truncatedSegment: (
+    index: number,
+    declared: number,
+    offset: number,
+    available: number,
+  ): string =>
+    `ESP image is truncated: segment ${String(index)} declares ${String(declared)} bytes at offset ${offsetText(offset)}, but the file holds ${String(available)}.`,
+  truncatedSegmentHeaders: (declared: number, present: number): string =>
+    `ESP image is truncated: the header declares ${String(declared)} segments, but the file ends before the header of segment ${String(present)}.`,
+  truncatedBeforeChecksum: (offset: number): string =>
+    `ESP image is truncated before its checksum at offset ${offsetText(offset)}.`,
+  checksumMismatch: (
+    stored: number,
+    offset: number,
+    computed: number,
+  ): string =>
+    `ESP image checksum ${hexByte(stored)} at offset ${offsetText(offset)} does not match the computed ${hexByte(computed)}.`,
+  truncatedBeforeDigest: (offset: number): string =>
+    `ESP image is truncated before its appended SHA-256 at offset ${offsetText(offset)}.`,
+  digestMismatch: (offset: number): string =>
+    `ESP image appended SHA-256 at offset ${offsetText(offset)} does not match the SHA-256 of the bytes before it.`,
+  segmentEntryTruncated: (
+    index: number,
+    declared: number,
+    available: number,
+  ): string =>
+    `ESP image segment ${String(index)} is truncated: its header declares ${String(declared)} bytes; the file holds ${String(available)}.`,
+  signatureDigestMismatch: (slot: number, offset: number): string =>
+    `Secure Boot v2 signature block in slot ${String(slot)} at offset ${offsetText(offset)} records an image digest that does not match the bytes before its sector.`,
+  invalidSignatureSlot: (slot: number, offset: number): string =>
+    `Secure Boot v2 slot ${String(slot)} at offset ${offsetText(offset)} has the 0xE7 magic but not a matching CRC32 or a complete block; it is not a valid signature block.`,
+  signatureSlotsCut: (fileSize: number, sector: number): string =>
+    `The file ends at ${offsetText(fileSize)} in erased flash, before the Secure Boot v2 signature slots at ${offsetText(sector)} are complete; signature blocks may be missing.`,
+  signatureSectorTruncated: (
+    sector: number,
+    fileSize: number,
+    sectorEnd: number,
+  ): string =>
+    `Secure Boot v2 signature sector at offset ${offsetText(sector)} is truncated: the file ends at ${offsetText(fileSize)}, before ${offsetText(sectorEnd)}.`,
+} as const;
+
 /** Derive chip, classification, integrity, descriptor and coverage facts. */
 export const deriveEspImage = (observed: EspImageObservations): EspImage => {
   const limitations: string[] = [];
@@ -121,7 +189,11 @@ export const deriveEspImage = (observed: EspImageObservations): EspImage => {
   const firstUndescribed = trailing.undescribed[0];
   if (firstUndescribed !== undefined)
     limitations.push(
-      `${String(undescribedBytes)} bytes after the ESP image, in ${String(trailing.undescribed.length)} range(s) from offset ${offsetText(firstUndescribed.offset)}, are not described by its header, erased flash or a signature sector. They may be other flash contents, a Secure Boot v1 signature, or flash segments that esptool --ram-only-header leaves out of the segment count.`,
+      ESP_IMAGE_LIMITATIONS.undescribedTrailing(
+        undescribedBytes,
+        trailing.undescribed.length,
+        firstUndescribed.offset,
+      ),
     );
   return {
     metadata: {
@@ -214,23 +286,27 @@ const segmentLimitations = (
   const ambiguity =
     chip === undefined ? undefined : espPageSizedMappingAmbiguity(chip);
   if (chip === undefined)
-    limitations.push(
-      `ESP image chip_id 0x${chipId.toString(16).padStart(4, "0")} is not in the ${ESP_CHIP_TABLE_SOURCE} chip table; chip, ISA and segment classification are unknown.`,
-    );
+    limitations.push(ESP_IMAGE_LIMITATIONS.unknownChip(chipId));
   else if (
     ambiguity !== undefined &&
     segments.some(({ metadata }) => metadata.classification === "unknown")
   )
     limitations.push(
-      `${chip.target} maps flash through 256 MMU pages of the bootloader's configured size, which the image does not record; segments from ${offsetText(ambiguity.low)} to ${offsetText(ambiguity.high)} are unclassified.`,
+      ESP_IMAGE_LIMITATIONS.unclassifiedPages(
+        chip.target,
+        ambiguity.low,
+        ambiguity.high,
+      ),
     );
   const lengthLimit =
     chip === undefined ? undefined : espSegmentLengthLimit(chip);
   for (const { metadata } of segments) {
-    const segment = `ESP image segment ${String(metadata.index)} length ${offsetText(metadata.data_len)}`;
     if (metadata.data_len % 4 !== 0)
       limitations.push(
-        `${segment} is not a multiple of 4; ESP-IDF rejects such an image.`,
+        ESP_IMAGE_LIMITATIONS.segmentLengthUnaligned(
+          metadata.index,
+          metadata.data_len,
+        ),
       );
     if (
       chip !== undefined &&
@@ -238,7 +314,12 @@ const segmentLimitations = (
       metadata.data_len >= lengthLimit
     )
       limitations.push(
-        `${segment} is ${String(lengthLimit / 0x10_0000)} MiB or more; ESP-IDF rejects such an image for ${chip.target}.`,
+        ESP_IMAGE_LIMITATIONS.segmentLengthTooLarge(
+          metadata.index,
+          metadata.data_len,
+          lengthLimit,
+          chip.target,
+        ),
       );
   }
   return limitations;
@@ -256,13 +337,18 @@ const truncation = (
   );
   if (short !== undefined) {
     limitations.push(
-      `ESP image is truncated: segment ${String(short.metadata.index)} declares ${String(short.metadata.data_len)} bytes at offset ${offsetText(short.dataOffset)}, but the file holds ${String(short.availableLength)}.`,
+      ESP_IMAGE_LIMITATIONS.truncatedSegment(
+        short.metadata.index,
+        short.metadata.data_len,
+        short.dataOffset,
+        short.availableLength,
+      ),
     );
     return true;
   }
   if (segments.length < declared) {
     limitations.push(
-      `ESP image is truncated: the header declares ${String(declared)} segments, but the file ends before the header of segment ${String(segments.length)}.`,
+      ESP_IMAGE_LIMITATIONS.truncatedSegmentHeaders(declared, segments.length),
     );
     return true;
   }
@@ -280,14 +366,12 @@ const checksumFacts = (
   const stored = observed.storedChecksum ?? null;
   if (offset === null || computed === null || stored === null) {
     if (!truncated && offset !== null)
-      limitations.push(
-        `ESP image is truncated before its checksum at offset ${offsetText(offset)}.`,
-      );
+      limitations.push(ESP_IMAGE_LIMITATIONS.truncatedBeforeChecksum(offset));
     return { offset, stored, computed, status: "unavailable" };
   }
   if (stored !== computed)
     limitations.push(
-      `ESP image checksum ${hexByte(stored)} at offset ${offsetText(offset)} does not match the computed ${hexByte(computed)}.`,
+      ESP_IMAGE_LIMITATIONS.checksumMismatch(stored, offset, computed),
     );
   return {
     offset,
@@ -318,16 +402,12 @@ const digestFacts = (
     observed.observedEnd < offset + ESP_IMAGE_DIGEST_BYTES
   ) {
     if (computed !== null && offset !== null)
-      limitations.push(
-        `ESP image is truncated before its appended SHA-256 at offset ${offsetText(offset)}.`,
-      );
+      limitations.push(ESP_IMAGE_LIMITATIONS.truncatedBeforeDigest(offset));
     return { offset, stored: null, computed, status: "unavailable" };
   }
   const stored = hex(observed.storedDigest);
   if (stored !== computed)
-    limitations.push(
-      `ESP image appended SHA-256 at offset ${offsetText(offset)} does not match the SHA-256 of the bytes before it.`,
-    );
+    limitations.push(ESP_IMAGE_LIMITATIONS.digestMismatch(offset));
   return {
     offset,
     stored,
@@ -384,14 +464,22 @@ const trailingFacts = (
     };
   });
   for (const { index, offset, bytes, kind } of slots) {
-    if (kind === "block")
-      blocks.push({
-        offset,
-        metadata: decodeEspSignatureBlock(bytes, index, observed.signedContent),
-      });
-    else if (kind === "other" && bytes[0] === 0xe7)
+    if (kind === "block") {
+      const metadata = decodeEspSignatureBlock(
+        bytes,
+        index,
+        observed.signedContent,
+      );
+      blocks.push({ offset, metadata });
+      // A definite contradiction, like a checksum mismatch; the signature
+      // itself stays unverified.
+      if (metadata.image_digest_matches === false)
+        limitations.push(
+          ESP_IMAGE_LIMITATIONS.signatureDigestMismatch(index, offset),
+        );
+    } else if (kind === "other" && bytes[0] === 0xe7)
       limitations.push(
-        `Secure Boot v2 slot ${String(index)} at offset ${offsetText(offset)} has the 0xE7 magic but not a matching CRC32 or a complete block; it is not a valid signature block.`,
+        ESP_IMAGE_LIMITATIONS.invalidSignatureSlot(index, offset),
       );
   }
   const sectorEnd = sector + ESP_FLASH_SECTOR_BYTES;
@@ -403,9 +491,7 @@ const trailingFacts = (
     if (undescribed.length > 0 || fileSize >= slotsEnd)
       return { blocks, undescribed, truncated: false };
     // Erased padding cut short may be a signed image that lost its sector.
-    limitations.push(
-      `The file ends at ${offsetText(fileSize)} in erased flash, before the Secure Boot v2 signature slots at ${offsetText(sector)} are complete; signature blocks may be missing.`,
-    );
+    limitations.push(ESP_IMAGE_LIMITATIONS.signatureSlotsCut(fileSize, sector));
     return { blocks, undescribed, truncated: true };
   }
   for (const { offset, bytes, kind } of slots)
@@ -415,7 +501,11 @@ const trailingFacts = (
   add(observed.restFirstUnerased, fileSize);
   if (fileSize < sectorEnd) {
     limitations.push(
-      `Secure Boot v2 signature sector at offset ${offsetText(sector)} is truncated: the file ends at ${offsetText(fileSize)}, before ${offsetText(sectorEnd)}.`,
+      ESP_IMAGE_LIMITATIONS.signatureSectorTruncated(
+        sector,
+        fileSize,
+        sectorEnd,
+      ),
     );
     return { blocks, undescribed, truncated: true };
   }

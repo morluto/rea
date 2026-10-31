@@ -1,21 +1,44 @@
 import type { JsonValue } from "../jsonValue.js";
-import { ownMember, same, type JsonObject } from "./environmentStateRules.js";
+import {
+  isObject,
+  ownMember,
+  same,
+  scalarText,
+  type JsonObject,
+} from "./environmentStateRules.js";
 import { storedKinds } from "./environmentStateWriteApply.js";
 import { fittedClockFormat } from "./environmentStateWriteClockFormats.js";
 import { composedValue } from "./environmentStateWriteComposed.js";
+import { emptyReference } from "./environmentStateWriteReferences.js";
 import {
   alikeRules,
+  isBlankValue,
   type FieldRule,
   type WriteBody,
 } from "./environmentStateWriteRules.js";
-import { slugOf, type Ampersand } from "./environmentStateWriteValues.js";
+import {
+  containsDelimited,
+  replaceDelimited,
+  sequenceNumber,
+  slugOf,
+  type Ampersand,
+} from "./environmentStateWriteValues.js";
 
 type Default = { readonly member: string; readonly value: JsonValue };
+type Blank = NonNullable<WriteBody["blank"]>[number];
 
 /** What earlier calls showed that a merge must respect: members stored unsorted as sent, and the value showing each clock's width. */
 export interface EarlierEvidence {
   readonly kept: ReadonlySet<string>;
   readonly clockOf: (field: string) => JsonValue | undefined;
+  /** The integer the exemplar showed in an unruled field above every value its type held, where a sequence may start. */
+  readonly startOf?: (field: string) => number | undefined;
+  readonly createCollections?: readonly string[];
+  /** The largest integer an echoed field held on the plan's accepted creates, across the type or in the later call's collection. */
+  readonly sentLargest?: (
+    field: string,
+    scope: "collection" | "type",
+  ) => number | undefined;
   /** How the plan's accepted calls and the type's held entities spelled `&` in each field's slug; absent where none showed one. */
   readonly ampersands?: ReadonlyMap<string, AmpersandSpelling>;
 }
@@ -23,7 +46,7 @@ export interface EarlierEvidence {
 /** How a field's slug showed `&`: dropped, as the word, or in a way neither spelling gives. */
 export type AmpersandSpelling = "dropped" | Ampersand | "unknown";
 
-/** The plan's rule for a field and a later call's agree: equal, or clocks one spelling covers given what earlier calls showed. */
+/** The plan's rule for a field and a later call's agree: equal, clocks one spelling covers given what earlier calls showed, slugs that differ only in how they spell `&`, or made objects alike but in the counts only the later call could show. */
 const agreeing = (
   held: FieldRule,
   later: FieldRule,
@@ -37,6 +60,13 @@ const agreeing = (
 ): FieldRule | undefined => {
   const alike = alikeRules(held, later, values.earlier.kept);
   if (alike !== undefined) return alike;
+  if (held.rule === "made-object" && later.rule === "made-object")
+    return madeAlike(
+      held,
+      later,
+      ownMember(values.exemplar, values.field),
+      values.earlier,
+    );
   const spelled = ampersandSpelled(
     held,
     { rule: later, entity: values.laterEntity },
@@ -50,6 +80,41 @@ const agreeing = (
     values.earlier.clockOf(values.field),
   );
   return format === undefined ? undefined : { ...held, format };
+};
+
+type MadeObject = Extract<FieldRule, { rule: "made-object" }>;
+
+/** Two made-object rules as one: the same clocks, format and own members, and the earlier counts among the later's; a count only the later call shows starts at the exemplar's value, which no earlier object could show past, and only while the exemplar is the one create accepted, as earlier creates held it still. */
+const madeAlike = (
+  held: MadeObject,
+  later: MadeObject,
+  exemplar: JsonValue | undefined,
+  earlier: EarlierEvidence,
+): MadeObject | undefined => {
+  if (
+    !same(held.clocks, later.clocks) ||
+    !same(held.own, later.own) ||
+    !same(held.format, later.format) ||
+    held.counts.some(
+      ({ member }) => !later.counts.some((count) => count.member === member),
+    )
+  )
+    return undefined;
+  const counts: MadeObject["counts"] = [];
+  for (const { member } of later.counts) {
+    const kept = held.counts.find((count) => count.member === member);
+    // Accepted creates past the exemplar showed this member unchanged, which a count would have moved.
+    if (kept === undefined && (earlier.createCollections ?? []).length > 1)
+      return undefined;
+    const start =
+      kept?.start ??
+      sequenceNumber(
+        isObject(exemplar) ? ownMember(exemplar, member) : undefined,
+      );
+    if (start === undefined) return undefined;
+    counts.push({ member, start });
+  }
+  return { ...held, counts };
 };
 
 /** A rule with its slugs spelled the default way. */
@@ -194,6 +259,44 @@ const joinedDefaults = (
   return [...joined].map(([member, value]) => ({ member, value }));
 };
 
+/** A later call's rule for a field the plan kept as shown, when it spells the exemplar's value too: a string composed from the exemplar's fields or holding the value it templates, or a sequence that started at its value. */
+const spellsExemplar = (
+  field: string,
+  rule: FieldRule,
+  calls: Pick<FieldCalls, "exemplar" | "earlier" | "later">,
+): FieldRule | undefined => {
+  const value = ownMember(calls.exemplar, field);
+  if (rule.rule === "composed")
+    return value !== undefined &&
+      composedValue(rule.parts, calls.exemplar) === value
+      ? rule
+      : undefined;
+  if (rule.rule === "template") {
+    const token = scalarText(ownMember(calls.exemplar, rule.from));
+    const next = scalarText(ownMember(calls.later.entity, rule.from));
+    return typeof value === "string" &&
+      token !== undefined &&
+      next !== undefined &&
+      containsDelimited(value, token) &&
+      replaceDelimited(value, token, next) ===
+        ownMember(calls.later.entity, field)
+      ? rule
+      : undefined;
+  }
+  if (rule.rule !== "sequence") return undefined;
+  const start = calls.earlier.startOf?.(field);
+  const collections = calls.earlier.createCollections ?? [];
+  if (
+    (rule.scope === "type" && collections.length > 1) ||
+    (rule.scope === "collection" &&
+      new Set(collections).size !== collections.length)
+  )
+    return undefined;
+  return start !== undefined && sequenceNumber(value) === start
+    ? { ...rule, start }
+    : undefined;
+};
+
 /** What two calls show of one field. */
 interface FieldCalls {
   readonly before: FieldRule | undefined;
@@ -201,6 +304,10 @@ interface FieldCalls {
   readonly exemplar: JsonObject;
   readonly later: { readonly entity: JsonObject; readonly body: JsonObject };
   readonly sentBefore: ReadonlySet<string>;
+  /** The values the plan's calls sent members it fixes or saw sent empty. */
+  readonly pinned: ReadonlyMap<string, JsonValue>;
+  /** Members an earlier call left out and the application stored a fixed value for (`body.defaults`). */
+  readonly defaulted: ReadonlySet<string>;
   readonly required: readonly string[];
   readonly earlier: EarlierEvidence;
 }
@@ -216,6 +323,12 @@ const addedReference = (
     return Object.hasOwn(later.body, added.member)
       ? undefined
       : { rule: added };
+  // A call that named nothing and stored nothing agrees, as it does with a reference the first create showed.
+  if (
+    after === undefined &&
+    emptyReference(later.body[added.member], later.entity[field])
+  )
+    return { rule: added };
   const rule =
     after === undefined
       ? undefined
@@ -242,6 +355,42 @@ const shownAlone = (
   return sent ? undefined : { rule: own };
 };
 
+/** A member one call sent and stored as sent, and another left out and the application numbered: the value a call sends, else the next number. */
+const sentOrNumbered = (
+  before: FieldRule,
+  after: FieldRule,
+  field: string,
+  calls: FieldCalls,
+  agree: (held: FieldRule) => FieldRule | undefined,
+): FieldRule | undefined => {
+  const laterSent = Object.hasOwn(calls.later.body, field);
+  if (before.rule === "echo") {
+    // Serving numbers past every value a call sent, so a later call numbered at or below one cannot be repeated.
+    const numbered = sequenceNumber(ownMember(calls.later.entity, field));
+    const largest =
+      after.rule === "sequence"
+        ? calls.earlier.sentLargest?.(field, after.scope)
+        : undefined;
+    // An earlier call that left the member out stored a fixed value, so the application does not number it.
+    return after.rule === "sequence" &&
+      !laterSent &&
+      !calls.defaulted.has(field) &&
+      (largest === undefined || (numbered !== undefined && numbered > largest))
+      ? { ...after, sent: true }
+      : undefined;
+  }
+  if (before.rule !== "sequence") return undefined;
+  if (after.rule === "echo")
+    return before.sent === true || !calls.sentBefore.has(field)
+      ? { ...before, sent: true }
+      : undefined;
+  if (before.sent !== true || after.rule !== "sequence" || laterSent)
+    return undefined;
+  const { sent: _sent, ...numbered } = before;
+  const merged = agree(numbered);
+  return merged?.rule === "sequence" ? { ...merged, sent: true } : undefined;
+};
+
 /** One field's rule in the merged plan, and the default it gives a member; undefined when the calls disagree on it. */
 const mergedField = (
   field: string,
@@ -254,15 +403,33 @@ const mergedField = (
   if (!inExemplar || !Object.hasOwn(later.entity, field))
     return shownAlone(inExemplar, calls);
   if (before !== undefined && after !== undefined) {
-    const rule = agreeing(before, after, {
+    const values = {
       field,
       later: later.entity[field],
       earlier: calls.earlier,
       exemplar,
       laterEntity: later.entity,
-    });
+    };
+    const rule =
+      agreeing(before, after, values) ??
+      sentOrNumbered(before, after, field, calls, (held) =>
+        agreeing(held, after, values),
+      );
     return rule === undefined ? undefined : { rule };
   }
+  // A reference one call showed and another that named nothing, storing nothing, agree.
+  if (
+    before?.rule === "reference" &&
+    after === undefined &&
+    emptyReference(later.body[before.member], later.entity[field])
+  )
+    return { rule: before };
+  if (
+    before === undefined &&
+    after?.rule === "reference" &&
+    emptyReference(calls.pinned.get(after.member), exemplar[field])
+  )
+    return { rule: after };
   // The plan echoes a member this call left out: what it stored there is the member's default.
   if (before !== undefined)
     return before.rule === "echo" && !Object.hasOwn(later.body, field)
@@ -271,6 +438,10 @@ const mergedField = (
           default: { member: field, value: later.entity[field]! },
         }
       : undefined;
+  if (before === undefined && after !== undefined) {
+    const rule = spellsExemplar(field, after, calls);
+    if (rule !== undefined) return { rule };
+  }
   // This call echoes a member the plan's calls left out: what they stored there is its default.
   if (after !== undefined)
     return after.rule === "echo" && !calls.required.includes(field)
@@ -311,6 +482,16 @@ export const mergedCreatePlan = (
     ...plan.body.fixed.map(({ member }) => member),
     ...plan.body.required,
   ]);
+  const pinned = new Map<string, JsonValue>([
+    ...(plan.body.blank ?? []).map(({ member, sent }): [string, JsonValue] => [
+      member,
+      sent,
+    ]),
+    ...plan.body.fixed.map(({ member, sent }): [string, JsonValue] => [
+      member,
+      sent,
+    ]),
+  ]);
   const merged = new Map<string, FieldRule>();
   const defaults: Default[] = [];
   for (const field of new Set([
@@ -324,6 +505,10 @@ export const mergedCreatePlan = (
       exemplar,
       later,
       sentBefore,
+      pinned,
+      defaulted: new Set(
+        (plan.body.defaults ?? []).map(({ member }) => member),
+      ),
       required: plan.body.required,
       earlier,
     });
@@ -331,7 +516,20 @@ export const mergedCreatePlan = (
     if (outcome.rule !== undefined) merged.set(field, outcome.rule);
     if (outcome.default !== undefined) defaults.push(outcome.default);
   }
-  const body = mergedBody(plan.body, later, exemplar);
+  // A member a reference reads is accepted with any id, though a call that named nothing showed it fixed.
+  const read = new Set(
+    [...merged.values()].flatMap((rule) =>
+      rule.rule === "reference" ? [rule.member] : [],
+    ),
+  );
+  const body = mergedBody(
+    released(plan.body, read),
+    {
+      ...later,
+      contract: released(later.contract, read),
+    },
+    exemplar,
+  );
   const joined =
     body === undefined
       ? undefined
@@ -347,6 +545,46 @@ export const mergedCreatePlan = (
       ...[...merged.values()].filter((rule) => !held.has(rule.field)),
     ],
     body: joined.length === 0 ? body : { ...body, defaults: joined },
+  };
+};
+
+/** Every empty value recorded calls sent a member, the earliest first. */
+const joinedBlanks = (
+  held: readonly Blank[],
+  added: readonly Blank[],
+): Blank[] => {
+  const blank = [...held];
+  for (const entry of added)
+    if (
+      !blank.some(
+        ({ member, sent }) => member === entry.member && same(sent, entry.sent),
+      )
+    )
+      blank.push(entry);
+  return blank;
+};
+
+/** A body contract with the members references read accepted, and kept as sent empty, rather than fixed at the empty value a call sent. */
+const released = (body: WriteBody, read: ReadonlySet<string>): WriteBody => {
+  const freed = body.fixed.filter(
+    ({ member, sent }) => read.has(member) && emptyReference(sent, sent),
+  );
+  if (freed.length === 0) return body;
+  return {
+    ...body,
+    fixed: body.fixed.filter((entry) => !freed.includes(entry)),
+    blank: [
+      ...(body.blank ?? []),
+      ...freed.filter(
+        ({ member }) => !body.blank?.some((entry) => entry.member === member),
+      ),
+    ],
+    accepted: [
+      ...body.accepted,
+      ...freed
+        .map(({ member }) => member)
+        .filter((member) => !body.accepted.includes(member)),
+    ],
   };
 };
 
@@ -375,6 +613,7 @@ const mergedBody = (
   const added = contract.accepted.filter(
     (member) => !body.accepted.includes(member),
   );
+  const blank = joinedBlanks(body.blank ?? [], contract.blank ?? []);
   return {
     ...body,
     accepted: [...body.accepted, ...added],
@@ -382,10 +621,12 @@ const mergedBody = (
       ...body.fixed,
       ...contract.fixed.filter((entry) => !fixed.has(entry.member)),
     ],
-    required: body.required.filter((member) =>
-      Object.hasOwn(later.body, member),
+    required: body.required.filter(
+      (member) =>
+        Object.hasOwn(later.body, member) && !isBlankValue(later.body[member]),
     ),
     identity: body.identity ?? contract.identity,
     kinds: [...body.kinds, ...storedKinds(added, exemplar, later.entity)],
+    ...(blank.length === 0 ? {} : { blank }),
   };
 };

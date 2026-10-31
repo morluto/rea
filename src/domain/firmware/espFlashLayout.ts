@@ -80,10 +80,15 @@ export interface EspFlashPlan {
 
 const SAFE_LABEL = /^(?=.*[A-Za-z_])[A-Za-z0-9_][A-Za-z0-9._-]{0,15}$/u;
 
+/** Windows reserves these device names, alone or before any extension. */
+const WINDOWS_DEVICE_NAME =
+  /^(?:con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³])(?:\.|$)/iu;
+
 /**
  * Partition paths use the label when it is a safe path segment with a
- * letter or underscore that no other label repeats, ignoring case as some
- * file systems do; else the table index, which cannot collide with a label.
+ * letter or underscore that is not a Windows device name and that no other
+ * label repeats, ignoring case as some file systems do; else the table
+ * index, which cannot collide with a label.
  */
 const partitionPaths = (
   partitions: readonly EspPartition[],
@@ -100,6 +105,7 @@ const partitionPaths = (
       const named =
         label !== null &&
         SAFE_LABEL.test(label) &&
+        !WINDOWS_DEVICE_NAME.test(label) &&
         counts.get(label.toLowerCase()) === 1;
       return [
         part.index,

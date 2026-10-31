@@ -91,3 +91,13 @@ it("rejects DTDs without resolving entities", () => {
     } satisfies Partial<CaptureFormatError>),
   );
 });
+
+it("refuses duplicate expanded attribute names rather than dropping source values", () => {
+  expect(() =>
+    decodeSazMetadata(
+      Buffer.from(
+        '<Session xmlns:p="urn:a" xmlns:q="urn:a" p:x="first" q:x="last"/>',
+      ),
+    ),
+  ).toThrow("SAZ metadata is not well-formed XML.");
+});
