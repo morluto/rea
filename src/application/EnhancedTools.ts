@@ -419,8 +419,15 @@ export class EnhancedTools {
       native.data.target_sha256 !== nameSubject.sha256 ||
       native.data.target_architecture !== nameSubject.architecture ||
       native.data.provider.id !== bindingsExecution.value.provider.id ||
+      native.data.provider.name !== bindingsExecution.value.provider.name ||
+      native.data.provider.version !==
+        bindingsExecution.value.provider.version ||
       namesExecution.value.analysisProfile?.provider.id !==
         namesExecution.value.provider.id ||
+      namesExecution.value.analysisProfile?.provider.name !==
+        namesExecution.value.provider.name ||
+      namesExecution.value.analysisProfile?.provider.version !==
+        namesExecution.value.provider.version ||
       nativeSelection === undefined ||
       !machoTargetSelectionMatchesArchitecture(
         nativeSelection,
