@@ -3,23 +3,33 @@ import {
   ARTIFACT_FORMAT_IDS,
   type ArtifactFormatId,
 } from "../domain/artifactGraph.js";
+import type { EspFlashSelection } from "../domain/firmware/espFlashLocation.js";
 import { ESP_IMAGE_LIMITATIONS } from "../domain/firmware/espImageFacts.js";
 import {
   ZIP_PACKAGE_FORMATS,
   type ZipPackageFormat,
 } from "../domain/zipPackageFormat.js";
-import type { ArtifactReader } from "./ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  type ArtifactReader,
+} from "./ArtifactReader.js";
 import type { ArtifactReaderAdmission } from "./ArtifactReaderAdmission.js";
 import { AsarArtifactReader } from "./AsarArtifactReader.js";
 import type { BunStandaloneAdmission } from "./bun/BunStandaloneAdmission.js";
 import { BunStandaloneArtifactReader } from "./BunStandaloneArtifactReader.js";
+import { DfuSeArtifactReader } from "./DfuSeArtifactReader.js";
 import { DirectoryArtifactReader } from "./DirectoryArtifactReader.js";
 import type { DotnetBundleAdmission } from "./dotnet/DotnetBundleAdmission.js";
 import { DotnetBundleArtifactReader } from "./DotnetBundleArtifactReader.js";
+import {
+  EspFlashImageArtifactReader,
+  type EspFlashAdmission,
+} from "./EspFlashImageArtifactReader.js";
 import { EspImageArtifactReader } from "./EspImageArtifactReader.js";
 import { FitArtifactReader } from "./FitArtifactReader.js";
 import type { GodotPckAdmission } from "./GodotPckLocation.js";
 import { GodotPckArtifactReader } from "./GodotPckArtifactReader.js";
+import { InesArtifactReader, INES_LIMITATION } from "./InesArtifactReader.js";
 import { HexRecordArtifactReader } from "./HexRecordArtifactReader.js";
 import { MachOSliceArtifactReader } from "./MachOSliceArtifactReader.js";
 import { NativeDmgArtifactReader } from "./NativeDmgArtifactReader.js";
@@ -27,6 +37,7 @@ import type { NodeSeaAdmission } from "./nodeSea/NodeSeaAdmission.js";
 import { NodeSeaArtifactReader } from "./NodeSeaArtifactReader.js";
 import type { PyInstallerAdmission } from "./pyinstaller/PyInstallerAdmission.js";
 import { PyInstallerArtifactReader } from "./PyInstallerArtifactReader.js";
+import { Uf2ArtifactReader } from "./Uf2ArtifactReader.js";
 import { UImageArtifactReader } from "./UImageArtifactReader.js";
 import { UnityFsArtifactReader } from "./UnityFsArtifactReader.js";
 import { ZipArtifactReader } from "./ZipArtifactReader.js";
@@ -39,6 +50,8 @@ export interface ArtifactReaderConstruction {
   readonly unreadableDirectories: "fail" | "omit";
   readonly admission?: ArtifactReaderAdmission | undefined;
   readonly asarHeaderAdmission?: AsarHeaderAdmission | undefined;
+  /** Caller inputs for an explicitly selected ESP flash image. */
+  readonly espFlashSelection?: EspFlashSelection | undefined;
   /** Caller-selected root spelling; only ASAR companion lookup consumes this. */
   readonly selectedPath?: string | undefined;
 }
@@ -93,6 +106,10 @@ function admittedAs(
   kind: "node-sea",
   options: ArtifactReaderConstruction,
 ): NodeSeaAdmission | ReturnType<typeof sourceOf>;
+function admittedAs(
+  kind: "esp-flash-image",
+  options: ArtifactReaderConstruction,
+): EspFlashAdmission | ReturnType<typeof sourceOf>;
 function admittedAs(
   kind: string,
   options: ArtifactReaderConstruction,
@@ -233,6 +250,22 @@ const NON_ZIP_FORMATS = {
           : { selectedPath: options.selectedPath }),
       }),
   }),
+  ines: container("ines", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation: INES_LIMITATION,
+    createReader: (path, options) => {
+      const source = sourceOf(options);
+      if (source === undefined)
+        throw new ArtifactReaderFailure(
+          "integrity",
+          "iNES inventory requires its admitted source descriptor",
+        );
+      return new InesArtifactReader(path, source);
+    },
+  }),
   "godot-pck": container("godot-pck", {
     roleContainer: true,
     retainClassifiedSource: true,
@@ -337,6 +370,40 @@ const NON_ZIP_FORMATS = {
     readerLimitation: ESP_IMAGE_LIMITATIONS.inventoryScope,
     createReader: (path, options) =>
       new EspImageArtifactReader(path, sourceOf(options)),
+  }),
+  uf2: container("uf2", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "UF2 inventory decodes main-flash block payloads into address-contiguous regions per familyID. It does not establish CPU, byte order, memory map, or an entry point; a familyID names a target family, and gaps are unwritten, not zero.",
+    createReader: (path, options) =>
+      new Uf2ArtifactReader(path, sourceOf(options)),
+  }),
+  dfuse: container("dfuse", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "DfuSe inventory lists each target element as one region at its declared address. It does not establish CPU, byte order, memory map, or an entry point; an alternate setting selects a device memory, not an address space REA can interpret.",
+    createReader: (path, options) =>
+      new DfuSeArtifactReader(path, sourceOf(options)),
+  }),
+  "esp-flash-image": container("esp-flash-image", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "ESP flash layout inventory reads a dump's bootloader region, partition table and partitions and decodes the bootloader and app partitions as ESP images. The OTA selection is derived without app rollback or anti-rollback, and the running partition is unknown. Partitions, nvs_keys included, are extracted as ordinary data; nothing is decrypted.",
+    createReader: (path, options) =>
+      new EspFlashImageArtifactReader(
+        path,
+        admittedAs("esp-flash-image", options),
+        options.espFlashSelection,
+      ),
   }),
   fit: container("fit", {
     roleContainer: true,

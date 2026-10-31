@@ -22,6 +22,8 @@ import { fileURLToPath } from "node:url";
 
 import { createMessage, generateKey, readPrivateKey, sign } from "openpgp";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 
 import {
   LinuxHopperPublisher,
@@ -1035,9 +1037,13 @@ portableTar(
           throw new Error("Fixture descriptor close temporarily unavailable");
         return await originalClose.apply(this);
       });
-    try {
-      const inspection = f.publisher.inspectLauncher(f.launcher);
-      await metadataCloseStarted;
+    const inspection = f.publisher.inspectLauncher(f.launcher);
+    await withVerifierCleanup(async () => {
+      await awaitAcknowledgement(
+        metadataCloseStarted,
+        inspection,
+        "metadata close",
+      );
       const hashFailure = await f.publisher.hashLauncher(f.launcher).then(
         () => undefined,
         (cause: unknown) => cause,
@@ -1057,11 +1063,14 @@ portableTar(
       });
       await expect(f.publisher.close()).resolves.toBeUndefined();
       expect(close).toHaveBeenCalledTimes(9);
-    } finally {
-      releaseMetadataClose();
-      close.mockRestore();
-      await f.publisher.close();
-    }
+    }, [
+      releaseMetadataClose,
+      async () => {
+        await inspection;
+      },
+      () => close.mockRestore(),
+      () => f.publisher.close(),
+    ]);
   },
 );
 

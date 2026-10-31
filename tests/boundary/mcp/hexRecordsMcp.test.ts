@@ -8,6 +8,7 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { SREC_S37 } from "../../../src/domain/firmware/hexRecords.fixture.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { artifactExtractionResultSchema } from "../../../src/domain/artifactGraph.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
 
 // The compiled stdio fixture checks advertised schemas against their dialect and
 // validates actual tool responses, avoiding a second source server module graph.
@@ -48,13 +49,22 @@ it.each(["full", "compact"] as const)(
           kind: "inventory",
           collection: "occurrences",
           logical_paths: ["0x08000000-0x08000003.bin"],
-          fields: ["format_metadata"],
+          fields: ["logical_path", "format_metadata"],
         },
       });
       expect(retained.isError, JSON.stringify(retained)).not.toBe(true);
-      expect(JSON.stringify(retained.structuredContent)).toContain(
-        "hex-record-region",
+      const view = analysisViewResultSchema.parse(
+        parseEvidence(retained.structuredContent).normalized_result,
       );
+      expect(view).toMatchObject({
+        kind: "inventory",
+        items: [
+          {
+            logical_path: "0x08000000-0x08000003.bin",
+            format_metadata: { kind: "hex-record-region" },
+          },
+        ],
+      });
       const extracted = await call("extract_artifact", {});
       expect(extracted.isError, JSON.stringify(extracted)).not.toBe(true);
       const result = artifactExtractionResultSchema.parse(

@@ -733,6 +733,65 @@ it("records failed omissions from full reports without treating partial or unhan
   ).rejects.toMatchObject({ code: "ENOENT" });
 });
 
+it("requires executed Python analysis-efficiency cases while allowing optional skips", async () => {
+  const root = await createTestTempDirectory("rea-python-analysis-inventory-");
+  await mkdir(join(root, "scripts"), { recursive: true });
+  await writeFile(
+    join(root, "scripts", "run-python-tests.py"),
+    await readFile(
+      new URL("../../../scripts/run-python-tests.py", import.meta.url),
+    ),
+  );
+  const passing =
+    "import unittest\nclass Example(unittest.TestCase):\n def test_case(self): pass\n";
+  for (const family of ["mitmproxy", "native", "pwndbg"]) {
+    await mkdir(join(root, "bridge", family), { recursive: true });
+    await writeFile(join(root, "bridge", family, "test_case.py"), passing);
+  }
+  const directory = join(root, "tests", "support", "analysis-efficiency");
+  await mkdir(directory, { recursive: true });
+  const testFile = join(directory, "test_example.py");
+  const run = () =>
+    execute("python3", ["scripts/run-python-tests.py"], { cwd: root });
+
+  await writeFile(join(root, "checkout_support.py"), "VALUE = 42\n");
+  await writeFile(
+    testFile,
+    "import unittest\nfrom checkout_support import VALUE\nclass Example(unittest.TestCase):\n def test_case(self): self.assertEqual(VALUE, 42)\n",
+  );
+  expect((await run()).stderr).toContain("OK");
+
+  for (const content of [
+    "# A present file can contain no tests.\n",
+    "import unittest\nclass Example(unittest.TestCase):\n @unittest.skip('unavailable')\n def test_case(self): pass\n",
+    "import unittest\nclass Example(unittest.TestCase):\n def test_case(self):\n  for x in range(2):\n   with self.subTest(x=x): self.skipTest('unavailable')\n",
+    "import unittest\nclass Example(unittest.TestCase):\n def test_case(self):\n  with self.subTest(outer=1):\n   with self.subTest(inner=2): self.skipTest('unavailable')\n",
+  ]) {
+    await writeFile(testFile, content);
+    await expect(run()).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining(
+        '"code": "no_executed_analysis_efficiency_tests"',
+      ),
+    });
+  }
+  for (const content of [
+    "import unittest\nclass Example(unittest.TestCase):\n def test_case(self): pass\n @unittest.skip('optional')\n def test_skipped(self): pass\n",
+    "import unittest\nclass Example(unittest.TestCase):\n def test_case(self):\n  for x in range(2):\n   with self.subTest(x=x):\n    if x == 0: self.skipTest('optional')\n    self.assertEqual(x, 1)\n",
+  ]) {
+    await writeFile(testFile, content);
+    expect((await run()).stderr).toContain("skipped 'optional'");
+  }
+  await writeFile(
+    testFile,
+    "import unittest\nclass Example(unittest.TestCase):\n def test_case(self):\n  with self.subTest(value=1): self.fail('subtest failed')\n",
+  );
+  await expect(run()).rejects.toMatchObject({
+    code: 1,
+    stderr: expect.stringContaining("subtest failed"),
+  });
+});
+
 it("requires executed Python cases in every bridge family", async () => {
   const root = await createTestTempDirectory("rea-python-inventory-");
   await mkdir(join(root, "scripts"), { recursive: true });

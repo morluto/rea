@@ -1,3 +1,4 @@
+import { parseEspFlashAddress } from "../domain/firmware/espFlashSelection.js";
 import { registerNativeFunctionMatchingTool } from "./registerNativeFunctionMatchingTool.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
@@ -25,6 +26,7 @@ import { mcpProgressReporter } from "./mcpProgress.js";
 import { registerArtifactComparisonTool } from "./registerArtifactComparisonTool.js";
 import { registerBundleComparisonTool } from "./registerBundleComparisonTool.js";
 import { registerCloseLifecycleTool } from "./registerCloseLifecycleTool.js";
+import { registerResetInvestigationTool } from "./registerResetInvestigationTool.js";
 import { registerFunctionComparisonTool } from "./registerFunctionComparisonTool.js";
 import { registerInvestigationTools } from "./registerInvestigationTools.js";
 import { registerProcessComparisonTool } from "./registerProcessComparisonTool.js";
@@ -157,6 +159,7 @@ export interface LifecycleToolRegistration extends SessionAvailabilityProbes {
   readonly statusContract: ReturnType<typeof toolContract<"binary_session">>;
   readonly startedAt: string;
   readonly availabilityPolicy: () => AvailabilityPolicy;
+  readonly artifactResources: ArtifactResourceScope;
   readonly closeProcessResources: () => Promise<Result<null, AnalysisError>>;
 }
 
@@ -165,6 +168,7 @@ const registerLifecycleTools = (
 ): void => {
   registerOpenLifecycleTool(registration);
   registerCloseLifecycleTool(registration);
+  registerResetInvestigationTool(registration);
   registerSessionStatusTool({
     ...registration,
     contract: registration.statusContract,
@@ -192,6 +196,25 @@ const registerOpenLifecycleTool = ({
           ...(input.entry_point === undefined
             ? {}
             : { entryPoint: input.entry_point }),
+          ...(input.flash_offset === undefined &&
+          input.partition_table_offset === undefined
+            ? {}
+            : {
+                espFlash: {
+                  ...(input.flash_offset === undefined
+                    ? {}
+                    : {
+                        flashOffset: parseEspFlashAddress(input.flash_offset),
+                      }),
+                  ...(input.partition_table_offset === undefined
+                    ? {}
+                    : {
+                        partitionTableOffset: parseEspFlashAddress(
+                          input.partition_table_offset,
+                        ),
+                      }),
+                },
+              }),
           ...(input.provider_id === undefined
             ? {}
             : { providerId: input.provider_id }),
@@ -236,11 +259,12 @@ const registerContextTools = (
 ): void => {
   const navigationContract = toolContract("get_navigation_context");
   const addressContract = toolContract("inspect_address_context");
+  const admission = withAdmittedAnalysis({ kind: "session", session });
   server.registerTool(
     navigationContract.name,
     toolRegistrationOptions(navigationContract),
     async (input, context) => {
-      const admitted = await session.withAdmittedAnalysis(
+      const admitted = await admission(
         navigationContract.name,
         context.mcpReq.signal,
         async (analysis) =>
@@ -258,7 +282,7 @@ const registerContextTools = (
     addressContract.name,
     toolRegistrationOptions(addressContract),
     async (input, context) => {
-      const admitted = await session.withAdmittedAnalysis(
+      const admitted = await admission(
         addressContract.name,
         context.mcpReq.signal,
         async (analysis) =>

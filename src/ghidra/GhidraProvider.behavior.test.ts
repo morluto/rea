@@ -40,7 +40,10 @@ import { parseExecutableHeader } from "../domain/binaryTarget.js";
 import { elf, thinMach } from "../domain/binaryTarget.fixture.js";
 import { GhidraProvider } from "./GhidraProvider.js";
 import type { GhidraTargetSnapshot } from "./GhidraClient.js";
-import type { GhidraProviderClientFactory } from "./GhidraProviderClient.js";
+import {
+  ghidraMissingProgramGuidance,
+  type GhidraProviderClientFactory,
+} from "./GhidraProviderClient.js";
 import type { GhidraHeadlessLauncher } from "./GhidraLauncher.js";
 import type { GhidraInstallationHost } from "./GhidraInstallation.js";
 import {
@@ -479,6 +482,7 @@ describe("Ghidra raw-binary profile", () => {
     expect(resolved.ok && shifted.ok).toBe(true);
     if (!resolved.ok || !shifted.ok || resolved.value.profile === null)
       throw new Error("expected raw-binary profiles");
+    expect(shifted.value.profile?.digest).toEqual(expect.any(String));
     expect(shifted.value.profile?.digest).not.toBe(
       resolved.value.profile.digest,
     );
@@ -1333,6 +1337,121 @@ describe("Ghidra result projection", () => {
       error: { _tag: "AnalysisCancelledError", operation: "open_binary" },
     });
   });
+});
+
+describe("Ghidra file-offset outcome projection", () => {
+  const remoteFailure = (remoteCode: string, message: string) =>
+    provider(installationHost(), () => ({
+      start: () => Promise.resolve(ok(sessionInfo())),
+      callTool: () =>
+        Promise.resolve(
+          err(
+            new GhidraSessionError(
+              "remote",
+              message,
+              { remote_code: remoteCode },
+              { remoteCode },
+            ),
+          ),
+        ),
+      close: () => Promise.resolve(ok(null)),
+    }));
+
+  it.each([
+    [
+      "address_unmapped",
+      "unmapped",
+      "Address 0x403030 is outside every Ghidra memory block",
+    ],
+    [
+      "address_uninitialized",
+      "uninitialized",
+      "Address 0x403010 is in uninitialized Ghidra memory block .bss",
+    ],
+    [
+      "file_mapping_absent",
+      "absent",
+      "Address 0x403010 in initialized Ghidra memory block auxiliary has no authoritative mapping to the admitted target file",
+    ],
+    [
+      "file_mapping_ambiguous",
+      "ambiguous",
+      "Address 0x403010 has 2 authoritative mappings to the admitted target file",
+    ],
+    [
+      "file_offset_unrepresentable",
+      "unrepresentable",
+      "Address 0x403010 maps to an admitted target-file offset beyond the exact JSON integer range",
+    ],
+  ] as const)(
+    "reports %s as a conforming address without an exact offset",
+    async (remoteCode, outcome, message) => {
+      const client = await createElfClient(remoteFailure(remoteCode, message));
+      // A non-canonical spelling the bridge accepts survives verbatim.
+      const result = await client.execute("address_to_file_offset", {
+        address: "0X00403010",
+      });
+      if (result.ok) throw new Error("Expected a file-offset outcome");
+      const projected = projectAnalysisError(result.error);
+      expect(projected).toMatchObject({
+        code: "invalid_request",
+        category: "invalid_input",
+        retryable: false,
+        details: {
+          operation: "address_to_file_offset",
+          issues: [
+            {
+              path: ["address"],
+              reason: "invalid_value",
+              message,
+              observed: { address: "0X00403010", file_mapping: outcome },
+            },
+          ],
+          diagnostics: { remote_code: remoteCode },
+        },
+      });
+      expect(projected.message.startsWith(`${message}. `)).toBe(true);
+      expect(projected.message).not.toContain("Analysis input is invalid");
+      expect(projected).not.toHaveProperty("recovery");
+      expect(projected.remediation.action).toContain(
+        "inspect_native_load_image",
+      );
+      expect(projected.remediation.action).not.toContain("schema");
+      expect(projected.remediation.action).not.toContain("tools/list");
+      await client.close();
+    },
+  );
+
+  it.each([
+    ["address_to_file_offset", "invalid_request"],
+    ["procedure_pseudo_code", "not_found"],
+  ] as const)(
+    "keeps schema recovery for an ordinary %s %s refusal",
+    async (operation, remoteCode) => {
+      const client = await createElfClient(
+        remoteFailure(remoteCode, "Fixture bridge rejected the request"),
+      );
+      const result = await client.execute(
+        operation,
+        operation === "address_to_file_offset"
+          ? { address: "0x403010" }
+          : { procedure: "missing" },
+      );
+      if (result.ok) throw new Error("Expected an input refusal");
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: "invalid_request",
+        message:
+          "Analysis input is invalid. Check the arguments and try again.",
+        recovery: { kind: "inspect_input_contract", operation },
+        details: {
+          issues: [
+            { path: [], message: "Fixture bridge rejected the request" },
+          ],
+        },
+      });
+      await client.close();
+    },
+  );
 });
 
 describe("Ghidra decompiler failure projection", () => {
@@ -3294,6 +3413,101 @@ describe("Ghidra deadline guidance", () => {
   });
 });
 
+describe("Ghidra missing project program", () => {
+  const startFailure = async (
+    stdout: string,
+    environment: Readonly<Record<string, string>> = {},
+  ) => {
+    const root = await mkdtemp(join(tmpdir(), "rea-missing-program-"));
+    onTestFinished(async () => {
+      await rm(root, { recursive: true, force: true });
+    });
+    await mkdir(join(root, "selected.rep"));
+    await writeFile(join(root, "selected.gpr"), "marker");
+    const failure = new GhidraSessionError(
+      "start",
+      "Ghidra exited before the bridge was ready",
+      {
+        failure_kind: "start",
+        exit_code: 1,
+        failure_output: failureOutput(stdout),
+      },
+    );
+    const ghidra = provider(
+      installationHost(),
+      () => ({
+        start: async () => err(failure),
+        callTool: async () => err(failure),
+        close: async () => ok(null),
+      }),
+      {
+        REA_GHIDRA_PROJECT_PATH: join(root, "selected.gpr"),
+        ...environment,
+      },
+    );
+    onTestFinished(async () => {
+      await ghidra.closeOwnedResources();
+    });
+    const target = executableTarget("elf", "x86_64");
+    const profile = await ghidra.resolveAnalysisProfile(target);
+    if (!profile.ok || profile.value.profile === null)
+      throw new Error("Expected Ghidra analysis profile");
+    const result = await ghidra
+      .createClient(target, profile.value.profile)
+      .execute("list_documents", {});
+    if (result.ok) throw new Error("Expected a Ghidra start failure");
+    return projectAnalysisError(result.error);
+  };
+  const abort = (name: string) =>
+    `ERROR Abort due to Headless analyzer error: Requested project program file(s) not found: ${name} (HeadlessAnalyzer) java.io.IOException: Requested project program file(s) not found: ${name}`;
+
+  const expectMissingProgram = (
+    projected: Awaited<ReturnType<typeof startFailure>>,
+    programName: string,
+    configured: boolean,
+  ) => {
+    const guidance = ghidraMissingProgramGuidance(programName, configured);
+    expect(projected).toMatchObject({
+      code: "configuration_invalid",
+      details: {
+        settings: [
+          {
+            setting: "REA_GHIDRA_PROGRAM_NAME",
+            constraint: guidance.constraint,
+          },
+        ],
+      },
+    });
+    expect(projected.remediation.action).toBe(guidance.remediationAction);
+    expect(projected.message).toContain(JSON.stringify(programName));
+  };
+
+  it("reports the program name defaulted from the target as REA_GHIDRA_PROGRAM_NAME", async () => {
+    expectMissingProgram(
+      await startFailure(abort("fixture")),
+      "fixture",
+      false,
+    );
+  });
+
+  it("reports an explicitly configured program name that the project lacks", async () => {
+    const projected = await startFailure(abort("program_gamma"), {
+      REA_GHIDRA_PROGRAM_NAME: "program_gamma",
+    });
+    expectMissingProgram(projected, "program_gamma", true);
+  });
+
+  it("keeps the generic start failure when Ghidra names a different program", async () => {
+    const projected = await startFailure(abort("fixture_other"));
+    expect(projected.code).toBe("execution_failure");
+  });
+
+  it("keeps the generic start failure for unrelated launch output", async () => {
+    const projected = await startFailure("ERROR Unable to lock project");
+    expect(projected.code).toBe("execution_failure");
+  });
+});
+
 describe("Ghidra analysis seeds and configured language", () => {
   const seedSession = async (
     report: (sha256: string) => GhidraSeedReport | undefined,
@@ -4651,14 +4865,14 @@ it("reports every Windows existing-project capability unavailable before open", 
     REA_GHIDRA_PROJECT_PATH: join(process.cwd(), "selected.gpr"),
   });
   try {
+    const capabilities = ghidra.capabilities();
+    expect(capabilities.length).toBeGreaterThan(0);
     expect(
-      ghidra
-        .capabilities()
-        .every(
-          (capability) =>
-            !capability.available &&
-            capability.availabilityCode === "unsupported_host",
-        ),
+      capabilities.every(
+        (capability) =>
+          !capability.available &&
+          capability.availabilityCode === "unsupported_host",
+      ),
     ).toBe(true);
     const readiness = await ghidra.inspectReadinessSnapshot();
     expect(readiness.availability).toMatchObject({
@@ -4666,6 +4880,9 @@ it("reports every Windows existing-project capability unavailable before open", 
       code: "unsupported_host",
       reason: EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
     });
+    expect(readiness.capabilities.map(({ operation }) => operation)).toEqual(
+      capabilities.map(({ operation }) => operation),
+    );
     expect(
       readiness.capabilities.every(
         (capability) =>

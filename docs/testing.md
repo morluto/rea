@@ -382,6 +382,38 @@ matching real-provider lane.
 | Client configuration or schema conversion | [Native client lane](client-verification.md)                  | Distinguish loopback models from live services              |
 | Agent investigation quality               | [Agent evaluation](#agent-evaluation-and-conformance-records) | Review transcript and scenario-specific evidence            |
 
+### Provider-backed workflow verification
+
+For a new or changed provider-backed tool, select tests from the analyst's
+question and the facts the contract claims, not from an upstream command list.
+Use the existing workflow as a baseline and identify what the proposed tool
+adds. Choose the relevant cases below; do not require every provider or a
+Cartesian matrix when it would not change the claim.
+
+When auditing existing tools, compare selected analyst workflows with the cases
+their existing tests and real-provider lanes actually exercise. Run relevant
+public workflows and focused checks; report untested scenarios rather than
+inferring that a green test proves them or that no prior testing occurred. A fix
+should add a regression for the demonstrated failure at its owning boundary and
+affected consumer.
+
+- Use a controlled target with independently known facts and a meaningful
+  counterexample. Compare native provider output with the target or a
+  format-aware oracle; a provider label, a mock, or another REA projection is
+  not independent proof of the underlying fact.
+- Exercise the affected public CLI/MCP workflow, including handoffs between
+  calls. Assert the requested result, caller-selected inputs, source identity,
+  evidence and coverage. Check that unavailable, partial and empty outcomes
+  retain their different meanings across the producing and consuming boundaries.
+- Where relevant, continue after a mixed success, failed request, cancellation
+  or close/reopen. Verify the next supported recovery and preservation of prior
+  results and resource ownership. Use the applicable lifecycle regressions below.
+- Record the provider version, host, fixture, actual entrypoint, controlled
+  faults and skipped or unavailable coverage. A simulated provider tests the
+  integration boundary; a scripted sequence tests that sequence, not an agent's
+  ability to discover it. Run the matching real-provider and agent lanes when
+  their respective claims require them.
+
 ## Test design and pruning
 
 Prefer real public CLI/MCP workflows, then production-boundary integration,
@@ -537,6 +569,27 @@ formerly failing size/depth and distinguish cold runs, warm builds, coverage,
 and toolchain conditions when comparing timings.
 
 ## Lifecycle regressions
+
+Investigation lifetime changes exercise public MCP target A/B switches, target-free
+close and close cleanup failure/retry, with exact retained IDs and complete Unknown
+revision histories. Verify engine replay/cache removal separately from retained
+facts. An explicit reset must preserve a healthy engine and existing metadata
+invalidation, drain an admitted signal-ignoring late result, block later work,
+and prevent stale replay/source bindings from restoring old facts. Cover checkpoint
+overwrite refusal, publication followed by cancellation or staging cleanup failure,
+cleanup retry, then fresh-process bundle import with identical original references
+and Unknown history. Capacity admission tests preserve the complete pre-state on
+failed record/import/Unknown transactions, count duplicates once, account for
+metadata size deltas and release budget on reset. Controlled providers and cleanup
+seams establish ordering and failure semantics; real application/provider runs are
+reported separately.
+
+Hold successful and error replies at the MCP transport boundary while reset
+queues behind their original admission. Verify checkpoint contents and publication
+order, including SDK output validation failure, handler failure and cancellation
+before or during send. Handler cleanup must settle even when the SDK suppresses
+the reply. An outgoing server request with the same numeric ID as an incoming
+tool request must not acknowledge that tool's response.
 
 For changes to resource acquisition, readiness, cancellation, or cleanup, select
 the affected owners and applicable scenarios below. Include temporary snapshots
@@ -1029,7 +1082,7 @@ prove behavior on the verified Ghidra 12.1.4 and JDK 21 build.
 | `npm run verify:ghidra`                    | Linux x64/arm64 ELF or macOS x64/arm64 Mach-O                                                                    | Host C compiler, Ghidra 12.1.4, and full JDK 21                             |
 | `npm run verify:ghidra:seeds`              | POSIX; raw x86 fixture; seed ordering, BSS labels, analyzer readback, not-applicable and unknown analyzer names  | Ghidra 12.1.4 and full JDK 21                                               |
 | `npm run verify:ghidra:swift`              | macOS x64/arm64 Mach-O                                                                                           | Host Swift compiler, Ghidra 12.1.4, and full JDK 21                         |
-| `npm run verify:ghidra:riscv`              | Linux/macOS x64/arm64 host; source-owned RV32/RV64 ELF through CLI and MCP                                       | RISC-V Clang, LLD, LLVM readelf, Ghidra 12.1.4, and full JDK 21             |
+| `npm run verify:ghidra:riscv`              | Linux/macOS x64/arm64 host; source-owned RV32/RV64 double-float and RV32 ilp32 ELF through CLI and MCP           | RISC-V Clang, LLD, LLVM readelf and objdump, Ghidra 12.1.4, and full JDK 21 |
 | `npm run verify:ghidra:switch`             | Linux x64 ELF; GCC/Clang optimized and stripped switch fixtures                                                  | GCC, Clang, GNU nm/objdump/strip, Ghidra 12.1.4, and full JDK 21            |
 | `npm run verify:ghidra:aarch64-jump-table` | Any supported Ghidra host; AArch64 ELF; signed/unsigned byte/halfword tables; host ARM64 Mach-O                  | Clang with AArch64 target support, Ghidra 12.1.4, and full JDK 21           |
 | `npm run verify:ghidra:cross-format`       | Any supported Ghidra host; also analyzes AArch64 ELF, x86-64 PE, and x86-64 Mach-O                               | `clang`, LLD, and `lld-link` in addition to host-lane prerequisites         |
@@ -1438,6 +1491,11 @@ cached byte spans and a Ghidra comparison. See the [Linux report](https://github
 for measured scope and limitations. Windows, PE and universal Mach-O remain
 unverified by this lane.
 
+Kuna 1.986 passed the fixture and a separate small, source-owned Mach-O with
+symbols and stripped on macOS arm64, including the Ghidra comparison and owned
+cleanup. Linux and other hosts have not been verified with 1.986; this check is
+not a repeat of the larger 1.833 matrix.
+
 ## DOS Ghidra analysis
 
 `npm run verify:ghidra:dos` requires the supported Ghidra and JDK installation
@@ -1508,8 +1566,9 @@ real-provider coverage.
 For source-identity boundaries that a normal single-file import cannot create,
 `tests/conformance/ghidra/ReaFileOffsetSourceProbe.java` exercises the production
 bridge against real Ghidra `FileBytes`. It rejects auxiliary and partial sources,
-checks the original target's round trip, and retains ambiguity when duplicate
-target bytes have distinct loaded mappings. Injected decompiler failures and
+keeps distinct outcome codes for uninitialized and unmapped addresses, checks
+the original target's round trip, and retains ambiguity when duplicate target
+bytes have distinct loaded mappings. Injected decompiler failures and
 cancellation verify that completed source/function resolution facts and backend
 failure codes survive; these injections do not establish natural engine failures.
 On Windows, after creating the
@@ -2000,6 +2059,20 @@ and derives malformed images and ESP8266 v1 and v3 images. It checks each
 tool before building and warns when esptool is not the pinned v5.6.0.
 `REA_XTENSA_ESP32_GCC` adds an ESP32 Xtensa build. See
 [ESP images](esp-image.md).
+
+`npm run verify:uf2` needs only a Python that runs esptool, named by
+`REA_ESPTOOL_PYTHON` (default `python3`). It writes inputs at known addresses,
+builds UF2 files with esptool's `merge-bin --format uf2` (v4 `merge_bin`) with
+and without MD5 and with 256-byte payloads, and concatenates two chips'
+outputs. Inspection and extraction through the built CLI must return each input
+at its address under the familyID esptool itself reports. It is not part of CI.
+See [UF2 and DfuSe images](uf2-dfuse.md).
+`npm run verify:esp-flash` needs the same tools and an ESP-IDF checkout
+(`REA_ESP_IDF_PATH`) for `gen_esp32part.py` and `otatool.py`. It builds
+partition tables, assembles dumps with `esptool merge-bin`, writes OTA records
+with otatool through `tests/conformance/esp/flash_file_tool.py`, and compares
+REA's flash facts with `image-info`, the decoded table and
+`otatool read_otadata`. See [ESP flash images](esp-flash-image.md).
 
 ### JavaScript source recovery
 

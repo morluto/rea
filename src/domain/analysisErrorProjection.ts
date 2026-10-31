@@ -1,5 +1,9 @@
 import { projectArtifactIntegrityDetails } from "./artifactIntegrity.js";
-import type { AnalysisErrorRecovery } from "./analysisErrorRecovery.js";
+import {
+  cleanupRetryRecovery,
+  cleanupRetryRemediation,
+  type AnalysisErrorRecovery,
+} from "./analysisErrorRecovery.js";
 import { jsonValueSchema, type JsonValue } from "./jsonValue.js";
 import { isImmutableJsonSnapshot } from "./immutableJson.js";
 
@@ -133,7 +137,13 @@ const projectError = (
             : jsonValueSchema.parse(partialObservation),
         }),
   };
-  const recovery = errorRecovery(error);
+  // The retained cleanup owner's retry precedes the failed operation's hint.
+  const cleanupRetry = error.cleanupRetry;
+  const recovery =
+    cleanupRetry === undefined
+      ? errorRecovery(error)
+      : cleanupRetryRecovery(cleanupRetry);
+  const remediation = analysisErrorRemediationAction(error);
   return {
     code,
     category: analysisErrorCategory(error),
@@ -146,7 +156,10 @@ const projectError = (
         error instanceof AnalysisResourceConstraintError &&
         (error.retryable ?? error.resource === "capacity")),
     remediation: {
-      action: analysisErrorRemediationAction(error),
+      action:
+        cleanupRetry === undefined
+          ? remediation
+          : `${remediation} ${cleanupRetryRemediation(cleanupRetry)}`,
     },
     ...(recovery === undefined ? {} : { recovery }),
     ...(Object.keys(details).length === 0 ? {} : { details }),
@@ -157,10 +170,9 @@ const errorRecovery = (
   error: AnalysisError,
 ): AnalysisErrorRecovery | undefined => {
   if (error instanceof AnalysisInputError)
-    return {
-      kind: "inspect_input_contract",
-      operation: error.operation,
-    };
+    return error.conformsToInputContract
+      ? undefined
+      : { kind: "inspect_input_contract", operation: error.operation };
   if (error instanceof AnalysisTimeoutError)
     return {
       kind: "inspect_timeout_state",
@@ -379,6 +391,9 @@ const requestErrorDetails = (
     return {
       evidence_id: error.evidenceId,
       reason: error.reason,
+      ...(error.referenceScope === undefined
+        ? {}
+        : { reference_scope: error.referenceScope }),
       expected: error.expected,
       actual: error.actual,
     };
