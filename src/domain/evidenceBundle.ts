@@ -57,8 +57,12 @@ const immutableBundles = new WeakMap<object, EvidenceBundle>();
 
 /** Caller input has valid shape but is not in authenticated canonical form. */
 export class NonCanonicalEvidenceBundleError extends TypeError {
-  constructor() {
-    super("Evidence bundle manifests are not canonical");
+  constructor(section: "records" | "manifests" = "manifests") {
+    super(
+      section === "records"
+        ? "Evidence bundle records are not in canonical order"
+        : "Evidence bundle manifests are not canonical",
+    );
     this.name = "NonCanonicalEvidenceBundleError";
   }
 }
@@ -375,13 +379,26 @@ const authenticateBundle = (
     }),
     parsed.unknowns,
   );
-  if (!equalJsonText(parsed, canonical))
-    throw new NonCanonicalEvidenceBundleError();
-  if (seal) {
-    freezeJsonSnapshot(canonical);
-    immutableBundles.set(canonical, canonical);
+  if (equalJsonText(parsed, canonical)) {
+    if (seal) {
+      freezeJsonSnapshot(canonical);
+      immutableBundles.set(canonical, canonical);
+    }
+    return canonical;
   }
-  return canonical;
+  // Attribute the violation to the section that actually differs so the
+  // public diagnostic does not falsely blame unchanged manifests.
+  const recordsOnlyDiffer = Object.keys(canonical).every(
+    (key) =>
+      key === "records" ||
+      equalJsonText(
+        parsed[key as keyof EvidenceBundle],
+        canonical[key as keyof EvidenceBundle],
+      ),
+  );
+  throw new NonCanonicalEvidenceBundleError(
+    recordsOnlyDiffer ? "records" : "manifests",
+  );
 };
 
 const validateUnknownGraph = (

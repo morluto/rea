@@ -143,7 +143,7 @@ describe("reconstruction obligation ledger CLI bundle validation", () => {
       retryable: false,
       details: {
         reason: expect.stringContaining(
-          "Evidence bundle manifests are not canonical",
+          "Evidence bundle records are not in canonical order",
         ),
       },
     });
