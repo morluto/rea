@@ -185,6 +185,13 @@ observed entry label. An interior address therefore remains visible without
 being mistaken for the function entry. Identity failures are reported as
 `procedure.status: "unknown"`; label failures leave a null name and `name_error`.
 Neither failure discards usable pseudocode, and names are not parsed from it.
+A provider answer without pseudocode is an error item that keeps that
+observation's own `limitations`, so a reason the provider reported for that
+entry, such as a Kuna export failure or a missing body, stays with the item.
+Null pseudocode is `capability_unavailable`; empty or non-text pseudocode is
+`unreadable_output`. Provider failures keep their typed error. Successful items
+do not repeat limitations; the batch Evidence aggregates every observation's
+limitations by provider and operation.
 Resolved entries also appear in the composed Evidence locations. New batch
 Evidence commits the revised workflow profile; retained historical Evidence
 remains valid. This tool
