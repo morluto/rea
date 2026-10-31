@@ -420,8 +420,9 @@ export const createDarwinProcessRunTokenReader = (
     readonly moduleCachePath?: string;
     /**
      * REA-owned per-user directory that reuses a verified compiled helper
-     * across processes. Unset compiles once per reader, as callers selecting
-     * their own compiler, module cache, or write boundary expect.
+     * across processes with the xcrun compiler. Unset compiles once per
+     * reader, as callers selecting their own compiler, module cache, or write
+     * boundary expect.
      */
     readonly helperCacheDirectory?: string;
   } = {},
@@ -437,19 +438,13 @@ export const createDarwinProcessRunTokenReader = (
   });
   const moduleCachePath = options.moduleCachePath ?? "";
   const helperCache =
-    options.helperCacheDirectory === undefined
+    options.helperCacheDirectory === undefined || compiler.kind !== "xcrun"
       ? undefined
       : createDarwinHelperCache({
           directory: options.helperCacheDirectory,
           sources: sourceFiles,
-          toolchain: {
-            compiler: compiler.kind,
-            executable: compiler.executable,
-            ...(compiler.kind === "swiftc" ? { sdk: compiler.sdkRoot } : {}),
-            // xcrun selects its toolchain and SDK from these.
-            developer_dir: environment.DEVELOPER_DIR ?? "",
-            sdkroot: environment.SDKROOT ?? "",
-          },
+          xcrun: compiler.executable,
+          environment,
         });
   let root: ProcessReaderRoot | undefined;
   let executable: string | undefined;
@@ -809,7 +804,13 @@ export const createDarwinProcessRunTokenReader = (
         await operation.promise;
       }
       await Promise.allSettled(activeCommands);
-      await cleanupRoot();
+      // Each owner keeps its own failed cleanup for the next close attempt.
+      const [rootCleanup, cacheCleanup] = await Promise.allSettled([
+        cleanupRoot(),
+        helperCache?.close(),
+      ]);
+      if (rootCleanup.status === "rejected") throw rootCleanup.reason;
+      if (cacheCleanup.status === "rejected") throw cacheCleanup.reason;
     })().catch((cause: unknown) => {
       if (closePromise === pendingClose) closePromise = undefined;
       throw cause;

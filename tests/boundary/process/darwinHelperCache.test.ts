@@ -1,17 +1,23 @@
+import { execFile } from "node:child_process";
 import {
   chmod,
   lstat,
   mkdir,
   readFile,
   readdir,
+  realpath,
+  rm,
   stat,
   symlink,
+  utimes,
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { writeFakeXcrun } from "../../fixtures/darwinHelperToolchain.js";
 import {
   createDarwinHelperCache,
   darwinHelperCacheDirectory,
@@ -19,6 +25,7 @@ import {
 import { createDarwinProcessRunTokenReader } from "../../../src/process/DarwinProcessRunTokenReader.js";
 import { createSystemProcessOwnershipHost } from "../../../src/process/ProcessOwnershipObservation.js";
 
+const execFileAsync = promisify(execFile);
 const posix = process.platform !== "win32";
 const onDarwin = process.platform === "darwin";
 
@@ -28,18 +35,24 @@ const exists = (path: string): Promise<boolean> =>
     () => false,
   );
 
-/** One cache over fixture sources, plus a compiled helper to publish. */
-const fixtureCache = async (prefix: string) => {
+/** One cache over fixture sources and toolchain, plus a helper to publish. */
+const fixtureCache = async (prefix: string, rootParent = "cache") => {
   const directory = await createTestTempDirectory(prefix);
   const source = join(directory, "Reader.swift");
   await writeFile(source, "// helper source v1\n");
   const compiled = join(directory, "compiled-reader");
   await writeFile(compiled, "#!/bin/sh\necho compiled\n");
   await chmod(compiled, 0o755);
-  const root = join(directory, "cache", "process-helper");
-  const create = (toolchain: Record<string, string> = { compiler: "xcrun" }) =>
-    createDarwinHelperCache({ directory: root, sources: [source], toolchain });
-  return { directory, source, compiled, root, create };
+  const xcrun = await writeFakeXcrun(directory);
+  const root = join(directory, rootParent, "process-helper");
+  const create = () =>
+    createDarwinHelperCache({
+      directory: root,
+      sources: [source],
+      xcrun: xcrun.executable,
+      environment: process.env,
+    });
+  return { directory, source, compiled, root, xcrun, create };
 };
 
 const missKey = async (
@@ -58,7 +71,7 @@ it.skipIf(!posix)(
     const first = fixture.create();
     const key = await missKey(first);
     const published = await first.publish(key, fixture.compiled);
-    expect(published).toBe(join(fixture.root, key, "reader"));
+    expect(published).toBe(join(await realpath(fixture.root), key, "reader"));
     expect((await stat(fixture.root)).mode & 0o777).toBe(0o700);
     expect((await stat(join(fixture.root, key))).mode & 0o777).toBe(0o700);
     expect((await stat(published ?? "")).mode & 0o777).toBe(0o700);
@@ -71,22 +84,29 @@ it.skipIf(!posix)(
       kind: "hit",
       executable: published,
     });
+    await first.close();
   },
 );
 
 it.skipIf(!posix)(
-  "keys entries on helper source bytes and toolchain selection",
+  "keys entries on helper sources and the toolchain xcrun resolves",
   async () => {
     const fixture = await fixtureCache("rea-helper-cache-key-");
-    const key = await missKey(fixture.create());
-    expect(await missKey(fixture.create({ compiler: "swiftc" }))).not.toBe(key);
+    const keys = [await missKey(fixture.create())];
     await writeFile(fixture.source, "// helper source v2\n");
-    expect(await missKey(fixture.create())).not.toBe(key);
+    keys.push(await missKey(fixture.create()));
+    // An in-place compiler or SDK update keeps paths but changes identity.
+    await writeFile(fixture.xcrun.swiftc, "compiler v2 (longer)");
+    keys.push(await missKey(fixture.create()));
+    const later = new Date(Date.now() + 60_000);
+    await utimes(join(fixture.xcrun.sdk, "SDKSettings.json"), later, later);
+    keys.push(await missKey(fixture.create()));
+    expect(new Set(keys).size).toBe(keys.length);
   },
 );
 
 it.skipIf(!posix)(
-  "removes this user's corrupt, mislabelled, or loosened entries before republishing",
+  "never executes or removes an invalid, linked, or loosened entry",
   async () => {
     const fixture = await fixtureCache("rea-helper-cache-invalid-");
     const corruptions: Record<string, (entry: string) => Promise<void>> = {
@@ -103,39 +123,42 @@ it.skipIf(!posix)(
       },
       "group-writable entry": (entry) => chmod(entry, 0o770),
       "group-writable helper": (entry) => chmod(join(entry, "reader"), 0o770),
-      "malformed manifest": async (entry) => {
-        await writeFile(join(entry, "manifest.json"), "{");
-      },
+      "malformed manifest": (entry) =>
+        writeFile(join(entry, "manifest.json"), "{"),
       "linked helper": async (entry) => {
         const target = join(fixture.directory, "elsewhere");
         await writeFile(target, "#!/bin/sh\necho elsewhere\n");
         await chmod(target, 0o700);
-        const { rm } = await import("node:fs/promises");
         await rm(join(entry, "reader"));
         await symlink(target, join(entry, "reader"));
+      },
+      "manifest FIFO": async (entry) => {
+        await rm(join(entry, "manifest.json"));
+        await execFileAsync("/usr/bin/mkfifo", [join(entry, "manifest.json")]);
       },
     };
     for (const [name, corrupt] of Object.entries(corruptions)) {
       const cache = fixture.create();
       const key = await missKey(cache);
-      const published = await cache.publish(key, fixture.compiled);
-      expect(published, name).toBeDefined();
+      expect(await cache.publish(key, fixture.compiled), name).toBeDefined();
       await corrupt(join(fixture.root, key));
+      // Opening the FIFO must not wait for a writer.
       expect(await fixture.create().lookup(), name).toEqual({
-        kind: "miss",
-        key,
+        kind: "unavailable",
       });
-      expect(await exists(join(fixture.root, key)), name).toBe(false);
+      // Removal could race another process that verified this path.
+      expect(await exists(join(fixture.root, key)), name).toBe(true);
+      await chmod(join(fixture.root, key), 0o700);
+      await rm(join(fixture.root, key), { recursive: true, force: true });
     }
   },
 );
 
 it.skipIf(!posix)(
-  "never executes or removes a linked entry or an untrusted cache root",
+  "never trusts a linked entry, an untrusted root, or an ancestor others can write",
   async () => {
     const fixture = await fixtureCache("rea-helper-cache-untrusted-");
-    const cache = fixture.create();
-    const key = await missKey(cache);
+    const key = await missKey(fixture.create());
     const valid = join(fixture.directory, "valid-entry");
     await mkdir(valid, { mode: 0o700 });
     await symlink(valid, join(fixture.root, key));
@@ -152,6 +175,15 @@ it.skipIf(!posix)(
     );
     expect(await readdir(loose.root)).toEqual([]);
 
+    // Another user could rename the verified entry out of a shared parent.
+    const shared = await fixtureCache(
+      "rea-helper-cache-shared-parent-",
+      "shared/cache",
+    );
+    await mkdir(join(shared.directory, "shared"), { recursive: true });
+    await chmod(join(shared.directory, "shared"), 0o777);
+    expect(await shared.create().lookup()).toEqual({ kind: "unavailable" });
+
     const blocked = await fixtureCache("rea-helper-cache-blocked-root-");
     await writeFile(join(blocked.directory, "cache"), "not a directory");
     expect(await blocked.create().lookup()).toEqual({ kind: "unavailable" });
@@ -163,20 +195,19 @@ it.skipIf(!posix)(
   async () => {
     const fixture = await fixtureCache("rea-helper-cache-race-");
     const key = await missKey(fixture.create());
+    const caches = Array.from({ length: 4 }, () => fixture.create());
     const results = await Promise.all(
-      Array.from({ length: 4 }, () =>
-        fixture.create().publish(key, fixture.compiled),
-      ),
+      caches.map((cache) => cache.publish(key, fixture.compiled)),
     );
-    expect(new Set(results)).toEqual(
-      new Set([join(fixture.root, key, "reader")]),
-    );
+    expect(new Set(results).size).toBe(1);
+    expect(results[0]).toMatch(/\/reader$/u);
     expect(await readdir(fixture.root)).toEqual([key]);
+    await Promise.all(caches.map((cache) => cache.close()));
   },
 );
 
 it.skipIf(!posix)(
-  "returns no shared helper when the compiled output is unusable",
+  "returns no shared helper when the compiled output or toolchain is unusable",
   async () => {
     const fixture = await fixtureCache("rea-helper-cache-unusable-");
     const key = await missKey(fixture.create());
@@ -187,6 +218,8 @@ it.skipIf(!posix)(
     await writeFile(empty, "");
     expect(await fixture.create().publish(key, empty)).toBeUndefined();
     expect(await readdir(fixture.root)).toEqual([]);
+    await rm(fixture.xcrun.swiftc);
+    expect(await fixture.create().lookup()).toEqual({ kind: "unavailable" });
   },
 );
 
@@ -211,42 +244,6 @@ it("shares a helper only for the default toolchain and an absolute home", () => 
   expect(select({ home: undefined })).toBeUndefined();
 });
 
-/** Fake xcrun whose helper answers token reads; counts compilations. */
-const writeCountingCompiler = async (directory: string, blocking = false) => {
-  const executable = join(directory, "fake-xcrun");
-  const countPath = join(directory, "compile-count");
-  const rootsPath = join(directory, "compile-roots");
-  const helper = `#!/usr/bin/env node
-const pids = process.argv.slice(2).filter((value) => value !== "--identities");
-process.stdout.write(JSON.stringify({ results: pids.map((pid) => ({ pid: Number(pid), state: "readable", run_id: "fixture" })) }));
-`;
-  await writeFile(
-    executable,
-    `#!/usr/bin/env node
-const fs = process.getBuiltinModule("node:fs");
-const path = process.getBuiltinModule("node:path");
-const output = process.argv[process.argv.indexOf("-o") + 1];
-fs.appendFileSync(${JSON.stringify(countPath)}, "x");
-fs.appendFileSync(${JSON.stringify(rootsPath)}, path.dirname(output) + "\\n");
-if (${String(blocking)}) setInterval(() => {}, 1000);
-else {
-  fs.writeFileSync(output, ${JSON.stringify(helper)});
-  fs.chmodSync(output, 0o755);
-}
-`,
-  );
-  await chmod(executable, 0o755);
-  return {
-    executable,
-    compilations: async () =>
-      (await readFile(countPath, "utf8").catch(() => "")).length,
-    roots: async () =>
-      (await readFile(rootsPath, "utf8").catch(() => ""))
-        .split("\n")
-        .filter((line) => line !== ""),
-  };
-};
-
 const fixtureProcess = {
   pid: 123,
   parentPid: 1,
@@ -260,17 +257,18 @@ it.skipIf(!posix)(
   async () => {
     const directory = await createTestTempDirectory("rea-helper-cache-reader-");
     const helperCacheDirectory = join(directory, "process-helper");
-    const compiler = await writeCountingCompiler(directory);
+    const xcrun = await writeFakeXcrun(directory);
     const create = () =>
       createDarwinProcessRunTokenReader({
-        compiler: { kind: "xcrun", executable: compiler.executable },
+        compiler: { kind: "xcrun", executable: xcrun.executable },
         helperCacheDirectory,
       });
     const first = create();
     let shared: string;
     try {
       shared = await first.prepare();
-      expect(shared.startsWith(join(helperCacheDirectory, ""))).toBe(true);
+      expect(shared.endsWith("/reader")).toBe(true);
+      expect(shared.includes("/process-helper/")).toBe(true);
       expect((await first.read([fixtureProcess])).get(123)).toEqual({
         state: "readable",
         runId: "fixture",
@@ -278,7 +276,7 @@ it.skipIf(!posix)(
     } finally {
       await first.close();
     }
-    const [compileRoot] = await compiler.roots();
+    const [compileRoot] = await xcrun.roots();
     expect(compileRoot).toBeDefined();
     expect(await exists(compileRoot ?? "")).toBe(false);
     expect(await exists(shared)).toBe(true);
@@ -293,7 +291,7 @@ it.skipIf(!posix)(
     } finally {
       await second.close();
     }
-    expect(await compiler.compilations()).toBe(1);
+    expect(await xcrun.compilations()).toBe(1);
     expect(await exists(shared)).toBe(true);
   },
 );
@@ -303,16 +301,16 @@ it.skipIf(!posix)(
   async () => {
     const directory = await createTestTempDirectory("rea-helper-cache-cancel-");
     const helperCacheDirectory = join(directory, "process-helper");
-    const compiler = await writeCountingCompiler(directory, true);
+    const xcrun = await writeFakeXcrun(directory, true);
     const reader = createDarwinProcessRunTokenReader({
-      compiler: { kind: "xcrun", executable: compiler.executable },
+      compiler: { kind: "xcrun", executable: xcrun.executable },
       helperCacheDirectory,
     });
     const controller = new AbortController();
     try {
       const prepared = reader.prepare(controller.signal);
       const deadline = Date.now() + 10_000;
-      while ((await compiler.compilations()) === 0 && Date.now() < deadline)
+      while ((await xcrun.compilations()) === 0 && Date.now() < deadline)
         await new Promise((resolve) => setTimeout(resolve, 10));
       controller.abort(new Error("caller cancelled"));
       await expect(prepared).rejects.toThrow("caller cancelled");
@@ -320,7 +318,7 @@ it.skipIf(!posix)(
       await reader.close();
     }
     expect(await readdir(helperCacheDirectory)).toEqual([]);
-    const [compileRoot] = await compiler.roots();
+    const [compileRoot] = await xcrun.roots();
     expect(await exists(compileRoot ?? "")).toBe(false);
   },
 );
