@@ -1,7 +1,7 @@
 import {
   nativeAddressListSchema,
   nativeObservationSourceSchemas,
-  containingProcedureResolutionSchema,
+  traceContainingProcedureSchema,
 } from "../domain/native/nativeObservation.js";
 import { overviewInventoryCoverageSchema } from "../domain/native/inventoryCoverage.js";
 import {
@@ -257,7 +257,7 @@ const literalTraceOutput = evidenceResultOf(
       z.object({
         target_address: z.string(),
         source_address: z.string(),
-        containing_procedure: containingProcedureResolutionSchema,
+        containing_procedure: traceContainingProcedureSchema,
       }),
     ),
     truncated: z.boolean(),

@@ -210,8 +210,13 @@ unresolved relationship reads. Cancellation remains a tool error.
 
 `trace_feature` validates each reference's containing-procedure resolution using
 the same contract as navigation context. Explicit absence remains a successful
-negative observation; malformed provider replies return `unreadable_output`
-for `resolve_containing_procedure` before successful-result projection.
+negative observation. If the provider reports a non-retryable owner-lookup
+capability refusal without incomplete cleanup, the reference remains visible
+with `containing_procedure.status: "unavailable"` and a residual unknown. That
+unknown does not imply references were truncated.
+Malformed provider replies return `unreadable_output` for
+`resolve_containing_procedure` before successful-result projection;
+cancellation and incomplete cleanup remain errors.
 
 REA prepares complete MCP results within the pinned stdio client's 10 MiB
 receive-buffer budget, including both text and structured representations and

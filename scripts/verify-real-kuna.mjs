@@ -282,8 +282,7 @@ const quality = (text) => ({
 const verifyKuna = async (
   path,
   functions,
-  expectedCaller,
-  expectedStrings = [],
+  { expectedCaller, expectedStrings = [], verifyNamedTrace = false } = {},
 ) => {
   const sha256 = createHash("sha256")
     .update(await readFile(path))
@@ -320,6 +319,7 @@ const verifyKuna = async (
         name,
         address,
         expectedCaller,
+        verifyNamedTrace,
         nativeIncoming: (targetAddress) =>
           nativeKunaIncomingSites({
             executable: kuna,
@@ -549,10 +549,11 @@ try {
   for (const binary of [built, stripped])
     results.push({
       binary: binary.slice(workspace.length + 1),
-      kuna: await verifyKuna(binary, [...fixtureFunctions], fixtureMain, [
-        "＿φ( °-°)/ REA unicode marker",
-        "REA wide marker",
-      ]),
+      kuna: await verifyKuna(binary, [...fixtureFunctions], {
+        expectedCaller: fixtureMain,
+        expectedStrings: ["＿φ( °-°)/ REA unicode marker", "REA wide marker"],
+        verifyNamedTrace: binary === built,
+      }),
     });
 
   // Caller-built matrix.

@@ -215,12 +215,7 @@ const ENHANCED_REQUIREMENTS: ReadonlyMap<string, ProviderComposition> = new Map(
     ],
     analyze_function: ["analyze_function"],
     inspect_native_api: ["analyze_function"],
-    trace_feature: [
-      "search_strings",
-      "search_procedures",
-      "xrefs",
-      "resolve_containing_procedure",
-    ],
+    trace_feature: ["search_strings", "search_procedures", "xrefs"],
   } satisfies Readonly<Record<EnhancedContractName, ProviderComposition>>),
 );
 
