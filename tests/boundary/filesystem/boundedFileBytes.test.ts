@@ -61,7 +61,23 @@ describe("bounded file byte reads", () => {
     },
   );
 
-  it("stops after one overflow byte when a file grows beyond its admitted size", async () => {
+  it("reads appended bytes when the file grows within the limit", async () => {
+    const root = await createTestTempDirectory("rea-growing-bytes-");
+    const path = join(root, "input");
+    await writeFile(path, "hello");
+    const handle = await open(path, "r");
+    try {
+      expect((await handle.stat()).size).toBe(5);
+      await appendFile(path, "!");
+      expect(
+        await readBoundedFileBytes(handle, 10, { expectedSize: 5 }),
+      ).toEqual(Buffer.from("hello!"));
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it("continues to EOF when a file grows beyond its expected size", async () => {
     const root = await createTestTempDirectory("rea-growing-bytes-");
     const path = join(root, "input");
     await writeFile(path, "0123456789");
@@ -69,7 +85,9 @@ describe("bounded file byte reads", () => {
     try {
       expect((await handle.stat()).size).toBeLessThan(12);
       await appendFile(path, "abcdefghijklmnopqrstuvwxyz");
-      expect(await readBoundedFileBytes(handle, 12)).toBeUndefined();
+      expect(
+        await readBoundedFileBytes(handle, 12, { expectedSize: 10 }),
+      ).toBeUndefined();
       const next = Buffer.alloc(1);
       expect((await handle.read(next, 0, 1, null)).bytesRead).toBe(1);
       expect(next.toString()).toBe("d");
