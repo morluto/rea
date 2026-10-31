@@ -33,6 +33,7 @@ import { OwnedFileHandle } from "../../src/filesystem/OwnedFileHandle.js";
 import { primaryAnalysisError } from "../../src/domain/analysisErrorBase.js";
 import { buildManagedPeFixture } from "../../src/dotnet/ManagedPe.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { wasmArtifactFixture } from "../fixtures/wasm/artifact.js";
 import { ProcessCaptureError } from "../../src/process/capture/ProcessCaptureError.js";
 
 import { reconstructionObligationLedgerSchema } from "../../src/domain/reconstructionObligationLedgerSchemas.js";
@@ -913,6 +914,56 @@ describe("native matching failure ownership through the public SDK", () => {
           arguments: input,
         });
         expectUnexpectedToolFailure(response, failure);
+        expect(session.exportEvidenceBundle().records).toEqual([]);
+      });
+    },
+  );
+});
+
+describe("compare_wasm_interfaces Evidence attribution", () => {
+  const inspection = (selectedPath?: string) => {
+    const report = wasmArtifactFixture();
+    return createEvidence(
+      {
+        path: report.artifact.path,
+        sha256: report.artifact.sha256,
+        format: "file",
+      },
+      { id: "typed-fixture", name: "Typed fixture", version: "1" },
+      {
+        operation: "inspect_wasm_artifact",
+        parameters: { path: selectedPath ?? report.artifact.path },
+        result: report,
+        confidence: "observed",
+      },
+    );
+  };
+
+  it.each(["left", "right"] as const)(
+    "names the %s argument whose authentic Evidence selects another artifact",
+    async (side) => {
+      await withSdk(async ({ client, session }) => {
+        const rejected = inspection("/artifacts/other.wasm");
+        const response = await client.callTool({
+          name: "compare_wasm_interfaces",
+          arguments: {
+            left: side === "left" ? rejected : inspection(),
+            right: side === "right" ? rejected : inspection(),
+            scope: "both",
+          },
+        });
+
+        expect(parseMcpToolError(response).error).toMatchObject({
+          code: "invalid_request",
+          details: {
+            issues: [
+              expect.objectContaining({
+                path: [side],
+                reason: "invalid_value",
+              }),
+            ],
+          },
+        });
         expect(session.exportEvidenceBundle().records).toEqual([]);
       });
     },
