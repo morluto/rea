@@ -180,6 +180,7 @@ const traceReferences = async (
         if (!resolved.ok) {
           if (
             !(resolved.error instanceof AnalysisCapabilityUnavailableError) ||
+            resolved.error.operation !== "resolve_containing_procedure" ||
             resolved.error.cleanupIncomplete ||
             resolved.error.retryable
           )

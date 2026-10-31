@@ -210,8 +210,8 @@ unresolved relationship reads. Cancellation remains a tool error.
 
 `trace_feature` validates each reference's containing-procedure resolution using
 the same contract as navigation context. Explicit absence remains a successful
-negative observation. If the provider reports a non-retryable owner-lookup
-capability refusal without incomplete cleanup, the reference remains visible
+negative observation. If the provider reports a non-retryable capability refusal
+attributed to the owner lookup without incomplete cleanup, the reference remains visible
 with `containing_procedure.status: "unavailable"` and a residual unknown. That
 unknown does not imply references were truncated.
 Malformed provider replies return `unreadable_output` for
