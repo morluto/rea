@@ -4,7 +4,7 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { expect, it, onTestFinished } from "vitest";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { z } from "zod";
-import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { SESSION_TOOL_CONTRACTS } from "../../../src/contracts/sessionToolContracts.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 
 import { createFunctionCoordinateContext } from "../../../src/domain/native/functionCoordinateContext.js";
@@ -1018,7 +1018,11 @@ it("distinguishes same-entry renames from different entries through retained MCP
   expect(parseEvidence(repeated.structuredContent).normalized_result).toEqual(
     first.result,
   );
-  const contract = toolContract("compare_functions");
+  const contract = SESSION_TOOL_CONTRACTS.find(
+    ({ name }) => name === "compare_functions",
+  );
+  if (contract === undefined)
+    throw new Error("compare_functions contract is missing");
   const schemaServer = new McpServer({
     name: "comparison-schema",
     version: "1",

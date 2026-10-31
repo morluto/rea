@@ -614,8 +614,12 @@ Use `annotate_native_function` for one function name and/or entry comments, with
 For `compare_functions`, obtain `analyze_function` Evidence before and after the
 edit while the MCP session is open; annotation Evidence is not a comparison
 input. Export the needed Evidence before close if comparison will happen later.
-A rename can be reported as a function mismatch even for the same entry in one
-Program; inspect the selected entries, profiles and changed dimensions.
+Authenticated same-artifact coordinates preserve renamed entries as
+`matched / same-entry`, with the canonical `entry_address` inline; name and
+exact-text changes remain separate dimensions. This requires compatible
+architecture, provider-owned mapping and selected-image commitments. Equal
+numeric addresses alone cannot establish correspondence; inspect retained
+source Evidence and coverage when the match remains ambiguous.
 
 ## Offline PE resource inventory
 

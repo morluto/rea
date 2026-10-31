@@ -1123,9 +1123,13 @@ itself is not an `analyze_function` input. If comparing after close, export the
 needed Evidence before closing and import it into the later session. A one-shot
 CLI annotation returns its edited dossier before its temporary session is
 discarded; a later CLI invocation with the same fresh-import settings starts from
-the original executable. The current name-based comparison can report a rename
-as a function mismatch even for the same entry in one Program; inspect the
-selected entries, profiles and changed dimensions before interpreting identity.
+the original executable. Comparison preserves correspondence across renames
+when authenticated artifact identity, architecture and provider-owned mapping
+and slice commitments establish the same canonical entry. The result reports
+`matched`, `method: "same-entry"` and `entry_address`; name and exact-text changes
+remain separate dimensions. Equal numeric addresses without applicable coordinate
+commitments do not establish same-entry correspondence. Inspect the retained
+source Evidence and coverage when correspondence remains ambiguous.
 `set_address_name` and `set_addresses_names` give Ghidra sessions the same
 compact naming results as Hopper: a local function entry renames that function,
 and any other mapped address, such as a global, receives a new or renamed primary
