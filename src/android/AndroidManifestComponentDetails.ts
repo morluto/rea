@@ -32,6 +32,20 @@ const projectedDataAttributes = new Set([
 const literalBoolean = (value: string | null): boolean | null =>
   value === "true" ? true : value === "false" ? false : null;
 
+/** Whether a filter names an action, which Android requires to keep an activity filter. */
+const declaresAction = (filter: Element): boolean => {
+  for (let index = 0; index < filter.childNodes.length; index += 1) {
+    const member = filter.childNodes.item(index);
+    if (
+      isManifestElement(member) &&
+      member.nodeName === "action" &&
+      androidAttribute(member, "name") !== null
+    )
+      return true;
+  }
+  return false;
+};
+
 /** One decoded-manifest lifetime owns nested declarations and cumulative copy budgets. */
 export const createAndroidManifestDetailsReader = (
   source: string,
@@ -99,6 +113,7 @@ export const createAndroidManifestDetailsReader = (
     let legacyValuesRemaining = limits.intentValues;
     let legacyTruncated = false;
     let filterCount = 0;
+    let actionFilter = false;
     for (let index = 0; index < component.childNodes.length; index += 1) {
       const child = component.childNodes.item(index);
       if (!isManifestElement(child)) continue;
@@ -111,6 +126,8 @@ export const createAndroidManifestDetailsReader = (
         continue;
       }
       if (child.nodeName !== "intent-filter") continue;
+      // Checked past the filter bound too; one action-bearing filter suffices.
+      actionFilter ||= declaresAction(child);
       const filterIndex = filterCount++;
       if (filterIndex >= limits.intentFilters) {
         partial = true;
@@ -237,6 +254,7 @@ export const createAndroidManifestDetailsReader = (
       actions,
       categories,
       filterCount,
+      actionFilter,
       legacyTruncated,
       partial,
       detailLimited,
