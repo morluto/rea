@@ -325,6 +325,8 @@ cliTest(
       list: [literal],
       bullet: "- literal",
       numbered: "1. literal",
+      numberedBare: "1.",
+      parenBare: "1)",
       rule: "---",
       indented: "    literal\n- next\n# heading",
       nested: { value: 1 },
@@ -365,6 +367,8 @@ cliTest(
       expect(text(parseFragment(html))).toContain(literal);
       expect(html).toContain("**key**<br># injected");
       expect(html).toContain("literal<br>- next<br># heading");
+      expect(html).toContain("<p>1.</p>");
+      expect(html).toContain("<p>1)</p>");
       expect(html).not.toMatch(/<(?:strong|em|ul|ol|li|T|pre|hr)(?:\s|>)/u);
       expect(html).not.toContain('href="wrong"');
       expect(html).not.toContain("<h1");

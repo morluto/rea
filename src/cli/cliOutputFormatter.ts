@@ -350,7 +350,7 @@ const encodeMarkdownWhitespace = (whitespace: string): string =>
 const escapeMarkdownText = (value: string): string =>
   escapeTableCell(value)
     .replace(/^(\s*)([-+=])/, "$1\\$2")
-    .replace(/^(\s*\d{1,9})([.)])(?=\s)/, "$1\\$2")
+    .replace(/^(\s*\d{1,9})([.)])(?=\s|$)/, "$1\\$2")
     .replace(/^[ \t]+/, encodeMarkdownWhitespace)
     .replace(/[ \t]+$/u, encodeMarkdownWhitespace);
 
