@@ -6,6 +6,7 @@ import {
   inspectNativeDispatchMetadata,
 } from "../../domain/native/objcSwiftMetadata.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
 import { err, ok } from "../../domain/result.js";
 import type { AnalysisOperationPort } from "../AnalysisProvider.js";
@@ -83,7 +84,12 @@ export const inspectNativeDispatch = async (
     {},
     signal === undefined ? {} : { signal },
   );
-  if (!execution.ok) return err(execution.error);
+  if (!execution.ok)
+    return err(
+      execution.error.retainSecondaryFailure(binaryMetadata.error, {
+        binary_metadata_failure: projectAnalysisError(binaryMetadata.error),
+      }),
+    );
   const names = dispatchNameInventorySchema.safeParse(execution.value.result);
   if (!names.success)
     return err(
@@ -91,14 +97,18 @@ export const inspectNativeDispatch = async (
         NATIVE_DISPATCH_METADATA_SOURCES.symbols,
         "provider returned an invalid inventory",
         { cause: names.error },
-      ).retainPartialObservation(
-        createAnalysisExecutionEvidence(
-          NATIVE_DISPATCH_METADATA_SOURCES.symbols,
-          {},
-          execution.value,
-          "observed",
-        ),
-      ),
+      )
+        .retainPartialObservation(
+          createAnalysisExecutionEvidence(
+            NATIVE_DISPATCH_METADATA_SOURCES.symbols,
+            {},
+            execution.value,
+            "observed",
+          ),
+        )
+        .retainSecondaryFailure(binaryMetadata.error, {
+          binary_metadata_failure: projectAnalysisError(binaryMetadata.error),
+        }),
     );
   const result = inspectNativeDispatchMetadata(
     names.data.map((entry) => ({

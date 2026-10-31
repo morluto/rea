@@ -956,7 +956,9 @@ complete observation.
   offers direct metadata inspection or a `list_names` symbol inventory. The
   workflow tries direct metadata first and uses the symbol fallback only when
   that operation is unavailable; runtime failures remain failures rather than
-  being replaced by symbol-only results.
+  being replaced by symbol-only results. If the symbol fallback then fails or
+  returns an invalid inventory, the error also keeps the direct operation's
+  refusal under `details.diagnostics.binary_metadata_failure`.
 
 `get_objc_classes` keeps names from the provider inventory. It coalesces rows
 only when their exact selected-image pointer slots decode to the same class
