@@ -181,7 +181,17 @@ describe("provider-owned overview boundary", () => {
       parseGhidraInventoryResult("read_binary_inventory_summary", overview),
     ).toEqual({
       ok: true,
-      value: { value: { ...overview, segment_count: 0 }, rawResult: overview },
+      value: {
+        value: {
+          ...overview,
+          segment_count: 0,
+          inventory_coverage: {
+            scope: "provider_inventory",
+            discovery_coverage: "unknown",
+          },
+        },
+        rawResult: overview,
+      },
     });
   });
 

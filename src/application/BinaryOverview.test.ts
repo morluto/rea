@@ -140,6 +140,10 @@ it("counts canonical fallback inventories including typed and display-only strin
       document: "selected",
       procedure_count: 1,
       string_count: 2,
+      inventory_coverage: {
+        scope: "provider_inventory",
+        discovery_coverage: "unknown",
+      },
     }),
   );
   expect(await fallbackOverview([], []).execute("binary_overview", {})).toEqual(
@@ -147,6 +151,10 @@ it("counts canonical fallback inventories including typed and display-only strin
       document: "selected",
       procedure_count: 0,
       string_count: 0,
+      inventory_coverage: {
+        scope: "provider_inventory",
+        discovery_coverage: "unknown",
+      },
     }),
   );
 });
