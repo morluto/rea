@@ -259,3 +259,19 @@ describe("packaged Windows native artifact validation", () => {
     });
   });
 });
+
+describe("source checkout artifact diagnostics", () => {
+  it("keeps the original failure text for non-missing artifact errors", () => {
+    const value = fixture();
+    const corrupted = Object.assign(new Error("boom"), { code: "EIO" });
+    const loaded = loadWindowsNativeAuthority({
+      ...value.host,
+      readManifest: () => {
+        throw corrupted;
+      },
+    });
+    expect(loaded.available).toBe(false);
+    if (loaded.available) throw new Error("unreachable");
+    expect(loaded.reason).toContain("boom");
+  });
+});

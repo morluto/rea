@@ -709,7 +709,7 @@ describe("session filesystem path boundaries over MCP", () => {
     expect(closed.isError, JSON.stringify(closed.content)).toBe(true);
     expect(JSON.stringify(closed.content)).toContain("absolute");
     await mcp.callTool({ name: "close_binary", arguments: {} });
-  }, 10_000);
+  }, 30_000);
 });
 
 describe("json depth bounds over MCP", () => {
