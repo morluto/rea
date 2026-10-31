@@ -1038,8 +1038,8 @@ it.each(
     expect(result.error.cause).toBeInstanceOf(GhidraAdmissionError);
     expect(result.error.cause).toMatchObject({ code });
     expect(client.isReady()).toBe(false);
-    expect(launcher.requests).toEqual(["ping"]);
     await expect(waitForExit(launcher.processes[0])).resolves.toBe(true);
+    expect(launcher.requests).toEqual(["ping", "shutdown"]);
     await expect(access(launcher.runtimeRoots[0] ?? "")).rejects.toMatchObject({
       code: "ENOENT",
     });

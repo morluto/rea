@@ -402,11 +402,6 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 }
             }
             try {
-                if (identityAdmissionFailure != null) {
-                    writeFailure(writer, request.id, identityAdmissionFailure,
-                        "Ghidra imported identity admission failed");
-                    return;
-                }
                 if (request.method.equals("shutdown")) {
                     requireKeys(request.params, Set.of());
                     JsonObject result = new JsonObject();
@@ -414,6 +409,14 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     result.addProperty("project_ephemeral", true);
                     writeSuccess(writer, request.id, result);
                     return;
+                }
+                if (identityAdmissionFailure != null) {
+                    // Keep the producer alive until the client has consumed the
+                    // refusal and closed or sent shutdown. Every other request
+                    // remains refused, including further startup attempts.
+                    writeFailure(writer, request.id, identityAdmissionFailure,
+                        "Ghidra imported identity admission failed");
+                    continue;
                 }
                 decompileTimeoutSeconds = request.decompileTimeoutSeconds() == null
                     ? descriptor.decompileTimeoutSeconds() : request.decompileTimeoutSeconds();

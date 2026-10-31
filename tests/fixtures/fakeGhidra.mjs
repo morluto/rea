@@ -178,7 +178,25 @@ const handleOutputFailure = (socket, state) => {
 
 const handleRequest = (socket, server, request, state) => {
   if (request.method === "ping") {
-    handlePing(socket, server, request, state);
+    handlePing(socket, request, state);
+    return;
+  }
+  if (
+    ["import_identity_unavailable", "import_identity_mismatch"].includes(
+      state.mode,
+    ) &&
+    request.method !== "shutdown"
+  ) {
+    socket.write(
+      `${JSON.stringify({
+        id: request.id,
+        ok: false,
+        error: {
+          code: state.mode,
+          message: "Ghidra imported identity admission failed",
+        },
+      })}\n`,
+    );
     return;
   }
   if (
@@ -337,13 +355,13 @@ const handleRequest = (socket, server, request, state) => {
   }
 };
 
-const handlePing = (socket, server, request, state) => {
+const handlePing = (socket, request, state) => {
   if (
     ["import_identity_unavailable", "import_identity_mismatch"].includes(
       state.mode,
     )
   ) {
-    socket.end(
+    socket.write(
       `${JSON.stringify({
         id: request.id,
         ok: false,
@@ -352,10 +370,6 @@ const handlePing = (socket, server, request, state) => {
           message: "Ghidra project identity admission failed",
         },
       })}\n`,
-      () => {
-        socket.destroy();
-        server.close(() => process.exit(0));
-      },
     );
     return;
   }
