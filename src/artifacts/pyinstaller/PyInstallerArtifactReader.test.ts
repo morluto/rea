@@ -311,6 +311,36 @@ it("preserves the CArchive binary type as executable metadata", async () => {
   });
 });
 
+it("leaves binary members of a PE carrier unmarked", async () => {
+  // The Windows bootloader sets no execute bit.
+  const path = await writeArchive(
+    "executable-member-pe",
+    cArchiveExecutable({
+      carrier: "pe",
+      layout: "2.1",
+      pythonVersion: 314,
+      pythonLibrary: "python314.dll",
+      members: [
+        {
+          name: "helper.dll",
+          typeCode: "b",
+          payload: Buffer.from("MZ"),
+          compress: false,
+        },
+      ],
+    }),
+  );
+  const snapshot = await scanCanonicalArtifactInventory(path);
+  expect(
+    snapshot.occurrences.find(
+      ({ logical_path }) => logical_path === "helper.dll",
+    ),
+  ).toMatchObject({
+    executable: false,
+    format_metadata: { type_code: "b" },
+  });
+});
+
 it("records a 2.0 cookie without a Python library name", async () => {
   const path = await writeArchive(
     "legacy",
