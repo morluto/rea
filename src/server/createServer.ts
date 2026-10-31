@@ -575,64 +575,76 @@ export const createServer = (
   const cutter = new CutterBridgeService(
     new CutterBridgeClient(providerEnvironment),
   );
+  const providerCloseStages: readonly (() => Promise<void>)[] = [
+    () => android.close(),
+    () => cutter.close(),
+    () => fridaInstrumentation.closeAll(),
+    () => wasmArtifact.close(),
+    () => apkSignature.close(),
+    () => packetCapture.close(),
+    () => signalRecording.close(),
+    () => apktool.close(),
+    () => jeb.close(),
+    () => adbDevice.close(),
+    () => flutter.close(),
+    () => pcap.close(),
+    () => evmInterface.close(),
+    () => sqliteDatabase.close(),
+    () => binaryLayout.close(),
+    () => recordedCrash.close(),
+    () => webSourceLocation.close(),
+    () => webModuleTrace.close(),
+    () => desktopApplication.close(),
+    () => goBinary.close(),
+    () => rustBinary.close(),
+    () => erlangBeam.close(),
+    () => il2cppMetadata.close(),
+    () => modelArtifact.close(),
+    () => gpuCodeObjects.close(),
+    () => peResources.close(),
+    () => nativeExports.close(),
+    () => devicetree.close(),
+    () => elfNotes.close(),
+    () => appleIps.close(),
+    () => kernelModule.close(),
+    () => peLoadConfig.close(),
+    () => peCertificates.close(),
+    () => peImports.close(),
+    () => electronFuses.close(),
+    () => pythonPyc.close(),
+    () => webNetworkCapture.close(),
+    () => javascriptRecovery.close?.() ?? Promise.resolve(),
+    ...(options.optionalObservationProviderOwner === "caller"
+      ? []
+      : [
+          () => options.browserObservation?.close?.() ?? Promise.resolve(),
+          () => options.browserScenarioCapture?.close?.() ?? Promise.resolve(),
+          () => options.electronObservation?.close?.() ?? Promise.resolve(),
+          () =>
+            options.electronActiveObservation?.close?.() ?? Promise.resolve(),
+          () =>
+            options.javascriptRuntimeObservation?.close?.() ??
+            Promise.resolve(),
+        ]),
+    () => webRuntime.provider.close?.() ?? Promise.resolve(),
+    () => artifactResources.close(),
+    () => reverseEngineering.close(),
+    () => firmwareAnalysis.close(),
+    () => gdbSessions.closeAll(),
+    () => rizinDebugSessions.closeAll(),
+  ];
+  const providerClosed = providerCloseStages.map(() => false);
   let providerClose: Promise<void> | undefined;
   const closeProviders = (): Promise<void> => {
-    providerClose ??= Promise.allSettled([
-      android.close(),
-      cutter.close(),
-      fridaInstrumentation.closeAll(),
-      wasmArtifact.close(),
-      apkSignature.close(),
-      packetCapture.close(),
-      signalRecording.close(),
-      apktool.close(),
-      jeb.close(),
-      adbDevice.close(),
-      flutter.close(),
-      pcap.close(),
-      evmInterface.close(),
-      sqliteDatabase.close(),
-      binaryLayout.close(),
-      recordedCrash.close(),
-      webSourceLocation.close(),
-      webModuleTrace.close(),
-      desktopApplication.close(),
-      goBinary.close(),
-      rustBinary.close(),
-      erlangBeam.close(),
-      il2cppMetadata.close(),
-      modelArtifact.close(),
-      gpuCodeObjects.close(),
-      peResources.close(),
-      nativeExports.close(),
-      devicetree.close(),
-      elfNotes.close(),
-      appleIps.close(),
-      kernelModule.close(),
-      peLoadConfig.close(),
-      peCertificates.close(),
-      peImports.close(),
-      electronFuses.close(),
-      pythonPyc.close(),
-      webNetworkCapture.close(),
-      javascriptRecovery.close?.() ?? Promise.resolve(),
-      ...(options.optionalObservationProviderOwner === "caller"
-        ? []
-        : [
-            options.browserObservation?.close?.() ?? Promise.resolve(),
-            options.browserScenarioCapture?.close?.() ?? Promise.resolve(),
-            options.electronObservation?.close?.() ?? Promise.resolve(),
-            options.electronActiveObservation?.close?.() ?? Promise.resolve(),
-            options.javascriptRuntimeObservation?.close?.() ??
-              Promise.resolve(),
-          ]),
-      webRuntime.provider.close?.() ?? Promise.resolve(),
-      artifactResources.close(),
-      reverseEngineering.close(),
-      firmwareAnalysis.close(),
-      gdbSessions.closeAll(),
-      rizinDebugSessions.closeAll(),
-    ])
+    providerClose ??= Promise.allSettled(
+      providerCloseStages.map((close, index) =>
+        providerClosed[index]
+          ? Promise.resolve()
+          : close().then(() => {
+              providerClosed[index] = true;
+            }),
+      ),
+    )
       .then((results) => {
         const failures = results.flatMap((result) =>
           result.status === "rejected" ? [result.reason] : [],

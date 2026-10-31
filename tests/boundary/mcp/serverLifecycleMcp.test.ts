@@ -2,7 +2,7 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { parseMcpEvidenceBundle } from "../../fixtures/mcpEvidenceBundle.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 
 import type { AnalysisOperationPort } from "../../../src/application/AnalysisProvider.js";
 import { HopperRemoteError } from "../../../src/domain/hopperErrors.js";
@@ -10,6 +10,7 @@ import { err } from "../../../src/domain/result.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { SqliteDatabaseService } from "../../../src/application/sqlite/SqliteDatabaseService.js";
+import type { EvmInterfaceService } from "../../../src/application/evm/EvmInterfaceService.js";
 import { PassThrough } from "node:stream";
 import { once } from "node:events";
 import { access } from "node:fs/promises";
@@ -43,6 +44,36 @@ import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.j
 import type { JavaScriptRuntimeObservationPort } from "../../../src/application/javascript/JavaScriptRuntimeObservationPort.js";
 
 const resources: Array<{ close(): Promise<void> }> = [];
+
+it("does not repeat successful provider cleanup after a peer fails", async () => {
+  const failedClose = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("retained EVM worker"))
+    .mockResolvedValue(undefined);
+  const successfulClose = vi.fn().mockResolvedValue(undefined);
+  const server = createServer(
+    { kind: "fixed", analysis: { execute: async () => ok([]) } },
+    {
+      evmInterface: { close: failedClose } as unknown as EvmInterfaceService,
+      sqliteDatabase: {
+        close: successfulClose,
+      } as unknown as SqliteDatabaseService,
+    },
+  );
+  const onclose = server.server.onclose;
+  if (onclose === undefined)
+    throw new Error("server close hook was not installed");
+
+  onclose();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(failedClose).toHaveBeenCalledTimes(1);
+  expect(successfulClose).toHaveBeenCalledTimes(1);
+
+  onclose();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(failedClose).toHaveBeenCalledTimes(2);
+  expect(successfulClose).toHaveBeenCalledTimes(1);
+});
 
 it.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
   "drains an admitted SQLite inspection before changing the session binding",
@@ -439,7 +470,7 @@ it("closes the bound Go, IL2CPP and web-capture services and retries failed shut
   }
 });
 
-it("closes the Inspector owner with peers and retries its retained cleanup", async () => {
+it("retries only the retained Inspector cleanup while leaving peers closed", async () => {
   let inspectorCloseAttempts = 0;
   let peerCloseAttempts = 0;
   const cleanupFailure = new ProviderCleanupError(
@@ -494,7 +525,7 @@ it("closes the Inspector owner with peers and retries its retained cleanup", asy
 
   await server.close();
   expect(inspectorCloseAttempts).toBe(2);
-  expect(peerCloseAttempts).toBe(2);
+  expect(peerCloseAttempts).toBe(1);
 });
 
 it("does not close a caller-owned Inspector observation provider", async () => {
