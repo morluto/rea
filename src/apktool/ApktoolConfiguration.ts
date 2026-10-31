@@ -491,24 +491,29 @@ const versionProbeFailure = (
         ...apktoolVersionProbeTimeoutGuidance(),
       },
     );
+  // EPERM is the other errno a refused exec can surface (for example a launcher
+  // blocked by an operating-system security policy), so it is a permission
+  // failure like EACCES, not a missing launcher.
   if (
     cause instanceof Error &&
     "code" in cause &&
-    (cause.code === "ENOENT" || cause.code === "EACCES")
+    (cause.code === "ENOENT" ||
+      cause.code === "EACCES" ||
+      cause.code === "EPERM")
   )
     return new ApktoolConfigurationFailure(
-      cause.code === "EACCES" ? "command_not_executable" : "command_missing",
-      cause.code === "EACCES"
-        ? `Execution of the selected apktool launcher was denied: ${selection.command}`
-        : `The selected apktool launcher was not found: ${selection.command}`,
+      cause.code === "ENOENT" ? "command_missing" : "command_not_executable",
+      cause.code === "ENOENT"
+        ? `The selected apktool launcher was not found: ${selection.command}`
+        : `Execution of the selected apktool launcher was denied: ${selection.command}`,
       {
         filesystem_error: cause.code,
         selected_command: selection.command,
         command_source: selection.commandSource,
         remediation:
-          cause.code === "EACCES"
-            ? `Check file type and execute permission for ${APKTOOL_COMMAND_ENV} or select an executable apktool launcher`
-            : `Set ${APKTOOL_COMMAND_ENV} to an absolute apktool launcher (the upstream wrapper or a java -jar script)`,
+          cause.code === "ENOENT"
+            ? `Set ${APKTOOL_COMMAND_ENV} to an absolute apktool launcher (the upstream wrapper or a java -jar script)`
+            : `Check file type and execute permission for ${APKTOOL_COMMAND_ENV} or select an executable apktool launcher`,
       },
       { cause },
     );
