@@ -130,7 +130,7 @@ export const SESSION_TOOL_CONTRACTS = [
   ),
   session(
     "build_call_path",
-    "Build every shortest direct-callee path inline from complete analyze_function Evidence records using exact canonical addresses. Missing dossiers and provider mixing remain unknown; every node and edge cites source Evidence.",
+    "Build the shortest direct-callee paths inline from complete analyze_function Evidence records using exact canonical addresses. max_paths (default 64) is a caller-selected count preference; a 2 MiB serialized paths-field budget bounds retained output before another cited path is formed. total_shortest_paths reports how many exist, total_shortest_paths_capped reports when that count only bounds one past the exactly representable range, paths_truncated reports when the returned list is a prefix, and paths_limited_by_bytes identifies byte-budget truncation. Missing dossiers and provider mixing remain unknown; every node and edge cites source Evidence.",
     callPathInputSchema,
   ),
   session(
