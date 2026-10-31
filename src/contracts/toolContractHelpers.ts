@@ -21,7 +21,7 @@ const exampleInputSchema = z.record(z.string(), jsonValueSchema);
 
 export const examplesFor = (
   name: string,
-  inputSchema: z.ZodObject,
+  inputSchema: z.ZodType,
 ): readonly ToolExample[] => {
   const parsed = inputSchema.parse(TOOL_EXAMPLE_OVERRIDES[name] ?? {});
   return [
