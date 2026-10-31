@@ -12,6 +12,7 @@ import { inspectVerifierGhidraInstallation } from "./ghidra-installation-inspect
 /** Exercise qualified annotation names against real demangled C++ ABI symbols. */
 export async function verifyGhidraNamespaceAnnotations({
   call,
+  evidence,
   reject,
   target,
   entrypoint,
@@ -62,7 +63,7 @@ export async function verifyGhidraNamespaceAnnotations({
       assert.ok(symbol, `Missing demangled fixture global ${namespace}::value`);
       return { namespace, address: symbol.address };
     });
-    await verifyDuplicateAddressNames(call, procedures, names);
+    await verifyDuplicateAddressNames(call, evidence, procedures, names);
     const ambiguous = await reject("procedure_address", { procedure: "same" });
     assert.equal(ambiguous.code, "invalid_request");
     for (const { address } of entries)
@@ -136,6 +137,21 @@ export async function verifyGhidraNamespaceAnnotations({
     }
     await verifyAddressNames(call, [entries[0], entries[2]], "function");
     await verifyAddressNames(call, globals, "label");
+    // Equal leaf names in different namespaces are distinct destinations.
+    const shared = "rea_namespace_shared";
+    assert.deepEqual(
+      await call("set_addresses_names", {
+        names: Object.fromEntries(
+          entries.map(({ address }) => [address, shared]),
+        ),
+      }),
+      Object.fromEntries(entries.map(({ address }) => [address, true])),
+    );
+    for (const { namespace, address } of entries)
+      assert.equal(
+        await call("address_name", { address }),
+        `${namespace}::${shared}`,
+      );
     for (const { namespace, address } of entries) {
       assert.equal(
         await call("set_address_name", {
@@ -183,7 +199,7 @@ export async function verifyGhidraNamespaceAnnotations({
   }
 }
 
-async function verifyDuplicateAddressNames(call, procedures, names) {
+async function verifyDuplicateAddressNames(call, evidence, procedures, names) {
   const functionEntries = [
     "rea_duplicate_function_a",
     "rea_duplicate_function_b",
@@ -231,32 +247,118 @@ async function verifyDuplicateAddressNames(call, procedures, names) {
       "A rejected duplicate leaves the other address unchanged",
     );
 
+    const readback = async (ownerName, message) => {
+      assert.equal(
+        await call("address_name", { address: owner.address }),
+        ownerName,
+        message,
+      );
+      assert.equal(
+        await call("address_name", { address: duplicate.address }),
+        duplicate.original,
+        message,
+      );
+    };
+    // Object member order is not an ordering choice: each batch is decided
+    // from the names held before it, so both orders must agree.
     const batchName = `rea_batch_duplicate_${kind}`;
+    const moved = `${name}_moved`;
+    const competing = "duplicate_requested_name";
+    const selected = "name_held_by_selected_address";
+    for (const [requested, expected, ownerName, reasons, message] of [
+      [
+        { [owner.address]: batchName, [duplicate.address]: batchName },
+        { [owner.address]: false, [duplicate.address]: false },
+        name,
+        { [owner.address]: competing, [duplicate.address]: competing },
+        "Competing requests for one name apply neither address",
+      ],
+      [
+        { [owner.address]: duplicate.original, [duplicate.address]: name },
+        { [owner.address]: false, [duplicate.address]: false },
+        name,
+        { [owner.address]: selected, [duplicate.address]: selected },
+        "A swap between selected addresses is not ordered implicitly",
+      ],
+      [
+        { [duplicate.address]: name, [owner.address]: moved },
+        { [owner.address]: true, [duplicate.address]: false },
+        moved,
+        { [duplicate.address]: selected },
+        "A name held by another selected address is not taken by member order",
+      ],
+      [
+        { [duplicate.address]: name },
+        { [duplicate.address]: false },
+        name,
+        { [duplicate.address]: "name_held_by_unselected_address" },
+        "A name held by an unselected address is not moved",
+      ],
+    ]) {
+      const facts = [];
+      for (const ordered of [
+        requested,
+        Object.fromEntries(Object.entries(requested).reverse()),
+      ]) {
+        const record = await evidence("set_addresses_names", {
+          names: ordered,
+        });
+        assert.deepEqual(record.normalized_result, expected, message);
+        const { failures, conflicts } = record.raw_result;
+        assert.deepEqual(
+          Object.fromEntries(
+            Object.entries(failures).map(([key, { reason }]) => [key, reason]),
+          ),
+          reasons,
+          message,
+        );
+        // Each contested global name is reported once and names its requester.
+        for (const [key, failure] of Object.entries(failures)) {
+          const conflict = conflicts[failure.conflict];
+          assert.equal(conflict.namespace, null, message);
+          assert.equal(conflict.name, requested[key], message);
+          assert.ok(conflict.requested_by.includes(failure.address), message);
+        }
+        assert.equal(
+          conflicts.length,
+          new Set(Object.keys(failures).map((key) => requested[key])).size,
+          message,
+        );
+        facts.push(record.raw_result);
+        await readback(ownerName, message);
+        if (ownerName !== name)
+          assert.equal(
+            await call("set_address_name", { address: owner.address, name }),
+            true,
+          );
+      }
+      assert.deepEqual(facts[1], facts[0], message);
+    }
     assert.deepEqual(
-      await call("set_addresses_names", {
-        names: {
-          [owner.address]: batchName,
-          [duplicate.address]: batchName,
-        },
-      }),
-      { [owner.address]: true, [duplicate.address]: false },
+      (await call("list_names")).filter((item) => item.value === batchName),
+      [],
+      "A rejected competing name has no owner",
+    );
+    // An explicit later call may take a name released by an earlier one.
+    assert.equal(
+      await call("set_address_name", { address: owner.address, name: moved }),
+      true,
     );
     assert.equal(
-      await call("address_name", { address: owner.address }),
-      batchName,
+      await call("set_address_name", { address: duplicate.address, name }),
+      true,
     );
-    assert.equal(
-      await call("address_name", { address: duplicate.address }),
-      duplicate.original,
-      "A failed batch member rolls back only its own address",
-    );
-    const owners = (await call("list_names")).filter(
-      (item) => item.value === batchName && item.symbol.primary,
-    );
-    assert.deepEqual(
-      owners.map(({ address }) => address),
-      [owner.address],
-    );
+    // Ghidra symbol names are case-sensitive, so case variants do not compete.
+    const cased = {
+      [owner.address]: `${batchName}_Case`,
+      [duplicate.address]: `${batchName}_case`,
+    };
+    assert.deepEqual(await call("set_addresses_names", { names: cased }), {
+      [owner.address]: true,
+      [duplicate.address]: true,
+    });
+    for (const [address, expected] of Object.entries(cased))
+      assert.equal(await call("address_name", { address }), expected);
   }
 }
 

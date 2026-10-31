@@ -74,7 +74,9 @@ Ghidra inventories, measured load-image observations and function replies use
 `raw_result: null` when their useful facts are already preserved in
 `normalized_result`, limitations, locations and relationship coverage. Distinct
 overview details, file-offset selection roles and database types supplemented
-with derived metadata keep their upstream representation. Native load-image
+with derived metadata keep their upstream representation. When a Ghidra naming
+edit is not applied, `raw_result` keeps the bridge's `failures` and shared
+`conflicts` table without a second copy of the result booleans. Native load-image
 attestation continues to use the bridge reply locally before Evidence
 projection. Read function results from `normalized_result`; older retained
 Evidence keeps its original representation and identity.
