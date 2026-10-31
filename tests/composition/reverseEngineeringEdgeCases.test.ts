@@ -459,7 +459,10 @@ it("cancels when an AbortSignal becomes aborted during listener registration", a
 it("drains an active provider operation before service shutdown resolves", async () => {
   const { directory, path } = await createArtifact();
   let signal: AbortSignal | undefined;
-  let releaseRun: (() => void) | undefined;
+  let releaseRun!: () => void;
+  const runGate = new Promise<void>((resolve) => {
+    releaseRun = resolve;
+  });
   let runStarted: (() => void) | undefined;
   const started = new Promise<void>((resolve) => {
     runStarted = resolve;
@@ -468,9 +471,7 @@ it("drains an active provider operation before service shutdown resolves", async
     run: async (_command, _args, options) => {
       signal = options?.signal;
       runStarted?.();
-      await new Promise<void>((resolve) => {
-        releaseRun = resolve;
-      });
+      await runGate;
       return { stdout: "finished", stderr: "" };
     },
   });
@@ -485,7 +486,7 @@ it("drains an active provider operation before service shutdown resolves", async
     });
     expect(signal?.aborted).toBe(true);
     expect(closed).toBe(false);
-    releaseRun?.();
+    releaseRun();
     await closing;
     expect(closed).toBe(true);
     await expect(operation).resolves.toMatchObject({
@@ -493,7 +494,7 @@ it("drains an active provider operation before service shutdown resolves", async
       error: { _tag: "AnalysisCancelledError" },
     });
   }, [
-    () => releaseRun?.(),
+    releaseRun,
     async () => {
       await operation;
     },
@@ -513,16 +514,17 @@ it("relays caller cancellation to the admitted provider signal", async () => {
   const started = new Promise<void>((resolve) => {
     announceStarted = resolve;
   });
-  let releaseRun: (() => void) | undefined;
+  let releaseRun!: () => void;
+  const runGate = new Promise<void>((resolve) => {
+    releaseRun = resolve;
+  });
   let providerSignal: AbortSignal | undefined;
   const service = new CoreReverseEngineeringService({
     commands: createReverseEngineeringCommandPort(process.env),
     run: async (_command, _args, options) => {
       providerSignal = options?.signal;
       announceStarted?.();
-      await new Promise<void>((resolve) => {
-        releaseRun = resolve;
-      });
+      await runGate;
       return { stdout: "captured", stderr: "" };
     },
   });
@@ -539,14 +541,14 @@ it("relays caller cancellation to the admitted provider signal", async () => {
       { once: true },
     );
     expect(providerSignal?.aborted).toBe(true);
-    releaseRun?.();
+    releaseRun();
     await expect(operation).resolves.toMatchObject({
       ok: false,
       error: { _tag: "AnalysisCancelledError" },
     });
   }, [
     () => controller.abort(),
-    () => releaseRun?.(),
+    releaseRun,
     async () => {
       await operation;
     },
