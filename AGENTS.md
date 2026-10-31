@@ -79,6 +79,18 @@ Coordinate expensive checks across agents. If a test unexpectedly consumes heavy
 
 `docs/public/product-catalog.json`, `docs/verification/managed-conformance-*.json`, and `skills/` are ignored outputs. Edit source contracts and `.agents/skills/reverse-engineer-anything/`, then regenerate as needed. `.cache/mcp-tool-catalog.json` is test metadata; runtime builds and source checking do not consume it. Never commit binaries, provider project documents, credentials, `dist/`, `node_modules/`, or local planning artifacts.
 
+## Agent Checkout Setup
+
+For ChatGPT/Codex source work, start with [CONTRIBUTING.md](CONTRIBUTING.md#development-setup).
+Use the existing npm scripts; `rea setup` configures an analysis client, not a
+development checkout. Do not run it or install providers just to edit source.
+Read `website/AGENTS.md` before touching that subtree.
+
+Prepare dependencies while network access is available, using the pinned Node.js
+and npm versions. See [automated environments](CONTRIBUTING.md#automated-agent-environments)
+for hook handling and offline limitations. Report setup failures and checks that
+could not run; do not treat missing dependencies or providers as passing checks.
+
 ## Tool and Test Changes
 
 For tool design, follow [docs/tool-design.md](docs/tool-design.md): start from the analyst question, reuse existing contracts, preserve caller choices, and return useful evidence inline. Limits must follow real format, protocol, authority, or resource constraints. Account for representation expansion before allocation; derive completeness from examined coverage.

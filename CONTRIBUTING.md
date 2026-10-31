@@ -260,6 +260,37 @@ environment; a dependency update does not verify the revised environment.
 Repository invariants live in [AGENTS.md](AGENTS.md). Keep provider-specific
 protocols in adapters and shared CLI/MCP workflows in the application layer.
 
+### Automated agent environments
+
+ChatGPT/Codex development sessions use the same pinned toolchain and npm scripts
+as contributor checkouts. Provision the versions in `.nvmrc` and
+`package.json#packageManager` before `npm ci`; runtime compatibility alone does
+not establish that the development toolchain matches.
+
+In a disposable automation checkout that does not use Git hooks, the existing
+prepare script supports skipping Husky installation. In a POSIX shell:
+
+```bash
+HUSKY=0 npm ci
+npm run check:fast
+```
+
+In PowerShell, set `$env:HUSKY` to `"0"` for the installation and restore its
+previous value afterward. Keep the normal hook-enabled `npm ci` for interactive
+contributor checkouts. Skipping hook installation does not replace the checks
+required in [PR verification](#development-feedback-and-pr-verification).
+
+Install dependencies during the environment's network-enabled setup phase.
+An offline session needs a completed install or an npm cache containing all
+locked packages; `npm ci` cannot fetch missing packages without network access.
+Report unavailable checks explicitly.
+
+The README's `npx rea-agents setup` registers REA with an analysis client and can
+change user configuration; it is not the development bootstrap. Source edits
+do not require client registration, analysis-engine installation, credentials,
+or target binaries. Build or prepare test artifacts only when the selected
+workflow needs them, following the commands below and [testing](docs/testing.md#developer-commands).
+
 ### Windows source checkouts
 
 The published npm package includes the Windows x64 native addon and its
