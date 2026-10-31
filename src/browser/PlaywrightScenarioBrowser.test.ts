@@ -96,6 +96,42 @@ it("passes the selected environment to the actual browser launch boundary", asyn
   });
 });
 
+it("forwards the Windows system root from a case-normalized environment snapshot", async () => {
+  // win32 environment snapshots uppercase every name; the launch allowlist
+  // must read the same spelling so the browser receives SystemRoot.
+  const selected = {
+    PATH: "/selected/bin",
+    SYSTEMROOT: "C:/WINDOWS",
+  };
+  let launchedEnvironment: unknown;
+  const scenario = browserScenarioSchema.parse({
+    browser: { mode: "launch", executable_path: process.execPath },
+    start_url: { url: "https://example.test" },
+    actions: [
+      { step_id: "settle", action: "wait_for_timeout", duration_ms: 1 },
+    ],
+  });
+  await expect(
+    openPlaywrightScenarioBrowser(scenario, selected, {
+      launcher: {
+        connectOverCDP: async () => {
+          throw new Error("Unexpected connection");
+        },
+        launchPersistentContext: async (_profile, options) => {
+          launchedEnvironment = options?.env;
+          throw new Error("launch boundary reached");
+        },
+      },
+    }),
+  ).rejects.toMatchObject({
+    diagnostics: { startup_error: "launch boundary reached" },
+  });
+  expect(launchedEnvironment).toEqual({
+    PATH: "/selected/bin",
+    SYSTEMROOT: "C:/WINDOWS",
+  });
+});
+
 it.skipIf(process.platform === "win32")(
   "passes the caller-selected symlink-parent executable to the launch boundary",
   async () => {
