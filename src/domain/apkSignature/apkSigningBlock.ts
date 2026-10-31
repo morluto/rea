@@ -42,6 +42,7 @@ export const APK_BLOCK_ID = {
 export type ApkSigningBlockError =
   | { readonly kind: "not-a-zip"; readonly detail: string }
   | { readonly kind: "zip64-unsupported"; readonly detail: string }
+  | { readonly kind: "multi-disk-unsupported"; readonly detail: string }
   | {
       /** A ZIP whose end-of-central-directory is damaged or inconsistent. */
       readonly kind: "malformed-zip";
@@ -101,14 +102,41 @@ const hasLocalFileHeader = (bytes: Uint8Array): boolean =>
   bytes[2] === 0x03 &&
   bytes[3] === 0x04;
 
+interface CentralDirectory {
+  readonly offset: number;
+  readonly size: number;
+  readonly entries: number;
+  readonly end: number;
+}
+
+/** Admit a classic directory only when its offset describes this selected disk. */
+const classicDirectory = (
+  eocd: ZipEndOfCentralDirectory,
+): Result<CentralDirectory, ApkSigningBlockError> => {
+  if (eocd.disk !== 0 || eocd.directoryDisk !== 0)
+    return err({
+      kind: "multi-disk-unsupported",
+      detail: `classic EOCD names disk ${String(eocd.disk)} and central-directory disk ${String(eocd.directoryDisk)}`,
+    });
+  if (eocd.entriesOnDisk !== eocd.totalEntries)
+    return err({
+      kind: "malformed-zip",
+      offset: eocd.offset + 8,
+      detail: "single-disk ZIP entry counts disagree",
+    });
+  return ok({
+    offset: eocd.directoryOffset,
+    size: eocd.directorySize,
+    entries: eocd.totalEntries,
+    end: eocd.offset,
+  });
+};
+
 /** Resolve the central-directory offset, following a Zip64 EOCD when present. */
 const centralDirectoryOffset = (
   bytes: Uint8Array,
   eocd: ZipEndOfCentralDirectory,
-): Result<
-  { offset: number; size: number; entries: number; end: number },
-  ApkSigningBlockError
-> => {
+): Result<CentralDirectory, ApkSigningBlockError> => {
   const dv = view(bytes);
   const {
     offset: eocdOffset,
@@ -120,7 +148,7 @@ const centralDirectoryOffset = (
     offset === ZIP64_SENTINEL ||
     size === ZIP64_SENTINEL ||
     entries === ZIP64_ENTRIES_SENTINEL;
-  if (!saturated) return ok({ offset, size, entries, end: eocdOffset });
+  if (!saturated) return classicDirectory(eocd);
   // Zip64: a locator precedes the EOCD, pointing at the Zip64 EOCD record.
   const locator = eocdOffset - 20;
   if (
@@ -130,7 +158,7 @@ const centralDirectoryOffset = (
     // Exactly 65,535 entries saturates the count without Zip64; that archive
     // is still described completely by its 32-bit EOCD fields.
     if (offset !== ZIP64_SENTINEL && size !== ZIP64_SENTINEL)
-      return ok({ offset, size, entries, end: eocdOffset });
+      return classicDirectory(eocd);
     return err({
       kind: "malformed-zip",
       offset: eocdOffset,

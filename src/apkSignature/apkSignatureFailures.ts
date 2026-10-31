@@ -53,6 +53,13 @@ export const mapApkBlockError = (
         path,
         `This archive uses a Zip64 structure this reader does not decode (${error.detail}).`,
       );
+    case "multi-disk-unsupported":
+      return new AnalysisUnsupportedTargetError(
+        OPERATION,
+        path,
+        `The selected archive declares an unsupported multi-disk ZIP layout (${error.detail}).`,
+        { remediationAction: "Select a complete single-disk APK/ZIP archive." },
+      );
     case "malformed-zip":
       return inputError(
         `Damaged ZIP/APK at byte ${String(error.offset)}: ${error.detail}.`,
