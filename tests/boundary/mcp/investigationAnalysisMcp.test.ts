@@ -25,6 +25,11 @@ import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { observed } from "../../fixtures/analysisExecution.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import {
+  analysisErrorRemediationAction,
+  analysisErrorUserMessage,
+} from "../../../src/domain/analysisErrorPresentation.js";
+import { EvidenceReferenceError } from "../../../src/domain/evidenceErrors.js";
 import type { RelationshipCoverage } from "../../../src/domain/relationshipCoverage.js";
 
 it("aggregates comparison Evidence and records an approved runtime gap", async () => {
@@ -67,6 +72,69 @@ it("aggregates comparison Evidence and records an approved runtime gap", async (
         question: `Did both versions behave the same under a complete controlled replay? (Evidence ${evidence.evidence_id})`,
       },
     ]);
+  } finally {
+    await close(session, server, client);
+  }
+}, 10_000);
+
+it("does not advise resending inline comparison Evidence whose retained closure is missing", async () => {
+  const { session, server, client } = await connected();
+  const comparison = FUNCTION_COMPARISON_EVIDENCE;
+  try {
+    const response = await client.callTool({
+      name: "find_changed_behavior",
+      arguments: { comparisons: [comparison] },
+    });
+    expect(response.isError).toBe(true);
+    const failure = parseMcpToolError(response).error;
+    expect(failure).toMatchObject({
+      code: "evidence_integrity_mismatch",
+      details: {
+        evidence_id: comparison.evidence_id,
+        reason: "missing",
+        supplied_inline: true,
+      },
+    });
+    const { expected, actual } = failure.details as {
+      expected: string;
+      actual: string | null;
+    };
+    const suppliedInline = new EvidenceReferenceError(
+      comparison.evidence_id,
+      "missing",
+      {
+        expected,
+        actual,
+        referenceScope: "retained-closure",
+        suppliedInline: true,
+      },
+    );
+    expect(failure.message).toBe(analysisErrorUserMessage(suppliedInline));
+    expect(failure.remediation.action).toBe(
+      analysisErrorRemediationAction(suppliedInline),
+    );
+    expect(failure.remediation.action).not.toBe(
+      analysisErrorRemediationAction(
+        new EvidenceReferenceError(comparison.evidence_id, "missing", {
+          expected,
+          actual,
+          referenceScope: "retained-closure",
+        }),
+      ),
+    );
+    expect(session.exportEvidenceBundle().records).toHaveLength(0);
+
+    for (const evidence of [
+      FUNCTION_COMPARISON_EXAMPLE.left,
+      FUNCTION_COMPARISON_EXAMPLE.right,
+      comparison,
+    ])
+      expect(session.recordEvidence(evidence).ok).toBe(true);
+    const retried = await client.callTool({
+      name: "find_changed_behavior",
+      arguments: { comparisons: [comparison] },
+    });
+    expect(retried.isError, JSON.stringify(retried)).not.toBe(true);
   } finally {
     await close(session, server, client);
   }

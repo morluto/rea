@@ -108,3 +108,69 @@ it("rejects a lookup that returns another semantic Evidence identity", () => {
     },
   });
 });
+
+it("marks a missing caller-supplied inline record without changing other missing links", () => {
+  const records = new InvestigationRecords();
+  const leaf = observation("/leaf");
+  const root = observation("/root", [leaf.evidence_id]);
+  const inline = new Set([root.evidence_id]);
+  expect(
+    resolveInvestigationEvidenceClosure(records, [root.evidence_id], inline),
+  ).toMatchObject({
+    ok: false,
+    error: {
+      reason: "missing",
+      evidenceId: root.evidence_id,
+      suppliedInline: true,
+    },
+  });
+  const added = records.recordEvidence(root);
+  if (!added.ok) throw added.error;
+  expect(
+    resolveInvestigationEvidenceClosure(records, [root.evidence_id], inline),
+  ).toMatchObject({
+    ok: false,
+    error: {
+      reason: "missing",
+      evidenceId: leaf.evidence_id,
+      suppliedInline: false,
+    },
+  });
+});
+
+it("reports a missing inline root before a missing linked record, whatever their order", () => {
+  const records = new InvestigationRecords();
+  const linked = observation("/linked");
+  const root = observation("/inline-root", [linked.evidence_id]);
+  const inline = new Set([root.evidence_id]);
+  for (const seeds of [
+    [root.evidence_id, linked.evidence_id],
+    [linked.evidence_id, root.evidence_id],
+  ])
+    expect(
+      resolveInvestigationEvidenceClosure(records, seeds, inline),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        reason: "missing",
+        evidenceId: root.evidence_id,
+        suppliedInline: true,
+      },
+    });
+  const added = records.recordEvidence(root);
+  if (!added.ok) throw added.error;
+  expect(
+    resolveInvestigationEvidenceClosure(
+      records,
+      [root.evidence_id, linked.evidence_id],
+      inline,
+    ),
+  ).toMatchObject({
+    ok: false,
+    error: {
+      reason: "missing",
+      evidenceId: linked.evidence_id,
+      suppliedInline: false,
+    },
+  });
+});

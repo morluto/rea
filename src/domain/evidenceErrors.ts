@@ -48,24 +48,29 @@ export class EvidenceReferenceError extends EvidenceIntegrityError {
   readonly actual: string | null;
   /** Set when the consuming workflow requires retained closure. */
   readonly referenceScope: "retained-closure" | undefined;
+  /** Set when the caller already supplied the missing record inline. */
+  readonly suppliedInline: boolean;
 
   constructor(
     readonly evidenceId: string,
     readonly reason:
-      | "missing"
-      | "wrong_operation"
-      | "wrong_predicate"
-      | "identity_mismatch",
+      "missing" | "wrong_operation" | "wrong_predicate" | "identity_mismatch",
     options: AnalysisErrorOptions & {
       readonly expected: string;
       readonly actual: string | null;
       readonly referenceScope?: "retained-closure" | undefined;
+      /**
+       * The caller supplied this record inline, so supplying it again cannot
+       * provide the missing retained closure.
+       */
+      readonly suppliedInline?: boolean | undefined;
     },
   ) {
     super(`Evidence reference ${reason}: ${evidenceId}`, options);
     this.expected = options.expected;
     this.actual = options.actual;
     this.referenceScope = options.referenceScope;
+    this.suppliedInline = options.suppliedInline ?? false;
   }
 }
 

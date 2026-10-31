@@ -659,6 +659,14 @@ Supply complete inline Evidence, repeat its producer, or import an exported
 Evidence bundle before referencing that imported record. Export a bundle before
 closing if the investigation needs it later.
 
+Investigation workflows (`find_changed_behavior`, `build_call_path` and
+`correlate_static_and_runtime`) also require the supplied inline records and
+their linked Evidence to be retained by the current connection. When a record
+the caller already supplied inline is not retained, the error adds
+`details.supplied_inline: true` and recommends importing or selecting the
+originating bundle, or repeating its producer, instead of resending the same
+inline Evidence.
+
 CLI application workflows continue to read portable inline Evidence from files
 and run the same analysis workflows; a standalone CLI invocation cannot resolve
 another MCP connection's retained records. No additional lookup call, provider
