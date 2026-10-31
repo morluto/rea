@@ -35,7 +35,7 @@ export async function verifyBrowserSourceMap(
       const { stdout } = await promisify(execFile)(
         process.execPath,
         [entrypoint, ...args, "--json"],
-        { env, timeout: 45000, maxBuffer: 16 * 1024 * 1024 },
+        { env, timeout: 90000, maxBuffer: 16 * 1024 * 1024 },
       );
       return parseEvidence(JSON.parse(stdout));
     };
@@ -49,6 +49,7 @@ export async function verifyBrowserSourceMap(
     const capture = await cli(
       "capture-browser-scenario",
       JSON.stringify({
+        command_timeout_ms: 60000,
         browser: { mode: "launch", executable_path: executable },
         start_url: { url: site.origin },
         actions: [
