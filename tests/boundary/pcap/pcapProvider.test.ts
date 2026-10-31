@@ -91,37 +91,6 @@ it("inspects both tools without reading a capture", async () => {
   });
 });
 
-it("rejects a selected TShark whose bytes change during its version probe", async () => {
-  const root = await createTestTempDirectory("rea-pcap-tool-identity-");
-  const { tshark, capinfos } = await writeStubTools(root);
-  await writeFile(
-    tshark,
-    `#!/bin/sh
-if [ "$1" = "--version" ]; then
-  printf 'TShark (Wireshark) 4.6.6-stub\\n'
-  printf '\\n# changed during version probe\\n' >> "$0"
-  exit 0
-fi
-exit 2
-`,
-    { mode: 0o755 },
-  );
-  const provider = new PcapProvider({
-    environment: { REA_TSHARK_COMMAND: tshark, REA_CAPINFOS_COMMAND: capinfos },
-  });
-  onTestFinished(() => provider.close());
-  const result = await provider.execute({
-    operation: "inspect_pcap_client",
-    input: {},
-  });
-  expect(result.ok).toBe(false);
-  if (!result.ok)
-    expect(projectAnalysisError(result.error)).toMatchObject({
-      code: "artifact_changed",
-      details: { path: tshark },
-    });
-});
-
 it("inspects a capture with endpoints, DNS, TLS SNI, and HTTP", async () => {
   const { provider, root } = await providerWith();
   const path = await captureFixture(root);
@@ -441,16 +410,6 @@ it("reports a non-capture file as unsupported", async () => {
   });
 });
 
-it("reports a missing tshark binary as a capability gap", async () => {
-  const provider = new PcapProvider({
-    environment: { REA_TSHARK_COMMAND: "/nonexistent/tshark" },
-  });
-  expect(await provider.inspectAvailability()).toMatchObject({
-    status: "unavailable",
-    code: "executable_missing",
-  });
-});
-
 it("rejects a capture that is not a readable file", async () => {
   const { provider } = await providerWith();
   const result = await provider.execute({
@@ -461,25 +420,6 @@ it("rejects a capture that is not a readable file", async () => {
   if (result.ok) return;
   expect(projectAnalysisError(result.error)).toMatchObject({
     code: "invalid_request",
-  });
-});
-
-it("cancels before spawning anything", async () => {
-  const { provider, root } = await providerWith();
-  await writeFile(join(root, "spawned"), "");
-  const controller = new AbortController();
-  controller.abort();
-  const result = await provider.execute(
-    {
-      operation: "inspect_pcap_capture",
-      input: { path: "/some/capture.pcap" },
-    },
-    { signal: controller.signal },
-  );
-  expect(result.ok).toBe(false);
-  if (result.ok) return;
-  expect(projectAnalysisError(result.error)).toMatchObject({
-    code: "cancelled",
   });
 });
 

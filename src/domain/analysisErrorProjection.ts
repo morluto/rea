@@ -379,6 +379,9 @@ const requestErrorDetails = (
     return {
       evidence_id: error.evidenceId,
       reason: error.reason,
+      ...(error.referenceScope === undefined
+        ? {}
+        : { reference_scope: error.referenceScope }),
       expected: error.expected,
       actual: error.actual,
     };
@@ -639,6 +642,10 @@ const lifecycleErrorDetails = (
       ...(error.constraint === undefined
         ? {}
         : { constraint: error.constraint }),
+      ...(error.infoPlist === undefined ? {} : { info_plist: error.infoPlist }),
+      ...(error.probedPaths === undefined
+        ? {}
+        : { probed_paths: [...error.probedPaths] }),
       ...(error.systemCode === undefined
         ? {}
         : { system_code: error.systemCode, boundary: "filesystem-read" }),

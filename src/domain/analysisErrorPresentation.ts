@@ -10,6 +10,7 @@ import {
   AnalysisTimeoutError,
 } from "./analysisErrorCore.js";
 import { ArtifactOperationError } from "./artifactOperationError.js";
+import { OPENABLE_APPLE_BUNDLE_TYPES_TEXT } from "./apple/appleBundleTypes.js";
 import {
   BinaryTargetError,
   ConfigurationError,
@@ -138,12 +139,35 @@ export const analysisErrorRemediationAction = (
       ? "Correct the reported address, document, or arguments and retry."
       : "Review the Hopper diagnostic details and correct the request or target; run `rea doctor` if the provider itself is failing. Repeating the unchanged request is not expected to succeed.";
   if (error instanceof EvidenceReferenceError)
-    return "Use an exact Evidence reference available from the selected source, supply the complete inline Evidence, re-run its producer, or select/import its Evidence bundle. close_binary clears a server session's retained records.";
+    return error.reason === "missing" &&
+      error.referenceScope === "retained-closure"
+      ? "Import the originating Evidence bundle with the selected records and their complete linked sources into the current investigation, or re-run their producers there. Retry after the required records are retained. close_binary clears a server session's retained records."
+      : "Use an exact Evidence reference available from the selected source, supply the complete inline Evidence, re-run its producer, or select/import its Evidence bundle. close_binary clears a server session's retained records.";
   if (
     error instanceof BinaryTargetError &&
     error.constraint === "directory_requires_file"
   )
-    return "For a JavaScript/Electron application directory, call analyze_javascript_application with input_path or run `rea analyze <directory>`. For binary analysis, select its executable file.";
+    return `For a JavaScript/Electron application directory, call analyze_javascript_application with input_path or run \`rea analyze <directory>\`. For binary analysis, select its executable file or an Apple bundle directory (${OPENABLE_APPLE_BUNDLE_TYPES_TEXT}).`;
+  if (
+    error instanceof BinaryTargetError &&
+    error.constraint === "bundle_type_unsupported"
+  )
+    return `Select the bundle's program file directly, or open a bundle directory of a supported type (${OPENABLE_APPLE_BUNDLE_TYPES_TEXT}).`;
+  if (
+    error instanceof BinaryTargetError &&
+    (error.constraint === "bundle_executable_undeclared" ||
+      error.constraint === "bundle_program_missing") &&
+    error.infoPlist !== undefined
+  )
+    return `Read ${error.infoPlist} with inspect_plist (\`rea inspect-plist <path>\`) to review its CFBundleExecutable, then select an existing program file directly.`;
+  if (
+    error instanceof BinaryTargetError &&
+    (error.constraint === "bundle_info_plist_missing" ||
+      error.constraint === "bundle_layout_ambiguous" ||
+      error.constraint === "bundle_current_version_missing" ||
+      error.constraint === "bundle_path_escapes")
+  )
+    return "Review the bundle paths listed in details, then select the bundle's program file directly or repair the bundle layout.";
   if (
     error instanceof BinaryTargetError &&
     error.constraint === "load_selection_rejected"
@@ -239,7 +263,8 @@ export const analysisErrorCategory = (
   if (
     error instanceof BinaryTargetError &&
     (error.constraint === "wasm_requires_static_inspection" ||
-      error.constraint === "file_format_rejected")
+      error.constraint === "file_format_rejected" ||
+      error.constraint === "bundle_type_unsupported")
   )
     return "unsupported_target";
   if (
@@ -362,7 +387,9 @@ export const analysisErrorUserMessage = (error: AnalysisError): string => {
   if (error instanceof ArtifactOperationError) return artifactMessage(error);
   if (error instanceof EvidenceReferenceError)
     return error.reason === "missing"
-      ? `Evidence ${error.evidenceId} is not available from the selected source. Supply complete inline Evidence, re-run its producer, or select/import its bundle before using this reference.`
+      ? error.referenceScope === "retained-closure"
+        ? `Evidence ${error.evidenceId} is missing from the required retained Evidence closure in the current investigation. Import its originating bundle or re-create the required observations before retrying.`
+        : `Evidence ${error.evidenceId} is not available from the selected source. Supply complete inline Evidence, re-run its producer, or select/import its bundle before using this reference.`
       : `Evidence ${error.evidenceId} does not match the requested reference (${error.reason}). Check the expected and actual identity in the diagnostic details.`;
   if (error instanceof EvidenceIntegrityError)
     return "Evidence is invalid or has changed. Recreate or re-import it, then try again.";
@@ -396,11 +423,10 @@ export const analysisErrorUserMessage = (error: AnalysisError): string => {
     return `${error.message}. Static WebAssembly inspection uses a separate optional WABT lane, not a native analysis engine.`;
   if (error instanceof BinaryTargetError)
     return error.constraint === "directory_requires_file"
-      ? "open_binary accepts files and macOS app bundles. This target is a directory; JavaScript/Electron application directories can be analyzed directly with analyze_javascript_application or `rea analyze <directory>`."
-      : error.constraint === "file_format_rejected" ||
-          error.constraint === "load_selection_rejected"
-        ? `${error.message}.`
-        : `${error.message}. Check that the path exists, is readable, and points to a supported file.`;
+      ? `open_binary accepts files and Apple bundle directories (${OPENABLE_APPLE_BUNDLE_TYPES_TEXT}). This target is another directory; JavaScript/Electron application directories can be analyzed directly with analyze_javascript_application or \`rea analyze <directory>\`.`
+      : error.constraint === undefined
+        ? `${error.message}. Check that the path exists, is readable, and points to a supported file.`
+        : `${error.message}.`;
   if (error._tag === "ProcessCaptureError")
     return (
       error.userMessage ??

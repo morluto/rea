@@ -9,7 +9,7 @@ import { historicalHar } from "../../fixtures/historicalHar.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest } from "../../support/cli/cliFixture.js";
+import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
 
 cliTest(
   "omits HAR extension payloads from capture previews while retaining complete records",
@@ -150,7 +150,7 @@ cliTest(
       const text = JSON.stringify({ log });
       const path = join(root, `${label}.har`);
       await writeFile(path, text);
-      const output = await cli.run({
+      const invocation = {
         arguments: [
           "inspect-web-network-capture",
           path,
@@ -159,7 +159,11 @@ cliTest(
           "0",
           "--json",
         ],
-      });
+      };
+      const output =
+        label === "null-timings"
+          ? await cli.run(invocation)
+          : await runFileCli(cli, invocation);
       expect(output.exitCode).toBe(1);
       const expected = {
         code: "invalid_request",

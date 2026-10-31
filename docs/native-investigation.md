@@ -512,8 +512,10 @@ output-budget omissions remain omissions.
 
 Source input is limited to 64 MiB. Binary and direct XML decoding reserve an
 estimated 64 MiB decode budget before parsing; this is not a hard process-memory
-bound. JSON decode memory has not been measured and has no equivalent decode
-estimate. A refused input reports non-retryable `resource_constraint` with
+bound. The XML estimate charges every element and every text, comment or CDATA
+node of the decoder's DOM at a measured upper bound, so a plist made of many
+small elements reaches it at a few MiB of source. JSON decode memory has not
+been measured and has no equivalent decode estimate. A refused input reports non-retryable `resource_constraint` with
 `reported_limits.maximum_input_bytes` or `maximum_decoded_bytes` as applicable.
 Ordinary direct-source decoding has a ceiling of 998 source nesting levels,
 derived from the existing 1000-level JSON result capacity by reserving one level
@@ -1115,6 +1117,42 @@ unpaired Unicode surrogate; a rejection identifies the field and UTF-16 index
 and leaves every annotation unchanged. CRLF, supplementary Unicode characters,
 and combining characters are preserved. Windows P0 remains read-only. Ghidra has no
 GUI authority, and REA never falls back automatically to Hopper.
+For a before-and-after `compare_functions` in MCP, call `analyze_function`
+before and after the edit while the session remains open; the annotation Evidence
+itself is not an `analyze_function` input. If comparing after close, export the
+needed Evidence before closing and import it into the later session. A one-shot
+CLI annotation returns its edited dossier before its temporary session is
+discarded; a later CLI invocation with the same fresh-import settings starts from
+the original executable. Comparison preserves correspondence across renames
+when authenticated artifact identity, architecture and provider-owned mapping
+and slice commitments establish the same canonical entry. The result reports
+`matched`, `method: "same-entry"` and `entry_address`; name and exact-text changes
+remain separate dimensions. Equal numeric addresses without applicable coordinate
+commitments do not establish same-entry correspondence. Inspect the retained
+source Evidence and coverage when correspondence remains ambiguous.
+To aggregate already-retained comparison results, pass their exact IDs to
+`find_changed_behavior`, for example:
+
+```javascript
+await call("find_changed_behavior", {
+  comparisons: comparisons.map(({ evidence_id }) => ({
+    kind: "retained-evidence",
+    evidence_id,
+  })),
+});
+```
+
+These IDs select comparison Evidence, not function dossiers or summary views.
+Complete inline comparisons remain accepted and can be mixed with references.
+The current server must retain the comparisons and their original source closure;
+import the complete source bundle after a session handoff. Missing or damaged
+records are explicit failures. A missing required retained record reports its exact
+`evidence_id` with `details.reference_scope: "retained-closure"`. Import the
+originating bundle with its linked sources, or re-create those observations in the
+current investigation, before retrying; resending the inline comparison alone
+does not restore its closure. Aggregating static differences does not establish
+observed runtime change.
+
 `set_address_name` and `set_addresses_names` give Ghidra sessions the same
 compact naming results as Hopper: a local function entry renames that function,
 and any other mapped address, such as a global, receives a new or renamed primary

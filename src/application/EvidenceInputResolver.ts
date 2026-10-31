@@ -24,30 +24,28 @@ export interface EvidenceSourceResolutionOptions extends EvidenceFileReadOptions
   ) => Result<Evidence, AnalysisError>;
 }
 
-/** Resolve an exact reference without selecting a target or running analysis. */
+/** Resolve an exact reference; callers declare when recovery requires retained closure. */
 export const resolveEvidenceInput = (
   input: EvidenceInput,
   lookup: EvidenceLookup | undefined,
+  referenceScope?: EvidenceReferenceError["referenceScope"],
 ): Result<Evidence, EvidenceReferenceError> => {
   if (!("kind" in input)) return ok(input);
   const record = lookup?.(input.evidence_id);
   if (record === undefined)
     return err(
-      new EvidenceReferenceError(
-        input.evidence_id,
-        "missing",
-        "Evidence available to the selected source",
-        null,
-      ),
+      new EvidenceReferenceError(input.evidence_id, "missing", {
+        expected: "Evidence available to the selected source",
+        actual: null,
+        referenceScope,
+      }),
     );
   if (record.evidence_id !== input.evidence_id)
     return err(
-      new EvidenceReferenceError(
-        input.evidence_id,
-        "identity_mismatch",
-        input.evidence_id,
-        record.evidence_id,
-      ),
+      new EvidenceReferenceError(input.evidence_id, "identity_mismatch", {
+        expected: input.evidence_id,
+        actual: record.evidence_id,
+      }),
     );
   return ok(record);
 };

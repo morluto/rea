@@ -281,6 +281,18 @@ The inventory lists each segment with its ESP-IDF load classification, the
 checksum and SHA-256 results, the descriptor and any Secure Boot v2 signature
 blocks. See [ESP images](esp-image.md) for recognition, coverage and refusals.
 
+Inspect an ESP flash dump, or one read from a flash address other than 0:
+
+```sh
+rea inspect-artifact flash.bin --json
+rea inspect-artifact dump.bin --target-format esp-flash-image --flash-offset 0x1000 --json
+rea extract-artifact flash.bin --json
+```
+
+The inventory lists the bootloader, the partition table and each partition,
+with ESP image facts for app partitions and the OTA records. See
+[ESP flash images](esp-flash-image.md) for table location, inputs and limits.
+
 Inspect a Node.js SEA carrier without running it:
 
 ```sh
@@ -316,6 +328,16 @@ Zstandard (standard method 93). They retain the shared ZIP CRC, declared-size,
 overlap and archive expansion checks. The native streaming decoder keeps the
 existing 128 MiB Zstandard window cap; frames requiring a larger window are
 refused. Deprecated method 20 and other unregistered ZIP codecs remain unsupported.
+
+Inventory and extract UF2 or DfuSe regions:
+
+```sh
+rea inspect-artifact ./firmware.uf2 --json
+rea extract-artifact ./firmware.dfu --json
+```
+
+See [UF2 and DfuSe images](uf2-dfuse.md) for recognition, families, numbering,
+the DfuSe suffix CRC and limits.
 
 Inventory and extract U-Boot FIT images:
 
@@ -866,7 +888,13 @@ rea mcp --http --port 8765
 `--host` and `--port` default to `MCP_HOST` and `MCP_PORT` from the environment,
 then to `127.0.0.1` and an ephemeral port. A bind outside loopback requires
 `MCP_ALLOWED_HOSTS` or `--allowed-hosts`, a comma-separated list of client host
-names or IP addresses without URLs or ports. For example:
+names or IP addresses without URLs or ports.
+
+Repeat `--allowed-hosts` to append names, or put multiple names in one
+comma-separated value. All occurrences are validated together and deduplicated
+after hostname normalization; the explicit list replaces `MCP_ALLOWED_HOSTS`.
+
+For example:
 
 ```sh
 rea mcp --http --host 0.0.0.0 --allowed-hosts 127.0.0.1,rea.lan

@@ -761,6 +761,37 @@ concrete version, selection source, and complete analysis profile through
 choices return typed selection details. A selected provider is never replaced
 automatically after a runtime failure.
 
+`open_binary` resolves an Apple bundle directory (`.app`, `.appex`,
+`.framework`, `.xpc`, `.systemextension`, `.bundle` or `.plugin`, compared
+case-insensitively) to the program file its `Info.plist` names in
+`CFBundleExecutable`; the Evidence subject is that program file. It reads the
+macOS `Contents/` layout or the flat root layout. A framework with `Versions/`
+may instead keep `Info.plist` in `Versions/Current/Resources/` with its program
+file in `Versions/Current/`; a flattened framework without `Versions/`, as
+Electron and Gecko apps ship it, keeps `Resources/Info.plist` beside its
+program file. An app keeps its iOS-on-Mac `Wrapper` resolution. For the
+other types, exactly one layout may declare the bundle, and its `Info.plist`,
+program directory and program file must stay inside the bundle. Resolution
+never guesses a program file. Each refusal reports one `details.constraint`:
+
+- `bundle_info_plist_missing`, with `probed_paths` listing every layout's
+  `Info.plist`.
+- `bundle_layout_ambiguous`, with `probed_paths` listing the `Info.plist`
+  files found.
+- `bundle_current_version_missing`, with `probed_paths` naming
+  `Versions/Current`.
+- `bundle_path_escapes`, with `probed_paths` naming the path that resolved
+  outside the bundle.
+- `bundle_executable_undeclared`, with `info_plist`.
+- `bundle_program_missing`, with `info_plist` and `probed_paths` naming the
+  declared program file.
+
+An unreadable or malformed `Info.plist` keeps its reason without a bundle
+constraint, and `details.path` names that file. A `.dext`, `.kext`,
+`.qlgenerator` or `.mdimporter` directory reports `bundle_type_unsupported`. A
+resource root reports its `layout` as `contents`, `root`,
+`versioned-framework` or `flattened-framework`.
+
 `open_bundle_resources` selects a separate read-only app resource session
 without resolving `CFBundleExecutable`, including when it is absent or
 unresolvable. `binary_session` reports `session_kind: "bundle_resources"` and the
@@ -1286,12 +1317,20 @@ bytes and returns the `integrity_contradictions` records for the extracted
 files. An active ASAR unpacked entry whose companion file is absent cannot be
 materialized; extraction fails as `unavailable` with that logical path.
 
+A container can also declare a checksum over its own bytes; today that is the
+DFU suffix CRC of a DfuSe file. A mismatch is a contradiction of the root
+occurrence (logical path `.`), recorded as a `dfu-crc32` pair. Under
+`record-and-continue` the root becomes `mismatched` while its elements stay
+listed and extractable as observed-untrusted bytes, and `extract_artifact`
+returns the root record with the extracted files' records.
+
 If native DMG child traversal is unavailable after carrier identification,
 the typed failure retains a revalidated root-only inventory under
 `details.partial_observation.inventory`, with unknown child coverage and the
 producer's diagnostics/provenance. It does not borrow or detach an existing
 attachment. Native checksum verification failures still refuse traversal;
-`record-and-continue` recovery applies to structured entry contradictions.
+`record-and-continue` recovery applies to structured entry and container
+contradictions.
 
 Occurrences use normalized logical paths for identity and lookup. Optional
 `source_path` retains the original path within the owning reader when Unicode

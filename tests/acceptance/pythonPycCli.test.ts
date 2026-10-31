@@ -10,7 +10,7 @@ import {
   pythonPycHeader,
 } from "../../src/python/PythonPyc.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { cliTest } from "../support/cli/cliFixture.js";
+import { cliTest, runFileCli } from "../support/cli/cliFixture.js";
 
 const completePycEvidenceSchema = toolContract(
   "inspect_python_pyc",
@@ -57,7 +57,7 @@ cliTest(
           }),
         ]),
       );
-      const result = await cli.run({
+      const result = await runFileCli(cli, {
         arguments: ["inspect-python-pyc", path, "--json"],
       });
       expect(result.exitCode, result.stderr).toBe(0);
@@ -77,7 +77,7 @@ cliTest(
         }),
       ]),
     );
-    const ordinaryInt = await cli.run({
+    const ordinaryInt = await runFileCli(cli, {
       arguments: ["inspect-python-pyc", ordinaryIntPath, "--json"],
     });
     expect(ordinaryInt.exitCode, ordinaryInt.stderr).toBe(0);
@@ -95,7 +95,7 @@ cliTest(
         Buffer.alloc(7),
       ]),
     );
-    const truncated = await cli.run({
+    const truncated = await runFileCli(cli, {
       arguments: ["inspect-python-pyc", truncatedPath, "--json"],
     });
     expect(truncated.exitCode).toBe(1);
@@ -183,7 +183,7 @@ cliTest(
       const path = join(root, `inline-caches-${magic}.pyc`);
       await writeFile(path, pyc);
 
-      const result = await cli.run({
+      const result = await runFileCli(cli, {
         arguments: ["inspect-python-pyc", path, "--json"],
       });
       expect(
@@ -278,7 +278,7 @@ cliTest(
       header[2] = 0x0d;
       header[3] = 0x0a;
       await writeFile(path, Buffer.concat([header, marshal]));
-      const result = await cli.run({
+      const result = await runFileCli(cli, {
         arguments: ["inspect-python-pyc", path, "--json"],
       });
       expect(result.exitCode).toBe(1);
@@ -295,7 +295,7 @@ cliTest(
     for (const magic of [3392, 3394]) {
       const path = join(root, `${magic}.pyc`);
       await writeFile(path, Buffer.concat([pythonPycHeader(magic), marshal]));
-      const result = await cli.run({
+      const result = await runFileCli(cli, {
         arguments: ["inspect-python-pyc", path, "--json"],
       });
       expect(result.exitCode, result.stderr).toBe(0);
@@ -354,7 +354,7 @@ cliTest(
         path,
         Buffer.concat([pythonPycHeader(magic), marshalCode(layout, fields)]),
       );
-      const result = await cli.run({
+      const result = await runFileCli(cli, {
         arguments: ["inspect-python-pyc", path, "--json"],
       });
       expect(result.exitCode, result.stderr).toBe(0);
@@ -413,7 +413,7 @@ cliTest(
         path,
         Buffer.concat([pythonPycHeader(magic), marshalCode(layout, fields)]),
       );
-      const result = await cli.run({
+      const result = await runFileCli(cli, {
         arguments: ["inspect-python-pyc", path, "--json"],
       });
       expect(result.exitCode).toBe(1);
@@ -502,7 +502,7 @@ cliTest(
           }),
         ]),
       );
-      const result = await cli.run({
+      const result = await runFileCli(cli, {
         arguments: ["inspect-python-pyc", path, "--json"],
       });
       expect(result.exitCode, result.stderr).toBe(0);
@@ -552,7 +552,7 @@ cliTest(
           marshalCode(testCase.layout, { consts: [frozenSet, dict] }),
         ]),
       );
-      const result = await cli.run({
+      const result = await runFileCli(cli, {
         arguments: ["inspect-python-pyc", path, "--json"],
       });
       expect(result.exitCode, result.stderr).toBe(0);
@@ -633,7 +633,7 @@ cliTest(
           marshalCode(testCase.layout, { consts: [frozenSet, dict] }),
         ]),
       );
-      const result = await cli.run({
+      const result = await runFileCli(cli, {
         arguments: ["inspect-python-pyc", path, "--json"],
       });
       expect(result.exitCode, result.stderr).toBe(0);
@@ -664,7 +664,7 @@ cliTest(
           }),
         ]),
       );
-      const rawResult = await cli.run({
+      const rawResult = await runFileCli(cli, {
         arguments: ["inspect-python-pyc", rawPath, "--json"],
       });
       expect(rawResult.exitCode, rawResult.stderr).toBe(0);

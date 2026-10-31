@@ -7,7 +7,7 @@ import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest } from "../../support/cli/cliFixture.js";
+import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
 
 const PACKAGE_LINE = "package:/data/app/example/base.apk=com.example.app";
 const unrecognized = (count: number) =>
@@ -60,10 +60,13 @@ process.exit(91);
         ["resolve-adb-packages", "resolve_adb_packages", ["example"]],
         ["list-adb-packages", "list_adb_packages", []],
       ] as const) {
-        const output = await cli.run({
+        const invocation = {
           arguments: [command, "emulator-5554", ...tail, "--json"],
           environment,
-        });
+        };
+        const output = await (count === 0
+          ? cli.run(invocation)
+          : runFileCli(cli, invocation));
         expect(output.exitCode, output.stderr).toBe(0);
         const evidence = parseEvidence(output.json);
         expect(

@@ -3,8 +3,8 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { Ajv2020 } from "ajv/dist/2020.js";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 import { machoImage } from "../../../src/artifacts/apple/MachoImage.fixture.js";
 import { createArtifactBinarySession } from "../../../src/composition/binary.js";
@@ -13,6 +13,9 @@ import { artifactInspectionResultSchema } from "../../../src/domain/artifactInsp
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+
+const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
 
 const TRAVERSAL_UNKNOWN =
   "Producer traversal coverage is unknown; missing matches do not prove source absence.";
@@ -33,7 +36,10 @@ const writeBundle = async (withFifo: boolean): Promise<string> => {
 const connect = async () => {
   const session = await createArtifactBinarySession(process.env);
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "inspection-coverage", version: "1" });
+  const client = new Client(
+    { name: "inspection-coverage", version: "1" },
+    { jsonSchemaValidator: schemaValidation },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
@@ -43,11 +49,7 @@ const connect = async () => {
   );
   expect(definition?.outputSchema).toBeDefined();
   const outputSchema: Record<string, unknown> = definition!.outputSchema!;
-  const viewOutput = new Ajv2020({
-    strict: false,
-    validateFormats: false,
-  }).compile(outputSchema);
-  return { client, server, viewOutput };
+  return { client, server, outputSchema };
 };
 
 describe.skipIf(process.platform === "win32")(
@@ -68,7 +70,7 @@ describe.skipIf(process.platform === "win32")(
       "derives inspection and summary coverage from inventory traversal (FIFO: $withFifo)",
       async ({ withFifo, status, sourceCoverage }) => {
         const path = await writeBundle(withFifo);
-        const { client, server, viewOutput } = await connect();
+        const { client, server, outputSchema } = await connect();
         try {
           const opened = await client.callTool({
             name: "open_binary",
@@ -107,8 +109,11 @@ describe.skipIf(process.platform === "win32")(
           for (const reply of summaries) {
             expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
             expect(
-              viewOutput(reply.structuredContent),
-              JSON.stringify(viewOutput.errors),
+              schemaValidation.assertions.validate(
+                outputSchema,
+                reply.structuredContent,
+              ),
+              JSON.stringify(schemaValidation.assertions.errors),
             ).toBe(true);
             const view = analysisViewResultSchema.parse(
               parseEvidence(reply.structuredContent).normalized_result,

@@ -548,6 +548,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
         String softFloat = currentProgram.getOptions(ghidra.program.model.listing.Program.PROGRAM_INFO)
             .getString("REA MIPS soft-float storage", null);
         if (softFloat != null) result.add("mips_soft_float_storage", JsonParser.parseString(softFloat));
+        // Written by ReaGhidraRiscvCallingConvention after analysis; REA requires it
+        // exactly when the committed profile declares a RISC-V calling-convention policy.
+        String riscvCallingConvention = currentProgram.getOptions(ghidra.program.model.listing.Program.PROGRAM_INFO)
+            .getString("REA RISC-V calling convention", null);
+        if (riscvCallingConvention != null) result.add("riscv_calling_convention", JsonParser.parseString(riscvCallingConvention));
         return result;
     }
 
