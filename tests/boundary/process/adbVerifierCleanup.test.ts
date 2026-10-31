@@ -23,8 +23,9 @@ const runVerifier = async (
   settings: {
     closeFails?: boolean;
     thrown?: "undefined" | "null";
-    removal?: "fails" | "leaves_probe";
+    removal?: "fails" | "fails_once" | "leaves_probe";
     pull?: "error" | "throw";
+    push?: "refused" | "digest_mismatch" | "throw_after_write";
   } = {},
 ) => {
   const root = await mkdtemp(join(tmpdir(), "rea-adb-verifier-test-"));
@@ -53,6 +54,7 @@ const runVerifier = async (
       "#!/bin/sh",
       `printf '%s\\n' "$*" >> "$REA_FAKE_ADB_LOG"`,
       `[ "$REA_FAKE_ADB_REMOVAL" = "fails" ] && exit 1`,
+      `[ "$REA_FAKE_ADB_REMOVAL" = "fails_once" ] && [ ! -f "$REA_FAKE_ADB_RETRIED" ] && { : > "$REA_FAKE_ADB_RETRIED"; exit 1; }`,
       `[ "$REA_FAKE_ADB_REMOVAL" = "leaves_probe" ] && exit 0`,
       `[ "$1 $3 $4 $5" = "-s shell rm --" ] || exit 2`,
       `rm -- "$REA_FAKE_DEVICE/$(basename -- "$6")"`,
@@ -84,8 +86,26 @@ export class AdbDeviceAnalysisService {
     if (process.env.REA_ADB_THROW === "undefined") throw undefined;
     if (process.env.REA_ADB_THROW === "null") throw null;
     const device = process.env.REA_FAKE_DEVICE;
+    if (operation === "push_adb_file" && process.env.REA_ADB_PUSH === "refused")
+      return { ok: false, error: { message: "push refused before write" } };
     if (operation === "push_adb_file")
       await writeFile(join(device, basename(input.device_path)), "probe");
+    if (operation === "push_adb_file" && process.env.REA_ADB_PUSH === "digest_mismatch")
+      return { ok: false, error: {
+        message: "device digest mismatch after write",
+        partialObservation: {
+          operation,
+          parameters: { serial: input.serial, device_path: input.device_path },
+        },
+      } };
+    if (operation === "push_adb_file" && process.env.REA_ADB_PUSH === "throw_after_write") {
+      const error = new Error("push transport failed after write");
+      error.partialObservation = {
+        operation,
+        parameters: { serial: input.serial, device_path: input.device_path },
+      };
+      throw error;
+    }
     if (operation === "pull_adb_file" && process.env.REA_ADB_PULL === "throw")
       throw new Error("pull transport crashed");
     if (operation === "pull_adb_file" && process.env.REA_ADB_PULL === "error")
@@ -125,8 +145,10 @@ export class AdbDeviceAnalysisService {
         REA_ADB_CLOSE_FAIL: settings.closeFails ? "1" : "0",
         REA_FAKE_ADB: adb,
         REA_FAKE_ADB_LOG: adbLog,
+        REA_FAKE_ADB_RETRIED: join(root, "adb-retried"),
         REA_FAKE_ADB_REMOVAL: settings.removal ?? "removes",
         REA_ADB_PULL: settings.pull ?? "succeeds",
+        REA_ADB_PUSH: settings.push ?? "succeeds",
         REA_FAKE_DEVICE: device,
         ...(settings.thrown === undefined
           ? {}
@@ -164,7 +186,7 @@ posix(
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(result.adbCalls).toHaveLength(1);
     expect(result.adbCalls[0]).toMatch(
-      /^-s test shell rm -- \/data\/local\/tmp\/rea-verify-\d+\.txt$/u,
+      /^-s test shell rm -- \/data\/local\/tmp\/rea-verify-[0-9a-f-]{36}\.txt$/u,
     );
     expect(result.stdout).toContain("[ok] verifier transfer probe removed");
     expect(result.deviceFiles).toEqual([]);
@@ -178,8 +200,9 @@ posix(
 
     expect(result.status).toBe(1);
     expect(result.stdout).toMatch(
-      /\[FAIL\] verifier transfer probe removed — \/data\/local\/tmp\/rea-verify-\d+\.txt: /u,
+      /\[FAIL\] verifier transfer probe removed — \/data\/local\/tmp\/rea-verify-[0-9a-f-]{36}\.txt: /u,
     );
+    expect(result.adbCalls).toHaveLength(2);
     expect(result.stdout).not.toContain("all adb device checks passed");
     expect(result.deviceFiles).toHaveLength(1);
     expect(result.closed).toBe("closed");
@@ -192,9 +215,9 @@ posix(
     const result = await runVerifier({ removal: "leaves_probe" });
 
     expect(result.status).toBe(1);
-    expect(result.adbCalls).toHaveLength(1);
+    expect(result.adbCalls).toHaveLength(2);
     expect(result.stdout).toMatch(
-      /\[FAIL\] verifier transfer probe removed — \/data\/local\/tmp\/rea-verify-\d+\.txt\n/u,
+      /\[FAIL\] verifier transfer probe removed — \/data\/local\/tmp\/rea-verify-[0-9a-f-]{36}\.txt: /u,
     );
     expect(result.stdout).not.toContain("all adb device checks passed");
     expect(result.deviceFiles).toHaveLength(1);
@@ -213,13 +236,70 @@ posix.each([
     expect(`${result.stdout}${result.stderr}`).toContain(failure);
     expect(result.adbCalls).toHaveLength(1);
     expect(result.adbCalls[0]).toMatch(
-      /^-s test shell rm -- \/data\/local\/tmp\/rea-verify-\d+\.txt$/u,
+      /^-s test shell rm -- \/data\/local\/tmp\/rea-verify-[0-9a-f-]{36}\.txt$/u,
     );
     expect(result.stdout).toContain("[ok] verifier transfer probe removed");
     expect(result.deviceFiles).toEqual([]);
     expect(result.closed).toBe("closed");
   },
 );
+
+posix(
+  "cleans up after a device digest error that follows a completed push",
+  async () => {
+    const result = await runVerifier({ push: "digest_mismatch" });
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("device digest mismatch after write");
+    expect(result.adbCalls).toHaveLength(1);
+    expect(result.stdout).toContain("[ok] verifier transfer probe removed");
+    expect(result.deviceFiles).toEqual([]);
+  },
+);
+
+posix(
+  "cleans up after an unexpected push rejection that may follow a write",
+  async () => {
+    const result = await runVerifier({ push: "throw_after_write" });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("push transport failed after write");
+    expect(result.adbCalls).toHaveLength(1);
+    expect(result.stdout).toContain("[ok] verifier transfer probe removed");
+    expect(result.deviceFiles).toEqual([]);
+  },
+);
+
+posix(
+  "does not remove a probe after a push is refused before writing",
+  async () => {
+    const result = await runVerifier({ push: "refused" });
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("push refused before write");
+    expect(result.adbCalls).toHaveLength(0);
+    expect(result.deviceFiles).toEqual([]);
+  },
+);
+
+posix("retries failed probe cleanup during finalization", async () => {
+  const result = await runVerifier({ removal: "fails_once" });
+
+  expect(result.status).toBe(0);
+  expect(result.adbCalls).toHaveLength(2);
+  expect(result.stdout).toContain(
+    "[ok] verifier transfer probe removed — /data/local/tmp/rea-verify-",
+  );
+  expect(result.deviceFiles).toEqual([]);
+});
+
+posix("uses a different per-run probe path", async () => {
+  const first = await runVerifier();
+  const second = await runVerifier();
+  const pathFrom = (calls: string[]) => calls[0]?.split(" ").at(-1);
+
+  expect(pathFrom(first.adbCalls)).not.toBe(pathFrom(second.adbCalls));
+});
 
 it("makes provider cleanup failure fail the production verifier with resource details", async () => {
   const result = await runVerifier({ closeFails: true });

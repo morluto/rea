@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, posix } from "node:path";
@@ -25,6 +25,7 @@ if (options.help) {
 const provider = createAdbDeviceAnalysisProvider(process.env);
 const service = new AdbDeviceAnalysisService(provider);
 let failures = 0;
+const deferredProbeCleanups = [];
 const check = (name, condition, detail = "") => {
   const mark = condition ? "ok" : "FAIL";
   process.stdout.write(
@@ -33,11 +34,12 @@ const check = (name, condition, detail = "") => {
   if (!condition) failures += 1;
 };
 
-const run = async (operation, input) => {
+const run = async (operation, input, onFailure) => {
   const result = await service.execute(operation, input);
   if (!result.ok) {
     process.stdout.write(`[FAIL] ${operation} — ${result.error.message}\n`);
     failures += 1;
+    onFailure?.(result.error);
     return null;
   }
   return result.value.normalized_result;
@@ -46,36 +48,44 @@ const run = async (operation, input) => {
 // Remove the verifier's own transfer probe with the provider-reported adb
 // client, then confirm through the directory listing that it is gone.
 const removeDeviceProbe = async (binary, serial, devicePath) => {
-  const name = "verifier transfer probe removed";
-  if (typeof binary !== "string" || binary === "") {
-    check(name, false, `${devicePath}: adb client path unavailable`);
-    return;
-  }
-  try {
-    await execFileAsync(
-      binary,
-      ["-s", serial, "shell", "rm", "--", devicePath],
-      {
-        timeout: 30_000,
-      },
-    );
-  } catch (cause) {
-    check(name, false, `${devicePath}: ${formatFailure(cause)}`);
-    return;
-  }
-  const listing = await run("list_adb_directory", {
+  if (typeof binary !== "string" || binary === "")
+    throw new Error("ADB client path unavailable");
+  await execFileAsync(binary, ["-s", serial, "shell", "rm", "--", devicePath], {
+    timeout: 30_000,
+  });
+  const result = await service.execute("list_adb_directory", {
     serial,
     device_path: posix.dirname(devicePath),
   });
-  if (listing !== null)
-    check(
-      name,
-      listing.coverage === "complete" &&
-        !listing.entries.some(
-          (entry) => entry.name === posix.basename(devicePath),
-        ),
-      devicePath,
+  if (!result.ok) throw result.error;
+  const listing = result.value.normalized_result;
+  if (
+    listing.coverage !== "complete" ||
+    listing.entries.some((entry) => entry.name === posix.basename(devicePath))
+  )
+    throw new Error(
+      `Probe remains or directory coverage is incomplete: ${devicePath}`,
     );
+};
+
+const removeDeviceProbeOrDefer = async (binary, serial, devicePath) => {
+  const name = "verifier transfer probe removed";
+  try {
+    await removeDeviceProbe(binary, serial, devicePath);
+    check(name, true, devicePath);
+  } catch (cause) {
+    process.stdout.write(
+      `[retry] ${name} during verifier finalization — ${formatFailure(cause)}\n`,
+    );
+    deferredProbeCleanups.push(async () => {
+      try {
+        await removeDeviceProbe(binary, serial, devicePath);
+        check(name, true, `${devicePath} after finalization retry`);
+      } catch (retryCause) {
+        check(name, false, `${devicePath}: ${formatFailure(retryCause)}`);
+      }
+    });
+  }
 };
 
 const verifyTransferRoundtrip = async ({
@@ -85,16 +95,35 @@ const verifyTransferRoundtrip = async ({
   devicePath,
   outputDirectory,
 }) => {
-  const pushed = await run("push_adb_file", {
-    serial,
-    local_path: payload,
-    device_path: devicePath,
-    overwrite: false,
-  });
-  if (pushed === null) return;
-  // A successful no-overwrite push proves the verifier created this exact
-  // destination; pull_adb_file deliberately retains device originals.
+  let pushed;
+  let pushMayHaveWritten = false;
   try {
+    try {
+      pushed = await run(
+        "push_adb_file",
+        {
+          serial,
+          local_path: payload,
+          device_path: devicePath,
+          overwrite: false,
+        },
+        (error) => {
+          pushMayHaveWritten = hasCompletedPushObservation(
+            error,
+            serial,
+            devicePath,
+          );
+        },
+      );
+    } catch (cause) {
+      pushMayHaveWritten = hasCompletedPushObservation(
+        cause,
+        serial,
+        devicePath,
+      );
+      throw cause;
+    }
+    if (pushed === null) return;
     check(
       "push reports matching device-side digest",
       pushed.device_digest_source === "device_sha256sum" &&
@@ -113,7 +142,8 @@ const verifyTransferRoundtrip = async ({
         `${pulled.bytes} bytes`,
       );
   } finally {
-    await removeDeviceProbe(adbBinary, serial, devicePath);
+    if ((pushed !== null && pushed !== undefined) || pushMayHaveWritten)
+      await removeDeviceProbeOrDefer(adbBinary, serial, devicePath);
   }
 };
 
@@ -321,7 +351,7 @@ try {
       await import("node:fs/promises").then((fs) =>
         fs.writeFile(payload, payloadBytes),
       );
-      const deviceTarget = `/data/local/tmp/rea-verify-${Date.now()}.txt`;
+      const deviceTarget = `/data/local/tmp/rea-verify-${randomUUID()}.txt`;
       await verifyTransferRoundtrip({
         adbBinary: client?.client.binary_path,
         serial,
@@ -438,7 +468,10 @@ try {
   verifierFailure = cause;
 } finally {
   try {
-    await closeVerifierResources([() => provider.close()]);
+    await closeVerifierResources([
+      ...deferredProbeCleanups,
+      () => provider.close(),
+    ]);
   } catch (cause) {
     process.stderr.write(`[FAIL] verifier cleanup — ${formatFailure(cause)}\n`);
     failures += 1;
@@ -492,4 +525,13 @@ function formatFailure(cause) {
     return `${cause.name}: ${cause.message}${details}${typeof reason === "string" ? ` reason=${reason}` : ""}`;
   }
   return String(cause);
+}
+
+function hasCompletedPushObservation(error, serial, devicePath) {
+  const observation = error?.partialObservation;
+  return (
+    observation?.operation === "push_adb_file" &&
+    observation.parameters?.serial === serial &&
+    observation.parameters?.device_path === devicePath
+  );
 }
