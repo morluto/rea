@@ -3,7 +3,7 @@
 Verified on Linux with Node v24.22.1 and local Codex CLI 0.165.0 for
 [#8347](https://github.com/morluto/rea/issues/8347). The implementation was
 integrated with main `d54a4661da20382ad8456564a08569fdd24131c5` in
-`4e20698b7b9883f659e445c059c011aa0e5de834`. The final runtime manifest SHA-256 was
+`4e20698b7b9883f659e445c059c011aa0e5de834`. That verified runtime manifest SHA-256 was
 `ee23cbaf0ecbf8d896fb5dc7a88317e2ab8eb77bd3a4467bf5793c3471ca9c7d`.
 Earlier measurements below identify their earlier revisions explicitly.
 
@@ -11,7 +11,65 @@ The [MCP contract](../mcp-contracts.md) separates engine cleanup, investigation
 reset and explicit checkpointing. Automatic journaling remains tracked in
 [#4809](https://github.com/morluto/rea/issues/4809).
 
-## Latest public workflows
+## Post-review qualification
+
+Review corrections were qualified at clean
+`6d875b3ff73d40b365a713cf4ba69a10cca257b7`, with runtime manifest SHA-256
+`328f05dc2d7b114c33dc0406e488c3046a43e1c12187e15ad9263be65df7cbaa`.
+SDK error Evidence retention and reply publication now share session admission;
+reset retries the MCP artifact scope alongside process cleanup before saving or
+clearing. Controlled public MCP regressions cover both publication orderings,
+queued cancellation, terminal shutdown, ordinary export cleanup failure, mixed
+cleanup outcomes and scope reuse. Reinstating the former wiring made four of the
+five new regression cases fail; all five pass with the correction. Controlled
+waits also use bounded acknowledgements and release/join held work in `finally`.
+
+The nine genuine saved-source cases below were repeated against this runtime:
+**313 MCP calls and 19 CLI checks**, 118.510 s guarded elapsed, 114.859544 s CPU,
+and 1,065,390,080 B maximum kernel-family peak. Every complete original result,
+ID, source, coverage and Unknown revision chain matched through close, checkpoint
+collision refusal, reset, same-process import and fresh-process recovery. No
+producer or target open was replayed in this cohort. Input/checkpoint/runtime
+immutability and owned cleanup were verified, with no OOM. These normal workflows
+complement the controlled error/cleanup timing regressions; they do not reproduce
+those timing faults themselves.
+
+One further local Codex CLI task requested `gpt-6.1-terra`/`high` with the
+scoped four-family code-mode profile. Its 25 MCP calls included four expected
+missing-reference controls and no unexpected model errors or producer replay.
+Independent full-result/source/history authentication and answer review supported
+the answer within its stated scope; it did not claim to query every other
+Unknown. The run used 58.269 s elapsed, 9.837083 s local CPU and 885,448,704 B peak,
+with 239,931 input tokens including 215,168 cached, 3,721 output tokens and 277
+separately reported reasoning tokens.
+
+A real fresh stdio client restored that same new checkpoint: 21 records and
+three Unknown revisions in 16,138,749 B, SHA-256
+`760fc74951abc292a3ff2fe1771391ac0d4345416b2345dfa4e85cbb6ce96181`.
+Nine calls reproduced all four complete original results and source records,
+then reexported byte-identical bundle bytes. This took 5.443 s elapsed,
+5.253212 s CPU and 595,218,432 B peak, with verified cleanup and no OOM.
+Two external-checker failures were preserved and corrected against actual event
+ordinals and query filter/paging semantics; neither required model or backend
+replay. Separate checker CPU and remote model compute were not measured.
+
+Across both cohorts, eight actual model runs plus one prelaunch failure used
+2,539,067 input tokens including the 2,269,056 cached subset, 19,721 output tokens,
+and 840 separately reported reasoning tokens. Guarded elapsed totals 419.228 s
+and local CPU 76.072315 s; maximum family peak remains 922,148,864 B. Initial
+failed/partial attempts below remain included. This is execution accounting,
+not a paired model-token performance comparison.
+
+The current runtime also repeated the actual Ghidra healthy-engine control:
+49 calls, 44.333 s elapsed, 43.348651 s CPU and 1,093,464,064 B peak. The same
+verifier-owned JVM PID/start identity/process group, public analysis run and MCP
+client survived reset; two `address_name` queries returned identical Evidence.
+Startup-inclusive and warm requests took 24,953.573 ms and 6.762 ms respectively,
+without dossier, inventory or decompile replay. These are startup/reuse
+observations rather than a PR before/after speedup. Full checkpoint/history
+recovery and owned cleanup passed, with no OOM.
+
+## Initial main-integration workflows
 
 Nine genuine saved-source cases covered eight target families:
 
@@ -38,7 +96,7 @@ the saved observations rather than release binaries. The actual jq target was
 `/usr/bin/jq`, SHA-256
 `90b1eef4498f31836342898fc6e97cfeb8a197c4366773a0fb120ae02a45ea52`.
 
-The final cohort completed **313 MCP calls and 19 public CLI checks**, without
+That cohort completed **313 MCP calls and 19 public CLI checks**, without
 source producer replay. Summed guarded elapsed was 119.445 s and CPU was
 115.040362 s; maximum kernel cgroup-family peak was 1,047,826,432 B. All pinned
 input/runtime hashes stayed unchanged, owned cleanup was verified, and no resource
@@ -78,7 +136,7 @@ uncontrolled; builds and fingerprinting were measured separately. These samples
 establish two fewer necessary calls, rather than statistical speedups or model
 token savings.
 
-## Actual Codex tasks
+## Initial Codex tasks
 
 Local Codex requested `gpt-6.1-terra` with `high` reasoning. Native used the full
 advertised surface without an enabled-tool filter or exact-name guide, both
@@ -97,7 +155,7 @@ stdio verifier used nine calls to restore its same 21-record/three-revision
 checkpoint, reproduce all four complete originals, and reexport byte-identical
 bundle bytes.
 
-The table includes **all attempts**, partial runs and the native task repeated
+The initial cohort table includes **all attempts**, partial runs and the native task repeated
 after main integration:
 
 | Task/profile                        | Input tokens (cached subset) | Output tokens | Elapsed s / CPU s   | Kernel-family peak B |
@@ -141,7 +199,7 @@ bundles: 34 records, 87,532,230 estimated representation bytes against its obser
 corpus did not reach default capacity; injected-policy regressions establish
 atomic refusal, metadata replacement accounting and budget release on reset.
 
-Local checks passed across 29 focused source/public-boundary files, 381 distinct
+Local checks passed across 36 focused source/public-boundary files, 424 distinct
 tests using each file's latest passing run, and 93 Python tests. The main
 integration specifically reran eight lifecycle/recovery files with 61 passing
 tests, including retained candidate cleanup failure/recovery and healthy-client
