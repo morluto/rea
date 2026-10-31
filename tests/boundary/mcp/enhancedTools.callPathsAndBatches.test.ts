@@ -12,6 +12,7 @@ import { ENHANCED_TOOL_CONTRACTS } from "../../../src/contracts/enhancedToolCont
 import { NULL_PSEUDOCODE_GUIDANCE } from "../../../src/application/EnhancedTools.js";
 import type { RelationshipCoverage } from "../../../src/domain/relationshipCoverage.js";
 import { err, ok as resultOk } from "../../../src/domain/result.js";
+import { MAX_ENHANCED_RECORDS } from "../../../src/contracts/enhancedInputs.js";
 
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import {
@@ -485,6 +486,38 @@ describe("enhanced MCP batch cancellation", () => {
 });
 
 describe("enhanced MCP batches", () => {
+  it("advertises and enforces the batch input budget before provider calls", async () => {
+    let calls = 0;
+    const client = await connect({
+      execute: async () => {
+        calls += 1;
+        throw new Error("provider must not be called for invalid input");
+      },
+    });
+    const { tools } = await client.listTools();
+    expect(
+      tools.find(({ name }) => name === "batch_decompile")?.inputSchema,
+    ).toMatchObject({
+      properties: { addresses: { maxItems: MAX_ENHANCED_RECORDS } },
+    });
+
+    const result = await client.callTool({
+      name: "batch_decompile",
+      arguments: {
+        addresses: Array.from(
+          { length: MAX_ENHANCED_RECORDS + 1 },
+          () => "0x0",
+        ),
+      },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(parseMcpToolError(result)).toMatchObject({
+      error: { code: "invalid_request", category: "invalid_input" },
+    });
+    expect(calls).toBe(0);
+  });
+
   it("returns every batch item in caller order with its own result", async () => {
     const addresses = Array.from(
       { length: 37 },
