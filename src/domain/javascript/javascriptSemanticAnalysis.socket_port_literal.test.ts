@@ -155,3 +155,83 @@ it.each([
     expect(socketAcquisitionsFor(call)).toEqual([{ kind: "acquire", method }]);
   },
 );
+
+/**
+ * Three review findings on the options-object form.
+ *
+ * `tls.connect` only lets a later options object replace the first argument when
+ * it actually supplies a port or a Unix socket path:
+ *
+ *   tls.connect(-1, {})                            -> THREW ERR_SOCKET_BAD_PORT
+ *   tls.connect(65536, { servername: "x" })        -> THREW ERR_SOCKET_BAD_PORT
+ *   tls.connect(-1, { port: 443 })                 -> Socket created
+ *   tls.connect(-1, { path: "/tmp/x.sock" })       -> Socket created
+ *   tls.connect(-1, { port: -1 })                  -> THREW ERR_SOCKET_BAD_PORT
+ *
+ * A non-empty `path` member selects a Unix socket, so Node ignores `port`:
+ *
+ *   net.connect({ path: "/tmp/x.sock", port: -1 }) -> Socket created
+ *   net.connect({ path: "", port: -1 })            -> THREW ERR_SOCKET_BAD_PORT
+ *
+ * JavaScript uses the last duplicate member:
+ *
+ *   net.connect({ port: -1, port: 443 })           -> Socket created
+ *   net.connect({ port: 443, port: -1 })           -> THREW ERR_SOCKET_BAD_PORT
+ */
+it.each([
+  ["an empty tls options object", `tls.connect(-1, {})`],
+  ["tls options without a port", `tls.connect(65536, { servername: "x" })`],
+  ["tls options with a rejected port", `tls.connect(-1, { port: -1 })`],
+  ["tls options with an empty path", `tls.connect(-1, { path: "" })`],
+  ["a void tls port with empty options", `tls.connect(void 0, {})`],
+  [
+    "a Unix socket path beside a bad port",
+    `net.connect({ path: "", port: -1 })`,
+  ],
+  [
+    "an options object whose last port is rejected",
+    `net.connect({ port: 443, port: -1 })`,
+  ],
+] as const)("emits no socket acquisition for %s", (_name, call) => {
+  expect(socketAcquisitionsFor(call)).toEqual([]);
+});
+
+it.each([
+  [
+    "tls options with their own port",
+    `tls.connect(-1, { port: 443 })`,
+    "connect",
+  ],
+  [
+    "tls options with their own path",
+    `tls.connect(-1, { path: "/tmp/x.sock" })`,
+    "connect",
+  ],
+  [
+    "tls options that win over the bad port",
+    `tls.connect(65536, { port: 443 })`,
+    "connect",
+  ],
+  [
+    "a Unix socket path beside a bad port",
+    `net.connect({ path: "/tmp/x.sock", port: -1 })`,
+    "connect",
+  ],
+  [
+    "a Unix socket path beside an out-of-range port",
+    `net.connect({ path: "/tmp/x.sock", port: 65536 })`,
+    "connect",
+  ],
+  [
+    "a dynamic Unix socket path",
+    `net.connect({ path: dynamic, port: -1 })`,
+    "connect",
+  ],
+  [
+    "an options object whose last port is usable",
+    `net.connect({ port: -1, port: 443 })`,
+    "connect",
+  ],
+] as const)("keeps the socket acquisition for %s", (_name, call, method) => {
+  expect(socketAcquisitionsFor(call)).toEqual([{ kind: "acquire", method }]);
+});
