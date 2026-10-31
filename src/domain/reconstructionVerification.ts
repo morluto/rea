@@ -2,6 +2,7 @@ import {
   ArtifactInventoryCarrierError,
   parseArtifactInventoryEvidence,
 } from "./artifactInventoryEvidence.js";
+import { compareArtifacts } from "./artifactComparison.js";
 import { uniqueSorted } from "./canonicalOrdering.js";
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 import { comparisonSourceEvidenceSides } from "./comparisonSourceEvidence.js";
@@ -45,6 +46,11 @@ interface FunctionSourceFacts {
   readonly callCoverageDiagnostics: readonly string[];
 }
 
+type ArtifactReplay = Pick<
+  ReturnType<typeof compareArtifacts>,
+  "status" | "left_manifest_id" | "right_manifest_id"
+>;
+
 /** Verify only explicitly declared claims; no global equivalence is inferred. */
 export const verifyReconstruction = (
   specificationInput: unknown,
@@ -70,8 +76,11 @@ export const verifyReconstruction = (
     bundle.records.map((item) => [item.evidence_id, item]),
   );
   const heads = reconstructionUnknownHeads(bundle.unknowns);
+  const artifactReplays = new Map<string, ArtifactReplay>();
   const results = specification.claims
-    .map((claim, index) => evaluateClaim(claim, index, records, heads))
+    .map((claim, index) =>
+      evaluateClaim(claim, index, records, heads, artifactReplays),
+    )
     .sort((left, right) =>
       compareUnicodeCodePoints(left.claim_id, right.claim_id),
     );
@@ -117,6 +126,7 @@ const evaluateClaim = (
   claimIndex: number,
   records: ReadonlyMap<string, Evidence>,
   heads: ReadonlyMap<string, ResidualUnknown>,
+  artifactReplays: Map<string, ArtifactReplay>,
 ): ClaimResult => {
   const comparison = records.get(claim.comparison_evidence_id);
   if (comparison === undefined)
@@ -155,6 +165,15 @@ const evaluateClaim = (
   const blockers = [
     ...authorityLimitations(claim, sources, sides),
     ...callCoverage.blockers,
+    ...(claim.kind === "structural-artifact"
+      ? assessArtifactSourceComparison(
+          sides,
+          records,
+          comparison,
+          observed,
+          artifactReplays,
+        )
+      : []),
   ];
   const relevantUnknowns = reconstructionClaimUnknowns(
     heads,
@@ -184,6 +203,76 @@ const evaluateClaim = (
       ),
     ]),
   });
+};
+
+const assessArtifactSourceComparison = (
+  sides: {
+    readonly left: readonly string[];
+    readonly right: readonly string[];
+  },
+  records: ReadonlyMap<string, Evidence>,
+  comparison: Evidence,
+  observed: ObservedStatus,
+  replays: Map<string, ArtifactReplay>,
+): string[] => {
+  const parsed = readComparisonResult(comparison, "compare_artifacts");
+  if (!parsed.ok) throw parsed.error;
+  let leftManifest: string;
+  let rightManifest: string;
+  let corroborated = true;
+  try {
+    const left = sides.left.map((id) => records.get(id)!);
+    const right = sides.right.map((id) => records.get(id)!);
+    if (
+      observed === "unchanged" ||
+      observed === "changed" ||
+      observed === "added" ||
+      observed === "removed" ||
+      observed === "contradiction"
+    ) {
+      const key = JSON.stringify([sides.left, sides.right]);
+      let actual = replays.get(key);
+      if (actual === undefined) {
+        const result = compareArtifacts(left, right);
+        actual = {
+          status: result.status,
+          left_manifest_id: result.left_manifest_id,
+          right_manifest_id: result.right_manifest_id,
+        };
+        replays.set(key, actual);
+      }
+      leftManifest = actual.left_manifest_id;
+      rightManifest = actual.right_manifest_id;
+      corroborated = actual.status === observed;
+    } else {
+      leftManifest =
+        parseArtifactInventoryEvidence(left).inventory.manifest.manifest_id;
+      rightManifest =
+        parseArtifactInventoryEvidence(right).inventory.manifest.manifest_id;
+    }
+  } catch (cause: unknown) {
+    if (
+      !(cause instanceof AnalysisInputError) &&
+      !(cause instanceof ArtifactInventoryCarrierError)
+    )
+      throw cause;
+    throw new EvidenceIntegrityError(cause.message, {
+      cause,
+      userMessage: cause.message,
+    });
+  }
+  if (
+    parsed.value.result.left_manifest_id !== leftManifest ||
+    parsed.value.result.right_manifest_id !== rightManifest
+  )
+    throw new EvidenceIntegrityError(
+      "Artifact comparison manifest identities disagree with its sources",
+    );
+  return corroborated
+    ? []
+    : [
+        "Artifact source inventories do not corroborate the claimed comparison status.",
+      ];
 };
 
 const readValidatedSourceFacts = (

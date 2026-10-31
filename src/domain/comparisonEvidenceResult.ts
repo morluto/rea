@@ -70,10 +70,10 @@ export function readComparisonResult(
     evidence.normalized_result,
   );
   if (!parsed.ok) return parsed;
-  const links = validateFindingLinks(
-    evidence,
-    parsed.value.changes.flatMap(({ evidence_links }) => evidence_links),
-  );
+  const links = validateFindingLinks(evidence, [
+    ...parsed.value.changes.flatMap(({ evidence_links }) => evidence_links),
+    ...(parsed.value.integrity_mismatch_evidence_ids ?? []),
+  ]);
   if (!links.ok) return links;
   return ok({ operation, evidence, result: parsed.value });
 }
