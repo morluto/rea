@@ -357,20 +357,22 @@ const escapeMarkdownText = (value: string): string =>
 const markdownHeading = (path: readonly string[]): string =>
   `## ${escapeMarkdownText(path.join("."))}\n\n`;
 
+/** Encode literal text for a Markdown table cell, including edge whitespace. */
+export const encodeMarkdownTableCell = (value: string): string =>
+  escapeTableCell(value).replace(/^[ \t]+|[ \t]+$/g, (whitespace) =>
+    encodeMarkdownWhitespace(whitespace),
+  );
+
 const renderTable = (
   headers: readonly string[],
   rows: readonly string[][],
 ): string => {
   if (headers.length === 0) return "";
-  const encodeTableCell = (value: string): string =>
-    escapeTableCell(value).replace(/^[ \t]+|[ \t]+$/g, (spaces) =>
-      encodeMarkdownWhitespace(spaces),
-    );
-  const escapedHeaders = headers.map(encodeTableCell);
+  const escapedHeaders = headers.map(encodeMarkdownTableCell);
   const widths = escapedHeaders.map((header) => header.length);
   for (const row of rows) {
     for (let index = 0; index < escapedHeaders.length; index += 1) {
-      const width = encodeTableCell(row[index] ?? "").length;
+      const width = encodeMarkdownTableCell(row[index] ?? "").length;
       if (width > widths[index]!) widths[index] = width;
     }
   }
@@ -384,7 +386,9 @@ const renderTable = (
   for (const row of rows) {
     lines.push(
       `| ${escapedHeaders
-        .map((_, index) => pad(encodeTableCell(row[index] ?? ""), index))
+        .map((_, index) =>
+          pad(encodeMarkdownTableCell(row[index] ?? ""), index),
+        )
         .join(" | ")} |`,
     );
   }
