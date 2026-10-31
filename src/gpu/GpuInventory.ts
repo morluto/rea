@@ -52,7 +52,7 @@ import {
   readPtxKernels,
   readPtxTarget,
 } from "./PtxKernels.js";
-import { parseAmdGpuTargetId } from "./AmdGpuTarget.js";
+import type { AmdGpuTargetIdentity } from "./AmdGpuTarget.js";
 
 /** File declarations only. Every child range stays in its named parent coordinate space. */
 export class GpuInventory {
@@ -68,7 +68,10 @@ export class GpuInventory {
   unknown_section_names = 0;
   #factBytes = 0;
   #workBytes = 0;
-  readonly #outerTargets = new WeakMap<GpuObject, string | null>();
+  readonly #outerTargets = new WeakMap<
+    GpuObject,
+    string | AmdGpuTargetIdentity | null
+  >();
   readonly #selectedObjects: ReadonlySet<string> | undefined;
   readonly #selectedTargets: ReadonlySet<string> | undefined;
   constructor(
@@ -88,9 +91,9 @@ export class GpuInventory {
       throw new GpuReportCapacityFailure();
     this.#factBytes += bytes + 2;
   }
-  #add(row: GpuObject): void {
+  #add(row: GpuObject, amdTarget?: AmdGpuTargetIdentity | null): void {
     if (row.raw_flags !== null || row.bundle_id !== null)
-      this.#outerTargets.set(row, row.target);
+      this.#outerTargets.set(row, amdTarget ?? row.target);
     this.#retain(row);
     this.#retain(" ".repeat(32)); // Reserve all later inspection-state changes.
     this.objects.push(row);
@@ -417,37 +420,48 @@ export class GpuInventory {
   }
   #target(row: GpuObject, payload: GpuPayloadTarget): string | undefined {
     const selectedTarget = row.target;
-    const outer = this.#outerTargets.get(row) ?? null;
+    const outerIdentity = this.#outerTargets.get(row) ?? null;
+    const outer =
+      typeof outerIdentity === "string"
+        ? outerIdentity
+        : (outerIdentity?.key ?? null);
+    const payloadKey =
+      payload.scope === "amdgpu"
+        ? (payload.identity?.key ?? null)
+        : payload.key;
     const hasOuter = outer !== null;
     let state: GpuObject["target_consistency"] = "unknown";
     if (payload.value !== null && !hasOuter) state = "single-source";
-    else if (outer !== null && payload.key !== null) {
+    else if (outer !== null && payloadKey !== null) {
       if (payload.scope === "cuda-base") {
         const base = /^sm_([0-9]+)[a-z]*$/u.exec(outer)?.[1];
-        const inner = /^sm_([0-9]+)$/u.exec(payload.key)?.[1];
+        const inner = /^sm_([0-9]+)$/u.exec(payloadKey)?.[1];
         if (base !== undefined && inner !== undefined)
           state = base === inner ? "base-only" : "conflict";
-      } else if (ptxTargetIdentity(outer) === ptxTargetIdentity(payload.key))
+      } else if (payload.scope === "amdgpu") {
+        if (outer === payloadKey) state = "consistent";
+        else
+          state =
+            typeof outerIdentity === "object" &&
+            outerIdentity !== null &&
+            payload.identity !== null &&
+            outerIdentity.processor === payload.identity.processor
+              ? "unknown"
+              : "conflict";
+      } else if (ptxTargetIdentity(outer) === ptxTargetIdentity(payloadKey))
         state = "consistent";
-      else if (row.kind === "amdgpu") {
-        const outerTarget = parseAmdGpuTargetId(outer);
-        const payloadTarget = parseAmdGpuTargetId(payload.key);
-        state =
-          outerTarget !== null &&
-          payloadTarget !== null &&
-          outerTarget.processor === payloadTarget.processor
-            ? "unknown"
-            : "conflict";
-      } else state = "conflict";
+      else state = "conflict";
     }
     this.#retain({
       payload_target: payload.value,
       cuda_target_header: payload.cudaHeader ?? null,
+      amd_target_metadata: payload.amdMetadata ?? null,
       target_consistency: state,
       target: selectedTarget ?? payload.value,
     });
     row.payload_target = payload.value;
     row.cuda_target_header = payload.cudaHeader ?? null;
+    row.amd_target_metadata = payload.amdMetadata ?? null;
     row.target_consistency = state;
     if (selectedTarget === null) row.target = payload.value;
     if (row.target === null) this.discovery = "partial";
@@ -500,8 +514,9 @@ export class GpuInventory {
       if (prepared.limitations.length > 0) this.discovery = "partial";
       this.#target(row, {
         value: prepared.target,
-        key: prepared.target_key,
-        scope: "exact",
+        identity: prepared.targetIdentity,
+        amdMetadata: prepared.targetMetadata,
+        scope: "amdgpu",
       });
       if (!inspected.ok) {
         this.discovery = "partial";
@@ -566,8 +581,8 @@ export class GpuInventory {
           base,
           this.signal,
         );
-        for (const row of directory.objects) {
-          this.#add(row);
+        for (const { object: row, amdTarget } of directory.declarations) {
+          this.#add(row, amdTarget);
           if (row.kind === "host") row.inspection = "complete";
           else if (row.kind === "amdgpu" && row.target === null)
             await this.#amdPayload(source, row);

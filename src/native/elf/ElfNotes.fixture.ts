@@ -1,4 +1,4 @@
-import { deflateSync } from "node:zlib";
+import { deflateSync, zstdCompressSync } from "node:zlib";
 
 const concat = (...parts: Buffer[]): Buffer => Buffer.concat(parts);
 
@@ -209,6 +209,23 @@ export const elfNoteFixture = (options: ElfNoteImageOptions = {}): Buffer => {
   return bytes;
 };
 
+/** A valid GNU note whose SHT_NOTE section-name lookup cannot be completed. */
+export const elfNoteWithUnreadableSectionNameFixture = (
+  reason: "outside" | "unterminated",
+): Buffer => {
+  const bytes = elfNoteFixture({
+    ownership: "section",
+    notes: gnuBuildIdNote(),
+  });
+  const noteSection = 64 + 64;
+  const namesSection = 64 + 2 * 64;
+  const namesOffset = Number(bytes.readBigUInt64LE(namesSection + 24));
+  const namesSize = Number(bytes.readBigUInt64LE(namesSection + 32));
+  if (reason === "outside") bytes.writeUInt32LE(namesSize, noteSection);
+  else bytes.fill(0x41, namesOffset + 1, namesOffset + namesSize);
+  return bytes;
+};
+
 /** A non-allocated SHT_NOTE whose stored bytes include an ELF compression header. */
 export const compressedElfNoteSectionFixture = (
   bits: 32 | 64 = 64,
@@ -276,7 +293,7 @@ export const elfExtendedSectionCountFixture = (): Buffer => {
   return bytes;
 };
 
-/** ELF note fixture with a zlib-compressed section-name string table. */
+/** ELF note fixture with a compressed section-name string table. */
 export const compressedElfNoteFixture = (
   bits: 32 | 64 = 64,
   little = true,
@@ -309,7 +326,8 @@ export const compressedElfNoteFixture = (
   const namesOffset = word(namesHeader + (wide ? 24 : 16));
   const namesSize = word(namesHeader + (wide ? 32 : 20));
   const names = image.subarray(namesOffset, namesOffset + namesSize);
-  const compressed = deflateSync(names);
+  const compressed =
+    compressionType === 2 ? zstdCompressSync(names) : deflateSync(names);
   const compressionHeaderBytes = wide ? 24 : 12;
   const replacement = Buffer.alloc(compressionHeaderBytes);
   if (little) replacement.writeUInt32LE(compressionType, 0);

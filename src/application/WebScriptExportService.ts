@@ -21,7 +21,6 @@ import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -86,16 +85,20 @@ export const exportWebScriptsValidated = async (
   resources: ArtifactResourceScope,
   options: ExecutionOptions = {},
 ): Promise<Result<Evidence, AnalysisError>> => {
-  if (!isAbsolute(input.capture_path) || !isAbsolute(input.output_directory))
+  const invalidPaths = (["capture_path", "output_directory"] as const).filter(
+    (field) => !isAbsolute(input[field]),
+  );
+  if (invalidPaths.length > 0)
     return err(
-      new AnalysisInputError(OPERATION, undefined, [
-        {
-          path: [],
-          reason: "invalid_format",
-          message:
-            "capture_path and output_directory must be absolute filesystem paths on this host.",
-        },
-      ]),
+      new AnalysisInputError(
+        OPERATION,
+        undefined,
+        invalidPaths.map((field) => ({
+          path: [field],
+          reason: "invalid_format" as const,
+          message: `${field} must be an absolute filesystem path on this host.`,
+        })),
+      ),
     );
   try {
     if (options.signal?.aborted)
@@ -136,7 +139,7 @@ export const exportWebScriptsValidated = async (
             capture_path: input.capture_path,
             output_directory: input.output_directory,
           },
-          result: jsonValueSchema.parse(result),
+          result,
           rawResult: null,
           confidence: "derived",
           authority: "historical-reference",

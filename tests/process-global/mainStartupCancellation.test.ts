@@ -222,7 +222,9 @@ it("hands exact startup bytes to the installed SDK framing owner", async () => {
     owner.resume();
     input.write(ping.subarray(11));
     await expect.poll(() => messages.length).toBe(2);
-    expect(Buffer.concat(raw)).toEqual(Buffer.concat([request, ping]));
+    expect(
+      Buffer.compare(Buffer.concat(raw), Buffer.concat([request, ping])),
+    ).toBe(0);
     expect(messages[0]).toMatchObject({
       params: { clientInfo: { name: "é🚀" } },
     });

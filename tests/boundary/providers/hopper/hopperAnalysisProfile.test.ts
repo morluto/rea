@@ -67,7 +67,7 @@ describe("Hopper analysis profiles", () => {
     expect("loaderArgs" in input).toBe(false);
   });
 
-  it("reports an unresolved profile when the launcher version is unavailable", async () => {
+  it("refuses a profile when the selected launcher cannot be fingerprinted", async () => {
     const resolved = await resolveHopperAnalysisProfile(
       target("elf", "x86_64"),
       {
@@ -77,10 +77,15 @@ describe("Hopper analysis profiles", () => {
         resourceScope: inspectionResources.owner,
       },
     );
-    expect(resolved).toEqual({
-      ok: true,
-      value: {
-        profile: null,
+    expect(resolved).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "ProviderAdapterError",
+        operation: "resolve_analysis_profile",
+        diagnostics: {
+          launcher_path: "/missing/hopper",
+          system_code: "ENOENT",
+        },
       },
     });
   });

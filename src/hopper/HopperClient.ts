@@ -1,3 +1,4 @@
+import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { randomBytes, randomUUID } from "node:crypto";
 import { access } from "node:fs/promises";
 import type { Socket } from "node:net";
@@ -73,7 +74,7 @@ import {
   hopperLauncherReportedApplicationNotFound,
   nativeHopperLaunchWasDenied,
 } from "./HopperProcessDiagnostic.js";
-import { DEFAULT_HOPPER_STARTUP_TIMEOUT_MS } from "../config/providerStartupTimeout.js";
+import { DEFAULT_HOPPER_STARTUP_TIMEOUT_MS } from "../domain/analysisResourceLimits.js";
 import {
   bridgeRequestLimitMismatchError,
   bridgeRequestOversizeError,
@@ -101,6 +102,7 @@ export interface HopperClientOptions {
   readonly launcher: BridgeLauncher;
   readonly runId?: string;
   readonly startupTimeoutMs?: number;
+  readonly readStartupTimeoutMs?: () => number;
   /** Effective request ceiling. Omitted uses the 16 MiB default. */
   readonly bridgeMaxRequestBytes?: BridgeMaxRequestBytes;
   readonly onDiagnostic?: (event: HopperDiagnostic) => void;
@@ -440,7 +442,7 @@ export class HopperClient {
     this.#resources.shutdownConfirmed = false;
     this.#resources.externalApplication = undefined;
     const deadline = new ProviderStartupDeadline(
-      this.#options.startupTimeoutMs,
+      this.#options.readStartupTimeoutMs?.() ?? this.#options.startupTimeoutMs,
       signal,
     );
     this.#startupOutcome = undefined;
@@ -453,7 +455,7 @@ export class HopperClient {
     try {
       const result = await this.#startWithin(deadline);
       return result.ok && deadline.signal.aborted
-        ? this.#startupFailure(await this.#interruptionFailure(deadline))
+        ? await this.#startupFailure(await this.#interruptionFailure(deadline))
         : result;
     } finally {
       deadline.signal.removeEventListener("abort", onStartupAbort);
@@ -960,6 +962,13 @@ export class HopperClient {
         (await this.#resources.processSupervisor?.waitForOutputClose(0)) ??
           false,
       ),
+      {
+        limit: analysisSettingLimit(
+          "hopper.startup_timeout_ms",
+          deadline.timeoutMs,
+          undefined,
+        ),
+      },
     );
   }
 

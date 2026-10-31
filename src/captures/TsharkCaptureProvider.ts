@@ -17,7 +17,7 @@ import {
 import { parsePacketOutput } from "./parsePacketOutput.js";
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { access, mkdir, realpath, writeFile } from "node:fs/promises";
+import { access, mkdir, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import {
   createAnalysisExecution,
@@ -32,6 +32,10 @@ import {
   type ArtifactAnalysisRuntime,
 } from "../process/ArtifactAnalysisResources.js";
 import { readStableArtifact } from "../artifacts/readStableArtifact.js";
+import {
+  assertArtifactCommandPath,
+  selectArtifactCommandPath,
+} from "../process/ArtifactCommandPath.js";
 import {
   AnalysisError,
   type AnalysisCapturedOutput,
@@ -155,7 +159,11 @@ export class TsharkCaptureProvider implements PacketCapturePort {
         throw new Error(
           `TShark 4.x was not found on PATH; add it to PATH or set absolute ${TSHARK_COMMAND_ENV}.`,
         );
-      const command = await realpath(configured);
+      const selectedCommand = await selectArtifactCommandPath(
+        configured,
+        options?.signal,
+      );
+      const command = selectedCommand.resolvedPath;
       await access(command, constants.X_OK);
       const toolSnapshot = await this.#resources.read(
         command,
@@ -167,7 +175,11 @@ export class TsharkCaptureProvider implements PacketCapturePort {
         this.environment.REA_TSHARK_PRLIMIT_COMMAND ?? "/usr/bin/prlimit";
       if (!isAbsolute(configuredLimiter))
         throw new Error("REA_TSHARK_PRLIMIT_COMMAND must be absolute.");
-      const limiter = await realpath(configuredLimiter);
+      const selectedLimiter = await selectArtifactCommandPath(
+        configuredLimiter,
+        options?.signal,
+      );
+      const limiter = selectedLimiter.resolvedPath;
       await access(limiter, constants.X_OK);
       const limiterIdentity = await this.#resources.read(
         limiter,
@@ -175,7 +187,10 @@ export class TsharkCaptureProvider implements PacketCapturePort {
         options?.signal,
       );
       effectiveLimits = await this.#resources.readLimits(limits);
-      const limitArguments = prlimitArgumentVector(effectiveLimits, command);
+      const limitArguments = prlimitArgumentVector(
+        effectiveLimits,
+        selectedCommand.invocationPath,
+      );
       phase = "workspace";
       root = await this.createRuntime();
       this.#resources.retain(root, undefined);
@@ -184,9 +199,15 @@ export class TsharkCaptureProvider implements PacketCapturePort {
       await mkdir(configurationPath, { mode: 0o700 });
       const execute = async (args: readonly string[]) => {
         capturedOutput = undefined;
+        await assertArtifactCommandPath(selectedCommand, operation, {
+          signal: options?.signal,
+        });
+        await assertArtifactCommandPath(selectedLimiter, operation, {
+          signal: options?.signal,
+        });
         const output = await runOwnedCommand(
           {
-            command: limiter,
+            command: selectedLimiter.invocationPath,
             arguments: [...limitArguments, ...args],
             ...(root === undefined ? {} : { cwd: root.path }),
             expectedCommand: null,
@@ -209,6 +230,12 @@ export class TsharkCaptureProvider implements PacketCapturePort {
           },
         );
         capturedOutput = artifactCommandOutput(output);
+        await assertArtifactCommandPath(selectedCommand, operation, {
+          capturedOutput,
+        });
+        await assertArtifactCommandPath(selectedLimiter, operation, {
+          capturedOutput,
+        });
         const current = await this.#resources.readCommandAfterRun(
           command,
           { path: limiter, sha256: limiterIdentity.sha256 },

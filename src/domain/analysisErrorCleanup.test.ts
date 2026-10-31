@@ -165,13 +165,20 @@ it.each([
     "fixture",
     ["owned-input"],
     { reason: "close denied" },
-    { operation: "inspect" },
+    {
+      operation: "inspect",
+      cleanup: { reason: "close denied", resources: ["owned-input"] },
+    },
   );
   const composed = analysisErrorWithCleanupFailure(
     primary,
     cleanup,
     "inspect",
   ).bindCleanupDependencies([primary, cleanup]);
+  expect(composed.cleanup?.reason).toBe("close denied");
+  expect(composed.cleanup?.reason).not.toBe(
+    projectAnalysisError(cleanup).message,
+  );
   const pending = projectAnalysisError(composed);
   expect(pending.code).toBe("cleanup_incomplete");
   expect(pending.category).toBe(original.category);

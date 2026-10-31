@@ -381,11 +381,11 @@ it.each(
       reason: "invalid_protocol_value",
       count: 1,
     });
-    expect(
-      result.value.completeness.attach_limited_sections.includes(
-        "webmcp_tools",
-      ),
-    ).toBe(scope !== "foreign");
+    // Initial allowed-child replay coverage remains unknown even when a
+    // later event positively identifies that child's destination as foreign.
+    expect(result.value.completeness.attach_limited_sections).toContain(
+      "webmcp_tools",
+    );
     expect(
       result.value.completeness.policy_filtered_sections.includes(
         "webmcp_tools",
@@ -483,7 +483,7 @@ it.each(
       result.value.completeness.attach_limited_sections.includes(
         "webmcp_tools",
       ),
-    ).toBe(uncertain);
+    ).toBe(uncertain || valid);
     expect(
       result.value.completeness.policy_filtered_sections.includes(
         "webmcp_tools",
@@ -523,11 +523,13 @@ describe("CdpBrowserProvider: transient WebMCP frames", () => {
     expect(result.value.completeness.attach_limited_sections).toContain(
       "webmcp_tools",
     );
-    expect(
-      result.value.completeness.excluded.find(
-        ({ section }) => section === "webmcp_tools",
-      )?.count,
-    ).toBe(1);
+    // Initial foreign frame and its replay declaration are two exclusions;
+    // their count does not describe the transient allowed child.
+    expect(result.value.completeness.excluded).toContainEqual({
+      section: "webmcp_tools",
+      reason: "out_of_target_scope",
+      count: 2,
+    });
   });
 
   it("accepts fresh child registrations after a stable frame commit", async () => {
@@ -551,7 +553,9 @@ describe("CdpBrowserProvider: transient WebMCP frames", () => {
     expect(result.value.tools.items).toContainEqual(
       expect.objectContaining({ name: "child_tool" }),
     );
-    expect(result.value.completeness.attach_limited_sections).not.toContain(
+    // Fresh registration restores this tool, but cannot recover pre-attach
+    // declarations from the initial allowed child frame.
+    expect(result.value.completeness.attach_limited_sections).toContain(
       "webmcp_tools",
     );
   });
@@ -864,11 +868,43 @@ describe("CdpBrowserProvider WebMCP schema comparison", () => {
       $ref: "https://untrusted.invalid/schema.json",
       examples: [{ token: "caller-schema-value" }],
     };
-    const options: { webMcpTools: boolean; webMcpInputSchema: JsonValue } = {
-      webMcpTools: true,
-      webMcpInputSchema: declaration,
-    };
-    const browser = await startFakeCdpBrowser(options);
+    let inputSchema: JsonValue = declaration;
+    const browser = await startFakeCdpBrowser({
+      // A root-only replay supplies complete owner correspondence. Foreign
+      // filtering and pre-existing child coverage are tested separately above.
+      eventsBeforeReply: ["WebMCP.enable"],
+      commandEvents: ({ method, sessionId }) =>
+        method === "WebMCP.enable"
+          ? [
+              {
+                method: "WebMCP.toolsAdded",
+                ...(sessionId === undefined ? {} : { sessionId }),
+                params: {
+                  tools: [
+                    {
+                      name: "schema_tool",
+                      frameId: "frame-main",
+                      inputSchema,
+                      annotations: { consequential: false },
+                    },
+                  ],
+                },
+              },
+            ]
+          : undefined,
+      commandResult: ({ method }, origin) =>
+        method === "Page.getFrameTree"
+          ? {
+              frameTree: {
+                frame: {
+                  id: "frame-main",
+                  loaderId: "loader-main",
+                  url: `${origin}/app`,
+                },
+              },
+            }
+          : undefined,
+    });
     trackBrowser(browser);
     const provider = new CdpBrowserProvider();
     const input = {
@@ -895,7 +931,7 @@ describe("CdpBrowserProvider WebMCP schema comparison", () => {
       trust: "page-declared-untrusted",
     });
     const compare = async (schema: JsonValue) => {
-      options.webMcpInputSchema = schema;
+      inputSchema = schema;
       const after = await discover();
       const diff = compareWebCaptures(
         compareWebCapturesInputSchema.parse({
@@ -908,7 +944,7 @@ describe("CdpBrowserProvider WebMCP schema comparison", () => {
     const reordered = Object.fromEntries(Object.entries(declaration).reverse());
     const equivalent = await compare(reordered);
     expect(equivalent.dimension).toMatchObject({
-      status: "unknown",
+      status: "unchanged",
       total_changes: 0,
     });
     expect(equivalent.after.tools.items[0]?.input_schema_sha256).toBe(

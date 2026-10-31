@@ -210,10 +210,10 @@ export const cubinFixture = (
   }
   return result;
 };
-export const amdFixture = (
+/** One producer-shaped AMDGPU MessagePack note, composable with later notes. */
+export const amdNoteFixture = (
   hidden = false,
-  trailingNote?: Buffer,
-  target: string | null = "amdgcn-amd-amdhsa--gfx900",
+  target: string | number | null = "amdgcn-amd-amdhsa--gfx900",
 ): Buffer => {
   const args = [
     { ".offset": 0, ".size": 8, ".value_kind": "global_buffer" },
@@ -247,6 +247,14 @@ export const amdFixture = (
   note.writeUInt32LE(32, 8);
   note.write("AMDGPU\0", 12);
   metadata.copy(note, 20);
+  return note;
+};
+export const amdFixture = (
+  hidden = false,
+  trailingNote?: Buffer,
+  target: string | number | null = "amdgcn-amd-amdhsa--gfx900",
+): Buffer => {
+  const note = amdNoteFixture(hidden, target);
   return elfFixture(224, [
     {
       name: ".note",

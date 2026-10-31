@@ -16,7 +16,7 @@ import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
-import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
+import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 
 /** Recover bounded static property reads, writes, spreads, and destructuring. */
@@ -33,7 +33,7 @@ export const collectJavaScriptSemanticObjects = (
     output,
     writeTargets: new Map(),
   };
-  traverseJavaScriptAst(program, {
+  traverseJavaScriptValueAst(program, state.erasedSyntaxNodes, {
     enter: (node, parent) => {
       callableStack.enter(node, parent);
       const ownerCallableId = callableStack.callables.at(-1) ?? null;

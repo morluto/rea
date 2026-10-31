@@ -1,6 +1,22 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 
 import { absoluteCallerPath } from "../../../src/filesystem/callerPath.js";
+
+it("resolves absolute POSIX paths independently of an unavailable cwd", () => {
+  const cwd = vi.spyOn(process, "cwd").mockImplementation(() => {
+    throw new Error("working directory was removed");
+  });
+  try {
+    expect(
+      absoluteCallerPath("/cache//rea/kuna/.", { platform: "linux" }),
+    ).toBe("/cache/rea/kuna/");
+    expect(
+      absoluteCallerPath("sample", { cwd: "/explicit", platform: "linux" }),
+    ).toBe("/explicit/sample");
+  } finally {
+    cwd.mockRestore();
+  }
+});
 
 it("keeps POSIX parent components for the filesystem to resolve", () => {
   const posix = { cwd: "/work", platform: "linux" } as const;

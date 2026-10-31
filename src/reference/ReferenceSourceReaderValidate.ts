@@ -127,6 +127,12 @@ export const prepareRoot = async (
       "Reference source root could not be resolved",
     );
     if (rootFailure === undefined) throw cause;
-    return err(failure(rootFailure.code, `${rootFailure.message}: ${root}`));
+    return err({
+      ...failure(rootFailure.code, `${rootFailure.message}: ${root}`),
+      ...(rootFailure.remediationAction === undefined
+        ? {}
+        : { remediationAction: rootFailure.remediationAction }),
+      cause,
+    });
   }
 };

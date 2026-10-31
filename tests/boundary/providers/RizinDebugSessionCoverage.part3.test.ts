@@ -1,9 +1,17 @@
 import { afterEach, expect, it, vi } from "vitest";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import {
   AnalysisCancelledError,
   AnalysisInputError,
 } from "../../../src/domain/analysisErrorCore.js";
 import { stopOwnedDebuggerProcess } from "../../../src/process/ownedDebuggerSession.js";
+import {
+  applyDebuggerAdmissionOverride,
+  DEBUGGER_COMMAND_DEADLINE_SETTING,
+  resolveDebuggerSessionLimits,
+} from "../../../src/config/debuggerSessionLimits.js";
+import { rizinCommandTimeoutLimitation } from "../../../src/rizin/RizinDebugSessionManager.js";
 import { rizinTestInferiorTty } from "./RizinTestInferiorTty.js";
 import {
   createRizinCoverageHarness,
@@ -22,26 +30,33 @@ it.skipIf(process.platform === "win32")(
       frameTimeoutMs: 10,
       stopProcess: async () => ({ status: "stopped" }),
     });
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
+    if (!started.ok) throw started.error;
+    const deadline = applyDebuggerAdmissionOverride(
+      resolveDebuggerSessionLimits({}).commandDeadline,
+      10,
+    );
+    expect(deadline).toMatchObject({
+      setting: DEBUGGER_COMMAND_DEADLINE_SETTING,
+      value: 10,
+      source: "runtime",
+      unit: "ms",
+    });
     const result = await manager.execute(started.value.session_id, "wait");
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.value.result.completion_status).toBe("unknown");
-      expect(result.value.evidence.raw_result).toEqual(result.value.result);
-      expect(result.value.evidence.parameters.launch_provenance).toEqual({
-        caller_selected_path: "/tmp/injected",
-        resolved_path: "/tmp/injected",
-      });
-      expect(result.value.evidence.limitations).toEqual([
-        "The current debugger target identity is not established by the Rizin session identifier.",
-        "The command timed out before its completion marker at 10 ms (deadlineExpired). This release has no runtime override. Retained output is partial and completion is unknown.",
-        "The owned debugger session was stopped because output correlation could no longer be guaranteed.",
-        "The command is unrestricted and may access local files, the shell, network, or mutate the target.",
-        "Interrupted output may include an incomplete completion-marker prefix; it is retained because it cannot be distinguished from command diagnostics.",
-        "Launch provenance records the original and resolved startup paths; it does not establish the current target after unrestricted debugger commands.",
-      ]);
-    }
+    if (!result.ok) throw result.error;
+    expect(result.value.result.completion_status).toBe("unknown");
+    expect(result.value.evidence.raw_result).toEqual(result.value.result);
+    expect(result.value.evidence.parameters.launch_provenance).toEqual({
+      caller_selected_path: "/tmp/injected",
+      resolved_path: "/tmp/injected",
+    });
+    expect(result.value.evidence.limitations).toEqual([
+      "The current debugger target identity is not established by the Rizin session identifier.",
+      rizinCommandTimeoutLimitation(deadline),
+      "The owned debugger session was stopped because output correlation could no longer be guaranteed.",
+      "The command is unrestricted and may access local files, the shell, network, or mutate the target.",
+      "Interrupted output may include an incomplete completion-marker prefix; it is retained because it cannot be distinguished from command diagnostics.",
+      "Launch provenance records the original and resolved startup paths; it does not establish the current target after unrestricted debugger commands.",
+    ]);
   },
 );
 
@@ -134,23 +149,36 @@ it.skipIf(process.platform === "win32")(
 it.skipIf(process.platform === "win32")(
   "cancels a command after capturing its completion frame",
   async () => {
-    let signal: AbortSignal;
+    const reason = { stage: "completion frame captured" };
     const injected = createInjectedProcess({
       onWrite: (text, control) => {
         const marker = /!echo (.+)\n/u.exec(text)?.[1];
-        if (marker !== undefined) control.output(Buffer.from(`${marker}\0`));
+        if (marker !== undefined)
+          control.output(Buffer.from(`registers${marker}\0`));
       },
     });
-    const { manager, started } = await startInjected(injected.spawnProcess);
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
-    signal = abortOnCheck(5);
+    const { manager, started } = await startInjected(injected.spawnProcess, {
+      stopProcess: async () => ({ status: "stopped" }),
+    });
+    if (!started.ok) throw started.error;
+    const signal = abortOnCheck(5, reason);
+    const registration = vi.spyOn(signal, "addEventListener");
     const result = await manager.execute(
       started.value.session_id,
       "dr",
       signal,
     );
     expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(result.error.cause).toBe(reason);
+    expect(registration).toHaveBeenCalledTimes(1);
+    expect(result.error.capturedOutput?.stdout).toBe("registers");
+    expect(result.error.partialObservation).toMatchObject({
+      parameters: { session_id: started.value.session_id, command: "dr" },
+      raw_result: { output: "registers", completion_status: "unknown" },
+    });
+    expect(manager.status(started.value.session_id)?.state).toBe("closed");
   },
 );
 
@@ -161,14 +189,29 @@ it.skipIf(process.platform === "win32")(
     const { manager, started } = await startInjected(injected.spawnProcess, {
       stopProcess: async () => ({ status: "stopped" }),
     });
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
+    if (!started.ok) throw started.error;
+    const reason = { stage: "frame waiter installation" };
+    const signal = abortOnCheck(5, reason);
+    const registration = vi.spyOn(signal, "addEventListener");
     const result = await manager.execute(
       started.value.session_id,
       "wait",
-      abortOnCheck(5),
+      signal,
     );
     expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(registration).toHaveBeenCalledTimes(2);
+    expect(registration).toHaveBeenCalledWith("abort", expect.any(Function), {
+      once: true,
+    });
+    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(result.error.cause).toBe(reason);
+    expect(result.error.capturedOutput?.stdout).toBe("");
+    expect(result.error.partialObservation).toMatchObject({
+      parameters: { session_id: started.value.session_id, command: "wait" },
+      raw_result: { output: "", completion_status: "unknown" },
+    });
+    expect(manager.status(started.value.session_id)?.state).toBe("closed");
   },
 );
 
@@ -355,7 +398,18 @@ it.skipIf(process.platform === "win32").each([false, true])(
       },
     });
     const { manager, started } = await startInjected(injected.spawnProcess, {
-      stopProcess: stopOwnedDebuggerProcess,
+      // The injected stream has no OS process identity. Exercise protocol detach
+      // here; real debugger process ownership is covered by process boundaries.
+      stopProcess: async (session) => {
+        if (session.exited) return { status: "already_exited" };
+        try {
+          await session.detachInferior?.();
+          injected.control.exit();
+          return { status: "stopped" };
+        } catch (cause) {
+          return { status: "incomplete", reason: String(cause) };
+        }
+      },
       maxCommandOutputBytes: 8,
     });
     if (!started.ok) throw started.error;
@@ -374,6 +428,8 @@ it.skipIf(process.platform === "win32").each([false, true])(
       expect(result.error.cleanupIncomplete).toBe(false);
     }
     expect(writes.some((text) => text.startsWith("olj\n"))).toBe(true);
+    if (!retry)
+      expect((await manager.close(started.value.session_id)).ok).toBe(true);
     expect(manager.status(started.value.session_id)).toBeUndefined();
   },
 );
@@ -463,26 +519,73 @@ it.skipIf(process.platform === "win32").each([
       "noisy",
       controller.signal,
     );
-    await entered;
-    controller.abort(reason);
-    releaseStop();
-    const result = await pending;
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error).toMatchObject({
-      _tag: "AnalysisCancelledError",
-      cleanupIncomplete: incomplete,
+    await withVerifierCleanup(async () => {
+      await awaitAcknowledgement(entered, pending, "debugger final cleanup");
+      controller.abort(reason);
+      releaseStop();
+      const result = await pending;
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toMatchObject({
+        _tag: "AnalysisCancelledError",
+        cleanupIncomplete: incomplete,
+      });
+      expect(result.error.cause).toBe(reason);
+      expect(result.error.capturedOutput?.stdout).toBe(
+        stage === "output" ? "beyond s" : stage === "exited" ? "partial" : "",
+      );
+      expect(result.error.partialObservation).toBeDefined();
+      if (incomplete) {
+        stopping = false;
+        expect((await manager.close(started.value.session_id)).ok).toBe(true);
+        expect(result.error.cleanupIncomplete).toBe(false);
+      }
+    }, [
+      releaseStop,
+      async () => {
+        await pending;
+      },
+      () => {
+        stopping = false;
+      },
+    ]);
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "accepts cleanup readback larger than the caller command-output cap",
+  async () => {
+    const cleanupReadback = `${" ".repeat(32)}[]`;
+    const injected = createInjectedProcess({
+      onWrite: (text, control) => {
+        const marker = /!echo (.+)\n/u.exec(text)?.[1];
+        if (marker === undefined) return;
+        if (text.startsWith("ok\n")) control.output(`ok\0${marker}\0`);
+        else if (text.startsWith("olj\n"))
+          control.output(`${cleanupReadback}\0${marker}\0`);
+        else control.output(`${marker}\0`);
+      },
     });
-    expect(result.error.cause).toBe(reason);
-    expect(result.error.capturedOutput?.stdout).toBe(
-      stage === "output" ? "beyond s" : stage === "exited" ? "partial" : "",
-    );
-    expect(result.error.partialObservation).toBeDefined();
-    if (incomplete) {
-      stopping = false;
-      expect((await manager.close(started.value.session_id)).ok).toBe(true);
-      expect(result.error.cleanupIncomplete).toBe(false);
-    }
+    const { manager, started } = await startInjected(injected.spawnProcess, {
+      maxCommandOutputBytes: 8,
+      stopProcess: async (session) => {
+        try {
+          await session.detachInferior?.();
+          injected.control.exit();
+          return { status: "stopped" };
+        } catch (cause) {
+          return { status: "incomplete", reason: String(cause) };
+        }
+      },
+    });
+    if (!started.ok) throw started.error;
+    const executed = await manager.execute(started.value.session_id, "ok");
+    if (!executed.ok) throw executed.error;
+    expect(executed.value.result.completion_status).toBe("complete");
+    expect(Buffer.byteLength(cleanupReadback, "utf8")).toBeGreaterThan(8);
+    const closed = await manager.close(started.value.session_id);
+    if (!closed.ok) throw closed.error;
+    expect(closed.value).toEqual({ target_state: "unknown" });
   },
 );
 

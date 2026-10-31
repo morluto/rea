@@ -3,6 +3,7 @@ import {
   mkdtemp,
   mkdir,
   readFile,
+  realpath,
   writeFile,
   readdir,
   rm,
@@ -14,14 +15,14 @@ import { execFile } from "node:child_process";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { requireMcpToolError } from "./mcp-verifier-results.mjs";
-import { closeVerifierResources } from "./verifier-cleanup.mjs";
+import { withVerifierCleanup } from "./verifier-cleanup.mjs";
 import { WABT_OPERATION_TIMEOUT_MS } from "./wabt-verifier-timeouts.mjs";
 const execute = promisify(execFile);
 /** Real WABT inspection with authored cleanup denials and same-connection recovery. */
 export async function verifyWabtCleanup(entrypoint, environment, parent) {
-  const root = await mkdtemp(join(parent, "wabt-cleanup-"));
-  let primaryFailure;
-  try {
+  // Production canonicalizes the temporary parent before creating its root.
+  const root = await realpath(await mkdtemp(join(parent, "wabt-cleanup-")));
+  return withVerifierCleanup(async () => {
     const valid = join(root, "valid.wasm"),
       invalid = join(root, "invalid.wasm");
     await writeFile(
@@ -162,8 +163,7 @@ export async function verifyWabtCleanup(entrypoint, environment, parent) {
         stderr: "pipe",
       });
       const calls = [];
-      let callFailure;
-      try {
+      await withVerifierCleanup(async () => {
         await client.connect(transport);
         const request = {
           name: "inspect_wasm_artifact",
@@ -193,15 +193,7 @@ export async function verifyWabtCleanup(entrypoint, environment, parent) {
           last.structuredContent.normalized_result.validation,
           "valid",
         );
-      } catch (cause) {
-        callFailure = cause;
-        throw cause;
-      } finally {
-        await closeVerifierResources(
-          [() => client.close(), () => transport.close()],
-          callFailure,
-        );
-      }
+      }, [() => client.close(), () => transport.close()]);
       const facts = await observations(c);
       assert.deepEqual(
         facts.remaining,
@@ -214,13 +206,5 @@ export async function verifyWabtCleanup(entrypoint, environment, parent) {
         count + (record.kind === "cli" ? 1 : record.calls.length),
       0,
     );
-  } catch (cause) {
-    primaryFailure = cause;
-    throw cause;
-  } finally {
-    await closeVerifierResources(
-      [() => rm(root, { recursive: true, force: true })],
-      primaryFailure,
-    );
-  }
+  }, [() => rm(root, { recursive: true, force: true })]);
 }

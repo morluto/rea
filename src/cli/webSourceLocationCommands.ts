@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { z } from "incur";
 import { createWebSourceLocationService } from "../composition/webSourceLocations.js";
 import { webSourceLocationInputSchema } from "../domain/webSourceLocation.js";
@@ -62,7 +63,7 @@ export const registerWebSourceLocationCommands = (
             "web-source-location",
             "trace_web_source_location",
             signal,
-          ),
+          ).then(projectCliAnalysisResult),
         ),
       ),
   });

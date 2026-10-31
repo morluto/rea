@@ -20,8 +20,10 @@ import { ArtifactTraversalObservation } from "../ArtifactTraversalObservation.js
 import {
   ArtifactReaderFailure,
   sameArtifactSourceIdentity,
+  type ArtifactEntry,
   type ArtifactReaderTraversal,
 } from "../ArtifactReader.js";
+import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { analyzeInterfaceBuilderBundle } from "./InterfaceBuilderAnalysis.js";
 import {
   appleAssetCatalogInputSchema,
@@ -40,10 +42,6 @@ import {
 const ASSETUTIL = "/usr/bin/assetutil";
 const MAX_CATALOG_BYTES = 64 * 1024 * 1024;
 const MAX_TOTAL_METADATA_BYTES = 64 * 1024 * 1024;
-
-/** The command owner wraps the exact caller reason; do not replace it with the wrapper. */
-const cancellationCause = (cause: unknown, signal?: AbortSignal): unknown =>
-  cause instanceof ExecFileOutputCancelledError ? cause.cause : signal?.reason;
 
 /** Inspect compiled asset catalog metadata without extracting rendition bytes. */
 export const analyzeAppleAssetCatalogs = async (input: {
@@ -130,6 +128,13 @@ export const analyzeAppleAssetCatalogs = async (input: {
   const resourceReferences = collectInterfaceBuilderResourceKeys(
     interfaceBuilder.graph.nodes,
   );
+  const resourceObjectsIncomplete = interfaceBuilder.graph.coverage.some(
+    ({ facet, status }) =>
+      (facet === "archive_object_decode" ||
+        facet === "documents" ||
+        facet.startsWith("objects:")) &&
+      status !== "complete",
+  );
   const result = projectAppleAssetCatalogPage({
     targetSha256: input.targetSha256,
     ...(input.resourceRoot === undefined
@@ -141,7 +146,7 @@ export const analyzeAppleAssetCatalogs = async (input: {
     resourceKeyCoverage:
       catalogCoverage.status !== "complete"
         ? catalogCoverage
-        : interfaceBuilder.graph.truncated
+        : resourceObjectsIncomplete
           ? { status: "partial", reason: "interface_builder_graph_incomplete" }
           : { status: "complete", reason: null },
     offset: page.offset,
@@ -166,9 +171,9 @@ export const analyzeAppleAssetCatalogs = async (input: {
             `Asset catalog entries that are not regular files were not inspected, so resource keys reported as unmatched may resolve there: ${uninspected.join(", ")}`,
           ]),
       "Exact resource-key joins use only recognized image or asset key fields on decoded Interface Builder resource objects; other archive resource references are not inferred.",
-      ...(interfaceBuilder.graph.truncated
+      ...(resourceObjectsIncomplete
         ? [
-            "Interface Builder resource-key joins may be incomplete because the decoded UI graph was truncated.",
+            "Interface Builder resource-key joins may be incomplete because the decoded object inventory is incomplete.",
           ]
         : []),
     ],
@@ -293,7 +298,7 @@ const collectAssetCatalogs = async (input: {
 
 const inspectAssetCatalogEntry = async (input: {
   readonly reader: DirectoryArtifactReader;
-  readonly entry: import("../ArtifactReader.js").ArtifactEntry;
+  readonly entry: ArtifactEntry;
   readonly runAssetUtil: (
     path: string,
     signal?: AbortSignal,
@@ -315,7 +320,7 @@ const inspectAssetCatalogEntry = async (input: {
   try {
     output = await input.runAssetUtil(entry.adapterKey, signal);
   } catch (cause) {
-    throw assetUtilFailure(cause, signal);
+    throw assetUtilFailure(cause, entry);
   }
   const after = await lstat(entry.adapterKey, { bigint: true });
   if (
@@ -335,6 +340,7 @@ const inspectAssetCatalogEntry = async (input: {
     exit_code: 0,
     signal: null,
   };
+  const diagnostics = { catalog_path: entry.path };
   let parsed: unknown;
   try {
     parsed = JSON.parse(output);
@@ -342,7 +348,7 @@ const inspectAssetCatalogEntry = async (input: {
     throw new AnalysisOutputError(
       "inspect_asset_catalog",
       `assetutil returned invalid JSON for ${entry.path}`,
-      { cause, capturedOutput },
+      { cause, capturedOutput, diagnostics },
     );
   }
   try {
@@ -356,10 +362,11 @@ const inspectAssetCatalogEntry = async (input: {
     };
   } catch (cause: unknown) {
     if (!(cause instanceof AnalysisOutputError)) throw cause;
-    throw new AnalysisOutputError("inspect_asset_catalog", cause.reason, {
-      cause,
-      capturedOutput,
-    });
+    throw new AnalysisOutputError(
+      "inspect_asset_catalog",
+      `${cause.reason} for ${entry.path}`,
+      { cause, capturedOutput, diagnostics },
+    );
   }
 };
 
@@ -411,20 +418,24 @@ const runAssetUtil = async (
   ).stdout;
 
 /** Preserve the command owner's failure and captured output before artifact adaptation. */
-const assetUtilFailure = (cause: unknown, signal?: AbortSignal): unknown => {
+const assetUtilFailure = (cause: unknown, entry: ArtifactEntry): unknown => {
   if (cause instanceof AnalysisError) return cause;
-  if (signal?.aborted || cause instanceof ExecFileOutputCancelledError)
+  if (cause instanceof ExecFileOutputCancelledError)
     return new ArtifactReaderFailure(
       "cancelled",
       "Asset catalog inspection cancelled",
-      { cause: cancellationCause(cause, signal) },
+      { cause: cause.cause },
     );
   const output = execFileOutputFailure(cause);
   const code =
     cause instanceof Error && "code" in cause ? cause.code : undefined;
   const capturedOutput: AnalysisCapturedOutput | undefined =
     output === undefined ? undefined : execFileFailureCapturedOutput(output);
-  const options = { cause, capturedOutput };
+  const options = {
+    cause,
+    capturedOutput,
+    diagnostics: { catalog_path: entry.path },
+  };
   if (code === "ETIMEDOUT")
     return new AnalysisTimeoutError("inspect_asset_catalog", 60_000, options);
   if (code === "ENOENT")
@@ -448,12 +459,44 @@ const assetUtilFailure = (cause: unknown, signal?: AbortSignal): unknown => {
         ),
       },
     );
-  if (output !== undefined)
+  if (output !== undefined) {
+    // assetutil's explicit input rejection is distinct from unusable tool
+    // output. Match its complete diagnostic for this exact selected path;
+    // other text, interrupted runs and incomplete captures establish no cause.
+    const rejectsCatalog = [
+      `carutil: error:\n    ${entry.adapterKey} is not a valid AssetCatalog`,
+      `carutil: error:\n\t${entry.adapterKey} is not a valid AssetCatalog`,
+      `assetutil: file error error exiting: 'can't read from: '${entry.adapterKey}' Undefined error: 0' invalid file`,
+    ].some((rejection) => {
+      const offset = output.stderr.indexOf(rejection);
+      const end = offset + rejection.length;
+      return (
+        offset >= 0 &&
+        (offset === 0 || output.stderr[offset - 1] === "\n") &&
+        (end === output.stderr.length || output.stderr[end] === "\n")
+      );
+    });
+    if (
+      output.code === 1 &&
+      output.signal === null &&
+      !output.killed &&
+      !output.outputTruncated &&
+      output.collectionFailure !== true &&
+      rejectsCatalog
+    )
+      return new ArtifactOperationError(
+        "inspect_asset_catalog",
+        "format",
+        undefined,
+        `assetutil rejected ${entry.path} as an invalid asset catalog`,
+        options,
+      );
     return new AnalysisOutputError(
       "inspect_asset_catalog",
-      "assetutil did not produce usable catalog metadata",
+      `assetutil did not produce usable catalog metadata for ${entry.path}`,
       options,
     );
+  }
   return cause;
 };
 

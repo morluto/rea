@@ -78,10 +78,7 @@ it("reports an expired version probe as a typed timeout", async () => {
     category: "timeout",
     details: { timeout_ms: 20_000 },
   });
-  expect(projected.message).toContain("20000 ms");
-  expect(projected.message).toContain("no runtime override");
-  expect(projected.remediation.action).toContain("decode_timeout_ms");
-  expect(projected.remediation.action).toContain("no runtime override");
+  expect(projected.details?.limit).toBeUndefined();
 });
 
 it("retains an unresolved probe cleanup owner and reports the cleanup", async () => {

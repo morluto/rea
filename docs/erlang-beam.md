@@ -54,6 +54,72 @@ rules apply to the last occurrence of each chunk name; an empty final occurrence
 does not revive an earlier payload of that name. Nonempty truncated tables remain
 format failures.
 
+## Select retained facts
+
+Complete output remains the default. Request a summary with a `beam` view to
+read a few facts in the first call while retaining the complete inspection:
+
+```json
+{
+  "name": "inspect_erlang_beam",
+  "arguments": {
+    "path": "/artifacts/app.beam",
+    "detail": "summary",
+    "view": {
+      "kind": "beam",
+      "collection": "exports",
+      "names": ["module_info"],
+      "fields": ["function_index", "function", "arity", "label"],
+      "limit": 20
+    }
+  }
+}
+```
+
+`normalized_result.page.items` contains the matching rows. `source_index` is
+zero-based in the original collection and scoped to `parent_evidence_id` and
+that collection. It does not replace the original one-based atom `index` or a
+lambda's own `index`. Every matching function name survives, including different
+arities. Names are exact retained display strings; raw indexes remain available
+when names are unresolved or displayed names collide.
+
+Collections are `atoms`, `exports`, `imports`, `lambdas`, and `chunks`. `names`
+selects atom/chunk names or function names; imports additionally support exact
+`modules`. Filters intersect. `indices` selects original collection indexes;
+`fields` selects that collection's own fields. Empty selector arrays match
+nothing, and `fields: []` returns only `source_index`. Offset/limit page matching
+rows in original order (defaults 0/64). Unfiltered pages slice the retained
+collection; queries do not decode the file again.
+
+For `chunks`, `names` matches the four-character IFF chunk tag (for example
+`"AtU8"`, `"Code"`, `"ExpT"`); available `fields` are `index`, `name`,
+`location`, and `payload`. For `lambdas`, `names` matches the resolved function
+name from the atom table; `null` names (unresolved atom indices) are never
+selected by a name filter. For `atoms`, `names` matches the decoded atom name
+string.
+
+`beam` keeps the module, form/Code bounds, original source coverage, and table
+counts. A null count means no table was decoded; zero means a decoded empty
+table. Missing tables and unresolved atom names remain explicit, and an empty
+page does not establish runtime absence. Page coverage is separate from the
+source's examined chunks and parser budgets.
+
+CLI summary delivery requires a destination for the complete Evidence bundle:
+
+```sh
+rea inspect-erlang-beam /artifacts/app.beam --detail summary \
+  --view '{"kind":"beam","collection":"exports","names":["module_info"],"fields":["function","arity"]}' \
+  --evidence_output /reports/app-beam.evidence.json --json
+rea inspect-analysis-view '{"source":{"kind":"evidence-file","path":"/reports/app-beam.evidence.json"},"view":{"kind":"beam","collection":"imports","modules":["erlang"]}}' --json
+```
+
+The bundle retains the complete report. Subsequent MCP queries may use
+`source: {kind: "retained-evidence", evidence_id: parent_evidence_id}` or an
+Evidence file. Retained and offline views still work after the original BEAM
+file is deleted. Supplying `view` requires `detail: "summary"`; omitting it
+returns only the structural summary. Selection changes delivery, not parsing or
+coverage, and executes no bytecode.
+
 ## Limits and failures
 
 The selected file is limited to 64 MiB by default (512 MiB maximum). At most

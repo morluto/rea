@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+
+import { onTestFinished } from "vitest";
+
 import type { AnalysisClient } from "../../../../src/application/AnalysisProvider.js";
 import type { BinaryTarget } from "../../../../src/domain/binaryTargetTypes.js";
 import type { JsonValue } from "../../../../src/domain/jsonValue.js";
@@ -54,13 +57,25 @@ export const session = async (
       ...(singleFunctionRuns === undefined ? {} : { singleFunctionRuns }),
     },
   );
+  // Finished hooks run in reverse order: clients, shared cache, then root.
+  onTestFinished(async () => {
+    const closed = await provider.closeOwnedResources();
+    if (!closed.ok) throw closed.error;
+  });
   const profile = await withKunaResourceScope((resourceScope) =>
     provider.resolveAnalysisProfile(target, { resourceScope }),
   );
   if (!profile.ok || profile.value.profile === null)
     throw new Error("profile did not resolve");
   const resolved = profile.value.profile;
-  const open = () => provider.createClient(target, resolved);
+  const open = () => {
+    const client = provider.createClient(target, resolved);
+    onTestFinished(async () => {
+      const closed = await client.close();
+      if (!closed.ok) throw closed.error;
+    });
+    return client;
+  };
   return { root, kuna, target, cacheRoot, provider, profile: resolved, open };
 };
 

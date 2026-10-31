@@ -47,9 +47,12 @@ describe("managed metadata heaps", () => {
       blob: null,
     } as unknown as ManagedMetadataLayout;
 
-    expect(readMetadataBlob(Buffer.alloc(0), layout, 0, 0)).toEqual(
-      Buffer.alloc(0),
-    );
+    expect(
+      Buffer.compare(
+        readMetadataBlob(Buffer.alloc(0), layout, 0, 0),
+        Buffer.alloc(0),
+      ),
+    ).toBe(0);
     expect(() => readMetadataBlob(Buffer.alloc(0), layout, 1, 0)).toThrowError(
       expect.objectContaining({
         issue: expect.objectContaining({

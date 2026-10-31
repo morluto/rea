@@ -67,6 +67,67 @@ describe("CdpBrowserProvider: browser socket without HTTP discovery", () => {
   });
 });
 
+it("retains browser-socket siblings and reports invalid attachment as unknown, not omitted", async () => {
+  const browser = await startFakeCdpBrowser({
+    commandResult: ({ method }) =>
+      method === "Target.getTargets"
+        ? {
+            targetInfos: [
+              {
+                targetId: "first",
+                type: "page",
+                title: 3,
+                url: "https://example.test/first",
+                attached: "unknown",
+              },
+              {
+                targetId: "second",
+                type: "page",
+                title: "Good",
+                url: "https://example.test/second",
+                attached: false,
+              },
+              {
+                targetId: 1,
+                type: "page",
+                url: "https://example.test/invalid",
+              },
+              { id: "alias", type: "page", url: "https://example.test/alias" },
+            ],
+          }
+        : undefined,
+  });
+  trackBrowser(browser);
+  const result = await new CdpBrowserProvider().listTargets(
+    listBrowserTargetsInputSchema.parse({
+      cdp_endpoint: browser.browserWebSocketUrl,
+    }),
+  );
+  if (!result.ok) throw result.error;
+  expect(
+    result.value.targets.map(({ target_id, attached, title }) => [
+      target_id,
+      attached,
+      title,
+    ]),
+  ).toEqual([
+    ["first", null, ""],
+    ["second", false, "Good"],
+  ]);
+  const limitations = result.value.limitations.join("\n");
+  expect(limitations).toContain(
+    'reported malformed attached metadata "unknown"',
+  );
+  expect(limitations).toContain("reported malformed title metadata 3");
+  expect(
+    result.value.limitations.filter((item) =>
+      item.includes("target identity is malformed"),
+    ),
+  ).toHaveLength(2);
+  expect(limitations).not.toContain("omitted attachment");
+  await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+});
+
 describe("CdpBrowserProvider: browser socket failures and cleanup", () => {
   it("closes an unadopted browser socket when the target is missing", async () => {
     const browser = await startFakeCdpBrowser();

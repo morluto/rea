@@ -233,7 +233,7 @@ it.each([
   {
     captured: true,
     code: "EACCES",
-    tag: "AnalysisAccessDeniedError",
+    tag: "AnalysisCapabilityUnavailableError",
   },
   {
     captured: true,
@@ -248,7 +248,7 @@ it.each([
   {
     captured: false,
     code: "EACCES",
-    tag: "AnalysisAccessDeniedError",
+    tag: "AnalysisCapabilityUnavailableError",
   },
   {
     captured: false,
@@ -290,6 +290,16 @@ it.each([
       expect(result).toMatchObject({ ok: false, error: { _tag: tag } });
       if (result.ok) return;
       expect(result.error.cause).toBe(code === "ABORT_ERR" ? reason : failure);
+      if (code === "EACCES") {
+        expect(result.error).toMatchObject({
+          providerId: "objdump",
+          diagnostics: {
+            boundary: "provider-launch",
+            command: "objdump",
+            system_code: code,
+          },
+        });
+      }
       if (captured && code === "ABORT_ERR") {
         expect(result.error.capturedOutput).toMatchObject({
           stdout: "partial stdout",

@@ -6,6 +6,7 @@ import { NATIVE_DISPATCH_METADATA_SOURCES } from "./native/NativeDispatchMetadat
 import { NATIVE_UI_ACTION_OPERATIONS } from "./native/NativeUiActionTrace.js";
 import { NATIVE_CALL_ROUTE_SOURCES } from "./native/NativeCallRoutes.js";
 import { z } from "zod";
+import type { BinarySessionDetail } from "../contracts/sessionStatusContract.js";
 import { sqliteDatabaseCapability } from "./sqlite/SqliteDatabaseCapability.js";
 import type {
   OptionalProviderLoadFailures,
@@ -16,11 +17,12 @@ import {
   expandProviderCapabilities,
   providerCapabilitySet,
   toolAvailabilityInventory,
+  toolAvailabilitySummaryInventory,
   TOOL_ANNOTATION_NAMES,
   TOOL_EFFECT_NAMES,
-  type ClientFeatureAvailability,
   type ProviderCapability,
   type ToolAvailabilityInventory,
+  type ToolAvailabilitySummaryInventory,
   type ToolAvailability,
   type ToolAvailabilityMode,
   type ToolUnavailabilityReason,
@@ -39,11 +41,8 @@ import type {
 import type { JebAnalysisAvailability } from "./jeb/JebAnalysisPort.js";
 import { FRIDA_TOOL_CONTRACTS } from "../contracts/fridaToolContracts.js";
 import { TOOL_CONTRACTS } from "../contracts/toolContracts.js";
-import {
-  clientRequirementsFor,
-  NO_CLIENT_FEATURES,
-} from "./CapabilityClientRequirements.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
+import { isBundleResourceOperation } from "./binary/BundleResourceSession.js";
 
 const FRIDA_OPERATION_NAMES: ReadonlySet<string> = new Set(
   FRIDA_TOOL_CONTRACTS.map(({ name }) => name),
@@ -51,6 +50,7 @@ const FRIDA_OPERATION_NAMES: ReadonlySet<string> = new Set(
 
 const statusSchema = z.object({
   open: z.boolean(),
+  session_kind: z.literal("bundle_resources").optional(),
   kind: z.enum(["executable", "database", "archive", "artifact"]).optional(),
   format: z.string().optional(),
   capabilities: z
@@ -73,6 +73,7 @@ export const HOST_RESTRICTED_FEATURES = [
   "firmwareInspection",
   "firmwareExtraction",
   "javascriptRecovery",
+  "persistentDebugger",
 ] as const;
 export type HostRestrictedFeature = (typeof HOST_RESTRICTED_FEATURES)[number];
 
@@ -129,6 +130,7 @@ type AvailabilityContext = {
   readonly name: string;
   readonly kind: ToolKind;
   readonly targetOpen: boolean;
+  readonly resourceSession: boolean;
   readonly requiresActiveTarget: boolean;
   readonly targetKind:
     | "executable"
@@ -251,7 +253,6 @@ const NAVIGATION_CONTEXT_MODES = [
 export const buildCapabilityInventory = (
   sessionStatus: JsonValue,
   policy: AvailabilityPolicy,
-  clientFeatures: ClientFeatureAvailability = NO_CLIENT_FEATURES,
 ): readonly ToolAvailability[] => {
   const status = statusSchema.parse(sessionStatus);
   const descriptors = new Map<string, ProviderDescriptor>(
@@ -262,6 +263,7 @@ export const buildCapabilityInventory = (
       name: contract.name,
       kind: contract.kind,
       targetOpen: status.open,
+      resourceSession: status.session_kind === "bundle_resources",
       requiresActiveTarget:
         "requiresActiveTarget" in contract &&
         contract.requiresActiveTarget === true,
@@ -270,11 +272,6 @@ export const buildCapabilityInventory = (
       descriptors,
       policy,
     });
-    const clientRequirements = clientRequirementsFor(
-      contract.name,
-      clientFeatures,
-    );
-    const clientBlocked = clientRequirements.missing_required.length > 0;
     const effects = composedEffects(
       contract.name,
       contract.effects,
@@ -290,7 +287,7 @@ export const buildCapabilityInventory = (
       ...(availability.modes === undefined
         ? {}
         : { modes: [...availability.modes] }),
-      client_requirements: clientRequirements,
+      client_requirements: emptyClientRequirements(),
       effects,
       annotations: {
         read_only: annotations.readOnlyHint,
@@ -299,13 +296,6 @@ export const buildCapabilityInventory = (
         open_world: annotations.openWorldHint,
       },
     };
-    if (clientBlocked)
-      return {
-        ...facts,
-        available: false,
-        reason: "client_capability_missing",
-        remediation: `Use an MCP client that supports: ${clientRequirements.missing_required.join(", ")}.`,
-      };
     return availability.reason === "available"
       ? {
           ...facts,
@@ -323,35 +313,38 @@ export const buildCapabilityInventory = (
 };
 
 type ClientRequirements = ToolAvailability["client_requirements"];
-type MutableAvailabilityGroup = Omit<
-  ToolAvailabilityInventory["groups"][number],
-  "names"
-> & { names: string[] };
 
-const EMPTY_CLIENT_REQUIREMENTS: ClientRequirements = {
+// Current workflows do not require negotiated MCP client features.
+const emptyClientRequirements = (): ClientRequirements => ({
   required: [],
   optional: [],
   missing_required: [],
   missing_optional: [],
-};
+});
 
-/** Compact repeated metadata while retaining every operation's current availability inline. */
-export const compactToolAvailability = (
+/**
+ * Group every operation's current availability inline. Complete detail also
+ * groups by the static surface, effect, and annotation flags; summary omits
+ * those flags so tools that share a status collapse into one group.
+ */
+export function compactToolAvailability(
   availability: readonly ToolAvailability[],
-): ToolAvailabilityInventory => {
+  detail?: "complete",
+): ToolAvailabilityInventory;
+export function compactToolAvailability(
+  availability: readonly ToolAvailability[],
+  detail: BinarySessionDetail,
+): ToolAvailabilityInventory | ToolAvailabilitySummaryInventory;
+export function compactToolAvailability(
+  availability: readonly ToolAvailability[],
+  detail: BinarySessionDetail = "complete",
+): ToolAvailabilityInventory | ToolAvailabilitySummaryInventory {
   const clientRequirements =
-    availability[0]?.client_requirements ?? EMPTY_CLIENT_REQUIREMENTS;
-  const groups = new Map<string, MutableAvailabilityGroup>();
+    availability[0]?.client_requirements ?? emptyClientRequirements();
+  const groups = new Map<string, { names: string[] }>();
 
   for (const entry of availability) {
-    const effects = TOOL_EFFECT_NAMES.filter((name) => entry.effects[name]);
-    const annotations = TOOL_ANNOTATION_NAMES.filter(
-      (name) => entry.annotations[name],
-    );
-    const groupFacts = {
-      surface: entry.surface,
-      effects,
-      annotations,
+    const statusFacts = {
       available: entry.available,
       reason: entry.reason,
       remediation: entry.remediation,
@@ -364,19 +357,46 @@ export const compactToolAvailability = (
         ? {}
         : { client_requirements: entry.client_requirements }),
     };
+    const groupFacts =
+      detail === "summary"
+        ? statusFacts
+        : {
+            surface: entry.surface,
+            effects: TOOL_EFFECT_NAMES.filter((name) => entry.effects[name]),
+            annotations: TOOL_ANNOTATION_NAMES.filter(
+              (name) => entry.annotations[name],
+            ),
+            ...statusFacts,
+          };
     const key = JSON.stringify(groupFacts);
     const existing = groups.get(key);
     if (existing) existing.names.push(entry.name);
     else groups.set(key, { ...groupFacts, names: [entry.name] });
   }
 
-  return toolAvailabilityInventory.parse({
+  const inventory = {
     client_requirements: clientRequirements,
     groups: [...groups.values()],
-  });
-};
+  };
+  return detail === "summary"
+    ? toolAvailabilitySummaryInventory.parse(inventory)
+    : toolAvailabilityInventory.parse(inventory);
+}
 
 const availabilityFor = (context: AvailabilityContext): Availability => {
+  const workflowAvailability = workflowAvailabilityFor(context);
+  if (
+    context.targetOpen &&
+    context.resourceSession &&
+    context.requiresActiveTarget &&
+    !isBundleResourceOperation(context.name) &&
+    (workflowAvailability === null || context.kind === "session")
+  )
+    return {
+      reason: "target_unsupported",
+      remediation:
+        "This resource-only session cannot execute this operation. Call open_binary with an executable analysis target.",
+    };
   // These built-in workflows accept a caller-selected endpoint; they do not load the optional passive provider.
   if (
     context.name === "inspect_byte_entropy" ||
@@ -400,7 +420,6 @@ const availabilityFor = (context: AvailabilityContext): Availability => {
       reason: "provider_unavailable",
       remediation: `Adapter ${failure.providerId} could not load: ${failure.reason}. Repair the adapter installation and restart REA; other capabilities remain available.`,
     };
-  const workflowAvailability = workflowAvailabilityFor(context);
   if (workflowAvailability !== null) return workflowAvailability;
   const hostDecision = hostAvailability(context);
   if (hostDecision !== null) return hostDecision;
@@ -442,7 +461,15 @@ const workflowAvailabilityFor = ({
   kind,
   policy,
 }: AvailabilityContext): Availability | null => {
+  if (name === "start_gdb_session" || name === "start_rizin_debug_session")
+    return hostRestrictedAvailability(
+      policy,
+      "persistentDebugger",
+      true,
+      "Run persistent debugger sessions on Linux with /proc descriptor readback.",
+    );
   if (
+    name === "inspect_apk_signature" ||
     name === "inspect_desktop_application" ||
     name === "inspect_go_binary" ||
     name === "inspect_il2cpp_metadata" ||
@@ -450,6 +477,7 @@ const workflowAvailabilityFor = ({
     name === "inspect_gpu_code_objects" ||
     name === "inspect_rust_binary" ||
     name === "inspect_python_pyc" ||
+    name === "inspect_apple_ips" ||
     name === "inspect_erlang_beam" ||
     name === "inspect_electron_fuses"
   )
@@ -529,9 +557,14 @@ const workflowAvailabilityFor = ({
         };
   if (name === "inspect_pe_resources" || name === "inspect_native_exports")
     return { reason: "available", remediation: null };
-  if (name === "inspect_pe_certificates")
+  if (name === "inspect_pe_certificates" || name === "inspect_pe_imports")
     return { reason: "available", remediation: null };
-  if (name === "inspect_elf_notes")
+  if (
+    name === "inspect_elf_notes" ||
+    name === "inspect_devicetree" ||
+    name === "inspect_kernel_module" ||
+    name === "inspect_pe_load_config"
+  )
     return { reason: "available", remediation: null };
   if (name === "inspect_evm_interface") {
     const profile = hostRestrictedAvailability(

@@ -1,10 +1,15 @@
 import { accessSync, constants, statSync } from "node:fs";
 
-import type { ConfigurationError } from "../domain/configurationErrors.js";
-import { ok, type Result } from "../domain/result.js";
+import {
+  ConfigurationError,
+  type ConfigurationSettingIssue,
+} from "../domain/configurationErrors.js";
+import { err, ok, type Result } from "../domain/result.js";
 import { parseEnvironment } from "./environment.js";
+import { providerStartupTimeoutSchema } from "./providerStartupTimeout.js";
 import { homeDirectoryFromEnvironment } from "./homeDirectory.js";
 import { DEFAULT_BRIDGE_MAX_REQUEST } from "./bridgeMaxRequestBytes.js";
+import { hopperCallerScanBudgetFromEnvironment } from "./hopperCallerScanBudget.js";
 import { DEFAULT_REGEX_MATCHING_DEADLINE } from "./regexMatchingDeadline.js";
 import { DEFAULT_REGEX_WORKER_HEAP_REQUEST } from "./regexWorkerHeapRequest.js";
 import type { AppConfig } from "./types.js";
@@ -36,27 +41,59 @@ export const defaultHopperLauncherPath = (
 };
 
 /**
- * Environment native analysis admits. JEB validates its own timeout during
+ * Environment native analysis admits. JEB validates its own settings during
  * optional provider composition; that setting must not block unrelated
  * CLI/MCP startup. Registration validation still checks it directly.
  */
 const nativeAnalysisEnvironment = (
   environment: Readonly<Record<string, string | undefined>>,
 ): Readonly<Record<string, string | undefined>> => {
-  const { REA_JEB_MCP_TIMEOUT_MS: _jebTimeout, ...appEnvironment } =
-    environment;
+  const {
+    REA_JEB_MCP_TIMEOUT_MS: _jebTimeout,
+    REA_JEB_MCP_URL: _jebUrl,
+    ...appEnvironment
+  } = environment;
   return appEnvironment;
 };
 
-/**
- * The configuration error native commands return, without probing launchers.
- * Doctor uses this so readiness and analysis admit the same settings.
- */
-export const nativeAnalysisConfigurationError = (
+/** Native admission issues and an explicitly configured timeout's independent facts. */
+export interface NativeAnalysisConfigurationInspection {
+  readonly issues: readonly ConfigurationSettingIssue[];
+  readonly configuredHopperStartupTimeout?: Result<number, ConfigurationError>;
+}
+
+/** Inspect native admission without probing launchers or losing mixed-invalid diagnostics. */
+export const inspectNativeAnalysisConfiguration = (
   environment: Readonly<Record<string, string | undefined>>,
-): ConfigurationError | undefined => {
+): NativeAnalysisConfigurationInspection => {
   const parsed = parseEnvironment(nativeAnalysisEnvironment(environment));
-  return parsed.ok ? undefined : parsed.error;
+  const issues = parsed.ok ? [] : parsed.error.settings;
+  const configuredTimeout = environment.REA_HOPPER_STARTUP_TIMEOUT_MS;
+  if (configuredTimeout === undefined) return { issues };
+  if (parsed.ok)
+    return {
+      issues,
+      configuredHopperStartupTimeout: ok(
+        parsed.value.REA_HOPPER_STARTUP_TIMEOUT_MS,
+      ),
+    };
+  // Another setting may reject the aggregate before this supplied timeout's
+  // facts are available. Its dedicated diagnostic still uses the same schema.
+  const timeout = providerStartupTimeoutSchema.safeParse(configuredTimeout);
+  return {
+    issues,
+    configuredHopperStartupTimeout: timeout.success
+      ? ok(timeout.data)
+      : err(
+          new ConfigurationError("Invalid REA environment configuration", {
+            cause: timeout.error,
+            settings: timeout.error.issues.map(({ message }) => ({
+              setting: "REA_HOPPER_STARTUP_TIMEOUT_MS",
+              constraint: message,
+            })),
+          }),
+        ),
+  };
 };
 
 /** Parse provider configuration and runtime prerequisites at the composition root. */
@@ -67,9 +104,15 @@ export const parseConfig = (
   if (!parsed.ok) return parsed;
   const env = parsed.value;
   return ok({
+    ...(env.REA_MCP_TOOL_FAMILIES === undefined
+      ? {}
+      : { mcpToolFamilies: env.REA_MCP_TOOL_FAMILIES }),
     ...(env.REA_MCP_MAX_RESPONSE_BYTES === undefined
       ? {}
       : { mcpMaxResponseBytes: env.REA_MCP_MAX_RESPONSE_BYTES }),
+    ...(env.REA_MCP_MAX_INPUT_ELEMENTS === undefined
+      ? {}
+      : { mcpMaxInputElements: env.REA_MCP_MAX_INPUT_ELEMENTS }),
     ...(env.REA_MCP_INPUT_SCHEMA_PROFILE === undefined
       ? {}
       : { mcpInputSchemaProfile: env.REA_MCP_INPUT_SCHEMA_PROFILE }),
@@ -80,9 +123,25 @@ export const parseConfig = (
     ...(env.REA_IDA_MCP_CONFIG === undefined
       ? {}
       : { idaMcpConfigPath: env.REA_IDA_MCP_CONFIG }),
+    ...(env.REA_GHIDRA_PROJECT_PATH === undefined
+      ? {}
+      : {
+          ghidraExistingProject: {
+            path: env.REA_GHIDRA_PROJECT_PATH,
+            ...(env.REA_GHIDRA_PROGRAM_NAME === undefined
+              ? {}
+              : { programName: env.REA_GHIDRA_PROGRAM_NAME }),
+          },
+        }),
     ghidraInstallDir: env.GHIDRA_INSTALL_DIR,
     ghidraJavaHome: env.JAVA_HOME,
     ghidraStartupTimeoutMs: env.REA_GHIDRA_STARTUP_TIMEOUT_MS,
+    ...(env.REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS === undefined
+      ? {}
+      : {
+          ghidraDecompileTimeoutSeconds:
+            env.REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS,
+        }),
     ...(env.REA_GHIDRA_LANGUAGE_ID === undefined
       ? {}
       : {
@@ -110,6 +169,10 @@ export const parseConfig = (
         homeDirectoryFromEnvironment(environment, process.platform),
       ),
     hopperStartupTimeoutMs: env.REA_HOPPER_STARTUP_TIMEOUT_MS,
+    hopperCallerScanBudget: hopperCallerScanBudgetFromEnvironment(
+      environment.REA_HOPPER_CALLER_SCAN_BUDGET_MS,
+      env.REA_HOPPER_CALLER_SCAN_BUDGET_MS,
+    ),
     hopperTargetPath: env.HOPPER_TARGET_PATH,
     hopperTargetKind: env.HOPPER_TARGET_KIND,
     hopperLoaderArgs: env.loaderArgs,

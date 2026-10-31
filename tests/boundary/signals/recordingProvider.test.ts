@@ -351,7 +351,7 @@ it.each([
     expect(report.annotations_text).toBe(`${source.toString("hex")}\n`);
     expect(report.tool.arguments).toContain(`--input-file=./${recordingName}`);
     expect(report.tool.arguments).not.toContain("--input-file=-");
-    expect(await readFile(f.path)).toEqual(source);
+    expect(Buffer.compare(await readFile(f.path), source)).toBe(0);
     expect((await readdir(f.directory)).sort()).toEqual(
       [recordingName, "producer.mjs"].sort(),
     );

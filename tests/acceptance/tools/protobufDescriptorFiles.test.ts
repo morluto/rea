@@ -198,7 +198,9 @@ cliTest(
             },
           });
         }
-        expect(await readFile(descriptor)).toEqual(Buffer.from(bytes));
+        expect(
+          Buffer.compare(await readFile(descriptor), Buffer.from(bytes)),
+        ).toBe(0);
         expect(await readFile(capture, "utf8")).toBe(text);
       }
   },
@@ -295,7 +297,9 @@ cliTest(
       expect(parseEvidence(response.structuredContent).evidence_id).toBe(
         evidence.evidence_id,
       );
-      expect(await readFile(descriptor)).toEqual(Buffer.from(bytes));
+      expect(
+        Buffer.compare(await readFile(descriptor), Buffer.from(bytes)),
+      ).toBe(0);
     }
   },
 );

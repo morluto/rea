@@ -1,3 +1,4 @@
+import { describeResidualUnknownGraphConstraint } from "./residualUnknownGraphError.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
@@ -9,6 +10,7 @@ import {
   AnalysisTimeoutError,
 } from "./analysisErrorCore.js";
 import { ArtifactOperationError } from "./artifactOperationError.js";
+import { OPENABLE_APPLE_BUNDLE_TYPES_TEXT } from "./apple/appleBundleTypes.js";
 import {
   BinaryTargetError,
   ConfigurationError,
@@ -20,6 +22,7 @@ import {
   EvidenceIntegrityError,
   EvidenceReferenceError,
   AnalysisSnapshotMismatchError,
+  ResourceSnapshotMismatchError,
 } from "./evidenceErrors.js";
 import {
   HopperRemoteError,
@@ -70,12 +73,18 @@ export const analysisErrorRemediationAction = (
   if (error instanceof AnalysisCapabilityUnavailableError && error.retryable)
     return "Review details.reason, then retry the same analysis after the condition clears.";
   if (error instanceof EvidenceFileError && error.published !== undefined)
-    return "Use the published file at details.published_path and resolve the reported staging cleanup failure.";
+    return error.published.path === undefined
+      ? "Resolve the reported staging cleanup failure. Publication completed; its path identity is excluded."
+      : "Use the published file at details.published_path and resolve the reported staging cleanup failure.";
   if (
     error instanceof ProviderSelectionError &&
     error.remediationAction !== undefined
   )
     return error.remediationAction;
+  if (error instanceof ResourceSnapshotMismatchError)
+    return error.operation === "export"
+      ? "Call close_binary without snapshot_path to close this resource-only session."
+      : "Open an executable analysis target before importing a binary analysis snapshot.";
   if (error instanceof AnalysisSnapshotMismatchError)
     return "Run analysis without this snapshot, then save a fresh snapshot using the intended artifact, provider, and analysis profile.";
   if (error instanceof AnalysisUnsupportedTargetError)
@@ -115,7 +124,7 @@ export const analysisErrorRemediationAction = (
     return "Use an artifact within the capacity reported in details.detail. Changing output detail or retrying the unchanged input does not remove this boundary.";
   if (error instanceof HopperTimeoutError)
     return error.operation === undefined
-      ? "Review details.launcher and inspect Hopper for ongoing initial analysis or a pending loader, demo, or license dialog. For a large target, increase REA_HOPPER_STARTUP_TIMEOUT_MS in the environment that starts REA and allow at least that long in the MCP client. Resolve retained cleanup before reopening."
+      ? "Review details.launcher and inspect Hopper for ongoing initial analysis or a pending loader, demo, or license dialog. For a large target, use update_analysis_settings with setting hopper.startup_timeout_ms and action set for the next startup attempt without restarting REA, or increase REA_HOPPER_STARTUP_TIMEOUT_MS for future REA processes. Allow at least that long in the MCP client. Resolve retained cleanup before reopening."
       : error.providerState === "busy"
         ? "Check binary_session.analysis_activity, wait for the active Hopper request to finish, then retry."
         : "Check binary_session for Hopper health, then retry the operation.";
@@ -130,12 +139,35 @@ export const analysisErrorRemediationAction = (
       ? "Correct the reported address, document, or arguments and retry."
       : "Review the Hopper diagnostic details and correct the request or target; run `rea doctor` if the provider itself is failing. Repeating the unchanged request is not expected to succeed.";
   if (error instanceof EvidenceReferenceError)
-    return "Use an exact Evidence reference available from the selected source, supply the complete inline Evidence, re-run its producer, or select/import its Evidence bundle. close_binary clears a server session's retained records.";
+    return error.reason === "missing" &&
+      error.referenceScope === "retained-closure"
+      ? "Import the originating Evidence bundle with the selected records and their complete linked sources into the current investigation, or re-run their producers there. Retry after the required records are retained. close_binary clears a server session's retained records."
+      : "Use an exact Evidence reference available from the selected source, supply the complete inline Evidence, re-run its producer, or select/import its Evidence bundle. close_binary clears a server session's retained records.";
   if (
     error instanceof BinaryTargetError &&
     error.constraint === "directory_requires_file"
   )
-    return "For a JavaScript/Electron application directory, call analyze_javascript_application with input_path or run `rea analyze <directory>`. For binary analysis, select its executable file.";
+    return `For a JavaScript/Electron application directory, call analyze_javascript_application with input_path or run \`rea analyze <directory>\`. For binary analysis, select its executable file or an Apple bundle directory (${OPENABLE_APPLE_BUNDLE_TYPES_TEXT}).`;
+  if (
+    error instanceof BinaryTargetError &&
+    error.constraint === "bundle_type_unsupported"
+  )
+    return `Select the bundle's program file directly, or open a bundle directory of a supported type (${OPENABLE_APPLE_BUNDLE_TYPES_TEXT}).`;
+  if (
+    error instanceof BinaryTargetError &&
+    (error.constraint === "bundle_executable_undeclared" ||
+      error.constraint === "bundle_program_missing") &&
+    error.infoPlist !== undefined
+  )
+    return `Read ${error.infoPlist} with inspect_plist (\`rea inspect-plist <path>\`) to review its CFBundleExecutable, then select an existing program file directly.`;
+  if (
+    error instanceof BinaryTargetError &&
+    (error.constraint === "bundle_info_plist_missing" ||
+      error.constraint === "bundle_layout_ambiguous" ||
+      error.constraint === "bundle_current_version_missing" ||
+      error.constraint === "bundle_path_escapes")
+  )
+    return "Review the bundle paths listed in details, then select the bundle's program file directly or repair the bundle layout.";
   if (
     error instanceof BinaryTargetError &&
     error.constraint === "load_selection_rejected"
@@ -158,15 +190,60 @@ export const analysisErrorRemediationAction = (
     return "Check the current process's read access to the selected path. Retry with a readable local file.";
   if (error instanceof AnalysisArtifactChangedError)
     return "Wait until the selected file is stable. For an active binary session, reopen the target with open_binary before retrying so REA acquires its current identity; for a CLI command or target-free tool, rerun the operation.";
-  if (error instanceof ConfigurationError && error.settings.length > 0)
-    return `Correct ${[...new Set(error.settings.map(({ setting }) => setting))].join(", ")} in the environment that starts REA (your shell or the MCP client's registration), then rerun.`;
+  if (error instanceof ConfigurationError)
+    return (
+      error.remediationAction ??
+      (error.settings.length > 0
+        ? `Correct ${[...new Set(error.settings.map(({ setting }) => setting))].join(", ")} in the environment that starts REA (your shell or the MCP client's registration), then rerun.`
+        : analysisErrorUserMessage(error))
+    );
   if (error instanceof AnalysisInputError)
-    return `Read the declared input schema or CLI usage for ${error.operation}; if using MCP and the catalog may be stale, call tools/list. Correct the listed fields, then retry. Do not repeat the unchanged call.`;
+    return (
+      error.remediationAction ??
+      `Read the declared input schema or CLI usage for ${error.operation}; if using MCP and the catalog may be stale, call tools/list. Correct the listed fields, then retry. Do not repeat the unchanged call.`
+    );
   if (
     error instanceof AnalysisOutputError &&
     error.remediationAction !== undefined
   )
     return error.remediationAction;
+  if (
+    error instanceof UnknownRegistryError &&
+    error.reason === "constraint" &&
+    error.constraint !== undefined
+  ) {
+    const suffix = " Do not repeat the unchanged call.";
+    switch (error.constraint.kind) {
+      case "missing_evidence":
+        return (
+          "Use an Evidence ID retained in this session; obtain or import the missing Evidence before referencing it." +
+          suffix
+        );
+      case "missing_unknown":
+        return (
+          "Use an unknown_id retained in this session; create or import the related unknown before referencing it." +
+          suffix
+        );
+      case "resolution_unproven":
+        return (
+          "Supply supporting non-mutation Evidence matching the unknown's required authority, confidence and environment, or withdraw the unsupported resolution." +
+          suffix
+        );
+      case "contradicting_evidence":
+        return (
+          "Reconcile the contradicting Evidence before claiming a verified resolution." +
+          suffix
+        );
+      case "dependency_cycle":
+        return (
+          "Correct the depends-on relationships to remove the dependency cycle." +
+          suffix
+        );
+      case "history_gap":
+      case "revision_chain":
+        break;
+    }
+  }
   if (error instanceof UnknownRegistryError && error.reason === "not-found")
     return "Check that the unknown_id belongs to this session, then retry.";
   return analysisErrorUserMessage(error);
@@ -186,7 +263,8 @@ export const analysisErrorCategory = (
   if (
     error instanceof BinaryTargetError &&
     (error.constraint === "wasm_requires_static_inspection" ||
-      error.constraint === "file_format_rejected")
+      error.constraint === "file_format_rejected" ||
+      error.constraint === "bundle_type_unsupported")
   )
     return "unsupported_target";
   if (
@@ -212,11 +290,15 @@ export const analysisErrorCategory = (
     return "unavailable";
   if (error instanceof ArtifactOperationError)
     return artifactErrorCategory(error.reason);
-  if (error instanceof EvidenceFileError && error.reason === "path-limit")
+  if (
+    error instanceof EvidenceFileError &&
+    (error.reason === "path-limit" || error.reason === "storage-limit")
+  )
     return "resource_constraint";
   if (
     error instanceof EvidenceFileError &&
     (error.reason === "missing" ||
+      error.reason === "symlink-traversal" ||
       error.reason === "not-file" ||
       error.reason === "wrong-kind" ||
       error.reason === "exists")
@@ -224,7 +306,7 @@ export const analysisErrorCategory = (
     return "invalid_input";
   if (
     error instanceof UnknownRegistryError &&
-    error.reason === "already-exists"
+    (error.reason === "already-exists" || error.reason === "constraint")
   )
     return "invalid_input";
   return STATIC_ERROR_CATEGORIES[error._tag] ?? "execution_failure";
@@ -305,7 +387,9 @@ export const analysisErrorUserMessage = (error: AnalysisError): string => {
   if (error instanceof ArtifactOperationError) return artifactMessage(error);
   if (error instanceof EvidenceReferenceError)
     return error.reason === "missing"
-      ? `Evidence ${error.evidenceId} is not available from the selected source. Supply complete inline Evidence, re-run its producer, or select/import its bundle before using this reference.`
+      ? error.referenceScope === "retained-closure"
+        ? `Evidence ${error.evidenceId} is missing from the required retained Evidence closure in the current investigation. Import its originating bundle or re-create the required observations before retrying.`
+        : `Evidence ${error.evidenceId} is not available from the selected source. Supply complete inline Evidence, re-run its producer, or select/import its bundle before using this reference.`
       : `Evidence ${error.evidenceId} does not match the requested reference (${error.reason}). Check the expected and actual identity in the diagnostic details.`;
   if (error instanceof EvidenceIntegrityError)
     return "Evidence is invalid or has changed. Recreate or re-import it, then try again.";
@@ -317,6 +401,8 @@ export const analysisErrorUserMessage = (error: AnalysisError): string => {
     return "This residual unknown already exists in the session. Reuse it or call update_unknown with its current expected_revision; do not repeat record_unknown.";
   if (error instanceof UnknownRegistryError && error.reason === "not-found")
     return "The requested residual unknown does not exist in this session. Check the unknown_id and try again.";
+  if (error instanceof UnknownRegistryError && error.constraint !== undefined)
+    return describeResidualUnknownGraphConstraint(error.constraint);
   if (error instanceof UnknownRegistryError)
     return "Evidence state changed before the update completed. Refresh the current state and try again.";
   if (error instanceof ConfigurationError)
@@ -337,11 +423,10 @@ export const analysisErrorUserMessage = (error: AnalysisError): string => {
     return `${error.message}. Static WebAssembly inspection uses a separate optional WABT lane, not a native analysis engine.`;
   if (error instanceof BinaryTargetError)
     return error.constraint === "directory_requires_file"
-      ? "open_binary accepts files and macOS app bundles. This target is a directory; JavaScript/Electron application directories can be analyzed directly with analyze_javascript_application or `rea analyze <directory>`."
-      : error.constraint === "file_format_rejected" ||
-          error.constraint === "load_selection_rejected"
-        ? `${error.message}.`
-        : `${error.message}. Check that the path exists, is readable, and points to a supported file.`;
+      ? `open_binary accepts files and Apple bundle directories (${OPENABLE_APPLE_BUNDLE_TYPES_TEXT}). This target is another directory; JavaScript/Electron application directories can be analyzed directly with analyze_javascript_application or \`rea analyze <directory>\`.`
+      : error.constraint === undefined
+        ? `${error.message}. Check that the path exists, is readable, and points to a supported file.`
+        : `${error.message}.`;
   if (error._tag === "ProcessCaptureError")
     return (
       error.userMessage ??
@@ -514,11 +599,20 @@ const evidenceFileMessage = ({
   operation,
   reason,
   published,
+  systemCode,
 }: EvidenceFileError): string => {
   if (published !== undefined)
     return "The output file was published, but staging cleanup remains incomplete.";
   if (reason === "path-limit")
     return "Filesystem path-length constraints prevented reading or atomic publication at the selected path. Choose a shorter local path.";
+  if (reason === "storage-limit")
+    return systemCode === "EFBIG"
+      ? "The host file-size limit prevented Evidence publication. Increase the inherited file-size allowance and retry."
+      : systemCode === undefined
+        ? "A host filesystem resource limit prevented Evidence publication. Check the file-size allowance, filesystem space and quota before retrying."
+        : "The filesystem lacks space or quota for Evidence publication. Free space or increase quota and retry.";
+  if (reason === "symlink-traversal")
+    return "The selected path cannot be resolved because its symbolic-link chain loops or exceeds the host traversal limit. Repair the chain or select another path.";
   if (reason === "missing")
     return operation === "read"
       ? "Evidence file does not exist at the selected path. Check the path and try again."

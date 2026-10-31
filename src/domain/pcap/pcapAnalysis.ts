@@ -80,6 +80,13 @@ const endpoint = z.strictObject({
 
 const dnsQuery = z.strictObject({
   query: z.string().min(1),
+  query_labels_hex: z
+    .array(z.string().regex(/^(?:[0-9a-f]{2}){1,63}$/u))
+    .nullable()
+    .optional()
+    .describe(
+      "Original DNS wire label bytes in order, as lowercase hex strings; the root terminator is excluded. Null or omission means unknown wire identity; display text alone does not establish identity.",
+    ),
   response_addresses: z.array(z.string().min(1)),
   response_address_count: z.int().nonnegative(),
 });

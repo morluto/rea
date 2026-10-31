@@ -226,17 +226,43 @@ const members = async (path: string) => {
 
 describe("ZIP archives after leading bytes", () => {
   it.each([
-    { style: "offsets that include the leading bytes", adjust: true },
-    { style: "offsets written before the bytes were prepended", adjust: false },
+    {
+      style: "offsets that include the leading bytes",
+      adjust: true,
+      comment: false,
+    },
+    {
+      style: "offsets written before the bytes were prepended",
+      adjust: false,
+      comment: false,
+    },
+    {
+      style: "included leading bytes and an EOCD-like comment",
+      adjust: true,
+      comment: true,
+    },
+    {
+      style: "prepended leading bytes and an EOCD-like comment",
+      adjust: false,
+      comment: true,
+    },
   ])(
     "admits a ZIP after an unclaimed script stub with $style",
-    async ({ adjust }) => {
+    async ({ adjust, comment }) => {
       const root = await createTestTempDirectory("rea-zip-leading-");
       const plain = join(root, "plain.zip");
       const prefixed = join(root, "installer.bin");
       const zip = await memberZip();
+      let prefixedBytes = withLeadingBytes(zip, SCRIPT_STUB, adjust);
+      if (comment) {
+        const payload = Buffer.alloc(22);
+        payload.writeUInt32LE(0x06054b50, 0);
+        // A comment may contain an EOCD signature without declaring another archive.
+        prefixedBytes.writeUInt16LE(payload.length, prefixedBytes.length - 2);
+        prefixedBytes = Buffer.concat([prefixedBytes, payload]);
+      }
       await writeFile(plain, zip);
-      await writeFile(prefixed, withLeadingBytes(zip, SCRIPT_STUB, adjust));
+      await writeFile(prefixed, prefixedBytes);
 
       expect(
         (await classifyAndHashRoot(prefixed, false, await lstat(prefixed)))
@@ -377,4 +403,130 @@ describe("package signature byte identity", () => {
       }
     },
   );
+});
+
+describe("raw disk image signatures", () => {
+  // Raw (UDRW, UDTO) images have no UDIF trailer; hdiutil writes these
+  // structures at fixed device offsets of 512-byte sectors.
+  const rawImage = (write: (bytes: Buffer) => void, size = 4096): Buffer => {
+    const bytes = Buffer.alloc(size);
+    write(bytes);
+    return bytes;
+  };
+  const mbrEntry = (bytes: Buffer, status: number, type: number): void => {
+    bytes[446] = status;
+    bytes[450] = type;
+    bytes.writeUInt32LE(1, 454);
+    bytes.writeUInt32LE(2048, 458);
+    bytes[510] = 0x55;
+    bytes[511] = 0xaa;
+  };
+  const gptHeader = (bytes: Buffer, revision: number, size: number): void => {
+    bytes.write("EFI PART", 512, "ascii");
+    bytes.writeUInt32LE(revision, 520);
+    bytes.writeUInt32LE(size, 524);
+  };
+  const volumeHeader = (bytes: Buffer, signature: string, version: number) => {
+    bytes.write(signature, 1024, "ascii");
+    bytes.writeUInt16BE(version, 1026);
+  };
+
+  const expectDmgAtBothBoundaries = async (
+    path: string,
+    admitted: boolean,
+  ): Promise<void> => {
+    expect(
+      (await classifyAndHashRoot(path, false, await lstat(path))).format,
+    ).toBe(admitted ? "dmg" : "file");
+    expect(await parseBinaryTarget(path)).toMatchObject(
+      admitted
+        ? { ok: true, value: { kind: "archive", format: "dmg" } }
+        : { ok: false, error: { _tag: "BinaryTargetError" } },
+    );
+  };
+
+  it.each([
+    {
+      layout: "a GUID partition table without a protective MBR",
+      bytes: rawImage((bytes) => gptHeader(bytes, 0x0001_0000, 92)),
+    },
+    {
+      layout: "an Apple partition map",
+      bytes: rawImage((bytes) => {
+        bytes.write("ER", 0, "ascii");
+        bytes.write("PM", 512, "ascii");
+      }),
+    },
+    {
+      layout: "an MBR partition table",
+      bytes: rawImage((bytes) => mbrEntry(bytes, 0x80, 0x0b)),
+    },
+    {
+      layout: "an unpartitioned HFS+ volume",
+      bytes: rawImage((bytes) => volumeHeader(bytes, "H+", 4)),
+    },
+    {
+      layout: "an unpartitioned HFSX volume",
+      bytes: rawImage((bytes) => volumeHeader(bytes, "HX", 5)),
+    },
+  ])("admits $layout as a DMG at both boundaries", async ({ bytes }) => {
+    const root = await createTestTempDirectory("rea-raw-dmg-");
+    const path = join(root, "image.dmg");
+    await writeFile(path, bytes);
+    await expectDmgAtBothBoundaries(path, true);
+    // Structure alone never overrides the caller-visible suffix rule.
+    const renamed = join(root, "image.img");
+    await writeFile(renamed, bytes);
+    expect(
+      (await classifyAndHashRoot(renamed, false, await lstat(renamed))).format,
+    ).not.toBe("dmg");
+    expect(await parseBinaryTarget(renamed)).not.toMatchObject({
+      ok: true,
+      value: { format: "dmg" },
+    });
+  });
+
+  it.each([
+    { blob: "zero-filled bytes", bytes: rawImage(() => {}, 1024 * 1024) },
+    {
+      blob: "a boot signature over an empty table",
+      bytes: rawImage((bytes) => {
+        bytes[510] = 0x55;
+        bytes[511] = 0xaa;
+      }),
+    },
+    {
+      blob: "an MBR entry with an invalid status byte",
+      bytes: rawImage((bytes) => mbrEntry(bytes, 0x01, 0x0b)),
+    },
+    {
+      blob: "a GPT header with an unknown revision",
+      bytes: rawImage((bytes) => gptHeader(bytes, 0x0002_0000, 92)),
+    },
+    {
+      blob: "a GPT header shorter than its defined fields",
+      bytes: rawImage((bytes) => gptHeader(bytes, 0x0001_0000, 91)),
+    },
+    {
+      blob: "a driver descriptor without a partition map entry",
+      bytes: rawImage((bytes) => bytes.write("ER", 0, "ascii")),
+    },
+    {
+      blob: "an HFS+ signature with the HFSX version",
+      bytes: rawImage((bytes) => volumeHeader(bytes, "H+", 5)),
+    },
+    {
+      blob: "an HFS+ signature cut off before its version",
+      bytes: rawImage((bytes) => bytes.write("H+", 1024, "ascii"), 1026),
+    },
+    {
+      blob: "text",
+      bytes: Buffer.from("This is not a disk image.\n".repeat(64)),
+    },
+  ])("refuses $blob named as a DMG at both boundaries", async ({ bytes }) => {
+    const root = await createTestTempDirectory("rea-raw-dmg-negative-");
+    const path = join(root, "image.dmg");
+    await writeFile(path, bytes);
+    await expectDmgAtBothBoundaries(path, false);
+  });
 });

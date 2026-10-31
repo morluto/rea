@@ -35,12 +35,13 @@ export const managedInspectionInputFailure = (
   operation: string,
   path: string,
   cause: unknown,
+  inputField: "path" | "leftPath" | "rightPath" = "path",
 ): AnalysisInputError | undefined =>
   cause instanceof ManagedReaderFailure &&
   managedMetadataFailureStatus(cause.issue) === "malformed"
     ? new AnalysisInputError(operation, { cause }, [
         {
-          path: ["path"],
+          path: [inputField],
           reason: "invalid_format",
           message: `Selected artifact ${path}: ${cause.issue.detail}`,
         },

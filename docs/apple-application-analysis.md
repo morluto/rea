@@ -101,8 +101,8 @@ limitation reports how many inventoried entries were left out. IPA projection
 still lists every archive component, including `SwiftSupport/`.
 
 `platforms` lists `macos` for application roots with `Contents/`. It lists `ios`
-for shallow application roots that have an `Info.plist`. An application root
-with neither, such as an empty inventory, has no platform.
+for shallow application roots that have an `Info.plist` at their root. An
+application root with neither, such as an empty inventory, has no platform.
 
 ## macOS bundle anatomy
 
@@ -148,6 +148,11 @@ directories rather than `Versions/Current`. A framework's `info_plist_path` is
 `Versions/<version>/` directory (even if only one of them holds a plist,
 because `Versions/Current` decides which one applies) or when its single
 version directory has no `Resources/Info.plist`.
+
+A `shallow` bundle's `info_plist_path` is its root `Info.plist`. Without one,
+it is `Resources/Info.plist`: a flattened macOS framework keeps its binary,
+`_CodeSignature/`, and `Resources/` directly in the `.framework`, like a single
+`Versions/<version>/` directory without the `Versions/` wrapper.
 
 AppleDouble sidecar files (`._*` and `__MACOSX/`) are inventory facts, but they
 describe neighbouring files. They are excluded from roots, bundle roles, and the
@@ -213,6 +218,9 @@ Resolution follows dyld:
   already loaded image reuses it.
 - Symlinks such as `Versions/Current` are followed inside the analyzed root.
   An escape through `..` or an absolute link is `escapes-target`.
+- Dyld path components are POSIX names. On Windows hosts, link text uses `\`
+  as its separator, and a dyld component that contains `\` or `:` cannot name
+  a file in the analyzed root, so its candidate is `absent`.
 
 Each edge lists every candidate path tried, with its outcome: `resolved`,
 `absent`, `not-mach-o`, `malformed`, `unsupported` (recognized Mach-O outside

@@ -367,10 +367,30 @@ it("preserves the initial partial observation when the provider cleanup retry al
   try {
     const result = await serveScenario();
     expect(result.output).toMatchObject({ code: "cleanup_incomplete" });
-    expect(JSON.stringify(result.output)).toContain("injected close failure 1");
-    expect(JSON.stringify(result.output)).not.toContain(
-      "injected close failure 2",
-    );
+    expect(result.output).toMatchObject({
+      details: {
+        diagnostics: {
+          primary_error: {
+            details: {
+              diagnostics: {
+                primary_error: {
+                  details: { cleanup_reason: "injected close failure 1" },
+                },
+              },
+            },
+          },
+          cleanup_error: {
+            details: { diagnostics: { reason: "injected close failure 2" } },
+          },
+        },
+        partial_observation: {
+          capture: {
+            browser: { cleanup: "incomplete" },
+            steps: [{ step_id: "scenario_start" }, { step_id: "wait" }],
+          },
+        },
+      },
+    });
     expect(close).toHaveBeenCalledTimes(1);
     expect(session.closeBrowserCalls).toBe(2);
     expect(session.profileRemovalCalls).toBe(0);
@@ -439,7 +459,7 @@ it("preserves cancellation diagnostics while retrying retained cleanup", async (
     const result = await serveScenario();
     expect(result.output).toMatchObject({
       code: "cleanup_incomplete",
-      category: "execution_failure",
+      category: "cancelled",
       details: {
         cleanup: "incomplete",
         diagnostics: {
@@ -483,12 +503,18 @@ it("preserves a thrown capture error when provider shutdown also rejects", async
   try {
     const result = await serveScenario();
     expect(result.output).toMatchObject({
-      code: "provider_timeout",
+      code: "cleanup_incomplete",
       category: "timeout",
+      details: {
+        execution_failure: "provider_timeout",
+        diagnostics: {
+          primary_error: { code: "provider_timeout", category: "timeout" },
+          cleanup_error: {
+            details: { diagnostics: { reason: "secondary shutdown failure" } },
+          },
+        },
+      },
     });
-    expect(JSON.stringify(result.output)).not.toContain(
-      "secondary shutdown failure",
-    );
     expect(close).toHaveBeenCalledTimes(1);
   } finally {
     await provider.close();

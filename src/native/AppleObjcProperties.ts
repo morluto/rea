@@ -13,15 +13,6 @@ export interface ObjcPropertyReaders {
 }
 
 /**
- * Parse an `@property` attribute string such as `T@"NSString",C,N,V_name`.
- * Each comma-separated token is one attribute; `T` is the type encoding.
- */
-export const parsePropertyAttributes = (
-  name: string,
-  attributes: string,
-): ObjcProperty => decodePropertyAttributes(name, attributes).property;
-
-/**
  * Decode one attribute string. An unfinished quoted or templated type leaves
  * later attributes ambiguous, so a missing `N` or `R` does not establish the
  * Objective-C defaults.

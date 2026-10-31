@@ -9,7 +9,11 @@ import { interfaceBuilderAnalysisSchema } from "../../../src/domain/apple/interf
 import { thinMach } from "../../../src/domain/binaryTarget.fixture.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest } from "../../support/cli/cliFixture.js";
+import {
+  cliTest,
+  runFileCli,
+  type TestCli,
+} from "../../support/cli/cliFixture.js";
 
 const unknownMixedInteger = {
   $plist_type: "unknown",
@@ -30,6 +34,14 @@ const scenarios = [
   "segmented keys",
 ] as const;
 
+const inspectArchive = (cli: TestCli, app: string, fresh: boolean) => {
+  const invocation = {
+    arguments: ["decode-interface-builder", app, "--json"],
+    environment: { REA_LOG_LEVEL: "silent", REA_ANALYSIS_PROVIDER: "auto" },
+  };
+  return fresh ? cli.run(invocation) : runFileCli(cli, invocation);
+};
+
 cliTest.for(scenarios)(
   "preserves numeric meaning and graph identity for %s Interface Builder attributes",
   async (scenario, { cli }) => {
@@ -49,20 +61,22 @@ cliTest.for(scenarios)(
         ? "<plist><dict><key>CFBundle<![CDATA[Executable]]></key><string>Fixture</string></dict></plist>"
         : build({ CFBundleExecutable: "Fixture" }),
     );
+    const uid = (value: number) =>
+      scenario === "binary" ? { UID: value } : { CF$UID: value };
     const source = {
       $archiver: "NSKeyedArchiver",
       $version: 100000,
-      $top: { root: { CF$UID: 1 } },
+      $top: { root: uid(1) },
       $objects: [
         "$null",
         {
-          $class: { CF$UID: 3 },
+          $class: uid(3),
           large: scenario === "binary" ? 9007199254740992 : "__INTEGER__",
           safe: 42,
-          children: [{ CF$UID: 2 }],
+          children: [uid(2)],
           ...(scenario.includes("collision") ? { other: "__OTHER__" } : {}),
         },
-        { $class: { CF$UID: 3 }, label: "Child" },
+        { $class: uid(3), label: "Child" },
         { $classname: "UIView", $classes: ["UIView", "NSObject"] },
       ],
     };
@@ -111,10 +125,11 @@ cliTest.for(scenarios)(
           .replaceAll("<key>safe</key>", "<key>sa<![CDATA[fe]]></key>"),
       );
     await writeFile(join(resources, "Main.nib"), bytes);
-    const output = await cli.run({
-      arguments: ["decode-interface-builder", app, "--json"],
-      environment: { REA_LOG_LEVEL: "silent", REA_ANALYSIS_PROVIDER: "auto" },
-    });
+    const output = await inspectArchive(
+      cli,
+      app,
+      scenario === "XML" || scenario === "binary",
+    );
     expect(output.exitCode, output.stderr).toBe(0);
     const result = interfaceBuilderAnalysisSchema.parse(
       parseEvidence(output.json).normalized_result,

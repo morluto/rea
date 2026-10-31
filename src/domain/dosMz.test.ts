@@ -4,6 +4,10 @@ import { dosMz, pe } from "./binaryTarget.fixture.js";
 import { parseExecutableHeader } from "./binaryTarget.js";
 import {
   observeMzWindowsHeader,
+  readDosMzDeclarations,
+  dosMzDeclaredImageByteLength,
+  parseDeclaredMzHeaderEvidence,
+  withMzWindowsHeaderSignature,
   parseDosMzHeader,
   parseMzHeaderEvidence,
 } from "./dosMz.js";
@@ -21,6 +25,7 @@ describe("DOS MZ load-module validation", () => {
         overlayBytes: 7,
         relocationCount: 0,
         relocationTableOffset: 28,
+        relocations: [],
         entrySegment: 0,
         entryOffset: 0,
       },
@@ -284,8 +289,10 @@ describe("MZ Windows header observations", () => {
       }),
     ).toEqual({ state: "declared", offset, signature: "PE" });
   });
+});
 
-  it("preserves DOS facts while leaving an unsigned Windows pointer unresolved", () => {
+describe("MZ header padding observations", () => {
+  it("treats a complete header after the relocation table as DOS padding", () => {
     const bytes = Buffer.alloc(128);
     bytes.write("MZ", 0, "ascii");
     bytes.writeUInt16LE(128, 2);
@@ -308,15 +315,66 @@ describe("MZ Windows header observations", () => {
         relocationTableOffset: 28,
       },
     });
-    expect(evidence.windowsHeader).toEqual({
+    expect(evidence.windowsHeader).toEqual({ state: "absent" });
+    expect(parseExecutableHeader(bytes, "x64")).toMatchObject({
+      ok: true,
+      value: { format: "dos-mz", architecture: "x86" },
+    });
+
+    bytes.writeUInt32LE(0xfffffff0, 60);
+    expect(parseMzHeaderEvidence(bytes).windowsHeader).toEqual({
+      state: "absent",
+    });
+    expect(parseExecutableHeader(bytes, "x64")).toMatchObject({
+      ok: true,
+      value: { format: "dos-mz", architecture: "x86" },
+    });
+  });
+
+  it("requests an unread signature before treating padding as DOS data", () => {
+    const offset = 8192;
+    const bytes = Buffer.alloc(offset + 512);
+    bytes.write("MZ", 0, "ascii");
+    bytes.writeUInt16LE(128, 2);
+    bytes.writeUInt16LE(1, 4);
+    bytes.writeUInt16LE(2, 6);
+    bytes.writeUInt16LE(4, 8);
+    bytes.writeUInt16LE(28, 24);
+    bytes.writeUInt32LE(offset, 60);
+    const prefix = bytes.subarray(0, 4096);
+
+    expect(observeMzWindowsHeader(prefix, bytes.length)).toEqual({
+      state: "signature-needed",
+      offset,
+    });
+    expect(
+      observeMzWindowsHeader(prefix, bytes.length, {
+        offset,
+        bytes: Buffer.from("PE\0\0", "binary"),
+      }),
+    ).toEqual({ state: "declared", offset, signature: "PE" });
+    expect(
+      observeMzWindowsHeader(prefix, bytes.length, {
+        offset,
+        bytes: Buffer.from("ZZZZ", "ascii"),
+      }),
+    ).toEqual({ state: "absent" });
+  });
+
+  it("keeps an unconfirmed pointer outside a relocation table unresolved", () => {
+    const bytes = Buffer.alloc(256);
+    dosMz().copy(bytes, 0, 0, 28);
+    bytes.writeUInt16LE(256, 2);
+    bytes.writeUInt16LE(4, 8);
+    bytes.writeUInt16LE(64, 24);
+    bytes.writeUInt32LE(192, 60);
+
+    expect(parseMzHeaderEvidence(bytes).windowsHeader).toEqual({
       state: "candidate",
-      offset: 0x44434241,
-      signature: "unobserved",
+      offset: 192,
+      signature: "other",
     });
-    expect(parseExecutableHeader(bytes, "x64")).toEqual({
-      ok: false,
-      error: "MZ Windows new-header candidate is unresolved",
-    });
+    expect(parseExecutableHeader(bytes, "x64")).toMatchObject({ ok: false });
 
     bytes.writeUInt32LE(0xfffffff0, 60);
     expect(parseMzHeaderEvidence(bytes).windowsHeader).toEqual({
@@ -326,4 +384,205 @@ describe("MZ Windows header observations", () => {
     });
     expect(parseExecutableHeader(bytes, "x64")).toMatchObject({ ok: false });
   });
+});
+
+it("retains ordered DOS relocation aliases and their source/module target coordinates", () => {
+  const bytes = Buffer.alloc(128);
+  bytes.write("MZ");
+  bytes.writeUInt16LE(128, 2);
+  bytes.writeUInt16LE(1, 4);
+  bytes.writeUInt16LE(4, 6);
+  bytes.writeUInt16LE(4, 8);
+  bytes.writeUInt16LE(28, 24);
+  bytes.writeUInt16LE(0, 28);
+  bytes.writeUInt16LE(1, 30);
+  bytes.writeUInt16LE(16, 32);
+  bytes.writeUInt16LE(0, 34);
+  bytes.writeUInt16LE(16, 36);
+  bytes.writeUInt16LE(0, 38);
+  bytes.writeUInt16LE(17, 40);
+  bytes.writeUInt16LE(0, 42);
+  const parsed = parseDosMzHeader(bytes);
+  if (!parsed.ok) throw new Error(parsed.error);
+  expect(parsed.value.relocations).toEqual([
+    { segment: 1, offset: 0, moduleOffset: 16, fileOffset: 80 },
+    { segment: 0, offset: 16, moduleOffset: 16, fileOffset: 80 },
+    { segment: 0, offset: 16, moduleOffset: 16, fileOffset: 80 },
+    { segment: 0, offset: 17, moduleOffset: 17, fileOffset: 81 },
+  ]);
+  // Parsed facts are snapshots, independent of later source-buffer edits.
+  bytes.writeUInt16LE(63, 32);
+  expect(parsed.value.relocations[1]).toEqual({
+    segment: 0,
+    offset: 16,
+    moduleOffset: 16,
+    fileOffset: 80,
+  });
+  expect(parseDosMzHeader(bytes)).toEqual({
+    ok: false,
+    error: "DOS MZ relocation 1 points outside its load module",
+  });
+});
+
+const extendedRelocationImage = (): Buffer => {
+  const bytes = dosMz(8192);
+  bytes.writeUInt16LE(257, 8); // 4112-byte header.
+  bytes.writeUInt16LE(2, 6);
+  bytes.writeUInt16LE(4096, 24);
+  return bytes;
+};
+
+it("retains fixed declarations while requesting only a source-bounded relocation prefix", () => {
+  const bytes = extendedRelocationImage();
+  const prefix = bytes.subarray(0, 64);
+  const evidence = parseMzHeaderEvidence(prefix, bytes.length);
+  expect(evidence.declarations).toEqual(readDosMzDeclarations(prefix));
+  expect(evidence.declarations).toMatchObject({
+    ok: true,
+    value: {
+      headerBytes: 4112,
+      relocationCount: 2,
+      relocationTableOffset: 4096,
+      relocationTableEnd: 4104,
+      entryOffset: 0,
+      entrySegment: 0,
+    },
+  });
+  expect(evidence.relocationTableRead).toEqual({ offset: 0, byteLength: 4104 });
+  expect(evidence.dos).toEqual({
+    ok: false,
+    error: "truncated DOS MZ relocation table",
+  });
+  const observed = parseMzHeaderEvidence(bytes.subarray(0, 4104), bytes.length);
+  expect(observed.relocationTableRead).toBeUndefined();
+  expect(observed.dos).toMatchObject({
+    ok: true,
+    value: { relocationCount: 2, headerBytes: 4112 },
+  });
+});
+
+it("does not request absent or out-of-bounds relocation records", () => {
+  const zero = extendedRelocationImage();
+  zero.writeUInt16LE(512, 8);
+  zero.writeUInt16LE(0, 6);
+  zero.writeUInt16LE(6000, 24);
+  expect(
+    parseMzHeaderEvidence(zero.subarray(0, 64), zero.length)
+      .relocationTableRead,
+  ).toBeUndefined();
+  expect(parseDosMzHeader(zero).ok).toBe(true);
+  const outsideHeader = extendedRelocationImage();
+  outsideHeader.writeUInt16LE(5000, 24);
+  const headerEvidence = parseMzHeaderEvidence(
+    outsideHeader.subarray(0, 64),
+    outsideHeader.length,
+  );
+  expect(headerEvidence.relocationTableRead).toBeUndefined();
+  expect(headerEvidence.dos).toEqual({
+    ok: false,
+    error: "DOS MZ relocation table lies outside its header",
+  });
+  const outsideFile = extendedRelocationImage();
+  outsideFile.writeUInt16LE(1024, 8);
+  outsideFile.writeUInt16LE(9000, 24);
+  expect(
+    parseMzHeaderEvidence(outsideFile.subarray(0, 64), outsideFile.length)
+      .relocationTableRead,
+  ).toBeUndefined();
+});
+
+it("keeps independent malformed declarations and the established DOS error precedence", () => {
+  const bytes = extendedRelocationImage();
+  bytes.writeUInt16LE(0, 4);
+  bytes.writeUInt16LE(65535, 20);
+  const evidence = parseMzHeaderEvidence(bytes.subarray(0, 64), bytes.length);
+  expect(evidence.declarations).toMatchObject({
+    ok: true,
+    value: { pages: 0, entryOffset: 65535 },
+  });
+  expect(evidence.relocationTableRead?.byteLength).toBe(4104);
+  expect(evidence.dos).toEqual({
+    ok: false,
+    error: "invalid DOS MZ page count or final-page size",
+  });
+  expect(parseDosMzHeader(bytes, bytes.length - 1)).toEqual({
+    ok: false,
+    error: "invalid DOS MZ file length",
+  });
+  bytes.writeUInt16LE(17, 4);
+  expect(parseDosMzHeader(bytes.subarray(0, 64), bytes.length)).toEqual({
+    ok: false,
+    error: "truncated DOS MZ relocation table",
+  });
+  expect(parseDosMzHeader(bytes)).toEqual({
+    ok: false,
+    error: "DOS MZ entry point lies outside its initialized load module",
+  });
+});
+
+it("keeps declared Windows signatures independent of incomplete DOS relocations", () => {
+  const bytes = extendedRelocationImage();
+  bytes.writeUInt32LE(128, 60);
+  const evidence = parseMzHeaderEvidence(bytes.subarray(0, 64), bytes.length, {
+    offset: 128,
+    bytes: Buffer.from("PE\0\0"),
+  });
+  expect(evidence.windowsHeader).toEqual({
+    state: "declared",
+    signature: "PE",
+    offset: 128,
+  });
+  expect(evidence.dos).toEqual({
+    ok: false,
+    error: "truncated DOS MZ relocation table",
+  });
+  expect(evidence.relocationTableRead?.byteLength).toBe(4104);
+});
+
+it("completes captured evidence from the original admitted fixed declarations", () => {
+  const bytes = extendedRelocationImage();
+  const declarations = readDosMzDeclarations(bytes.subarray(0, 64));
+  if (!declarations.ok) throw new Error(declarations.error);
+  expect(dosMzDeclaredImageByteLength(declarations.value)).toEqual({
+    ok: true,
+    value: bytes.length,
+  });
+  const evidence = parseDeclaredMzHeaderEvidence(
+    bytes.subarray(0, 4104),
+    bytes.length,
+    declarations,
+  );
+  expect(evidence.declarations).toBe(declarations);
+  expect(evidence).toEqual(
+    parseMzHeaderEvidence(bytes.subarray(0, 4104), bytes.length),
+  );
+  expect(evidence.dos.ok).toBe(true);
+});
+
+it("adds distant Windows signatures while retaining prior DOS observations", () => {
+  const bytes = extendedRelocationImage();
+  bytes.writeUInt32LE(6000, 60);
+  const prefix = bytes.subarray(0, 4104);
+  const evidence = parseMzHeaderEvidence(prefix, bytes.length);
+  expect(evidence.windowsHeader).toEqual({
+    state: "signature-needed",
+    offset: 6000,
+  });
+  const signature = { offset: 6000, bytes: Buffer.from("PE\0\0") };
+  const completed = withMzWindowsHeaderSignature(
+    prefix,
+    bytes.length,
+    evidence,
+    signature,
+  );
+  expect(completed.dos).toBe(evidence.dos);
+  expect(completed.declarations).toBe(evidence.declarations);
+  expect(completed.windowsHeader).toEqual({
+    state: "declared",
+    signature: "PE",
+    offset: 6000,
+  });
+  expect(completed).toEqual(
+    parseMzHeaderEvidence(prefix, bytes.length, signature),
+  );
 });

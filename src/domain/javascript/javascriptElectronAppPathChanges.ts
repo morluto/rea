@@ -360,7 +360,10 @@ export const createSemanticElectronAppPathChangeQuery = (
       return true;
     const exported = commonJsRuntimeExportValues(node, state);
     if (
-      !exported.some(({ value }) => value !== null) ||
+      !exported.some(
+        ({ value, iterationSource }) =>
+          value !== null || iterationSource !== undefined,
+      ) ||
       (!t.isAssignmentExpression(node) && !t.isCallExpression(node))
     )
       return false;
@@ -368,11 +371,15 @@ export const createSemanticElectronAppPathChangeQuery = (
       indexCommonJsExportReceiversSteps(state),
     ));
     return exported.some(
-      ({ exportedName, value, projection, ownEnumerable }) =>
+      ({ exportedName, value, projection, ownEnumerable, iterationSource }) =>
         commonJsExportApplicability(receivers.get(node), exportedName) !==
           "detached" &&
-        value !== null &&
-        possiblePath(value, true, projection, ownEnumerable),
+        (value !== null
+          ? possiblePath(value, true, projection, ownEnumerable)
+          : iterationSource !== undefined &&
+            // Unknown iteration does not identify any yielded slot. Retain
+            // only source reachability through the existing escape query.
+            possiblePath(iterationSource, true)),
     );
   };
 };

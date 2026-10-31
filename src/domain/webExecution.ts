@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { utcDateTimeSchema } from "./offsetDateTime.js";
+import { MAX_BROWSER_DEADLINE_MS } from "./browserDeadline.js";
 import { jsonObjectSchema } from "./jsonValue.js";
 import {
   webRuntimeLocationSchema,
@@ -10,7 +12,7 @@ import { browserVersionSchema } from "./browserObservationSchemas.js";
 
 /** Explicit instrumentation request for one finite, externally driven execution window. */
 export const observeWebExecutionInputSchema = webRuntimeScopeSchema.extend({
-  observation_ms: z.int().min(1).max(2_147_483_647).default(10_000),
+  observation_ms: z.int().min(1).max(MAX_BROWSER_DEADLINE_MS).default(10_000),
 });
 export type ObserveWebExecutionInput = z.infer<
   typeof observeWebExecutionInputSchema
@@ -33,8 +35,8 @@ export const webExecutionObservationSchema = z.object({
   browser: browserVersionSchema,
   target: webRuntimeTargetSchema,
   window: z.object({
-    armed_at: z.iso.datetime(),
-    ended_at: z.iso.datetime(),
+    armed_at: utcDateTimeSchema,
+    ended_at: utcDateTimeSchema,
     requested_ms: z.int().min(1),
     end_reason: z.enum([
       "window_elapsed",

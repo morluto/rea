@@ -365,7 +365,7 @@ describe("feature trace projection from contextBridge source members", () => {
     });
     expect(result.evidence_links).toEqual([sourceEvidenceId]);
     expect(result.limitations).toContain(
-      "No graph entity matched the literal seed; this is not evidence that the feature is absent.",
+      "No application graph entity matched the literal seed; this is not evidence that the feature is absent.",
     );
   });
 

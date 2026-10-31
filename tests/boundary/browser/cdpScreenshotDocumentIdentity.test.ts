@@ -144,6 +144,95 @@ describe("screenshot authorization during metrics reads", () => {
   );
 });
 
+describe("screenshot initial root identity", () => {
+  it.each(
+    [
+      { label: "missing", identity: {} },
+      { label: "wrong type", identity: { id: 7 } },
+      { label: "empty", identity: { id: "" } },
+      { label: "parented", identity: { id: "frame-main", parentId: "parent" } },
+      {
+        label: "malformed parent",
+        identity: { id: "frame-main", parentId: null },
+      },
+      {
+        label: "self parent",
+        identity: { id: "frame-main", parentId: "frame-main" },
+      },
+    ].flatMap(({ label, identity }) =>
+      [false, true].map((withChild) => ({ label, identity, withChild })),
+    ),
+  )(
+    "rejects $label root identity without borrowing a child ($withChild)",
+    async ({ identity, withChild }) => {
+      const { browser, result } = await captureWithFake({
+        commandResult: ({ method }, origin) =>
+          method === "Page.getFrameTree"
+            ? {
+                frameTree: {
+                  frame: { ...identity, url: origin + "/app" },
+                  ...(withChild
+                    ? {
+                        childFrames: [
+                          {
+                            frame: {
+                              id: "frame-child",
+                              parentId: "frame-main",
+                              url: origin + "/child",
+                            },
+                          },
+                        ],
+                      }
+                    : {}),
+                },
+              }
+            : undefined,
+      });
+      expect(result).toMatchObject({
+        ok: false,
+        error: { reason: "protocol_error" },
+      });
+      if (result.ok) throw new Error("Expected malformed root refusal");
+      const projection = projectAnalysisError(result.error);
+      expect(projection.message).not.toContain(
+        "outside the permitted HTTP(S) origin scope",
+      );
+      expect(projection.remediation.action).not.toContain("allowed_origins");
+      expect(browser.commands.map(({ method }) => method)).not.toContain(
+        "Page.getLayoutMetrics",
+      );
+      expect(browser.commands.map(({ method }) => method)).not.toContain(
+        "Page.captureScreenshot",
+      );
+      await expect.poll(() => browser.activeConnectionCount()).toBe(0);
+    },
+  );
+
+  it("retains a known foreign origin refusal when the root ID is malformed", async () => {
+    const { browser, result } = await captureWithFake({
+      commandResult: ({ method }) =>
+        method === "Page.getFrameTree"
+          ? {
+              frameTree: {
+                frame: { id: 7, url: "https://outside.example/page" },
+              },
+            }
+          : undefined,
+    });
+    if (result.ok) throw new Error("Expected known origin refusal");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      message: expect.stringContaining(
+        "outside the permitted HTTP(S) origin scope",
+      ),
+      remediation: { action: expect.stringContaining("allowed_origins") },
+      details: { reason: "target_not_allowed" },
+    });
+    expect(browser.commands.map(({ method }) => method)).not.toContain(
+      "Page.captureScreenshot",
+    );
+  });
+});
+
 describe("screenshot viewport freshness", () => {
   it.each([
     { phase: "normal capture", stage: 2, imageSize: 4, captures: 1 },
@@ -763,6 +852,7 @@ describe("screenshot frame identity transitions", () => {
 
   it("detects a same-URL root replacement and scopes later events to its new identity", async () => {
     const { result } = await captureWithFake({
+      eventsBeforeReply: ["Page.captureScreenshot"],
       commandEvents: (command, origin) =>
         command.method === "Page.captureScreenshot"
           ? [

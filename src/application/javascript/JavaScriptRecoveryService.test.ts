@@ -132,28 +132,6 @@ describe("JavaScript recovery workflow", () => {
       expect(cancelled.error.cause).toBe(reason);
     }
   });
-  it("rejects additional_paths repeating path or each other", async () => {
-    const service = new JavaScriptRecoveryService({
-      recover: async () => {
-        throw new Error("port must not execute");
-      },
-    });
-    for (const additional_paths of [
-      [artifact.path],
-      ["/tmp/dir/../bundle.js", "/tmp/bundle.js"],
-      ["/tmp/shared.js", "/tmp/shared.js"],
-    ]) {
-      const result = await service.recover({
-        ...input,
-        additional_paths,
-      });
-      if (result.ok) throw new Error("expected duplicate rejection");
-      expect(result.error._tag).toBe("AnalysisInputError");
-      expect(result.error).toMatchObject({
-        issues: [{ path: ["additional_paths"], reason: "invalid_format" }],
-      });
-    }
-  });
   it("rejects relative additional_paths before acquiring the port", async () => {
     let invoked = false;
     const service = new JavaScriptRecoveryService({

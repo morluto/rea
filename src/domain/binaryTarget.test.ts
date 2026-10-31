@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { parseExecutableHeader } from "./binaryTarget.js";
+import {
+  parseExecutableHeader,
+  peDebugDirectoryEntry,
+  parsePeRecordFacts,
+} from "./binaryTarget.js";
 import { dosMz, elf, fat, pe, thinMach } from "./binaryTarget.fixture.js";
 
 describe("executable header parsing", () => {
@@ -79,6 +83,18 @@ describe("executable header parsing", () => {
         format: "pe",
         architecture,
         managed: true,
+      });
+    },
+  );
+
+  it.each([0x014c, 0x8664] as const)(
+    "rejects optional-header width inconsistent with machine %s",
+    (machine) => {
+      const bytes = pe(machine);
+      bytes.writeUInt16LE(machine === 0x014c ? 0x20b : 0x10b, 88);
+      expect(parseExecutableHeader(bytes, "x64")).toEqual({
+        ok: false,
+        error: "PE optional-header magic does not match its architecture",
       });
     },
   );
@@ -206,6 +222,7 @@ describe("executable header completeness", () => {
 
   it("rejects Mach-O load commands that extend past the file", () => {
     const header = thinMach(0xcffaedfe, 0x0100000c);
+    header.writeUInt32LE(1, 16);
     header.writeUInt32LE(100, 20);
 
     expect(reason(header)).toBe(
@@ -364,3 +381,44 @@ const fat64 = (cpus: readonly number[], littleEndian: boolean): Buffer => {
   });
   return bytes;
 };
+
+it.each([
+  { magic: 0x10b, directoryOffset: 96 },
+  { magic: 0x20b, directoryOffset: 112 },
+])(
+  "retains a complete debug entry when later declared directories are unavailable ($magic)",
+  ({ magic, directoryOffset }) => {
+    const optional = Buffer.alloc(directoryOffset + 7 * 8);
+    optional.writeUInt16LE(magic);
+    optional.writeUInt32LE(0x400, 60);
+    optional.writeUInt32LE(0xffffffff, directoryOffset - 4);
+    optional.writeUInt32LE(0x2400, directoryOffset + 6 * 8);
+    optional.writeUInt32LE(28, directoryOffset + 6 * 8 + 4);
+    expect(peDebugDirectoryEntry(optional)).toEqual({
+      debugRva: 0x2400,
+      debugSize: 28,
+      sizeOfHeaders: 0x400,
+    });
+    expect(
+      peDebugDirectoryEntry(optional.subarray(0, optional.length - 1)),
+    ).toBeUndefined();
+    optional.writeUInt32LE(6, directoryOffset - 4);
+    expect(peDebugDirectoryEntry(optional)).toBeUndefined();
+  },
+);
+
+it("keeps validated optional-header facts separate from executable metadata", () => {
+  const bytes = pe(0x8664);
+  const record = bytes.subarray(bytes.readUInt32LE(0x3c));
+  const parsed = parsePeRecordFacts(record, undefined);
+  if (!parsed.ok) throw new Error(parsed.error);
+  expect(parsed.value.optionalHeader).toMatchObject({ magic: 0x20b, bits: 64 });
+  expect(parsed.value.metadata).toEqual({
+    format: "pe",
+    peMachine: 0x8664,
+    architecture: "x86_64",
+    availableArchitectures: ["x86_64"],
+    executableRole: "application",
+    managed: false,
+  });
+});

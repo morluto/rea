@@ -1,15 +1,10 @@
-import type { JavaScriptOpaqueScopeEffects } from "./javascriptSemanticOpaqueEffects.js";
-import type { SemanticIterationSource } from "./javascriptSemanticIterationSources.js";
 import * as t from "@babel/types";
 import {
   semanticStaticPropertyKey,
   staticJavaScriptTruthiness,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
-import {
-  semanticBindingAtRead,
-  semanticEffectTiming,
-} from "./javascriptSemanticMutationInitializers.js";
+import type { SemanticIterationSource } from "./javascriptSemanticIterationFacts.js";
 
 import type {
   JavaScriptSemanticPropertyPath,
@@ -121,6 +116,17 @@ export interface JavaScriptSemanticScopeState {
   readonly implicitArguments?: true;
 }
 
+/** One source owns sites and the minimal scope tree reaching them; O(AST) storage. */
+export interface JavaScriptOpaqueScopeEffects {
+  /** Cheap source evidence collected with declarations, before alias queries. */
+  mayReferenceGlobalEval: boolean;
+  readonly sites: WeakSet<t.Node>;
+  readonly sloppySites: WeakSet<t.Node>;
+  readonly byScope: Map<string, t.CallExpression[]>;
+  readonly children: Map<string, Set<string>>;
+  readonly globalSites: (t.CallExpression | t.OptionalCallExpression)[];
+}
+
 /** Shared state for semantic collection and evaluation. */
 export interface JavaScriptSemanticAnalysisState {
   arrayIterationUnknown: boolean;
@@ -135,6 +141,8 @@ export interface JavaScriptSemanticAnalysisState {
   /** Callee sites whose possible local returns needed a broader projection. */
   readonly returnedReferenceWidenings: Set<t.Node>;
   readonly parentsByNode: WeakMap<t.Node, t.Node>;
+  /** TypeScript syntax omitted from JavaScript value evaluation. */
+  readonly erasedSyntaxNodes: WeakSet<t.Node>;
   readonly scopes: JavaScriptSemanticScopeState[];
   readonly scopesById: Map<string, JavaScriptSemanticScopeState>;
   /** Scope boundaries and descendant scopes resolved on demand. */
@@ -171,6 +179,10 @@ export interface JavaScriptSemanticAnalysisState {
   readonly ambientBindingWrites: Map<string, t.Node[]>;
   /** Source-local writes, tagged by global, import.meta or CJS module identity. */
   readonly ambientWrites: SemanticPropertyPathCoverage;
+  /** Browser receivers proven to be only the ambient global identity. */
+  readonly retainedGlobalCallReceivers: WeakSet<t.Node>;
+  /** Store targets whose ownership is unknown or ambient, as classified by ambient indexing. */
+  readonly escapingReferenceStores: WeakSet<t.MemberExpression>;
   /** Ambient object identities passed to calls whose effects are not evaluated. */
   readonly ambientEscapes: SemanticPropertyPathCoverage;
   /** Capture sites keep later opaque effects from changing earlier copies. */
@@ -199,6 +211,12 @@ export interface JavaScriptBindingIndex {
     referenceNode: t.Node,
   ): JavaScriptSemanticBindingState | undefined;
   effectsForReferenceAt(
+    site: t.Node,
+    referenceNode: t.Node,
+    propertyPath?: JavaScriptSemanticPropertyPath,
+  ): JavaScriptSemanticReferenceEffectsAtSite;
+  /** Order declarations within one activation; deferred and repeating effects stay unknown. */
+  effectsForReferenceWithinActivationAt(
     site: t.Node,
     referenceNode: t.Node,
     propertyPath?: JavaScriptSemanticPropertyPath,
@@ -534,101 +552,4 @@ export const semanticVariableScope = (
     candidate = outer;
   }
   return candidate;
-};
-
-/** Identify a global name only when no lexical or dynamic environment shadows it. */
-export const isUnshadowedGlobal = (
-  node: t.Node,
-  state: JavaScriptSemanticAnalysisState,
-  name: string,
-): boolean =>
-  t.isIdentifier(node, { name }) &&
-  (resolveSemanticBindingState(state, node, name) === undefined
-    ? !semanticResolutionBlocked(state, node, name)
-    : isUnmodifiedCommonJsWrapperBinding(node, name, state));
-
-/** A program-level `var` redeclaration still denotes its untouched CJS wrapper parameter. */
-export const isUnmodifiedCommonJsWrapperBinding = (
-  node: t.Node,
-  name: string,
-  state: JavaScriptSemanticAnalysisState,
-): boolean => {
-  const binding = commonJsWrapperBindingDeclaration(node, name, state);
-  return (
-    binding !== undefined &&
-    !semanticBindingHasPriorValueWrite(node, binding, state)
-  );
-};
-
-/** Retained value and pattern stores share one source-ordered write boundary. */
-export const semanticBindingHasPriorValueWrite = (
-  site: t.Node,
-  binding: JavaScriptSemanticBindingState,
-  state: JavaScriptSemanticAnalysisState,
-): boolean => {
-  if (binding.definitions.some(({ kind }) => kind === "function")) return true;
-  const writes = state.bindingWrites.get(binding.bindingId) ?? [];
-  const read = semanticBindingAtRead(binding, site, state.parentsByNode);
-  const retained =
-    read.status === "ordered"
-      ? new Set([
-          ...read.binding.initializers,
-          ...read.binding.referenceInitializers,
-        ])
-      : undefined;
-  const representedWrites = new Set<t.Node>();
-  const retainedWrites = new Set<t.Node>();
-  for (const source of [
-    ...binding.initializers,
-    ...binding.referenceInitializers,
-  ]) {
-    let owner: t.Node | undefined = source.node;
-    while (owner !== undefined && !writes.includes(owner))
-      owner = state.parentsByNode.get(owner);
-    if (owner !== undefined) {
-      representedWrites.add(owner);
-      if (retained === undefined || retained.has(source))
-        retainedWrites.add(owner);
-    } else if (
-      (retained === undefined || retained.has(source)) &&
-      semanticEffectTiming(site, source.node, state) !== "after"
-    )
-      return true;
-  }
-  return writes.some(
-    (write) =>
-      (!representedWrites.has(write) || retainedWrites.has(write)) &&
-      semanticEffectTiming(site, write, state) !== "after",
-  );
-};
-
-/** Explicit wrapper facts and program `var` redeclarations retain their lexical identity. */
-export const commonJsWrapperBindingDeclaration = (
-  node: t.Node,
-  name: string,
-  state: JavaScriptSemanticAnalysisState,
-): JavaScriptSemanticBindingState | undefined => {
-  if (
-    !["module", "exports", "require", "__dirname", "__filename"].includes(
-      name,
-    ) ||
-    !t.isIdentifier(node, { name })
-  )
-    return undefined;
-  const binding = resolveSemanticBindingState(state, node, name);
-  if (binding === undefined) return undefined;
-  const scope = state.scopesById.get(binding.scopeId);
-  if (
-    scope?.kind !== "program" ||
-    ![...binding.declarationKinds].every((kind) => kind === "var")
-  )
-    return undefined;
-  // The index owns explicit wrapper parameters, including ones with no source
-  // redeclaration. Babel's module classification does not invalidate that fact.
-  if (binding.hostOrigin === "commonjs-wrapper") return binding;
-  // Without an explicit host fact, preserve the legacy script-var inference.
-  return state.program.sourceType === "script" &&
-    binding.declarationKinds.size > 0
-    ? binding
-    : undefined;
 };

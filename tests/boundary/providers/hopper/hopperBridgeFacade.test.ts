@@ -5,7 +5,8 @@ import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { OFFICIAL_TOOL_CONTRACTS } from "../../../../src/contracts/officialToolContracts.js";
-import { functionDossierSchema } from "../../../../src/domain/hopperValues.js";
+import { nativeSymbolMetadataSchema } from "../../../../src/domain/native/nativeSymbol.js";
+import { functionDossierSchema } from "../../../../src/domain/native/functionDossier.js";
 
 const execute = promisify(execFile);
 const bridgePath = new URL(
@@ -30,6 +31,7 @@ const probeResultSchema = z.strictObject({
     procedure: z.strictObject({
       address: z.literal("0x401000"),
       name: z.literal("fixture-procedure"),
+      symbol: nativeSymbolMetadataSchema.nullable(),
       classification: z.null(),
       body: z.strictObject({
         available: z.literal(false),
@@ -44,6 +46,7 @@ const probeResultSchema = z.strictObject({
     length: z.number(),
     signature: z.literal("int fixture-procedure()"),
     locals: z.array(z.unknown()),
+    symbol: nativeSymbolMetadataSchema.nullable(),
     classification: z.null(),
     body: z.strictObject({
       available: z.literal(false),
@@ -55,6 +58,7 @@ const probeResultSchema = z.strictObject({
     procedure: z.strictObject({
       address: z.literal("0x401000"),
       name: z.literal("fixture-procedure"),
+      symbol: nativeSymbolMetadataSchema.nullable(),
       classification: z.null(),
       body: z.strictObject({
         available: z.literal(false),

@@ -12,6 +12,7 @@ import { readMachoImage } from "../../../src/native/metadata/MachoImage.js";
 import { readBinaryContainer } from "../../../src/native/metadata/readBinaryContainer.js";
 import {
   createGoBinaryFixture,
+  createGoBinaryByteStringFixture,
   createGoPeHeaderPointerFixture,
   createGoSplitElfFixture,
   createGoOverlappingElfFixture,
@@ -187,6 +188,18 @@ it.each([
           offset: fixture.moduleOffset,
           bytes: fixture.moduleBytes.length,
         },
+        module: {
+          path: "example.com/tool/cmd/tool",
+          main: { path: "example.com/tool", version: "(devel)", sum: "" },
+          dependencies: [
+            {
+              path: "example.com/dependency",
+              version: "v1.2.3",
+              replacement: { path: "../dependency", version: "", sum: "" },
+            },
+          ],
+          complete: true,
+        },
       },
     });
   },
@@ -309,6 +322,12 @@ it("refuses invalid module framing and preserves BOMs without replacement decodi
   expect(readGoBinaryImage(bom.bytes).build_info).toMatchObject({
     go_version: "\ufeffgo1.26.0",
     module_text: "\ufeffpath\tx\n",
+    module: {
+      path: null,
+      unparsed_lines: ["\ufeffpath\tx"],
+      unparsed_line_bytes_base64: [],
+      complete: false,
+    },
   });
 });
 
@@ -344,6 +363,13 @@ it("preserves non-UTF8 compiler and module bytes without rejecting other observe
       )
       .toString("base64"),
   });
+});
+
+it("retains parsed neighboring module records and exact invalid UTF-8 lines at the image boundary", () => {
+  const fixture = createGoBinaryByteStringFixture();
+  expect(readGoBinaryImage(fixture.bytes).build_info).toEqual(
+    fixture.expectedBuildInfo,
+  );
 });
 
 it.each([0, 4, 16])("ignores unused inline pointer width %s", (width) => {
@@ -553,6 +579,15 @@ it.each(legacyLayouts)(
       module_text: "",
       module_bytes_base64: "",
       module_location: { offset: fixture.moduleField, bytes: 0 },
+      module: {
+        path: null,
+        main: null,
+        dependencies: [],
+        settings: [],
+        unparsed_lines: [],
+        unparsed_line_bytes_base64: [],
+        complete: true,
+      },
     });
   },
 );

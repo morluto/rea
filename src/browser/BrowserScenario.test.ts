@@ -102,20 +102,21 @@ describe("browser scenario secret redaction", () => {
       "raw A/B? remains case-sensitive",
     );
     expect(
-      secrets.redactBytes(
+      Buffer.compare(
+        secrets.redactBytes(
+          Buffer.concat([
+            Buffer.from([0xff, 0]),
+            Buffer.from("a%2fb%3F"),
+            Buffer.from([0x80]),
+          ]),
+        ),
         Buffer.concat([
           Buffer.from([0xff, 0]),
-          Buffer.from("a%2fb%3F"),
+          Buffer.from("[REDACTED:session]"),
           Buffer.from([0x80]),
         ]),
       ),
-    ).toEqual(
-      Buffer.concat([
-        Buffer.from([0xff, 0]),
-        Buffer.from("[REDACTED:session]"),
-        Buffer.from([0x80]),
-      ]),
-    );
+    ).toBe(0);
     expect(
       secrets.sanitizeUrl("https://app.example.test/?token=a%2fb%3F").url,
     ).toBe("https://app.example.test/?token=[REDACTED:session]");

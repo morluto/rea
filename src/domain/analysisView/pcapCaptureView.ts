@@ -4,11 +4,12 @@ import { pcapEvidenceSchemas } from "../pcap/pcapAnalysis.js";
 import { parseAnalysisViewResult } from "./analysisViewParent.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { err, ok, type Result } from "../result.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import {
+  ownedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
 import {
   completeWithinViewCoverage,
   pageViewCoverage,
@@ -38,6 +39,17 @@ export const pcapViewRequestSchema = z.discriminatedUnion("facet", [
     ...pageShape,
     facet: z.literal("dns-addresses"),
     query: z.string().min(1),
+    query_labels_hex:
+      fields.dns_queries.element.shape.query_labels_hex.describe(
+        "Select the exact retained wire label bytes for this query display. Null selects unknown identity, including historical records with the field omitted; omit this selector to match any identity.",
+      ),
+    query_index: z
+      .int()
+      .nonnegative()
+      .optional()
+      .describe(
+        "Zero-based index in the full retained dns_queries array, independent of page offset; use it to select one occurrence when display and wire identity remain ambiguous.",
+      ),
   }),
   z.strictObject({
     ...pageShape,
@@ -113,17 +125,14 @@ const parseParent = (
 ): Result<Capture, AnalysisError> => {
   const parsed = parseAnalysisViewResult(captureSchema, parent);
   if (!parsed.ok) return parsed;
-  if (
-    parent.subject?.local_path !== parsed.value.target.path ||
-    parent.subject.digest.sha256 !== parsed.value.target.sha256
-  )
+  const subject = parent.subject;
+  if (subject == null || subject.digest.sha256 !== parsed.value.target.sha256)
     return err(
       analysisViewInputError([
         {
           path: ["source", "subject"],
           reason: "invalid_value",
-          message:
-            "Packet parent subject must identify the report's exact path and SHA-256.",
+          message: "Packet parent subject must identify the report's SHA-256.",
         },
       ]),
     );
@@ -213,7 +222,12 @@ const selectRows = (
       });
     case "dns-addresses": {
       const matches = capture.dns_queries.filter(
-        (query) => query.query === view.query,
+        (query, index) =>
+          query.query === view.query &&
+          (view.query_index === undefined || index === view.query_index) &&
+          (view.query_labels_hex === undefined ||
+            JSON.stringify(query.query_labels_hex ?? null) ===
+              JSON.stringify(view.query_labels_hex)),
       );
       if (matches.length !== 1)
         return err(
@@ -221,7 +235,8 @@ const selectRows = (
             {
               path: ["view", "query"],
               reason: "invalid_value",
-              message: "Select one unambiguous exact retained DNS question.",
+              message:
+                "Select one exact retained DNS question using query_labels_hex or query_index when its display is ambiguous.",
             },
           ]),
         );
@@ -239,9 +254,12 @@ const selectRows = (
 /** Historical packet facts are paged without reopening the source or rerunning Wireshark. */
 export const projectPcapCaptureView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
-  if (view.kind !== "summary" && view.kind !== "pcap")
+  admitted: AdmittedView,
+) => {
+  const view = ownedView<
+    SummaryAnalysisView | z.output<typeof pcapViewRequestSchema>
+  >(admitted, "summary", "pcap");
+  if (view === undefined)
     return err(
       analysisViewInputError([
         {
@@ -270,7 +288,7 @@ export const projectPcapCaptureView = (
   };
   if (view.kind === "summary")
     return ok({
-      kind: "summary",
+      kind: "summary" as const,
       view,
       ...shared,
       summary: summarize(capture),
@@ -289,14 +307,15 @@ export const projectPcapCaptureView = (
     );
     if (!text.ok) return text;
     return ok({
-      kind: "pcap",
+      kind: "pcap" as const,
       view,
       ...shared,
       source_coverage: capture.coverage,
       page: {
-        facet: "diagnostics",
+        facet: "diagnostics" as const,
         text: text.value.item.text,
-        status: value === undefined ? "unknown" : "retained",
+        status:
+          value === undefined ? ("unknown" as const) : ("retained" as const),
       },
       coverage: text.value.coverage,
       unknowns:
@@ -311,7 +330,7 @@ export const projectPcapCaptureView = (
   const selected = selectRows(capture, view);
   return selected.ok
     ? ok({
-        kind: "pcap",
+        kind: "pcap" as const,
         view,
         ...shared,
         source_coverage: capture.coverage,

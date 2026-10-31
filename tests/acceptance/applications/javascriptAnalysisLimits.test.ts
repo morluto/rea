@@ -1,4 +1,3 @@
-import type { Client } from "@modelcontextprotocol/client";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
@@ -10,7 +9,7 @@ import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/j
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest } from "../../support/cli/cliFixture.js";
+import { cliTest, type SharedMcpCall } from "../../support/cli/cliFixture.js";
 
 const cases = [
   {
@@ -99,14 +98,15 @@ it("preserves MCP analysis limits in retained Evidence and an exported bundle ro
   await writeFile(join(root, "main.js"), "export const observed = 7;\n");
   const bundleRoot = await createTestTempDirectory("rea-js-limit-bundle-");
   const path = join(bundleRoot, "evidence.json");
-  const { client } = await connectLocalToolsMcp({
+  const { call } = await connectLocalToolsMcp({
     NODE_OPTIONS: "--max-old-space-size=512",
   });
   const expected = new Map<string, unknown>();
   for (const { controls } of cases) {
-    const response = await client.callTool({
-      name: "analyze_javascript_application",
-      arguments: { input_path: root, ...controls, detail: "summary" },
+    const response = await call("analyze_javascript_application", {
+      input_path: root,
+      ...controls,
+      detail: "summary",
     });
     expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
     const { parent_evidence_id } = z
@@ -122,32 +122,23 @@ it("preserves MCP analysis limits in retained Evidence and an exported bundle ro
     });
   }
   expect(expected.size).toBe(cases.length);
-  const retained = await getBundle(client);
+  const retained = await getBundle(call);
   for (const [evidence_id, parameters] of expected)
     expect(
       retained.records.find((record) => record.evidence_id === evidence_id)
         ?.parameters,
     ).toEqual(parameters);
-  const exported = await client.callTool({
-    name: "export_evidence_bundle",
-    arguments: { path },
-  });
+  const exported = await call("export_evidence_bundle", { path });
   expect(exported.isError).not.toBe(true);
   expect(parseEvidenceBundle(JSON.parse(await readFile(path, "utf8")))).toEqual(
     retained,
   );
-  const closed = await client.callTool({
-    name: "close_binary",
-    arguments: {},
-  });
+  const closed = await call("close_binary", {});
   expect(closed.isError).not.toBe(true);
-  expect((await getBundle(client)).records).toEqual([]);
-  const imported = await client.callTool({
-    name: "import_evidence_bundle",
-    arguments: { path },
-  });
+  expect((await getBundle(call)).records).toEqual([]);
+  const imported = await call("import_evidence_bundle", { path });
   expect(imported.isError, JSON.stringify(imported.content)).not.toBe(true);
-  expect(await getBundle(client)).toEqual(retained);
+  expect(await getBundle(call)).toEqual(retained);
 }, 60_000);
 
 cliTest(
@@ -184,17 +175,14 @@ cliTest(
         ] as const
       ).map(([path, content]) => writeFile(join(root, path), content)),
     );
-    const { client } = await connectLocalToolsMcp({
+    const { client, call } = await connectLocalToolsMcp({
       NODE_OPTIONS: "--max-old-space-size=512",
     });
-    const response = await client.callTool({
-      name: "analyze_javascript_application",
-      arguments: {
-        input_path: root,
-        max_heap_mb: 128,
-        analysis_timeout_ms: 1,
-        source_paths: sourcePaths,
-      },
+    const response = await call("analyze_javascript_application", {
+      input_path: root,
+      max_heap_mb: 128,
+      analysis_timeout_ms: 1,
+      source_paths: sourcePaths,
     });
     expect(parseMcpToolError(response)).toMatchObject({
       error: {
@@ -210,7 +198,7 @@ cliTest(
         },
       },
     });
-    const bundle = await getBundle(client);
+    const bundle = await getBundle(call);
     const partial = bundle.records.find(
       (record) => record.operation === "analyze_javascript_application",
     );
@@ -244,13 +232,10 @@ cliTest(
       })
       .parse(cliTimeout.json);
     const cliPartial = parseEvidence(cliFailure.details.partial_observation);
-    const control = await client.callTool({
-      name: "analyze_javascript_application",
-      arguments: {
-        input_path: root,
-        max_heap_mb: 128,
-        source_paths: sourcePaths,
-      },
+    const control = await call("analyze_javascript_application", {
+      input_path: root,
+      max_heap_mb: 128,
+      source_paths: sourcePaths,
     });
     expect(control.isError).not.toBe(true);
     const controlEvidence = parseEvidence(control.structuredContent);
@@ -271,11 +256,8 @@ cliTest(
   60_000,
 );
 
-async function getBundle(client: Client) {
-  const response = await client.callTool({
-    name: "get_evidence_bundle",
-    arguments: { detail: "complete" },
-  });
+async function getBundle(call: SharedMcpCall) {
+  const response = await call("get_evidence_bundle", { detail: "complete" });
   expect(response.isError).not.toBe(true);
   return parseEvidenceBundle(
     z.object({ result: z.unknown() }).parse(response.structuredContent).result,

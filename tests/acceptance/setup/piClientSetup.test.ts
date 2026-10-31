@@ -282,8 +282,8 @@ cliTest(
         other: { command: "other-server" },
         rea: {
           type: "stdio",
-          command: process.platform === "win32" ? process.execPath : cliPath,
-          args: process.platform === "win32" ? [cliPath, "mcp"] : ["mcp"],
+          command: process.execPath,
+          args: [cliPath, "mcp"],
         },
       },
       autoEnableCodemode: false,

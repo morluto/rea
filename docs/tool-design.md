@@ -48,11 +48,67 @@ fixture servers. Custom orchestration languages, replay engines, or separate
 prepare/execute plans need an observed requirement those primitives cannot
 satisfy. A plan without execution does not establish runtime behavior.
 
+## Exercise the analyst workflow
+
+Before defining a new provider-backed tool, state the analyst's question, what
+they already have, the intended result and authority, and what must remain
+unknown. Try the nearest existing REA workflow and the relevant native provider
+or ordinary script path when available. Identify the specific gap and what a
+new or extended contract would add; upstream capability alone does not require
+a new tool or equal support from every provider.
+
+Exercise the task through REA as a whole and compare relevant provider behavior
+with an independent artifact or format observation where possible. Use the
+caller's selected target and authority. Record the provider version, target and
+observed coverage, and distinguish an unsupported operation from an empty
+result or an untested path.
+
+Include the boundary cases that could change the answer: provider labels versus
+source facts, addresses versus file locations, partial results, and a useful
+recovery after failure or session close when those apply to the task. Check that
+composed results keep each observation's identity, limitations and source
+association. Existing real-provider lanes and focused tests establish their
+selected scenarios; they do not by themselves establish a different workflow or
+provider equivalence. If a provider cannot be exercised, report that limitation
+and continue with the available evidence. Measure agent tool selection only with
+an actual agent evaluation; a scripted tool sequence does not establish it. Use
+[testing guidance](testing.md#provider-backed-workflow-verification) to select
+the cases that establish the proposed contract.
+
+## Audit existing tools
+
+Scope an audit by analyst tasks and the caller's target, providers and authority.
+Record the source revision and, when used, the running server, catalog and
+provider versions; a connected server can differ from the current checkout.
+Inspect the live CLI help or MCP descriptions and schemas alongside the owning
+contracts and documentation. Choose representative tasks and their nearest REA
+and native alternatives rather than counting upstream commands.
+
+Exercise the selected public workflows, including the steps before and after a
+tool call. Check task selection, input choices, returned facts and their source,
+partial or unsupported outcomes, and applicable session and recovery behavior.
+Compare native provider output and an independent artifact observation where
+available. Inspect existing tests and real-provider lanes for the scenario they
+actually cover; a passing test does not establish a different task or host.
+Use [workflow verification](testing.md#provider-backed-workflow-verification)
+for counterexamples and lifecycle controls relevant to the audit.
+
+Report working routes as well as findings. Separate a reproduced contract bug,
+an intentional limitation, a design opportunity and an unverified hypothesis;
+include the smallest useful reproduction, impact and coverage limits. Do not
+claim autonomous-agent selection from a scripted trace. Check related reports
+before proposing another issue, and avoid treating lack of API parity as a bug.
+
 ## Define the contract
 
 - Use strict inputs with explicit target identity and required fields. Preserve
   meaningful target, action, capture, and output choices; remove ignored options
   and repeated permission declarations.
+  One-shot binary CLI analysis retains the caller's verbatim target spelling in
+  Evidence `caller_input_path`, including a result loaded from a snapshot. The
+  subject keeps the inspected file identity. Provider inspections also retain
+  the established `parameters.input_path` field for existing consumers. Keep
+  request provenance separate from provider arguments and snapshot queries.
 - Return the requested facts inline with artifact/provider identity, source
   locations, Evidence references, coverage, and relevant confidence and
   limitations. Use supported selection, summaries or views when they answer
@@ -78,7 +134,67 @@ satisfy. A plan without execution does not establish runtime behavior.
   ceiling and its recovery as described in
   [admission limits and recovery](design/limits-and-recovery.md).
 
+### Compose declared Evidence inputs
+
+Declare each logical Evidence source with the shared `evidenceInputSchema`:
+complete inline Evidence or an exact
+`{kind: "retained-evidence", evidence_id}` reference. Use that declaration in
+single, optional, array and nested source fields across domains. Keep complete
+record schemas for stored Evidence, bundle records and pure semantic inputs;
+request alternatives do not change those representations. Ordinary IDs in
+parameters or result data are not implicitly source selectors.
+
+Derive borrowing request validation and source resolution from the canonical
+request schema with `getEvidenceInputContract` and `resolveEvidenceRequest`.
+The shared application entrypoint selects references for CLI and MCP before the
+format owner admits, authenticates and interprets their records. Preserve
+admission before copying large source payloads. Do not maintain a second list
+of source paths or resolve references only in an adapter. A resolved reference
+has the same identity, caller-selected observations, provenance, coverage and
+partial or unknown facts as its complete inline record; it never reruns a
+producer or upgrades incomplete evidence.
+Keep Evidence-bearing request unions outside skipping `default` wrappers;
+use `prefault` when a default must pass through branch selection. Catalog
+conformance rejects unsupported source containers rather than silently losing
+their references.
+
+Return authenticated source records alongside derived workflow Evidence when
+the adapter must retain them. Keep links to those exact sources and require the
+source closure when the workflow follows their links. Missing references and
+incompatible workflow roles are explicit failures; do not infer a substitute
+from ledger order, display names or the active target. A summary or inspection
+page has its own identity: consumers needing complete source facts use its
+`normalized_result.parent_evidence_id`, unless their contract explicitly accepts
+that view.
+
+New provider-owned source observations require a retention owner. Existing
+caller-owned inputs can also compose on a fixed port without a recorder;
+when a recorder is available, preserve its acceptance or rejection and retain
+completed sources through cancellation.
+
+MCP supplies the current ledger lookup. CLI commands that advertise
+`--evidence-bundle` use one explicitly selected, authenticated bundle for the
+command's lifetime. Keep cleanup with that owner. A retained reference does not
+grant filesystem access: file selectors remain separate, explicit contracts
+where supported. See [retained Evidence inputs](mcp-contracts.md#retained-application-evidence-inputs)
+and [CLI reuse](cli.md#import-export-and-compare-evidence).
+
 ### Interpret boundary facts once
+
+The format or protocol reader owns interpretation. Pass its parsed facts and
+explicit uncertainty to consumers; do not make adapters reparse display text,
+reconstruct omitted values, or infer success from missing diagnostics.
+Client registration inspections, for example, carry command identity and
+activation independently of readiness. An owned registration may be disabled
+or stale; unresolved ownership remains unknown. Consumers use those facts
+instead of reclassifying the raw command.
+
+A completed read can establish byte identity even when decoding or format
+validation fails. State which representation a digest identifies, such as file
+bytes, Fetch response-body bytes, or UTF-8 text. Preserve admitted source values
+separately from normalized lookup and display values. When the retention
+contract keeps only a digest and size, state that the bytes or text are
+unavailable; the digest does not establish format validity.
 
 Comparison needs separate proofs for lookup, correspondence, content, and
 coverage. A hash cannot supply the proof that two retained values belong to
@@ -97,10 +213,6 @@ corresponding objects.
 Complete traversal or inventory does not make unavailable values equal. A
 partial aggregate fingerprint difference cannot establish modification when
 omissions alone explain it; independently proven differences still survive.
-
-The format or protocol reader owns interpretation. Pass its parsed facts and
-explicit uncertainty to consumers; do not make adapters reparse display text,
-reconstruct omitted values, or infer success from missing diagnostics.
 
 Keep format recognition separate from provider admission. A recognizable header
 can supply useful observations while later structure remains unresolved or a
@@ -127,6 +239,12 @@ For tools that acquire resources, identify the owner and the observations that
 establish each transition. Include temporary files and one-shot commands, as
 well as persistent engine sessions. Use the existing provider contracts;
 providers need not expose identical state machines.
+
+In multi-stage work, retain each completed, admitted observation before awaiting
+the next stage. Later reads, validation, cancellation, or finalization can fail
+without erasing those facts. Carry them through typed failure outcomes with
+explicit coverage of unperformed work; do not construct a successful result for
+stages that never ran.
 
 - Keep target admission, provider readiness, active work, observed process exit,
   and resource release separate. A valid process handle, successful launcher,
@@ -201,8 +319,16 @@ providers need not expose identical state machines.
   [`finishAnalysisCommand`](https://github.com/morluto/rea/blob/main/src/cli/finishAnalysisCommand.ts) where its contract
   applies rather than duplicate close/finally handling.
 - Give descriptor-backed reads an owner before opening the file. A rejected
-  close must retain the exact handle and preserve any earlier failure. If an
-  abortable caller stops waiting, keep the underlying work in that owner's
+  close must retain the exact handle and preserve any earlier failure.
+  Carry [`openRegularFile`](https://github.com/morluto/rea/blob/main/src/filesystem/RegularFile.ts)'s
+  admitted handle and initial metadata rather than restatting only to rebuild
+  those facts. Keep fresh descriptor and selected-path identity checks after
+  work, comparing against the original baseline instead of replacing it with
+  a later stat. Preserve explicit bigint reads when ordinary admission metadata
+  cannot supply the required size or timestamp precision.
+  Stable file reads expose completed values separately from cancellation so
+  consumers retain acquired identity facts after successful close or cleanup retry.
+  If an abortable caller stops waiting, keep the underlying work in that owner's
   lifetime so shutdown cannot report release before finalization settles.
   Admit the entire inspection once, including later reads and finalization.
   Helpers must borrow that admission or use an operation child scope; re-entering
@@ -230,9 +356,38 @@ through the producing owner and affected CLI/MCP consumers.
 
 ## Implement and evaluate
 
-Put provider protocols/parsing in adapters and shared CLI/MCP workflows in the
-application layer. Share Evidence provenance, unknown projection, and session
-retention semantics; matching payloads alone do not establish parity.
+Put provider wire-protocol parsing in adapters and shared CLI/MCP workflows in
+the application layer. Reusable format declarations may live in pure domain
+owners: [`peOptionalHeader.ts`](https://github.com/morluto/rea/blob/main/src/domain/peOptionalHeader.ts)
+decodes PE structure, while consumers retain machine admission, directory-address
+interpretation, and file/mapping bounds. Share Evidence provenance, unknown
+projection, and session retention semantics; matching payloads alone do not
+establish parity.
+
+Let `createEvidence` own JSON validation and snapshotting of ordinary observation
+payloads. `EvidenceObservationInput` accepts semantically parsed parameters,
+results, and raw results whose JSON validity still needs admission. Keep format,
+selection, and identity validation at their producing boundary. Invalid JSON
+issues are rooted at `parameters`, `normalized_result`, or `raw_result` in the
+Evidence envelope.
+
+`EvidenceObservation` retains the stronger JSON contract used by producer
+helpers and `createImmutableEvidenceSteps`. The cooperative constructor also
+requires an authenticated immutable result; preserve that ownership proof.
+For objects, proof comes from completed sealing by
+[`immutableJson.ts`](https://github.com/morluto/rea/blob/main/src/domain/immutableJson.ts);
+`readonly` or `Object.freeze` alone does not establish it. JSON primitives are
+directly eligible. Seal owned data and complete cooperative sealing before
+reusing its result.
+
+When a failed or cancelled operation retains completed, valid partial Evidence,
+use the shared [`ToolResultDelivery`](https://github.com/morluto/rea/blob/main/src/server/ToolResultDelivery.ts)
+path with the session's Evidence writer. Keep the original failure and the
+named contract's target-content marking; replace the inline partial with a
+retained reference only after recording succeeds. An absent writer or a writer
+returning a failure `Result` leaves the partial inline, as does a partial that
+is not valid Evidence. Unexpected recorder exceptions propagate. An `evidence_id`
+member alone does not establish Evidence validity or retention.
 
 Measure the resource before choosing a budget and enforce it before the costly
 step. Account for value alternatives, trace-frame products, retained records,
@@ -240,6 +395,12 @@ serialization expansion, and temporary-file growth separately. Derive facet
 completeness from examined records and exhaustiveness, rather than diagnostic
 prose or an empty failure list. Preserve observations independently of cleanup
 success.
+
+Price mutually exclusive success and failure representations separately.
+Replace a reserved failure envelope when pricing success, and release discarded
+decoding state from retained-output accounting. Retaining additional failed-body
+text changes the capacity available to later results; treat that as a contract
+change and cover its effect on later valid items.
 
 For example, if ten applicable records are discovered, eight are examined, and
 five are returned, the five returned records do not establish complete coverage
@@ -254,6 +415,10 @@ File-error wrappers retain the format owner's specific diagnostic and recovery
 text. Strict JSON file input, for example, keeps the byte-order-mark explanation
 and UTF-8 recovery through CLI/MCP projection rather than replacing it with
 generic invalid-file advice. Consumers do not classify parser message text.
+When an artifact boundary falls back to an I/O error, retain the original cause
+on the typed error so provider callers can inspect its filesystem evidence.
+Keep public error fields under the canonical projector's ownership; retaining
+a cause does not require exposing it in transport output.
 
 Update canonical contracts, output schemas, examples, generated artifacts, and
 relevant docs together. Verify converted advertised schemas and success,

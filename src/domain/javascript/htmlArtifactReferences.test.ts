@@ -30,8 +30,13 @@ it.each([
     '<svg><foreignObject><script src="actual.js"></script></foreignObject></svg>',
     ["actual.js"],
   ],
-  // The existing extraction contract does not classify script MIME types.
   ['<script type="application/json" src="actual.js"></script>', ["actual.js"]],
+  ['<script type="importmap" src="actual.js"></script>', ["actual.js"]],
+  ['<script type="speculationrules" src="actual.js"></script>', ["actual.js"]],
+  ['<script language="vbscript" src="actual.js"></script>', ["actual.js"]],
+  ['<script type=" Text/JavaScript " src="actual.js"></script>', ["actual.js"]],
+  ['<script type="MODULE" src="actual.js"></script>', ["actual.js"]],
+  ['<script type=" module " src="actual.js"></script>', ["actual.js"]],
 ])("extracts document references from %s", (text, expected) => {
   expect(
     htmlArtifactReferences(text).scripts.map(({ scriptPath }) => scriptPath),
@@ -49,6 +54,7 @@ it("retains exact opening-tag coordinates rather than the script body", () => {
     scripts: [
       {
         scriptPath: "actual.js",
+        scriptType: "classic",
         location: {
           start: { line: 3, column: 0 },
           end: { line: 4, column: ' title=">" src=actual.js>'.length },
@@ -143,3 +149,21 @@ it("counts every inline body but retains bounded locations", () => {
     },
   });
 });
+
+it.each([
+  ['type=" Text/JavaScript "', "classic"],
+  ['type="MODULE"', "module"],
+  ['type="application/json"', null],
+  ['type="importmap"', null],
+  ['type="speculationrules"', null],
+  ['language="vbscript"', null],
+  ['type=" module "', null],
+])(
+  "retains external src with parsed JavaScript type for %s",
+  (attributes, scriptType) => {
+    expect(
+      htmlArtifactReferences(`<script ${attributes} src="source.js"></script>`)
+        .scripts,
+    ).toMatchObject([{ scriptPath: "source.js", scriptType }]);
+  },
+);

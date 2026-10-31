@@ -191,6 +191,42 @@ const encodeNibArchiveWithSharedDataValue = (input: {
   return Buffer.concat([header, objects, keys, values, classes]);
 };
 
+it.each([16, 17])(
+  "reports the bounded sample of %i malformed archive diagnostics",
+  async (count) => {
+    const bundle = await createTestTempDirectory("rea-ib-invalid-bound-");
+    for (let index = 0; index < count; index += 1)
+      await writeFile(
+        join(bundle, `bad-${String(index).padStart(2, "0")}.nib`),
+        "not a plist",
+      );
+    const result = await analyzeInterfaceBuilderBundle({
+      bundlePath: bundle,
+      targetSha256: "a".repeat(64),
+    });
+    const diagnostic = result.limitations.find((value) =>
+      value.startsWith("Some Interface Builder archives could not be decoded:"),
+    );
+    expect(diagnostic?.match(/bad-\d{2}\.nib/gu)).toHaveLength(16);
+    const omission = result.limitations.filter((value) =>
+      value.includes("additional archive decode failure diagnostic(s)"),
+    );
+    expect(omission).toHaveLength(count === 16 ? 0 : 1);
+    if (count === 17) {
+      expect(omission[0]).toMatch(/\b1 additional\b/u);
+      expect(omission[0]).toMatch(/\b16 paths\b/u);
+    }
+    expect(result.graph.coverage).toContainEqual(
+      expect.objectContaining({
+        facet: "archive_decode",
+        status: "partial",
+        examined: count,
+        omitted: 0,
+      }),
+    );
+  },
+);
+
 describe("compiled Interface Builder traversal coverage", () => {
   it.skipIf(process.platform === "win32")(
     "shares the 64-path omission budget between regular-document capacity and symlink source notices",
@@ -225,10 +261,16 @@ describe("compiled Interface Builder traversal coverage", () => {
         expect.objectContaining({
           facet: "archive_decode",
           status: "partial",
-          reason: "document_limit_reached",
+          reason: "multiple_archive_decode_causes",
           examined: 1,
           omitted: 126,
         }),
+      );
+      expect(result.limitations).toContain(
+        "61 Interface Builder archive(s) omitted because max documents.",
+      );
+      expect(result.limitations).toContain(
+        "65 Interface Builder archive(s) omitted because symlink not followed.",
       );
       const reasons = result.limitations.filter((value) =>
         value.includes(": omitted because "),
@@ -745,8 +787,10 @@ describe("bounded Interface Builder archive decoding", () => {
       }
     },
   );
+});
 
-  it("marks repeated NIB hierarchy references partial at the caller object limit", async () => {
+describe("bounded Interface Builder hierarchy and value expansion", () => {
+  it("deduplicates repeated NIB links while reporting the unavailable owner registry", async () => {
     const root = await createTestTempDirectory("rea-ib-repeated-hierarchy-");
     const bundle = join(root, "Example.app");
     await mkdir(bundle, { recursive: true });
@@ -765,10 +809,10 @@ describe("bounded Interface Builder archive decoding", () => {
             : [
                 {
                   classIndex: 2,
-                  values: {
-                    first: { ref: viewId + 2 },
-                    second: { ref: viewId + 2 },
-                  },
+                  values: [
+                    ["NS.objects", { ref: viewId + 2 }],
+                    ["NS.objects", { ref: viewId + 2 }],
+                  ] as const,
                 },
               ]),
         ];
@@ -794,6 +838,7 @@ describe("bounded Interface Builder archive decoding", () => {
         facet: "hierarchy:RepeatedHierarchy.nib",
         status: "partial",
         reason: "serialized_view_hierarchy_incomplete",
+        omitted: 1,
       }),
     );
   });
@@ -1306,8 +1351,8 @@ cliTest(
   },
 );
 
-describe("binary Interface Builder archive omissions", () => {
-  it("reports omitted __proto__ entries as partial decoding", async () => {
+describe("binary Interface Builder dictionary keys", () => {
+  it("does not report decoded __proto__ entries as omitted", async () => {
     const placeholder = "proto_key";
     const encoded = Buffer.from(
       buildBinary({
@@ -1336,13 +1381,13 @@ describe("binary Interface Builder archive omissions", () => {
     expect(result.graph.coverage).toContainEqual(
       expect.objectContaining({
         facet: "archive_decode",
-        status: "partial",
-        reason: "dictionary_entries_omitted",
+        status: "complete",
+        reason: null,
       }),
     );
-    expect(result.limitations).toContain(
-      "Contents/Resources/Prototype.nib: Dictionary entries keyed __proto__ were omitted because REA results cannot represent that key.",
-    );
+    expect(
+      result.limitations.some((value) => value.includes("keyed __proto__")),
+    ).toBe(false);
   });
 });
 
@@ -1391,7 +1436,7 @@ describe("aggregate Interface Builder archive retention budget", () => {
     await mkdir(resources, { recursive: true });
     const padding = `<!--${"x".repeat(1024)}-->`.repeat(11 * 1024);
     const valid = (name: string, body = "") =>
-      `<?xml version="1.0"?><plist version="1.0"><dict><key>document</key><string>${name}</string>${body}</dict></plist>`;
+      `<?xml version="1.0"?><plist version="1.0"><dict><key>com.apple.ibtool.document.objects</key><dict><key>view</key><dict><key>class</key><string>NSView</string><key>document</key><string>${name}</string>${body}</dict></dict></dict></plist>`;
     // XML data expands to a Uint8Array and then to a base64 JSON projection;
     // this first valid document exercises expansion beyond the source bytes.
     const expandedData = Buffer.alloc(1024 * 1024, 7).toString("base64");
@@ -1434,12 +1479,12 @@ describe("Interface Builder XML plist depth", () => {
     const bundle = join(root, "Example.app");
     const resources = join(bundle, "Contents", "Resources");
     await mkdir(resources, { recursive: true });
-    // The root dict is value depth 0, so the leaf sits at `nested + 1`. The
-    // plist envelope and keys add XML elements but not value depth.
+    // Root, object table and object occupy depths 0, 1 and 2. The leaf
+    // sits at nested + 3; plist envelopes and keys add no value depth.
     const document = (nested: number) =>
-      `<?xml version="1.0"?><plist version="1.0"><dict>${"<key>child</key><dict>".repeat(nested)}<key>leaf</key><integer>1</integer>${"</dict>".repeat(nested)}</dict></plist>`;
-    await writeFile(join(resources, "AtLimit.nib"), document(127));
-    await writeFile(join(resources, "BeyondLimit.nib"), document(128));
+      `<?xml version="1.0"?><plist version="1.0"><dict><key>com.apple.ibtool.document.objects</key><dict><key>view</key><dict><key>class</key><string>NSView</string>${"<key>child</key><dict>".repeat(nested)}<key>leaf</key><integer>1</integer>${"</dict>".repeat(nested)}</dict></dict></dict></plist>`;
+    await writeFile(join(resources, "AtLimit.nib"), document(125));
+    await writeFile(join(resources, "BeyondLimit.nib"), document(126));
 
     const release = vi.spyOn(InterfaceBuilderDecodeBudget.prototype, "release");
     const result = await analyzeInterfaceBuilderBundle({
@@ -1505,7 +1550,7 @@ describe("bounded Interface Builder archive decoding", () => {
     expect(result.graph.truncated).toBe(true);
   });
 
-  it("marks archive decoding partial when __proto__ entries are omitted", async () => {
+  it("does not mark XML archive decoding partial for __proto__ entries", async () => {
     const root = await createTestTempDirectory("rea-ib-test-");
     const bundle = join(root, "Example.app");
     const resources = join(bundle, "Contents", "Resources");
@@ -1523,14 +1568,13 @@ describe("bounded Interface Builder archive decoding", () => {
     expect(result.graph.coverage).toContainEqual(
       expect.objectContaining({
         facet: "archive_decode",
-        status: "partial",
-        reason: "dictionary_entries_omitted",
+        status: "complete",
+        reason: null,
       }),
     );
-    expect(result.graph.truncated).toBe(true);
-    expect(result.limitations).toContain(
-      "Contents/Resources/Prototype.nib: 1 dictionary entry keyed __proto__ was omitted because REA results cannot represent that key.",
-    );
+    expect(
+      result.limitations.some((value) => value.includes("keyed __proto__")),
+    ).toBe(false);
   });
 
   it("decodes an archive with a date year beyond four digits", async () => {

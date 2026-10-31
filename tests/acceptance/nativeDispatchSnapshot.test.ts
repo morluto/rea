@@ -113,8 +113,8 @@ cliTest.skipIf(process.platform !== "darwin")(
     ).toEqual(
       savedSnapshot.value.workflow_entries[0]?.execution.analysis_profile,
     );
-    expect(await readFile(first)).toEqual(Buffer.from(bytes));
-    expect(await readFile(second)).toEqual(Buffer.from(bytes));
+    expect(Buffer.compare(await readFile(first), Buffer.from(bytes))).toBe(0);
+    expect(Buffer.compare(await readFile(second), Buffer.from(bytes))).toBe(0);
   },
   30000,
 );
@@ -170,7 +170,7 @@ cliTest.skipIf(process.platform !== "darwin")(
         },
       });
     }
-    expect(await readFile(target)).toEqual(bytes);
+    expect(Buffer.compare(await readFile(target), bytes)).toBe(0);
     await client.ping();
   },
   30000,
@@ -211,6 +211,7 @@ cliTest.skipIf(process.platform !== "darwin")(
     const cliEvidence = toolContract(
       "inspect_native_dispatch_metadata",
     ).outputSchema.parse(firstCli.json);
+    expect(cliEvidence.caller_input_path).toBe(target);
     const cliSaved = await readAnalysisSnapshot(cliSnapshot);
     if (!cliSaved.ok) throw cliSaved.error;
     expect(cliSaved.value.binding.analysis_profile).toEqual(
@@ -218,16 +219,42 @@ cliTest.skipIf(process.platform !== "darwin")(
     );
     expect(cliSaved.value.entries).toEqual([]);
     expect(cliSaved.value.workflow_entries).toHaveLength(1);
+    expect(
+      cliSaved.value.evidence_bundle.records.find(
+        (record) => record.evidence_id === cliEvidence.evidence_id,
+      )?.caller_input_path,
+    ).toBe(target);
+    const savedQueryId = cliSaved.value.workflow_entries[0]?.query_id;
     const replayCli = await cli.run({
-      arguments: cliArguments,
+      arguments: [
+        "inspect-native-dispatch-metadata",
+        "minimal.macho",
+        "--snapshot",
+        cliSnapshot,
+        "--json",
+      ],
+      cwd: root,
       environment: isolatedProviderEnvironment,
     });
     expect(replayCli.exitCode, replayCli.stderr).toBe(0);
+    const replayEvidence = toolContract(
+      "inspect_native_dispatch_metadata",
+    ).outputSchema.parse(replayCli.json);
+    expect(replayEvidence).toEqual({
+      ...cliEvidence,
+      caller_input_path: "minimal.macho",
+    });
+    const replaySaved = await readAnalysisSnapshot(cliSnapshot);
+    if (!replaySaved.ok) throw replaySaved.error;
+    expect(replaySaved.value.workflow_entries[0]?.query_id).toBe(savedQueryId);
+    expect(replaySaved.value.workflow_entries[0]?.parameters).toEqual(
+      cliSaved.value.workflow_entries[0]?.parameters,
+    );
     expect(
-      toolContract("inspect_native_dispatch_metadata").outputSchema.parse(
-        replayCli.json,
-      ),
-    ).toEqual(cliEvidence);
+      replaySaved.value.evidence_bundle.records.find(
+        (record) => record.evidence_id === cliEvidence.evidence_id,
+      )?.caller_input_path,
+    ).toBe(target);
     const changedLimitCli = await cli.run({
       arguments: [...cliArguments, "--max-records", "1"],
       environment: isolatedProviderEnvironment,
@@ -250,6 +277,7 @@ cliTest.skipIf(process.platform !== "darwin")(
     });
     expect(firstMcp.isError, JSON.stringify(firstMcp)).not.toBe(true);
     const mcpEvidence = parseEvidence(firstMcp.structuredContent);
+    expect(mcpEvidence).not.toHaveProperty("caller_input_path");
     const closed = await call("close_binary", {
       snapshot_path: mcpSnapshot,
       overwrite: true,
@@ -262,6 +290,9 @@ cliTest.skipIf(process.platform !== "darwin")(
     );
     expect(mcpSaved.value.entries).toEqual([]);
     expect(mcpSaved.value.workflow_entries).toHaveLength(1);
+    expect(mcpSaved.value.evidence_bundle.records[0]).not.toHaveProperty(
+      "caller_input_path",
+    );
 
     const reopened = await call("open_binary", {
       path: target,
@@ -273,7 +304,7 @@ cliTest.skipIf(process.platform !== "darwin")(
     });
     expect(reobserved.isError, JSON.stringify(reobserved)).not.toBe(true);
     expect(parseEvidence(reobserved.structuredContent)).toEqual(mcpEvidence);
-    expect(await readFile(target)).toEqual(Buffer.from(bytes));
+    expect(Buffer.compare(await readFile(target), Buffer.from(bytes))).toBe(0);
     await client.ping();
   },
   30000,

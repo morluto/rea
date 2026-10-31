@@ -1,7 +1,7 @@
 import { expect, it, vi } from "vitest";
 import type { IPty } from "@lydell/node-pty";
 
-import { parseProcessScenario } from "../../domain/process/processScenario.js";
+import { processScenarioSchema } from "../../domain/process/processScenario.js";
 import type { ProcessCaptureFinalization } from "../../domain/process/processCapture.js";
 import { awaitTerminalExit } from "./ProcessCaptureLifecycle.js";
 import type { ProcessTimer } from "./ProcessTimer.js";
@@ -75,7 +75,7 @@ const start = (
 ) =>
   awaitTerminalExit({
     terminal: fake.terminal,
-    scenario: parseProcessScenario({
+    scenario: processScenarioSchema.parse({
       executable: "unused",
       idle_timeout_ms: 10_000,
       ...scenario,
@@ -529,15 +529,16 @@ it("cancels the bounded-wait timer once deliveries settle after an exit", async 
 
 it("keeps a non-empty reason when a signal delivery throws without a message", async () => {
   const fake = fakeTerminal();
+  let signalStarted = false;
   const throwing = {
     ...fake,
     signalTarget: async (): Promise<never> => {
+      signalStarted = true;
       throw new Error();
     },
   };
   const pending = start(throwing, { timeout_ms: 100, finalization_ms: 5_000 });
-  await waitFor(() => throwing.signals.length >= 0);
-  await new Promise((resolve) => setTimeout(resolve, 150));
+  await waitFor(() => signalStarted);
   throwing.deliverExit({ exitCode: 0, signal: 0 });
 
   const exit = observed(await pending);

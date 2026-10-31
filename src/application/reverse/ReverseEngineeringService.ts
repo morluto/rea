@@ -15,12 +15,12 @@ import {
   AnalysisInputError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
+  AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
 import {
   AnalysisError,
   type AnalysisCleanupObservation,
 } from "../../domain/analysisErrorBase.js";
-import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
@@ -47,6 +47,7 @@ import {
 } from "../../process/OwnedCommand.js";
 import type { ProviderProcessSupervisor } from "../../process/ProviderProcess.js";
 import { absoluteCallerPath } from "../../filesystem/callerPath.js";
+import { parseAnalysisInput } from "../AnalysisInput.js";
 
 export type ReverseEngineeringOperation =
   | "inspect_with_objdump"
@@ -214,21 +215,17 @@ export class ReverseEngineeringService {
       recordEvidence: undefined,
     },
   ): Promise<Result<Evidence, AnalysisError>> {
-    const parsed = objdumpInputSchema.safeParse(rawInput);
-    if (!parsed.success)
-      return err(
-        analysisInputErrorFromIssues(
-          "inspect_with_objdump",
-          parsed.error.issues,
-          rawInput,
-          { cause: parsed.error },
-        ),
-      );
+    const parsed = parseAnalysisInput(
+      "inspect_with_objdump",
+      rawInput,
+      objdumpInputSchema,
+    );
+    if (!parsed.ok) return parsed;
     const {
       detail,
       command_timeout_ms: commandTimeoutMs,
       ...input
-    } = parsed.data;
+    } = parsed.value;
     if (detail === "summary") {
       const ready = requireAnalysisViewRetention(
         "inspect_with_objdump",
@@ -1057,7 +1054,11 @@ export const digestFile = async (
       remainingMs,
     );
     const abort = (): void => {
-      stream.destroy(new AnalysisCancelledError("artifact_digest"));
+      stream.destroy(
+        new AnalysisCancelledError("artifact_digest", {
+          cause: signal?.reason,
+        }),
+      );
     };
     const cleanup = (): void => {
       clearTimeout(timer);
@@ -1066,7 +1067,11 @@ export const digestFile = async (
     if (signal?.aborted) {
       cleanup();
       stream.destroy();
-      rejectDigest(new AnalysisCancelledError("artifact_digest"));
+      rejectDigest(
+        new AnalysisCancelledError("artifact_digest", {
+          cause: signal.reason,
+        }),
+      );
       return;
     }
     signal?.addEventListener("abort", abort, { once: true });
@@ -1139,7 +1144,9 @@ const statWithDeadline = (
   timeoutMs: number,
 ): Promise<Stats> => {
   if (signal?.aborted)
-    return Promise.reject(new AnalysisCancelledError("artifact_digest"));
+    return Promise.reject(
+      new AnalysisCancelledError("artifact_digest", { cause: signal.reason }),
+    );
   return new Promise<Stats>((resolveStat, rejectStat) => {
     let settled = false;
     const finish = (outcome: Result<Stats, unknown>): void => {
@@ -1151,7 +1158,13 @@ const statWithDeadline = (
       else rejectStat(outcome.error);
     };
     const abort = (): void =>
-      finish(err(new AnalysisCancelledError("artifact_digest")));
+      finish(
+        err(
+          new AnalysisCancelledError("artifact_digest", {
+            cause: signal?.reason,
+          }),
+        ),
+      );
     const timer = setTimeout(
       () =>
         finish(

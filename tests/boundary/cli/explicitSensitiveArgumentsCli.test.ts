@@ -112,7 +112,8 @@ describe("CLI --sensitive-value parser diagnostics", () => {
       expectExcluded(result, ["mitmproxy"]);
       expect(JSON.parse(result.stdout)).toMatchObject({
         code: "VALIDATION_ERROR",
-        message: expect.stringContaining('"har"|"[REDACTED]"|"saz"'),
+        message:
+          "REA could not read the command arguments. Check the named argument and its expected type, then try again.",
         fieldErrors: [
           expect.objectContaining({ code: "invalid_value", path: "format" }),
         ],

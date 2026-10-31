@@ -20,6 +20,60 @@ requires an absolute filesystem path and preserves that exact selection:
 }
 ```
 
+## Selected code objects
+
+Complete output remains the default. To read selected code objects from a large
+report, request MCP `detail: "summary"`. The summary contains artifact/header
+identity, source coverage and a limitation count; its
+`normalized_result.parent_evidence_id` identifies the complete retained report.
+Use that parent ID with `inspect_analysis_view` and:
+
+```json
+{
+  "kind": "python-pyc",
+  "collection": "code_objects",
+  "names": ["parse_args", "parse_known_args"],
+  "fields": [
+    "name",
+    "qualname",
+    "filename",
+    "firstlineno",
+    "bytecode",
+    "nested_code"
+  ],
+  "offset": 0,
+  "limit": 64
+}
+```
+
+This is the request's `view` field. To receive these selected facts in the first
+call, include the same `view` directly in `inspect_python_pyc` alongside
+`detail: "summary"`. Later pages use the returned parent ID with
+`inspect_analysis_view`. `view` requires summary delivery; complete delivery
+rejects a view instead of ignoring it. `names` matches retained display strings and
+returns every same-name object. `indices` selects original `code_objects`
+indexes; combining names and indices intersects those selectors. Omitted
+selectors include all rows, while `[]` selects none. Each row always includes
+`source_index`, scoped to its parent Evidence; `fields: []` returns only that
+index. Filtering preserves source order, and paging counts matching rows.
+The view's `pyc.coverage` preserves source coverage independently of page
+coverage. Views preserve `nested_code` indexes and their code-constant semantics.
+
+CLI summary delivery requires a durable destination for the complete Evidence:
+
+```bash
+rea inspect-python-pyc module.pyc --detail summary --evidence_output module.evidence.json --json
+```
+
+Add `--view '{"kind":"python-pyc","collection":"code_objects","names":["parse_args"],"fields":["name","bytecode"]}'`
+to select facts in that initial CLI call.
+
+The output's `summary` is derived Evidence. Pass its parent ID and the saved
+bundle to `inspect-analysis-view --evidence-bundle module.evidence.json` for
+offline queries. MCP views read retained Evidence, and offline views read the
+bundle; neither requires the original pyc to remain present. Parse budgets and
+complete-source retention still apply to summary delivery.
+
 ## Observations
 
 The inline Evidence result contains the artifact path, SHA-256, and byte length.

@@ -21,6 +21,9 @@ it("preserves possible ambient effects and discloses projection widening in sour
   expect(ir.limitations).toContain(RETURNED_REFERENCE_WIDENING_LIMITATION);
   const facts = analyzeJavaScriptStaticSource(source);
   expect(facts.limitations).toContain(RETURNED_REFERENCE_WIDENING_LIMITATION);
+  expect(facts.analysis_coverage?.semantics.uncertainty).toContain(
+    "returned-reference-widening",
+  );
   expect(facts.endpoints).toEqual(
     expect.arrayContaining([
       expect.objectContaining({ value: "/preserved", mechanism: "call:fetch" }),

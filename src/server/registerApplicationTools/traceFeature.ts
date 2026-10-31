@@ -1,6 +1,6 @@
 import type { EvidenceMcpServer } from "../EvidenceMcpServer.js";
 import { runAdmittedToolOperation } from "../admittedToolOperation.js";
-import { recordSessionEvidenceSources } from "../sessionEvidence.js";
+import { recordEvidenceSources } from "../../application/investigation/recordEvidenceSources.js";
 
 import { traceApplicationFeatureEvidence } from "../../application/javascript/JavaScriptApplicationWorkflowService.js";
 import { toolContract } from "../../contracts/toolContracts.js";
@@ -31,12 +31,14 @@ export const registerTraceFeatureTool = (
             traceContract.name,
             () =>
               Promise.resolve(
-                traceApplicationFeatureEvidence(input, options.evidenceById),
+                traceApplicationFeatureEvidence(input, options.evidenceById, {
+                  signal: context.mcpReq.signal,
+                }),
               ),
           );
           if (!result.ok)
             return server.delivery.toCallToolResult(result, traceContract);
-          const recorded = recordSessionEvidenceSources(
+          const recorded = recordEvidenceSources(
             options.recordEvidence,
             result.value.sources,
           );

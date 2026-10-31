@@ -4,9 +4,13 @@ Issue [#4772](https://github.com/morluto/rea/issues/4772). Qualified runtime
 `b49ee40bf330b7bf1c5180b14dcc104c1c613a8e`, tree `0e5f8fe2feae1796c340c07c26e0e28e5d4328d8`,
 integrates main `c8ed32853881b08aa83459d4da55a28a4e09b0c8`. Recorded at
 `2026-10-22T08:30:58.269Z`. Subsequent verification-only
-commits change these reports. The [JSON record](javascript-route-inventory-2026-10-21.json)
+commits updated these reports. The [archived JSON record](https://github.com/morluto/rea/blob/7d0efef62d56d0a10134bea62d709302daa1565f/docs/verification/javascript-route-inventory-2026-10-21.json)
 pins original inputs, exact commands, profiles, failed controls and historical revisions.
 Current-head GitHub CI and automated review must be checked separately.
+
+The full JSON archive is 2,681,223 bytes, with SHA-256
+`9d7ea2582a6f33ff0741578aec9f01b9327b3256ce50c582437164868e544d51`. It remains available in Git
+at the linked immutable revision; this page retains the historical summary.
 
 The latest main contracts, selected environment and ASAR admission remain shared
 by CLI and MCP. The staged-code hook runs lint fixes before formatting, resolving the

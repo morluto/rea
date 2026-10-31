@@ -1,8 +1,17 @@
 import type { ElectronStaticFindings } from "./electronStaticAnalysisTypes.js";
 import type { JavaScriptRouteSourceFacts } from "./javascriptRouteFacts.js";
+import type { JavaScriptStaticCoverage } from "./javascriptStaticCoverage.js";
 
 /** Token semantics shared by bundle producers and worker admission. */
 export const JAVASCRIPT_AST_FINGERPRINT_ALGORITHM = "babel-ast-v3";
+
+/**
+ * Marks a Vite preload dependency written relative to the build output
+ * directory (Vite's absolute-base form, such as `assets/chunk.js`). The
+ * runtime helper prefixes the configured base, so the path is not a module
+ * specifier and not relative to the importing chunk.
+ */
+export const VITE_OUTPUT_DEPENDENCY_PREFIX = "vite-output:";
 
 /** Static syntax context retained for later artifact path resolution. */
 export type JavaScriptStaticPathContext =
@@ -115,6 +124,8 @@ export interface JavaScriptRolePath {
   readonly role: "preload" | "renderer";
   readonly path: string;
   readonly resolution_context: JavaScriptStaticPathContext;
+  /** Inferred from intact source-directory intrinsics; not a runtime/bundler guarantee. */
+  readonly path_base?: "source-directory";
   readonly mechanism: string;
   readonly module_key: string | null;
   /** Recovered factory runtime; absent in older or unbundled findings. */
@@ -124,7 +135,10 @@ export interface JavaScriptRolePath {
 
 /** Deterministic AST-only analysis of one JavaScript source file. */
 export interface JavaScriptStaticAnalysis {
+  /** Established overall summary; syntax alone is reported in analysis_coverage. */
   readonly parse_status: "complete" | "partial" | "failed";
+  /** Historical facts omit this measurement; consumers must not infer it. */
+  readonly analysis_coverage?: JavaScriptStaticCoverage;
   readonly parse_error_count: number;
   readonly visited_ast_nodes: number;
   readonly references: readonly JavaScriptStaticReference[];

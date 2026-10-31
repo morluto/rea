@@ -20,8 +20,27 @@ it("uses parser roles for TS, import, and meta names while retaining computed re
       .map(({ name }) => name),
   ).toEqual(["field", "field"]);
   expect(ir.references.filter(({ name }) => name === "computed")).toHaveLength(
-    3,
+    2,
   );
+});
+
+it("distinguishes erased type queries from evaluated typeof expressions", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    const marker = 1;
+    type Shape = typeof marker;
+    function describe() { type Local = typeof marker; }
+    const kind = typeof marker;
+  `);
+  expect(
+    ir.references
+      .filter(({ name }) => name === "marker")
+      .map(({ role, resolution, location }) => [
+        role,
+        resolution,
+        location.start.line,
+      ]),
+  ).toEqual([["read", "resolved", 5]]);
+  expect(ir.closureCaptures).toEqual([]);
 });
 
 it("keeps destructuring writes, defaults and closure captures under one role owner", () => {
