@@ -38,9 +38,8 @@ const inspectIpcCall = (
   node: t.CallExpression | t.OptionalCallExpression,
   context: JavaScriptFindingContext,
 ): void => {
-  const scoped = scopedIpcDescriptor(node, context);
   const descriptor =
-    scoped?.descriptor ??
+    scopedIpcDescriptor(node, context) ??
     ipcDescriptor(electronCalleePath(node.callee, context));
   if (descriptor === undefined) return;
   const channelNode = argumentNode(node.arguments[0]);
@@ -92,7 +91,6 @@ const inspectIpcCall = (
     context.accumulator.unknownFindings += 1;
   const finding: ElectronIpcFinding = {
     ...findingState,
-    ...(scoped === undefined ? {} : { receiver: scoped.receiver }),
     ...channelReference,
     module_key: null,
     location: range(node),
@@ -109,10 +107,7 @@ const scopedIpcDescriptor = (
   node: t.CallExpression | t.OptionalCallExpression,
   context: JavaScriptFindingContext,
 ):
-  | {
-      readonly descriptor: ElectronIpcDescriptor;
-      readonly receiver: ElectronIpcReceiver;
-    }
+  | (ElectronIpcDescriptor & { readonly receiver: ElectronIpcReceiver })
   | undefined => {
   if (
     !t.isMemberExpression(node.callee) &&
@@ -123,28 +118,40 @@ const scopedIpcDescriptor = (
     node.callee.property,
     node.callee.computed,
   );
-  const descriptor = ipcDescriptor(["ipcMain", operation]);
-  if (descriptor === undefined) return undefined;
+  const registration = ipcDescriptor(["ipcMain", operation]);
+  const transmission = operation === "send" || operation === "postMessage";
+  if (registration === undefined && !transmission) return undefined;
   const receiver = context.browserWindowReceiver?.(node.callee.object, node, [
     operation,
   ]);
   if (receiver === undefined) return undefined;
-  const path = receiver.path;
+  // Registrations consume an .ipc namespace; sends consume the contents/frame
+  // itself. Resolve both through the same allocation and mutation owner.
+  const path = receiver.path.slice(0, -1);
+  if (!transmission && path.pop() !== "ipc") return undefined;
   const kind =
-    path.length === 3 && path[0] === "webContents" && path[1] === "ipc"
+    path.length === 1 && path[0] === "webContents"
       ? "web-contents"
-      : path.length === 4 &&
+      : path.length === 2 &&
           path[0] === "webContents" &&
-          path[1] === "mainFrame" &&
-          path[2] === "ipc"
+          path[1] === "mainFrame"
         ? "main-frame"
         : undefined;
-  return kind === undefined
-    ? undefined
-    : {
-        descriptor,
-        receiver: { kind, owner_location: range(receiver.owner) },
-      };
+  if (kind === undefined) return undefined;
+  const allocation: ElectronIpcReceiver = {
+    kind,
+    owner_location: range(receiver.owner),
+  };
+  return transmission
+    ? {
+        side: "main",
+        operation: operation === "send" ? "send" : "post-message",
+        mode: "send",
+        receiver: allocation,
+      }
+    : registration === undefined
+      ? undefined
+      : { ...registration, receiver: allocation };
 };
 
 const inspectValidationComparison = (
@@ -224,7 +231,9 @@ const addValidation = (
 
 export const ipcDescriptor = (
   path: readonly string[] | undefined,
-): ElectronIpcDescriptor | undefined => {
+):
+  | Exclude<ElectronIpcDescriptor, { side: "main"; mode: "send" }>
+  | undefined => {
   if (path?.length !== 2) return undefined;
   const [object, operation] = path;
   if (object === "ipcRenderer" && operation !== undefined) {

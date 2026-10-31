@@ -45,6 +45,8 @@ const electronBoundarySummarySchema = z.strictObject({
     literal_channels: countSchema,
     dynamic_channel_operations: countSchema,
     renderer_transmissions: countSchema,
+    // Older saved Evidence did not measure this direction; absence is unknown.
+    main_transmissions: countSchema.exactOptional(),
     renderer_listeners: countSchema,
     main_handlers: countSchema,
     paired_renderer_transmissions: countSchema,

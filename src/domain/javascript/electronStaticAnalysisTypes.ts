@@ -69,6 +69,13 @@ export type ElectronContextBridgeFinding = ElectronContextBridgeApiKey & {
 /** Electron IPC operation identity and its semantic communication mode. */
 export type ElectronIpcDescriptor =
   | {
+      readonly side: "main";
+      readonly operation: "send" | "post-message";
+      readonly mode: "send";
+      /** Main transmissions require a source-proven destination allocation. */
+      readonly receiver: ElectronIpcReceiver;
+    }
+  | {
       readonly side: "renderer";
       readonly operation:
         | "send"

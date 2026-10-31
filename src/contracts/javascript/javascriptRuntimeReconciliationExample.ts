@@ -148,6 +148,7 @@ export const JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE = createEvidence(
           literal_channels: 0,
           dynamic_channel_operations: 0,
           renderer_transmissions: 0,
+          main_transmissions: 0,
           renderer_listeners: 0,
           main_handlers: 0,
           paired_renderer_transmissions: 0,

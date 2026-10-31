@@ -227,6 +227,60 @@ function* indexSemanticMemberMutationFactsSteps(
     state,
     (site, reference, path) =>
       referenceEffectsMayHaveChanged(state, site, reference, path),
+    function* (allocations) {
+      // Source allocation alone admits ordinary Socket.loadURL lookalikes.
+      // Reuse the module-origin owner before requesting a whole-file write proof.
+      const interop = createSemanticModuleInterop(state);
+      const examined = new WeakSet<t.NewExpression>();
+      let hasElectronConstructor = false;
+      for (const allocation of allocations) {
+        if (allocation === undefined || examined.has(allocation.owner))
+          continue;
+        examined.add(allocation.owner);
+        const { root, members } = electronMemberPath(allocation.owner.callee);
+        let exported: readonly string[] | null | undefined;
+        if (t.isIdentifier(root)) {
+          const binding = resolveSemanticBindingState(state, root, root.name);
+          exported =
+            binding === undefined
+              ? undefined
+              : electronExport(binding, state, interop);
+        } else {
+          const origin =
+            interop.callOrigin(root)?.origin ??
+            electronRequireOrigin(root, state)?.origin;
+          exported =
+            origin !== undefined && ELECTRON_MODULE.test(origin.specifier)
+              ? electronExportPath(origin.importedPath)
+              : undefined;
+        }
+        if (
+          exported !== undefined &&
+          exported !== null &&
+          exported.length + members.length === 1 &&
+          [...exported, ...members][0] === "BrowserWindow"
+        ) {
+          hasElectronConstructor = true;
+          break;
+        }
+      }
+      if (!hasElectronConstructor) return undefined;
+      const identity = yield* indexJavaScriptElectronIdentitySteps(
+        state.program,
+        state,
+      );
+      return {
+        constructorPath: (callee: t.Node): readonly string[] | undefined => {
+          const { root, members } = electronMemberPath(callee);
+          const exported = identity.exportPath(root);
+          return exported !== undefined &&
+            members.every((member): member is string => member !== null)
+            ? [...exported, ...members]
+            : undefined;
+        },
+        intactExport: identity.intactExport,
+      };
+    },
   );
   indexedMemberMutationStates.add(state);
   invalidateSemanticRequireDelegateWrites(state);
