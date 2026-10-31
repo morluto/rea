@@ -99,4 +99,9 @@ it("decodes named DT_FLAGS and DT_FLAGS_1 bits without expanding unrecognized va
     names: ["BIND_NOW"],
     unrecognized: 0x80000000,
   });
+  expect(decodeElfDynamicFlags(0x100000008, DF_FLAG_BITS)).toEqual({
+    raw: 0x100000008,
+    names: ["BIND_NOW"],
+    unrecognized: 0x100000000,
+  });
 });

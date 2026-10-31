@@ -40,7 +40,7 @@ const writeWord = (
   little: boolean,
 ): void => {
   if (bits === 64) {
-    const wide = BigInt(value >>> 0);
+    const wide = BigInt(value);
     if (little) bytes.writeBigUInt64LE(wide, offset);
     else bytes.writeBigUInt64BE(wide, offset);
     return;
@@ -150,7 +150,7 @@ class StringTable {
   }
 
   bytes(options: { readonly dropLastNul?: boolean } = {}): Buffer {
-    const table = concat(...this.#parts);
+    const table = Buffer.concat(this.#parts);
     if (options.dropLastNul === true && table.length > 1)
       return table.subarray(0, table.length - 1);
     return table;
@@ -513,7 +513,7 @@ const buildDependencyTables = (config: FixtureConfig): DependencyTables => {
     runpathOffset,
     rpathOffset,
     dynstrBytes: dynstr.bytes({ dropLastNul: config.truncateDynstr }),
-    dynsym: concat(...symbols),
+    dynsym: Buffer.concat(symbols),
     versym,
     hash: config.omitHash ? Buffer.alloc(0) : sysvHash(symbols.length, little),
     gnuHashBytes: config.gnuHash

@@ -146,23 +146,52 @@ const fileRange = (offset: bigint, size: bigint, label: string): Range => {
   return { offset: Number(offset), bytes: Number(size) };
 };
 
+/** The count limit a failure hit: a caller budget, or a fixed ceiling. */
+export type ElfDependencyCountLimit =
+  | {
+      readonly kind: "budget";
+      readonly parameter: "max_needed" | "max_versions" | "max_imports";
+      readonly value: number;
+      readonly ceiling: number;
+      readonly entries: string;
+    }
+  | {
+      readonly kind: "ceiling";
+      readonly value: number;
+      readonly entries: string;
+    };
+
+/** A count limit failure that keeps which limit failed for recovery advice. */
+export class ElfDependencyCountFailure extends ArtifactReaderFailure {
+  constructor(
+    message: string,
+    readonly limit: ElfDependencyCountLimit,
+  ) {
+    super("limit", message, { boundary: "capacity" });
+  }
+}
+
+const ceilingFailure = (
+  entries: string,
+  ceiling: number,
+): ElfDependencyCountFailure =>
+  new ElfDependencyCountFailure(
+    `${entries} exceed the ${String(ceiling)}-entry ceiling this operation accepts.`,
+    { kind: "ceiling", value: ceiling, entries },
+  );
+
 const charge = (
   count: number,
   limit: number,
   ceiling: number,
-  label: string,
+  entries: string,
+  parameter: "max_needed" | "max_versions" | "max_imports",
 ): void => {
-  if (count > ceiling)
-    throw new ArtifactReaderFailure(
-      "limit",
-      `${label} exceed the ${String(ceiling)}-entry ceiling this operation accepts.`,
-      { boundary: "capacity" },
-    );
+  if (count > ceiling) throw ceilingFailure(entries, ceiling);
   if (count > limit)
-    throw new ArtifactReaderFailure(
-      "limit",
-      `${label} exceed the ${String(limit)}-entry budget.`,
-      { boundary: "capacity" },
+    throw new ElfDependencyCountFailure(
+      `${entries} exceed the ${String(limit)}-entry budget.`,
+      { kind: "budget", parameter, value: limit, ceiling, entries },
     );
 };
 
@@ -644,6 +673,7 @@ export const parseElfDependencies = (
         input.max_needed,
         MAX_INSPECT_ELF_DEPENDENCY_NEEDED,
         "DT_NEEDED entries",
+        "max_needed",
       );
       continue;
     }
@@ -787,6 +817,7 @@ export const parseElfDependencies = (
         input.max_versions,
         MAX_INSPECT_ELF_DEPENDENCY_VERSIONS,
         "GNU version records",
+        "max_versions",
       );
     },
   );
@@ -806,6 +837,7 @@ export const parseElfDependencies = (
         input.max_versions,
         MAX_INSPECT_ELF_DEPENDENCY_VERSIONS,
         "GNU version records",
+        "max_versions",
       );
     },
   );
@@ -896,11 +928,11 @@ export const parseElfDependencies = (
       flags:
         flagsRaw === undefined
           ? null
-          : decodeElfDynamicFlags(flagsRaw >>> 0, DF_FLAG_BITS),
+          : decodeElfDynamicFlags(flagsRaw, DF_FLAG_BITS),
       flags_1:
         flags1Raw === undefined
           ? null
-          : decodeElfDynamicFlags(flags1Raw >>> 0, DF_1_FLAG_BITS),
+          : decodeElfDynamicFlags(flags1Raw, DF_1_FLAG_BITS),
     },
     needed,
     version_requirements: versionRequirements,
@@ -1338,11 +1370,7 @@ const parseImports = (
 ): ElfDependencyImport[] => {
   if (dynsym === null || symbolCount === null) return [];
   if (symbolCount > MAX_INSPECT_ELF_DEPENDENCY_IMPORTS)
-    throw new ArtifactReaderFailure(
-      "limit",
-      `Dynamic symbols exceed the ${String(MAX_INSPECT_ELF_DEPENDENCY_IMPORTS)}-entry ceiling this operation accepts.`,
-      { boundary: "capacity" },
-    );
+    throw ceilingFailure("Dynamic symbols", MAX_INSPECT_ELF_DEPENDENCY_IMPORTS);
   const imports: ElfDependencyImport[] = [];
   try {
     reader.range(dynsym.offset, symbolCount * entrySize, ".dynsym");
@@ -1403,6 +1431,7 @@ const parseImports = (
       maxImports,
       MAX_INSPECT_ELF_DEPENDENCY_IMPORTS,
       "Undefined dynamic symbols",
+      "max_imports",
     );
     const name = namedString(
       dynstr,

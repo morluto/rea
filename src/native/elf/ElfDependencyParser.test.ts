@@ -477,6 +477,48 @@ it("fails when undefined symbols exceed the caller-selected import budget", () =
   }
 });
 
+it.each([
+  ["DT_NEEDED entries", { max_needed: 2 }, "max_needed", 65536],
+  ["GNU version records", { max_versions: 2 }, "max_versions", 65536],
+  ["Undefined dynamic symbols", { max_imports: 2 }, "max_imports", 262144],
+] as const)(
+  "names the caller budget when %s fail",
+  (entries, budget, parameter, ceiling) => {
+    expect(() => parse(elfDependencyFixture(), budget)).toThrow(
+      expect.objectContaining({
+        limit: { kind: "budget", parameter, value: 2, ceiling, entries },
+      }),
+    );
+  },
+);
+
+it("reports a fixed ceiling when dynamic symbols pass it under default budgets", () => {
+  const imports = Array.from({ length: 262145 }, (_, index) => ({
+    name: `s${String(index)}`,
+  }));
+  expect(() => parse(elfDependencyFixture({ imports }))).toThrow(
+    expect.objectContaining({
+      limit: { kind: "ceiling", value: 262144, entries: "Dynamic symbols" },
+    }),
+  );
+});
+
+it("keeps ELF64 flag bits above the low 32", () => {
+  const report = parse(
+    elfDependencyFixture({ flags: 0x100000008, flags1: 0x200000001 }),
+  );
+  expect(report.dynamic).toMatchObject({
+    flags: { raw: 0x100000008, names: ["BIND_NOW"], unrecognized: 0x100000000 },
+    flags_1: { raw: 0x200000001, names: ["NOW"], unrecognized: 0x200000000 },
+  });
+});
+
+it("refuses a flag word past the safe integer range rather than cutting it", () => {
+  expect(() => parse(elfDependencyFixture({ flags: 2 ** 60 }))).toThrow(
+    /not representable/u,
+  );
+});
+
 const elf64ProgramHeader = (bytes: Buffer, type: number): number => {
   const phoff = Number(bytes.readBigUInt64LE(32));
   const phentsize = bytes.readUInt16LE(54);

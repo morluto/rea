@@ -28,9 +28,6 @@ import {
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import {
   MAX_INSPECT_ELF_DEPENDENCY_FILE_BYTES,
-  MAX_INSPECT_ELF_DEPENDENCY_IMPORTS,
-  MAX_INSPECT_ELF_DEPENDENCY_NEEDED,
-  MAX_INSPECT_ELF_DEPENDENCY_VERSIONS,
   type InspectElfDependenciesInput,
 } from "../../domain/native/elfDependencies.js";
 import { err, ok } from "../../domain/result.js";
@@ -39,7 +36,11 @@ import {
   BinaryFormatFailure,
   BinaryResourceFailure,
 } from "../metadata/BinaryContainer.js";
-import { parseElfDependencies } from "./ElfDependencyParser.js";
+import {
+  ElfDependencyCountFailure,
+  type ElfDependencyCountLimit,
+  parseElfDependencies,
+} from "./ElfDependencyParser.js";
 
 const OPERATION = "inspect_elf_dependencies";
 
@@ -95,22 +96,15 @@ export class ElfDependenciesProvider implements ElfDependenciesPort {
   }
 }
 
-const inputBudgetRemediation = (
-  boundary: "file-size" | "capacity",
-  input: InspectElfDependenciesInput,
-): string => {
-  if (boundary === "file-size")
-    return input.max_file_bytes >= MAX_INSPECT_ELF_DEPENDENCY_FILE_BYTES
-      ? `The image exceeds the ${String(MAX_INSPECT_ELF_DEPENDENCY_FILE_BYTES)}-byte input ceiling this operation accepts; select a smaller artifact.`
-      : `Raise max_file_bytes above ${String(input.max_file_bytes)} bytes or select a smaller artifact; the limit is the caller-selected input read budget.`;
-  if (
-    input.max_needed >= MAX_INSPECT_ELF_DEPENDENCY_NEEDED &&
-    input.max_versions >= MAX_INSPECT_ELF_DEPENDENCY_VERSIONS &&
-    input.max_imports >= MAX_INSPECT_ELF_DEPENDENCY_IMPORTS
-  )
-    return "The image exceeds the dynamic-dependency entry ceiling this operation accepts; select a smaller artifact.";
-  return `Raise max_needed, max_versions, or max_imports, or select a smaller artifact; the limit is the caller-selected DT_NEEDED, GNU version, or undefined-symbol budget.`;
-};
+const fileSizeRemediation = (input: InspectElfDependenciesInput): string =>
+  input.max_file_bytes >= MAX_INSPECT_ELF_DEPENDENCY_FILE_BYTES
+    ? `The image exceeds the ${String(MAX_INSPECT_ELF_DEPENDENCY_FILE_BYTES)}-byte input ceiling this operation accepts. This release has no runtime override, and raising max_file_bytes does not raise it; select a smaller artifact.`
+    : `Raise max_file_bytes above ${String(input.max_file_bytes)} bytes or select a smaller artifact; the limit is the caller-selected input read budget.`;
+
+const countLimitRemediation = (limit: ElfDependencyCountLimit): string =>
+  limit.kind === "budget"
+    ? `Raise ${limit.parameter} above ${String(limit.value)}, up to ${String(limit.ceiling)}, or select a smaller artifact; the limit is the caller-selected budget for ${limit.entries}.`
+    : `${limit.entries} are limited to a fixed ceiling of ${String(limit.value)} entries. This release has no runtime override, and raising max_needed, max_versions, or max_imports does not raise it; select a smaller artifact.`;
 
 const elfDependenciesFailurePrimary = (
   facts: ArtifactFilePrimaryFacts,
@@ -192,10 +186,10 @@ const elfDependenciesFailurePrimary = (
                 )
               : {
                   retryable: false as const,
-                  remediationAction: inputBudgetRemediation(
-                    cause.boundary,
-                    input,
-                  ),
+                  remediationAction:
+                    cause instanceof ElfDependencyCountFailure
+                      ? countLimitRemediation(cause.limit)
+                      : fileSizeRemediation(input),
                 }),
         },
       );

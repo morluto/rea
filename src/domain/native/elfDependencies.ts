@@ -80,15 +80,18 @@ export const decodeElfDynamicFlags = (
   raw: number,
   bits: readonly (readonly [number, string])[],
 ): { raw: number; names: string[]; unrecognized: number } => {
+  // ELF64 flag words outrun the 32-bit bitwise operators.
+  const word = BigInt(raw);
   const names: string[] = [];
-  let recognized = 0;
+  let unrecognized = word;
   for (const [mask, name] of bits) {
-    if ((raw & mask) !== 0) {
+    const bit = BigInt(mask);
+    if ((word & bit) !== 0n) {
       names.push(name);
-      recognized |= mask;
+      unrecognized &= ~bit;
     }
   }
-  return { raw, names, unrecognized: (raw >>> 0) - recognized };
+  return { raw, names, unrecognized: Number(unrecognized) };
 };
 
 /** Split a DT_RPATH / DT_RUNPATH value on ':' without dropping empty entries. */
@@ -198,10 +201,13 @@ export type InspectElfDependenciesInput = z.infer<
   typeof inspectElfDependenciesInputSchema
 >;
 
+/** A whole flag word: ELF64 values may set bits above the low 32. */
+const flagWord = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
+
 const flagsSchema = z.strictObject({
-  raw: uint,
+  raw: flagWord,
   names: z.array(z.string().min(1)),
-  unrecognized: uint,
+  unrecognized: flagWord,
 });
 
 const searchPathSchema = z.strictObject({
