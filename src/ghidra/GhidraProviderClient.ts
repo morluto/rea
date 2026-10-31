@@ -98,6 +98,16 @@ import { ghidraPePdbLimitations } from "./GhidraPeProfile.js";
 import { unverifiedGhidraBuildLimitation } from "./GhidraReleasePolicy.js";
 import { GhidraHeadlessLauncher } from "./GhidraLauncher.js";
 import { attestGhidraNativeLoadImage } from "./GhidraLoadImageAttest.js";
+import {
+  NATIVE_AOT_MAX_REPORT_BYTES,
+  NATIVE_AOT_MAX_SOURCE_BYTES,
+  nativeAotSnapshotOverCapacity,
+  parseNativeAotPe,
+  type NativeAotPeResult,
+} from "../domain/native/nativeAotPe.js";
+import { ABORTED, waitForAbortable } from "../process/AbortablePromise.js";
+import { oversizedProviderResponse } from "../process/ProviderResponseLines.js";
+import { nativeLoadImageObservationSchema } from "../domain/native/nativeLoadImage.js";
 import type { NativeAotPeResult } from "../domain/native/nativeAotPe.js";
 import { GhidraNativeAotSnapshotOwner } from "./GhidraNativeAotSnapshotOwner.js";
 import {
@@ -1044,6 +1054,18 @@ const projectSessionError = (
   health?: ProviderOperationHealth,
   request?: Readonly<Record<string, JsonValue>>,
 ): AnalysisError => {
+  const primary =
+    failure.kind === "resource"
+      ? oversizedProviderResponse(operation, {
+          cause: failure,
+          diagnostics: failure.diagnostics,
+        })
+      : projectPrimarySessionError(
+          operation,
+          failure,
+          startupTimeoutMs,
+          health,
+        );
   const primary = projectPrimarySessionError(
     operation,
     failure,

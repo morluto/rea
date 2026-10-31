@@ -1,3 +1,4 @@
+import { ProviderResponseLines } from "../process/ProviderResponseLines.js";
 import {
   parseBridgeMessageLine,
   type HopperBridgeMessage,
@@ -9,15 +10,22 @@ export interface HopperResponseStreamOptions {
   readonly hasQueued: (id: number) => boolean;
   readonly nextRequestId: () => number;
   readonly abort: (message: string, cause?: Error) => void;
+  /** Fail the request owning a reply too long to assemble; false ends the session. */
+  readonly oversized: () => boolean;
 }
 
 /** Incrementally validates Hopper NDJSON response frames. */
 export class HopperResponseStream {
+  readonly #lines = new ProviderResponseLines({
+    onLine: (line) => this.#acceptLine(line),
+    onOverflow: () => this.options.oversized(),
+  });
   readonly #lines = new DecodedNdjsonLineBuffer();
 
   constructor(readonly options: HopperResponseStreamOptions) {}
 
   push(chunk: string): void {
+    this.#lines.push(chunk);
     for (const line of this.#lines.push(chunk))
       if (!this.#acceptLine(line)) break;
   }
