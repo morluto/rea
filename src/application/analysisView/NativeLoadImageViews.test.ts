@@ -176,6 +176,13 @@ it.each(["checks", "sections"])(
       await view(source(), { kind: "native-load-image", collection }),
     ).toMatchObject({
       items: { collection, rows: null },
+      coverage: {
+        status: "unavailable",
+        examined: 0,
+        total: null,
+        next_offset: null,
+        exhausted: false,
+      },
       unknowns: expect.arrayContaining([
         "Null collection counts or rows mean not recorded or not applicable, not observed absence.",
       ]),

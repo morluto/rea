@@ -20,7 +20,7 @@ import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import {
   pageViewCoverage,
-  completeWithinViewCoverage,
+  unavailableViewCoverage,
 } from "./analysisViewCoverage.js";
 import {
   nativeContextViewRequestSchema,
@@ -302,22 +302,42 @@ export const projectNativeObservationView = (
     ],
   };
   if (view.kind === "native-context") {
-    const { total, ...page } = contextRows(context.value, view);
-    return ok({
+    const selected = contextRows(context.value, view);
+    const shared = {
       ...common,
       kind: "native-context" as const,
-      ...page,
       parent_operation: source.value.operation,
-      coverage:
-        total === null
-          ? completeWithinViewCoverage(0, 0)
-          : pageViewCoverage(view.offset, page.items.rows?.length ?? 0, total),
-      unknowns:
-        total === null
-          ? [
-              "Result limitations are not applicable to this primitive observation; null does not report an examined empty list.",
-            ]
-          : common.unknowns,
+    };
+    if (selected.facet === "result-limitations") {
+      const { total, ...page } = selected;
+      return ok({
+        ...shared,
+        ...page,
+        coverage:
+          total === null
+            ? unavailableViewCoverage()
+            : pageViewCoverage(
+                view.offset,
+                page.items.rows?.length ?? 0,
+                total,
+              ),
+        unknowns:
+          total === null
+            ? [
+                "Result limitations are not applicable to this primitive observation; null does not report an examined empty list.",
+              ]
+            : common.unknowns,
+      });
+    }
+    const { total, ...page } = selected;
+    return ok({
+      ...shared,
+      ...page,
+      coverage: pageViewCoverage(
+        view.offset,
+        page.items.rows?.length ?? 0,
+        total,
+      ),
     });
   }
   const selection = view.kind === "summary" ? { offset: 0, limit: 64 } : view;
