@@ -1,6 +1,7 @@
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { nativeDispatchMetadataInputSchema } from "../domain/native/objcSwiftMetadata.js";
 import { nativeValueTraceInputSchema } from "../domain/native/nativeValueTrace.js";
+import { nativeDataTypeInputSchema } from "../domain/native/nativeDataType.js";
 import { z } from "incur";
 import {
   bytePatternFields,
@@ -37,6 +38,9 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 const bytePatternInputSchema = z
   .object(bytePatternFields)
   .superRefine(validateBytePattern);
+
+/** Data type selectors stay optional in the options schema; exactly one is required. */
+const dataTypeSelectorGuidance = "Supply exactly one of --type or --address.";
 
 /** Register native load-image, memory, and annotation CLI commands. */
 export const registerCoreNativeCommands = (
@@ -258,29 +262,50 @@ export const registerCoreNativeCommands = (
       ),
   });
   cli.command(CLI_COMMANDS.inspectNativeDataType, {
-    description: "Inspect one recovered database type or typed data object",
+    description: `Inspect one recovered database type or typed data object. ${dataTypeSelectorGuidance}`,
     args: z.object({
-      path: z.string().describe("Local native executable or app path"),
+      path: localPathStringSchema.describe(
+        "Local native executable or app path",
+      ),
     }),
     options: z.object({
-      type: z.string().optional().describe("Exact database type category path"),
-      address: z.string().optional().describe("Exact native address"),
+      type: z
+        .string()
+        .optional()
+        .describe(
+          `Exact database type category path. ${dataTypeSelectorGuidance}`,
+        ),
+      address: z
+        .string()
+        .optional()
+        .describe(`Exact native address. ${dataTypeSelectorGuidance}`),
       ...nativeOpenOptionFields,
     }),
     run: ({ args, options }) =>
-      logCliCommand(logger, CLI_COMMANDS.inspectNativeDataType, () =>
-        runDirectAnalysis(
+      logCliCommand(logger, CLI_COMMANDS.inspectNativeDataType, async () => {
+        const input = {
+          ...(options.type === undefined ? {} : { type: options.type }),
+          ...(options.address === undefined
+            ? {}
+            : { address: options.address }),
+        };
+        // Admit the canonical selector choice before opening the target.
+        const selected = nativeDataTypeInputSchema.safeParse(input);
+        if (!selected.success)
+          return projectAnalysisError(
+            analysisInputErrorFromIssues(
+              "inspect_native_data_type",
+              selected.error.issues,
+              input,
+            ),
+          );
+        return runDirectAnalysis(
           args.path,
           "inspect_native_data_type",
-          {
-            ...(options.type === undefined ? {} : { type: options.type }),
-            ...(options.address === undefined
-              ? {}
-              : { address: options.address }),
-          },
+          input,
           directAnalysisOptionsFromCli(logger, options),
-        ).then(projectCliAnalysisResult),
-      ),
+        ).then(projectCliAnalysisResult);
+      }),
   });
   for (const [command, operation] of [
     [CLI_COMMANDS.inspectNativeInstruction, "inspect_native_instruction"],
