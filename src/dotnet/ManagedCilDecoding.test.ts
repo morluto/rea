@@ -461,7 +461,9 @@ describe("managed complete operand decoding", () => {
       });
     },
   );
+});
 
+describe("managed operand extent diagnostics for switch and partial bodies", () => {
   it("reports a switch whose target table is missing", () => {
     expect(
       fatBody(Buffer.from([0x00, 0x45, 0x02, 0x00, 0x00, 0x00])),
