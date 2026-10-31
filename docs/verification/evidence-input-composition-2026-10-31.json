@@ -3285,5 +3285,308 @@
       "derived replay preserves analyst revisions",
       "advertised local tool contracts and malformed process choices"
     ]
+  },
+  "source_path_admission_followup": {
+    "source_head": "e2ec93bea1056ea07caba132b7ee2e80c4844e5e",
+    "source_state": "working tree includes shared owner-failure input path attribution and boundary regressions",
+    "semantics": "Preserve the original typed owner failure and all diagnostics; attach its declared source path only when the owner did not supply one. Do not reparse source values or overwrite owner context.",
+    "files": 9,
+    "tests": 75,
+    "elapsed_seconds": 98.459,
+    "CPU_usec": 98133579,
+    "peak_process_family_bytes": 1605656576,
+    "cleanup_verified": true,
+    "kernel_payload_exit_observation_verified": true,
+    "memory_events": {
+      "low": 0,
+      "high": 0,
+      "max": 0,
+      "oom": 0,
+      "oom_kill": 0,
+      "oom_group_kill": 0
+    },
+    "log_sha256": "2a5747e2a4330c2e2ff4e1524f887317994d4374f9bc362c74963d7aab25c9e0",
+    "HTTP_default_boundary": [
+      {
+        "source_records": 1019,
+        "request_bytes": 3123,
+        "response_bytes": 703,
+        "code": "evidence_integrity_mismatch",
+        "diagnostics": {
+          "input_path": ["functions", 0]
+        }
+      },
+      {
+        "source_records": 1020,
+        "request_bytes": 3126,
+        "response_bytes": 824,
+        "code": "resource_constraint",
+        "max_input_elements": 1024
+      }
+    ],
+    "ADB_CLI_file": {
+      "tests": 41,
+      "passed": 41,
+      "17_extra_case_elapsed_ms": 1597,
+      "test_deadline_changed": false
+    },
+    "CI_failure_receipt_sha256": "b661561b19afbdd3c07f67bf7765aec8f3a3ac52aee425e9190e7c6c3c3694b1"
+  },
+  "adb_timeout_probe": {
+    "metadata": {
+      "head": "e2ec93bea1056ea07caba132b7ee2e80c4844e5e",
+      "dirty": true,
+      "runtime_files_sha256": "18a7b20e0548ecfb155b49b289af0a5458a20a406ad54bf6ce47de5cb75947e1",
+      "runtime_files_count": 2656,
+      "node_version": "v24.22.1",
+      "source_changes_during_probe": "None by probe operator",
+      "helper_sha256": "1aa0d21ddb8c05520a8abb432e54821f145772ec75bc7503a34ad0c41484464c",
+      "script_sha256": "0da8d19ab6946102036a76abaab9bb907f637a0a4c80374b8bed72703b243e98",
+      "probe_sha256": "3636eaefc7b6506404cb4288c6e60131aa61ed19bcc0909594aa4edf10a2b0a9",
+      "claim_scope": "Bounded exact invalid CLI validation case; no baseline runtime measurement or OS cold-cache claim"
+    },
+    "attempts": [
+      {
+        "lane": "cold",
+        "wrapper_exit_code": 0,
+        "scope_elapsed_seconds": 2.223,
+        "cpu_usec": 2050776,
+        "peak_memory_bytes": 208924672,
+        "cleanup_verified": true,
+        "abort": null,
+        "payload_events": {
+          "memory.events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "pids.events": {
+            "max": 0
+          }
+        },
+        "result": {
+          "lane": "cold",
+          "cache_scope": "Node compile cache only; OS page cache uncontrolled",
+          "elapsed_ms": 1970.016705,
+          "exit_code": 1,
+          "signal": null,
+          "killed": false,
+          "structured_error": {
+            "code": "VALIDATION_ERROR",
+            "message": "REA could not read the command arguments. Check the named argument and its expected type, then try again.",
+            "fieldErrors": [
+              {
+                "code": "too_big",
+                "missing": false,
+                "path": "extra",
+                "expected": "",
+                "received": "",
+                "message": "Too big: expected array to have <=16 items"
+              }
+            ]
+          },
+          "stderr_bytes": 0,
+          "output_truncated": false,
+          "helper_timeout_ms": 20000,
+          "valid": true,
+          "compile_cache_entries_before": 0,
+          "compile_cache_entries_after": 1,
+          "configured_adb_exists": false,
+          "target_execution": "The 17-element option is rejected before command run/provider admission; no ADB executable is available at the explicitly selected path"
+        },
+        "resource_metric_scope": "Kernel cgroup counters at payload exit, including probe helper and observer; CLI elapsed excludes scope setup"
+      },
+      {
+        "lane": "warm",
+        "wrapper_exit_code": 0,
+        "scope_elapsed_seconds": 1.42,
+        "cpu_usec": 1250331,
+        "peak_memory_bytes": 202555392,
+        "cleanup_verified": true,
+        "abort": null,
+        "payload_events": {
+          "memory.events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          },
+          "pids.events": {
+            "max": 0
+          }
+        },
+        "result": {
+          "lane": "warm",
+          "cache_scope": "Node compile cache only; OS page cache uncontrolled",
+          "elapsed_ms": 1170.06075,
+          "exit_code": 1,
+          "signal": null,
+          "killed": false,
+          "structured_error": {
+            "code": "VALIDATION_ERROR",
+            "message": "REA could not read the command arguments. Check the named argument and its expected type, then try again.",
+            "fieldErrors": [
+              {
+                "code": "too_big",
+                "missing": false,
+                "path": "extra",
+                "expected": "",
+                "received": "",
+                "message": "Too big: expected array to have <=16 items"
+              }
+            ]
+          },
+          "stderr_bytes": 0,
+          "output_truncated": false,
+          "helper_timeout_ms": 20000,
+          "valid": true,
+          "compile_cache_entries_before": 1,
+          "compile_cache_entries_after": 1,
+          "configured_adb_exists": false,
+          "target_execution": "The 17-element option is rejected before command run/provider admission; no ADB executable is available at the explicitly selected path"
+        },
+        "resource_metric_scope": "Kernel cgroup counters at payload exit, including probe helper and observer; CLI elapsed excludes scope setup"
+      }
+    ],
+    "prelaunch_attempts": [
+      {
+        "stage": "harness Node resolution before payload launch",
+        "error": "/usr/local/bin/node is absent; pinned PATH fallback was not used",
+        "cli_payloads_started": 0,
+        "resolution": "Resolve node from the already-authorized pinned PATH and assert v24.22.1"
+      }
+    ],
+    "limitations": [
+      "Two serial local probes; CI host load and its coverage/worker environment are not reproduced.",
+      "Cold/warm describes only explicitly selected Node compile-cache directory. OS page cache is uncontrolled.",
+      "No equivalent baseline runtime was built or measured; passing probes do not establish baseline flakiness.",
+      "The production 20-second helper deadline, 1MiB output budget, 16-element option maximum, and guarded 1CPU/4GiB hard/3GiB early-stop limits were preserved."
+    ],
+    "source_findings": {
+      "ci_failure": "The helper timed out after 20000ms and terminated the child with SIGTERM; the expected validation assertion was never evaluated.",
+      "unchanged_paths": "CLI entry/bootstrap, ADB domain/command/provider, argument/error presenters, ExecFileOutput helper and adbCli test are unchanged against base 23de10bb2.",
+      "shared_startup": "CLI eagerly imports all command registrars, including changed Evidence consumers; no deterministic startup regression is ruled out by source inspection alone.",
+      "interpretation": "Exact local validation works without provider admission. Transient CI load/startup/exit delay is plausible; baseline flakiness remains unproven."
+    },
+    "source_receipt_sha256": "a4a4d70886f800b49f4035127a8c8f1cc01e789a2bfb4feb93a37287056126cf"
+  },
+  "final_native_replay": {
+    "metadata": {
+      "runtime_head": "e2ec93bea1056ea07caba132b7ee2e80c4844e5e",
+      "source_dirty": true,
+      "source_status_sha256": "b14ac2eb972870d1d63d0a210d69eb1768200ed1aeaae3373e4ed7e7307c9c11",
+      "runtime_files_sha256": "1bcdcd29df3b90f2cfa61aad29d647dbfb22176d0bca880c7a537507fdeab271",
+      "runtime_files_count": 2656,
+      "node_version": "v24.22.1",
+      "harness_sha256": "b27ebed606c3a5449d9f21d050b63b77a0d6769e5ddbd24ab0aec4aae301236a",
+      "prior_harness_sha256": "5df9e8da8ca635fc8f3938573f5148f6b87f45f5c14490218bd5a65b0b083983",
+      "model_invocations": 0
+    },
+    "runtime_unchanged_during_replay": true,
+    "wrapper_exit_code": 0,
+    "scope_elapsed_seconds": 5.543,
+    "cpu_seconds": 5.263196,
+    "kernel_peak_memory_bytes": 447791104,
+    "kernel_resource_events": {
+      "memory.events": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "pids.events": {
+        "max": 0
+      }
+    },
+    "cleanup_verified": true,
+    "abort": null,
+    "resource_scope": "Kernel cgroup counters at payload exit, including replay helper and observer",
+    "result": {
+      "status": "passed",
+      "scope": "Final rebuilt runtime, fresh target-free public stdio MCP replay of immutable genuine jq/Ghidra Evidence",
+      "elapsed_ms": 4832.407,
+      "source_bundle": {
+        "label": "transport-roundtrip/native-01/source.bundle.json",
+        "bytes": 3097994,
+        "sha256": "0a3adad6ab39bfe29320e1f070a8e598382d2f17c4d6c19079bd6ff16dfe0937",
+        "records": 8,
+        "unchanged": true
+      },
+      "source_evidence_ids": [
+        "ev_6a73ba03158b02af19dc76fe1865647b1dbeeaff7e7c4eed20a5f8fc58caff59",
+        "ev_681e6e6b603413f6dc0eeff8ca31acb3875d1d72d97b5e2de837460c2c03b0f9",
+        "ev_df9c037f6b8a7c14d87b43162eac21246fa6a47f739361f653f459ec094d2df6"
+      ],
+      "results": [
+        {
+          "tool": "build_call_path",
+          "evidence_id": "ev_b3a67463b568bd4dd5f338a995014b937dc3572a8e8557f72433a86dd98f44be",
+          "complete_Evidence_equal": true,
+          "identity_equal": true,
+          "provenance_coverage_partial_unknowns_equal": true,
+          "complete_Evidence_JSON_sha256": "d594b20cf2f0113ae56328154421012630d17700b858dc1c728153c3d7f42ce2",
+          "normalized_result_sha256": "32aeea7af5a251e6140ab169ebf860dec796c92b5cb369dde7388d06674a236b",
+          "original_golden_file_sha256": "314398a30dc2fc69a5b0c48ed02e1c3196f61c58947349dbbe20412292f2925b",
+          "request_sha256": "9336645bf08d22b43fccfa4b5dbc31d489c2d859e94d978054fe586f121b6745",
+          "raw_public_reply_value_equal": true,
+          "raw_public_reply_value_sorted_JSON_sha256": "4c50d38a4dd3b2a0c8297be9ceab0daa78a9552e2f223033e1cee4b3e0acf1f6"
+        },
+        {
+          "tool": "compare_functions",
+          "evidence_id": "ev_a287514fc988745a27e6b1a52bfe3833bafdaebc956aace351b420ef36982259",
+          "complete_Evidence_equal": true,
+          "identity_equal": true,
+          "provenance_coverage_partial_unknowns_equal": true,
+          "complete_Evidence_JSON_sha256": "e8e7a231c330cf8303b16b0fce652c7ec70314981ec1f16c080ef19a7511c86d",
+          "normalized_result_sha256": "435b6811e6cebcdc7fbf759063c80f2a1af1230cb3e02d18129d594f91cf04e3",
+          "original_golden_file_sha256": "a038a9f6ab1a5dd595298652ecccaed563b9ba42d7f7e5501a6613d5f0d9138c",
+          "request_sha256": "df40a1886c6a02ce09c1f2112bedd0afc4eb4387f2e031acc3d7c4784ab35d2e",
+          "raw_public_reply_value_equal": true,
+          "raw_public_reply_value_sorted_JSON_sha256": "4302c2da170600d290e32532628fba366ac1125a1bab8495d5d907d456c064d3"
+        },
+        {
+          "tool": "match_native_functions",
+          "evidence_id": "ev_3aea60bbe5bcea71c2454fa1f560bc7a3a3df9534125471322ae5c6302cf6737",
+          "complete_Evidence_equal": true,
+          "identity_equal": true,
+          "provenance_coverage_partial_unknowns_equal": true,
+          "complete_Evidence_JSON_sha256": "dda700d743438c9ffbee33c4129c728de6249d85f6440a5e411fe21c7bdc922e",
+          "normalized_result_sha256": "73ec328c668981d0fbbfd14bccd0f6e1d2f11bd8eda308358334dccd51771af4",
+          "original_golden_file_sha256": "7ba60ae9e42775d116d57f92e4a47bd2e88ce34e4b96c86eb62e9173a9fa58c8",
+          "request_sha256": "2bc4b0444f12b039a42a4770442614647fe3cbd3d34251f29e30db59db3db039",
+          "raw_public_reply_value_equal": true,
+          "raw_public_reply_value_sorted_JSON_sha256": "21173d4fb03df46e6ffa981739c57a0de30f0366221c53c411cb0384d07d0ed4"
+        }
+      ],
+      "calls": 7,
+      "producer_calls": 0,
+      "target_open_calls": 0,
+      "ghidra_starts_requested": 0,
+      "source_reanalysis": false,
+      "complete_Evidence_equal_to_prior_runtime": true,
+      "default_MCP_input_elements": 1024,
+      "limits_raised": false,
+      "model_invocations": 0,
+      "token_measurement": "Not measured; scripted replay has no model",
+      "cleanup": {
+        "client_closed": true,
+        "transport_closed": true,
+        "private_root_removed": true
+      },
+      "raw_public_reply_values_equal_before_parsing": true
+    },
+    "limitations": [
+      "Replay uses genuine prior native Evidence; prior provider-analysis costs are reported in original transport matrix, not repeated here.",
+      "One final rebuilt-runtime replay, no before/after performance comparison or cold-cache claim.",
+      "No models or token measurement; no native CLI counterpart exists for these three operations."
+    ],
+    "source_receipt_sha256": "63eb768f4e5d4b4fed04ee03eb2bf374b75bc391559df335110a557c8f4d6444"
   }
 }

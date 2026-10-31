@@ -10,7 +10,11 @@ import {
 import { getEvidenceInputContract } from "../domain/evidenceInputContract.js";
 import { readImmutableEvidence } from "../domain/evidenceValidation.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
-import { EvidenceReferenceError } from "../domain/evidenceErrors.js";
+import {
+  EvidenceIntegrityError,
+  EvidenceReferenceError,
+} from "../domain/evidenceErrors.js";
+import { err } from "../domain/result.js";
 import {
   resolveEvidenceRequest,
   type EvidenceRequestResolutionOptions,
@@ -115,7 +119,43 @@ describe("schema-owned Evidence request resolution", () => {
       { readEvidence: readImmutableEvidence },
     );
     expect(rejected.ok).toBe(false);
+    if (!rejected.ok)
+      expect(rejected.error.diagnostics).toEqual({ input_path: ["source"] });
   });
+
+  it.each([{ ownerPath: undefined }, { ownerPath: ["payload", 2] }])(
+    "preserves source-owner failures and existing paths: %j",
+    ({ ownerPath }) => {
+      const failure = new EvidenceIntegrityError("Invalid source", {
+        diagnostics: {
+          owner: "fixture",
+          ...(ownerPath === undefined ? {} : { input_path: ownerPath }),
+        },
+      });
+      let reads = 0;
+      const result = resolveEvidenceRequest(
+        "test",
+        { layers: [{ source: {} }] },
+        z.strictObject({
+          layers: z.array(z.strictObject({ source: evidenceInputSchema })),
+        }),
+        undefined,
+        {
+          readEvidence: () => {
+            reads += 1;
+            return err(failure);
+          },
+        },
+      );
+      if (result.ok) throw new Error("Invalid source was accepted");
+      expect(result.error).toBe(failure);
+      expect(reads).toBe(1);
+      expect(failure.diagnostics).toEqual({
+        owner: "fixture",
+        input_path: ownerPath ?? ["layers", 0, "source"],
+      });
+    },
+  );
 
   it("preserves optional/default/nullable source selection and envelope constraints", () => {
     const schema = z.strictObject({

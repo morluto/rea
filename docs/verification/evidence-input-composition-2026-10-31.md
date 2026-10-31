@@ -211,6 +211,36 @@ checks, covering default-budget aggregation, artifact coverage, replay and publi
 local contracts: 123.152 s elapsed, 121.276327 CPU s and 1,466,314,752 peak bytes.
 Cleanup was verified with no OOM; runtime code was unchanged.
 
+The HTTP admission-edge regression now checks the same source-owner semantics.
+An admitted array of 1,019 malformed carriers fails at its first source, while
+1,020 carriers exceed the unchanged 1,024-element envelope allowance. Responses
+were 703 and 824 bytes, respectively; both stayed below 4 KiB and the server kept
+serving. The shared resolver additionally preserves `input_path` on owner errors
+when absent. Original error identity, owner diagnostics and existing paths remain
+intact, with no second source parse. The rebuilt nine-file gate passed 75 checks,
+including all 41 ADB CLI cases, resolver, native references and HTTP/stdio admission:
+98.459 s elapsed, 98.133579 CPU s and 1,605,656,576 peak bytes; cleanup verified,
+no OOM.
+
+CI also terminated one unchanged ADB CLI child at its helper's existing 20-second
+deadline. Two isolated exact 17-extra CLI probes returned the expected argument
+validation failure in 1.970 s with a fresh Node compile cache and 1.170 s reusing
+it. Neither ran ADB or reached a device; the 20-second deadline was unchanged.
+Both local scopes cleaned up with no OOM. The rebuilt full ADB CLI file passed,
+including that case in 1.597 s. The CI delay was not reproduced; these observations
+do not establish baseline flakiness or a controlled before/after startup result.
+
+After the diagnostic change, the untouched genuine jq/Ghidra bundle was imported
+again into a fresh target-free stdio server. Call path, function comparison and
+native matching returned complete public values equal to their original matrix
+goldens, including IDs, provenance, coverage and unknowns. Seven calls included
+no producer, target opening or Ghidra execution. The built runtime fingerprint
+was `1bcdcd29df3b90f2cfa61aad29d647dbfb22176d0bca880c7a537507fdeab271`;
+source bundle and runtime stayed unchanged. The replay cost 5.543 s / 5.263196 CPU s
+/ 447,791,104 peak bytes, with verified cleanup and no OOM. This is an additional
+scripted replay, separate from the thirteen-attempt matrix and fourteen model
+attempts. Its full receipt and the timeout probes are included in JSON.
+
 ## Regression and coverage limits
 
 The focused regression run passed 508 checks covering source integrity, exact

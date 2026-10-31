@@ -135,7 +135,11 @@ export function resolveEvidenceRequest(
       }
       if (options.readEvidence !== undefined) {
         const admitted = options.readEvidence(selected, path);
-        if (!admitted.ok) return admitted;
+        if (!admitted.ok) {
+          if (admitted.error.diagnostics?.input_path === undefined)
+            admitted.error.retainDiagnostics({ input_path: [...path] });
+          return admitted;
+        }
         selected = admitted.value;
       }
       sources.add(selected);
