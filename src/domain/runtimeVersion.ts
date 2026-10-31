@@ -3,6 +3,14 @@ import { satisfies } from "semver";
 /** Supported runtime range, kept in sync with the published package engines. */
 export const SUPPORTED_NODE_VERSION_RANGE = "^22.23.4 || ^24.22.1 || >=26.12.1";
 
+/**
+ * Node.js compatibility range supported when running on Bun.
+ * Bun reports its Node compatibility line independently of Node.js patch security releases.
+ * In particular, Bun 1.4 reports Node compatibility 26.3.0.
+ */
+export const SUPPORTED_BUN_NODE_COMPATIBILITY_RANGE =
+  "^22.23.4 || ^24.22.1 || >=26.0.0";
+
 /** Human-readable form of {@link SUPPORTED_NODE_VERSION_RANGE} for remediation. */
 export const SUPPORTED_NODE_VERSION_PROSE =
   "Node.js 22.x (>=22.23.4), 24.x (>=24.22.1), or 26.12.1+";
@@ -37,6 +45,9 @@ export const javaScriptRuntime = (versions: {
 export const supportsJavaScriptRuntime = (
   runtime: JavaScriptRuntime,
 ): boolean =>
-  supportsNodeVersion(
-    runtime.id === "node" ? runtime.version : runtime.nodeCompatibilityVersion,
-  );
+  runtime.id === "node"
+    ? supportsNodeVersion(runtime.version)
+    : satisfies(
+        runtime.nodeCompatibilityVersion,
+        SUPPORTED_BUN_NODE_COMPATIBILITY_RANGE,
+      );

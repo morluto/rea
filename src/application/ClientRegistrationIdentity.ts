@@ -1,4 +1,5 @@
 import { accessSync, constants, realpathSync } from "node:fs";
+import { basename, isAbsolute, join } from "node:path";
 import { isAbsolute } from "node:path";
 import {
   CURRENT_ENTRYPOINT_PATH,
@@ -285,13 +286,26 @@ export const classifyClientRegistrationCommand = (
 ): ClientRegistrationCommandIdentity =>
   inspectClientRegistrationCommand(command, currentCommandPath).identity;
 
+const isJavaScriptRuntimeExecutable = (interpreter: string): boolean => {
+  const binary = basename(interpreter).toLowerCase();
+  return (
+    binary === "node" ||
+    binary === "node.exe" ||
+    binary === "bun" ||
+    binary === "bun.exe"
+  );
+};
+
 const inspectDirectRegistrationCommand = (
   command: readonly string[],
   currentCommandPath: string | undefined,
 ): ClientRegistrationCommandFacts => {
   const currentPathAvailable =
     currentCommandPath !== undefined && currentCommandPath.length > 0;
-  if (command.length === 3 && command[2] === "mcp") {
+  if (
+    command.length === 3 &&
+    (command[2] === "mcp" || command[2] === "--mcp")
+  ) {
     const interpreter = command[0] ?? "";
     const entrypoint = command[1] ?? "";
     if (!isAbsolute(interpreter) || !isAbsolute(entrypoint))
@@ -305,7 +319,10 @@ const inspectDirectRegistrationCommand = (
       interpreter,
       process.execPath,
     );
-    if (interpreterIdentity !== "owned")
+    if (
+      interpreterIdentity !== "owned" &&
+      !isJavaScriptRuntimeExecutable(interpreter)
+    )
       return {
         identity: currentPathAvailable ? interpreterIdentity : "unknown",
         launch: "runtime_script",
@@ -325,7 +342,10 @@ const inspectDirectRegistrationCommand = (
       package: undefined,
     };
   }
-  if (command.length === 2 && command[1] === "mcp") {
+  if (
+    command.length === 2 &&
+    (command[1] === "mcp" || command[1] === "--mcp")
+  ) {
     const executable = command[0] ?? "";
     if (executable === PRODUCT_IDENTITY.cliBinary)
       return {
