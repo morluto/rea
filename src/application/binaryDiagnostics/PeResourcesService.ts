@@ -9,6 +9,12 @@ import {
   type PeResources,
   type PeResourceIdentity,
 } from "../../domain/native/peResources.js";
+import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
+import type {
+  DelphiFormObject,
+  DelphiFormText,
+  DelphiFormValue,
+} from "../../domain/native/delphiForm.js";
 import { peSubjectArchitecture } from "../../domain/peMachine.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
@@ -130,45 +136,116 @@ const validReport = (
     )
   )
     return false;
-  return report.icon_groups.every((group) => {
-    const resource = report.resources[group.resource_index];
-    if (
-      resource === undefined ||
-      resource.type.kind !== "id" ||
-      resource.type.id !== 14
-    )
-      return false;
-    return group.images.every(
-      (image) =>
-        inside(image.location) &&
-        image.location.offset >= resource.payload.location.offset &&
-        image.location.offset + image.location.bytes <=
-          resource.payload.location.offset + resource.payload.location.bytes &&
-        image.candidate_resource_indices.every((index) => {
-          const icon = report.resources[index];
-          return (
-            icon !== undefined &&
-            icon.type.kind === "id" &&
-            icon.type.id === 3 &&
-            icon.name.kind === "id" &&
-            icon.name.id === image.resource_id
-          );
-        }) &&
-        (image.same_language_resource_index === null
-          ? image.size_matches === null
-          : image.candidate_resource_indices.includes(
-              image.same_language_resource_index,
-            ) &&
-            sameIdentity(
-              report.resources[image.same_language_resource_index]?.language,
-              resource.language,
-            ) &&
-            image.size_matches ===
-              (report.resources[image.same_language_resource_index]?.payload
-                .location.bytes ===
-                image.declared_bytes)),
+  return (
+    report.icon_groups.every((group) => {
+      const resource = report.resources[group.resource_index];
+      if (
+        resource === undefined ||
+        resource.type.kind !== "id" ||
+        resource.type.id !== 14
+      )
+        return false;
+      return group.images.every(
+        (image) =>
+          inside(image.location) &&
+          image.location.offset >= resource.payload.location.offset &&
+          image.location.offset + image.location.bytes <=
+            resource.payload.location.offset +
+              resource.payload.location.bytes &&
+          image.candidate_resource_indices.every((index) => {
+            const icon = report.resources[index];
+            return (
+              icon !== undefined &&
+              icon.type.kind === "id" &&
+              icon.type.id === 3 &&
+              icon.name.kind === "id" &&
+              icon.name.id === image.resource_id
+            );
+          }) &&
+          (image.same_language_resource_index === null
+            ? image.size_matches === null
+            : image.candidate_resource_indices.includes(
+                image.same_language_resource_index,
+              ) &&
+              sameIdentity(
+                report.resources[image.same_language_resource_index]?.language,
+                resource.language,
+              ) &&
+              image.size_matches ===
+                (report.resources[image.same_language_resource_index]?.payload
+                  .location.bytes ===
+                  image.declared_bytes)),
+      );
+    }) &&
+    // A decoded form must come from an RT_RCDATA payload and stay inside it,
+    // so a provider result cannot point a form at another resource's bytes.
+    report.delphi_forms.every((form) => {
+      const resource = report.resources[form.resource_index];
+      if (
+        resource === undefined ||
+        resource.type.kind !== "id" ||
+        resource.type.id !== 10
+      )
+        return false;
+      const payload = resource.payload.location;
+      const within = ({ offset, bytes }: { offset: number; bytes: number }) =>
+        offset >= payload.offset &&
+        offset + bytes <= payload.offset + payload.bytes;
+      return (
+        // The declared page must be the resource's own declaration, and the
+        // source classification must agree with it, so published Evidence
+        // cannot claim a declaration the artifact did not make.
+        form.declared_code_page === resource.code_page &&
+        (form.declared_code_page === 0) ===
+          (form.code_page_source === "default") &&
+        within(form.signature_location) &&
+        (form.prefix === null || within(form.prefix.location)) &&
+        (form.root === null ||
+          (within(form.root.location) && insideLocations(form.root, within)))
+      );
+    })
+  );
+};
+
+/** Every nested location of a decoded form must stay inside its payload. */
+const insideLocations = (
+  object: DelphiFormObject,
+  within: (range: { offset: number; bytes: number }) => boolean,
+): boolean => {
+  if (!within(object.location)) return false;
+  const text = (item: DelphiFormText | null): boolean =>
+    item === null || within(item.location);
+  if (!text(object.class_name) || !text(object.component_name)) return false;
+  return (
+    object.properties.every(
+      (property) =>
+        within(property.location) &&
+        text(property.name) &&
+        insideValue(property.value, within),
+    ) && object.children.every((child) => insideLocations(child, within))
+  );
+};
+
+const insideValue = (
+  value: DelphiFormValue,
+  within: (range: { offset: number; bytes: number }) => boolean,
+): boolean => {
+  if (value.kind === "list")
+    return value.items.every((item) => insideValue(item, within));
+  if (value.kind === "set")
+    return value.names.every((item) => within(item.location));
+  if (value.kind === "collection")
+    return value.items.every(
+      (item) =>
+        within(item.location) &&
+        item.properties.every(
+          (property) =>
+            within(property.location) &&
+            within(property.name.location) &&
+            insideValue(property.value, within),
+        ),
     );
-  });
+  return within(value.location);
 };
 
 const sameIdentity = (

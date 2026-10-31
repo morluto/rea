@@ -30,6 +30,9 @@ it.each([
   "outside-range",
   "wrong-coverage",
   "bad-icon-reference",
+  "form-points-at-icon-resource",
+  "form-signature-outside-payload",
+  "form-code-page-mismatch",
   "mismatched-directory-path",
   "outside-directory-entry",
   "outside-directory-name",
@@ -43,6 +46,56 @@ it.each([
     if (problem === "wrong-coverage") report.coverage.resources = 99;
     if (problem === "bad-icon-reference")
       report.icon_groups[0]!.images[0]!.candidate_resource_indices = [999];
+    if (problem === "form-code-page-mismatch")
+      report.delphi_forms = [
+        {
+          // The declared page must be the resource's own declaration: this
+          // form claims the opposite classification of what resource 2 has.
+          resource_index: 2,
+          signature: "TPF0",
+          version: "boVersion0",
+          signature_location: report.resources[2]!.payload.location,
+          prefix: null,
+          declared_code_page: report.resources[2]!.code_page === 0 ? 1252 : 0,
+          code_page: "windows-1252",
+          code_page_source:
+            report.resources[2]!.code_page === 0 ? "resource" : "default",
+          root: null,
+        },
+      ];
+    if (problem === "form-points-at-icon-resource")
+      report.delphi_forms = [
+        {
+          // Resource 0 is an RT_ICON, not the RT_RCDATA the form claims.
+          resource_index: 0,
+          signature: "TPF0",
+          version: "boVersion0",
+          signature_location: { offset: 0x400, bytes: 4 },
+          prefix: null,
+          declared_code_page: 0,
+          code_page: "windows-1252",
+          code_page_source: "default",
+          root: null,
+        },
+      ];
+    if (problem === "form-signature-outside-payload")
+      report.delphi_forms = [
+        {
+          // Resource 2 is the RT_RCDATA payload, but the signature is outside it.
+          resource_index: 2,
+          signature: "TPF0",
+          version: "boVersion0",
+          signature_location: {
+            offset: report.artifact.bytes,
+            bytes: 4,
+          },
+          prefix: null,
+          declared_code_page: 0,
+          code_page: "windows-1252",
+          code_page_source: "default",
+          root: null,
+        },
+      ];
     if (problem === "mismatched-directory-path")
       report.directories[1]!.path = [];
     if (problem === "outside-directory-entry")

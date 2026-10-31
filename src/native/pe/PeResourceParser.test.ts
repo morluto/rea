@@ -4,6 +4,13 @@ import {
   inspectPeResourcesInputSchema,
   peResourcesSchema,
 } from "../../domain/native/peResources.js";
+import {
+  delphiBinary,
+  delphiComponent,
+  delphiForm,
+  delphiFormFixture,
+  delphiProperty,
+} from "./DelphiForm.fixture.js";
 import { hasPeResourceName } from "./PeResourceLayout.js";
 import { parsePeResources } from "./PeResourceParser.js";
 import { peResourceFixture } from "./PeResources.fixture.js";
@@ -225,6 +232,97 @@ describe("portable PE resource parsing", () => {
     await expect(parse(fixture.bytes)).rejects.toMatchObject({
       reason: "format",
     });
+  });
+});
+
+describe("Delphi forms inside PE resources", () => {
+  const formFixture = (codePage: number) => {
+    const fixture = peResourceFixture(false, [
+      { type: 10, name: 7, language: 1033, payload: delphiFormFixture() },
+    ]);
+    fixture.bytes.writeUInt32LE(codePage, (fixture.dataOffsets[0] ?? 0) + 8);
+    return fixture;
+  };
+
+  it("decodes a TPF0 RT_RCDATA payload against the resource it came from", async () => {
+    const { bytes } = formFixture(1252);
+    const result = peResourcesSchema.parse(await parse(bytes));
+    expect(result.delphi_forms).toHaveLength(1);
+    const [form] = result.delphi_forms;
+    expect(form).toMatchObject({
+      resource_index: 0,
+      signature: "TPF0",
+      version: "boVersion0",
+      code_page: "windows-1252",
+      code_page_source: "resource",
+    });
+    expect(form?.root?.class_name?.text).toBe("TForm1");
+    expect(form?.root?.component_name?.text).toBe("Form1");
+    expect(form?.root?.children[0]?.class_name?.text).toBe("TButton");
+    expect(form?.root?.properties[0]).toMatchObject({
+      name: { text: "Caption" },
+      value_type: "vaString",
+      value: { kind: "string", text: "Hello" },
+    });
+    expect(form?.root?.properties[3]).toMatchObject({
+      name: { text: "Options" },
+      value_type: "vaSet",
+    });
+    // Offsets are absolute file offsets, traceable back to the resource.
+    const payload = result.resources[0]?.payload.location;
+    expect(form?.signature_location.offset).toBe(payload?.offset);
+    expect(form?.root?.location.offset).toBe((payload?.offset ?? 0) + 4);
+    expect(result.limitations.some((line) => line.includes("TPF0"))).toBe(true);
+  });
+
+  it("records the code page as a default when the resource declares none", async () => {
+    const result = peResourcesSchema.parse(await parse(formFixture(0).bytes));
+    expect(result.delphi_forms[0]).toMatchObject({
+      code_page: "windows-1252",
+      code_page_source: "default",
+      declared_code_page: 0,
+    });
+  });
+
+  it("reports a declared code page this host cannot label as unsupported", async () => {
+    // 866 is a declared page, not an absent one, so it must not be decoded as
+    // the Delphi 7 default without saying so.
+    const result = peResourcesSchema.parse(await parse(formFixture(866).bytes));
+    expect(result.delphi_forms[0]).toMatchObject({
+      code_page: "latin1",
+      code_page_source: "unsupported",
+      declared_code_page: 866,
+    });
+  });
+
+  it("decodes a form whose binary value dwarfs its decoded output", async () => {
+    // A large vaBinary property emits capped hex and a byte count, so the raw
+    // payload size must not be charged against the metadata budget.
+    const fixture = peResourceFixture(false, [
+      {
+        type: 10,
+        name: 7,
+        language: 1033,
+        payload: delphiForm(
+          delphiComponent("TForm1", "Form1", [
+            delphiProperty("Blob", delphiBinary(262144)),
+          ]),
+        ),
+      },
+    ]);
+    const result = peResourcesSchema.parse(await parse(fixture.bytes));
+    expect(result.delphi_forms).toHaveLength(1);
+    expect(result.delphi_forms[0]?.root?.properties[0]).toMatchObject({
+      name: { text: "Blob" },
+      value: { kind: "binary", declared_bytes: 262144, truncated: true },
+    });
+  });
+
+  it("leaves RCDATA payloads without a filer signature out of the inventory", async () => {
+    const result = peResourcesSchema.parse(
+      await parse(peResourceFixture().bytes),
+    );
+    expect(result.delphi_forms).toEqual([]);
   });
 });
 
