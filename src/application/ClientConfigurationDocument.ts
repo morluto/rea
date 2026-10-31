@@ -13,6 +13,11 @@ import {
   stringifyHermesConfigurationYaml,
 } from "./HermesConfigurationYaml.js";
 import {
+  editGgcodeConfigurationYaml,
+  parseGgcodeConfigurationYaml,
+  stringifyGgcodeConfigurationYaml,
+} from "./GgcodeConfigurationYaml.js";
+import {
   applyEdits,
   createScanner,
   format as formatJson,
@@ -97,6 +102,7 @@ export const clientConfigurationServersKey = (
     case "toml":
     case "grok":
     case "hermes":
+    case "ggcode":
       return "mcp_servers";
     case "opencode":
     case "zcode":
@@ -166,6 +172,11 @@ const parseDocument = (
       parseHermesConfigurationYaml(text),
       "The configuration root",
     );
+  // ggcode stores MCP servers as a top-level YAML sequence in
+  // mcp_servers.yaml; the legacy in-main ggcode.yaml section is a mapping
+  // whose `mcp_servers` member holds the same entries. Standalone reads
+  // reject the mapping layout because ggcode cannot load it there.
+  if (format === "ggcode") return parseGgcodeConfigurationYaml(text);
   // ZCode loads nonempty native files with strict JSON.parse.
   if (format === "zcode")
     return requireObject(JSON.parse(text), "The configuration root");
@@ -219,6 +230,29 @@ export const parseZcodeFallbackConfiguration = (
         : requireObject(document.mcpServers, "ZCode fallback mcpServers"),
     serversPath: ["mcpServers"],
     dialect: "zcode_fallback",
+    environmentKey: "env",
+    legacyServers: {},
+  };
+};
+
+/**
+ * The legacy ggcode.yaml main config: a mapping root whose `mcp_servers`
+ * member holds legacy entries. Only the read-only fallback layer, superseded
+ * seeding, and uninstall read this layout; the standalone file uses the strict
+ * sequence parser.
+ */
+export const parseGgcodeLegacyConfiguration = (
+  text: string,
+): ClientConfigurationDocument => {
+  const document = parseGgcodeConfigurationYaml(text, "legacy");
+  return {
+    document,
+    servers:
+      document.mcp_servers === undefined
+        ? {}
+        : requireObject(document.mcp_servers, '"mcp_servers"'),
+    serversPath: ["mcp_servers"],
+    dialect: "ggcode",
     environmentKey: "env",
     legacyServers: {},
   };
@@ -1660,6 +1694,8 @@ export const serializeClientConfiguration = (
     return ok(serializeGrokConfiguration(document, originalText));
   if (format === "hermes")
     return ok(serializeHermesConfiguration(document, originalText));
+  if (format === "ggcode")
+    return ok(serializeGgcodeConfiguration(document, originalText));
   if (format === "dsh") return ok(serializeDshDocument(document));
   // An empty original holds no comments or settings to preserve. Writing a
   // fresh document also keeps a lone BOM from shifting past the closing brace.
@@ -1726,6 +1762,35 @@ const serializeHermesConfiguration = (
   return editHermesConfigurationYaml(
     originalText,
     [serversKey, PRODUCT_IDENTITY.mcpServerKey],
+    entry,
+  );
+};
+
+/**
+ * Keep an existing ggcode `mcp_servers.yaml` intact aside from the REA entry.
+ * The file carries user comments and unrelated servers, so the rea entry is
+ * upserted into the parsed YAML sequence (which retains formatting and
+ * comments) rather than re-serializing the whole document. A fresh file is
+ * created from the seeded server table.
+ */
+const serializeGgcodeConfiguration = (
+  document: Record<string, unknown>,
+  originalText: string | undefined,
+): string => {
+  if (
+    originalText === undefined ||
+    isEmptyClientConfigurationText(originalText)
+  )
+    return stringifyGgcodeConfigurationYaml(document);
+  const serversKey = clientConfigurationServersKey("ggcode");
+  const servers = document[serversKey];
+  const entry =
+    typeof servers === "object" && servers !== null
+      ? (servers as Record<string, unknown>)[PRODUCT_IDENTITY.mcpServerKey]
+      : undefined;
+  return editGgcodeConfigurationYaml(
+    originalText,
+    PRODUCT_IDENTITY.mcpServerKey,
     entry,
   );
 };
@@ -1799,6 +1864,15 @@ export const clientRegistrationEntry = (
         args,
         ...(Object.keys(environment).length === 0 ? {} : { env: environment }),
         enabled: true,
+      };
+    case "ggcode":
+      // ggcode defaults an empty `type` to stdio; the entry states it so a
+      // hand edit toward another transport is reported stale.
+      return {
+        type: "stdio",
+        command: executable,
+        args,
+        ...(Object.keys(environment).length === 0 ? {} : { env: environment }),
       };
     default:
       return {
