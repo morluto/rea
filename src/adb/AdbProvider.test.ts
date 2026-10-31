@@ -1510,6 +1510,45 @@ exit 1`,
   ).toBe(true);
 });
 
+it.each([
+  { label: "wrong IHDR type", offset: 12, value: 0x4a554e4b },
+  { label: "ASCII-folded IHDR type", offset: 12, value: 0xc9484452 },
+  { label: "wrong IHDR length", offset: 8, value: 12 },
+  { label: "zero width", offset: 16, value: 0 },
+  { label: "zero height", offset: 20, value: 0 },
+  { label: "oversized width", offset: 16, value: 0x80000000 },
+  { label: "oversized height", offset: 20, value: 0x80000000 },
+])(
+  "refuses a screen capture with $label before publishing it",
+  async ({ offset, value }) => {
+    const header = Buffer.from(
+      "89504e470d0a1a0a0000000d494844520000000400000003",
+      "hex",
+    );
+    header.writeUInt32BE(value, offset);
+    const escaped = [...header]
+      .map((byte) => `\\${byte.toString(8).padStart(3, "0")}`)
+      .join("");
+    const { binary, root } = await writeAdbStub(
+      () => `if [ "$1" = "version" ]; then ${VERSION_BLOCK}; exit 0; fi
+if [ "$1" = "-s" ] && [ "$3" = "exec-out" ]; then
+  printf '${escaped}'
+  exit 0
+fi
+exit 1`,
+    );
+    const output = join(root, "invalid-capture");
+    const projected = await refusedBy(providerOver(binary), {
+      operation: "capture_adb_screen",
+      input: { serial: "emulator-5554", output_directory: output },
+    });
+    expect(projected).toMatchObject({ code: "unreadable_output" });
+    await expect(readFile(join(output, "screen.png"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  },
+);
+
 it("stops a screen capture aborted after adb returns but before publication", async () => {
   const { binary, root } = await writeAdbStub(
     (root) => `if [ "$1" = "version" ]; then ${VERSION_BLOCK}; exit 0; fi
