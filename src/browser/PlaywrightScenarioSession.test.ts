@@ -1408,6 +1408,38 @@ it("rejects attached block when caller-owned registrations already exist", async
   expect(cleanup.close).toHaveBeenCalledTimes(1);
 });
 
+// Real Chrome cannot reliably reject the policy check in a live frame on cue.
+it("names a live frame's unreadable service-worker state and keeps its cause", async () => {
+  const { cleanup, page } = fixture();
+  const failure = new Error("frame.evaluate: Execution context was destroyed");
+  page.evaluate.mockRejectedValueOnce(failure);
+
+  await expect(
+    PlaywrightScenarioSession.open(connectedScenario("block"), {}, {}),
+  ).rejects.toMatchObject({
+    _tag: "BrowserObservationError",
+    reason: "service_worker_state_unknown",
+    diagnostics: { frame_state: "check_failed" },
+    cause: failure,
+  });
+  expect(cleanup.close).toHaveBeenCalledTimes(1);
+});
+
+it("lets a later frame's service-worker refusal outrank an unreadable frame", async () => {
+  const { page } = fixture();
+  page.frames = () => [page, page];
+  page.evaluate
+    .mockRejectedValueOnce(new Error("frame.evaluate: Target crashed"))
+    .mockResolvedValueOnce("service_worker_blocked");
+
+  await expect(
+    PlaywrightScenarioSession.open(connectedScenario("block"), {}, {}),
+  ).rejects.toMatchObject({
+    _tag: "BrowserObservationError",
+    reason: "service_worker_blocked",
+  });
+});
+
 it("preserves both cleanup failures and retries retained owners", async () => {
   const { cleanup, storage } = fixture();
   const detachFailure = new Error("CDP detach rejected");

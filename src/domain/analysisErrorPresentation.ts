@@ -70,6 +70,11 @@ export const analysisErrorRemediationAction = (
     error.reason === "service_worker_blocked"
   )
     return "Set environment.service_workers to allow to permit this capture, or remove the service worker registration through the browser. REA never removes existing registrations.";
+  if (
+    error instanceof BrowserObservationError &&
+    error.reason === "service_worker_state_unknown"
+  )
+    return "Set environment.service_workers to allow to permit this capture. REA does not treat a frame whose service-worker state it cannot read as unregistered.";
   if (error instanceof AnalysisCapabilityUnavailableError && error.retryable)
     return "Review details.reason, then retry the same analysis after the condition clears.";
   if (error instanceof EvidenceFileError && error.published !== undefined)
@@ -322,6 +327,7 @@ const browserErrorCategory = (
     reason === "target_not_found" ||
     reason === "target_not_allowed" ||
     reason === "service_worker_blocked" ||
+    reason === "service_worker_state_unknown" ||
     reason === "target_changed" ||
     reason === "target_session_detached" ||
     reason === "endpoint_unreachable" ||

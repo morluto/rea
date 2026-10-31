@@ -221,6 +221,7 @@ const BROWSER_ERROR_CODES: Readonly<
   target_not_found: "target_unavailable",
   target_not_allowed: "target_unavailable",
   service_worker_blocked: "target_unavailable",
+  service_worker_state_unknown: "target_unavailable",
   target_changed: "target_unavailable",
   target_session_detached: "target_unavailable",
   protocol_error: "unreadable_output",
