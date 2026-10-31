@@ -100,7 +100,6 @@ await withVerifierCleanup(async () => {
   await mkdir(projects);
   await exec(
     // The invoking developer selects the compiler; execFile does not use a shell.
-    // codeql[js/command-line-injection]
     process.env.REA_CC ?? "cc",
     [
       "-O0",

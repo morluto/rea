@@ -6,7 +6,6 @@ const mode = process.env.REA_TEST_FAILURE_MODE;
 if (!marker || !mode) throw new Error("Missing verifier fixture configuration");
 const keepAlive = setInterval(() => {}, 1000);
 // The test harness selects its own temporary exit marker.
-// codeql[js/path-injection]
 process.on("exit", () => writeFileSync(marker, "exited"));
 process.stdin.on("end", () => clearInterval(keepAlive));
 const input = createInterface({ input: process.stdin });
