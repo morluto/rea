@@ -7,11 +7,11 @@ import { ghidraProfileInstallationHost as host } from "./GhidraInstallation.fixt
 import { GhidraProvider } from "./GhidraProvider.js";
 
 // Digests commit to the current shared policy, including the instruction status
-// revision that prevents reuse of snapshots with the previous ambiguous result.
+// and inventory search revisions that prevent reuse of incompatible snapshots.
 const RAW_DIGESTS = {
-  "6502": "8e33776d1cc5c5d77d32923d5978c05ec2d989d00920dd458cc2dafb4c9c0cad",
+  "6502": "cdb139ac275b4ef15bb1ba83dfa3666e34939836a22b646552b8e624c5ef95e7",
   "x86-disabled-analyzer":
-    "d17bddc8ac110c891d30fb989fc7906df421bd9bea5df4aac05a950f50c7bdaf",
+    "8e60d13f1dfd8116610b551e14ebb55b22396053bf5b3349dd8fb38fe5e2e6b7",
 } as const;
 
 const configFor = (environment: NodeJS.ProcessEnv) => {
@@ -45,6 +45,7 @@ describe("raw-binary analysis profile digest", () => {
       language_selection: "caller-supplied-v1",
       load_image_evidence: "independent-raw-mapping-context-v4",
       instruction_status: "unlisted-address-without-decode-v1",
+      inventory_search_projection: "provider-inventory-facts-v1",
       analyzer_preset: "ghidra-default",
     });
   });
@@ -64,6 +65,7 @@ describe("raw-binary analysis profile digest", () => {
       RAW_DIGESTS["x86-disabled-analyzer"],
     );
     expect(resolved.value.profile?.parameters).toMatchObject({
+      inventory_search_projection: "provider-inventory-facts-v1",
       analysis_options: {
         disabled_analyzers: ["Aggressive Instruction Finder"],
       },
