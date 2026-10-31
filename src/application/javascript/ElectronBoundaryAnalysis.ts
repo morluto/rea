@@ -1,6 +1,7 @@
 import type { JavaScriptJsonDocuments } from "./JavaScriptJsonDocuments.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 import type { ElectronIpcFinding } from "../../domain/javascript/electronStaticAnalysisTypes.js";
+import { ELECTRON_MODULE } from "../../domain/javascript/javascriptElectronMemberWrites.js";
 import type { ElectronBoundarySummary } from "../../domain/javascript/javascriptApplicationAnalysis.js";
 import type { JavaScriptArtifactAnalysis } from "./JavaScriptArtifactAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
@@ -117,6 +118,25 @@ export const createElectronIpcContext = (
   return { records, owners, states, pairings };
 };
 
+/**
+ * Whether any analyzed source links an Electron module specifier. The same
+ * `ELECTRON_MODULE` entry points the static analysis admits are used here, so
+ * `electron`, `electron/main` and the other supported subpaths count while an
+ * unrelated `electron-helper` package does not. Type-only links are ignored: a
+ * source that imports Electron types does not promise any boundary fact.
+ */
+export const electronModuleReferenced = (
+  analysis: JavaScriptArtifactAnalysis,
+): boolean =>
+  analysis.files.some(({ semantic }) =>
+    (semantic?.ir.moduleLinks ?? []).some(
+      ({ specifier, kind }) =>
+        kind !== "type-import" &&
+        specifier !== null &&
+        ELECTRON_MODULE.test(specifier),
+    ),
+  );
+
 /** Summarize static Electron findings without treating gaps as absence. */
 export const summarizeElectronBoundaries = (
   analysis: JavaScriptArtifactAnalysis,
@@ -155,7 +175,30 @@ export const summarizeElectronBoundaries = (
       finding.channel === null ? [] : [finding.channel],
     ),
   );
+  const protocolCount = javascript.reduce(
+    (count, { electron }) => count + electron.protocols.length,
+    0,
+  );
+  // Every Electron boundary fact family the graph counts, so `empty` here means
+  // the same thing it means in the graph limitation list.
+  const electronFactCount =
+    windows.length +
+    bridges.length +
+    validations.length +
+    utilities.length +
+    nativeBindings.length +
+    ipc.length +
+    protocolCount;
+  const electronReferenced = electronModuleReferenced(analysis);
   return {
+    ...(electronReferenced
+      ? {
+          electron_semantics:
+            electronFactCount === 0
+              ? ("empty" as const)
+              : ("recovered" as const),
+        }
+      : {}),
     browser_windows: windows.length,
     explicit_web_preferences: windows.reduce(
       (count, window) => count + window.web_preferences.length,
@@ -220,10 +263,7 @@ export const summarizeElectronBoundaries = (
         moduleKind: finding.module_kind,
       }),
     ).length,
-    protocol_registrations: javascript.reduce(
-      (count, { electron }) => count + electron.protocols.length,
-      0,
-    ),
+    protocol_registrations: protocolCount,
   };
 };
 
