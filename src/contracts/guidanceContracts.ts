@@ -89,3 +89,17 @@ export type SearchGuidanceOutput = z.output<typeof searchGuidanceOutputSchema>;
 export type ReadGuidanceSectionOutput = z.output<
   typeof readGuidanceSectionOutputSchema
 >;
+
+/**
+ * MCP 2025 wire output roots are objects, so the adapters deliver each result
+ * union under `result`, as session tools do. A root union would be wrapped in
+ * the advertisement alone by the recorded catalog and rejected by validating
+ * clients.
+ */
+export const searchGuidanceToolOutputSchema = z.strictObject({
+  result: searchGuidanceOutputSchema,
+});
+
+export const readGuidanceSectionToolOutputSchema = z.strictObject({
+  result: readGuidanceSectionOutputSchema,
+});

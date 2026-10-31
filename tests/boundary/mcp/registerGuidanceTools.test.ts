@@ -2,9 +2,9 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterEach, expect, it } from "vitest";
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
 import {
-  readGuidanceSectionOutputSchema,
+  readGuidanceSectionToolOutputSchema,
   searchGuidanceInputSchema,
-  searchGuidanceOutputSchema,
+  searchGuidanceToolOutputSchema,
 } from "../../../src/contracts/guidanceContracts.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { registerGuidanceTools } from "../../../src/server/registerGuidanceTools.js";
@@ -15,16 +15,11 @@ const open: {
   server: EvidenceMcpServer;
   resources: ArtifactResourceScope;
 }[] = [];
+// Every successful guidance result is the advertised object with `result`.
 const guidanceOutput = <T>(
-  schema: { parse(value: unknown): T },
+  schema: { parse(value: unknown): { readonly result: T } },
   value: unknown,
-): T => {
-  // MCP's legacy output-schema projection wraps root-level union schemas.
-  // Newer transports pass the object unchanged.
-  if (typeof value === "object" && value !== null && "result" in value)
-    return schema.parse(value.result);
-  return schema.parse(value);
-};
+): T => schema.parse(value).result;
 afterEach(async () => {
   await Promise.all(
     open
@@ -79,7 +74,7 @@ it("advertises strict provider-free contracts and returns packaged guide results
   });
   expect(response.isError).not.toBe(true);
   const parsed = guidanceOutput(
-    searchGuidanceOutputSchema,
+    searchGuidanceToolOutputSchema,
     response.structuredContent,
   );
   expect(parsed).toMatchObject({
@@ -97,7 +92,10 @@ it("advertises strict provider-free contracts and returns packaged guide results
   });
   expect(section.isError).not.toBe(true);
   expect(
-    guidanceOutput(readGuidanceSectionOutputSchema, section.structuredContent),
+    guidanceOutput(
+      readGuidanceSectionToolOutputSchema,
+      section.structuredContent,
+    ),
   ).toMatchObject({
     status: "section",
     heading: selected?.heading,
@@ -108,7 +106,7 @@ it("advertises strict provider-free contracts and returns packaged guide results
     arguments: { query: "module", limit: 1 },
   });
   const firstResult = guidanceOutput(
-    searchGuidanceOutputSchema,
+    searchGuidanceToolOutputSchema,
     firstPage.structuredContent,
   );
   if (firstResult.status !== "matches" || firstResult.next_cursor === undefined)
@@ -122,6 +120,6 @@ it("advertises strict provider-free contracts and returns packaged guide results
     },
   });
   expect(
-    guidanceOutput(searchGuidanceOutputSchema, nextPage.structuredContent),
+    guidanceOutput(searchGuidanceToolOutputSchema, nextPage.structuredContent),
   ).toMatchObject({ status: "matches", offset: 1 });
 });

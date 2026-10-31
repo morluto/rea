@@ -29,6 +29,10 @@ are bound to the installed bundle and report stale or unavailable guidance witho
 returning cached section content. A no-match result says nothing about analysis
 capability availability.
 
+Over MCP, both tools deliver their structured result under `result`, matching
+the object root of their advertised output schemas, as the session tools do.
+The CLI prints the result itself.
+
 Search returns at most 20 matches per page with 500-code-unit context excerpts.
 Read retrieves the complete selected section. Admission permits 1 MiB per file,
 4 MiB per bundle, 4,096 sections, and 25,165,824 expanded UTF-16 code units before

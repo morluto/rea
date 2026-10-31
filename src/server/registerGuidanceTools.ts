@@ -21,7 +21,7 @@ export const registerGuidanceTools = (
       const result = await searchGuidance(input, resources);
       return server.delivery.toCallToolResult(
         result.ok
-          ? { ok: true, value: jsonValueSchema.parse(result.value) }
+          ? { ok: true, value: jsonValueSchema.parse({ result: result.value }) }
           : result,
         search,
       );
@@ -36,7 +36,7 @@ export const registerGuidanceTools = (
       const result = await readGuidanceSection(input, resources);
       return server.delivery.toCallToolResult(
         result.ok
-          ? { ok: true, value: jsonValueSchema.parse(result.value) }
+          ? { ok: true, value: jsonValueSchema.parse({ result: result.value }) }
           : result,
         read,
       );
