@@ -66,7 +66,7 @@ request ceiling.
 | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Program identity | One `analyzeHeadless` import produces exactly one Program; `list_documents` therefore returns exactly one name.                                                                                                                                                                                 |
 | Addresses        | Default memory uses lowercase `0x` hexadecimal. Non-default and external spaces use `<percent-encoded-space>:0x<hex>` and remain round-trippable. The handshake commits image base and default address-space name.                                                                              |
-| Symbols          | `list_names` includes address-bearing memory and external symbols, including dynamic symbols, while excluding variable and no-address namespace records. Each item reports primary, dynamic, external, symbol type, and source facts.                                                           |
+| Symbols          | `list_names` includes address-bearing memory and external symbols, including dynamic symbols, while excluding variable and no-address namespace records. Each item reports primary, dynamic, external, symbol type, and source facts. ELF loader entry labels add `loader_role_label`.          |
 | Procedures       | Both non-external and external functions are listed. A local thunk remains distinct from its resolved target; exact and qualified name lookup fails on ambiguity rather than guessing.                                                                                                          |
 | Strings          | Only Ghidra-defined string `Data` is observed. Items report charset, byte length, and whether a required null terminator is missing. The API cannot distinguish a present terminator from fixed/Pascal layouts when no terminator is missing, so that state is named `present_or_not_required`. |
 | Memory           | Memory-block end addresses are exclusive. Read/write/execute, initialization, overlay, address space, and image base are direct Ghidra observations.                                                                                                                                            |
@@ -79,6 +79,20 @@ or undefined literals, including Rust strings, may be absent; an empty result
 does not prove text is absent. Both list and search Evidence carry this
 limitation. When an address is known, use `read_bytes` and `xrefs` to inspect
 bytes and references.
+
+Ghidra's ELF loader names a header or dynamic entry that no symbol defines
+(`entry`, `_DT_INIT`, `_DT_FINI`, `_INIT_<n>`, `_PREINIT_<n>`, `_FINI_<n>`) and
+reports it as `imported`, like an artifact symbol. For an imported global
+function with one of these names, `loader_role_label` reports `artifact-symbol`
+when a defined `.symtab`/`.dynsym` symbol supplies that exact name. Otherwise it
+reports `unexamined` when those tables cannot be read completely (any ELF parser
+diagnostic, a symbol or string table extending past the file, or undecoded
+MiniDebugInfo) or when Ghidra's DWARF analysis imported debug information, which
+also names functions as `imported`; it reports `synthesized` only when neither
+applies. The check compares names, not addresses.
+Matching and comparison treat `synthesized` as generated and `unexamined` as
+unknown origin. Evidence recorded before this fact existed keeps its reported
+`imported` origin.
 
 ## PE debug-symbol coverage
 

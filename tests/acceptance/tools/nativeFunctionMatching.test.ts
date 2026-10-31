@@ -7,10 +7,15 @@ import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import {
   nativeMatchingNamedInventory as nativeMatchingInventory,
+  nativeMatchingBody,
   nativeMatchingDetails,
   nativeMatchingTarget,
   nativeMatchingProvider,
 } from "../../fixtures/nativeFunctionMatching.js";
+import { FUNCTION_COMPARISON_EXAMPLE } from "../../../src/contracts/functionComparisonExample.js";
+import { functionComparisonResultSchema } from "../../../src/domain/functionComparisonSchemas.js";
+import { functionDossierSchema } from "../../../src/domain/native/functionDossier.js";
+import type { NativeSymbolMetadata } from "../../../src/domain/native/nativeSymbol.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { procedureInfoSchema } from "../../../src/domain/native/procedureInfo.js";
 import {
@@ -332,6 +337,162 @@ cliTest.for([{ profile: "full" }, { profile: "compact" }] as const)(
       right: reference(right.evidence_id),
     });
     expect(missing.isError).toBe(true);
+  },
+);
+
+const roleLabelDossier = (
+  side: "1" | "2",
+  address: string,
+  label: NativeSymbolMetadata["loader_role_label"],
+) => {
+  const value = functionDossierSchema.parse(
+    FUNCTION_COMPARISON_EXAMPLE.left.normalized_result,
+  );
+  value.procedure = {
+    address,
+    name: "entry",
+    symbol: {
+      primary: true,
+      dynamic: false,
+      external: false,
+      type: "function",
+      source: "imported",
+      ...(label === undefined ? {} : { loader_role_label: label }),
+    },
+    classification: null,
+    body: nativeMatchingBody(address, 1),
+    signature: null,
+    locals: [],
+  };
+  value.basic_blocks = [];
+  return createEvidence(nativeMatchingTarget(side), nativeMatchingProvider, {
+    operation: "analyze_function",
+    parameters: { procedure: address },
+    result: value,
+    relationshipCoverage: { status: "complete" },
+  });
+};
+
+cliTest(
+  "native matching and comparison keep loader-synthesized role labels apart from exact symbols through CLI and MCP",
+  { timeout: 60000 },
+  async ({ cli }) => {
+    // Unrelated entry bodies, equal synthesized initializer bodies, an
+    // artifact-supplied role name, and a role name whose origin is unknown.
+    const left = nativeMatchingInventory("1", [
+      { address: "0x10", value: "entry", loader_role_label: "synthesized" },
+      { address: "0x20", value: "_DT_INIT", loader_role_label: "synthesized" },
+      {
+        address: "0x30",
+        value: "_INIT_0",
+        loader_role_label: "artifact-symbol",
+      },
+      { address: "0x40", value: "_FINI_0", loader_role_label: "unexamined" },
+    ]);
+    const right = nativeMatchingInventory("2", [
+      { address: "0x50", value: "entry", loader_role_label: "synthesized" },
+      { address: "0x60", value: "_DT_INIT", loader_role_label: "synthesized" },
+      {
+        address: "0x70",
+        value: "_INIT_0",
+        loader_role_label: "artifact-symbol",
+      },
+      { address: "0x80", value: "_FINI_0", loader_role_label: "unexamined" },
+    ]);
+    const leftObservations = [
+      ...nativeMatchingDetails("1", "0x10", "e8000000c3"),
+      ...nativeMatchingDetails("1", "0x20", "4883ec08c3"),
+    ];
+    const rightObservations = [
+      ...nativeMatchingDetails("2", "0x50", "b82a000000c3"),
+      ...nativeMatchingDetails("2", "0x60", "4883ec08c3"),
+    ];
+    const request = {
+      left,
+      right,
+      left_observations: leftObservations,
+      right_observations: rightObservations,
+      detail: "complete",
+    };
+    const { call } = await connectLocalToolsMcp();
+    const mcp = await call("match_native_functions", request);
+    expect(mcp.isError, JSON.stringify(mcp)).not.toBe(true);
+    const evidence = parseEvidence(mcp.structuredContent);
+    const report = nativeFunctionMatchingSchema.parse(
+      evidence.normalized_result,
+    );
+    const outcome = (name: string) =>
+      report.matches
+        .filter((match) =>
+          [...match.left, ...match.right].some(
+            (member) => member.name === name,
+          ),
+        )
+        .map(({ state, basis }) => ({ state, basis }));
+    expect(outcome("entry")).toEqual([
+      { state: "only_left", basis: null },
+      { state: "only_right", basis: null },
+    ]);
+    expect(outcome("_DT_INIT")).toEqual([
+      { state: "matched", basis: "identical-bytes" },
+    ]);
+    expect(outcome("_INIT_0")).toEqual([
+      { state: "matched", basis: "exact-symbol" },
+    ]);
+    expect(outcome("_FINI_0")).toEqual([
+      { state: "only_left", basis: null },
+      { state: "only_right", basis: null },
+    ]);
+    const members = report.matches.flatMap((match) => [
+      ...match.left,
+      ...match.right,
+    ]);
+    for (const member of members)
+      expect(
+        member.limitations.includes(
+          "Provider loader-synthesized role label; exact-name matching is unavailable. Independent complete body bytes remain eligible.",
+        ),
+        member.name,
+      ).toBe(member.name === "entry" || member.name === "_DT_INIT");
+    expect(
+      members
+        .filter((member) => member.name === "_FINI_0")
+        .every((member) =>
+          member.limitations.includes(
+            "Symbol origin unavailable; exact-name matching is unavailable. Independent complete body bytes remain eligible.",
+          ),
+        ),
+    ).toBe(true);
+
+    // The CLI shares the matching implementation and Evidence identity.
+    const root = await createTestTempDirectory("rea-matching-role-labels-");
+    const requestPath = join(root, "request.json");
+    await writeFile(requestPath, JSON.stringify(request));
+    const cliResult = await cli.run({
+      arguments: ["match-native-functions", requestPath, "--json"],
+    });
+    expect(cliResult.exitCode, cliResult.stderr).toBe(0);
+    expect(parseEvidence(cliResult.json).evidence_id).toBe(
+      evidence.evidence_id,
+    );
+
+    // compare_functions (MCP-only) consumes the same symbol-origin owner.
+    for (const label of ["synthesized", "artifact-symbol"] as const) {
+      const compared = await call("compare_functions", {
+        left: roleLabelDossier("1", "0x10", label),
+        right: roleLabelDossier("2", "0x50", label),
+      });
+      expect(compared.isError, JSON.stringify(compared)).not.toBe(true);
+      expect(
+        functionComparisonResultSchema.parse(
+          parseEvidence(compared.structuredContent).normalized_result,
+        ).function_match,
+      ).toMatchObject(
+        label === "synthesized"
+          ? { status: "ambiguous", method: "explicit" }
+          : { status: "matched", method: "symbol" },
+      );
+    }
   },
 );
 

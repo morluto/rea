@@ -25,8 +25,14 @@ Unknown or conflicting origin does not establish name correspondence; complete
 independent body bytes remain eligible. Exact names establish name correspondence,
 not unchanged code or original-source identity. Ghidra publishes its symbol facts;
 Hopper, IDA and older imported dossiers retain unknown origin when no such facts
-were observed. Display spelling alone, including `EntryPoint` or `FUN_` prefixes,
-does not establish whether a name was generated.
+were observed. Ghidra's ELF loader reports its own entry labels, such as `entry`
+at a header entry that no symbol defines, with source `imported`; the
+`loader_role_label` fact then marks a `synthesized` label as generated and an
+`unexamined` one as unknown, so neither establishes name correspondence. Equal
+complete body bytes still can. Ghidra's PE and Mach-O loaders also label their
+header entry `entry`; those labels do not report this fact yet. Display spelling
+alone, including `EntryPoint` or `FUN_` prefixes, does not establish whether a
+name was generated.
 
 Authentic Evidence selected for the wrong side, role, target, provider, profile
 or document returns an input error naming the selected field or observation

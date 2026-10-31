@@ -154,14 +154,8 @@ export const parseGhidraInventoryInput = (
   return ok(parsed.data);
 };
 
-const symbolFacts = z
-  .object({
-    primary: z.boolean(),
-    dynamic: z.boolean(),
-    external: z.boolean(),
-    type: z.string().min(1),
-    source: z.enum(["default", "analysis", "ai", "imported", "user_defined"]),
-  })
+const symbolFacts = nativeSymbolMetadataSchema
+  .extend({ type: z.string().min(1) })
   .strict();
 const procedureFacts = z
   .object({
