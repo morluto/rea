@@ -105,3 +105,45 @@ it("separates focused installed guidance from terms spread across a broad parent
     await resources.close();
   }
 });
+
+it("keeps WebAssembly interface comparison under the WASM guidance section", async () => {
+  const resources = new ArtifactResourceScope();
+  try {
+    const read = async (
+      query: string,
+      heading: string,
+    ): Promise<string | undefined> => {
+      const search = await searchGuidance({ query, limit: 20 }, resources);
+      if (!search.ok) throw search.error;
+      if (search.value.status !== "matches")
+        throw new Error("Expected guidance matches");
+      const match = search.value.matches.find(
+        ({ heading: candidate }) => candidate === heading,
+      );
+      if (match === undefined) return undefined;
+      const section = await readGuidanceSection(
+        { locator: match.locator },
+        resources,
+      );
+      if (!section.ok || section.value.status !== "section")
+        throw new Error("Expected a readable guidance section");
+      return section.value.content;
+    };
+
+    const wasm = await read("compare_wasm_interfaces", "Offline WASM");
+    expect(wasm).toBeDefined();
+    expect(wasm).toContain("compare_wasm_interfaces");
+    expect(
+      await read("compare_wasm_interfaces", "Offline PE and ELF export tables"),
+    ).toBeUndefined();
+    const native = await read(
+      "inspect_native_exports",
+      "Offline PE and ELF export tables",
+    );
+    if (native === undefined)
+      throw new Error("Expected the native export section");
+    expect(native).not.toContain("compare_wasm_interfaces");
+  } finally {
+    await resources.close();
+  }
+});
