@@ -102,24 +102,24 @@ const cases = [
     0,
   ],
   ['spawn("missing-stdio", [])', "missing-stdio", "default", 0],
-  // Async exec/execFile ignore stdio even when the supplied value is dynamic.
-  ['exec("exec-inherit", {stdio:"inherit"})', "exec-inherit", "default", null],
+  // Async exec/execFile always pipe for the callback; Node ignores options.stdio.
+  ['exec("exec-inherit", {stdio:"inherit"})', "exec-inherit", "pipe", null],
   [
     'execFile("execfile-ignore", {stdio:"ignore"})',
     "execfile-ignore",
-    "default",
+    "pipe",
     null,
   ],
   [
     'execFile("execfile-array", [], {stdio:["inherit","inherit","inherit"]})',
     "execfile-array",
-    "default",
+    "pipe",
     0,
   ],
   [
     'execFile("execfile-dynamic", ["one"], {stdio:input,env:{A:"1"}})',
     "execfile-dynamic",
-    "default",
+    "pipe",
     1,
   ],
   ['fork("fork-silent", [], {silent:true})', "fork-silent", "pipe", 0],
@@ -129,11 +129,11 @@ const cases = [
     "inherit",
     0,
   ],
-  ['exec("null-stdio", {stdio:null})', "null-stdio", "default", null],
+  ['exec("null-stdio", {stdio:null})', "null-stdio", "pipe", null],
   [
     'execFile("undefined-options", [], undefined)',
     "undefined-options",
-    "default",
+    "pipe",
     0,
   ],
   ['fork("void-options", [], void effect())', "void-options", "default", 0],
@@ -187,15 +187,10 @@ const cases = [
     null,
   ],
   ['spawn(...input, [], {stdio:"inherit"})', null, "dynamic", null],
-  ['exec("named-callback", done)', "named-callback", "default", null],
-  ['execFile("callback-alias", [], callback)', "callback-alias", "default", 0],
-  ['exec("imported-callback", imported)', "imported-callback", "default", null],
-  [
-    'exec("reassigned-callback", changed)',
-    "reassigned-callback",
-    "default",
-    null,
-  ],
+  ['exec("named-callback", done)', "named-callback", "pipe", null],
+  ['execFile("callback-alias", [], callback)', "callback-alias", "pipe", 0],
+  ['exec("imported-callback", imported)', "imported-callback", "pipe", null],
+  ['exec("reassigned-callback", changed)', "reassigned-callback", "pipe", null],
   ['spawn("named-nullish", [], {stdio:absent})', "named-nullish", "dynamic", 0],
   [
     'spawn("named-null-spread", [], {stdio:"inherit",...absent})',
@@ -305,15 +300,16 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     );
     for (const extension of ["cjs", "cts"]) {
       expected.set(`${extension}-argv`, ["inherit", null]);
-      expected.set(`${extension}-callback`, ["default", null]);
+      expected.set(`${extension}-callback`, ["pipe", null]);
     }
+    // spawn keeps declared stdio; exec/execFile always report effective pipe.
     expected.set("cjs-var-argv", ["inherit", null]);
-    expected.set("cjs-hoisted-callback", ["default", null]);
+    expected.set("cjs-hoisted-callback", ["pipe", null]);
     expected.set("import-equals-argv", ["inherit", null]);
-    expected.set("import-equals-callback", ["default", null]);
+    expected.set("import-equals-callback", ["pipe", null]);
     expected.set("export-assignment-argv", ["inherit", null]);
     for (const command of opaqueExecCallbackCommands)
-      expected.set(command, ["default", null]);
+      expected.set(command, ["pipe", null]);
     for (const [command, count] of [
       ["Function-global", 0],
       ["frames-global", 0],

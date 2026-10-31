@@ -429,8 +429,9 @@ const stdioMode = (
   method: JavaScriptSemanticChildProcessSpawn["method"],
   context: ChildSpawnContext,
 ): string => {
-  // Async exec/execFile do not forward options.stdio to their underlying spawn.
-  if (method === "exec" || method === "execFile") return "default";
+  // Async exec/execFile ignore options.stdio and always pipe stdout/stderr for
+  // the callback; report that effective mode rather than "default" (unset).
+  if (method === "exec" || method === "execFile") return "pipe";
   if (options === undefined) return "default";
   const expression = unwrapJavaScriptExpression(options).node;
   if (context.isNullish(expression)) return "default";
