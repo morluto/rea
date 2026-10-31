@@ -1,3 +1,5 @@
+import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { permitsCapabilityFallback } from "../CapabilityFallback.js";
 import { z } from "zod";
 
 import type { AnalysisOperationPort } from "../AnalysisProvider.js";
@@ -12,6 +14,7 @@ import {
 } from "../../domain/native/nativeInvestigationGraph.js";
 import { nativeDispatchMetadataResultSchema } from "../../domain/native/objcSwiftMetadata.js";
 import { inspectNativeDispatch } from "./NativeDispatchMetadataInspection.js";
+import { parseProcedureAddress } from "../ProcedureAddressResolution.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
 import { readNativeCallRoutes } from "./NativeCallRoutes.js";
 import {
@@ -48,7 +51,31 @@ export const traceNativeUiAction = async (
     ),
     inspectNativeDispatch(analysis, 20_000, { signal }),
   ]);
-  if (!uiExecution.ok && uiExecution.error._tag === "AnalysisCancelledError")
+  if (!uiExecution.ok && !metadataExecution.ok) {
+    const primary =
+      uiExecution.error._tag === "AnalysisCancelledError"
+        ? uiExecution.error
+        : metadataExecution.error;
+    const secondary =
+      primary === uiExecution.error
+        ? metadataExecution.error
+        : uiExecution.error;
+    if (secondary.cleanupIncomplete)
+      return err(
+        analysisErrorWithCleanupFailure(
+          primary,
+          secondary,
+          "trace_native_ui_action",
+        ).bindCleanupDependencies([primary, secondary]),
+      );
+    if (primary.cleanupIncomplete) primary.retainSecondaryFailure(secondary);
+    return err(primary);
+  }
+  if (
+    !uiExecution.ok &&
+    (uiExecution.error._tag === "AnalysisCancelledError" ||
+      uiExecution.error.cleanupIncomplete)
+  )
     return err(uiExecution.error);
   if (!metadataExecution.ok) return err(metadataExecution.error);
   const metadata = nativeDispatchMetadataResultSchema.parse(
@@ -134,34 +161,30 @@ export const traceNativeUiAction = async (
       { procedure: input.action },
       signal === undefined ? {} : { signal },
     );
-    if (!native.ok && native.error._tag === "AnalysisCancelledError")
-      return err(native.error);
-    if (
-      !native.ok &&
-      native.error._tag !== "AnalysisCapabilityUnavailableError"
-    )
+    if (!native.ok && !permitsCapabilityFallback(native.error))
       return err(native.error);
     if (native.ok) {
-      const address = z.string().safeParse(native.value.result);
-      if (!address.success || native.value.subject?.sha256 !== targetSha256)
+      const address = parseProcedureAddress(native.value.result);
+      if (!address.ok) return address;
+      if (native.value.subject?.sha256 !== targetSha256)
         return err(
           new AnalysisOutputError(
             NATIVE_UI_ACTION_OPERATIONS.nativeSeed,
-            "Native seed lacks a validated address or matching target identity",
+            "Native seed lacks matching target identity",
           ),
         );
-      const id = `native:function:${address.data}`;
+      const id = `native:function:${address.value}`;
       graph.nodes.push({
         id,
         kind: "function",
         name: input.action,
-        location: { address: address.data, file_offset: null },
+        location: { address: address.value, file_offset: null },
         attributes: { resolved_by: native.value.provider.id },
         evidence: [
           {
             kind: "reference",
             description: `Provider resolved the explicit native seed ${input.action}`,
-            location: { address: address.data, file_offset: null },
+            location: { address: address.value, file_offset: null },
             artifact_path: null,
             artifact_sha256: targetSha256,
           },
@@ -438,7 +461,8 @@ const expandNativeCalls = async (input: {
     sourceLimitations.push(...execution.limitations);
     if (
       !execution.outcome.ok &&
-      execution.outcome.error._tag === "AnalysisCancelledError"
+      (execution.outcome.error._tag === "AnalysisCancelledError" ||
+        execution.outcome.error.cleanupIncomplete)
     )
       return { error: execution.outcome.error };
     const unknowns = execution.unknowns;

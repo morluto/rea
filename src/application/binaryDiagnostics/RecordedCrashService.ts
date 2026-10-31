@@ -1,19 +1,16 @@
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { RecordedCrashPort } from "./RecordedCrashPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import {
-  AnalysisCancelledError,
-  AnalysisOutputError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import {
   inspectRecordedCrashInputSchema,
   RECORDED_LINUX_CORE_PROFILES,
   recordedCrashSchema,
 } from "../../domain/native/recordedCrash.js";
-import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
-import { err, ok, type Result } from "../../domain/result.js";
+import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
+import { parseAnalysisInput } from "../AnalysisInput.js";
 
 const OPERATION = "inspect_recorded_crash";
 
@@ -52,20 +49,14 @@ export class RecordedCrashService {
       input: Parameters<RecordedCrashPort["inspect"]>[0],
     ) => ReturnType<RecordedCrashPort["inspect"]>,
   ): Promise<Result<Evidence, AnalysisError>> {
-    if (options?.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(OPERATION, {
-          cause: options.signal.reason,
-        }),
-      );
-    const input = inspectRecordedCrashInputSchema.safeParse(rawInput);
-    if (!input.success)
-      return err(
-        analysisInputErrorFromIssues(OPERATION, input.error.issues, rawInput, {
-          cause: input.error,
-        }),
-      );
-    const inspected = await inspect(input.data);
+    const input = parseAnalysisInput(
+      OPERATION,
+      rawInput,
+      inspectRecordedCrashInputSchema,
+      options?.signal,
+    );
+    if (!input.ok) return input;
+    const inspected = await inspect(input.value);
     if (!inspected.ok) return inspected;
     const diagnostics = recordedCrashSchema.shape.diagnostics.safeParse(
       inspected.value.diagnostics,
@@ -76,9 +67,9 @@ export class RecordedCrashService {
     const report = recordedCrashSchema.safeParse(inspected.value);
     if (
       !report.success ||
-      report.data.artifact.path !== input.data.path ||
+      report.data.artifact.path !== input.value.path ||
       (report.data.debugger.status === "available") !==
-        input.data.include_debugger_context
+        input.value.include_debugger_context
     )
       return err(
         new AnalysisOutputError(
@@ -102,11 +93,11 @@ export class RecordedCrashService {
         {
           operation: OPERATION,
           parameters: {
-            path: input.data.path,
-            include_debugger_context: input.data.include_debugger_context,
-            ...(input.data.pwntools_timeout_ms === undefined
+            path: input.value.path,
+            include_debugger_context: input.value.include_debugger_context,
+            ...(input.value.pwntools_timeout_ms === undefined
               ? {}
-              : { pwntools_timeout_ms: input.data.pwntools_timeout_ms }),
+              : { pwntools_timeout_ms: input.value.pwntools_timeout_ms }),
           },
           result: value,
           // The decoded report is the only representation; do not repeat it.

@@ -72,7 +72,16 @@ it("retains upstream body failure and joins the active updater and installer chi
   const verifierUrl = pathToFileURL(
     resolve("scripts/verify-package-update.mjs"),
   ).href;
+  const commandsUrl = pathToFileURL(
+    resolve("scripts/lib/verify-package-commands.mjs"),
+  ).href;
+  const cleanupUrl = pathToFileURL(
+    resolve("scripts/lib/verifier-cleanup.mjs"),
+  ).href;
   const harness = `
+import { readFile, rm } from "node:fs/promises";
+import { createPackageVerifierCommands } from ${JSON.stringify(commandsUrl)};
+import { withVerifierCleanup } from ${JSON.stringify(cleanupUrl)};
 globalThis.fetch = async () => ({
   status: 200,
   headers: new Headers({ "content-type": "application/json" }),
@@ -81,7 +90,12 @@ globalThis.fetch = async () => ({
   },
 });
 const { verifyPackageUpdate } = await import(${JSON.stringify(verifierUrl)});
+const scratch = { path: ${JSON.stringify(workspace)}, close: () => rm(${JSON.stringify(workspace)}, { recursive: true, force: true }) };
+let commands;
 let failure;
+let pids;
+await withVerifierCleanup(async () => {
+commands = await createPackageVerifierCommands({ workspace: scratch });
 try {
   await verifyPackageUpdate({
     prefix: ${JSON.stringify(prefix)},
@@ -89,12 +103,13 @@ try {
     tarball: ${JSON.stringify(tarball)},
     workspace: ${JSON.stringify(workspace)},
     environment: { PATH: process.env.PATH },
+    commands,
   });
 } catch (cause) {
   failure = cause instanceof Error ? cause.message : String(cause);
 }
-const { readFile } = await import("node:fs/promises");
-const pids = JSON.parse(await readFile(${JSON.stringify(descendants)}, "utf8"));
+pids = JSON.parse(await readFile(${JSON.stringify(descendants)}, "utf8"));
+}, [() => commands === undefined ? scratch.close() : commands.close()]);
 let livePids;
 if (process.platform === "win32") {
   livePids = pids.filter((pid) => {

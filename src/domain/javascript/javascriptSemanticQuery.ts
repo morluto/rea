@@ -2,11 +2,10 @@ import type { JavaScriptSemanticGraph } from "./javascriptSemanticGraph.js";
 import type {
   JavaScriptSemanticGraphNode,
   JavaScriptSemanticGraphRelation,
+  JavaScriptSemanticGraphUnknown,
 } from "./javascriptSemanticGraphSchemas.js";
-import type { JavaScriptSemanticGraphUnknown } from "./javascriptSemanticGraphSchemas.js";
 import { isJavaScriptSemanticOwnershipRelation as ownershipRelation } from "./javascriptSemanticQueryRelations.js";
 import {
-  javaScriptSemanticQueryInputSchema,
   javaScriptSemanticQueryResultSchema,
   type JavaScriptSemanticQueryInput,
   type JavaScriptSemanticQueryResult,
@@ -34,18 +33,8 @@ interface QueryResult {
   readonly retainedRelations: JavaScriptSemanticGraphRelation[];
 }
 
-/** Run one deterministic traversal over a verified semantic graph. */
-export const queryJavaScriptSemanticGraph = (
-  graph: JavaScriptSemanticGraph,
-  rawInput: unknown,
-): JavaScriptSemanticQueryResult =>
-  queryJavaScriptSemanticGraphValidated(
-    graph,
-    javaScriptSemanticQueryInputSchema.parse(rawInput),
-  );
-
 /** Run a query already parsed by its owning request boundary. */
-export const queryJavaScriptSemanticGraphValidated = (
+export const queryJavaScriptSemanticGraph = (
   graph: JavaScriptSemanticGraph,
   input: JavaScriptSemanticQueryInput,
 ): JavaScriptSemanticQueryResult => {

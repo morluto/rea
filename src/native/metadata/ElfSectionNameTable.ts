@@ -1,7 +1,8 @@
-import { inflateSync } from "node:zlib";
+import { constants, inflateSync, zstdDecompressSync } from "node:zlib";
 
 const SHF_COMPRESSED = 0x800n;
 const ELFCOMPRESS_ZLIB = 1;
+const ELFCOMPRESS_ZSTD = 2;
 
 export type ElfSectionNameTableResult =
   | {
@@ -37,7 +38,10 @@ export const decodeElfSectionNameTable = (
   const compressionType = little
     ? bytes.readUInt32LE(0)
     : bytes.readUInt32BE(0);
-  if (compressionType !== ELFCOMPRESS_ZLIB)
+  if (
+    compressionType !== ELFCOMPRESS_ZLIB &&
+    compressionType !== ELFCOMPRESS_ZSTD
+  )
     return { state: "unsupported", compressionType };
 
   const declaredSize =
@@ -55,13 +59,20 @@ export const decodeElfSectionNameTable = (
   const expected = Number(declaredSize);
   let decoded: Buffer;
   try {
-    decoded = inflateSync(bytes.subarray(headerBytes), {
-      maxOutputLength: Math.max(1, expected),
-    });
+    const payload = bytes.subarray(headerBytes);
+    const maxOutputLength = Math.max(1, expected);
+    decoded =
+      compressionType === ELFCOMPRESS_ZSTD
+        ? zstdDecompressSync(payload, {
+            maxOutputLength,
+            // Retain Zstandard's default maximum decoder window of 128 MiB.
+            params: { [constants.ZSTD_d_windowLogMax]: 27 },
+          })
+        : inflateSync(payload, { maxOutputLength });
   } catch (cause: unknown) {
     return {
       state: "malformed",
-      message: `ELF compressed section-name table could not be decompressed: ${cause instanceof Error ? cause.message : "invalid zlib data"}`,
+      message: `ELF compressed section-name table could not be decompressed: ${cause instanceof Error ? cause.message : "invalid compressed data"}`,
     };
   }
   if (decoded.length !== expected)

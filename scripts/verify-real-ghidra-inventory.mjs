@@ -1,3 +1,4 @@
+import { filterGhidraLiteralCandidates } from "../dist/ghidra/GhidraLiteralSearch.js";
 import { parseGhidraInventoryResult } from "../dist/ghidra/GhidraInventoryValues.js";
 
 import { findValue, matchesSymbol } from "./verify-real-ghidra-assertions.mjs";
@@ -16,7 +17,12 @@ export async function call(client, operation, parameters) {
     );
   const parsed = parseGhidraInventoryResult(operation, called.value);
   if (!parsed.ok) throw parsed.error;
-  return parsed.value.value;
+  return (operation === "search_procedures" ||
+    operation === "search_strings") &&
+    parameters.mode === "literal" &&
+    parameters.case_sensitive === false
+    ? filterGhidraLiteralCandidates(parsed.value.value, parameters.pattern)
+    : parsed.value.value;
 }
 
 export async function allItems(client, operation, parameters) {

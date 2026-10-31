@@ -137,7 +137,7 @@ export const compareBrowserScenarios = (
     limitations: [
       "Steps align only by exact, unique step_id; missing, duplicate, or action-mismatched steps are reported and prevent an unchanged claim.",
       "Only declared literal normalization rules are applied, in canonical rule_id order, to already-redacted durable capture fields.",
-      "Elapsed time, event sequence/index values and capture-local transaction IDs are excluded as volatile; network transactions are compared as an unordered collection in the step that sent their request; cookies, local storage and session storage entries are compared as unordered collections after literal normalization; screenshot bytes are compared by content digest.",
+      "Elapsed time, event sequence/index values, request observation times and durations, and capture-local transaction IDs are excluded as volatile; network transactions are compared as an unordered collection in the step that sent their request; cookies, local storage and session storage entries are compared as unordered collections after literal normalization; screenshot bytes are compared by content digest.",
       "A changed status proves an observed normalized difference. Missing or truncated evidence, incompatible capture context, or alignment failure prevents an unchanged claim.",
     ],
   });
@@ -388,7 +388,7 @@ const compareScenarioEvents = (
   input: CompareCapturedValuesInput<{
     readonly events: readonly unknown[];
     readonly network_transactions: readonly string[];
-  }>,
+  }> & { readonly familyIncomparableReason: string | undefined },
 ): ComparableArtifact => {
   const beforeState =
     input.beforeState ??
@@ -461,10 +461,7 @@ const compareScenarioEvents = (
         before_sha256: beforeSha256,
         after_sha256: afterSha256,
         reason:
-          joinIncomparableReasons(
-            input.familyIncomparableReason,
-            input.incomparableReason,
-          ) ??
+          input.incomparableReason ??
           `Artifact coverage is not comparable (${beforeState} before, ${afterState} after).`,
       },
     };
@@ -508,13 +505,12 @@ const eventCoverageReason = (
   beforeNetworkReason: string | undefined,
   afterNetworkReason: string | undefined,
 ): string | undefined => {
-  const reasons = [
+  return joinIncomparableReasons(
     familyReason,
     networkContentReason,
     beforeNetworkReason,
     afterNetworkReason,
-  ].filter((reason) => reason !== undefined);
-  return reasons.length === 0 ? undefined : reasons.join(" ");
+  );
 };
 
 interface CompareCapturedValuesInput<Value> {
@@ -529,7 +525,6 @@ interface CompareCapturedValuesInput<Value> {
   readonly beforeState?: BrowserScenarioEvidenceState;
   readonly afterState?: BrowserScenarioEvidenceState;
   readonly incomparableReason?: string | undefined;
-  readonly familyIncomparableReason?: string | undefined;
 }
 
 const compareCapturedValues = <Value>(
@@ -587,10 +582,7 @@ const compareCapturedValues = <Value>(
         before_sha256: beforeSha256,
         after_sha256: afterSha256,
         reason:
-          joinIncomparableReasons(
-            input.familyIncomparableReason,
-            input.incomparableReason,
-          ) ??
+          input.incomparableReason ??
           `Artifact coverage is not comparable (${beforeState} before, ${afterState} after).`,
       },
     };

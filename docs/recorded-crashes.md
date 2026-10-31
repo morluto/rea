@@ -1,7 +1,8 @@
 # Recorded crash evidence
 
 `inspect_recorded_crash` / `rea inspect-recorded-crash` inspect a caller-selected
-Linux ELF64 little-endian core independently of an active binary target. Two
+Linux ELF64 little-endian core independently of an active binary target. Apple
+`.ips` crash reports use the separate [Apple IPS](apple-ips.md) workflow. Two
 architecture profiles are interpreted, x86-64 and AArch64; each binds registers
 to its own `NT_PRSTATUS` layout, and any other `e_machine` is refused as
 `unsupported_target` before note interpretation.

@@ -12,7 +12,11 @@ import { AnalysisTimeoutError } from "../domain/analysisErrorCore.js";
 import { browserObservationEndpointSchema } from "../domain/browserObservation.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { CdpTargetSessionOwner } from "./CdpTargetSessionOwner.js";
-import { withCdpDiscoveryDeadline } from "./CdpEndpoint.js";
+import {
+  withCdpDiscoveryDeadline,
+  type CdpEndpointTarget,
+} from "./CdpEndpoint.js";
+import { selectCdpDiscoveryTarget } from "./CdpDiscoveryTargets.js";
 import {
   attachCdpTargetSession,
   failCdpOpenAfterCleanup,
@@ -81,7 +85,7 @@ export class PlaywrightScenarioServiceWorkers {
   #setup = new AbortController();
 
   constructor(
-    private readonly page: Page,
+    private readonly page: Pick<Page, "frames" | "isClosed" | "mainFrame">,
     private readonly endpoint: string,
     private readonly targetId: string,
     private readonly commandTimeoutMs: number = selectedCdpCommandTimeoutMs(
@@ -115,22 +119,26 @@ export class PlaywrightScenarioServiceWorkers {
           this.commandTimeoutMs,
         ),
     );
-    const target = opened.discovery.targets.find(
-      ({ id }) => id === this.targetId,
-    );
-    if (target === undefined) {
-      const failure = new BrowserObservationError(
+    let target: CdpEndpointTarget;
+    try {
+      const selected = selectCdpDiscoveryTarget(
+        opened.discovery.targets,
+        this.targetId,
         OPERATION,
-        "target_not_found",
+        opened.discovery.ambiguousTargetIds,
       );
+      if (selected === undefined)
+        throw new BrowserObservationError(OPERATION, "target_not_found");
+      target = selected;
+    } catch (cause: unknown) {
       if (opened.connection !== undefined)
         return await failCdpOpenAfterCleanup(
           opened.connection,
-          failure,
+          cause,
           OPERATION,
           this.#transportOwner,
         );
-      throw failure;
+      throw cause;
     }
     const transport =
       opened.connection ??

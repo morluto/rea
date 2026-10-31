@@ -1,12 +1,23 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
+import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import * as ownership from "../../../../src/process/ProcessOwnership.js";
 
-import type {
-  HopperStartupDiagnostic,
-  HopperStartupFailureCode,
+import {
+  DEFAULT_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
+  HOPPER_DEMO_DIALOG_TIMEOUT_SETTING,
+  MAXIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
+  MINIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
+  type HopperStartupDiagnostic,
+  type HopperStartupFailureCode,
 } from "../../../../src/domain/hopperStartupFailure.js";
+import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
+import { HopperProcessError } from "../../../../src/domain/hopperErrors.js";
+import { analysisErrorProjectionSchema } from "../../../../src/contracts/errorSchemas.js";
 import {
   runLinuxPrivateDisplayProbe,
   selectLinuxPrivateDisplayStrategy,
@@ -27,6 +38,13 @@ const hangingHelperPath = fileURLToPath(
 );
 const dialogDetectionFixturePath = fileURLToPath(
   new URL("../../../fixtures/hopperDialogDetection.py", import.meta.url),
+);
+const dialogOutcomeFixturePath = fileURLToPath(
+  new URL("../../../fixtures/hopperDemoDialogOutcome.py", import.meta.url),
+);
+const pythonCommand = ["python3", "python"].find(
+  (candidate) =>
+    spawnSync(candidate, ["--version"], { stdio: "ignore" }).status === 0,
 );
 const cleanupTimeoutFixturePath = fileURLToPath(
   new URL("../../../fixtures/hopperCleanupTimeout.py", import.meta.url),
@@ -91,7 +109,9 @@ const failureExit = (code: HopperStartupFailureCode): number =>
     ? 80
     : code === "runtime_dependency_unavailable"
       ? 79
-      : 70;
+      : code === "demo_dialog_absent"
+        ? 81
+        : 70;
 
 describe("Hopper demo dialog detection", () => {
   it.skipIf(process.platform !== "linux")(
@@ -108,6 +128,91 @@ describe("Hopper demo dialog detection", () => {
         click: [136, 362],
         wrong_parent_rejected: true,
       });
+    },
+  );
+});
+
+describe("Hopper demo dialog timeout outcomes", () => {
+  it.skipIf(pythonCommand === undefined)(
+    "distinguishes an unowned launcher from an admitted launcher without a dialog",
+    () => {
+      const result = spawnSync(
+        pythonCommand ?? "python3",
+        [dialogOutcomeFixturePath],
+        { encoding: "utf8" },
+      );
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual({
+        not_owned: { code: 74, reason: "process_ownership_mismatch" },
+        admitted_without_window: {
+          code: 81,
+          reason: "demo_dialog_absent",
+        },
+        admitted_with_window: {
+          code: 76,
+          reason: "unsupported_demo_dialog",
+        },
+        default_timeout: { ms: 10_000 },
+        configured_timeout: { ms: 25_000 },
+        requested_timeout: { ms: 500 },
+        invalid_timeout: {
+          code: 82,
+          reason: "invalid_dialog_timeout",
+          dialog_timeout: {
+            setting: HOPPER_DEMO_DIALOG_TIMEOUT_SETTING,
+            value: "-5",
+            source: "setting",
+            minimum_ms: MINIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
+            maximum_ms: MAXIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
+            default_ms: DEFAULT_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
+          },
+        },
+        watcher_no_window: {
+          code: 81,
+          reason: "demo_dialog_absent",
+          elapsed_ms: 1_000,
+        },
+        watcher_hopper_window_without_dialog: {
+          code: 76,
+          reason: "unsupported_demo_dialog",
+          elapsed_ms: 1_000,
+        },
+        watcher_dialog_after_legacy_limit: {
+          dialog: 10,
+          elapsed_ms: DEFAULT_HOPPER_DEMO_DIALOG_TIMEOUT_MS + 100,
+          legacy_limit_ms: DEFAULT_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
+        },
+      });
+      const timeout = JSON.parse(result.stdout).invalid_timeout.dialog_timeout;
+      const parsed = parseLinuxPrivateDisplayDiagnostic(
+        `${LINUX_PRIVATE_DISPLAY_DIAGNOSTIC_PREFIX}${JSON.stringify({
+          ...diagnostic({
+            status: "error",
+            operation: "launch",
+            reason: "invalid_dialog_timeout",
+            failure_code: "invalid_dialog_timeout",
+          }),
+          dialog_timeout: timeout,
+        })}\n`,
+      );
+      expect(parsed.ok).toBe(true);
+      if (!parsed.ok || parsed.value.status !== "error")
+        throw new Error("Expected an error diagnostic for the invalid timeout");
+      const projected = projectAnalysisError(
+        new HopperProcessError(82, { diagnostic: parsed.value }),
+      );
+      expect(projected).toMatchObject({
+        code: "provider_unavailable",
+        details: {
+          failure_code: "invalid_dialog_timeout",
+          exit_code: 82,
+          diagnostics: { dialog_timeout: timeout },
+        },
+      });
+      expect(projected.details).not.toHaveProperty("launch_rejection");
+      expect(analysisErrorProjectionSchema.safeParse(projected).success).toBe(
+        true,
+      );
     },
   );
 });
@@ -357,3 +462,111 @@ it("passes the private X authority cookie through xauth stdin", () => {
     mode: 0o600,
   });
 });
+
+const inertProbe = async (keepLeader = false) => {
+  const root = await mkdtemp(join(tmpdir(), "rea-private-display-lifecycle-"));
+  const marker = join(root, "descendant-survived");
+  const ready = join(root, "ready");
+  const helper = join(root, "probe.py");
+  const child = `setTimeout(() => require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'survived'), 800)`;
+  await writeFile(
+    helper,
+    [
+      "import subprocess, sys, time",
+      `subprocess.Popen([${JSON.stringify(process.execPath)}, '-e', ${JSON.stringify(child)}], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)`,
+      `open(${JSON.stringify(ready)}, 'w').write('ready')`,
+      "sys.stderr.write('authored probe diagnostic')",
+      "sys.stderr.flush()",
+      ...(keepLeader ? ["time.sleep(2)"] : []),
+    ].join("\n"),
+  );
+  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  return { helper, marker, ready };
+};
+
+it.skipIf(process.platform === "win32")(
+  "stops silent owned descendants before releasing a normally exited probe",
+  async () => {
+    const { helper, marker } = await inertProbe();
+    const result = await runLinuxPrivateDisplayProbe("direct", {
+      helperPath: helper,
+      timeoutMs: 5000,
+    });
+    expect(result).toMatchObject({
+      outcome: "exited",
+      exitCode: 0,
+      stderr: "authored probe diagnostic",
+      cleanup: { status: "released" },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    await expect(access(marker)).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
+
+it.skipIf(process.platform === "win32").each(["exited", "cancelled"] as const)(
+  "retains refused probe cleanup and retries its exact owner after %s",
+  async (outcome) => {
+    const { helper, ready } = await inertProbe(outcome === "cancelled");
+    const controller = new AbortController();
+    const scheduled = vi.spyOn(globalThis, "setTimeout");
+    const cleared = vi.spyOn(globalThis, "clearTimeout");
+    onTestFinished(() => {
+      scheduled.mockRestore();
+      cleared.mockRestore();
+    });
+    const original = ownership.cleanupOwnedProcessGroup;
+    const cleanup = vi
+      .spyOn(ownership, "cleanupOwnedProcessGroup")
+      .mockImplementation(async () => {
+        // Finalization cancellation must not replace a completed probe outcome.
+        if (outcome === "exited") controller.abort("cancelled during cleanup");
+        return {
+          cleaned: false,
+          reason: "controlled display probe cleanup refusal",
+        };
+      });
+    let pending:
+      | Extract<
+          LinuxPrivateDisplayProbeProcessResult["cleanup"],
+          { status: "pending" }
+        >
+      | undefined;
+    onTestFinished(async () => {
+      cleanup.mockRestore();
+      await pending?.lease.release();
+    });
+    const operation = runLinuxPrivateDisplayProbe("direct", {
+      helperPath: helper,
+      timeoutMs: 5000,
+      signal: controller.signal,
+    });
+    if (outcome === "cancelled") {
+      await vi.waitFor(async () => expect(await access(ready)).toBeUndefined());
+      controller.abort("caller stopped");
+    }
+    const result = await operation;
+    expect(result.outcome).toBe(outcome);
+    // The probe has settled despite refused cleanup; no abandoned output wait
+    // should keep its original deadline alive until a later cleanup retry.
+    const deadlines = scheduled.mock.calls.flatMap((arguments_, index) =>
+      arguments_[1] === 5000 ? [scheduled.mock.results[index]!.value] : [],
+    );
+    expect(deadlines.length).toBeGreaterThan(0);
+    for (const timer of deadlines) expect(cleared).toHaveBeenCalledWith(timer);
+    expect(result.stderr).toBe("authored probe diagnostic");
+    expect(result.cleanup.status).toBe("pending");
+    if (result.cleanup.status !== "pending")
+      throw new Error("Expected retained probe owner");
+    pending = result.cleanup;
+    const retainedRunId = cleanup.mock.calls[0]?.[0].runId;
+    await expect(pending.lease.release()).rejects.toThrow(
+      "controlled display probe cleanup refusal",
+    );
+    expect(
+      cleanup.mock.calls.every(([owner]) => owner.runId === retainedRunId),
+    ).toBe(true);
+    cleanup.mockImplementation(original);
+    await pending.lease.release();
+    expect(pending.lease.released).toBe(true);
+  },
+);

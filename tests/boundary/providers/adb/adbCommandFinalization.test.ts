@@ -3,7 +3,10 @@ import { dirname, join } from "node:path";
 import { beforeEach, expect, onTestFinished, test, vi } from "vitest";
 
 import { runAdbCapture } from "../../../../src/adb/AdbCommand.js";
-import { inspectAdbClient } from "../../../../src/adb/AdbConfiguration.js";
+import {
+  inspectAdbClient,
+  resolveAdbBinary,
+} from "../../../../src/adb/AdbConfiguration.js";
 import { AdbDeviceAnalysisService } from "../../../../src/application/adb/AdbDeviceAnalysisService.js";
 import {
   execFileOutput,
@@ -57,7 +60,7 @@ beforeEach(() => {
   hooks.failure = undefined;
 });
 
-const capture = (
+const capture = async (
   script: string,
   signal?: AbortSignal,
   limits = { timeoutMs: 1000, maxOutputBytes: 1024 },
@@ -65,7 +68,7 @@ const capture = (
   runAdbCapture(
     "inspect_adb_device",
     { device: "device" },
-    process.execPath,
+    await resolveAdbBinary({ ...process.env, REA_ADB_PATH: process.execPath }),
     ["-e", script],
     limits,
     signal,
@@ -152,7 +155,7 @@ const clientScript = async (source: string) => {
   await writeFile(binary, `#!${process.execPath}\n${source}\n`, {
     mode: 0o755,
   });
-  return { binary, pathSource: "environment" as const };
+  return resolveAdbBinary({ ...process.env, REA_ADB_PATH: binary });
 };
 const nativeClientTest = test.skipIf(process.platform === "win32");
 
@@ -162,7 +165,7 @@ test.each([null, "caller stopped", new Error("caller stopped")] as const)(
     const controller = new AbortController();
     controller.abort(reason);
     const error: unknown = await inspectAdbClient(
-      { binary: "/must-not-start", pathSource: "environment" },
+      await resolveAdbBinary({ REA_ADB_PATH: process.execPath }),
       controller.signal,
     ).catch((cause: unknown) => cause);
     expect(error).toMatchObject({
@@ -207,7 +210,7 @@ nativeClientTest(
     const controller = new AbortController();
     hooks.afterCommand = () => controller.abort(null);
     const error: unknown = await inspectAdbClient(
-      { binary: join(root, "missing"), pathSource: "environment" },
+      await resolveAdbBinary({ REA_ADB_PATH: join(root, "missing") }),
       controller.signal,
     ).catch((cause: unknown) => cause);
     expect(error).toMatchObject({

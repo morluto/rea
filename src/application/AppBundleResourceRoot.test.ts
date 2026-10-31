@@ -2,6 +2,7 @@ import {
   chmod,
   mkdir,
   mkdtemp,
+  realpath,
   rm,
   symlink,
   writeFile,
@@ -56,6 +57,32 @@ it("resolves resource roots without requiring or hashing CFBundleExecutable", as
     await rm(temp, { recursive: true, force: true });
   }
 });
+
+it.skipIf(process.platform === "win32")(
+  "preserves valid symlink-parent traversal when selecting resource roots",
+  async () => {
+    const temp = await mkdtemp(join(tmpdir(), "rea-resource-parent-"));
+    try {
+      await mkdir(join(temp, "physical", "child"), { recursive: true });
+      await mkdir(join(temp, "physical", "Fixture.app"));
+      await writeFile(
+        join(temp, "physical", "Fixture.app", "Info.plist"),
+        "<plist><dict/></plist>",
+      );
+      await symlink(join(temp, "physical", "child"), join(temp, "alias"));
+      const selected = `${temp}/alias/../Fixture.app`;
+      const resolved = await resolveAppBundleResourceRoot(selected);
+      expect(resolved.ok).toBe(true);
+      if (!resolved.ok) throw resolved.error;
+      expect(resolved.value.callerPath).toBe(selected);
+      expect(resolved.value.canonicalPath).toBe(
+        await realpath(join(temp, "physical", "Fixture.app")),
+      );
+    } finally {
+      await rm(temp, { recursive: true, force: true });
+    }
+  },
+);
 
 it("resolves a flat bundle resource root without inferring executable identity", async () => {
   const temp = await mkdtemp(join(tmpdir(), "rea-ios-resource-root-"));

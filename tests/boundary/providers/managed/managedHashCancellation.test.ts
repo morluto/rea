@@ -40,12 +40,14 @@ it.each([
     const controller = new AbortController();
     const reason =
       reasonKind === "cleanup"
-        ? new RegularFileCleanupFailure(
-            join(directory, "other-input.dll"),
-            new OwnedFileHandle(admitted),
-            { kind: "completed", value: null },
-            new Error("opaque caller reason, not this operation's cleanup"),
-          )
+        ? new RegularFileCleanupFailure({
+            path: join(directory, "other-input.dll"),
+            owner: new OwnedFileHandle(admitted),
+            outcome: { kind: "completed", value: null },
+            cleanupCause: new Error(
+              "opaque caller reason, not this operation's cleanup",
+            ),
+          })
         : Object.assign(
             new Error("cancel after actual managed source bytes arrive"),
             reasonKind === "filesystem" ? { code: "EACCES" } : {},

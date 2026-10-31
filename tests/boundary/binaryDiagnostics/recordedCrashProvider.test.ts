@@ -159,7 +159,9 @@ it
         const request = requestSchema.parse(
           JSON.parse(await readFile(spawn.arguments.at(-1) ?? "", "utf8")),
         );
-        expect(await readFile(request.snapshot_path)).toEqual(bytes);
+        expect(
+          Buffer.compare(await readFile(request.snapshot_path), bytes),
+        ).toBe(0);
         const payload = structuredClone(value);
         alterRecordedCrashReply(payload, scenario);
         const {
@@ -201,7 +203,7 @@ it
           capturedOutput: { stdout: "recorded warning" },
         },
       });
-    expect(await readFile(path)).toEqual(bytes);
+    expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
     await expect(access(owned)).rejects.toMatchObject({ code: "ENOENT" });
   },
 );
@@ -257,7 +259,9 @@ it
         const request = requestSchema.parse(
           JSON.parse(await readFile(spawn.arguments.at(-1) ?? "", "utf8")),
         );
-        expect(await readFile(request.snapshot_path)).toEqual(bytes);
+        expect(
+          Buffer.compare(await readFile(request.snapshot_path), bytes),
+        ).toBe(0);
         if (snapshotPath === "") {
           snapshotPath = request.snapshot_path;
           owned = spawn.cwd ?? "";
@@ -341,14 +345,14 @@ it
     }
     if (scenario === "cancelled" || scenario === "cancelled-exec")
       expectDebuggerStopped(debuggerProcess);
-    expect(await readFile(path)).toEqual(bytes);
+    expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
     if (
       scenario === "cleanup-failure" ||
       scenario === "decoder-cleanup-failure" ||
       scenario === "cancelled-exec-foreign"
     ) {
       await expect(access(owned)).resolves.toBeUndefined();
-      expect(await readFile(snapshotPath)).toEqual(bytes);
+      expect(Buffer.compare(await readFile(snapshotPath), bytes)).toBe(0);
       const refused = await provider.inspect({
         path,
         include_debugger_context: true,
@@ -538,7 +542,7 @@ it.runIf(host)(
       include_debugger_context: true,
       pwntools_timeout_ms: 1_500,
     });
-    expect(await readFile(path)).toEqual(bytes);
+    expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
     if (result.ok) throw new Error("expected debugger timeout");
     const projected = projectAnalysisError(result.error);
     expect(projected.code).toBe("provider_timeout");

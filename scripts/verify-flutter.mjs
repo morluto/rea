@@ -8,8 +8,11 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { toolContract } from "../dist/contracts/toolContracts.js";
 import { ArtifactResourceScope } from "../dist/artifacts/ArtifactResourceScope.js";
-import { mcpTextValue } from "./lib/mcp-verifier-results.mjs";
-import { closeVerifierResources } from "./lib/verifier-cleanup.mjs";
+import { requireMcpOutput } from "./lib/mcp-verifier-results.mjs";
+import {
+  closeVerifierResources,
+  withVerifierCleanup,
+} from "./lib/verifier-cleanup.mjs";
 import { hashVerifierFile } from "./lib/verifier-file-resources.mjs";
 
 const options = parseArguments(process.argv.slice(2));
@@ -49,171 +52,165 @@ const transport = new StdioClientTransport({
   stderr: "pipe",
 });
 const execute = promisify(execFile);
-let primaryError;
-try {
-  await client.connect(transport);
-  const apk = resolve(options.apk);
-  const identity = await hashVerifierFile(apk, resources);
-  const identified = await run("identify_flutter_build", { path: apk });
-  assert.deepEqual(identified.target, { path: apk, ...identity });
-  assert.equal(identified.flutter_detected, true);
-  assert.equal(identified.coverage, "complete");
-  const abis = identified.abis.filter((abi) => abi.libapp.present);
-  assert.ok(abis.length > 0);
-  const hashes = new Set();
-  for (const abi of abis) {
-    assert.equal(abi.libapp.elf_header_valid, true);
-    assert.equal(abi.libapp.snapshot_hash_sources, 2);
-    assert.ok(abi.libapp.snapshot_hash);
-    hashes.add(abi.libapp.snapshot_hash);
-    assert.equal(abi.libflutter.present, true);
-    assert.match(abi.libflutter.build_id ?? "", /^(?:[0-9a-f]{2}){4,64}$/u);
-    assert.deepEqual(abi.libflutter.build_id_candidates, [
-      abi.libflutter.build_id,
-    ]);
-  }
-  assert.equal(hashes.size, 1, "Every ABI must agree on the snapshot hash");
-  if (expectations !== null) {
-    assert.equal(identity.sha256, expectations.target_sha256);
-    assert.deepEqual([...hashes], [expectations.snapshot_hash]);
-    assert.deepEqual(
-      abis.map((abi) => abi.abi).sort(),
-      Object.keys(expectations.engines).sort(),
-    );
+await withVerifierCleanup(
+  async () => {
+    await client.connect(transport);
+    const apk = resolve(options.apk);
+    const identity = await hashVerifierFile(apk, resources);
+    const identified = await run("identify_flutter_build", { path: apk });
+    assert.deepEqual(identified.target, { path: apk, ...identity });
+    assert.equal(identified.flutter_detected, true);
+    assert.equal(identified.coverage, "complete");
+    const abis = identified.abis.filter((abi) => abi.libapp.present);
+    assert.ok(abis.length > 0);
+    const hashes = new Set();
     for (const abi of abis) {
+      assert.equal(abi.libapp.elf_header_valid, true);
+      assert.equal(abi.libapp.snapshot_hash_sources, 2);
+      assert.ok(abi.libapp.snapshot_hash);
+      hashes.add(abi.libapp.snapshot_hash);
+      assert.equal(abi.libflutter.present, true);
+      assert.match(abi.libflutter.build_id ?? "", /^(?:[0-9a-f]{2}){4,64}$/u);
+      assert.deepEqual(abi.libflutter.build_id_candidates, [
+        abi.libflutter.build_id,
+      ]);
+    }
+    assert.equal(hashes.size, 1, "Every ABI must agree on the snapshot hash");
+    if (expectations !== null) {
+      assert.equal(identity.sha256, expectations.target_sha256);
+      assert.deepEqual([...hashes], [expectations.snapshot_hash]);
       assert.deepEqual(
-        {
-          dart_version: abi.libflutter.dart_version,
-          toolchain_lines: abi.libflutter.toolchain_lines,
-        },
-        expectations.engines[abi.abi],
+        abis.map((abi) => abi.abi).sort(),
+        Object.keys(expectations.engines).sort(),
       );
-      assert.equal(abi.libflutter.dart_version_capped, false);
-      assert.equal(abi.libflutter.toolchain_capped, false);
-    }
-    process.stdout.write(
-      "[ok] Exact per-ABI engine labels match digest-bound expectations\n",
-    );
-  } else {
-    process.stdout.write(
-      "[unverified] Exact engine labels and their absence need --expectations JSON\n",
-    );
-  }
-  // The same checks apply to the default selection and each remaining ABI.
-  const preferred = await run("inspect_dart_aot", { path: apk });
-  for (const abi of abis) {
-    const aot =
-      abi.abi === preferred.abi
-        ? preferred
-        : await run("inspect_dart_aot", { path: apk, abi: abi.abi });
-    assert.equal(aot.abi, abi.abi);
-    assert.equal(
-      aot.libapp.coverage,
-      "complete",
-      `Snapshot decoding must be complete on ${abi.abi}`,
-    );
-    assert.equal(aot.coverage, aot.string_pool.coverage);
-    if (aot.coverage !== "complete") {
+      for (const abi of abis) {
+        assert.deepEqual(
+          {
+            dart_version: abi.libflutter.dart_version,
+            toolchain_lines: abi.libflutter.toolchain_lines,
+          },
+          expectations.engines[abi.abi],
+        );
+        assert.equal(abi.libflutter.dart_version_capped, false);
+        assert.equal(abi.libflutter.toolchain_capped, false);
+      }
       process.stdout.write(
-        `[unverified] ${abi.abi}: full string-pool projection (returned pool is bounded and partial)\n`,
-      );
-    }
-    assert.deepEqual(aot.target, identified.target);
-    assert.equal(aot.libapp.sha256, abi.libapp.sha256);
-    assert.equal(aot.libapp.bytes, abi.libapp.bytes);
-    assert.equal(aot.libapp.snapshot_hash_sources, 2);
-    assert.equal(aot.libapp.snapshot_hash, abi.libapp.snapshot_hash);
-    assert.deepEqual(
-      aot.libapp.sections.map((section) => section.name).sort(),
-      [
-        "_kDartVmSnapshotData",
-        "_kDartVmSnapshotInstructions",
-        "_kDartIsolateSnapshotData",
-        "_kDartIsolateSnapshotInstructions",
-      ].sort(),
-    );
-    for (const section of aot.libapp.sections) {
-      assert.ok(section.offset + section.size <= aot.libapp.bytes);
-      if (!section.name.endsWith("Data")) continue;
-      assert.equal(section.magic_valid, true);
-      assert.equal(
-        section.kind,
-        3,
-        "This verifier requires an AOT app snapshot",
-      );
-      assert.ok(
-        section.header_length >= 48 &&
-          section.header_length + 4 <= section.size,
-        `Snapshot extent must fit ${section.name} on ${abi.abi}`,
-      );
-    }
-    assert.ok(aot.string_pool.package_uri_count_at_least > 0);
-    assert.ok(aot.string_pool.dart_uri_count_at_least > 0);
-    if (expectations?.string_pools !== undefined) {
-      const expected = expectations.string_pools[abi.abi];
-      assert.ok(
-        expected,
-        `Pinned string-pool counts are required on ${abi.abi}`,
-      );
-      assert.equal(
-        aot.string_pool.package_uri_count_at_least,
-        expected.package_uri_count_at_least,
-      );
-      assert.equal(
-        aot.string_pool.dart_uri_count_at_least,
-        expected.dart_uri_count_at_least,
-      );
-      process.stdout.write(
-        `[ok] ${abi.abi}: exact pinned package and Dart URI counts\n`,
+        "[ok] Exact per-ABI engine labels match digest-bound expectations\n",
       );
     } else {
       process.stdout.write(
-        `[unverified] ${abi.abi}: exact string-pool counts need --expectations JSON\n`,
+        "[unverified] Exact engine labels and their absence need --expectations JSON\n",
       );
     }
-    process.stdout.write(
-      `[ok] ${abi.abi}: four symbols, bounded AOT headers, agreeing hashes and string pool\n`,
-    );
-  }
-  if (options.plainApk !== null) {
-    const plain = resolve(options.plainApk);
-    const negative = await run("identify_flutter_build", { path: plain });
-    assert.deepEqual(negative.target, {
-      path: plain,
-      ...(await hashVerifierFile(plain, resources)),
-    });
-    assert.equal(negative.flutter_detected, false);
-    assert.equal(negative.coverage, "complete");
-  }
-  assert.deepEqual(
-    await hashVerifierFile(apk, resources),
-    identity,
-    "Verification must preserve its input",
-  );
-} catch (cause) {
-  primaryError = cause;
-  throw cause;
-} finally {
-  // Server shutdown retries retained provider cleanup and settles before success.
-  await closeVerifierResources(
-    [
-      async () => {
-        await closeVerifierResources([
-          () => client.close(),
-          () => transport.close(),
-          () => resources.close(),
-        ]);
-        assert.deepEqual(
-          await readdir(root),
-          [],
-          `Provider snapshots remain under ${root}`,
+    // The same checks apply to the default selection and each remaining ABI.
+    const preferred = await run("inspect_dart_aot", { path: apk });
+    for (const abi of abis) {
+      const aot =
+        abi.abi === preferred.abi
+          ? preferred
+          : await run("inspect_dart_aot", { path: apk, abi: abi.abi });
+      assert.equal(aot.abi, abi.abi);
+      assert.equal(
+        aot.libapp.coverage,
+        "complete",
+        `Snapshot decoding must be complete on ${abi.abi}`,
+      );
+      assert.equal(aot.coverage, aot.string_pool.coverage);
+      if (aot.coverage !== "complete") {
+        process.stdout.write(
+          `[unverified] ${abi.abi}: full string-pool projection (returned pool is bounded and partial)\n`,
         );
-        await rm(root, { recursive: true, force: true });
-      },
-    ],
-    primaryError,
-  );
-}
+      }
+      assert.deepEqual(aot.target, identified.target);
+      assert.equal(aot.libapp.sha256, abi.libapp.sha256);
+      assert.equal(aot.libapp.bytes, abi.libapp.bytes);
+      assert.equal(aot.libapp.snapshot_hash_sources, 2);
+      assert.equal(aot.libapp.snapshot_hash, abi.libapp.snapshot_hash);
+      assert.deepEqual(
+        aot.libapp.sections.map((section) => section.name).sort(),
+        [
+          "_kDartVmSnapshotData",
+          "_kDartVmSnapshotInstructions",
+          "_kDartIsolateSnapshotData",
+          "_kDartIsolateSnapshotInstructions",
+        ].sort(),
+      );
+      for (const section of aot.libapp.sections) {
+        assert.ok(section.offset + section.size <= aot.libapp.bytes);
+        if (!section.name.endsWith("Data")) continue;
+        assert.equal(section.magic_valid, true);
+        assert.equal(
+          section.kind,
+          3,
+          "This verifier requires an AOT app snapshot",
+        );
+        assert.ok(
+          section.header_length >= 48 &&
+            section.header_length + 4 <= section.size,
+          `Snapshot extent must fit ${section.name} on ${abi.abi}`,
+        );
+      }
+      assert.ok(aot.string_pool.package_uri_count_at_least > 0);
+      assert.ok(aot.string_pool.dart_uri_count_at_least > 0);
+      if (expectations?.string_pools !== undefined) {
+        const expected = expectations.string_pools[abi.abi];
+        assert.ok(
+          expected,
+          `Pinned string-pool counts are required on ${abi.abi}`,
+        );
+        assert.equal(
+          aot.string_pool.package_uri_count_at_least,
+          expected.package_uri_count_at_least,
+        );
+        assert.equal(
+          aot.string_pool.dart_uri_count_at_least,
+          expected.dart_uri_count_at_least,
+        );
+        process.stdout.write(
+          `[ok] ${abi.abi}: exact pinned package and Dart URI counts\n`,
+        );
+      } else {
+        process.stdout.write(
+          `[unverified] ${abi.abi}: exact string-pool counts need --expectations JSON\n`,
+        );
+      }
+      process.stdout.write(
+        `[ok] ${abi.abi}: four symbols, bounded AOT headers, agreeing hashes and string pool\n`,
+      );
+    }
+    if (options.plainApk !== null) {
+      const plain = resolve(options.plainApk);
+      const negative = await run("identify_flutter_build", { path: plain });
+      assert.deepEqual(negative.target, {
+        path: plain,
+        ...(await hashVerifierFile(plain, resources)),
+      });
+      assert.equal(negative.flutter_detected, false);
+      assert.equal(negative.coverage, "complete");
+    }
+    assert.deepEqual(
+      await hashVerifierFile(apk, resources),
+      identity,
+      "Verification must preserve its input",
+    );
+  },
+  // Server shutdown retries retained provider cleanup and settles before success.
+  [
+    async () => {
+      await closeVerifierResources([
+        () => client.close(),
+        () => transport.close(),
+        () => resources.close(),
+      ]);
+      assert.deepEqual(
+        await readdir(root),
+        [],
+        `Provider snapshots remain under ${root}`,
+      );
+      await rm(root, { recursive: true, force: true });
+    },
+  ],
+);
 process.stdout.write(
   "all asserted Flutter CLI/MCP checks passed; unverified facets are reported above\n",
 );
@@ -237,8 +234,7 @@ async function run(operation, input) {
     { name: operation, arguments: input },
     { timeout: 60_000 },
   );
-  assert.notEqual(response.isError, true, mcpTextValue(response));
-  const mcp = contract.outputSchema.parse(JSON.parse(mcpTextValue(response)));
+  const mcp = requireMcpOutput(response, operation, contract);
   assert.deepEqual(cli.normalized_result, mcp.normalized_result);
   assert.deepEqual(cli.subject, mcp.subject);
   assert.equal(cli.subject.local_path, input.path);

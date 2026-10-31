@@ -17,6 +17,13 @@ const EXECUTION_WORDING =
   /\b(?:run|runs|running|launch|launches|launching|execute|executes|executing|execution|start|starts|install|installs|uninstall|uninstalls)\b/iu;
 
 const EXECUTION_WORDING_EXCEPTIONS: Readonly<Record<string, string>> = {
+  inspect_artifact: "states that mapper execution remains unobserved",
+  guided_workflows:
+    "renders existing guidance and states that it does not start analysis",
+  inspect_analysis_settings:
+    "reports launch configuration without launching any process",
+  update_analysis_settings:
+    "resets defaults to launch configuration without launching any process",
   inspect_with_objdump:
     "runs a caller-selected inspection tool, not target code",
   start_gdb_session:
@@ -28,10 +35,15 @@ const EXECUTION_WORDING_EXCEPTIONS: Readonly<Record<string, string>> = {
   inspect_byte_entropy: "states that it profiles the file without execution",
   inspect_pe_resources: "states that it does not execute the image",
   inspect_native_exports: "reads the export table without executing it",
+  inspect_devicetree: "states that it does not execute the image",
   inspect_elf_notes: "states that it does not execute the image",
+  inspect_apple_ips: "states that it does not execute a target",
+  inspect_kernel_module: "states that it does not execute the module",
+  inspect_pe_load_config: "states that it does not execute the image",
   inspect_desktop_application:
     "states that directory triage performs no target execution",
   inspect_pe_certificates: "states that it does not execute the image",
+  inspect_pe_imports: "states that it does not execute the image",
   inspect_go_binary: "reads embedded metadata without executing the target",
   inspect_rust_binary:
     "reads an embedded dependency list without executing the target",
@@ -63,6 +75,8 @@ const EXECUTION_WORDING_EXCEPTIONS: Readonly<Record<string, string>> = {
   project_managed_application_graph: "states it does not execute managed code",
   inspect_android_package: "states it does not execute the APK",
   search_android_classes: "states it does not execute the APK",
+  inspect_android_jni_bindings:
+    "reads DEX and ELF bytes without executing target code",
   inspect_apktool_client:
     "inspects the operator-selected apktool launcher; never installs it",
   inspect_pcap_client:
@@ -164,6 +178,7 @@ describe("tool effects", () => {
       "capture_electron_scenario",
       "capture_native_ui_scenario",
       "capture_process_scenario",
+      "close_frida_session",
       "close_gdb_session",
       "close_rizin_debug_session",
       "cutter_command",

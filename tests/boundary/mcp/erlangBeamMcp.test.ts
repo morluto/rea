@@ -1,3 +1,13 @@
+import pino from "pino";
+import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
+import { registerErlangTools } from "../../../src/server/registerErlangTools.js";
+import { createToolResultDelivery } from "../../../src/server/toolResult.js";
+import { BeamService } from "../../../src/application/erlang/BeamService.js";
+import { BeamProvider } from "../../../src/erlang/BeamProvider.js";
+import {
+  erlangBeamSchema,
+  MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS,
+} from "../../../src/domain/erlang/beam.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
@@ -12,7 +22,9 @@ import {
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { mcpTest, type TestMcp } from "../../support/mcp/mcpFixture.js";
 
-import { MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS } from "../../../src/domain/erlang/beam.js";
+const completeBeamEvidenceSchema = toolContract(
+  "inspect_erlang_beam",
+).outputSchema.safeExtend({ normalized_result: erlangBeamSchema });
 
 const connect = async (mcp: TestMcp) => {
   const session = createTestBinarySession(() => {
@@ -42,7 +54,7 @@ mcpTest(
         arguments: { path },
       });
       expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
-      const evidence = toolContract("inspect_erlang_beam").outputSchema.parse(
+      const evidence = completeBeamEvidenceSchema.parse(
         response.structuredContent,
       );
       expect(evidence.normalized_result.module).toBe("mcp_mod");
@@ -117,6 +129,51 @@ mcpTest(
       }
     } finally {
       await session.close();
+    }
+  },
+);
+
+mcpTest(
+  "refuses BEAM summary before file access without retention and still delivers complete output",
+  async ({ mcp }) => {
+    const root = await createTestTempDirectory("rea-beam-no-retention-");
+    const service = new BeamService(new BeamProvider());
+    const server = new EvidenceMcpServer(
+      { name: "beam-no-retention", version: "1" },
+      {},
+      undefined,
+      createToolResultDelivery(2 * 1024 * 1024),
+    );
+    registerErlangTools(server, service, pino({ enabled: false }));
+    const client = await mcp.connect(server);
+    try {
+      for (const delivery of [
+        { detail: "summary" },
+        { detail: "summary", view: { kind: "beam", collection: "exports" } },
+      ]) {
+        const reply = await client.callTool({
+          name: "inspect_erlang_beam",
+          arguments: { path: join(root, "does-not-exist.beam"), ...delivery },
+        });
+        expect(reply.isError).toBe(true);
+        expect(parseMcpToolError(reply).error).toMatchObject({
+          code: "capability_unavailable",
+          details: { operation: "inspect_erlang_beam" },
+        });
+      }
+      const path = join(root, "complete.beam");
+      await writeFile(path, erlangBeamFixture("without_retention"));
+      const complete = await client.callTool({
+        name: "inspect_erlang_beam",
+        arguments: { path },
+      });
+      expect(complete.isError).not.toBe(true);
+      expect(
+        completeBeamEvidenceSchema.parse(complete.structuredContent)
+          .normalized_result.module,
+      ).toBe("without_retention");
+    } finally {
+      await service.close();
     }
   },
 );

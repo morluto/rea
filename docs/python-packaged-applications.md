@@ -25,8 +25,12 @@ metadata retains the original name, table index, type, compression flag,
 relative offset and known directory record extent. Logical paths follow the
 carrier's path dialect: backslashes separate components for PE carriers, while
 they remain literal filename characters for POSIX carriers. The source name
-always retains its stored spelling. If the carrier dialect is unconfirmed, REA
-preserves backslashes verbatim instead of inferring POSIX semantics.
+always retains its stored spelling in occurrence `source_path` and
+`format_metadata.source_name`. For PYZ rows, that source is the exact module or
+data key in the PYZ table, not a reconstructed filesystem name;
+`format_metadata.container_name` identifies the containing PYZ image. If the
+carrier dialect is unconfirmed, REA preserves backslashes verbatim instead of
+inferring POSIX semantics.
 `relative_offset` is relative to the CArchive start for CArchive rows, or to
 the decoded PYZ image for PYZ rows. A CArchive directory record starts at
 `archive_start + toc_offset + directory_record_offset`; its size is

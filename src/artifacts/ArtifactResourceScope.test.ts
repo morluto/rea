@@ -5,18 +5,20 @@ import {
   withArtifactFileHandle,
   bindArtifactFileCleanup,
 } from "./ArtifactFileOperation.js";
-import { ArtifactResourceRetryFailure } from "./ArtifactResourceScope.js";
+import {
+  ArtifactResourceRetryFailure,
+  ArtifactResourceScope,
+} from "./ArtifactResourceScope.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { expect, it } from "vitest";
 
-import { err } from "../domain/result.js";
+import { err, ok } from "../domain/result.js";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import {
   ArtifactReaderFailure,
   type ArtifactReader,
 } from "./ArtifactReader.js";
 import { translateArtifactFailure } from "./ArtifactOperationFailure.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
 
 const deferred = <T>() => {
   let resolve: (value: T) => void = () => {};
@@ -136,6 +138,155 @@ it("runs later close hooks when an earlier hook fails", async () => {
   order.length = 0;
   await expect(scope.close()).rejects.toBeInstanceOf(AggregateError);
   expect(order).toEqual(["first", "second"]);
+});
+
+it("rejects a close hook's undefined reason and retries through the same scope", async () => {
+  const scope = new ArtifactResourceScope();
+  let denied = true;
+  let failedHookRuns = 0;
+  let laterHookRuns = 0;
+  scope.addCloseHook(async () => {
+    failedHookRuns += 1;
+    if (denied) throw undefined;
+  });
+  scope.addCloseHook(async () => {
+    laterHookRuns += 1;
+  });
+
+  try {
+    const close = scope.close();
+    expect(scope.close()).toBe(close);
+    await expect(close).rejects.toBeUndefined();
+    expect(failedHookRuns).toBe(1);
+    expect(laterHookRuns).toBe(1);
+
+    denied = false;
+    await scope.close();
+    expect(failedHookRuns).toBe(2);
+    expect(laterHookRuns).toBe(2);
+  } finally {
+    denied = false;
+    await scope.close();
+  }
+});
+
+it.each([
+  { name: "null", reason: null },
+  { name: "false", reason: false },
+  { name: "zero", reason: 0 },
+  { name: "empty string", reason: "" },
+  { name: "Error", reason: new Error("single hook failure") },
+])("preserves a close hook's exact $name rejection", async ({ reason }) => {
+  const scope = new ArtifactResourceScope();
+  let denied = true;
+  scope.addCloseHook(async () => {
+    if (denied) throw reason;
+  });
+  try {
+    await expect(scope.close()).rejects.toBe(reason);
+  } finally {
+    denied = false;
+    await scope.close();
+  }
+});
+
+it("preserves undefined alongside other close hook failures", async () => {
+  const scope = new ArtifactResourceScope();
+  const failure = new Error("third hook failed");
+  const reasons = [undefined, null, failure];
+  let denied = true;
+  const attempted: unknown[] = [];
+  for (const reason of reasons)
+    scope.addCloseHook(async () => {
+      attempted.push(reason);
+      if (denied) throw reason;
+    });
+
+  try {
+    const outcome = await scope.close().then(
+      () => ok(undefined),
+      (error: unknown) => err(error),
+    );
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok || !(outcome.error instanceof AggregateError))
+      throw new Error("Expected all hook failures");
+    expect(outcome.error.errors).toEqual(reasons);
+    expect(outcome.error.errors[2]).toBe(failure);
+    expect(attempted).toEqual(reasons);
+  } finally {
+    denied = false;
+    await scope.close();
+  }
+});
+
+it("retains both a failed owner and an undefined hook failure until each recovers", async () => {
+  const scope = new ArtifactResourceScope();
+  const ownerFailure = new Error("lease still owned");
+  let ownerDenied = true;
+  let hookDenied = true;
+  let releases = 0;
+  let hookRuns = 0;
+  const owner = {
+    kind: "lease" as const,
+    resource: "retained lease",
+    lease: {
+      async release() {
+        releases += 1;
+        if (ownerDenied) throw ownerFailure;
+      },
+    },
+  };
+  scope.addCloseHook(async () => {
+    hookRuns += 1;
+    if (hookDenied) throw undefined;
+  });
+
+  try {
+    const released = await scope.release(owner);
+    expect(released).toMatchObject({ kind: "failed", cause: ownerFailure });
+    const outcome = await scope.close().then(
+      () => ok(undefined),
+      (error: unknown) => err(error),
+    );
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok || !(outcome.error instanceof ArtifactResourceRetryFailure))
+      throw new Error("Expected both retained cleanup failures");
+    expect(outcome.error.failedOwners).toEqual([owner]);
+    expect(outcome.error.failedOwners[0]).toBe(owner);
+    expect(outcome.error.cleanup).toEqual({
+      reason: "lease still owned; undefined",
+      resources: ["retained lease", "close hook"],
+    });
+    const combined = outcome.error.cause;
+    expect(combined).toBeInstanceOf(AggregateError);
+    if (!(combined instanceof AggregateError))
+      throw new Error("Expected retained cleanup and hook causes");
+    expect(combined.errors).toHaveLength(2);
+    expect(combined.errors[1]).toBeUndefined();
+    expect(combined.errors[0]).toMatchObject({
+      failedOwners: [owner],
+      cause: { errors: [ownerFailure] },
+    });
+    expect(scope.hasPending).toBe(true);
+    expect(releases).toBe(2);
+    expect(hookRuns).toBe(1);
+
+    ownerDenied = false;
+    await expect(scope.close()).rejects.toBeUndefined();
+    expect(scope.hasPending).toBe(false);
+    expect(scope.cleanupResources).toEqual([]);
+    expect(releases).toBe(3);
+    expect(hookRuns).toBe(2);
+
+    hookDenied = false;
+    await scope.close();
+    expect(releases).toBe(3);
+    expect(hookRuns).toBe(3);
+  } finally {
+    ownerDenied = false;
+    hookDenied = false;
+    await scope.close();
+  }
 });
 
 it("retains the same failed reader owner in a retry failure and retries before admitting work", async () => {

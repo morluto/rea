@@ -18,8 +18,10 @@ cliTest(
     });
     expect(empty.exitCode).not.toBe(0);
     expect(empty.json).toMatchObject({
-      code: "invalid_request",
-      category: "invalid_input",
+      code: "VALIDATION_ERROR",
+      fieldErrors: expect.arrayContaining([
+        expect.objectContaining({ path: "path", code: "too_small" }),
+      ]),
     });
     const explicit = await cli.run({
       arguments: ["inspect-desktop-application", ".", "--json"],

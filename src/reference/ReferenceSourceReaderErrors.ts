@@ -87,6 +87,7 @@ export const rootFilesystemFailure = (
   | {
       readonly code: "invalid-root" | "io";
       readonly message: string;
+      readonly remediationAction?: string;
     }
   | undefined => {
   if (!(cause instanceof Error)) return undefined;
@@ -94,8 +95,21 @@ export const rootFilesystemFailure = (
   if (typeof code !== "string" || !FILESYSTEM_ERROR_CODES.has(code))
     return undefined;
   return {
-    code: code === "ENOENT" || code === "ENOTDIR" ? "invalid-root" : "io",
+    code: ["ENOENT", "ENOTDIR", "ELOOP", "ENAMETOOLONG"].includes(code)
+      ? "invalid-root"
+      : "io",
     message: `${operation}: ${cause.message}`,
+    ...(code === "ELOOP"
+      ? {
+          remediationAction:
+            "Repair the symbolic-link chain or select another reference source directory.",
+        }
+      : code === "ENAMETOOLONG"
+        ? {
+            remediationAction:
+              "Select a reference source path within the operating system's path-length limits.",
+          }
+        : {}),
   };
 };
 

@@ -32,7 +32,7 @@ import type { SetupClient } from "./SupportedClients.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 
 export type ClientConfigurationFormat = NonNullable<SetupClient["format"]>;
-export type ClientServersKey = "mcp_servers" | "mcpServers" | "mcp" | "servers";
+type ClientServersKey = "mcp_servers" | "mcpServers" | "mcp" | "servers";
 
 /**
  * Registration entry dialect. OpenCode V2 reads V1 `mcp.<name>` entries, but a
@@ -50,6 +50,8 @@ export interface ClientConfigurationDocument {
   /** Key path of `servers` in `document`. */
   readonly serversPath: readonly string[];
   readonly dialect: ClientRegistrationDialect;
+  /** Member holding explicit environment overrides in a server registration. */
+  readonly environmentKey: "env" | "environment";
   /**
    * OpenCode V1 server members beside a native V2 `mcp.servers` table. OpenCode
    * still loads them, and a native entry with the same name takes precedence.
@@ -217,6 +219,7 @@ export const parseZcodeFallbackConfiguration = (
         : requireObject(document.mcpServers, "ZCode fallback mcpServers"),
     serversPath: ["mcpServers"],
     dialect: "zcode_fallback",
+    environmentKey: "env",
     legacyServers: {},
   };
 };
@@ -235,6 +238,7 @@ export const parseClientConfiguration = (
   if (format === "zcode_fallback") return parseZcodeFallbackConfiguration(text);
   if (format === "dsh") return parseDshCordisDocument(text);
   const document = parseDocument(text, format);
+  const environmentKey = format === "opencode" ? "environment" : "env";
   const serversKey = clientConfigurationServersKey(format);
   const value = document[serversKey];
   const servers =
@@ -251,6 +255,7 @@ export const parseClientConfiguration = (
           : requireObject(nested, `"${serversKey}.servers"`),
       serversPath: [serversKey, "servers"],
       dialect: format,
+      environmentKey,
       legacyServers: {},
     };
   }
@@ -270,6 +275,7 @@ export const parseClientConfiguration = (
       servers,
       serversPath: [serversKey],
       dialect: format,
+      environmentKey,
       legacyServers: {},
     };
   return {
@@ -277,6 +283,7 @@ export const parseClientConfiguration = (
     servers: requireObject(native, `"${serversKey}.servers"`),
     serversPath: [serversKey, "servers"],
     dialect: "opencode_v2",
+    environmentKey,
     legacyServers: Object.fromEntries(
       Object.entries(servers).filter(
         ([name]) => !OPENCODE_V2_MCP_SETTINGS.has(name),
@@ -1258,7 +1265,7 @@ const tomlServerEntry = (
 };
 
 /** Whether Grok Build's root disable list names `serverKey`. */
-export const grokServerListedDisabled = (
+const grokServerListedDisabled = (
   document: Record<string, unknown>,
   serverKey: string,
 ): boolean =>
@@ -1272,7 +1279,7 @@ export const grokServerListedDisabled = (
 export const OMP_DISABLED_SERVERS_KEY = "disabledServers";
 
 /** Whether OMP's root `disabledServers` denylist names `serverKey`. */
-export const ompServerListedDisabled = (
+const ompServerListedDisabled = (
   document: Record<string, unknown>,
   serverKey: string,
 ): boolean => {

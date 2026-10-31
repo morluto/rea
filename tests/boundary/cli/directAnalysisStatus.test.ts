@@ -1,3 +1,6 @@
+import { createCatalogIdentity } from "../../../src/catalogIdentity.js";
+import { contractsForToolFamilies } from "../../../src/contracts/toolFamilies.js";
+import { promptsForToolFamilies } from "../../../src/contracts/promptToolFamilyScope.js";
 import { Cli } from "incur";
 import { expect, it, vi } from "vitest";
 import { runSessionStatus } from "../../../src/application/DirectAnalysisStatus.js";
@@ -40,7 +43,7 @@ it.each(["capabilities", "providers"])(
             readConfiguration: () => parseConfig({}),
             createBinarySession: () => session,
           }),
-        runProviderAnalysis: async () => null,
+        runProviderAnalysis: async () => ({ ok: false, error: null }),
       },
     );
     let stdout = "";
@@ -100,5 +103,48 @@ it.each([false, true])(
       close.mockRestore();
       await session.close();
     }
+  },
+);
+
+it.each(["capabilities", "providers"])(
+  "reports the configured family scope through %s",
+  async (command) => {
+    const session = createStatusSession();
+    const families = new Set(["session"]);
+    const expected = createCatalogIdentity({
+      contracts: contractsForToolFamilies(families),
+      promptContracts: promptsForToolFamilies(families),
+      outputSchemaProfile: "compact",
+    });
+    const cli = Cli.create({ name: "rea" });
+    registerUtilityCommands(
+      cli,
+      silentLogger,
+      {},
+      {
+        runSessionStatus: () =>
+          runSessionStatus({
+            readConfiguration: () =>
+              parseConfig({
+                REA_MCP_TOOL_FAMILIES: " session,session ",
+                REA_MCP_INPUT_SCHEMA_PROFILE: "full",
+                REA_MCP_OUTPUT_SCHEMA_PROFILE: "compact",
+              }),
+            createBinarySession: () => session,
+          }),
+        runProviderAnalysis: async () => ({ ok: false, error: null }),
+      },
+    );
+    let stdout = "";
+    await cli.serve([command, "--json"], {
+      env: {},
+      stdout: (text) => {
+        stdout += text;
+      },
+      exit: () => {},
+    });
+    expect(JSON.parse(stdout)).toMatchObject({
+      server_identity: { catalog: expected },
+    });
   },
 );

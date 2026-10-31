@@ -3,41 +3,94 @@ import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import type { NativeCommandCapture } from "./CommandRunner.js";
 import { withoutEchoedPathHeader } from "./parsers/echoedPath.js";
 
+/** Path the command received. Diagnostics echo this operand, not the selected subject. */
+export const nativeCommandOperand = (
+  capture: NativeCommandCapture,
+): string | undefined => capture.arguments.at(-1);
+
+/** Recognize vtool's sole settled container-format refusal without hiding other failures. */
+export const isVtoolContainerRefusal = (
+  capture: NativeCommandCapture,
+): boolean => {
+  const operandPath = nativeCommandOperand(capture);
+  if (
+    operandPath === undefined ||
+    capture.tool !== "vtool" ||
+    capture.exitCode !== 1 ||
+    capture.signal !== null ||
+    capture.stdout.trim() !== ""
+  )
+    return false;
+  const diagnostic = capture.stderr.trimEnd();
+  const suffix = ` error: ${operandPath} file is not mach-o`;
+  if (!diagnostic.endsWith(suffix)) return false;
+  const executable = diagnostic.slice(0, -suffix.length);
+  return (
+    !/[\r\n]/u.test(executable) &&
+    (executable === "vtool" || executable.endsWith("/vtool"))
+  );
+};
+
 const MISSING_UUID_DIAGNOSTIC = "missing LC_UUID load command";
 
-/** Recognize only dyld_info's target-specific missing-UUID refusal. */
+const dyldFailureDiagnostics = (
+  capture: NativeCommandCapture,
+  outputs: readonly string[],
+): readonly string[] =>
+  capture.tool !== "dyld_info" ||
+  capture.exitCode === null ||
+  capture.exitCode === 0 ||
+  capture.signal !== null
+    ? []
+    : outputs.flatMap((output) =>
+        withoutEchoedPathHeader(output, capture.arguments.at(-1))
+          .split(/\r?\n/u)
+          .map((line) => line.trim().replace(/^(?:dyld_info:\s*)/u, ""))
+          .filter(Boolean),
+      );
+
+/** Admit the observed refusal only when it is the sole settled diagnostic. */
+const dyldFailureDiagnostic = (
+  capture: NativeCommandCapture,
+): string | null => {
+  const diagnostics = dyldFailureDiagnostics(capture, [
+    capture.stdout,
+    capture.stderr,
+  ]);
+  return diagnostics.length === 1 ? (diagnostics[0] ?? null) : null;
+};
+
+/** Keep missing-UUID admission limited to its observed stdout-only refusal. */
 export const isMissingUuidDyldFailure = (
   capture: NativeCommandCapture,
 ): boolean =>
-  capture.tool === "dyld_info" &&
-  capture.exitCode !== null &&
-  capture.exitCode !== 0 &&
-  capture.signal === null &&
-  withoutEchoedPathHeader(capture.stdout, capture.arguments.at(-1))
-    .split(/\r?\n/u)
-    .some(
-      (line) =>
-        line.trim().replace(/^(?:dyld_info:\s*)/u, "") ===
-        MISSING_UUID_DIAGNOSTIC,
-    );
+  capture.stderr.trim().length === 0 &&
+  dyldFailureDiagnostic(capture) === MISSING_UUID_DIAGNOSTIC;
 
-/** The narrowly observed dyld refusal for an unbacked dSYM text section. */
+/** Admit the observed dSYM refusal only when no other diagnostic is present. */
 export const isUnbackedTextDyldFailure = (
   capture: NativeCommandCapture,
 ): boolean =>
-  capture.tool === "dyld_info" &&
-  capture.exitCode !== null &&
-  capture.exitCode !== 0 &&
-  capture.signal === null &&
-  [capture.stdout, capture.stderr].some((output) =>
-    withoutEchoedPathHeader(output, capture.arguments.at(-1))
-      .split(/\r?\n/u)
-      .some(
-        (line) =>
-          line.trim().replace(/^(?:dyld_info:\s*)/u, "") ===
-          "section '__TEXT/__text' has offset=0 but is not a zero-fill section type",
-      ),
-  );
+  dyldFailureDiagnostic(capture) ===
+  "section '__TEXT/__text' has offset=0 but is not a zero-fill section type";
+
+/** Reported CORE/FVMLIB refusals still require an independently matching header. */
+export const parseDyldFileTypeRefusal = (
+  capture: NativeCommandCapture,
+): {
+  readonly fileType: "3" | "4";
+  readonly diagnostic: string;
+} | null => {
+  for (const line of dyldFailureDiagnostics(capture, [
+    capture.stdout,
+    capture.stderr,
+  ])) {
+    const fileType = /^unknown (?:mh\.)?filetype ([34])$/u.exec(line)?.[1];
+    if (fileType === "3" || fileType === "4")
+      return { fileType, diagnostic: line };
+  }
+  return null;
+};
 
 /** Complete captures come from the settled native command owner. */
 export const nativeMachoCapturedOutput = (

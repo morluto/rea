@@ -49,6 +49,9 @@ const generator = () => {
     unique: "ref-9",
     renewed: ["renewed-9"],
     clock: NOW,
+    "nested-clock": { at: NOW },
+    "held-clock": NOW,
+    "made-object": { at: NOW },
   };
   const generate = (rule: GeneratedRule) => {
     asked.push(rule);
@@ -96,7 +99,7 @@ it.each<[string, JsonObject | undefined, string]>([
   [
     "a fixed member with another value",
     { title: "B", priority: "LOW" },
-    `Member priority is accepted only with the value the capture sent, because the application stored it differently (${LISTED}).`,
+    `Member priority is accepted only with the value the capture sent, "HIGH", because the application stored it differently or other recorded fields go with it (${LISTED}).`,
   ],
   [
     "a number for a string",
@@ -372,6 +375,28 @@ it("takes an update's unique and renewed values from the generator, whether or n
     "unique",
     "renewed",
   ]);
+});
+
+const HELD_PLAN: Plan = {
+  rules: [
+    { field: "title", rule: "echo" },
+    { field: "updatedAt", rule: "held-clock", format: SECONDS },
+  ],
+  body: { ...UPDATE_PLAN.body!, accepted: ["title", "updatedAt"], fixed: [] },
+};
+
+it("stamps a held clock only on a call that sends the value the entity holds", () => {
+  expect(
+    update({ title: "New Title", updatedAt: BEFORE.updatedAt! }, HELD_PLAN)
+      .result,
+  ).toEqual(ok({ ...BEFORE, title: "New Title", updatedAt: NOW }));
+  const { asked, result } = update({ title: "New Title" }, HELD_PLAN);
+  expect(result).toEqual(
+    err(
+      "Member updatedAt must be sent with the value the entity holds, as the recorded call did.",
+    ),
+  );
+  expect(asked).toEqual([]);
 });
 
 it("renews no child rows on an entity that holds none", () => {
@@ -652,3 +677,124 @@ it("checks a member stored only under another name against the type of the field
   expect(created({ not: "a string" }).ok).toBe(false);
   expect(created(null).ok).toBe(false);
 });
+
+const ADDRESS: FieldRule = {
+  field: "url",
+  rule: "composed",
+  parts: [
+    { text: "/dashboards/f/" },
+    { from: "uid", as: "value" },
+    { text: "/" },
+    { from: "title", as: "slug" },
+  ],
+};
+const UNSPELLED =
+  'The write composes "url" from "uid", "title", and the entity holds no value one of them can spell.';
+
+it("rebuilds an updated composed address, and refuses one whose entity holds no field a part reads", () => {
+  const plan: Plan = {
+    rules: [{ field: "title", rule: "echo" }, ADDRESS],
+    body: {
+      accepted: ["title"],
+      fixed: [],
+      required: [],
+      identity: "uid",
+      kinds: [],
+    },
+  };
+  const rename = (before: JsonObject) =>
+    updatedFields(
+      plan,
+      { before, observed: before },
+      { ...callWith({ title: "Moved Folder" }, { item: "7" }), id: "7" },
+      generator().generate,
+    );
+  expect(
+    rename({ id: 7, uid: "f-7", title: "Old", url: "/dashboards/f/f-7/old" }),
+  ).toEqual(
+    ok({
+      id: 7,
+      uid: "f-7",
+      title: "Moved Folder",
+      url: "/dashboards/f/f-7/moved-folder",
+    }),
+  );
+  expect(rename({ id: 7, title: "Old", url: "/dashboards/f/f-7/old" })).toEqual(
+    err(UNSPELLED),
+  );
+});
+
+it("refuses a create whose composed address reads a member the call does not send", () => {
+  const plan: Plan = {
+    rules: [
+      { field: "uid", rule: "echo" },
+      { field: "title", rule: "echo" },
+      ADDRESS,
+    ],
+    body: {
+      accepted: ["uid", "title"],
+      fixed: [],
+      required: ["title"],
+      identity: null,
+      kinds: [],
+    },
+  };
+  const observed: JsonObject = {
+    uid: "f-1",
+    title: "Recorded",
+    url: "/dashboards/f/f-1/recorded",
+  };
+  const create = (body: JsonObject) =>
+    createdFields(plan, observed, callWith(body), generator().generate);
+  expect(create({ uid: "f-2", title: "New Folder" })).toEqual(
+    ok({
+      uid: "f-2",
+      title: "New Folder",
+      url: "/dashboards/f/f-2/new-folder",
+    }),
+  );
+  expect(create({ title: "New Folder" })).toEqual(err(UNSPELLED));
+});
+
+it.each(["__proto__", "constructor"])(
+  "creates and updates an absent own %s field without changing object inheritance",
+  (field) => {
+    const plan = {
+      rules: [{ field, rule: "echo" as const }],
+      body: {
+        accepted: [field],
+        fixed: [],
+        required: [],
+        identity: null,
+        kinds: [],
+      },
+    };
+    const sent = Object.fromEntries([[field, { label: "stored" }]]);
+    const call = callWith(sent);
+    const created = createdFields(plan, { id: 1 }, call, generator().generate);
+    const updated = updatedFields(
+      plan,
+      {
+        before: { id: 1 },
+        observed: Object.fromEntries([
+          ["id", 1],
+          [field, { label: "old" }],
+        ]),
+      },
+      { ...call, id: "1" },
+      generator().generate,
+    );
+    for (const result of [created, updated]) {
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error(result.error);
+      expect(
+        Object.getOwnPropertyDescriptor(result.value, field)?.value,
+      ).toEqual({ label: "stored" });
+      expect(Object.getPrototypeOf(result.value)).toBe(Object.prototype);
+      expect(JSON.parse(JSON.stringify(result.value))).toEqual({
+        id: 1,
+        ...sent,
+      });
+    }
+  },
+);

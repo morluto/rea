@@ -1,6 +1,10 @@
 import type { FileHandle } from "node:fs/promises";
 import { copyArtifactEntry, type ArtifactEntry } from "../ArtifactReader.js";
-import { isCArchiveDeclaration, type CArchiveEntry } from "./CArchiveLayout.js";
+import {
+  isCArchiveDeclaration,
+  isCArchivePythonModule,
+  type CArchiveEntry,
+} from "./CArchiveLayout.js";
 import type { PyzArchive, PyzEntry } from "./PyzArchive.js";
 import {
   RECONSTRUCTED_PYTHON_HEADER_LIMITATION,
@@ -54,7 +58,7 @@ export const hasEncryptionMarker = (
   entries.some(
     (entry) =>
       entry.name === CRYPTO_KEY_NAME &&
-      (entry.typeCode === "m" || entry.typeCode === "M") &&
+      isCArchivePythonModule(entry) &&
       entry.uncompressedSize > 0,
   );
 
@@ -66,14 +70,14 @@ export const projectStoredMember = (
 ): PyInstallerMember => {
   if (isCArchiveDeclaration(entry))
     return {
-      entry: fileEntry({
-        path: `__pyinstaller__/${entry.typeCode === "o" ? "runtime-options" : "dependencies"}/${String(entry.index)}`,
+      entry: projectEntry({
+        path: `__pyinstaller__/${entry.role === "runtime-option" ? "runtime-options" : "dependencies"}/${String(entry.index)}`,
         kind: "metadata",
         declaredSize: entry.uncompressedSize,
         compressedSize: entry.compressedSize,
         byteOffset: null,
         limitations:
-          entry.typeCode === "d"
+          entry.role === "dependency"
             ? [
                 "Multipackage dependency bytes belong to another executable and remain unresolved.",
               ]
@@ -85,7 +89,7 @@ export const projectStoredMember = (
     };
   const { header } = bytecode;
   const path = canonicalMemberPath(entry.name, pathDialect);
-  const symlink = entry.typeCode === "n";
+  const symlink = entry.role === "symlink";
   const limitations: string[] = [];
   if (symlink) limitations.push("PyInstaller symlink target was not read.");
   if (header !== undefined)
@@ -93,12 +97,12 @@ export const projectStoredMember = (
   if (bytecode.limitation !== undefined) limitations.push(bytecode.limitation);
   const declaredSize = entry.uncompressedSize;
   return {
-    entry: fileEntry({
+    entry: projectEntry({
       path,
       kind: symlink ? "symlink" : "file",
       declaredSize,
       compressedSize: entry.compressedSize,
-      executable: entry.typeCode === "b",
+      executable: entry.role === "binary",
       byteOffset: sourceByteOffset(entry, archiveStart),
       limitations,
       adapterKey: `carchive:${String(entry.index)}:${entry.name}`,
@@ -126,7 +130,7 @@ export const projectPyzContainer = (
   const limitations: string[] = [];
   if (archive.kind === "opaque")
     return {
-      entry: fileEntry({
+      entry: projectEntry({
         path,
         declaredSize: entry.uncompressedSize,
         compressedSize: entry.compressedSize,
@@ -167,16 +171,12 @@ export const projectPyzContainer = (
             },
     };
   return {
-    entry: {
+    entry: projectEntry({
       path,
       kind: "directory",
       declaredSize: entry.uncompressedSize,
       compressedSize: entry.compressedSize,
-      executable: false,
-      encrypted: false,
       byteOffset,
-      declaredIntegrity: null,
-      unpacked: false,
       limitations: [
         ...limitations,
         `PyInstaller PYZ sha256 ${archive.sha256}.`,
@@ -191,7 +191,7 @@ export const projectPyzContainer = (
         archive,
         encrypted,
       ),
-    },
+    }),
     read: undefined,
   };
 };
@@ -216,18 +216,15 @@ export const projectPyzMember = (
     pathDialect,
   );
   const encrypted = pyzEntryEncrypted(item, encryptionMarker);
-  if (item.namespace)
+  if (item.role === "namespace")
     return {
-      entry: {
-        path: path,
+      entry: projectEntry({
+        path,
         kind: "metadata",
         declaredSize: 0,
         compressedSize: item.length,
-        executable: false,
         encrypted,
         byteOffset: null,
-        declaredIntegrity: null,
-        unpacked: false,
         limitations: [
           "Namespace package has no importable bytecode; its declared payload is not materialized.",
           ...(encrypted
@@ -243,13 +240,13 @@ export const projectPyzMember = (
           undefined,
           encryptionMarker,
         ),
-      },
+      }),
       read: undefined,
     };
   const header =
     !encrypted &&
     pythonMagic !== undefined &&
-    (item.typeCode === 0 || item.typeCode === 1)
+    (item.role === "module" || item.role === "package")
       ? reconstructedPycHeader(pythonMagic)
       : undefined;
   const limitations: string[] = [];
@@ -261,7 +258,7 @@ export const projectPyzMember = (
     "PYZ tables declare compressed lengths; the uncompressed size is unknown until decoding.",
   );
   return {
-    entry: fileEntry({
+    entry: projectEntry({
       path: path,
       declaredSize: null,
       compressedSize: item.length,
@@ -313,15 +310,15 @@ const pyzMemberPath = (
   item: PyzEntry,
   pathDialect: CarrierPathDialect,
 ): string => {
-  if (item.typeCode === 2)
+  if (item.role === "data")
     return `${container}/${canonicalMemberPath(item.name, pathDialect)}`;
   const dotted = item.name.replaceAll(".", "/");
-  if (item.namespace) return `${container}/${dotted}`;
-  if (item.package) return `${container}/${dotted}/__init__.pyc`;
+  if (item.role === "namespace") return `${container}/${dotted}`;
+  if (item.role === "package") return `${container}/${dotted}/__init__.pyc`;
   return `${container}/${dotted}.pyc`;
 };
 
-const fileEntry = (input: {
+const projectEntry = (input: {
   readonly path: string;
   readonly declaredSize: number | null;
   readonly compressedSize: number;
@@ -331,9 +328,10 @@ const fileEntry = (input: {
   readonly formatMetadata: PyInstallerEntryMetadata;
   readonly executable?: boolean;
   readonly encrypted?: boolean;
-  readonly kind?: "file" | "symlink" | "metadata";
+  readonly kind?: "file" | "directory" | "symlink" | "metadata";
 }): ArtifactEntry => ({
   path: input.path,
+  sourcePath: input.formatMetadata.source_name,
   kind: input.kind ?? "file",
   declaredSize: input.declaredSize,
   compressedSize: input.compressedSize,

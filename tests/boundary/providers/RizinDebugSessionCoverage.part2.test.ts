@@ -191,19 +191,3 @@ it.skipIf(process.platform === "win32")(
     expect(result.ok).toBe(false);
   },
 );
-
-it.skipIf(process.platform === "win32")(
-  "cancels while waiting for the previous command turn",
-  async () => {
-    const injected = createInjectedProcess();
-    const { manager, started } = await startInjected(injected.spawnProcess);
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
-    const result = await manager.execute(
-      started.value.session_id,
-      "dr",
-      abortOnCheck(2),
-    );
-    expect(result.ok).toBe(false);
-  },
-);

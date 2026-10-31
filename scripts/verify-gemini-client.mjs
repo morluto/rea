@@ -6,18 +6,28 @@ import { join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv2020 from "ajv/dist/2020.js";
 import {
-  schemaArrays,
-  schemaChildren,
-  schemaMaps,
-} from "../dist/contracts/jsonSchemaKeywords.js";
-import {
   TOOL_CONTRACTS,
   toolContract,
 } from "../dist/contracts/toolContracts.js";
-import { exec } from "./lib/verify-package-core.mjs";
-import { assertJavaScriptApplicationInputPaths } from "./lib/javascript-application-paths.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
+import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
+import {
+  CLIENT_JAVASCRIPT_FIXTURE_SOURCE,
+  assertClientJavaScriptFixtureEvidence,
+} from "./verify/clients/javascript-fixture.mjs";
+import {
+  findClientResult,
+  isClientJavaScriptEvidence,
+} from "./verify/clients/result-discovery.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { createGeminiModelFixture } from "./verify/clients/gemini-model-fixture.mjs";
+import { importVerifierSource } from "./lib/verifier-source-loader.mjs";
+
+const { geminiUnsupportedLiteral } = await importVerifierSource(
+  new URL("./lib/gemini-schema-literals.mts", import.meta.url).href,
+  import.meta.url,
+);
 
 const repo = fileURLToPath(new URL("..", import.meta.url));
 const runtimeRoot = process.env.REA_VERIFY_RUNTIME_ROOT ?? repo;
@@ -50,402 +60,364 @@ const skillPath = join(
   "reverse-engineer-anything",
   "SKILL.md",
 );
-await Promise.all([
-  mkdir(account),
-  mkdir(workspace),
-  mkdir(join(profile, ".gemini"), { recursive: true }),
-]);
-await exec("git", ["init", "--quiet", workspace], { timeout: 30_000 });
-await writeFile(join(lab, "system-settings.json"), "{}\n");
-await writeFile(join(lab, "system-defaults.json"), "{}\n");
-const environment = {
-  PATH: process.env.PATH ?? "",
-  USERPROFILE: account,
-  GEMINI_CLI_HOME: profile,
-  GEMINI_CLI_SYSTEM_SETTINGS_PATH: join(lab, "system-settings.json"),
-  GEMINI_CLI_SYSTEM_DEFAULTS_PATH: join(lab, "system-defaults.json"),
-  // Preserve the caller's bounded Node heap instead of the launcher's host-memory auto-sizing.
-  GEMINI_CLI_NO_RELAUNCH: "1",
-  GEMINI_CLI_TRUST_WORKSPACE: "true",
-  REA_PROCESS_RUN_ID: verifier.run_id,
-  REA_MCP_INPUT_SCHEMA_PROFILE: schemaProfile,
-};
-let clientVersion;
-try {
-  clientVersion = (
-    await exec(...launch(["--version"]), { env: environment, timeout: 30_000 })
-  ).stdout.trim();
-} catch (cause) {
-  const windowsHint =
-    process.platform === "win32"
-      ? " On Windows, select the JavaScript entry point; npm installs provide it as node_modules/@google/gemini-cli/bundle/gemini.js."
-      : "";
-  throw new Error(
-    `Gemini preflight failed for ${command}; install Gemini CLI or set REA_VERIFY_GEMINI_COMMAND.${windowsHint} ${String(cause)}`,
-  );
-}
-const original = JSON.stringify(
-  {
-    security: {
-      auth: { selectedType: "gemini-api-key" },
-      folderTrust: { enabled: false },
-    },
-    telemetry: { enabled: false },
-    advanced: { autoConfigureMemory: false },
-    model: { name: "gemini-2.5-flash", maxSessionTurns: 8 },
-    mcpServers: { other: { command: "unrelated-server" } },
-  },
-  null,
-  2,
-);
-await writeFile(configPath, original);
-for (const args of [
-  ["setup", "--client", "gemini_cli", "--dry-run"],
-  ["setup", "--client", "gemini_cli", "--yes"],
-  ["doctor", "--client", "gemini_cli", "--skill"],
-]) {
-  const result = await exec(
-    process.execPath,
-    [join(runtimeRoot, "scripts/rea.mjs"), ...args, "--json"],
-    { env: environment, cwd: workspace, timeout: 60_000 },
-  );
-  const parsed = JSON.parse(result.stdout);
-  if (args[0] === "doctor") assert.equal(parsed.healthy, true);
-  else {
-    assert.equal(
-      parsed.status,
-      args.includes("--dry-run") ? "planned" : "ready",
-    );
-    if (args.includes("--dry-run")) {
-      assert(parsed.plannedActions.some((a) => a.target === configPath));
-      assert(
-        parsed.plannedActions.some((a) =>
-          a.target.startsWith(join(profile, ".agents", "skills") + sep),
-        ),
-      );
-      assert(
-        parsed.plannedActions.every((a) => a.target.startsWith(profile + sep)),
-      );
-    }
-  }
-  await writeFile(
-    join(lab, `${args[0]}${args.includes("--dry-run") ? "-plan" : ""}.json`),
-    result.stdout,
-  );
-}
-assert.equal(await readFile(`${configPath}.rea.backup`, "utf8"), original);
-const configured = await readFile(configPath, "utf8");
-assert.deepEqual(JSON.parse(configured).mcpServers.other, {
-  command: "unrelated-server",
-});
-const repeated = await exec(
-  process.execPath,
-  [
-    join(runtimeRoot, "scripts/rea.mjs"),
-    "setup",
-    "--client",
-    "gemini_cli",
-    "--yes",
-    "--json",
-  ],
-  { env: environment, cwd: workspace, timeout: 60_000 },
-);
-assert.deepEqual(JSON.parse(repeated.stdout).appliedActions, []);
-assert.equal(await readFile(configPath, "utf8"), configured);
-assert.equal(await readFile(`${configPath}.rea.backup`, "utf8"), original);
-assert(
-  (await readFile(skillPath, "utf8")).includes(
-    "name: reverse-engineer-anything",
-  ),
-);
-const target = join(lab, "fixture α测试");
-await mkdir(target);
-await writeFile(
-  join(target, "app.js"),
-  'export function result() { return { clientCompatibility: "REA_CLIENT_FIXTURE", count: 7 }; }\n',
-);
+let clientVersion = null;
+let fixture;
+let passed = false;
 let evidenceSeen = false;
 let skillLoaded = false;
 let skillRequested = false;
 let finalSeen = false;
-let catalogSize = 0;
+let catalogSize = null;
 let schemasChecked = 0;
 let examplesChecked = 0;
 let artifactDigest;
-const schemaValidator = new Ajv2020({ strict: false, validateFormats: false });
-const unsupportedLiteralPath = (schema, path = "$", seen = new Set()) => {
-  if (!schema || typeof schema !== "object" || seen.has(schema))
-    return undefined;
-  seen.add(schema);
-  for (const [key, child] of Object.entries(schema)) {
-    const childPath = `${path}.${key}`;
-    if (key === "const" && (typeof child === "boolean" || child === ""))
-      return childPath;
-    if (
-      key === "enum" &&
-      Array.isArray(child) &&
-      child.some((item) => typeof item === "boolean" || item === "")
-    )
-      return childPath;
-    const schemaChildrenAtKey =
-      schemaMaps.has(key) &&
-      child &&
-      typeof child === "object" &&
-      !Array.isArray(child)
-        ? Object.entries(child).map(([name, item]) => [
-            `${childPath}.${name}`,
-            item,
-          ])
-        : schemaArrays.has(key) && Array.isArray(child)
-          ? child.map((item, index) => [`${childPath}[${index}]`, item])
-          : schemaChildren.has(key)
-            ? [[childPath, child]]
-            : [];
-    for (const [nestedPath, nested] of schemaChildrenAtKey) {
-      const found = unsupportedLiteralPath(nested, nestedPath, seen);
-      if (found !== undefined) return found;
-    }
-  }
-  return undefined;
-};
-const extractEvidence = (value) => {
-  if (typeof value === "string") {
-    if (
-      value.startsWith("<untrusted_context>\n") &&
-      value.endsWith("\n</untrusted_context>")
-    ) {
-      return extractEvidence(
-        value.slice(
-          "<untrusted_context>\n".length,
-          -"\n</untrusted_context>".length,
-        ),
-      );
-    }
+const commands = await createVerifierCommands();
+await withVerifierCleanup(async () => {
+  await withVerifierCleanup(async () => {
+    await Promise.all([
+      mkdir(account),
+      mkdir(workspace),
+      mkdir(join(profile, ".gemini"), { recursive: true }),
+    ]);
+    await commands.exec("git", ["init", "--quiet", workspace], {
+      timeout: 30_000,
+      stdin: "pipe",
+    });
+    await writeFile(join(lab, "system-settings.json"), "{}\n");
+    await writeFile(join(lab, "system-defaults.json"), "{}\n");
+    const environment = {
+      PATH: process.env.PATH ?? "",
+      USERPROFILE: account,
+      GEMINI_CLI_HOME: profile,
+      GEMINI_CLI_SYSTEM_SETTINGS_PATH: join(lab, "system-settings.json"),
+      GEMINI_CLI_SYSTEM_DEFAULTS_PATH: join(lab, "system-defaults.json"),
+      // Preserve the caller's bounded Node heap instead of the launcher's host-memory auto-sizing.
+      GEMINI_CLI_NO_RELAUNCH: "1",
+      GEMINI_CLI_TRUST_WORKSPACE: "true",
+      REA_PROCESS_RUN_ID: verifier.run_id,
+      REA_MCP_INPUT_SCHEMA_PROFILE: schemaProfile,
+    };
     try {
-      return extractEvidence(JSON.parse(value));
-    } catch {
-      return undefined;
-    }
-  }
-  if (value && typeof value === "object") {
-    if (
-      typeof value.evidence_id === "string" &&
-      value.normalized_result?.graph?.nodes?.length > 0
-    )
-      return value;
-    for (const nested of Object.values(value)) {
-      const evidence = extractEvidence(nested);
-      if (evidence) return evidence;
-    }
-  }
-  return undefined;
-};
-const fixture = await createGeminiModelFixture({
-  directory: lab,
-  onRequest: async ({ body, tools }) => {
-    const analysis = tools.find((t) =>
-      t.name.endsWith("analyze_javascript_application"),
-    );
-    assert(analysis, "Gemini must expose the REA analysis tool");
-    const prefix = analysis.name.slice(
-      0,
-      -"analyze_javascript_application".length,
-    );
-    const expected = TOOL_CONTRACTS.map((t) => prefix + t.name).sort();
-    assert.deepEqual(
-      tools
-        .filter((t) => expected.includes(t.name))
-        .map((t) => t.name)
-        .sort(),
-      expected,
-      "Gemini must forward the complete REA tool catalog",
-    );
-    catalogSize = expected.length;
-    if (schemasChecked === 0) {
-      for (const tool of tools.filter((t) => expected.includes(t.name))) {
-        assert(
-          tool.parametersJsonSchema,
-          `${tool.name}: missing advertised JSON Schema`,
-        );
-        assert(
-          schemaValidator.validateSchema(tool.parametersJsonSchema),
-          `${tool.name}: invalid advertised JSON Schema: ${JSON.stringify(schemaValidator.errors)}`,
-        );
-        const unsupportedLiteral = unsupportedLiteralPath(
-          tool.parametersJsonSchema,
-        );
-        assert.equal(
-          unsupportedLiteral,
-          undefined,
-          `${tool.name}: Gemini SDK declaration retains a boolean or empty-string const/enum at ${unsupportedLiteral}`,
-        );
-        const name = tool.name.slice(prefix.length);
-        const contract = toolContract(name);
-        const validate = schemaValidator.compile(tool.parametersJsonSchema);
-        for (const example of contract.examples) {
-          assert(
-            validate(example.input),
-            `${tool.name}: Gemini SDK declaration rejects canonical example ${example.title}: ${JSON.stringify(schemaValidator.errors)}`,
-          );
-          examplesChecked++;
-        }
-        schemasChecked++;
-      }
-    }
-    const responses = body.contents
-      .flatMap((c) => c.parts ?? [])
-      .filter((p) => p.functionResponse)
-      .map((p) => p.functionResponse);
-    skillLoaded ||= responses.some(
-      (r) =>
-        r.name === "activate_skill" &&
-        r.response?.output?.includes(
-          `<activated_skill name="reverse-engineer-anything">`,
-        ) &&
-        r.response.output.includes(
-          join(profile, ".agents", "skills", "reverse-engineer-anything"),
-        ),
-    );
-    const observed = extractEvidence(responses);
-    if (observed) {
-      const evidence = toolContract(
-        "analyze_javascript_application",
-      ).outputSchema.parse(observed);
-      await assertJavaScriptApplicationInputPaths(evidence, target);
-      const shape = evidence.normalized_result.graph.nodes
-        .flatMap((n) => n.observations)
-        .map((o) => o.properties)
-        .find(
-          (p) =>
-            p.semantic_role === "export-return-shapes" &&
-            p.exported_name === "result",
-        );
-      assert(shape?.return_shape_coverage?.projection_complete);
-      const fields = shape.static_return_shapes.flatMap((s) => s.fields);
-      assert(
-        fields.some(
-          (f) =>
-            f.path === "/clientCompatibility" &&
-            f.state === "literal" &&
-            f.value === "REA_CLIENT_FIXTURE",
-        ),
+      clientVersion = (
+        await commands.exec(...launch(["--version"]), {
+          env: environment,
+          timeout: 30_000,
+          stdin: "pipe",
+        })
+      ).stdout.trim();
+    } catch (cause) {
+      const windowsHint =
+        process.platform === "win32"
+          ? " On Windows, select the JavaScript entry point; npm installs provide it as node_modules/@google/gemini-cli/bundle/gemini.js."
+          : "";
+      throw new Error(
+        `Gemini preflight failed for ${command}; install Gemini CLI or set REA_VERIFY_GEMINI_COMMAND.${windowsHint} ${String(cause)}`,
+        { cause },
       );
-      assert(
-        fields.some(
-          (f) => f.path === "/count" && f.state === "literal" && f.value === 7,
-        ),
-      );
-      const bytes = JSON.stringify(evidence);
-      artifactDigest = createHash("sha256").update(bytes).digest("hex");
-      await writeFile(join(lab, "gemini-evidence.json"), bytes);
-      evidenceSeen = true;
     }
-    if (mode === "chat" || evidenceSeen) {
-      finalSeen = true;
-      return [{ text: "REA_CLIENT_COMPATIBILITY_OK" }];
-    }
-    if (!skillRequested) {
-      const skill = tools.find((t) => t.name === "activate_skill");
-      assert(skill, "Gemini must expose its native skill activation tool");
-      skillRequested = true;
-      return [
-        {
-          functionCall: {
-            name: skill.name,
-            args: { name: "reverse-engineer-anything" },
-          },
-        },
-      ];
-    }
-    assert(skillLoaded, "Gemini must load the installed personal REA skill");
-    return [
+    const original = JSON.stringify(
       {
-        functionCall: {
-          name: analysis.name,
-          args: { input_path: target, format: "directory" },
+        security: {
+          auth: { selectedType: "gemini-api-key" },
+          folderTrust: { enabled: false },
         },
+        telemetry: { enabled: false },
+        advanced: { autoConfigureMemory: false },
+        model: { name: "gemini-2.5-flash", maxSessionTurns: 8 },
+        mcpServers: { other: { command: "unrelated-server" } },
       },
-    ];
+      null,
+      2,
+    );
+    await writeFile(configPath, original);
+    for (const args of [
+      ["setup", "--client", "gemini_cli", "--dry-run"],
+      ["setup", "--client", "gemini_cli", "--yes"],
+      ["doctor", "--client", "gemini_cli", "--skill"],
+    ]) {
+      const result = await commands.exec(
+        process.execPath,
+        [join(runtimeRoot, "scripts/rea.mjs"), ...args, "--json"],
+        { env: environment, cwd: workspace, timeout: 60_000, stdin: "pipe" },
+      );
+      const parsed = JSON.parse(result.stdout);
+      if (args[0] === "doctor") assert.equal(parsed.healthy, true);
+      else {
+        assert.equal(
+          parsed.status,
+          args.includes("--dry-run") ? "planned" : "ready",
+        );
+        if (args.includes("--dry-run")) {
+          assert(parsed.plannedActions.some((a) => a.target === configPath));
+          assert(
+            parsed.plannedActions.some((a) =>
+              a.target.startsWith(join(profile, ".agents", "skills") + sep),
+            ),
+          );
+          assert(
+            parsed.plannedActions.every((a) =>
+              a.target.startsWith(profile + sep),
+            ),
+          );
+        }
+      }
+      await writeFile(
+        join(
+          lab,
+          `${args[0]}${args.includes("--dry-run") ? "-plan" : ""}.json`,
+        ),
+        result.stdout,
+      );
+    }
+    assert.equal(await readFile(`${configPath}.rea.backup`, "utf8"), original);
+    const configured = await readFile(configPath, "utf8");
+    assert.deepEqual(JSON.parse(configured).mcpServers.other, {
+      command: "unrelated-server",
+    });
+    const repeated = await commands.exec(
+      process.execPath,
+      [
+        join(runtimeRoot, "scripts/rea.mjs"),
+        "setup",
+        "--client",
+        "gemini_cli",
+        "--yes",
+        "--json",
+      ],
+      { env: environment, cwd: workspace, timeout: 60_000, stdin: "pipe" },
+    );
+    assert.deepEqual(JSON.parse(repeated.stdout).appliedActions, []);
+    assert.equal(await readFile(configPath, "utf8"), configured);
+    assert.equal(await readFile(`${configPath}.rea.backup`, "utf8"), original);
+    assert(
+      (await readFile(skillPath, "utf8")).includes(
+        "name: reverse-engineer-anything",
+      ),
+    );
+    const target = join(lab, "fixture α测试");
+    await mkdir(target);
+    await writeFile(join(target, "app.js"), CLIENT_JAVASCRIPT_FIXTURE_SOURCE);
+    const schemaValidator = new Ajv2020({
+      strict: false,
+      validateFormats: false,
+    });
+    const decodeGeminiResult = (text) => {
+      if (
+        text.startsWith("<untrusted_context>\n") &&
+        text.endsWith("\n</untrusted_context>")
+      )
+        return decodeGeminiResult(
+          text.slice(
+            "<untrusted_context>\n".length,
+            -"\n</untrusted_context>".length,
+          ),
+        );
+      return JSON.parse(text);
+    };
+    fixture = await createGeminiModelFixture({
+      directory: lab,
+      onRequest: async ({ body, tools }) => {
+        const analysis = tools.find((t) =>
+          t.name.endsWith("analyze_javascript_application"),
+        );
+        assert(analysis, "Gemini must expose the REA analysis tool");
+        const prefix = analysis.name.slice(
+          0,
+          -"analyze_javascript_application".length,
+        );
+        const expected = TOOL_CONTRACTS.map((t) => prefix + t.name).sort();
+        const reaTools = tools.filter((t) => expected.includes(t.name));
+        catalogSize = reaTools.length;
+        assert.deepEqual(
+          reaTools.map((t) => t.name).sort(),
+          expected,
+          "Gemini must forward the complete REA tool catalog",
+        );
+        if (schemasChecked === 0) {
+          for (const tool of reaTools) {
+            assert(
+              tool.parametersJsonSchema,
+              `${tool.name}: missing advertised JSON Schema`,
+            );
+            assert(
+              schemaValidator.validateSchema(tool.parametersJsonSchema),
+              `${tool.name}: invalid advertised JSON Schema: ${JSON.stringify(schemaValidator.errors)}`,
+            );
+            const unsupportedLiteral = geminiUnsupportedLiteral(
+              tool.parametersJsonSchema,
+            )?.path;
+            assert.equal(
+              unsupportedLiteral,
+              undefined,
+              `${tool.name}: Gemini SDK declaration retains a boolean or empty-string const/enum at ${unsupportedLiteral}`,
+            );
+            const name = tool.name.slice(prefix.length);
+            const contract = toolContract(name);
+            const validate = schemaValidator.compile(tool.parametersJsonSchema);
+            for (const example of contract.examples) {
+              assert(
+                validate(example.input),
+                `${tool.name}: Gemini SDK declaration rejects canonical example ${example.title}: ${JSON.stringify(schemaValidator.errors)}`,
+              );
+              examplesChecked++;
+            }
+            schemasChecked++;
+          }
+        }
+        const responses = body.contents
+          .flatMap((c) => c.parts ?? [])
+          .filter((p) => p.functionResponse)
+          .map((p) => p.functionResponse);
+        skillLoaded ||= responses.some(
+          (r) =>
+            r.name === "activate_skill" &&
+            r.response?.output?.includes(
+              `<activated_skill name="reverse-engineer-anything">`,
+            ) &&
+            r.response.output.includes(
+              join(profile, ".agents", "skills", "reverse-engineer-anything"),
+            ),
+        );
+        const observed = findClientResult(
+          responses,
+          isClientJavaScriptEvidence,
+          decodeGeminiResult,
+        );
+        if (observed) {
+          const { evidence } = await assertClientJavaScriptFixtureEvidence(
+            observed,
+            target,
+          );
+          const bytes = JSON.stringify(evidence);
+          artifactDigest = createHash("sha256").update(bytes).digest("hex");
+          await writeFile(join(lab, "gemini-evidence.json"), bytes);
+          evidenceSeen = true;
+        }
+        if (mode === "chat" || evidenceSeen) {
+          finalSeen = true;
+          return [{ text: "REA_CLIENT_COMPATIBILITY_OK" }];
+        }
+        if (!skillRequested) {
+          const skill = tools.find((t) => t.name === "activate_skill");
+          assert(skill, "Gemini must expose its native skill activation tool");
+          skillRequested = true;
+          return [
+            {
+              functionCall: {
+                name: skill.name,
+                args: { name: "reverse-engineer-anything" },
+              },
+            },
+          ];
+        }
+        assert(
+          skillLoaded,
+          "Gemini must load the installed personal REA skill",
+        );
+        return [
+          {
+            functionCall: {
+              name: analysis.name,
+              args: { input_path: target, format: "directory" },
+            },
+          },
+        ];
+      },
+    });
+    const response = await saveVerifierCommandOutput(
+      () =>
+        commands.exec(
+          ...launch([
+            "--model",
+            "gemini-2.5-flash",
+            "--approval-mode",
+            mode === "chat" ? "default" : "yolo",
+            "--allowed-mcp-server-names",
+            "rea",
+            "--output-format",
+            "stream-json",
+            "-p",
+            mode === "chat"
+              ? "Say hello briefly."
+              : `Use REA to analyze the JavaScript directory ${target}. Report the result.`,
+          ]),
+          {
+            env: {
+              ...environment,
+              GEMINI_API_KEY: "local-fixture-key",
+              GOOGLE_GEMINI_BASE_URL: fixture.baseUrl,
+            },
+            cwd: workspace,
+            timeout: 120_000,
+            maxBuffer: 10 * 1024 * 1024,
+            stdin: "pipe",
+          },
+        ),
+      {
+        stdout: join(lab, `${mode}.stdout`),
+        stderr: join(lab, `${mode}.stderr`),
+      },
+    );
+    const events = response.stdout
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+    assert.equal(
+      events.findLast((e) => e.type === "result")?.status,
+      "success",
+    );
+    assert.equal(fixture.failure, undefined);
+    assert(
+      finalSeen && response.stdout.includes("REA_CLIENT_COMPATIBILITY_OK"),
+    );
+    if (mode === "call") assert(evidenceSeen && skillLoaded);
+  }, [
+    () => commands.close(),
+    async () => {
+      await fixture?.close();
+    },
+  ]);
+  passed = true;
+}, [
+  async () => {
+    const lineage = await completeVerifierRun(verifier);
+    const receipt = {
+      client: "Gemini CLI",
+      clientVersion,
+      mode,
+      schemaProfile,
+      schemasChecked,
+      examplesChecked,
+      passed,
+      artifacts: lab,
+      runtimeRoot,
+      host: {
+        platform: process.platform,
+        architecture: process.arch,
+        node: process.versions.node,
+      },
+      modelFixture:
+        "loopback native Gemini API adapter; token counts synthetic; no live Google API claim",
+      skillDiscovery:
+        "native GEMINI_CLI_HOME personal shared directory; isolated Git project",
+      catalogSize,
+      evidenceSeen,
+      skillLoaded,
+      artifactDigest,
+      finalSeen,
+      requests: fixture?.requests,
+      probes: fixture?.probes,
+      fixtureFailure: fixture?.failure,
+      verifier: lineage,
+    };
+    await withVerifierCleanup(
+      () =>
+        writeFile(join(lab, "receipt.json"), JSON.stringify(receipt, null, 2)),
+      [
+        () => {
+          console.log(JSON.stringify(receipt));
+        },
+      ],
+    );
   },
-});
-let failure;
-try {
-  const response = await exec(
-    ...launch([
-      "--model",
-      "gemini-2.5-flash",
-      "--approval-mode",
-      mode === "chat" ? "default" : "yolo",
-      "--allowed-mcp-server-names",
-      "rea",
-      "--output-format",
-      "stream-json",
-      "-p",
-      mode === "chat"
-        ? "Say hello briefly."
-        : `Use REA to analyze the JavaScript directory ${target}. Report the result.`,
-    ]),
-    {
-      env: {
-        ...environment,
-        GEMINI_API_KEY: "local-fixture-key",
-        GOOGLE_GEMINI_BASE_URL: fixture.baseUrl,
-      },
-      cwd: workspace,
-      timeout: 120_000,
-      maxBuffer: 10 * 1024 * 1024,
-    },
-  );
-  await writeFile(join(lab, `${mode}.stdout`), response.stdout);
-  await writeFile(join(lab, `${mode}.stderr`), response.stderr);
-  const events = response.stdout
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => JSON.parse(line));
-  assert.equal(events.findLast((e) => e.type === "result")?.status, "success");
-  assert.equal(fixture.failure, undefined);
-  assert(finalSeen && response.stdout.includes("REA_CLIENT_COMPATIBILITY_OK"));
-  if (mode === "call") assert(evidenceSeen && skillLoaded);
-} catch (cause) {
-  failure = cause;
-  if (typeof cause?.stdout === "string")
-    await writeFile(join(lab, `${mode}.stdout`), cause.stdout);
-  if (typeof cause?.stderr === "string")
-    await writeFile(join(lab, `${mode}.stderr`), cause.stderr);
-} finally {
-  await fixture.close();
-  const lineage = await completeVerifierRun(verifier);
-  const receipt = {
-    client: "Gemini CLI",
-    clientVersion,
-    mode,
-    schemaProfile,
-    schemasChecked,
-    examplesChecked,
-    passed: failure === undefined,
-    artifacts: lab,
-    runtimeRoot,
-    host: {
-      platform: process.platform,
-      architecture: process.arch,
-      node: process.versions.node,
-    },
-    modelFixture:
-      "loopback native Gemini API adapter; token counts synthetic; no live Google API claim",
-    skillDiscovery:
-      "native GEMINI_CLI_HOME personal shared directory; isolated Git project",
-    catalogSize,
-    schemasChecked,
-    evidenceSeen,
-    skillLoaded,
-    artifactDigest,
-    finalSeen,
-    requests: fixture.requests,
-    probes: fixture.probes,
-    fixtureFailure: fixture.failure,
-    verifier: lineage,
-  };
-  await writeFile(join(lab, "receipt.json"), JSON.stringify(receipt, null, 2));
-  console.log(JSON.stringify(receipt));
-}
-if (failure !== undefined) throw failure;
+]);

@@ -1,6 +1,6 @@
 import type { EvidenceMcpServer } from "../EvidenceMcpServer.js";
 import { runAdmittedToolOperation } from "../admittedToolOperation.js";
-import { recordSessionEvidenceSources } from "../sessionEvidence.js";
+import { recordEvidenceSources } from "../../application/investigation/recordEvidenceSources.js";
 
 import { buildResolvedReconstructionObligationLedgerEvidence } from "../../application/ReconstructionObligationLedgerService.js";
 import { resolveReconstructionObligationLedgerRequest } from "../../application/ReconstructionObligationLedgerRequest.js";
@@ -45,7 +45,7 @@ export const registerReconstructionObligationLedgerTool = (
           );
           if (!result.ok)
             return server.delivery.toCallToolResult(result, contract);
-          const recorded = recordSessionEvidenceSources(
+          const recorded = recordEvidenceSources(
             options.recordEvidence,
             resolved.value.sources.bundle.records,
           );

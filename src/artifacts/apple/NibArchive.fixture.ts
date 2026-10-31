@@ -4,6 +4,7 @@ type NibFixtureValue =
   | boolean
   | null
   | { ref: number }
+  | { data: Uint8Array }
   | { float32: number }
   | { float64: number };
 type NibFixtureFields =
@@ -97,6 +98,7 @@ const encodeValue = (
     | boolean
     | null
     | { ref: number }
+    | { data: Uint8Array }
     | { float32: number }
     | { float64: number },
 ): Buffer => {
@@ -110,6 +112,12 @@ const encodeValue = (
     return bytes;
   }
   if (typeof value === "object") {
+    if ("data" in value)
+      return Buffer.concat([
+        Buffer.from([8]),
+        varint(value.data.length),
+        value.data,
+      ]);
     if ("float32" in value) {
       const bytes = Buffer.alloc(5);
       bytes[0] = 6;

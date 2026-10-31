@@ -1,7 +1,11 @@
-import { boundedViewMessages } from "./analysisViewCoverage.js";
+import {
+  boundedViewMessages,
+  completeWithinViewCoverage,
+  pageViewCoverage,
+} from "./analysisViewCoverage.js";
 import { expect, it } from "vitest";
 
-import { functionDossierSchema } from "../hopperValues.js";
+import { functionDossierSchema } from "../native/functionDossier.js";
 import { ghidraFunctionDossier } from "../ghidraValues.fixture.js";
 import { JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE } from "../../contracts/javascript/javascriptRuntimeReconciliationExample.js";
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../../contracts/artifactComparisonExample.js";
@@ -21,14 +25,11 @@ import {
   createJavaScriptSemanticGraph,
   createImmutableJavaScriptSemanticGraphSteps,
 } from "../javascript/javascriptSemanticGraph.js";
-import {
-  completeWithinViewCoverage,
-  pageViewCoverage,
-} from "./analysisViewCoverage.js";
 import { sourceMapReference } from "../javascript/javascriptApplicationGraph.fixture.js";
 import { createArtifactInspection } from "../artifactInspection.js";
 import { javascriptModulePaths } from "./javascriptApplicationView.js";
 import {
+  analysisViewResultSchema,
   inspectAnalysisViewInputSchema,
   projectAnalysisView,
   type AnalysisViewParent,
@@ -98,6 +99,200 @@ it("projects native procedure and bounded assembly and high-pcode with exact par
   });
   if (!flow.ok) throw flow.error;
   expect(flow.value).toMatchObject({ item: [{ opcode: "COPY" }] });
+});
+
+it("projects a compact analyze_function summary that validates and retains the dossier", () => {
+  const parent = nativeParent();
+  const summary = projectAnalysisView(parent, { kind: "summary" });
+  if (!summary.ok) throw summary.error;
+  const validated = analysisViewResultSchema.parse(summary.value);
+  expect(validated).toMatchObject({
+    kind: "summary",
+    parent_operation: "analyze_function",
+    parent_evidence_id: parent.evidenceId,
+    artifact: parent.artifact,
+    summary: {
+      procedure: { address: "0x401000" },
+      pseudocode: { available: true },
+      value_flow: { available: true },
+      facet_availability: { references: { available: true } },
+      counts: { assembly: 2, incoming_references: 0 },
+    },
+  });
+});
+
+it("keeps omitted optional dossier records unknown in the analyze_function summary", () => {
+  const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
+  // The fixture omits unresolved_calls and Swift literals, as IDA and Kuna
+  // dossiers and non-Swift targets do: their counts are unknown, not zero.
+  const omitted = projectAnalysisView(nativeParent(dossier), {
+    kind: "summary",
+  });
+  if (!omitted.ok) throw omitted.error;
+  expect(analysisViewResultSchema.parse(omitted.value)).toMatchObject({
+    summary: {
+      counts: {
+        unresolved_calls: null,
+        swift_string_literals: null,
+        swift_string_literal_omissions: null,
+      },
+    },
+    unknowns: expect.arrayContaining([
+      "unresolved_calls not recorded",
+      "swift_string_literals not recorded",
+      "swift_string_literal_omissions not recorded",
+    ]),
+  });
+  const recorded = projectAnalysisView(
+    nativeParent({
+      ...dossier,
+      unresolved_calls: [{ address: "0x401010", reason: "indirect call" }],
+      swift_string_literals: [],
+      swift_string_literal_omissions: [],
+    }),
+    { kind: "summary" },
+  );
+  if (!recorded.ok) throw recorded.error;
+  expect(analysisViewResultSchema.parse(recorded.value)).toMatchObject({
+    summary: {
+      counts: {
+        unresolved_calls: 1,
+        swift_string_literals: 0,
+        swift_string_literal_omissions: 0,
+      },
+    },
+  });
+  expect(recorded.value.unknowns).not.toContain(
+    "unresolved_calls not recorded",
+  );
+  expect(recorded.value.unknowns).not.toContain(
+    "swift_string_literals not recorded",
+  );
+});
+
+it("keeps value-flow counts unknown when value flow is unrecorded or unavailable", () => {
+  const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
+  const flowCounts = {
+    value_flow_operations: null,
+    value_flow_def_use: null,
+    value_flow_effects: null,
+    value_flow_parameters: null,
+    value_flow_parameter_uses: null,
+  };
+  // IDA and Kuna dossiers record no value flow at all.
+  const unrecorded = projectAnalysisView(
+    nativeParent({ ...dossier, native_value_flow: null }),
+    { kind: "summary" },
+  );
+  if (!unrecorded.ok) throw unrecorded.error;
+  expect(analysisViewResultSchema.parse(unrecorded.value)).toMatchObject({
+    summary: {
+      value_flow: { available: false, truncated: false },
+      counts: flowCounts,
+    },
+    unknowns: expect.arrayContaining(["native_value_flow was not recorded"]),
+  });
+  // A Ghidra dossier can declare value flow unavailable with a reason.
+  const unavailable = projectAnalysisView(
+    nativeParent({
+      ...dossier,
+      native_value_flow: {
+        available: false,
+        reason: "High p-code was not produced.",
+        limitations: [],
+      },
+    }),
+    { kind: "summary" },
+  );
+  if (!unavailable.ok) throw unavailable.error;
+  expect(analysisViewResultSchema.parse(unavailable.value)).toMatchObject({
+    summary: { value_flow: { available: false }, counts: flowCounts },
+    unknowns: expect.arrayContaining([
+      "native_value_flow unavailable: High p-code was not produced.",
+    ]),
+  });
+  // Available value flow keeps its observed counts, including empty ones.
+  const available = projectAnalysisView(nativeParent(dossier), {
+    kind: "summary",
+  });
+  if (!available.ok) throw available.error;
+  const flow = dossier.native_value_flow;
+  if (flow === null || !flow.available) throw new Error("fixture value flow");
+  expect(available.value).toMatchObject({
+    summary: {
+      value_flow: { available: true },
+      counts: {
+        value_flow_operations: flow.operations.length,
+        value_flow_def_use: flow.def_use.length,
+        value_flow_effects: flow.effects.length,
+        value_flow_parameters: flow.parameters.length,
+        value_flow_parameter_uses: flow.parameter_uses.length,
+      },
+    },
+  });
+  expect(flow.operations.length).toBeGreaterThan(0);
+  expect(available.value.unknowns).not.toContain(
+    "native_value_flow was not recorded",
+  );
+});
+
+it("keeps provider-unavailable facets unknown in the analyze_function summary", () => {
+  // A Kuna-style dossier: empty rows with explicit unavailability for several facets.
+  const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
+  const unsupported = {
+    ...dossier,
+    comments: [],
+    incoming_references: [],
+    outgoing_references: [],
+    basic_blocks: [],
+    facet_availability: {
+      ...dossier.facet_availability,
+      comments: {
+        available: false,
+        reason: "Kuna exports no analyst comments.",
+      },
+      references: {
+        available: false,
+        reason: "This provider does not report typed references.",
+      },
+      cfg: { available: false, reason: "Kuna exports no basic blocks." },
+    },
+  };
+  const summary = projectAnalysisView(nativeParent(unsupported), {
+    kind: "summary",
+  });
+  if (!summary.ok) throw summary.error;
+  const validated = analysisViewResultSchema.parse(summary.value);
+  expect(validated).toMatchObject({
+    kind: "summary",
+    summary: {
+      facet_availability: unsupported.facet_availability,
+      counts: {
+        comments: null,
+        incoming_references: null,
+        outgoing_references: null,
+        basic_blocks: null,
+        // Declared-available facets keep their observed counts.
+        assembly: 2,
+        callers: 0,
+        referenced_strings: dossier.referenced_strings.length,
+      },
+    },
+    unknowns: expect.arrayContaining([
+      "comments unavailable: Kuna exports no analyst comments.",
+      "references unavailable: This provider does not report typed references.",
+      "cfg unavailable: Kuna exports no basic blocks.",
+    ]),
+  });
+  // A dossier that declares nothing reports null availability and plain counts.
+  const { facet_availability: _declared, ...undeclared } = dossier;
+  const silent = projectAnalysisView(nativeParent(undeclared), {
+    kind: "summary",
+  });
+  if (!silent.ok) throw silent.error;
+  expect(silent.value).toMatchObject({
+    summary: { facet_availability: null, counts: { comments: 0 } },
+  });
 });
 
 it("rejects invalid native parents, unsupported source operations and singleton offsets", () => {
@@ -430,6 +625,69 @@ it("projects layout summary, facet, item, and stable pages", () => {
   });
 });
 
+it.each(["sections", "symbols"] as const)(
+  "selects %s by exact source bytes and preserves opaque names by index",
+  (collection) => {
+    const layout = analysisViewLayoutFixture();
+    const rows = layout[collection];
+    const original = rows[0];
+    if (original === undefined) throw new Error("missing layout row");
+    const opaque = {
+      ...original,
+      name: {
+        ...original.name,
+        display: "�name",
+        bytes_base64: Buffer.from([0xff, ...Buffer.from("name")]).toString(
+          "base64",
+        ),
+      },
+    };
+    const valid = {
+      ...rows[1],
+      name: {
+        ...original.name,
+        display: "provider-formatted-name",
+        bytes_base64: Buffer.from("�name").toString("base64"),
+      },
+    };
+    const parent = {
+      ...layoutParent(),
+      normalizedResult: {
+        ...layout,
+        [collection]: [opaque, valid],
+      },
+    };
+    const selected = projectAnalysisView(parent, {
+      kind: "item",
+      collection,
+      selector: { name: "�name" },
+    });
+    expect(selected).toMatchObject({ ok: true, value: { item: valid } });
+    expect(
+      projectAnalysisView(parent, {
+        kind: "item",
+        collection,
+        selector: { name: "\ud800name" },
+      }).ok,
+    ).toBe(false);
+    expect(
+      projectAnalysisView(parent, {
+        kind: "item",
+        collection,
+        selector: { name: "provider-formatted-name" },
+      }).ok,
+    ).toBe(false);
+    expect(
+      projectAnalysisView(parent, {
+        kind: "item",
+        collection,
+        selector: { index: 0 },
+      }),
+    ).toMatchObject({ ok: true, value: { item: opaque } });
+    expect(parent.normalizedResult[collection]).toEqual([opaque, valid]);
+  },
+);
+
 it("rejects ambiguous layout names with candidate indexes", () => {
   const parent = layoutParent();
   const result = projectAnalysisView(parent, {
@@ -524,9 +782,15 @@ it("projects JavaScript summary and preserves selected module observations", () 
   expect(item.value.item).toMatchObject({
     path: "renderer.js",
     kind: "javascript-asset",
+    observations: expect.arrayContaining([
+      expect.objectContaining({
+        properties: expect.objectContaining({
+          source: "export const secret = 1;\n",
+          text: "should not leak",
+        }),
+      }),
+    ]),
   });
-  expect(JSON.stringify(item.value.item)).toContain("export const secret = 1;");
-  expect(JSON.stringify(item.value.item)).toContain("should not leak");
   const page = projectAnalysisView(parent, {
     kind: "page",
     collection: "modules",

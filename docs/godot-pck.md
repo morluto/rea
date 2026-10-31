@@ -1,12 +1,24 @@
 # Godot PCK archives
 
-`inspect-artifact` and `extract-artifact` read ordinary Godot PCK formats 2, 3
+`inspect-artifact` and `extract-artifact` read ordinary Godot PCK formats 1, 2, 3
 and 4 without running the game or requiring Godot. Official Godot 4.4.1, 4.6.1
-and 4.7.1 produced these respective formats in verification; other engine
-releases have not been verified. Format 1 is unsupported.
+and 4.7.1 produced formats 2, 3 and 4 respectively in verification; other engine
+releases have not been verified. Format 1 compatibility follows the
+[Godot 3.5 loader](https://github.com/godotengine/godot/blob/3.5/core/io/file_access_pack.cpp#L201-L242)
+and [exporter](https://github.com/godotengine/godot/blob/3.5/editor/editor_export.cpp#L1094-L1164)
+layout and is covered by synthetic standalone and embedded fixtures; an actual
+Godot 3 export has not been exercised.
+
+Format 1 uses an 84-byte header, no pack or member flags, and absolute member
+offsets in the complete source file, including an embedded executable carrier.
+Its reported flags and file base are zero because those fields are absent.
+Zero-offset removal records remain unsupported; REA does not apply patches.
 
 Inspection retains the original header and directory facts, including engine
 version, flags, declared file count, source paths, offsets and declared MD5.
+For a member declared as `res://scenes/main.gd`, the occurrence's
+`source_path` retains that exact declaration while `logical_path` is
+`scenes/main.gd`, the relative path used for lookup and extraction.
 Observed plaintext bytes receive content-addressed SHA-256 identities. MD5 is a
 container integrity claim, separate from the observed SHA-256. A mismatch fails
 by default; `--integrity-policy record-and-continue` retains the observed bytes

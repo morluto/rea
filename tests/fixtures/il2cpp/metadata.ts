@@ -37,7 +37,20 @@ export interface Il2cppMetadataFixtureOptions {
     readonly genericContainers: number;
     readonly parameters: number;
   };
+  /** Write FIXTURE_GENERIC_CONTAINERS and point their owners at them. */
+  readonly genericOwners?: boolean;
 }
+
+/**
+ * Generic containers as [owner, argument count, is method, first parameter]:
+ * System.Größe<T0>, Game.Player.Slot.Add<T0, T1> and System.Größe.ToString<T0>;
+ * the fixture names each container's parameters T0, T1 and so on.
+ */
+export const FIXTURE_GENERIC_CONTAINERS = [
+  [3, 1, 0, 0],
+  [2, 2, 1, 1],
+  [4, 1, 1, 3],
+] as const;
 
 export const FIXTURE_IMAGES = [
   { name: "Assembly-CSharp.dll", type_start: 0, type_count: 3 },
@@ -221,6 +234,7 @@ const encodeMethods = (
   { D, T, P, G }: Readonly<Record<"D" | "T" | "P" | "G", Width>>,
   returnToken: number,
   intern: (value: string) => number,
+  methodContainerIndices: ReadonlyMap<number, number>,
 ) => {
   const recordBytes = { methods: methodBytes };
   const methods = Buffer.alloc(rows.length * recordBytes.methods);
@@ -243,7 +257,12 @@ const encodeMethods = (
             (parameter) => parameter.method === index,
           ),
     );
-    writeIndex(methods, parameterStart + P, G, -1);
+    writeIndex(
+      methods,
+      parameterStart + P,
+      G,
+      methodContainerIndices.get(index) ?? -1,
+    );
     methods.writeUInt32LE(
       FIXTURE_METHOD_TOKENS[index]!,
       parameterStart + P + G,
@@ -463,23 +482,50 @@ const genericContainerLayout = (
   options: Il2cppMetadataFixtureOptions,
   fixed: boolean,
 ) => {
-  const definitions = Object.entries(options.genericTypeArgumentCounts ?? {})
-    .map(([type, argumentCount]) => ({ type: Number(type), argumentCount }))
-    .sort((left, right) => left.type - right.type);
+  if (
+    options.genericOwners === true &&
+    options.genericTypeArgumentCounts !== undefined
+  )
+    throw new Error("genericOwners already declares the type containers");
+  const definitions =
+    options.genericOwners === true
+      ? FIXTURE_GENERIC_CONTAINERS.map(([type, argumentCount, isMethod]) => ({
+          type,
+          argumentCount,
+          isMethod,
+        }))
+      : Object.entries(options.genericTypeArgumentCounts ?? {})
+          .map(([type, argumentCount]) => ({
+            type: Number(type),
+            argumentCount,
+            isMethod: 0,
+          }))
+          .sort((left, right) => left.type - right.type);
   const count = Math.max(
     options.wide?.genericContainers ?? 0,
     definitions.length,
   );
+  const owners = (isMethod: number) =>
+    new Map(
+      definitions.flatMap(({ type, isMethod: method }, index) =>
+        method === isMethod ? [[type, index] as const] : [],
+      ),
+    );
   return {
     definitions,
-    indices: new Map(definitions.map(({ type }, index) => [type, index])),
+    indices: owners(0),
+    methodIndices: owners(1),
     count,
     width: fixed ? 4 : widthFor(count),
   };
 };
 
 const encodeGenericContainerTables = (
-  definitions: readonly { type: number; argumentCount: number }[],
+  definitions: readonly {
+    type: number;
+    argumentCount: number;
+    isMethod: number;
+  }[],
   containerCount: number,
   width: Width,
   intern: (value: string) => number,
@@ -495,11 +541,11 @@ const encodeGenericContainerTables = (
 
   const containers = Buffer.alloc(containerCount * 16);
   let parameterStart = 0;
-  definitions.forEach(({ type, argumentCount }, index) => {
+  definitions.forEach(({ type, argumentCount, isMethod }, index) => {
     const at = index * 16;
     containers.writeInt32LE(type, at);
     containers.writeInt32LE(argumentCount, at + 4);
-    containers.writeInt32LE(0, at + 8);
+    containers.writeInt32LE(isMethod, at + 8);
     containers.writeInt32LE(parameterStart, at + 12);
     parameterStart += argumentCount;
   });
@@ -639,6 +685,7 @@ export const createIl2cppMetadataFixture = (
     { D, T, P, G },
     returnToken,
     intern,
+    genericLayout.methodIndices,
   );
 
   const {

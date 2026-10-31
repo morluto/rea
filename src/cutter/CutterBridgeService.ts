@@ -11,13 +11,13 @@ import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { cutterCommandInputSchema } from "../contracts/cutterToolContracts.js";
+import type { CutterBridgeDiscovery } from "../domain/cutterDiscovery.js";
 import {
   CutterBridgeClient,
-  type CutterBridgeDiscovery,
   type CutterBridgeExecution,
   type CutterDiscoveryOptions,
+  CUTTER_PROVIDER_IDENTITY,
 } from "./CutterBridgeClient.js";
-import { CUTTER_PROVIDER_IDENTITY } from "./CutterBridgeClient.js";
 
 interface CutterBridgePort {
   listSessions(

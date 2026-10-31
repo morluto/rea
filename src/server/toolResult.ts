@@ -1,23 +1,20 @@
+import { isNativeObservationOperation } from "../domain/native/nativeObservation.js";
 import { isNativeInventoryOperation } from "../domain/native/nativeInventory.js";
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
-import { ToolResultDelivery as Delivery } from "./ToolResultDelivery.js";
+import { ToolResultDelivery } from "./ToolResultDelivery.js";
 import { INSPECT_ANALYSIS_VIEW_OPERATION } from "../domain/analysisView/analysisViewErrors.js";
 import { inspectAnalysisViewInputSchema } from "../domain/analysisView/analysisView.js";
 import type { Evidence } from "../domain/evidence.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 
-/** Full delivery policy, including canonical native Evidence continuation. */
-export class ToolResultDelivery extends Delivery {
-  constructor(maximumResponseBytes: number) {
-    super(maximumResponseBytes, retainedEvidenceContinuation);
-  }
-}
-
-/** Create one delivery policy from the already selected, parsed response budget. */
+/** Compose native Evidence continuation with the selected, parsed response budget. */
 export const createToolResultDelivery = (
   maximumResponseBytes: number | undefined,
 ): ToolResultDelivery =>
-  new ToolResultDelivery(maximumResponseBytes ?? STDIO_DEFAULT_MAX_BUFFER_SIZE);
+  new ToolResultDelivery(
+    maximumResponseBytes ?? STDIO_DEFAULT_MAX_BUFFER_SIZE,
+    retainedEvidenceContinuation,
+  );
 
 /** Offer a named, schema-validated source page only for retained native analysis. */
 const retainedEvidenceContinuation = (
@@ -28,7 +25,9 @@ const retainedEvidenceContinuation = (
       ? { kind: "native", facet: "pseudocode", offset: 0 }
       : isNativeInventoryOperation(evidence.operation)
         ? { kind: "native-inventory", offset: 0, limit: 64 }
-        : undefined;
+        : isNativeObservationOperation(evidence.operation)
+          ? { kind: "native-observation", offset: 0, limit: 64 }
+          : undefined;
   if (view === undefined) return {};
   const input = inspectAnalysisViewInputSchema.safeParse({
     source: { kind: "retained-evidence", evidence_id: evidence.evidence_id },

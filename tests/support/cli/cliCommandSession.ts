@@ -61,12 +61,23 @@ interface CliCommandSessionDependencies {
   readonly commandLimit?: number;
   /** Resident-set bytes, reported by the worker, that start a new process. */
   readonly residentLimitBytes?: number;
+  /** Optional caller-selected startup and command deadlines; unset by default. */
+  readonly startTimeoutMs?: number;
+  readonly requestTimeoutMs?: number;
+  /** Grace for EOF cleanup and each signal before escalation. */
+  readonly shutdownGraceMs?: number;
 }
 
 interface PendingCommand {
   readonly id: number;
   readonly resolve: (result: CliCommandResult) => void;
   readonly reject: (error: unknown) => void;
+  readonly timer: ReturnType<typeof setTimeout> | undefined;
+}
+
+interface RetiredWorker {
+  readonly child: ChildProcessWithoutNullStreams;
+  attempt: Promise<void> | undefined;
 }
 
 type SessionResponse = z.infer<typeof responseSchema>;
@@ -77,6 +88,11 @@ const positiveLimit = (value: number | undefined, fallback: number): number =>
   value !== undefined && Number.isSafeInteger(value) && value > 0
     ? value
     : fallback;
+
+const selectedTimeout = (value: number | undefined): number | undefined =>
+  value !== undefined && Number.isSafeInteger(value) && value > 0
+    ? value
+    : undefined;
 
 const envKey = (environment: Readonly<Record<string, string>>): string =>
   JSON.stringify(
@@ -110,13 +126,17 @@ const signalChild = (
 
 const stopChild = async (
   child: ChildProcessWithoutNullStreams,
+  graceMs: number,
 ): Promise<void> => {
   if (child.exitCode !== null || child.signalCode !== null) return;
+  // EOF lets the worker await closeCliResources before exiting.
+  if (!child.stdin.writableEnded) child.stdin.end();
+  if (await waitForExit(child, graceMs)) return;
   signalChild(child, "SIGTERM");
-  if (await waitForExit(child, SHUTDOWN_GRACE_MS)) return;
+  if (await waitForExit(child, graceMs)) return;
   if (child.exitCode !== null || child.signalCode !== null) return;
   signalChild(child, "SIGKILL");
-  if (await waitForExit(child, SHUTDOWN_GRACE_MS)) return;
+  if (await waitForExit(child, graceMs)) return;
   throw new Error(
     `shared CLI process ${String(child.pid)} did not exit after SIGKILL`,
   );
@@ -157,11 +177,14 @@ class SharedCliProcess implements CliCommandSession {
 
   readonly #commandLimit: number;
   readonly #residentLimitBytes: number;
+  readonly #startTimeoutMs: number | undefined;
+  readonly #requestTimeoutMs: number | undefined;
+  readonly #shutdownGraceMs: number;
   #child: ChildProcessWithoutNullStreams | undefined;
   #childEnvKey: string | undefined;
   #commands = 0;
   #residentBytes: number | undefined;
-  #retiring: Promise<void> | undefined;
+  #retiring: RetiredWorker | undefined;
   #closed = false;
   #closing: Promise<void> | undefined;
   #starting: Promise<void> | undefined;
@@ -180,6 +203,12 @@ class SharedCliProcess implements CliCommandSession {
     this.#residentLimitBytes = positiveLimit(
       dependencies.residentLimitBytes,
       RESIDENT_REUSE_LIMIT_BYTES,
+    );
+    this.#startTimeoutMs = selectedTimeout(dependencies.startTimeoutMs);
+    this.#requestTimeoutMs = selectedTimeout(dependencies.requestTimeoutMs);
+    this.#shutdownGraceMs = positiveLimit(
+      dependencies.shutdownGraceMs,
+      SHUTDOWN_GRACE_MS,
     );
   }
 
@@ -207,45 +236,83 @@ class SharedCliProcess implements CliCommandSession {
   close(): Promise<void> {
     this.#closed = true;
     if (this.#closing !== undefined) return this.#closing;
-    const attempt = this.#shutdown();
+    let attempt: Promise<void>;
+    attempt = this.#shutdown().catch((error: unknown) => {
+      if (this.#closing === attempt) this.#closing = undefined;
+      throw error;
+    });
     this.#closing = attempt;
     return attempt;
   }
 
   async #shutdown(): Promise<void> {
-    try {
-      const owner = this.#child;
-      if (owner !== undefined) await stopChild(owner);
-      const retiring = this.#retiring;
-      if (retiring !== undefined) await retiring;
-    } catch (error) {
-      this.#closing = undefined;
-      throw error;
-    }
     const pendingStart = this.#starting;
+    this.#failReady(closedError());
+    this.#failPending(closedError());
+    const owner = this.#child;
+    if (owner !== undefined) this.#retire(owner);
+    await this.#finishRetirement();
     if (pendingStart !== undefined) await pendingStart.catch(() => undefined);
   }
 
   async #invoke(request: CliCommandRequest): Promise<CliCommandResult> {
     if (this.#closed) throw closedError();
-    try {
-      return await this.#run(request);
-    } finally {
+    await this.#finishRetirement();
+    const current = this.#child;
+    if (
+      !this.#reusable(current, envKey(request.environment)) &&
+      current !== undefined
+    ) {
+      this.#retire(current);
       await this.#finishRetirement();
     }
+    if (this.#closed) throw closedError();
+    let result: CliCommandResult;
+    try {
+      if (this.#child === undefined) await this.#start(request.environment);
+      result = await this.#run(request);
+    } catch (primary) {
+      try {
+        await this.#finishRetirement();
+      } catch (cleanup) {
+        const primaryReason =
+          primary instanceof Error ? primary.message : String(primary);
+        const cleanupReason =
+          cleanup instanceof Error ? cleanup.message : String(cleanup);
+        throw new AggregateError(
+          [primary, cleanup],
+          `${primaryReason}; shared CLI cleanup failed: ${cleanupReason}`,
+          { cause: primary },
+        );
+      }
+      throw primary;
+    }
+    await this.#finishRetirement();
+    return result;
   }
 
   async #run(request: CliCommandRequest): Promise<CliCommandResult> {
-    await this.#ensure(request.environment);
     const owner = this.#child;
     if (this.#closed || owner === undefined) throw closedError();
     const id = this.#nextId;
     this.#nextId += 1;
     const result = new Promise<CliCommandResult>((resolve, reject) => {
-      this.#pending = { id, resolve, reject };
+      const timer =
+        this.#requestTimeoutMs === undefined
+          ? undefined
+          : setTimeout(() => {
+              this.#failTransport(
+                owner,
+                new Error(
+                  `Shared CLI command did not respond within ${String(this.#requestTimeoutMs)} ms`,
+                ),
+              );
+            }, this.#requestTimeoutMs);
+      timer?.unref();
+      this.#pending = { id, resolve, reject, timer };
     });
     try {
-      await writeChild(
+      void writeChild(
         owner,
         encodeCliSessionFrame({
           id,
@@ -253,7 +320,9 @@ class SharedCliProcess implements CliCommandSession {
           cwd: request.cwd,
           env: request.environment,
         }),
-      );
+      ).catch((error: unknown) => {
+        this.#failTransport(owner, error);
+      });
     } catch (error) {
       this.#failTransport(owner, error);
     }
@@ -263,11 +332,14 @@ class SharedCliProcess implements CliCommandSession {
   async #finishRetirement(): Promise<void> {
     const retiring = this.#retiring;
     if (retiring === undefined) return;
-    try {
-      await retiring;
-    } finally {
-      if (this.#retiring === retiring) this.#retiring = undefined;
-    }
+    retiring.attempt ??= stopChild(
+      retiring.child,
+      this.#shutdownGraceMs,
+    ).finally(() => {
+      retiring.attempt = undefined;
+    });
+    await retiring.attempt;
+    if (this.#retiring === retiring) this.#retiring = undefined;
   }
 
   #reusable(
@@ -289,16 +361,6 @@ class SharedCliProcess implements CliCommandSession {
     );
   }
 
-  async #ensure(environment: Readonly<Record<string, string>>): Promise<void> {
-    if (this.#closed) throw closedError();
-    const key = envKey(environment);
-    const current = this.#child;
-    if (this.#reusable(current, key)) return;
-    if (current !== undefined) await stopChild(current);
-    if (this.#closed) throw closedError();
-    await this.#start(environment);
-  }
-
   #start(environment: Readonly<Record<string, string>>): Promise<void> {
     if (this.#closed) return Promise.reject(closedError());
     const started = this.#spawnWorker(environment);
@@ -311,12 +373,25 @@ class SharedCliProcess implements CliCommandSession {
       this.#rejectReady = reject;
     });
     this.#starting = ready;
+    const timer =
+      this.#startTimeoutMs === undefined
+        ? undefined
+        : setTimeout(() => {
+            this.#failTransport(
+              started,
+              new Error(
+                `Shared CLI worker did not become ready within ${String(this.#startTimeoutMs)} ms`,
+              ),
+            );
+          }, this.#startTimeoutMs);
+    timer?.unref();
     this.#watch(started);
     if (this.#closed) {
-      signalChild(started, "SIGTERM");
       this.#failReady(closedError());
+      this.#retire(started);
     }
     return ready.finally(() => {
+      clearTimeout(timer);
       if (this.#starting === ready) this.#starting = undefined;
     });
   }
@@ -378,6 +453,7 @@ class SharedCliProcess implements CliCommandSession {
       return;
     }
     this.#pending = undefined;
+    clearTimeout(current.timer);
     if (message.fatal === true) {
       this.#retire(owner);
     } else {
@@ -394,7 +470,7 @@ class SharedCliProcess implements CliCommandSession {
     }
     this.#commands = 0;
     this.#residentBytes = undefined;
-    this.#retiring = stopChild(owner);
+    this.#retiring ??= { child: owner, attempt: undefined };
   }
 
   #onClose(
@@ -427,6 +503,7 @@ class SharedCliProcess implements CliCommandSession {
   #failPending(error: unknown): void {
     const current = this.#pending;
     this.#pending = undefined;
+    clearTimeout(current?.timer);
     current?.reject(error);
   }
 

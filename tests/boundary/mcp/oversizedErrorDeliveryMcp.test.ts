@@ -13,9 +13,9 @@ import { EvidenceIntegrityError } from "../../../src/domain/evidenceErrors.js";
 import type { Evidence } from "../../../src/domain/evidence.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
-import { ToolResultDelivery } from "../../../src/server/toolResult.js";
+import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 
-const delivery = new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
+const delivery = createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
 const UNTRUSTED_TARGET_CONTENT = {
   provenance: { untrusted_content: true, source: "analysis_target" },
 };
@@ -280,7 +280,7 @@ const deliveredErrorBytes = (
 it.each([false, true])(
   "applies the result budget to the complete delivered error (target content: %s)",
   async (targetContent) => {
-    const boundaryDelivery = new ToolResultDelivery(4096);
+    const boundaryDelivery = createToolResultDelivery(4096);
     const fittingName =
       boundaryDelivery.resultBudgetBytes -
       deliveredErrorBytes(0, targetContent, boundaryDelivery);

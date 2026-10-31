@@ -1,3 +1,5 @@
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
+import { AnalysisSettings } from "../application/AnalysisSettings.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { Tool, ServerContext } from "@modelcontextprotocol/server";
 import { afterEach, expect, it, vi } from "vitest";
@@ -69,10 +71,13 @@ afterEach(async () => {
 const fixture = async (
   options: {
     readonly hold?: ReturnType<typeof barrier>;
+    readonly analysisSettings?: AnalysisSettings;
+    readonly execute?: () => Promise<void>;
     readonly failClose?: () => boolean;
     readonly failLoad?: boolean;
     readonly invalidOutput?: boolean;
     readonly failAfterTool?: boolean;
+    readonly maximumInputElements?: number;
   } = {},
 ) => {
   const started = barrier();
@@ -92,12 +97,14 @@ const fixture = async (
       started.release();
       await options.hold?.promise;
       if (options.failLoad) throw new Error("PRIVATE startup cause");
+      target.analysisSettings = options.analysisSettings;
       target.materialize(() => {
         target.registerTool(
           "fixture",
           { inputSchema: input, outputSchema: output },
           async (args, context) => {
             calls(args.n, context);
+            await options.execute?.();
             return {
               content: [],
               structuredContent: {
@@ -132,6 +139,7 @@ const fixture = async (
         );
       });
     },
+    options.maximumInputElements,
   );
   const client = new Client({ name: "deferred-fixture-client", version: "1" });
   const [clientTransport, serverTransport] =
@@ -153,6 +161,33 @@ const fixture = async (
   };
 };
 
+it("refuses excess input before loading a deferred runtime, then admits a valid call", async () => {
+  const f = await fixture({ maximumInputElements: 2 });
+  const result = await f.client.callTool({
+    name: "fixture",
+    arguments: { n: 3, other: [0] },
+  });
+  expect(result.isError).toBe(true);
+  const text = result.content.find((part) => part.type === "text")?.text;
+  expect(JSON.parse(text ?? "null")).toMatchObject({
+    error: {
+      code: "resource_constraint",
+      details: { reported_limits: { max_input_elements: 2 } },
+    },
+  });
+  expect(f.loads()).toBe(0);
+  expect(f.calls).not.toHaveBeenCalled();
+  await f.client.ping();
+  const admitted = await f.client.callTool({
+    name: "fixture",
+    arguments: { n: 4 },
+  });
+  expect(admitted.isError).not.toBe(true);
+  expect(admitted.structuredContent).toEqual({ n: 4 });
+  expect(f.loads()).toBe(1);
+  expect(f.calls).toHaveBeenCalledOnce();
+});
+
 it("discovers without initialization, then shares one canonical runtime and preserves request metadata", async () => {
   const hold = barrier();
   const f = await fixture({ hold });
@@ -169,21 +204,28 @@ it("discovers without initialization, then shares one canonical runtime and pres
     arguments: {},
     _meta: { caller: "retained" },
   });
-  await f.started.promise;
-  const b = f.client.callTool({ name: "fixture", arguments: { n: 7 } });
-  hold.release();
-  expect((await a).structuredContent).toEqual({ n: 3 });
-  expect((await b).structuredContent).toEqual({ n: 7 });
-  expect(f.loads()).toBe(1);
-  expect(f.calls.mock.calls[0]?.[1].mcpReq._meta?.caller).toBe("retained");
-  expect(await f.client.listTools()).toEqual(before);
-  expect(changed).not.toHaveBeenCalled();
-  const invalid = await f.client.callTool({
-    name: "fixture",
-    arguments: { n: 1.5 },
-  });
-  expect(invalid.isError).toBe(true);
-  expect(f.calls).toHaveBeenCalledTimes(2);
+  const pending: Promise<unknown>[] = [a];
+  try {
+    await awaitAcknowledgement(f.started.promise, a, "deferred initialization");
+    const b = f.client.callTool({ name: "fixture", arguments: { n: 7 } });
+    pending.push(b);
+    hold.release();
+    expect((await a).structuredContent).toEqual({ n: 3 });
+    expect((await b).structuredContent).toEqual({ n: 7 });
+    expect(f.loads()).toBe(1);
+    expect(f.calls.mock.calls[0]?.[1].mcpReq._meta?.caller).toBe("retained");
+    expect(await f.client.listTools()).toEqual(before);
+    expect(changed).not.toHaveBeenCalled();
+    const invalid = await f.client.callTool({
+      name: "fixture",
+      arguments: { n: 1.5 },
+    });
+    expect(invalid.isError).toBe(true);
+    expect(f.calls).toHaveBeenCalledTimes(2);
+  } finally {
+    hold.release();
+    await Promise.allSettled(pending);
+  }
 });
 
 it("preserves output validation after deferred registration", async () => {
@@ -239,16 +281,32 @@ it("does not execute a tool cancelled while canonical loading is pending", async
     { signal: controller.signal },
   );
   const rejected = expect(pending).rejects.toBeDefined();
-  await f.started.promise;
-  controller.abort();
-  await cancelled.promise;
-  hold.release();
-  await rejected;
-  await f.server.ensureRuntime();
-  expect(f.calls).not.toHaveBeenCalled();
-  expect(
-    (await f.client.callTool({ name: "fixture", arguments: {} })).isError,
-  ).not.toBe(true);
+  try {
+    await awaitAcknowledgement(
+      f.started.promise,
+      pending,
+      "cancelled caller initialization",
+    );
+    controller.abort();
+    await awaitAcknowledgement(
+      cancelled.promise,
+      f.server.ensureRuntime(),
+      "cancellation notification",
+    );
+    hold.release();
+    await rejected;
+    await f.server.ensureRuntime();
+    expect(f.calls).not.toHaveBeenCalled();
+    expect(
+      (await f.client.callTool({ name: "fixture", arguments: {} })).isError,
+    ).not.toBe(true);
+  } finally {
+    controller.abort();
+    hold.release();
+    await Promise.allSettled([pending, rejected, f.server.ensureRuntime()]);
+    if (previous === undefined) delete f.serverTransport.onmessage;
+    else f.serverTransport.onmessage = previous;
+  }
 });
 
 it("keeps an independent caller alive when its peer cancels during shared loading", async () => {
@@ -273,16 +331,34 @@ it("keeps an independent caller alive when its peer cancels during shared loadin
   const a = f.client
     .callTool({ name: "fixture", arguments: {} }, { signal: controller.signal })
     .catch(() => undefined);
-  await f.started.promise;
-  const b = f.client.callTool({ name: "fixture", arguments: { n: 8 } });
-  await secondRequest.promise;
-  controller.abort();
-  await cancelled.promise;
-  hold.release();
-  await a;
-  expect((await b).structuredContent).toEqual({ n: 8 });
-  expect(f.calls).toHaveBeenCalledTimes(1);
-  expect(f.loads()).toBe(1);
+  const pending: Promise<unknown>[] = [a];
+  try {
+    await awaitAcknowledgement(f.started.promise, a, "shared initialization");
+    const b = f.client.callTool({ name: "fixture", arguments: { n: 8 } });
+    pending.push(b);
+    await awaitAcknowledgement(
+      secondRequest.promise,
+      b,
+      "independent caller admission",
+    );
+    controller.abort();
+    await awaitAcknowledgement(
+      cancelled.promise,
+      f.server.ensureRuntime(),
+      "peer cancellation notification",
+    );
+    hold.release();
+    await a;
+    expect((await b).structuredContent).toEqual({ n: 8 });
+    expect(f.calls).toHaveBeenCalledTimes(1);
+    expect(f.loads()).toBe(1);
+  } finally {
+    controller.abort();
+    hold.release();
+    await Promise.allSettled([...pending, f.server.ensureRuntime()]);
+    if (previous === undefined) delete f.serverTransport.onmessage;
+    else f.serverTransport.onmessage = previous;
+  }
 });
 
 it("joins late initialization during close and prevents target execution", async () => {
@@ -291,14 +367,24 @@ it("joins late initialization during close and prevents target execution", async
   const pending = f.client
     .callTool({ name: "fixture", arguments: {} })
     .catch(() => undefined);
-  await f.started.promise;
-  const closing = f.server.close();
-  hold.release();
-  await closing;
-  await pending;
-  expect(f.calls).not.toHaveBeenCalled();
-  expect(f.closed).toHaveBeenCalledTimes(1);
-  await expect(f.server.ensureRuntime()).rejects.toThrow("closed");
+  let closing: Promise<void> | undefined;
+  try {
+    await awaitAcknowledgement(
+      f.started.promise,
+      pending,
+      "initialization before close",
+    );
+    closing = f.server.close();
+    hold.release();
+    await closing;
+    await pending;
+    expect(f.calls).not.toHaveBeenCalled();
+    expect(f.closed).toHaveBeenCalledTimes(1);
+    await expect(f.server.ensureRuntime()).rejects.toThrow("closed");
+  } finally {
+    hold.release();
+    await Promise.allSettled([pending, closing]);
+  }
 });
 
 it("retains failed cleanup for retry without loading a replacement runtime", async () => {
@@ -340,4 +426,40 @@ it("never executes a partially registered handler after initialization fails", a
   expect(f.loads()).toBe(1);
   await f.server.close();
   expect(f.closed).toHaveBeenCalledTimes(1);
+});
+
+it("keeps one accepted settings snapshot through a deferred handler while the next call sees updates", async () => {
+  const settings = new AnalysisSettings({});
+  const entered = barrier();
+  const held = barrier();
+  const seen: Array<number | undefined> = [];
+  const f = await fixture({
+    analysisSettings: settings,
+    execute: async () => {
+      entered.release();
+      await held.promise;
+      seen.push(settings.read().overrides["asar.max_header_bytes"]);
+    },
+  });
+  const pending = f.client.callTool({ name: "fixture", arguments: {} });
+  try {
+    await awaitAcknowledgement(
+      entered.promise,
+      pending,
+      "settings snapshot handler entry",
+    );
+    expect(
+      settings.update({
+        changes: [
+          { setting: "asar.max_header_bytes", action: "set", value: 33554432 },
+        ],
+      }).ok,
+    ).toBe(true);
+  } finally {
+    held.release();
+    await Promise.allSettled([pending]);
+  }
+  expect((await pending).isError).not.toBe(true);
+  await f.client.callTool({ name: "fixture", arguments: {} });
+  expect(seen).toEqual([undefined, 33554432]);
 });

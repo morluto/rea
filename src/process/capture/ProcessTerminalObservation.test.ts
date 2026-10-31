@@ -17,7 +17,7 @@ import {
 } from "./ProcessCaptureError.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
-import { parseProcessScenario } from "../../domain/process/processScenario.js";
+import { processScenarioSchema } from "../../domain/process/processScenario.js";
 import {
   createProcessCaptureObservationBuffer,
   resolveProcessResult,
@@ -27,7 +27,7 @@ import {
 import { createProcessTerminalFinalizer } from "./ProcessTerminalObservation.js";
 
 const createTerminalCleanupFixture = () => {
-  const scenario = parseProcessScenario({
+  const scenario = processScenarioSchema.parse({
     executable: "unused",
     terminal: { columns: 80, rows: 4 },
     normalization: { paths: false, ports: false },
@@ -157,7 +157,7 @@ it("retains completed terminal facts and the typed capacity failure through fina
     state: "available",
     value: rendered,
   });
-  const scenario = parseProcessScenario({
+  const scenario = processScenarioSchema.parse({
     executable: "unused",
     limits: { output_bytes: 4 },
   });

@@ -4,6 +4,7 @@ import type { JsonValue } from "../../domain/jsonValue.js";
 import type { FieldRule } from "../../domain/analysisView/environmentStateWriteRules.js";
 import { compareAnswers } from "./environmentCompareDiff.js";
 import { IdMap, learnIds } from "./environmentCompareIds.js";
+import { bookmark } from "../../../tests/fixtures/environmentStateDerivedValues.js";
 
 const compare = (
   live: unknown,
@@ -32,6 +33,233 @@ describe("early-year clock formats", () => {
       ).toEqual([["clock-format", "/created_at"]]);
     },
   );
+});
+
+describe("composed response values", () => {
+  const rules: readonly FieldRule[] = [
+    {
+      field: "date_added",
+      rule: "clock",
+      format: { kind: "iso", separator: "T", fraction: 0, zone: "Z" },
+    },
+    {
+      field: "date_modified",
+      rule: "clock",
+      format: { kind: "iso", separator: "T", fraction: 0, zone: "Z" },
+    },
+    {
+      field: "web_archive_snapshot_url",
+      rule: "composed",
+      parts: [
+        { text: "https://web.archive.org/web/" },
+        { from: "date_added", as: "clock", pattern: "YYYYMMDDhhmmss" },
+        { text: "/" },
+        { from: "url", as: "value" },
+      ],
+    },
+  ];
+  const live = bookmark(
+    1,
+    "https://example.test/page",
+    "A bookmark",
+    "2026-10-20T09:00:00Z",
+  );
+  const env = bookmark(
+    1,
+    "https://example.test/page",
+    "A bookmark",
+    "2026-10-17T18:00:00Z",
+  );
+
+  it("compares coherent archive URLs through their clock parts without counting source fields twice", () => {
+    const result = compare(live, env, new IdMap(), [201, 201], rules);
+    expect(result.differences).toEqual([]);
+    expect(result.normalised).toMatchObject({ clocks: 2, generated: 1 });
+  });
+
+  it("compares a composed ID through the source field's mapping even when the address comes first", () => {
+    const map = new IdMap();
+    map.learn(101, 1);
+    const result = compare(
+      { url: "/folders/101", id: 101 },
+      { url: "/folders/1", id: 1 },
+      map,
+      [201, 201],
+      [
+        {
+          field: "url",
+          rule: "composed",
+          parts: [{ text: "/folders/" }, { from: "id", as: "value" }],
+        },
+      ],
+    );
+    expect(result.differences).toEqual([]);
+    expect(result.normalised).toMatchObject({ ids: 1, generated: 1 });
+  });
+
+  it.each(["live", "env", "both"] as const)(
+    "reports an incoherent %s composition, including equal but stale URLs",
+    (side) => {
+      const invalid = "https://web.archive.org/web/stale";
+      const result = compare(
+        side === "env" ? live : { ...live, web_archive_snapshot_url: invalid },
+        side === "live" ? env : { ...env, web_archive_snapshot_url: invalid },
+        new IdMap(),
+        [201, 201],
+        rules,
+      );
+      expect(result.differences).toMatchObject([
+        { category: "value", pointer: "/web_archive_snapshot_url" },
+      ]);
+      expect(result.normalised.generated).toBe(0);
+    },
+  );
+
+  it("preserves actual input differences although each address correctly spells its own response", () => {
+    const different = bookmark(
+      1,
+      "https://example.test/other",
+      "A bookmark",
+      "2026-10-17T18:00:00Z",
+    );
+    const result = compare(live, different, new IdMap(), [201, 201], rules);
+    expect(result.differences.map(({ pointer }) => pointer).sort()).toEqual([
+      "/url",
+      "/web_archive_snapshot_url",
+    ]);
+    expect(result.normalised.generated).toBe(0);
+  });
+
+  it("does not normalize a source's unproven generated-looking business value", () => {
+    const result = compare(
+      { url: "/folders/token00001", token: "token00001" },
+      { url: "/folders/token00002", token: "token00002" },
+      new IdMap(),
+      [201, 201],
+      [
+        {
+          field: "url",
+          rule: "composed",
+          parts: [{ text: "/folders/" }, { from: "token", as: "value" }],
+        },
+      ],
+    );
+    expect(result.differences.map(({ pointer }) => pointer).sort()).toEqual([
+      "/token",
+      "/url",
+    ]);
+  });
+
+  it("compares the projected slug while retaining a difference in its source title", () => {
+    const result = compare(
+      {
+        title: "Hello!",
+        date_added: "2026-10-20T09:00:00Z",
+        url: "/snapshot/20261020/hello",
+      },
+      {
+        title: "Hello",
+        date_added: "2026-10-17T18:00:00Z",
+        url: "/snapshot/20261017/hello",
+      },
+      new IdMap(),
+      [201, 201],
+      [
+        rules[0]!,
+        {
+          field: "url",
+          rule: "composed",
+          parts: [
+            { text: "/snapshot/" },
+            { from: "date_added", as: "clock", pattern: "YYYYMMDD" },
+            { text: "/" },
+            { from: "title", as: "slug" },
+          ],
+        },
+      ],
+    );
+    expect(result.differences).toMatchObject([
+      { category: "value", pointer: "/title" },
+    ]);
+    expect(result.normalised).toMatchObject({ clocks: 1, generated: 1 });
+  });
+});
+
+describe("trimmed response clocks", () => {
+  const rules: readonly FieldRule[] = [
+    {
+      field: "updatedAt",
+      rule: "clock",
+      format: {
+        kind: "iso",
+        separator: "T",
+        zone: "Z",
+        fraction: 8,
+        trimmed: true,
+      },
+    },
+  ];
+
+  it.each([".12345678", ".123", ""])(
+    "normalizes a learned trimmed width %s against the served millisecond width",
+    (fraction) => {
+      const result = compare(
+        { updatedAt: `2026-03-04T05:06:07${fraction}Z` },
+        { updatedAt: "2026-03-04T05:06:08.321Z" },
+        new IdMap(),
+        [200, 200],
+        rules,
+      );
+      expect(result.differences).toEqual([]);
+      expect(result.normalised.clocks).toBe(1);
+    },
+  );
+
+  it.each([
+    ["2026-03-04T05:06:07.123456789Z", "2026-03-04T05:06:08.321Z"],
+    ["2026-03-04T05:06:07.123456780Z", "2026-03-04T05:06:08.321Z"],
+    ["2026-03-04T05:06:07.120Z", "2026-03-04T05:06:08.320Z"],
+    ["2026-03-04T05:06:07.123+01:00", "2026-03-04T05:06:08.321Z"],
+    ["2026-03-04 05:06:07.123Z", "2026-03-04T05:06:08.321Z"],
+  ])(
+    "reports a pair outside the learned trimmed format (%s, %s)",
+    (live, env) => {
+      const result = compare(
+        { updatedAt: live },
+        { updatedAt: env },
+        new IdMap(),
+        [200, 200],
+        rules,
+      );
+      expect(result.differences).toMatchObject([
+        { category: "clock-format", pointer: "/updatedAt" },
+      ]);
+      expect(result.normalised.clocks).toBe(0);
+    },
+  );
+
+  it("keeps trimmed normalization within the confirmed response entity", () => {
+    const answer = (fraction: string) => ({
+      status: 200,
+      body: {
+        kind: "json" as const,
+        value: {
+          data: { updatedAt: `2026-03-04T05:06:07.${fraction}Z` },
+          updatedAt: `2026-03-04T05:06:07.${fraction}Z`,
+        },
+      },
+    });
+    const result = compareAnswers(
+      answer("12345678"),
+      answer("123"),
+      new IdMap(),
+      { at: "/data", rules },
+    );
+    expect(result.differences).toMatchObject([
+      { category: "clock-format", pointer: "/updatedAt" },
+    ]);
+    expect(result.normalised.clocks).toBe(1);
+  });
 });
 
 const registerGeneratedValueComparisonCases = () => {
@@ -105,6 +333,57 @@ const registerGeneratedValueComparisonCases = () => {
     expect(result.normalised.generated).toBe(1);
   });
 };
+
+describe("composed response fields", () => {
+  const rules: readonly FieldRule[] = [
+    {
+      field: "date_added",
+      rule: "clock",
+      format: { kind: "iso", separator: "T", fraction: 0, zone: "Z" },
+    },
+    { field: "url", rule: "echo" },
+    {
+      field: "web_archive_snapshot_url",
+      rule: "composed",
+      parts: [
+        { text: "https://web.archive.org/web/" },
+        { from: "date_added", as: "clock", pattern: "YYYYMMDDhhmmss" },
+        { text: "/" },
+        { from: "url", as: "value" },
+      ],
+    },
+  ];
+  const bookmark = (stamp: string, snapshot: string) => ({
+    date_added: `2026-10-01T09:00:${stamp}Z`,
+    url: "https://quarry.example.test/ledger",
+    web_archive_snapshot_url: `https://web.archive.org/web/${snapshot}/https://quarry.example.test/ledger`,
+  });
+
+  it("normalizes a composed field each side spells from its own fields", () => {
+    const result = compare(
+      bookmark("00", "20261001090000"),
+      bookmark("05", "20261001090005"),
+      new IdMap(),
+      [200, 200],
+      rules,
+    );
+    expect(result.differences).toEqual([]);
+    expect(result.normalised).toMatchObject({ clocks: 1, generated: 1 });
+  });
+
+  it("reports a composed field one side does not spell from its own fields", () => {
+    const result = compare(
+      bookmark("00", "20261001090000"),
+      bookmark("05", "20261001090009"),
+      new IdMap(),
+      [200, 200],
+      rules,
+    );
+    expect(
+      result.differences.map(({ category, pointer }) => [category, pointer]),
+    ).toEqual([["value", "/web_archive_snapshot_url"]]);
+  });
+});
 
 describe("compareAnswers", () => {
   registerGeneratedValueComparisonCases();
@@ -670,4 +949,77 @@ describe("raw ids a mapping gives to other entities", () => {
       ).differences,
     ).toEqual([]);
   });
+});
+
+describe("generated integer identities", () => {
+  const unique: readonly FieldRule[] = [{ field: "id", rule: "unique" }];
+
+  it.each([
+    {
+      name: "numbers of one length",
+      live: 1_729_791_234_567_890,
+      env: 1_000_000_000_123_456,
+      rules: unique,
+      generated: 1,
+    },
+    {
+      name: "digit strings of one length",
+      live: "1729791234567890",
+      env: "1000000000123456",
+      rules: unique,
+      generated: 1,
+    },
+    {
+      name: "numbers of different lengths",
+      live: 1_729_791_234_567_890,
+      env: 100_000_000_012_345,
+      rules: unique,
+      generated: 0,
+    },
+    {
+      name: "a number and a digit string",
+      live: 1_729_791_234_567_890,
+      env: "1000000000123456",
+      rules: unique,
+      generated: 0,
+    },
+    {
+      name: "short integers",
+      live: 17,
+      env: 18,
+      rules: unique,
+      generated: 0,
+    },
+    {
+      name: "integers no rule generates",
+      live: 1_729_791_234_567_890,
+      env: 1_000_000_000_123_456,
+      rules: [],
+      generated: 0,
+    },
+  ])(
+    "matches $name only when a unique rule generates both",
+    ({ live, env, rules, generated }) => {
+      const result = compare(
+        { id: live },
+        { id: env },
+        new IdMap(),
+        [200, 200],
+        rules,
+      );
+      expect(result.normalised.generated).toBe(generated);
+      expect(result.differences).toEqual(
+        generated === 1
+          ? []
+          : [
+              {
+                category: "value",
+                pointer: "/id",
+                live: JSON.stringify(live),
+                env: JSON.stringify(env),
+              },
+            ],
+      );
+    },
+  );
 });

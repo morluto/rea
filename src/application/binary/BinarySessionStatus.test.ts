@@ -5,9 +5,12 @@ import type {
   CapabilityDescriptor,
   ProviderIdentity,
 } from "../AnalysisProvider.js";
+import { z } from "zod";
 import {
+  analysisProviderCandidate,
+  analysisProviderCandidateSummary,
   expandProviderCapabilities,
-  sessionProvider,
+  sessionProviderFacts,
   type ProviderCapabilitySet,
 } from "../../contracts/toolOutputSchemaPrimitives.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
@@ -16,16 +19,23 @@ import type {
   SessionProviderRoute,
   SessionProviderRouter,
 } from "./SessionProviderRouter.js";
-import { binarySessionStatus } from "./BinarySessionStatus.js";
+import {
+  binarySessionStatus,
+  restrictAdvertisedCapabilities,
+} from "./BinarySessionStatus.js";
 import {
   APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE,
   NATIVE_MACOS_PROVIDER_IDENTITY,
   nativeMacOSCapabilities,
 } from "../../native/NativeMacOSProviderMetadata.js";
 
-const projectedStatusSchema = sessionProvider.pick({
-  capabilities: true,
-  analysis_provider_candidates: true,
+const projectedStatusSchema = z.object({
+  capabilities: sessionProviderFacts.shape.capabilities,
+  analysis_provider_candidates: z.array(analysisProviderCandidate),
+});
+const summaryStatusSchema = z.object({
+  capabilities: sessionProviderFacts.shape.capabilities,
+  analysis_provider_candidates: z.array(analysisProviderCandidateSummary),
 });
 
 const providerA: ProviderIdentity = {
@@ -126,6 +136,25 @@ const project = async (
     { readonly reason: string }
   > = new Map(),
   target?: BinaryTarget,
+) =>
+  projectedStatusSchema.parse(
+    await projectStatus(routeCapabilities, candidates, {
+      runtimeUnavailability,
+      ...(target === undefined ? {} : { target }),
+    }),
+  );
+
+const projectStatus = async (
+  routeCapabilities: readonly CapabilityDescriptor[],
+  candidates: readonly AnalysisProviderCandidateStatus[],
+  options: {
+    readonly runtimeUnavailability?: ReadonlyMap<
+      string,
+      { readonly reason: string }
+    >;
+    readonly target?: BinaryTarget;
+    readonly detail?: "summary" | "complete";
+  } = {},
 ) => {
   const route: SessionProviderRoute = {
     identity: providerA,
@@ -142,17 +171,16 @@ const project = async (
   const router: Pick<SessionProviderRouter, "candidateStatuses"> = {
     candidateStatuses: async () => candidates,
   };
-  return projectedStatusSchema.parse(
-    await binarySessionStatus({
-      target,
-      route,
-      router,
-      runtimeUnavailability,
-      runId: undefined,
-      runtimeLineageSnapshots: [],
-      requestActivitySnapshots: [],
-    }),
-  );
+  return binarySessionStatus({
+    target: options.target,
+    route,
+    router,
+    runtimeUnavailability: options.runtimeUnavailability ?? new Map(),
+    runId: undefined,
+    runtimeLineageSnapshots: [],
+    requestActivitySnapshots: [],
+    ...(options.detail === undefined ? {} : { detail: options.detail }),
+  });
 };
 
 const expandCanonicalCapabilities = (sets: readonly ProviderCapabilitySet[]) =>
@@ -380,6 +408,42 @@ describe("binary session provider capability projection", () => {
     ).toEqual(expectedExpandedCandidateCapabilities[1]);
   });
 
+  it("restricts the public report without erasing provider facts", async () => {
+    const status = await project(selectedCapabilities, [
+      candidate(providerA, selectedCapabilities),
+      candidate(providerB, otherCapabilities),
+    ]);
+    const restricted = projectedStatusSchema.parse(
+      restrictAdvertisedCapabilities(
+        structuredClone(status),
+        (operation) => operation !== "read_bytes",
+      ),
+    );
+
+    // The complete facts remain available for availability checks: a composed
+    // tool can depend on an operation the public report hides.
+    expect(
+      expandCanonicalCapabilities(status.capabilities).map(
+        ({ operation }) => operation,
+      ),
+    ).toContain("read_bytes");
+    // A scoped registration hides these tools from `tools/list`, so naming
+    // them in the public report would direct the agent to a failing call.
+    expect(
+      expandCanonicalCapabilities(restricted.capabilities).map(
+        ({ operation }) => operation,
+      ),
+    ).toEqual(["procedure_info", "xrefs"]);
+    expect(
+      expandCanonicalCapabilities(
+        restricted.analysis_provider_candidates[0]?.capabilities ?? [],
+      ).map(({ operation }) => operation),
+    ).toEqual(["procedure_info", "xrefs"]);
+    expect(restricted.analysis_provider_candidates[1]?.capabilities).toEqual(
+      [],
+    );
+  });
+
   it("keeps empty route and candidate capability collections empty", async () => {
     const status = await project([], [candidate(providerA, [])]);
     expect(status.capabilities).toEqual([]);
@@ -444,3 +508,118 @@ it.each(["elf", "pe"] as const)(
     ]);
   },
 );
+
+describe("binary session summary projection", () => {
+  it("keeps each candidate's status, code and reason in summary without diagnostics or capability sets", async () => {
+    const unavailable: AnalysisProviderCandidateStatus = {
+      ...candidate(providerB, otherCapabilities),
+      availability: {
+        status: "unavailable",
+        code: "not_configured",
+        reason: "Set PROVIDER_B_HOME; see docs/provider-b.md.",
+        diagnostics: { checks: [{ name: "configuration", ok: false }] },
+      },
+      targetSupport: {
+        status: "unsupported",
+        code: "architecture_unsupported",
+        reason: "Provider B cannot select this slice.",
+        diagnostics: { architecture: "arm64" },
+      },
+      selected: false,
+    };
+    const pending: AnalysisProviderCandidateStatus = {
+      ...candidate(providerA, selectedCapabilities),
+      availability: {
+        status: "unknown",
+        code: null,
+        reason: "Provider A startup is still pending.",
+        diagnostics: { startup: "pending" },
+      },
+    };
+    const candidates = [pending, unavailable];
+    const before = structuredClone(candidates);
+    const runtimeUnavailability = new Map([
+      ["procedure_info", { reason: "Runtime operation failure" }],
+    ]);
+    const complete = projectedStatusSchema.parse(
+      await projectStatus(selectedCapabilities, candidates, {
+        runtimeUnavailability,
+      }),
+    );
+    const raw = await projectStatus(selectedCapabilities, candidates, {
+      runtimeUnavailability,
+      detail: "summary",
+    });
+    const summary = summaryStatusSchema.parse(raw);
+
+    expect(candidates).toEqual(before);
+    expect(summary.capabilities).toEqual(complete.capabilities);
+    expect(summary.analysis_provider_candidates).toEqual([
+      {
+        provider: providerA,
+        availability: {
+          status: "unknown",
+          code: null,
+          reason: "Provider A startup is still pending.",
+        },
+        target_support: {
+          status: "unknown",
+          code: null,
+          reason: "No target is open.",
+        },
+        selected: true,
+      },
+      {
+        provider: providerB,
+        availability: {
+          status: "unavailable",
+          code: "not_configured",
+          reason: "Set PROVIDER_B_HOME; see docs/provider-b.md.",
+        },
+        target_support: {
+          status: "unsupported",
+          code: "architecture_unsupported",
+          reason: "Provider B cannot select this slice.",
+        },
+        selected: false,
+      },
+    ]);
+    expect(JSON.stringify(raw)).not.toContain("diagnostics");
+    expect(
+      analysisProviderCandidate
+        .array()
+        .safeParse(summary.analysis_provider_candidates).success,
+    ).toBe(false);
+  });
+});
+
+it("narrows summary capabilities without inventing omitted candidate facts", async () => {
+  const source = await projectStatus(
+    selectedCapabilities,
+    [candidate(providerA, selectedCapabilities)],
+    { detail: "summary" },
+  );
+  const summary = summaryStatusSchema.parse(source);
+  const selected = summaryStatusSchema.parse(
+    restrictAdvertisedCapabilities(
+      source,
+      (operation) => operation === "read_bytes",
+    ),
+  );
+  expect(
+    expandCanonicalCapabilities(selected.capabilities).map(
+      ({ operation }) => operation,
+    ),
+  ).toEqual(["read_bytes"]);
+  expect(selected.analysis_provider_candidates).toEqual(
+    summary.analysis_provider_candidates,
+  );
+  expect(selected.analysis_provider_candidates[0]).not.toHaveProperty(
+    "capabilities",
+  );
+  expect(selected.analysis_provider_candidates[0]!.target_support).toEqual({
+    status: "unknown",
+    code: null,
+    reason: "No target is open.",
+  });
+});

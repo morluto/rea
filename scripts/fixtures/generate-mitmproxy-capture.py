@@ -66,6 +66,7 @@ class Generator:
         first.request.path = "http://user:password@example.test/a?token=ordinary#fragment"
         first.response = http.Response.make(200, b"\x00\xfeanswer", [(b"Set-Cookie", b"session=cookie-secret"), (b"Location", b"https://redirect-user:redirect-password@example.test/b?token=ordinary")])
         first.metadata = {"big_integer": 9007199254740993, "nonfinite": float("inf"), "isLosslessNumber": True, "value": "ordinary-extension", "response": {"headers": [["Authorization", "ordinary-extension-credential-name"]]}}
+        first.metadata["numeric_spellings"] = {"small": 1e-7, "large": 1e20, "ordinary": 42}
         first.websocket = WebSocketData(messages=[WebSocketMessage(2, True, b"\x00\xfdmessage", 123.5)])
         first.backup()
         first.comment = "caller-selected-fixture"

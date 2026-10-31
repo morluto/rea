@@ -1,6 +1,9 @@
-import { createHash } from "node:crypto";
 import { readFile, realpath } from "node:fs/promises";
-import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { dirname } from "node:path";
+import {
+  bindConformanceFixtureArtifact,
+  resolveConformanceFixturePath,
+} from "./conformance-fixtures.mjs";
 
 /** Bind the real-Hopper semantic verifier to source-owned manifest artifacts. */
 export async function loadRealHopperFixtureTargets(manifestPath) {
@@ -15,19 +18,22 @@ export async function loadRealHopperFixtureTargets(manifestPath) {
   const largeOracle = requireLargeOracle(large.expectations);
   const root = dirname(canonicalManifest);
   const [primaryArtifact, secondaryArtifact, largeArtifact] = await Promise.all(
-    [
-      bindFixtureArtifact(root, primary),
-      bindFixtureArtifact(root, secondary),
-      bindFixtureArtifact(root, large),
-    ],
+    [primary, secondary, large].map(async (fixture) =>
+      bindConformanceFixtureArtifact(
+        await resolveConformanceFixturePath(root, fixture.artifact),
+        fixture,
+      ),
+    ),
   );
   const objc = manifest.fixtures.find((fixture) => fixture?.name === "objc");
+  const unicode =
+    objc === undefined ? undefined : fixtureEntry(manifest.fixtures, "objc");
   const unicodeArtifact =
-    objc === undefined
+    unicode === undefined
       ? undefined
-      : await bindFixtureArtifact(
-          root,
-          fixtureEntry(manifest.fixtures, "objc"),
+      : await bindConformanceFixtureArtifact(
+          await resolveConformanceFixturePath(root, unicode.artifact),
+          unicode,
         );
   requireDistinctArtifacts([
     primaryArtifact,
@@ -100,28 +106,3 @@ function fixtureEntry(fixtures, name) {
   if (matches.length !== 1) throw new Error(`Missing fixture ${name}`);
   return matches[0];
 }
-
-async function bindFixtureArtifact(root, fixture) {
-  if (
-    typeof fixture.artifact !== "string" ||
-    typeof fixture.artifactSha256 !== "string" ||
-    !/^[0-9a-f]{64}$/u.test(fixture.artifactSha256)
-  )
-    throw new Error(`Invalid artifact declaration for ${fixture.name}`);
-  const path = await realpath(resolve(root, fixture.artifact));
-  const relation = relative(root, path);
-  if (
-    relation === ".." ||
-    relation.startsWith(`..${sep}`) ||
-    isAbsolute(relation)
-  )
-    throw new Error(`Fixture ${fixture.name} escapes its manifest root`);
-  const actual = sha256(await readFile(path));
-  if (actual !== fixture.artifactSha256)
-    throw new Error(
-      `Fixture ${fixture.name} digest did not match its manifest`,
-    );
-  return { path, sha256: actual };
-}
-
-const sha256 = (value) => createHash("sha256").update(value).digest("hex");

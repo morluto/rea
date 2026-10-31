@@ -250,6 +250,18 @@ describe("learning a list's query", () => {
     // Serving supplies a call's values in name order.
     expect(ids("?limit=1&size=2", learned!.parameters)).toEqual(["1"]);
   });
+
+  it("adopts a filter on a field named unlike its parameter only once lines with two values agree on it", () => {
+    const owner = (...lines: QueryLine[]) =>
+      learnQuery(lines)?.parameters["owner"];
+    expect(owner(line("?owner=a", [1, 3], 50))).toBeUndefined();
+    expect(
+      owner(line("?owner=a", [1, 3], 50), line("?owner=b", [2], 51)),
+    ).toEqual({ role: "filter", field: "shelf" });
+    expect(learnQuery([line("?shelf_id=a", [1, 3], 52)])?.parameters).toEqual({
+      shelf_id: { role: "filter", field: "shelf" },
+    });
+  });
 });
 
 describe("queries the state can always answer", () => {
@@ -360,5 +372,32 @@ describe("queries the state can always answer", () => {
       role: "inert",
       values: ["x"],
     });
+  });
+});
+
+describe("parameters that ask for an order", () => {
+  it("reads a sort field in any spelling as a sort, never as a parameter without effect", () => {
+    expect(explainLine(line("?_sort=id&_order=DESC", [4, 3, 2, 1]))).toEqual({
+      _sort: { role: "sort" },
+      _order: { role: "direction" },
+    });
+    expect(
+      explainLine(line("?sortKey=id&sortDirection=descending", [4, 3, 2, 1])),
+    ).toEqual({
+      sortKey: { role: "sort" },
+      sortDirection: { role: "direction" },
+    });
+    // A sort value naming no field leaves the line unexplained rather than without effect.
+    expect(explainLine(line("?_sort=newest", [1, 2, 3, 4]))).toBeUndefined();
+  });
+
+  it("reads a direction name given no direction as an ordinary parameter", () => {
+    expect(explainLine(line("?direction=shared-by", [1, 2, 3, 4]))).toEqual({
+      direction: { role: "inert", values: ["shared-by"] },
+    });
+    expect(explainLine(line("?reverse=false", [1, 2, 3, 4]))).toEqual({
+      reverse: { role: "inert", values: ["false"] },
+    });
+    expect(explainLine(line("?reverse=true", [1, 2, 3, 4]))).toBeUndefined();
   });
 });

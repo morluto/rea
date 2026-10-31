@@ -14,6 +14,7 @@ import {
   analysisEvidenceDeliveryOptions,
   deliverCliAnalysisEvidence,
 } from "./analysisEvidenceDelivery.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { explicitSensitiveValueOptions } from "./explicitSensitiveArguments.js";
 
@@ -27,7 +28,7 @@ export const registerWebNetworkCaptureCommands = (
     description:
       "Inspect retained HAR, native mitmproxy, Fiddler SAZ or aioquic qlog records without fetching recorded URLs",
     args: z.object({
-      capturePath: z.string().describe("Absolute local capture path"),
+      capturePath: localPathStringSchema.describe("Local capture path"),
       format: z
         .enum(WEB_NETWORK_CAPTURE_FORMATS)
         .describe("Producer capture format"),
@@ -42,10 +43,9 @@ export const registerWebNetworkCaptureCommands = (
         .array(z.string())
         .optional()
         .describe("Exact body pointers; repeat to select several"),
-      protobufSchema: z
-        .string()
+      protobufSchema: localPathStringSchema
         .optional()
-        .describe("Absolute local compiled FileDescriptorSet path"),
+        .describe("Local compiled FileDescriptorSet path"),
       protobufMessage: z
         .string()
         .optional()
@@ -116,6 +116,7 @@ export const registerWebNetworkCaptureCommands = (
               signal,
               detail: options.detail,
               evidenceOutput: options.evidence_output,
+              sensitiveValues: options.sensitiveValue ?? [],
             });
           },
         ),

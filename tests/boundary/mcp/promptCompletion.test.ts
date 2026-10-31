@@ -184,7 +184,7 @@ describe("guided prompt completion from investigation records", () => {
     const inspectionEvidence = createEvidence(undefined, fixtureProvider, {
       operation: "inspect_artifact",
       parameters: {},
-      result: jsonValueSchema.parse(inventoryInspection),
+      result: inventoryInspection,
       confidence: "observed",
       authority: "shipped-artifact",
       evidenceLinks: inventoryInspection.evidence_links,
@@ -426,7 +426,7 @@ const createPagedInspectionEvidence = async (
     {
       operation: "inventory_artifact",
       parameters: {},
-      result: jsonValueSchema.parse(inventoryResult),
+      result: inventoryResult,
       confidence: "observed",
       authority: "shipped-artifact",
     },
@@ -530,7 +530,7 @@ const createPagedInspectionEvidence = async (
     {
       operation: "inspect_artifact",
       parameters: {},
-      result: jsonValueSchema.parse(result),
+      result: result,
       confidence: "observed",
       authority: "shipped-artifact",
       evidenceLinks: result.evidence_links,

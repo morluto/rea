@@ -33,6 +33,20 @@ export const javaScriptRuntimeContext = (
 ): JavaScriptRuntimeContext =>
   runtimeContextByProgram.get(program) ?? "unknown";
 
+/** Runtime strictness follows parser-owned mode, not erased TypeScript syntax. */
+export const javaScriptProgramStrictness = (
+  program: t.Program,
+): "strict" | "sloppy" | "unknown" => {
+  if (program.directives.some(({ value }) => value.value === "use strict"))
+    return "strict";
+  const context = javaScriptRuntimeContext(program);
+  return context === "module"
+    ? "strict"
+    : context === "commonjs"
+      ? "sloppy"
+      : "unknown";
+};
+
 const hasRuntimeModuleDeclaration = (program: t.Program): boolean =>
   program.body.some((node) => {
     if (t.isTSImportEqualsDeclaration(node))

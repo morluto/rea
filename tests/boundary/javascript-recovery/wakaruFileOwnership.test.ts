@@ -2,10 +2,7 @@ import { createHash } from "node:crypto";
 import { access, readFile, type FileHandle } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { afterEach, expect, it, onTestFinished, vi } from "vitest";
-import {
-  ArtifactFileCancelled,
-  ArtifactFileCleanupFailure,
-} from "../../../src/artifacts/ArtifactFileOperation.js";
+import { ArtifactFileCleanupFailure } from "../../../src/artifacts/ArtifactFileOperation.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import {
@@ -177,20 +174,27 @@ linuxX64.each([
     expect(result.error).toBeInstanceOf(
       denied ? ProviderCleanupError : AnalysisCancelledError,
     );
-    const failure = result.error.cause;
-    const physical =
-      failure instanceof ArtifactFileCleanupFailure
-        ? failure.fileCleanupFailure
-        : failure instanceof ArtifactFileCancelled
-          ? failure.fileCancellation
-          : undefined;
-    expect(physical?.outcome).toMatchObject({
-      kind: "completed",
-      value: {
+    if (denied) {
+      const failure = result.error.cause;
+      expect(failure).toBeInstanceOf(ArtifactFileCleanupFailure);
+      if (!(failure instanceof ArtifactFileCleanupFailure))
+        throw new Error("Expected exact file cleanup owner");
+      expect(failure.fileCleanupFailure.outcome).toMatchObject({
+        kind: "completed",
+        value: {
+          bytes: bytes.length,
+          sha256: createHash("sha256").update(bytes).digest("hex"),
+        },
+      });
+    } else {
+      expect(result.error.cause).toBe(controller.signal.reason);
+      expect(result.error.partialObservation).toEqual({
+        kind: "file-snapshot-hash",
+        path: selected,
         bytes: bytes.length,
         sha256: createHash("sha256").update(bytes).digest("hex"),
-      },
-    });
+      });
+    }
     expect(fixture.launches).toHaveLength(0);
     if (denied) {
       expect(result.error.cleanupIncomplete).toBe(true);

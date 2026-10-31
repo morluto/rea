@@ -16,6 +16,7 @@ import {
   elfFixture,
   ptxFixture,
   amdFixture,
+  amdNoteFixture,
   llvmBitcodeFixture,
 } from "../../fixtures/gpu/codeObjects.js";
 const inspect = async (
@@ -363,6 +364,74 @@ it.each(["amdgcn", "amdgpu9.00"])(
     expect(result.value.kernels).toHaveLength(1);
   },
 );
+it.each([
+  "producer-specific-gpu-target",
+  "amdgpu9.00-amd-amdhsa--gfx900:xnack",
+])(
+  "retains the unrecognized AMDGPU note target %s without substituting ELF processor flags",
+  async (noteTarget) => {
+    const result = await inspect(
+      hipFixture(amdFixture(false, undefined, noteTarget)),
+      { targets: ["gfx900"] },
+    );
+    if (!result.ok) throw result.error;
+    const row = result.value.objects.find(({ kind }) => kind === "amdgpu");
+    expect(row).toMatchObject({
+      target: "gfx900",
+      payload_target: noteTarget,
+      target_consistency: "unknown",
+      inspection: "complete",
+    });
+    expect(result.value.coverage.payloads).toBe("complete");
+    expect(result.value.kernels).toMatchObject([
+      { name: "add_one", parameter_bytes: 12, registers: { sgpr: 6, vgpr: 2 } },
+    ]);
+    expect(row?.limitations.join(" ")).not.toContain(
+      "Conflicting target declarations",
+    );
+    expect(result.value.kernels[0]?.limitations.join(" ")).not.toContain(
+      "Conflicting target declarations",
+    );
+  },
+);
+it("retains kernels from conflicting AMDGPU notes without choosing either note or ELF flags", async () => {
+  const bytes = amdFixture(
+    false,
+    amdNoteFixture(false, "amdgcn-amd-amdhsa--gfx1100"),
+  );
+  const result = await inspect(bytes);
+  if (!result.ok) throw result.error;
+  expect(result.value.objects).toMatchObject([
+    {
+      kind: "amdgpu",
+      target: null,
+      payload_target: null,
+      target_consistency: "unknown",
+      inspection: "partial",
+    },
+  ]);
+  expect(result.value.objects[0]?.limitations).toContain(
+    "AMDGPU notes declare conflicting processor targets; processor identity is unknown",
+  );
+  expect(result.value.coverage).toMatchObject({
+    discovery: "partial",
+    payloads: "partial",
+  });
+  expect(result.value.kernels).toMatchObject([
+    { name: "add_one", parameter_bytes: 12, registers: { sgpr: 6, vgpr: 2 } },
+    { name: "add_one", parameter_bytes: 12, registers: { sgpr: 6, vgpr: 2 } },
+  ]);
+  expect(new Set(result.value.kernels.map(({ id }) => id)).size).toBe(2);
+  const selected = await inspect(bytes, { targets: ["gfx900"] });
+  if (!selected.ok) throw selected.error;
+  expect(selected.value.objects[0]).toMatchObject({
+    target: null,
+    payload_target: null,
+    target_consistency: "unknown",
+    inspection: "not-selected",
+  });
+  expect(selected.value.kernels).toEqual([]);
+});
 it.each(
   [
     "amdgcn-amd-amdhsa-unknown-",
@@ -791,9 +860,18 @@ it.each(["truncated", "invalid", "extension"] as const)(
       tail.write("AMDGPU\0", 12);
       tail[20] = kind === "invalid" ? 0xc1 : 0xd4;
     }
-    for (const bytes of [
-      amdFixture(false, tail),
-      hipFixture(amdFixture(false, tail)),
+    const payloadTarget = "amdgcn-amd-amdhsa--gfx900";
+    for (const { bytes, target, consistency } of [
+      {
+        bytes: amdFixture(false, tail),
+        target: payloadTarget,
+        consistency: "single-source",
+      },
+      {
+        bytes: hipFixture(amdFixture(false, tail)),
+        target: "gfx900",
+        consistency: "consistent",
+      },
     ]) {
       const result = await inspect(bytes);
       if (!result.ok) throw result.error;
@@ -806,7 +884,42 @@ it.each(["truncated", "invalid", "extension"] as const)(
       expect(
         result.value.objects.find((row) => row.kind === "amdgpu")!.inspection,
       ).toBe(kind === "extension" ? "unsupported" : "malformed");
+      const identity = {
+        target,
+        payload_target: payloadTarget,
+        target_consistency: consistency,
+      };
+      expect(
+        result.value.objects.find((row) => row.kind === "amdgpu"),
+      ).toMatchObject(identity);
       expect(result.value.coverage.payloads).toBe("partial");
+      const selected = await inspect(bytes, { targets: [target] });
+      if (!selected.ok) throw selected.error;
+      expect(
+        selected.value.objects.find((row) => row.kind === "amdgpu"),
+      ).toMatchObject(identity);
+      expect(selected.value.kernels).toEqual(result.value.kernels);
+      expect(selected.value.coverage.payloads).toBe("partial");
+      const skipped = await inspect(bytes, {
+        targets: [target === "gfx900" ? payloadTarget : "gfx900"],
+      });
+      if (!skipped.ok) throw skipped.error;
+      expect(
+        skipped.value.objects.find((row) => row.kind === "amdgpu"),
+      ).toMatchObject(
+        target === payloadTarget
+          ? {
+              ...identity,
+              inspection: kind === "extension" ? "unsupported" : "malformed",
+            }
+          : {
+              target,
+              payload_target: null,
+              target_consistency: "unexamined",
+              inspection: "not-selected",
+            },
+      );
+      expect(skipped.value.kernels).toEqual([]);
     }
   },
 );
@@ -908,7 +1021,9 @@ it("preserves standalone PTX BOM and trailing NUL bytes in the retained text art
   const bytes = Buffer.from("\uFEFF" + ptxFixture + "\0");
   const result = await inspect(bytes);
   if (!result.ok) throw result.error;
-  expect(Buffer.from(result.value.ptx_artifacts[0]!.text)).toEqual(bytes);
+  expect(
+    Buffer.compare(Buffer.from(result.value.ptx_artifacts[0]!.text), bytes),
+  ).toBe(0);
   expect(result.value.ptx_artifacts[0]!.byte_length).toBe(bytes.length);
 });
 it("rejects a changed full-file identity before applying positional object selection", async () => {
@@ -966,6 +1081,32 @@ it("retains an embedded CCOB with a corrupted signature as unsupported", async (
     }),
   );
 });
+it.each([
+  ["unknown COFF machine", 0xffff],
+  ["x86 machine with a PE32+ optional header", 0x14c],
+] as const)(
+  "discovers PE GPU sections with %s",
+  async (_description, machine) => {
+    const bytes = peGpuFixture();
+    const pe = bytes.readUInt32LE(60);
+    bytes.writeUInt16LE(machine, pe + 4);
+    const result = await inspect(bytes);
+    if (!result.ok) throw result.error;
+    expect(result.value.format).toBe("pe");
+    expect(result.value.artifact.sha256).toBe(
+      createHash("sha256").update(bytes).digest("hex"),
+    );
+    expect(result.value.coverage).toMatchObject({
+      discovery: "complete",
+      payloads: "complete",
+    });
+    expect(result.value.kernels.map(({ name }) => name)).toEqual([
+      "add_one",
+      "add_one",
+    ]);
+    expect(result.value.ptx_artifacts[0]!.text).toBe(ptxFixture);
+  },
+);
 it("does not dispatch a high-bit-corrupted DOS signature to the PE parser", async () => {
   const bytes = peGpuFixture(Buffer.from(ptxFixture));
   bytes[0] = bytes[0]! | 0x80;

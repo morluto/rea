@@ -769,6 +769,6 @@ it.each(["inventory", "selected_table", "database"] as const)(
           ),
         }),
       );
-    expect(await readFile(path)).toEqual(before);
+    expect(Buffer.compare(await readFile(path), before)).toBe(0);
   },
 );

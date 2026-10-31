@@ -13,9 +13,10 @@ vi.mock("../process/ExecFileOutput.js", async (importOriginal) => ({
 const selection = {
   binary: "/host/adb",
   pathSource: "environment",
+  environment: {},
 } as const;
 
-it("names the adb version-probe deadline and says it has no runtime override", async () => {
+it("reports the fixed adb version-probe deadline", async () => {
   vi.mocked(execFileOutput).mockRejectedValueOnce(
     Object.assign(new Error("deadline"), {
       code: "ETIMEDOUT",
@@ -34,12 +35,10 @@ it("names the adb version-probe deadline and says it has no runtime override", a
     code: "provider_timeout",
     details: { timeout_ms: 10_000 },
   });
-  expect(projected.message).toContain("10000 ms");
-  expect(projected.message).toContain("no runtime override");
-  expect(projected.remediation.action).toContain("no runtime override");
+  expect(projected.details?.limit).toBeUndefined();
 });
 
-it("names the adb version-output cap and says it has no runtime override", async () => {
+it("reports the fixed adb version-output cap", async () => {
   vi.mocked(execFileOutput).mockRejectedValueOnce(
     Object.assign(new Error("too much"), {
       code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
@@ -56,9 +55,15 @@ it("names the adb version-output cap and says it has no runtime override", async
   const projected = projectAnalysisError(
     failure as Parameters<typeof projectAnalysisError>[0],
   );
-  expect(projected.message).toContain("65536-byte");
-  expect(projected.remediation.action).toContain("65536 bytes");
-  expect(projected.remediation.action).toContain("no runtime override");
+  expect(projected).toMatchObject({
+    code: "resource_constraint",
+    retryable: false,
+    details: {
+      resource: "memory",
+      reported_limits: { max_output_bytes: 65536 },
+    },
+  });
+  expect(projected.details?.limit).toBeUndefined();
 });
 
 it("distinguishes execute denial from missing or unreadable version output", async () => {

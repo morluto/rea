@@ -13,8 +13,9 @@ export type ArtifactLimitBoundary = "file-size" | "capacity" | "memory";
 /** Admission named by the producing reader, with its effective byte ceiling and its source. */
 export interface ArtifactAdmissionLimit {
   readonly kind: "asar-header";
+  readonly requiredBytes?: number;
   readonly maximumBytes: number;
-  readonly source: "default" | "setting";
+  readonly source: "default" | "setting" | "runtime";
 }
 
 /** Artifact inventory or extraction failed a typed safety boundary. */
@@ -32,6 +33,8 @@ export class ArtifactOperationError extends AnalysisError {
       | "inspect_pe_resources"
       | "inspect_pe_certificates"
       | "inspect_elf_notes"
+      | "inspect_devicetree"
+      | "inspect_kernel_module"
       | "inspect_erlang_beam"
       | "extract_artifact"
       | "decode_interface_builder"

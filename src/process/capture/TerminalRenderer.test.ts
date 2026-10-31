@@ -7,7 +7,7 @@ import { expect, it, vi } from "vitest";
 import { TerminalRenderer } from "./TerminalRenderer.js";
 import { ProcessCaptureResourceScope } from "./ProcessCaptureLifecycle.js";
 import { createBoundedProcessTextNormalizer } from "./ProcessNormalization.js";
-import { parseProcessScenario } from "../../domain/process/processScenario.js";
+import { processScenarioSchema } from "../../domain/process/processScenario.js";
 import type { BoundedProcessTextNormalization } from "./ProcessNormalization.js";
 
 const require = createRequire(import.meta.url);
@@ -128,7 +128,7 @@ it("omits rendered frames with unknown expanded size and keeps later bounded sta
     scrollback: 0,
     maxBytes: 1_000,
     normalize: createBoundedProcessTextNormalizer(
-      parseProcessScenario({
+      processScenarioSchema.parse({
         executable: "unused",
         normalization: {
           paths: false,
@@ -259,7 +259,7 @@ it.each([1024, 2048])(
       scrollback: 0,
       maxBytes,
       normalize: createBoundedProcessTextNormalizer(
-        parseProcessScenario({
+        processScenarioSchema.parse({
           executable: "unused",
           normalization: { paths: false, pids: false, ports: false },
         }),
@@ -285,7 +285,7 @@ it.each([1024, 2048])(
 
 it("renders retained chunks once after late PID knowledge, preserving event times and resize order", async () => {
   let identifiers: readonly number[] = [100];
-  const scenario = parseProcessScenario({
+  const scenario = processScenarioSchema.parse({
     executable: "unused",
     normalization: {
       paths: false,
@@ -333,7 +333,7 @@ it("renders retained chunks once after late PID knowledge, preserving event time
 });
 
 it("renders a bounded sequence of retained chunks and resizes", async () => {
-  const scenario = parseProcessScenario({
+  const scenario = processScenarioSchema.parse({
     executable: "unused",
     normalization: { paths: false, ports: false, pids: true, patterns: [] },
   });

@@ -14,7 +14,7 @@ import {
 import { admitAnalysisViewData } from "./analysisViewDataAdmission.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import { analysisViewResultInputError } from "./analysisViewParent.js";
-import type { AnalysisViewParent } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   ENTRY_BYTES,
   textBytes,
@@ -46,6 +46,22 @@ export abstract class WebNetworkProjectionAccumulator {
       return false;
     this.#temporaryBytes += bytes;
     return true;
+  }
+
+  /** Restore the enclosing synchronous parse's scratch after a nested body lease. */
+  protected temporaryCheckpoint(): () => void {
+    const held = this.#temporaryBytes;
+    return () => {
+      this.#temporaryBytes = held;
+    };
+  }
+
+  /** Mark the retained bytes; the returned call releases what was retained since, once none of it is held. */
+  protected retainedCheckpoint(): () => void {
+    const mark = this.#retainedBytes;
+    return () => {
+      this.#retainedBytes = Math.min(this.#retainedBytes, mark);
+    };
   }
 
   /** Per-record strings and descriptors never become cumulative scratch. */
@@ -131,23 +147,21 @@ export const admitHarCaptureParent = (
     return unsupported(
       `${viewKind} does not support capture format ${parsed.data.format}.`,
     );
-  // Environment views cite the report path and digest, so their parent's subject must be exactly them;
+  // Environment views preserve the recorded report path and authenticate its digest;
   // the api-surface view keeps the admission its existing callers rely on.
   const { artifact } = parsed.data;
+  const subject = parent.subject;
   if (
     viewKind !== "api-surface" &&
     artifact.sha256 !== null &&
-    (parent.subject == null ||
-      parent.subject.local_path !== artifact.path ||
-      parent.subject.digest.sha256 !== artifact.sha256)
+    (subject == null || subject.digest.sha256 !== artifact.sha256)
   )
     return err(
       analysisViewInputError([
         {
           path: ["source", "subject"],
           reason: "invalid_value",
-          message:
-            "Capture parent subject must identify the report's exact path and SHA-256.",
+          message: "Capture parent subject must identify the report's SHA-256.",
         },
       ]),
     );

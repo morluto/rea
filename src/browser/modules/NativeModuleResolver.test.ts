@@ -167,6 +167,26 @@ describe("optional native resolution acquisition", () => {
         message: expect.stringContaining("REA_BROWSER_EXECUTABLE"),
       });
   });
+  it.each(["relative/chromium", ""])(
+    "retains an invalid selected browser path %j without launching",
+    async (executable) => {
+      const provider = new NativeModuleResolver(
+        { REA_BROWSER_EXECUTABLE: executable },
+        () => {
+          throw new Error("must not launch");
+        },
+      );
+      const result = await provider.resolve(input);
+      if (result.ok) throw new Error("expected configuration refusal");
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: "capability_unavailable",
+        details: {
+          reason: "invalid_browser_executable",
+          diagnostics: { executable },
+        },
+      });
+    },
+  );
   it("does not acquire a browser after caller cancellation", async () => {
     const controller = new AbortController();
     const reason = { request: "opaque admission cancellation" };

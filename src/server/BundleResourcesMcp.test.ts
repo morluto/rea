@@ -1,9 +1,8 @@
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import type { Client } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchema } from "ajv";
-import { afterEach, expect, it } from "vitest";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { expect, it } from "vitest";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 
@@ -19,9 +18,10 @@ import { SessionProviderRouter } from "../application/binary/SessionProviderRout
 import { toolContract } from "../contracts/toolContracts.js";
 import { createEvidence } from "../domain/evidence.js";
 import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
-import { createServer } from "./createServer.js";
 import { createArtifactBinarySession } from "../composition/binary.js";
 import { build } from "plist";
+import { createApplicationMcpHarness } from "../../tests/fixtures/applicationMcpHarness.js";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
 const identity: ProviderIdentity = {
   id: "bundle-resource-mcp-fixture",
@@ -29,14 +29,8 @@ const identity: ProviderIdentity = {
   version: "1",
 };
 
-const resources: Array<{ close(): Promise<unknown> }> = [];
-
-afterEach(async () => {
-  await Promise.all(resources.splice(0).map((resource) => resource.close()));
-});
-
 it("routes bundle resource MCP calls with null executable identity and retained Evidence", async () => {
-  const parent = await mkdtemp(join(tmpdir(), "rea-bundle-resource-mcp-"));
+  const parent = await createTestTempDirectory("rea-bundle-resource-mcp-");
   const bundle = join(parent, "Fixture.app");
   await mkdir(bundle);
   const plistPath = join(bundle, "Info.plist");
@@ -82,21 +76,10 @@ it("routes bundle resource MCP calls with null executable identity and retained 
     new InvestigationRecords(),
     { createClient: () => ({ client: resourceClient, capabilities: [] }) },
   );
-  const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "bundle-resource-test", version: "1" });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  resources.push({
-    close: async () => {
-      await client.close();
-      await server.close();
-      await session.close();
-      await rm(parent, { recursive: true, force: true });
-    },
+  const { client } = await createApplicationMcpHarness({
+    session,
+    clientIdentity: { name: "bundle-resource-test", version: "1" },
   });
-
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
 
   await expectResourceSchemaBranches(client);
 
@@ -105,7 +88,9 @@ it("routes bundle resource MCP calls with null executable identity and retained 
     arguments: { path: plistPath },
   });
   expect(unbound.isError).toBe(true);
-  expect(unbound.structuredContent).toMatchObject({
+  const unboundError = unbound.content.find((item) => item.type === "text");
+  if (unboundError?.type !== "text") throw new Error("Expected error text");
+  expect(JSON.parse(unboundError.text)).toMatchObject({
     error: { code: "target_unavailable", category: "unavailable" },
   });
   const unopened = await client.callTool({
@@ -119,13 +104,15 @@ it("routes bundle resource MCP calls with null executable identity and retained 
   ).toMatchObject({
     result: {
       open: false,
-      tool_availability: expect.arrayContaining([
-        expect.objectContaining({
-          name: "inspect_plist",
-          available: false,
-          reason: "target_required",
-        }),
-      ]),
+      tool_availability: {
+        groups: expect.arrayContaining([
+          expect.objectContaining({
+            names: expect.arrayContaining(["inspect_plist"]),
+            available: false,
+            reason: "target_required",
+          }),
+        ]),
+      },
     },
   });
 
@@ -188,8 +175,8 @@ it("routes bundle resource MCP calls with null executable identity and retained 
 });
 
 it("exposes the production resource session through the MCP SDK for a keyless bundle", async () => {
-  const parent = await mkdtemp(
-    join(tmpdir(), "rea-bundle-resource-production-mcp-"),
+  const parent = await createTestTempDirectory(
+    "rea-bundle-resource-production-mcp-",
   );
   const bundle = join(parent, "Fixture.app");
   const resourceDirectory = join(bundle, "Resources");
@@ -206,23 +193,10 @@ it("exposes the production resource session through the MCP SDK for a keyless bu
   );
 
   const session = await createArtifactBinarySession({}, process.platform);
-  const server = createServer({ kind: "session", session });
-  const client = new Client({
-    name: "production-bundle-resource-test",
-    version: "1",
+  const { client } = await createApplicationMcpHarness({
+    session,
+    clientIdentity: { name: "production-bundle-resource-test", version: "1" },
   });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  resources.push({
-    close: async () => {
-      await client.close();
-      await server.close();
-      await session.close();
-      await rm(parent, { recursive: true, force: true });
-    },
-  });
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
 
   const opened = await client.callTool({
     name: "open_bundle_resources",
@@ -348,6 +322,15 @@ const expectResourceSchemaBranches = async (client: Client): Promise<void> => {
       validResult: jsonObjectSchema.parse({
         target_sha256: "a".repeat(64),
         catalogs: [],
+        inventory_coverage: { scope: "container-entries", status: "unknown" },
+        catalog_coverage: {
+          status: "unknown",
+          reason: "catalog_coverage_not_reported",
+        },
+        resource_key_coverage: {
+          status: "unknown",
+          reason: "resource_key_coverage_not_reported",
+        },
         total_records: 0,
         offset: 0,
         limit: 1,

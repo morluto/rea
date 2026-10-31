@@ -90,6 +90,40 @@ releases are outside this recovery path.
 For a release that needs an independently frozen application checkpoint, use
 the optional manual path below. It retains explicit prepare and publish phases.
 
+Automatic main proposals and manual checkpoint preparation use
+`scripts/release-proposal.mjs` with the pinned release-please dependency.
+The controller applies `patches/release-please+17.3.0.patch` only when invoked;
+normal dependency installation and published-package installation do not apply it.
+The patch avoids commit-file backfills, associated PR file lists and path splitting
+for a single root Node package with the default changelog, default or
+always-bump-minor versioning, no path exclusions and no explicit plugins. Other
+configurations retain the upstream file attribution workflow. Commit history and
+associated PR metadata still come from GitHub: release notes need the commits,
+and `BEGIN_COMMIT_OVERRIDE` needs the merged PR body. Skipped file lists remain
+unknown rather than being reported as empty. The controller sizes commit search
+from the complete selected Git history, and a missing known release boundary
+fails before proposal creation.
+
+History-page reads retry GitHub's canonical internal GraphQL response error within
+the existing five-retry budget and exponential backoff. Each retry uses the same
+cursor; permission, validation and mixed errors fail immediately. Exhaustion
+stops preparation before proposal writes. The controller does not restart proposal
+creation or retry mutations. An internal GraphQL error does not establish API
+quota exhaustion or prove that query size caused the failure. Publication
+continues through the pinned release-please action.
+
+A nonzero manifest version must resolve to a GitHub release or tag before
+proposal history is collected. If publication has not created that boundary
+yet, preparation stops before opening or updating a PR; wait for publication
+before retrying. Missing manifest versions and `0.0.0` still allow an initial
+release. This prevents historical `Release-As` directives from being replayed
+as unreleased changes.
+
+When upgrading release-please, review the upstream manifest implementation,
+refresh the versioned patch and run the release proposal and workflow boundary
+tests. Version mismatch or a patch that neither applies cleanly nor matches an
+already-applied patch fails closed.
+
 ## Contributor-aware release notes
 
 Use [the rea-changelog-update skill](https://github.com/morluto/rea/blob/main/.agents/skills/rea-changelog-update/SKILL.md)
@@ -315,7 +349,10 @@ tag remains in main's ancestry. Keep the released tag unchanged.
 
 The synchronization must include `.release-please-manifest.json`,
 `package.json`, both root versions in `package-lock.json`, `CHANGELOG.md`,
-`server.json`, and the versioned documentation examples. Run
+`server.json`, both plugin manifests (`.claude-plugin/plugin.json` and
+`.codex-plugin/plugin.json`), the Codex server declaration (`.codex-plugin/mcp.json`), both
+marketplaces (`.claude-plugin/marketplace.json` and
+`.agents/plugins/marketplace.json`), and the versioned documentation examples. Run
 `npm run docs:generate`, `npm run docs:check`, and the release configuration
 tests against the combined tree. After the merge, verify that the released
 tag is an ancestor of main:
@@ -349,3 +386,18 @@ tag. Do not dispatch a fresh publish phase to repair an already-created
 release: Release Please will not create the same release again. Do not move
 the tag, delete the release, or unpublish npm as a retry. A defective public
 package requires a reviewed correction and a new version.
+
+### Plugin artifact metadata
+
+Package verification selects files with npm, then packs an owned staging directory.
+The release manifest omits development dependencies and development-only overrides;
+its generated `npm-shrinkwrap.json` preserves the runtime dependency resolutions
+and integrity values from `package-lock.json`. Runtime or unresolved overrides
+fail packaging rather than being dropped. Source metadata is never rewritten.
+The archive bundles production dependencies because Codex fetches npm plugins
+without installing dependencies. The producer includes all locked PTY platform
+archives after checking their integrity, without re-resolving the runtime tree.
+Optional Frida stays outside the bundle so ordinary npm installation can retain
+its host-specific installer. This also lets Claude install locked dependencies under its plugin policy while
+retaining development security overrides. Both plugin marketplaces select the
+same qualified npm artifact, which the release workflow publishes unchanged.

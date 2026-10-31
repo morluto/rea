@@ -7,9 +7,12 @@ it.each(["zlib", "zstd"] as const)(
     const source = Buffer.from("kernel"),
       encode = codec === "zstd" ? zstdCompressSync : deflateSync,
       compressed = encode(source);
-    expect(await decodeGpuPayload(compressed, codec, source.length)).toEqual(
-      source,
-    );
+    expect(
+      Buffer.compare(
+        await decodeGpuPayload(compressed, codec, source.length),
+        source,
+      ),
+    ).toBe(0);
     await expect(
       decodeGpuPayload(
         Buffer.concat([compressed, Buffer.from("junk")]),

@@ -158,6 +158,7 @@ it("routes observe_native_calls through MCP with schema-checked input and output
           expect.objectContaining({
             path: ["environment", "__proto__"],
             reason: "invalid_type",
+            expected: "string",
           }),
         ],
       },

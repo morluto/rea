@@ -32,6 +32,12 @@ import {
   ghidraPowerPcProfileParameters,
 } from "./GhidraPowerPcProfile.js";
 import { ghidraRawBinaryLanguage } from "./GhidraRawBinaryLanguage.js";
+import {
+  GHIDRA_GAMECUBE_DOL_LANGUAGE,
+  ghidraDolLanguage,
+  ghidraDolLanguageUnsupportedReason,
+  ghidraDolProfileParameters,
+} from "./GhidraDolProfile.js";
 
 import {
   ghidraProcessorUnsupportedReason,
@@ -59,6 +65,7 @@ const sharedAnalysisSemantics = {
   procedure_file_offset_resolution:
     "address-first-unique-target-source-mapping-v2",
   instruction_flow_evidence: "decoded-return-pcode-v1",
+  instruction_status: "unlisted-address-without-decode-v1",
   instruction_references: "exact-address-incoming-without-synthetic-entry-v2",
   function_boundary_observations: "ghidra-function-boundary-limitations-v4",
 } as const;
@@ -92,6 +99,32 @@ const languageOverrideConflict = (
         : [{ setting: "REA_GHIDRA_COMPILER_SPEC_ID", constraint }]),
     ],
   });
+
+/**
+ * Analysis policy shared by lanes that import one file image through
+ * BinaryLoader. Each lane adds its own loader, language, and entry facts.
+ */
+const binaryLoaderPolicy = (
+  target: Extract<BinaryTarget, { format: "raw-binary" | "gamecube-dol" }>,
+  installation: GhidraInstallationInspection,
+): Readonly<Record<string, JsonValue>> => ({
+  target_kind: target.kind,
+  target_format: target.format,
+  architecture: target.architecture,
+  available_architectures: [...target.availableArchitectures].sort(),
+  import_mode: "ephemeral-source-immutable",
+  ...sharedAnalysisSemantics,
+  no_return_repair:
+    installation.platform === "win32"
+      ? "disabled-windows-p0"
+      : "returning-imports-decoded-return-v2",
+  process_launch:
+    installation.platform === "win32"
+      ? "official-headless-script-v1"
+      : "inspected-jvm-launch-support-v1",
+  jump_table_evidence: "typed-case-default-blocks-v1",
+  decompiler_jump_loads: true,
+});
 
 /** Resolve version-bound, deterministic semantics before Ghidra imports a target. */
 export const resolveGhidraAnalysisProfile = async (
@@ -146,6 +179,42 @@ export const resolveGhidraAnalysisProfile = async (
           analyzer_preset: ghidraDisabledAnalyzerPreset(disabledAnalyzers),
           analysis_options: { disabled_analyzers: [...disabledAnalyzers] },
         };
+  if (target.format === "gamecube-dol") {
+    // The DOL admission owns the processor family; only a BE32 PowerPC variant may replace the stock language.
+    const reason = ghidraDolLanguageUnsupportedReason(languageOverride);
+    // The DOL is admitted; only the selected language conflicts with it.
+    if (reason !== null && languageOverride !== undefined)
+      return Promise.resolve(
+        err(
+          languageOverrideConflict(languageOverride, reason, {
+            languageId: GHIDRA_GAMECUBE_DOL_LANGUAGE.languageId,
+            ...(languageOverride.compilerSpecId === undefined
+              ? {}
+              : { compilerSpecId: languageOverride.compilerSpecId }),
+          }),
+        ),
+      );
+    const language = ghidraDolLanguage(languageOverride);
+    return Promise.resolve(
+      ok({
+        profile: createProfile({
+          ...binaryLoaderPolicy(target, installation),
+          load_image_evidence: "independent-dol-section-mapping-v1",
+          loader: "BinaryLoader",
+          language_id: language.languageId,
+          compiler_spec_id: language.compilerSpecId ?? "language-default",
+          language_selection:
+            languageOverride === undefined
+              ? "provider-pinned-v1"
+              : "configured-v1",
+          entry_point: target.entryPoint,
+          entry_seed: "external-entry-and-function-before-analysis-v1",
+          ...ghidraDolProfileParameters(target.dol),
+          ...analyzerParameters,
+        }),
+      }),
+    );
+  }
   if (target.format === "raw-binary") {
     if (languageOverride !== undefined)
       return Promise.resolve(
@@ -160,23 +229,8 @@ export const resolveGhidraAnalysisProfile = async (
     return Promise.resolve(
       ok({
         profile: createProfile({
-          target_kind: target.kind,
-          target_format: target.format,
-          architecture: target.architecture,
-          available_architectures: [...target.availableArchitectures].sort(),
-          import_mode: "ephemeral-source-immutable",
-          ...sharedAnalysisSemantics,
-          no_return_repair:
-            installation.platform === "win32"
-              ? "disabled-windows-p0"
-              : "returning-imports-decoded-return-v2",
-          process_launch:
-            installation.platform === "win32"
-              ? "official-headless-script-v1"
-              : "inspected-jvm-launch-support-v1",
+          ...binaryLoaderPolicy(target, installation),
           load_image_evidence: "independent-raw-mapping-context-v4",
-          jump_table_evidence: "typed-case-default-blocks-v1",
-          decompiler_jump_loads: true,
           loader: "BinaryLoader",
           language_id: language.languageId,
           compiler_spec_id: language.compilerSpecId,
@@ -352,6 +406,14 @@ export const ghidraProfileLanguageOverride = (
     : { languageId, compilerSpecId };
 };
 
+/** Read back the language a provider-pinned profile imports with, for any pinned lane. */
+export const ghidraProfilePinnedLanguage = (
+  parameters: Readonly<Record<string, unknown>>,
+): GhidraLanguageOverride | undefined =>
+  parameters.language_selection === "provider-pinned-v1"
+    ? ghidraProfileLanguageOverride(parameters)
+    : undefined;
+
 /** Whether a committed profile and the active configuration select the same language. */
 export const sameGhidraLanguageOverride = (
   left: GhidraLanguageOverride | undefined,
@@ -404,4 +466,23 @@ const createGhidraProfile = (
           }),
         }
       : {}),
+  });
+
+/** A caller database supplies analysis state; no import or completion claims are inferred. */
+export const existingGhidraAnalysisProfile = (
+  target: BinaryTarget,
+  provider: Parameters<typeof createAnalysisProfile>[0],
+  project: JsonValue,
+) =>
+  createAnalysisProfile(provider, {
+    target_kind: target.kind,
+    target_format: target.format,
+    architecture: target.architecture ?? null,
+    import_mode: "existing-project-private-copy-v1",
+    ...sharedAnalysisSemantics,
+    annotation_policy: "read-only-existing-project-v1",
+    existing_project: project,
+    original_analysis: { completeness: "unknown", settings: "unknown" },
+    no_return_repair: "disabled-existing-project",
+    process_launch: "inspected-jvm-launch-support-v1",
   });

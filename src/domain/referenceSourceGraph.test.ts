@@ -1,13 +1,14 @@
+import { createHash } from "node:crypto";
+
+import canonicalize from "canonicalize";
 import { describe, expect, it } from "vitest";
 
 import {
-  computeHistoricalSourceGraphSha256,
   createHistoricalSourceGraph,
   createHistoricalSourceManifest,
   historicalSourceGraphSchema,
   historicalSourceParseFailureKey,
   parseHistoricalSourceGraph,
-  parseHistoricalSourceManifest,
   type HistoricalSourceGraphInput,
 } from "./referenceSourceGraph.js";
 
@@ -108,11 +109,27 @@ const registerSourceCommitmentTests = (): void => {
     const graph = createHistoricalSourceGraph(graphInput());
     const first = createHistoricalSourceManifest(graph);
     const second = createHistoricalSourceManifest(structuredClone(graph));
+    const graphJson = canonicalize(graph);
+    if (graphJson === undefined) throw new TypeError("Unserializable graph");
+    const expectedSemantic = {
+      schema: "HistoricalSourceManifest",
+      authority: "historical-reference",
+      graph_sha256: createHash("sha256").update(graphJson).digest("hex"),
+      root_sha256: graph.root_sha256,
+      inventory_state: "complete",
+      entry_count: 3,
+      relationship_count: 2,
+    };
+    const semanticJson = canonicalize(expectedSemantic);
+    if (semanticJson === undefined)
+      throw new TypeError("Unserializable manifest semantics");
 
+    expect(first).toEqual({
+      ...expectedSemantic,
+      manifest_id: `hsm_${createHash("sha256").update(semanticJson).digest("hex")}`,
+    });
     expect(first).toEqual(second);
     expect(parseHistoricalSourceGraph(graph)).toEqual(graph);
-    expect(parseHistoricalSourceManifest(first)).toEqual(first);
-    expect(first.graph_sha256).toBe(computeHistoricalSourceGraphSha256(graph));
     expect(() =>
       createHistoricalSourceGraph({
         ...graphInput(),
@@ -211,6 +228,9 @@ describe("historical source graph", () => {
   it("omits absent local diagnostics and rejects explicitly undefined non-JSON metadata", () => {
     const input = graphInput();
     const graph = createHistoricalSourceGraph(input);
+    expect(graph.entries.map((entry) => entry.path)).toEqual(
+      input.entries.map((entry) => entry.path),
+    );
     expect(
       graph.entries.every(
         (entry) => !Object.hasOwn(entry, "local_diagnostics"),
@@ -301,8 +321,8 @@ const registerLocalDiagnosticCommitmentTests = (): void => {
     };
     const revised = createHistoricalSourceGraph(changedMessage);
     expect(revised.root_sha256).toBe(graph.root_sha256);
-    expect(computeHistoricalSourceGraphSha256(revised)).not.toBe(
-      computeHistoricalSourceGraphSha256(graph),
+    expect(createHistoricalSourceManifest(revised).graph_sha256).not.toBe(
+      createHistoricalSourceManifest(graph).graph_sha256,
     );
   });
 
@@ -333,8 +353,9 @@ const registerLocalDiagnosticCommitmentTests = (): void => {
       "File could not be read safely: EIO. Check permissions.",
     ];
     expect(
-      computeHistoricalSourceGraphSha256(createHistoricalSourceGraph(moved)),
-    ).not.toBe(computeHistoricalSourceGraphSha256(graph));
+      createHistoricalSourceManifest(createHistoricalSourceGraph(moved))
+        .graph_sha256,
+    ).not.toBe(createHistoricalSourceManifest(graph).graph_sha256);
   });
 };
 
@@ -370,8 +391,8 @@ describe("partial historical source graphs", () => {
     };
     const revised = createHistoricalSourceGraph(changedMessage);
     expect(revised.root_sha256).toBe(graph.root_sha256);
-    expect(computeHistoricalSourceGraphSha256(revised)).not.toBe(
-      computeHistoricalSourceGraphSha256(graph),
+    expect(createHistoricalSourceManifest(revised).graph_sha256).not.toBe(
+      createHistoricalSourceManifest(graph).graph_sha256,
     );
     expect(() =>
       createHistoricalSourceGraph({
@@ -452,7 +473,7 @@ describe("partial historical source graphs", () => {
 });
 
 describe("historical source graph validation", () => {
-  it("rejects strict unknown fields, invalid VCS, dangling internal edges, and false manifests", () => {
+  it("rejects strict unknown fields, invalid VCS, and dangling internal edges", () => {
     expect(() =>
       createHistoricalSourceGraph({ ...graphInput(), surprise: true }),
     ).toThrow();
@@ -510,13 +531,6 @@ describe("historical source graph validation", () => {
         extra: true,
       }),
     ).toThrow();
-
-    const manifest = createHistoricalSourceManifest(
-      createHistoricalSourceGraph(graphInput()),
-    );
-    expect(() =>
-      parseHistoricalSourceManifest({ ...manifest, entry_count: 999 }),
-    ).toThrow(/identifier does not match/u);
   });
 });
 

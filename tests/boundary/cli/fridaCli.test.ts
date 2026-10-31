@@ -6,10 +6,57 @@ import { expect, it } from "vitest";
 import type { DeviceManager } from "frida";
 
 import { createCli } from "../../../src/cli.js";
-import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { FRIDA_TOOL_CONTRACTS } from "../../../src/contracts/fridaToolContracts.js";
 import type { FridaInstrumentationPort } from "../../../src/application/frida/FridaInstrumentationPort.js";
 import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
 import { FridaInstrumentationManager } from "../../../src/frida/FridaInstrumentationManager.js";
+
+it.each([
+  {
+    option: "--device-id",
+    value: "missing-device",
+    error: "Device not found",
+    field: "device_id",
+    code: "provider_timeout",
+  },
+  {
+    option: "--remote-address",
+    value: "127.0.0.1:27042",
+    error: "Unable to connect to remote frida-server",
+    field: "remote_address",
+    code: "capability_unavailable",
+  },
+])(
+  "retains selected Frida endpoint in CLI discovery failures: $field",
+  async ({ option, value, error, field, code }) => {
+    const bindings = {
+      getDeviceById: async () => {
+        throw new Error(error);
+      },
+      addRemoteDevice: async () => {
+        throw new Error(error);
+      },
+    } as unknown as DeviceManager;
+    const provider = new FridaInstrumentationManager({
+      deviceManager: bindings,
+    });
+    let stdout = "";
+    await createCli({}, undefined, provider).serve(
+      ["list-frida-processes", option, value, "--json"],
+      {
+        env: {},
+        exit: () => {},
+        stdout: (text) => {
+          stdout += text;
+        },
+      },
+    );
+    expect(JSON.parse(stdout)).toMatchObject({
+      code,
+      details: { diagnostics: { [field]: value } },
+    });
+  },
+);
 
 it.each([
   { devices: [], cleanupError: null },
@@ -47,9 +94,9 @@ it.each([
   );
   expect(exitCode).toBe(0);
   expect(closed).toBe(true);
-  const output = toolContract("list_frida_devices").outputSchema.parse(
-    JSON.parse(stdout),
-  );
+  const output = FRIDA_TOOL_CONTRACTS.find(
+    (contract) => contract.name === "list_frida_devices",
+  )!.outputSchema.parse(JSON.parse(stdout));
   expect(output).toEqual({
     devices: observation.devices.map(({ deviceId, name, type }) => ({
       device_id: deviceId,
@@ -106,9 +153,9 @@ it.each([false, true])(
       });
     else
       expect(
-        toolContract("list_frida_processes").outputSchema.parse(
-          JSON.parse(stdout),
-        ),
+        FRIDA_TOOL_CONTRACTS.find(
+          (contract) => contract.name === "list_frida_processes",
+        )!.outputSchema.parse(JSON.parse(stdout)),
       ).toEqual(expected);
   },
 );
@@ -214,7 +261,9 @@ it("maps one-shot Frida CLI target, script, duration, and remote options", async
   expect(exitCode).toBe(0);
   const result: unknown = JSON.parse(stdout);
   expect(() =>
-    toolContract("instrument_with_frida").outputSchema.parse(result),
+    FRIDA_TOOL_CONTRACTS.find(
+      (contract) => contract.name === "instrument_with_frida",
+    )!.outputSchema.parse(result),
   ).not.toThrow();
   expect(JSON.stringify(result)).not.toContain("synthetic-secret-token");
   expect(calls).toEqual([
@@ -358,7 +407,6 @@ it("keeps Frida script-file identity in original bytes when UTF-8 decoding repla
         .update(decodedSource, "utf8")
         .digest("hex");
       const outputText = JSON.stringify(output);
-      expect(outputText).toContain(rawDigest);
       if (name === "ff.js" || name === "fe.js") {
         expect(rawDigest).not.toBe(loadedSourceDigest);
         expect(output).toMatchObject({
@@ -370,10 +418,10 @@ it("keeps Frida script-file identity in original bytes when UTF-8 decoding repla
               loaded_source_sha256: loadedSourceDigest,
             },
           },
+          limitations: expect.arrayContaining([
+            expect.stringMatching(/replacement|original bytes/iu),
+          ]),
         });
-        expect(outputText).toMatch(
-          /limitations.*(?:replacement|original bytes)/iu,
-        );
       } else {
         expect(output).toMatchObject({
           normalized_result: { source_sha256: rawDigest },

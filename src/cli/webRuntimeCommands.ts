@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { Cli, z } from "incur";
 import { createWebRuntimeService } from "../composition/webRuntime.js";
 import { browserCliError } from "./browserCliError.js";
@@ -7,7 +8,7 @@ import {
 } from "../cliObservationOptions.js";
 import { logCliCommand } from "../cliLogging.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
-import { observeWebExecutionInputSchema } from "../domain/webExecution.js";
+import { MAX_BROWSER_DEADLINE_MS } from "../domain/browserDeadline.js";
 import type { Logger } from "pino";
 import type { ProgressReporter } from "../application/ProgressReporter.js";
 import { withCommandCancellation } from "./commandCancellation.js";
@@ -36,10 +37,15 @@ export const registerWebRuntimeCommands = (
     }),
     options: z.object({
       ...browserScopeOptions,
-      observationMs:
-        observeWebExecutionInputSchema.shape.observation_ms.describe(
-          "Observation duration in milliseconds",
-        ),
+      // incur only coerces ZodNumber argv fields; domain z.int() constructs
+      // ZodNumberFormat. Preserve the canonical bounds in this CLI adapter.
+      observationMs: z
+        .number()
+        .int()
+        .min(1)
+        .max(MAX_BROWSER_DEADLINE_MS)
+        .default(10_000)
+        .describe("Observation duration in milliseconds"),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
@@ -65,7 +71,7 @@ export const registerWebRuntimeCommands = (
             service.provider.identity().id,
             "observe_web_execution",
             signal,
-          );
+          ).then(projectCliAnalysisResult);
         }),
       ),
   });
@@ -106,7 +112,7 @@ export const registerWebRuntimeCommands = (
             service.provider.identity().id,
             "inspect_web_event_listeners",
             signal,
-          );
+          ).then(projectCliAnalysisResult);
         }),
       ),
   });

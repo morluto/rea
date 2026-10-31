@@ -22,7 +22,12 @@ const NOMINAL_CATEGORIES: ReadonlyMap<string, SwiftTypeCategory> = new Map([
  */
 export const classifySwiftSymbol = (
   name: string,
-): { readonly category: SwiftTypeCategory | null } | undefined => {
+):
+  | {
+      readonly category: SwiftTypeCategory | null;
+      readonly protocolIdentity: boolean;
+    }
+  | undefined => {
   const prefix = /^_?(?:\$[sS]|_T0)/u.exec(name);
   if (prefix === null) {
     if (!name.startsWith("_Tt")) return undefined;
@@ -30,15 +35,21 @@ export const classifySwiftSymbol = (
       category:
         LEGACY_CATEGORIES.find(([prefix]) => name.startsWith(prefix))?.[1] ??
         null,
+      protocolIdentity: name.startsWith("_TtP"),
     };
   }
   const mangling = name.slice(prefix[0].length);
   let offset = identifierEnd(mangling, 0);
-  if (offset === undefined) return { category: null };
+  if (offset === undefined) return { category: null, protocolIdentity: false };
   let category: SwiftTypeCategory | null = null;
+  let protocolIdentity = false;
   for (;;) {
     const end = identifierEnd(mangling, offset);
     if (end === undefined) {
+      // A protocol member retains its enclosing category, but only the exact
+      // descriptor terminal identifies the protocol itself.
+      protocolIdentity =
+        category === "protocols" && mangling.slice(offset) === "Mp";
       // A zero-prefixed identifier uses word substitutions or Punycode. We
       // cannot tell whether it continues a nested type or names a member, so
       // retaining the outer category would be a guess.
@@ -58,14 +69,16 @@ export const classifySwiftSymbol = (
       // Current swiftc emits protocol descriptors as `…<Nominal>Mp` without
       // the nominal `P` marker (e.g. `_$s4main7ScoringMp`). Decode that exact
       // suffix; unknown substitution encodings stay unclassified, never guessed.
-      if (mangling.slice(end) === "Mp") category = "protocols";
-      else if (kind === "E" && category !== null) category = "extensions";
+      if (mangling.slice(end) === "Mp") {
+        category = "protocols";
+        protocolIdentity = true;
+      } else if (kind === "E" && category !== null) category = "extensions";
       break;
     }
     category = nominal;
     offset = end + 1;
   }
-  return { category };
+  return { category, protocolIdentity };
 };
 
 /**
@@ -87,6 +100,16 @@ const SWIFT_MANGLING_PREFIXES = [
 /** Recognize names the Swift demangler accepts as mangled symbols. */
 export const isSwiftMangledSymbolName = (name: string): boolean =>
   SWIFT_MANGLING_PREFIXES.some((prefix) => name.startsWith(prefix));
+
+/**
+ * A Swift symbol carries either a demangler mangling or a name the category
+ * decoder already accepts, including visible runtime class names (`_Tt…`) and
+ * the optional leading underscore of legacy encodings (`__T0…`). Whether the
+ * nominal category can be decoded is a separate question, so it must not decide
+ * whether the symbol is Swift at all.
+ */
+export const isSwiftSymbolName = (name: string): boolean =>
+  isSwiftMangledSymbolName(name) || classifySwiftSymbol(name) !== undefined;
 
 const identifierEnd = (
   mangling: string,

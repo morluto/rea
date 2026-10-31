@@ -5,7 +5,7 @@ import type { ToolContract } from "./toolContractTypes.js";
 import { evidenceResultOf } from "./toolOutputSchemaPrimitives.js";
 import { analysisDetailOutputSchemaOf } from "./analysisDetail.js";
 import { toolContractMetadata } from "./toolEffects.js";
-import { isValidFridaRemoteAddress } from "./fridaRemoteAddress.js";
+import { isValidFridaRemoteAddress } from "../domain/fridaRemoteAddress.js";
 import {
   fridaSessionObservationSchema,
   fridaSessionStatusInputSchema,

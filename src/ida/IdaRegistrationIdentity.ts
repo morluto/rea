@@ -21,7 +21,11 @@ export const idaExplicitSensitiveValues = (
   if (config === undefined) return [];
   return "headers" in config
     ? Object.entries(config.headers)
-        .filter(([name]) => isSensitiveHeader(config, name))
+        .filter(([name]) =>
+          config.sensitive?.headers.some(
+            (selected) => selected.toLowerCase() === name.toLowerCase(),
+          ),
+        )
         .map(([, value]) => value)
     : Object.entries(config.env)
         .filter(([name]) => config.sensitive?.env.includes(name))

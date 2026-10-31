@@ -14,16 +14,17 @@ import {
 } from "../domain/binaryTargetTypes.js";
 import {
   AnalysisCancelledError,
-  AnalysisInputError,
   AnalysisArtifactChangedError,
   AnalysisAccessDeniedError,
   AnalysisCapabilityUnavailableError,
   AnalysisResourceConstraintError,
+  AnalysisUnsupportedTargetError,
 } from "../domain/analysisErrorCore.js";
 import {
   ArtifactFileCleanupFailure,
   artifactFileCancellationCause,
-  artifactFilePrimaryFailure,
+  artifactFilePrimaryFacts,
+  type ArtifactFilePrimaryFacts,
   bindArtifactFileCleanup,
   withArtifactRegularFile,
 } from "../artifacts/ArtifactFileOperation.js";
@@ -41,6 +42,7 @@ import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
 import { pushDispatchCoverage } from "./AppleDispatchCoverage.js";
 import { parsePointerFixups } from "./AppleMachoFixups.js";
+import { BinaryFormatFailure } from "./metadata/BinaryContainer.js";
 import {
   parseMachoLayout,
   UnsupportedMachoMetadataFormatError,
@@ -230,7 +232,10 @@ export const decodeAppleDispatchMetadata = (
     ({ name }) => name === "__swift5_types",
   )) {
     if (section.size % 4 !== 0)
-      throw new RangeError("Misaligned Swift type section");
+      throw new BinaryFormatFailure(
+        "malformed",
+        "Misaligned Swift type section",
+      );
     for (let index = 0; index < section.size / 4 && index < maxRecords; index++)
       typeEntries.push(section.address + BigInt(index * 4));
     if (section.size / 4 > maxRecords) budget.truncated = true;
@@ -364,8 +369,7 @@ export const inspectAppleDispatchMetadata = async (
     target.path,
     resources,
     signal,
-    async (handle) => {
-      const before = await handle.stat();
+    async ({ handle, initial: before }) => {
       if (before.size > maximumBytes)
         throw inputBudgetExceeded(admission, before.size);
       if (signal?.aborted) throw cancelled();
@@ -412,7 +416,10 @@ export const appleDispatchMetadataFailure = (
         : undefined;
     const previous =
       physical?.outcome.kind === "failed"
-        ? appleDispatchMetadataFailure(artifactFilePrimaryFailure(cause), path)
+        ? appleDispatchMetadataPrimaryFailure(
+            artifactFilePrimaryFacts(cause),
+            path,
+          )
         : physical?.completionCancellation === undefined
           ? undefined
           : new AnalysisCancelledError(OPERATION, {
@@ -431,35 +438,65 @@ export const appleDispatchMetadataFailure = (
     bindArtifactFileCleanup(cause, failure);
     return failure;
   }
-  if (cause instanceof AnalysisError) return cause;
-  if (cause instanceof UnsupportedMachoMetadataFormatError)
-    return new AnalysisCapabilityUnavailableError(
-      IDENTITY.id,
-      OPERATION,
-      cause.message,
-      { cause },
-    );
-  if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
-    return new AnalysisCancelledError(OPERATION, {
-      cause: artifactFileCancellationCause(cause),
-    });
-  if (cause instanceof ArtifactReaderFailure && cause.reason === "unavailable")
-    return new AnalysisCapabilityUnavailableError(
-      IDENTITY.id,
-      OPERATION,
-      cause.message,
-      { cause },
-    );
-  if (cause instanceof ArtifactReaderFailure && cause.reason === "integrity")
-    return new AnalysisArtifactChangedError(OPERATION, path, cause.message, {
-      cause,
-    });
-  if (cause instanceof ArtifactReaderFailure && cause.reason === "path")
-    return new AnalysisInputError(OPERATION, { cause }, [
-      { path: ["path"], reason: "invalid_value", message: cause.message },
-    ]);
+  return appleDispatchMetadataPrimaryFailure(
+    artifactFilePrimaryFacts(cause),
+    path,
+  );
+};
+
+const appleDispatchMetadataPrimaryFailure = (
+  { cause, origin }: ArtifactFilePrimaryFacts,
+  path: string,
+): AnalysisError => {
+  if (origin === "owned-or-classified") {
+    if (cause instanceof AnalysisError) return cause;
+    if (cause instanceof BinaryFormatFailure)
+      return new AnalysisUnsupportedTargetError(
+        OPERATION,
+        path,
+        cause.message,
+        {
+          cause,
+          remediationAction:
+            cause.kind === "malformed"
+              ? "Select a Mach-O artifact with well-formed metadata sections, reopen the target, then retry."
+              : "Select a supported little-endian 64-bit Mach-O artifact, reopen the target, then retry.",
+        },
+      );
+    if (cause instanceof UnsupportedMachoMetadataFormatError)
+      return new AnalysisCapabilityUnavailableError(
+        IDENTITY.id,
+        OPERATION,
+        cause.message,
+        { cause },
+      );
+    if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
+      return new AnalysisCancelledError(OPERATION, {
+        cause: artifactFileCancellationCause(cause),
+      });
+    if (
+      cause instanceof ArtifactReaderFailure &&
+      cause.reason === "unavailable"
+    )
+      return new AnalysisCapabilityUnavailableError(
+        IDENTITY.id,
+        OPERATION,
+        cause.message,
+        { cause },
+      );
+    if (cause instanceof ArtifactReaderFailure && cause.reason === "integrity")
+      return new AnalysisArtifactChangedError(OPERATION, path, cause.message, {
+        cause,
+      });
+    if (cause instanceof ArtifactReaderFailure && cause.reason === "path")
+      return new AnalysisArtifactChangedError(OPERATION, path, cause.message, {
+        cause,
+      });
+  }
   const readCause =
-    cause instanceof ArtifactReaderFailure && cause.reason === "io"
+    origin === "owned-or-classified" &&
+    cause instanceof ArtifactReaderFailure &&
+    cause.reason === "io"
       ? cause.cause
       : cause;
   if (
@@ -470,14 +507,15 @@ export const appleDispatchMetadataFailure = (
     return new AnalysisAccessDeniedError(OPERATION, path, readCause.code, {
       cause,
     });
+  // This path already belongs to the bound target; loss of readability is a
+  // change to that artifact, rather than a new caller input-selection error.
   if (isSelectedRegularFileError(readCause))
-    return new AnalysisInputError(OPERATION, { cause }, [
-      {
-        path: ["path"],
-        reason: "invalid_value",
-        message: `Selected metadata target could not be read (${String(readCause.code)}): ${path}`,
-      },
-    ]);
+    return new AnalysisArtifactChangedError(
+      OPERATION,
+      path,
+      `Bound metadata target could not be read (${readCause.code}): ${path}`,
+      { cause },
+    );
   return new ProviderAdapterError(IDENTITY.id, OPERATION, {
     cause,
     diagnostics: {

@@ -142,6 +142,8 @@ try {
     assert.equal(probe.target_sha256, targetDigest);
     assert.equal(probe["ReaGhidraBridge.java"], bridgeDigest);
     for (const check of [
+      "regex_failure_preserves_stage_and_pattern",
+      "regex_failure_leaves_lifecycle_to_provider",
       "pseudocode_unavailable_with_failure",
       "native_api_unavailable_with_failure",
       "native_value_flow_unavailable_with_failure",
@@ -153,6 +155,11 @@ try {
       "failure_limitation_named",
       "pseudocode_request_still_fails",
       "cancellation_still_ends_request",
+      "timed_out_decompile_is_live",
+      "timed_out_pseudocode_names_limit",
+      "timed_out_native_api_names_limit",
+      "timed_out_listing_unchanged",
+      "timed_out_pseudocode_request_names_limit",
       "session_recovers_after_failure",
     ])
       assert.ok(probe.checks.includes(check), check);
@@ -221,7 +228,24 @@ try {
     assert.ok(
       !result.value.limitations.some((item) => item.includes(injected)),
     );
+    const functionLimitCapability = result.value.limitations.find((item) =>
+      item.includes("REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS"),
+    );
+    assert.ok(functionLimitCapability?.includes("per-function limit"));
+    assert.ok(
+      functionLimitCapability.includes(
+        "caller cancellation requests session closure",
+      ),
+    );
+    assert.ok(
+      !result.value.limitations.some((item) =>
+        item.includes(
+          "lets each decompilation run until it completes or the caller cancels",
+        ),
+      ),
+    );
     healthy = {
+      function_limit_capability: functionLimitCapability,
       pseudocode_available: true,
       native_api_available: value.native_api.available,
     };

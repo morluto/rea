@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
+import { parseEvidenceBundle } from "../../dist/domain/evidenceBundle.js";
 
 /** Exercise complete oversized results and recovery through real CLI/MCP adapters. */
 export async function verifyGhidraLargeResults({
@@ -110,8 +111,11 @@ export async function verifyGhidraLargeResults({
       entry.address,
       "A delivery constraint must preserve the successfully committed edit",
     );
+    // The default summary fits the receive budget; only the complete dossier
+    // exercises the oversized-delivery path with a retained reference.
     const dossierError = await reject("analyze_function", {
       procedure: "rea_frame_probe",
+      detail: "complete",
     });
     const dossierId = retainedReference(dossierError, "analyze_function");
     const after = await call("binary_session");
@@ -129,7 +133,9 @@ export async function verifyGhidraLargeResults({
     );
     const bundlePath = join(workspace, "bundle.json");
     await call("export_evidence_bundle", { path: bundlePath });
-    const bundle = JSON.parse(await readFile(bundlePath, "utf8"));
+    const bundle = parseEvidenceBundle(
+      JSON.parse(await readFile(bundlePath, "utf8")),
+    );
     const retained = (id) => {
       const record = bundle.records.find(
         ({ evidence_id }) => evidence_id === id,

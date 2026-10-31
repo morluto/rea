@@ -59,6 +59,13 @@ const check = (label, selected, pattern, allow = []) => {
     );
 };
 
+// Prerequisite inspection lifetime is an application contract shared by adapters.
+check(
+  "provider-owned inspection lifetime (use src/application/ProviderInspectionScope)",
+  files,
+  /providers\/ProviderInspectionScope\.js/,
+);
+
 check(
   "src/domain uses localeCompare (use compareUnicodeCodePoints)",
   inDir("src/domain/"),
@@ -149,6 +156,9 @@ check(
   files,
   /`[^`\n]*\\0/,
   [
+    // Bundle fingerprint: fixed packaged paths (no NUL/newline) and 64 hex
+    // digest characters per record, never guide contents. Preserve v1 locators.
+    "src/application/GuidanceAccess.ts",
     "src/application/javascript/ElectronBoundaryAnalysis.ts",
     "src/application/javascript/ElectronBoundaryGraphContext.ts",
     "src/application/javascript/JavaScriptArtifactGraphContext.ts",

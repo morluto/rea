@@ -20,8 +20,7 @@ import {
   recommendedReconstructionProbes,
   type ReconstructionEvaluationContext,
 } from "./reconstructionCoverageEvaluation.js";
-import { digestSchema } from "./../domain/digests.js";
-import { prefixedDigestSchema } from "./../domain/digests.js";
+import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
 import { digestCanonicalValue } from "./canonicalDigest.js";
 import {
   offsetDateTimeInstantFromEpochMilliseconds,
@@ -98,7 +97,7 @@ const claimSchema = z.strictObject({
   ]),
 });
 
-const verifierContractBaseSchema = z.strictObject({
+const verifierContractSchema = z.strictObject({
   verifier_id: stableIdSchema,
   claim_ids: z.array(stableIdSchema).min(1),
   dimensions: z.array(stableIdSchema).min(1),
@@ -112,9 +111,6 @@ const verifierContractBaseSchema = z.strictObject({
   minimum_repeats: z.int().min(1),
   normalization_sha256: digestSchema,
   normalization_removes_dimensions: z.literal(false),
-});
-
-const verifierContractSchema = verifierContractBaseSchema.extend({
   contract_sha256: digestSchema,
 });
 
@@ -214,15 +210,6 @@ export interface ParsedReconstructionCoverage {
   >;
 }
 
-/** Parse inline coverage data and validate every evidence and authority link. */
-export const createReconstructionCoverageData = (
-  input: unknown,
-): ReconstructionCoverageData => {
-  const parsed = readReconstructionCoverageData(input);
-  if (!parsed.ok) throw parsed.error;
-  return parsed.value.coverage;
-};
-
 const coverageEnvelopeSchema = reconstructionCoverageDataSchema.extend({
   evidence_bundle: z.unknown(),
 });
@@ -247,7 +234,10 @@ export const readReconstructionCoverageData = (
         })),
       ),
     );
-  const bundle = readEvidenceBundle(parsed.data.evidence_bundle);
+  const bundle = readEvidenceBundle(parsed.data.evidence_bundle, {
+    operation: "evaluate_reconstruction_coverage",
+    path: [...path, "evidence_bundle"],
+  });
   if (!bundle.ok) return bundle;
   const coverage = { ...parsed.data, evidence_bundle: bundle.value };
   try {
@@ -314,17 +304,6 @@ export type ReconstructionClosureResult = z.infer<
 >;
 
 type ClosureReason = z.infer<typeof closureReasonSchema>;
-
-/** Build a verifier contract whose digest prevents retrospective coverage edits. */
-export const createReconstructionVerifierContract = (
-  input: z.input<typeof verifierContractBaseSchema>,
-): ReconstructionVerifierContract => {
-  const parsed = verifierContractBaseSchema.parse(input);
-  return verifierContractSchema.parse({
-    ...parsed,
-    contract_sha256: digestCanonicalValue(parsed, "Reconstruction coverage"),
-  });
-};
 
 /** Evaluate the owner's authenticated workspace and lookup facts. */
 export const evaluateParsedReconstructionClosure = (

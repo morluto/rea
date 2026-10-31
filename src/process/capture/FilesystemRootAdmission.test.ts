@@ -8,7 +8,7 @@ import {
 } from "../../domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { emptyProcessCapture } from "../../domain/process/processCapture.fixture.js";
-import { parseProcessScenario } from "../../domain/process/processScenario.js";
+import { processScenarioSchema } from "../../domain/process/processScenario.js";
 import { ProcessCaptureSnapshotFailure } from "./FilesystemSnapshot.js";
 import { prepareProcessCapture } from "./ProcessCaptureLifecycle.js";
 
@@ -54,7 +54,7 @@ it.each(["EACCES", "EPERM"] as const)(
       snapshot,
       cleanupLeases: [lease],
     });
-    const scenario = parseProcessScenario({
+    const scenario = processScenarioSchema.parse({
       executable: process.execPath,
       filesystem_observation_paths: ["/fixture/absent", selected],
     });

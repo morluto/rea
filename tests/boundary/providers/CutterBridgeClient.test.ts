@@ -247,6 +247,63 @@ it.skipIf(process.platform === "win32").each(["discovery", "command"] as const)(
   },
 );
 
+describe("CutterBridgeClient: selected POSIX paths", () => {
+  let directory: string | undefined;
+  let server: ReturnType<typeof createServer> | undefined;
+
+  afterEach(async () => {
+    if (server !== undefined)
+      await new Promise<void>((resolve) => server?.close(() => resolve()));
+    if (directory !== undefined)
+      await rm(directory, { recursive: true, force: true });
+    server = undefined;
+    directory = undefined;
+  });
+
+  it
+    .skipIf(process.platform === "win32")
+    .each(["explicit", "tilde", "default"] as const)(
+    "discovers descriptors through symlink parent traversal in %s directory selection",
+    async (selection) => {
+      directory = await mkdtemp(join(tmpdir(), "rea-cutter-selected-path-"));
+      const home = `${directory}/home`;
+      const target = `${directory}/actual`;
+      await mkdir(home);
+      await mkdir(`${target}/child`, { recursive: true });
+      await symlink(`${target}/child`, `${home}/linked`);
+      const selectedHome = `${home}/linked/..`;
+      const suffix =
+        selection === "default" ? ".cache/rea/cutter-bridge" : "bridge";
+      const actualDirectory = `${target}/${suffix}`;
+      await mkdir(actualDirectory, { recursive: true, mode: 0o700 });
+      const sessionId = "27d3e3f1-f1e5-49ae-91ec-95af1f343a5a";
+      const token = "synthetic-cutter-selected-path-token";
+      server = statusServer(token, "/tmp/selected.bin", 7);
+      const port = await listen(server);
+      await writeDescriptor(actualDirectory, sessionId, port, token);
+      const selectedDirectory = `${selectedHome}/${suffix}`;
+      const client = createClient({
+        HOME: selection === "tilde" ? home : selectedHome,
+        ...(selection === "default"
+          ? {}
+          : {
+              REA_CUTTER_BRIDGE_DIR:
+                selection === "tilde"
+                  ? "~/linked/../bridge"
+                  : selectedDirectory,
+            }),
+      });
+      try {
+        const result = await client.listSessions();
+        expect(result.bridge_directory).toBe(selectedDirectory);
+        expectDiscoveredSession(result, sessionId, 7, "/tmp/selected.bin");
+      } finally {
+        await client.close();
+      }
+    },
+  );
+});
+
 describe("CutterBridgeClient: scenario group 1", () => {
   let directory: string | undefined;
   let server: ReturnType<typeof createServer> | undefined;

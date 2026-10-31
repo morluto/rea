@@ -11,6 +11,11 @@ import {
 } from "../../fixtures/analysisView.js";
 import { environmentStateServeFixture } from "../../fixtures/environmentServe.js";
 import {
+  BOOKMARK_ROWS,
+  bookmark,
+  TAG_ROWS,
+} from "../../fixtures/environmentStateDerivedValues.js";
+import {
   BOOK_NOT_FOUND,
   BOOK_ROWS,
   FIRST_BOOK,
@@ -55,31 +60,40 @@ const writeExactClockFiles = async (
     ["GET", "/api/books/1", BOOK_NOT_FOUND, 404],
   ]);
   const fixture = environmentStateServeFixture(capture);
-  const ordered = analysisViewCaptureEvidence(
-    environmentManifestCaptureFixture([
-      {
-        startedDateTime: "0001-01-01T00:00:00.0000000002Z",
-        request: { method: "GET", url: "http://app.example/api/books/1" },
-        response: {
-          status: 404,
-          content: {
-            mimeType: "application/json",
-            text: JSON.stringify(BOOK_NOT_FOUND),
+  const chronologyProbe = (later: string, earlier: string) =>
+    analysisViewCaptureEvidence(
+      environmentManifestCaptureFixture([
+        {
+          startedDateTime: later,
+          request: { method: "GET", url: "http://app.example/api/books/1" },
+          response: {
+            status: 404,
+            content: {
+              mimeType: "application/json",
+              text: JSON.stringify(BOOK_NOT_FOUND),
+            },
           },
         },
-      },
-      {
-        startedDateTime: "0001-01-01T01:00:00.0000000001+01:00",
-        request: {
-          method: "DELETE",
-          url: "http://app.example/api/books/1",
+        {
+          startedDateTime: earlier,
+          request: {
+            method: "DELETE",
+            url: "http://app.example/api/books/1",
+          },
+          response: {
+            status: 204,
+            content: { mimeType: "application/json", text: "" },
+          },
         },
-        response: {
-          status: 204,
-          content: { mimeType: "application/json", text: "" },
-        },
-      },
-    ]),
+      ]),
+    );
+  const ordered = chronologyProbe(
+    "0001-01-01T00:00:00.0000000002Z",
+    "0001-01-01T01:00:00.0000000001+01:00",
+  );
+  const legacyOrdered = chronologyProbe(
+    "2026-10-20 10:00:00.0002+0100",
+    "2026-10-20 09:00:00.0001+0000",
   );
   const clocks = timedCaptureEvidence([
     [
@@ -93,6 +107,7 @@ const writeExactClockFiles = async (
     ["manifest.json", fixture.manifest],
     ["capture.json", capture],
     ["order.json", ordered],
+    ["legacy-order.json", legacyOrdered],
     ["clocks.json", clocks],
   ] as const) {
     const path = join(root, name);
@@ -327,6 +342,143 @@ describe("rea environment-compare value context", () => {
                     env: JSON.stringify(numberedUuid(99)),
                   },
                 ],
+              },
+            ],
+          },
+        ],
+      });
+      for (const [path, text] of originals)
+        expect(await readFile(path, "utf8")).toBe(text);
+    },
+  );
+});
+
+describe("rea environment-compare recorded clock spelling", () => {
+  for (const scenario of [
+    {
+      name: "variable fractional widths under a confirmed trimmed write plan",
+      rows: TAG_ROWS,
+      probe: [
+        [
+          "POST",
+          "/api/tags",
+          {
+            id: numberedUuid(20),
+            name: "Spare",
+            createdAt: "2026-10-20T10:00:00.12345678Z",
+            updatedAt: "2026-10-20T10:00:00.12345678Z",
+          },
+          201,
+          { name: "Spare" },
+        ],
+      ] as const,
+      generated: 0,
+    },
+    {
+      name: "a composed bookmark URL through its creation clock",
+      rows: BOOKMARK_ROWS,
+      probe: [
+        [
+          "POST",
+          "/api/bookmarks",
+          bookmark(
+            20,
+            "https://pier.example.test/inspection",
+            "Pier",
+            "2026-10-20T10:00:00Z",
+          ),
+          201,
+          { url: "https://pier.example.test/inspection", title: "Pier" },
+        ],
+      ] as const,
+      generated: 1,
+    },
+  ]) {
+    cliTest(`accepts ${scenario.name}`, async ({ cli }) => {
+      const root = await createTestTempDirectory(
+        "rea-environment-derived-compare-",
+      );
+      const capture = timedCaptureEvidence(scenario.rows);
+      const fixture = environmentStateServeFixture(capture);
+      const probe = timedCaptureEvidence(scenario.probe);
+      const originals = new Map<string, string>();
+      for (const [name, value] of [
+        ["manifest.json", fixture.manifest],
+        ["capture.json", capture],
+        ["probe.json", probe],
+      ] as const) {
+        const path = join(root, name);
+        const text = JSON.stringify(value);
+        originals.set(path, text);
+        await writeFile(path, text);
+      }
+      const result = await cli.run({
+        arguments: [
+          "environment-compare",
+          join(root, "manifest.json"),
+          "--evidence",
+          join(root, "capture.json"),
+          "--probe",
+          join(root, "probe.json"),
+          "--json",
+        ],
+      });
+      expect(result.exitCode, result.stderr).toBe(0);
+      expect(result.json).toMatchObject({
+        status: "complete",
+        summary: { probes: 1, steps: 1, equal: 1, agreement: 1 },
+        probes: [
+          {
+            normalised: { clocks: 2, generated: scenario.generated },
+            results: [{ method: "POST", equal: true, differences: [] }],
+          },
+        ],
+      });
+      for (const [path, text] of originals)
+        expect(await readFile(path, "utf8")).toBe(text);
+    });
+  }
+
+  cliTest(
+    "replays compact-offset submillisecond probe timestamps in exact order",
+    async ({ cli }) => {
+      const root = await createTestTempDirectory(
+        "rea-environment-legacy-chronology-",
+      );
+      const originals = await writeExactClockFiles(root);
+      const result = await cli.run({
+        arguments: [
+          "environment-compare",
+          join(root, "manifest.json"),
+          "--evidence",
+          join(root, "capture.json"),
+          "--probe",
+          join(root, "legacy-order.json"),
+          "--json",
+        ],
+      });
+      expect(result.exitCode, result.stderr).toBe(0);
+      expect(result.json).toMatchObject({
+        status: "complete",
+        environment: { state: "served" },
+        summary: { probes: 1, steps: 2, equal: 2, agreement: 1 },
+        probes: [
+          {
+            label: "legacy-order.json",
+            results: [
+              {
+                ordinal: 1,
+                method: "DELETE",
+                live_status: 204,
+                env_status: 204,
+                equal: true,
+              },
+              {
+                ordinal: 0,
+                method: "GET",
+                live_status: 404,
+                env_status: 404,
+                equal: true,
               },
             ],
           },

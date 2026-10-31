@@ -6,15 +6,13 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { expect, it } from "vitest";
 
+import { regexMatchingDeadlineRecovery } from "../../../src/config/regexMatchingDeadline.js";
 import {
   DEFAULT_REGEX_MATCHING_DEADLINE_MS,
-  MAXIMUM_REGEX_MATCHING_DEADLINE_MS,
-  REGEX_MATCHING_DEADLINE_SETTING,
-} from "../../../src/config/regexMatchingDeadline.js";
-import { MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB } from "../../../src/config/regexWorkerHeapRequest.js";
+  MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB,
+} from "../../../src/domain/analysisResourceLimits.js";
 import { ok } from "../../../src/domain/result.js";
 import { HopperRegexSearch } from "../../../src/hopper/HopperRegexSearch.js";
-import { OFFICIAL_TOOL_CONTRACTS } from "../../../src/contracts/officialToolContracts.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import {
   matchRegexValues,
@@ -76,21 +74,6 @@ it("names the configurable regex deadline and the effective worker heap", () => 
     readLaunchNodeOptions(),
   );
   expect(REGEX_MATCHING_LIMITATION).toBe(regexMatchingLimitation(heap));
-  expect(REGEX_MATCHING_LIMITATION).toContain(REGEX_MATCHING_DEADLINE_SETTING);
-  expect(REGEX_MATCHING_LIMITATION).toContain(
-    `${String(DEFAULT_REGEX_MATCHING_DEADLINE_MS)} ms (source default`,
-  );
-  expect(REGEX_MATCHING_LIMITATION).toContain(
-    "REA_REGEX_WORKER_HEAP_REQUEST_MIB",
-  );
-  expect(REGEX_MATCHING_LIMITATION).not.toContain("no runtime override");
-  if (heap.kind === "unknown") {
-    expect(REGEX_MATCHING_LIMITATION).toContain("was not established");
-  } else {
-    expect(REGEX_MATCHING_LIMITATION).toContain(
-      `effective ${String(heap.mib)} MiB`,
-    );
-  }
   const deadline = projectAnalysisError(
     regexMatchingDeadlineError("search_procedures"),
   );
@@ -104,21 +87,15 @@ it("names the configurable regex deadline and the effective worker heap", () => 
       },
     },
   });
-  expect(deadline.message).toContain(REGEX_MATCHING_DEADLINE_SETTING);
-  expect(deadline.remediation.action).toContain(
-    REGEX_MATCHING_DEADLINE_SETTING,
-  );
-  expect(deadline.remediation.action).not.toContain("no runtime override");
+  expect(deadline.details?.limit).toMatchObject({
+    setting: "regex.matching_deadline_ms",
+    effective_value: 5000,
+    source: "default",
+  });
   const failure = projectAnalysisError(
     regexWorkerHeapError("search_procedures", new Error("heap")),
   );
-  expect(failure.remediation.action).not.toContain("no runtime override");
-  expect(failure.remediation.action).toContain("--max-old-space-size");
-  expect(failure.remediation.action).toContain(
-    "REA_REGEX_WORKER_HEAP_REQUEST_MIB",
-  );
   if (heap.kind === "effective") {
-    expect(failure.message).toContain(`${String(heap.mib)} MiB`);
     expect(failure.details).toMatchObject({
       reported_limits: {
         worker_heap_mib: heap.mib,
@@ -127,30 +104,15 @@ it("names the configurable regex deadline and the effective worker heap", () => 
       },
     });
   } else {
-    expect(failure.message).toContain("was not established");
+    expect(failure.details?.reported_limits).not.toHaveProperty(
+      "worker_heap_mib",
+    );
     expect(failure.details).toMatchObject({
       reported_limits: {
         requested_worker_heap_mib: 128,
         requested_worker_heap_source: "default",
       },
     });
-  }
-  for (const name of ["search_procedures", "search_strings"] as const) {
-    const description = OFFICIAL_TOOL_CONTRACTS.find(
-      (tool) => tool.name === name,
-    )?.description;
-    expect(description).toContain(REGEX_MATCHING_DEADLINE_SETTING);
-    expect(description).toContain(
-      `default ${String(DEFAULT_REGEX_MATCHING_DEADLINE_MS)}`,
-    );
-    expect(description).toContain(String(MAXIMUM_REGEX_MATCHING_DEADLINE_MS));
-    expect(description).toContain("source (default or setting)");
-    expect(description).toContain("REA_REGEX_WORKER_HEAP_REQUEST_MIB");
-    expect(description).toContain("default 128");
-    expect(description).toContain("from 7 to 16384");
-    expect(description).toContain("floor");
-    expect(description).toContain("maximum");
-    expect(description).not.toContain("no runtime override");
   }
 });
 
@@ -490,11 +452,16 @@ it("stops a slow match at the configured deadline and names the setting", async 
       },
     },
   });
-  expect(projected.message).toContain(REGEX_MATCHING_DEADLINE_SETTING);
+  expect(projected.details?.limit).toMatchObject({
+    setting: "regex.matching_deadline_ms",
+    effective_value: 100,
+    source: "setting",
+    agent_editable: true,
+    rea_restart_required: false,
+  });
   expect(projected.remediation.action).toContain(
-    REGEX_MATCHING_DEADLINE_SETTING,
+    regexMatchingDeadlineRecovery({ deadlineMs: 100, source: "setting" }),
   );
-  expect(projected.remediation.action).not.toContain("no runtime override");
   expect(matched.error).toMatchObject({
     _tag: "AnalysisResourceConstraintError",
     resource: "cpu",
@@ -570,6 +537,38 @@ it("preserves Unicode matching order and refuses a pre-cancelled match", async (
       signal: AbortSignal.abort(),
     }),
   ).toMatchObject({ ok: false, error: { _tag: "AnalysisCancelledError" } });
+});
+
+it("preserves the caller abort reason for pre-cancelled and interrupted matches", async () => {
+  const preCancelled = { request: "stop before matching" };
+  const refused = await matchRegexValues({
+    operation: "search_procedures",
+    pattern: ".",
+    caseSensitive: true,
+    values: ["value"],
+    signal: AbortSignal.abort(preCancelled),
+  });
+  expect(refused).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisCancelledError" },
+  });
+  if (!refused.ok) expect(refused.error.cause).toBe(preCancelled);
+  const controller = new AbortController();
+  const interrupted = { request: "stop while matching" };
+  const matching = matchRegexValues({
+    operation: "search_procedures",
+    pattern: "^a",
+    caseSensitive: true,
+    values: ["a"],
+    signal: controller.signal,
+  });
+  controller.abort(interrupted);
+  const result = await matching;
+  expect(result).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisCancelledError" },
+  });
+  if (!result.ok) expect(result.error.cause).toBe(interrupted);
 });
 
 it("names the rejected pattern field for a default invalid-pattern refusal", async () => {

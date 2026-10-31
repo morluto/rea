@@ -13,7 +13,10 @@ import {
   OwnedCommandFailure,
   runOwnedCommand,
 } from "../process/OwnedCommand.js";
-import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
+import type {
+  ProcessDiagnosticBudget,
+  ProviderProcessSnapshot,
+} from "../process/ProviderProcess.js";
 import { ApktoolProvider } from "./ApktoolProvider.js";
 
 vi.mock("../process/OwnedCommand.js", async (importOriginal) => ({
@@ -37,8 +40,8 @@ const MANIFEST = [
   "",
 ].join("\n");
 
-const decodeTimeouts: number[] = [];
-const outputBudgets: number[] = [];
+const decodeTimeouts: (number | null)[] = [];
+const outputBudgets: ProcessDiagnosticBudget[] = [];
 
 afterEach(() => {
   decodeTimeouts.length = 0;

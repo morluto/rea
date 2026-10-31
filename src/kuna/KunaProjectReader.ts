@@ -1,3 +1,11 @@
+import type { RegularFileState } from "../filesystem/RegularFile.js";
+import {
+  RegularFileChangedError,
+  sameRegularFileState,
+  RegularFileOperationCancelled,
+} from "../filesystem/RegularFile.js";
+import { KunaDocumentError } from "./KunaDocumentError.js";
+import { assertKunaFileState } from "./KunaProjectState.js";
 import { createReadStream } from "node:fs";
 import { open } from "node:fs/promises";
 import { join } from "node:path";
@@ -12,12 +20,13 @@ import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
+import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import {
   RegularFileCancelled,
   RegularFileCleanupFailure,
+  OwnedRegularFileOperationFailure,
   withOwnedFileHandle,
 } from "../filesystem/OwnedRegularFile.js";
-import { RegularFileOperationCancelled } from "../filesystem/RegularFile.js";
 import { ABORTED, waitForAbortable } from "../process/AbortablePromise.js";
 import type { KunaProject } from "./KunaProjectCache.js";
 import {
@@ -66,6 +75,7 @@ export interface KunaSpanOwnership {
 const readSpan = async (
   operation: string,
   path: string,
+  expected: RegularFileState,
   offset: number,
   length: number,
   ownership: KunaSpanOwnership,
@@ -98,16 +108,32 @@ const readSpan = async (
       : await ownership.admitSpan(operation, signal, () => open(path, "r"));
   if (!opened.ok) return opened;
   const owner = new OwnedFileHandle(opened.value);
-  let text: string | undefined;
-  let readFailure: unknown;
+  let read: Result<string, unknown>;
+  let spanCancellation: AnalysisCancelledError | undefined;
   try {
-    const buffer = Buffer.alloc(length);
-    const { bytesRead } = await owner.handle.read(buffer, 0, length, offset);
-    if (bytesRead !== length)
-      throw new Error(`${path} is shorter than its recorded span`);
-    text = buffer.toString("utf8");
+    if (!sameRegularFileState(expected, await owner.handle.stat()))
+      throw new RegularFileChangedError(path);
+    const buffer = await readFileHandleRange(
+      owner.handle,
+      offset,
+      length,
+      (bytesRead) => {
+        // Preserve a fully acquired span for owned finalization, which records
+        // cancellation alongside its text if descriptor cleanup fails.
+        if (bytesRead < length && signal?.aborted)
+          throw (spanCancellation = new AnalysisCancelledError(operation, {
+            cause: signal.reason,
+          }));
+      },
+    );
+    if (buffer.length !== length)
+      throw new KunaDocumentError("span_short", { path });
+    if (!sameRegularFileState(expected, await owner.handle.stat()))
+      throw new RegularFileChangedError(path);
+    await assertKunaFileState(path, expected);
+    read = ok(buffer.toString("utf8"));
   } catch (cause: unknown) {
-    readFailure = cause;
+    read = err(cause);
   }
   const finish = () =>
     withOwnedFileHandle(
@@ -116,9 +142,7 @@ const readSpan = async (
       {
         // A failed read keeps its own diagnostic. A completed read records
         // cancellation when the caller aborts before the queued close settles.
-        ...(readFailure === undefined && signal !== undefined
-          ? { signal }
-          : {}),
+        ...(read.ok && signal !== undefined ? { signal } : {}),
         ...(ownership.retainFailedClose === undefined
           ? {}
           : {
@@ -127,8 +151,14 @@ const readSpan = async (
             }),
       },
       async () => {
-        if (readFailure !== undefined) throw readFailure;
-        return text ?? "";
+        if (
+          !read.ok &&
+          spanCancellation !== undefined &&
+          read.error === spanCancellation
+        )
+          throw read.error;
+        if (!read.ok) throw new OwnedRegularFileOperationFailure(read.error);
+        return read.value;
       },
     );
   try {
@@ -138,6 +168,17 @@ const readSpan = async (
         : await ownership.finishSpan(finish);
     return ok(value);
   } catch (cause: unknown) {
+    if (spanCancellation !== undefined && cause === spanCancellation)
+      return err(spanCancellation);
+    if (cause instanceof OwnedRegularFileOperationFailure) {
+      if (cause.operationCause instanceof RegularFileChangedError)
+        throw cause.operationCause;
+      return err(
+        new ProviderAdapterError(KUNA_PROVIDER_ID, operation, {
+          cause: cause.operationCause,
+        }),
+      );
+    }
     if (cause instanceof RegularFileCleanupFailure)
       return err(
         spanCloseFailure(
@@ -145,7 +186,7 @@ const readSpan = async (
           path,
           offset,
           length,
-          spanCloseAfterRead(cause, text, readFailure, signal),
+          spanCloseAfterRead(cause, read, signal),
           ownership,
         ),
       );
@@ -171,27 +212,23 @@ const readSpan = async (
  */
 const spanCloseAfterRead = (
   failure: RegularFileCleanupFailure<string>,
-  text: string | undefined,
-  readFailure: unknown,
+  read: Result<string, unknown>,
   signal: AbortSignal | undefined,
 ): RegularFileCleanupFailure<string> => {
   if (
     failure.completionCancellation !== undefined ||
-    text === undefined ||
-    readFailure !== undefined ||
+    !read.ok ||
     signal?.aborted !== true ||
     failure.outcome.kind !== "failed" ||
     !(failure.outcome.cause instanceof RegularFileOperationCancelled)
   )
     return failure;
-  return new RegularFileCleanupFailure(
-    failure.path,
-    failure.owner,
-    { kind: "completed", value: text },
-    failure.cleanupCause,
-    failure.retention,
-    { reason: signal.reason },
-  );
+  return new RegularFileCleanupFailure({
+    ...failure,
+    outcome: { kind: "completed", value: read.value },
+    completionCancellation: { reason: signal.reason },
+    operationFailure: undefined,
+  });
 };
 
 /** Keep the span text or the short-read diagnostic with the exact handle. */
@@ -233,6 +270,7 @@ const spanCloseFailure = (
   if (failure.outcome.kind !== "failed") return marker;
   const primaryCause = failure.outcome.cause;
   const primary =
+    failure.operationFailure === undefined &&
     primaryCause instanceof AnalysisError
       ? primaryCause
       : new ProviderAdapterError(KUNA_PROVIDER_ID, operation, {
@@ -267,6 +305,11 @@ export class KunaProjectReader {
     operation: string,
     signal?: AbortSignal,
   ): Promise<Result<KunaProjectText, AnalysisError>> {
+    await assertKunaFileState(
+      join(this.project.directory, this.project.manifest.files.c.path),
+      this.project.fileStates.c,
+      signal ?? this.lifetime.signal,
+    );
     this.#blocks ??= new Map(
       this.project.functions.map((block) => [block.address, block]),
     );
@@ -295,6 +338,7 @@ export class KunaProjectReader {
     const text = await readSpan(
       operation,
       join(this.project.directory, this.project.manifest.files.c.path),
+      this.project.fileStates.c,
       block.cOffset,
       block.cLength,
       this.lifetime,
@@ -328,6 +372,7 @@ export class KunaProjectReader {
     const text = await readSpan(
       operation,
       join(this.project.directory, this.project.manifest.files.asm.path),
+      this.project.fileStates.asm,
       span.offset,
       span.length,
       this.lifetime,
@@ -361,13 +406,29 @@ export class KunaProjectReader {
     operation: string,
     signal: AbortSignal | undefined,
   ): Promise<Result<KunaAssemblyIndex, AnalysisError>> {
+    const path = join(
+      this.project.directory,
+      this.project.manifest.files.asm.path,
+    );
+    await assertKunaFileState(
+      path,
+      this.project.fileStates.asm,
+      signal ?? this.lifetime.signal,
+    );
     this.#assembly ??= this.lifetime.own(
       scanKunaAssembly(
         createReadStream(
           join(this.project.directory, this.project.manifest.files.asm.path),
           { signal: this.lifetime.signal },
         ),
-      ),
+      ).then(async (index) => {
+        await assertKunaFileState(
+          path,
+          this.project.fileStates.asm,
+          this.lifetime.signal,
+        );
+        return index;
+      }),
     );
     const index = await waitForAbortable(this.#assembly, signal);
     if (index === ABORTED)

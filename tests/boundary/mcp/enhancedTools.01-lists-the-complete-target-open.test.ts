@@ -14,8 +14,7 @@ import type {} from "../../../src/domain/jsonValue.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
-import { ok as resultOk } from "../../../src/domain/result.js";
-import { err } from "../../../src/domain/result.js";
+import { ok as resultOk, err } from "../../../src/domain/result.js";
 import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
 import { nativeDispatchMetadataResultSchema } from "../../../src/domain/native/objcSwiftMetadata.js";
 
@@ -275,7 +274,8 @@ describe("enhanced MCP tools", () => {
       ["analyze_swift_types", { category: "classes", pattern: "Fixture" }],
       ["find_xrefs_to_name", { name: "entry" }],
       ["binary_overview", {}],
-      ["analyze_function", { procedure: "0x1" }],
+      // This server retains no Evidence, so the complete dossier is the deliverable shape.
+      ["analyze_function", { procedure: "0x1", detail: "complete" }],
       ["inspect_native_api", { procedure: "0x1" }],
       ["trace_feature", { query: "hello" }],
       ["trace_call_path", { start: "0x1", goal: "0x2" }],

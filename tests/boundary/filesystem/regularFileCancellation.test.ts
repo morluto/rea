@@ -114,12 +114,12 @@ it.each(
               outcome,
               reason: nestedReason,
             })
-          : new RegularFileCleanupFailure(
-              "/caller-selected-path",
-              callerOwner,
+          : new RegularFileCleanupFailure({
+              path: "/caller-selected-path",
+              owner: callerOwner,
               outcome,
-              nestedReason,
-            );
+              cleanupCause: nestedReason,
+            });
     const controller = new AbortController();
     if (stage === "before admission") controller.abort(reason);
     const resources = scoped ? new ArtifactResourceScope() : undefined;
@@ -164,12 +164,12 @@ it("preserves a cleanup-shaped physical read rejection without borrowing its own
   await writeFile(input, "input");
   await writeFile(foreignPath, "foreign owner bytes");
   const foreignOwner = new OwnedFileHandle(await open(foreignPath, "r"));
-  const reason = new RegularFileCleanupFailure(
-    foreignPath,
-    foreignOwner,
-    { kind: "completed", value: "foreign value" },
-    new Error("foreign cleanup failure"),
-  );
+  const reason = new RegularFileCleanupFailure({
+    path: foreignPath,
+    owner: foreignOwner,
+    outcome: { kind: "completed", value: "foreign value" },
+    cleanupCause: new Error("foreign cleanup failure"),
+  });
   const probe = await open(input, "r");
   const inputIdentity = await probe.stat();
   const prototype = probe.constructor.prototype as {
@@ -204,12 +204,12 @@ it("retries only the owned close when a cleanup-shaped physical read remains pen
   await writeFile(input, "input");
   await writeFile(foreignPath, "foreign owner bytes");
   const foreignOwner = new OwnedFileHandle(await open(foreignPath, "r"));
-  const reason = new RegularFileCleanupFailure(
-    foreignPath,
-    foreignOwner,
-    { kind: "completed", value: "foreign value" },
-    new Error("foreign cleanup failure"),
-  );
+  const reason = new RegularFileCleanupFailure({
+    path: foreignPath,
+    owner: foreignOwner,
+    outcome: { kind: "completed", value: "foreign value" },
+    cleanupCause: new Error("foreign cleanup failure"),
+  });
   const controller = new AbortController();
   const probe = await open(input, "r");
   const inputIdentity = await probe.stat();
@@ -276,12 +276,12 @@ it("retains physical read provenance for an opted-in caller after close retry", 
   await writeFile(input, "input");
   await writeFile(foreignPath, "foreign owner bytes");
   const foreignOwner = new OwnedFileHandle(await open(foreignPath, "r"));
-  const reason = new RegularFileCleanupFailure(
-    foreignPath,
-    foreignOwner,
-    { kind: "completed", value: "foreign value" },
-    new Error("foreign cleanup failure"),
-  );
+  const reason = new RegularFileCleanupFailure({
+    path: foreignPath,
+    owner: foreignOwner,
+    outcome: { kind: "completed", value: "foreign value" },
+    cleanupCause: new Error("foreign cleanup failure"),
+  });
   const controller = new AbortController();
   const probe = await open(input, "r");
   const inputIdentity = await probe.stat();
@@ -359,7 +359,7 @@ it.each([false, true])(
           return withOwnedRegularFile(
             path,
             { signal: inner.signal },
-            async (nested) => {
+            async ({ handle: nested }) => {
               innerHandle = nested;
               const value = await nested.readFile();
               const close = nested.close.bind(nested);
@@ -434,7 +434,7 @@ it.each(
       expect(admitted?.fd).toBe(-1);
       expect(resources?.hasPending ?? false).toBe(false);
       await resources?.retryCleanup();
-      expect(await readFile(path)).toEqual(bytes);
+      expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
     } finally {
       vi.restoreAllMocks();
       await resources?.close();
@@ -500,7 +500,7 @@ it.each(["completed", "failed"] as const)(
             signal: controller.signal,
             retainFailedClose: (owner) => retained.push(owner),
           },
-          async (handle) => {
+          async ({ handle }) => {
             const bytes = await handle.readFile();
             if (outcome === "failed") throw primary;
             return bytes;

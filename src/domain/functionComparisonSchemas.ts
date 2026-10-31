@@ -2,8 +2,8 @@ import { z } from "zod";
 import { overallStatus, summarize } from "./functionComparisonResults.js";
 import { canonicalJson } from "./comparisonSemantics.js";
 import { evidenceInputSchema } from "./evidenceReference.js";
-import { digestSchema } from "./../domain/digests.js";
-import { prefixedDigestSchema } from "./../domain/digests.js";
+import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
+import { nativeAddressSchema } from "./native/nativeAddress.js";
 
 const comparisonStatusSchema = z.enum(["unchanged", "changed", "unknown"]);
 export const functionComparisonDimensionNameSchema = z.enum([
@@ -69,6 +69,13 @@ const functionMatchSchema = z.union([
   z.object({
     status: z.literal("matched"),
     method: z.literal("symbol"),
+    left_name: z.string(),
+    right_name: z.string(),
+  }),
+  z.object({
+    status: z.literal("matched"),
+    method: z.literal("same-entry"),
+    entry_address: nativeAddressSchema,
     left_name: z.string(),
     right_name: z.string(),
   }),

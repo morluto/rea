@@ -104,7 +104,7 @@ it("reports unreadable ELF names alongside the no-record limitation", async () =
   const nameTableHeader = 256 + 64;
   bytes.writeBigUInt64LE(0x800n, nameTableHeader + 8);
   bytes.writeBigUInt64LE(24n, nameTableHeader + 32);
-  bytes.writeUInt32LE(2, 768);
+  bytes.writeUInt32LE(3, 768);
   const root = await createTestTempDirectory("rea-go-unknown-section-names-");
   const path = join(root, "unknown-names.elf");
   await writeFile(path, bytes);
@@ -116,7 +116,7 @@ it("reports unreadable ELF names alongside the no-record limitation", async () =
     "No recognized Go build-info record was found in the inspected image; absent metadata does not establish that the binary is not Go.",
   );
   expect(result.value.limitations).toContain(
-    "ELF section names are unavailable because compression type 2 is unsupported",
+    "ELF section names are unavailable because compression type 3 is unsupported",
   );
   expect(result.value).not.toHaveProperty("section_names_limitation");
 });
