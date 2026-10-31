@@ -38,6 +38,10 @@ const isMcpHttpMode =
   isMcpEntry &&
   (args[1]?.startsWith("-") ?? false) &&
   args.slice(1).includes("--http");
+// Completion mode needs the complete command catalog even when its only word
+// is --version. A normal standalone version query only needs Incur's builtins.
+const isVersionOnly =
+  !isShellCompletion && args.length === 1 && args[0] === "--version";
 /** Exit status of a writer terminated by SIGPIPE (128 + 13). */
 const SIGPIPE_EXIT_STATUS = 141;
 // Set once the reader of CLI output has closed the pipe.
@@ -50,6 +54,7 @@ const runtimeFiles = [
       ? ["dist/mcp/main.js", "dist/cli-runtime/mcpDoctor.js"]
       : [
           "dist/cli-runtime/cli.js",
+          "dist/cli-runtime/cliBase.js",
           "dist/cli-runtime/cliOutput.js",
           "dist/cli-runtime/cliResultOutput.js",
         ]),
@@ -149,9 +154,13 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
     } else if (versionOutput !== undefined) {
       writeStdout(versionOutput);
     } else {
-      const cliRuntime = await import("../dist/cli-runtime/cli.js");
+      const cliRuntime = isVersionOnly
+        ? await import("../dist/cli-runtime/cliBase.js")
+        : await import("../dist/cli-runtime/cli.js");
       closeCliResources = cliRuntime.closeCliResources;
-      const { createCli } = cliRuntime;
+      const createCli = isVersionOnly
+        ? cliRuntime.createCliBase
+        : cliRuntime.createCli;
       const { createCliResultOutput } =
         await import("../dist/cli-runtime/cliResultOutput.js");
       let wroteOutput = false;
