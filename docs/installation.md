@@ -390,6 +390,23 @@ A scoped report has `scope.mode: "explicit"`. Its `scope_checks` determine
 `environment_healthy` summarizes the full audit. `--target` adds a target check,
 but the report remains audit-wide unless a scope option is also supplied.
 
+Without a scope option, `healthy` also counts clients and providers you never
+set up, so a working setup can report `healthy: false`. The audit-wide report
+then includes `configured_scope`: the registered clients (any registration
+state except missing or manual), the configured or discovered providers, and
+the skill when any selected copy is installed, even partially. Its `healthy`
+applies the same scoped rules to just those components, reading the skill
+copies of those clients rather than every installed copy, and becomes false
+with the audit when doctor's own cleanup fails. `argv` holds the exact
+arguments of the `rea doctor` invocation that reports that scope, starting with
+`npx -y rea-agents@<version>` or `bunx rea-agents@<version>`, pinned to the
+running release, when doctor was launched that way; `command` is
+the same invocation quoted for PowerShell on Windows and for POSIX shells
+elsewhere. `failing_checks` lists the checks that make the scope unhealthy, with
+their detail and remediation, and is empty when it is healthy. The skill check
+there reflects the configured clients' copies, so it can differ from the audit's
+`skill:identity`. It is omitted when no client or provider is set up.
+
 An invalid `REA_LOG_LEVEL` fails every scope, including one client or the
 installed skill, because the executable rejects it before any command. A
 selected client also fails for every other setting that MCP startup rejects,
