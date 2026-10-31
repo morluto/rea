@@ -205,6 +205,11 @@ path. A configured path or working IPC handler does not prove preload execution.
 If cleanup cannot be verified, the error retains collected observations in
 `details.partial_observation` and marks their application cleanup `unverified`.
 Cleanup uncertainty does not authorize signaling unrelated processes.
+When a collected application snapshot is retained as a partial observation,
+its limitations also retain the cleanup owner's unrelated-process diagnostics.
+This includes cancellation, failed final state reads, and process or transport
+cleanup failures; adding those observations does not verify cleanup or replace
+the original failure. Later cleanup retries do not rewrite that historical snapshot.
 
 On Linux, Chromium-based processes can overwrite the initial environment memory
 exposed through `/proc/<pid>/environ`. The environment may be readable while
