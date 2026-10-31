@@ -135,7 +135,7 @@ it("accounts for JSON escape expansion of a stored declaration in the reply limi
   ]);
 });
 
-it("attributes triggers declared with another ASCII case to the stored table name", async () => {
+it("attributes indexes and triggers declared with another ASCII case to the stored table name", async () => {
   const path = await createDatabase(`
     CREATE TABLE Users(id INTEGER PRIMARY KEY, email TEXT);
     CREATE INDEX users_email ON users(email);
@@ -156,12 +156,18 @@ it("attributes triggers declared with another ASCII case to the stored table nam
     views: [],
   });
   expect(
+    selected.schema.indexes.map(({ name, table }) => ({ name, table })),
+  ).toEqual([{ name: "users_email", table: "Users" }]);
+  expect(
     selected.schema.triggers.map(({ name, table }) => ({ name, table })),
   ).toEqual([
     { name: "audit_insert", table: "Users" },
     { name: "audit_delete", table: "Users" },
   ]);
   const inventory = inspectSqliteDatabaseSnapshot(path, { path });
+  expect(
+    inventory.schema.indexes.map(({ name, table }) => ({ name, table })),
+  ).toEqual([{ name: "users_email", table: "Users" }]);
   expect(inventory.schema.triggers).toEqual([
     { name: "audit_insert", table: "Users" },
     { name: "audit_delete", table: "Users" },

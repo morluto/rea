@@ -353,12 +353,16 @@ const readSchema = (
         unresolvedVirtualTables.push({ name: virtualName, prefix });
     }
   }
-  // A trigger stores its target as written in CREATE TRIGGER, which SQLite
-  // resolves by ASCII case folding; report the stored table or view name.
-  // A selected-table scan returns only the selected table's dependents, and
-  // other scopes fold stored names once, only when a spelling differs.
+  // A dependent index or trigger stores its target as written in CREATE INDEX
+  // or CREATE TRIGGER, which SQLite resolves by ASCII case folding; report
+  // the stored table or view name. A selected-table scan returns only the
+  // selected table's dependents, and other scopes fold stored names once,
+  // only when a spelling differs.
   let foldedNames: Map<string, string> | undefined;
-  const triggerTable = (written: string, writtenBytes: Uint8Array): string => {
+  const dependentTable = (
+    written: string,
+    writtenBytes: Uint8Array,
+  ): string => {
     if (selectedName !== undefined) return selectedName;
     foldedNames ??= new Map(
       [...metadata.values()].flatMap((listed) => {
@@ -527,7 +531,7 @@ const readSchema = (
     } else if (value.type === "index") {
       const index = {
         name: value.name,
-        table: value.tbl_name,
+        table: dependentTable(value.tbl_name, parsed.tbl_name),
         ...(scope === "inventory" ? {} : { sql: value.sql }),
         root_page: value.rootpage,
       };
@@ -543,7 +547,7 @@ const readSchema = (
     } else {
       const trigger = {
         name: value.name,
-        table: triggerTable(value.tbl_name, parsed.tbl_name),
+        table: dependentTable(value.tbl_name, parsed.tbl_name),
         ...(scope === "inventory" ? {} : { sql: value.sql }),
       };
       budget.retain(trigger);
