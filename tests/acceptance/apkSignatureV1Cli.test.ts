@@ -1,9 +1,9 @@
 import { apkSignatureResultSchema } from "../../src/domain/apkSignature/apkSignatureReport.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { expect } from "vitest";
+import { expect, onTestFinished } from "vitest";
+import { closeVerifierResources } from "../../scripts/lib/verifier-cleanup.mjs";
 
 import { AnalysisProviderRegistry } from "../../src/application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../../src/application/binary/BinarySessionComposition.js";
@@ -35,6 +35,7 @@ import {
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+import { createTestMcp } from "../support/mcp/mcpFixture.js";
 
 const completeEvidence = (value: unknown) => {
   const evidence = toolContract("inspect_apk_signature").outputSchema.parse(
@@ -46,6 +47,24 @@ const completeEvidence = (value: unknown) => {
       evidence.normalized_result,
     ),
   };
+};
+
+const connectSignerMcp = async () => {
+  const session = composeBinarySession(new AnalysisProviderRegistry([]));
+  const mcp = createTestMcp();
+  onTestFinished(() =>
+    closeVerifierResources([
+      () => mcp.close(),
+      async () => {
+        const result = await session.close();
+        if (!result.ok) throw result.error;
+      },
+    ]),
+  );
+  return await mcp.connect(createServer({ kind: "session", session }), {
+    name: "apk-v1-signer-parity",
+    version: "1",
+  });
 };
 
 const expectV1Only = (
@@ -200,47 +219,33 @@ cliTest(
     ).toBe(false);
     expect(cliV1.limitations.join(" ")).toContain("NOT verified");
 
-    const session = composeBinarySession(new AnalysisProviderRegistry([]));
-    const server = createServer({ kind: "session", session });
-    const client = new Client({ name: "apk-v1-signer-parity", version: "1" });
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
-    try {
-      await server.connect(serverTransport);
-      await client.connect(clientTransport);
-      const tool = (await client.listTools()).tools.find(
-        (t) => t.name === "inspect_apk_signature",
+    const client = await connectSignerMcp();
+    const tool = (await client.listTools()).tools.find(
+      (t) => t.name === "inspect_apk_signature",
+    );
+    const outputSchema: Record<string, unknown> | undefined =
+      tool?.outputSchema;
+    if (tool === undefined || outputSchema === undefined)
+      throw new Error("inspect_apk_signature must advertise an output schema");
+    const ajv = new Ajv2020({ strict: false, validateFormats: false });
+    for (const [path, fromCli] of [
+      [v1Only, cliV1],
+      [mixed, cliMixed],
+      [rotated, cliRotated],
+      [rotatedWithV2, cliRotatedWithV2],
+    ] as const) {
+      const reply = await client.callTool(
+        { name: tool.name, arguments: { path, detail: "complete" } },
+        { toolDefinition: tool },
       );
-      const outputSchema: Record<string, unknown> | undefined =
-        tool?.outputSchema;
-      if (tool === undefined || outputSchema === undefined)
-        throw new Error(
-          "inspect_apk_signature must advertise an output schema",
-        );
-      const ajv = new Ajv2020({ strict: false, validateFormats: false });
-      for (const [path, fromCli] of [
-        [v1Only, cliV1],
-        [mixed, cliMixed],
-        [rotated, cliRotated],
-        [rotatedWithV2, cliRotatedWithV2],
-      ] as const) {
-        const reply = await client.callTool(
-          { name: tool.name, arguments: { path, detail: "complete" } },
-          { toolDefinition: tool },
-        );
-        expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
-        expect(
-          ajv.validate(outputSchema, reply.structuredContent),
-          JSON.stringify(ajv.errors),
-        ).toBe(true);
-        const evidence = parseEvidence(reply.structuredContent);
-        expect(evidence.normalized_result).toEqual(fromCli.normalized_result);
-        expect(evidence.evidence_id).toBe(fromCli.evidence_id);
-      }
-    } finally {
-      await client.close();
-      await server.close();
-      await session.close();
+      expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
+      expect(
+        ajv.validate(outputSchema, reply.structuredContent),
+        JSON.stringify(ajv.errors),
+      ).toBe(true);
+      const evidence = parseEvidence(reply.structuredContent);
+      expect(evidence.normalized_result).toEqual(fromCli.normalized_result);
+      expect(evidence.evidence_id).toBe(fromCli.evidence_id);
     }
   },
 );

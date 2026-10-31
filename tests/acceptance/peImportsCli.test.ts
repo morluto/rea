@@ -36,7 +36,15 @@ for (const bits of [32, 64] as const) {
         expect(result.exitCode).toBe(1);
         expect(result.json).toMatchObject({
           code: "invalid_request",
-          details: { operation: "inspect_pe_imports" },
+          details: {
+            operation: "inspect_pe_imports",
+            issues: expect.arrayContaining([
+              expect.objectContaining({
+                path: ["path"],
+                reason: "invalid_format",
+              }),
+            ]),
+          },
         });
         const response = await call("inspect_pe_imports", { path });
         expect(response.isError).toBe(true);
@@ -220,7 +228,12 @@ cliTest("reports a truncated PE as invalid input", async ({ cli }) => {
   expect(result.exitCode).toBe(1);
   expect(result.json).toMatchObject({
     code: "invalid_request",
-    details: { operation: "inspect_pe_imports" },
+    details: {
+      operation: "inspect_pe_imports",
+      issues: expect.arrayContaining([
+        expect.objectContaining({ path: ["path"], reason: "invalid_format" }),
+      ]),
+    },
   });
 });
 
