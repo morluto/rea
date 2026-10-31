@@ -58,25 +58,35 @@ export const classifySwiftSymbol = (
         // A substituted module can introduce a constrained extension after
         // the nominal type. This parser does not decode that context, so it
         // cannot retain the preceding nominal category as the member's owner.
-        mangling.startsWith("AA", offset)
+        /^A[0-9]*A/u.test(mangling.slice(offset))
       )
         category = null;
       break;
     }
-    const kind = mangling.charAt(end);
+    // A file-discriminated declaration encodes its name as two identifiers
+    // followed by `LL`; Swift uses this form for some private declarations.
+    // For a nested nominal, the type kind follows the discriminator, so
+    // treating its decimal length as a kind keeps the enclosing category.
+    const discriminatorEnd = identifierEnd(mangling, end);
+    const kindOffset =
+      discriminatorEnd !== undefined &&
+      mangling.startsWith("LL", discriminatorEnd)
+        ? discriminatorEnd + 2
+        : end;
+    const kind = mangling.charAt(kindOffset);
     const nominal = NOMINAL_CATEGORIES.get(kind);
     if (nominal === undefined) {
       // Current swiftc emits protocol descriptors as `…<Nominal>Mp` without
       // the nominal `P` marker (e.g. `_$s4main7ScoringMp`). Decode that exact
       // suffix; unknown substitution encodings stay unclassified, never guessed.
-      if (mangling.slice(end) === "Mp") {
+      if (mangling.slice(kindOffset) === "Mp") {
         category = "protocols";
         protocolIdentity = true;
       } else if (kind === "E" && category !== null) category = "extensions";
       break;
     }
     category = nominal;
-    offset = end + 1;
+    offset = kindOffset + 1;
   }
   return { category, protocolIdentity };
 };

@@ -59,6 +59,12 @@ const source = fileURLToPath(
 const literalSource = fileURLToPath(
   new URL("../tests/conformance/swift/string-literals.swift", import.meta.url),
 );
+const privateNestedSource = fileURLToPath(
+  new URL(
+    "../tests/conformance/swift/private-nested-types.swift",
+    import.meta.url,
+  ),
+);
 const unresolvedJumpSource = fileURLToPath(
   new URL(
     "../tests/conformance/swift/unresolved-string-jump.s",
@@ -66,6 +72,7 @@ const unresolvedJumpSource = fileURLToPath(
   ),
 );
 const binary = join(root, "swift-inventory");
+const privateNestedBinary = join(root, "private-nested-types");
 const literalBinary = join(root, "swift-literals");
 const literalAssembly = fileURLToPath(
   new URL("../tests/conformance/swift/decoder-safeguards.S", import.meta.url),
@@ -78,6 +85,20 @@ try {
   await execute("swiftc", ["-O", "-g", source, "-o", binary], {
     timeout: 60_000,
   });
+  await execute(
+    "swiftc",
+    [
+      "-Onone",
+      "-g",
+      "-parse-as-library",
+      "-module-name",
+      "main",
+      privateNestedSource,
+      "-o",
+      privateNestedBinary,
+    ],
+    { timeout: 60_000 },
+  );
   await mkdir(join(root, "copied"));
   const copied = join(root, "copied", "swift-inventory");
   await copyFile(binary, copied);
@@ -187,6 +208,48 @@ try {
     } finally {
       await call("close_binary", {});
     }
+  }
+  await call("open_binary", {
+    path: privateNestedBinary,
+    provider_id: "ghidra",
+  });
+  try {
+    const categories = [
+      { pattern: "State", expected: "enums", enclosing: "structs" },
+      { pattern: "Item", expected: "structs", enclosing: "classes" },
+      { pattern: "Hidden", expected: "classes", enclosing: "structs" },
+      { pattern: "secret", expected: "classes", enclosing: "classes" },
+    ];
+    for (const { pattern, expected, enclosing } of categories) {
+      const correctlyClassified = await call("analyze_swift_types", {
+        category: expected,
+        pattern,
+      });
+      assert(
+        correctlyClassified.total > 0,
+        `Swift ${pattern} symbols were not classified as ${expected}`,
+      );
+      if (enclosing !== expected) {
+        const enclosingCategory = await call("analyze_swift_types", {
+          category: enclosing,
+          pattern,
+        });
+        assert.equal(
+          enclosingCategory.total,
+          0,
+          `Swift ${pattern} symbols were incorrectly classified as ${enclosing}`,
+        );
+      }
+    }
+    reports.push({
+      variant: "private-nested-types",
+      checked: categories.map(({ pattern, expected }) => ({
+        pattern,
+        category: expected,
+      })),
+    });
+  } finally {
+    await call("close_binary", {});
   }
   literalReport = await verifyStringLiterals();
 } finally {

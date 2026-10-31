@@ -160,11 +160,12 @@ describe("Swift classification through MCP", () => {
 });
 
 describe("Swift category uncertainty through MCP", () => {
-  it("keeps unsupported nested Unicode names unresolved through MCP filters", async () => {
+  it("keeps unsupported nested Unicode and substituted contexts unresolved through MCP filters", async () => {
     const names = [
       "_$s6Nested8EnvelopeV007IhuqBAbO8describeSSyF",
       "_$s6Nested8EnvelopeV007jvrtDBlCAEycfC",
       "_$s6Nested8EnvelopeV007jvrtDBlCMa",
+      "_$s4Demo3BoxCA2A1PRzlE7FailureO5valueSiyF",
     ];
     const procedures = [
       ...names.map((name, index) => ({
@@ -187,7 +188,7 @@ describe("Swift category uncertainty through MCP", () => {
       }),
     );
     expect(all).toMatchObject({
-      total: 6,
+      total: 7,
       categories: {
         structs: {
           items: [{ name: "_$s6Nested8EnvelopeVMa" }],
@@ -223,6 +224,84 @@ describe("Swift category uncertainty through MCP", () => {
           mangled_names: [name],
           reason: "category_not_decoded",
         })),
+      });
+    }
+  });
+});
+
+describe("private nested Swift nominal types through MCP", () => {
+  it("uses the nested nominal category rather than its file discriminator", async () => {
+    const cases = [
+      {
+        address: "0x1",
+        value:
+          "_$s4main8EnvelopeV5State33_06D5FEE0226E625B433890B34489ED31LLO8describeSSyF",
+        category: "enums",
+      },
+      {
+        address: "0x2",
+        value:
+          "_$s4main6HolderC4Item33_06D5FEE0226E625B433890B34489ED31LLV7doubledSiyF",
+        category: "structs",
+      },
+      {
+        address: "0x3",
+        value:
+          "_$s4main8EnvelopeV6Hidden33_BB24877EF3DBC90D8F8601519D2F330CLLC5valueSiyF",
+        category: "classes",
+      },
+    ] as const;
+    const control = {
+      address: "0x4",
+      value: "_$s4main6HolderC6secret33_BB24877EF3DBC90D8F8601519D2F330CLLSiyF",
+    } as const;
+    const client = await connect({
+      execute: async (operation) =>
+        ok(
+          operation === "list_procedures"
+            ? [...cases, control].map(({ address, value }) => ({
+                address,
+                value,
+              }))
+            : [],
+        ),
+    });
+
+    const all = jsonResult(
+      await client.callTool({ name: "analyze_swift_types", arguments: {} }),
+    );
+    expect(all).toMatchObject({
+      total: 4,
+      categories: {
+        classes: {
+          count: 2,
+          items: [{ address: "0x3" }, { address: "0x4" }],
+        },
+        enums: { count: 1, items: [{ address: "0x1" }] },
+        structs: { count: 1, items: [{ address: "0x2" }] },
+      },
+      unclassified: [],
+    });
+
+    for (const category of new Set(cases.map(({ category }) => category))) {
+      const filtered = jsonResult(
+        await client.callTool({
+          name: "analyze_swift_types",
+          arguments: { category },
+        }),
+      );
+      const addresses =
+        category === "classes"
+          ? ["0x3", "0x4"]
+          : cases
+              .filter((entry) => entry.category === category)
+              .map(({ address }) => address);
+      expect(filtered).toMatchObject({
+        total: addresses.length,
+        categories: {
+          [category]: { items: addresses.map((address) => ({ address })) },
+        },
+        unclassified: [],
       });
     }
   });

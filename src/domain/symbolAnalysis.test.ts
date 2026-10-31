@@ -29,13 +29,16 @@ describe("modern Swift category evidence", () => {
     const names = [
       "_$s1M7WrapperVAASQRzlE4sameySbxF",
       "_$s1M3BoxVAARi_zrlE1vxvM",
+      // Swift 6.2.3 emits A2A for this constrained generic extension.
+      "_$s4Demo3BoxCA2A1PRzlE4callSiyF",
+      "_$s4Demo3BoxCA2A1PRzlE7FailureO5valueSiyF",
     ];
     const result = categorizeSwiftTypes(
       names.map((name, index) => ({ address: String(index), name })),
     );
     expect(result.categories).toMatchObject({
       structs: { count: 0 },
-      other: { count: 2 },
+      other: { count: 4 },
     });
     expect(result.unclassified.map(({ name }) => name)).toEqual(names);
     const controls = [
@@ -148,6 +151,38 @@ describe("modern Swift category evidence", () => {
       categories: { structs: { items: [{ address: "0x2", name: "shared" }] } },
     });
   });
+});
+
+it("uses the nominal kind after a private nested-type discriminator", () => {
+  // The class and member symbols come from the Swift conformance fixture.
+  const names = [
+    [
+      "_$s4main8EnvelopeV5State33_06D5FEE0226E625B433890B34489ED31LLO8describeSSyF",
+      "enums",
+    ],
+    [
+      "_$s4main6HolderC4Item33_06D5FEE0226E625B433890B34489ED31LLV7doubledSiyF",
+      "structs",
+    ],
+    [
+      "_$s4main8EnvelopeV6Hidden33_BB24877EF3DBC90D8F8601519D2F330CLLC5valueSiyF",
+      "classes",
+    ],
+    [
+      "_$s4main6HolderC6secret33_BB24877EF3DBC90D8F8601519D2F330CLLSiyF",
+      "classes",
+    ],
+  ] as const;
+
+  for (const [name, category] of names) {
+    expect(
+      categorizeSwiftTypes([{ address: "0x1", name }], { category }),
+    ).toMatchObject({
+      total: 1,
+      categories: { [category]: { count: 1 } },
+      unclassified: [],
+    });
+  }
 });
 
 describe("Swift alias ambiguity", () => {
