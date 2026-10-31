@@ -84,6 +84,8 @@ Claude Code, Codex, Cursor, Gemini CLI, Grok Build, കൂടാതെ [മറ�
 
 MCP സാധാരണയായി compact input schemas ഉപയോഗിക്കുന്നു. പൂർണ്ണ field guidance-ഉം nested validation details-ഉം വേണമെങ്കിൽ MCP registration-ൽ `REA_MCP_INPUT_SCHEMA_PROFILE=full` സജ്ജമാക്കുക. രണ്ടു profiles-ലും എല്ലാ tools-ഉം ഒരേ canonical server validation-ഉം നിലനിൽക്കും; MCP contracts guide കാണുക.
 
+സ്ഥിരസ്ഥിതിയായി പൂർണ്ണ ഔട്ട്പുട്ട് സ്കീമകളാണ് പ്രസിദ്ധീകരിക്കുന്നത് (`full`). നിങ്ങളുടെ ക്ലയന്റ് മുഴുവൻ `tools/list` ഫ്രെയിമിന്റെ വലുപ്പം പരിമിതപ്പെടുത്തുന്നുവെങ്കിൽ, പ്രസിദ്ധീകരിക്കുന്ന ഓരോ ഔട്ട്പുട്ട് സ്കീമയുടെയും വലുപ്പം പരിമിതപ്പെടുത്താൻ `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` ഉപയോഗിക്കുക; ഔട്ട്പുട്ട് സ്കീമകൾ പൂർണ്ണമായി ഒഴിവാക്കാൻ `off` ഉപയോഗിക്കുക. രണ്ട് ക്രമീകരണങ്ങളും സർവർ ഭാഗത്തെ കാനോനിക്കൽ പരിശോധനയും പൂർണ്ണ ഘടനാബദ്ധമായ ഫലങ്ങളും നിലനിർത്തുന്നു. MCP കരാർ മാർഗ്ഗനിർദ്ദേശത്തിലെ “Output schemas” കാണുക.
+
 ### നിങ്ങളുടെ agent-നോട് ആവശ്യപ്പെടുക
 
 ```text

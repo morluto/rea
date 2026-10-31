@@ -82,6 +82,8 @@ npx rea-agents setup
 
 MCP 默认使用紧凑输入 Schema 来减少上下文开销。需要完整字段说明和嵌套验证细节时，在 MCP 注册中设置 `REA_MCP_INPUT_SCHEMA_PROFILE=full`。两种配置都保留完整工具集和规范的服务端验证；见 MCP 合约指南。
 
+默认会公布完整的输出 schema（`full`）。如果客户端限制整个 `tools/list` 帧的大小，可设置 `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` 来限制每个公布的输出 schema，或使用 `off` 完全省略输出 schema。两种设置都会保留服务端的标准契约校验和完整的结构化结果。参见 MCP 契约指南中的「Output schemas」。
+
 ### 询问智能体
 
 ```text

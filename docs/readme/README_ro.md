@@ -97,6 +97,8 @@ validării structurilor imbricate. Ambele profiluri păstrează toate uneltele �
 validarea canonică a serverului. Consultă secțiunea „Compact input schema profile”
 din ghidul contractelor MCP.
 
+În mod implicit sunt publicate schemele de ieșire complete (`full`). Dacă clientul limitează dimensiunea întregului cadru `tools/list`, setează `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` pentru a limita fiecare schemă de ieșire publicată sau `off` pentru a omite complet schemele de ieșire. Ambele setări păstrează validarea canonică pe server și rezultatele structurate complete. Vezi „Output schemas” în ghidul contractelor MCP.
+
 ### Cere-i agentului
 
 ```text

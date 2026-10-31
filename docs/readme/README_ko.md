@@ -82,6 +82,8 @@ npx rea-agents setup
 
 MCP는 기본적으로 간결한 입력 스키마를 사용합니다. 전체 필드 안내와 중첩 검증 정보가 필요하면 MCP 등록에서 `REA_MCP_INPUT_SCHEMA_PROFILE=full`을 설정하세요. 두 프로필 모두 전체 도구와 동일한 정규 서버 검증을 유지합니다. MCP 계약 가이드를 참고하세요.
 
+기본적으로 전체 출력 스키마가 공개됩니다(`full`). 클라이언트가 `tools/list` 프레임 전체의 크기를 제한한다면 `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact`로 공개되는 각 출력 스키마의 크기를 제한하거나, `off`로 출력 스키마를 아예 생략하세요. 두 설정 모두 서버 측의 정식 검증과 완전한 구조화 결과를 유지합니다. MCP 계약 가이드의 “Output schemas”를 참고하세요.
+
 ### 에이전트에게 요청
 
 ```text

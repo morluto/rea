@@ -82,6 +82,8 @@ La configurazione supporta Claude Code, Codex, Cursor, Gemini CLI, Grok Build e 
 
 MCP usa schemi di input compatti per impostazione predefinita. Per tutte le indicazioni sui campi e la validazione annidata, imposta `REA_MCP_INPUT_SCHEMA_PROFILE=full` nella registrazione MCP. Entrambi i profili mantengono tutti gli strumenti e la stessa validazione canonica del server; vedi la guida ai contratti MCP.
 
+Per impostazione predefinita vengono annunciati gli schemi di output completi (`full`). Se il client limita le dimensioni dell’intero frame `tools/list`, imposta `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` per limitare ogni schema di output annunciato, oppure `off` per omettere del tutto gli schemi di output. Entrambe le impostazioni mantengono la validazione canonica lato server e i risultati strutturati completi. Vedi «Output schemas» nella guida ai contratti MCP.
+
 ### Chiedi al tuo agente
 
 ```text

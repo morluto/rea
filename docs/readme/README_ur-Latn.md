@@ -97,6 +97,8 @@ set karein. Dono profiles mein tamam tools aur canonical server validation
 maujood rehte hain. MCP contracts guide ka "Compact input schema profile"
 section dekhein.
 
+Default taur par mukammal output schemas advertise hote hain (`full`). Agar aapka client poore `tools/list` frame ka size limit karta hai, to har advertised output schema ko mahdood karne ke liye `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` set karein, ya output schemas ko bilkul hataane ke liye `off` istemal karein. Dono settings canonical server-side validation aur mukammal structured results ko barqarar rakhti hain. MCP contracts guide mein “Output schemas” dekhein.
+
 ### Apne agent se kahein
 
 ```text
