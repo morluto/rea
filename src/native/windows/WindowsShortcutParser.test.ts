@@ -169,6 +169,78 @@ it("reports an ExtraData size that overruns the file", async () => {
   ).toBe(true);
 });
 
+const HAS_EXP_STRING = 0x00000200;
+const HAS_EXP_ICON = 0x00004000;
+
+/** Set extra LinkFlags on an already built shortcut. */
+const withLinkFlags = (bytes: Buffer, added: number): Buffer => {
+  const flagged = Buffer.from(bytes);
+  flagged.writeUInt32LE((flagged.readUInt32LE(0x14) | added) >>> 0, 0x14);
+  return flagged;
+};
+
+const missingBlockIssues = (report: { issues: readonly { code: string }[] }) =>
+  report.issues.filter((issue) => issue.code === "missing_extra_data_block");
+
+it("reports an expected block as absent once the TerminalBlock is read", async () => {
+  const report = await parse(
+    withLinkFlags(
+      windowsShortcutBytes({ extraData: [] }),
+      HAS_EXP_STRING | HAS_EXP_ICON,
+    ),
+  );
+  expect(report.extra_data.terminal_offset).toEqual(expect.any(Number));
+  expect(missingBlockIssues(report)).toEqual([
+    expect.objectContaining({
+      message: "HasExpString is set and EnvironmentVariableDataBlock is absent",
+    }),
+    expect.objectContaining({
+      message: "HasExpIcon is set and IconEnvironmentDataBlock is absent",
+    }),
+  ]);
+  expect(windowsShortcutSchema.safeParse(report).success).toBe(true);
+});
+
+it("keeps an expected block unknown when StringData stops before ExtraData", async () => {
+  const report = await parse(
+    withLinkFlags(truncatedStringDataShortcut(), HAS_EXP_STRING),
+  );
+  expect(report.coverage.status).toBe("partial");
+  expect(report.extra_data.terminal_offset).toBeNull();
+  expect(missingBlockIssues(report)).toEqual([]);
+});
+
+it("keeps an expected block unknown when an ExtraData block overruns the file", async () => {
+  const bytes = windowsShortcutBytes({ extraData: [], terminalBlock: false });
+  const report = await parse(
+    withLinkFlags(
+      Buffer.concat([
+        bytes,
+        Buffer.from([0x40, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0xa0]),
+      ]),
+      HAS_EXP_ICON,
+    ),
+  );
+  expect(report.coverage.status).toBe("partial");
+  expect(missingBlockIssues(report)).toEqual([]);
+});
+
+it("reports partial coverage when an expected block has no ExtraData to read", async () => {
+  const report = await parse(
+    withLinkFlags(
+      windowsShortcutBytes({ extraData: [], terminalBlock: false }),
+      HAS_EXP_STRING,
+    ),
+  );
+  expect(report.coverage.status).toBe("partial");
+  expect(report.issues).toEqual([
+    expect.objectContaining({
+      code: "truncated",
+      message: "ExtraData TerminalBlock is absent",
+    }),
+  ]);
+});
+
 it("reports an odd Unicode StringData remainder", async () => {
   const header = windowsShortcutBytes({
     flags: 0x84,

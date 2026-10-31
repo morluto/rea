@@ -914,6 +914,21 @@ const parseIdList = async (
   };
 };
 
+const EXPECTED_EXTRA_DATA_BLOCKS = [
+  {
+    flag: 0x00000200,
+    flagName: "HasExpString",
+    signature: 0xa0000001,
+    blockName: "EnvironmentVariableDataBlock",
+  },
+  {
+    flag: 0x00004000,
+    flagName: "HasExpIcon",
+    signature: 0xa0000007,
+    blockName: "IconEnvironmentDataBlock",
+  },
+] as const;
+
 const parseExtraData = async (
   bytes: Buffer,
   walk: Walk,
@@ -1073,20 +1088,21 @@ export const parseWindowsShortcut = async (
     ? await parseExtraData(bytes, walk, input.max_extra_data_blocks, signal)
     : { blocks: [], terminal_offset: null };
   const signatures = new Set(extraData.blocks.map((block) => block.signature));
-  if ((flags & 0x00000200) !== 0 && !signatures.has(0xa0000001))
-    note(
-      walk,
-      "missing_extra_data_block",
-      extraData.terminal_offset ?? walk.offset,
-      "HasExpString is set and EnvironmentVariableDataBlock is absent",
-    );
-  if ((flags & 0x00004000) !== 0 && !signatures.has(0xa0000007))
-    note(
-      walk,
-      "missing_extra_data_block",
-      extraData.terminal_offset ?? walk.offset,
-      "HasExpIcon is set and IconEnvironmentDataBlock is absent",
-    );
+  const unseenBlocks = EXPECTED_EXTRA_DATA_BLOCKS.filter(
+    ({ flag, signature }) => (flags & flag) !== 0 && !signatures.has(signature),
+  );
+  // Only a TerminalBlock proves the whole section was read. Without one an
+  // unseen block is unknown, not absent.
+  if (extraData.terminal_offset !== null)
+    for (const { flagName, blockName } of unseenBlocks)
+      note(
+        walk,
+        "missing_extra_data_block",
+        extraData.terminal_offset,
+        `${flagName} is set and ${blockName} is absent`,
+      );
+  else if (unseenBlocks.length > 0 && walk.issues.length === 0)
+    note(walk, "truncated", walk.offset, "ExtraData TerminalBlock is absent");
   const reportBase = {
     artifact,
     header,
