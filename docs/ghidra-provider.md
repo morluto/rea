@@ -83,9 +83,12 @@ Ghidra's ELF loader names a header or dynamic entry that no symbol defines
 (`entry`, `_DT_INIT`, `_DT_FINI`, `_INIT_<n>`, `_PREINIT_<n>`, `_FINI_<n>`) and
 reports it as `imported`, like an artifact symbol. For an imported global
 function with one of these names, `loader_role_label` reports `artifact-symbol`
-when a defined `.symtab`/`.dynsym` symbol supplies that exact name, `synthesized`
-when none does, or `unexamined` when those tables cannot be read completely,
-including undecoded MiniDebugInfo. The check compares names, not addresses.
+when a defined `.symtab`/`.dynsym` symbol supplies that exact name. Otherwise it
+reports `unexamined` when those tables cannot be read completely (any ELF parser
+diagnostic, a symbol or string table extending past the file, or undecoded
+MiniDebugInfo) or when Ghidra's DWARF analysis imported debug information, which
+also names functions as `imported`; it reports `synthesized` only when neither
+applies. The check compares names, not addresses.
 Matching and comparison treat `synthesized` as generated and `unexamined` as
 unknown origin. Evidence recorded before this fact existed keeps its reported
 `imported` origin.

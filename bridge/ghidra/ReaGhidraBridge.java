@@ -63,11 +63,15 @@ import ghidra.app.decompiler.ClangNode;
 import ghidra.framework.Application;
 import ghidra.app.util.bin.format.pdb.PdbParserConstants;
 import ghidra.app.util.bin.FileBytesProvider;
+import ghidra.app.util.bin.format.elf.ElfDynamicTable;
 import ghidra.app.util.bin.format.elf.ElfDynamicType;
 import ghidra.app.util.bin.format.elf.ElfHeader;
+import ghidra.app.util.bin.format.elf.ElfSectionHeader;
+import ghidra.app.util.bin.format.elf.ElfSectionHeaderConstants;
 import ghidra.app.util.bin.format.elf.ElfSymbol;
 import ghidra.app.util.bin.format.elf.ElfSymbolTable;
 import ghidra.app.util.opinion.ElfLoader;
+import ghidra.app.plugin.core.analysis.DWARFAnalyzer;
 import ghidra.framework.options.Options;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressIterator;
@@ -4744,18 +4748,26 @@ public final class ReaGhidraBridge extends HeadlessScript {
         Optional<Set<String>> names =
             ELF_ARTIFACT_ROLE_NAMES.computeIfAbsent(program, ReaGhidraBridge::elfArtifactRoleNames);
         if (names.isEmpty()) return "unexamined";
-        return names.get().contains(symbol.getName()) ? "artifact-symbol" : "synthesized";
+        if (names.get().contains(symbol.getName())) return "artifact-symbol";
+        // Ghidra's DWARF import, including its external debug-file symbol copy,
+        // also names functions with SourceType.IMPORTED from unexamined sources.
+        return DWARFAnalyzer.isAlreadyImported(program) ? "unexamined" : "synthesized";
     }
 
     private static Optional<Set<String>> elfArtifactRoleNames(Program program) {
         List<FileBytes> files = program.getMemory().getAllFileBytes();
         if (files.size() != 1 || files.get(0).getFileOffset() != 0) return Optional.empty();
         try {
-            ElfHeader elf = new ElfHeader(new FileBytesProvider(files.get(0)), null);
+            List<String> diagnostics = new ArrayList<>();
+            ElfHeader elf = new ElfHeader(new FileBytesProvider(files.get(0)), diagnostics::add);
             elf.parse();
-            // The loader also imports compressed MiniDebugInfo symbols, which
-            // this check does not decode.
-            if (elf.getSection(".gnu_debugdata") != null) return Optional.empty();
+            // The parser reports truncated headers and unresolved tables without
+            // throwing, and reads past the file end as zeros. The loader also
+            // imports compressed MiniDebugInfo symbols, which this check does not decode.
+            if (!diagnostics.isEmpty() || !elfSymbolTablesInFile(elf, files.get(0).getSize()) ||
+                elf.getSection(".gnu_debugdata") != null) {
+                return Optional.empty();
+            }
             Set<String> names = new HashSet<>();
             for (ElfSymbolTable table : elf.getSymbolTables()) {
                 for (ElfSymbol entry : table.getSymbols()) {
@@ -4770,6 +4782,36 @@ public final class ReaGhidraBridge extends HeadlessScript {
         catch (Exception exception) {
             return Optional.empty();
         }
+    }
+
+    // Every symbol table and its string table lies within the file, and none was skipped.
+    private static boolean elfSymbolTablesInFile(ElfHeader elf, long fileSize) {
+        ElfSectionHeader[] sections = elf.getSections();
+        int tables = 0;
+        for (ElfSectionHeader section : sections) {
+            if (section.getType() != ElfSectionHeaderConstants.SHT_SYMTAB &&
+                section.getType() != ElfSectionHeaderConstants.SHT_DYNSYM) {
+                continue;
+            }
+            tables++;
+            int link = section.getLink();
+            if (!elfSectionInFile(section, fileSize) || link <= 0 || link >= sections.length ||
+                sections[link].getType() != ElfSectionHeaderConstants.SHT_STRTAB ||
+                !elfSectionInFile(sections[link], fileSize)) {
+                return false;
+            }
+        }
+        ElfDynamicTable dynamic = elf.getDynamicTable();
+        if (dynamic != null && dynamic.containsDynamicValue(ElfDynamicType.DT_SYMTAB) &&
+            elf.getDynamicSymbolTable() == null) {
+            return false;
+        }
+        return elf.getSymbolTables().length >= tables;
+    }
+
+    private static boolean elfSectionInFile(ElfSectionHeader section, long fileSize) {
+        return !section.isInvalidOffset() && section.getSize() >= 0 &&
+            section.getOffset() <= fileSize - section.getSize();
     }
 
     private static String normalizedSource(SourceType source) {

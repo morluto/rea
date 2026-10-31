@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // Write source-owned x86-64 ELF executables whose header entry Ghidra's ELF
-// loader names `entry`. The bytes are never executed.
-import { writeFile } from "node:fs/promises";
+// loader names `entry` into a new private directory and print its path. The
+// bytes are never executed.
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -25,8 +27,12 @@ const sectionHeader = (fields) => {
   return header;
 };
 
-/** One PT_LOAD image; `sections` optionally adds headers and their contents. */
-const executable = (sections) => {
+/**
+ * One PT_LOAD image; `sections` optionally adds headers and their contents. A
+ * section `size` may exceed its data, and `missingHeaders` declares headers
+ * beyond the end of the file.
+ */
+const executable = (sections, { missingHeaders = 0 } = {}) => {
   const image = Buffer.alloc(CODE_OFFSET + CODE.length);
   image.set([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1]);
   image.writeUInt16LE(2, 16); // ET_EXEC
@@ -75,7 +81,7 @@ const executable = (sections) => {
         ...section,
         name: names[index + 1],
         offset: section.offset ?? offset,
-        size: section.data.length,
+        size: section.size ?? section.data.length,
       }),
     );
     if (section.offset === undefined) {
@@ -86,7 +92,7 @@ const executable = (sections) => {
   align();
   const bytes = Buffer.concat([...parts, ...headers]);
   bytes.writeBigUInt64LE(BigInt(offset), 40);
-  bytes.writeUInt16LE(headers.length, 60);
+  bytes.writeUInt16LE(headers.length + missingHeaders, 60);
   bytes.writeUInt16LE(headers.length - 1, 62);
   return bytes;
 };
@@ -107,6 +113,57 @@ symbol.writeUInt16LE(1, 30); // .text
 symbol.writeBigUInt64LE(ELF_ROLE_ENTRY, 32);
 symbol.writeBigUInt64LE(BigInt(CODE.length), 40);
 
+const symbolTable = (entries, size) => ({
+  name: ".symtab",
+  type: 2, // SHT_SYMTAB
+  data: entries,
+  size,
+  link: 3,
+  info: 1,
+  align: 8n,
+  entrySize: 24n,
+});
+
+const uleb = (value) => Buffer.from([value]); // every value here is below 0x80
+const cstring = (value) => Buffer.from(`${value}\0`);
+const little = (bytes, write) => {
+  const buffer = Buffer.alloc(bytes);
+  write(buffer);
+  return buffer;
+};
+const u16 = (value) => little(2, (buffer) => buffer.writeUInt16LE(value));
+const u32 = (value) => little(4, (buffer) => buffer.writeUInt32LE(value));
+const u64 = (value) => little(8, (buffer) => buffer.writeBigUInt64LE(value));
+// DWARF 4: a C compile unit with one external subprogram `entry` at the entry.
+const DW_FORM = { addr: 0x01, data2: 0x05, data4: 0x06, string: 0x08 };
+const debugAbbrev = Buffer.concat([
+  ...[1, 0x11, 1].map(uleb), // compile_unit, has children
+  ...[0x25, DW_FORM.string, 0x13, DW_FORM.data2, 0x03, DW_FORM.string].map(
+    uleb,
+  ),
+  ...[0x11, DW_FORM.addr, 0x12, DW_FORM.data4, 0, 0].map(uleb),
+  ...[2, 0x2e, 0].map(uleb), // subprogram, no children
+  ...[0x3f, 0x19, 0x03, DW_FORM.string].map(uleb), // external, name
+  ...[0x11, DW_FORM.addr, 0x12, DW_FORM.data4, 0, 0, 0].map(uleb),
+]);
+const units = Buffer.concat([
+  u16(4), // version
+  u32(0), // debug_abbrev offset
+  Buffer.from([8]), // address size
+  uleb(1),
+  cstring("REA source-owned fixture"),
+  u16(0x0c), // DW_LANG_C99
+  cstring("entry.c"),
+  u64(ELF_ROLE_ENTRY),
+  u32(CODE.length),
+  uleb(2),
+  cstring("entry"),
+  u64(ELF_ROLE_ENTRY),
+  u32(CODE.length),
+  uleb(0),
+]);
+const debugInfo = Buffer.concat([u32(units.length), units]);
+
 /** Expected bridge `loader_role_label` for the function at the ELF header entry. */
 export const ELF_ROLE_LABEL_FIXTURES = {
   // No symbol table: the loader creates and names the entry function.
@@ -116,16 +173,33 @@ export const ELF_ROLE_LABEL_FIXTURES = {
     label: "artifact-symbol",
     bytes: executable([
       text,
-      {
-        name: ".symtab",
-        type: 2, // SHT_SYMTAB
-        data: symbol,
-        link: 3,
-        info: 1,
-        align: 8n,
-        entrySize: 24n,
-      },
+      symbolTable(symbol),
       { name: ".strtab", type: 3, data: Buffer.from("\0entry\0") },
+    ]),
+  },
+  // The parser reports missing section headers without throwing.
+  truncated: {
+    label: "unexamined",
+    bytes: executable([text], { missingHeaders: 2 }),
+  },
+  // A symbol table extending past the file end is read only partly.
+  oversized: {
+    label: "unexamined",
+    bytes: executable([
+      text,
+      symbolTable(Buffer.alloc(24), 24 * 0x1000),
+      { name: ".strtab", type: 3, data: Buffer.from([0]) },
+    ]),
+  },
+  // Without .symtab, Ghidra's DWARF analysis names the entry function from
+  // debug information with the same imported source. Requires auto-analysis.
+  dwarf: {
+    label: "unexamined",
+    analysis: true,
+    bytes: executable([
+      text,
+      { name: ".debug_abbrev", type: 1, data: debugAbbrev },
+      { name: ".debug_info", type: 1, data: debugInfo },
     ]),
   },
   // MiniDebugInfo can supply stripped symbols that the bridge does not decode.
@@ -139,9 +213,13 @@ export const ELF_ROLE_LABEL_FIXTURES = {
 };
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const [directory] = process.argv.slice(2);
-  if (directory === undefined)
-    throw new Error("Usage: elf-role-label-fixture.mjs OUTPUT_DIRECTORY");
+  if (process.argv.length > 2)
+    throw new Error("Usage: elf-role-label-fixture.mjs (takes no arguments)");
+  // Only constant fixture names are written inside the directory created here.
+  const directory = await mkdtemp(join(tmpdir(), "rea-elf-role-"));
   for (const [name, fixture] of Object.entries(ELF_ROLE_LABEL_FIXTURES))
-    await writeFile(join(directory, `${name}.elf`), fixture.bytes);
+    await writeFile(join(directory, `${name}.elf`), fixture.bytes, {
+      flag: "wx",
+    });
+  console.log(directory);
 }

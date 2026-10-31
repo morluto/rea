@@ -5,7 +5,8 @@ import { z } from "zod";
  * `entry` at an ELF header entry that no symbol-defined function occupies.
  * Present only on such convention names. It reports whether the artifact's
  * examined symbol tables supply the same exact name (`artifact-symbol`), do
- * not (`synthesized`), or could not be examined completely (`unexamined`).
+ * not while no other provider name source applies (`synthesized`), or the
+ * label's origin could not be established (`unexamined`).
  */
 const nativeLoaderRoleLabelSchema = z.enum([
   "artifact-symbol",
