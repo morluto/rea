@@ -161,7 +161,9 @@ for the error code, target details, partial observations, remediation, and the
 optional bounded `recovery` next step. `recovery.kind=inspect_input_contract`
 names the rejected operation: re-read that operation's advertised input schema
 (call `tools/list` if the catalog may be stale), correct the listed fields, and
-do not repeat the unchanged call. `recovery.kind=inspect_timeout_state` names
+do not repeat the unchanged call. A well-formed request the selected target
+cannot answer, such as an address without one exact file offset, omits this
+hint; follow its `remediation.action`. `recovery.kind=inspect_timeout_state` names
 the operation and the REA server/provider deadline. Inspect partial Evidence
 and reported cleanup state, then follow the returned remediation. Change a
 request field or REA_* setting only when the returned remediation explicitly
@@ -1119,6 +1121,15 @@ mapping. A successful start-address mapping does not establish that an entire
 range is contiguous in the original file, or that its bytes equal analysis
 memory after loader fixups. Uninitialized, missing, and ambiguous mappings fail
 explicitly; preserve the reported failure rather than guessing an offset.
+For Ghidra, such a well-formed address returns `invalid_request` whose message
+states the bridge's reason and whose remediation points to
+`inspect_native_load_image`. It carries no `inspect_input_contract` recovery.
+`details.issues[0].observed` keeps the caller's exact `address` and a
+`file_mapping` outcome: `unmapped` (outside every memory block),
+`uninitialized`, `absent` (no authoritative target-file source), `ambiguous`,
+or `unrepresentable` (beyond the exact JSON integer range). Initialization, not
+the loaded flag, decides whether source bytes can exist, so an initialized
+file-backed overlay still maps.
 
 For constructor-populated pointer or resource slots, a static zero is not proof
 of a later null value. Inspect the slot's `xrefs` and the writer's assembly or
