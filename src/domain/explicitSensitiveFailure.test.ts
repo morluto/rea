@@ -307,3 +307,77 @@ it("preserves completed publication and live cleanup while excluding marked file
   original.resolveCleanup();
   expect(redacted.cleanupIncomplete).toBe(false);
 });
+
+it.each([
+  {
+    label: "producer guidance",
+    userMessage: "Unknown procedure explicit-secret",
+    remediationAction: "Use list_procedures instead of explicit-secret",
+    expectedMessage: "Unknown procedure [REDACTED]",
+    expectedAction: "Use list_procedures instead of [REDACTED]",
+  },
+  {
+    label: "empty guidance",
+    userMessage: "",
+    remediationAction: "",
+    expectedMessage: "",
+    expectedAction: "",
+  },
+  {
+    label: "absent guidance",
+    userMessage: undefined,
+    remediationAction: undefined,
+    expectedMessage: undefined,
+    expectedAction: undefined,
+  },
+])("preserves $label on redacted input failures", (fixture) => {
+  const error = new AnalysisInputError(
+    "procedure_pseudo_code",
+    {
+      ...context,
+      ...(fixture.userMessage === undefined
+        ? {}
+        : { userMessage: fixture.userMessage }),
+      ...(fixture.remediationAction === undefined
+        ? {}
+        : { remediationAction: fixture.remediationAction }),
+    },
+    [
+      {
+        path: ["procedure"],
+        reason: "invalid_value",
+        message: "explicit-secret",
+      },
+    ],
+  );
+  const redacted = redactExplicitFailure(error, ["explicit-secret"]);
+  expect(redacted).toBeInstanceOf(AnalysisInputError);
+  if (!(redacted instanceof AnalysisInputError))
+    throw new Error("Input error required");
+  expect({
+    userMessage: redacted.userMessage,
+    remediationAction: redacted.remediationAction,
+  }).toEqual({
+    userMessage: fixture.expectedMessage,
+    remediationAction: fixture.expectedAction,
+  });
+  const projected = projectAnalysisError(redacted);
+  expect(projected).toMatchObject({
+    code: "invalid_request",
+    recovery: { kind: "inspect_input_contract", operation: error.operation },
+    details: {
+      issues: [
+        { path: ["procedure"], reason: "invalid_value", message: "[REDACTED]" },
+      ],
+    },
+  });
+  if (fixture.expectedMessage !== undefined)
+    expect(projected.message).toBe(fixture.expectedMessage);
+  if (fixture.expectedAction !== undefined)
+    expect(projected.remediation.action).toBe(fixture.expectedAction);
+  else
+    expect(projected.remediation.action).toContain(
+      "Read the declared input schema",
+    );
+  expect(JSON.stringify(projected)).not.toContain("explicit-secret");
+});

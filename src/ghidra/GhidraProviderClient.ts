@@ -1127,9 +1127,18 @@ const projectPrimarySessionError = (
       },
     );
   if (failure.kind === "remote" && isGhidraInputFailureCode(failure.remoteCode))
-    return new AnalysisInputError(operation, context, [
-      { path: [], reason: "invalid_value", message: failure.message },
-    ]);
+    return new AnalysisInputError(
+      operation,
+      failure.remoteCode === "not_found" &&
+        failure.message.startsWith("Unknown Ghidra procedure name or address")
+        ? {
+            ...context,
+            remediationAction:
+              "Choose an observed procedure with CLI rea search <path> . --kind procedures --mode regex --provider ghidra --json or MCP list_procedures.",
+          }
+        : context,
+      [{ path: [], reason: "invalid_value", message: failure.message }],
+    );
   if (failure.kind === "remote" && failure.remoteCode === "method_unavailable")
     return new AnalysisCapabilityUnavailableError(
       "ghidra",

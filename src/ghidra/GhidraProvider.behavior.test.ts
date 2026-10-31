@@ -4807,3 +4807,67 @@ it.each(["search_procedures", "search_strings"] as const)(
     }
   },
 );
+
+describe("Ghidra procedure-name guidance", () => {
+  const rejectedName = async (
+    message: string,
+    remoteCode: "not_found" | "invalid_request",
+  ) => {
+    const ghidra = provider(installationHost(), () => ({
+      start: () => Promise.resolve(ok(sessionInfo())),
+      callTool: () =>
+        Promise.resolve(
+          err(
+            new GhidraSessionError(
+              "remote",
+              message,
+              { remote_code: remoteCode },
+              { remoteCode },
+            ),
+          ),
+        ),
+      close: () => Promise.resolve(ok(null)),
+    }));
+    const client = await createElfClient(ghidra);
+    const execution = await client.execute("procedure_pseudo_code", {
+      procedure: "transform_b",
+    });
+    if (execution.ok) throw new Error("Expected a Ghidra remote failure");
+    return projectAnalysisError(execution.error);
+  };
+
+  it("names the procedure-listing commands when the bridge rejects an unknown procedure name", async () => {
+    const projected = await rejectedName(
+      "Unknown Ghidra procedure name or address: transform_b",
+      "not_found",
+    );
+    expect(projected.remediation.action).toContain("list_procedures");
+    expect(projected.remediation.action).toContain("--kind procedures");
+    expect(projected).toMatchObject({
+      code: "invalid_request",
+      recovery: {
+        kind: "inspect_input_contract",
+        operation: "procedure_pseudo_code",
+      },
+    });
+  });
+
+  it.each([
+    ["not_found", "No procedure exists at the requested address"],
+    ["invalid_request", "Procedure argument failed bridge validation"],
+    [
+      "invalid_request",
+      "Unknown Ghidra procedure name or address: transform_b",
+    ],
+  ] as const)(
+    "keeps generic guidance for %s: %s",
+    async (remoteCode, message) => {
+      const projected = await rejectedName(message, remoteCode);
+      expect(projected.remediation.action).toContain(
+        "Read the declared input schema",
+      );
+      expect(projected.remediation.action).not.toContain("list_procedures");
+      expect(projected.code).toBe("invalid_request");
+    },
+  );
+});
