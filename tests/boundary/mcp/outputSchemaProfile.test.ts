@@ -202,15 +202,7 @@ it("advertises slice-relative and container-relative offset bases in the compact
     if (macho === undefined)
       throw new Error("Missing inspect_macho in compact tools/list");
 
-    expect(macho.description).toContain(
-      "Normalized entrypoint, segment, and section file offsets are relative to the selected Mach-O slice",
-    );
-    expect(macho.description).toContain(
-      "selected_architecture.container_file_offset and Evidence locations are relative to the original input Mach-O container",
-    );
-    expect(macho.description).toContain(
-      "Do not use a slice-relative offset as an input-file offset",
-    );
+    expect(macho.description).toBe(contract.description);
 
     const advertisedOutput = macho.outputSchema as
       | Record<string, unknown>
