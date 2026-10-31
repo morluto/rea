@@ -20,6 +20,7 @@ import type {
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { safeParseJson } from "../domain/safeJson.js";
 import { boundedUtf8Text } from "./boundedUtf8Text.js";
+import { createDarwinHelperCache } from "./DarwinHelperCache.js";
 import { snapshotEnvironment } from "./snapshotEnvironment.js";
 import {
   execFileOutput,
@@ -394,6 +395,19 @@ const waitForCompilation = async (
   });
 };
 
+/** The kernel or policy refused to launch the file, before it could answer. */
+const helperLaunchFailed = (cause: unknown): boolean => {
+  const failure = execFileOutputFailure(cause);
+  // spawn rejects with the bare errno before any output exists.
+  const code =
+    failure?.code ??
+    (cause instanceof Error && "code" in cause ? cause.code : undefined);
+  return (
+    ["EACCES", "EPERM", "ENOEXEC", "ENOENT"].includes(String(code)) ||
+    (failure?.signal === "SIGKILL" && !failure.killed)
+  );
+};
+
 /** Explicit tool selection; direct Swift compilation also needs its matching SDK. */
 export type DarwinProcessReaderCompiler =
   | { readonly kind: "xcrun"; readonly executable: string }
@@ -417,6 +431,13 @@ export const createDarwinProcessRunTokenReader = (
      * reader because cleanup only removes the per-run helper root.
      */
     readonly moduleCachePath?: string;
+    /**
+     * REA-owned per-user directory that reuses a verified compiled helper
+     * across processes with the xcrun compiler. Unset compiles once per
+     * reader, as callers selecting their own compiler, module cache, or write
+     * boundary expect.
+     */
+    readonly helperCacheDirectory?: string;
   } = {},
 ) => {
   const compiler = options.compiler ?? {
@@ -429,8 +450,21 @@ export const createDarwinProcessRunTokenReader = (
     environment,
   });
   const moduleCachePath = options.moduleCachePath ?? "";
+  const helperCache =
+    options.helperCacheDirectory === undefined || compiler.kind !== "xcrun"
+      ? undefined
+      : createDarwinHelperCache({
+          directory: options.helperCacheDirectory,
+          sources: sourceFiles,
+          xcrun: compiler.executable,
+          environment,
+        });
   let root: ProcessReaderRoot | undefined;
   let executable: string | undefined;
+  // The shared copy runs while it launches; this reader's own helper is kept.
+  let sharedExecutable: string | undefined;
+  let perRunExecutable: string | undefined;
+  let bypassCache = false;
   let compilation: ProcessReaderCompilation | undefined;
   let closePromise: Promise<void> | undefined;
   let closed = false;
@@ -489,6 +523,16 @@ export const createDarwinProcessRunTokenReader = (
           "Direct Darwin helper compilation requires absolute REA_DARWIN_SWIFTC_PATH and SDKROOT paths selecting a compatible installed Swift compiler and macOS SDK.",
         );
       }
+      const cached = bypassCache
+        ? undefined
+        : await helperCache?.lookup(signal);
+      if (signal.aborted || closed) throw abortReason(signal);
+      // A verified shared entry needs no per-run root and is never removed.
+      if (cached?.kind === "hit") {
+        sharedExecutable = cached.executable;
+        executable = cached.executable;
+        return cached.executable;
+      }
       operationRoot = {
         path: await mkdtemp(join(tmpdir(), "rea-process-token-")),
       };
@@ -532,8 +576,16 @@ export const createDarwinProcessRunTokenReader = (
         throw compilerInspectionError(cause, compilerTimeoutMs, compiler);
       }
       if (signal.aborted || closed) throw abortReason(signal);
-      executable = output;
-      return output;
+      // The per-run root stays owned until close even when the shared copy runs.
+      const shared =
+        cached?.kind === "miss"
+          ? await helperCache?.publish(cached.key, output, signal)
+          : undefined;
+      if (signal.aborted || closed) throw abortReason(signal);
+      perRunExecutable = output;
+      sharedExecutable = shared;
+      executable = shared ?? output;
+      return executable;
     } catch (cause: unknown) {
       operation.primaryFailure = { cause };
       if (operationRoot !== undefined) {
@@ -644,8 +696,7 @@ export const createDarwinProcessRunTokenReader = (
   ): Promise<string> => {
     if (closed)
       return Promise.reject(new ProcessAdmissionError("reader_closed"));
-    const pending = (async () => {
-      const binary = await compile(signal);
+    const execute = async (binary: string) => {
       const { stdout } = await execFileOutput(binary, arguments_, {
         env: environment,
         timeout: 15_000,
@@ -654,6 +705,22 @@ export const createDarwinProcessRunTokenReader = (
       });
       signal?.throwIfAborted();
       return stdout;
+    };
+    const pending = (async () => {
+      const binary = await compile(signal);
+      // Decide before awaiting: a concurrent fallback may already switch.
+      const usedShared = binary === sharedExecutable;
+      try {
+        return await execute(binary);
+      } catch (cause: unknown) {
+        if (!usedShared || !helperLaunchFailed(cause)) throw cause;
+        // The shared copy cannot run here, for example from a noexec home
+        // volume; this reader keeps its own helper from now on.
+        bypassCache = true;
+        sharedExecutable = undefined;
+        if (executable === binary) executable = perRunExecutable;
+        return execute(await compile(signal));
+      }
     })();
     activeCommands.add(pending);
     return pending.finally(() => {
@@ -774,7 +841,24 @@ export const createDarwinProcessRunTokenReader = (
         await operation.promise;
       }
       await Promise.allSettled(activeCommands);
-      await cleanupRoot();
+      // Each owner keeps its own failed cleanup for the next close attempt;
+      // a failure of both stays incomplete until both owners recover.
+      const [rootCleanup, cacheCleanup] = await Promise.allSettled([
+        cleanupRoot(),
+        helperCache?.close(),
+      ]);
+      if (
+        rootCleanup.status === "rejected" &&
+        cacheCleanup.status === "rejected" &&
+        rootCleanup.reason instanceof ProviderCleanupError &&
+        cacheCleanup.reason instanceof ProviderCleanupError
+      )
+        throw analysisErrorWithCleanupFailure(
+          rootCleanup.reason,
+          cacheCleanup.reason,
+        ).bindCleanupDependencies([rootCleanup.reason, cacheCleanup.reason]);
+      if (rootCleanup.status === "rejected") throw rootCleanup.reason;
+      if (cacheCleanup.status === "rejected") throw cacheCleanup.reason;
     })().catch((cause: unknown) => {
       if (closePromise === pendingClose) closePromise = undefined;
       throw cause;
