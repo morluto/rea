@@ -53,6 +53,8 @@ const DWARF_LAYOUT_UNAVAILABLE =
   "Debug compilation-unit layout is unavailable. Files are named by canonical address.";
 const BODY_UNAVAILABLE =
   "procedure_info is unavailable, so function body ranges are unknown.";
+const RETAINED_BODY_UNAVAILABLE =
+  "One or more exported functions retain an unavailable function body; see each function record's body reason.";
 const TARGET_DIGEST_UNAVAILABLE =
   "Target SHA-256 was not observed, so this export cannot be resumed.";
 const PROFILE_UNAVAILABLE =
@@ -159,6 +161,7 @@ export const decompileAll = async (
       loaded.value.identity,
       selection.collapsedDuplicates,
       state.bodyUnavailable,
+      session.retainsUnavailableBody(),
       loaded.value.unaddressed,
     );
     indexed = await session.writeIndex({
@@ -959,6 +962,7 @@ const exportLimitations = (
   identity: ExportIdentity,
   collapsedDuplicates: boolean,
   bodyUnavailable: boolean,
+  retainedBodyUnavailable: boolean,
   unaddressed: number,
 ): readonly string[] => [
   ...(layout === "dwarf" ? [DWARF_LAYOUT_UNAVAILABLE] : []),
@@ -966,7 +970,11 @@ const exportLimitations = (
   ...(identity.analysisProfileDigest === null ? [PROFILE_UNAVAILABLE] : []),
   ...(collapsedDuplicates ? [DUPLICATE_ADDRESSES] : []),
   ...(unaddressed > 0 ? [unaddressedRows(unaddressed)] : []),
-  ...(bodyUnavailable ? [BODY_UNAVAILABLE] : []),
+  ...(bodyUnavailable
+    ? [BODY_UNAVAILABLE]
+    : retainedBodyUnavailable
+      ? [RETAINED_BODY_UNAVAILABLE]
+      : []),
 ];
 
 const layoutStatus = (
