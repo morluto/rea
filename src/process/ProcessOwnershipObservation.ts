@@ -1071,6 +1071,11 @@ const isExpectedAbort = (
   (cause === signal.reason ||
     (cause instanceof Error && cause.name === "AbortError"));
 
+const isMissingProcfsLookup = (cause: unknown): boolean =>
+  cause instanceof Error &&
+  "code" in cause &&
+  (cause.code === "ENOENT" || cause.code === "ESRCH");
+
 /** Create the operating-system process inspector for an explicit host context. */
 export const createSystemProcessOwnershipHost = (
   platform: NodeJS.Platform = process.platform,
@@ -1216,7 +1221,11 @@ export const createSystemProcessOwnershipHost = (
                   ...(signal === undefined ? {} : { signal }),
                 });
               } catch (cause: unknown) {
-                if (isExpectedAbort(cause, signal)) throw cause;
+                if (
+                  isExpectedAbort(cause, signal) ||
+                  isMissingProcfsLookup(cause)
+                )
+                  throw cause;
                 return [pid, readableIdentity(parsed)] as const;
               }
               signal?.throwIfAborted();
@@ -1248,7 +1257,11 @@ export const createSystemProcessOwnershipHost = (
                   ...(signal === undefined ? {} : { signal }),
                 });
               } catch (cause: unknown) {
-                if (isExpectedAbort(cause, signal)) throw cause;
+                if (
+                  isExpectedAbort(cause, signal) ||
+                  isMissingProcfsLookup(cause)
+                )
+                  throw cause;
                 return [pid, readableIdentity(parsed)] as const;
               }
               signal?.throwIfAborted();
@@ -1273,11 +1286,7 @@ export const createSystemProcessOwnershipHost = (
               ] as const;
             } catch (cause: unknown) {
               if (isExpectedAbort(cause, signal)) throw cause;
-              if (
-                cause instanceof Error &&
-                "code" in cause &&
-                (cause.code === "ENOENT" || cause.code === "ESRCH")
-              ) {
+              if (isMissingProcfsLookup(cause)) {
                 signal?.throwIfAborted();
                 let presenceProbeFailure: unknown;
                 let presenceProbeSucceeded = false;
@@ -1306,10 +1315,10 @@ export const createSystemProcessOwnershipHost = (
                     reason:
                       presenceProbeFailure === undefined &&
                       presenceProbeSucceeded
-                        ? "proc_stat_missing_but_process_signal_probe_succeeded"
+                        ? "procfs_lookup_missing_but_process_signal_probe_succeeded"
                         : presenceProbeFailure === undefined
-                          ? "proc_stat_missing_and_process_signal_probe_returned_false"
-                          : `proc_stat_missing_and_process_signal_probe_failed: ${errorMessage(presenceProbeFailure)}`,
+                          ? "procfs_lookup_missing_and_process_signal_probe_returned_false"
+                          : `procfs_lookup_missing_and_process_signal_probe_failed: ${errorMessage(presenceProbeFailure)}`,
                   } as const,
                 ] as const;
               }
