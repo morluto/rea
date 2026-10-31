@@ -49,6 +49,7 @@ import {
   type GhidraHeadlessLauncher,
 } from "./GhidraLauncher.js";
 import { AnalysisArtifactChangedError } from "../domain/analysisErrorCore.js";
+import { GHIDRA_PROJECT_PROFILE_MISMATCH } from "./GhidraProjectSnapshot.js";
 import type { GhidraInstallationHost } from "./GhidraInstallation.js";
 import {
   GHIDRA_MUTATING_OPERATIONS,
@@ -3442,7 +3443,7 @@ describe("Ghidra changed project", () => {
 
   it("projects a source project changed before its verified copy as artifact_changed", async () => {
     const path = "/projects/selected";
-    const reason = "Regular file changed during read";
+    const reason = GHIDRA_PROJECT_PROFILE_MISMATCH;
     const { error, projected } = await launchFailure(
       new AnalysisArtifactChangedError("open_binary", path, reason),
     );
