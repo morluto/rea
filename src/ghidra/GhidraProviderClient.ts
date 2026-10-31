@@ -8,6 +8,7 @@ import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.
 import { artifactFilePrimaryFacts } from "../artifacts/ArtifactFileOperation.js";
 import { fileURLToPath } from "node:url";
 import { GHIDRA_BRIDGE_SOURCES } from "./GhidraBridgeSources.js";
+import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 
 import {
   createAnalysisExecution,
@@ -1109,6 +1110,32 @@ const projectPrimarySessionError = (
       physicalCause.reason,
       context,
     );
+  if (
+    failure.kind === "admission" &&
+    failure.cause instanceof GhidraAdmissionError &&
+    (failure.cause.code === "import_identity_unavailable" ||
+      failure.cause.code === "import_identity_mismatch")
+  ) {
+    const unavailable = failure.cause.code === "import_identity_unavailable";
+    const constraint = unavailable
+      ? "The Ghidra program did not report a valid imported SHA-256, so REA cannot verify its target identity"
+      : "The Ghidra program's imported SHA-256 differs from the selected target's SHA-256";
+    const remediationAction = unavailable
+      ? "Select a Ghidra program whose imported identity can be verified, or investigate the missing identity in Ghidra. Configure a different project or program when starting REA. REA did not fall back to a fresh import."
+      : "Select a target matching the configured program and retry, or configure a matching project or program when starting REA. Resolve any reported cleanup before reopening. REA did not fall back to a fresh import.";
+    if (limits.ghidraExistingProject !== undefined)
+      return new ConfigurationError(constraint, {
+        ...context,
+        settings: [{ setting: "REA_GHIDRA_PROJECT_PATH", constraint }],
+        remediationAction,
+      });
+    return new ProviderAdapterError("ghidra", operation, {
+      ...context,
+      userMessage: `${constraint}.`,
+      remediationAction:
+        "Inspect the retained Ghidra diagnostics and target identity before retrying the import.",
+    });
+  }
   // A well-formed address that lacks one exact source offset keeps the
   // bridge's reason and the caller's exact spelling, not schema advice.
   const fileOffset =

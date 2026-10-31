@@ -178,7 +178,23 @@ const handleOutputFailure = (socket, state) => {
 
 const handleRequest = (socket, server, request, state) => {
   if (request.method === "ping") {
-    handlePing(socket, request, state);
+    handlePing(socket, server, request, state);
+    return;
+  }
+  if (
+    state.mode === "late_identity_failure" &&
+    request.method === "list_strings"
+  ) {
+    socket.write(
+      `${JSON.stringify({
+        id: request.id,
+        ok: false,
+        error: {
+          code: "import_identity_mismatch",
+          message: "Unexpected later failure",
+        },
+      })}\n`,
+    );
     return;
   }
   if (
@@ -321,7 +337,28 @@ const handleRequest = (socket, server, request, state) => {
   }
 };
 
-const handlePing = (socket, request, state) => {
+const handlePing = (socket, server, request, state) => {
+  if (
+    ["import_identity_unavailable", "import_identity_mismatch"].includes(
+      state.mode,
+    )
+  ) {
+    socket.end(
+      `${JSON.stringify({
+        id: request.id,
+        ok: false,
+        error: {
+          code: state.mode,
+          message: "Ghidra project identity admission failed",
+        },
+      })}\n`,
+      () => {
+        socket.destroy();
+        server.close(() => process.exit(0));
+      },
+    );
+    return;
+  }
   if (state.mode === "remote_startup_error") {
     socket.write(
       `${JSON.stringify({

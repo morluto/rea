@@ -179,6 +179,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private List<FunctionEntry> procedureInventory;
     private List<InventoryItem> stringInventory;
     private DecompInterface decompiler;
+    // A refused Program may only report its admission failure to the client.
+    private String identityAdmissionFailure;
     /** Per-function native decompiler limit from the session; 0 leaves it unbounded. */
     private int decompileTimeoutSeconds;
     // DecompileProcess converts seconds to an int millisecond timer delay.
@@ -224,14 +226,17 @@ public final class ReaGhidraBridge extends HeadlessScript {
             throw new IllegalStateException("Ghidra provider version does not match the session");
         }
         String importedSha256 = currentProgram.getExecutableSHA256();
-        if (importedSha256 == null ||
-            !constantTimeEquals(
-                importedSha256.toLowerCase(Locale.ROOT),
-                descriptor.targetSha256
-            )) {
-            throw new IllegalStateException(
-                "Ghidra imported-byte digest does not match the admitted target"
-            );
+        if (importedSha256 == null || !importedSha256.matches("(?i)[0-9a-f]{64}")) {
+            identityAdmissionFailure = "import_identity_unavailable";
+        }
+        else if (!constantTimeEquals(importedSha256.toLowerCase(Locale.ROOT),
+                                     descriptor.targetSha256)) {
+            identityAdmissionFailure = "import_identity_mismatch";
+        }
+        if (identityAdmissionFailure != null) {
+            end(false);
+            serve(descriptor);
+            return;
         }
         admittedTargetSha256 = descriptor.targetSha256;
         // GhidraScript wraps run() in a transaction. End it before serving so
@@ -397,6 +402,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 }
             }
             try {
+                if (identityAdmissionFailure != null) {
+                    writeFailure(writer, request.id, identityAdmissionFailure,
+                        "Ghidra imported identity admission failed");
+                    return;
+                }
                 if (request.method.equals("shutdown")) {
                     requireKeys(request.params, Set.of());
                     JsonObject result = new JsonObject();
