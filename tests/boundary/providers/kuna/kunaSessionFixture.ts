@@ -32,18 +32,23 @@ export const session = async (
   environment: Readonly<Record<string, string>> = {},
   launcher?: KunaProcessLauncher,
   singleFunctionRuns?: number,
+  image: {
+    readonly bytes: Uint8Array | string;
+    readonly format: "elf" | "mach-o";
+    readonly architecture: "x86_64" | "arm64";
+  } = { bytes: "program bytes", format: "elf", architecture: "x86_64" },
 ) => {
   const root = await createTestTempDirectory(prefix);
   const kuna = await writeFakeKuna(root, { functions: FUNCTIONS, ...behavior });
   const targetPath = join(root, "program");
-  await writeFile(targetPath, "program bytes");
+  await writeFile(targetPath, image.bytes);
   const target: BinaryTarget = {
     path: targetPath,
-    sha256: createHash("sha256").update("program bytes").digest("hex"),
+    sha256: createHash("sha256").update(image.bytes).digest("hex"),
     kind: "executable",
-    format: "elf",
-    architecture: "x86_64",
-    availableArchitectures: ["x86_64"],
+    format: image.format,
+    architecture: image.architecture,
+    availableArchitectures: [image.architecture],
   };
   const cacheRoot = join(root, "cache");
   const provider = new KunaProvider(

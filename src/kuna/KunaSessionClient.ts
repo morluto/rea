@@ -69,6 +69,16 @@ import {
   type KunaInventoryFunction,
 } from "./KunaProjectFiles.js";
 import {
+  KUNA_LAYOUT_NOT_APPLICABLE,
+  kunaDataEntryMessage,
+  kunaDataNameLimitation,
+  kunaInventoryLimitations,
+  MACHO_LOAD_COMMAND_PREFIX,
+  placeKunaInventory,
+  readKunaMachoLayout,
+  type KunaInventoryLayout,
+} from "./KunaInventoryPlacement.js";
+import {
   isKunaOperation,
   KUNA_RELATIONSHIP_LIMITATION,
   KUNA_SINGLE_FUNCTION_LIMITATION,
@@ -103,8 +113,17 @@ type AnswerSource =
   | { readonly kind: "project-export"; readonly project: KunaProject }
   | { readonly kind: "single-function" };
 
+/**
+ * Lookups over one inventory as the target's layout classifies it. Every
+ * entry stays addressable for names and references; procedure operations
+ * refuse the entries the layout places in data.
+ */
 interface InventoryIndex {
   readonly inventory: readonly KunaInventoryFunction[];
+  readonly layout: KunaInventoryLayout;
+  /** The data region of each entry the layout places in data. */
+  readonly data: ReadonlyMap<KunaInventoryFunction, string>;
+  readonly unplaced: ReadonlySet<KunaInventoryFunction>;
   readonly byAddress: ReadonlyMap<string, KunaInventoryFunction>;
   readonly byName: ReadonlyMap<string, readonly KunaInventoryFunction[]>;
 }
@@ -305,6 +324,8 @@ export class KunaSessionClient implements AnalysisClient {
   #inventory:
     | Promise<Result<readonly KunaInventoryFunction[], AnalysisError>>
     | undefined;
+  /** The target's section table, read once from the verified private input. */
+  #layout: Promise<Result<KunaInventoryLayout, AnalysisError>> | undefined;
   #project: Promise<Result<KunaProject, AnalysisError>> | undefined;
   /** The cache lookup that decides #project, shared by concurrent first requests. */
   #starting: Promise<void> | undefined;
@@ -348,6 +369,9 @@ export class KunaSessionClient implements AnalysisClient {
       ...(dependencies.launcher === undefined
         ? {}
         : { launcher: dependencies.launcher }),
+      ...(target.format === "mach-o"
+        ? { inputPrefix: MACHO_LOAD_COMMAND_PREFIX }
+        : {}),
     });
     this.#deadline = dependencies.deadline;
     this.#heapRequest = dependencies.heapRequest;
@@ -677,26 +701,23 @@ export class KunaSessionClient implements AnalysisClient {
       return this.#stringAnswer(operation, parameters, installation, options);
     if (operation === "list_procedures" || operation === "search_procedures")
       return this.#procedureList(operation, parameters, installation, options);
-    const inventory = await this.#ensureInventory(installation, options);
-    if (!inventory.ok) return inventory;
+    const index = await this.#ensureIndex(installation, options);
+    if (!index.ok) return index;
     if (operation === "address_name")
-      return this.#addressName(
-        parameters,
-        inventory.value,
-        installation,
-        options,
-      );
-    const entry = this.#resolve(
-      operation,
-      parameters.procedure,
-      inventory.value,
-    );
+      return this.#addressName(parameters, index.value, installation, options);
+    const entry = this.#resolve(operation, parameters.procedure, index.value);
     if (!entry.ok) {
       const selectedAddress =
         operation === "procedure_address"
           ? normalizeKunaAddress(parameters.procedure)
           : undefined;
-      if (selectedAddress === undefined) return entry;
+      // An entry the layout places in data is not a procedure the graph
+      // could still own.
+      if (
+        selectedAddress === undefined ||
+        this.#isDataAddress(index.value, selectedAddress)
+      )
+        return entry;
       const graph = await this.#references.functionAt(
         installation,
         selectedAddress,
@@ -799,30 +820,47 @@ export class KunaSessionClient implements AnalysisClient {
       return err(
         analysisInputErrorFromIssues(operation, query.error.issues, parameters),
       );
-    const inventory = await this.#ensureInventory(installation, options);
-    if (!inventory.ok) return inventory;
-    let selected = inventory.value;
+    const index = await this.#ensureIndex(installation, options);
+    if (!index.ok) return index;
+    const { inventory, data, unplaced } = index.value;
+    let selected = inventory;
     if (query?.success === true) {
       if (query.data.mode === "regex") {
         const matches = await this.#queryWork.match({
           operation,
           pattern: query.data.pattern,
           caseSensitive: query.data.case_sensitive,
-          values: () => inventory.value.map(({ name }) => name),
+          values: () => inventory.map(({ name }) => name),
           signal: options.signal,
         });
         if (!matches.ok) return matches;
-        selected = matches.value.map((index) => inventory.value[index]!);
+        selected = matches.value.map((position) => inventory[position]!);
       } else {
         const matches = analysisSearchPredicate(query.data);
-        selected = inventory.value.filter(({ name }) => matches(name));
+        selected = inventory.filter(({ name }) => matches(name));
       }
     }
+    const procedures: KunaInventoryFunction[] = [];
+    const omitted: string[] = [];
+    let unclassified = 0;
+    for (const entry of selected) {
+      const region = data.get(entry);
+      if (region !== undefined) {
+        omitted.push(region);
+        continue;
+      }
+      if (unplaced.has(entry)) unclassified += 1;
+      procedures.push(entry);
+    }
     return ok({
-      result: selected.map(({ address, name }) => ({ address, value: name })),
+      result: procedures.map(({ address, name }) => ({ address, value: name })),
       source: null,
       locations: [],
-      limitations: [],
+      limitations: kunaInventoryLimitations(
+        index.value.layout,
+        omitted,
+        unclassified,
+      ),
     });
   }
 
@@ -917,17 +955,22 @@ export class KunaSessionClient implements AnalysisClient {
           [{ path: [field], reason: "invalid_value" }],
         ),
       );
-    const inventory = await this.#ensureInventory(installation, options);
-    if (!inventory.ok) return inventory;
-    const entry = this.#resolve(operation, raw, inventory.value, field);
+    const index = await this.#ensureIndex(installation, options);
+    if (!index.ok) return index;
+    // References to data are meaningful, so xrefs also accepts data names.
+    const entry = this.#resolve(operation, raw, index.value, field);
     return entry.ok ? ok(entry.value.address) : entry;
   }
 
-  /** Resolve an exact inventory name, alias or entry address. */
+  /**
+   * Resolve an exact inventory name, alias or entry address. A procedure
+   * selector excludes entries the layout places in data; an address selector
+   * accepts every entry.
+   */
   #resolve(
     operation: string,
     raw: unknown,
-    inventory: readonly KunaInventoryFunction[],
+    index: InventoryIndex,
     field: "procedure" | "address" = "procedure",
   ): Result<KunaInventoryFunction, AnalysisError> {
     const parsed = procedureSelectorSchema.safeParse(raw);
@@ -941,31 +984,44 @@ export class KunaSessionClient implements AnalysisClient {
       );
     const selector = parsed.data;
     const address = normalizeKunaAddress(selector);
+    const refused = (entry: KunaInventoryFunction) =>
+      field === "procedure" && index.data.has(entry);
+    const dataRefusal = (entry: KunaInventoryFunction) =>
+      err(
+        new AnalysisInputError(operation, {
+          userMessage: kunaDataEntryMessage(entry, index.data.get(entry)!),
+        }),
+      );
     if (address !== undefined) {
-      const entry = this.#index(inventory).byAddress.get(address);
-      return entry === undefined
-        ? err(
-            new AnalysisInputError(operation, {
-              userMessage: `${address} is not a procedure entry Kuna found; list_procedures shows the entries it found.`,
-            }),
-          )
-        : ok(entry);
+      const entry = index.byAddress.get(address);
+      if (entry === undefined)
+        return err(
+          new AnalysisInputError(operation, {
+            userMessage: `${address} is not a procedure entry Kuna found; list_procedures shows the entries it found.`,
+          }),
+        );
+      return refused(entry) ? dataRefusal(entry) : ok(entry);
     }
-    const matches = this.#index(inventory).byName.get(selector) ?? [];
+    const named = index.byName.get(selector) ?? [];
+    const matches = named.filter((entry) => !refused(entry));
     if (matches.length === 1 && matches[0] !== undefined) return ok(matches[0]);
+    if (matches.length === 0 && named.length === 1 && named[0] !== undefined)
+      return dataRefusal(named[0]);
     return err(
       new AnalysisInputError(operation, {
         userMessage:
-          matches.length === 0
+          matches.length === 0 && named.length === 0
             ? `Kuna found no procedure named ${selector}; search_procedures finds similar names.`
-            : `${selector} names ${String(matches.length)} Kuna entries (${matches.map(({ address }) => address).join(", ")}); select one by address.`,
+            : matches.length === 0
+              ? `${selector} names ${String(named.length)} Kuna entries that lie in Mach-O data regions (${named.map(({ address }) => address).join(", ")}); they are data, not procedures.`
+              : `${selector} names ${String(matches.length)} Kuna entries (${matches.map(({ address }) => address).join(", ")}); select one by address.`,
       }),
     );
   }
 
   async #addressName(
     parameters: Readonly<Record<string, JsonValue>>,
-    inventory: readonly KunaInventoryFunction[],
+    index: InventoryIndex,
     installation: KunaInstallation,
     options: ExecutionOptions,
   ): Promise<Result<Answer, AnalysisError>> {
@@ -983,14 +1039,17 @@ export class KunaSessionClient implements AnalysisClient {
         ),
       );
     const locations = [{ kind: "address", address } as const];
-    const entry = this.#index(inventory).byAddress.get(address);
-    if (entry !== undefined)
+    const entry = index.byAddress.get(address);
+    if (entry !== undefined) {
+      const region = index.data.get(entry);
       return ok({
         result: entry.name,
         source: null,
         locations,
-        limitations: [],
+        limitations:
+          region === undefined ? [] : [kunaDataNameLimitation(entry, region)],
       });
+    }
     await this.#startProject(installation);
     return this.#withProject(
       "address_name",
@@ -1386,10 +1445,14 @@ export class KunaSessionClient implements AnalysisClient {
     });
   }
 
-  /** Address and name lookups over one inventory, built once. */
-  #index(inventory: readonly KunaInventoryFunction[]): InventoryIndex {
-    if (this.#inventoryIndex?.inventory === inventory)
-      return this.#inventoryIndex;
+  /** Address and name lookups over one classified inventory, built once. */
+  #index(
+    inventory: readonly KunaInventoryFunction[],
+    layout: KunaInventoryLayout,
+  ): InventoryIndex {
+    const kept = this.#inventoryIndex;
+    if (kept?.inventory === inventory && kept.layout === layout) return kept;
+    const { data, unplaced } = placeKunaInventory(inventory, layout);
     const byAddress = new Map<string, KunaInventoryFunction>();
     const byName = new Map<string, KunaInventoryFunction[]>();
     for (const entry of inventory) {
@@ -1400,8 +1463,62 @@ export class KunaSessionClient implements AnalysisClient {
         else named.push(entry);
       }
     }
-    this.#inventoryIndex = { inventory, byAddress, byName };
+    this.#inventoryIndex = {
+      inventory,
+      layout,
+      data,
+      unplaced,
+      byAddress,
+      byName,
+    };
     return this.#inventoryIndex;
+  }
+
+  /** Whether the layout places the inventory entry at an address in data. */
+  #isDataAddress(index: InventoryIndex, address: string): boolean {
+    const entry = index.byAddress.get(address);
+    return entry !== undefined && index.data.has(entry);
+  }
+
+  /** The inventory, classified by the target's layout when it has one. */
+  async #ensureIndex(
+    installation: KunaInstallation,
+    options: ExecutionOptions,
+  ): Promise<Result<InventoryIndex, AnalysisError>> {
+    const inventory = await this.#ensureInventory(installation, options);
+    if (!inventory.ok) return inventory;
+    const layout = await this.#ensureLayout(options);
+    if (!layout.ok) return layout;
+    return ok(this.#index(inventory.value, layout.value));
+  }
+
+  /**
+   * Read a Mach-O target's section table once, from the leading bytes kept
+   * while its private copy was hashed. Other formats keep Kuna's inventory
+   * as reported. A failed read is retried by the next request.
+   */
+  #ensureLayout(
+    options: ExecutionOptions,
+  ): Promise<Result<KunaInventoryLayout, AnalysisError>> {
+    if (this.#target.format !== "mach-o")
+      return Promise.resolve(ok(KUNA_LAYOUT_NOT_APPLICABLE));
+    if (this.#layout === undefined) {
+      const read = this.#own(this.#readLayout());
+      this.#layout = read;
+      void read.then((layout) => {
+        if (!layout.ok && this.#layout === read) this.#layout = undefined;
+      });
+    }
+    return waitFor(this.#layout, options.signal, "list_procedures");
+  }
+
+  async #readLayout(): Promise<Result<KunaInventoryLayout, AnalysisError>> {
+    try {
+      const head = await this.#commands.inputHead("list_procedures");
+      return head.ok ? ok(await readKunaMachoLayout(head.value)) : head;
+    } catch (cause: unknown) {
+      return err(failure("list_procedures", cause));
+    }
   }
 
   /** One installation producer; only the final departing caller stops it. */
