@@ -59,7 +59,7 @@ const NATIVE_PLATFORMS: Readonly<
 > = {
   linux: { x64: "linux_x86_64", arm64: "linux_arm_64" },
   darwin: { x64: "mac_x86_64", arm64: "mac_arm_64" },
-  win32: { x64: "win_x86_64" },
+  win32: { x64: "win_x86_64", arm64: "win_arm_64" },
 };
 
 /** Executable format each supported host runs its own Ghidra native tools as. */
@@ -654,14 +654,14 @@ const installationChecks = ({
     code: "unsupported_host",
     detail: platform,
     remediation:
-      "Use Linux or macOS x64/arm64, or Windows x64 with matching native Ghidra tools.",
+      "Use Linux, macOS or Windows on x64/arm64 with matching native Ghidra tools.",
   }),
   installationCheck({
     name: "architecture",
     passed: NATIVE_PLATFORMS[platform]?.[architecture] !== undefined,
     code: "unsupported_host",
     detail: architecture,
-    remediation: "Use x64/arm64 on Linux or macOS, or x64 on Windows.",
+    remediation: "Use x64 or arm64 on Linux, macOS or Windows.",
   }),
   installationCheck({
     name: "installation",
