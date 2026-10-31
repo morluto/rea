@@ -1,4 +1,4 @@
-import { copyFile } from "node:fs/promises";
+import { copyFile, symlink } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -170,6 +170,12 @@ processTest(
     await copyFile(
       resolve("scripts/lib/verifier-source-loader.mjs"),
       workspace.path("scripts/lib/verifier-source-loader.mjs"),
+    );
+    // Hosts without Node's transform mode resolve rolldown from the checkout.
+    await symlink(
+      resolve("node_modules"),
+      workspace.path("node_modules"),
+      "junction",
     );
     await Promise.all([
       workspace.write("package.json", '{"type":"module"}'),
