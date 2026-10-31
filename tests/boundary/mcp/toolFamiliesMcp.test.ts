@@ -1,6 +1,6 @@
 import type { Client } from "@modelcontextprotocol/client";
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 import {
   TOOL_CONTRACTS,
@@ -8,13 +8,13 @@ import {
 } from "../../../src/contracts/toolContracts.js";
 import { TOOL_FAMILY_DEFINITIONS } from "../../../src/contracts/toolFamilies.js";
 import { registerSessionStatusTool } from "../../../src/server/registerSessionStatusTool.js";
-import type { BinarySessionPort } from "../../../src/application/binary/BinarySessionPort.js";
 import { binaryTargetSummary } from "../../../src/application/binary/BinaryTargetSummary.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
 import { ToolResultDelivery } from "../../../src/server/ToolResultDelivery.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 import { createTestMcp } from "../../support/mcp/mcpFixture.js";
+import { createTestBinarySession } from "../../fixtures/binarySession.js";
 
 const scopedServer = (
   advertisedToolFamilies: ReadonlySet<string> | undefined,
@@ -60,47 +60,56 @@ const familyTools = (...ids: readonly string[]): readonly string[] =>
     ({ contracts }) => contracts.map(({ name }) => name),
   );
 
-/** Route facts with one direct operation the status report must hide. */
-const sessionStatusWithDirectOperations = () => ({
-  open: true,
-  ...binaryTargetSummary({
-    path: "/fixture/tool-family-target",
-    kind: "executable",
-    format: "mach-o",
-    architecture: "x86_64",
-    availableArchitectures: ["x86_64"],
-    sha256: "a".repeat(64),
-  }),
-  cleanup_pending: false,
-  analysis_run: null,
-  analysis_activity: { status: "not_observed", providers: [] },
-  provider_operation_health: null,
-  analysis_provider_binding: null,
-  capabilities: [
-    {
-      provider: { id: "probe", name: "Probe", version: "1" },
-      shared_limitations: [],
-      groups: [
+/** Preserve owner-produced lifecycle facts while varying the route under test. */
+const sessionWithDirectOperations = () => {
+  const session = createTestBinarySession(() => {
+    throw new Error("Status projection must not acquire a provider");
+  });
+  const status = session.status.bind(session);
+  const projected = vi
+    .spyOn(session, "status")
+    .mockImplementation(async (options) => ({
+      ...jsonObjectSchema.parse(await status(options)),
+      open: true,
+      ...binaryTargetSummary({
+        path: "/fixture/tool-family-target",
+        kind: "executable",
+        format: "mach-o",
+        architecture: "x86_64",
+        availableArchitectures: ["x86_64"],
+        sha256: "a".repeat(64),
+      }),
+      capabilities: [
         {
-          operations: [
-            "open_binary",
-            "get_navigation_context",
-            "current_document",
-            "current_address",
-            "resolve_containing_procedure",
-            "inspect_macho",
+          provider: { id: "probe", name: "Probe", version: "1" },
+          shared_limitations: [],
+          groups: [
+            {
+              operations: [
+                "open_binary",
+                "get_navigation_context",
+                "current_document",
+                "current_address",
+                "resolve_containing_procedure",
+                "inspect_macho",
+              ],
+              effects: ["mutates_artifact"],
+              limitations: [],
+              available: true,
+              reason: null,
+              availability_code: null,
+            },
           ],
-          effects: ["mutates_artifact"],
-          limitations: [],
-          available: true,
-          reason: null,
-          availability_code: null,
         },
       ],
-    },
-  ],
-  analysis_provider_candidates: [],
-});
+    }));
+  onTestFinished(async () => {
+    projected.mockRestore();
+    const disposed = await session.dispose();
+    if (!disposed.ok) throw disposed.error;
+  });
+  return session;
+};
 
 interface SessionReport {
   readonly capabilities?: readonly {
@@ -187,9 +196,7 @@ describe("MCP tool family advertising", () => {
       };
       registerSessionStatusTool({
         server,
-        session: {
-          status: sessionStatusWithDirectOperations,
-        } as unknown as BinarySessionPort,
+        session: sessionWithDirectOperations(),
         contract: toolContract("binary_session"),
         startedAt: new Date().toISOString(),
         availabilityPolicy: () => ({ processCaptureEnabled: false }),
@@ -216,9 +223,7 @@ describe("MCP tool family advertising", () => {
     const server = scopedServer(new Set(["session"]));
     registerSessionStatusTool({
       server,
-      session: {
-        status: sessionStatusWithDirectOperations,
-      } as unknown as BinarySessionPort,
+      session: sessionWithDirectOperations(),
       contract: toolContract("binary_session"),
       startedAt: new Date().toISOString(),
       availabilityPolicy: () => ({ processCaptureEnabled: false }),

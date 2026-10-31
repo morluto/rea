@@ -172,6 +172,14 @@ const projectStatus = async (
     candidateStatuses: async () => candidates,
   };
   return binarySessionStatus({
+    investigation: {
+      evidence_records: 0,
+      unknown_revisions: 0,
+      unknown_heads: 0,
+      retained_representation_bytes: 0,
+      maximum_representation_bytes: 0,
+      persistence: "memory",
+    },
     target: options.target,
     route,
     router,

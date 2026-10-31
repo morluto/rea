@@ -971,7 +971,9 @@ including while a shutdown request is in flight. A helper exit alone is
 insufficient, and an application that never authenticated has no verified
 process identity. If no matching bridge becomes available, inspect and close
 the reported document in Hopper before ending the owning REA connection.
-Export the Evidence bundle before `close_binary` clears session records.
+`close_binary` preserves Evidence and complete Unknown history in memory on the
+same connection. Export the bundle before ending the REA process to resume later;
+`reset_investigation(save_path)` checkpoints and explicitly clears those records.
 `binary_session.cleanup_pending` remains true while provider cleanup is retained,
 and provider health remains visible even with `open: false`; that flag alone
 does not establish successful cleanup.

@@ -8,7 +8,6 @@ import {
 } from "../../domain/evidenceErrors.js";
 import { NoBinaryOpenError } from "../../domain/configurationErrors.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import type { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import {
   rebindEvidenceSubjectTargetPath,
   type Evidence,
@@ -377,9 +376,7 @@ export class AnalysisSnapshotCache {
           readonly profile: AnalysisProfileCommitment;
         }
       | undefined,
-    mergeEvidence: (
-      bundle: EvidenceBundle,
-    ) => Result<number, EvidenceIntegrityError | AnalysisInputError>,
+    mergeEvidence: (bundle: EvidenceBundle) => Result<number, AnalysisError>,
   ): Result<number, AnalysisError> {
     let validated: AnalysisSnapshot;
     try {

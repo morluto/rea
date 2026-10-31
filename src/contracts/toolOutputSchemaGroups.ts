@@ -36,6 +36,10 @@ import {
 } from "../domain/native/nativeReference.js";
 import { procedureIdentitySchema } from "../domain/native/procedureInfo.js";
 import { z } from "zod";
+import {
+  evidenceBundleExportReceiptSchema,
+  resetInvestigationReceiptSchema,
+} from "../domain/investigationLifecycle.js";
 import { jsonRecordSchema } from "../domain/jsonRecord.js";
 import { byteSearchResultSchema } from "../domain/native/bytePattern.js";
 import { evidenceBundleSummarySchema } from "../domain/evidenceRecordSummary.js";
@@ -513,6 +517,7 @@ export const managedWorkflowOutputSchemas = {
 
 /** Exact structured-content schemas for target lifecycle operations. */
 export const sessionOutputSchemas = {
+  reset_investigation: lifecycleResultOf(resetInvestigationReceiptSchema),
   open_binary: lifecycleResultOf(
     z.discriminatedUnion("format", [...liveBinaryTargetSummaryVariants]),
   ),
@@ -562,14 +567,7 @@ export const sessionOutputSchemas = {
       ]),
     ),
   ),
-  export_evidence_bundle: lifecycleResultOf(
-    z.object({
-      path: z.string(),
-      bytes: z.int().min(0),
-      records: z.int().min(0),
-      unknowns: z.int().min(0),
-    }),
-  ),
+  export_evidence_bundle: lifecycleResultOf(evidenceBundleExportReceiptSchema),
   get_evidence_bundle: lifecycleResultOf(
     z.union([evidenceBundleSchema, evidenceBundleSummarySchema]),
   ),

@@ -660,6 +660,7 @@ export const createServer = (
     recordEvidenceWithUnknown,
   } = createSessionRecorders(server, session);
   const analysisAdmission = withAdmittedAnalysis(source);
+  server.withAdmittedAnalysis = analysisAdmission;
   const recordSessionEvidence =
     session === undefined
       ? undefined

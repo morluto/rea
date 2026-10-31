@@ -110,8 +110,8 @@ it.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
         normalized_result: { rows: { columns: ["id"], returned_rows: 3 } },
       });
       expect(await closing).toMatchObject({ ok: true });
-      // Closing a binding clears its ledger after the admitted recording succeeds.
-      expect(session.evidenceById(evidenceId)).toBeUndefined();
+      // Engine cleanup waits for admission but preserves the completed fact.
+      expect(session.evidenceById(evidenceId)?.evidence_id).toBe(evidenceId);
       expect(closed).toBe(true);
     } finally {
       release.resolve();

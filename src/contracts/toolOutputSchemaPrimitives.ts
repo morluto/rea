@@ -1,5 +1,6 @@
 import { procedureInfoSchema } from "../domain/native/procedureInfo.js";
 import { z } from "zod";
+import { investigationStatisticsSchema } from "../domain/investigationLifecycle.js";
 import { utcDateTimeSchema } from "../domain/offsetDateTime.js";
 
 import { functionDossierSchema } from "../domain/native/functionDossier.js";
@@ -532,6 +533,7 @@ export function expandToolAvailability(
 /** Session status facts shared by every detail level and session kind. */
 export const sessionProviderFacts = z
   .object({
+    investigation: investigationStatisticsSchema,
     cleanup_pending: z.boolean(),
     capabilities: z.array(providerCapabilitySet),
     analysis_run: analysisRun,
