@@ -390,6 +390,13 @@ Use the existing workflow as a baseline and identify what the proposed tool
 adds. Choose the relevant cases below; do not require every provider or a
 Cartesian matrix when it would not change the claim.
 
+When auditing existing tools, compare selected analyst workflows with the cases
+their existing tests and real-provider lanes actually exercise. Run relevant
+public workflows and focused checks; report untested scenarios rather than
+inferring that a green test proves them or that no prior testing occurred. A fix
+should add a regression for the demonstrated failure at its owning boundary and
+affected consumer.
+
 - Use a controlled target with independently known facts and a meaningful
   counterexample. Compare native provider output with the target or a
   format-aware oracle; a provider label, a mock, or another REA projection is

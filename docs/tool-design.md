@@ -75,6 +75,30 @@ an actual agent evaluation; a scripted tool sequence does not establish it. Use
 [testing guidance](testing.md#provider-backed-workflow-verification) to select
 the cases that establish the proposed contract.
 
+## Audit existing tools
+
+Scope an audit by analyst tasks and the caller's target, providers and authority.
+Record the source revision and, when used, the running server, catalog and
+provider versions; a connected server can differ from the current checkout.
+Inspect the live CLI help or MCP descriptions and schemas alongside the owning
+contracts and documentation. Choose representative tasks and their nearest REA
+and native alternatives rather than counting upstream commands.
+
+Exercise the selected public workflows, including the steps before and after a
+tool call. Check task selection, input choices, returned facts and their source,
+partial or unsupported outcomes, and applicable session and recovery behavior.
+Compare native provider output and an independent artifact observation where
+available. Inspect existing tests and real-provider lanes for the scenario they
+actually cover; a passing test does not establish a different task or host.
+Use [workflow verification](testing.md#provider-backed-workflow-verification)
+for counterexamples and lifecycle controls relevant to the audit.
+
+Report working routes as well as findings. Separate a reproduced contract bug,
+an intentional limitation, a design opportunity and an unverified hypothesis;
+include the smallest useful reproduction, impact and coverage limits. Do not
+claim autonomous-agent selection from a scripted trace. Check related reports
+before proposing another issue, and avoid treating lack of API parity as a bug.
+
 ## Define the contract
 
 - Use strict inputs with explicit target identity and required fields. Preserve
