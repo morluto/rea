@@ -159,6 +159,7 @@ export interface LifecycleToolRegistration extends SessionAvailabilityProbes {
   readonly statusContract: ReturnType<typeof toolContract<"binary_session">>;
   readonly startedAt: string;
   readonly availabilityPolicy: () => AvailabilityPolicy;
+  readonly artifactResources: ArtifactResourceScope;
   readonly closeProcessResources: () => Promise<Result<null, AnalysisError>>;
 }
 

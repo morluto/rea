@@ -23,6 +23,7 @@ import {
   createTestBinarySession,
 } from "../../../tests/fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+import { awaitAcknowledgement } from "../../../tests/fixtures/lifecycleAcknowledgement.js";
 
 const observation = (label: string) =>
   createEvidence(
@@ -79,6 +80,7 @@ it("publishes engine retirement with its pending cleanup owner already visible",
     }),
   });
   const notifications: ReturnType<typeof session.status>[] = [];
+  const pending: Promise<unknown>[] = [];
   let unsubscribe: () => void = () => undefined;
   try {
     expect((await session.open(target)).ok).toBe(true);
@@ -94,7 +96,8 @@ it("publishes engine retirement with its pending cleanup owner already visible",
       notifications.push(session.status());
     });
     const closing = session.close();
-    await entered.promise;
+    pending.push(closing);
+    await awaitAcknowledgement(entered.promise, closing, "engine close entry");
     expect(notifications.length).toBeGreaterThan(0);
     for (const status of await Promise.all(notifications))
       expect(status).toMatchObject({ open: false, cleanup_pending: true });
@@ -107,6 +110,7 @@ it("publishes engine retirement with its pending cleanup owner already visible",
   } finally {
     unsubscribe();
     release.resolve();
+    await Promise.allSettled(pending);
     await session.close();
   }
 });
@@ -384,6 +388,7 @@ it("drains prior metadata writes and refuses later admissions and direct writes 
   const entered = createDeferred<void>();
   const release = createDeferred<void>();
   let committedBeforeClear = false;
+  const pending: Promise<unknown>[] = [];
   try {
     expect((await session.open(target)).ok).toBe(true);
     expect(
@@ -409,8 +414,10 @@ it("drains prior metadata writes and refuses later admissions and direct writes 
         return written;
       },
     );
-    await entered.promise;
+    pending.push(before);
+    await awaitAcknowledgement(entered.promise, before, "metadata write entry");
     const disposing = session.dispose();
+    pending.push(disposing);
     const late = vi.fn(async () =>
       session.importEvidenceBundle(
         createEvidenceBundle([observation("late_import")]),
@@ -421,6 +428,7 @@ it("drains prior metadata writes and refuses later admissions and direct writes 
       undefined,
       late,
     );
+    pending.push(after);
     release.resolve();
     expect((await before).ok).toBe(true);
     expect(committedBeforeClear).toBe(true);
@@ -457,6 +465,7 @@ it("drains prior metadata writes and refuses later admissions and direct writes 
     expect(session.exportEvidenceBundle()).toEqual(createEvidenceBundle([]));
   } finally {
     release.resolve();
+    await Promise.allSettled(pending);
     await session.dispose();
   }
 });
@@ -485,7 +494,11 @@ it.each(["preaborted", "queued"] as const)(
             await release.promise;
           },
         );
-        await entered.promise;
+        await awaitAcknowledgement(
+          entered.promise,
+          blocker,
+          "reset blocker entry",
+        );
       } else controller.abort(reason);
       const resetting = session.resetInvestigation({
         savePath: path,

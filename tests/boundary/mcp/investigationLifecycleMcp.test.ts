@@ -29,6 +29,7 @@ import {
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpEvidenceBundle } from "../../fixtures/mcpEvidenceBundle.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 // Native behavior is simulated here. The real SDK, session, ledger, source
@@ -406,43 +407,54 @@ it("drains a late valid observation before saving and prevents it from entering 
       return observed("fresh-after-reset");
     },
   });
-  onTestFinished(() => release.resolve());
   await call(test.client, "open_binary", { path: test.first });
   const earlier = test.client.callTool({
     name: "address_name",
     arguments: query,
   });
-  await entered.promise;
-  const path = join(test.root, "drained.json");
-  const resetting = test.client.callTool({
-    name: "reset_investigation",
-    arguments: { save_path: path },
-  });
-  await test.client.ping();
-  const later = test.client.callTool({
-    name: "address_name",
-    arguments: query,
-  });
-  await test.client.ping();
-  expect(addressCalls).toBe(1);
-  release.resolve();
-  const [, reset, next] = await Promise.all([earlier, resetting, later]);
-  expect(reset.isError, JSON.stringify(reset)).not.toBe(true);
-  expect(next.isError, JSON.stringify(next)).not.toBe(true);
-  const saved = parseEvidenceBundle(JSON.parse(await readFile(path, "utf8")));
-  expect(saved.records).toHaveLength(1);
-  expect(saved.records[0]).toMatchObject({
-    operation: "address_name",
-    normalized_result: "late-before-reset",
-  });
-  expect(reset.structuredContent).toMatchObject({
-    result: cleared(saved, true),
-  });
-  const current = await bundle(test.client);
-  expect(current.records).toEqual([parseEvidence(next.structuredContent)]);
-  expect(current.records[0]?.normalized_result).toBe("fresh-after-reset");
-  expect(test.createClient).toHaveBeenCalledTimes(1);
-  expect(test.providerClose).not.toHaveBeenCalled();
+  const pending: Promise<unknown>[] = [earlier];
+  try {
+    await awaitAcknowledgement(
+      entered.promise,
+      earlier,
+      "analysis before reset entry",
+    );
+    const path = join(test.root, "drained.json");
+    const resetting = test.client.callTool({
+      name: "reset_investigation",
+      arguments: { save_path: path },
+    });
+    pending.push(resetting);
+    await test.client.ping();
+    const later = test.client.callTool({
+      name: "address_name",
+      arguments: query,
+    });
+    pending.push(later);
+    await test.client.ping();
+    expect(addressCalls).toBe(1);
+    release.resolve();
+    const [, reset, next] = await Promise.all([earlier, resetting, later]);
+    expect(reset.isError, JSON.stringify(reset)).not.toBe(true);
+    expect(next.isError, JSON.stringify(next)).not.toBe(true);
+    const saved = parseEvidenceBundle(JSON.parse(await readFile(path, "utf8")));
+    expect(saved.records).toHaveLength(1);
+    expect(saved.records[0]).toMatchObject({
+      operation: "address_name",
+      normalized_result: "late-before-reset",
+    });
+    expect(reset.structuredContent).toMatchObject({
+      result: cleared(saved, true),
+    });
+    const current = await bundle(test.client);
+    expect(current.records).toEqual([parseEvidence(next.structuredContent)]);
+    expect(current.records[0]?.normalized_result).toBe("fresh-after-reset");
+    expect(test.createClient).toHaveBeenCalledTimes(1);
+    expect(test.providerClose).not.toHaveBeenCalled();
+  } finally {
+    release.resolve();
+    await Promise.allSettled(pending);
+  }
 });
 
 it("keeps history after a committed save fails final cleanup and permits its owner's retry", async () => {
@@ -522,24 +534,38 @@ it("preserves the investigation when SDK cancellation arrives during final save 
       (reply) => reply,
       (error: unknown) => error,
     );
-  await entered.promise;
-  controller.abort(
-    new Error("Caller cancelled reset during final save cleanup"),
-  );
-  expect(await resetting).toMatchObject({
-    message: expect.stringContaining("Caller cancelled reset"),
-  });
-  await test.client.ping();
-  release.resolve();
-  // A later admitted read joins server settlement even when SDK cancellation
-  // suppresses the reset reply. The published file and all records must survive.
-  expect(await bundle(test.client)).toEqual(seeded.before);
-  expect(parseEvidenceBundle(JSON.parse(await readFile(path, "utf8")))).toEqual(
-    seeded.before,
-  );
-  expect(
-    (await call(test.client, "reset_investigation")).structuredContent,
-  ).toEqual({ result: cleared(seeded.before, false) });
+  try {
+    await awaitAcknowledgement(
+      entered.promise,
+      resetting,
+      "reset final cleanup entry",
+    );
+    controller.abort(
+      new Error("Caller cancelled reset during final save cleanup"),
+    );
+    expect(await resetting).toMatchObject({
+      message: expect.stringContaining("Caller cancelled reset"),
+    });
+    await test.client.ping();
+    release.resolve();
+    // A later admitted read joins server settlement even when SDK cancellation
+    // suppresses the reset reply. The published file and all records must survive.
+    expect(await bundle(test.client)).toEqual(seeded.before);
+    expect(
+      parseEvidenceBundle(JSON.parse(await readFile(path, "utf8"))),
+    ).toEqual(seeded.before);
+    expect(
+      (await call(test.client, "reset_investigation")).structuredContent,
+    ).toEqual({ result: cleared(seeded.before, false) });
+  } finally {
+    release.resolve();
+    await Promise.allSettled([resetting]);
+    await test.session.withAdmittedAnalysis(
+      "fixture_reset_settlement",
+      undefined,
+      async () => undefined,
+    );
+  }
 });
 
 it("drains admitted work before retrying process cleanup and refuses reset while that owner is unresolved", async () => {
@@ -585,12 +611,18 @@ it("drains admitted work before retrying process cleanup and refuses reset while
       events.push("metadata_drained");
     },
   );
+  const pending: Promise<unknown>[] = [admitted];
   try {
-    await entered.promise;
+    await awaitAcknowledgement(
+      entered.promise,
+      admitted,
+      "metadata before cleanup entry",
+    );
     const resetting = test.client.callTool({
       name: "reset_investigation",
       arguments: { save_path: path, overwrite: true },
     });
+    pending.push(resetting);
     await test.client.ping();
     expect(retry).not.toHaveBeenCalled();
     release.resolve();
@@ -627,7 +659,7 @@ it("drains admitted work before retrying process cleanup and refuses reset while
   } finally {
     cleanupAllowed = true;
     release.resolve();
-    await admitted;
+    await Promise.allSettled(pending);
     retry.mockRestore();
   }
 });

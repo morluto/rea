@@ -32,6 +32,10 @@ import {
 import { ProviderAdapterError } from "./providerAdapterError.js";
 import { UnknownRegistryError } from "./unknownRegistryError.js";
 import { projectAnalysisError } from "./analysisErrorProjection.js";
+import {
+  analysisErrorRemediationAction,
+  analysisErrorUserMessage,
+} from "./analysisErrorPresentation.js";
 import { ProviderSelectionError } from "./providerSelectionError.js";
 import { analysisErrorProjectionSchema } from "../contracts/errorSchemas.js";
 import { nativeCallPartialObservationSchema } from "./native/nativeCallPartialObservation.js";
@@ -1089,9 +1093,11 @@ describe("analysis error projection: caller contract", () => {
 
 describe("analysis error projection: operational diagnostics", () => {
   it("distinguishes an observed Hopper exit from an undetermined provider failure", () => {
-    const exited = projectAnalysisError(
-      new HopperProcessError(7, { operation: "search_strings", requestId: 4 }),
-    );
+    const exitedError = new HopperProcessError(7, {
+      operation: "search_strings",
+      requestId: 4,
+    });
+    const exited = projectAnalysisError(exitedError);
     expect(exited).toMatchObject({
       code: "provider_unavailable",
       retryable: true,
@@ -1104,15 +1110,16 @@ describe("analysis error projection: operational diagnostics", () => {
         exit_code: 7,
       },
     });
-    expect(exited.message).not.toContain("Run `rea doctor`, then try again.");
-    expect(exited.remediation.action).toContain("Restart the owned provider");
-
-    const unknown = projectAnalysisError(
-      new HopperProcessError(null, {
-        operation: "search_strings",
-        requestId: 5,
-      }),
+    expect(exited.message).toBe(analysisErrorUserMessage(exitedError));
+    expect(exited.remediation.action).toBe(
+      analysisErrorRemediationAction(exitedError),
     );
+
+    const unknownError = new HopperProcessError(null, {
+      operation: "search_strings",
+      requestId: 5,
+    });
+    const unknown = projectAnalysisError(unknownError);
     expect(unknown.details).toMatchObject({
       stage: "analysis",
       provider_state: "unknown",
@@ -1121,21 +1128,27 @@ describe("analysis error projection: operational diagnostics", () => {
       request_id: 5,
       exit_code: null,
     });
-    expect(unknown.message).toContain("could not determine");
-    expect(unknown.message).not.toContain("stopped");
-    expect(unknown.remediation.action).toContain("provider_operation_health");
+    expect(unknown.message).toBe(analysisErrorUserMessage(unknownError));
+    expect(unknown.remediation.action).toBe(
+      analysisErrorRemediationAction(unknownError),
+    );
 
-    const unreachable = projectAnalysisError(
-      new HopperProcessError(null, {
+    const unreachableError = new HopperProcessError(null, {
+      operation: "search_strings",
+      providerState: "unreachable",
+    });
+    const unreachable = projectAnalysisError(unreachableError);
+    expect(unreachable).toMatchObject({
+      code: "provider_unavailable",
+      details: {
+        provider_state: "unreachable",
+        retry_action: "restart_provider",
         operation: "search_strings",
-        providerState: "unreachable",
-      }),
-    );
-    expect(unreachable.message).toContain(
-      "close_binary preserves retained Evidence and Unknown history",
-    );
-    expect(unreachable.message).toContain("before ending the REA process");
-    expect(unreachable.remediation.action).toContain("export_evidence_bundle");
+        exit_code: null,
+      },
+      message: analysisErrorUserMessage(unreachableError),
+      remediation: { action: analysisErrorRemediationAction(unreachableError) },
+    });
   });
 });
 
