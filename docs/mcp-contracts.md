@@ -222,10 +222,11 @@ restart or recreate the server to apply changes. If a result cannot fit, REA ret
 `resource_constraint` with `details.resource: "transport"` before constructing
 a document-sized string. Analysis Evidence remains complete in the current
 session. Its exact reference is reported in
-`details.reported_limits.evidence_reference`; call `inspect_analysis_view` with
-that reference for a summary, one section/module, or a stable page, or call
-`export_evidence_bundle` with a destination path. Complete
-bundle exports stream canonical JSON into an atomically published file.
+`details.reported_limits.evidence_reference`; for supported parent operations,
+call `inspect_analysis_view` with that reference and a compatible view. To recover
+any retained record, export the complete session with `export_evidence_bundle`
+to a destination path. Complete bundle exports stream canonical JSON into an
+atomically published file.
 
 On protocol revision `2026-07-28`, completed replies retain the SDK's
 `resultType: "complete"`, including the replacement for an oversized error.
@@ -320,9 +321,12 @@ To discover existing records without their large payloads, call
 `get_evidence_bundle` with `detail: "summary"`. Its `result.records` contain
 Evidence IDs, artifact/provider identities, analysis-profile digests and native
 procedure metadata. Optional `filters` match exact `evidence_id`, `operation`,
-`target_sha256`, `analysis_profile_digest` or `procedure_address`. Use a discovered
-ID with `inspect_analysis_view`; neither discovery nor retained selection starts
-a provider. `retention: "complete-record"` describes stored Evidence, while
+`target_sha256`, `analysis_profile_digest` or `procedure_address`. For a supported
+parent operation, use a discovered ID with a compatible `inspect_analysis_view`;
+neither discovery nor retained selection starts a provider. For records without
+a supported view, request the complete bundle or export it to a caller-selected
+path; complete bundle delivery is subject to the MCP response budget.
+`retention: "complete-record"` describes stored Evidence, while
 `native_dossier.value_flow` independently reports truncation, unavailable or
 unknown metadata. Missing omission counts remain null. Summary output carries
 every matching record; actual transport admission still applies. Omitted
