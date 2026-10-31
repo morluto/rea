@@ -288,9 +288,12 @@ it("retains coalesced static evidence when abort follows a resource frame", asyn
           `${ready} const fs=require("node:fs"); const {createHash}=require("node:crypto"); const staticFacts=JSON.parse(${JSON.stringify(encodedStatic)}); require("node:readline").createInterface({input:process.stdin}).on("line", line => { const request=JSON.parse(line); if(!request.file)return; const text=JSON.stringify(staticFacts); fs.writeFileSync(request.id+".static.json",text); const frames=[{kind:"static",id:request.id,bytes:Buffer.byteLength(text),sha256:createHash("sha256").update(text).digest("hex")},{kind:"failure",id:request.id,reason:"resource",resource:"memory",limits:null,message:"resource failure before abort"}]; process.stdout.write(frames.map(frame=>JSON.stringify(frame)).join("\\n")+"\\n"); });`,
         ],
       });
-      launched.process.stdout?.on("data", (chunk: Buffer | string) => {
-        if (String(chunk).includes("resource failure before abort"))
-          setTimeout(() => controller.abort(null), 5);
+      // One microtask keeps the abort behind the runtime's own reader for the
+      // same chunk without wall-clock timing: the coalesced failure is recorded
+      // primary before cancellation is delivered.
+      observeWorkerFrames(launched.process.stdout, (frame) => {
+        if (frame.kind !== "failure") return;
+        queueMicrotask(() => controller.abort(null));
       });
       return launched;
     },
