@@ -91,6 +91,8 @@ const ipcChannel = <Shape extends z.ZodRawShape>(shape: Shape) =>
       receiver: ipcReceiver,
       invocation_location: range.optional(),
       resolution_basis: z.literal("wrapper-substitution").optional(),
+      invocation_channels: z.literal("literal").exactOptional(),
+      guarded_invocation_channels: strings.exactOptional(),
       ...shape,
       channel: z.null(),
       channel_expression: z.string(),
@@ -297,6 +299,23 @@ const electron = z
         namespace_access: z.boolean().optional(),
         dynamic_member_access: z.boolean().optional(),
       }),
+    ),
+    protocols: z.array(
+      z
+        .strictObject({
+          ...findingContext,
+          api: z.string(),
+          role: z.enum([
+            "os-default-client",
+            "privileged-scheme",
+            "handler",
+            "interceptor",
+          ]),
+          scheme: staticValue,
+          session: z.enum(["default-protocol", "default-session"]),
+          enabled_privileges: strings.nullable(),
+        })
+        .transform(withRuntime),
     ),
   })
   .transform(({ call_paths, app_path_changes, ...rest }) => ({

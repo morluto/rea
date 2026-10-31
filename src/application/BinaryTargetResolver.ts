@@ -47,9 +47,14 @@ import { err, ok, type Result } from "../domain/result.js";
 import { readMipsElfMetadata } from "./MipsElfMetadata.js";
 import { validateElfDeclaredRanges } from "../domain/elfDeclaredRanges.js";
 import {
-  resolveAppBundleExecutable,
+  resolveAppleBundleExecutable,
   type ResolvedAppBundle,
 } from "./AppBundleExecutable.js";
+import {
+  OPENABLE_APPLE_BUNDLE_TYPES_TEXT,
+  isUnopenedAppleBundleExtension,
+  openableAppleBundleExtension,
+} from "../domain/apple/appleBundleTypes.js";
 import {
   validateDosComLength,
   type ExecutableFormatHint,
@@ -853,17 +858,27 @@ const resolveAppBundle = async (
 ): Promise<Result<ResolvedAppBundle, BinaryTargetError>> => {
   const metadata = await stat(path);
   if (!metadata.isDirectory()) return ok({ executable: path });
-  if (extname(path).toLowerCase() !== ".app")
+  if (openableAppleBundleExtension(extname(path)) !== undefined)
+    return resolveAppleBundleExecutable(path);
+  // Another Apple bundle type, such as a driver or kernel extension, is not
+  // an application directory and has no JavaScript route.
+  if (isUnopenedAppleBundleExtension(extname(path)))
     return err(
       new BinaryTargetError(
         path,
-        "this opening route requires a file or app bundle",
-        {
-          constraint: "directory_requires_file",
-        },
+        `${extname(path)} bundle directories are not opened by this route; it opens ${OPENABLE_APPLE_BUNDLE_TYPES_TEXT} bundle directories`,
+        { constraint: "bundle_type_unsupported" },
       ),
     );
-  return resolveAppBundleExecutable(path);
+  return err(
+    new BinaryTargetError(
+      path,
+      "this opening route requires a file or a supported Apple bundle directory",
+      {
+        constraint: "directory_requires_file",
+      },
+    ),
+  );
 };
 
 const readExecutableMetadata = async (

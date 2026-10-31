@@ -152,7 +152,7 @@
     "test": "npm run test:with-build",
     "test:with-build": "npm run test:prepare && vitest run",
     "test:run": "vitest run",
-    "test:python": "python3 -m unittest bridge/native/test_rea_lldb_tracer.py bridge/pwndbg/test_core_context.py bridge/mitmproxy/test_capture.py -v && python3 -m unittest discover -s tests/support/analysis-efficiency -p 'test_*.py' -v",
+    "test:python": "python3 scripts/run-python-tests.py",
     "test:local": "node scripts/run-development-tests.mjs local",
     "test:fast": "node scripts/ci/test-group.mjs source",
     "test:built": "node scripts/ci/test-group.mjs built",

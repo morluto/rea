@@ -10,23 +10,27 @@ inferred from a `.bin` suffix or from unrecognized bytes.
 ## Open and inspect
 
 ```bash
-rea inspect /absolute/path/to/ecu.bin --target-format raw-binary --architecture arm --entry-point 0x8000000 --provider ghidra --json
-rea function /absolute/path/to/ecu.bin 0x8000000 --target-format raw-binary --architecture arm --entry-point 0x8000000 --provider ghidra --json
-rea inspect-native-load-image /absolute/path/to/ecu.bin --target-format raw-binary --architecture arm --entry-point 0x8000000 --provider ghidra --json
+rea inspect /absolute/path/to/kernel.img --target-format raw-binary --architecture arm --entry-point 0x8000 --provider ghidra --json
+rea function /absolute/path/to/kernel.img 0x8000 --target-format raw-binary --architecture arm --entry-point 0x8000 --provider ghidra --json
+rea inspect-native-load-image /absolute/path/to/kernel.img --target-format raw-binary --architecture arm --entry-point 0x8000 --provider ghidra --json
 ```
 
 ```json
 {
   "name": "open_binary",
   "arguments": {
-    "path": "/absolute/path/to/ecu.bin",
+    "path": "/absolute/path/to/kernel.img",
     "format": "raw-binary",
     "architecture": "arm",
-    "entry_point": "0x8000000",
+    "entry_point": "0x8000",
     "provider_id": "ghidra"
   }
 }
 ```
+
+The example maps a 32-bit ARM-state image at `0x8000`. For `arm`, decoding
+starts at the entry in ARM (A32) state, so Thumb-only images, including Cortex-M
+firmware, are not supported. See [Limitations](#limitations).
 
 `architecture` is one of `x86`, `x86_64`, `arm`, `arm64`, `6502`, or `m68k`. `entry_point` is a
 hexadecimal address of the form `0x…`. The complete file is mapped starting at

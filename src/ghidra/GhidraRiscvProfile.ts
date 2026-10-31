@@ -54,7 +54,7 @@ export const ghidraRiscvUnsupportedReason = (
   if (metadata.elfClass !== 32 && metadata.elfClass !== 64)
     return "This Ghidra RISC-V lane requires ELF32 or ELF64; the class decides which generic language is pinned.";
   if ((metadata.flags & EF_RISCV_RVE) !== 0)
-    return "EF_RISCV_RVE declares the embedded 15-register ABI, which needs its own processor specification and compiler verification.";
+    return "EF_RISCV_RVE declares the embedded 16-register ABI (x0-x15), which needs its own processor specification and compiler verification.";
   if ((metadata.flags & EF_RISCV_TSO) !== 0)
     return "EF_RISCV_TSO declares the total-store-order memory model; this lane verifies the baseline model only.";
   if (metadata.type !== ET_EXEC)

@@ -6,7 +6,10 @@ import { describe, expect, it } from "vitest";
 
 import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
 
-import { normalizeCliArguments } from "../../../src/cliBuiltinArguments.js";
+import {
+  normalizeCliArguments,
+  adaptCliOutputArgumentsForIncur,
+} from "../../../src/cliBuiltinArguments.js";
 import {
   renderCliOutputArgumentError,
   renderCliDocument,
@@ -14,7 +17,6 @@ import {
   renderVersionReport,
   parseCliOutputArguments,
 } from "../../../src/cliOutput.js";
-import { adaptCliOutputArgumentsForIncur } from "../../../src/cliBuiltinArguments.js";
 
 const CLI_INTEGRATION_TIMEOUT_MS = 60_000;
 

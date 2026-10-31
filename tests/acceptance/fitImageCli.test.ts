@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, onTestFinished } from "vitest";
@@ -413,3 +414,54 @@ cliTest.for([
       ?.declared_size,
   ).toBe(item.bytes);
 });
+
+cliTest.for([
+  { algo: "sha256", verified: 1, unverified: 0 },
+  { algo: "Xsha256", verified: 0, unverified: 1 },
+  { algo: "\uFEFFsha256", verified: 0, unverified: 1 },
+])(
+  "preserves the exact FIT hash algorithm $algo through the CLI",
+  async ({ algo, verified, unverified }, { cli }) => {
+    const directory = await createTestTempDirectory("rea-fit-algorithm-cli-");
+    const source = join(directory, "boot.itb");
+    await writeFile(
+      source,
+      fitFixture({
+        images: [
+          {
+            name: "kernel",
+            data: FIT_KERNEL,
+            children: [
+              {
+                name: "hash-1",
+                properties: {
+                  algo: dtString(algo),
+                  value: createHash("sha256").update(FIT_KERNEL).digest(),
+                },
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    const inspected = await cli.run({
+      arguments: ["inspect-artifact", source, "--json"],
+    });
+    expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
+    const inspection = artifactInspectionResultSchema.parse(
+      parseEvidence(inspected.json).normalized_result,
+    );
+    const graph = artifactInventoryResultSchema.parse(
+      inspection.substeps[0]?.evidence.normalized_result,
+    );
+    expect(
+      graph.occurrences.find((row) => row.logical_path === "images/kernel.bin")
+        ?.format_metadata,
+    ).toMatchObject({
+      kind: "fit-image",
+      hash_algorithms: [algo],
+      hashes_verified: verified,
+      hashes_unverified: unverified,
+    });
+  },
+);

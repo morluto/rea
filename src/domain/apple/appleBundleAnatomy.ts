@@ -2,11 +2,10 @@ import { z } from "zod";
 
 import type { ProjectedInventoryEntry } from "../mobileApplicationGraphProjection.js";
 import { compareUnicodeCodePoints as compare } from "../unicodeCodePointOrder.js";
+import { APPLE_BUNDLE_EXTENSION } from "./appleBundleTypes.js";
 
 const pathSchema = z.string().min(1);
 
-const BUNDLE_EXTENSION =
-  /\.(?:app|appex|xpc|framework|systemextension|dext|bundle|plugin|qlgenerator|mdimporter)$/iu;
 const MACH_O_FORMATS: readonly string[] = ["mach-o", "mach-o-universal"];
 
 /** One application root or nested bundle classified by path convention. */
@@ -151,7 +150,7 @@ const detectBundles = (tree: Tree, roots: readonly string[]): Bundle[] => {
   const paths = new Set<string>(roots);
   for (const path of directoryPaths(tree)) {
     if (
-      BUNDLE_EXTENSION.test(path.split("/").at(-1) ?? "") &&
+      APPLE_BUNDLE_EXTENSION.test(path.split("/").at(-1) ?? "") &&
       roots.some((root) => isWithin(path, root))
     )
       paths.add(path);

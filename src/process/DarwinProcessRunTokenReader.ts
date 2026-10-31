@@ -10,7 +10,7 @@ import {
   DEFAULT_SWIFTC_COMPILE_TIMEOUT_MS,
   providerStartupTimeoutSchema,
 } from "../config/providerStartupTimeout.js";
-import { MAX_PROVIDER_STARTUP_TIMEOUT_MS } from "../domain/analysisResourceLimits.js";
+import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type {
@@ -132,7 +132,7 @@ export const resolveSwiftcCompileTimeoutMs = (
 
 /** Name the existing swiftc deadline when a helper compile times out. */
 export const swiftcCompileTimeoutRecovery = (timeoutMs: number): string =>
-  `The effective REA_SWIFTC_COMPILE_TIMEOUT_MS value is ${String(timeoutMs)} ms (integer range 1..${String(MAX_PROVIDER_STARTUP_TIMEOUT_MS)}; omitted default ${String(DEFAULT_SWIFTC_COMPILE_TIMEOUT_MS)} ms). Set it in the environment that starts REA and restart REA; the next ownership-helper compile uses the new value.`;
+  `The effective REA_SWIFTC_COMPILE_TIMEOUT_MS value is ${String(timeoutMs)} ms (integer range 1..${String(MAX_NODE_TIMER_DELAY_MS)}; omitted default ${String(DEFAULT_SWIFTC_COMPILE_TIMEOUT_MS)} ms). Set it in the environment that starts REA and restart REA; the next ownership-helper compile uses the new value.`;
 
 /** Bound on compiler diagnostics embedded in the inspection failure text. */
 const STDERR_EXCERPT_LIMIT = 512;

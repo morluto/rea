@@ -869,7 +869,13 @@ rea mcp --http --port 8765
 `--host` and `--port` default to `MCP_HOST` and `MCP_PORT` from the environment,
 then to `127.0.0.1` and an ephemeral port. A bind outside loopback requires
 `MCP_ALLOWED_HOSTS` or `--allowed-hosts`, a comma-separated list of client host
-names or IP addresses without URLs or ports. For example:
+names or IP addresses without URLs or ports.
+
+Repeat `--allowed-hosts` to append names, or put multiple names in one
+comma-separated value. All occurrences are validated together and deduplicated
+after hostname normalization; the explicit list replaces `MCP_ALLOWED_HOSTS`.
+
+For example:
 
 ```sh
 rea mcp --http --host 0.0.0.0 --allowed-hosts 127.0.0.1,rea.lan

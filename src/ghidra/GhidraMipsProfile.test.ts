@@ -13,16 +13,14 @@ import { HopperProvider } from "../hopper/HopperProvider.js";
 import { hopperLoaderArgsForTarget } from "../hopper/HopperAnalysisProfile.js";
 import { IdaProvider } from "../ida/IdaProvider.js";
 import { GhidraProvider } from "./GhidraProvider.js";
-import {
-  ghidraMipsProfileParameters,
-  ghidraPinnedMipsLanguage,
-} from "./GhidraMipsProfile.js";
+import { ghidraMipsProfileParameters } from "./GhidraMipsProfile.js";
 import { ghidraProfileInstallationHost as host } from "./GhidraInstallation.fixture.js";
 import { GHIDRA_SESSION_CAPABILITIES } from "./GhidraSessionValues.js";
 import type { GhidraMipsSoftFloatReport } from "./GhidraMipsProfile.js";
 import {
   ghidraPinnedLanguage,
   ghidraProfileLanguageOverride,
+  ghidraProfilePinnedLanguage,
 } from "./GhidraAnalysisProfile.js";
 
 const parsed = parseConfig({ GHIDRA_INSTALL_DIR: "/ghidra" });
@@ -331,12 +329,12 @@ describe("recordless legacy MIPS admission", () => {
     const pinned = ghidraMipsProfileParameters(
       target({ flags: 0x50000001, abiFlags: null }),
     );
-    expect(ghidraPinnedMipsLanguage(pinned)).toEqual({
+    expect(ghidraProfilePinnedLanguage(pinned)).toEqual({
       languageId: "MIPS:LE:32:default",
       compilerSpecId: "default",
     });
     const standard = ghidraMipsProfileParameters(target());
-    expect(ghidraPinnedMipsLanguage(standard)).toBeUndefined();
+    expect(ghidraProfilePinnedLanguage(standard)).toBeUndefined();
   });
 });
 

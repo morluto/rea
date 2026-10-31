@@ -1,9 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { parseConfig } from "../config/parseConfig.js";
+import {
+  ELF_METADATA_ARCHITECTURES,
+  type BinaryTarget,
+} from "../domain/binaryTargetTypes.js";
 import { silentLogger } from "../logger.js";
 import { err, ok } from "../domain/result.js";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
+import { hopperDeclinedArchitectureReason } from "./HopperAnalysisProfile.js";
 import { HopperClient } from "./HopperClient.js";
 import { HopperProvider } from "./HopperProvider.js";
 import { isSnapshotCacheable } from "../application/binary/AnalysisSnapshotCache.js";
@@ -44,6 +49,9 @@ describe("Hopper provider capabilities", () => {
     }
     expect(routeAllowsSnapshotReplay(route, "get_call_graph")).toBe(false);
   });
+});
+
+describe("Hopper provider target support", () => {
   it("declines caller-selected gamecube-dol targets before the ELF powerpc gate", () => {
     const config = parseConfig({});
     if (!config.ok) throw new Error("expected valid configuration");
@@ -114,27 +122,55 @@ describe("Hopper provider capabilities", () => {
       reason: expect.stringContaining("Ghidra"),
     });
   });
-  it("declines Hexagon targets with a Ghidra-directed reason", () => {
-    const config = parseConfig({});
-    if (!config.ok) throw new Error("expected valid configuration");
-    const provider = new HopperProvider(config.value, silentLogger, {});
-    const support = provider.inspectTargetSupport({
+  it("declines each family Ghidra may admit without stating a Ghidra lane status", () => {
+    const families = [...ELF_METADATA_ARCHITECTURES, "hexagon"] as const;
+    const reasons = families.map((family) =>
+      hopperDeclinedArchitectureReason(family),
+    );
+    for (const [index, family] of families.entries()) {
+      expect(reasons[index]).toContain(family);
+      expect(reasons[index]).toContain("Ghidra");
+    }
+    // Apart from the family's name, every reason is the same text.
+    expect(
+      new Set(
+        reasons.map((reason, index) =>
+          reason.replaceAll(families[index] ?? "", "<family>"),
+        ),
+      ).size,
+    ).toBe(1);
+  });
+  it.each([
+    {
       path: "/tmp/chre_pal.so",
       sha256: "a".repeat(64),
       kind: "executable",
       format: "elf",
       architecture: "hexagon",
       availableArchitectures: ["hexagon"],
-    });
-    expect(support).toMatchObject({
-      status: "unsupported",
-      code: "architecture_unsupported",
-      reason: expect.stringContaining("Hexagon"),
-    });
-    if (support.status === "unsupported") {
-      expect(support.reason).toContain("Ghidra");
-    }
-  });
+    },
+    {
+      path: "/tmp/router.elf",
+      sha256: "a".repeat(64),
+      kind: "executable",
+      format: "elf",
+      architecture: "mips",
+      availableArchitectures: ["mips"],
+      mips: { elfClass: 32, byteOrder: "big", type: 2, flags: 0 },
+    },
+  ] as const satisfies readonly BinaryTarget[])(
+    "declines $architecture targets with the owned reason",
+    (target) => {
+      const config = parseConfig({});
+      if (!config.ok) throw new Error("expected valid configuration");
+      const provider = new HopperProvider(config.value, silentLogger, {});
+      expect(provider.inspectTargetSupport(target)).toMatchObject({
+        status: "unsupported",
+        code: "architecture_unsupported",
+        reason: hopperDeclinedArchitectureReason(target.architecture),
+      });
+    },
+  );
   it("declines thin arm64_32 Mach-O targets without a verified lane", () => {
     const config = parseConfig({});
     if (!config.ok) throw new Error("expected valid configuration");
