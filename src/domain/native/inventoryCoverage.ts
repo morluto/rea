@@ -16,6 +16,18 @@ export const overviewInventoryCoverageSchema = z.strictObject({
   discovery_coverage: inventoryDiscoveryCoverageSchema,
 });
 
-export const overviewInventoryCoverage: z.output<
-  typeof overviewInventoryCoverageSchema
-> = { scope: "provider_inventory", discovery_coverage: "unknown" };
+/**
+ * Label an overview from any producer, including a replayed snapshot saved
+ * before this record existed: the counts' meaning does not depend on who
+ * produced them.
+ */
+export const withOverviewInventoryCoverage = <Value>(overview: Value): Value =>
+  typeof overview === "object" && overview !== null && !Array.isArray(overview)
+    ? {
+        ...overview,
+        inventory_coverage: {
+          scope: "provider_inventory",
+          discovery_coverage: "unknown",
+        } satisfies z.output<typeof overviewInventoryCoverageSchema>,
+      }
+    : overview;

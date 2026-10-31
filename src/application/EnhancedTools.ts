@@ -1,4 +1,5 @@
 import { permitsCapabilityFallback } from "./CapabilityFallback.js";
+import { withOverviewInventoryCoverage } from "../domain/native/inventoryCoverage.js";
 import type { NativeCallGraph } from "../domain/native/nativeCallGraph.js";
 import { nativeProcedureInputSchema } from "../domain/native/nativeProcedureInput.js";
 import { CALL_RELATIONSHIP_TRAVERSALS } from "./CallRelationshipTraversal.js";
@@ -733,7 +734,8 @@ export class EnhancedTools {
       {},
       signal,
     );
-    if (direct.ok || !permitsCapabilityFallback(direct.error)) return direct;
+    if (direct.ok) return ok(withOverviewInventoryCoverage(direct.value));
+    if (!permitsCapabilityFallback(direct.error)) return direct;
     const document = await resolveAnalysisDocument(
       this.analysis,
       undefined,
@@ -768,12 +770,14 @@ export class EnhancedTools {
     if (!stringCount.ok) return stringCount;
 
     return ok(
-      projectBinaryOverview({
-        document: document.value,
-        ...(segments?.ok ? { segments: segments.value } : {}),
-        procedure_count: procedureCount.value,
-        string_count: stringCount.value,
-      }),
+      withOverviewInventoryCoverage(
+        projectBinaryOverview({
+          document: document.value,
+          ...(segments?.ok ? { segments: segments.value } : {}),
+          procedure_count: procedureCount.value,
+          string_count: stringCount.value,
+        }),
+      ),
     );
   }
 

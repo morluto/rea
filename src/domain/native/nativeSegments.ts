@@ -4,7 +4,6 @@ import { AnalysisOutputError } from "../analysisErrorCore.js";
 import type { JsonValue } from "../jsonValue.js";
 import { invalidNativeOutput } from "./nativeProviderOutput.js";
 import { addressDistance } from "./addressCoordinate.js";
-import { overviewInventoryCoverage } from "./inventoryCoverage.js";
 
 export interface SegmentSummary {
   readonly name: string;
@@ -79,6 +78,5 @@ export const projectBinaryOverview = (input: {
         }),
     procedure_count,
     string_count,
-    inventory_coverage: overviewInventoryCoverage,
   };
 };

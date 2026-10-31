@@ -28,7 +28,16 @@ it("uses the provider-owned overview without requesting complete inventories", a
       );
     },
   });
-  expect(await tools.execute("binary_overview", {})).toEqual(ok(result));
+  // A provider or a snapshot saved before the record existed omits it.
+  expect(await tools.execute("binary_overview", {})).toEqual(
+    ok({
+      ...result,
+      inventory_coverage: {
+        scope: "provider_inventory",
+        discovery_coverage: "unknown",
+      },
+    }),
+  );
   expect(calls).toEqual(["read_binary_inventory_summary"]);
 });
 
