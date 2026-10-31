@@ -16,6 +16,7 @@ import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.
 import { err, ok, type Result } from "../domain/result.js";
 import { SharedStartupAttempt } from "../process/SharedStartupAttempt.js";
 import { closeAnalysisClient } from "../application/AnalysisClientCleanup.js";
+import { isCompletedCloseFailure } from "../domain/analysisCloseCompletedError.js";
 
 /** Own deferred client creation while callers wait independently and close joins it. */
 export class AnalysisClientCreation {
@@ -36,6 +37,7 @@ export class AnalysisClientCreation {
   #failure: AnalysisError | undefined;
   #closed = false;
   #clientLease: AnalysisCleanupLease | undefined;
+  #completedCloseFailure: AnalysisError | undefined;
   #closing: Promise<Result<null, AnalysisError>> | undefined;
   #closeOptions: Parameters<AnalysisClient["close"]>[0];
 
@@ -167,6 +169,12 @@ export class AnalysisClientCreation {
             ).bindCleanupDependencies([primary, inspections.error]);
     if (primary !== undefined) {
       const closed = await this.#releaseClient(this.#closeOptions);
+      if (!closed.ok && isCompletedCloseFailure(closed.error)) {
+        primary.retainSecondaryFailure(closed.error, {
+          client_close_failure: projectAnalysisError(closed.error),
+        });
+        return err(primary);
+      }
       return err(
         closed.ok
           ? primary
@@ -250,11 +258,17 @@ export class AnalysisClientCreation {
         this.providerId,
         this.#closeOptions,
       );
-      if (!result.ok) throw result.error;
+      if (!result.ok) {
+        if (isCompletedCloseFailure(result.error))
+          this.#completedCloseFailure = result.error;
+        else throw result.error;
+      }
     });
     try {
       await this.#clientLease.release();
-      return ok(null);
+      const completedFailure = this.#completedCloseFailure;
+      this.#completedCloseFailure = undefined;
+      return completedFailure === undefined ? ok(null) : err(completedFailure);
     } catch (cause: unknown) {
       const failure = new ProviderCleanupError(
         this.providerId,

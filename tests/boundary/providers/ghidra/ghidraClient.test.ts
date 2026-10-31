@@ -13,6 +13,7 @@ import {
   chmod,
   mkdir,
   writeFile,
+  readFile,
   open,
   type FileHandle,
 } from "node:fs/promises";
@@ -124,6 +125,7 @@ const clientFor = (
     readonly logger?: Logger;
     readonly targetPath?: string;
     readonly targetSha256?: string;
+    readonly diagnosticsDir?: string;
   } = {},
 ): GhidraClient => {
   const client = new GhidraClient({
@@ -135,6 +137,9 @@ const clientFor = (
     profileDigest: PROFILE_DIGEST,
     startupTimeoutMs: options.startupTimeoutMs ?? 1_000,
     ...(options.runId === undefined ? {} : { runId: options.runId }),
+    ...(options.diagnosticsDir === undefined
+      ? {}
+      : { diagnosticsDir: options.diagnosticsDir }),
     ...(options.logger === undefined ? {} : { logger: options.logger }),
     ...(options.onDiagnostic === undefined
       ? {}
@@ -2526,3 +2531,88 @@ it.each(["search_procedures", "search_strings"] as const)(
     ).toBe(4);
   },
 );
+
+it("exports request-discoverable diagnostics after the runtime is removed", async () => {
+  const root = await createTestTempDirectory("ghidra-diagnostics-");
+  const launcher = new FixtureLauncher("remote_error");
+  const client = clientFor(launcher, { diagnosticsDir: root });
+  const result = await client.callTool("list_procedures", {
+    document: null,
+    offset: 0,
+    limit: 500,
+  });
+  if (result.ok) throw new Error("Expected remote lookup failure");
+  expect(result.error.diagnostics.diagnostic_scope).toBe("request");
+  expect(result.error.diagnostics).not.toHaveProperty("stdout");
+  const path = result.error.diagnostics.diagnostics_export_path;
+  if (typeof path !== "string")
+    throw new Error("Missing diagnostic export path");
+  await writeFile(
+    join(launcher.runtimeRoots[0]!, "ghidra.log"),
+    `log ${launcher.tokens[0]} end`,
+  );
+  expect((await client.close()).ok).toBe(true);
+  await expect(access(launcher.runtimeRoots[0]!)).rejects.toThrow();
+  expect(await readFile(join(path, "ghidra.log"), "utf8")).toBe(
+    "log [REDACTED] end",
+  );
+  expect(await readFile(join(path, "stdout.log"), "utf8")).toContain(
+    "Fixture launcher startup output",
+  );
+  const manifest = JSON.parse(
+    await readFile(join(path, "manifest.json"), "utf8"),
+  );
+  expect(manifest.files.stdout).toEqual({ status: "complete" });
+  expect(manifest.files.ghidra).toEqual({ status: "captured" });
+  expect(manifest.files.script).toEqual({ status: "unavailable" });
+  expect(manifest.log_source_completeness).toBe("unknown");
+});
+
+it("reports export failure after closing the process and removing the runtime", async () => {
+  const root = await createTestTempDirectory("ghidra-diagnostics-");
+  const launcher = new FixtureLauncher("remote_error");
+  const client = clientFor(launcher, { diagnosticsDir: root });
+  const result = await client.callTool("list_procedures", {
+    document: null,
+    offset: 0,
+    limit: 500,
+  });
+  if (result.ok) throw new Error("Expected remote lookup failure");
+  const path = result.error.diagnostics.diagnostics_export_path;
+  if (typeof path !== "string")
+    throw new Error("Missing diagnostic export path");
+  await writeFile(join(path, "manifest.json.tmp"), "occupied");
+  const closed = await client.close();
+  expect(closed).toMatchObject({
+    ok: false,
+    error: { _tag: "ProviderAdapterError", operation: "diagnostic_export" },
+  });
+  await expect(access(launcher.runtimeRoots[0]!)).rejects.toThrow();
+  expect(launcher.processes[0]?.exitCode).not.toBeNull();
+  expect((await client.close()).ok).toBe(true);
+});
+
+it("returns the finalized export path after automatic startup failure cleanup", async () => {
+  const root = await createTestTempDirectory("ghidra-diagnostics-");
+  const { launcher } = preExitedProcessLauncher({
+    output: "startup output",
+    closeOutput: true,
+  });
+  const client = clientFor(launcher, { diagnosticsDir: root });
+  const started = await client.start();
+  if (started.ok) throw new Error("Expected startup failure");
+  expect(started.error.kind).toBe("process");
+  const path = started.error.diagnostics.diagnostics_export_path;
+  if (typeof path !== "string")
+    throw new Error("Missing diagnostic export path");
+  expect(await readFile(join(path, "stdout.log"), "utf8")).toContain(
+    "startup output",
+  );
+  const manifest = JSON.parse(
+    await readFile(join(path, "manifest.json"), "utf8"),
+  );
+  expect(manifest.files.stdout.status).toBe("complete");
+  const runtimeRoot = started.error.diagnostics.runtime_root;
+  if (typeof runtimeRoot !== "string") throw new Error("Missing runtime root");
+  await expect(access(runtimeRoot)).rejects.toThrow();
+});

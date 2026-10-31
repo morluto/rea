@@ -36,10 +36,23 @@ After the authenticated startup handshake, rejected inputs (`invalid_request`,
 available. They preserve the active request's
 `failure_output`, target/profile identity and runtime/log coordinates, while
 omitting cumulative launcher stdout/stderr and launch-support output. Startup,
-process, protocol and other remote failures retain full session diagnostics.
+process, protocol and other remote failures retain bounded session diagnostics.
 The Ghidra client still owns its bounded cumulative output; this projection does
 not clear it or alter session readiness. Log paths refer to the owned ephemeral
 runtime and are removed by normal cleanup.
+
+To retain diagnostics beyond cleanup, set `REA_GHIDRA_DIAGNOSTICS_DIR` to an
+existing absolute directory before starting REA. Each Ghidra run creates a unique
+subdirectory, reported as `diagnostics_export_path` in failures, including
+request-scoped failures. After shutdown, `manifest.json` describes `stdout.log`,
+`stderr.log`, `ghidra.log`, and `script.log`. Launcher streams are captured beyond
+the in-memory budget; `complete`, `incomplete`, and `error` describe capture.
+Ghidra and script files are copied after the process stops; `captured` means the
+available file was copied, not that Ghidra produced every expected message.
+`unavailable` means no source file existed. Transport credentials are redacted.
+The caller owns these exports and their removal; they may contain target paths or
+other diagnostic data. Export failures are reported, and runtime cleanup still
+proceeds. An export may lack a manifest if its destination cannot be written.
 
 Provider selection and profile identity follow
 [MCP contracts](mcp-contracts.md#identity-and-discovery). One deep

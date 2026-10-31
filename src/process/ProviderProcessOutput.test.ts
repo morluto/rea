@@ -878,3 +878,31 @@ it("marks a stop the owner requested before any signal it sends", async () => {
     stopRequested: true,
   });
 });
+
+it("delivers output beyond the retained diagnostic budget to an opt-in sink", () => {
+  const producer = Object.assign(new EventEmitter(), {
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    exitCode: null,
+    signalCode: null,
+    kill: () => false,
+  });
+  const received: Buffer[] = [];
+  const owner = new ProviderProcessSupervisor(
+    { process: producer, ownsProcessLifetime: true },
+    {
+      maxDiagnosticBytes: 3,
+      onOutput: (_stream, chunk) => received.push(Buffer.from(chunk)),
+    },
+  );
+  producer.stdout.write("first");
+  producer.stdout.write("second");
+  expect(Buffer.concat(received).toString()).toBe("firstsecond");
+  expect(owner.snapshot()).toMatchObject({
+    stdout: { text: "fir", observedBytes: 11 },
+    diagnosticTruncated: true,
+  });
+  owner.dispose();
+  producer.stdout.destroy();
+  producer.stderr.destroy();
+});

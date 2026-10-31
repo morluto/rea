@@ -15,6 +15,7 @@ import type {
   ProviderIdentity,
 } from "../AnalysisProvider.js";
 import { closeAnalysisClient } from "../AnalysisClientCleanup.js";
+import { isCompletedCloseFailure } from "../../domain/analysisCloseCompletedError.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 
 /** Synthetic identity for a deterministic provider set. */
@@ -40,7 +41,8 @@ const closeCompositeClients = (
         const providerId = provider.identity().id;
         if (completed.has(client)) return { providerId, result: ok(null) };
         const result = await closeAnalysisClient(client, providerId, options);
-        if (result.ok) completed.add(client);
+        if (result.ok || isCompletedCloseFailure(result.error))
+          completed.add(client);
         return { providerId, result };
       }),
     );
@@ -51,6 +53,19 @@ const closeCompositeClients = (
     if (failures.length === 1) {
       const failure = failures[0];
       if (failure !== undefined) return err(failure.error);
+    }
+    if (failures.every(({ error }) => isCompletedCloseFailure(error))) {
+      const [first, ...rest] = failures;
+      if (first !== undefined) {
+        for (const { error } of rest) first.error.retainSecondaryFailure(error);
+        first.error.retainDiagnostics({
+          additional_close_failures: rest.map(({ providerId, error }) => ({
+            provider_id: providerId,
+            error: projectAnalysisError(error),
+          })),
+        });
+        return err(first.error);
+      }
     }
     const resources = [
       ...new Set(failures.flatMap(({ error }) => error.cleanupResources)),

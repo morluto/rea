@@ -13,6 +13,7 @@ import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { AnalysisCloseCompletedError } from "../domain/analysisCloseCompletedError.js";
 import {
   providerRetryAction,
   type ProviderOperationHealth,
@@ -110,11 +111,14 @@ import {
 import { GhidraWire } from "./GhidraClientWire.js";
 import { completeGhidraStartupHandshake } from "./GhidraClientStartup.js";
 import { ghidraSessionRoot } from "./GhidraSessionRoot.js";
+import { GhidraDiagnosticExport } from "./GhidraDiagnosticExport.js";
 
 const SHUTDOWN_TIMEOUT_MS = 10_000;
 const SESSION_ROOT = ghidraSessionRoot();
 
 type GhidraStartupAttempt = SharedStartupAttempt<GhidraStartResult>;
+
+class GhidraDiagnosticExportError extends AnalysisCloseCompletedError {}
 
 /** Closed Java-bridge operation union callable after the exact handshake. */
 export type GhidraOperation =
@@ -157,6 +161,7 @@ export class GhidraClient {
   #outputDrainPromise: Promise<boolean> | undefined;
   #outputDrainIncomplete = false;
   #lastDiagnostics: Readonly<Record<string, JsonValue>> = {};
+  #diagnosticExport: GhidraDiagnosticExport | undefined;
   #startupAttempt: GhidraStartupAttempt | undefined;
   #closePromise: Promise<void> | undefined;
   readonly #failure = bindGhidraSessionFailure(
@@ -741,6 +746,7 @@ export class GhidraClient {
   }
 
   #cleanupError(cause: unknown): AnalysisError {
+    if (cause instanceof GhidraDiagnosticExportError) return cause;
     if (cause instanceof AnalysisError && cause.cleanupIncomplete)
       return this.#retainCleanupFailure(cause);
     const failure = new ProviderCleanupError(
@@ -790,8 +796,20 @@ export class GhidraClient {
     );
     try {
       await this.#cleanup();
-      return err(primary);
+      return err(
+        primary.withDiagnostics({
+          ...primary.diagnostics,
+          ...this.#diagnostics(),
+        }),
+      );
     } catch (cause: unknown) {
+      if (cause instanceof GhidraDiagnosticExportError)
+        return err(
+          primary.withDiagnostics({
+            ...primary.diagnostics,
+            ...this.#diagnostics(),
+          }),
+        );
       return err(primary.withCleanupFailure(this.#cleanupError(cause)));
     }
   }
@@ -977,6 +995,27 @@ export class GhidraClient {
     this.#authenticationTokens.add(this.#token);
     this.#lineage.reset();
     this.#runId = this.#options.runId ?? randomUUID();
+    if (this.#options.diagnosticsDir !== undefined) {
+      try {
+        this.#diagnosticExport = new GhidraDiagnosticExport(
+          this.#options.diagnosticsDir,
+          this.#token,
+          {
+            run_id: this.#runId,
+            target_sha256: this.#options.targetSha256,
+            profile_digest: this.#options.profileDigest,
+          },
+        );
+      } catch (cause: unknown) {
+        return this.#startupFailure(
+          this.#failure(
+            "start",
+            "Ghidra diagnostic export allocation failed",
+            cause,
+          ),
+        );
+      }
+    }
     this.#memoryCgroupBaseline = await this.#readMemoryCgroup();
     const launched = await this.#options.launcher
       .launch(
@@ -1006,6 +1045,8 @@ export class GhidraClient {
         this.#process = new ProviderProcessSupervisor(partialLaunch, {
           maxDiagnosticBytes: GHIDRA_PROCESS_DIAGNOSTIC_BYTES,
           outputToken: GHIDRA_JVM_OOME_MARKER,
+          onOutput: (stream, bytes) =>
+            this.#diagnosticExport?.write(stream, bytes),
           onDiagnostic: (event) => this.#onProcessDiagnostic(event),
         });
         this.#startupOutputCheckpoint = this.#process.checkpointOutput();
@@ -1030,6 +1071,7 @@ export class GhidraClient {
     this.#process = new ProviderProcessSupervisor(launched.value, {
       maxDiagnosticBytes: GHIDRA_PROCESS_DIAGNOSTIC_BYTES,
       outputToken: GHIDRA_JVM_OOME_MARKER,
+      onOutput: (stream, bytes) => this.#diagnosticExport?.write(stream, bytes),
       onDiagnostic: (event) => this.#onProcessDiagnostic(event),
     });
     this.#startupOutputCheckpoint = this.#process.checkpointOutput();
@@ -1161,6 +1203,7 @@ export class GhidraClient {
   async #cleanup(forceStop = false): Promise<void> {
     this.#closing = true;
     let forcedStopFailure: { readonly cause: unknown } | undefined;
+    let exportFailure: unknown;
     try {
       this.#requestQueue.failQueued(
         this.#failure("process", "Ghidra session closed"),
@@ -1216,7 +1259,28 @@ export class GhidraClient {
           );
         }
       }
-      this.#lastDiagnostics = this.#diagnostics();
+      if (this.#diagnosticExport !== undefined) {
+        try {
+          this.#diagnosticExport.finish(
+            this.#launch,
+            this.#process?.observedOutputClose() === true &&
+              this.#processSnapshot?.outputIncomplete !== true,
+          );
+        } catch (cause: unknown) {
+          exportFailure = cause;
+        }
+      }
+      this.#lastDiagnostics = {
+        ...this.#diagnostics(),
+        ...(exportFailure === undefined
+          ? {}
+          : {
+              diagnostics_export_error: this.#redactAuthentication(
+                String(exportFailure),
+              ),
+            }),
+      };
+      this.#diagnosticExport = undefined;
       this.#process = undefined;
       this.#launch = undefined;
       await this.#fileResources.retryCleanup();
@@ -1234,6 +1298,14 @@ export class GhidraClient {
       if (forcedStopFailure !== undefined) throw forcedStopFailure.cause;
       for (const failure of this.#cleanupFailures) failure.resolveCleanup();
       this.#cleanupFailures.clear();
+      if (exportFailure !== undefined)
+        throw new GhidraDiagnosticExportError("ghidra", "diagnostic_export", {
+          diagnostics: {
+            ...this.#lastDiagnostics,
+            reason: String(exportFailure),
+          },
+          cause: exportFailure,
+        });
     } finally {
       this.#closing = false;
     }
@@ -1412,6 +1484,9 @@ export class GhidraClient {
       providerVersion: this.#options.providerVersion,
       profileDigest: this.#options.profileDigest,
       ...(this.#runId === undefined ? {} : { runId: this.#runId }),
+      ...(this.#diagnosticExport === undefined
+        ? {}
+        : { diagnosticsExportPath: this.#diagnosticExport.path }),
       ...(this.#runtimeRoot === undefined
         ? {}
         : { runtimeRoot: this.#runtimeRoot.path }),

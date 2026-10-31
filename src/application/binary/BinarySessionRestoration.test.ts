@@ -6,6 +6,7 @@ import {
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { createAnalysisProfile } from "../../domain/analysisProfile.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
+import { AnalysisCloseCompletedError } from "../../domain/analysisCloseCompletedError.js";
 import { err, ok } from "../../domain/result.js";
 import { createAnalysisExecution } from "../AnalysisProvider.js";
 import { AnalysisProviderRegistry } from "./AnalysisProviderRegistry.js";
@@ -137,3 +138,48 @@ it.each([
     }
   },
 );
+
+it("preserves an open failure and completed export failure without inventing pending cleanup", async () => {
+  const session = new BinarySession(
+    SessionProviderRouter.selectable(new AnalysisProviderRegistry([]), []),
+  );
+  const identity = {
+    id: "completed-close",
+    name: "Completed close",
+    version: "1",
+  };
+  const primary = new AnalysisOutputError("health", "startup failed");
+  const exportFailure = new AnalysisCloseCompletedError(
+    identity.id,
+    "diagnostic_export",
+  );
+  let closes = 0;
+  const route: SessionProviderRoute = {
+    identity,
+    capabilities: new Map(),
+    profile: createAnalysisProfile(identity, {}),
+    binding: null,
+    selection: undefined,
+    createClient: () => ({
+      execute: async () => err(primary),
+      close: async () => {
+        closes++;
+        return err(exportFailure);
+      },
+    }),
+  };
+  const target = await session.resolveTarget(process.execPath);
+  if (!target.ok) throw target.error;
+  const result = await session.openResolvedTarget({
+    target: target.value,
+    route,
+  });
+  if (result.ok) throw new Error("Expected startup failure");
+  expect(result.error).toBe(primary);
+  expect(result.error.cleanupIncomplete).toBe(false);
+  expect(result.error.diagnostics).toMatchObject({
+    client_close_failure: { details: { operation: "diagnostic_export" } },
+  });
+  expect(await session.close()).toEqual(ok(null));
+  expect(closes).toBe(1);
+});

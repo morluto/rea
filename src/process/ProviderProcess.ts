@@ -211,6 +211,8 @@ export interface ProviderProcessSupervisorOptions {
    * applies, so its latest occurrence survives an exhausted budget.
    */
   readonly outputToken?: string;
+  /** Observe raw output before the diagnostic retention budget is applied. */
+  readonly onOutput?: (stream: "stdout" | "stderr", bytes: Buffer) => void;
   readonly onDiagnostic?: (event: ProviderProcessDiagnostic) => void;
 }
 
@@ -812,6 +814,7 @@ export class ProviderProcessSupervisor {
     chunk: Buffer | string,
   ): void {
     const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    this.#options.onOutput?.(stream, bytes);
     if (stream === "stdout") {
       this.#stdoutMarker?.scan(bytes, this.#stdoutObservedBytes);
       this.#stdoutObservedBytes += bytes.byteLength;

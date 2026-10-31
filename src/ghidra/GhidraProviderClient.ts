@@ -431,6 +431,9 @@ export const createGhidraProviderClient = (input: {
       }),
     );
   const client = clientFactory({
+    ...(config.ghidraDiagnosticsDir === undefined
+      ? {}
+      : { diagnosticsDir: config.ghidraDiagnosticsDir }),
     startupTimeoutMs: config.ghidraStartupTimeoutMs,
     readStartupTimeoutMs: () => config.ghidraStartupTimeoutMs,
     bridgeMaxRequestBytes: config.bridgeMaxRequestBytes,
