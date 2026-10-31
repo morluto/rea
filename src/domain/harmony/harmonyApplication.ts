@@ -15,8 +15,10 @@ import { nativeRuntimeConvention } from "../nativeConvention.js";
 import {
   projectedBridgeCandidateSchema,
   projectedComponentSchema,
+  projectedContentEntries,
   projectedInventoryEntries,
   projectedFileComponents,
+  projectedUnavailableComponents,
   projectionCoverage,
   projectionEvidenceIdSchema,
   unavailableComponentSchema,
@@ -81,12 +83,8 @@ export const projectHarmonyInventory = (
   const { entries, limitations: unresolved } =
     projectedInventoryEntries(inventory);
   const all = projectedFileComponents(entries);
-  const fileEntries = entries.filter(
-    ({ kind }) => kind === "file" || kind === "slice",
-  );
-  const unavailable = fileEntries.flatMap(({ unavailable }) =>
-    unavailable === undefined ? [] : [unavailable],
-  );
+  const fileEntries = projectedContentEntries(entries);
+  const unavailable = projectedUnavailableComponents(entries);
   const children: HarmonyApplicationProjectionResult["app_pack_children"] = [];
   if (rootFormat === "app-pack") {
     for (const entry of fileEntries) {

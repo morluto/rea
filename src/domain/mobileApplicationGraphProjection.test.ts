@@ -1,11 +1,13 @@
 import { expect, it } from "vitest";
 
 import {
+  projectedContentEntries,
   projectedFileComponents,
+  projectedUnavailableComponents,
   type ProjectedInventoryEntry,
 } from "./mobileApplicationGraphProjection.js";
 
-it("selects authenticated file and slice facts without reordering or deduplicating occurrences", () => {
+it("selects file and slice facts without reordering or deduplicating occurrences", () => {
   const file: ProjectedInventoryEntry = {
     path: "member",
     kind: "file",
@@ -36,17 +38,26 @@ it("selects authenticated file and slice facts without reordering or deduplicati
       limitations: ["Content was not read."],
     },
   };
+  // A link has no content bytes even when the inventory cannot authenticate it.
+  const unreadLink: ProjectedInventoryEntry = {
+    ...unread,
+    path: "unread-link",
+    kind: "symlink",
+  };
   const entries = Object.freeze([
     { ...file, kind: "directory" as const },
     file,
     { ...file, kind: "symlink" as const },
+    unreadLink,
     slice,
     unread,
     file,
   ]);
-  const result = projectedFileComponents(entries);
-  expect(result).toEqual([file.component, slice.component, file.component]);
-  expect(result[0]).toBe(file.component);
-  expect(result[1]).toBe(slice.component);
-  expect(entries[4]).toBe(unread);
+  expect(projectedContentEntries(entries)).toEqual([file, slice, unread, file]);
+  const components = projectedFileComponents(entries);
+  expect(components).toEqual([file.component, slice.component, file.component]);
+  expect(components[0]).toBe(file.component);
+  expect(components[1]).toBe(slice.component);
+  expect(projectedUnavailableComponents(entries)).toEqual([unread.unavailable]);
+  expect(entries[5]).toBe(unread);
 });

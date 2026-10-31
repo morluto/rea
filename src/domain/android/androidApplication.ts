@@ -17,6 +17,7 @@ import {
   projectedComponentSchema,
   projectedInventoryEntries,
   projectedFileComponents,
+  projectedUnavailableComponents,
   projectionCoverage,
   projectionEvidenceIdSchema,
   unavailableComponentSchema,
@@ -99,12 +100,7 @@ export const projectAndroidInventory = (
   const { entries, limitations: unresolved } =
     projectedInventoryEntries(inventory);
   const all = projectedFileComponents(entries);
-  const fileEntries = entries.filter(
-    ({ kind }) => kind === "file" || kind === "slice",
-  );
-  const unavailable = fileEntries.flatMap(({ unavailable }) =>
-    unavailable === undefined ? [] : [unavailable],
-  );
+  const unavailable = projectedUnavailableComponents(entries);
   const classified = classify(all);
   const bridgeProjection = bridgeCandidates(
     [...classified.dex, ...classified.jvm_classes],
