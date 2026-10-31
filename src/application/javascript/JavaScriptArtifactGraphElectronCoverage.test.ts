@@ -73,11 +73,15 @@ const snapshot = {
 
 const graphFor = async (
   source: string,
+  mutate?: (
+    entry: AnalyzedJavaScriptArtifactFile,
+  ) => AnalyzedJavaScriptArtifactFile,
 ): Promise<{
   limitations: readonly string[];
   electronSemantics: string | undefined;
 }> => {
-  const entry = await analyzedEntry(source);
+  const base = await analyzedEntry(source);
+  const entry = mutate === undefined ? base : mutate(base);
   const analysis: JavaScriptArtifactAnalysis = {
     jsonDocuments: new JavaScriptJsonDocuments(),
     files: [entry],
@@ -166,5 +170,37 @@ describe("Electron semantic coverage", () => {
       `const helper = require("electron-helper");\nhelper.run();\n`,
     );
     expect(unrelated.electronSemantics).toBeUndefined();
+  });
+
+  it("keeps the coverage state when a rejected projection drops the file", async () => {
+    // A file whose expanded relationships exceed the result budget is replaced
+    // by a placeholder before the Electron summary runs, so the coverage state
+    // must come from the retained analysis rather than the projected view.
+    const { limitations, electronSemantics } = await graphFor(
+      `const { app } = require("electron");\napp.whenReady();\n`,
+      (entry) => ({
+        ...entry,
+        application_projection_failure: {
+          reason: "result budget exhausted",
+          error: { code: "result_budget_exhausted" },
+          limits: null,
+        },
+      }),
+    );
+    expect(electronSemantics).toBe("empty");
+    expect(limitations).toContain(EMPTY_COVERAGE);
+  });
+
+  it("counts a retained static reference when semantic analysis was skipped", async () => {
+    // Semantic analysis can be skipped for a budget, which leaves the module
+    // links absent while the static reference is still retained.
+    const { electronSemantics } = await graphFor(
+      `const { app } = require("electron");\napp.whenReady();\n`,
+      (entry) => ({
+        ...entry,
+        semantic: null,
+      }),
+    );
+    expect(electronSemantics).toBe("empty");
   });
 });
