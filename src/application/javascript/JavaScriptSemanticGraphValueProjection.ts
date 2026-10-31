@@ -3,7 +3,10 @@ import {
   semanticPropertyPointer,
 } from "../../domain/javascript/javascriptSemanticSlots.js";
 import { digestCanonicalValue } from "../../domain/canonicalDigest.js";
-import type { JavaScriptSemanticBinding } from "../../domain/javascript/javascriptSemanticIr.js";
+import type {
+  JavaScriptSemanticBinding,
+  JavaScriptSemanticIr,
+} from "../../domain/javascript/javascriptSemanticIr.js";
 import type {
   JavaScriptSemanticProperty,
   JavaScriptSemanticValue,
@@ -14,6 +17,7 @@ import {
   addSemanticGraphUnknown,
 } from "./JavaScriptSemanticGraphConstruction.js";
 import type { SemanticFlowProjectionContext } from "./JavaScriptSemanticGraphFlowProjection.js";
+import { foldedAssignedContainerValues } from "./JavaScriptSemanticGraphAssignedValues.js";
 import {
   observedSemanticEvidence,
   unknownSemanticEvidence,
@@ -23,6 +27,7 @@ import {
 export const projectSemanticValues = (
   context: SemanticFlowProjectionContext,
 ): void => {
+  projectAssignedContainerValues(context);
   for (const binding of context.ir.bindings) {
     const bindingNode = context.bindingNodes.get(binding.bindingId);
     if (bindingNode === undefined) continue;
@@ -178,6 +183,94 @@ const projectUnknownInitializer = ({
       path: propertyPath,
     });
   }
+};
+
+/**
+ * Model unconditional top-level `X.p = { container }` like an initializer
+ * for that property slot. Multiple top-level writers to one path keep only
+ * the last assignment's value; conditional or in-function writes already
+ * carry candidate influence edges and stay value-unknown.
+ */
+/** Nested container value covering `path` inside the assigned leaf value. */
+const objectSlotValue = (
+  path: readonly string[],
+  fullPath: readonly string[],
+  value: JavaScriptSemanticValue,
+): JavaScriptSemanticValue => {
+  let current = value;
+  for (let depth = path.length; depth < fullPath.length; depth += 1) {
+    const container = semanticContainer(current);
+    if (container === null)
+      return { status: "unknown", reason: "not-a-container" };
+    const next = container.slots.find((slot) => slot.name === fullPath[depth]);
+    if (next === undefined)
+      return { status: "unknown", reason: "assigned-value-partial-coverage" };
+    current = next.value;
+  }
+  return current;
+};
+
+const projectAssignedContainerValues = (
+  context: SemanticFlowProjectionContext,
+): void => {
+  for (const folded of foldedAssignedContainerValues(context)) {
+    const binding = context.ir.bindings.find(
+      (candidate) => candidate.bindingId === folded.receiverBindingId,
+    );
+    const bindingNode = context.bindingNodes.get(folded.receiverBindingId);
+    if (binding === undefined || bindingNode === undefined) continue;
+    // Materialize each ancestor slot so the container slot itself reports
+    // object/array status; projecting from the binding alone would leave the
+    // property slot unknown and stop read resolution at the container.
+    let parent: ReturnType<typeof semanticPropertySlot> | null = null;
+    for (let depth = 1; depth <= folded.propertyPath.length; depth += 1) {
+      const path = folded.propertyPath.slice(0, depth);
+      const slotName = path[path.length - 1];
+      if (slotName === undefined) break;
+      const slot = semanticPropertySlot(context, binding.bindingId, path, {
+        name: slotName,
+        presence: "present",
+        value:
+          depth === folded.propertyPath.length
+            ? folded.value
+            : nestedAssignedValue(path, folded.propertyPath, folded.value),
+      });
+      addSemanticGraphRelation(context.state, {
+        source: parent ?? bindingNode,
+        target: slot,
+        relation: "writes-property",
+        resolution: "resolved",
+      });
+      if (depth === folded.propertyPath.length)
+        projectValue({
+          context,
+          binding,
+          value: folded.value,
+          target: slot,
+          path,
+        });
+      parent = slot;
+    }
+  }
+};
+
+/** Nested container value covering `path` inside the assigned leaf value. */
+const nestedAssignedValue = (
+  path: readonly string[],
+  fullPath: readonly string[],
+  value: JavaScriptSemanticValue,
+): JavaScriptSemanticValue => {
+  let current = value;
+  for (let depth = path.length; depth < fullPath.length; depth += 1) {
+    const container = semanticContainer(current);
+    if (container === null)
+      return { status: "unknown", reason: "not-a-container" };
+    const next = container.slots.find((slot) => slot.name === fullPath[depth]);
+    if (next === undefined)
+      return { status: "unknown", reason: "assigned-value-partial-coverage" };
+    current = next.value;
+  }
+  return current;
 };
 
 interface ValueProjectionInput {

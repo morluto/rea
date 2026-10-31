@@ -1,3 +1,4 @@
+import type { JavaScriptSourceRange } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
 import {
   semanticSlotAtPath,
   semanticContainer,
@@ -8,7 +9,10 @@ import type {
   JavaScriptSemanticValue,
 } from "../../domain/javascript/javascriptSemanticValueTypes.js";
 import type { JavaScriptSemanticGraphNode } from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
-import type { JavaScriptSemanticObjectOperation } from "../../domain/javascript/javascriptSemanticIr.js";
+import type {
+  JavaScriptSemanticIr,
+  JavaScriptSemanticObjectOperation,
+} from "../../domain/javascript/javascriptSemanticIr.js";
 import {
   retainSemanticGraphNode,
   addSemanticGraphRelation,
@@ -16,7 +20,91 @@ import {
 } from "./JavaScriptSemanticGraphConstruction.js";
 import { unknownSemanticEvidence } from "./JavaScriptSemanticGraphEvidence.js";
 import type { SemanticFlowProjectionContext } from "./JavaScriptSemanticGraphFlowProjection.js";
+import {
+  foldedAssignedContainerValues,
+  type FoldedAssignedValue,
+} from "./JavaScriptSemanticGraphAssignedValues.js";
 import { semanticPropertySlot } from "./JavaScriptSemanticGraphValueProjection.js";
+
+/** Apply folded assignment values to one operation by source position. */
+const withPositionalFolds = (
+  base: JavaScriptSemanticValue | undefined,
+  operation: JavaScriptSemanticObjectOperation,
+  folds: readonly FoldedAssignedValue[] | undefined,
+): JavaScriptSemanticValue | undefined => {
+  if (base === undefined || folds === undefined) return base;
+  let value = base;
+  for (const folded of folds) {
+    const after =
+      operation.location.start.line > folded.target.start.line ||
+      (operation.location.start.line === folded.target.start.line &&
+        operation.location.start.column >= folded.target.end.column);
+    if (after)
+      value = valueWithAssignedContainer(
+        value,
+        folded.propertyPath,
+        folded.value,
+      );
+  }
+  return value;
+};
+
+/** Overwrites one property path with an assigned container value. */
+const valueWithAssignedContainer = (
+  value: JavaScriptSemanticValue,
+  path: readonly string[],
+  assigned: JavaScriptSemanticValue,
+): JavaScriptSemanticValue => {
+  if (path.length === 0) return assigned;
+  const [name, ...rest] = path as [string, ...string[]];
+  if (value.status !== "object" && value.status !== "array")
+    return {
+      status: "object",
+      properties: [
+        {
+          name,
+          value: assignedAtRest(rest, assigned),
+          presence: "present",
+        },
+      ],
+      unknownProperties: false,
+      omittedProperties: 0,
+    };
+  const properties = value.status === "object" ? value.properties : value.items;
+  const updated = properties.map((property) =>
+    property.name === name
+      ? {
+          ...property,
+          value: valueWithAssignedContainer(property.value, rest, assigned),
+          presence: "present" as const,
+        }
+      : property,
+  );
+  if (
+    value.status === "object" &&
+    !updated.some((property) => property.name === name)
+  )
+    updated.push({
+      name,
+      value: assignedAtRest(rest, assigned),
+      presence: "present",
+    });
+  return value.status === "object"
+    ? { ...value, properties: updated }
+    : { ...value, items: updated };
+};
+
+const assignedAtRest = (
+  rest: readonly string[],
+  assigned: JavaScriptSemanticValue,
+): JavaScriptSemanticValue =>
+  rest.length === 0
+    ? assigned
+    : valueWithAssignedContainer(
+        { status: "unknown", reason: "assigned-container-parent" },
+        rest,
+        assigned,
+      );
 
 /** Project static object reads, writes, spreads, and destructuring. */
 export function* projectSemanticObjects(
@@ -25,9 +113,18 @@ export function* projectSemanticObjects(
   const values = new Map(
     context.ir.bindings.map((binding) => [binding.bindingId, binding.value]),
   );
+  // Folded assignment values apply positionally: only reads at or after the
+  // assignment observe them, so an earlier read keeps the pre-assignment fact.
+  const foldsByBinding = new Map<string, FoldedAssignedValue[]>();
+  for (const folded of foldedAssignedContainerValues(context)) {
+    const list = foldsByBinding.get(folded.receiverBindingId) ?? [];
+    list.push(folded);
+    foldsByBinding.set(folded.receiverBindingId, list);
+  }
+  // folds are consumed positionally in objectTarget
   for (const [index, operation] of context.ir.objectOperations.entries()) {
     if (index % 64 === 0) yield;
-    const target = objectTarget(context, values, operation);
+    const target = objectTarget(context, values, operation, foldsByBinding);
     const occurrence = addObjectOccurrence(
       context,
       operation,
@@ -72,15 +169,23 @@ const objectTarget = (
   context: SemanticFlowProjectionContext,
   values: ReadonlyMap<string, JavaScriptSemanticValue>,
   operation: JavaScriptSemanticObjectOperation,
+  foldsByBinding: ReadonlyMap<string, readonly FoldedAssignedValue[]>,
 ): ObjectTarget => {
   const binding =
     operation.objectBindingId === null
       ? undefined
       : context.bindingNodes.get(operation.objectBindingId);
-  const value =
+  const base =
     operation.objectBindingId === null
       ? undefined
       : values.get(operation.objectBindingId);
+  const value = withPositionalFolds(
+    base,
+    operation,
+    operation.objectBindingId === null
+      ? undefined
+      : foldsByBinding.get(operation.objectBindingId),
+  );
   if (
     operation.objectBindingId === null ||
     operation.propertyPath === null ||
