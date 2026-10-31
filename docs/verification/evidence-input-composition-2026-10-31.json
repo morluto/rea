@@ -1,0 +1,1180 @@
+{
+  "schema_version": 1,
+  "record_date": "2026-10-31",
+  "scope": "Factual record of 14 actual local Codex CLI attempts: six initial primary tasks, one interrupted supplemental task, and seven final-runtime tasks. Original source records remain unchanged. This receipt excludes raw transcripts, authentication, account configuration, ambient environment and private workspace paths.",
+  "model_identity": {
+    "requested_alias": "gpt-6.1-terra",
+    "reasoning": "high",
+    "client": "codex-cli 0.165.0",
+    "resolved_server_model": "not inferred or claimed"
+  },
+  "runtime": {
+    "source_base_commit": "23de10bb2849cdce8ddbe70504aa7cc57de75a98",
+    "initial-dirty-runtime": {
+      "runtime_files_sha256": "b25a88f176cb8e874f5b9c5a4f89d2e9f3357c51cc6ee0c4db282a75ed81f378",
+      "working_diff_sha256": "99f9331581c177e399bb2d9caae66eeb656375d58475d24757cd68558a126097",
+      "source_state": "base commit plus uncommitted working tree"
+    },
+    "final-dirty-runtime": {
+      "runtime_files_sha256": "26caffaa63a30858d6f8c22fb299b1cf2a310292e785851bc0847ba75c5b2c0a",
+      "working_diff_sha256": "d1a6404523285eb123e673e76cddcd3d6b38063210862503a500435e30fe6611",
+      "source_state": "same base commit plus later uncommitted working tree"
+    }
+  },
+  "resource_policy": {
+    "logical_CPU_quota_percent": 100,
+    "hard_memory_bytes": 4294967296,
+    "early_stop_bytes": 3221225472,
+    "swap_bytes": 0,
+    "tasks_max": 192,
+    "model_task_timeout_seconds": 850
+  },
+  "measurement_limits": [
+    "Tasks use fresh isolated REA/Codex processes/profiles; provider toolchains were preinstalled, runtime built, OS page cache uncontrolled. No controlled cold/warm or before/after benchmark.",
+    "Actual token totals include schemas, accumulated context, extra calls and retries. Cached input is a subset, not additional input. Byte sizes do not establish token savings.",
+    "Scoped diagnostic/catalog-selection trials change task context/tool exposure; comparisons to full catalog are observational.",
+    "Original Obsidian partial and failed supplemental are retained; final selected smallerJS case does not fix or replace Obsidian limitations.",
+    "Local CPU/process-family memory includes client,MCP and child providers; remote model compute and monitoring outside payload scope are not measured.",
+    "Selected independent managed metadata reader emitted six warnings; no wholeCLI validity or provider-complete correctness claim.",
+    "Signed archive naming/path hints do not establish cryptographic authenticity. Static model trials did not execute targets; the controlled jq process captures were executed separately, as recorded in their provenance.",
+    "Kernel local resource counters are observed at payload exit with observer alive, not final whole-scope counters. All per-run requested model/reasoning/client settings equal model_identity; cached_input_tokens is a subset of input_tokens."
+  ],
+  "artifacts": {
+    "jq": {
+      "file_name": "jq",
+      "bytes": 30800,
+      "sha256": "90b1eef4498f31836342898fc6e97cfeb8a197c4366773a0fb120ae02a45ea52",
+      "provenance": {
+        "kind": "existing-system-installed-file",
+        "observed_path": "/usr/bin/jq",
+        "publisher_authenticity": "not established by file identity"
+      },
+      "independent_facts": {
+        "format": "ELF64",
+        "machine": 62,
+        "entry": "0x3e40"
+      },
+      "oracles": ["base-artifacts", "jq-disassembly"]
+    },
+    "obsidian-asar": {
+      "file_name": "obsidian-1.14.4.asar",
+      "bytes": 27477966,
+      "sha256": "146ef8470d8cbb4a6db209bdc19bf2bad13350444186c0fd93c31087b142b92f",
+      "provenance": {
+        "kind": "official-public-release-gzip-streamed-to-ASAR",
+        "url": "https://github.com/obsidianmd/obsidian-releases/releases/download/v1.14.4/obsidian-1.14.4.asar.gz",
+        "transport_bytes": 9200670,
+        "transport_sha256": "d1ed428c363968774f0f3906e67d8a53a058ece0b6cdd924b07865977b2ada21",
+        "version": "1.14.4"
+      },
+      "independent_facts": {
+        "asar_entries": 396,
+        "package_name": "obsidian-dev",
+        "package_version": "1.14.4"
+      },
+      "oracles": ["base-artifacts", "obsidian-literals"]
+    },
+    "nuget-cli": {
+      "file_name": "NuGet.CommandLine.XPlat.dll",
+      "bytes": 756736,
+      "sha256": "ddea7807716a77a166cc321ddfad566e80569d9919dd8ecdf0ce50e4e9059642",
+      "provenance": {
+        "kind": "existing-local-dotnet-SDK-copy",
+        "SDK_version": "8.0.427",
+        "assembly_version": "6.11.2.1",
+        "publisher_authenticity": "not independently established"
+      },
+      "independent_facts": {
+        "mvid": "30253a31-d9fc-46b8-89c2-c793e1d5689e",
+        "type_defs": 295,
+        "method_defs": 1507
+      },
+      "oracles": ["base-artifacts", "managed-getter"]
+    },
+    "css-wasm": {
+      "file_name": "tree-sitter-css.wasm",
+      "bytes": 128668,
+      "sha256": "8a23977fe271357cce6f254ef88c9bebf3854602d8046605aef6a45c02135c59",
+      "provenance": {
+        "kind": "existing-installed-copy-matching-pinned-repository-corpus-member",
+        "project": "VS Code Tree-sitter published WASM package",
+        "version": "0.3.1",
+        "upstream_url": "https://registry.npmjs.org/@vscode/tree-sitter-wasm/-/tree-sitter-wasm-0.3.1.tgz",
+        "transport_sha256": "985684b2cfbe5e8f90499a9f36e37519887c7d4e2697d0457d0f1e923ce5184c",
+        "transport_scope": "Published corpus provenance; transport archive was not reacquired for this validation."
+      },
+      "independent_facts": {
+        "imports": 7,
+        "exports": 3,
+        "tree_sitter_css": {
+          "function_index": 9,
+          "parameters": [],
+          "results": ["i32"]
+        }
+      },
+      "oracles": ["base-artifacts", "wasm-interface"]
+    },
+    "rectangle-zip": {
+      "file_name": "Rectangle2.0.4.zip",
+      "bytes": 5080855,
+      "sha256": "0b9b8b11edeb3237e3224c619a6f6bfb5e5996a477048be6ff4b98b0346aedc9",
+      "provenance": {
+        "kind": "official-public-release",
+        "url": "https://github.com/rxhanson/Rectangle/releases/download/v2.0.4/Rectangle2.0.4.zip",
+        "version": "2.0.4"
+      },
+      "independent_facts": {
+        "zip_entries": 274,
+        "symlinks": 6,
+        "app_root": "Rectangle.app"
+      },
+      "oracles": ["base-artifacts", "rectangle-members"]
+    },
+    "agent-browser-entry": {
+      "file_name": "bin/agent-browser.js",
+      "bytes": 3184,
+      "sha256": "8e382f4a5ba22f45e1e0339abfe5a55ed95a19540b16a69ee3faf31c8dc8216a",
+      "provenance": {
+        "kind": "existing-installed-npm-package-entrypoint",
+        "package": "agent-browser",
+        "version": "0.27.0",
+        "repository_from_package_metadata": "https://github.com/vercel-labs/agent-browser",
+        "publisher_authenticity": "not independently established"
+      },
+      "independent_facts": {
+        "import_sources": ["child_process", "fs", "path", "url", "os"],
+        "import_lines": [11, 12, 13, 14, 15],
+        "source_functions": ["isMusl", "getBinaryName", "main"]
+      },
+      "identity_scope": "Harness pins individual entrypoint bytes; REA application subject identifies the containing directory, separately.",
+      "oracles": ["agent-browser-entry", "agent-browser-locations"]
+    },
+    "newpipe-apk": {
+      "file_name": "NewPipe_v0.29.1.apk",
+      "bytes": 11507122,
+      "sha256": "18447bfb1e06d113edc88df93f471827280de06f6f3d4dc42f56f28b9c1bab79",
+      "provenance": {
+        "kind": "official-public-release-matching-repository-corpus-pin",
+        "url": "https://github.com/TeamNewPipe/NewPipe/releases/download/v0.29.1/NewPipe_v0.29.1.apk",
+        "version": "0.29.1"
+      },
+      "independent_facts": {
+        "zip_entries": 1375,
+        "dex_members": 3,
+        "native_ABI_members": 4
+      },
+      "oracles": ["mobile-bytes"]
+    },
+    "shark-zip": {
+      "file_name": "Shark-default-v1.0.8-signed.zip",
+      "bytes": 1854336,
+      "sha256": "086861edbee759f9f2b48ee4e0bdce02a61cda6df39b465564df39973da4a18b",
+      "provenance": {
+        "kind": "official-public-release-asset-digest",
+        "url": "https://github.com/xiaobingtech/Shark/releases/download/v1.0.8/Shark-default-v1.0.8-signed.zip",
+        "version": "v1.0.8",
+        "release_api": "https://api.github.com/repos/xiaobingtech/Shark/releases/tags/v1.0.8"
+      },
+      "oracles": ["shark-app-member"]
+    },
+    "shark-app": {
+      "file_name": "Shark-default-v1.0.8-signed.app",
+      "bytes": 1867667,
+      "sha256": "b2344fb11bb31477c5c44734c2d26fd29adcab40719712664e48f973ae0909d3",
+      "provenance": {
+        "kind": "exact-regular-ZIP-member",
+        "parent_artifact_id": "shark-zip",
+        "member_path": "Shark-default-v1.0.8-signed.app"
+      },
+      "independent_facts": {
+        "members": ["pac.json", "pack.info", "entry-default.hap"]
+      },
+      "oracles": ["shark-app-member", "mobile-bytes"]
+    },
+    "shark-hap": {
+      "file_name": "Shark-v1.0.8-entry-default.hap",
+      "bytes": 3061314,
+      "sha256": "177659902ed83329a5fbda867c7985660aa2d33f71cbc8ac8baf53b7da4caac8",
+      "provenance": {
+        "kind": "exact-regular-APP-member",
+        "parent_artifact_id": "shark-app",
+        "member_path": "entry-default.hap"
+      },
+      "independent_facts": {
+        "zip_entries": 55,
+        "selected_members": {
+          "module.json": 1979,
+          "resources.index": 3827,
+          "ets/modules.abc": 775040
+        }
+      },
+      "oracles": ["shark-app-member", "mobile-bytes"]
+    },
+    "process-capture-bundle": {
+      "file_name": "captures.bundle.json",
+      "bytes": 15199,
+      "sha256": "55da0f130dc2265aae54261d49949471e5c929163c2b7314b42e95df3325b739",
+      "provenance": {
+        "kind": "two-authentic-controlled-local-jq-captures",
+        "executable_artifact_id": "jq",
+        "scenario": "jq -cn with explicit before/after revision filters and equal comparison contracts; capture producers ran separately from static model trial."
+      },
+      "capture_evidence_ids": [
+        "ev_892da4f0557c355c1127634b9c69780d2e9f7dc64ddc75e39093dba382e4b525",
+        "ev_33bb6e0546183b842d986bbf422e3d1f7281030aee543689d25e2efe2baebd28"
+      ],
+      "independent_facts": {
+        "before": {
+          "domain": "rea-process",
+          "revision": "before"
+        },
+        "after": {
+          "domain": "rea-process",
+          "revision": "after"
+        },
+        "root_exit_codes": [0, 0],
+        "truncated": [false, false],
+        "settlement_states": ["unverifiable", "quiesced"]
+      },
+      "oracles": ["process-capture", "process-output", "process-inline"]
+    }
+  },
+  "oracles": {
+    "base-artifacts": {
+      "receipt_file": "independent-oracles.json",
+      "sha256": "9a073a390f6b34efff311d9485669394f867eebbe69d446c135c1ed0935aaf8c",
+      "scope": "Independent Python ELF/ASAR/ZIP/WASM bytes and dnfile selected managed metadata."
+    },
+    "jq-disassembly": {
+      "receipt_file": "jq-objdump.txt",
+      "sha256": "97abd64e549b9145bed646da9527961ad49f52706d04cac08f80f095a0eeb42c",
+      "scope": "Independent objdump static call instructions; provider addresses use image-base shift0x100000."
+    },
+    "managed-getter": {
+      "receipt_file": "managed-selected-member-oracle.json",
+      "sha256": "489bb5734e15f3fb5918156c18ca00f5704a67b13d00fbaeb0d3639941f16d81",
+      "scope": "Independent owner/token/signature and raw selected getter CIL bytes; generic MemberRef remains unresolved."
+    },
+    "wasm-interface": {
+      "receipt_file": "wasm-signature-oracle.json",
+      "sha256": "ebfb954f1f606173fe0539f8781b3d8ad8724f1e137bbe222dd048b0386503c7",
+      "scope": "Independent WASMv1 section/type/function/export parsing, not complete validation."
+    },
+    "rectangle-members": {
+      "receipt_file": "artifact-selected-members-oracle.json",
+      "sha256": "aa670d3f5218fad2e1d8b3d27cfc3e3ccdf7e487130655d9ee18eca188d5c40e",
+      "scope": "ZIP membership, six Unix symlinks and universal Mach-O magic."
+    },
+    "obsidian-literals": {
+      "receipt_file": "javascript-selected-literal-oracle.json",
+      "sha256": "6b89e8e3345b306d3fa730cb0c06c431952a146b22bdc80361ed7d28321669e0",
+      "scope": "Exact app.js bytes/literal locations and proximity, not behavior."
+    },
+    "agent-browser-entry": {
+      "receipt_file": "agent-browser-shipped-artifact.json",
+      "sha256": "fa15475292bdeae665824387eeee39edb21c89f8fea9acd1cc98c52488cc5081",
+      "scope": "Actual installed npm metadata and shipped wrapper file identity/source declarations."
+    },
+    "agent-browser-locations": {
+      "receipt_file": "agent-browser-source-locations.json",
+      "sha256": "86de5f9df5e02e0552172f69798a6539ea60df8683877c932879d905b4103d12",
+      "scope": "Exact static import/function/call syntax source positions."
+    },
+    "mobile-bytes": {
+      "receipt_file": "mobile-independent-oracles.json",
+      "sha256": "3b2384558020bff1ec6d91b97be7e7048f80f9a034e21741606a7cd2dcde3498",
+      "scope": "APK/HAP ZIP members/hashes, ELF headers and independently parsed Harmony JSON declarations."
+    },
+    "shark-app-member": {
+      "receipt_file": "harmony-shark-app-identity.json",
+      "sha256": "2ff4e7e82373735d44f8e00da790e512e096a85864c3066a9d4ca20077aa4d07",
+      "scope": "Official ZIP -> APP -> HAP exact member byte identities; no signature verification."
+    },
+    "process-capture": {
+      "receipt_file": "process/validation-summary.json",
+      "sha256": "37da2e897f19e980815bf31b7fef60236a3c7de707776b2ccf5c86c7b7e8e09a",
+      "scope": "Actual controlled jq capture receipts, owned cleanup, rendered terminal JSON and comparison scope."
+    },
+    "process-output": {
+      "receipt_file": "process/independent-oracle.json",
+      "sha256": "c48c2083a9b23bb80a91ac74859668a24f815b543df6a26176ed7daeee16574f",
+      "scope": "Controlled terminal JSON revision before/after, observed independently of REA comparison."
+    },
+    "process-inline": {
+      "receipt_file": "process/expected.json",
+      "sha256": "72e430aaf4e6505039e414bc3deda56a568cd60bb686780220c92acc0a2a1278",
+      "scope": "Existing actual inline CLI comparison result and capture IDs, matched against MCP result."
+    },
+    "wasm-export": {
+      "receipt_file": "final-runtime-cohort/wasm-export-identity.json",
+      "sha256": "0937303fff3223a8a79aee5453240157bff4413ca16809ca83dc8a5a2454dc89",
+      "scope": "Actual model-exported bundle bytes, four records, exact source/comparison IDs; CLI follow-up not executed by this agent."
+    }
+  },
+  "runs": [
+    {
+      "id": "initial/artifact-rectangle-01",
+      "runtime_id": "initial-dirty-runtime",
+      "cohort": "complete-catalog-primary",
+      "artifact_id": "rectangle-zip",
+      "prompt_sha256": "1136286c9772e6a4a3679255c2bb994153035112382558ef343b72609d6ac65e",
+      "usage": {
+        "scope": "completed-turn",
+        "input_tokens": 346798,
+        "cached_input_tokens": 295680,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1540,
+        "reasoning_output_tokens": 46
+      },
+      "calls": {
+        "completed": 6,
+        "failed": 0,
+        "by_tool": {
+          "open_binary": 1,
+          "inspect_artifact": 1,
+          "inspect_analysis_view": 1,
+          "project_apple_application_graph": 1,
+          "compare_artifacts": 1,
+          "close_binary": 1
+        }
+      },
+      "elapsed_seconds": {
+        "task": 40.218,
+        "complete_resource_scope": 40.818
+      },
+      "local_resources": {
+        "cpu_usec": 8063731,
+        "peak_process_family_memory_bytes": 681668608,
+        "observation_verified": true,
+        "oom": 0,
+        "oom_kill": 0
+      },
+      "cleanup": {
+        "payload_family_verified": true,
+        "copied_auth_profile_removed": true
+      },
+      "target_bytes_unchanged": true,
+      "client_exit_code": 0,
+      "task_timeout": false,
+      "resource_abort": null,
+      "outcome": "passed_within_reviewed_task_facts",
+      "known_limitations": [
+        "Six symlink availabilities remain unknown; self-comparison overallunknown,269unchanged+6unknown. Path roles do not establish parsed plist/runtime behavior."
+      ],
+      "tool_profile_id": "complete-catalog"
+    },
+    {
+      "id": "initial/javascript-agent-browser-01",
+      "runtime_id": "initial-dirty-runtime",
+      "cohort": "complete-catalog-failed-supplemental",
+      "artifact_id": "agent-browser-entry",
+      "prompt_sha256": "bd40c5aced0ad3784732707612868fd70fcccffc1def5c09381f710ada5a09c6",
+      "usage": {
+        "scope": "observed-cumulative-lower-bound-before-interruption",
+        "input_tokens": 1234923,
+        "cached_input_tokens": 1182336,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 3274,
+        "reasoning_output_tokens": 716,
+        "total_tokens": 1238197,
+        "observed_at": "2026-10-31T11:14:00.265Z",
+        "final_total": "unavailable"
+      },
+      "calls": {
+        "completed": 31,
+        "failed": 10,
+        "by_tool": {
+          "inspect_desktop_application": 22,
+          "search_guidance": 2,
+          "open_binary": 2,
+          "read_bytes": 1,
+          "read_guidance_section": 1,
+          "analyze_javascript_application": 1,
+          "close_binary": 2
+        }
+      },
+      "elapsed_seconds": {
+        "task": 86.873,
+        "complete_resource_scope": 87.528
+      },
+      "local_resources": {
+        "cpu_usec": 23684944,
+        "peak_process_family_memory_bytes": 937619456,
+        "observation_verified": true,
+        "oom": 0,
+        "oom_kill": 0
+      },
+      "cleanup": {
+        "payload_family_verified": true,
+        "copied_auth_profile_removed": true
+      },
+      "target_bytes_unchanged": true,
+      "client_exit_code": 0,
+      "task_timeout": false,
+      "resource_abort": null,
+      "outcome": "terminated_for_model_task_scope_deviation",
+      "known_limitations": [
+        "Terminated after model wandered beyond supplied target and used wrong analysis input; no final answer/composition claim.",
+        "Tool availability proven by typed response from application-analysis tool; this was target/task-following failure.",
+        "Graceful client exit0 does not establish completed task. Final completed-turn usage absent; retained last cumulative usage is a lower bound only."
+      ],
+      "tool_profile_id": "complete-catalog"
+    },
+    {
+      "id": "initial/javascript-obsidian-01",
+      "runtime_id": "initial-dirty-runtime",
+      "cohort": "complete-catalog-primary",
+      "artifact_id": "obsidian-asar",
+      "prompt_sha256": "b6fa427f876d1270000f48853a4736fac76044d5fe576ee0aaf1a01faab7767c",
+      "usage": {
+        "scope": "completed-turn",
+        "input_tokens": 679803,
+        "cached_input_tokens": 644480,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 2233,
+        "reasoning_output_tokens": 308
+      },
+      "calls": {
+        "completed": 7,
+        "failed": 4,
+        "by_tool": {
+          "analyze_javascript_application": 1,
+          "inspect_analysis_view": 4,
+          "trace_application_feature": 1,
+          "trace_javascript_semantics": 1
+        }
+      },
+      "elapsed_seconds": {
+        "task": 347.242,
+        "complete_resource_scope": 347.812
+      },
+      "local_resources": {
+        "cpu_usec": 313685188,
+        "peak_process_family_memory_bytes": 1871228928,
+        "observation_verified": true,
+        "oom": 0,
+        "oom_kill": 0
+      },
+      "cleanup": {
+        "payload_family_verified": true,
+        "copied_auth_profile_removed": true
+      },
+      "target_bytes_unchanged": true,
+      "client_exit_code": 0,
+      "task_timeout": false,
+      "resource_abort": null,
+      "outcome": "partial_task_existing_producer_timeout_and_output_limit",
+      "known_limitations": [
+        "Initial source hit existing300000ms deadline; retained partial source reused without producer replay.",
+        "Feature computation retained but >=10534041-byte response exceeded10MiB transport budget; feature summary unsupported.",
+        "One model view-argument error. Requested bounded feature task remained incomplete;31of32sources unexamined."
+      ],
+      "tool_profile_id": "complete-catalog"
+    },
+    {
+      "id": "initial/managed-nuget-01",
+      "runtime_id": "initial-dirty-runtime",
+      "cohort": "complete-catalog-primary",
+      "artifact_id": "nuget-cli",
+      "prompt_sha256": "04580fa379f975f315b2b35b370824c9c668f36c913aa976fafe50cbc5a19879",
+      "usage": {
+        "scope": "completed-turn",
+        "input_tokens": 312762,
+        "cached_input_tokens": 258560,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1977,
+        "reasoning_output_tokens": 184
+      },
+      "calls": {
+        "completed": 8,
+        "failed": 1,
+        "by_tool": {
+          "inspect_managed_artifact": 1,
+          "inspect_managed_members": 2,
+          "inspect_analysis_view": 3,
+          "project_managed_application_graph": 1,
+          "compare_managed_members": 1
+        }
+      },
+      "elapsed_seconds": {
+        "task": 47.209,
+        "complete_resource_scope": 47.757
+      },
+      "local_resources": {
+        "cpu_usec": 9963962,
+        "peak_process_family_memory_bytes": 884748288,
+        "observation_verified": true,
+        "oom": 0,
+        "oom_kill": 0
+      },
+      "cleanup": {
+        "payload_family_verified": true,
+        "copied_auth_profile_removed": true
+      },
+      "target_bytes_unchanged": true,
+      "client_exit_code": 0,
+      "task_timeout": false,
+      "resource_abort": null,
+      "outcome": "passed_within_reviewed_task_facts",
+      "known_limitations": [
+        "One expected typed refusal: managed member comparison requires distinct Evidence. Selected metadata and getter CIL matched independent reader; six dnfile compressed-integer warnings preclude whole-file validity claim."
+      ],
+      "tool_profile_id": "complete-catalog"
+    },
+    {
+      "id": "initial/native-jq-01",
+      "runtime_id": "initial-dirty-runtime",
+      "cohort": "complete-catalog-primary",
+      "artifact_id": "jq",
+      "prompt_sha256": "771bbef6a8e4b544707ed533a4d80f16fd45fb5f133efe061f347ab3adfc7025",
+      "usage": {
+        "scope": "completed-turn",
+        "input_tokens": 619582,
+        "cached_input_tokens": 558208,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1707,
+        "reasoning_output_tokens": 119
+      },
+      "calls": {
+        "completed": 12,
+        "failed": 2,
+        "by_tool": {
+          "open_binary": 1,
+          "list_procedures": 2,
+          "procedure_callees": 1,
+          "analyze_function": 2,
+          "build_call_path": 2,
+          "compare_functions": 2,
+          "search_guidance": 1,
+          "close_binary": 1
+        }
+      },
+      "elapsed_seconds": {
+        "task": 74.555,
+        "complete_resource_scope": 75.181
+      },
+      "local_resources": {
+        "cpu_usec": 34261922,
+        "peak_process_family_memory_bytes": 1463037952,
+        "observation_verified": true,
+        "oom": 0,
+        "oom_kill": 0
+      },
+      "cleanup": {
+        "payload_family_verified": true,
+        "copied_auth_profile_removed": true
+      },
+      "target_bytes_unchanged": true,
+      "client_exit_code": 0,
+      "task_timeout": false,
+      "resource_abort": null,
+      "outcome": "passed_within_reviewed_task_facts",
+      "known_limitations": [
+        "Two model argument failures omitted required reference kind; guidance corrected them. Each dossier producer called once; static direct call corroborated, runtime unknown."
+      ],
+      "tool_profile_id": "complete-catalog"
+    },
+    {
+      "id": "initial/reference-negative-01",
+      "runtime_id": "initial-dirty-runtime",
+      "cohort": "complete-catalog-primary",
+      "artifact_id": null,
+      "prompt_sha256": "11930f48db70d30ca33623a4c583aa9158501f08a6b82043ef439e8316d9d6b3",
+      "usage": {
+        "scope": "completed-turn",
+        "input_tokens": 36805,
+        "cached_input_tokens": 23680,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 284,
+        "reasoning_output_tokens": 0
+      },
+      "calls": {
+        "completed": 1,
+        "failed": 1,
+        "by_tool": {
+          "build_call_path": 1
+        }
+      },
+      "elapsed_seconds": {
+        "task": 18.152,
+        "complete_resource_scope": 18.708
+      },
+      "local_resources": {
+        "cpu_usec": 5248159,
+        "peak_process_family_memory_bytes": 518017024,
+        "observation_verified": true,
+        "oom": 0,
+        "oom_kill": 0
+      },
+      "cleanup": {
+        "payload_family_verified": true,
+        "copied_auth_profile_removed": true
+      },
+      "target_bytes_unchanged": null,
+      "client_exit_code": 0,
+      "task_timeout": false,
+      "resource_abort": null,
+      "outcome": "passed_expected_missing_reference_failure",
+      "known_limitations": [
+        "One intentional unknown-ID failure; exact missing retained-closure diagnostic/recovery preserved. No target opened or retry."
+      ],
+      "tool_profile_id": "complete-catalog"
+    },
+    {
+      "id": "initial/wasm-css-01",
+      "runtime_id": "initial-dirty-runtime",
+      "cohort": "complete-catalog-primary",
+      "artifact_id": "css-wasm",
+      "prompt_sha256": "62d72a4715be9912e0463304d22046d101ae1508f2713d392e08268c6beb5777",
+      "usage": {
+        "scope": "completed-turn",
+        "input_tokens": 226862,
+        "cached_input_tokens": 186240,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 934,
+        "reasoning_output_tokens": 70
+      },
+      "calls": {
+        "completed": 4,
+        "failed": 0,
+        "by_tool": {
+          "inspect_wasm_artifact": 1,
+          "inspect_analysis_view": 1,
+          "compare_wasm_interfaces": 1,
+          "close_binary": 1
+        }
+      },
+      "elapsed_seconds": {
+        "task": 33.172,
+        "complete_resource_scope": 33.678
+      },
+      "local_resources": {
+        "cpu_usec": 9233193,
+        "peak_process_family_memory_bytes": 723169280,
+        "observation_verified": true,
+        "oom": 0,
+        "oom_kill": 0
+      },
+      "cleanup": {
+        "payload_family_verified": true,
+        "copied_auth_profile_removed": true
+      },
+      "target_bytes_unchanged": true,
+      "client_exit_code": 0,
+      "task_timeout": false,
+      "resource_abort": null,
+      "outcome": "passed_within_reviewed_task_facts",
+      "known_limitations": [
+        "Static interface self-comparison only; no runtime/ABI/linking compatibility claim."
+      ],
+      "tool_profile_id": "complete-catalog"
+    },
+    {
+      "id": "final/android-newpipe-final-01",
+      "runtime_id": "final-dirty-runtime",
+      "cohort": "diagnostic/catalog-selection",
+      "artifact_id": "newpipe-apk",
+      "prompt_sha256": "b9530066a166ba81d4a4a012f48918cbbc5579c84d2ff0bd998520b3e770fe65",
+      "usage": {
+        "scope": "completed-turn",
+        "input_tokens": 179635,
+        "cached_input_tokens": 150528,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1750,
+        "reasoning_output_tokens": 46
+      },
+      "calls": {
+        "completed": 5,
+        "failed": 0,
+        "by_tool": {
+          "open_binary": 1,
+          "inspect_artifact": 1,
+          "project_android_application_graph": 1,
+          "inspect_analysis_view": 1,
+          "close_binary": 1
+        }
+      },
+      "elapsed_seconds": {
+        "task": 40.835,
+        "complete_resource_scope": 41.352
+      },
+      "local_resources": {
+        "cpu_usec": 10080132,
+        "peak_process_family_memory_bytes": 704409600,
+        "observation_verified": true,
+        "oom": 0,
+        "oom_kill": 0
+      },
+      "cleanup": {
+        "payload_family_verified": true,
+        "copied_auth_profile_removed": true
+      },
+      "target_bytes_unchanged": true,
+      "client_exit_code": 0,
+      "task_timeout": false,
+      "resource_abort": null,
+      "outcome": "passed_within_reviewed_task_facts",
+      "known_limitations": [
+        "Path-based runtime/JNI hypotheses only; central-directory inventory excludes non-entry signing bytes, DEX/manifest/signature semantics unverified."
+      ],
+      "tool_profile_id": "selected-1"
+    },
+    {
+      "id": "final/harmony-shark-app-final-01",
+      "runtime_id": "final-dirty-runtime",
+      "cohort": "diagnostic/catalog-selection",
+      "artifact_id": "shark-app",
+      "prompt_sha256": "cc2bf2d25f7cb4497411c2ab656be84470847ba828a851debccb307ea95ade77",
+      "usage": {
+        "scope": "completed-turn",
+        "input_tokens": 221571,
+        "cached_input_tokens": 197376,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1339,
+        "reasoning_output_tokens": 105
+      },
+      "calls": {
+        "completed": 6,
+        "failed": 0,
+        "by_tool": {
+          "open_binary": 1,
+          "inspect_artifact": 1,
+          "inspect_analysis_view": 2,
+          "project_harmony_application_graph": 1,
+          "close_binary": 1
+        }
+      },
+      "elapsed_seconds": {
+        "task": 32.437,
+        "complete_resource_scope": 33.184
+      },
+      "local_resources": {
+        "cpu_usec": 6377128,
+        "peak_process_family_memory_bytes": 560021504,
+        "observation_verified": true,
+        "oom": 0,
+        "oom_kill": 0
+      },
+      "cleanup": {
+        "payload_family_verified": true,
+        "copied_auth_profile_removed": true
+      },
+      "target_bytes_unchanged": true,
+      "client_exit_code": 0,
+      "task_timeout": false,
+      "resource_abort": null,
+      "outcome": "passed_within_reviewed_task_facts",
+      "known_limitations": [
+        "APP inventory is shallow: innerHAP model/manifest/Ark behavior unknown. Signed naming and empty signing list do not verify signature status."
+      ],
+      "tool_profile_id": "selected-2"
+    },
+    {
+      "id": "final/harmony-shark-hap-final-01",
+      "runtime_id": "final-dirty-runtime",
+      "cohort": "diagnostic/catalog-selection",
+      "artifact_id": "shark-hap",
+      "prompt_sha256": "d7f22a3764fa5673f7d7f3235093f41d43a4028b8cf7eaa2342b9a2527c4a200",
+      "usage": {
+        "scope": "completed-turn",
+        "input_tokens": 184452,
+        "cached_input_tokens": 152576,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1212,
+        "reasoning_output_tokens": 43
+      },
+      "calls": {
+        "completed": 5,
+        "failed": 0,
+        "by_tool": {
+          "open_binary": 1,
+          "inspect_artifact": 1,
+          "inspect_analysis_view": 1,
+          "project_harmony_application_graph": 1,
+          "close_binary": 1
+        }
+      },
+      "elapsed_seconds": {
+        "task": 31.108,
+        "complete_resource_scope": 31.783
+      },
+      "local_resources": {
+        "cpu_usec": 6012587,
+        "peak_process_family_memory_bytes": 580714496,
+        "observation_verified": true,
+        "oom": 0,
+        "oom_kill": 0
+      },
+      "cleanup": {
+        "payload_family_verified": true,
+        "copied_auth_profile_removed": true
+      },
+      "target_bytes_unchanged": true,
+      "client_exit_code": 0,
+      "task_timeout": false,
+      "resource_abort": null,
+      "outcome": "passed_within_reviewed_task_facts",
+      "known_limitations": [
+        "Stage/Ark/resource roles are path hints; no signature validation, JSON semantic interpretation by projection, bytecode decoding or runtime execution."
+      ],
+      "tool_profile_id": "selected-2"
+    },
+    {
+      "id": "final/javascript-agent-browser-final-01",
+      "runtime_id": "final-dirty-runtime",
+      "cohort": "diagnostic/catalog-selection",
+      "artifact_id": "agent-browser-entry",
+      "prompt_sha256": "db542ef5ed9c66b8b6421dc719bfd7352849798e6526476360e3f425661513bf",
+      "usage": {
+        "scope": "completed-turn",
+        "input_tokens": 619589,
+        "cached_input_tokens": 563712,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 2519,
+        "reasoning_output_tokens": 180
+      },
+      "calls": {
+        "completed": 12,
+        "failed": 1,
+        "by_tool": {
+          "analyze_javascript_application": 1,
+          "inspect_analysis_view": 5,
+          "trace_application_feature": 2,
+          "search_guidance": 1,
+          "read_guidance_section": 1,
+          "trace_javascript_semantics": 2
+        }
+      },
+      "elapsed_seconds": {
+        "task": 54.521,
+        "complete_resource_scope": 55.108
+      },
+      "local_resources": {
+        "cpu_usec": 9472096,
+        "peak_process_family_memory_bytes": 903847936,
+        "observation_verified": true,
+        "oom": 0,
+        "oom_kill": 0
+      },
+      "cleanup": {
+        "payload_family_verified": true,
+        "copied_auth_profile_removed": true
+      },
+      "target_bytes_unchanged": true,
+      "client_exit_code": 0,
+      "task_timeout": false,
+      "resource_abort": null,
+      "outcome": "passed_within_reviewed_task_facts",
+      "known_limitations": [
+        "One corrected model view-syntax error;12calls include2feature and2semantic requests, producer once.",
+        "Imported targets external/unresolved, ownership trace has no edges,5unselectedsources unknown. Directory subject digest distinct from independently pinned file digest."
+      ],
+      "tool_profile_id": "selected-3"
+    },
+    {
+      "id": "final/native-jq-01",
+      "runtime_id": "final-dirty-runtime",
+      "cohort": "same-prompt-uncontrolled-final-runtime-repeat",
+      "artifact_id": "jq",
+      "prompt_sha256": "771bbef6a8e4b544707ed533a4d80f16fd45fb5f133efe061f347ab3adfc7025",
+      "usage": {
+        "scope": "completed-turn",
+        "input_tokens": 599933,
+        "cached_input_tokens": 535424,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1894,
+        "reasoning_output_tokens": 56
+      },
+      "calls": {
+        "completed": 11,
+        "failed": 0,
+        "by_tool": {
+          "open_binary": 1,
+          "list_procedures": 1,
+          "procedure_callees": 1,
+          "analyze_function": 2,
+          "search_guidance": 1,
+          "read_guidance_section": 2,
+          "build_call_path": 1,
+          "compare_functions": 1,
+          "close_binary": 1
+        }
+      },
+      "elapsed_seconds": {
+        "task": 80.931,
+        "complete_resource_scope": 81.487
+      },
+      "local_resources": {
+        "cpu_usec": 38326466,
+        "peak_process_family_memory_bytes": 1269936128,
+        "observation_verified": true,
+        "oom": 0,
+        "oom_kill": 0
+      },
+      "cleanup": {
+        "payload_family_verified": true,
+        "copied_auth_profile_removed": true
+      },
+      "target_bytes_unchanged": true,
+      "client_exit_code": 0,
+      "task_timeout": false,
+      "resource_abort": null,
+      "outcome": "passed_within_reviewed_task_facts",
+      "known_limitations": [
+        "Uncontrolled same-prompt/full-catalog repetition selected a different callee;3guidance calls,0invalid references. No causal retry/token/time improvement claim."
+      ],
+      "tool_profile_id": "complete-catalog"
+    },
+    {
+      "id": "final/process-static-final-01",
+      "runtime_id": "final-dirty-runtime",
+      "cohort": "diagnostic/catalog-selection",
+      "artifact_id": "process-capture-bundle",
+      "prompt_sha256": "5c9669834c9db02974e20940f23f3fed99c3253943844fc259e21ffa41c9ef3c",
+      "usage": {
+        "scope": "completed-turn",
+        "input_tokens": 89101,
+        "cached_input_tokens": 73984,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 725,
+        "reasoning_output_tokens": 0
+      },
+      "calls": {
+        "completed": 3,
+        "failed": 0,
+        "by_tool": {
+          "import_evidence_bundle": 1,
+          "compare_process_captures": 1,
+          "find_changed_behavior": 1
+        }
+      },
+      "elapsed_seconds": {
+        "task": 26.911,
+        "complete_resource_scope": 27.578
+      },
+      "local_resources": {
+        "cpu_usec": 5575060,
+        "peak_process_family_memory_bytes": 531283968,
+        "observation_verified": true,
+        "oom": 0,
+        "oom_kill": 0
+      },
+      "cleanup": {
+        "payload_family_verified": true,
+        "copied_auth_profile_removed": true
+      },
+      "target_bytes_unchanged": null,
+      "client_exit_code": 0,
+      "task_timeout": false,
+      "resource_abort": null,
+      "outcome": "passed_authentic_capture_reference_chain",
+      "known_limitations": [
+        "Exact static import->refpair comparison->reflist aggregate chain; no model capture/target execution.",
+        "MCP comparison deep-equals existing real inline CLI oracle; terminal/overallchanged, aggregateobserved_changed.",
+        "Exitdimension includes settlement differences; both root numeric exitcodes0. Process/filesystem/network/environment/imagebinding unknowns preserved."
+      ],
+      "tool_profile_id": "selected-4",
+      "input_bundle_bytes_unchanged": true
+    },
+    {
+      "id": "final/wasm-css-export-final-01",
+      "runtime_id": "final-dirty-runtime",
+      "cohort": "diagnostic/catalog-selection",
+      "artifact_id": "css-wasm",
+      "prompt_sha256": "b490a05c18a3e9a674a649042fbb9489970c07d8bc12ba07dc966b90d3c9f1ac",
+      "usage": {
+        "scope": "completed-turn",
+        "input_tokens": 161702,
+        "cached_input_tokens": 141056,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1033,
+        "reasoning_output_tokens": 27
+      },
+      "calls": {
+        "completed": 4,
+        "failed": 0,
+        "by_tool": {
+          "inspect_wasm_artifact": 1,
+          "inspect_analysis_view": 1,
+          "compare_wasm_interfaces": 1,
+          "export_evidence_bundle": 1
+        }
+      },
+      "elapsed_seconds": {
+        "task": 32.32,
+        "complete_resource_scope": 32.888
+      },
+      "local_resources": {
+        "cpu_usec": 9036127,
+        "peak_process_family_memory_bytes": 700076032,
+        "observation_verified": true,
+        "oom": 0,
+        "oom_kill": 0
+      },
+      "cleanup": {
+        "payload_family_verified": true,
+        "copied_auth_profile_removed": true
+      },
+      "target_bytes_unchanged": true,
+      "client_exit_code": 0,
+      "task_timeout": false,
+      "resource_abort": null,
+      "outcome": "passed_within_reviewed_task_facts_and_real_export",
+      "known_limitations": [
+        "Actual bundle export checked, four records; bundleunknown count0 does not mean all target behavior known. Portable CLI equality follow-up excluded from this receipt."
+      ],
+      "tool_profile_id": "selected-5"
+    }
+  ],
+  "actual_wasm_export": {
+    "file_name": "wasm-css-evidence.json",
+    "bytes": 13925066,
+    "sha256": "acb0cb6c3e0d520f83144e106e171c3ecebba70c5c0498bbb0113185a3e4bf95",
+    "records": 4,
+    "source_artifact_id": "css-wasm",
+    "full_parent_evidence_id": "ev_27ff1c46b138fd9809ab403aa2db919b440b0d822006cdc18a44e651f2508f43",
+    "comparison_evidence_id": "ev_b32346965c153a067abff9698aeba1ccbace34c78ac2071ac18311250b68c6da",
+    "scope": "exports",
+    "portable_CLI_followup": "Not executed by this receipt author; separate driver evidence required."
+  },
+  "audit": {
+    "attempts": 14,
+    "all_copied_auth_profiles_removed": true,
+    "all_payload_cleanup_verified": true,
+    "all_resource_observations_verified": true,
+    "all_oom_events_zero": true
+  },
+  "tool_profiles": {
+    "complete-catalog": {
+      "kind": "complete-catalog",
+      "enabled_tools": null,
+      "exact_name_guidance": false
+    },
+    "selected-1": {
+      "kind": "selected-relevant-tools",
+      "enabled_tools": [
+        "open_binary",
+        "inspect_artifact",
+        "inspect_analysis_view",
+        "close_binary",
+        "search_guidance",
+        "read_guidance_section",
+        "project_android_application_graph"
+      ],
+      "exact_name_guidance": true
+    },
+    "selected-2": {
+      "kind": "selected-relevant-tools",
+      "enabled_tools": [
+        "open_binary",
+        "inspect_artifact",
+        "inspect_analysis_view",
+        "close_binary",
+        "search_guidance",
+        "read_guidance_section",
+        "project_harmony_application_graph"
+      ],
+      "exact_name_guidance": true
+    },
+    "selected-3": {
+      "kind": "selected-relevant-tools",
+      "enabled_tools": [
+        "analyze_javascript_application",
+        "inspect_analysis_view",
+        "trace_application_feature",
+        "trace_javascript_semantics",
+        "search_guidance",
+        "read_guidance_section"
+      ],
+      "exact_name_guidance": true
+    },
+    "selected-4": {
+      "kind": "selected-relevant-tools",
+      "enabled_tools": [
+        "import_evidence_bundle",
+        "compare_process_captures",
+        "find_changed_behavior",
+        "search_guidance",
+        "read_guidance_section"
+      ],
+      "exact_name_guidance": true
+    },
+    "selected-5": {
+      "kind": "selected-relevant-tools",
+      "enabled_tools": [
+        "inspect_wasm_artifact",
+        "inspect_analysis_view",
+        "compare_wasm_interfaces",
+        "export_evidence_bundle",
+        "search_guidance",
+        "read_guidance_section"
+      ],
+      "exact_name_guidance": true
+    }
+  },
+  "review_method": "Agent transcript review against the listed independent byte/metadata oracles, limited to stated task facts; not human acceptance or complete-provider correctness. Oracle receipts are retained externally, identified here by relative file and SHA; raw source/transcripts are not embedded.",
+  "model_receipt_source_sha256": "7643761cbd91d1a75180ac7bc4ae49560abc176eea8e302c6915e014980623f0",
+  "portable_cli_comparison": {
+    "scope": "Candidate runtime: equivalent complete inline vs selected-bundle retained-reference self-comparisons of one authentic real WASM inspection, scope exports.",
+    "selected_bundle_sha256": "acb0cb6c3e0d520f83144e106e171c3ecebba70c5c0498bbb0113185a3e4bf95",
+    "selected_bundle_bytes": 13925066,
+    "selected_parent_evidence_id": "ev_27ff1c46b138fd9809ab403aa2db919b440b0d822006cdc18a44e651f2508f43",
+    "expected_mcp_comparison_evidence_id": "ev_b32346965c153a067abff9698aeba1ccbace34c78ac2071ac18311250b68c6da",
+    "arm_order": ["inline", "reference"],
+    "cache_state": "Each arm starts a fresh public CLI process. No system/filesystem cache flush; no cold-cache claim. Order is explicit and later arms may benefit from warm host caches.",
+    "common_costs": "Source inspection and MCP export happened before this paired experiment and are not included in per-arm metrics. Their separate measurements must be reported when making whole-task claims. Preparation/verification/tokenization each have separate bounded receipts; no outer driver process-family metric is claimed.",
+    "commands": {
+      "inline": "node scripts/rea.mjs compare-wasm-interfaces INLINE_REQUEST.json --json",
+      "reference": "node scripts/rea.mjs compare-wasm-interfaces REFERENCE_REQUEST.json --json --evidence-bundle EXPORTED_BUNDLE.json"
+    },
+    "arms": [
+      {
+        "arm": "inline",
+        "scope_elapsed_seconds": 2.832,
+        "cpu_usage_usec": 2612440,
+        "peak_process_family_memory_bytes": 370515968,
+        "metric_scope": "Counters at payload exit while observer remains alive; not final whole-scope counters.",
+        "cleanup_verified": true,
+        "exit_code": 0,
+        "request_json_bytes": 27823017,
+        "request_json_sha256": "b5b341ff02f4044ab69396bd3008b8184faff89108867ebc21f09589a3e59525",
+        "output_json_bytes": 3732,
+        "output_json_sha256": "9d2dd8cdc7f72d863b30662b05fc73960d20c49cb1472f67f77c3173063e1f97",
+        "selected_bundle_unchanged": true,
+        "canonical_source_record_unchanged": true
+      },
+      {
+        "arm": "reference",
+        "scope_elapsed_seconds": 2.632,
+        "cpu_usage_usec": 2385397,
+        "peak_process_family_memory_bytes": 310009856,
+        "metric_scope": "Counters at payload exit while observer remains alive; not final whole-scope counters.",
+        "cleanup_verified": true,
+        "exit_code": 0,
+        "request_json_bytes": 261,
+        "request_json_sha256": "7e5056031244e1c7dec5f417a06634e348d989139a134e6911acd1b5b8bd65f7",
+        "output_json_bytes": 3732,
+        "output_json_sha256": "9d2dd8cdc7f72d863b30662b05fc73960d20c49cb1472f67f77c3173063e1f97",
+        "selected_bundle_unchanged": true,
+        "canonical_source_record_unchanged": true
+      }
+    ],
+    "preparation": {
+      "scope_elapsed_seconds": 1.119,
+      "cpu_usage_usec": 875255,
+      "peak_process_family_memory_bytes": 316796928,
+      "metric_scope": "Counters at payload exit while observer remains alive; not final whole-scope counters.",
+      "cleanup_verified": true
+    },
+    "verification": {
+      "scope_elapsed_seconds": 0.518,
+      "cpu_usage_usec": 282755,
+      "peak_process_family_memory_bytes": 42881024,
+      "metric_scope": "Counters at payload exit while observer remains alive; not final whole-scope counters.",
+      "cleanup_verified": true
+    },
+    "all_output_bytes_and_authenticated_evidence_equal": true,
+    "source_bundle_and_runtime_unchanged": true,
+    "serialized_input_token_estimates": "Not measured; the optional tokenizer was unavailable. Bytes are not model token usage."
+  }
+}

@@ -9,21 +9,21 @@ import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import type { AnalysisErrorProjection } from "../../domain/analysisErrorProjection.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { describeValidationFailure } from "../../domain/validationFailure.js";
+import { PROCESS_PROVIDER } from "../../domain/process/processEvidenceProvider.js";
 import {
   analysisInputErrorFromIssues,
   projectInputIssues,
 } from "../../domain/inputIssueProjection.js";
 import { processTraceSpecificationSchema } from "../../domain/process/processTraceSpecification.js";
 import { processScenarioSchema } from "../../domain/process/processScenario.js";
-import { compareProcessCaptureEvidence } from "../../domain/process/processComparisonEvidence.js";
+import { compareProcessEvidence } from "./ProcessComparisonService.js";
 import { createProgressReporter } from "../ProgressReporter.js";
 import { captureProcessScenario } from "../../process/capture/ProcessHarness.js";
 import { ProcessCaptureResourceScope } from "../../process/capture/ProcessCaptureLifecycle.js";
 import { ProcessCaptureError } from "../../process/capture/ProcessCaptureError.js";
-import { PROCESS_PROVIDER } from "../../domain/process/processEvidenceProvider.js";
 import {
   createProcessCaptureEvidence,
-  parseProcessCaptureEvidence,
+  type ProcessCaptureEvidenceFailure,
 } from "./ProcessEvidence.js";
 import { readJsonFile } from "../JsonFiles.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
@@ -99,13 +99,17 @@ export const compareProcessEvidenceFiles = async (
   signal?: AbortSignal,
 ) =>
   withProcessInputResources("compare_process_captures", async (resources) => {
-    const left = parseCaptureEvidence(
-      await readJson(leftPath, "compare_process_captures", signal, resources),
-      "left",
+    const left = await readJson(
+      leftPath,
+      "compare_process_captures",
+      signal,
+      resources,
     );
-    const right = parseCaptureEvidence(
-      await readJson(rightPath, "compare_process_captures", signal, resources),
-      "right",
+    const right = await readJson(
+      rightPath,
+      "compare_process_captures",
+      signal,
+      resources,
     );
     const traceSpecification =
       traceSpecPath === undefined
@@ -118,34 +122,47 @@ export const compareProcessEvidenceFiles = async (
               resources,
             ),
           );
-    return compareProcessCaptureEvidence(
-      left,
-      right,
-      traceSpecification === undefined ? {} : { traceSpecification },
-    ).evidence;
+    const result = compareProcessEvidence(
+      {
+        left,
+        right,
+        ...(traceSpecification === undefined
+          ? {}
+          : { trace_spec: traceSpecification }),
+      },
+      undefined,
+      {
+        ...(signal === undefined ? {} : { signal }),
+        projectSourceFailure: projectCaptureFileFailure,
+      },
+    );
+    if (!result.ok) throw result.error;
+    return result.value.evidence;
   });
 
-const parseCaptureEvidence = (input: unknown, side: "left" | "right") => {
-  const parsed = parseProcessCaptureEvidence(input);
-  if (parsed.ok) return parsed.value;
-  const failure = parsed.error;
+/** Preserve CLI file diagnostics while sharing all source interpretation. */
+const projectCaptureFileFailure = (
+  failure: ProcessCaptureEvidenceFailure,
+  side: "left" | "right",
+  input: unknown,
+): AnalysisError => {
   switch (failure.kind) {
     case "invalid-evidence":
-      throw analysisInputErrorFromIssues(
+      return analysisInputErrorFromIssues(
         "compare_process_captures",
         failure.cause.issues,
         input,
         { cause: failure.cause },
       );
     case "wrong-workflow":
-      throw processInputFailure(
+      return processInputFailure(
         "compare_process_captures",
         "Capture evidence is not from the current process-capture workflow. Create new capture evidence, then try again.",
         [side],
         "invalid_value",
       );
     case "unsupported-provider":
-      throw new AnalysisInputError("compare_process_captures", undefined, [
+      return new AnalysisInputError("compare_process_captures", undefined, [
         {
           path: [side, "provider"],
           reason: "invalid_value",
@@ -153,7 +170,7 @@ const parseCaptureEvidence = (input: unknown, side: "left" | "right") => {
         },
       ]);
     case "invalid-capture":
-      throw invalidCaptureEvidence(failure.cause, side);
+      return invalidCaptureEvidence(failure.cause, side);
   }
 };
 

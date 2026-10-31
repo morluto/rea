@@ -622,8 +622,10 @@ or process workflows.
 ## CLI and verification
 
 All six CLI commands accept inline JSON or a path to a JSON file. The CLI
-returns an Evidence record directly. Put the full records in a later CLI input;
-a separate CLI process has no retained MCP connection state.
+returns an Evidence record directly. Later workflow inputs can contain full
+records, or exact retained references when `--evidence-bundle PATH` selects an
+authenticated exported bundle. A separate CLI process has no retained MCP
+connection state. See [CLI Evidence reuse](cli.md#import-export-and-compare-evidence).
 
 File inputs must be regular files; symlinks to regular files are accepted.
 Directories, named pipes and device files produce an input error before JSON
@@ -646,8 +648,12 @@ rea trace-application-feature ./trace-input.json --json
 MCP analysis returns the complete Evidence record, with the operation result
 in `normalized_result` and its identity in `evidence_id`. If the connected server advertises retained references, reuse its
 exact returned ID as `{"kind":"retained-evidence","evidence_id":"RETURNED_ID"}`
-in `application`, or `left`/`right` for comparisons. `RETURNED_ID` is a template,
-not a literal valid ID. Native Evidence arrays still use complete records.
+in `application`, or `left`/`right` for comparisons. For summary or inspection
+replies, use `normalized_result.parent_evidence_id` to select the complete source.
+`RETURNED_ID` is a template, not a literal valid ID. Native-observation arrays
+and `reconcile_javascript_runtime`'s nested static layers and runtime-observation
+array also accept references where advertised, independently mixed with inline
+records. Exact identity, coverage and partial or unknown facts are preserved.
 References are scoped to one connection; `close_binary` clears them. Export a
 bundle before closing and import it on another connection, or supply the full
 inline Evidence there. Versions before 4.1.0 accept full inline Evidence only; installing
