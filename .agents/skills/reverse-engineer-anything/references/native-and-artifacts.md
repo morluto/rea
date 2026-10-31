@@ -163,6 +163,22 @@ absence of those declarations, not proof the image never carried notes in
 another container. See
 [ELF note tables](https://github.com/morluto/rea/blob/main/docs/elf-notes.md).
 
+## ELF dynamic dependencies
+
+Use `inspect_elf_dependencies` for an explicit local ELF32/ELF64 `ET_EXEC` or
+`ET_DYN` image when the question concerns needed libraries, SONAME, rpath /
+runpath, GNU symbol versions, or undefined dynamic imports. No `open_binary`,
+dynamic loader, or `ldd` is required. The CLI equivalent is
+`inspect-elf-dependencies PATH`. Preserve artifact SHA-256, `DT_NEEDED` order
+and duplicates, search-path tokens as written, decoded `DT_FLAGS` /
+`DT_FLAGS_1`, `PT_INTERP`, GNU version names, and `library@version` joins when
+`.gnu.version` names a verneed record. `$ORIGIN`, `$LIB`, and `$PLATFORM` are
+not expanded. A missing `PT_DYNAMIC` is observed absence of that inventory,
+not proof the image never needed libraries in another container. Relocatable
+objects use `inspect_kernel_module`. Core dumps use `inspect_recorded_crash`.
+See
+[ELF dynamic dependencies](https://github.com/morluto/rea/blob/main/docs/elf-dependencies.md).
+
 ## Apple IPS crash reports
 
 Use `inspect_apple_ips` for an explicit local Apple `.ips` file when the

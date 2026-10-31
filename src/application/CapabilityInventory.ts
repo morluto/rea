@@ -563,6 +563,7 @@ const workflowAvailabilityFor = ({
     name === "inspect_elf_notes" ||
     name === "inspect_devicetree" ||
     name === "inspect_kernel_module" ||
+    name === "inspect_elf_dependencies" ||
     name === "inspect_pe_load_config"
   )
     return { reason: "available", remediation: null };

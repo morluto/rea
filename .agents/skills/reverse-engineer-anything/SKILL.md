@@ -270,6 +270,20 @@ explicit path or endpoint and do not need it.
   build-id or ABI-tag fields. A missing table is observed absence of those
   declarations, not proof the image never carried notes. See the
   [ELF notes guide](https://github.com/morluto/rea/blob/main/docs/elf-notes.md).
+- ELF load-time dynamic dependencies: `inspect_elf_dependencies` with the
+  explicit local ELF32/ELF64 `ET_EXEC` or `ET_DYN` file. This built-in
+  target-free inspection requires no disassembler or dynamic loader. Preserve
+  ordered `DT_NEEDED` names (duplicates included), `DT_SONAME`, `DT_RPATH` /
+  `DT_RUNPATH` as written including `$ORIGIN` / `$LIB` / `$PLATFORM` tokens,
+  decoded `DT_FLAGS` / `DT_FLAGS_1`, `PT_INTERP`, GNU version requirements and
+  definitions, derived per-namespace maxima, and undefined `.dynsym` imports
+  joined to `library@version` when known. A missing `PT_DYNAMIC` is an observed
+  empty inventory, not proof another overlay carried dynamic metadata.
+  Relocatable objects use `inspect_kernel_module`; core dumps use
+  `inspect_recorded_crash`. For large inventories prefer `detail: "summary"`
+  plus `inspect_analysis_view` kind `elf-dependencies`. CLI summary requires
+  `--evidence_output`. See the
+  [ELF dependencies guide](https://github.com/morluto/rea/blob/main/docs/elf-dependencies.md).
 - Apple `.ips` crash reports: `inspect_apple_ips` with the explicit local
   file. This built-in target-free inspection requires no Xcode, atos, or
   pwntools. Preserve first-line metadata, `bug_type` as a string, process and

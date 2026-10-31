@@ -32,6 +32,7 @@ import {
   createAppleIpsService,
   createDevicetreeService,
   createKernelModuleService,
+  createElfDependenciesService,
   createPeLoadConfigService,
   createPeCertificatesService,
   createPeImportsService,
@@ -45,6 +46,7 @@ import {
 import { registerElfNotesTool } from "./registerElfNotesTool.js";
 import { registerAppleIpsTool } from "./registerAppleIpsTool.js";
 import { registerKernelModuleTool } from "./registerKernelModuleTool.js";
+import { registerElfDependenciesTool } from "./registerElfDependenciesTool.js";
 import { registerPeLoadConfigTool } from "./registerPeLoadConfigTool.js";
 import { registerPeCertificatesTool } from "./registerPeCertificatesTool.js";
 import { registerPeImportsTool } from "./registerPeImportsTool.js";
@@ -482,6 +484,7 @@ export const createServer = (
   const elfNotes = createElfNotesService();
   const appleIps = createAppleIpsService();
   const kernelModule = createKernelModuleService();
+  const elfDependencies = createElfDependenciesService();
   const peLoadConfig = createPeLoadConfigService();
   const peCertificates = createPeCertificatesService();
   const peImports = createPeImportsService();
@@ -609,6 +612,7 @@ export const createServer = (
       elfNotes.close(),
       appleIps.close(),
       kernelModule.close(),
+      elfDependencies.close(),
       peLoadConfig.close(),
       peCertificates.close(),
       peImports.close(),
@@ -830,6 +834,14 @@ export const createServer = (
         kernelModule,
         toolLogger,
         recordEvidence,
+        analysisAdmission,
+      );
+      registerElfDependenciesTool(
+        server,
+        elfDependencies,
+        toolLogger,
+        recordEvidence,
+        evidenceById,
         analysisAdmission,
       );
       registerPeLoadConfigTool(

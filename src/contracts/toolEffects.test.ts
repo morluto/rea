@@ -39,6 +39,8 @@ const EXECUTION_WORDING_EXCEPTIONS: Readonly<Record<string, string>> = {
   inspect_elf_notes: "states that it does not execute the image",
   inspect_apple_ips: "states that it does not execute a target",
   inspect_kernel_module: "states that it does not execute the module",
+  inspect_elf_dependencies:
+    "states that it does not execute the image or invoke the dynamic loader",
   inspect_pe_load_config: "states that it does not execute the image",
   inspect_desktop_application:
     "states that directory triage performs no target execution",

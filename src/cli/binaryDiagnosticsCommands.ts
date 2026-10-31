@@ -11,6 +11,7 @@ import {
   createAppleIpsService,
   createDevicetreeService,
   createKernelModuleService,
+  createElfDependenciesService,
   createPeLoadConfigService,
   createPeResourcesService,
   createPeCertificatesService,
@@ -31,6 +32,7 @@ import { inspectNativeExportsInputSchema } from "../domain/native/nativeExports.
 import { inspectElfNotesInputSchema } from "../domain/native/elfNotes.js";
 import { inspectAppleIpsInputSchema } from "../domain/native/appleIps.js";
 import { inspectKernelModuleInputSchema } from "../domain/native/kernelModule.js";
+import { inspectElfDependenciesInputSchema } from "../domain/native/elfDependencies.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
 import { withEvidenceCallerInputPath } from "../domain/evidence.js";
@@ -163,6 +165,50 @@ export const registerBinaryDiagnosticsCommands = (
               "inspect_kernel_module",
               signal,
             ).then(projectCliAnalysisResult),
+        );
+      }),
+  });
+  cli.command(CLI_COMMANDS.inspectElfDependencies, {
+    description:
+      "Inspect ELF needed libraries and required symbol versions without executing the image",
+    args: z.object({
+      path: localPathStringSchema.describe(
+        "Local ELF32/ELF64 ET_EXEC or ET_DYN image",
+      ),
+    }),
+    options: z.object({
+      maxFileBytes: inspectElfDependenciesInputSchema.shape.max_file_bytes,
+      maxNeeded: inspectElfDependenciesInputSchema.shape.max_needed,
+      maxVersions: inspectElfDependenciesInputSchema.shape.max_versions,
+      maxImports: inspectElfDependenciesInputSchema.shape.max_imports,
+      ...analysisEvidenceDeliveryOptions,
+    }),
+    run: ({ args, options }) =>
+      withCommandCancellation(async (signal) => {
+        const dependencies = createElfDependenciesService();
+        return await logCliCommand(
+          logger,
+          CLI_COMMANDS.inspectElfDependencies,
+          async () =>
+            deliverCliAnalysisEvidence({
+              run: () =>
+                dependencies.inspect(
+                  {
+                    path: absoluteCallerPath(args.path),
+                    max_file_bytes: options.maxFileBytes,
+                    max_needed: options.maxNeeded,
+                    max_versions: options.maxVersions,
+                    max_imports: options.maxImports,
+                  },
+                  { signal },
+                ),
+              service: dependencies,
+              providerId: "rea-elf-dependencies",
+              operation: "inspect_elf_dependencies",
+              signal,
+              detail: options.detail,
+              evidenceOutput: options.evidence_output,
+            }),
         );
       }),
   });

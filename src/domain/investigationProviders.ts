@@ -66,6 +66,13 @@ export const KERNEL_MODULE_PROVIDER = Object.freeze({
   version: "1",
 } as const);
 
+/** Provider identity for portable, execution-free ELF dynamic-dependency inventories. */
+export const ELF_DEPENDENCIES_PROVIDER = Object.freeze({
+  id: "rea-elf-dependencies",
+  name: "REA ELF dependency parser",
+  version: "1",
+} as const);
+
 /** Provider identity for execution-free Shannon byte-entropy profiling. */
 export const BYTE_ENTROPY_PROVIDER = Object.freeze({
   id: "byte-entropy",

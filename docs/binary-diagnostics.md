@@ -466,3 +466,26 @@ Export directories in PE headers are read like those in sections. An export or
 dynamic symbol table above 262144 entries, more than 262144 rows, or more than
 16 MiB of retained names fails without partial success. Export rows do not establish that a symbol is reachable, safe to call
 or loaded at runtime.
+
+## Portable ELF dependencies
+
+`inspect_elf_dependencies` / `inspect-elf-dependencies` reads the load-time
+dynamic-dependency inventory of an explicit ELF32/ELF64 `ET_EXEC` or `ET_DYN`
+image on any supported host, without executing it, invoking the dynamic
+loader, or opening a disassembler:
+
+```sh
+rea inspect-elf-dependencies ./program --json
+```
+
+The complete Evidence identifies the stable artifact snapshot by path, byte
+count and SHA-256. It reports ordered `DT_NEEDED` names (duplicates preserved),
+`DT_SONAME`, `DT_RPATH` / `DT_RUNPATH` as written including `$ORIGIN` / `$LIB`
+/ `$PLATFORM` tokens, decoded `DT_FLAGS` / `DT_FLAGS_1`, `PT_INTERP`, GNU
+version requirements and definitions, derived per-namespace version maxima,
+and undefined `.dynsym` imports joined to `library@version` when known. A
+missing `PT_DYNAMIC` is an observed empty inventory. Relocatable objects use
+`inspect_kernel_module`; core dumps use `inspect_recorded_crash`. Complete
+delivery remains the default. For a small initial MCP reply, select
+`detail: "summary"` and page `inspect_analysis_view` with `kind:
+"elf-dependencies"`. See [ELF dynamic dependencies](elf-dependencies.md).
