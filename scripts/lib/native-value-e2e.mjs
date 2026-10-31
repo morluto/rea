@@ -214,6 +214,19 @@ async function verifyNativeValueAdapters(
     );
     assert.deepEqual(mcpEvidence.normalized_result, mcpGraph);
     assert.deepEqual(mcpGraph, cliGraph);
+    const warmReply = await client.callTool(
+      {
+        name: "trace_native_values",
+        arguments: { procedure, max_depth: 2, max_functions: 8, limit: 3 },
+      },
+      { timeout: 180000 },
+    );
+    const warmEvidence = parseEvidence(
+      requireMcpOutput(warmReply, "trace_native_values"),
+    );
+    const warmGraph = nativeValueTraceSchema.parse(
+      warmEvidence.normalized_result,
+    );
     const analyzed = await client.callTool(
       {
         name: "analyze_function",
@@ -286,6 +299,25 @@ async function verifyNativeValueAdapters(
       "MCP omitted structured Evidence bundle",
     );
     const bundle = requireMcpEvidenceBundle(bundleReply);
+    for (const [evidence, graph] of [
+      [mcpEvidence, mcpGraph],
+      [warmEvidence, warmGraph],
+    ]) {
+      for (const source of [
+        ...graph.procedures,
+        ...graph.nodes,
+        ...graph.edges,
+      ]) {
+        assert.ok(evidence.evidence_links.includes(source.evidence_id));
+        assert.equal(
+          bundle.records.find(
+            (record) => record.evidence_id === source.evidence_id,
+          )?.operation,
+          "analyze_function",
+          `Missing source Evidence ${source.evidence_id}`,
+        );
+      }
+    }
     for (const evidence of [
       mcpEvidence,
       functionEvidence,

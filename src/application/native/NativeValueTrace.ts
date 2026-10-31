@@ -7,6 +7,7 @@ import {
 import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
 import {
   AnalysisCancelledError,
+  AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
 import { err, ok } from "../../domain/result.js";
@@ -86,6 +87,7 @@ export const traceNativeValues = async (
       {
         ...(signal === undefined ? {} : { signal }),
         ...(next.depth > 0 ? { selectorOrigin: "provider" as const } : {}),
+        retainEvidence: true,
       },
     );
     decompilations++;
@@ -129,7 +131,15 @@ export const traceNativeValues = async (
           "Cross-function target digest mismatch",
         ).retainPartialObservation(evidence),
       );
-    const evidenceId = evidence.evidence_id;
+    const evidenceId = execution.value.evidenceId;
+    if (evidenceId === undefined)
+      return err(
+        new AnalysisCapabilityUnavailableError(
+          "rea",
+          "trace_native_values",
+          "The function observation has no Evidence retention owner.",
+        ).retainPartialObservation(evidence),
+      );
     procedures.push({
       address,
       depth: next.depth,

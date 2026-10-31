@@ -417,6 +417,30 @@ const verifyKuna = async (
         references,
       });
     }
+    if (functions.length > 0) {
+      const trace = await cold.call("trace_native_values", {
+        procedure: functions[0][1],
+        max_depth: 0,
+        max_functions: 1,
+      });
+      const bundle = await cold.call("get_evidence_bundle", {
+        detail: "complete",
+      });
+      for (const source of [
+        ...trace.value.procedures,
+        ...trace.value.nodes,
+        ...trace.value.edges,
+      ]) {
+        assert.ok(trace.structured.evidence_links.includes(source.evidence_id));
+        assert.equal(
+          bundle.value.records.find(
+            (record) => record.evidence_id === source.evidence_id,
+          )?.operation,
+          "analyze_function",
+          `Missing source Evidence ${source.evidence_id}`,
+        );
+      }
+    }
   } catch (cause) {
     coldFailure = cause;
   } finally {

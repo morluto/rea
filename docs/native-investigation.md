@@ -421,6 +421,13 @@ nodes and edges. Node payloads are bounded to 8 MiB and serialized results to
 32 MiB. Pagination returns edges whose source is on the node page and preserves
 stable IDs for endpoints outside that page.
 
+Procedure, node and edge `evidence_id` values identify the source function
+observations used by the trace. In an MCP session, retrieve them from the
+Evidence bundle for inspection or export. A replayed source keeps the original
+observation's identity; the trace also reports that replay occurred. Older
+cached value traces are not replayed under the revised workflow profile, while
+their historical Evidence remains available.
+
 Within one value trace, each exact procedure selector is attempted at most once,
 including failed analyses. A failed seed returns the provider's original typed
 failure and corrective guidance; it cannot establish a trace or target identity.

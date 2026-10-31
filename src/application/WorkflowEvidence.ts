@@ -1,6 +1,7 @@
 import { AnalysisWorkScope } from "./AnalysisWorkScope.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { jsonStringByteLength } from "../domain/jsonStringByteLength.js";
+import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import { REA_WORKFLOW_PROVIDER } from "../domain/investigationProviders.js";
 import { workflowAnalysisProfile } from "./WorkflowAnalysisProfile.js";
 import type {
@@ -96,12 +97,10 @@ export const executeComposedWorkflow = async (
   const observed: AnalysisOperationPort = {
     resourceScope: analysis.resourceScope,
     execute: async (operation, parameters, options) => {
-      const execution = await analysis.execute(operation, parameters, {
+      let execution = await analysis.execute(operation, parameters, {
         ...options,
         workScope,
       });
-      if (execution.ok && execution.value.evidenceId !== undefined)
-        evidenceLinks.add(execution.value.evidenceId);
       if (execution.ok && execution.value.sourceEvidence !== undefined) {
         const recorded = recordEvidenceSources(
           (source) => sourceLedger.record(source),
@@ -109,6 +108,26 @@ export const executeComposedWorkflow = async (
         );
         if (!recorded.ok) return recorded;
       }
+      if (
+        execution.ok &&
+        options?.retainEvidence === true &&
+        execution.value.evidenceId === undefined
+      ) {
+        const source = createAnalysisExecutionEvidence(
+          operation,
+          parameters,
+          execution.value,
+          "observed",
+        );
+        const recorded = recordEvidenceSources(
+          (evidence) => sourceLedger.record(evidence),
+          [source],
+        );
+        if (!recorded.ok) return recorded;
+        execution = ok({ ...execution.value, evidenceId: source.evidence_id });
+      }
+      if (execution.ok && execution.value.evidenceId !== undefined)
+        evidenceLinks.add(execution.value.evidenceId);
       if (execution.ok && execution.value.cachePolicy === "live")
         cachePolicy = "live";
       if (execution.ok)

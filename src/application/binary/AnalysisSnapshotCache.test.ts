@@ -1151,6 +1151,71 @@ it("does not replay pre-envelope call graphs under the revised workflow profile"
   ).toBe(false);
 });
 
+it("keeps older value-trace Evidence as history without replaying its source IDs", () => {
+  const cache = new AnalysisSnapshotCache();
+  const target = ANALYSIS_SNAPSHOT_TARGET;
+  const profile = ANALYSIS_SNAPSHOT_PROFILE;
+  const operation = "trace_native_values" as const;
+  const parameters = { procedure: "0x1000" };
+  const oldProfile = workflowAnalysisProfile(profile);
+  const oldResult = {
+    seed: "0x1000",
+    target_sha256: target.sha256,
+    nodes: [],
+    edges: [],
+    procedures: [
+      {
+        address: "0x1000",
+        depth: 0,
+        evidence_id: `ev_${"a".repeat(64)}`,
+        provider: profile.provider.id,
+        analysis_profile_digest: profile.digest,
+      },
+    ],
+    unknowns: [],
+    total_nodes: 0,
+    total_edges: 0,
+    decompilations: 1,
+    next_offset: null,
+    page_truncated: false,
+    traversal: { status: "complete" },
+    truncated: false,
+    limitations: [],
+  };
+  const execution = {
+    ...createAnalysisExecution(oldResult, REA_WORKFLOW_PROVIDER, {
+      subject: target,
+    }),
+    analysisProfile: oldProfile,
+  };
+  cache.recordWorkflow({ target, profile, operation, parameters, execution });
+  const evidence = createEvidence(target, REA_WORKFLOW_PROVIDER, {
+    operation,
+    parameters,
+    result: oldResult,
+    confidence: "derived",
+    analysisProfile: oldProfile,
+  });
+  const exported = cache.export(
+    target,
+    profile,
+    createEvidenceBundle([evidence]),
+  );
+  if (!exported.ok) throw exported.error;
+  const snapshot = parseAnalysisSnapshot(exported.value);
+  expect(snapshot.evidence_bundle.records).toContainEqual(evidence);
+  expect(
+    snapshotEvidenceForQuery(snapshot, {
+      target,
+      bindingProfile: profile,
+      operation,
+      parameters,
+      provider: REA_WORKFLOW_PROVIDER,
+      evidenceProfile: workflowAnalysisProfile(profile, operation),
+    }),
+  ).toBeUndefined();
+});
+
 it("declines source-bearing snapshot entries while replaying omitted and empty source controls", () => {
   const cache = new AnalysisSnapshotCache();
   const target = ANALYSIS_SNAPSHOT_TARGET;
