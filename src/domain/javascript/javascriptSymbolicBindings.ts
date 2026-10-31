@@ -69,6 +69,7 @@ interface SymbolicReadBoundary {
   readonly edge: "start" | "end";
 }
 type SymbolicNamespace = Extract<SymbolicValue, { kind: "namespace" }>;
+type LoaderFreeArgument = boolean | t.Expression;
 
 const SYMBOLIC_DEPTH_LIMIT = 128;
 
@@ -885,7 +886,7 @@ export class JavaScriptSymbolicBindings {
   #isLoaderFreeBinding(
     binding: JavaScriptSemanticBindingState,
     invocation?: t.CallExpression | t.OptionalCallExpression,
-    callerParameterLoaderFree?: ReadonlyMap<string, boolean>,
+    callerParameterLoaderFree?: ReadonlyMap<string, LoaderFreeArgument>,
     proofInvocation?: t.CallExpression | t.OptionalCallExpression,
   ): boolean {
     if (!this.#memberMutationFactsIndexed) {
@@ -958,7 +959,7 @@ export class JavaScriptSymbolicBindings {
     node: t.Node,
     depth = 0,
     invocation?: t.CallExpression | t.OptionalCallExpression,
-    callerParameterLoaderFree?: ReadonlyMap<string, boolean>,
+    callerParameterLoaderFree?: ReadonlyMap<string, LoaderFreeArgument>,
   ): boolean {
     if (!this.#chargeLoaderProof()) return false;
     if (depth >= 128) {
@@ -1076,15 +1077,15 @@ export class JavaScriptSymbolicBindings {
   #isLoaderFreeFunction(
     node: t.Function,
     invocation?: t.CallExpression | t.OptionalCallExpression,
-    callerParameterLoaderFree?: ReadonlyMap<string, boolean>,
+    callerParameterLoaderFree?: ReadonlyMap<string, LoaderFreeArgument>,
   ): boolean {
     const functionScope = this.state.scopeByNode.get(node);
     if (functionScope === undefined) return false;
-    const parameterLoaderFree = new Map<string, boolean>();
+    const parameterLoaderFree = new Map<string, LoaderFreeArgument>();
     const parameterStates: string[] = [];
     const argumentLoaderFree = (
       argument: t.CallExpression["arguments"][number] | undefined,
-    ): boolean => {
+    ): LoaderFreeArgument => {
       if (argument === undefined || !t.isExpression(argument)) return false;
       if (t.isIdentifier(argument)) {
         const binding = resolveSemanticBindingState(
@@ -1100,7 +1101,9 @@ export class JavaScriptSymbolicBindings {
         0,
         undefined,
         callerParameterLoaderFree,
-      );
+      )
+        ? argument
+        : false;
     };
     runtimeFunctionParameters(node).forEach((parameter, index) => {
       const target = t.isRestElement(parameter)
@@ -1115,15 +1118,23 @@ export class JavaScriptSymbolicBindings {
         target,
         target.name,
       );
-      const loaderFree = t.isRestElement(parameter)
+      const loaderFree: LoaderFreeArgument = t.isRestElement(parameter)
         ? invocation !== undefined &&
-          invocation.arguments.slice(index).every(argumentLoaderFree)
+          invocation.arguments
+            .slice(index)
+            .every((argument) => argumentLoaderFree(argument) !== false)
         : argumentLoaderFree(invocation?.arguments[index]);
       if (binding !== undefined)
         parameterLoaderFree.set(binding.bindingId, loaderFree);
-      parameterStates.push(loaderFree ? "1" : "0");
+      parameterStates.push(
+        loaderFree === false
+          ? "0"
+          : loaderFree === true
+            ? "1"
+            : `1:${loaderFree.start ?? "?"}:${loaderFree.end ?? "?"}`,
+      );
     });
-    const signature = parameterStates.join("");
+    const signature = parameterStates.join("|");
     if (invocation !== undefined) {
       const cached = this.#loaderFreeFunctionCalls.get(node)?.get(signature);
       if (cached !== undefined) return cached;
@@ -1173,16 +1184,23 @@ export class JavaScriptSymbolicBindings {
   #isLoaderFreeFunctionReference(
     node: t.Identifier,
     functionScopeId: string,
-    parameterLoaderFree: ReadonlyMap<string, boolean>,
+    parameterLoaderFree: ReadonlyMap<string, LoaderFreeArgument>,
     proofInvocation?: t.CallExpression | t.OptionalCallExpression,
   ): boolean {
     const binding = resolveSemanticBindingState(this.state, node, node.name);
     if (binding === undefined) return this.#isLoaderFreeAmbientReference(node);
-    if (binding.kind === "parameter")
-      return (
-        !this.#isMemberReceiver(node) &&
-        (parameterLoaderFree.get(binding.bindingId) ?? false)
-      );
+    if (binding.kind === "parameter") {
+      const argument = parameterLoaderFree.get(binding.bindingId) ?? false;
+      const parent = this.state.parentsByNode.get(node);
+      const memberReceiver =
+        (t.isMemberExpression(parent) ||
+          t.isOptionalMemberExpression(parent)) &&
+        parent.object === node;
+      if (!memberReceiver) return argument !== false;
+      if (argument === false || argument === true) return false;
+      const member = this.#parameterMemberExpression(node, argument);
+      return member !== undefined && this.#isLoaderFree(member);
+    }
     if (binding.kind === "catch") return false;
     const invocation = this.#calleeInvocation(node);
     return (
@@ -1218,12 +1236,35 @@ export class JavaScriptSymbolicBindings {
     );
   }
 
-  #isMemberReceiver(node: t.Identifier): boolean {
-    const parent = this.state.parentsByNode.get(node);
-    return (
+  #parameterMemberExpression(
+    node: t.Identifier,
+    argument: LoaderFreeArgument,
+  ): t.Expression | undefined {
+    if (argument === false || argument === true) return undefined;
+    let source: t.Expression = node;
+    let projected = argument;
+    let parent = this.state.parentsByNode.get(source);
+    if (
+      !(t.isMemberExpression(parent) || t.isOptionalMemberExpression(parent)) ||
+      parent.object !== source
+    )
+      return undefined;
+    do {
+      projected = t.isOptionalMemberExpression(parent)
+        ? t.optionalMemberExpression(
+            projected,
+            parent.property,
+            parent.computed,
+            parent.optional,
+          )
+        : t.memberExpression(projected, parent.property, parent.computed);
+      source = parent;
+      parent = this.state.parentsByNode.get(source);
+    } while (
       (t.isMemberExpression(parent) || t.isOptionalMemberExpression(parent)) &&
-      parent.object === node
+      parent.object === source
     );
+    return projected;
   }
 
   #chargeLoaderProof(): boolean {

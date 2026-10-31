@@ -499,6 +499,20 @@ describe("later initializer mutation proof", () => {
     expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
   });
 
+  it("keeps a safe literal member helper complete", () => {
+    const result = analyzeJavaScriptStaticSource(`
+      function run() {
+        size("value");
+      }
+      var size = value => value.length;
+      run();
+    `);
+
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("complete");
+    expect(result.limitations).not.toContainEqual(UNKNOWN_LIMITATION);
+  });
+
   it("keeps the unknown when a destructuring projection inherits a loader", () => {
     const result = analyzeJavaScriptStaticSource(`
       Object.prototype.load = require;
