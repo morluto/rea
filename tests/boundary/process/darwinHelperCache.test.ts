@@ -377,10 +377,13 @@ it.skipIf(!posix)(
     const second = create();
     try {
       expect(await second.prepare()).toBe(shared);
-      expect((await second.read([fixtureProcess])).get(123)).toEqual({
-        state: "readable",
-        runId: "fixture",
-      });
+      // Concurrent reads that both launched the shared copy both fall back.
+      const reads = await Promise.all([
+        second.read([fixtureProcess]),
+        second.read([fixtureProcess]),
+      ]);
+      for (const read of reads)
+        expect(read.get(123)).toEqual({ state: "readable", runId: "fixture" });
     } finally {
       await second.close();
     }

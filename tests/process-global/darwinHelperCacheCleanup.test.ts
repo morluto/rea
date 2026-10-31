@@ -2,15 +2,28 @@ import { chmod, mkdir, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 
-const fault = vi.hoisted(() => ({ removals: 0 }));
+const fault = vi.hoisted(() => ({ removals: 0, roots: 0, renames: 0 }));
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
   return {
     ...actual,
+    rename: async (...args: Parameters<typeof actual.rename>) => {
+      if (String(args[0]).includes("/.publish-") && fault.renames > 0) {
+        fault.renames -= 1;
+        throw Object.assign(new Error("controlled lost publication race"), {
+          code: "ENOTEMPTY",
+        });
+      }
+      return actual.rename(...args);
+    },
     rm: async (...args: Parameters<typeof actual.rm>) => {
       if (String(args[0]).includes("/.publish-") && fault.removals > 0) {
         fault.removals -= 1;
         throw new Error("controlled staging removal failure");
+      }
+      if (String(args[0]).includes("rea-process-token-") && fault.roots > 0) {
+        fault.roots -= 1;
+        throw new Error("controlled helper-root removal failure");
       }
       return actual.rm(...args);
     },
@@ -19,6 +32,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 
 import { ProviderCleanupError } from "../../src/domain/providerCleanupError.js";
 import { createDarwinHelperCache } from "../../src/process/DarwinHelperCache.js";
+import { createDarwinProcessRunTokenReader } from "../../src/process/DarwinProcessRunTokenReader.js";
 import { writeFakeXcrun } from "../fixtures/darwinHelperToolchain.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
@@ -75,5 +89,42 @@ it.skipIf(process.platform === "win32")(
     // Every error returned while cleanup was pending now reports release.
     expect(failed).toMatchObject({ cleanupIncomplete: false });
     expect(again).toMatchObject({ cleanupIncomplete: false });
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "keeps a close incomplete until both the helper root and the cache recover",
+  async () => {
+    const directory = await createTestTempDirectory("rea-helper-cache-both-");
+    const xcrun = await writeFakeXcrun(directory);
+    const helperCacheDirectory = join(directory, "process-helper");
+    const reader = createDarwinProcessRunTokenReader({
+      compiler: { kind: "xcrun", executable: xcrun.executable },
+      helperCacheDirectory,
+    });
+    // Publication loses its rename; publication and two closes cannot remove
+    // its staging copy, while the helper root fails only the first close.
+    fault.renames = 1;
+    fault.removals = 3;
+    expect(await reader.prepare()).toContain("rea-process-token-");
+    fault.roots = 1;
+    const failed: unknown = await reader
+      .close()
+      .catch((cause: unknown) => cause);
+    expect(failed).toMatchObject({ cleanupIncomplete: true });
+    const resources = (failed as { cleanupResources: readonly string[] })
+      .cleanupResources;
+    expect(resources.some((path) => path.includes("rea-process-token-"))).toBe(
+      true,
+    );
+    expect(resources.some((path) => path.includes("/.publish-"))).toBe(true);
+    // The root recovers first; the error must still wait for the cache.
+    const again: unknown = await reader
+      .close()
+      .catch((cause: unknown) => cause);
+    expect(again).toMatchObject({ cleanupIncomplete: true });
+    expect(failed).toMatchObject({ cleanupIncomplete: true });
+    await reader.close();
+    expect(failed).toMatchObject({ cleanupIncomplete: false });
   },
 );

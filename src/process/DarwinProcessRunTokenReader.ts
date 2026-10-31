@@ -708,11 +708,12 @@ export const createDarwinProcessRunTokenReader = (
     };
     const pending = (async () => {
       const binary = await compile(signal);
+      // Decide before awaiting: a concurrent fallback may already switch.
+      const usedShared = binary === sharedExecutable;
       try {
         return await execute(binary);
       } catch (cause: unknown) {
-        if (binary !== sharedExecutable || !helperLaunchFailed(cause))
-          throw cause;
+        if (!usedShared || !helperLaunchFailed(cause)) throw cause;
         // The shared copy cannot run here, for example from a noexec home
         // volume; this reader keeps its own helper from now on.
         bypassCache = true;
@@ -840,11 +841,22 @@ export const createDarwinProcessRunTokenReader = (
         await operation.promise;
       }
       await Promise.allSettled(activeCommands);
-      // Each owner keeps its own failed cleanup for the next close attempt.
+      // Each owner keeps its own failed cleanup for the next close attempt;
+      // a failure of both stays incomplete until both owners recover.
       const [rootCleanup, cacheCleanup] = await Promise.allSettled([
         cleanupRoot(),
         helperCache?.close(),
       ]);
+      if (
+        rootCleanup.status === "rejected" &&
+        cacheCleanup.status === "rejected" &&
+        rootCleanup.reason instanceof ProviderCleanupError &&
+        cacheCleanup.reason instanceof ProviderCleanupError
+      )
+        throw analysisErrorWithCleanupFailure(
+          rootCleanup.reason,
+          cacheCleanup.reason,
+        ).bindCleanupDependencies([rootCleanup.reason, cacheCleanup.reason]);
       if (rootCleanup.status === "rejected") throw rootCleanup.reason;
       if (cacheCleanup.status === "rejected") throw cacheCleanup.reason;
     })().catch((cause: unknown) => {
