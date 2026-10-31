@@ -675,6 +675,18 @@ an existing Hopper launcher is selected through `HOPPER_LAUNCHER_PATH`. Ghidra
 and IDA have their own provider-specific host requirements; Windows Ghidra uses
 the [experimental P0 boundary](windows-ghidra-p0.md).
 
+A launcher selected through `HOPPER_LAUNCHER_PATH` is authenticated again at
+launch. REA accepts either the current public demo from the release feed or a
+release whose signed package it has retained in the cache described below.
+Neither route covers a self-purchased Linux build: those packages are not
+published in the public feed, and a Linux executable carries no code signature
+that could anchor an equivalent publisher identity. Such a launcher is therefore
+reported as `unsupported_hopper_build` even when Hopper itself runs normally under
+a paid license. The paid license remains usable with Hopper directly, including
+its bundled `hopper_mcp` server, but it does not by itself make that launcher
+acceptable to REA on Linux. On macOS the same licensed build validates through
+the Apple code signature instead and remains usable.
+
 If the Linux package download receives an HTTP failure, setup includes the
 observed HTTP status in its `download_failed` diagnostic. The status does not
 establish the underlying cause or guarantee that retrying will succeed.
