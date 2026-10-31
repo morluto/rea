@@ -171,6 +171,29 @@ Review the setup changes and restart your agent. For one-off CLI commands,
 use `npx rea-agents@latest` followed by the command. With Bun, use
 `bunx rea-agents@latest` in place of `npx rea-agents@latest`.
 
+## Reproducible development
+
+The repository pins Node.js in `.nvmrc` and locks npm dependencies in
+`package-lock.json`. The following commands are the complete local workflow:
+
+1. Setup: `nvm use` followed by `npm ci`.
+2. Build: `make build`.
+3. Test: `make test`.
+4. Run: `make run`.
+
+`make test` runs the offline source test suite after dependencies have been
+installed. `make run` starts the stdio MCP server. The same build and runtime
+are available in Docker without installing project dependencies globally. Build
+the image with `docker build --tag rea-agents:local .` and run it with
+`docker run --rm --interactive rea-agents:local`.
+
+To publish a container image, authenticate Docker with the target registry and
+run `IMAGE=ghcr.io/OWNER/rea-agents:TAG make deploy` with an explicit image
+reference.
+
+The deploy target builds and pushes only the image named by `IMAGE`; it does not
+create or modify registry credentials.
+
 ## How REA works
 
 Your agent calls REA through MCP to inspect the target and trace relevant code.

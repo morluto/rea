@@ -1,0 +1,18 @@
+.git
+.cache
+build
+coverage
+dist
+node_modules
+*.log
+website/node_modules
+
+# Keep local website configuration and Cloudflare state out of the image.
+website/.env*
+!website/.env*.example
+website/.dev.vars*
+!website/.dev.vars.example
+website/.wrangler/
+
+# Keep local analysis results out of the image.
+experiments/analysis-efficiency/results/
