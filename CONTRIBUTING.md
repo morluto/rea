@@ -273,9 +273,11 @@ artifacts, those controls are unavailable even after a successful runtime
 build.
 
 Follow the [Windows native build guide](native/windows/README.md#build) before
-running those workflows from source. The artifact build requires Linux,
-MinGW-w64, and `tar`; the build script does not run on Windows. See that guide
-for the build and artifact-verification commands and the separate real Windows
+running those workflows from source. When the checkout's `package.json` version
+matches a published release, you can
+[restore the verified artifact](native/windows/README.md#restore-the-artifact-in-a-source-checkout)
+from npm instead of cross-compiling on Linux. See that guide for the build,
+recovery, and artifact-verification commands and the separate real Windows
 verification prerequisites. Keep the generated addon and manifest uncommitted.
 
 The general source suite (`npm run test:fast`, `npm run test:changed`, and
