@@ -5,6 +5,8 @@ this file with Hopper's supported ``--python`` launcher option. Keep all Hopper
 API access on this thread: moving dispatch to a worker can deadlock Hopper.
 """
 
+from __future__ import annotations
+
 import json
 import hmac
 import os
