@@ -823,6 +823,59 @@ describe("doctor installation identity", () => {
   });
 });
 
+describe("doctor installation state from listed launcher paths", () => {
+  const shimDirectory =
+    "C:\\Users\\Example\\AppData\\Local\\npm-cache\\_npx\\abc\\node_modules\\.bin";
+  const installations = async (
+    platform: NodeJS.Platform,
+    paths: readonly string[],
+  ) =>
+    (
+      await runDoctor(
+        undefined,
+        host({ platform, installationPaths: () => Promise.resolve(paths) }),
+      )
+    ).identity?.installations;
+
+  it("reports Windows launcher shims in one directory as a single installation", async () => {
+    const paths = [`${shimDirectory}\\rea`, `${shimDirectory}\\rea.cmd`];
+
+    expect(await installations("win32", paths)).toEqual({
+      paths,
+      state: "single",
+    });
+  });
+
+  it("treats Windows directories that differ only in case as one installation", async () => {
+    expect(
+      (
+        await installations("win32", [
+          "C:\\Tools\\npm\\rea.cmd",
+          "c:\\tools\\NPM\\rea",
+        ])
+      )?.state,
+    ).toBe("single");
+  });
+
+  it("still reports launchers in different Windows directories as shadowing", async () => {
+    expect(
+      (
+        await installations("win32", [
+          `${shimDirectory}\\rea.cmd`,
+          "C:\\Tools\\npm\\rea.cmd",
+        ])
+      )?.state,
+    ).toBe("multiple");
+  });
+
+  it("keeps one launcher single and no launcher unknown", async () => {
+    expect((await installations("linux", ["/usr/local/bin/rea"]))?.state).toBe(
+      "single",
+    );
+    expect((await installations("win32", []))?.state).toBe("unknown");
+  });
+});
+
 describe("doctor scoped readiness", () => {
   it("checks explicitly selected skill destinations independently of registrations", async () => {
     const selected: (readonly string[] | undefined)[] = [];
