@@ -96,12 +96,15 @@ export async function verifyGhidraSnapshotLifecycle(
     const annotation = bundle.records.find(
       (record) =>
         record.operation === "annotate_native_function" &&
-        record.normalized_result.annotations.name === edited.procedure.name,
+        record.normalized_result.annotations.name === edited.procedure.name &&
+        record.normalized_result.annotations.address ===
+          edited.procedure.address,
     );
     const editedApi = bundle.records.find(
       (record) =>
         record.operation === "inspect_native_api" &&
-        record.normalized_result.procedure.name === edited.procedure.name,
+        record.normalized_result.procedure.name === edited.procedure.name &&
+        record.normalized_result.procedure.address === edited.procedure.address,
     );
     assert.ok(annotation);
     assert.ok(editedApi);
