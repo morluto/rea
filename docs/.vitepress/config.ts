@@ -106,6 +106,8 @@ export default defineConfig({
             text: "Reconstruction readiness",
             link: "/reconstruction-readiness",
           },
+          { text: "REA guide", link: "/rea-guide" },
+          { text: "Architecture patterns", link: "/architecture-patterns" },
           { text: "Releasing", link: "/releasing" },
         ],
       },
