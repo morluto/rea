@@ -10,7 +10,15 @@ import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { importReferenceSource } from "../application/ReferenceSourceImport.js";
 import { projectReferenceSourceImportError } from "../application/ReferenceSourceImportTypes.js";
 import type { AnalysisCleanupObservation } from "../domain/analysisErrorBase.js";
+import {
+  PERSISTED_SETTINGS,
+  unsetUserConfig,
+  userConfigFilePath,
+  writeUserConfig,
+  type PersistedSetting,
+} from "../config/userConfig.js";
 import { parseConfig } from "../config/parseConfig.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { projectInputIssues } from "../domain/inputIssueProjection.js";
@@ -36,6 +44,8 @@ export const registerUtilityCommands = (
   analysis: Pick<DirectAnalysis, "runProviderAnalysis" | "runSessionStatus">,
 ): void => {
   const { runProviderAnalysis } = analysis;
+
+  registerConfigCommand(cli, logger, environment);
   registerCapabilityCommands(cli, logger, analysis);
   registerNativeCommands(cli, logger, runProviderAnalysis);
   registerNativeCallCommands(cli, logger, runProviderAnalysis);
@@ -446,3 +456,123 @@ const mergeReferenceSourceCleanup = (
         reason: `${first.reason}; ${second.reason}`,
         resources: [...new Set([...first.resources, ...second.resources])],
       };
+
+/**
+ * Register `rea config`, the user-owned persistence surface for provider
+ * settings (env > config file > auto-detect).
+ */
+const registerConfigCommand = (
+  cli: CliInstance,
+  logger: Logger,
+  environment: Readonly<Record<string, string | undefined>>,
+): void => {
+  cli.command(CLI_COMMANDS.config, {
+    description: "Show or persist provider settings in the user config file",
+    args: z.object({}),
+    options: z.object({
+      set: z
+        .array(z.string())
+        .default([])
+        .describe(
+          "NAME=VALUE pairs to persist (repeatable); e.g. --set GHIDRA_INSTALL_DIR=/opt/ghidra",
+        ),
+      unset: z
+        .array(z.string())
+        .default([])
+        .describe("Setting names to remove from the config file (repeatable)"),
+      get: z
+        .string()
+        .optional()
+        .describe("Print the effective value and source for one setting"),
+    }),
+    run: async ({ options }) =>
+      logCliCommand(logger, CLI_COMMANDS.config, async () => {
+        const persistable = PERSISTED_SETTINGS as readonly string[];
+        const supported = `is not a persistable REA setting; supported: ${persistable.join(", ")}`;
+        const rejectSetting = (setting: string, constraint: string): never => {
+          throw new ConfigurationError("Invalid rea config request", {
+            settings: [{ setting, constraint }],
+          });
+        };
+        if (
+          options.get !== undefined &&
+          (options.set.length > 0 || options.unset.length > 0)
+        ) {
+          rejectSetting("--get", "cannot be combined with --set or --unset");
+        }
+        // The injected environment is already merged (env > config file), so
+        // the raw ambient process environment decides which side won.
+        const rawEnvironment = process.env as Record<
+          string,
+          string | undefined
+        >;
+        const effectiveSettings = (): Record<
+          string,
+          { value: string; source: string }
+        > => {
+          const result: Record<string, { value: string; source: string }> = {};
+          for (const name of persistable) {
+            const effective = environment[name];
+            if (effective === undefined || effective.length === 0) continue;
+            const source =
+              rawEnvironment[name] !== undefined ? "env" : "config";
+            result[name] = { value: effective, source };
+          }
+          return result;
+        };
+        if (options.get !== undefined) {
+          if (!persistable.includes(options.get)) {
+            rejectSetting(options.get, supported);
+          }
+          const entry = effectiveSettings()[options.get];
+          return entry === undefined
+            ? { setting: options.get, value: null, source: "auto-detect" }
+            : { setting: options.get, ...entry };
+        }
+        if (options.set.length > 0 || options.unset.length > 0) {
+          const settings: Partial<Record<PersistedSetting, string>> = {};
+          for (const pair of options.set) {
+            const eq = pair.indexOf("=");
+            if (eq <= 0) {
+              rejectSetting(pair, "--set expects NAME=VALUE");
+            }
+            const name = pair.slice(0, eq);
+            if (!persistable.includes(name)) {
+              rejectSetting(name, supported);
+            }
+            const value = pair.slice(eq + 1);
+            if (value.length === 0) {
+              rejectSetting(name, "must be a non-empty string");
+            }
+            settings[name as PersistedSetting] = value;
+          }
+          for (const name of options.unset) {
+            if (!persistable.includes(name)) {
+              rejectSetting(name, supported);
+            }
+          }
+          const path = userConfigFilePath(
+            environment as Readonly<NodeJS.ProcessEnv>,
+            process.platform,
+          );
+          let saved: readonly string[] = [];
+          let removed: readonly string[] = [];
+          if (options.set.length > 0) {
+            await writeUserConfig(
+              environment as Readonly<NodeJS.ProcessEnv>,
+              settings,
+            );
+            saved = Object.keys(settings);
+          }
+          if (options.unset.length > 0) {
+            removed = await unsetUserConfig(
+              environment as Readonly<NodeJS.ProcessEnv>,
+              options.unset as readonly PersistedSetting[],
+            );
+          }
+          return { path, saved, removed };
+        }
+        return { settings: effectiveSettings() };
+      }),
+  });
+};
