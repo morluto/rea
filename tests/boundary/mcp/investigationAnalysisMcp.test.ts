@@ -206,7 +206,9 @@ it("keeps call-path publication ahead of close_binary record draining", async ()
       provider: { id: "rea-call-path" },
       evidence_links: input.functions.map(({ evidence_id }) => evidence_id),
     });
-    expect(session.exportEvidenceBundle().records).toHaveLength(0);
+    expect(session.evidenceForAnalysis(evidence.evidence_id)).toEqual(evidence);
+    for (const source of input.functions)
+      expect(session.hasEvidence(source.evidence_id)).toBe(true);
   } finally {
     releasePreparation.resolve();
     await close(session, server, client);

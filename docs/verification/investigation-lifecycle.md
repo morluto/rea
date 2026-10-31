@@ -141,7 +141,7 @@ bundles: 34 records, 87,532,230 estimated representation bytes against its obser
 corpus did not reach default capacity; injected-policy regressions establish
 atomic refusal, metadata replacement accounting and budget release on reset.
 
-Local checks passed across 25 focused source/public-boundary files, 342 distinct
+Local checks passed across 29 focused source/public-boundary files, 381 distinct
 tests using each file's latest passing run, and 93 Python tests. The main
 integration specifically reran eight lifecycle/recovery files with 61 passing
 tests, including retained candidate cleanup failure/recovery and healthy-client
