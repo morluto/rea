@@ -10,8 +10,9 @@ export const artifactTargetRefusal = (
   operation: string,
   target: BinaryTarget,
 ): ArtifactTargetRefusal | undefined => {
-  const bundle =
-    target.kind === "executable" && target.bundleInfoPlist !== undefined;
+  // Bundle operations read the bundle directory, whatever its executable
+  // admitted as; the bundle facts alone establish an .app target.
+  const bundle = target.bundleInfoPlist !== undefined;
   const refuse = (reason: string): ArtifactTargetRefusal => ({
     code: "target_kind_unsupported",
     reason,

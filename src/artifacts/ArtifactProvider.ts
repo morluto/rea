@@ -270,8 +270,12 @@ class ArtifactClient implements AnalysisClient {
         );
       }
       if (operation === "inspect_keyed_archive") {
+        // A bundle target reads bundle-relative archives whatever its
+        // executable admitted as; only a plist opened on its own is standalone.
         const standalone =
-          this.target.kind === "artifact" && this.target.format === "plist";
+          this.target.bundleInfoPlist === undefined &&
+          this.target.kind === "artifact" &&
+          this.target.format === "plist";
         const selectedPath = artifactTargetSelectedPath(this.target);
         const result = standalone
           ? await inspectStandaloneKeyedArchive({
