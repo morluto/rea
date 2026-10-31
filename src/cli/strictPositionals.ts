@@ -40,13 +40,16 @@ const optionTokenShape = (schema: z.ZodObject): z.ZodObject =>
   );
 
 /**
- * Incur 0.6.1 drops unbound positionals. Its public parser owns token binding,
- * but provides neither a strict-count option nor raw argv in middleware.
- * Capture its unbound tail with inert schemas, before the real command parse.
- * The original schemas still own validation, transforms, defaults and catalog.
+ * Incur 0.6.1 drops unbound positionals and middleware has no raw argv.
+ * Capture its unbound tail with inert schemas; let callers validate raw tokens
+ * after command resolution. Original schemas still own parsing and defaults.
  */
-export const rejectSurplusCliArguments = (
+export const validateCliArguments = (
   cli: CliInstance,
+  validateRawArguments?: (
+    arguments_: readonly string[],
+    command: string,
+  ) => void,
 ): ((
   arguments_: readonly string[],
   options: ServeOptions,
@@ -68,6 +71,7 @@ export const rejectSurplusCliArguments = (
       async (context, next) => {
         const tokens = invocation.getStore();
         if (tokens !== undefined) {
+          validateRawArguments?.(tokens, context.command);
           // Only the resolved command needs an inert token-binding schema.
           // Keep the original schema references, but do not prepare every
           // registered command for each one-shot invocation.

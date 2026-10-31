@@ -11,7 +11,6 @@ import {
 } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
-
 import { spawn } from "@lydell/node-pty";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
@@ -19,10 +18,33 @@ import { parse as parseToml } from "smol-toml";
 
 import type { SetupResult } from "../../../src/application/SetupTypes.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest } from "../../support/cli/cliFixture.js";
+import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
 
 const execute = promisify(execFile);
 const decisionMarker = "REA_SETUP_DECISION:";
+const isolatedSetupEnvironment = (home: string) => ({
+  HOME: home,
+  USERPROFILE: home,
+  CODEX_HOME: join(home, ".codex"),
+  XDG_CONFIG_HOME: join(home, ".config"),
+  XDG_DATA_HOME: join(home, ".local", "share"),
+  XDG_CACHE_HOME: join(home, ".cache"),
+});
+const runSetup = (cli: TestCli, home: string, dryRun: string) =>
+  cli.run({
+    arguments: [
+      "setup",
+      "--yes",
+      "--client",
+      "codex",
+      "--skill=false",
+      dryRun,
+      "--format",
+      "json",
+    ],
+    cwd: home,
+    environment: isolatedSetupEnvironment(home),
+  });
 const decisionSchema = z.object({
   approved: z.boolean(),
   selectedActionIds: z.array(z.string()),
@@ -85,6 +107,80 @@ const clientStates = [
 ] as const;
 
 const agentActions = actions.filter(({ kind }) => kind !== "install_hopper");
+
+cliTest.for([
+  "--dry-run=abc",
+  "--dry-run=",
+  "--dryRun=abc",
+  "--dry-run=ab\ncd",
+] as const)(
+  "rejects malformed setup dry-run value %s before approved changes are written",
+  async (dryRun, { cli }) => {
+    const home = await createTestTempDirectory("rea-cli-invalid-dry-run-");
+    const config = join(home, ".codex", "config.toml");
+    const result = await runSetup(cli, home, dryRun);
+
+    await expect(access(config)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(result.exitCode).not.toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`).toContain("--dry-run");
+  },
+);
+
+cliTest.for(["--dry-run=true", "--dry-run=false"] as const)(
+  "accepts explicit setup dry-run value %s",
+  async (dryRun, { cli }) => {
+    const home = await createTestTempDirectory("rea-cli-explicit-dry-run-");
+    const config = join(home, ".codex", "config.toml");
+    const result = await runSetup(cli, home, dryRun);
+
+    expect(result.exitCode, result.stderr).toBe(0);
+    if (dryRun === "--dry-run=true") {
+      expect(result.json).toMatchObject({ status: "planned" });
+      await expect(access(config)).rejects.toMatchObject({ code: "ENOENT" });
+    } else {
+      expect(result.json).toMatchObject({ status: "ready" });
+      await expect(access(config)).resolves.toBeUndefined();
+    }
+  },
+);
+
+cliTest(
+  "reports invalid dry-run through the public CLI without a stack trace",
+  async ({ cli }) => {
+    const home = await createTestTempDirectory(
+      "rea-cli-public-invalid-dry-run-",
+    );
+    const config = join(home, ".codex", "config.toml");
+    const result = await runSetup(cli, home, "--dry-run=abc");
+
+    expect(result.exitCode).not.toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`).toContain(
+      "Invalid --dry-run value; use true or false.",
+    );
+    expect(`${result.stdout}\n${result.stderr}`).not.toContain(
+      "Incur.ParseError",
+    );
+    await expect(access(config)).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
+
+cliTest(
+  "shows setup help even when a malformed dry-run value is present",
+  async ({ cli }) => {
+    const home = await createTestTempDirectory("rea-cli-help-invalid-dry-run-");
+    const config = join(home, ".codex", "config.toml");
+    const result = await cli.run({
+      arguments: ["setup", "--dry-run=abc", "--help"],
+      cwd: home,
+      environment: isolatedSetupEnvironment(home),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("Usage: rea setup");
+    expect(result.stdout).not.toContain("Invalid --dry-run value");
+    await expect(access(config)).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
 
 const runSetupDryRunInTty = async (
   home: string,
