@@ -639,3 +639,100 @@ it("prefers a later exact filename over an earlier unique canonical candidate", 
     expect.objectContaining({ to: `${composed}.js`, resolution: "internal" }),
   ]);
 });
+
+const relationshipsOf = (files: readonly (readonly [string, string])[]) =>
+  parseReferenceSourceEntries(
+    {
+      root: "/selected/source",
+      bytesRead: 0,
+      limitations: [],
+      entries: files.map(([path, content]) => ({
+        status: "read" as const,
+        kind: "file" as const,
+        path,
+        bytes: Buffer.from(content),
+        size: Buffer.byteLength(content),
+      })),
+    },
+    [],
+  ).relationships;
+
+it("keeps the raw query on an unresolved ESM pathname", () => {
+  const relationships = relationshipsOf([
+    [
+      "main.mjs",
+      'import "./missing.mjs?v=1";\nimport "./missing.mjs?v=1/..";\n',
+    ],
+  ]);
+  expect(relationships).toContainEqual(
+    expect.objectContaining({
+      from_path: "main.mjs",
+      to: "missing.mjs?v=1",
+      source_specifier: "./missing.mjs?v=1",
+      kind: "imports",
+      resolution: "unresolved",
+    }),
+  );
+  expect(relationships).toContainEqual(
+    expect.objectContaining({
+      from_path: "main.mjs",
+      to: "missing.mjs?v=1/..",
+      source_specifier: "./missing.mjs?v=1/..",
+      resolution: "unresolved",
+    }),
+  );
+});
+
+it("keeps the raw fragment on an unresolved ESM pathname", () => {
+  expect(
+    relationshipsOf([["main.mjs", 'import "./missing.mjs#a/../b";\n']]),
+  ).toContainEqual(
+    expect.objectContaining({
+      from_path: "main.mjs",
+      to: "missing.mjs#a/../b",
+      source_specifier: "./missing.mjs#a/../b",
+      kind: "imports",
+      resolution: "unresolved",
+    }),
+  );
+});
+
+it("keeps the raw query when an unresolved ESM import is in a subdirectory", () => {
+  const relationships = relationshipsOf([
+    ["pkg/main.mjs", 'import "./missing.mjs?v=1/..";\n'],
+    ["main.mjs", 'import "./pkg/missing.mjs?v=1";\n'],
+  ]);
+  expect(relationships).toContainEqual(
+    expect.objectContaining({
+      from_path: "pkg/main.mjs",
+      to: "pkg/missing.mjs?v=1/..",
+      source_specifier: "./missing.mjs?v=1/..",
+      resolution: "unresolved",
+    }),
+  );
+  expect(relationships).toContainEqual(
+    expect.objectContaining({
+      from_path: "main.mjs",
+      to: "pkg/missing.mjs?v=1",
+      source_specifier: "./pkg/missing.mjs?v=1",
+      resolution: "unresolved",
+    }),
+  );
+});
+
+it("leaves a resolved ESM query on the inventoried pathname", () => {
+  expect(
+    relationshipsOf([
+      ["main.mjs", 'import "./dep.mjs?v=1";\n'],
+      ["dep.mjs", "export const value = 1;\n"],
+    ]),
+  ).toContainEqual(
+    expect.objectContaining({
+      from_path: "main.mjs",
+      to: "dep.mjs",
+      source_specifier: "./dep.mjs?v=1",
+      kind: "imports",
+      resolution: "internal",
+    }),
+  );
+});
