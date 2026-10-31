@@ -7,6 +7,7 @@ import {
   AnalysisCancelledError,
   AnalysisTimeoutError,
   AnalysisResourceConstraintError,
+  AnalysisProtocolError,
 } from "./analysisErrorCore.js";
 import { ArtifactOperationError } from "./artifactOperationError.js";
 import {
@@ -20,6 +21,8 @@ import {
   HopperRemoteError,
   HopperStartError,
   HopperTimeoutError,
+  HopperCancelledError,
+  HopperProtocolError,
 } from "./hopperErrors.js";
 import {
   DEFAULT_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
@@ -903,6 +906,60 @@ describe("analysis error projection: Hopper startup failures", () => {
 });
 
 describe("analysis error projection: retry guidance", () => {
+  it.each([
+    new AnalysisProtocolError("invalid reply"),
+    new AnalysisOutputError("inspect", "report missing"),
+    new HopperProtocolError("invalid reply"),
+    new ProviderAdapterError("fixture", "inspect"),
+    new AnalysisCancelledError("inspect"),
+    new HopperCancelledError(),
+    new AnalysisTimeoutError("inspect", 30),
+  ])("separates recovery actions from the $_tag failure message", (error) => {
+    const projected = projectAnalysisError(error);
+    expect(projected.remediation.action).not.toBe(projected.message);
+    expect(projected.remediation.action).toMatch(/^(Run|Start|Narrow)\b/u);
+    expect(analysisErrorProjectionSchema.safeParse(projected).success).toBe(
+      true,
+    );
+  });
+
+  it.each([
+    new ProviderAdapterError("fixture", "inspect", {
+      userMessage: "Reopen the target to refresh the selected provider.",
+    }),
+    new AnalysisOutputError("inspect", "report missing", {
+      userMessage: "Select a complete report.",
+    }),
+    new AnalysisTimeoutError("inspect", 30, {
+      userMessage: "Increase the selected operation deadline.",
+    }),
+  ])("preserves custom producer guidance for $_tag", (error) => {
+    expect(projectAnalysisError(error)).toMatchObject({
+      message: error.userMessage,
+      remediation: { action: error.userMessage },
+    });
+  });
+
+  it.each([
+    new ProviderAdapterError("fixture", "inspect", {
+      userMessage: "Selected provider failed.",
+      remediationAction: "Correct the selected provider setting.",
+    }),
+    new AnalysisOutputError("inspect", "report missing", {
+      userMessage: "Selected report is incomplete.",
+      remediationAction: "Select a complete report.",
+    }),
+    new AnalysisTimeoutError("inspect", 30, {
+      userMessage: "Selected deadline elapsed.",
+      remediationAction: "Increase the selected operation deadline.",
+    }),
+  ])("preserves producer recovery guidance for $_tag", (error) => {
+    expect(projectAnalysisError(error)).toMatchObject({
+      message: error.userMessage,
+      remediation: { action: error.remediationAction },
+    });
+  });
+
   it.each([
     [
       "unreadable output",

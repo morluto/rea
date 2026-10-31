@@ -246,6 +246,16 @@ export const analysisErrorRemediationAction = (
   }
   if (error instanceof UnknownRegistryError && error.reason === "not-found")
     return "Check that the unknown_id belongs to this session, then retry.";
+  if (error.userMessage !== undefined) return error.userMessage;
+  if (
+    UNREADABLE_OUTPUT_TAGS.has(error._tag) ||
+    ADAPTER_FAILURE_TAGS.has(error._tag)
+  )
+    return "Run `rea doctor` and review the reported details to correct the request or provider setup before running the analysis again.";
+  if (CANCELLED_TAGS.has(error._tag))
+    return "Start the analysis again when ready.";
+  if (TIMEOUT_TAGS.has(error._tag))
+    return "Narrow the request, then run `rea doctor` if it still exceeds its deadline.";
   return analysisErrorUserMessage(error);
 };
 

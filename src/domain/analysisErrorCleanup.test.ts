@@ -74,6 +74,16 @@ it.each([false, true])(
   },
 );
 
+it("preserves cleanup recovery guidance while resources remain owned", () => {
+  const cleanup = new ProviderCleanupError("fixture", ["owned-input"], {});
+  expect(projectAnalysisError(cleanup)).toMatchObject({
+    code: "cleanup_incomplete",
+    retryable: false,
+    remediation: { action: cleanup.userMessage },
+  });
+  expect(cleanup.cleanupResources).toEqual(["owned-input"]);
+});
+
 it("keeps dependency-owned resources empty after the final owner releases", () => {
   const file = new ProviderCleanupError("fixture", ["file-owner"], {});
   const trace = new ProviderCleanupError("fixture", ["trace-owner"], {});
