@@ -106,26 +106,40 @@ type BatchDecompileItem = {
 };
 
 /**
+ * Guidance for a batch item whose provider returned null pseudocode, by
+ * whether that observation reported caveats for the item to carry.
+ */
+export const NULL_PSEUDOCODE_GUIDANCE = {
+  reported: {
+    userMessage:
+      "The provider returned no pseudocode for this function; this item's limitations hold that observation's caveats, including any reason the provider reported.",
+    remediationAction:
+      "Read this item's limitations for the provider's reason before retrying; another provider may decompile this entry.",
+  },
+  none: {
+    userMessage:
+      "The provider returned no pseudocode for this function and reported no caveat or reason for it.",
+    remediationAction:
+      "The provider gave no further explanation; another provider may decompile this entry.",
+  },
+} as const;
+
+/**
  * The item error for a provider answer without usable text. Null is the
- * provider's observation that it has no pseudocode for this function, with
- * any reason it reported in that observation's limitations; empty or
- * non-text pseudocode is unreadable output.
+ * provider's observation that it has no pseudocode for this function; empty
+ * or non-text pseudocode is unreadable output.
  */
 const missingPseudocodeError = (
   providerId: string,
   pseudocode: JsonValue,
+  caveats: keyof typeof NULL_PSEUDOCODE_GUIDANCE,
 ): AnalysisError =>
   pseudocode === null
     ? new AnalysisCapabilityUnavailableError(
         providerId,
         "procedure_pseudo_code",
         "provider returned null pseudocode",
-        {
-          userMessage:
-            "The provider returned no pseudocode for this function; this item's limitations hold that observation's caveats, including any reason the provider reported.",
-          remediationAction:
-            "Read this item's limitations for the provider's reason before retrying; another provider may decompile this entry.",
-        },
+        NULL_PSEUDOCODE_GUIDANCE[caveats],
       )
     : new AnalysisOutputError(
         "procedure_pseudo_code",
@@ -552,7 +566,11 @@ export class EnhancedTools {
         procedure,
         status: "error",
         error: projectAnalysisError(
-          missingPseudocodeError(provider.id, pseudocode),
+          missingPseudocodeError(
+            provider.id,
+            pseudocode,
+            limitations.length === 0 ? "none" : "reported",
+          ),
         ),
         ...(limitations.length === 0 ? {} : { limitations }),
       });

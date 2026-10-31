@@ -5,7 +5,8 @@ import { expect } from "vitest";
 
 import { AnalysisProviderRegistry } from "../../../../src/application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../../../../src/application/binary/BinarySessionComposition.js";
-import { toolContract } from "../../../../src/contracts/toolContracts.js";
+import { ENHANCED_TOOL_CONTRACTS } from "../../../../src/contracts/enhancedToolContracts.js";
+import { SESSION_TOOL_CONTRACTS } from "../../../../src/contracts/sessionToolContracts.js";
 import { parseEvidence } from "../../../../src/domain/evidence.js";
 import { evidenceBundleSchema } from "../../../../src/domain/evidenceBundle.js";
 import { KunaProvider } from "../../../../src/kuna/KunaProvider.js";
@@ -17,6 +18,23 @@ import { writeFakeKuna } from "./fakeKuna.js";
 import { FUNCTIONS } from "./kunaSessionFixture.js";
 
 const test = mcpTest.skipIf(process.platform === "win32");
+
+const batchDecompile = ENHANCED_TOOL_CONTRACTS.find(
+  (
+    contract,
+  ): contract is Extract<
+    (typeof ENHANCED_TOOL_CONTRACTS)[number],
+    { readonly name: "batch_decompile" }
+  > => contract.name === "batch_decompile",
+);
+const getEvidenceBundle = SESSION_TOOL_CONTRACTS.find(
+  (
+    contract,
+  ): contract is Extract<
+    (typeof SESSION_TOOL_CONTRACTS)[number],
+    { readonly name: "get_evidence_bundle" }
+  > => contract.name === "get_evidence_bundle",
+);
 
 test("keeps each Kuna no-pseudocode observation's limitations on its batch item", async ({
   mcp,
@@ -70,10 +88,11 @@ test("keeps each Kuna no-pseudocode observation's limitations on its batch item"
         })
       ).structuredContent,
     );
-    const result =
-      toolContract("batch_decompile").outputSchema.parse(
-        batch,
-      ).normalized_result;
+    if (batchDecompile === undefined || getEvidenceBundle === undefined)
+      throw new Error(
+        "Missing batch_decompile or get_evidence_bundle contract",
+      );
+    const result = batchDecompile.outputSchema.parse(batch).normalized_result;
     expect(result).toMatchObject({ total: 4, succeeded: 1, failed: 3 });
     const [main, failed, imported, unknown] = result.items;
     expect(main).toMatchObject({ address: "main", status: "ok" });
@@ -124,7 +143,7 @@ test("keeps each Kuna no-pseudocode observation's limitations on its batch item"
 
     // A batch-only bundle keeps the association without another provider read.
     const bundle = evidenceBundleSchema.parse(
-      toolContract("get_evidence_bundle").outputSchema.parse(
+      getEvidenceBundle.outputSchema.parse(
         (await call("get_evidence_bundle", {})).structuredContent,
       ).result,
     );

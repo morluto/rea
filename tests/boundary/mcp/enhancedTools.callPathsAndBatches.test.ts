@@ -8,7 +8,8 @@ import {
   AnalysisOutputError,
 } from "../../../src/domain/analysisErrorCore.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
-import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { ENHANCED_TOOL_CONTRACTS } from "../../../src/contracts/enhancedToolContracts.js";
+import { NULL_PSEUDOCODE_GUIDANCE } from "../../../src/application/EnhancedTools.js";
 import type { RelationshipCoverage } from "../../../src/domain/relationshipCoverage.js";
 import { err, ok as resultOk } from "../../../src/domain/result.js";
 
@@ -651,28 +652,45 @@ describe("enhanced MCP batch answers without pseudocode", () => {
     });
 
     expect(result.isError).not.toBe(true);
-    const evidence = toolContract("batch_decompile").outputSchema.parse(
-      result.structuredContent,
+    const contract = ENHANCED_TOOL_CONTRACTS.find(
+      (
+        candidate,
+      ): candidate is Extract<
+        (typeof ENHANCED_TOOL_CONTRACTS)[number],
+        { readonly name: "batch_decompile" }
+      > => candidate.name === "batch_decompile",
     );
-    const noPseudocode = {
+    if (contract === undefined)
+      throw new Error("Missing batch_decompile contract");
+    const evidence = contract.outputSchema.parse(result.structuredContent);
+    const noPseudocode = (
+      guidance: (typeof NULL_PSEUDOCODE_GUIDANCE)[keyof typeof NULL_PSEUDOCODE_GUIDANCE],
+    ) => ({
       code: "capability_unavailable",
       retryable: false,
+      message: guidance.userMessage,
+      remediation: { action: guidance.remediationAction },
       details: {
         provider_id: "fixture",
         operation: "procedure_pseudo_code",
         reason: "provider returned null pseudocode",
       },
-    };
+    });
     expect(evidence.normalized_result).toMatchObject({
       items: [
         { address: "0x1", status: "ok", pseudocode: answers["0x1"]?.result },
         {
           address: "0x2",
           status: "error",
-          error: noPseudocode,
+          error: noPseudocode(NULL_PSEUDOCODE_GUIDANCE.reported),
           limitations: answers["0x2"]?.limitations,
         },
-        { address: "0x3", status: "error", error: noPseudocode },
+        // Without caveats, the guidance does not point at an absent field.
+        {
+          address: "0x3",
+          status: "error",
+          error: noPseudocode(NULL_PSEUDOCODE_GUIDANCE.none),
+        },
         {
           address: "0x4",
           status: "error",
