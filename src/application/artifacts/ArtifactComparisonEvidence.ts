@@ -130,12 +130,10 @@ export const resolveArtifactComparisonEvidence = (
   const parent = evidenceById?.(parentId);
   if (parent === undefined)
     return err(
-      new EvidenceReferenceError(
-        parentId,
-        "missing",
-        "retained complete artifact inventory Evidence",
-        null,
-      ),
+      new EvidenceReferenceError(parentId, "missing", {
+        expected: "retained complete artifact inventory Evidence",
+        actual: null,
+      }),
     );
   const selected = resolveEvidenceInput(
     { kind: "retained-evidence", evidence_id: parentId },

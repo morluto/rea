@@ -40,7 +40,10 @@ import { parseExecutableHeader } from "../domain/binaryTarget.js";
 import { elf, thinMach } from "../domain/binaryTarget.fixture.js";
 import { GhidraProvider } from "./GhidraProvider.js";
 import type { GhidraTargetSnapshot } from "./GhidraClient.js";
-import type { GhidraProviderClientFactory } from "./GhidraProviderClient.js";
+import {
+  ghidraMissingProgramGuidance,
+  type GhidraProviderClientFactory,
+} from "./GhidraProviderClient.js";
 import type { GhidraHeadlessLauncher } from "./GhidraLauncher.js";
 import type { GhidraInstallationHost } from "./GhidraInstallation.js";
 import {
@@ -3291,6 +3294,101 @@ describe("Ghidra deadline guidance", () => {
     expect(projected.remediation.action).not.toContain(
       "REA_GHIDRA_STARTUP_TIMEOUT_MS",
     );
+  });
+});
+
+describe("Ghidra missing project program", () => {
+  const startFailure = async (
+    stdout: string,
+    environment: Readonly<Record<string, string>> = {},
+  ) => {
+    const root = await mkdtemp(join(tmpdir(), "rea-missing-program-"));
+    onTestFinished(async () => {
+      await rm(root, { recursive: true, force: true });
+    });
+    await mkdir(join(root, "selected.rep"));
+    await writeFile(join(root, "selected.gpr"), "marker");
+    const failure = new GhidraSessionError(
+      "start",
+      "Ghidra exited before the bridge was ready",
+      {
+        failure_kind: "start",
+        exit_code: 1,
+        failure_output: failureOutput(stdout),
+      },
+    );
+    const ghidra = provider(
+      installationHost(),
+      () => ({
+        start: async () => err(failure),
+        callTool: async () => err(failure),
+        close: async () => ok(null),
+      }),
+      {
+        REA_GHIDRA_PROJECT_PATH: join(root, "selected.gpr"),
+        ...environment,
+      },
+    );
+    onTestFinished(async () => {
+      await ghidra.closeOwnedResources();
+    });
+    const target = executableTarget("elf", "x86_64");
+    const profile = await ghidra.resolveAnalysisProfile(target);
+    if (!profile.ok || profile.value.profile === null)
+      throw new Error("Expected Ghidra analysis profile");
+    const result = await ghidra
+      .createClient(target, profile.value.profile)
+      .execute("list_documents", {});
+    if (result.ok) throw new Error("Expected a Ghidra start failure");
+    return projectAnalysisError(result.error);
+  };
+  const abort = (name: string) =>
+    `ERROR Abort due to Headless analyzer error: Requested project program file(s) not found: ${name} (HeadlessAnalyzer) java.io.IOException: Requested project program file(s) not found: ${name}`;
+
+  const expectMissingProgram = (
+    projected: Awaited<ReturnType<typeof startFailure>>,
+    programName: string,
+    configured: boolean,
+  ) => {
+    const guidance = ghidraMissingProgramGuidance(programName, configured);
+    expect(projected).toMatchObject({
+      code: "configuration_invalid",
+      details: {
+        settings: [
+          {
+            setting: "REA_GHIDRA_PROGRAM_NAME",
+            constraint: guidance.constraint,
+          },
+        ],
+      },
+    });
+    expect(projected.remediation.action).toBe(guidance.remediationAction);
+    expect(projected.message).toContain(JSON.stringify(programName));
+  };
+
+  it("reports the program name defaulted from the target as REA_GHIDRA_PROGRAM_NAME", async () => {
+    expectMissingProgram(
+      await startFailure(abort("fixture")),
+      "fixture",
+      false,
+    );
+  });
+
+  it("reports an explicitly configured program name that the project lacks", async () => {
+    const projected = await startFailure(abort("program_gamma"), {
+      REA_GHIDRA_PROGRAM_NAME: "program_gamma",
+    });
+    expectMissingProgram(projected, "program_gamma", true);
+  });
+
+  it("keeps the generic start failure when Ghidra names a different program", async () => {
+    const projected = await startFailure(abort("fixture_other"));
+    expect(projected.code).toBe("execution_failure");
+  });
+
+  it("keeps the generic start failure for unrelated launch output", async () => {
+    const projected = await startFailure("ERROR Unable to lock project");
+    expect(projected.code).toBe("execution_failure");
   });
 });
 

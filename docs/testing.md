@@ -382,6 +382,38 @@ matching real-provider lane.
 | Client configuration or schema conversion | [Native client lane](client-verification.md)                  | Distinguish loopback models from live services              |
 | Agent investigation quality               | [Agent evaluation](#agent-evaluation-and-conformance-records) | Review transcript and scenario-specific evidence            |
 
+### Provider-backed workflow verification
+
+For a new or changed provider-backed tool, select tests from the analyst's
+question and the facts the contract claims, not from an upstream command list.
+Use the existing workflow as a baseline and identify what the proposed tool
+adds. Choose the relevant cases below; do not require every provider or a
+Cartesian matrix when it would not change the claim.
+
+When auditing existing tools, compare selected analyst workflows with the cases
+their existing tests and real-provider lanes actually exercise. Run relevant
+public workflows and focused checks; report untested scenarios rather than
+inferring that a green test proves them or that no prior testing occurred. A fix
+should add a regression for the demonstrated failure at its owning boundary and
+affected consumer.
+
+- Use a controlled target with independently known facts and a meaningful
+  counterexample. Compare native provider output with the target or a
+  format-aware oracle; a provider label, a mock, or another REA projection is
+  not independent proof of the underlying fact.
+- Exercise the affected public CLI/MCP workflow, including handoffs between
+  calls. Assert the requested result, caller-selected inputs, source identity,
+  evidence and coverage. Check that unavailable, partial and empty outcomes
+  retain their different meanings across the producing and consuming boundaries.
+- Where relevant, continue after a mixed success, failed request, cancellation
+  or close/reopen. Verify the next supported recovery and preservation of prior
+  results and resource ownership. Use the applicable lifecycle regressions below.
+- Record the provider version, host, fixture, actual entrypoint, controlled
+  faults and skipped or unavailable coverage. A simulated provider tests the
+  integration boundary; a scripted sequence tests that sequence, not an agent's
+  ability to discover it. Run the matching real-provider and agent lanes when
+  their respective claims require them.
+
 ## Test design and pruning
 
 Prefer real public CLI/MCP workflows, then production-boundary integration,
@@ -1437,6 +1469,11 @@ the fixture and system zlib 1.2.13 / SQLite 3.40.1 libraries through MCP, includ
 cached byte spans and a Ghidra comparison. See the [Linux report](https://github.com/morluto/rea/pull/3854#issuecomment-6185870391)
 for measured scope and limitations. Windows, PE and universal Mach-O remain
 unverified by this lane.
+
+Kuna 1.986 passed the fixture and a separate small, source-owned Mach-O with
+symbols and stripped on macOS arm64, including the Ghidra comparison and owned
+cleanup. Linux and other hosts have not been verified with 1.986; this check is
+not a repeat of the larger 1.833 matrix.
 
 ## DOS Ghidra analysis
 

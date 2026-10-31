@@ -13,6 +13,13 @@ Select columns, batch IDs and page individual facts; aliases remain unresolved.
 Unpaired observations do not prove additions/removals. Existing matched dossier
 pairs include inputs for `compare_functions`; otherwise analyze just chosen pairs.
 
+Aggregate completed comparisons with `find_changed_behavior`, selecting each
+comparison's exact `retained-evidence` ID instead of resending full records.
+Inline comparison Evidence remains accepted. References belong to the current
+server: after handoff, import the original bundle including its source closure.
+Do not substitute dossier IDs or summary views. Static differences remain
+behavior candidates, with runtime behavior unknown unless separately observed.
+
 For a matching representation refusal, inspect `details.limit` and raise
 `native.matching_representation_bytes` with `update_analysis_settings` before
 retrying the unchanged MCP request. CLI launch seed:
@@ -610,6 +617,16 @@ discovery are unsupported. Windows Ghidra P0 admits raw images only for `6502`. 
 
 Fresh-import sessions admit annotations; existing-project reuse is read-only.
 Use `annotate_native_function` for one function name and/or entry comments, with at least one explicit change. Review its annotation readback and refreshed dossier inline. Changes are atomic and session-scoped; empty comments clear them, omitted fields preserve them. Later MCP calls observe edits until close. CLI `annotate-native-function` returns the updated analysis before discarding the session. Original executable bytes are unchanged; edits invalidate immutable snapshots. Windows P0 does not admit database mutations. For naming only, `set_address_name` / `set_addresses_names` also work with Ghidra: they name function entries or data addresses (primary labels) and return compact per-address success booleans instead of a dossier.
+
+For `compare_functions`, obtain `analyze_function` Evidence before and after the
+edit while the MCP session is open; annotation Evidence is not a comparison
+input. Export the needed Evidence before close if comparison will happen later.
+Authenticated same-artifact coordinates preserve renamed entries as
+`matched / same-entry`, with the canonical `entry_address` inline; name and
+exact-text changes remain separate dimensions. This requires compatible
+architecture, provider-owned mapping and selected-image commitments. Equal
+numeric addresses alone cannot establish correspondence; inspect retained
+source Evidence and coverage when the match remains ambiguous.
 
 ## Offline PE resource inventory
 
