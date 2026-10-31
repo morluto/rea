@@ -50,7 +50,7 @@ describe("Windows shortcut stable filesystem boundary", () => {
   });
 
   it("rejects network share paths without opening them", async () => {
-    const provider = new WindowsShortcutProvider();
+    const provider = new WindowsShortcutProvider("win32");
     for (const path of [
       "\\\\server\\share\\shortcut.lnk",
       "//server/share/shortcut.lnk",
@@ -75,7 +75,7 @@ describe("Windows shortcut stable filesystem boundary", () => {
   });
 
   it("does not treat an extended drive path as a network share", async () => {
-    const provider = new WindowsShortcutProvider();
+    const provider = new WindowsShortcutProvider("win32");
     for (const path of [
       "\\\\?\\C:\\shortcuts\\missing.lnk",
       "\\\\.\\C:\\shortcuts\\missing.lnk",
@@ -93,6 +93,20 @@ describe("Windows shortcut stable filesystem boundary", () => {
       });
     }
   });
+
+  it.skipIf(process.platform === "win32")(
+    "reads repeated leading slashes as a local POSIX path",
+    async () => {
+      const root = await createTestTempDirectory("rea-windows-shortcut-posix-");
+      const path = join(root, "shortcut.lnk");
+      await writeFile(path, powershellHiddenIconSpoofShortcut());
+
+      const result = await new WindowsShortcutProvider("linux").inspect(
+        providerInput(`//${path}`),
+      );
+      expect(result.ok).toBe(true);
+    },
+  );
 
   it("returns typed resource and cancellation failures", async () => {
     const root = await createTestTempDirectory("rea-windows-shortcut-budget-");

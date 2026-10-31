@@ -55,14 +55,19 @@ const LOCAL_DRIVE_DEVICE_PATH = /^[\\/]{2}[?.][\\/][A-Za-z]:(?:[\\/]|$)/u;
  * A path Windows could open through a remote host. Even `lstat` on such a path
  * can reach an SMB server and offer the caller's credentials, so this is decided
  * from the text alone. A mapped network drive looks like a local drive here.
+ * POSIX hosts read repeated leading slashes as one local root.
  */
-const namesNetworkShare = (path: string): boolean =>
-  HOST_PREFIXED_PATH.test(path) && !LOCAL_DRIVE_DEVICE_PATH.test(path);
+const namesNetworkShare = (path: string, platform: NodeJS.Platform): boolean =>
+  platform === "win32" &&
+  HOST_PREFIXED_PATH.test(path) &&
+  !LOCAL_DRIVE_DEVICE_PATH.test(path);
 
 /** Portable Shell Link reader over one bounded, identity-checked regular file. */
 export class WindowsShortcutProvider implements WindowsShortcutPort {
   readonly identity = WINDOWS_SHORTCUT_PROVIDER;
   readonly #resources = new ArtifactResourceScope();
+
+  constructor(private readonly platform: NodeJS.Platform = process.platform) {}
 
   async close(): Promise<void> {
     try {
@@ -80,7 +85,7 @@ export class WindowsShortcutProvider implements WindowsShortcutPort {
     input: InspectWindowsShortcutInput,
     options?: ExecutionOptions,
   ) {
-    if (namesNetworkShare(input.path))
+    if (namesNetworkShare(input.path, this.platform))
       return err(
         new AnalysisInputError(OPERATION, {}, [
           {
