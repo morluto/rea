@@ -230,12 +230,18 @@ it("keeps distinct targets when a capped reference source has an unavailable own
       {
         target_address: "0x10",
         source_address: "0x20",
-        containing_procedure: { status: "unavailable", reason: "not supported" },
+        containing_procedure: {
+          status: "unavailable",
+          reason: "not supported",
+        },
       },
       {
         target_address: "0x11",
         source_address: "0x20",
-        containing_procedure: { status: "unavailable", reason: "not supported" },
+        containing_procedure: {
+          status: "unavailable",
+          reason: "not supported",
+        },
       },
     ],
   });
