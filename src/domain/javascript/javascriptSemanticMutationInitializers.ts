@@ -488,7 +488,9 @@ const computeDirectInitializerPosition = (
   if (
     t.isAssignmentExpression(parent) &&
     parent.right === node &&
-    t.isIdentifier(parent.left)
+    (t.isIdentifier(parent.left) ||
+      (parent.operator === "=" &&
+        (t.isObjectPattern(parent.left) || t.isArrayPattern(parent.left))))
   ) {
     return directMutationPosition(parent, parents);
   }
