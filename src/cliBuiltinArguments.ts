@@ -161,6 +161,32 @@ export const productionMcpDoctorArguments = (
   return normalized.filter((_, index) => index !== mcp && index !== doctor);
 };
 
+/**
+ * Incur's registration builtin ignores unknown options. Check its command tail
+ * before registration side effects, retaining its consumption of nonempty
+ * values (including flag-shaped values). Global flags have already been split.
+ * Missing values and surplus positionals remain separate parser concerns.
+ */
+export const unknownMcpAddOption = (
+  arguments_: readonly string[],
+): string | undefined => {
+  for (let index = 0; index < arguments_.length; index += 1) {
+    const token = arguments_[index]!;
+    if (token === "--agent" || token === "--command" || token === "-c") {
+      if (arguments_[index + 1]) index += 1;
+      continue;
+    }
+    if (
+      token === "--no-global" ||
+      token.startsWith("--agent=") ||
+      token.startsWith("--command=")
+    )
+      continue;
+    if (token.startsWith("-")) return token;
+  }
+  return undefined;
+};
+
 /** Incur accepts the schema key and its kebab-case spelling. */
 const FLAGS = ["--sensitive-value", "--sensitiveValue"] as const;
 
