@@ -277,6 +277,19 @@ export const existingProjectCapabilities = (
     return { ...capability, limitations };
   });
 
+/**
+ * The loopback transport opens a TCP listener Node connects to on `127.0.0.1`,
+ * so the session accesses the network even though the Unix socket default does
+ * not. Session status reports the effect from the descriptor.
+ */
+export const declareLoopbackNetworkEffect = (
+  descriptor: CapabilityDescriptor,
+): CapabilityDescriptor =>
+  Object.freeze({
+    ...descriptor,
+    effects: Object.freeze({ ...descriptor.effects, mayAccessNetwork: true }),
+  });
+
 /** Capabilities advertised when a POSIX host selects the loopback transport. */
 export const loopbackTransportCapabilities =
   (): readonly CapabilityDescriptor[] =>
@@ -287,16 +300,20 @@ export const loopbackTransportCapabilities =
           ...loopbackTransportLimitations,
         ]);
         if (!capability.effects.mutatesArtifact)
-          return Object.freeze({ ...capability, limitations });
+          return declareLoopbackNetworkEffect(
+            Object.freeze({ ...capability, limitations }),
+          );
         // The selected transport, not the host, withholds mutation; no provider
         // rejection code describes that, so only the reason is published.
         const { availabilityCode: _hostCode, ...descriptor } = capability;
-        return Object.freeze({
-          ...descriptor,
-          available: false,
-          reason: LOOPBACK_TRANSPORT_MUTATION_REASON,
-          limitations,
-        });
+        return declareLoopbackNetworkEffect(
+          Object.freeze({
+            ...descriptor,
+            available: false,
+            reason: LOOPBACK_TRANSPORT_MUTATION_REASON,
+            limitations,
+          }),
+        );
       }),
     );
 

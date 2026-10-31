@@ -3793,6 +3793,7 @@ describe("Ghidra bridge transport selection", () => {
       expect.arrayContaining([loopbackTransportLimitations[0]]),
     );
     expect(annotation(ghidra)).toMatchObject({ available: true });
+    expect(annotation(ghidra)?.effects.mayAccessNetwork).toBe(false);
     await client.close();
   });
 
@@ -3821,6 +3822,7 @@ describe("Ghidra bridge transport selection", () => {
       reason: LOOPBACK_TRANSPORT_MUTATION_REASON,
     });
     expect(annotation(ghidra)).not.toHaveProperty("availabilityCode");
+    expect(annotation(ghidra)?.effects.mayAccessNetwork).toBe(true);
     const withheld = (
       capabilities: ReturnType<GhidraProvider["capabilities"]>,
     ) =>
@@ -3843,6 +3845,7 @@ describe("Ghidra bridge transport selection", () => {
     ).toMatchObject({
       available: true,
       limitations: expect.arrayContaining([...loopbackTransportLimitations]),
+      effects: expect.objectContaining({ mayAccessNetwork: true }),
     });
     await client.close();
   });
@@ -4853,6 +4856,32 @@ it("reports every Windows existing-project capability unavailable before open", 
     ).toBe(true);
   } finally {
     await ghidra.closeOwnedResources();
+  }
+});
+
+it("declares the loopback network effect for a POSIX existing-project session", async () => {
+  const loopback = provider(installationHost(), undefined, {
+    REA_GHIDRA_PROJECT_PATH: join(process.cwd(), "selected.gpr"),
+    REA_GHIDRA_BRIDGE_TRANSPORT: "authenticated-loopback-tcp",
+  });
+  const unix = provider(installationHost(), undefined, {
+    REA_GHIDRA_PROJECT_PATH: join(process.cwd(), "selected.gpr"),
+  });
+  try {
+    expect(
+      loopback.capabilities().every((c) => c.effects.mayAccessNetwork),
+    ).toBe(true);
+    expect(
+      (await loopback.inspectReadinessSnapshot()).capabilities.every(
+        (c) => c.effects.mayAccessNetwork,
+      ),
+    ).toBe(true);
+    expect(unix.capabilities().some((c) => c.effects.mayAccessNetwork)).toBe(
+      false,
+    );
+  } finally {
+    await loopback.closeOwnedResources();
+    await unix.closeOwnedResources();
   }
 });
 
