@@ -73,6 +73,7 @@ export const existingMaintenanceScope = async (
       // profile is absent, so maintenance reads ownership evidence instead of
       // product applicability. Owned rows stay the only ones selected below.
       evidence: "ownership",
+      scope: "user",
       ...(resources === undefined ? {} : { resources }),
     },
   );
@@ -88,6 +89,7 @@ export const existingMaintenanceScope = async (
       continue;
     }
     if (
+      registration.scope === "project" ||
       activation !== "enabled" ||
       (registration.state !== "aligned" && registration.state !== "stale") ||
       commandIdentity !== "owned"

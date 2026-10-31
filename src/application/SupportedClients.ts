@@ -1,4 +1,4 @@
-import { dirname, isAbsolute, join, resolve, win32 } from "node:path";
+import { dirname, isAbsolute, join, posix, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { lstatSync } from "node:fs";
 import { err, ok, type Result } from "../domain/result.js";
@@ -21,6 +21,8 @@ export interface SetupClient {
   readonly configPath: string;
   /** User configuration files in increasing precedence, including the write target. */
   readonly configPaths?: readonly string[];
+  /** Project-scoped configuration files in increasing precedence, evaluated in doctor and uninstall. */
+  readonly projectConfigPaths?: readonly string[];
   /** Read-only Gemini scopes and trust inputs; never setup write targets. */
   readonly geminiSettings?: {
     readonly systemPath: string;
@@ -28,6 +30,15 @@ export interface SetupClient {
     readonly workspaceDirectory: string;
     readonly trustedFoldersPath: string;
     readonly trustOverride?: boolean;
+    readonly platform: NodeJS.Platform;
+  };
+  /** Read-only Pi scopes and trust inputs; never setup write targets. */
+  readonly piSettings?: {
+    readonly agentDirectory: string;
+    readonly trustPath: string;
+    readonly settingsPath: string;
+    readonly projectDirectory: string;
+    readonly env: NodeJS.ProcessEnv;
     readonly platform: NodeJS.Platform;
   };
   /** Unresolved path evidence only; consumers must not perform I/O on it. */
@@ -116,9 +127,19 @@ interface ClientDefinitionBase {
   readonly zcodeFallbackPath?: (context: ClientPathContext) => string;
   readonly skillPath?: ClientPath;
   readonly configPaths?: (context: ClientPathContext) => readonly string[];
+  readonly projectConfigPaths?: (
+    context: ClientPathContext,
+    userPaths: {
+      readonly configPath: string;
+      readonly configPaths?: readonly string[];
+    },
+  ) => readonly string[];
   readonly geminiSettings?: (
     context: ClientPathContext,
   ) => NonNullable<SetupClient["geminiSettings"]>;
+  readonly piSettings?: (
+    context: ClientPathContext,
+  ) => NonNullable<SetupClient["piSettings"]>;
 }
 
 /** XDG treats an empty config-home value as unset. */
@@ -365,7 +386,7 @@ const piAgentDirectory = ({
   platform,
   env,
 }: ClientPathContext): string => {
-  const paths = platform === "win32" ? win32 : { join };
+  const paths = platform === "win32" ? win32 : posix;
   let directory = env.PI_CODING_AGENT_DIR;
   if (!directory) return paths.join(home, ".pi", "agent");
   if (
@@ -434,6 +455,77 @@ const openCodeConfigurationPaths = (
   return resolved.filter((path, index) => resolved.lastIndexOf(path) === index);
 };
 
+const pathPresentOrUnresolved = (path: string): boolean => {
+  try {
+    lstatSync(path);
+    return true;
+  } catch (cause: unknown) {
+    return !(
+      cause instanceof Error &&
+      "code" in cause &&
+      cause.code === "ENOENT"
+    );
+  }
+};
+
+const openCodeWorktreeBoundary = (startDir: string): string => {
+  let current = resolve(startDir);
+  while (true) {
+    if (pathPresentOrUnresolved(join(current, ".git"))) return current;
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return resolve(startDir);
+};
+
+const openCodeDirectoryHierarchy = (startDir: string): readonly string[] => {
+  const resolvedStart = resolve(startDir);
+  const boundary = openCodeWorktreeBoundary(resolvedStart);
+  const dirs: string[] = [];
+  let current = resolvedStart;
+  while (true) {
+    dirs.push(current);
+    if (current === boundary) break;
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return dirs.reverse();
+};
+
+/**
+ * OpenCode project configuration paths in increasing precedence: outermost
+ * ancestor down to the current working directory, checking JSON before JSONC.
+ */
+const openCodeProjectConfigurationPaths = (
+  _context: ClientPathContext,
+  userPaths: {
+    readonly configPath: string;
+    readonly configPaths?: readonly string[];
+  },
+): readonly string[] => {
+  const userSet = new Set([
+    resolve(userPaths.configPath),
+    ...(userPaths.configPaths ?? []).map((path) => resolve(path)),
+  ]);
+  const paths: string[] = [];
+  for (const dir of openCodeDirectoryHierarchy(process.cwd())) {
+    const candidates = [
+      join(dir, "opencode.json"),
+      join(dir, "opencode.jsonc"),
+      join(dir, ".opencode", "opencode.json"),
+      join(dir, ".opencode", "opencode.jsonc"),
+    ];
+    for (const candidate of candidates) {
+      const resolved = resolve(candidate);
+      if (!userSet.has(resolved) && pathPresentOrUnresolved(resolved))
+        paths.push(resolved);
+    }
+  }
+  return paths.filter((path, index) => paths.lastIndexOf(path) === index);
+};
+
 const existingOpenCodeConfigPath = (context: ClientPathContext): string => {
   // The selected directory is loaded after an explicit file by OpenCode V1.
   const overrideDirectory = openCodeOverrideDirectory(context.env);
@@ -450,18 +542,7 @@ const existingOpenCodeConfigPath = (context: ClientPathContext): string => {
             join(opencodeDirectory(context), "opencode.jsonc"),
           ].map((path) => resolve(path));
   return (
-    [...candidates].reverse().find((path) => {
-      try {
-        lstatSync(path);
-        return true;
-      } catch (cause: unknown) {
-        return !(
-          cause instanceof Error &&
-          "code" in cause &&
-          cause.code === "ENOENT"
-        );
-      }
-    }) ??
+    [...candidates].reverse().find((path) => pathPresentOrUnresolved(path)) ??
     resolve(
       overrideDirectory !== undefined
         ? join(overrideDirectory, "opencode.json")
@@ -469,6 +550,34 @@ const existingOpenCodeConfigPath = (context: ClientPathContext): string => {
             join(opencodeDirectory(context), "opencode.json"),
     )
   );
+};
+
+const piProjectConfigurationPaths = (
+  _context: ClientPathContext,
+  userPaths: {
+    readonly configPath: string;
+    readonly configPaths?: readonly string[];
+  },
+): readonly string[] => {
+  const candidate = resolve(process.cwd(), ".pi", "mcp.json");
+  if (resolve(candidate) === resolve(userPaths.configPath)) return [];
+  if (!pathPresentOrUnresolved(candidate)) return [];
+  return [candidate];
+};
+
+const piSettings = (
+  context: ClientPathContext,
+): NonNullable<SetupClient["piSettings"]> => {
+  const paths = context.platform === "win32" ? win32 : posix;
+  const agentDirectory = piAgentDirectory(context);
+  return {
+    agentDirectory,
+    trustPath: paths.join(agentDirectory, "trust.json"),
+    settingsPath: paths.join(agentDirectory, "settings.json"),
+    projectDirectory: process.cwd(),
+    env: context.env,
+    platform: context.platform,
+  };
 };
 
 const geminiSettings = ({
@@ -584,6 +693,7 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     displayName: "OpenCode",
     configPath: existingOpenCodeConfigPath,
     configPaths: openCodeConfigurationPaths,
+    projectConfigPaths: openCodeProjectConfigurationPaths,
     markerPath: opencodeDirectory,
     format: "opencode",
   },
@@ -674,10 +784,12 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     name: "pi",
     displayName: "Pi",
     configPath: (context: ClientPathContext) =>
-      (context.platform === "win32" ? win32 : { join }).join(
+      (context.platform === "win32" ? win32 : posix).join(
         piAgentDirectory(context),
         "mcp.json",
       ),
+    projectConfigPaths: piProjectConfigurationPaths,
+    piSettings,
     markerPath: piAgentDirectory,
     format: "pi",
   },
@@ -865,6 +977,20 @@ export const supportedClients = (
           configPathError: location.error.message,
         };
       const { configPath, markerPath, msixPackage } = location.value;
+      const configPaths =
+        definition.configPaths === undefined
+          ? undefined
+          : [...new Set([...definition.configPaths(context), configPath])];
+      const projectConfigPaths =
+        definition.projectConfigPaths === undefined
+          ? undefined
+          : (() => {
+              const paths = definition.projectConfigPaths(context, {
+                configPath,
+                ...(configPaths === undefined ? {} : { configPaths }),
+              });
+              return paths.length === 0 ? undefined : paths;
+            })();
       return {
         name: definition.name,
         displayName: definition.displayName,
@@ -872,13 +998,11 @@ export const supportedClients = (
         ...(definition.geminiSettings === undefined
           ? {}
           : { geminiSettings: definition.geminiSettings(context) }),
-        ...(definition.configPaths === undefined
+        ...(definition.piSettings === undefined
           ? {}
-          : {
-              configPaths: [
-                ...new Set([...definition.configPaths(context), configPath]),
-              ],
-            }),
+          : { piSettings: definition.piSettings(context) }),
+        ...(configPaths === undefined ? {} : { configPaths }),
+        ...(projectConfigPaths === undefined ? {} : { projectConfigPaths }),
         ...(definition.zcodeFallbackPath === undefined
           ? {}
           : { zcodeFallbackPath: definition.zcodeFallbackPath(context) }),

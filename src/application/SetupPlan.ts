@@ -121,6 +121,8 @@ export const discoverSetupState = async (input: {
   const defaultClientIds = registrations
     .filter(
       (registration) =>
+        (registration.scope !== "project" ||
+          registration.launcher_scope === "user") &&
         (registration.state === "aligned" || registration.state === "stale") &&
         classifyClientRegistrationCommand(
           registration.command,

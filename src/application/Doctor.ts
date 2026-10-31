@@ -504,6 +504,9 @@ const registrationCheck = (
   ok: false,
   classification: registration.state === "unknown" ? "unknown" : "config_drift",
   detail: registration.config_path,
+  ...(registration.scope === undefined
+    ? {}
+    : { details: { scope: registration.scope } }),
   remediation: registration.remediation,
 });
 

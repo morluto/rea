@@ -554,4 +554,25 @@ describe("MSIX Claude Desktop uninstall", () => {
     });
     expect(await readJson(appDataConfig)).toEqual({ mcpServers: {} });
   });
+
+  it("does not treat MSIX files as layered fallback when private copy has unowned entry", async () => {
+    const { home, env, appDataConfig, privateConfig } = await windowsProfile();
+    await writeJson(privateConfig, {
+      preferences: {},
+      mcpServers: { rea: { command: "unowned-rea-server" } },
+    });
+    await writeJson(appDataConfig, { mcpServers: { rea: reaEntry } });
+
+    const result = await runUninstall(
+      false,
+      systemUninstallHost(home, undefined, env, "win32"),
+    );
+
+    expect(result.status).toBe("complete");
+    expect(await readJson(privateConfig)).toEqual({
+      preferences: {},
+      mcpServers: { rea: { command: "unowned-rea-server" } },
+    });
+    expect(await readJson(appDataConfig)).toEqual({ mcpServers: {} });
+  });
 });

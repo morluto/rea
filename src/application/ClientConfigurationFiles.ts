@@ -1,3 +1,5 @@
+import { dirname, resolve } from "node:path";
+import { stripComments } from "jsonc-parser";
 import { err, ok, type Result } from "../domain/result.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import { readRegularFileText } from "./RegularFileRead.js";
@@ -14,6 +16,8 @@ import type { ConfigurationError } from "../domain/configurationErrors.js";
 import { mergeEnvironmentOverrides } from "../process/snapshotEnvironment.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 
+export type ClientRegistrationScope = "user" | "project";
+
 /** A parsed layer retains its path so rereading the write target replaces only that layer. */
 export interface ClientConfigurationSource extends ClientConfigurationDocument {
   readonly sourcePath: string;
@@ -22,12 +26,29 @@ export interface ClientConfigurationSource extends ClientConfigurationDocument {
 const invalidEnvironment = (
   path: string,
   error: ConfigurationError,
-  overrides: Readonly<Record<string, string>> = {},
+  overridesOrScope:
+    | Readonly<Record<string, string>>
+    | ClientRegistrationScope = {},
   platform: NodeJS.Platform = process.platform,
+  explicitScope?: ClientRegistrationScope,
 ): ClientConfigurationFileError => {
+  const scope =
+    typeof overridesOrScope === "string" ? overridesOrScope : explicitScope;
+  const overrides =
+    typeof overridesOrScope === "object" && overridesOrScope !== null
+      ? overridesOrScope
+      : {};
   const constraints = error.settings
     .map(({ setting, constraint }) => `${setting}: ${constraint}`)
     .join("; ");
+  if (scope === "project") {
+    return {
+      kind: "malformed",
+      path,
+      scope,
+      detail: `Configuration ${path} has an invalid REA server environment: ${constraints}. Repair ${path} and rerun rea doctor; REA setup does not modify project-scoped configuration.`,
+    };
+  }
   const overrideNames = new Set(
     Object.keys(overrides).map((name) =>
       platform === "win32" ? name.toUpperCase() : name,
@@ -47,6 +68,7 @@ const invalidEnvironment = (
   return {
     kind: "malformed",
     path,
+    ...(scope === undefined ? {} : { scope }),
     detail: `${location}: ${constraints}${constraints.endsWith(".") ? "" : "."} ${overrideNames.size === 0 ? "Repair it" : "Check the launch environment and any existing registration settings"} before rerunning setup.`,
   };
 };
@@ -55,6 +77,7 @@ const invalidEnvironment = (
 export interface ClientConfigurationFileError {
   readonly kind: "unreadable" | "malformed";
   readonly path: string;
+  readonly scope?: ClientRegistrationScope;
   readonly detail: string;
   readonly cleanupFailure?: RegularFileCleanupFailure;
 }
@@ -114,6 +137,7 @@ export const readClientConfigurationFiles = async (
   resources?: ArtifactResourceScope,
   platform: NodeJS.Platform = process.platform,
   writeOverrides?: Readonly<Record<string, string>>,
+  effectiveValidation: boolean = true,
 ): Promise<
   Result<readonly ClientConfigurationSource[], ClientConfigurationFileError>
 > => {
@@ -144,21 +168,23 @@ export const readClientConfigurationFiles = async (
       documents.push({ ...document.value, sourcePath: path });
     }
   }
-  const environment = clientRegistrationEnvironment(
-    effectiveClientConfiguration(documents, undefined, platform),
-    writeOverrides,
-    "effective",
-    platform,
-  );
-  if (!environment.ok)
-    return err(
-      invalidEnvironment(
-        client.configPath,
-        environment.error,
-        writeOverrides,
-        platform,
-      ),
+  if (effectiveValidation) {
+    const environment = clientRegistrationEnvironment(
+      effectiveClientConfiguration(documents, undefined, platform),
+      writeOverrides,
+      "effective",
+      platform,
     );
+    if (!environment.ok)
+      return err(
+        invalidEnvironment(
+          client.configPath,
+          environment.error,
+          writeOverrides,
+          platform,
+        ),
+      );
+  }
   return ok(documents);
 };
 
@@ -270,31 +296,380 @@ export const effectiveClientConfiguration = (
   };
 };
 
-/** Read the configuration ZCode will load, preserving its same-scope fallback rule. */
+const isPiPartialServerOverride = (
+  entry: unknown,
+): entry is Record<string, unknown> =>
+  isObject(entry) &&
+  !Object.hasOwn(entry, "command") &&
+  !Object.hasOwn(entry, "url") &&
+  !Object.hasOwn(entry, "type");
+
+/**
+ * Read-only evaluation of Pi's project trust boundary.
+ * Distinguishes explicit approvals/denials from unreadable/malformed trust files.
+ */
+export const isPiProjectTrusted = async (
+  settings: NonNullable<SetupClient["piSettings"]> | undefined,
+  resources?: ArtifactResourceScope,
+): Promise<Result<boolean, ClientConfigurationFileError>> => {
+  if (settings === undefined) return ok(true);
+  if (settings.env.PI_APPROVE === "true") return ok(true);
+  if (settings.env.PI_APPROVE === "false") return ok(false);
+  if (settings.env.PI_DEFAULT_PROJECT_TRUST === "always") return ok(true);
+  if (settings.env.PI_DEFAULT_PROJECT_TRUST === "never") return ok(false);
+
+  const trustText = await readConfigurationText(settings.trustPath, resources);
+  if (!trustText.ok) return trustText;
+  if (trustText.value !== undefined) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(stripComments(trustText.value));
+    } catch (cause: unknown) {
+      return err({
+        kind: "malformed",
+        path: settings.trustPath,
+        scope: "project",
+        detail: `Pi trust configuration in ${settings.trustPath} is malformed: ${cause instanceof Error ? cause.message : String(cause)}`,
+      });
+    }
+    if (!isObject(parsed)) {
+      return err({
+        kind: "malformed",
+        path: settings.trustPath,
+        scope: "project",
+        detail: `Pi trust configuration in ${settings.trustPath} is malformed: expected a JSON object.`,
+      });
+    }
+    const resolvedProject = resolve(settings.projectDirectory);
+    let current = resolvedProject;
+    while (true) {
+      for (const [key, val] of Object.entries(parsed)) {
+        const resolvedKey = resolve(key);
+        const matches =
+          settings.platform === "win32" || settings.platform === "darwin"
+            ? resolvedKey.toLowerCase() === current.toLowerCase()
+            : resolvedKey === current;
+        if (matches) {
+          if (val === true) return ok(true);
+          if (val === false) return ok(false);
+        }
+      }
+      const parent = dirname(current);
+      if (parent === current) break;
+      current = parent;
+    }
+  }
+
+  const settingsText = await readConfigurationText(
+    settings.settingsPath,
+    resources,
+  );
+  if (!settingsText.ok) return settingsText;
+  if (settingsText.value !== undefined) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(stripComments(settingsText.value));
+    } catch (cause: unknown) {
+      return err({
+        kind: "malformed",
+        path: settings.settingsPath,
+        scope: "project",
+        detail: `Pi settings in ${settings.settingsPath} are malformed: ${cause instanceof Error ? cause.message : String(cause)}`,
+      });
+    }
+    if (!isObject(parsed)) {
+      return err({
+        kind: "malformed",
+        path: settings.settingsPath,
+        scope: "project",
+        detail: `Pi settings in ${settings.settingsPath} are malformed: expected a JSON object.`,
+      });
+    }
+    const defaultTrust = parsed.defaultProjectTrust;
+    if (defaultTrust === "always") return ok(true);
+    if (defaultTrust === "never") return ok(false);
+  }
+
+  return ok(false);
+};
+
+export interface EffectiveClientRegistrationConfiguration {
+  readonly document: ClientConfigurationDocument | undefined;
+  readonly configPath: string;
+  readonly scope?: ClientRegistrationScope;
+  readonly launcherScope?: ClientRegistrationScope;
+  readonly launcherConfigPath?: string;
+}
+
+/** Read the configuration the client will load across project and user scopes. */
 export const readEffectiveClientRegistrationConfiguration = async (
   client: SetupClient,
   resources?: ArtifactResourceScope,
   platform: NodeJS.Platform = process.platform,
+  targetScope: "user" | "all" = "all",
 ): Promise<
-  Result<
-    {
-      readonly document: ClientConfigurationDocument | undefined;
-      readonly configPath: string;
-    },
-    ClientConfigurationFileError
-  >
+  Result<EffectiveClientRegistrationConfiguration, ClientConfigurationFileError>
 > => {
+  let evaluatedProjectScope: ClientRegistrationScope | undefined;
+  let piProjectFile:
+    | Result<
+        ClientConfigurationDocument | undefined,
+        ClientConfigurationFileError
+      >
+    | undefined;
+  if (
+    targetScope !== "user" &&
+    client.format === "pi" &&
+    client.projectConfigPaths !== undefined &&
+    client.projectConfigPaths.length > 0
+  ) {
+    const projectPath = client.projectConfigPaths[0];
+    if (projectPath !== undefined) {
+      const trust = await isPiProjectTrusted(client.piSettings, resources);
+      if (!trust.ok) return err({ ...trust.error, scope: "project" });
+      if (trust.value) {
+        piProjectFile = await readConfigurationFile(
+          projectPath,
+          client.format,
+          resources,
+        );
+        if (!piProjectFile.ok)
+          return err({ ...piProjectFile.error, scope: "project" });
+        if (piProjectFile.value !== undefined) {
+          evaluatedProjectScope = "user";
+          const rawProjectRea = effectiveClientServer(
+            piProjectFile.value,
+            PRODUCT_IDENTITY.mcpServerKey,
+          );
+          if (
+            rawProjectRea !== undefined &&
+            !isPiPartialServerOverride(rawProjectRea)
+          ) {
+            const fragmentEnv = clientRegistrationEnvironment(
+              piProjectFile.value,
+              {},
+              "fragment",
+              platform,
+            );
+            if (!fragmentEnv.ok)
+              return err(
+                invalidEnvironment(projectPath, fragmentEnv.error, "project"),
+              );
+            const effectiveEnv = clientRegistrationEnvironment(
+              piProjectFile.value,
+              {},
+              "effective",
+              platform,
+            );
+            if (!effectiveEnv.ok)
+              return err(
+                invalidEnvironment(projectPath, effectiveEnv.error, "project"),
+              );
+            return ok({
+              document: piProjectFile.value,
+              configPath: projectPath,
+              scope: "project",
+              launcherScope: "project",
+              launcherConfigPath: projectPath,
+            });
+          }
+        }
+      } else {
+        const candidate = await readConfigurationFile(
+          projectPath,
+          client.format,
+          resources,
+        );
+        if (!candidate.ok) {
+          if (candidate.error.cleanupFailure !== undefined) {
+            return err({ ...candidate.error, scope: "project" });
+          }
+        } else if (candidate.value !== undefined) {
+          evaluatedProjectScope = "user";
+        }
+      }
+    }
+  }
+
+  const hasProjectScope =
+    targetScope !== "user" &&
+    client.projectConfigPaths !== undefined &&
+    client.projectConfigPaths.length > 0;
+
   const nativeSources = await readClientConfigurationFiles(
     client,
     resources,
     platform,
+    undefined,
+    !hasProjectScope,
   );
-  if (!nativeSources.ok) return nativeSources;
+  if (!nativeSources.ok) return err(nativeSources.error);
   const nativeDocument = effectiveClientConfiguration(
     nativeSources.value,
     undefined,
     platform,
   );
+
+  if (
+    targetScope !== "user" &&
+    client.format === "pi" &&
+    client.projectConfigPaths !== undefined &&
+    client.projectConfigPaths.length > 0
+  ) {
+    const projectPath = client.projectConfigPaths[0];
+    if (projectPath !== undefined) {
+      const projectDoc = piProjectFile?.ok ? piProjectFile.value : undefined;
+      if (projectDoc !== undefined) {
+        const rawProjectRea = effectiveClientServer(
+          projectDoc,
+          PRODUCT_IDENTITY.mcpServerKey,
+        );
+        if (rawProjectRea !== undefined) {
+          const rawUserRea =
+            nativeDocument === undefined
+              ? undefined
+              : effectiveClientServer(
+                  nativeDocument,
+                  PRODUCT_IDENTITY.mcpServerKey,
+                );
+          let effectiveRea = rawProjectRea;
+          let isProjectLauncher = true;
+          let launcherConfigPath = projectPath;
+          if (
+            isPiPartialServerOverride(rawProjectRea) &&
+            isObject(rawUserRea)
+          ) {
+            const merged: Record<string, unknown> = { ...rawUserRea };
+            if (Object.hasOwn(rawProjectRea, "enabled"))
+              merged.enabled = rawProjectRea.enabled;
+            if (Object.hasOwn(rawProjectRea, "exposure"))
+              merged.exposure = rawProjectRea.exposure;
+            if (Object.hasOwn(rawProjectRea, "toolExposure"))
+              merged.toolExposure = rawProjectRea.toolExposure;
+            effectiveRea = merged;
+            isProjectLauncher = false;
+            launcherConfigPath = client.configPath;
+          }
+          const effectiveDoc: ClientConfigurationDocument = {
+            ...projectDoc,
+            servers: {
+              ...projectDoc.servers,
+              [PRODUCT_IDENTITY.mcpServerKey]: effectiveRea,
+            },
+          };
+          const effectiveEnv = clientRegistrationEnvironment(
+            effectiveDoc,
+            {},
+            "effective",
+            platform,
+          );
+          if (!effectiveEnv.ok)
+            return err(
+              invalidEnvironment(projectPath, effectiveEnv.error, "project"),
+            );
+          return ok({
+            document: effectiveDoc,
+            configPath: projectPath,
+            scope: "project",
+            launcherScope: isProjectLauncher ? "project" : "user",
+            launcherConfigPath,
+          });
+        }
+      }
+    }
+  }
+
+  if (
+    targetScope !== "user" &&
+    client.format === "opencode" &&
+    client.projectConfigPaths !== undefined &&
+    client.projectConfigPaths.length > 0
+  ) {
+    const projectSources: ClientConfigurationSource[] = [];
+    for (const path of client.projectConfigPaths) {
+      const document = await readConfigurationFile(
+        path,
+        client.format,
+        resources,
+      );
+      if (!document.ok) return err({ ...document.error, scope: "project" });
+      if (document.value !== undefined) {
+        const env = clientRegistrationEnvironment(
+          document.value,
+          {},
+          "fragment",
+          platform,
+        );
+        if (!env.ok) return err(invalidEnvironment(path, env.error, "project"));
+        projectSources.push({ ...document.value, sourcePath: path });
+      }
+    }
+
+    if (projectSources.length > 0) {
+      evaluatedProjectScope = "user";
+    }
+
+    const allSources = [...nativeSources.value, ...projectSources];
+    const winningProjectDoc = [...projectSources]
+      .reverse()
+      .find(
+        (doc) =>
+          effectiveClientServer(doc, PRODUCT_IDENTITY.mcpServerKey) !==
+          undefined,
+      );
+    if (winningProjectDoc !== undefined) {
+      const effectiveDoc = effectiveClientConfiguration(
+        allSources,
+        undefined,
+        platform,
+      );
+      if (effectiveDoc !== undefined) {
+        const effectiveEnv = clientRegistrationEnvironment(
+          effectiveDoc,
+          {},
+          "effective",
+          platform,
+        );
+        if (!effectiveEnv.ok)
+          return err(
+            invalidEnvironment(
+              winningProjectDoc.sourcePath,
+              effectiveEnv.error,
+              "project",
+            ),
+          );
+        const launcherDoc = [...allSources].reverse().find((doc) => {
+          const s = effectiveClientServer(doc, PRODUCT_IDENTITY.mcpServerKey);
+          return isObject(s) && Object.hasOwn(s, "command");
+        });
+        const isProjectLauncher =
+          launcherDoc !== undefined &&
+          projectSources.some(
+            (proj) => proj.sourcePath === launcherDoc.sourcePath,
+          );
+        return ok({
+          document: effectiveDoc,
+          configPath: winningProjectDoc.sourcePath,
+          scope: "project",
+          launcherScope: isProjectLauncher ? "project" : "user",
+          launcherConfigPath:
+            launcherDoc?.sourcePath ?? winningProjectDoc.sourcePath,
+        });
+      }
+    }
+  }
+
+  if (hasProjectScope && nativeDocument !== undefined) {
+    const userEnv = clientRegistrationEnvironment(
+      nativeDocument,
+      {},
+      "effective",
+      platform,
+    );
+    if (!userEnv.ok)
+      return err(invalidEnvironment(client.configPath, userEnv.error, "user"));
+  }
+
   const fallbackPath =
     client.format === "zcode" ? client.zcodeFallbackPath : undefined;
   if (
@@ -302,7 +677,13 @@ export const readEffectiveClientRegistrationConfiguration = async (
     (nativeDocument !== undefined &&
       Object.keys(nativeDocument.servers).length > 0)
   )
-    return ok({ document: nativeDocument, configPath: client.configPath });
+    return ok({
+      document: nativeDocument,
+      configPath: client.configPath,
+      ...(evaluatedProjectScope === undefined
+        ? {}
+        : { scope: evaluatedProjectScope }),
+    });
 
   const fallbackClient: SetupClient = {
     ...client,
@@ -315,7 +696,7 @@ export const readEffectiveClientRegistrationConfiguration = async (
     resources,
     platform,
   );
-  if (!fallbackSources.ok) return fallbackSources;
+  if (!fallbackSources.ok) return err(fallbackSources.error);
   const fallbackDocument = effectiveClientConfiguration(
     fallbackSources.value,
     undefined,
@@ -323,7 +704,19 @@ export const readEffectiveClientRegistrationConfiguration = async (
   );
   return ok(
     fallbackDocument === undefined
-      ? { document: nativeDocument, configPath: client.configPath }
-      : { document: fallbackDocument, configPath: fallbackPath },
+      ? {
+          document: nativeDocument,
+          configPath: client.configPath,
+          ...(evaluatedProjectScope === undefined
+            ? {}
+            : { scope: evaluatedProjectScope }),
+        }
+      : {
+          document: fallbackDocument,
+          configPath: fallbackPath,
+          ...(evaluatedProjectScope === undefined
+            ? {}
+            : { scope: evaluatedProjectScope }),
+        },
   );
 };
