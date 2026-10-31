@@ -4,6 +4,7 @@ import type { AnalysisViewRequest } from "../domain/analysisView/analysisView.js
 import { z } from "incur";
 import {
   parseEvidence,
+  tryParseEvidence,
   withEvidenceCallerInputPath,
   type Evidence,
 } from "../domain/evidence.js";
@@ -169,6 +170,180 @@ export const deliverCliAnalysisEvidence = async (
   });
 };
 
+const extractPartialEvidence = (
+  failure: JsonValue,
+):
+  | {
+      errorRecord: { [key: string]: JsonValue };
+      partialEvidence: Evidence;
+    }
+  | undefined => {
+  if (typeof failure !== "object" || failure === null || Array.isArray(failure))
+    return undefined;
+  const errorRecord = failure as { [key: string]: JsonValue };
+  const details =
+    typeof errorRecord.details === "object" &&
+    errorRecord.details !== null &&
+    !Array.isArray(errorRecord.details)
+      ? (errorRecord.details as { [key: string]: JsonValue })
+      : undefined;
+  if (details?.partial_observation === undefined) return undefined;
+  const partialEvidence = tryParseEvidence(details.partial_observation);
+  return partialEvidence === undefined
+    ? undefined
+    : { errorRecord, partialEvidence };
+};
+
+const formatEvidenceBundleReceipt = (
+  bundle: { readonly path: string; readonly bytes: number },
+  sensitiveValues?: readonly string[],
+): { readonly path?: string; readonly bytes: number } => ({
+  ...(sensitiveValues?.some(
+    (literal) => literal !== "" && bundle.path.includes(literal),
+  )
+    ? {}
+    : { path: bundle.path }),
+  bytes: bundle.bytes,
+});
+
+const committedReceiptFromError = (
+  error: unknown,
+): { readonly path: string; readonly bytes: number } | undefined => {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "diagnostics" in error &&
+    typeof (error as Record<string, unknown>).diagnostics === "object" &&
+    (error as Record<string, unknown>).diagnostics !== null &&
+    "evidence_bundle" in
+      ((error as Record<string, unknown>).diagnostics as Record<
+        string,
+        unknown
+      >)
+  ) {
+    const raw = (
+      (error as Record<string, unknown>).diagnostics as Record<string, unknown>
+    ).evidence_bundle;
+    if (
+      typeof raw === "object" &&
+      raw !== null &&
+      "path" in raw &&
+      typeof (raw as Record<string, unknown>).path === "string" &&
+      "bytes" in raw &&
+      typeof (raw as Record<string, unknown>).bytes === "number"
+    )
+      return {
+        path: (raw as Record<string, unknown>).path as string,
+        bytes: (raw as Record<string, unknown>).bytes as number,
+      };
+  }
+  return undefined;
+};
+
+const sanitizeSaveError = (
+  error: AnalysisError,
+  sensitiveValues?: readonly string[],
+): JsonValue => {
+  const rawSaveError = projectAnalysisError(
+    redactExplicitFailure(error, sensitiveValues ?? []),
+  );
+  if (
+    rawSaveError.details !== undefined &&
+    typeof rawSaveError.details === "object" &&
+    rawSaveError.details !== null &&
+    "partial_observation" in rawSaveError.details
+  ) {
+    const { partial_observation: _, ...restDetails } =
+      rawSaveError.details as Record<string, JsonValue>;
+    return {
+      ...rawSaveError,
+      details: restDetails,
+    };
+  }
+  return rawSaveError;
+};
+
+const publishPartialCliAnalysisEvidence = async (
+  failure: JsonValue,
+  input: CliEvidenceDelivery,
+): Promise<JsonValue> => {
+  const { operation, signal, detail, evidenceOutput } = input;
+  if (evidenceOutput === undefined) return failure;
+  const extracted = extractPartialEvidence(failure);
+  if (extracted === undefined) return failure;
+  const { errorRecord, partialEvidence } = extracted;
+
+  const delivered =
+    detail === "summary"
+      ? inspectAnalysisViewValidated({
+          source: { kind: "inline", evidence: partialEvidence },
+          view: input.view ?? { kind: "summary" },
+        })
+      : ok(partialEvidence);
+  const selected =
+    detail === "summary" &&
+    partialEvidence.caller_input_path !== undefined &&
+    delivered.ok
+      ? withEvidenceCallerInputPath(
+          delivered.value,
+          partialEvidence.caller_input_path,
+        )
+      : delivered.ok
+        ? delivered.value
+        : partialEvidence;
+  const inspectionSources = analysisEvidenceSources(partialEvidence);
+  if (!inspectionSources.ok) return failure;
+  const published = await publishEvidenceDelivery({
+    bundle: createEvidenceBundle([
+      ...new Map(
+        [...(input.sourceEvidence ?? []), ...inspectionSources.value].map(
+          (record) => [record.evidence_id, record],
+        ),
+      ).values(),
+    ]),
+    complete: partialEvidence,
+    delivered: selected,
+    outputPath: absoluteCallerPath(evidenceOutput),
+    operation,
+    signal,
+  });
+  if (!published.ok) {
+    const saveError = sanitizeSaveError(published.error, input.sensitiveValues);
+    const committedRaw = committedReceiptFromError(published.error);
+    const committedReceipt =
+      committedRaw !== undefined
+        ? formatEvidenceBundleReceipt(committedRaw, input.sensitiveValues)
+        : undefined;
+    const updatedDetails: { [key: string]: JsonValue } = {
+      ...(errorRecord.details as { [key: string]: JsonValue }),
+      publication_error: saveError,
+      ...(committedReceipt !== undefined
+        ? { evidence_bundle: committedReceipt }
+        : {}),
+    };
+    return {
+      ...errorRecord,
+      details: updatedDetails,
+    };
+  }
+  const receipt = formatEvidenceBundleReceipt(
+    published.value.evidenceBundle,
+    input.sensitiveValues,
+  );
+  recordCliEvidencePublication(receipt);
+  const updatedDetails: { [key: string]: JsonValue } = {
+    ...(errorRecord.details as { [key: string]: JsonValue }),
+    evidence_bundle: receipt,
+  };
+  if (detail === "summary" && delivered.ok) {
+    updatedDetails.partial_observation = selected;
+  }
+  return {
+    ...errorRecord,
+    details: updatedDetails,
+  };
+};
+
 /** Publish already finalized CLI analysis without opening a second provider/session. */
 export const publishCliAnalysisEvidence = async (
   result: Result<Evidence, JsonValue>,
@@ -179,7 +354,7 @@ export const publishCliAnalysisEvidence = async (
     projectAnalysisError(
       redactExplicitFailure(error, input.sensitiveValues ?? []),
     );
-  if (!result.ok) return result.error;
+  if (!result.ok) return publishPartialCliAnalysisEvidence(result.error, input);
   const complete = parseEvidence(result.value);
   const inputError = cliEvidenceDeliveryInputError(input);
   if (inputError !== undefined) {
@@ -221,15 +396,10 @@ export const publishCliAnalysisEvidence = async (
     signal,
   });
   if (!published.ok) return projectFailure(published.error);
-  const receipt = {
-    ...(input.sensitiveValues?.some(
-      (literal) =>
-        literal !== "" && published.value.evidenceBundle.path.includes(literal),
-    )
-      ? {}
-      : { path: published.value.evidenceBundle.path }),
-    bytes: published.value.evidenceBundle.bytes,
-  };
+  const receipt = formatEvidenceBundleReceipt(
+    published.value.evidenceBundle,
+    input.sensitiveValues,
+  );
   recordCliEvidencePublication(receipt);
   return detail === "summary"
     ? { summary: published.value.delivered, evidence_bundle: receipt }
