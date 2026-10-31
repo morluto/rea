@@ -27,6 +27,7 @@ import type { FridaInstrumentationPort } from "./application/frida/FridaInstrume
 import { Cli, z } from "incur";
 import {
   adaptCliOutputArgumentsForIncur,
+  classifyMcpAddDiscovery,
   normalizeCliArguments,
   splitIncurBuiltinArguments,
 } from "./cliBuiltinArguments.js";
@@ -255,21 +256,19 @@ export const createCli = (
     const normalized = normalizeCliArguments(arguments_);
     const { command, flags } = splitIncurBuiltinArguments(normalized);
     const builtin = command[0] === PRODUCT_IDENTITY.cliBinary ? 1 : 0;
+    const discovery = classifyMcpAddDiscovery(flags);
     if (
       command[builtin] === "mcp" &&
       command[builtin + 1] === "add" &&
-      !flags.has("--help") &&
-      !flags.has("-h") &&
-      !flags.has("--llms") &&
-      !flags.has("--llms-full")
+      discovery !== "bypass"
     ) {
       const write =
         options?.stdout ?? ((text: string) => process.stdout.write(text));
-      if (flags.has("--version")) {
+      if (discovery === "version") {
         write(`${PRODUCT_IDENTITY.packageVersion}\n`);
         return Promise.resolve();
       }
-      if (flags.has("--schema")) {
+      if (discovery === "schema") {
         const output = parseCliOutputArguments(normalized);
         if (!output.validation.ok)
           write(renderCliOutputArgumentError(output.validation));
