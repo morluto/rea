@@ -185,6 +185,13 @@ observed entry label. An interior address therefore remains visible without
 being mistaken for the function entry. Identity failures are reported as
 `procedure.status: "unknown"`; label failures leave a null name and `name_error`.
 Neither failure discards usable pseudocode, and names are not parsed from it.
+A provider answer without pseudocode is an error item that keeps that
+observation's own `limitations`, so a reason the provider reported for that
+entry, such as a Kuna export failure or a missing body, stays with the item.
+Null pseudocode is `capability_unavailable`; empty or non-text pseudocode is
+`unreadable_output`. Provider failures keep their typed error. Successful items
+do not repeat limitations; the batch Evidence aggregates every observation's
+limitations by provider and operation.
 Resolved entries also appear in the composed Evidence locations. New batch
 Evidence commits the revised workflow profile; retained historical Evidence
 remains valid. This tool
@@ -421,6 +428,21 @@ Failures while expanding a validated seed remain unknown observations and do not
 establish canonical function identity. A successful seed without a native def-use
 model still returns its procedure and an explicit coverage unknown. A new trace
 can retry failed selectors.
+
+Paging and traversal completeness are separate facts. `page_truncated` means the
+page omits retained nodes, and the edges they source, before `offset` or after
+`next_offset`. Every page repeats `traversal`: `complete`, or `truncated` with
+`reasons` naming each observed cause: the `max_depth`, `max_functions`,
+`max_call_sites`, `max_nodes` or `max_edges` budget, the fixed
+`node_payload_bytes` allowance, `provider_pcode_truncated`, or
+`ambiguous_call_candidates`. Each cause also has a located unknown. A budget is
+reported only after it rejects work, so an exactly filled budget is not
+truncation; a depth or candidate limit is reported only when no other path
+analyzes or queues that destination. `total_nodes` and `total_edges` count
+retained rows. `truncated` remains true for either kind of omission. Failed
+analyses and unresolved calls stay in `unknowns` and do not truncate the
+traversal. Each page reruns analysis; pages are not pinned to one snapshot
+across session edits.
 
 The raw Java `is_dead` flag can remain set after Ghidra decodes a live block;
 `block_membership` reports actual syntax-tree membership separately.

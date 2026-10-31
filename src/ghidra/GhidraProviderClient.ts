@@ -111,6 +111,10 @@ import {
   isGhidraInputFailureCode,
   type GhidraSessionError,
 } from "./GhidraSessionError.js";
+import {
+  ghidraFileOffsetOutcome,
+  ghidraFileOffsetUnavailable,
+} from "./GhidraFileOffsetFailure.js";
 import type { GhidraSessionInfo } from "./GhidraSessionValues.js";
 import { ghidraExtensionFailure } from "./extensions/GhidraExtensionFailures.js";
 import {
@@ -827,6 +831,7 @@ export const createGhidraProviderClient = (input: {
             called.error,
             projection,
             lostProviderHealth(),
+            input.value,
           ),
         );
       if (operation === "inspect_native_load_image")
@@ -1037,12 +1042,14 @@ const projectSessionError = (
   failure: GhidraSessionError,
   projection: GhidraProjection,
   health?: ProviderOperationHealth,
+  request?: Readonly<Record<string, JsonValue>>,
 ): AnalysisError => {
   const primary = projectPrimarySessionError(
     operation,
     failure,
     projection,
     health,
+    request,
   );
   return failure.cleanupFailure === undefined
     ? primary
@@ -1058,6 +1065,7 @@ const projectPrimarySessionError = (
   failure: GhidraSessionError,
   { limits, programName }: GhidraProjection,
   health?: ProviderOperationHealth,
+  request?: Readonly<Record<string, JsonValue>>,
 ): AnalysisError => {
   const startupTimeoutMs = limits.ghidraStartupTimeoutMs;
   const context = {
@@ -1099,6 +1107,20 @@ const projectPrimarySessionError = (
       operation,
       physicalCause.path,
       physicalCause.reason,
+      context,
+    );
+  // A well-formed address that lacks one exact source offset keeps the
+  // bridge's reason and the caller's exact spelling, not schema advice.
+  const fileOffset =
+    failure.kind === "remote"
+      ? ghidraFileOffsetOutcome(failure.remoteCode)
+      : undefined;
+  if (fileOffset !== undefined)
+    return ghidraFileOffsetUnavailable(
+      operation,
+      fileOffset,
+      failure.message,
+      typeof request?.address === "string" ? request.address : undefined,
       context,
     );
   if (
