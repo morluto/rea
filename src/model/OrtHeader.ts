@@ -58,6 +58,7 @@ export interface OrtHeaderResult {
   inputs: ModelGraphValue[];
   outputs: ModelGraphValue[];
   operators: ModelOperator[];
+  declared_tensor_count: number | null;
   ort_coverage: Record<Facet | "header", "complete" | "partial">;
   limitations: string[];
 }
@@ -79,6 +80,7 @@ class OrtDeclarations {
     inputs: [],
     outputs: [],
     operators: [],
+    declared_tensor_count: null,
     ort_coverage: {
       header: "complete",
       inputs: "complete",
@@ -163,6 +165,14 @@ class OrtDeclarations {
     read: (entry: number, index: number) => void,
   ): Promise<void> {
     const vector = this.#attempt(facet, () => this.fb.vector(table, slot, 4));
+    await this.#entries(vector, facet, read);
+  }
+
+  async #entries(
+    vector: OrtVector | null | undefined,
+    facet: Facet | "header",
+    read: (entry: number, index: number) => void,
+  ): Promise<void> {
     if (!vector) return;
     // Charge before retaining any per-entry representation or indexing names.
     this.fb.budget.charge(vector.count * 192);
@@ -218,9 +228,7 @@ class OrtDeclarations {
     return result;
   }
 
-  #value(table: OrtTable): ModelGraphValue {
-    const name = this.fb.text(table, 0);
-    if (name === null) rejectModel("ORT ValueInfo is missing its name");
+  #value(table: OrtTable, name: string): ModelGraphValue {
     const result: ModelGraphValue = {
       index: 0,
       name,
@@ -386,15 +394,27 @@ class OrtDeclarations {
       this.#progress();
       return this.result;
     }
+    const initializers = this.#attempt("initializers", () =>
+      this.fb.vector(graph, 0, 4),
+    );
+    if (initializers !== undefined)
+      this.result.declared_tensor_count = initializers?.count ?? 0;
     await this.#each(graph, 1, "header", (entry) => {
-      const value = this.#value(this.fb.table(this.fb.reference(entry)));
-      if (this.#values.has(value.name)) {
-        this.#values.set(value.name, null);
+      const table = this.fb.table(this.fb.reference(entry));
+      const name = this.fb.text(table, 0);
+      if (name === null) rejectModel("ORT ValueInfo is missing its name");
+      const duplicate = this.#values.has(name);
+      // Reserve the readable identity before parsing fallible type and shape
+      // details. A failure leaves the match explicitly unresolved.
+      this.#values.set(name, null);
+      if (duplicate) {
         this.#partial(
           "header",
           "ORT contains duplicate ValueInfo names; matching I/O types and shapes remain unknown.",
         );
-      } else this.#values.set(value.name, value);
+      }
+      const value = this.#value(table, name);
+      if (!duplicate) this.#values.set(name, value);
     });
     await this.#io(graph, 5, "inputs");
     await this.#io(graph, 6, "outputs");
@@ -421,7 +441,7 @@ class OrtDeclarations {
         );
     });
     this.#completed.add("operators");
-    await this.#each(graph, 0, "initializers", (entry) => {
+    await this.#entries(initializers, "initializers", (entry) => {
       this.result.tensors.push(
         this.#tensor(this.fb.table(this.fb.reference(entry))),
       );

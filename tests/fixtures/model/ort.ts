@@ -90,6 +90,7 @@ export interface OrtFixtureOptions {
   inputType?: number;
   inputKind?: number;
   missingInput?: boolean;
+  duplicateInput?: boolean;
   tensorType?: number;
   tensorBytes?: number;
   externalOffset?: bigint;
@@ -118,27 +119,31 @@ export const ortFixture = (options: OrtFixtureOptions = {}) => {
       name: string,
       dimensions: readonly (string | bigint | null)[] | null,
       type: number,
+      label?: string,
     ) =>
     () =>
-      writer.table([
-        name,
-        undefined,
-        () =>
-          writer.table([
-            undefined,
-            options.inputKind ?? 1,
-            () =>
-              writer.table([
-                type,
-                dimensions === null
-                  ? undefined
-                  : () =>
-                      writer.table([
-                        () => writer.vector(dimensions.map(dimension)),
-                      ]),
-              ]),
-          ]),
-      ]);
+      writer.table(
+        [
+          name,
+          undefined,
+          () =>
+            writer.table([
+              undefined,
+              options.inputKind ?? 1,
+              () =>
+                writer.table([
+                  type,
+                  dimensions === null
+                    ? undefined
+                    : () =>
+                        writer.table([
+                          () => writer.vector(dimensions.map(dimension)),
+                        ]),
+                ]),
+            ]),
+        ],
+        label,
+      );
   const tensor = () =>
     writer.table(
       [
@@ -167,7 +172,24 @@ export const ortFixture = (options: OrtFixtureOptions = {}) => {
           writer.vector([
             ...(options.missingInput
               ? []
-              : [valueInfo("images", shape, options.inputType ?? 1)]),
+              : [
+                  valueInfo(
+                    "images",
+                    shape,
+                    options.inputType ?? 1,
+                    "inputValue",
+                  ),
+                  ...(options.duplicateInput
+                    ? [
+                        valueInfo(
+                          "images",
+                          shape,
+                          options.inputType ?? 1,
+                          "duplicateInputValue",
+                        ),
+                      ]
+                    : []),
+                ]),
             valueInfo("result", ["batch", 3n, "height", "width"], 1),
           ]),
         () =>

@@ -219,6 +219,13 @@ export class ModelArtifactProvider implements ModelArtifactPort {
         error.partialObservation === undefined &&
         partialProgress !== undefined &&
         (partialProgress.coverage.header === "complete" ||
+          partialProgress.version !== null ||
+          partialProgress.ort_version !== undefined ||
+          partialProgress.file_identifier !== undefined ||
+          partialProgress.byte_order !== null ||
+          partialProgress.alignment !== null ||
+          partialProgress.declared_metadata_count !== null ||
+          partialProgress.declared_tensor_count !== null ||
           partialProgress.metadata.length > 0 ||
           partialProgress.tensor_declarations.length > 0 ||
           partialProgress.tensors.length > 0 ||
@@ -335,7 +342,7 @@ export class ModelArtifactProvider implements ModelArtifactPort {
                 partial.byte_order = progress.byte_order;
                 partial.alignment = progress.alignment;
                 partial.declared_metadata_count = progress.metadata.length;
-                partial.declared_tensor_count = progress.tensors.length;
+                partial.declared_tensor_count = progress.declared_tensor_count;
                 partial.metadata = progress.metadata;
                 partial.tensors = progress.tensors;
                 partial.inputs = progress.inputs;
@@ -355,8 +362,9 @@ export class ModelArtifactProvider implements ModelArtifactPort {
               },
             )
           : await readSafetensorsHeader(reader, first, second);
-    const { ort_coverage, ...parsed } = {
+    const { ort_coverage, declared_tensor_count, ...parsed } = {
       ort_coverage: undefined,
+      declared_tensor_count: undefined,
       ...header,
     };
     partial.version = parsed.version;
@@ -364,7 +372,10 @@ export class ModelArtifactProvider implements ModelArtifactPort {
     partial.alignment = parsed.alignment;
     partial.metadata = parsed.metadata;
     partial.declared_metadata_count = parsed.metadata.length;
-    partial.declared_tensor_count = parsed.tensors.length;
+    partial.declared_tensor_count =
+      declared_tensor_count === undefined
+        ? parsed.tensors.length
+        : declared_tensor_count;
     partial.tensor_declarations = [];
     partial.tensors = parsed.tensors;
     if ("ort_version" in parsed) {

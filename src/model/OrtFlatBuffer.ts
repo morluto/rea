@@ -15,6 +15,8 @@ export interface OrtVector {
 
 /** Bounds checked subset of FlatBuffers, owned by the ORT declaration reader. */
 export class OrtFlatBuffer {
+  readonly #textCache = new Map<number, string | null>();
+
   constructor(
     readonly bytes: Buffer,
     readonly budget: ModelReportBudget,
@@ -83,10 +85,22 @@ export class OrtFlatBuffer {
     this.range(start + 4, length + 1);
     if (this.bytes[start + 4 + length] !== 0)
       rejectModel("ORT FlatBuffers string lacks its terminator");
+    let value = this.#textCache.get(start);
+    if (value === undefined && !this.#textCache.has(start)) {
+      const bytes = this.bytes.subarray(start + 4, start + 4 + length);
+      if (!isUtf8(bytes)) {
+        // Cache only the bounded validation outcome. Invalid text never becomes
+        // a retained fact and therefore must not consume the report allowance.
+        this.#textCache.set(start, null);
+        rejectModel("ORT string is not valid UTF-8");
+      }
+      value = bytes.toString("utf8");
+      this.#textCache.set(start, value);
+    }
+    if (value === null || value === undefined)
+      rejectModel("ORT string is not valid UTF-8");
     this.budget.charge(6 * length + 32);
-    const bytes = this.bytes.subarray(start + 4, start + 4 + length);
-    if (!isUtf8(bytes)) rejectModel("ORT string is not valid UTF-8");
-    return bytes.toString("utf8");
+    return value;
   }
 
   text(table: OrtTable, index: number): string | null {

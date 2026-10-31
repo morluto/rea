@@ -4,6 +4,11 @@ import { join } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
 import { ModelArtifactProvider } from "../../../src/model/ModelArtifactProvider.js";
 import { ModelHeaderReader } from "../../../src/model/ModelHeaderReader.js";
+import { OrtFlatBuffer } from "../../../src/model/OrtFlatBuffer.js";
+import {
+  ModelFormatFailure,
+  ModelReportBudget,
+} from "../../../src/model/ModelFormat.js";
 import {
   readOrtHeader,
   type OrtHeaderResult,
@@ -152,6 +157,48 @@ it("retains I/O names when their ValueInfo is missing", async () => {
     inputs: "partial",
     outputs: "complete",
   });
+});
+
+it("keeps duplicate ValueInfo identities unresolved when one declaration is malformed", async () => {
+  const { bytes, fields } = ortFixture({ duplicateInput: true });
+  const field = fields.get("duplicateInputValue.2")!;
+  bytes.writeUInt32LE(0xffffffff, field);
+  const result = await inspect(bytes);
+  if (!result.ok) throw result.error;
+  expect(result.value.inputs).toMatchObject([
+    {
+      name: "images",
+      type: null,
+      type_id: null,
+      type_kind: "unknown",
+      shape: null,
+    },
+  ]);
+  expect(result.value.coverage).toMatchObject({
+    header: "partial",
+    inputs: "partial",
+  });
+  expect(result.value.limitations.join(" ")).toContain(
+    "duplicate ValueInfo names",
+  );
+});
+
+it("does not charge invalid shared strings to the retained report budget", () => {
+  const length = 65_000;
+  const bytes = Buffer.alloc(length + 9);
+  bytes.writeUInt32LE(4, 0);
+  bytes.writeUInt32LE(length, 4);
+  bytes[8] = 0xff;
+  const flatBuffer = new OrtFlatBuffer(bytes, new ModelReportBudget());
+  for (let attempt = 0; attempt < 100; attempt++) {
+    try {
+      flatBuffer.textAt(0);
+      throw new Error("Invalid UTF-8 string accepted");
+    } catch (cause) {
+      expect(cause).toBeInstanceOf(ModelFormatFailure);
+      expect(cause).toMatchObject({ kind: "format" });
+    }
+  }
 });
 
 it("keeps an omitted operator version unknown", async () => {
@@ -308,6 +355,7 @@ it("publishes only proven declarations before a cancelled collection walk", asyn
       outputs: [{ name: "result" }],
       operators: [{ op_type: "ConvInteger" }],
       tensors: [],
+      declared_tensor_count: 1,
       ort_coverage: {
         header: "partial",
         inputs: "complete",
