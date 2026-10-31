@@ -13,7 +13,7 @@ import type { JavaScriptFindingContext } from "./javascriptStaticAnalysisState.j
 /** Resolve a callee only when its root has a proven Electron module identity. */
 export const electronCalleePath = (
   callee: t.Node,
-  context: JavaScriptFindingContext,
+  context: Pick<JavaScriptFindingContext, "electronBindings">,
 ): readonly string[] | undefined => {
   const { root, members } = electronMemberPath(callee);
   if (!members.every((member): member is string => member !== null))

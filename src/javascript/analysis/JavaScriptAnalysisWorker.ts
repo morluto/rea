@@ -23,6 +23,7 @@ import type {
   JavaScriptSourceAnalysisLimits,
   JavaScriptRevokedStaticProjection,
 } from "../../domain/javascript/javascriptSourceAnalysis.js";
+import type { JavaScriptPackageType } from "../../domain/javascript/javascriptSourceParser.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
@@ -281,6 +282,7 @@ export class JavaScriptAnalysisWorker {
     capacity: JavaScriptSemanticProjectionCapacity,
     signal?: AbortSignal,
     onPhase?: (phase: string) => Promise<void>,
+    packageType: JavaScriptPackageType = "unknown",
   ): Promise<
     Result<JavaScriptAnalyzedSource, JavaScriptSourceAnalysisFailure>
   > {
@@ -336,6 +338,7 @@ export class JavaScriptAnalysisWorker {
         unknown_budget: capacity.unknowns,
         text_sha256: createHash("sha256").update(file.text.value).digest("hex"),
         file: metadata,
+        package_type: packageType,
       });
       const frame = `${JSON.stringify(request)}\n`;
       if (Buffer.byteLength(frame) > DEFAULTS.protocolBytes)

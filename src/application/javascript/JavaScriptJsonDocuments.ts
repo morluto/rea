@@ -54,6 +54,7 @@ const PACKAGE_PROPERTIES = [
   "browser",
   "exports",
   "imports",
+  "type",
 ] as const;
 
 /**

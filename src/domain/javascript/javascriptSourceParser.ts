@@ -153,6 +153,19 @@ const runtimeSourceTypeForPath = (
       ? "module"
       : "unambiguous";
 
+/**
+ * Node package facts apply to .js/.ts sources, not explicit suffixes,
+ * declaration wrappers, or an unknown JSX compilation pipeline.
+ */
+const packageContextForPath = (
+  sourcePath: string | undefined,
+  observedPackageType: JavaScriptPackageType | undefined,
+): JavaScriptPackageType | undefined =>
+  /\.(?:js|ts)$/iu.test(sourcePath ?? "") &&
+  !/\.d\.ts$/iu.test(sourcePath ?? "")
+    ? observedPackageType
+    : undefined;
+
 export interface RecoveredJavaScriptParse {
   readonly file: ParsedJavaScriptSource;
   /** Errors that apply only if a source of unknown mode is an ES module. */
@@ -172,13 +185,7 @@ export const parseRecoveredJavaScript = (
   observedPackageType?: JavaScriptPackageType,
 ): RecoveredJavaScriptParse => {
   const filenameType = runtimeSourceTypeForPath(sourcePath);
-  // Node package facts apply to .js/.ts sources, not explicit suffixes,
-  // declaration wrappers, or an unknown JSX compilation pipeline.
-  const packageContext =
-    /\.(?:js|ts)$/iu.test(sourcePath ?? "") &&
-    !/\.d\.ts$/iu.test(sourcePath ?? "")
-      ? observedPackageType
-      : undefined;
+  const packageContext = packageContextForPath(sourcePath, observedPackageType);
   // Retain TypeScript import syntax for later CommonJS compilation.
   const sourceType =
     filenameType !== "unambiguous"
@@ -245,36 +252,55 @@ export const parseRecoveredJavaScript = (
   };
 };
 
-/** Parse inert JavaScript or TypeScript facts without attaching comments to AST nodes. */
+/**
+ * Parse inert JavaScript or TypeScript facts without attaching comments to AST
+ * nodes. An observed package type selects the runtime context of .js/.ts
+ * sources as it does for reference imports; syntax recovery is unchanged.
+ */
 export const parseJavaScriptSource = (
   source: string,
   sourcePath?: string,
+  observedPackageType?: JavaScriptPackageType,
 ): ParsedJavaScriptSource | null => {
   try {
     const runtimeSourceType = runtimeSourceTypeForPath(sourcePath);
     const commonjs = runtimeSourceType === "commonjs";
+    const packageContext = packageContextForPath(
+      sourcePath,
+      observedPackageType,
+    );
     const options = {
       errorRecovery: true,
       attachComment: false,
       plugins: parserPluginsForPath(sourcePath),
     };
-    const file = parseWithRuntimeContext(source, sourcePath, {
-      ...options,
-      // Inert artifact analysis retains module declarations even in .cjs assets.
-      // Infer their syntax here; reference imports keep filename-mode diagnostics.
-      sourceType: commonjs ? "unambiguous" : runtimeSourceType,
-      allowReturnOutsideFunction: commonjs,
-      allowNewTargetOutsideFunction: commonjs,
-    });
+    const file = parseWithRuntimeContext(
+      source,
+      sourcePath,
+      {
+        ...options,
+        // Inert artifact analysis retains module declarations even in .cjs assets.
+        // Infer their syntax here; reference imports keep filename-mode diagnostics.
+        sourceType: commonjs ? "unambiguous" : runtimeSourceType,
+        allowReturnOutsideFunction: commonjs,
+        allowNewTargetOutsideFunction: commonjs,
+      },
+      packageContext,
+    );
     // Unambiguous mode retains module-only diagnostics after choosing a script.
     // The .cjs extension establishes wrapper mode, so obtain its own diagnostics.
     return commonjs &&
       file.program.sourceType === "script" &&
       file.errors.length > 0
-      ? parseWithRuntimeContext(source, sourcePath, {
-          ...options,
-          sourceType: "commonjs",
-        })
+      ? parseWithRuntimeContext(
+          source,
+          sourcePath,
+          {
+            ...options,
+            sourceType: "commonjs",
+          },
+          packageContext,
+        )
       : file;
   } catch (cause: unknown) {
     // Unparseable source is represented by the null return.

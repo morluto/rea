@@ -325,6 +325,176 @@ const expectImportEqualsRelationships = (
   ).toHaveLength(0);
 };
 
+/** Source-module facts and semantic require edges of one analyzed source. */
+const sourceRequireFacts = (
+  graph: ReturnType<
+    typeof javascriptApplicationAnalysisResultSchema.parse
+  >["graph"],
+  path: string,
+) => {
+  const module = graph.nodes
+    .flatMap(({ observations }) => observations)
+    .find(
+      ({ properties }) =>
+        properties.semantic_role === "source-module" &&
+        properties.path === path,
+    )?.properties;
+  const requires = graph.edges.filter(
+    ({ relation, properties, evidence }) =>
+      relation === "imports" &&
+      properties.module_link_kind === "require" &&
+      evidence.location.available &&
+      evidence.location.value.kind === "source-range" &&
+      evidence.location.value.source === path,
+  );
+  return {
+    module_format: module?.module_format,
+    import_relationships: module?.import_relationships,
+    require_targets: requires.map(({ properties }) => [
+      properties.specifier,
+      properties.resolved_path,
+      properties.resolution_status,
+    ]),
+  };
+};
+
+cliTest(
+  "follows the nearest package type for an unbound require in .js sources",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-package-type-requires-");
+    const source = (dependency: string) =>
+      `try { console.log(require(${JSON.stringify(dependency)})); } catch (error) { console.log(error.name); }\n`;
+    // The nearest package.json owns each .js file's scope (Node packages.md,
+    // "Determining module system"). Requiring Electron, directly, through a
+    // local loader, or in a bundler factory default that never runs, does not
+    // give a Node-loaded module a require.
+    await writeFixtureFiles(root, {
+      "package.json": JSON.stringify({ type: "module" }),
+      "main.js": source("./dep.cjs"),
+      "electron-main.js":
+        'try { require("electron"); console.log(require("./dep.cjs")); } catch (error) { console.log(error.name); }\n',
+      "shadowed.js": `function load(require) { return require("electron").contextBridge; }\n${source("./dep.cjs")}`,
+      "dead-default.js": [
+        source("./dep.cjs"),
+        "globalThis.webpackChunkApp = [];",
+        "globalThis.webpackChunkApp.push([[1], {",
+        '  7(module = require("electron").ipcRenderer.send("unused"), exports, load) {}',
+        "}]);",
+      ].join("\n"),
+      "dep.cjs": "module.exports = 1;\n",
+      "legacy/package.json": JSON.stringify({ type: "commonjs" }),
+      "legacy/main.js": source("../dep.cjs"),
+      "untyped/package.json": JSON.stringify({}),
+      "untyped/main.js": source("../dep.cjs"),
+    });
+    for (const [path, expected] of [
+      ["main.js", "ReferenceError"],
+      ["electron-main.js", "ReferenceError"],
+      ["shadowed.js", "ReferenceError"],
+      ["dead-default.js", "ReferenceError"],
+      ["legacy/main.js", "1"],
+      ["untyped/main.js", "1"],
+    ] as const) {
+      const control = await execute(process.execPath, [join(root, path)], {
+        cwd: root,
+        timeout: 5_000,
+      });
+      expect(control.stdout.trim(), path).toBe(expected);
+    }
+
+    const response = await cli.run({
+      arguments: ["analyze-javascript-application", root, "--format", "json"],
+      environment: { REA_LOG_LEVEL: "silent" },
+    });
+
+    expect(response.exitCode, response.stderr).toBe(0);
+    const { graph } = javascriptApplicationAnalysisResultSchema.parse(
+      parseEvidence(response.json).normalized_result,
+    );
+    for (const path of [
+      "main.js",
+      "electron-main.js",
+      "shadowed.js",
+      "dead-default.js",
+    ])
+      expect(sourceRequireFacts(graph, path), path).toEqual({
+        module_format: "unknown",
+        import_relationships: 0,
+        require_targets: [],
+      });
+    for (const path of ["legacy/main.js", "untyped/main.js"])
+      expect(sourceRequireFacts(graph, path), path).toEqual({
+        module_format: "commonjs",
+        import_relationships: 1,
+        require_targets: [["../dep.cjs", "dep.cjs", "resolved"]],
+      });
+  },
+);
+
+cliTest(
+  "keeps Electron's script loader for a .js preload in a module package scope",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-package-type-preload-");
+    // Electron's preload loader ignores "type": "module" ("ES Modules (ESM)
+    // in Electron"); main.mjs is an ES module by its suffix.
+    await writeFixtureFiles(root, {
+      "package.json": JSON.stringify({ type: "module", main: "main.mjs" }),
+      "main.mjs": [
+        'import { app, BrowserWindow, ipcMain } from "electron";',
+        'import { fileURLToPath } from "node:url";',
+        'ipcMain.handle("ping", () => "pong");',
+        "app.whenReady().then(() => {",
+        "  const window = new BrowserWindow({",
+        '    webPreferences: { preload: fileURLToPath(new URL("./preload.js", import.meta.url)) },',
+        "  });",
+        '  window.loadFile("index.html");',
+        "});",
+      ].join("\n"),
+      "preload.js": [
+        'const { contextBridge, ipcRenderer } = require("electron");',
+        'contextBridge.exposeInMainWorld("api", { ping: () => ipcRenderer.invoke("ping") });',
+      ].join("\n"),
+      // Its only renderer call is a contextBridge exposure inside a helper.
+      "bridge-helper.js": [
+        'const { contextBridge } = require("electron");',
+        "function expose(key) {",
+        "  contextBridge.exposeInMainWorld(key, { version: () => 1 });",
+        "}",
+        'expose("helper");',
+      ].join("\n"),
+      "index.html": "<!doctype html><title>app</title>\n",
+    });
+
+    const response = await cli.run({
+      arguments: ["analyze-javascript-application", root, "--format", "json"],
+      environment: { REA_LOG_LEVEL: "silent" },
+    });
+
+    expect(response.exitCode, response.stderr).toBe(0);
+    const { graph, summary } = javascriptApplicationAnalysisResultSchema.parse(
+      parseEvidence(response.json).normalized_result,
+    );
+    expect(sourceRequireFacts(graph, "preload.js")).toEqual({
+      module_format: "commonjs",
+      import_relationships: 2,
+      require_targets: [
+        ["electron", null, "external"],
+        ["electron", null, "external"],
+      ],
+    });
+    expect(sourceRequireFacts(graph, "bridge-helper.js")).toEqual({
+      module_format: "commonjs",
+      import_relationships: 1,
+      require_targets: [["electron", null, "external"]],
+    });
+    expect(summary.ipc).toMatchObject({
+      main_handlers: 1,
+      renderer_transmissions: 1,
+      paired_renderer_transmissions: 1,
+    });
+  },
+);
+
 cliTest.for(["CLI", "stdio MCP"] as const)(
   "retains unbound CommonJS semantic relationships through %s",
   async (surface, { cli }) => {
