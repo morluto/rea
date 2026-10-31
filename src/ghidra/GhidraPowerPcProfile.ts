@@ -1,5 +1,6 @@
 import type { GhidraLanguageOverride } from "../config/ghidraLanguageOverride.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
+import type { ElfFamilyMetadata } from "../domain/binaryTargetTypes.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 
 /**
@@ -21,7 +22,7 @@ export const ghidraPowerPcUnsupportedReason = (
   const missingMetadata =
     "PowerPC analysis requires ELF header metadata; a family name alone does not select a processor variant.";
   if (target.format !== "elf") return missingMetadata;
-  const metadata = target.powerpc;
+  const metadata = (target as { powerpc?: ElfFamilyMetadata }).powerpc;
   if (metadata === undefined) return missingMetadata;
   if (metadata.elfClass !== 32)
     return "This Ghidra PowerPC lane supports ELF32 only; PPC64 remains unsupported.";
@@ -55,15 +56,16 @@ export const ghidraPowerPcProfileParameters = (
     target.kind !== "executable" ||
     target.architecture !== "powerpc" ||
     target.format !== "elf" ||
-    target.powerpc === undefined
+    (target as { powerpc?: unknown }).powerpc === undefined
   )
     return {};
+  const metadata = (target as { powerpc: { elfClass: number; byteOrder: string; type: number; flags: number } }).powerpc;
   return {
     powerpc_elf: {
-      elf_class: target.powerpc.elfClass,
-      byte_order: target.powerpc.byteOrder,
-      type: target.powerpc.type,
-      flags: target.powerpc.flags,
+      elf_class: metadata.elfClass,
+      byte_order: metadata.byteOrder,
+      type: metadata.type,
+      flags: metadata.flags,
     },
     powerpc_support_lane: "elf32-be-exec-generic-v1",
   };
