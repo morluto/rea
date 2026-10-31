@@ -201,7 +201,9 @@ describe("server and catalog identity", () => {
     const aligned = createServerIdentity({
       catalog: DEFAULT_CATALOG_IDENTITY,
       startedAt: "2026-07-13T00:00:00.000Z",
-      commandPath: "/packaged/rea.mjs",
+      // Production passes the entrypoint through normalizeEntrypointPath; the
+      // comparison resolves the expectation the same way on every platform.
+      commandPath: normalizeEntrypointPath("/packaged/rea.mjs"),
       expected: {
         package_version: PRODUCT_IDENTITY.packageVersion,
         catalog_digest: DEFAULT_CATALOG_IDENTITY.digests.combined_sha256,

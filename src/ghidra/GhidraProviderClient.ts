@@ -68,6 +68,7 @@ import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { Logger } from "pino";
 import { GhidraClient } from "./GhidraClient.js";
+import { defaultGhidraTransport } from "./GhidraTransport.js";
 import type { GhidraClientOptions } from "./GhidraClientTypes.js";
 import {
   isGhidraFunctionOperation,
@@ -508,10 +509,7 @@ export const createGhidraProviderClient = (input: {
         ? (target.sourcePath ?? target.path)
         : target.path,
     targetSha256: target.sha256,
-    transport:
-      installation.platform === "win32"
-        ? "authenticated-loopback-tcp"
-        : "unix-socket",
+    transport: defaultGhidraTransport(installation.platform),
     providerVersion: prerequisites.value.providerVersion,
     profileDigest: committedProfile.digest,
     ...(["dos-mz", "dos-com"].includes(target.format)

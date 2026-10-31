@@ -197,137 +197,147 @@ it("projects cancelled byte searches as typed failures without successful partia
   }
 });
 
-it("searches bytes through MCP and the socket bridge with pagination and skipped coverage", async () => {
-  const config = parseConfig({ GHIDRA_INSTALL_DIR: "/fixture/ghidra" });
-  if (!config.ok) throw config.error;
-  const provider = new GhidraProvider(
-    config.value,
-    silentLogger,
-    {},
-    ghidraInstallationHost(),
-    (options) =>
-      new GhidraClient({
-        ...options,
-        platform: process.platform,
-        startupTimeoutMs: 5000,
-        launcher: {
-          launch: async (launch) => {
-            const projectRoot = join(launch.runtimeRoot, "project");
-            await mkdir(projectRoot);
-            const child = spawn(
-              process.execPath,
-              [
-                fileURLToPath(
-                  new URL("../../fixtures/fakeGhidra.mjs", import.meta.url),
-                ),
-              ],
-              {
-                stdio: ["ignore", "pipe", "pipe"],
-                env: {
-                  ...process.env,
-                  REA_GHIDRA_FIXTURE_CONFIG: JSON.stringify({
-                    endpointPath: launch.endpointPath,
-                    token: launch.token,
-                    runId: launch.runId,
-                    providerVersion: launch.providerVersion,
-                    profileDigest: launch.profileDigest,
-                    targetSha256: launch.targetSha256,
-                    transport: launch.transport,
-                  }),
+// The fake bridge publishes a Unix socket, or renames a pending TCP endpoint
+// file into place; under the Windows temp directory the first fails with EACCES
+// and the second with EBUSY. Windows Ghidra is verified against a real
+// installation by verify:ghidra:windows, not by this fixture.
+it.skipIf(process.platform === "win32")(
+  "searches bytes through MCP and the socket bridge with pagination and skipped coverage",
+  async () => {
+    const config = parseConfig({ GHIDRA_INSTALL_DIR: "/fixture/ghidra" });
+    if (!config.ok) throw config.error;
+    const provider = new GhidraProvider(
+      config.value,
+      silentLogger,
+      {},
+      ghidraInstallationHost(),
+      (options) =>
+        new GhidraClient({
+          ...options,
+          platform: process.platform,
+          startupTimeoutMs: 5000,
+          launcher: {
+            launch: async (launch) => {
+              const projectRoot = join(launch.runtimeRoot, "project");
+              await mkdir(projectRoot);
+              const child = spawn(
+                process.execPath,
+                [
+                  fileURLToPath(
+                    new URL("../../fixtures/fakeGhidra.mjs", import.meta.url),
+                  ),
+                ],
+                {
+                  stdio: ["ignore", "pipe", "pipe"],
+                  env: {
+                    ...process.env,
+                    REA_GHIDRA_FIXTURE_CONFIG: JSON.stringify({
+                      endpointPath: launch.endpointPath,
+                      token: launch.token,
+                      runId: launch.runId,
+                      providerVersion: launch.providerVersion,
+                      profileDigest: launch.profileDigest,
+                      targetSha256: launch.targetSha256,
+                      transport: launch.transport,
+                    }),
+                  },
                 },
-              },
-            );
-            return ok({
-              process: child,
-              ownsProcessLifetime: true as const,
-              projectRoot,
-              ghidraLogPath: join(launch.runtimeRoot, "ghidra.log"),
-              scriptLogPath: join(launch.runtimeRoot, "script.log"),
-              cleanup: async () => {
-                const signaled =
-                  child.exitCode === null && child.signalCode === null;
-                if (signaled) child.kill("SIGTERM");
-                return (await waitForExit(child, 2000))
-                  ? { cleaned: true as const, signaled }
-                  : { cleaned: false as const, reason: "Fixture did not exit" };
-              },
-            });
+              );
+              return ok({
+                process: child,
+                ownsProcessLifetime: true as const,
+                projectRoot,
+                ghidraLogPath: join(launch.runtimeRoot, "ghidra.log"),
+                scriptLogPath: join(launch.runtimeRoot, "script.log"),
+                cleanup: async () => {
+                  const signaled =
+                    child.exitCode === null && child.signalCode === null;
+                  if (signaled) child.kill("SIGTERM");
+                  return (await waitForExit(child, 2000))
+                    ? { cleaned: true as const, signaled }
+                    : {
+                        cleaned: false as const,
+                        reason: "Fixture did not exit",
+                      };
+                },
+              });
+            },
           },
-        },
-      }),
-  );
-  const session = composeBinarySession(
-    new AnalysisProviderRegistry([provider]),
-  );
-  const server = createServer(
-    { kind: "session", session },
-    { logger: silentLogger },
-  );
-  const client = new Client({ name: "byte-search", version: "1" });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  try {
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
-    const opened = await client.callTool({
-      name: "open_binary",
-      arguments: { path: process.execPath },
-    });
-    expect(opened.isError).not.toBe(true);
-    const first = await client.callTool({
-      name: "search_bytes",
-      arguments: { pattern: "48 8b ?? ?? 89", limit: 1 },
-    });
-    expect(first.isError, JSON.stringify(first)).not.toBe(true);
-    const firstEvidence = sessionEvidence(session, first.structuredContent);
-    expect(firstEvidence.raw_result).toBeNull();
-    expect(firstEvidence.normalized_result).toMatchObject({
-      matches: [
-        {
-          address: "0x1000",
-          segment: ".text",
-          file_offset: 0,
-          procedure: { name: "fixture_main" },
-        },
-      ],
-      searched: {
-        bytes: 10,
-        skipped_uninitialized: [{ segment: ".bss", bytes: 16 }],
-      },
-      complete: false,
-      next_cursor: "fixture-second-page",
-    });
-    const second = await client.callTool({
-      name: "search_bytes",
-      arguments: {
-        pattern: "48 8b ?? ?? 89",
-        limit: 1,
-        cursor: "fixture-second-page",
-      },
-    });
-    expect(second.isError).not.toBe(true);
-    expect(
-      sessionEvidence(session, second.structuredContent).normalized_result,
-    ).toMatchObject({
-      matches: [{ address: "0x1005", file_offset: 5 }],
-      complete: true,
-      next_cursor: null,
-    });
-    const invalid = await client.callTool({
-      name: "search_bytes",
-      arguments: { pattern: "??" },
-    });
-    expect(invalid.isError).toBe(true);
-    expect(JSON.stringify(invalid.content)).toContain(
-      "Pattern must constrain at least one bit",
+        }),
     );
-  } finally {
-    await client.close();
-    await server.close();
-    const closed = await session.close();
-    if (!closed.ok) throw closed.error;
-  }
-});
+    const session = composeBinarySession(
+      new AnalysisProviderRegistry([provider]),
+    );
+    const server = createServer(
+      { kind: "session", session },
+      { logger: silentLogger },
+    );
+    const client = new Client({ name: "byte-search", version: "1" });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const opened = await client.callTool({
+        name: "open_binary",
+        arguments: { path: process.execPath },
+      });
+      expect(opened.isError).not.toBe(true);
+      const first = await client.callTool({
+        name: "search_bytes",
+        arguments: { pattern: "48 8b ?? ?? 89", limit: 1 },
+      });
+      expect(first.isError, JSON.stringify(first)).not.toBe(true);
+      const firstEvidence = sessionEvidence(session, first.structuredContent);
+      expect(firstEvidence.raw_result).toBeNull();
+      expect(firstEvidence.normalized_result).toMatchObject({
+        matches: [
+          {
+            address: "0x1000",
+            segment: ".text",
+            file_offset: 0,
+            procedure: { name: "fixture_main" },
+          },
+        ],
+        searched: {
+          bytes: 10,
+          skipped_uninitialized: [{ segment: ".bss", bytes: 16 }],
+        },
+        complete: false,
+        next_cursor: "fixture-second-page",
+      });
+      const second = await client.callTool({
+        name: "search_bytes",
+        arguments: {
+          pattern: "48 8b ?? ?? 89",
+          limit: 1,
+          cursor: "fixture-second-page",
+        },
+      });
+      expect(second.isError).not.toBe(true);
+      expect(
+        sessionEvidence(session, second.structuredContent).normalized_result,
+      ).toMatchObject({
+        matches: [{ address: "0x1005", file_offset: 5 }],
+        complete: true,
+        next_cursor: null,
+      });
+      const invalid = await client.callTool({
+        name: "search_bytes",
+        arguments: { pattern: "??" },
+      });
+      expect(invalid.isError).toBe(true);
+      expect(JSON.stringify(invalid.content)).toContain(
+        "Pattern must constrain at least one bit",
+      );
+    } finally {
+      await client.close();
+      await server.close();
+      const closed = await session.close();
+      if (!closed.ok) throw closed.error;
+    }
+  },
+);
 
 it("retains missing PDB coverage in empty PE name-search Evidence and snapshot replay", async () => {
   const root = await createTestTempDirectory("rea-pdb-evidence-");
