@@ -60,6 +60,7 @@ const NATIVE_PLATFORMS: Readonly<
   linux: { x64: "linux_x86_64", arm64: "linux_arm_64" },
   darwin: { x64: "mac_x86_64", arm64: "mac_arm_64" },
   win32: { x64: "win_x86_64" },
+  freebsd: { x64: "freebsd_x86_64" },
 };
 
 /** Executable format each supported host runs its own Ghidra native tools as. */
@@ -67,6 +68,7 @@ const NATIVE_TOOL_FORMATS: Readonly<
   Partial<Record<NodeJS.Platform, ExecutableMetadata["format"]>>
 > = {
   linux: "elf",
+  freebsd: "elf",
   darwin: "mach-o",
   win32: "pe",
 };
@@ -961,6 +963,7 @@ const jvmOsNameMatchesPlatform = (
   if (platform === "darwin")
     return normalized.startsWith("mac") || normalized.startsWith("darwin");
   if (platform === "linux") return normalized.startsWith("linux");
+  if (platform === "freebsd") return normalized.startsWith("freebsd");
   return false;
 };
 
