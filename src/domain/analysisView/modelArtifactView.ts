@@ -9,6 +9,8 @@ import {
   modelMetadataSchema,
   modelTensorSchema,
   modelSourceSchema,
+  modelGraphValueSchema,
+  modelOperatorSchema,
   type ModelArtifact,
 } from "../model/modelArtifact.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
@@ -32,13 +34,23 @@ import {
 const HEADLINE_TEXT_LIMIT = 512;
 
 export const modelArtifactSummarySchema = modelArtifactObjectSchema
-  .omit({ metadata: true, tensors: true, totals: true })
+  .omit({
+    metadata: true,
+    tensors: true,
+    totals: true,
+    inputs: true,
+    outputs: true,
+    operators: true,
+  })
   .extend({
     totals: modelArtifactObjectSchema.shape.totals.omit({ by_type: true }),
     counts: z.strictObject({
       metadata: z.number().int().nonnegative(),
       tensors: z.number().int().nonnegative(),
       types: z.number().int().nonnegative(),
+      inputs: z.number().int().nonnegative().optional(),
+      outputs: z.number().int().nonnegative().optional(),
+      operators: z.number().int().nonnegative().optional(),
     }),
     headlines: z.array(
       modelMetadataSchema.omit({
@@ -56,6 +68,9 @@ const summarizeModel = (
   const {
     tensors,
     metadata,
+    inputs,
+    outputs,
+    operators,
     totals: { by_type, ...totals },
     ...identity
   } = report;
@@ -81,6 +96,9 @@ const summarizeModel = (
       tensors: tensors.length,
       metadata: metadata.length,
       types: by_type.length,
+      ...(inputs === undefined ? {} : { inputs: inputs.length }),
+      ...(outputs === undefined ? {} : { outputs: outputs.length }),
+      ...(operators === undefined ? {} : { operators: operators.length }),
     },
     headlines: metadata
       .filter(
@@ -122,6 +140,8 @@ export const modelArtifactViewItemsSchema = z.union([
   z.array(modelTypeRowSchema.partial().required({ index: true })),
   z.array(modelTensorSchema.partial().required({ index: true })),
   z.array(modelMetadataSchema.partial().required({ index: true })),
+  z.array(modelGraphValueSchema.partial().required({ index: true })),
+  z.array(modelOperatorSchema.partial().required({ index: true })),
 ]);
 export const modelArtifactViewContextSchema = z.strictObject({
   source: modelSourceSchema,
@@ -135,6 +155,8 @@ type Checked = {
   model: z.infer<typeof modelContextSchema>;
   names: Map<string, number>;
   keys: Map<string, number>;
+  inputNames: Map<string, number>;
+  outputNames: Map<string, number>;
   typeRows: z.infer<typeof modelTypeRowSchema>[];
   types: Map<string, number>;
 };
@@ -176,6 +198,12 @@ const read = (parent: AnalysisViewParent): Result<Checked, AnalysisError> => {
     ),
     names: new Map(report.tensors.map((row) => [row.name, row.index])),
     keys: new Map(report.metadata.map((row) => [row.key, row.index])),
+    inputNames: new Map(
+      (report.inputs ?? []).map((row) => [row.name, row.index]),
+    ),
+    outputNames: new Map(
+      (report.outputs ?? []).map((row) => [row.name, row.index]),
+    ),
   };
   if (reusable) checked.set(report, value);
   return ok(value);
@@ -193,7 +221,7 @@ export const projectModelArtifactView = (
           path: ["view"],
           reason: "invalid_value",
           message:
-            "Model Evidence supports summary and model-artifact metadata/tensor/type pages",
+            "Model Evidence supports summary and model-artifact metadata/tensor/type/input/output/operator pages",
         },
       ]),
     );
@@ -208,6 +236,8 @@ export const projectModelArtifactView = (
     model,
     names,
     keys,
+    inputNames,
+    outputNames,
     types: typeIndices,
     typeRows,
   } = parsed.value;
@@ -225,7 +255,9 @@ export const projectModelArtifactView = (
       "Tensor values, runtime execution and inference quality were not inspected.",
       ...(report.artifact.sha256 === null
         ? [
-            "Full-file content identity is unknown; header_sha256 commits only to declarations.",
+            report.format === "ort"
+              ? "The full-file Evidence subject is unset because full hashing was not requested; header_sha256 commits to the complete bounded ORT container."
+              : "Full-file content identity is unknown; header_sha256 commits only to declarations.",
           ]
         : []),
     ],
@@ -245,24 +277,53 @@ export const projectModelArtifactView = (
       },
       coverage: completeWithinViewCoverage(1, 1),
     });
+  if (
+    (view.collection === "inputs" ||
+      view.collection === "outputs" ||
+      view.collection === "operators") &&
+    report[view.collection] === undefined
+  )
+    return err(
+      analysisViewInputError([
+        {
+          path: ["view", "collection"],
+          reason: "invalid_value",
+          message: `This model Evidence does not record ${view.collection}; absence of observations does not establish an empty graph collection`,
+        },
+      ]),
+    );
   const rows =
     view.collection === "tensors"
       ? report.tensors
       : view.collection === "metadata"
         ? report.metadata
-        : typeRows;
+        : view.collection === "types"
+          ? typeRows
+          : view.collection === "inputs"
+            ? (report.inputs ?? [])
+            : view.collection === "outputs"
+              ? (report.outputs ?? [])
+              : (report.operators ?? []);
   const selectedNames =
-    view.collection === "tensors"
+    view.collection === "tensors" ||
+    view.collection === "inputs" ||
+    view.collection === "outputs"
       ? view.names
       : view.collection === "metadata"
         ? view.keys
-        : view.types;
+        : view.collection === "types"
+          ? view.types
+          : undefined;
   const lookup =
     view.collection === "tensors"
       ? names
       : view.collection === "metadata"
         ? keys
-        : typeIndices;
+        : view.collection === "inputs"
+          ? inputNames
+          : view.collection === "outputs"
+            ? outputNames
+            : typeIndices;
   const indices =
     view.indices === undefined ? undefined : new Set(view.indices);
   const types =
@@ -272,6 +333,14 @@ export const projectModelArtifactView = (
   const storageStates =
     view.collection === "tensors" && view.storage_validation !== undefined
       ? new Set(view.storage_validation)
+      : undefined;
+  const opTypes =
+    view.collection === "operators" && view.op_types !== undefined
+      ? new Set(view.op_types)
+      : undefined;
+  const domains =
+    view.collection === "operators" && view.domains !== undefined
+      ? new Set(view.domains)
       : undefined;
   let selected: number[] | undefined;
   if (selectedNames !== undefined)
@@ -290,16 +359,25 @@ export const projectModelArtifactView = (
   if (
     indices !== undefined ||
     types !== undefined ||
-    storageStates !== undefined
+    storageStates !== undefined ||
+    opTypes !== undefined ||
+    domains !== undefined
   )
     selected = (selected ?? rows.map((row) => row.index)).filter((index) => {
       const row = rows[index]!;
       return (
         (indices === undefined || indices.has(index)) &&
-        (types === undefined || types.has(row.type)) &&
+        (types === undefined ||
+          ("type" in row && row.type !== null && types.has(row.type))) &&
         (storageStates === undefined ||
           ("storage_validation" in row &&
-            storageStates.has(row.storage_validation)))
+            storageStates.has(row.storage_validation))) &&
+        (opTypes === undefined ||
+          ("op_type" in row &&
+            row.op_type !== null &&
+            opTypes.has(row.op_type))) &&
+        (domains === undefined ||
+          ("domain" in row && row.domain !== null && domains.has(row.domain)))
       );
     });
   const total = selected?.length ?? rows.length;
@@ -321,7 +399,8 @@ export const projectModelArtifactView = (
     const row = rows[index]!;
     const result: Record<string, JsonValue> = { index };
     for (const [name, value] of Object.entries(row))
-      if (fields === undefined || fields.has(name)) result[name] = value;
+      if (value !== undefined && (fields === undefined || fields.has(name)))
+        result[name] = value;
     return result;
   });
   return ok({

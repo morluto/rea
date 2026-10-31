@@ -228,7 +228,9 @@ it.each([8, 24, 40])(
     expect(result.value.alignment).toBe(alignment);
     expect(result.value.tensor_data_offset).toBe(fixture.dataOffset);
     expect(
-      result.value.tensors.every((row) => row.file_offset % alignment === 0),
+      result.value.tensors.every(
+        (row) => row.file_offset !== null && row.file_offset % alignment === 0,
+      ),
     ).toBe(true);
     expect(result.value.tensors[1]?.file_offset).toBe(
       fixture.dataOffset + Math.ceil(16 / alignment) * alignment,

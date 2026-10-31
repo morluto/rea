@@ -38,6 +38,7 @@ import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.
 import { ModelHeaderReader } from "./ModelHeaderReader.js";
 import { GgufHeader } from "./GgufHeader.js";
 import { readSafetensorsHeader } from "./SafetensorsHeader.js";
+import { readOrtHeader } from "./OrtHeader.js";
 import {
   ModelFormatFailure,
   MODEL_REPORT_BYTES,
@@ -45,6 +46,7 @@ import {
   modelCapacityReportedLimits,
 } from "./ModelFormat.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
+import type { JsonValue } from "../domain/jsonValue.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   isSelectedRegularFileError,
@@ -219,7 +221,10 @@ export class ModelArtifactProvider implements ModelArtifactPort {
         (partialProgress.coverage.header === "complete" ||
           partialProgress.metadata.length > 0 ||
           partialProgress.tensor_declarations.length > 0 ||
-          partialProgress.tensors.length > 0)
+          partialProgress.tensors.length > 0 ||
+          (partialProgress.inputs?.length ?? 0) > 0 ||
+          (partialProgress.outputs?.length ?? 0) > 0 ||
+          (partialProgress.operators?.length ?? 0) > 0)
       ) {
         const parsed = modelArtifactPartialSchema.safeParse(partialProgress);
         if (parsed.success)
@@ -253,7 +258,13 @@ export class ModelArtifactProvider implements ModelArtifactPort {
       );
     const reader = new ModelHeaderReader(file, Number(initial.size), signal);
     const first = await reader.take(4);
-    const format = first.equals(Buffer.from("GGUF")) ? "gguf" : "safetensors";
+    const gguf = first.equals(Buffer.from("GGUF"));
+    const second = !gguf && reader.size >= 8 ? await reader.take(4) : undefined;
+    const format = gguf
+      ? "gguf"
+      : second?.equals(Buffer.from("ORTM"))
+        ? "ort"
+        : "safetensors";
     const partial: ModelArtifactPartial = {
       kind: "model-artifact-partial",
       artifact: {
@@ -276,6 +287,13 @@ export class ModelArtifactProvider implements ModelArtifactPort {
         header: "partial",
         metadata: "not-started",
         tensors: "not-started",
+        ...(format === "ort"
+          ? {
+              inputs: "not-started" as const,
+              outputs: "not-started" as const,
+              operators: "not-started" as const,
+            }
+          : {}),
       },
       limitations: [
         "This partial observation contains only rows fully parsed before the interrupted read.",
@@ -284,7 +302,7 @@ export class ModelArtifactProvider implements ModelArtifactPort {
       ],
     };
     retainProgress?.(partial);
-    const parsed =
+    const header =
       format === "gguf"
         ? await new GgufHeader(reader).read({
             onHeader: (info) => {
@@ -307,7 +325,40 @@ export class ModelArtifactProvider implements ModelArtifactPort {
             onTensorDeclaration: (row) => partial.tensor_declarations.push(row),
             onLimitation: (message) => partial.limitations.push(message),
           })
-        : await readSafetensorsHeader(reader, first);
+        : format === "ort"
+          ? await readOrtHeader(
+              reader,
+              Buffer.concat([first, second!]),
+              (progress) => {
+                partial.ort_version = progress.ort_version;
+                partial.file_identifier = progress.file_identifier;
+                partial.byte_order = progress.byte_order;
+                partial.alignment = progress.alignment;
+                partial.declared_metadata_count = progress.metadata.length;
+                partial.declared_tensor_count = progress.tensors.length;
+                partial.metadata = progress.metadata;
+                partial.tensors = progress.tensors;
+                partial.inputs = progress.inputs;
+                partial.outputs = progress.outputs;
+                partial.operators = progress.operators;
+                partial.coverage = {
+                  header: progress.ort_coverage.header,
+                  metadata: "complete",
+                  tensors: progress.ort_coverage.initializers,
+                  inputs: progress.ort_coverage.inputs,
+                  outputs: progress.ort_coverage.outputs,
+                  operators: progress.ort_coverage.operators,
+                };
+                partial.limitations = [
+                  ...new Set([...partial.limitations, ...progress.limitations]),
+                ];
+              },
+            )
+          : await readSafetensorsHeader(reader, first, second);
+    const { ort_coverage, ...parsed } = {
+      ort_coverage: undefined,
+      ...header,
+    };
     partial.version = parsed.version;
     partial.byte_order = parsed.byte_order;
     partial.alignment = parsed.alignment;
@@ -316,13 +367,27 @@ export class ModelArtifactProvider implements ModelArtifactPort {
     partial.declared_tensor_count = parsed.tensors.length;
     partial.tensor_declarations = [];
     partial.tensors = parsed.tensors;
+    if ("ort_version" in parsed) {
+      partial.ort_version = parsed.ort_version;
+      partial.file_identifier = parsed.file_identifier;
+      partial.inputs = parsed.inputs;
+      partial.outputs = parsed.outputs;
+      partial.operators = parsed.operators;
+    }
     partial.limitations = [
       ...new Set([...partial.limitations, ...parsed.limitations]),
     ];
     partial.coverage = {
-      header: "complete",
+      header: ort_coverage?.header ?? "complete",
       metadata: "complete",
-      tensors: "complete",
+      tensors: ort_coverage?.initializers ?? "complete",
+      ...(ort_coverage === undefined
+        ? {}
+        : {
+            inputs: ort_coverage.inputs,
+            outputs: ort_coverage.outputs,
+            operators: ort_coverage.operators,
+          }),
     };
     const header_length = reader.position;
     const hashes = await reader.finish(input.hash === "full");
@@ -386,7 +451,9 @@ export class ModelArtifactProvider implements ModelArtifactPort {
         header_length,
         ...hashes,
         read_scope:
-          input.hash === "full" ? ("full-file" as const) : ("header" as const),
+          input.hash === "full" || format === "ort"
+            ? ("full-file" as const)
+            : ("header" as const),
       },
       format,
       ...parsed,
@@ -413,12 +480,24 @@ export class ModelArtifactProvider implements ModelArtifactPort {
         tensor_ranges: parsed.tensors.every((row) => row.byte_length !== null)
           ? ("complete" as const)
           : ("partial" as const),
+        ...ort_coverage,
       },
       limitations: [
         "Facts are file declarations; model behavior, weight values and compatibility with an inference runtime were not verified.",
-        "Header SHA-256 commits only to the recorded prefix; file size is a separate observation. Different weights may share these declarations.",
+        ...(format === "ort"
+          ? [
+              "ORT declarations and payloads are interleaved. The header commitment covers the entire bounded FlatBuffer, including uninterpreted tensor bytes.",
+              "Totals cover only retained dense initializer declarations; inspect initializer coverage before treating them as model-wide totals.",
+            ]
+          : [
+              "Header SHA-256 commits only to the recorded prefix; file size is a separate observation. Different weights may share these declarations.",
+            ]),
         ...(input.hash === "header"
-          ? ["Full-file SHA-256 is unknown because tensor data was not read."]
+          ? [
+              format === "ort"
+                ? "Full-file SHA-256 and Evidence subject remain unset because hash full was not requested; ORT inspection nevertheless reads the complete bounded container."
+                : "Full-file SHA-256 is unknown because tensor data was not read.",
+            ]
           : [
               "Full-file SHA-256 required streaming the entire file, including tensor data, without interpreting it.",
             ]),
@@ -430,7 +509,11 @@ export class ModelArtifactProvider implements ModelArtifactPort {
         ...parsed.limitations,
       ],
     };
-    if (jsonValueByteLength(report, MODEL_REPORT_BYTES) > MODEL_REPORT_BYTES)
+    // Producer-owned optional fields are omitted, never set to undefined.
+    if (
+      jsonValueByteLength(report as JsonValue, MODEL_REPORT_BYTES) >
+      MODEL_REPORT_BYTES
+    )
       throw new ModelFormatFailure(
         "capacity",
         "Model report exceeds 32 MiB",

@@ -66,13 +66,18 @@ source and type recovery remain a separate native-analysis question.
 
 ## Model files
 
-Use `inspect_model_artifact` (`inspect-model-artifact PATH`) for local GGUF v2/v3
-and safetensors declarations without a model runtime. Header-only mode does not
-read weights or establish full-file identity. `hash: "full"` explicitly streams
-all bytes. Retained `model-artifact` views page `metadata`, `tensors` and derived
-`types`, with exact batch filters and selected fields. Arrays retain typed counts
-and eight-element previews; omitted values, unknown types and runtime behavior
-stay explicit. See [model files](https://github.com/morluto/rea/blob/main/docs/model-artifacts.md).
+Use `inspect_model_artifact` (`inspect-model-artifact PATH`) for local GGUF v2/v3,
+safetensors and ONNX Runtime ORT declarations without a model runtime.
+GGUF/safetensors header-only mode does not read weights or establish full-file
+identity. `hash: "full"` explicitly streams all bytes. ORT always reads its
+complete bounded FlatBuffer without interpreting payloads; only `hash: "full"`
+publishes full-file identity. Its retained inputs/outputs preserve symbolic
+dimensions, and operators preserve domains and since-versions. Retained
+`model-artifact` views page `metadata`, `tensors`, derived `types`, and ORT graph
+collections with exact batch filters and selected fields. Arrays retain typed
+counts and eight-element previews; omitted values, unknown types and runtime
+behavior stay explicit. See
+[model files](https://github.com/morluto/rea/blob/main/docs/model-artifacts.md).
 
 ## IL2CPP metadata
 
