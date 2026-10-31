@@ -133,7 +133,7 @@ def _wait_for_identity_ack(config):
         return
     while True:
         try:
-            with open(path, "r") as handle:
+            with open(path) as handle:
                 return handle.read(32).strip()
         except FileNotFoundError:
             time.sleep(0.025)
