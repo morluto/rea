@@ -122,6 +122,8 @@ for (const format of ["dotnet-bundle", "pyinstaller"] as const) {
       XDG_CACHE_HOME: workspace.path("cache"),
       XDG_STATE_HOME: workspace.path("state"),
       REA_LOG_LEVEL: "silent",
+      HOPPER_LAUNCHER_PATH: workspace.path("unavailable-hopper"),
+      GHIDRA_INSTALL_DIR: workspace.path("unavailable-ghidra"),
     };
     const outputs: string[] = [];
     const client = new Client({

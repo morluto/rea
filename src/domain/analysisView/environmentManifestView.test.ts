@@ -351,6 +351,9 @@ it("derives value-free body shapes, observed query names and record pointers", (
       "status",
     ]);
   const silent = manifest([], environmentManifestCaptureFixture(), false);
+  expect(silent.tools.map((tool) => tool.name)).toEqual(
+    projected.tools.map((tool) => tool.name),
+  );
   expect(
     silent.tools.every((tool) => tool.query_parameter_names.length === 0),
   ).toBe(true);

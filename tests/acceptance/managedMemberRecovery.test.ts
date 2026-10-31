@@ -86,28 +86,34 @@ cliTest(
       expect(report.types).toHaveLength(3);
       expect(report.methods).toEqual([]);
       const empty = report.types.find((type) => type.method_list.count === 0);
-      expect(empty).toBeDefined();
+      if (empty === undefined) throw new Error("Missing empty fixture type");
       const selectedCli = await cli.run({
         arguments: [
           "inspect-managed-members",
           path,
           "--type",
-          empty!.full_name,
+          empty.full_name,
           "--json",
         ],
       });
       expect(selectedCli.exitCode, selectedCli.stderr).toBe(0);
       const selected = await artifactMcpCall(client, {
         name: "inspect_managed_members",
-        arguments: { path, type_names: [empty!.full_name] },
+        arguments: { path, type_names: [empty.full_name] },
       });
       expect(selected.isError).not.toBe(true);
       const selectedEvidence = parseEvidence(selected.structuredContent);
       expect(selectedEvidence.normalized_result).toEqual(
         parseEvidence(selectedCli.json).normalized_result,
       );
-      expect(selectedEvidence.normalized_result).toMatchObject({
+      const selectedReport = managedMemberInspectionSchema.parse(
+        selectedEvidence.normalized_result,
+      );
+      expect(selectedReport).toMatchObject({
         coverage: { state: "complete", issues: [] },
+        selection: { type_names: [empty.full_name], unmatched_type_names: [] },
+        types: [{ token: empty.token, full_name: empty.full_name }],
+        methods: [],
       });
 
       const summaryReply = await artifactMcpCall(client, {

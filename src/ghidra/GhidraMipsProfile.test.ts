@@ -126,6 +126,8 @@ describe("bounded Ghidra MIPS admission", () => {
       },
       gnu_attributes: null,
     });
+    expect(left.value.profile?.digest).toEqual(expect.any(String));
+    expect(right.value.profile?.digest).toEqual(expect.any(String));
     expect(left.value.profile?.digest).not.toBe(right.value.profile?.digest);
     const windows = new GhidraProvider(
       config,

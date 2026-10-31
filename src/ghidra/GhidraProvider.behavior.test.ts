@@ -482,6 +482,7 @@ describe("Ghidra raw-binary profile", () => {
     expect(resolved.ok && shifted.ok).toBe(true);
     if (!resolved.ok || !shifted.ok || resolved.value.profile === null)
       throw new Error("expected raw-binary profiles");
+    expect(shifted.value.profile?.digest).toEqual(expect.any(String));
     expect(shifted.value.profile?.digest).not.toBe(
       resolved.value.profile.digest,
     );
@@ -4864,14 +4865,14 @@ it("reports every Windows existing-project capability unavailable before open", 
     REA_GHIDRA_PROJECT_PATH: join(process.cwd(), "selected.gpr"),
   });
   try {
+    const capabilities = ghidra.capabilities();
+    expect(capabilities.length).toBeGreaterThan(0);
     expect(
-      ghidra
-        .capabilities()
-        .every(
-          (capability) =>
-            !capability.available &&
-            capability.availabilityCode === "unsupported_host",
-        ),
+      capabilities.every(
+        (capability) =>
+          !capability.available &&
+          capability.availabilityCode === "unsupported_host",
+      ),
     ).toBe(true);
     const readiness = await ghidra.inspectReadinessSnapshot();
     expect(readiness.availability).toMatchObject({
@@ -4879,6 +4880,9 @@ it("reports every Windows existing-project capability unavailable before open", 
       code: "unsupported_host",
       reason: EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
     });
+    expect(readiness.capabilities.map(({ operation }) => operation)).toEqual(
+      capabilities.map(({ operation }) => operation),
+    );
     expect(
       readiness.capabilities.every(
         (capability) =>

@@ -458,6 +458,7 @@ cliTest(
     expect(result.exitCode, result.stderr).toBe(0);
     const evidence = completePycEvidenceSchema.parse(result.json);
     expect(evidence.normalized_result.code_objects[0]?.firstlineno).toBe(-1);
+    expect(evidence.normalized_result.code_objects[1]?.firstlineno).toBe(-7);
     expect(evidence.normalized_result.code_objects[0]?.consts).toContainEqual({
       kind: "code",
       name: "inner",
@@ -557,13 +558,10 @@ cliTest(
       });
       expect(result.exitCode, result.stderr).toBe(0);
       const evidence = completePycEvidenceSchema.parse(result.json);
-      expect(
-        evidence.normalized_result.code_objects[0]?.consts.map((value) =>
-          value.kind === "frozenset" || value.kind === "dict"
-            ? value.length
-            : null,
-        ),
-      ).toEqual(testCase.lengths);
+      expect(evidence.normalized_result.code_objects[0]?.consts).toEqual([
+        { kind: "frozenset", length: testCase.lengths[0] },
+        { kind: "dict", length: testCase.lengths[1] },
+      ]);
     }
   },
 );

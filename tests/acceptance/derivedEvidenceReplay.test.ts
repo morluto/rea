@@ -149,6 +149,11 @@ it.each([
       right,
     });
     expect(invalid.isError).toBe(true);
+    expect(parseMcpToolError(invalid).error).toMatchObject({
+      code: "evidence_integrity_mismatch",
+      category: "integrity_mismatch",
+      retryable: false,
+    });
     const afterReplay = await restored.call("get_evidence_bundle", {});
     expect(
       parseEvidenceBundle(

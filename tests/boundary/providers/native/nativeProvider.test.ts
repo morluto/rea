@@ -8,7 +8,9 @@ import { PassThrough } from "node:stream";
 
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { build } from "plist";
+import { withVerifierCleanup } from "../../../../scripts/lib/verifier-cleanup.mjs";
 
+import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
@@ -428,23 +430,69 @@ describe("native command failure capture and limits", () => {
   });
 
   it("retains output written before cancellation and reaps the stalled command", async () => {
-    const runner = new XcrunCommandRunner({}, () =>
-      Promise.resolve(
-        ok(nativeResolvedToolFixture(process.execPath, "a".repeat(64))),
-      ),
+    let outputReady!: () => void;
+    let handshakeFailed!: (cause: Error) => void;
+    const ready = new Promise<void>((resolve, reject) => {
+      outputReady = resolve;
+      handshakeFailed = reject;
+    });
+    const launcher: NativeCommandLauncher = async (options) => {
+      const launched = await spawnOwnedProviderProcess({
+        ...options,
+        stdin: "pipe",
+      });
+      // The awaiting runner installs its supervisor in a microtask before this
+      // callback. Hold child output until its capture listeners are in place.
+      setImmediate(() => {
+        const { stdin, stdout, stderr } = launched.process;
+        if (stdin == null || stdout === null || stderr === null) {
+          handshakeFailed(new Error("Missing command handshake streams"));
+          return;
+        }
+        let out = "";
+        let err = "";
+        const observe = () => {
+          if (out === "started" && err === "warning") outputReady();
+        };
+        stdout.on("data", (chunk: Buffer) => {
+          out += chunk.toString();
+          observe();
+        });
+        stderr.on("data", (chunk: Buffer) => {
+          err += chunk.toString();
+          observe();
+        });
+        stdin.end("go");
+      });
+      return launched;
+    };
+    const runner = new XcrunCommandRunner(
+      {},
+      () =>
+        Promise.resolve(
+          ok(nativeResolvedToolFixture(process.execPath, "a".repeat(64))),
+        ),
+      launcher,
     );
     const controller = new AbortController();
     const pending = runner.run(
       "file",
       [
         "-e",
-        'process.stdout.write("started"); process.stderr.write("warning"); setInterval(() => {}, 1000)',
+        'process.stdin.once("data", () => { process.stdout.write("started"); process.stderr.write("warning"); }); setInterval(() => {}, 1000)',
       ],
       { signal: controller.signal },
     );
-    setTimeout(() => controller.abort(), 100);
-
-    const result = await pending;
+    const result = await withVerifierCleanup(async () => {
+      await awaitAcknowledgement(ready, pending, "command output", 10_000);
+      controller.abort();
+      return await pending;
+    }, [
+      () => controller.abort(),
+      async () => {
+        await pending;
+      },
+    ]);
 
     expect(result.ok).toBe(false);
     if (result.ok) return;

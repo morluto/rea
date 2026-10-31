@@ -19,6 +19,9 @@ const descriptors = [
 );
 const requirements = {
   packet: {
+    "tests/acceptance/pcapVerifier.test.ts": [
+      "verifies complete and unresolved HTTP coverage with real Wireshark tools",
+    ],
     "tests/boundary/captures/resourceLimits.test.ts": [
       ...resources,
       "reports a real kernel file-limit termination with its effective ceiling",

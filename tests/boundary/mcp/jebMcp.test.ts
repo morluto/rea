@@ -1,4 +1,3 @@
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { afterAll, expect, it, onTestFinished } from "vitest";
 import { z } from "zod";
@@ -11,8 +10,8 @@ import { createAnalysisExecution } from "../../../src/application/AnalysisProvid
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { ok } from "../../../src/domain/result.js";
-import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import {
   expandToolAvailability,
@@ -50,23 +49,12 @@ it("discovers current JEB operation support and recovery through binary_session"
   const session = createTestBinarySession(() => {
     throw new Error("Status must not start a deep provider");
   });
-  const server = createServer(
-    { kind: "session", session },
-    { environment: {}, jebAnalysis: provider },
-  );
-  const client = new Client(
-    { name: "jeb-availability", version: "1" },
-    { jsonSchemaValidator: schemaValidation },
-  );
-  onTestFinished(async () => {
-    await client.close();
-    await server.close();
-    await session.close();
+  const { client } = await createApplicationMcpHarness({
+    session,
+    serverOptions: { environment: {}, jebAnalysis: provider },
+    clientIdentity: { name: "jeb-availability", version: "1" },
+    schemaValidator: schemaValidation,
   });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
   const read = async () => {
     const result = await client.callTool({
       name: "binary_session",
@@ -150,23 +138,12 @@ it("advertises exact valid JEB schemas and records inline evidence through MCP",
   const session = createTestBinarySession(() => {
     throw new Error("deep provider must not start");
   });
-  const server = createServer(
-    { kind: "session", session },
-    { jebAnalysis: provider },
-  );
-  const client = new Client(
-    { name: "jeb-contract", version: "1" },
-    { jsonSchemaValidator: schemaValidation },
-  );
-  onTestFinished(async () => {
-    await client.close();
-    await server.close();
-    await session.close();
+  const { client } = await createApplicationMcpHarness({
+    session,
+    serverOptions: { jebAnalysis: provider },
+    clientIdentity: { name: "jeb-contract", version: "1" },
+    schemaValidator: schemaValidation,
   });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
   const advertised = (await client.listTools()).tools.find(
     (tool) => tool.name === "inspect_jeb_client",
   );
@@ -241,23 +218,12 @@ it("preserves JEB provider failure reasons through the MCP boundary", async () =
   const session = createTestBinarySession(() => {
     throw new Error("deep provider must not start");
   });
-  const server = createServer(
-    { kind: "session", session },
-    { jebAnalysis: unavailable },
-  );
-  const client = new Client(
-    { name: "jeb-failure", version: "1" },
-    { jsonSchemaValidator: schemaValidation },
-  );
-  onTestFinished(async () => {
-    await client.close();
-    await server.close();
-    await session.close();
+  const { client } = await createApplicationMcpHarness({
+    session,
+    serverOptions: { jebAnalysis: unavailable },
+    clientIdentity: { name: "jeb-failure", version: "1" },
+    schemaValidator: schemaValidation,
   });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
   const failed = await client.callTool({
     name: "list_jeb_units",
     arguments: {},
@@ -274,23 +240,14 @@ it("keeps the MCP server usable when REA_JEB_MCP_URL is invalid", async () => {
   const session = createTestBinarySession(() => {
     throw new Error("deep provider must not start");
   });
-  const server = createServer(
-    { kind: "session", session },
-    { environment: { REA_JEB_MCP_URL: "http://localhost:8425/mcp" } },
-  );
-  const client = new Client(
-    { name: "jeb-invalid-endpoint", version: "1" },
-    { jsonSchemaValidator: schemaValidation },
-  );
-  onTestFinished(async () => {
-    await client.close();
-    await server.close();
-    await session.close();
+  const { client } = await createApplicationMcpHarness({
+    session,
+    serverOptions: {
+      environment: { REA_JEB_MCP_URL: "http://localhost:8425/mcp" },
+    },
+    clientIdentity: { name: "jeb-invalid-endpoint", version: "1" },
+    schemaValidator: schemaValidation,
   });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
   expect((await client.listTools()).tools.length).toBeGreaterThan(0);
   const failed = await client.callTool({
     name: "inspect_jeb_client",
@@ -358,93 +315,80 @@ it.each(
         ? refusal
         : { success: true, gui_client: false };
     });
+    onTestFinished(() => fixture.close());
     const provider = new JebProvider({
       environment: { REA_JEB_MCP_URL: fixture.endpoint },
     });
     const session = createTestBinarySession(() => {
       throw new Error("JEB must not start a deep provider");
     });
-    const server = createServer(
-      { kind: "session", session },
-      { jebAnalysis: provider, environment: {} },
-    );
-    const client = new Client(
-      { name: "jeb-attribution", version: "1" },
-      { jsonSchemaValidator: schemaValidation },
-    );
-    try {
-      const [clientTransport, serverTransport] =
-        InMemoryTransport.createLinkedPair();
-      await server.connect(serverTransport);
-      await client.connect(clientTransport);
-      const call = () => client.callTool({ name: operation, arguments: input });
-      if (metadata === "unknown-version") {
-        for (let attempt = 0; attempt < 2; attempt++) {
-          const called = await call();
-          expect(called.isError).not.toBe(true);
-          const text = called.content
-            .map((block) => (block.type === "text" ? block.text : ""))
-            .join("");
-          const evidence = parseEvidence(JSON.parse(text));
-          expect(evidence.provider.version).toBeNull();
-          expect(evidence.normalized_result).toMatchObject({
-            engine: { version: null, gui_client: false },
-          });
-          expect(evidence.raw_result).toEqual(jebPrimaryResponses[tool]);
-        }
-        expect(fixture.calls).toEqual([tool, "get_client_information", tool]);
-      } else {
-        const failed = await client.callTool({
-          name: operation,
-          arguments: input,
-        });
-        expect(failed.isError).toBe(true);
-        const text = failed.content
+    const { client } = await createApplicationMcpHarness({
+      session,
+      serverOptions: { jebAnalysis: provider, environment: {} },
+      clientIdentity: { name: "jeb-attribution", version: "1" },
+      schemaValidator: schemaValidation,
+    });
+    const call = () => client.callTool({ name: operation, arguments: input });
+    if (metadata === "unknown-version") {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const called = await call();
+        expect(called.isError).not.toBe(true);
+        const text = called.content
           .map((block) => (block.type === "text" ? block.text : ""))
           .join("");
-        expect(JSON.parse(text)).toMatchObject({
-          error: {
-            code: "execution_failure",
-            message: refusal.message,
-            details: {
-              provider_id: "jeb",
-              operation,
-              diagnostics: {
-                endpoint: fixture.endpoint,
-                upstream_response: refusal,
-              },
-              partial_observation: {
-                kind: "retained-evidence",
-                evidence_id: expect.any(String),
-              },
+        const evidence = parseEvidence(JSON.parse(text));
+        expect(evidence.provider.version).toBeNull();
+        expect(evidence.normalized_result).toMatchObject({
+          engine: { version: null, gui_client: false },
+        });
+        expect(evidence.raw_result).toEqual(jebPrimaryResponses[tool]);
+      }
+      expect(fixture.calls).toEqual([tool, "get_client_information", tool]);
+    } else {
+      const failed = await client.callTool({
+        name: operation,
+        arguments: input,
+      });
+      expect(failed.isError).toBe(true);
+      const text = failed.content
+        .map((block) => (block.type === "text" ? block.text : ""))
+        .join("");
+      expect(JSON.parse(text)).toMatchObject({
+        error: {
+          code: "execution_failure",
+          message: refusal.message,
+          details: {
+            provider_id: "jeb",
+            operation,
+            diagnostics: {
+              endpoint: fixture.endpoint,
+              upstream_response: refusal,
+            },
+            partial_observation: {
+              kind: "retained-evidence",
+              evidence_id: expect.any(String),
             },
           },
-        });
-        const partial = z
-          .object({
-            error: z.object({
-              details: z.object({
-                partial_observation: z.object({
-                  kind: z.literal("retained-evidence"),
-                  evidence_id: z.string(),
-                }),
+        },
+      });
+      const partial = z
+        .object({
+          error: z.object({
+            details: z.object({
+              partial_observation: z.object({
+                kind: z.literal("retained-evidence"),
+                evidence_id: z.string(),
               }),
             }),
-          })
-          .parse(JSON.parse(text)).error.details.partial_observation;
-        expect(session.evidenceById(partial.evidence_id)).toMatchObject({
-          evidence_id: partial.evidence_id,
-          operation,
-          raw_result: jebPrimaryResponses[tool],
-        });
-        expect(fixture.calls).toEqual([tool, "get_client_information"]);
-      }
-    } finally {
-      await client.close();
-      await server.close();
-      await session.close();
-      await provider.close();
-      await fixture.close();
+          }),
+        })
+        .parse(JSON.parse(text)).error.details.partial_observation;
+      expect(session.evidenceById(partial.evidence_id)).toMatchObject({
+        evidence_id: partial.evidence_id,
+        operation,
+        raw_result: jebPrimaryResponses[tool],
+      });
+      expect(fixture.calls).toEqual([tool, "get_client_information"]);
     }
   },
 );

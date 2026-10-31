@@ -108,8 +108,30 @@ it.each([
   ["bridge/pwndbg/test_core_context.py", "python"],
   ["tests/support/analysis-efficiency/test_signal_oracle.py", "python"],
   ["scripts/run-python-tests.py", "python"],
+  ["scripts/verify-browser-request.mjs", "browser"],
+  ["scripts/lib/browser-request-e2e.mjs", "browser"],
+  ["scripts/fixtures/browser-request-site.mjs", "browser"],
+  ["scripts/lib/browser-nested-source-map-e2e.mjs", "web_source_map"],
+  ["scripts/lib/browser-runtime-fixture-lifecycle.mjs", "web_source_map"],
+  ["src/cliBrowserScenarioCommands.ts", "browser"],
+  ["src/application/BrowserScenarioCaptureService.ts", "browser"],
+  ["src/composition/browserScenario.ts", "browser"],
+  ["src/cli/environmentCommands.ts", "browser"],
+  ["src/application/environment/environmentBuild.ts", "browser"],
+  ["src/domain/analysisView/environmentCoverageView.ts", "browser"],
+  ["src/domain/analysisView/scenarioCaptureRecords.ts", "browser"],
+  ["src/domain/analysisView/recordedResponseBody.ts", "browser"],
+  ["src/domain/analysisView/recordedExchangeBody.ts", "browser"],
+  ["src/domain/analysisView/recordedMediaType.ts", "browser"],
+  ["src/domain/analysisView/webNetworkRouteTemplates.ts", "browser"],
+  ["src/domain/analysisView/EnvironmentManifestAccumulator.ts", "browser"],
+  ["src/domain/analysisView/EnvironmentStateAccumulator.ts", "browser"],
+  ["src/domain/analysisView/WebNetworkProjectionAccumulator.ts", "browser"],
   ["src/captures/CaptureProvider.ts", "packet_capture"],
   ["tests/boundary/mcp/packetCaptureMcp.test.ts", "packet_capture"],
+  ["tests/acceptance/pcapVerifier.test.ts", "packet_capture"],
+  ["tests/fixtures/pcap/offlineHttpCapture.ts", "packet_capture"],
+  ["scripts/verify-pcap.mjs", "packet_capture"],
   ["src/signals/RecordingProvider.ts", "signal_recording"],
   ["tests/boundary/mcp/signalRecordingMcp.test.ts", "signal_recording"],
   ["src/process/LinuxResourceLimits.ts", "packet_capture"],
@@ -123,6 +145,19 @@ it.each([
     [scope]: true,
   });
 });
+
+it.each(["src/domain/webCaptureDiffSchemas.ts", "src/domain/webScreenshot.ts"])(
+  "selects real browser verification for %s without capture lanes",
+  async (path) => {
+    const { directory, base } = await fixture();
+    const head = await change(directory, [path]);
+    expect(await classify(directory, base, head)).toMatchObject({
+      browser: true,
+      packet_capture: false,
+      signal_recording: false,
+    });
+  },
+);
 
 it("reuses only scheduled qualification and preserves every explicit full request", async () => {
   const { directory, base } = await fixture();
@@ -1047,7 +1082,7 @@ it.each([
       code: true,
       runtime: true,
       agentenv: true,
-      browser: false,
+      browser: true,
       package: false,
     },
   ],
@@ -1250,37 +1285,40 @@ it.each([
   },
 );
 
-it("rejects skipped selected work while allowing unselected lanes to skip", async () => {
-  const command = fileURLToPath(
-    new URL("../../../scripts/ci/required.mjs", import.meta.url),
-  );
-  const { CI_FLAGS } = await loadScopes();
-  const jobs = {
-    changes: {
-      result: "success",
-      outputs: {
-        ...Object.fromEntries(CI_FLAGS.map((flag) => [flag, "false"])),
-        tier: "fast",
-        evm: "true",
+it.each(["evm", "browser"])(
+  "rejects skipped selected %s work while allowing unselected lanes to skip",
+  async (scope) => {
+    const command = fileURLToPath(
+      new URL("../../../scripts/ci/required.mjs", import.meta.url),
+    );
+    const { CI_FLAGS } = await loadScopes();
+    const jobs = {
+      changes: {
+        result: "success",
+        outputs: {
+          ...Object.fromEntries(CI_FLAGS.map((flag) => [flag, "false"])),
+          tier: "fast",
+          [scope]: "true",
+        },
       },
-    },
-    static: { result: "success" },
-    test: { result: "success" },
-    evm: { result: "success" },
-    browser: { result: "skipped" },
-  };
-  const run = (result: string) =>
-    execFileAsync(process.execPath, [command], {
-      env: {
-        ...process.env,
-        CI_JOBS: JSON.stringify({ ...jobs, evm: { result } }),
-      },
-    });
-  await expect(run("success")).resolves.toMatchObject({ stderr: "" });
-  for (const result of ["failure", "cancelled", "skipped"]) {
-    await expect(run(result)).rejects.toMatchObject({ code: 1 });
-  }
-});
+      static: { result: "success" },
+      test: { result: "success" },
+      evm: { result: "skipped" },
+      browser: { result: "skipped" },
+    };
+    const run = (result: string) =>
+      execFileAsync(process.execPath, [command], {
+        env: {
+          ...process.env,
+          CI_JOBS: JSON.stringify({ ...jobs, [scope]: { result } }),
+        },
+      });
+    await expect(run("success")).resolves.toMatchObject({ stderr: "" });
+    for (const result of ["failure", "cancelled", "skipped"]) {
+      await expect(run(result)).rejects.toMatchObject({ code: 1 });
+    }
+  },
+);
 
 it.each([
   [
@@ -1663,6 +1701,17 @@ const stepRuns = z.object({
       steps: z.array(z.object({ run: z.string().optional() })).optional(),
     }),
   ),
+});
+
+it("runs the browser request journey in the real browser lane", async () => {
+  const workflow = stepRuns.parse(await workflowFile("real-browser.yml"));
+  const commands = workflow.jobs["real-browser"]?.steps?.map(
+    (step) => step.run,
+  );
+  expect(commands).toContain("dbus-run-session -- npm run verify:browser");
+  expect(commands).toContain(
+    "dbus-run-session -- node scripts/verify-browser-request.mjs",
+  );
 });
 
 it("owns every explicit native-host test path with the lane that runs it", async () => {

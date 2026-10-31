@@ -291,7 +291,7 @@
     "verify:native-ui:permissions": "npm run build:cached && node scripts/verify-native-ui.mjs --allow-permission-denial",
     "test:focused": "node scripts/run-development-tests.mjs focused",
     "test:sqlite": "npm run test:prepare && npm run test:sqlite:run",
-    "test:sqlite:run": "vitest run src/application/sqlite/ tests/boundary/sqlite/ tests/acceptance/sqliteDatabaseCli.test.ts tests/boundary/mcp/serverLifecycleMcp.test.ts",
+    "test:sqlite:run": "node scripts/run-exact-tests.mjs run tests/acceptance/sqliteDatabaseCli.test.ts tests/boundary/mcp/serverLifecycleMcp.test.ts && vitest run src/application/sqlite/ tests/boundary/sqlite/",
     "build:windows-native": "node scripts/build-windows-native.mjs",
     "verify:windows-native:artifact": "node scripts/verify-windows-native-artifact.mjs",
     "prepublishOnly": "npm run verify:windows-native:artifact",

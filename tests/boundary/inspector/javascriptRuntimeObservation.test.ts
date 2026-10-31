@@ -410,7 +410,11 @@ test("captures complete metadata with two enable commands", async () => {
     expect(new Set(fake.commands.map(({ method }) => method))).toEqual(
       new Set(["Runtime.enable", "Debugger.enable"]),
     );
-    expect(JSON.stringify(result.value)).toContain(outside);
+    expect(result.value.scripts.items).toContainEqual(
+      expect.objectContaining({
+        location: expect.objectContaining({ file_path: outside }),
+      }),
+    );
     expect(result.value.unavailable_without_instrumentation).toContain(
       "Electron IPC messages and handlers",
     );
@@ -759,9 +763,17 @@ describe("passive V8 Inspector evidence", () => {
         reason: "runtime-location-unresolved",
       }),
     );
-    expect(JSON.stringify(result.graph)).toContain(rawUrl);
-    expect(JSON.stringify(result.graph)).toContain("v8-hash");
-    expect(JSON.stringify(result.graph)).toContain('"reported_url":""');
+    const runtimeProperties = result.graph.nodes
+      .filter(({ kind }) => kind === "runtime-script-instance")
+      .flatMap(({ observations }) =>
+        observations.map(({ properties }) => properties),
+      );
+    expect(runtimeProperties).toContainEqual(
+      expect.objectContaining({ reported_url: rawUrl, cdp_hash: "v8-hash" }),
+    );
+    expect(runtimeProperties).toContainEqual(
+      expect.objectContaining({ reported_url: "", cdp_hash: null }),
+    );
   });
 });
 

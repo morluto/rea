@@ -52,19 +52,45 @@ describe("Vite build-output preload dependencies", () => {
       resolution_status: "resolved",
       resolved_path: "assets/lazy.js",
     });
-    expect(JSON.stringify(result.graph)).toContain(
-      "no ancestor of the importing file holds it",
+    const missing = result.graph.edges.find(
+      ({ properties }) =>
+        properties.specifier === "vite-output:assets/missing.js",
+    );
+    expect(missing?.evidence.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("no ancestor of the importing file holds it"),
+      ]),
     );
   });
 
   it("does not report a dependency as an external package when only the assets directory is selected", async () => {
     const root = await viteBuild();
     const result = await reconstructJavaScriptFixture(join(root, "assets"));
-    const serialized = JSON.stringify(result.graph);
-
-    expect(serialized).not.toContain('"resolution_status":"external"');
-    expect(serialized).toContain(
-      "A Vite preload dependency is relative to the build output directory",
+    expect(
+      result.graph.edges.map(({ properties }) => properties.resolution_status),
+    ).not.toContain("external");
+    expect(
+      result.graph.nodes.flatMap(({ observations }) =>
+        observations.map(({ properties }) => properties.resolution_status),
+      ),
+    ).not.toContain("external");
+    // Also guard nested graph metadata so the original graph-wide exclusion
+    // remains in force if a producer adds another resolution-status location.
+    expect(JSON.stringify(result.graph)).not.toContain(
+      '"resolution_status":"external"',
+    );
+    const edges = result.graph.edges.filter(
+      ({ properties }) => properties.specifier === "vite-output:assets/lazy.js",
+    );
+    expect(edges).toHaveLength(1);
+    expect(typeof edges[0]?.properties.resolution_status).toBe("string");
+    expect(edges[0]?.properties.resolution_status).not.toBe("external");
+    expect(edges[0]?.evidence.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(
+          "A Vite preload dependency is relative to the build output directory",
+        ),
+      ]),
     );
   });
 
@@ -90,10 +116,11 @@ describe("Vite build-output preload dependencies", () => {
       resolution_status: "unavailable",
       candidate_path: "dist/assets/lazy.css",
     });
-    const serialized = JSON.stringify(edge);
-    expect(serialized).toContain("dist/assets/lazy.css");
-    expect(serialized).not.toContain(
-      "no ancestor of the importing file holds it",
+    expect(edge?.evidence.limitations).toEqual(expect.any(Array));
+    expect(edge?.evidence.limitations).not.toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("no ancestor of the importing file holds it"),
+      ]),
     );
   });
 });

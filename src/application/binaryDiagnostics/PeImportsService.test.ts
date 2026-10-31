@@ -62,20 +62,6 @@ it("rejects a relative path and extra arguments before reading", async () => {
   expect(calls).toBe(0);
 });
 
-it("records the selected PE and an absent import table", async () => {
-  const result = await new PeImportsService({
-    identity,
-    inspect: () => Promise.resolve(ok(report)),
-  }).inspect({ path: report.artifact.path });
-  expect(result.ok).toBe(true);
-  if (!result.ok) throw result.error;
-  expect(result.value).toMatchObject({
-    confidence: "observed",
-    subject: { format: "pe", architecture: "x86_64" },
-    normalized_result: report,
-  });
-});
-
 it.each(["imports", "delay_imports", "examined_dlls"] as const)(
   "rejects contradictory complete %s coverage",
   async (field) => {

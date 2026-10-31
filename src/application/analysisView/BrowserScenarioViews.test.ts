@@ -375,16 +375,47 @@ describe("browser scenario retained boundaries", () => {
         rows: [{ transaction_id: "request-2" }],
       },
     });
+    expect(result).toMatchObject({
+      items: {
+        rows: [
+          {
+            events: expect.not.arrayContaining([
+              expect.objectContaining({
+                event: expect.objectContaining({ kind: "network-content" }),
+              }),
+            ]),
+            omitted_events: expect.arrayContaining([
+              expect.objectContaining({ kind: "network-content" }),
+            ]),
+          },
+        ],
+      },
+    });
     expect(JSON.stringify(result)).not.toContain('"content":');
     const selected = await view(capture, {
       ...request,
       event_kinds: ["network-content"],
     });
-    expect(JSON.stringify(selected)).toContain('"content":');
     expect(selected).toMatchObject({
       items: {
         rows: [
           {
+            transaction_id: "request-2",
+            events: [
+              expect.objectContaining({
+                event: expect.objectContaining({
+                  kind: "network-content",
+                  transaction_id: "request-2",
+                  phase: "response",
+                  body: expect.objectContaining({
+                    state: "captured",
+                    content: Buffer.from('{"id":2,"login":"probe"}').toString(
+                      "base64",
+                    ),
+                  }),
+                }),
+              }),
+            ],
             omitted_events: expect.arrayContaining([
               { item_index: expect.any(Number), kind: "request" },
             ]),
@@ -393,7 +424,9 @@ describe("browser scenario retained boundaries", () => {
       },
     });
   });
+});
 
+describe("browser scenario network observation", () => {
   it("distinguishes unrequested and legacy-unknown network observation from an observed empty inventory", () => {
     const base = scenarioCaptureFixture([], {
       request_body: false,

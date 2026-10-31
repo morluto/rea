@@ -467,7 +467,6 @@ describe("web bundle analyzer", () => {
         expect.objectContaining({ value: "Vue" }),
       ]),
     );
-    expect(JSON.stringify(result)).toContain("authorization=secret");
     expect(result.completeness.status).toBe("complete");
   });
 

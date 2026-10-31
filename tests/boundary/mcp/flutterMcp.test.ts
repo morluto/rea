@@ -1,4 +1,3 @@
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it, onTestFinished } from "vitest";
 import { Ajv2020 } from "ajv/dist/2020.js";
 
@@ -7,7 +6,6 @@ import { createAnalysisExecution } from "../../../src/application/AnalysisProvid
 import { assertAdvertisedMcpContracts } from "./mcpContractHarness.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { ok } from "../../../src/domain/result.js";
-import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createFlutterBuildAnalysisProvider } from "../../../src/composition/flutter.js";
 import {
@@ -280,17 +278,11 @@ it("advertises an exact valid Flutter schema and records inline evidence through
   const session = createTestBinarySession(() => {
     throw new Error("deep provider must not start");
   });
-  const server = createServer(
-    { kind: "session", session },
-    { flutterAnalysis: fakeProvider() },
-  );
-  onTestFinished(() => server.close());
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  await server.connect(serverTransport);
-  const client = new Client({ name: "flutter-boundary", version: "0.0.0" });
-  onTestFinished(() => client.close());
-  await client.connect(clientTransport);
+  const { client } = await createApplicationMcpHarness({
+    session,
+    clientIdentity: { name: "flutter-boundary", version: "0.0.0" },
+    serverOptions: { flutterAnalysis: fakeProvider() },
+  });
 
   const { tools } = await client.listTools();
   assertAdvertisedMcpContracts(

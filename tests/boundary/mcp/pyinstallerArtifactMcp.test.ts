@@ -2,8 +2,10 @@ import { access, readFile, rm, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { afterAll, expect, it } from "vitest";
+import type { Client } from "@modelcontextprotocol/client";
+import { afterAll, expect } from "vitest";
+import { mcpTest } from "../../support/mcp/mcpFixture.js";
+import { ownArtifactSession } from "../../support/mcp/artifactSession.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 import { createArtifactBinarySession } from "../../../src/composition/binary.js";
@@ -199,159 +201,142 @@ const writeSurrogateNamespaceExecutable = async (): Promise<string> => {
   return path;
 };
 
-it.each([false, true])(
+mcpTest.for([false, true])(
   "inventories a PyInstaller executable through inspect_artifact (opaque: %s)",
-  async (opaque) => {
+  async (opaque, { mcp, onTestFinished }) => {
     const path = await writeExecutable(opaque);
     const session = await createArtifactBinarySession(process.env);
-    const server = createServer({ kind: "session", session });
-    const client = new Client(
+    ownArtifactSession(session, onTestFinished);
+    const client = await mcp.connect(
+      createServer({ kind: "session", session }),
       { name: "pyinstaller-mcp-test", version: "1" },
-      { jsonSchemaValidator: schemaValidation },
+      schemaValidation,
     );
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
-    try {
-      await server.connect(serverTransport);
-      await client.connect(clientTransport);
-      const opened = await client.callTool({
-        name: "open_binary",
-        arguments: { path },
-      });
-      expect(opened.isError).not.toBe(true);
-      const inspected = await client.callTool({
-        name: "inspect_artifact",
-        arguments: {},
-      });
-      expect(inspected.isError).not.toBe(true);
-      const inspection = artifactInspectionResultSchema.parse(
-        parseEvidence(inspected.structuredContent).normalized_result,
-      );
-      expect(inspection.subject.root_format).toBe("pyinstaller");
-      if (!opaque) expect(inspection.next_probes).toEqual([]);
+
+    const opened = await client.callTool({
+      name: "open_binary",
+      arguments: { path },
+    });
+    expect(opened.isError).not.toBe(true);
+    const inspected = await client.callTool({
+      name: "inspect_artifact",
+      arguments: {},
+    });
+    expect(inspected.isError).not.toBe(true);
+    const inspection = artifactInspectionResultSchema.parse(
+      parseEvidence(inspected.structuredContent).normalized_result,
+    );
+    expect(inspection.subject.root_format).toBe("pyinstaller");
+    if (!opaque) expect(inspection.next_probes).toEqual([]);
+    expect(
+      inspection.substeps[0]?.evidence.normalized_result.coverage.status,
+    ).toBe(opaque ? "unknown" : "complete");
+    if (opaque)
       expect(
-        inspection.substeps[0]?.evidence.normalized_result.coverage.status,
-      ).toBe(opaque ? "unknown" : "complete");
-      if (opaque)
-        expect(
-          inspection.substeps[0]?.evidence.normalized_result.occurrences.find(
-            (row) => row.logical_path === "PYZ.pyz",
-          ),
-        ).toMatchObject({
-          encrypted: false,
-          hash_status: "verified",
-          artifact_id: expect.any(String),
-          format_metadata: { encryption_source: "carchive-marker" },
-        });
-      expect(
-        inspection.substeps[0]?.evidence.normalized_result.occurrences.map(
-          (occurrence) => occurrence.logical_path,
+        inspection.substeps[0]?.evidence.normalized_result.occurrences.find(
+          (row) => row.logical_path === "PYZ.pyz",
         ),
-      ).toEqual(
-        expect.arrayContaining([
-          "hello",
-          ...(opaque ? [] : ["PYZ.pyz/app.pyc"]),
-        ]),
-      );
-      if (!opaque)
-        expect(
-          inspection.substeps[0]?.evidence.normalized_result.occurrences.find(
-            (row) => row.logical_path === "PYZ.pyz/app.pyc",
-          ),
-        ).toMatchObject({
-          source_path: "app",
-          format_metadata: {
-            container_name: "PYZ.pyz",
-            source_name: "app",
-          },
-        });
-      const parent = parseEvidence(inspected.structuredContent);
-      const compact = await client.callTool({
-        name: "inspect_artifact",
-        arguments: { detail: "summary" },
+      ).toMatchObject({
+        encrypted: false,
+        hash_status: "verified",
+        artifact_id: expect.any(String),
+        format_metadata: { encryption_source: "carchive-marker" },
       });
-      expect(compact.isError).not.toBe(true);
-      const summary = parseEvidence(
-        compact.structuredContent,
-      ).normalized_result;
-      expect(summary).toMatchObject({
-        kind: "summary",
-        summary: {
-          root_format_metadata: {
-            kind: "pyinstaller",
-            python_version_raw: 312,
-            external_dependency_count: 1,
-          },
-          observed_entry_kind_counts: { metadata: 3 },
-          source_coverage: { status: opaque ? "unknown" : "complete" },
+    expect(
+      inspection.substeps[0]?.evidence.normalized_result.occurrences.map(
+        (occurrence) => occurrence.logical_path,
+      ),
+    ).toEqual(
+      expect.arrayContaining(["hello", ...(opaque ? [] : ["PYZ.pyz/app.pyc"])]),
+    );
+    if (!opaque)
+      expect(
+        inspection.substeps[0]?.evidence.normalized_result.occurrences.find(
+          (row) => row.logical_path === "PYZ.pyz/app.pyc",
+        ),
+      ).toMatchObject({
+        source_path: "app",
+        format_metadata: {
+          container_name: "PYZ.pyz",
+          source_name: "app",
         },
       });
-      await assertMetadataQueries(
-        client,
-        parent,
-        opaque ? "unknown" : "complete",
-      );
-      if (opaque) {
-        const missing = await client.callTool({
-          name: "inspect_analysis_view",
-          arguments: {
-            source: {
-              kind: "retained-evidence",
-              evidence_id: parent.evidence_id,
-            },
-            view: {
-              kind: "inventory",
-              collection: "occurrences",
-              logical_paths: ["PYZ.pyz/app.pyc"],
-              entry_kinds: ["file"],
-              fields: [],
-              offset: 0,
-              limit: 1,
-            },
+    const parent = parseEvidence(inspected.structuredContent);
+    const compact = await client.callTool({
+      name: "inspect_artifact",
+      arguments: { detail: "summary" },
+    });
+    expect(compact.isError).not.toBe(true);
+    const summary = parseEvidence(compact.structuredContent).normalized_result;
+    expect(summary).toMatchObject({
+      kind: "summary",
+      summary: {
+        root_format_metadata: {
+          kind: "pyinstaller",
+          python_version_raw: 312,
+          external_dependency_count: 1,
+        },
+        observed_entry_kind_counts: { metadata: 3 },
+        source_coverage: { status: opaque ? "unknown" : "complete" },
+      },
+    });
+    await assertMetadataQueries(
+      client,
+      parent,
+      opaque ? "unknown" : "complete",
+    );
+    if (opaque) {
+      const missing = await client.callTool({
+        name: "inspect_analysis_view",
+        arguments: {
+          source: {
+            kind: "retained-evidence",
+            evidence_id: parent.evidence_id,
           },
-        });
-        expect(missing.isError).not.toBe(true);
-        const page = analysisViewResultSchema.parse(
-          parseEvidence(missing.structuredContent).normalized_result,
-        );
-        expect(page).toMatchObject({
-          kind: "inventory",
-          items: [],
-          source_coverage: { status: "unknown" },
-        });
-        expect(page.unknowns).toContain(
-          "Producer traversal coverage is unknown; missing matches do not prove source absence.",
-        );
-      }
-    } finally {
-      await client.close();
-      await server.close();
-      await session.close();
+          view: {
+            kind: "inventory",
+            collection: "occurrences",
+            logical_paths: ["PYZ.pyz/app.pyc"],
+            entry_kinds: ["file"],
+            fields: [],
+            offset: 0,
+            limit: 1,
+          },
+        },
+      });
+      expect(missing.isError).not.toBe(true);
+      const page = analysisViewResultSchema.parse(
+        parseEvidence(missing.structuredContent).normalized_result,
+      );
+      expect(page).toMatchObject({
+        kind: "inventory",
+        items: [],
+        source_coverage: { status: "unknown" },
+      });
+      expect(page.unknowns).toContain(
+        "Producer traversal coverage is unknown; missing matches do not prove source absence.",
+      );
     }
   },
 );
 
-it("preserves legacy CArchive identities and modern bytecode derivation through inspect_artifact", async () => {
-  const fixture = cArchiveBytecodeExecutable();
-  const directory = await createTestTempDirectory(
-    "rea-pyinstaller-mcp-bytecode-",
-  );
-  const path = join(directory, "bytecode-layouts");
-  await writeFile(path, fixture.archive);
-  const session = await createArtifactBinarySession(process.env);
-  const server = createServer({ kind: "session", session });
-  const client = new Client(
-    {
-      name: "pyinstaller-bytecode-mcp-test",
-      version: "1",
-    },
-    { jsonSchemaValidator: schemaValidation },
-  );
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  try {
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
+mcpTest(
+  "preserves legacy CArchive identities and modern bytecode derivation through inspect_artifact",
+  async ({ mcp, onTestFinished }) => {
+    const fixture = cArchiveBytecodeExecutable();
+    const directory = await createTestTempDirectory(
+      "rea-pyinstaller-mcp-bytecode-",
+    );
+    const path = join(directory, "bytecode-layouts");
+    await writeFile(path, fixture.archive);
+    const session = await createArtifactBinarySession(process.env);
+    ownArtifactSession(session, onTestFinished);
+    const client = await mcp.connect(
+      createServer({ kind: "session", session }),
+      { name: "pyinstaller-bytecode-mcp-test", version: "1" },
+      schemaValidation,
+    );
+
     const opened = await client.callTool({
       name: "open_binary",
       arguments: { path },
@@ -390,29 +375,21 @@ it("preserves legacy CArchive identities and modern bytecode derivation through 
         )?.relation,
       ).toBe(module.derived ? "derived-from" : "contains");
     }
-  } finally {
-    await client.close();
-    await server.close();
-    await session.close();
-  }
-});
+  },
+);
 
-it("preserves surrogatepass PYZ module names through inspect_artifact", async () => {
-  const path = await writeSurrogateNamespaceExecutable();
-  const session = await createArtifactBinarySession(process.env);
-  const server = createServer({ kind: "session", session });
-  const client = new Client(
-    {
-      name: "pyinstaller-surrogate-mcp-test",
-      version: "1",
-    },
-    { jsonSchemaValidator: schemaValidation },
-  );
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  try {
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
+mcpTest(
+  "preserves surrogatepass PYZ module names through inspect_artifact",
+  async ({ mcp, onTestFinished }) => {
+    const path = await writeSurrogateNamespaceExecutable();
+    const session = await createArtifactBinarySession(process.env);
+    ownArtifactSession(session, onTestFinished);
+    const client = await mcp.connect(
+      createServer({ kind: "session", session }),
+      { name: "pyinstaller-surrogate-mcp-test", version: "1" },
+      schemaValidation,
+    );
+
     const opened = await client.callTool({
       name: "open_binary",
       arguments: { path },
@@ -444,14 +421,10 @@ it("preserves surrogatepass PYZ module names through inspect_artifact", async ()
       entry_kind: "file",
       format_metadata: { source_name: "healthy" },
     });
-  } finally {
-    await client.close();
-    await server.close();
-    await session.close();
-  }
-});
+  },
+);
 
-it.each([
+mcpTest.for([
   {
     name: "recognized opaque magic agrees with cookie",
     cookie: 309,
@@ -486,7 +459,10 @@ it.each([
   },
 ])(
   "retains PYZ header evidence through inspect_artifact: $name",
-  async ({ cookie, magic, version, conflict, derived }) => {
+  async (
+    { cookie, magic, version, conflict, derived },
+    { mcp, onTestFinished },
+  ) => {
     const payload = pyzArchive({
       magic,
       modules: [],
@@ -526,67 +502,56 @@ it.each([
       }),
     );
     const session = await createArtifactBinarySession(process.env);
-    const server = createServer({ kind: "session", session });
-    const client = new Client(
-      {
-        name: "opaque-pyz-metadata-test",
-        version: "1",
-      },
-      { jsonSchemaValidator: schemaValidation },
+    ownArtifactSession(session, onTestFinished);
+    const client = await mcp.connect(
+      createServer({ kind: "session", session }),
+      { name: "opaque-pyz-metadata-test", version: "1" },
+      schemaValidation,
     );
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
-    try {
-      await server.connect(serverTransport);
-      await client.connect(clientTransport);
+
+    expect(
+      (await client.callTool({ name: "open_binary", arguments: { path } }))
+        .isError,
+    ).not.toBe(true);
+    const reply = await client.callTool({
+      name: "inspect_artifact",
+      arguments: {},
+    });
+    expect(reply.isError).not.toBe(true);
+    const inspection = artifactInspectionResultSchema.parse(
+      parseEvidence(reply.structuredContent).normalized_result,
+    );
+    const inventory = inspection.substeps[0]?.evidence.normalized_result;
+    expect(inventory?.coverage.status).toBe("unknown");
+    expect(
+      inventory?.occurrences.find((row) => row.logical_path === "PYZ.pyz"),
+    ).toMatchObject({
+      entry_kind: "file",
+      hash_status: "verified",
+      format_metadata: {
+        pyz_status: "opaque",
+        pyz_sha256: createHash("sha256").update(payload).digest("hex"),
+        pyz_python_magic: magic.toString("hex"),
+        pyz_python_version: version,
+        pyz_entry_count: null,
+      },
+    });
+    expect(
+      inventory?.occurrences.find((row) => row.logical_path === "hello")
+        ?.format_metadata,
+    ).toMatchObject({
+      bytecode_header: derived ? "derived" : "unknown",
+      bytecode_magic: derived ? magic.toString("hex") : null,
+    });
+    if (conflict)
       expect(
-        (await client.callTool({ name: "open_binary", arguments: { path } }))
-          .isError,
-      ).not.toBe(true);
-      const reply = await client.callTool({
-        name: "inspect_artifact",
-        arguments: {},
-      });
-      expect(reply.isError).not.toBe(true);
-      const inspection = artifactInspectionResultSchema.parse(
-        parseEvidence(reply.structuredContent).normalized_result,
-      );
-      const inventory = inspection.substeps[0]?.evidence.normalized_result;
-      expect(inventory?.coverage.status).toBe("unknown");
-      expect(
-        inventory?.occurrences.find((row) => row.logical_path === "PYZ.pyz"),
-      ).toMatchObject({
-        entry_kind: "file",
-        hash_status: "verified",
-        format_metadata: {
-          pyz_status: "opaque",
-          pyz_sha256: createHash("sha256").update(payload).digest("hex"),
-          pyz_python_magic: magic.toString("hex"),
-          pyz_python_version: version,
-          pyz_entry_count: null,
-        },
-      });
-      expect(
-        inventory?.occurrences.find((row) => row.logical_path === "hello")
+        inventory?.occurrences.find((row) => row.logical_path === "other.pyz")
           ?.format_metadata,
       ).toMatchObject({
-        bytecode_header: derived ? "derived" : "unknown",
-        bytecode_magic: derived ? magic.toString("hex") : null,
+        pyz_status: "opaque",
+        pyz_python_version: "3.13",
+        pyz_python_magic: "f30d0d0a",
       });
-      if (conflict)
-        expect(
-          inventory?.occurrences.find((row) => row.logical_path === "other.pyz")
-            ?.format_metadata,
-        ).toMatchObject({
-          pyz_status: "opaque",
-          pyz_python_version: "3.13",
-          pyz_python_magic: "f30d0d0a",
-        });
-    } finally {
-      await client.close();
-      await server.close();
-      await session.close();
-    }
   },
 );
 
@@ -614,9 +579,9 @@ const PYZ_ROLE_FILES = [
   },
 ];
 
-it.each([false, true])(
+mcpTest.for([false, true])(
   "preserves PYZ member roles through MCP inventory and extraction (encryption marker=%s)",
-  async (encrypted) => {
+  async (encrypted, { mcp, onTestFinished }) => {
     const files = encrypted ? [] : PYZ_ROLE_FILES;
     const directory = await createTestTempDirectory("rea-pyz-roles-mcp-");
     const path = join(directory, "roles");
@@ -658,17 +623,14 @@ it.each([false, true])(
       }),
     );
     const session = await createArtifactBinarySession(process.env);
-    const server = createServer({ kind: "session", session });
-    const client = new Client(
+    ownArtifactSession(session, onTestFinished);
+    const client = await mcp.connect(
+      createServer({ kind: "session", session }),
       { name: "pyz-role-test", version: "1" },
-      { jsonSchemaValidator: schemaValidation },
+      schemaValidation,
     );
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
     let outputRoot: string | undefined;
     try {
-      await server.connect(serverTransport);
-      await client.connect(clientTransport);
       expect(
         (await client.callTool({ name: "open_binary", arguments: { path } }))
           .isError,
@@ -747,9 +709,6 @@ it.each([false, true])(
         ).rejects.toMatchObject({ code: "ENOENT" });
       }
     } finally {
-      await client.close();
-      await server.close();
-      await session.close();
       if (outputRoot !== undefined)
         await rm(outputRoot, { recursive: true, force: true });
     }

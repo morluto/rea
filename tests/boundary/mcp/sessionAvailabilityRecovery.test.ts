@@ -118,6 +118,8 @@ it("restores MCP tool availability after cancelling a target switch", async () =
     if (!settled.ok) throw settled.error;
     const restored = await readStatus();
     expect(restored).toMatchObject({ open: true, path: first });
+    expect(before.analysis_run?.run_id).toEqual(expect.any(String));
+    expect(restored.analysis_run?.run_id).toEqual(expect.any(String));
     expect(restored.analysis_run?.run_id).not.toBe(before.analysis_run?.run_id);
     expect(clients).toEqual([{ calls: 1, closed: 1 }]);
     expect(

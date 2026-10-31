@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -19,6 +20,7 @@ cliTest(
     const root = await createTestTempDirectory("rea-uimage-cli-");
     const partA = Buffer.from("first-part");
     const partB = Buffer.from("second-part");
+    const payload = buildMultiPayload([partA, partB]);
     const source = join(root, "firmware.bin");
     await writeFile(
       source,
@@ -30,7 +32,7 @@ cliTest(
         loadAddress: 0x8000,
         entryPoint: 0x8000,
         name: "multi-test",
-        payload: buildMultiPayload([partA, partB]),
+        payload,
       }),
     );
     const inspected = await cli.run({
@@ -69,10 +71,30 @@ cliTest(
       parseEvidence(extracted.json).normalized_result,
     );
     expect(result.containment_verified).toBe(true);
+    const expectedArtifacts = [
+      ["image-0.bin", partA],
+      ["image-1.bin", partB],
+      ["payload.bin", payload],
+    ] as const;
     expect(
-      (await readFile(join(result.output_root, "payload.bin"))).equals(
-        buildMultiPayload([partA, partB]),
-      ),
+      result.artifacts
+        .map(({ relative_path, bytes_written, sha256 }) => ({
+          relative_path,
+          bytes_written,
+          sha256,
+        }))
+        .sort((left, right) =>
+          left.relative_path.localeCompare(right.relative_path),
+        ),
+    ).toEqual(
+      expectedArtifacts.map(([relative_path, bytes]) => ({
+        relative_path,
+        bytes_written: bytes.length,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+      })),
+    );
+    expect(
+      (await readFile(join(result.output_root, "payload.bin"))).equals(payload),
     ).toBe(true);
     expect(
       (await readFile(join(result.output_root, "image-0.bin"))).equals(partA),

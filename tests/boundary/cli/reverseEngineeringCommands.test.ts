@@ -10,7 +10,6 @@ import {
   AnalysisTimeoutError,
   AnalysisOutputError,
 } from "../../../src/domain/analysisErrorCore.js";
-import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import {
   createEvidence,
   evidenceSchema,
@@ -347,7 +346,9 @@ it("preserves an independent timeout after cleanup succeeds", async () => {
     },
   });
   expect(error.cleanupIncomplete).toBe(false);
-  expect(projectAnalysisError(error).details).not.toHaveProperty("cleanup");
+  expect((result as { details: unknown }).details).not.toHaveProperty(
+    "cleanup",
+  );
 });
 
 it("does not project cancellation cleanup as incomplete after a successful retry", async () => {
@@ -362,11 +363,12 @@ it("does not project cancellation cleanup as incomplete after a successful retry
     }),
   };
 
-  await runObjdump(service);
+  const result = await runObjdump(service);
 
   expect(error.cleanupIncomplete).toBe(false);
-  expect(projectAnalysisError(error).details).toMatchObject({
-    cleanup: "complete",
+  expect(result).toMatchObject({
+    code: "cancelled",
+    details: { cleanup: "complete" },
   });
 });
 

@@ -596,7 +596,11 @@ describe("function collection collation ties", () => {
     const calls = result.dimensions.find(
       ({ dimension }) => dimension === "calls",
     );
-    expect(calls).toMatchObject({ status: "changed" });
+    expect(calls).toMatchObject({
+      status: "changed",
+      left_digest: expect.any(String),
+      right_digest: expect.any(String),
+    });
     expect(calls?.left_digest).not.toBe(calls?.right_digest);
   });
 
@@ -1143,7 +1147,11 @@ describe("function comparison identity and malformed CFG", () => {
     const pseudocode = comparison.dimensions.find(
       ({ dimension }) => dimension === "pseudocode",
     );
-    expect(pseudocode).toMatchObject({ status: "changed" });
+    expect(pseudocode).toMatchObject({
+      status: "changed",
+      left_digest: expect.any(String),
+      right_digest: expect.any(String),
+    });
     expect(pseudocode?.left_digest).not.toBe(pseudocode?.right_digest);
   });
 });

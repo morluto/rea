@@ -1,8 +1,12 @@
 import { Cli } from "incur";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 
 import { createCli } from "../../../src/cli.js";
-import { createCliInventory } from "../../../scripts/lib/catalog-cli.mjs";
+import {
+  cliCommandOptionNames,
+  createCliInventory,
+} from "../../../scripts/lib/catalog-cli.mjs";
 
 type CliInstance = ReturnType<typeof createCli>;
 type CommandMap = NonNullable<ReturnType<typeof Cli.toCommands.get>>;
@@ -59,9 +63,20 @@ describe("CLI option aliases", () => {
       // Incur parses `-abc` as stacked one-letter flags, so help must never
       // advertise a multi-letter single-dash spelling.
       const help = await serve(cli, [command, "--help"]);
+      expect(help.exitCode, `${command} --help`).toBe(0);
+      expect(help.stdout, `${command} --help`).not.toBe("");
       for (const match of help.stdout.matchAll(/(?:^|[\s,])-([a-z][\w-]+)/gmu))
         invalid.push(`${command} help: -${match[1] ?? ""}`);
       const options = /^Options:\n((?: {2}.*\n?)*)/mu.exec(help.stdout)?.[1];
+      const entry = registeredCommands.get(cli)?.get(command);
+      expect(entry, `${command} registration`).toBeDefined();
+      const schema: unknown = entry && Reflect.get(entry, "options");
+      if (schema !== undefined)
+        expect(schema, `${command} options schema`).toBeInstanceOf(z.ZodObject);
+      if (cliCommandOptionNames(cli, command).length > 0) {
+        expect(options, `${command} --help options`).toBeDefined();
+        expect(options, `${command} --help option entries`).toMatch(/^  --/mu);
+      }
       for (const line of options?.split("\n") ?? [])
         if (/^ {2}--\S+(?: <[^>]+>)?\s*$/u.test(line))
           undescribed.push(`${command} ${line.trim()}`);

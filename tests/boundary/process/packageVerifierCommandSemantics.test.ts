@@ -7,9 +7,11 @@ import { expect, it } from "vitest";
 import { z } from "zod";
 
 import { createPackageVerifierCommands } from "../../../scripts/lib/verify-package-commands.mjs";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { systemProcessOwnershipHost } from "../../../src/process/ProcessOwnershipObservation.js";
 import { liveProcesses } from "../../../src/process/ProcessOwnershipProcessTree.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 
 const observed = <Value>(promise: Promise<Value>) =>
   promise.then(
@@ -417,11 +419,11 @@ it("rejects a new cleanup owner once workspace release has started", async () =>
       events.push("caller-owner-released");
     },
   };
-  const closing = fixture.commands.close();
+  const closing = observed(fixture.commands.close());
   let rejection: unknown;
   let retained;
-  try {
-    await releaseStarted;
+  await withVerifierCleanup(async () => {
+    await awaitAcknowledgement(releaseStarted, closing, "workspace release");
     try {
       fixture.commands.adopt(capability, path);
     } catch (cause: unknown) {
@@ -432,15 +434,15 @@ it("rejects a new cleanup owner once workspace release has started", async () =>
       callerResource: existsSync(path),
       callerCloseCalls: releases.length,
     };
-  } finally {
-    try {
-      await capability.close();
-    } finally {
-      unblockWorkspaceClose();
-      await closing;
-      await fixture.commands.close();
-    }
-  }
+  }, [
+    () => capability.close(),
+    () => unblockWorkspaceClose(),
+    async () => {
+      const result = await closing;
+      if (!result.ok) throw result.cause;
+    },
+    () => fixture.commands.close(),
+  ]);
 
   expect(rejection).toBeInstanceOf(Error);
   expect(retained).toEqual({

@@ -93,6 +93,51 @@ it("binds SQLite compatibility jobs to the build's prepared runtime artifact and
   expect(downloads[0]?.with).toEqual({ name, path: "." });
 });
 
+it("requires each named SQLite compatibility test while retaining both directory suites", async () => {
+  const { scripts } = z
+    .object({ scripts: z.record(z.string(), z.string()) })
+    .parse(
+      JSON.parse(
+        await readFile(
+          new URL("../../../package.json", import.meta.url),
+          "utf8",
+        ),
+      ),
+    );
+  const commands = z
+    .string()
+    .parse(scripts["test:sqlite:run"])
+    .split("&&")
+    .map((command) => command.trim().split(/\s+/u));
+  const exact = commands.find(
+    (command) =>
+      command[0] === "node" &&
+      command[1] === "scripts/run-exact-tests.mjs" &&
+      command[2] === "run",
+  );
+  expect(exact).toEqual(
+    expect.arrayContaining([
+      "tests/acceptance/sqliteDatabaseCli.test.ts",
+      "tests/boundary/mcp/serverLifecycleMcp.test.ts",
+    ]),
+  );
+  const directories = commands.find(
+    (command) => command[0] === "vitest" && command[1] === "run",
+  );
+  expect(directories).toEqual(
+    expect.arrayContaining([
+      "src/application/sqlite/",
+      "tests/boundary/sqlite/",
+    ]),
+  );
+  const steps = z
+    .array(z.object({ run: z.string().optional() }))
+    .parse((await workflow("sqlite-runtime.yml")).jobs.sqlite?.steps);
+  expect(steps.some((step) => step.run === "npm run test:sqlite:run")).toBe(
+    true,
+  );
+});
+
 it("exports every canonical scope with read authority for admission and keeps telemetry outside the gate", async () => {
   const { jobs } = await workflow();
   const CI_FLAGS = await scopeFlags();

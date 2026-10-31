@@ -220,9 +220,11 @@ describe("managed application graph projection", () => {
     expect(observedEvidenceIds("managed-pinvoke-import")).toEqual([
       boundaryEvidence.evidence_id,
     ]);
-    for (const edge of graph.edges.filter(
+    const containmentEdges = graph.edges.filter(
       ({ relation }) => relation === "contains",
-    ))
+    );
+    expect(containmentEdges.length).toBeGreaterThan(0);
+    for (const edge of containmentEdges)
       expect(edge.evidence.evidence_ids).toEqual(allEvidenceIds);
     const method = graph.nodes.find(
       ({ kind, observations }) =>
