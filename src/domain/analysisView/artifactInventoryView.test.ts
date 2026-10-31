@@ -100,11 +100,37 @@ const page = (source: AnalysisViewParent, view: unknown) => {
     artifactInventoryViewRequestSchema.parse(view),
   );
   if (!result.ok) throw result.error;
-  if (result.value.kind !== "inventory")
-    throw new Error("Expected an inventory page");
+  if (!("items" in result.value)) throw new Error("Expected an inventory page");
   return result.value;
 };
 afterEach(() => vi.restoreAllMocks());
+
+it.each(["node_count", "occurrence_count", "edge_count"] as const)(
+  "rejects inventory views whose retained members exceed %s",
+  (count) => {
+    const inventory = freshInventory();
+    inventory.manifest[count] -= 1;
+    const result = projectArtifactInventoryView(
+      parent(inventory),
+      artifactInventoryViewRequestSchema.parse({
+        kind: "inventory",
+        collection: "nodes",
+      }),
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        issues: [
+          {
+            path: ["source"],
+            reason: "invalid_value",
+            message: "Artifact inventory members exceed their manifest counts",
+          },
+        ],
+      },
+    });
+  },
+);
 
 it("batches exact occurrence IDs in source order while retaining linkage with no selected fields", () => {
   const inventory = freshInventory();

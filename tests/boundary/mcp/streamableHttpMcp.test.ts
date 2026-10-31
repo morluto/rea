@@ -2,8 +2,9 @@ import {
   Client,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
-import { describe, expect } from "vitest";
+import { describe, expect, onTestFinished } from "vitest";
 
+import { advertisedMcpToolSchemas } from "../../fixtures/advertisedMcpTool.js";
 import { expectForeignHostRefused } from "../../support/http/rawRequest.js";
 import { startMcpHttpProcess } from "../../support/mcp/streamableHttpProcess.js";
 import { processTest } from "../../support/process/processFixture.js";
@@ -14,17 +15,26 @@ const HTTP_BOUNDARY_TIMEOUT_MS = 90_000;
 const openSession = async (url: URL, name: string) => {
   const transport = new StreamableHTTPClientTransport(url);
   const client = new Client({ name, version: "1" });
+  onTestFinished(() => client.close());
   await client.connect(transport);
   expect(transport.sessionId).toEqual(expect.any(String));
-  return { transport, client };
+  const { toolDefinition } = await advertisedMcpToolSchemas(
+    client,
+    "binary_session",
+  );
+  assertAdvertisedMcpContracts(["binary_session"], [toolDefinition]);
+  return { transport, client, toolDefinition };
 };
 
 /** The shared target answers with its identity only while its providers are still open. */
-const expectIdentity = async (client: Client): Promise<void> => {
-  const identity = await client.callTool({
-    name: "binary_session",
-    arguments: {},
-  });
+const expectIdentity = async ({
+  client,
+  toolDefinition,
+}: Awaited<ReturnType<typeof openSession>>): Promise<void> => {
+  const identity = await client.callTool(
+    { name: "binary_session", arguments: {} },
+    { toolDefinition },
+  );
   expect(identity.isError).toBeFalsy();
   expect(identity.structuredContent).toMatchObject({
     result: {
@@ -45,22 +55,18 @@ describe("rea mcp --http", () => {
         stdout += chunk.toString("utf8");
       });
       const first = await openSession(started.url, "streamable-http-boundary");
-      const { tools } = await first.client.listTools();
-      assertAdvertisedMcpContracts(["binary_session"], tools);
-      await expectIdentity(first.client);
+      await expectIdentity(first);
       await first.transport.terminateSession();
       expect(first.transport.sessionId).toBeUndefined();
       await first.client.close();
       // DELETE ended the session, not the server: the next client's tools still work.
       const second = await openSession(started.url, "next-session");
-      await expectIdentity(second.client);
+      await expectIdentity(second);
       // A client that leaves without DELETE does not block the listener: the next initialize replaces it.
       const third = await openSession(started.url, "replacing-session");
       expect(third.transport.sessionId).not.toBe(second.transport.sessionId);
-      await expectIdentity(third.client);
-      await expect(
-        second.client.callTool({ name: "binary_session", arguments: {} }),
-      ).rejects.toThrow();
+      await expectIdentity(third);
+      await expect(expectIdentity(second)).rejects.toThrow("Session not found");
       await second.client.close();
       await third.transport.terminateSession();
       await third.client.close();

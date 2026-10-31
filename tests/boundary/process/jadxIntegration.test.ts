@@ -1,6 +1,16 @@
 import { SdkErrorCode } from "@modelcontextprotocol/client";
+import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
 import { expect, it as test, onTestFinished, vi } from "vitest";
-import { access, readFile, truncate, writeFile } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  mkdir,
+  readFile,
+  symlink,
+  truncate,
+  writeFile,
+} from "node:fs/promises";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { AndroidAnalysisService } from "../../../src/application/android/AndroidAnalysisService.js";
@@ -10,6 +20,7 @@ import { androidResultSchemas } from "../../../src/domain/android/androidAnalysi
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { snapshotAndroidEngine } from "../../../src/android/AndroidTargetSnapshot.js";
 import { hashStableFile } from "../../../src/filesystem/StableFileHash.js";
+import * as stableHash from "../../../src/filesystem/StableFileHash.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { RegularFileCleanupFailure } from "../../../src/filesystem/OwnedRegularFile.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
@@ -19,28 +30,148 @@ import {
   verifyJadxFixtureCleanup as verifyCleanup,
 } from "../../fixtures/android/jadx.js";
 import { writeJadxJarInventory } from "../../fixtures/android/jadxJar.js";
+import { writeOrderedZip } from "../../fixtures/artifactEntryOrder.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const it = test.skipIf(process.platform === "win32");
 
-it("retains a failed input hash descriptor until provider shutdown retries it", async () => {
-  const { service, apk, provider, launches } = await setup();
-  const closeCause = new Error("fixture source hash close unavailable");
-  const owners: OwnedFileHandle[] = [];
-  const originalClose = OwnedFileHandle.prototype.close;
-  const close = vi
-    .spyOn(OwnedFileHandle.prototype, "close")
-    .mockImplementationOnce(async function (this: OwnedFileHandle) {
-      owners.push(this);
-      throw closeCause;
-    })
-    .mockImplementationOnce(async function (this: OwnedFileHandle) {
-      owners.push(this);
-      throw closeCause;
+it.each(["alias/../bin", ""])(
+  "keeps PATH=%j Java tied to each caller directory across private-workspace launches",
+  async (searchPath) => {
+    const root = await createTestTempDirectory("rea-jadx-relative-java-");
+    const apk = join(root, "fixture.apk"),
+      jar = join(root, "fixture.jar");
+    await writeOrderedZip(apk, ["AndroidManifest.xml", "classes.dex"]);
+    await writeJadxJarInventory(jar);
+    const fixture = new URL(
+      "../../fixtures/android/jadx-mcp.mjs",
+      import.meta.url,
+    );
+    const command = [process.execPath, fileURLToPath(fixture)]
+      .map((value) => `'${value.replaceAll("'", `'"'"'`)}'`)
+      .join(" ");
+    const shim = join(root, "java-shim");
+    await writeFile(
+      shim,
+      `#!/bin/sh\nselected="\${0%/*}"\n[ -f "$selected/runtime-marker" ] || exit 19\npwd >> "$selected/java.log"\nif [ "$1" = "--list-modules" ]; then\n  printf 'java.base@21.0.0\\njdk.compiler@21.0.0\\n'\nelse\n  exec ${command}\nfi\n`,
+    );
+    await chmod(shim, 0o755);
+    const directories = [join(root, "first"), join(root, "second")];
+    for (const directory of directories) {
+      await mkdir(join(directory, "real/deep"), { recursive: true });
+      await mkdir(join(directory, "real/bin"));
+      await symlink(join(directory, "real/deep"), join(directory, "alias"));
+      await symlink(shim, join(directory, "real/bin/java"));
+      await writeFile(join(directory, "real/bin/runtime-marker"), directory);
+      await symlink(shim, join(directory, "java"));
+      await writeFile(join(directory, "runtime-marker"), directory);
+    }
+    const logPath = (directory: string) =>
+      join(directory, searchPath === "" ? "java.log" : "real/bin/java.log");
+    const provider = new JadxProvider({
+      ...process.env,
+      JAVA_HOME: undefined,
+      PATH: searchPath,
+      REA_JADX_MCP_JAR: jar,
+      REA_JADX_OPERATION_TIMEOUT_MS: "5000",
+      REA_FAKE_JADX_CLASS_COUNT: "0",
     });
+    const service = new AndroidAnalysisService(provider);
+    const previousCwd = process.cwd();
+    try {
+      process.chdir(directories[0]!);
+      const availability = await provider.inspectAvailability();
+      expect(availability, JSON.stringify(availability)).toMatchObject({
+        status: "available",
+      });
+      const first = await service.execute("inspect_android_package", {
+        path: apk,
+      });
+      if (!first.ok) throw first.error;
+      const firstStarts = (await readFile(logPath(directories[0]!), "utf8"))
+        .trim()
+        .split("\n");
+      expect(firstStarts).toHaveLength(3);
+      const firstWorkspace = firstStarts.at(-1)!;
+      expect(firstWorkspace).not.toBe(directories[0]);
+      process.chdir(directories[1]!);
+      const second = await service.execute("inspect_android_package", {
+        path: apk,
+      });
+      if (!second.ok) throw second.error;
+      expect(second.value.subject?.digest.sha256).toBe(
+        first.value.subject?.digest.sha256,
+      );
+      const secondStarts = (await readFile(logPath(directories[1]!), "utf8"))
+        .trim()
+        .split("\n");
+      expect(secondStarts).toHaveLength(2);
+      const secondWorkspace = secondStarts.at(-1)!;
+      expect(secondWorkspace).not.toBe(firstWorkspace);
+      await expect(access(firstWorkspace)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      await provider.close();
+      await expect(access(secondWorkspace)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    } finally {
+      process.chdir(previousCwd);
+      await provider.close();
+    }
+  },
+);
+
+// Select the provider's source hash after resolver and engine admission complete.
+const failInputHashCloses = (path: string, failures: number) => {
+  const originalHash = stableHash.hashStableFile;
+  const originalClose = OwnedFileHandle.prototype.close;
+  let hashingInput = false;
+  const retained = new Set<OwnedFileHandle>();
+  const owners: OwnedFileHandle[] = [];
+  const close = vi.fn(async (owner: OwnedFileHandle) => {
+    owners.push(owner);
+    if (owners.length <= failures)
+      throw new Error("fixture input hash close unavailable");
+    return originalClose.call(owner);
+  });
+  const hash = vi
+    .spyOn(stableHash, "hashStableFile")
+    .mockImplementation(async (selected, options) => {
+      hashingInput = selected === path;
+      try {
+        return await originalHash(selected, options);
+      } finally {
+        hashingInput = false;
+      }
+    });
+  const closing = vi
+    .spyOn(OwnedFileHandle.prototype, "close")
+    .mockImplementation(async function (this: OwnedFileHandle) {
+      if (!hashingInput && !retained.has(this)) return originalClose.call(this);
+      retained.add(this);
+      return close(this);
+    });
+  return {
+    close,
+    owners,
+    restore: () => {
+      closing.mockRestore();
+      hash.mockRestore();
+    },
+  };
+};
+
+it("retains a failed input hash descriptor until provider shutdown retries it", async () => {
+  const { apk, provider, launches } = await setup();
+  const target = await parseBinaryTarget(apk);
+  if (!target.ok) throw target.error;
+  const fault = failInputHashCloses(target.value.path, 2);
+  const { close, owners } = fault;
   try {
-    const result = await service.execute("inspect_android_package", {
-      path: apk,
+    const result = await provider.execute(target.value, {
+      operation: "inspect_android_package",
+      input: { path: apk },
     });
     expect(result).toMatchObject({
       ok: false,
@@ -57,25 +188,22 @@ it("retains a failed input hash descriptor until provider shutdown retries it", 
     expect(owners[0]!.handle.fd).toBe(-1);
     expect(launches).toHaveLength(0);
   } finally {
-    close.mockRestore();
+    fault.restore();
     await provider.close();
     await verifyCleanup(launches);
   }
 });
 
 it("clears hash cleanup uncertainty when the provider immediately retries the same handle", async () => {
-  const { service, apk, provider, launches } = await setup();
-  const closeCause = new Error("fixture source hash close unavailable");
-  const originalClose = OwnedFileHandle.prototype.close;
-  const close = vi
-    .spyOn(OwnedFileHandle.prototype, "close")
-    .mockRejectedValueOnce(closeCause)
-    .mockImplementation(async function (this: OwnedFileHandle) {
-      return originalClose.call(this);
-    });
+  const { apk, provider, launches } = await setup();
+  const target = await parseBinaryTarget(apk);
+  if (!target.ok) throw target.error;
+  const fault = failInputHashCloses(target.value.path, 1);
+  const { close } = fault;
   try {
-    const result = await service.execute("inspect_android_package", {
-      path: apk,
+    const result = await provider.execute(target.value, {
+      operation: "inspect_android_package",
+      input: { path: apk },
     });
     expect(result).toMatchObject({ ok: false });
     if (result.ok) throw new Error("Expected the hash close failure");
@@ -84,7 +212,7 @@ it("clears hash cleanup uncertainty when the provider immediately retries the sa
     expect(result.error.cause).toBeInstanceOf(AggregateError);
     expect(launches).toHaveLength(0);
   } finally {
-    close.mockRestore();
+    fault.restore();
     await provider.close();
     await verifyCleanup(launches);
   }
@@ -100,22 +228,16 @@ it("drains hash descriptors even when session shutdown fails and retains its wor
   const workspace = launches[0]?.cwd;
   if (workspace === undefined)
     throw new Error("Expected an acquired workspace");
-  const originalClose = OwnedFileHandle.prototype.close;
-  let fileCloseCalls = 0;
-  const fileClose = vi
-    .spyOn(OwnedFileHandle.prototype, "close")
-    .mockImplementation(async function (this: OwnedFileHandle) {
-      fileCloseCalls += 1;
-      if (fileCloseCalls === 1)
-        throw new Error("fixture input hash close failure");
-      return originalClose.call(this);
-    });
+  const target = await parseBinaryTarget(apk);
+  if (!target.ok) throw target.error;
+  const fault = failInputHashCloses(target.value.path, 1);
   const sessionClose = vi
     .spyOn(JadxSession.prototype, "close")
     .mockRejectedValueOnce(new Error("fixture session cleanup failure"));
   try {
-    const outcome = await service.execute("inspect_android_package", {
-      path: apk,
+    const outcome = await provider.execute(target.value, {
+      operation: "inspect_android_package",
+      input: { path: apk },
     });
     expect(outcome).toMatchObject({
       ok: false,
@@ -125,17 +247,17 @@ it("drains hash descriptors even when session shutdown fails and retains its wor
       },
     });
     if (outcome.ok) throw new Error("Expected retained session cleanup");
-    expect(fileCloseCalls).toBe(2);
+    expect(fault.close).toHaveBeenCalledTimes(2);
     await expect(access(workspace)).resolves.toBeUndefined();
 
     sessionClose.mockRestore();
-    fileClose.mockRestore();
+    fault.restore();
     await provider.close();
     expect(outcome.error.cleanupIncomplete).toBe(false);
     await verifyCleanup(launches);
   } finally {
     sessionClose.mockRestore();
-    fileClose.mockRestore();
+    fault.restore();
     await provider.close();
     await verifyCleanup(launches);
   }
@@ -338,6 +460,38 @@ it("retire sessions when APK bytes, engine bytes or JVM options change", async (
   await verifyCleanup(launches);
 });
 
+it("keeps one operation's JVM environment aligned with its retained session identity", async () => {
+  const { service, apk, launches, provider, environment } = await setup();
+  environment.JAVA_TOOL_OPTIONS = "-Xmx512m";
+  const createRoot = PrivateRuntimeRoot.create.bind(PrivateRuntimeRoot);
+  const allocation = vi
+    .spyOn(PrivateRuntimeRoot, "create")
+    .mockImplementationOnce(async (options) => {
+      // Configuration and the reuse key are already admitted; launch follows
+      // this asynchronous workspace boundary.
+      environment.JAVA_TOOL_OPTIONS = "-Xmx8g";
+      return createRoot(options);
+    });
+  try {
+    const first = await service.execute("inspect_android_package", {
+      path: apk,
+    });
+    if (!first.ok) throw first.error;
+    expect(allocation).toHaveBeenCalledOnce();
+    environment.JAVA_TOOL_OPTIONS = "-Xmx512m";
+    const second = await service.execute("inspect_android_package", {
+      path: apk,
+    });
+    if (!second.ok) throw second.error;
+    expect(launches).toHaveLength(1);
+    expect(launches[0]?.javaToolOptions).toBe("-Xmx512m");
+  } finally {
+    allocation.mockRestore();
+    await provider.close();
+    await verifyCleanup(launches);
+  }
+});
+
 it("retires an idle engine and starts a fresh one for a later request", async () => {
   const { service, apk, launches, provider } = await setup();
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
@@ -365,6 +519,39 @@ it("retires an idle engine and starts a fresh one for a later request", async ()
   expect(launches).toHaveLength(2);
   await provider.close();
   await verifyCleanup(launches);
+});
+
+it("keeps idle retirement after refusing a mapping for a loaded engine", async () => {
+  const { service, apk, launches, provider } = await setup();
+  const missing = `${await createTestTempDirectory("rea-jadx-mapping-")}/mapping.txt`;
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    const first = await service.execute("inspect_android_package", {
+      path: apk,
+    });
+    if (!first.ok) throw first.error;
+    const refused = await service.execute("inspect_android_class", {
+      path: apk,
+      class_name: "example.Missing",
+      mapping_path: missing,
+    });
+    expect(refused.ok).toBe(false);
+    vi.advanceTimersByTime(60_000);
+  } finally {
+    vi.useRealTimers();
+  }
+  await expect
+    .poll(async () => {
+      try {
+        await verifyCleanup(launches);
+        return true;
+      } catch {
+        return false;
+      }
+    })
+    .toBe(true);
+  expect(launches).toHaveLength(1);
+  await provider.close();
 });
 
 it("completes large class inventories with exact case-sensitive search semantics", async () => {
@@ -797,6 +984,8 @@ it("bounds each upstream call by the selected deadline instead of a fixed limit"
         bridgeHash: "0".repeat(64),
         signal: new AbortController().signal,
         timeoutMs: 300,
+        resources: new ArtifactResourceScope(),
+        deadline: new AbortController().signal,
       }),
     ).rejects.toMatchObject({
       code: SdkErrorCode.RequestTimeout,

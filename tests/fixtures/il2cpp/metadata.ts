@@ -20,6 +20,11 @@ export interface Il2cppMetadataFixtureOptions {
   readonly emptyImage?: boolean;
   /** Nonempty property/event tables with deliberately different owner ranges. */
   readonly propertiesAndEvents?: boolean;
+  /** Override type names while preserving the fixture's row ownership. */
+  readonly typeNames?: Readonly<Record<number, string>>;
+  readonly typeNamespaces?: Readonly<Record<number, string>>;
+  /** Total generic argument count per type, including enclosing parameters. */
+  readonly genericTypeArgumentCounts?: Readonly<Record<number, number>>;
   /** Metadata version; 29 and 31 use fixed 4-byte indices and no header counts. */
   readonly version?: 24 | 27 | 29 | 31 | 39;
   /**
@@ -32,7 +37,20 @@ export interface Il2cppMetadataFixtureOptions {
     readonly genericContainers: number;
     readonly parameters: number;
   };
+  /** Write FIXTURE_GENERIC_CONTAINERS and point their owners at them. */
+  readonly genericOwners?: boolean;
 }
+
+/**
+ * Generic containers as [owner, argument count, is method, first parameter]:
+ * System.Größe<T0>, Game.Player.Slot.Add<T0, T1> and System.Größe.ToString<T0>;
+ * the fixture names each container's parameters T0, T1 and so on.
+ */
+export const FIXTURE_GENERIC_CONTAINERS = [
+  [3, 1, 0, 0],
+  [2, 2, 1, 1],
+  [4, 1, 1, 3],
+] as const;
 
 export const FIXTURE_IMAGES = [
   { name: "Assembly-CSharp.dll", type_start: 0, type_count: 3 },
@@ -216,6 +234,7 @@ const encodeMethods = (
   { D, T, P, G }: Readonly<Record<"D" | "T" | "P" | "G", Width>>,
   returnToken: number,
   intern: (value: string) => number,
+  methodContainerIndices: ReadonlyMap<number, number>,
 ) => {
   const recordBytes = { methods: methodBytes };
   const methods = Buffer.alloc(rows.length * recordBytes.methods);
@@ -238,7 +257,12 @@ const encodeMethods = (
             (parameter) => parameter.method === index,
           ),
     );
-    writeIndex(methods, parameterStart + P, G, -1);
+    writeIndex(
+      methods,
+      parameterStart + P,
+      G,
+      methodContainerIndices.get(index) ?? -1,
+    );
     methods.writeUInt32LE(
       FIXTURE_METHOD_TOKENS[index]!,
       parameterStart + P + G,
@@ -337,7 +361,11 @@ export const fixtureRows = (options: Il2cppMetadataFixtureOptions = {}) => {
   const fillers = options.wide?.fillerTypes ?? 0;
   const last = FIXTURE_TYPES.length + fillers - 1;
   const types = [
-    ...FIXTURE_TYPES,
+    ...FIXTURE_TYPES.map((type, index) => ({
+      ...type,
+      name: options.typeNames?.[index] ?? type.name,
+      namespace: options.typeNamespaces?.[index] ?? type.namespace,
+    })),
     ...Array.from({ length: fillers }, (_, index) => ({
       name: "Filler",
       namespace: "",
@@ -383,6 +411,7 @@ const encodeTypes = ({
   G,
   typeIndexFields,
   named,
+  genericContainerIndices,
   intern,
 }: {
   readonly typeRows: ReturnType<typeof fixtureRows>["types"];
@@ -394,6 +423,7 @@ const encodeTypes = ({
     readonly properties: readonly { declaring_type: number }[];
     readonly events: readonly { declaring_type: number }[];
   };
+  readonly genericContainerIndices: ReadonlyMap<number, number>;
   readonly intern: (value: string) => number;
 }) => {
   const types = Buffer.alloc(typeRows.length * recordSize);
@@ -406,7 +436,7 @@ const encodeTypes = ({
     // unrelated to nesting; the reader must use nestedTypes instead.
     for (let field = 0; field < typeIndexFields; field += 1, at += T)
       writeIndex(types, at, T, 0x2a);
-    writeIndex(types, at, G, -1);
+    writeIndex(types, at, G, genericContainerIndices.get(index) ?? -1);
     at += G + 4;
     const fieldStart = FIXTURE_FIELDS.findIndex(
       (field) => field.declaring_type === index,
@@ -448,6 +478,140 @@ const encodeTypes = ({
   return types;
 };
 
+const genericContainerLayout = (
+  options: Il2cppMetadataFixtureOptions,
+  fixed: boolean,
+) => {
+  if (
+    options.genericOwners === true &&
+    options.genericTypeArgumentCounts !== undefined
+  )
+    throw new Error("genericOwners already declares the type containers");
+  const definitions =
+    options.genericOwners === true
+      ? FIXTURE_GENERIC_CONTAINERS.map(([type, argumentCount, isMethod]) => ({
+          type,
+          argumentCount,
+          isMethod,
+        }))
+      : Object.entries(options.genericTypeArgumentCounts ?? {})
+          .map(([type, argumentCount]) => ({
+            type: Number(type),
+            argumentCount,
+            isMethod: 0,
+          }))
+          .sort((left, right) => left.type - right.type);
+  const count = Math.max(
+    options.wide?.genericContainers ?? 0,
+    definitions.length,
+  );
+  const owners = (isMethod: number) =>
+    new Map(
+      definitions.flatMap(({ type, isMethod: method }, index) =>
+        method === isMethod ? [[type, index] as const] : [],
+      ),
+    );
+  return {
+    definitions,
+    indices: owners(0),
+    methodIndices: owners(1),
+    count,
+    width: fixed ? 4 : widthFor(count),
+  };
+};
+
+const encodeGenericContainerTables = (
+  definitions: readonly {
+    type: number;
+    argumentCount: number;
+    isMethod: number;
+  }[],
+  containerCount: number,
+  width: Width,
+  intern: (value: string) => number,
+) => {
+  const parameters = definitions.flatMap(({ argumentCount }, container) =>
+    Array.from({ length: argumentCount }, (_, num) => ({
+      container,
+      num,
+      name: `T${String(num)}`,
+    })),
+  );
+  for (const parameter of parameters) intern(parameter.name);
+
+  const containers = Buffer.alloc(containerCount * 16);
+  let parameterStart = 0;
+  definitions.forEach(({ type, argumentCount, isMethod }, index) => {
+    const at = index * 16;
+    containers.writeInt32LE(type, at);
+    containers.writeInt32LE(argumentCount, at + 4);
+    containers.writeInt32LE(isMethod, at + 8);
+    containers.writeInt32LE(parameterStart, at + 12);
+    parameterStart += argumentCount;
+  });
+
+  const parameterBytes = Buffer.alloc(parameters.length * (width + 12));
+  parameters.forEach((parameter, index) => {
+    const at = index * (width + 12);
+    writeIndex(parameterBytes, at, width, parameter.container);
+    parameterBytes.writeInt32LE(intern(parameter.name), at + width);
+    parameterBytes.writeInt16LE(-1, at + width + 4);
+    parameterBytes.writeUInt16LE(0, at + width + 6);
+    parameterBytes.writeUInt16LE(parameter.num, at + width + 8);
+    parameterBytes.writeUInt16LE(0, at + width + 10);
+  });
+  return {
+    containers,
+    parameters: parameterBytes,
+    parameterCount: parameters.length,
+  };
+};
+
+const encodeImageRows = (
+  images: readonly ReturnType<typeof fixtureImages>[number][],
+  recordSize: number,
+  typeDefinitionWidth: Width,
+  intern: (value: string) => number,
+) => {
+  const bytes = Buffer.alloc(images.length * recordSize);
+  images.forEach((image, index) => {
+    const at = index * recordSize;
+    bytes.writeInt32LE(intern(image.name), at);
+    bytes.writeInt32LE(index, at + 4);
+    writeIndex(bytes, at + 8, typeDefinitionWidth, image.type_start);
+    bytes.writeUInt32LE(image.type_count, at + 8 + typeDefinitionWidth);
+    writeIndex(bytes, at + 12 + typeDefinitionWidth, typeDefinitionWidth, -1);
+    bytes.writeUInt32LE(0, at + 12 + 2 * typeDefinitionWidth);
+    bytes.writeInt32LE(-1, at + 16 + 2 * typeDefinitionWidth);
+  });
+  return bytes;
+};
+
+const createStringTable = () => {
+  const parts: Buffer[] = [];
+  const offsets = new Map<string, number>();
+  let size = 0;
+  const intern = (value: string) => {
+    const known = offsets.get(value);
+    if (known !== undefined) return known;
+    const encoded = Buffer.from(`${value}\0`, "utf8");
+    offsets.set(value, size);
+    parts.push(encoded);
+    size += encoded.length;
+    return offsets.get(value)!;
+  };
+  return {
+    intern,
+    bytes: () => Buffer.concat(parts),
+    count: () => offsets.size,
+    offset: (value: string) => {
+      const index = offsets.get(value);
+      if (index === undefined) throw new Error(`Unknown string ${value}`);
+      return index;
+    },
+  };
+};
+
 /** Lay sections out in header order; empty sections share the next offset. */
 export const createIl2cppMetadataFixture = (
   options: Il2cppMetadataFixtureOptions = {},
@@ -460,13 +624,13 @@ export const createIl2cppMetadataFixture = (
     properties: options.propertiesAndEvents ? FIXTURE_PROPERTIES : [],
     events: options.propertiesAndEvents ? FIXTURE_EVENTS : [],
   };
-  const genericContainers = options.wide?.genericContainers ?? 0;
+  const genericLayout = genericContainerLayout(options, fixed);
   const parameterCount = Math.max(
     options.wide?.parameters ?? 0,
     FIXTURE_PARAMETERS.length,
   );
   const D: Width = fixed ? 4 : widthFor(rows.types.length);
-  const G: Width = fixed ? 4 : widthFor(genericContainers);
+  const G = genericLayout.width;
   const P: Width = fixed ? 4 : widthFor(parameterCount);
   // Versions 29 and 31 also store elementTypeIndex in type records.
   const typeIndexFields = version === 24 ? 5 : fixed ? 4 : 3;
@@ -484,18 +648,8 @@ export const createIl2cppMetadataFixture = (
     methods: 16 + returnToken + D + T + P + G,
   };
 
-  const stringParts: Buffer[] = [];
-  const stringIndex = new Map<string, number>();
-  let stringBytes = 0;
-  const intern = (value: string) => {
-    const known = stringIndex.get(value);
-    if (known !== undefined) return known;
-    const encoded = Buffer.from(`${value}\0`, "utf8");
-    stringIndex.set(value, stringBytes);
-    stringParts.push(encoded);
-    stringBytes += encoded.length;
-    return stringIndex.get(value)!;
-  };
+  const stringTable = createStringTable();
+  const { intern } = stringTable;
   const imageRows = fixtureImages(options);
   for (const image of imageRows) intern(image.name);
   for (const type of FIXTURE_TYPES) {
@@ -505,6 +659,12 @@ export const createIl2cppMetadataFixture = (
   for (const row of [...rows.types, ...rows.methods]) intern(row.name);
   for (const row of [...FIXTURE_FIELDS, ...FIXTURE_PARAMETERS])
     intern(row.name);
+  const genericRows = encodeGenericContainerTables(
+    genericLayout.definitions,
+    genericLayout.count,
+    G,
+    intern,
+  );
 
   const types = encodeTypes({
     typeRows,
@@ -513,20 +673,11 @@ export const createIl2cppMetadataFixture = (
     G,
     typeIndexFields,
     named,
+    genericContainerIndices: genericLayout.indices,
     intern,
   });
 
-  const images = Buffer.alloc(imageRows.length * recordBytes.images);
-  imageRows.forEach((image, index) => {
-    const at = index * recordBytes.images;
-    images.writeInt32LE(intern(image.name), at);
-    images.writeInt32LE(index, at + 4);
-    writeIndex(images, at + 8, D, image.type_start);
-    images.writeUInt32LE(image.type_count, at + 8 + D);
-    writeIndex(images, at + 12 + D, D, -1);
-    images.writeUInt32LE(0, at + 12 + 2 * D);
-    images.writeInt32LE(-1, at + 16 + 2 * D);
-  });
+  const images = encodeImageRows(imageRows, recordBytes.images, D, intern);
 
   const methods = encodeMethods(
     rows.methods,
@@ -534,6 +685,7 @@ export const createIl2cppMetadataFixture = (
     { D, T, P, G },
     returnToken,
     intern,
+    genericLayout.methodIndices,
   );
 
   const {
@@ -560,14 +712,32 @@ export const createIl2cppMetadataFixture = (
   const contents = new Map<SectionName, SectionContent>([
     ["stringLiterals", { bytes: literals, count: literalRecords }],
     ["stringLiteralData", { bytes: literalData, count: 2 }],
-    ["strings", { bytes: Buffer.concat(stringParts), count: stringIndex.size }],
+    ["strings", { bytes: stringTable.bytes(), count: stringTable.count() }],
     // Wide-index padding rows are zero-filled and owned by no method.
     ["parameters", paddedRows(parameterRows, parameterCount, 8 + T)],
+    ...(genericRows.parameterCount === 0
+      ? []
+      : [
+          [
+            "genericParameters",
+            {
+              bytes: genericRows.parameters,
+              count: genericRows.parameterCount,
+            },
+          ] as [SectionName, SectionContent],
+        ]),
     ["fields", { bytes: fields, count: FIXTURE_FIELDS.length }],
     ["properties", { bytes: properties, count: named.properties.length }],
     ["events", { bytes: events, count: named.events.length }],
     ["methods", { bytes: methods, count: rows.methods.length }],
-    ...zeroFilledSection("genericContainers", genericContainers, 16),
+    ...(genericLayout.count === 0
+      ? []
+      : [
+          [
+            "genericContainers",
+            { bytes: genericRows.containers, count: genericLayout.count },
+          ] as [SectionName, SectionContent],
+        ]),
     ["nestedTypes", { bytes: nested, count: nestedTypeEntries.length }],
     ["typeDefinitions", { bytes: types, count: typeRows.length }],
     ["images", { bytes: images, count: imageRows.length }],
@@ -589,10 +759,16 @@ export const createIl2cppMetadataFixture = (
     header: headerField,
     section,
     record: (name, index) => section(name).offset + index * recordBytes[name],
-    stringOffset: (value) => {
-      const index = stringIndex.get(value);
-      if (index === undefined) throw new Error(`Unknown string ${value}`);
-      return section("strings").offset + index;
-    },
+    stringOffset: (value) =>
+      section("strings").offset + stringTable.offset(value),
   };
 };
+
+/** Fixture variant whose generic instance type arguments have metadata owners. */
+export const createLinkedIl2cppMetadataFixture = (
+  options: Il2cppMetadataFixtureOptions = {},
+): Il2cppMetadataFixture =>
+  createIl2cppMetadataFixture({
+    ...options,
+    genericTypeArgumentCounts: options.genericTypeArgumentCounts ?? { 3: 1 },
+  });

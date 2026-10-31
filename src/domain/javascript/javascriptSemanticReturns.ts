@@ -54,6 +54,10 @@ export const collectSemanticReturns = (
     const expressions = directReturnExpressions(node);
     const sites: JavaScriptSemanticReturnSite[] = [];
     for (const expression of expressions) {
+      const returned =
+        expression.node === null
+          ? null
+          : unwrapJavaScriptExpression(expression.node).node;
       sites.push({
         returnSiteId: semanticReturnSiteId(
           callable.callableId,
@@ -61,9 +65,10 @@ export const collectSemanticReturns = (
         ),
         location: expression.location,
         identityReferenceLocation:
-          expression.node !== null && t.isIdentifier(expression.node)
-            ? range(expression.node)
+          returned !== null && t.isIdentifier(returned)
+            ? range(returned)
             : null,
+        valueExpressionLocation: returned === null ? null : range(returned),
         value:
           expression.node === null
             ? { status: "unknown", reason: "Return has no value." }

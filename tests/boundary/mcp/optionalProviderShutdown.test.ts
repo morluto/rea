@@ -2,7 +2,10 @@ import { afterAll, expect, it, vi } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import {
+  createDeferred,
+  createTestBinarySession,
+} from "../../fixtures/binarySession.js";
 import { createBrowserObservationProvider } from "../../../src/composition/browserObservation.js";
 import { createJavaScriptRuntimeObservationProvider } from "../../../src/composition/javascriptRuntimeObservation.js";
 import { run } from "../../../src/main.js";
@@ -25,8 +28,64 @@ for (const path of [
   mkdirSync(path);
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
+it("refuses eager server publication after the shutdown snapshot and completed close", async () => {
+  const closingHandle = createDeferred<void>();
+  const releaseHandle = createDeferred<void>();
+  const acquired: ReturnType<typeof createServer>[] = [];
+  let publish: (() => unknown) | undefined;
+  let shutdown: (() => Promise<void>) | undefined;
+  let closing: Promise<void> | undefined;
+  let transportCloses = 0;
+  try {
+    expect(
+      await run({
+        env: environment,
+        loadOptionalProviders: async () => ({}),
+        createServer: (source, options) => {
+          const server = createServer(source, options);
+          acquired.push(server);
+          return server;
+        },
+        serve: (factory) => {
+          publish = () => factory({ era: "legacy" });
+          publish();
+          return {
+            close: async () => {
+              transportCloses++;
+              closingHandle.resolve();
+              await releaseHandle.promise;
+            },
+          };
+        },
+        captureShutdown: (close) => {
+          shutdown = close;
+        },
+        registerShutdown: () => () => {},
+        writeStderr: () => {},
+        setExitCode: () => {},
+      }),
+    ).toBe(0);
+    if (shutdown === undefined || publish === undefined)
+      throw new Error("Runtime ownership hooks were not installed");
+    closing = shutdown();
+    await closingHandle.promise;
+    expect(publish).toThrow("MCP connection is closed");
+    releaseHandle.resolve();
+    await closing;
+    expect(publish).toThrow("MCP connection is closed");
+    await shutdown();
+    expect(transportCloses).toBe(1);
+    expect(acquired).toHaveLength(1);
+  } finally {
+    releaseHandle.resolve();
+    await closing;
+    await shutdown?.();
+    for (const server of acquired) await server.close();
+  }
+});
+
 it("retries failed process-owned optional cleanup without reclosing completed peers", async () => {
-  const runtime = createJavaScriptRuntimeObservationProvider();
+  const runtime = createJavaScriptRuntimeObservationProvider({});
   const browser = createBrowserObservationProvider();
   const closeRuntime = runtime.close?.bind(runtime);
   const runtimeClose = vi.spyOn(runtime, "close");

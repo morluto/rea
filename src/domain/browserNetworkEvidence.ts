@@ -43,15 +43,15 @@ const unavailableBrowserNetworkBodySchema = z.discriminatedUnion("reason", [
     state: z.literal("unavailable"),
     reason: z.literal("body-size-limit"),
     message: z.string().min(1),
-    limit_bytes: z.number().int().positive().safe(),
-    observed_bytes: z.number().int().positive().safe(),
+    limit_bytes: z.int().positive().safe(),
+    observed_bytes: z.int().positive().safe(),
   }),
   z.strictObject({
     state: z.literal("unavailable"),
     reason: z.literal("body-allocation-limit"),
     message: z.string().min(1),
-    limit_allocation_bytes: z.number().int().positive().safe(),
-    observed_allocation_bytes: z.number().int().positive().safe(),
+    limit_allocation_bytes: z.int().positive().safe(),
+    observed_allocation_bytes: z.int().positive().safe(),
   }),
 ]);
 
@@ -71,7 +71,7 @@ export const browserNetworkBodySchema = z.union([
       ]),
       encoding: z.literal("base64"),
       content: z.string(),
-      bytes: z.number().int().min(0),
+      bytes: z.int().min(0),
       sha256: z.string().regex(/^[a-f0-9]{64}$/u),
       media_type: z.string().nullable(),
       redacted: z.boolean(),

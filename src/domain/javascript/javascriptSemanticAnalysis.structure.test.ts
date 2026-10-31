@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
+import { analyzeCommonJsSemanticFixture } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
+
 import {
   programScope,
   bindingById,
@@ -50,9 +52,9 @@ describe("JavaScript semantic analysis: ESM import origins", () => {
 });
 
 describe("JavaScript semantic analysis: structure 1", () => {
-  it("resolves imports, require destructuring, aliases, assignments, and shadowing", () => {
-    const ir = analyzeJavaScriptSemantics(`
-      import { ipcRenderer as ir } from "electron";
+  it("resolves CommonJS require destructuring, aliases, assignments, and shadowing", () => {
+    const ir = analyzeCommonJsSemanticFixture(`
+      const { ipcRenderer: ir } = require("electron");
       const { ipcMain: bus } = require("electron");
       const forwarded = bus;
       let assigned;
@@ -73,6 +75,7 @@ describe("JavaScript semantic analysis: structure 1", () => {
     expect(origin(topLevelBinding(ir, "ir"))).toEqual({
       specifier: "electron",
       importedPath: ["ipcRenderer"],
+      resolutionMode: "require",
     });
     expect(origin(topLevelBinding(ir, "bus"))).toEqual({
       specifier: "electron",
@@ -322,12 +325,8 @@ describe("JavaScript semantic analysis: class member keys", () => {
         marker(value?: number) {}
       }
     `);
-    // Only the computed abstract key evaluates the outer binding.
-    expect(
-      ir.references
-        .filter(({ name }) => name === "marker")
-        .map(({ role, location }) => `${role}@${location.start.line}`),
-    ).toEqual(["read@6"]);
+    // Abstract signatures, including computed keys, are erased.
+    expect(ir.references.filter(({ name }) => name === "marker")).toEqual([]);
   });
 
   it("does not capture an outer binding through a noncomputed method name", () => {
@@ -360,17 +359,19 @@ describe("JavaScript semantic analysis: class member keys", () => {
 });
 
 describe("JavaScript semantic analysis: structure 2", () => {
-  it("retains ESM, re-export, require, and CommonJS export relationships", () => {
+  it("retains ESM and CommonJS relationships in their respective runtime contexts", () => {
     const ir = analyzeJavaScriptSemantics(`
       export { ipcRenderer as bridge } from "electron";
       export * from "./wrapper.js";
       export const localValue = 1;
-      const addon = require("./native.node");
-      module.exports.addon = addon;
       export default function namedDefault() {}
     `);
+    const commonJs = analyzeCommonJsSemanticFixture(`
+      const addon = require("./native.node");
+      module.exports.addon = addon;
+    `);
 
-    expect(ir.moduleLinks).toEqual(
+    expect([...ir.moduleLinks, ...commonJs.moduleLinks]).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           kind: "re-export",

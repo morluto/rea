@@ -5,8 +5,10 @@ import {
   environmentStateHar,
 } from "./historicalHar.js";
 import { webNetworkCaptureSchema } from "../../src/domain/webNetworkCapture.js";
-import { BINARY_LAYOUT_TEST_PROVIDER } from "./binaryDiagnostics/layout.js";
-import { binaryLayoutFixture } from "./binaryDiagnostics/layout.js";
+import {
+  BINARY_LAYOUT_TEST_PROVIDER,
+  binaryLayoutFixture,
+} from "./binaryDiagnostics/layout.js";
 import { JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE } from "../../src/contracts/javascript/javascriptRuntimeReconciliationExample.js";
 import { createEvidence, type Evidence } from "../../src/domain/evidence.js";
 import type { JavaScriptApplicationAnalysisResult } from "../../src/domain/javascript/javascriptApplicationAnalysis.js";
@@ -19,7 +21,7 @@ import { createJavaScriptSemanticGraph } from "../../src/domain/javascript/javas
 import type { BinaryLayout } from "../../src/domain/native/binaryLayout.js";
 import { binaryLayoutSchema } from "../../src/domain/native/binaryLayout.js";
 import { ghidraFunctionDossier } from "../../src/domain/ghidraValues.fixture.js";
-import { functionDossierSchema } from "../../src/domain/hopperValues.js";
+import { functionDossierSchema } from "../../src/domain/native/functionDossier.js";
 import type { RelationshipCoverage } from "../../src/domain/relationshipCoverage.js";
 
 /** Canonical portable Evidence; no native provider is started by this fixture. */
@@ -313,3 +315,51 @@ export const environmentManifestCaptureFixture = (
 /** The same capture with distinct start times, as the environment-state view orders it. */
 export const environmentStateCaptureFixture = () =>
   environmentManifestCaptureFixture(environmentStateHar().log.entries);
+
+/** One synthetic exchange: method, path, JSON response body (a string is recorded as written), status, JSON request body and duration in milliseconds. */
+export type TimedCaptureRow = readonly [
+  method: string,
+  path: string,
+  body?: JsonValue,
+  status?: number,
+  request?: JsonValue | undefined,
+  time?: number,
+];
+
+/** Capture Evidence of HAR entries one second apart on one origin, as the environment-state view orders them. */
+export const timedCaptureEvidence = (
+  rows: readonly TimedCaptureRow[],
+): Evidence =>
+  analysisViewCaptureEvidence(
+    environmentManifestCaptureFixture(
+      rows.map(
+        ([method, path, body = null, status = 200, sent, time = 5], index) => ({
+          startedDateTime: new Date(
+            Date.parse("2026-10-17T18:00:00.000Z") + index * 1000,
+          ).toISOString(),
+          time,
+          request: {
+            method,
+            url: `http://app.example${path}`,
+            bodySize:
+              sent === undefined ? 0 : Buffer.byteLength(JSON.stringify(sent)),
+            ...(sent === undefined
+              ? {}
+              : {
+                  postData: {
+                    mimeType: "application/json",
+                    text: JSON.stringify(sent),
+                  },
+                }),
+          },
+          response: {
+            status,
+            content: {
+              mimeType: "application/json",
+              text: typeof body === "string" ? body : JSON.stringify(body),
+            },
+          },
+        }),
+      ),
+    ),
+  );

@@ -1,20 +1,22 @@
 import { createHash } from "node:crypto";
 
-import canonicalize from "canonicalize";
 import { z } from "zod";
 
 import { evidenceSchema, type Evidence } from "../evidence.js";
 import {
   cliMetadataGuidSchema,
+  managedMetadataTokenSchema,
   managedMemberInspectionSchema,
   type ManagedMemberInspection,
 } from "./managedArtifact.js";
-import type { JsonValue } from "../jsonValue.js";
+import { digestCanonicalValue } from "../canonicalDigest.js";
 import { digestSchema, prefixedDigestSchema } from "../digests.js";
-import { parseManagedInspectionEvidence } from "./managedInspectionEvidence.js";
+import { readManagedInspectionEvidence } from "./managedInspectionEvidence.js";
+import { AnalysisInputError } from "../analysisErrorCore.js";
+import { EvidenceIntegrityError } from "../evidenceErrors.js";
+import { err, ok, type Result } from "../result.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
-const tokenSchema = z.string().regex(/^0x[0-9a-f]{8}$/u);
 const textSchema = z.string().min(1);
 
 const decompilerSchema = z.strictObject({
@@ -26,7 +28,7 @@ const decompilerSchema = z.strictObject({
 });
 
 const managedReconstructionMethodInputSchema = z.strictObject({
-  token: tokenSchema,
+  token: managedMetadataTokenSchema,
   signature_sha256: digestSchema,
   normalized_il_sha256: digestSchema.nullable(),
   reconstruction: z.strictObject({
@@ -35,8 +37,8 @@ const managedReconstructionMethodInputSchema = z.strictObject({
     text: textSchema,
     text_sha256: digestSchema.optional(),
     source_path: textSchema.nullable().optional(),
-    start_line: z.number().int().min(1).nullable().optional(),
-    end_line: z.number().int().min(1).nullable().optional(),
+    start_line: z.int().min(1).nullable().optional(),
+    end_line: z.int().min(1).nullable().optional(),
   }),
 });
 
@@ -44,31 +46,42 @@ type ManagedReconstructionMethodInput = z.infer<
   typeof managedReconstructionMethodInputSchema
 >;
 
-export const managedReconstructionImportInputSchema = z.strictObject({
-  static_members: evidenceSchema,
+const managedReconstructionImportRequestShape = {
+  static_members: z.unknown(),
   decompiler: decompilerSchema,
   methods: z.array(managedReconstructionMethodInputSchema).min(1),
   notes: z.array(textSchema).default([]),
+};
+
+/** Request envelope parsed before interpreting the nested Evidence source. */
+export const managedReconstructionImportRequestSchema = z.strictObject(
+  managedReconstructionImportRequestShape,
+);
+
+/** Public reconstruction request with the complete source Evidence contract. */
+export const managedReconstructionImportInputSchema = z.strictObject({
+  ...managedReconstructionImportRequestShape,
+  static_members: evidenceSchema,
 });
 
 const importedMethodSchema = z.strictObject({
-  token: tokenSchema,
+  token: managedMetadataTokenSchema,
   declaring_type: z.string().nullable(),
   name: z.string(),
   signature_sha256: digestSchema,
   normalized_il_sha256: digestSchema.nullable(),
   body_sha256: digestSchema.nullable(),
-  il_size: z.number().int().min(0),
+  il_size: z.int().min(0),
   reconstruction: z.strictObject({
     kind: z.enum(["decompiled-csharp", "decompiled-il", "semantic-pseudocode"]),
     language: z.enum(["csharp", "il", "pseudocode"]),
     text: textSchema,
     text_sha256: digestSchema,
-    text_length: z.number().int().min(1),
-    line_count: z.number().int().min(1),
+    text_length: z.int().min(1),
+    line_count: z.int().min(1),
     source_path: textSchema.nullable(),
-    start_line: z.number().int().min(1).nullable(),
-    end_line: z.number().int().min(1).nullable(),
+    start_line: z.int().min(1).nullable(),
+    end_line: z.int().min(1).nullable(),
   }),
   validation: z.strictObject({
     matched_static_member: z.literal(true),
@@ -86,7 +99,7 @@ export const managedReconstructionImportResultSchema = z.strictObject({
     evidence_id: evidenceIdSchema,
     artifact_sha256: digestSchema,
     artifact_path: z.string().min(1),
-    byte_length: z.number().int().min(0),
+    byte_length: z.int().min(0),
     module_name: z.string().nullable(),
     mvid: cliMetadataGuidSchema.nullable(),
     metadata_status: z.enum(["absent", "complete", "partial", "malformed"]),
@@ -95,11 +108,11 @@ export const managedReconstructionImportResultSchema = z.strictObject({
     options_sha256: digestSchema,
   }),
   summary: z.strictObject({
-    imported_methods: z.number().int().min(1),
-    decompiled_csharp_methods: z.number().int().min(0),
-    decompiled_il_methods: z.number().int().min(0),
-    pseudocode_methods: z.number().int().min(0),
-    total_text_bytes: z.number().int().min(1),
+    imported_methods: z.int().min(1),
+    decompiled_csharp_methods: z.int().min(0),
+    decompiled_il_methods: z.int().min(0),
+    pseudocode_methods: z.int().min(0),
+    total_text_bytes: z.int().min(1),
   }),
   methods: z.array(importedMethodSchema).min(1),
   notes: z.array(textSchema),
@@ -109,6 +122,9 @@ export const managedReconstructionImportResultSchema = z.strictObject({
 
 export type ManagedReconstructionImportInput = z.infer<
   typeof managedReconstructionImportInputSchema
+>;
+export type ManagedReconstructionImportRequest = z.infer<
+  typeof managedReconstructionImportRequestSchema
 >;
 export type ManagedReconstructionImportResult = z.infer<
   typeof managedReconstructionImportResultSchema
@@ -121,13 +137,6 @@ type StaticObservation =
 
 const sha256Text = (value: string): string =>
   createHash("sha256").update(value).digest("hex");
-
-const sha256Json = (value: JsonValue): string => {
-  const serialized = canonicalize(value);
-  if (serialized === undefined)
-    throw new TypeError("Managed reconstruction canonicalization failed");
-  return createHash("sha256").update(serialized).digest("hex");
-};
 
 const countLines = (text: string): number =>
   text.length === 0 ? 0 : text.split(/\r\n|\r|\n/u).length;
@@ -145,19 +154,6 @@ const findObservedMethod = (
       candidate.normalized_il_sha256 !== null &&
       item.body.normalized_il_sha256 === candidate.normalized_il_sha256,
   );
-
-const verifyTextSha256 = (
-  candidate: ManagedReconstructionMethodInput,
-  textSha256: string,
-): void => {
-  if (
-    candidate.reconstruction.text_sha256 !== undefined &&
-    candidate.reconstruction.text_sha256 !== textSha256
-  )
-    throw new TypeError(
-      `Reconstruction text hash mismatch for ${candidate.token}`,
-    );
-};
 
 const buildImportedMethod = (
   observed: Member,
@@ -227,7 +223,10 @@ const buildDecompilerRecord = (
   decompiler: ManagedReconstructionImportInput["decompiler"],
 ): ManagedReconstructionImportResult["decompiler"] => ({
   ...decompiler,
-  options_sha256: sha256Json(decompiler.options),
+  options_sha256: digestCanonicalValue(
+    decompiler.options,
+    "Managed reconstruction",
+  ),
 });
 
 const RECONSTRUCTION_LIMITATIONS = [
@@ -238,7 +237,7 @@ const RECONSTRUCTION_LIMITATIONS = [
 ];
 
 const buildReconstructionWithoutId = (
-  input: ManagedReconstructionImportInput,
+  input: ManagedReconstructionImportRequest,
   staticEvidence: Evidence,
   members: ManagedMemberInspection,
   methods: readonly ImportedMethod[],
@@ -254,34 +253,80 @@ const buildReconstructionWithoutId = (
   limitations: RECONSTRUCTION_LIMITATIONS,
 });
 
-/** Authenticate decompiler reconstruction against static IL Evidence. */
-export const importManagedReconstruction = (
-  input: ManagedReconstructionImportInput,
-): ManagedReconstructionImportResult => {
-  const { evidence: staticEvidence, result: members } =
-    parseManagedInspectionEvidence(
-      input.static_members,
-      "inspect_managed_members",
-      managedMemberInspectionSchema,
-    );
-  const methods = input.methods.map((candidate) => {
-    const observed = findObservedMethod(members, candidate);
-    if (observed === undefined)
-      throw new TypeError(
-        `Reconstruction method lock ${candidate.token} does not match a static managed member observation`,
+export interface ResolvedManagedReconstructionImport {
+  readonly request: ManagedReconstructionImportRequest;
+  readonly staticEvidence: Evidence;
+  readonly members: ManagedMemberInspection;
+  readonly methods: readonly ImportedMethod[];
+}
+
+/** Parse the managed member facts once, then validate every caller lock at its request path. */
+export const resolveManagedReconstructionImport = (
+  input: ManagedReconstructionImportRequest,
+): Result<
+  ResolvedManagedReconstructionImport,
+  AnalysisInputError | EvidenceIntegrityError
+> => {
+  const source = readManagedInspectionEvidence(
+    input.static_members,
+    "inspect_managed_members",
+    managedMemberInspectionSchema,
+    { operation: "import_managed_reconstruction", path: ["static_members"] },
+  );
+  if (!source.ok) return source;
+
+  const methods: ImportedMethod[] = [];
+  for (const [index, candidate] of input.methods.entries()) {
+    const observed = findObservedMethod(source.value.result, candidate);
+    if (observed === undefined) {
+      const message = `Reconstruction method lock ${candidate.token} does not match a static managed member observation`;
+      return err(
+        new AnalysisInputError("import_managed_reconstruction", {}, [
+          { path: ["methods", index], reason: "invalid_value", message },
+        ]),
       );
+    }
     const textSha256 = sha256Text(candidate.reconstruction.text);
-    verifyTextSha256(candidate, textSha256);
-    return buildImportedMethod(observed, candidate, textSha256);
-  });
-  const withoutId = buildReconstructionWithoutId(
-    input,
-    staticEvidence,
-    members,
+    if (
+      candidate.reconstruction.text_sha256 !== undefined &&
+      candidate.reconstruction.text_sha256 !== textSha256
+    ) {
+      const message = `Reconstruction text hash mismatch for ${candidate.token}`;
+      return err(
+        new AnalysisInputError("import_managed_reconstruction", {}, [
+          {
+            path: ["methods", index, "reconstruction", "text_sha256"],
+            reason: "invalid_value",
+            message,
+          },
+        ]),
+      );
+    }
+    methods.push(buildImportedMethod(observed, candidate, textSha256));
+  }
+  return ok({
+    request: input,
+    staticEvidence: source.value.evidence,
+    members: source.value.result,
     methods,
+  });
+};
+
+/** Build the import solely from facts authenticated and validated by the resolver. */
+export const executeManagedReconstructionImport = (
+  resolved: ResolvedManagedReconstructionImport,
+): ManagedReconstructionImportResult => {
+  const withoutId = buildReconstructionWithoutId(
+    resolved.request,
+    resolved.staticEvidence,
+    resolved.members,
+    resolved.methods,
   );
   return managedReconstructionImportResultSchema.parse({
     ...withoutId,
-    reconstruction_id: `mre_${sha256Json(withoutId)}`,
+    reconstruction_id: `mre_${digestCanonicalValue(
+      withoutId,
+      "Managed reconstruction",
+    )}`,
   });
 };

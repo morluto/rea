@@ -3,6 +3,11 @@ import {
   browserAllowedOriginsSchema,
   browserEndpointSchema,
 } from "./browserObservation.js";
+import {
+  CDP_CLEANUP_GRACE_MS,
+  DEFAULT_CDP_COMMAND_TIMEOUT_MS,
+  webRuntimeCommandTimeoutSchema,
+} from "./browserDeadline.js";
 import { jsonObjectSchema } from "./jsonValue.js";
 
 // CDP positions are zero-based and relative to the resource named by url.
@@ -30,13 +35,14 @@ export const webRuntimeScopeSchema = z.strictObject({
   cdp_endpoint: browserEndpointSchema,
   allowed_origins: browserAllowedOriginsSchema,
   target_id: z.string().min(1),
+  command_timeout_ms: webRuntimeCommandTimeoutSchema,
 });
 
 /** Source evidence is bound by the selected CDP session's script ID, never URL equality. */
 export const webRuntimeSourceSchema = z.object({
   script_id: z.string().min(1),
   url: z.string(),
-  execution_context_id: z.number().int().nullable(),
+  execution_context_id: z.int().nullable(),
   reported_execution_context: jsonObjectSchema.nullable(),
   reported_script_context_aux_data: jsonObjectSchema.nullable(),
   frame_id: z.string().nullable(),
@@ -46,8 +52,8 @@ export const webRuntimeSourceSchema = z.object({
   language: z.string().nullable(),
   resource_start: z
     .object({
-      line_number: z.number().int().min(0).describe(START_LINE),
-      column_number: z.number().int().min(0).describe(START_COLUMN),
+      line_number: z.int().min(0).describe(START_LINE),
+      column_number: z.int().min(0).describe(START_COLUMN),
     })
     .nullable(),
   source: z.discriminatedUnion("state", [
@@ -55,8 +61,8 @@ export const webRuntimeSourceSchema = z.object({
       state: z.literal("captured"),
       text: z.string(),
       sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-      utf8_bytes: z.number().int().min(0),
-      utf16_units: z.number().int().min(0),
+      utf8_bytes: z.int().min(0),
+      utf16_units: z.int().min(0),
     }),
     z.object({
       state: z.enum(["unavailable", "excluded"]),
@@ -70,8 +76,8 @@ export type WebRuntimeSource = z.infer<typeof webRuntimeSourceSchema>;
 export const webRuntimeLocationSchema = z.object({
   script_id: z.string().describe(SCRIPT_ID),
   url: z.string().nullable(),
-  line_number: z.number().int().min(0).describe(RESOURCE_LINE),
-  column_number: z.number().int().min(0).nullable().describe(RESOURCE_COLUMN),
+  line_number: z.int().min(0).describe(RESOURCE_LINE),
+  column_number: z.int().min(0).nullable().describe(RESOURCE_COLUMN),
   function_name: z.string().nullable(),
   source_association: z.enum(["script_id", "unknown"]),
 });
@@ -90,6 +96,6 @@ export const WEB_RUNTIME_LIMITS = {
   protocolBytes: 64 * 1024 * 1024,
   retainedEventBytes: 8 * 1024 * 1024,
   sourceBytes: 32 * 1024 * 1024,
-  commandTimeoutMs: 20_000,
-  cleanupTimeoutMs: 5_000,
+  commandTimeoutMs: DEFAULT_CDP_COMMAND_TIMEOUT_MS,
+  cleanupTimeoutMs: CDP_CLEANUP_GRACE_MS,
 } as const;

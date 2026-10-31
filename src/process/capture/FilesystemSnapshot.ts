@@ -1,12 +1,17 @@
+import { observedSymlinkTarget } from "../../domain/symlinkTarget.js";
 import { createHash } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
-import { lstat, open, opendir, readlink } from "node:fs/promises";
-import { join, relative } from "node:path";
+import { lstat, open, opendir, readlink, realpath } from "node:fs/promises";
+import { basename, dirname, join, relative } from "node:path";
 import type { FileHandle } from "node:fs/promises";
+import { appendCallerPath } from "../../filesystem/callerPath.js";
+import { decodeDirectoryEntryName } from "../../filesystem/decodeDirectoryEntryName.js";
+import { sameRegularFileState } from "../../filesystem/RegularFile.js";
 import type { ProcessScenario } from "../../domain/process/processScenario.js";
 import type { FilesystemCoverage } from "../../domain/process/processCaptureCoverage.js";
 import type { Stats } from "node:fs";
 import { err, ok, type Result } from "../../domain/result.js";
+import { AnalysisAccessDeniedError } from "../../domain/analysisErrorCore.js";
 import type {
   FileState,
   ProcessFilesystemSnapshot,
@@ -26,6 +31,8 @@ import {
   withProcessCaptureFile,
   type ProcessCaptureCleanupRetainer,
 } from "./ProcessCaptureRead.js";
+import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 
 const hasSameIdentity = (
   before: Stats,
@@ -35,16 +42,6 @@ const hasSameIdentity = (
   before.dev === after.dev &&
   before.ino === after.ino &&
   (expected === "directory" ? after.isDirectory() : after.isSymbolicLink());
-
-const hasSameFileState = (before: Stats, after: Stats): boolean =>
-  before.dev === after.dev &&
-  before.ino === after.ino &&
-  before.isFile() &&
-  after.isFile() &&
-  before.mode === after.mode &&
-  before.size === after.size &&
-  before.mtimeMs === after.mtimeMs &&
-  before.ctimeMs === after.ctimeMs;
 
 const filesystemSystemCode = (cause: unknown): string | undefined => {
   if (!(cause instanceof Error) || !("code" in cause)) return undefined;
@@ -100,34 +97,57 @@ const observeSymlink = async (
   path: string,
   before: Stats,
   signal?: AbortSignal,
-): Promise<Result<string, EntryOmission>> => {
-  const target = await readEntryObservation(() => readlink(path), signal);
+): Promise<
+  Result<{ readonly text: string | null; readonly hex: string }, EntryOmission>
+> => {
+  const target = await readEntryObservation(
+    () => readlink(path, { encoding: "buffer" }),
+    signal,
+  );
   if (!target.ok) return target;
   const after = await readEntryObservation(() => lstat(path), signal);
   if (!after.ok) return after;
-  return hasSameIdentity(before, after.value, "symlink")
-    ? target
-    : err({ reason: "identity_changed", system_code: null });
+  if (!hasSameIdentity(before, after.value, "symlink"))
+    return err({ reason: "identity_changed", system_code: null });
+  return ok(observedSymlinkTarget(target.value));
 };
 
-const lstatIfPresent = async (
+type PathLookup =
+  | { readonly state: "present"; readonly stats: Stats }
+  | {
+      readonly state: "absent" | "unavailable";
+      readonly system_code: string;
+      readonly cause: unknown;
+    };
+
+/**
+ * Look up one path without following its final component. ENOENT and ENOTDIR
+ * both prove that no entry exists at the path; other unavailable lookups leave
+ * it unobserved rather than absent.
+ */
+const lookupPath = async (
   path: string,
-  previouslyObservedRoot = false,
   signal?: AbortSignal,
-): Promise<Stats | undefined> => {
+): Promise<PathLookup> => {
   signal?.throwIfAborted();
+  let stats: Stats;
   try {
-    const stats = await lstat(path);
-    signal?.throwIfAborted();
-    return stats;
+    stats = await lstat(path);
   } catch (cause: unknown) {
-    const code = filesystemSystemCode(cause);
-    if (code === "ENOENT" || (previouslyObservedRoot && code === "ENOTDIR")) {
-      signal?.throwIfAborted();
-      return undefined;
-    }
-    throw cause;
+    const systemCode = fileUnavailableSystemCode(cause);
+    if (systemCode === undefined) throw cause;
+    signal?.throwIfAborted();
+    return {
+      state:
+        systemCode === "ENOENT" || systemCode === "ENOTDIR"
+          ? "absent"
+          : "unavailable",
+      system_code: systemCode,
+      cause,
+    };
   }
+  signal?.throwIfAborted();
+  return { state: "present", stats };
 };
 
 /** Reports a complete digest or an explicit per-file reason hashing was omitted. */
@@ -191,6 +211,9 @@ export class ProcessCaptureSnapshotFailure extends ProcessCaptureError {
       "snapshot handle cleanup failed";
     super(message, {
       cause: primary,
+      ...(options.cause instanceof AnalysisAccessDeniedError
+        ? { cleanupPrimary: options.cause }
+        : {}),
       ...(cancellation
         ? { userCategory: "cancelled" as const, reason: "cancelled" as const }
         : {}),
@@ -214,6 +237,19 @@ export class ProcessCaptureSnapshotFailure extends ProcessCaptureError {
     this.readFailures = readFailures;
     if (cleanupLeases.length > 0)
       new AnalysisCleanupLeaseGroup(this, cleanupLeases);
+  }
+
+  /** The snapshot owns observations; the admitted read owns its failure identity. */
+  failureForCaller(): AnalysisError {
+    const primary = this.cleanupPrimary;
+    if (!(primary instanceof AnalysisAccessDeniedError)) return this;
+    return this.cleanupIncomplete
+      ? analysisErrorWithCleanupFailure(
+          primary,
+          this,
+          "capture_process",
+        ).bindCleanupDependencies([primary, this])
+      : primary;
   }
 }
 
@@ -259,7 +295,7 @@ export const hashFile = async (
         if (!noFollowAvailable) {
           const named = await lstat(path);
           signal?.throwIfAborted();
-          if (!hasSameFileState(expected, named))
+          if (!expected.isFile() || !sameRegularFileState(expected, named))
             return {
               state: "omitted",
               reason: "file_changed_or_short_read",
@@ -268,7 +304,11 @@ export const hashFile = async (
         }
         const stats = await ownedHandle.stat();
         signal?.throwIfAborted();
-        if (!hasSameFileState(expected, stats) || stats.size > maxBytes)
+        if (
+          !expected.isFile() ||
+          !sameRegularFileState(expected, stats) ||
+          stats.size > maxBytes
+        )
           return {
             state: "omitted",
             reason: "file_changed_or_short_read",
@@ -296,11 +336,11 @@ export const hashFile = async (
         }
         const after = await ownedHandle.stat();
         signal?.throwIfAborted();
-        let unchanged = hasSameFileState(stats, after);
+        let unchanged = sameRegularFileState(stats, after);
         if (unchanged && !noFollowAvailable) {
           const namedAfter = await lstat(path);
           signal?.throwIfAborted();
-          unchanged = hasSameFileState(after, namedAfter);
+          unchanged = sameRegularFileState(after, namedAfter);
         }
         if (!unchanged)
           return {
@@ -323,20 +363,32 @@ export const hashFile = async (
   );
 };
 
-/** Capture bounded, root-aliased filesystem state without following symlinks. */
+interface SnapshotResources {
+  readonly cleanup?: ProcessCaptureCleanupRetainer;
+  readonly observerPaths?: readonly string[];
+}
+
+/**
+ * Capture bounded, root-aliased filesystem state without following symlinks.
+ *
+ * Without `admission`, every selected root must be missing or observable, so
+ * an obstructed or denied selection fails before launch. A snapshot returned
+ * from that call admitted every root for the run: later lookups record a
+ * non-directory ancestor as absence and a denied lookup as an omission.
+ */
 export const snapshotRoots = async (
   scenario: ProcessScenario,
   signal?: AbortSignal,
-  previous?: ProcessFilesystemSnapshot,
-  retainer?: ProcessCaptureCleanupRetainer,
+  admission?: ProcessFilesystemSnapshot,
+  resources: SnapshotResources = {},
 ): Promise<ProcessFilesystemSnapshot> => {
-  // A prior root entry establishes same-run admission. Preserve initial
-  // obstruction errors; a later non-directory ancestor makes it absent.
-  const previousPaths = new Set(previous?.files.map(({ path }) => path));
+  const retainer = resources.cleanup;
+  const observerPaths = resources.observerPaths ?? [];
   const entries: FileState[] = [];
   const completeRoots: string[] = [];
   let remainingBytes = scenario.limits.file_bytes;
   let pendingNames = 0;
+  let unrepresentableNames = 0;
   let truncated = false;
   const enumerationReasons = new Set<
     FilesystemCoverage["enumeration_reasons"][number]
@@ -344,6 +396,29 @@ export const snapshotRoots = async (
   const enumerationOmissions: FilesystemCoverage["enumeration_omissions"] = [];
   const hashOmissions: FilesystemCoverage["hash_omissions"] = [];
   const closeFailures: ProcessCaptureReadFailure<unknown>[] = [];
+  const unobservedSubtrees: NonNullable<
+    FilesystemCoverage["unobserved_subtrees"]
+  > = [];
+  const observerRoots = new Set(
+    await Promise.all(observerPaths.map((path) => realpath(path))),
+  );
+  const observerNames = new Set(
+    [...observerRoots].map((path) => basename(path)),
+  );
+  const omitObserverPath = async (
+    root: string,
+    alias: string,
+    path: string,
+  ): Promise<boolean> => {
+    if (!observerNames.has(basename(path))) return false;
+    const physical = join(await realpath(dirname(path)), basename(path));
+    if (!observerRoots.has(physical)) return false;
+    unobservedSubtrees.push({
+      path: `${alias}:${relative(root, path) || "."}`,
+      reason: "observer_owned",
+    });
+    return true;
+  };
   const omitEntry = (path: string, omission: EntryOmission): false => {
     truncated = true;
     enumerationReasons.add(omission.reason);
@@ -397,22 +472,32 @@ export const snapshotRoots = async (
     admitted?: Stats,
   ): Promise<boolean> => {
     signal?.throwIfAborted();
+    if (await omitObserverPath(root, rootAlias, path)) return true;
     if (
-      entries.length >= scenario.limits.files ||
+      entries.length + unrepresentableNames >= scenario.limits.files ||
       depth > scenario.limits.filesystem_depth
     ) {
       truncated = true;
-      if (entries.length >= scenario.limits.files)
+      if (entries.length + unrepresentableNames >= scenario.limits.files)
         enumerationReasons.add("files_limit");
       if (depth > scenario.limits.filesystem_depth)
         enumerationReasons.add("depth_limit");
       return false;
     }
-    const stats =
-      admitted ??
-      (await lstatIfPresent(path, previousPaths.has(`${rootAlias}:.`), signal));
-    if (stats === undefined) return true;
     const relativePath = relative(root, path) || ".";
+    const lookup: PathLookup =
+      admitted === undefined
+        ? await lookupPath(path, signal)
+        : { state: "present", stats: admitted };
+    if (lookup.state !== "present")
+      return (
+        lookup.state === "absent" ||
+        omitEntry(`${rootAlias}:${relativePath}`, {
+          reason: "entry_unavailable",
+          system_code: lookup.system_code,
+        })
+      );
+    const { stats } = lookup;
     if (stats.isSymbolicLink()) {
       // Keep the target as stored: lexical resolution can merge distinct targets.
       const target = await observeSymlink(path, stats, signal);
@@ -424,9 +509,23 @@ export const snapshotRoots = async (
         mode: stats.mode,
         size: stats.size,
         sha256: null,
-        symlink_target: target.value,
+        symlink_target: target.value.text,
+        symlink_target_hex: target.value.hex,
       });
-      return true;
+      unobservedSubtrees.push({
+        path: `${rootAlias}:${relativePath}`,
+        reason: "symlink_not_followed",
+      });
+      truncated = true;
+      enumerationReasons.add("symlink_not_followed");
+      enumerationOmissions.push({
+        path: `${rootAlias}:${relativePath}`,
+        reason: "symlink_not_followed",
+        system_code: null,
+      });
+      // A link leaves its descendants unknown, while a physically enumerated
+      // parent still proves absence of unrelated sibling names.
+      return depth > 0;
     }
     if (stats.isFile()) {
       if (remainingBytes < stats.size) {
@@ -482,11 +581,16 @@ export const snapshotRoots = async (
     if (type !== "directory") return true;
     const children: string[] = [];
     let complete = true;
-    const remainingEntries =
-      scenario.limits.files - entries.length - pendingNames;
+    let remainingEntries =
+      scenario.limits.files -
+      entries.length -
+      pendingNames -
+      unrepresentableNames;
     let directory;
     try {
-      directory = await opendir(path);
+      directory = await opendir(path, {
+        encoding: "buffer" as BufferEncoding,
+      });
     } catch (cause: unknown) {
       const systemCode = fileUnavailableSystemCode(cause);
       if (systemCode === undefined) throw cause;
@@ -512,6 +616,16 @@ export const snapshotRoots = async (
             signal?.throwIfAborted();
             const child = await ownedDirectory.read();
             if (child === null) break;
+            const decoded = decodeDirectoryEntryName(child.name);
+            if (
+              decoded.kind === "decoded" &&
+              (await omitObserverPath(
+                root,
+                rootAlias,
+                appendCallerPath(path, decoded.name),
+              ))
+            )
+              continue;
             if (
               children.length >= remainingEntries ||
               depth >= scenario.limits.filesystem_depth
@@ -524,7 +638,21 @@ export const snapshotRoots = async (
                 enumerationReasons.add("depth_limit");
               break;
             }
-            children.push(child.name);
+            if (decoded.kind === "unrepresentable") {
+              unrepresentableNames += 1;
+              remainingEntries -= 1;
+              truncated = true;
+              complete = false;
+              enumerationReasons.add("unrepresentable_name");
+              enumerationOmissions.push({
+                path: `${rootAlias}:${relativePath}`,
+                reason: "unrepresentable_name",
+                system_code: null,
+                raw_name_hex: decoded.rawHex,
+              });
+              continue;
+            }
+            children.push(decoded.name);
             pendingNames += 1;
           }
         },
@@ -561,7 +689,14 @@ export const snapshotRoots = async (
       const child = children.pop();
       if (child === undefined) break;
       pendingNames -= 1;
-      if (!(await visit(root, rootAlias, join(path, child), depth + 1)))
+      if (
+        !(await visit(
+          root,
+          rootAlias,
+          appendCallerPath(path, child),
+          depth + 1,
+        ))
+      )
         complete = false;
     }
     return complete;
@@ -574,9 +709,11 @@ export const snapshotRoots = async (
       files_limit: scenario.limits.files,
       depth_limit: scenario.limits.filesystem_depth,
       enumeration_truncated:
-        completeRoots.length !== scenario.filesystem_observation_paths.length,
+        completeRoots.length !== scenario.filesystem_observation_paths.length ||
+        enumerationOmissions.length > 0,
       enumeration_reasons: [...enumerationReasons],
       enumeration_omissions: enumerationOmissions,
+      unobserved_subtrees: unobservedSubtrees,
       hash_budget_bytes: scenario.limits.file_bytes,
       hashed_bytes: scenario.limits.file_bytes - remainingBytes,
       hash_omissions: hashOmissions,
@@ -589,16 +726,35 @@ export const snapshotRoots = async (
       root,
     ] of scenario.filesystem_observation_paths.entries()) {
       const alias = `root_${String(index)}`;
-      const admitted = await lstatIfPresent(
-        root,
-        previousPaths.has(`${alias}:.`),
-        signal,
-      );
-      if (admitted === undefined) {
-        completeRoots.push(alias);
+      const lookup = await lookupPath(root, signal);
+      if (lookup.state !== "present") {
+        if (admission === undefined && lookup.system_code !== "ENOENT") {
+          if (
+            lookup.system_code === "EACCES" ||
+            lookup.system_code === "EPERM"
+          ) {
+            omitEntry(`${alias}:.`, {
+              reason: "entry_unavailable",
+              system_code: lookup.system_code,
+            });
+            throw new AnalysisAccessDeniedError(
+              "capture_process_scenario",
+              root,
+              lookup.system_code,
+              { cause: lookup.cause },
+            );
+          }
+          throw lookup.cause;
+        }
+        if (lookup.state === "absent") completeRoots.push(alias);
+        else
+          omitEntry(`${alias}:.`, {
+            reason: "entry_unavailable",
+            system_code: lookup.system_code,
+          });
         continue;
       }
-      if (await visit(root, alias, root, 0, admitted))
+      if (await visit(root, alias, root, 0, lookup.stats))
         completeRoots.push(alias);
     }
     const snapshot = buildSnapshot();

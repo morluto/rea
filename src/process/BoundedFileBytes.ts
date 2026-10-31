@@ -1,13 +1,32 @@
 import type { FileHandle } from "node:fs/promises";
 
+export interface BoundedFileReadOptions {
+  readonly signal?: AbortSignal | undefined;
+  readonly expectedSize?: number | undefined;
+  readonly cancellationFailure?: ((reason: unknown) => Error) | undefined;
+  readonly operationFailure?: ((cause: unknown) => Error) | undefined;
+}
+
 /** Read through EOF, returning undefined on overflow; leave the handle open. */
 export const readBoundedFileBytes = async (
   handle: FileHandle,
   maxBytes: number,
-  signal?: AbortSignal,
-  expectedSize?: number,
-  cancellationFailure?: (reason: unknown) => Error,
+  options: BoundedFileReadOptions = {},
 ): Promise<Buffer | undefined> => {
+  const { signal, expectedSize, cancellationFailure, operationFailure } =
+    options;
+  const read = async (
+    buffer: Buffer,
+    offset: number,
+    length: number,
+  ): Promise<{ readonly bytesRead: number }> => {
+    try {
+      return await handle.read(buffer, offset, length, null);
+    } catch (cause: unknown) {
+      if (operationFailure !== undefined) throw operationFailure(cause);
+      throw cause;
+    }
+  };
   const assertActive = (): void => {
     if (signal?.aborted && cancellationFailure !== undefined)
       throw cancellationFailure(signal.reason);
@@ -28,11 +47,10 @@ export const readBoundedFileBytes = async (
     let total = 0;
     for (;;) {
       assertActive();
-      const { bytesRead } = await handle.read(
+      const { bytesRead } = await read(
         buffer,
         0,
         Math.min(buffer.length, maxBytes - total + 1),
-        null,
       );
       if (bytesRead === 0) return Buffer.concat(chunks, total);
       total += bytesRead;
@@ -45,12 +63,7 @@ export const readBoundedFileBytes = async (
   let total = 0;
   for (;;) {
     assertActive();
-    const { bytesRead } = await handle.read(
-      buffer,
-      total,
-      expectedSize - total,
-      null,
-    );
+    const { bytesRead } = await read(buffer, total, expectedSize - total);
     if (bytesRead === 0) return buffer.subarray(0, total);
     total += bytesRead;
     if (total > maxBytes) return undefined;

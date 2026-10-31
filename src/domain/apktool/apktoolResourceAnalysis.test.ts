@@ -2,7 +2,10 @@ import { expect, it } from "vitest";
 import {
   androidLocaleDirectorySuffix,
   androidLocaleQualifierSchema,
+  apktoolInputSchemas,
   classifyAndroidStringsTable,
+  DEFAULT_APKTOOL_DECODE_TIMEOUT_MS,
+  MAX_APKTOOL_DECODE_TIMEOUT_MS,
 } from "./apktoolResourceAnalysis.js";
 
 it.each([
@@ -79,5 +82,36 @@ it.each([
       kind: "other",
       suffix,
     });
+  },
+);
+
+const decodeInput = apktoolInputSchemas.decode_android_resources;
+
+it("keeps 600000 ms as the omitted apktool decode deadline", () => {
+  const parsed = decodeInput.parse({ path: "/targets/app.apk" });
+  expect(parsed).not.toHaveProperty("decode_timeout_ms");
+  expect(DEFAULT_APKTOOL_DECODE_TIMEOUT_MS).toBe(600_000);
+  expect(decodeInput.shape.decode_timeout_ms.description).toContain("600000");
+  expect(decodeInput.shape.decode_timeout_ms.description).toContain(
+    "next decode",
+  );
+});
+
+it.each([1, 600_000, MAX_APKTOOL_DECODE_TIMEOUT_MS])(
+  "accepts decode_timeout_ms %s",
+  (decode_timeout_ms) => {
+    expect(
+      decodeInput.parse({ path: "/targets/app.apk", decode_timeout_ms }),
+    ).toMatchObject({ decode_timeout_ms });
+  },
+);
+
+it.each([0, -1, 1.5, MAX_APKTOOL_DECODE_TIMEOUT_MS + 1])(
+  "rejects decode_timeout_ms %s",
+  (decode_timeout_ms) => {
+    expect(
+      decodeInput.safeParse({ path: "/targets/app.apk", decode_timeout_ms })
+        .success,
+    ).toBe(false);
   },
 );

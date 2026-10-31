@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
 import { WindowsMinidumpService } from "./WindowsMinidumpService.js";
-import { WINDOWS_MINIDUMP_PROVIDER } from "../InvestigationProviders.js";
+import { WINDOWS_MINIDUMP_PROVIDER } from "../../domain/investigationProviders.js";
 import { inspectWindowsMinidumpInputSchema } from "../../domain/native/windowsMinidump.js";
 import { parseWindowsMinidump } from "../../native/minidump/WindowsMinidumpParser.js";
 import { windowsMinidumpFixture } from "../../native/minidump/WindowsMinidump.fixture.js";

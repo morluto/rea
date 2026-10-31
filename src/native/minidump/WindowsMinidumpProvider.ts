@@ -15,7 +15,7 @@ import {
 import type { InspectWindowsMinidumpInput } from "../../domain/native/windowsMinidump.js";
 import { err, ok } from "../../domain/result.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
-import { WINDOWS_MINIDUMP_PROVIDER } from "../../application/InvestigationProviders.js";
+import { WINDOWS_MINIDUMP_PROVIDER } from "../../domain/investigationProviders.js";
 import { parseWindowsMinidump } from "./WindowsMinidumpParser.js";
 
 const OPERATION = "inspect_windows_minidump";

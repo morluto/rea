@@ -9,17 +9,38 @@ import { expect, it } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { importReferenceSource } from "../../support/referenceSourceResourceScope.js";
 
+const hashedSourceEntry = (path: string, source: string) => ({
+  path,
+  kind: "file",
+  sha256: createHash("sha256").update(source).digest("hex"),
+  size: Buffer.byteLength(source),
+  language: "JavaScript",
+  classifications: ["source"],
+  content_state: "hashed",
+  limitations: [],
+});
+
+const memberFixtures = [
+  "require",
+  "require.resolve",
+  'require["resolve"]',
+  "require.main",
+  'require["main"]',
+  'require[("resolve")]',
+  'require["res\\u006flve"]',
+  "require?.",
+  "require.resolve?.",
+  'require["resolve"]?.',
+  "require?.resolve",
+  'require?.["resolve"]',
+  "(require?.resolve)",
+].map((callee, index, callees) => ({
+  callee,
+  path: `member-${String(index).padStart(String(callees.length - 1).length, "0")}.cjs`,
+}));
+
 it("distinguishes computed require member values from literal members in source evidence", async () => {
   const root = await createTestTempDirectory("rea-reference-require-members-");
-  const literalCallees = [
-    "require",
-    "require.resolve",
-    'require["resolve"]',
-    "require.main",
-    'require["main"]',
-    'require[("resolve")]',
-    'require["res\\u006flve"]',
-  ];
   const ignoredSources = [
     'require[resolve]("./dep.js");',
     'require[main]("./dep.js");',
@@ -31,18 +52,12 @@ it("distinguishes computed require member values from literal members in source 
     'require[`resolve`]("./dep.js");',
     'require["re" + "solve"]("./dep.js");',
     ...[
-      "require?.",
-      "require.resolve?.",
-      'require["resolve"]?.',
       "require.main?.",
       'require["main"]?.',
-      "require?.resolve",
-      'require?.["resolve"]',
       "require?.[resolve]",
       "require?.main",
       'require?.["main"]',
       "require?.[main]",
-      "(require?.resolve)",
       "require.resolve.call",
       "require.main.require",
       "module.require",
@@ -65,7 +80,7 @@ it("distinguishes computed require member values from literal members in source 
     "ignored.cjs": ignoredSources.map((source) => `{ ${source} }`).join("\n"),
     "unknown.cjs": [
       "function load(target) {",
-      ...literalCallees.flatMap((callee) => [
+      ...memberFixtures.flatMap(({ callee }) => [
         `  ${callee}(target);`,
         `  ${callee}(\`./dep.js\`);`,
         `  ${callee}(getTarget());`,
@@ -75,8 +90,8 @@ it("distinguishes computed require member values from literal members in source 
       "}",
     ].join("\n"),
   };
-  for (const [index, callee] of literalCallees.entries())
-    sources[`member-${index}.cjs`] = `${callee}("./dep.js");\n`;
+  for (const { path, callee } of memberFixtures)
+    sources[path] = `${callee}("./dep.js");\n`;
   await Promise.all(
     Object.entries(sources).map(([path, source]) =>
       writeFile(join(root, path), source),
@@ -108,19 +123,39 @@ it("distinguishes computed require member values from literal members in source 
   expect(graph.parse_failures).toEqual([]);
   expect(graph.relationships).toEqual([
     {
+      from_path: "ignored.cjs",
+      to: "./dep.js",
+      kind: "requires",
+      resolution: "unknown",
+      parse_state: "partial",
+    },
+    {
       from_path: "literal.cjs",
       to: "dep.js",
       kind: "requires",
       resolution: "internal",
       parse_state: "parsed",
     },
-    ...literalCallees.map((_, index) => ({
-      from_path: `member-${index}.cjs`,
-      to: "dep.js",
+    ...memberFixtures.flatMap(({ callee, path }) =>
+      callee === "require.main" || callee === 'require["main"]'
+        ? []
+        : [
+            {
+              from_path: path,
+              to: "dep.js",
+              kind: "requires",
+              resolution: "internal",
+              parse_state: "parsed",
+            },
+          ],
+    ),
+    {
+      from_path: "unknown.cjs",
+      to: "./dep.js",
       kind: "requires",
-      resolution: "internal",
-      parse_state: "parsed",
-    })),
+      resolution: "unknown",
+      parse_state: "partial",
+    },
     {
       from_path: "unknown.cjs",
       to: "<dynamic-import>",
@@ -128,18 +163,15 @@ it("distinguishes computed require member values from literal members in source 
       resolution: "unknown",
       parse_state: "partial",
     },
+    {
+      from_path: "unknown.cjs",
+      to: "dep.js",
+      kind: "requires",
+      resolution: "internal",
+      parse_state: "parsed",
+    },
   ]);
   expect(graph.entries).toHaveLength(Object.keys(sources).length);
-  for (const [path, source] of Object.entries(sources)) {
-    expect(graph.entries).toContainEqual({
-      path,
-      kind: "file",
-      sha256: createHash("sha256").update(source).digest("hex"),
-      size: Buffer.byteLength(source),
-      language: "JavaScript",
-      classifications: ["source"],
-      content_state: "hashed",
-      limitations: [],
-    });
-  }
+  for (const [path, source] of Object.entries(sources))
+    expect(graph.entries).toContainEqual(hashedSourceEntry(path, source));
 });

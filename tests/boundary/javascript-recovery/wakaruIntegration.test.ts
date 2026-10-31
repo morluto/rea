@@ -1,5 +1,12 @@
 import { execFile } from "node:child_process";
-import { access, mkdir, open, readFile, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  open,
+  readFile,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it, vi } from "vitest";
@@ -15,152 +22,170 @@ import {
 } from "../../fixtures/javascript-recovery/provider.js";
 import { readWithoutFifoWriter } from "../../fixtures/fifoInput.js";
 
-describe.skipIf(process.platform !== "linux" || process.arch !== "x64")(
-  "Wakaru recovery boundary",
-  () => {
-    it("publishes exact bytes and mappings with source identity and no runtime-equivalence claim", async () => {
-      const fixture = await recoveryFixture();
+const registerRecoveryProvenanceCases = () => {
+  it("publishes exact bytes and mappings with source identity and no runtime-equivalence claim", async () => {
+    const fixture = await recoveryFixture();
+    const result = await fixture.service.recover({
+      path: fixture.path,
+      output_directory: fixture.output,
+    });
+    if (!result.ok) throw result.error;
+    expect(parseEvidence(result.value)).toEqual(result.value);
+    const value = javascriptRecoveryResultSchema.parse(
+      result.value.normalized_result,
+    );
+    expect(value).toMatchObject({
+      status: "complete",
+      total: 1,
+      failed: 0,
+      runtime_equivalence: "unknown",
+      analysis_input: {
+        input_path: join(fixture.output, "modules"),
+        format: "directory",
+      },
+    });
+    expect(value.source.path).toBe(fixture.path);
+    expect(value.additional_sources).toBeUndefined();
+    expect(value.source.published_copy.sha256).toBe(value.source.sha256);
+    expect(value.modules[0]?.provenance.byte_ranges).toEqual([
+      { start: 0, end: value.source.bytes },
+    ]);
+    expect(value.engine.executed_source_revision).toBeNull();
+    expect(await readFile(value.source.published_copy.path, "utf8")).toBe(
+      "module.exports = 42;",
+    );
+    expect(result.value.confidence).toBe("derived");
+    await assertRecoveryCleanup(fixture.launches);
+  });
+
+  it.each([
+    "missing-provenance",
+    "malformed-report",
+    "duplicate",
+    "missing-file",
+    "escaping",
+    "extra-file",
+    "symlink",
+    "directory-symlink",
+    "bad-map",
+    "source-mismatch",
+    "overflow-range",
+    "extra-provenance",
+    "snapshot-change",
+    "source-change",
+    "engine-change",
+    "startup-error",
+  ])(
+    "rejects %s, rolls back publication and cleans its processes",
+    async (mode) => {
+      const fixture = await recoveryFixture(mode);
       const result = await fixture.service.recover({
         path: fixture.path,
         output_directory: fixture.output,
       });
-      if (!result.ok) throw result.error;
-      expect(parseEvidence(result.value)).toEqual(result.value);
-      const value = javascriptRecoveryResultSchema.parse(
-        result.value.normalized_result,
-      );
-      expect(value).toMatchObject({
-        status: "complete",
-        total: 1,
-        failed: 0,
-        runtime_equivalence: "unknown",
-        analysis_input: {
-          input_path: join(fixture.output, "modules"),
-          format: "directory",
-        },
-      });
-      expect(value.source.path).toBe(fixture.path);
-      expect(value.additional_sources).toBeUndefined();
-      expect(value.source.published_copy.sha256).toBe(value.source.sha256);
-      expect(value.modules[0]?.provenance.byte_ranges).toEqual([
-        { start: 0, end: value.source.bytes },
-      ]);
-      expect(value.engine.executed_source_revision).toBeNull();
-      expect(await readFile(value.source.published_copy.path, "utf8")).toBe(
-        "module.exports = 42;",
-      );
-      expect(result.value.confidence).toBe("derived");
-      await assertRecoveryCleanup(fixture.launches);
-    });
-
-    it.each([
-      "missing-provenance",
-      "malformed-report",
-      "duplicate",
-      "missing-file",
-      "escaping",
-      "extra-file",
-      "symlink",
-      "directory-symlink",
-      "bad-map",
-      "source-mismatch",
-      "overflow-range",
-      "extra-provenance",
-      "snapshot-change",
-      "source-change",
-      "engine-change",
-      "startup-error",
-    ])(
-      "rejects %s, rolls back publication and cleans its processes",
-      async (mode) => {
-        const fixture = await recoveryFixture(mode);
-        const result = await fixture.service.recover({
-          path: fixture.path,
-          output_directory: fixture.output,
+      if (result.ok) throw new Error("expected boundary failure");
+      const error = projectAnalysisError(result.error);
+      if (mode === "source-change" || mode === "engine-change") {
+        expect(error.code).toBe("artifact_changed");
+        expect(error.details).toMatchObject({
+          operation: "recover_javascript_sources",
+          path:
+            mode === "source-change"
+              ? fixture.path
+              : join(fixture.root, "fixture-wakaru"),
         });
-        if (result.ok) throw new Error("expected boundary failure");
-        const error = projectAnalysisError(result.error);
+      } else {
         expect(
           ["execution_failure", "unreadable_output"],
           JSON.stringify(error),
         ).toContain(error.code);
-        expect(error.details).toBeDefined();
-        await expect(access(fixture.output)).rejects.toMatchObject({
-          code: "ENOENT",
-        });
-        await assertRecoveryCleanup(fixture.launches);
-      },
-    );
-
-    it("rejects byte ranges splitting a UTF-8 code point", async () => {
-      const fixture = await recoveryFixture("utf8-range", "🎯");
-      const result = await fixture.service.recover({
-        path: fixture.path,
-        output_directory: fixture.output,
+      }
+      expect(error.details).toBeDefined();
+      await expect(access(fixture.output)).rejects.toMatchObject({
+        code: "ENOENT",
       });
-      if (result.ok) throw new Error("expected invalid UTF-8 boundary");
-      expect(JSON.stringify(projectAnalysisError(result.error))).toContain(
-        "UTF-8 byte range",
-      );
       await assertRecoveryCleanup(fixture.launches);
-    });
+    },
+  );
 
-    it("accepts a later release on the verified major line with additive report fields", async () => {
-      const fixture = await recoveryFixture("additive");
-      const result = await fixture.service.recover({
-        path: fixture.path,
-        output_directory: fixture.output,
-      });
-      if (!result.ok) throw result.error;
-      const value = javascriptRecoveryResultSchema.parse(
-        result.value.normalized_result,
-      );
-      expect(value).toMatchObject({
-        status: "complete",
-        engine: { version: "1.99.0" },
-        modules: [{ reported_status: "future_status" }],
-      });
-      expect(result.value.provider.version).toBe("1.99.0");
-      expect(
-        value.limitations.some((limitation) =>
-          limitation.includes("This session uses Wakaru 1.99.0"),
-        ),
-      ).toBe(true);
-      expect(
-        JSON.parse(await readFile(value.report.path, "utf8")),
-      ).toMatchObject({
+  it("rejects byte ranges splitting a UTF-8 code point", async () => {
+    const fixture = await recoveryFixture("utf8-range", "🎯");
+    const result = await fixture.service.recover({
+      path: fixture.path,
+      output_directory: fixture.output,
+    });
+    if (result.ok) throw new Error("expected invalid UTF-8 boundary");
+    expect(JSON.stringify(projectAnalysisError(result.error))).toContain(
+      "UTF-8 byte range",
+    );
+    await assertRecoveryCleanup(fixture.launches);
+  });
+};
+
+const registerRecoveryReleaseAndPartialCases = () => {
+  it("accepts a later release on the verified major line with additive report fields", async () => {
+    const fixture = await recoveryFixture("additive");
+    const result = await fixture.service.recover({
+      path: fixture.path,
+      output_directory: fixture.output,
+    });
+    if (!result.ok) throw result.error;
+    const value = javascriptRecoveryResultSchema.parse(
+      result.value.normalized_result,
+    );
+    expect(value).toMatchObject({
+      status: "complete",
+      engine: { version: "1.99.0" },
+      modules: [{ reported_status: "future_status" }],
+    });
+    expect(result.value.provider.version).toBe("1.99.0");
+    expect(
+      value.limitations.some((limitation) =>
+        limitation.includes("This session uses Wakaru 1.99.0"),
+      ),
+    ).toBe(true);
+    expect(JSON.parse(await readFile(value.report.path, "utf8"))).toMatchObject(
+      {
         future_report_field: { nested: true },
         warnings: [{ code: "W001" }],
-      });
-      expect(value.warnings).toEqual([
-        {
-          filename: "module.js",
-          kind: "notice",
-          is_error: false,
-          message: "future warning",
-        },
-      ]);
-      await assertRecoveryCleanup(fixture.launches);
-    });
+      },
+    );
+    expect(value.warnings).toEqual([
+      {
+        filename: "module.js",
+        kind: "notice",
+        is_error: false,
+        message: "future warning",
+      },
+    ]);
+    await assertRecoveryCleanup(fixture.launches);
+  });
 
-    it("retains valid partial output and exact failure diagnostics", async () => {
-      const fixture = await recoveryFixture("partial");
-      const result = await fixture.service.recover({
-        path: fixture.path,
-        output_directory: fixture.output,
-      });
-      if (!result.ok) throw result.error;
-      const value = javascriptRecoveryResultSchema.parse(
-        result.value.normalized_result,
-      );
-      expect(value).toMatchObject({
-        status: "partial",
-        failed: 1,
-        warnings: [{ is_error: true, kind: "parse_error" }],
-      });
-      expect(value.modules).toHaveLength(1);
-      await assertRecoveryCleanup(fixture.launches);
+  it("retains valid partial output and exact failure diagnostics", async () => {
+    const fixture = await recoveryFixture("partial");
+    const result = await fixture.service.recover({
+      path: fixture.path,
+      output_directory: fixture.output,
     });
+    if (!result.ok) throw result.error;
+    const value = javascriptRecoveryResultSchema.parse(
+      result.value.normalized_result,
+    );
+    expect(value).toMatchObject({
+      status: "partial",
+      failed: 1,
+      warnings: [{ is_error: true, kind: "parse_error" }],
+    });
+    expect(value.modules).toHaveLength(1);
+    await assertRecoveryCleanup(fixture.launches);
+  });
+};
+
+describe.skipIf(process.platform !== "linux" || process.arch !== "x64")(
+  "Wakaru recovery boundary",
+  () => {
+    registerRecoveryProvenanceCases();
+    registerRecoveryReleaseAndPartialCases();
   },
 );
 
@@ -403,6 +428,54 @@ describe.skipIf(process.platform !== "linux" || process.arch !== "x64")(
 );
 
 describe.skipIf(process.platform !== "linux" || process.arch !== "x64")(
+  "Wakaru selected input layout",
+  () => {
+    it("preserves selected source identities and layout through a symlink followed by ..", async () => {
+      const fixture = await recoveryFixture();
+      await mkdir(join(fixture.root, "target/child"), { recursive: true });
+      await symlink("target/child", join(fixture.root, "link"));
+      const selected = `${fixture.root}/link/../selected.js`;
+      await writeFile(selected, "export const selected = true;\n");
+      const result = await fixture.service.recover({
+        path: selected,
+        additional_paths: [fixture.path],
+        output_directory: fixture.output,
+      });
+      if (!result.ok) throw result.error;
+      const value = javascriptRecoveryResultSchema.parse(
+        result.value.normalized_result,
+      );
+      const sources = [value.source, ...(value.additional_sources ?? [])];
+      expect(sources.map(({ path }) => path)).toEqual([selected, fixture.path]);
+      expect(sources.map(({ published_copy }) => published_copy.path)).toEqual([
+        join(fixture.output, "inputs/target/selected.js"),
+        join(fixture.output, "inputs/selected.js"),
+      ]);
+      expect(await readFile(sources[0]!.published_copy.path, "utf8")).toBe(
+        "export const selected = true;\n",
+      );
+      expect(await readFile(sources[1]!.published_copy.path, "utf8")).toBe(
+        "module.exports = 42;",
+      );
+      expect(result.value.parameters).toMatchObject({
+        path: selected,
+        additional_paths: [fixture.path],
+      });
+      expect(result.value.subject).toMatchObject({
+        local_path: selected,
+        digest: { sha256: sources[0]!.sha256 },
+      });
+      for (const [index, module] of value.modules.entries())
+        expect(module.provenance).toMatchObject({
+          original_path: sources[index]!.path,
+          original_sha256: sources[index]!.sha256,
+        });
+      await assertRecoveryCleanup(fixture.launches);
+    });
+  },
+);
+
+describe.skipIf(process.platform !== "linux" || process.arch !== "x64")(
   "Wakaru multi-input ownership",
   () => {
     it.each(["cafe\u0301.js", "chunk\\name.js"])(
@@ -495,9 +568,10 @@ describe.skipIf(process.platform !== "linux" || process.arch !== "x64")(
         output_directory: fixture.output,
       });
       if (result.ok) throw new Error("expected per-source validation failure");
-      expect(projectAnalysisError(result.error).code).toMatch(
-        /execution_failure|unreadable_output/u,
-      );
+      const code = projectAnalysisError(result.error).code;
+      if (mode === "secondary-change" || mode === "redistribute")
+        expect(code).toBe("artifact_changed");
+      else expect(code).toMatch(/execution_failure|unreadable_output/u);
       const reason =
         mode === "secondary-foreign"
           ? "does not bind the selected input snapshot"

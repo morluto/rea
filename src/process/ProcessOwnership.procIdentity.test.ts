@@ -1,12 +1,18 @@
+import { performance } from "node:perf_hooks";
+
 import { expect, it, vi } from "vitest";
 
 const filesystem = vi.hoisted(() => ({
   readFile: vi.fn(),
+  // Host procfs ownership must never leak into fixture PIDs.
+  stat: vi.fn(async () => {
+    throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+  }),
 }));
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const original = await importOriginal<typeof import("node:fs/promises")>();
-  return { ...original, readFile: filesystem.readFile };
+  return { ...original, readFile: filesystem.readFile, stat: filesystem.stat };
 });
 
 import {
@@ -34,22 +40,66 @@ const procStat = (
   parentPid = 1,
   processGroupId = 42,
   pid = 42,
+  flags = 0,
 ) => {
-  const fields = ["S", String(parentPid), String(processGroupId), "42"];
+  const fields = [
+    "S",
+    String(parentPid),
+    String(processGroupId),
+    "42",
+    "0",
+    "0",
+    String(flags),
+  ];
   while (fields.length < 19) fields.push("0");
   fields.push(String(startTime));
   return `${String(pid)} (fixture) ${fields.join(" ")}`;
 };
 
-it("binds Linux effective UID to the same native process generation", async () => {
+/**
+ * Select REA's caller credentials for the simulated Linux host. Windows has no
+ * `process.geteuid`/`getegid`, so define them for the call and restore the
+ * original properties (or their absence) afterwards.
+ */
+const withCaller = async <T>(
+  uid: number,
+  gid: number,
+  run: () => Promise<T>,
+): Promise<T> => {
+  const names = ["geteuid", "getegid"] as const;
+  const originals = names.map((name) =>
+    Object.getOwnPropertyDescriptor(process, name),
+  );
+  names.forEach((name, index) =>
+    Object.defineProperty(process, name, {
+      configurable: true,
+      writable: true,
+      value: () => (index === 0 ? uid : gid),
+    }),
+  );
+  try {
+    return await run();
+  } finally {
+    names.forEach((name, index) => {
+      const original = originals[index];
+      if (original === undefined) Reflect.deleteProperty(process, name);
+      else Object.defineProperty(process, name, original);
+    });
+  }
+};
+
+it("binds Linux credentials to the same native process generation", async () => {
   const host = createSystemProcessOwnershipHost("linux", {});
   filesystem.readFile
     .mockResolvedValueOnce(procStat(100, 10, 42))
     .mockResolvedValueOnce("Name:\tfixture\nUid:\t1000\t1001\t1002\t1003\n")
     .mockResolvedValueOnce(procStat(100, 11, 43));
+  filesystem.stat.mockResolvedValueOnce({ uid: 1001 } as never);
 
   await expect(
-    host.processIdentities?.([entry], undefined, new Set([entry.pid])),
+    withCaller(1001, 20, async () =>
+      host.processIdentities?.([entry], undefined, new Set([entry.pid])),
+    ),
   ).resolves.toEqual(
     new Map([
       [
@@ -58,6 +108,8 @@ it("binds Linux effective UID to the same native process generation", async () =
           state: "readable",
           identity: "linux-starttime:100",
           effectiveUid: 1001,
+          // Kernel ptrace checks also compare the real and saved UIDs.
+          environmentRestriction: "credentials",
           lifecycle: { state: "observed", lifecycle: "non-zombie" },
           relation: {
             state: "observed",
@@ -73,7 +125,40 @@ it("binds Linux effective UID to the same native process generation", async () =
     "/proc/42/status",
     "/proc/42/stat",
   ]);
+  expect(filesystem.stat).toHaveBeenLastCalledWith("/proc/42/environ");
 });
+
+it.each([
+  [
+    "a non-dumpable process",
+    0,
+    "Gid:\t1000\t1000\t1000\t1000\n",
+    "non-dumpable",
+  ],
+  ["a setgid process", 1000, "Gid:\t1000\t5\t5\t5\n", "credentials"],
+  ["an inspectable process", 1000, "Gid:\t1000\t1000\t1000\t1000\n", undefined],
+] as const)(
+  "reports the Linux environment restriction for %s",
+  async (_name, procfsOwnerUid, gidRow, expected) => {
+    const host = createSystemProcessOwnershipHost("linux", {});
+    filesystem.readFile
+      .mockResolvedValueOnce(procStat(100))
+      .mockResolvedValueOnce(`Uid:\t1000\t1000\t1000\t1000\n${gidRow}`)
+      .mockResolvedValueOnce(procStat(100));
+    filesystem.stat.mockResolvedValueOnce({ uid: procfsOwnerUid } as never);
+
+    const identity = (
+      await withCaller(1000, 1000, async () =>
+        host.processIdentities?.([entry], undefined, new Set([entry.pid])),
+      )
+    )?.get(entry.pid);
+
+    expect(identity).toMatchObject({ state: "readable", effectiveUid: 1000 });
+    if (expected === undefined)
+      expect(identity).not.toHaveProperty("environmentRestriction");
+    else expect(identity).toHaveProperty("environmentRestriction", expected);
+  },
+);
 
 it("keeps native identity when status UID is unavailable", async () => {
   const host = createSystemProcessOwnershipHost("linux", {});
@@ -167,6 +252,45 @@ it("reads Linux effective UID only for token-unavailable rows", async () => {
   );
 });
 
+it("keeps the Linux environment restriction while an exiting candidate settles", async () => {
+  let identityReads = 0;
+  filesystem.readFile.mockImplementation(async (path) => {
+    if (String(path) === "/proc/42/status")
+      return "Uid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\n";
+    if (String(path) !== "/proc/42/stat")
+      throw new Error(`unexpected path: ${String(path)}`);
+    identityReads += 1;
+    // PF_EXITING is set after the first identity read.
+    return procStat(100, 1, 42, 42, identityReads === 1 ? 0 : 4);
+  });
+  filesystem.stat.mockResolvedValue({ uid: 0 } as never);
+  const systemHost = createSystemProcessOwnershipHost("linux", {});
+  const host: ProcessOwnershipHost = {
+    ...systemHost,
+    runTokens: async () =>
+      new Map([[entry.pid, { state: "unavailable", reason: "EACCES" }]]),
+  };
+
+  try {
+    const [fact] = await withCaller(1000, 1000, async () =>
+      readProcessOwnershipFacts([entry], host, undefined, {
+        exitSettlement: { deadline: performance.now() + 30 },
+      }),
+    );
+
+    expect(fact?.beforeExitSettlement).toBeDefined();
+    expect(fact?.identityAfter).toMatchObject({
+      state: "readable",
+      lifecycle: { state: "observed", lifecycle: "exiting" },
+      environmentRestriction: "non-dumpable",
+    });
+    expect(identityReads).toBeGreaterThan(3);
+  } finally {
+    filesystem.stat.mockReset();
+    filesystem.stat.mockRejectedValue(filesystemError("ENOENT"));
+  }
+});
+
 it("reports absence only when /proc lookup and signal-zero both report ESRCH", async () => {
   const host = createSystemProcessOwnershipHost("linux", {});
   const signalProbe = vi.spyOn(process, "kill").mockImplementation(() => {
@@ -225,6 +349,21 @@ it("keeps hidden or permission-denied live PIDs unavailable", async () => {
   } finally {
     signalProbe.mockRestore();
   }
+});
+
+it("preserves native identity with unavailable teardown relations", async () => {
+  const host = createSystemProcessOwnershipHost("linux", {});
+  filesystem.readFile.mockResolvedValueOnce(procStat(987654, 0, -1, 42, 4));
+  const identities = await host.processIdentities?.([entry]);
+  expect(identities?.get(42)).toMatchObject({
+    state: "readable",
+    identity: "linux-starttime:987654",
+    lifecycle: { state: "observed", lifecycle: "exiting" },
+    relation: {
+      state: "unavailable",
+      reason: "proc_stat_relation_unavailable",
+    },
+  });
 });
 
 it("keeps permission, parser, and unexpected failures unavailable", async () => {

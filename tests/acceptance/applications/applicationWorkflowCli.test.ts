@@ -1,10 +1,12 @@
 import { execFile } from "node:child_process";
+import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../../scripts/lib/mcp-verification-environment.mjs";
 import { createHash } from "node:crypto";
 import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
+import { runInNewContext } from "node:vm";
 
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
@@ -12,6 +14,11 @@ import { afterAll, describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { writeElectronApiAliasApplication } from "../../fixtures/electronApiAliasApplication.js";
+import {
+  createCliCommandSession,
+  type CliCommandSession,
+} from "../../support/cli/cliCommandSession.js";
+import { definedCliEnvironment } from "../../support/cli/cliFixture.js";
 
 import {
   JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
@@ -34,6 +41,7 @@ import { javaScriptSemanticTraceResultSchema } from "../../../src/domain/javascr
 import type { JavaScriptSemanticQueryInput } from "../../../src/domain/javascript/javascriptSemanticQuerySchemas.js";
 
 const execute = promisify(execFile);
+let cliSession: CliCommandSession | undefined;
 const requireFixture = createRequire(import.meta.url);
 // Analysis requests are stateless; retain one compiled server and its SDK
 // validators while every scenario still owns a separate application directory.
@@ -41,7 +49,11 @@ const mcpTransport = new StdioClientTransport({
   command: process.execPath,
   args: [resolve("scripts/rea.mjs"), "mcp"],
   cwd: process.cwd(),
-  env: { PATH: process.env.PATH ?? "", REA_LOG_LEVEL: "silent" },
+  env: {
+    PATH: process.env.PATH ?? "",
+    REA_LOG_LEVEL: "silent",
+    ...INLINE_EVIDENCE_MCP_ENVIRONMENT,
+  },
   stderr: "pipe",
 });
 mcpTransport.stderr?.on("data", () => undefined);
@@ -57,22 +69,17 @@ const connectedMcpClient = async (): Promise<Client> => {
 
 afterAll(async () => {
   try {
-    await mcpClient.close();
+    try {
+      await mcpClient.close();
+    } finally {
+      await mcpTransport.close();
+    }
   } finally {
-    await mcpTransport.close();
+    await cliSession?.close();
   }
 });
 const WEBPACK_FACTORY_BODY = `
   const key = "dynamic";
-  const __webpack_require__ = {
-    d(target, definitions) {
-      for (const name of Object.keys(definitions))
-        Object.defineProperty(target, name, {
-          enumerable: true,
-          get: definitions[name],
-        });
-    },
-  };
   exports[key] = 1;
   exports["dot.key"] = 2;
   exports[""] = 3;
@@ -824,6 +831,7 @@ describe("application workflow CLI parity", () => {
       }),
       "--json",
     ]);
+    await assertSourceFileView(sourceCompared);
     expect(sourceCompared).toMatchObject({
       operation: "compare_source_to_bundle",
       predicate_type: "rea.source-to-bundle-comparison",
@@ -1095,14 +1103,28 @@ describe("Webpack factory CommonJS export keys", () => {
     }]);`;
     await writeFile(join(root, "bundle.js"), bundle);
 
-    // Execute the same factory body as CommonJS, outside the analyzer, to
-    // verify Node's alias behavior and the exact runtime object keys.
+    // Execute the exact bundle and invoke its registered factory with a loader.
+    // This also rejects invalid factory syntax before trusting the export oracle.
+    const actual = runInNewContext(`
+      globalThis.webpackChunkStaticExports = [];
+      ${bundle}
+      const module = { exports: {} };
+      const loader = {
+        d(target, definitions) {
+          for (const name of Object.keys(definitions))
+            Object.defineProperty(target, name, {
+              enumerable: true,
+              get: definitions[name],
+            });
+        },
+      };
+      const [, factories] = globalThis.webpackChunkStaticExports[0];
+      factories[1](module, module.exports, loader);
+      module.exports;
+    `) as Record<string, unknown>;
     const oracleRoot = await createTestTempDirectory(
       "rea-webpack-export-oracle-",
     );
-    const oraclePath = join(oracleRoot, "oracle.cjs");
-    await writeFile(oraclePath, WEBPACK_FACTORY_BODY);
-    const actual = requireFixture(oraclePath) as Record<string, unknown>;
     expect(Reflect.ownKeys(actual).sort()).toEqual([
       "",
       "dot.key",
@@ -1215,17 +1237,21 @@ describe("Webpack factory CommonJS export keys", () => {
 
 describe("application workflow CLI input", () => {
   it("rejects Evidence ID-only workflow inputs", async () => {
-    const result = await runCli([
-      "compare-application-versions",
-      JSON.stringify({
-        left: JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE.left
-          .evidence_id,
-        right:
-          JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE.right.evidence_id,
-      }),
-      "--json",
-    ]);
-    expect(result).toMatchObject({ code: "invalid_request" });
+    const result = await runCli(
+      [
+        "compare-application-versions",
+        JSON.stringify({
+          left: JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE.left
+            .evidence_id,
+          right:
+            JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE.right.evidence_id,
+        }),
+        "--json",
+      ],
+      {},
+      1,
+    );
+    expect(result).toMatchObject({ code: "evidence_integrity_mismatch" });
   });
 });
 
@@ -1479,6 +1505,51 @@ describe("application workflow CLI and MCP capture lifetimes", () => {
 });
 
 describe("application workflow CLI export Evidence", () => {
+  it("compares primitive changes through local spread copies with CLI and stdio MCP", async () => {
+    const root = await createTestTempDirectory("rea-spread-copy-comparison-");
+    const [left, right] = await analyzeComparisonSources(root, [
+      `export default () => {
+        const o = { a: 1, b: 2 }; const box = { ...o };
+        return { type: "x", a: box.a, b: box.b };
+      };`,
+      `export default () => {
+        const o = { a: 9, b: 2 }; const box = { ...o };
+        return { type: "x", a: box.a, b: box.b };
+      };`,
+    ]);
+    const input = {
+      left,
+      right,
+      left_module_path: "parser.mjs",
+      left_export_name: "default",
+      right_module_path: "parser.mjs",
+      right_export_name: "default",
+    };
+    const expected = {
+      operation: "compare_javascript_export_shapes",
+      normalized_result: {
+        summary: { added: 0, removed: 0, changed: 1, unknown: 0 },
+        coverage: { status: "complete-within-inputs" },
+        changes: [
+          expect.objectContaining({
+            path: "/a",
+            status: "changed",
+            left: { availability: "literal", value: 1 },
+            right: { availability: "literal", value: 9 },
+          }),
+        ],
+      },
+    };
+    expect(
+      await runCliWithRequestFile(
+        root,
+        "compare-javascript-export-shapes",
+        input,
+      ),
+    ).toMatchObject(expected);
+    expect(await compareThroughStdioMcp(input)).toMatchObject(expected);
+  }, 20_000);
+
   it("preserves uncertainty after a helper can mutate an awaited return object", async () => {
     const root = await createTestTempDirectory("rea-awaited-export-shape-cli-");
     const sources = [
@@ -1673,21 +1744,25 @@ describe("application workflow CLI export property presence", () => {
 
 describe("application workflow CLI validation", () => {
   it("returns safe actionable JSON validation details", async () => {
-    const malformed = await runCli([
-      "trace-application-feature",
-      "{not-json",
-      "--json",
-    ]);
+    const malformed = await runCli(
+      ["trace-application-feature", "{not-json", "--json"],
+      {},
+      1,
+    );
     expect(malformed).toMatchObject({
       code: "invalid_request",
-      retryable: true,
+      retryable: false,
       details: {
         issues: [{ path: [], reason: "invalid_format", expected: "JSON" }],
       },
     });
     expect(JSON.stringify(malformed)).not.toContain("not-json");
 
-    const missing = await runCli(["trace-application-feature", "{}", "--json"]);
+    const missing = await runCli(
+      ["trace-application-feature", "{}", "--json"],
+      {},
+      1,
+    );
     expect(missing).toMatchObject({
       code: "invalid_request",
       details: {
@@ -1808,28 +1883,20 @@ it("retains bundled isolated-world contextBridge APIs through dedicated and gene
 const runCli = async (
   arguments_: readonly string[],
   environment: Readonly<Record<string, string>> = {},
+  expectedExitCode: 0 | 1 = 0,
 ): Promise<unknown> => {
-  try {
-    const { stdout } = await execute(
-      process.execPath,
-      ["scripts/rea.mjs", ...arguments_],
-      {
-        cwd: process.cwd(),
-        env: { ...process.env, ...environment },
-        maxBuffer: 16 * 1_024 * 1_024,
-      },
-    );
-    return JSON.parse(stdout);
-  } catch (cause: unknown) {
-    if (
-      typeof cause === "object" &&
-      cause !== null &&
-      "stdout" in cause &&
-      typeof cause.stdout === "string"
-    )
-      return JSON.parse(cause.stdout);
-    throw cause;
-  }
+  cliSession ??= createCliCommandSession();
+  const result = await cliSession.run({
+    arguments: arguments_,
+    cwd: process.cwd(),
+    environment: definedCliEnvironment({ ...process.env, ...environment }),
+  });
+  expect(result.signal, result.stderr || result.stdout).toBeNull();
+  expect(result.exitCode, result.stderr || result.stdout).toBe(
+    expectedExitCode,
+  );
+  expect(result.json, result.stderr || result.stdout).toBeDefined();
+  return result.json;
 };
 
 /**
@@ -1846,4 +1913,72 @@ const runCliWithRequestFile = async (
   const requestPath = join(root, "request.json");
   await writeFile(requestPath, JSON.stringify(request));
   return runCli([command, requestPath, "--json"]);
+};
+
+const assertSourceFileView = async (sourceCompared: unknown) => {
+  const wrongApplication = await runCli(
+    [
+      "compare-source-to-bundle",
+      JSON.stringify({
+        reference: SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE.reference,
+        application: sourceCompared,
+      }),
+      "--json",
+    ],
+    {},
+    1,
+  );
+  expect(wrongApplication).toMatchObject({
+    error: "Application workflow failed",
+  });
+
+  const sourceViewRoot = await createTestTempDirectory("rea-cli-source-view-");
+  const referencePath = join(sourceViewRoot, "reference.json");
+  const sourceComparisonPath = join(sourceViewRoot, "comparison.json");
+  await writeFile(
+    referencePath,
+    JSON.stringify(SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE.reference),
+  );
+  const requestedPath = relative(process.cwd(), referencePath);
+  const fileParent = parseEvidence(
+    await runCli([
+      "compare-source-to-bundle",
+      JSON.stringify({
+        reference: { kind: "file", path: requestedPath },
+        application: JAVASCRIPT_FEATURE_TRACE_EXAMPLE.application,
+      }),
+      "--json",
+    ]),
+  );
+  expect(fileParent.normalized_result).toEqual(
+    parseEvidence(sourceCompared).normalized_result,
+  );
+  expect(fileParent.parameters.reference_source).toEqual({
+    kind: "file",
+    path: absoluteCallerPath(requestedPath),
+    requested_path: requestedPath,
+  });
+  await writeFile(sourceComparisonPath, JSON.stringify(fileParent));
+  const selectedSource = await runCli([
+    "inspect-analysis-view",
+    JSON.stringify({
+      source: { kind: "evidence-file", path: sourceComparisonPath },
+      view: {
+        kind: "source-to-bundle",
+        collection: "mappings",
+        source_paths: ["src/main.ts"],
+        fields: ["status"],
+      },
+    }),
+    "--json",
+  ]);
+  expect(selectedSource).toMatchObject({
+    normalized_result: {
+      parent_operation: "compare_source_to_bundle",
+      items: [
+        { source_path: "src/main.ts", source_index: 0, status: "removed" },
+      ],
+      coverage: { total: 1, exhausted: true },
+    },
+  });
 };

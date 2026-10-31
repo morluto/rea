@@ -3,7 +3,7 @@
 REA can analyze DOS MZ executables and explicitly selected COM images through the bring-your-own Ghidra adapter.
 The Linux x64 and macOS arm64 verification lanes exercise actual 16-bit disassembly and
 decompilation through the CLI and stdio MCP. Provider admission accepts Ghidra
-12.1.x and that installation's declared JDK range. The verification lane uses
+12.x (>=12.1) and that installation's declared JDK range. The verification lane uses
 Ghidra 12.1.4 and JDK 21; no DOS emulator or cross-compiler is required.
 
 ## Open and inspect
@@ -23,13 +23,24 @@ not name its entry function `entry`. MCP uses `open_binary`, `list_procedures`,
 `procedure_info`, `read_function_instructions`, and `analyze_function` with the
 same admitted target and provider semantics.
 
-The classifier validates MZ page counts, initialized module length, header and
+The DOS MZ parser validates page counts, initialized module length, header and
 relocation-table bounds, relocation destinations, and the initialized entry
-point. It distinguishes DOS load-module and relocation bytes from the Windows
-new-header field. PE remains PE; NE, LE, and LX declarations are explicitly
-unsupported. A damaged declared Windows header does not silently become DOS.
-Inventory classification returns `unknown` when its bounded prefix cannot
-establish the format; this is distinct from the complete target admission check.
+point using the available structural bytes and actual file length. It reports
+those DOS facts separately from Windows-header evidence. A recognized PE
+signature remains PE; recognized NE, LE, and LX headers are explicitly
+unsupported. A nonzero Windows-header pointer without a recognized signature
+usually remains an unresolved candidate, even when the DOS structure validates:
+automatic target selection fails closed and reports both observations. When a
+nonempty relocation table ends inside a complete DOS header, the remaining
+header bytes belong to DOS padding; a nonzero dword there is not a Windows
+declaration. An unread signature beyond the current probe is requested before
+that padding rule applies. This avoids manufacturing a Windows header from
+original DOS padding while preserving rejection of damaged Windows
+declarations.
+Inventory classification is a bounded-prefix format hint; it returns `unknown`
+for an unresolved candidate or when its prefix cannot establish the format.
+That result is distinct from complete DOS validation and does not decide target
+admission.
 
 Ghidra imports a private target snapshot with `MzLoader`, language
 `x86:LE:16:Real Mode`, and compiler specification `default`. These settings,

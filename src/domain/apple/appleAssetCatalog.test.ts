@@ -1,10 +1,42 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  appleAssetCatalogResultSchema,
   appleAssetCatalogInputSchema,
   parseAppleAssetCatalogRecords,
   projectAppleAssetCatalogPage,
 } from "./appleAssetCatalog.js";
+
+it("requires resource-root provenance when asset results have no executable identity", () => {
+  const base = {
+    target_sha256: null,
+    catalogs: [],
+    inventory_coverage: {
+      scope: "container-entries" as const,
+      status: "unknown" as const,
+    },
+    total_records: 0,
+    offset: 0,
+    limit: 1,
+    records: [],
+    resource_key_matches: [],
+    next_offset: null,
+    truncated: false,
+    limitations: [],
+  };
+  const resource_root = {
+    caller_path: "/tmp/Fixture.app",
+    canonical_path: "/tmp/Fixture.app",
+    info_plist_path: "/tmp/Fixture.app/Info.plist",
+    layout: "root" as const,
+    executable_sha256: null,
+  };
+  expect(
+    appleAssetCatalogResultSchema.parse({ ...base, resource_root })
+      .resource_root,
+  ).toEqual(resource_root);
+  expect(appleAssetCatalogResultSchema.safeParse(base).success).toBe(false);
+});
 
 describe("compiled Apple asset catalog projection", () => {
   it("preserves metadata and paginates across catalog boundaries", () => {

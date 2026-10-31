@@ -11,6 +11,10 @@ import {
   type SourceToBundleCandidate,
   type SourceToBundleSignal,
 } from "./sourceToBundleComparisonSchemas.js";
+import {
+  javaScriptFileOccurrenceSchema,
+  type JavaScriptFileOccurrence,
+} from "./javascriptArtifactFiles.js";
 import { isDigest } from "../digests.js";
 
 type SourceFile = Extract<
@@ -32,6 +36,8 @@ interface CurrentPath {
 
 interface CurrentProjection {
   readonly node: ApplicationNode;
+  readonly occurrence?: JavaScriptFileOccurrence;
+  readonly representations: readonly string[];
   readonly digests: ReadonlySet<string>;
   readonly paths: readonly CurrentPath[];
 }
@@ -95,32 +101,32 @@ export const historicalSourceFiles = (
 export const buildSourceToBundleCandidateIndex = (
   nodes: readonly ApplicationNode[],
 ): SourceToBundleCandidateIndex => {
-  const projections = nodes.map(projectCurrentNode);
+  const projections = projectCurrentOccurrences(nodes);
   const byDigest = new Map<string, Set<string>>();
   const byPathSuffix = new Map<string, Set<string>>();
   const byBasename = new Map<string, Set<string>>();
   for (const projection of projections) {
     for (const digest of projection.digests)
-      addIndexValue(byDigest, digest, projection.node.node_id);
+      addIndexValue(byDigest, digest, projectionKey(projection));
     for (const path of projection.paths) {
       for (const suffix of path.allowSuffix
         ? pathSuffixes(path.value)
         : [path.value]) {
-        addIndexValue(byPathSuffix, suffix, projection.node.node_id);
+        addIndexValue(byPathSuffix, suffix, projectionKey(projection));
         const canonical = suffix.normalize("NFC");
         if (canonical !== suffix)
-          addIndexValue(byPathSuffix, canonical, projection.node.node_id);
+          addIndexValue(byPathSuffix, canonical, projectionKey(projection));
       }
       addIndexValue(
         byBasename,
         posix.basename(path.value),
-        projection.node.node_id,
+        projectionKey(projection),
       );
     }
   }
   return {
     nodes: new Map(
-      projections.map((projection) => [projection.node.node_id, projection]),
+      projections.map((projection) => [projectionKey(projection), projection]),
     ),
     byDigest,
     byPathSuffix,
@@ -158,8 +164,10 @@ export const candidateIdsForSource = (
 /** Whether an indexed candidate carries any content digest to compare. */
 export const candidateHasDigest = (
   index: SourceToBundleCandidateIndex,
-  nodeId: string,
-): boolean => (index.nodes.get(nodeId)?.digests.size ?? 0) > 0;
+  candidate: SourceToBundleCandidate,
+): boolean =>
+  (index.nodes.get(sourceToBundleCandidateIdentity(candidate))?.digests.size ??
+    0) > 0;
 
 /** Score one indexed candidate from explicit, caller-visible signals. */
 export const scoreSourceToBundleCandidate = (
@@ -173,12 +181,90 @@ export const scoreSourceToBundleCandidate = (
   const score = signals.reduce((total, signal) => total + signal.weight, 0);
   if (score < 20) return null;
   return {
+    ...(projection.occurrence === undefined
+      ? {}
+      : {
+          current_file_occurrence: projection.occurrence,
+          representation_node_ids: [...projection.representations],
+        }),
     current_node_id: projection.node.node_id,
     current_node_kind: projection.node.kind,
     score,
     confidence: candidateConfidence(signals),
     signals,
   };
+};
+
+const fileOccurrenceKey = (occurrence: JavaScriptFileOccurrence): string =>
+  compositeKey([
+    "file-occurrence",
+    occurrence.container_sha256,
+    occurrence.path,
+    occurrence.sha256,
+  ]);
+const projectionKey = (projection: CurrentProjection): string =>
+  projection.occurrence === undefined
+    ? projection.node.node_id
+    : fileOccurrenceKey(projection.occurrence);
+
+/** Matching and multiplicity share the producing occurrence identity. */
+export const sourceToBundleCandidateIdentity = (
+  candidate: SourceToBundleCandidate,
+): string =>
+  candidate.current_file_occurrence === undefined
+    ? candidate.current_node_id
+    : fileOccurrenceKey(candidate.current_file_occurrence);
+
+const projectCurrentOccurrences = (
+  nodes: readonly ApplicationNode[],
+): CurrentProjection[] => {
+  const groups = new Map<string, CurrentProjection>();
+  for (const node of nodes) {
+    const occurrences = new Map<
+      string,
+      {
+        occurrence: JavaScriptFileOccurrence;
+        observations: ApplicationNode["observations"][number][];
+      }
+    >();
+    for (const observation of node.observations) {
+      const parsed = javaScriptFileOccurrenceSchema.safeParse(
+        observation.properties.file_occurrence,
+      );
+      if (!parsed.success) continue;
+      const key = fileOccurrenceKey(parsed.data);
+      const previous = occurrences.get(key);
+      if (previous === undefined)
+        occurrences.set(key, {
+          occurrence: parsed.data,
+          observations: [observation],
+        });
+      else previous.observations.push(observation);
+    }
+    if (occurrences.size === 0) {
+      groups.set(node.node_id, projectCurrentNode(node));
+      continue;
+    }
+    for (const [key, { occurrence, observations }] of occurrences) {
+      const projected = projectCurrentNode({ ...node, observations });
+      const previous = groups.get(key);
+      groups.set(key, {
+        ...projected,
+        occurrence,
+        node: previous?.node ?? node,
+        representations: [
+          ...new Set([...(previous?.representations ?? []), node.node_id]),
+        ].sort(compareUnicodeCodePoints),
+        digests: new Set([
+          occurrence.sha256,
+          ...projected.digests,
+          ...(previous?.digests ?? []),
+        ]),
+        paths: uniquePaths([...projected.paths, ...(previous?.paths ?? [])]),
+      });
+    }
+  }
+  return [...groups.values()];
 };
 
 const projectCurrentNode = (node: ApplicationNode): CurrentProjection => {
@@ -229,6 +315,7 @@ const projectCurrentNode = (node: ApplicationNode): CurrentProjection => {
   }
   return {
     node,
+    representations: [node.node_id],
     digests,
     paths: uniquePaths(paths),
   };

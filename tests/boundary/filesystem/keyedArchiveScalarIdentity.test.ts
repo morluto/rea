@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { build } from "plist";
 import { expect, it } from "vitest";
 import { inspectBundleKeyedArchive } from "../../../src/artifacts/apple/KeyedArchiveReader.js";
 import { keyedArchiveResultSchema } from "../../../src/domain/apple/keyedArchive.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
+import { keyedArchiveUidBytes } from "../../fixtures/keyedArchiveThreeByteUid.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
@@ -134,5 +135,58 @@ cliTest.for(cases)(
       kind,
       item.digest,
     );
+  },
+);
+
+cliTest.for(["three-byte-uid"] as const)(
+  "preserves three-byte UID identity through the keyed-archive CLI",
+  async (_kind, { cli }) => {
+    const root = await createTestTempDirectory("rea-keyed-three-byte-uid-");
+    const path = join(root, "archive.plist");
+    const bytes = keyedArchiveUidBytes();
+    const digest = createHash("sha256").update(bytes).digest("hex");
+    await writeFile(path, bytes);
+    const output = await cli.run({
+      arguments: ["inspect-keyed-archive", path, "--json"],
+      environment: { REA_LOG_LEVEL: "silent", REA_ANALYSIS_PROVIDER: "auto" },
+    });
+    expect(output.exitCode).toBe(0);
+    const result = keyedArchiveResultSchema.parse(
+      parseEvidence(output.json).normalized_result,
+    );
+    expect(result.archive_sha256).toBe(digest);
+    expect(result.roots).toEqual({ root: { UID: 66051 } });
+    expect(result.references).toContainEqual({
+      source: null,
+      path: ["root"],
+      target: 66051,
+      status: "unresolved",
+      raw: { UID: 66051 },
+    });
+  },
+);
+
+cliTest(
+  "reports an inexact binary UID as unsupported without changing the artifact",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-keyed-inexact-uid-");
+    const path = join(root, "archive.plist");
+    const bytes = keyedArchiveUidBytes(8, BigInt(Number.MAX_SAFE_INTEGER) + 1n);
+    const originalHash = createHash("sha256").update(bytes).digest("hex");
+    await writeFile(path, bytes);
+
+    const output = await cli.run({
+      arguments: ["inspect-keyed-archive", path, "--json"],
+      environment: { REA_LOG_LEVEL: "silent", REA_ANALYSIS_PROVIDER: "auto" },
+    });
+
+    expect(output.exitCode).toBe(1);
+    expect(output.json).toMatchObject({
+      code: "unsupported_target",
+      message: expect.stringContaining("9007199254740992"),
+    });
+    const after = await readFile(path);
+    expect(Buffer.compare(after, bytes)).toBe(0);
+    expect(createHash("sha256").update(after).digest("hex")).toBe(originalHash);
   },
 );

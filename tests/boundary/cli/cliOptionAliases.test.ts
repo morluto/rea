@@ -38,6 +38,14 @@ const registeredAliases = (
 };
 
 describe("CLI option aliases", () => {
+  it("rejects an empty primary command inventory", () => {
+    const cli = createCli({});
+    registeredCommands.set(cli, new Map());
+    expect(() => createCliInventory(cli)).toThrow(
+      "Incur exposed no primary REA CLI commands",
+    );
+  });
+
   it("register only single-character short flags", async () => {
     const cli = createCli({});
     const invalid: string[] = [];

@@ -62,6 +62,12 @@ const cutIdentifierAtBudget = async () => {
 const writeThen = (stream, text, then) =>
   stream.write(text, () => setTimeout(then, 10));
 
+if (mode === "remote_error" || mode === "remote_startup_error")
+  await new Promise((resolve) =>
+    process.stdout.write("Fixture launcher startup output\n", resolve),
+  );
+
+let endpointPublication;
 if (mode === "exit") process.exit(73);
 if (mode === "flood_silent") {
   await floodStdout();
@@ -102,7 +108,14 @@ else {
   });
   if (transport === "unix-socket") server.listen(endpointPath);
   else {
-    server.listen(0, "127.0.0.1", async () => {
+    endpointPublication = (async () => {
+      await new Promise((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", () => {
+          server.off("error", reject);
+          resolve();
+        });
+      });
       const address = server.address();
       if (address === null || typeof address === "string") process.exit(65);
       const pending = `${endpointPath}.pending`;
@@ -115,7 +128,7 @@ else {
         { flag: "wx" },
       );
       await rename(pending, endpointPath);
-    });
+    })();
   }
 }
 
@@ -149,6 +162,10 @@ const handleOutputFailure = (socket, state) => {
   if (state.mode === "prefix_cut_identifier_exit_tools")
     void cutIdentifierAtBudget();
   else if (state.mode === "oom_exit_tools") oome();
+  else if (state.mode === "sigkill_tools")
+    writeThen(process.stdout, "WARN Decompiling 14005c790, pcode error\n", () =>
+      process.kill(process.pid, "SIGKILL"),
+    );
   else if (state.mode === "flood_then_oom_exit_tools")
     void floodStdout().then(oome);
   else if (state.mode === "flood_then_exit_tools")
@@ -187,29 +204,80 @@ const handleRequest = (socket, server, request, state) => {
     return;
   }
   if (state.mode === "remote_error" && request.method === "list_procedures") {
-    socket.write(
-      `${JSON.stringify({
-        id: request.id,
-        ok: false,
-        error: {
-          code: "not_found",
-          message: "Unknown Ghidra procedure name",
-        },
-      })}\n`,
+    writeThen(
+      process.stdout,
+      "Fixture request rejected: missing procedure\n",
+      () =>
+        socket.write(
+          `${JSON.stringify({
+            id: request.id,
+            ok: false,
+            error: {
+              code: "not_found",
+              message: "Unknown Ghidra procedure name",
+            },
+          })}\n`,
+        ),
     );
     return;
   }
   if (state.mode === "exit_tools" && request.method !== "shutdown")
     process.exit(74);
+  if (
+    state.mode === "sigkill_after_first_tool" &&
+    request.method !== "shutdown" &&
+    (state.toolRequests = (state.toolRequests ?? 0) + 1) > 1
+  )
+    process.kill(process.pid, "SIGKILL");
   if (request.method !== "shutdown" && handleOutputFailure(socket, state))
     return;
   if (state.mode === "hang_tools" && request.method !== "shutdown") return;
+  if (
+    state.mode === "unicode_search" &&
+    ["search_procedures", "search_strings"].includes(request.method)
+  ) {
+    const params = request.params;
+    const insensitiveLiteral =
+      params.mode === "literal" && params.case_sensitive === false;
+    // Fixed producer expectations deliberately do not reuse the host derivation.
+    const candidates = new Map([
+      ["source", "source"],
+      ["ſOURCE", "source"],
+      ["Σ", null],
+    ]);
+    const valid = insensitiveLiteral
+      ? candidates.has(params.pattern) &&
+        Object.hasOwn(params, "literal_ascii_candidate") &&
+        params.literal_ascii_candidate === candidates.get(params.pattern)
+      : !Object.hasOwn(params, "literal_ascii_candidate");
+    if (!valid) {
+      socket.write(
+        `${JSON.stringify({
+          id: request.id,
+          ok: false,
+          error: {
+            code: "invalid_request",
+            message: "Literal candidate wire fields drifted",
+          },
+        })}\n`,
+      );
+      return;
+    }
+  }
   const inventory =
     request.method === "list_strings" && state.mode === "fragmented"
       ? [stringItem("0x2000", "fixture 雪🦊")]
       : request.method === "list_strings" && state.mode === "oversized_result"
         ? [stringItem("0x2000", "x".repeat(64 * 1024 * 1024 + 1))]
-        : inventoryResultFor(request.method, request.params);
+        : state.mode === "unicode_search" &&
+            ["search_procedures", "search_strings"].includes(request.method)
+          ? [
+              { address: "0x1000", value: "ſource" },
+              { address: "0x1001", value: "SOURCE" },
+              { address: "0x1002", value: "İource" },
+              { address: "0x1003", value: "unrelated" },
+            ]
+          : inventoryResultFor(request.method, request.params);
   if (inventory !== undefined) {
     const response = `${JSON.stringify({ id: request.id, ok: true, result: inventory })}\n`;
     if (state.mode === "fragmented") {
@@ -248,6 +316,19 @@ const handleRequest = (socket, server, request, state) => {
 };
 
 const handlePing = (socket, request, state) => {
+  if (state.mode === "remote_startup_error") {
+    socket.write(
+      `${JSON.stringify({
+        id: request.id,
+        ok: false,
+        error: {
+          code: "invalid_request",
+          message: "Fixture rejected startup handshake",
+        },
+      })}\n`,
+    );
+    return;
+  }
   state.pings.value += 1;
   if (state.mode === "diagnostic_output" && state.pings.value === 1) {
     const retainedTokenPrefixBytes = Math.floor(state.token.length / 2);
@@ -499,3 +580,5 @@ const stringSearchItem = () => ({
   address: "0x2000",
   value: "fixture value",
 });
+
+await endpointPublication;

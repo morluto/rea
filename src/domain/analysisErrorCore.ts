@@ -1,4 +1,5 @@
 import type { JsonValue } from "./jsonValue.js";
+import type { FixedAllowance } from "./fixedAllowanceRemediation.js";
 import {
   AnalysisError,
   type AnalysisErrorOptions,
@@ -32,29 +33,107 @@ export const ANALYSIS_RESOURCE_KINDS = [
 /** A measured resource constraint or bounded admission refusal. */
 export class AnalysisResourceConstraintError extends AnalysisError {
   readonly _tag = "AnalysisResourceConstraintError";
-  readonly remediationAction: string | undefined;
   /**
-   * Whether retrying the same request can succeed. A caller-selected bound is
-   * deterministic for the same input, so it is not retryable even when its
-   * resource kind would otherwise be treated as admission capacity.
+   * The one recovery this refusal carries. A fixed allowance and a separate
+   * remediation sentence do not co-occur; retryability belongs to that same
+   * object.
    */
-  readonly retryable: boolean | undefined;
+  readonly recovery: ResourceConstraintRecovery;
 
   constructor(
     readonly operation: string,
     readonly resource: (typeof ANALYSIS_RESOURCE_KINDS)[number],
     readonly reason: string,
     readonly reportedLimits: Readonly<Record<string, JsonValue>> | null,
-    options?: AnalysisErrorOptions & {
-      readonly remediationAction?: string;
-      readonly retryable?: boolean;
-    },
+    options?: AnalysisErrorOptions & ResourceConstraintRecovery,
   ) {
     super(`Resource constraint during ${operation}: ${reason}`, options);
-    this.remediationAction = options?.remediationAction;
-    this.retryable = options?.retryable;
+    this.recovery = resourceConstraintRecoveryFrom(options);
+  }
+
+  /** Projection of `recovery`. Absent when recovery names a fixed allowance. */
+  get remediationAction(): string | undefined {
+    return this.recovery.remediationAction;
+  }
+
+  /**
+   * Projection of `recovery`. The fixed format, decoder, or capture allowance
+   * that refused the request. Worker limits and host resources do not raise
+   * it, so recovery derives from this allowance rather than from `resource`.
+   */
+  get fixedAllowance(): FixedAllowance | undefined {
+    return this.recovery.fixedAllowance;
+  }
+
+  /**
+   * Projection of `recovery`. Whether retrying the same request can succeed.
+   * A caller-selected bound is deterministic for the same input, so it is not
+   * retryable even when its resource kind would otherwise be treated as
+   * admission capacity.
+   */
+  get retryable(): boolean | undefined {
+    return this.recovery.retryable;
   }
 }
+
+const resourceConstraintRecoveryFrom = (
+  options: ResourceConstraintRecovery | undefined,
+): ResourceConstraintRecovery => {
+  if (options?.fixedAllowance !== undefined)
+    return {
+      fixedAllowance: options.fixedAllowance,
+      ...(options.retryable === undefined
+        ? {}
+        : { retryable: options.retryable }),
+    };
+  return {
+    ...(options?.remediationAction === undefined
+      ? {}
+      : { remediationAction: options.remediationAction }),
+    ...(options?.retryable === undefined
+      ? {}
+      : { retryable: options.retryable }),
+  };
+};
+
+/** Carry one refusal's recovery to an error re-attributed or redacted elsewhere. */
+export const resourceConstraintRecovery = (
+  error: AnalysisResourceConstraintError,
+  text: (value: string) => string = (value) => value,
+): ResourceConstraintRecovery => {
+  const recovery = error.recovery;
+  return recovery.fixedAllowance !== undefined
+    ? {
+        fixedAllowance: {
+          name: text(recovery.fixedAllowance.name),
+          kind: recovery.fixedAllowance.kind,
+        },
+        ...(recovery.retryable === undefined
+          ? {}
+          : { retryable: recovery.retryable }),
+      }
+    : {
+        ...(recovery.remediationAction === undefined
+          ? {}
+          : { remediationAction: text(recovery.remediationAction) }),
+        ...(recovery.retryable === undefined
+          ? {}
+          : { retryable: recovery.retryable }),
+      };
+};
+
+/** Producer-specific recovery, or a fixed allowance whose recovery is derived. */
+export type ResourceConstraintRecovery =
+  | {
+      readonly remediationAction?: string;
+      readonly fixedAllowance?: never;
+      readonly retryable?: boolean;
+    }
+  | {
+      readonly fixedAllowance: FixedAllowance;
+      readonly remediationAction?: never;
+      readonly retryable?: boolean;
+    };
 
 /** Provider-neutral invalid analysis input or output at an application boundary. */
 export class AnalysisProtocolError extends AnalysisError {
@@ -65,14 +144,20 @@ export class AnalysisProtocolError extends AnalysisError {
 export class AnalysisInputError extends AnalysisError {
   readonly _tag = "AnalysisInputError";
   override readonly userMessage: string | undefined;
+  /** Refusal-specific correction, when the generic input-contract advice cannot fix it. */
+  readonly remediationAction: string | undefined;
 
   constructor(
     readonly operation: string,
-    options?: AnalysisErrorOptions & { readonly userMessage?: string },
+    options?: AnalysisErrorOptions & {
+      readonly userMessage?: string;
+      readonly remediationAction?: string;
+    },
     readonly issues: readonly AnalysisInputIssue[] = [],
   ) {
     super(`Invalid analysis input for ${operation}`, options);
     this.userMessage = options?.userMessage;
+    this.remediationAction = options?.remediationAction;
   }
 }
 
@@ -89,6 +174,8 @@ export interface AnalysisInputIssue {
   /** Schema-authored correction guidance for cross-field or custom checks. */
   readonly message?: string;
   readonly expected?: JsonValue;
+  /** Producer-examined facts about the refused value, such as its location and shape. */
+  readonly observed?: JsonValue;
   readonly minimum?: number;
   readonly maximum?: number;
 }

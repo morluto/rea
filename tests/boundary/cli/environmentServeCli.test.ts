@@ -134,7 +134,7 @@ cliTest(
     url.search = query.toString();
     request.url = url.href;
     const capture = analysisViewCaptureEvidence(records);
-    const manifest = inspectAnalysisView({
+    const manifest = await inspectAnalysisView({
       source: { kind: "inline", evidence: capture },
       view: { kind: "environment-manifest" },
     });

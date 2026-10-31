@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { expect, it } from "vitest";
@@ -8,9 +9,10 @@ import { z } from "zod";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { workflowGit } from "../../support/workflowGit.js";
+import { resolveTypeScriptCompiler } from "../../../scripts/run-typescript.mjs";
 
 const repository = fileURLToPath(new URL("../../../", import.meta.url));
-const turbo = join(repository, "node_modules/turbo/bin/turbo");
+const turbo = join(repository, "scripts/run-turbo.mjs");
 const reportScript = join(repository, "scripts/ci/static-check-report.mjs");
 const rootConfigSchema = z.object({
   globalDependencies: z.array(z.string()).optional(),
@@ -350,6 +352,13 @@ it.each([
     invalidatesCompile: false,
   },
   {
+    label: "compiler launcher",
+    path: "scripts/run-typescript.mjs",
+    content: 'throw new Error("compiler launcher changed");\n',
+    diagnostic: "compiler launcher changed",
+    invalidatesCompile: true,
+  },
+  {
     label: "source declaration",
     path: "src/types.d.mts",
     content: "export type SourceValue = 2;\n",
@@ -410,10 +419,14 @@ it.each([
       ["compile", "typecheck"],
       {
         // Exercise the real compiler phase with the production task inputs.
-        compile: "tsc -p tsconfig.build.json",
-        typecheck: "tsc --noEmit",
+        compile: "node scripts/run-typescript.mjs -p tsconfig.build.json",
+        typecheck: "node scripts/run-typescript.mjs --noEmit",
       },
       { "#compiler-scope": "./scripts/root-types.d.mts" },
+    );
+    await writeFile(
+      join(root, "scripts/run-typescript.mjs"),
+      await readFile(join(repository, "scripts/run-typescript.mjs")),
     );
     for (const name of [
       "tsconfig.json",
@@ -612,3 +625,125 @@ it("invalidates checker task hashes for Node, ignore, and VitePress config chang
       `${task} must ignore vitest.config.ts`,
     ).toBe(initial.get(task));
 });
+
+it.skipIf(resolveTypeScriptCompiler().name !== "tsrs")(
+  "does not replay an official compiler success for a Rust compiler error",
+  async () => {
+    const root = await createTestTempDirectory("rea-cross-compiler-cache-");
+    const cache = await createTestTempDirectory("rea-cross-compiler-store-");
+    const require = createRequire(import.meta.url);
+    await mkdir(join(root, "scripts"));
+    await mkdir(join(root, "src"));
+    await mkdir(join(root, "node_modules/tsrs"), { recursive: true });
+    for (const name of ["typescript", "turbo"])
+      await symlink(
+        dirname(require.resolve(`${name}/package.json`)),
+        join(root, "node_modules", name),
+        "junction",
+      );
+    for (const name of ["run-typescript.mjs", "run-turbo.mjs"])
+      await writeFile(
+        join(root, "scripts", name),
+        await readFile(join(repository, "scripts", name)),
+      );
+    await writeTaskFixture(root, ["compile", "typecheck"], {
+      compile: "node scripts/run-typescript.mjs -p tsconfig.build.json",
+      typecheck: "node scripts/run-typescript.mjs --noEmit",
+    });
+    const rustPath = require.resolve("tsrs/package.json");
+    const rust = z
+      .object({ version: z.string(), bin: z.object({ tsrs: z.string() }) })
+      .parse(JSON.parse(await readFile(rustPath, "utf8")));
+    const writeInventory = (supported: boolean) =>
+      writeFile(
+        join(root, "node_modules/tsrs/package.json"),
+        JSON.stringify({
+          name: "tsrs",
+          version: rust.version,
+          bin: { tsrs: resolve(dirname(rustPath), rust.bin.tsrs) },
+          optionalDependencies: supported
+            ? { [`@tsrs/${process.platform}-${process.arch}`]: rust.version }
+            : {},
+        }),
+      );
+    await writeInventory(false);
+    await writeFile(
+      join(root, "tsconfig.json"),
+      JSON.stringify({
+        compilerOptions: {
+          strict: true,
+          rootDir: "src",
+          types: [],
+          lib: ["ES2023", "DOM"],
+          target: "ES2023",
+          module: "NodeNext",
+          outDir: "dist",
+        },
+        include: ["src/**/*.ts"],
+      }),
+    );
+    await writeFile(
+      join(root, "tsconfig.build.json"),
+      '{"extends":"./tsconfig.json"}\n',
+    );
+    await writeFile(
+      join(root, ".gitignore"),
+      "node_modules/\ndist/\n.cache/\n.turbo/\n",
+    );
+    // TS 7.0 accepts this contextual callback; TS 7.1 reports TS7031.
+    // The source stays identical while only the selected compiler changes.
+    await writeFile(
+      join(root, "src/repro.ts"),
+      [
+        "interface Options { signal?: AbortSignal }",
+        "interface Provider { inspect(options?: Options): Promise<void> }",
+        "declare const base: Provider;",
+        "const providers: Provider[] = [{ ...base, inspect: async ({ signal } = {}) => {",
+        "  if (signal?.aborted) throw signal.reason;",
+        "} }];",
+      ].join("\n"),
+    );
+    await workflowGit(root, ["init", "--initial-branch=main"]);
+    await workflowGit(root, ["add", "."]);
+    await workflowGit(root, ["commit", "-m", "test: seed compiler isolation"]);
+    const run = (task: string, dryRun = false) =>
+      execute(
+        join(root, "scripts/run-turbo.mjs"),
+        [
+          "run",
+          task,
+          ...(dryRun ? ["--dry=json"] : ["--output-logs=errors-only"]),
+          "--cache=local:rw",
+          "--cache-dir",
+          cache,
+        ],
+        root,
+      );
+    const hash = (task: string) => {
+      const result = run(task, true);
+      expect(result.status, result.stdout + result.stderr).toBe(0);
+      const entry = dryRunSchema
+        .parse(JSON.parse(result.stdout))
+        .tasks.find((value) => value.taskId === task);
+      if (entry === undefined) throw new Error(`Missing compiler task ${task}`);
+      return entry.hash;
+    };
+    const hashes = new Map<string, string>();
+    for (const task of ["compile", "typecheck"]) {
+      const cold = run(task);
+      expect(cold.status, cold.stdout + cold.stderr).toBe(0);
+      hashes.set(task, hash(task));
+      const warm = run(task);
+      expect(warm.status, warm.stdout + warm.stderr).toBe(0);
+      expect(warm.stdout).toMatch(/Cached:\s+1 cached/u);
+    }
+    await writeInventory(true);
+    for (const task of ["compile", "typecheck"]) {
+      const result = run(task);
+      expect(result.status, result.stdout + result.stderr).toBeGreaterThan(0);
+      expect(result.stdout + result.stderr).toContain("TS7031");
+      expect(result.stdout).toMatch(/Cached:\s+0 cached/u);
+      expect(hash(task)).not.toBe(hashes.get(task));
+    }
+  },
+);

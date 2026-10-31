@@ -1,12 +1,17 @@
+import {
+  projectStableArtifactFailure,
+  projectArtifactCloseFailure,
+} from "../../artifacts/StableArtifactFailure.js";
+import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
+import { fixedNativeAllowance } from "../../domain/native/nativeDeadlines.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
 import {
-  ArtifactFileCleanupFailure,
-  bindArtifactFileCleanup,
+  artifactFilePrimaryFacts,
+  type ArtifactFilePrimaryFacts,
   artifactFileCancellationCause,
 } from "../../artifacts/ArtifactFileOperation.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import type { PeResourcesPort } from "../../application/binaryDiagnostics/PeResourcesPort.js";
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
@@ -23,9 +28,11 @@ import {
   type InspectPeResourcesInput,
 } from "../../domain/native/peResources.js";
 import { err, ok } from "../../domain/result.js";
-import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
-import { PE_RESOURCES_PROVIDER } from "../../application/InvestigationProviders.js";
-import { parsePeResources } from "./PeResourceParser.js";
+import { PE_RESOURCES_PROVIDER } from "../../domain/investigationProviders.js";
+import {
+  parsePeResources,
+  PE_RESOURCE_METADATA_BYTES,
+} from "./PeResourceParser.js";
 
 /** Portable parser over one bounded, identity-checked regular file. */
 export class PeResourcesProvider implements PeResourcesPort {
@@ -36,19 +43,11 @@ export class PeResourcesProvider implements PeResourcesPort {
     try {
       await this.#resources.close();
     } catch (cause: unknown) {
-      if (
-        !(cause instanceof ArtifactReaderFailure) ||
-        cause.cleanup === undefined
-      )
-        throw cause;
-      const error = new ProviderCleanupError(
+      throw projectArtifactCloseFailure(
+        cause,
         PE_RESOURCES_PROVIDER.id,
-        cause.cleanup.resources,
-        { reason: cause.cleanup.reason },
-        { cause, operation: "inspect_pe_resources" },
+        "inspect_pe_resources",
       );
-      bindArtifactFileCleanup(cause, error);
-      throw error;
     }
   }
 
@@ -76,7 +75,7 @@ export class PeResourcesProvider implements PeResourcesPort {
         );
       });
     } catch (cause) {
-      return err(peResourcesFailure(cause, input, options?.signal));
+      return err(peResourcesFailure(cause, input));
     }
   }
 }
@@ -92,33 +91,46 @@ export const inputBudgetRemediation = (
 ): string =>
   boundary === "file-size"
     ? input.max_file_bytes >= MAX_INSPECT_PE_FILE_BYTES
-      ? `The image exceeds the ${String(MAX_INSPECT_PE_FILE_BYTES)}-byte input ceiling this operation accepts; select a smaller artifact.`
+      ? `The image exceeds the ${String(MAX_INSPECT_PE_FILE_BYTES)}-byte input ceiling this operation accepts. This release has no runtime override. Select a smaller artifact.`
       : `Raise max_file_bytes above ${String(input.max_file_bytes)} bytes or select a smaller artifact; the limit is the caller-selected input read budget.`
     : input.max_entries >= MAX_INSPECT_PE_DIRECTORY_ENTRIES
-      ? `The image exceeds the ${String(MAX_INSPECT_PE_DIRECTORY_ENTRIES)}-entry resource-directory ceiling this operation accepts; select a smaller artifact.`
+      ? `The image exceeds the ${String(MAX_INSPECT_PE_DIRECTORY_ENTRIES)}-entry resource-directory ceiling this operation accepts. This release has no runtime override. Select a smaller artifact.`
       : `Raise max_entries above ${String(input.max_entries)} or select a smaller artifact; the limit is the caller-selected resource directory entry budget.`;
 
 const peResourcesFailurePrimary = (
-  cause: unknown,
+  facts: ArtifactFilePrimaryFacts,
   input: InspectPeResourcesInput,
 ) => {
+  const { cause, origin } = facts;
   const operation = "inspect_pe_resources";
-  if (cause instanceof ArtifactReaderFailure && cause.reason === "integrity")
+  if (
+    origin === "owned-or-classified" &&
+    cause instanceof ArtifactReaderFailure &&
+    cause.reason === "integrity"
+  )
     return new AnalysisArtifactChangedError(
       operation,
       input.path,
       cause.message,
       { cause },
     );
-  if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
+  if (
+    origin === "owned-or-classified" &&
+    cause instanceof ArtifactReaderFailure &&
+    cause.reason === "cancelled"
+  )
     return new AnalysisCancelledError(operation, {
       cause: artifactFileCancellationCause(cause),
     });
 
-  if (cause instanceof ArtifactReaderFailure) {
+  if (
+    origin === "owned-or-classified" &&
+    cause instanceof ArtifactReaderFailure
+  ) {
     // An input byte budget is a file-size bound, not a memory constraint, and
     // an entry budget is a capacity bound. Report what was actually exceeded.
-    if (cause.reason === "limit")
+    if (cause.reason === "limit") {
+      const metadata = cause.boundary === "memory";
       return new AnalysisResourceConstraintError(
         operation,
         cause.boundary ?? "memory",
@@ -126,22 +138,32 @@ const peResourcesFailurePrimary = (
         {
           max_file_bytes: input.max_file_bytes,
           max_entries: input.max_entries,
+          ...(metadata
+            ? { maximum_metadata_bytes: PE_RESOURCE_METADATA_BYTES }
+            : {}),
         },
         {
           cause,
-          // Both bounds are caller-selected and deterministic for the same
-          // input, so waiting for an active analysis cannot help.
-          ...(cause.boundary === undefined || cause.boundary === "memory"
+          // Caller-selected budgets and the fixed metadata allowance are
+          // deterministic for the same input, so waiting cannot help.
+          ...(cause.boundary === undefined
             ? {}
-            : {
-                retryable: false,
-                remediationAction: inputBudgetRemediation(
-                  cause.boundary,
-                  input,
-                ),
-              }),
+            : metadata
+              ? fixedNativeAllowance(
+                  "The PE resource metadata allowance",
+                  "parser",
+                  `${String(PE_RESOURCE_METADATA_BYTES)} bytes (8 MiB)`,
+                )
+              : {
+                  retryable: false as const,
+                  remediationAction: inputBudgetRemediation(
+                    cause.boundary,
+                    input,
+                  ),
+                }),
         },
       );
+    }
     if (cause.reason === "path" || cause.reason === "format")
       return new AnalysisInputError(operation, { cause }, [
         {
@@ -157,7 +179,7 @@ const peResourcesFailurePrimary = (
       return new AnalysisAccessDeniedError(operation, input.path, cause.code, {
         cause,
       });
-    if (cause.code === "ENOENT" || cause.code === "ENOTDIR")
+    if (isSelectedRegularFileError(cause))
       return new AnalysisInputError(operation, { cause }, [
         {
           path: ["path"],
@@ -169,40 +191,25 @@ const peResourcesFailurePrimary = (
 
   return new ArtifactOperationError(
     operation,
-    cause instanceof ArtifactReaderFailure ? cause.reason : "io",
+    origin === "owned-or-classified" && cause instanceof ArtifactReaderFailure
+      ? cause.reason
+      : "io",
     undefined,
     cause instanceof Error ? cause.message : "PE artifact inspection failed.",
     { cause },
   );
 };
 
-const peResourcesFailure = (
-  cause: unknown,
-  input: InspectPeResourcesInput,
-  signal: AbortSignal | undefined,
-) => {
-  const primary =
-    cause instanceof ArtifactFileCleanupFailure &&
-    cause.fileCleanupFailure.outcome.kind === "failed"
-      ? peResourcesFailurePrimary(cause.fileCleanupFailure.outcome.cause, input)
-      : cause instanceof ArtifactFileCleanupFailure && signal?.aborted
-        ? new AnalysisCancelledError("inspect_pe_resources", {
-            cause: signal.reason,
-          })
-        : peResourcesFailurePrimary(cause, input);
-  if (!(cause instanceof ArtifactReaderFailure) || cause.cleanup === undefined)
-    return primary;
-  const cleanup = new ProviderCleanupError(
-    PE_RESOURCES_PROVIDER.id,
-    cause.cleanup.resources,
-    { reason: cause.cleanup.reason },
-    { operation: "inspect_pe_resources", cause },
+const peResourcesFailure = (cause: unknown, input: InspectPeResourcesInput) => {
+  const primary = peResourcesFailurePrimary(
+    artifactFilePrimaryFacts(cause),
+    input,
   );
-  const error = analysisErrorWithCleanupFailure(
+  return projectStableArtifactFailure(
+    cause,
     primary,
-    cleanup,
+    input.path,
+    PE_RESOURCES_PROVIDER.id,
     "inspect_pe_resources",
   );
-  bindArtifactFileCleanup(cause, error);
-  return error;
 };

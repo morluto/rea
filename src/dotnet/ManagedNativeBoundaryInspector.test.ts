@@ -1,3 +1,8 @@
+import {
+  metadataRowOffset,
+  readManagedMetadataLayout,
+} from "./ManagedMetadataLayout.js";
+import { readManagedPeLayout } from "./ManagedPeReader.js";
 import { describe, expect, it } from "vitest";
 
 import { createHash } from "node:crypto";
@@ -333,6 +338,17 @@ describe("independent managed metadata facets", () => {
         ]),
       });
     }
+    expect({
+      artifact: native.artifact,
+      module: native.module,
+      metadata: native.metadata,
+      identity_scope: native.identity_scope,
+    }).toEqual({
+      artifact: members.artifact,
+      module: members.module,
+      metadata: members.metadata,
+      identity_scope: members.identity_scope,
+    });
     expect(members.methods[0]?.name).toBe("Main");
     expect(native.pinvoke_imports[0]?.import_name).toBe("MessageBoxW");
     expect(native.cli_native?.ready_to_run_signature).toBe(true);
@@ -398,5 +414,369 @@ describe("managed PE fixture layout", () => {
     expect(boundaries.cli_native?.managed_native_header_rva).toBeGreaterThan(
       0x2700,
     );
+  });
+});
+
+const inspectImplementationFixture = ({
+  implFlags,
+  methodFlags = 0x0016,
+  zeroRva = false,
+  implMap = false,
+}: {
+  implFlags: number;
+  methodFlags?: number;
+  zeroRva?: boolean;
+  implMap?: boolean;
+}) => {
+  const bytes = buildManagedPeFixture({
+    methodFlags,
+    ...(implMap ? { pinvoke: {} } : {}),
+  });
+  const pe = readManagedPeLayout(bytes);
+  if (pe.cli === null) throw new Error("Expected CLI fixture");
+  const { rva, size } = pe.cli.metadata;
+  const layout = readManagedMetadataLayout(
+    bytes,
+    pe.rvaToOffset(rva, size, "cli.metadata"),
+    size,
+  );
+  const row = metadataRowOffset(layout, 6, 1);
+  bytes.writeUInt16LE(implFlags, row + 4);
+  if (zeroRva) bytes.writeUInt32LE(0, row);
+  const target = managedPeFixtureTarget(bytes);
+  return {
+    members: inspectManagedMembersBytes(bytes, target),
+    boundaries: inspectManagedNativeBoundariesBytes(bytes, target),
+  };
+};
+
+it.each([
+  { bits: 0, codeType: "il", managedKind: "managed", boundary: null },
+  {
+    bits: 1,
+    codeType: "native",
+    managedKind: "managed",
+    boundary: "native-body",
+  },
+  {
+    bits: 2,
+    codeType: "optil",
+    managedKind: "managed",
+    boundary: "mixed-or-unknown",
+  },
+  {
+    bits: 3,
+    codeType: "runtime",
+    managedKind: "managed",
+    boundary: "runtime-provided",
+  },
+  {
+    bits: 4,
+    codeType: "il",
+    managedKind: "unmanaged",
+    boundary: "unmanaged-method",
+  },
+  {
+    bits: 5,
+    codeType: "native",
+    managedKind: "unmanaged",
+    boundary: "native-body",
+  },
+  {
+    bits: 6,
+    codeType: "optil",
+    managedKind: "unmanaged",
+    boundary: "unmanaged-method",
+  },
+  {
+    bits: 7,
+    codeType: "runtime",
+    managedKind: "unmanaged",
+    boundary: "runtime-provided",
+  },
+])(
+  "publishes implementation facts consistently with body admission for low flags $bits",
+  ({ bits, codeType, managedKind, boundary }) => {
+    // NoInlining, Synchronized and PreserveSig do not change code type or managed kind.
+    for (const highBits of [0, 0x00a8]) {
+      const implFlags = bits | highBits;
+      const { members, boundaries } = inspectImplementationFixture({
+        implFlags,
+      });
+      expect(members.methods[0]?.body.status).toBe(
+        boundary === null ? "present" : "partial",
+      );
+      if (boundary === null) {
+        expect(boundaries.native_implementations).toEqual([]);
+        expect(members.methods[0]?.body.il_sha256).toEqual(expect.any(String));
+      } else {
+        expect(boundaries.native_implementations).toMatchObject([
+          {
+            token: members.methods[0]?.token,
+            impl_flags: implFlags,
+            code_type: codeType,
+            managed_kind: managedKind,
+            pinvoke_declared: false,
+            boundary_kind: boundary,
+            body_interpretation: "native-or-runtime",
+          },
+        ]);
+        expect(members.methods[0]?.body.il_sha256).toBeNull();
+        expect(members.methods[0]?.body.issue).toMatch(/CIL/u);
+      }
+    }
+  },
+);
+
+it.each([
+  {
+    name: "PInvoke flag on managed IL",
+    implFlags: 0,
+    methodFlags: 0x2016,
+    zeroRva: false,
+    implMap: false,
+    status: "partial",
+    codeType: "il",
+    managedKind: "managed",
+  },
+  {
+    name: "PInvoke flag on unmanaged OPTIL",
+    implFlags: 6,
+    methodFlags: 0x2016,
+    zeroRva: false,
+    implMap: false,
+    status: "partial",
+    codeType: "optil",
+    managedKind: "unmanaged",
+  },
+  {
+    name: "absent RVA before PInvoke/runtime classification",
+    implFlags: 7,
+    methodFlags: 0x2016,
+    zeroRva: true,
+    implMap: false,
+    status: "absent",
+    codeType: "runtime",
+    managedKind: "unmanaged",
+  },
+  {
+    name: "ImplMap without the PInvoke flag",
+    implFlags: 0,
+    methodFlags: 0x0016,
+    zeroRva: false,
+    implMap: true,
+    status: "present",
+    codeType: "il",
+    managedKind: "managed",
+  },
+])(
+  "retains distinct native declaration and body policies: $name",
+  (scenario) => {
+    const { members, boundaries } = inspectImplementationFixture(scenario);
+    expect(boundaries.native_implementations).toMatchObject([
+      {
+        token: members.methods[0]?.token,
+        flags: scenario.methodFlags,
+        code_type: scenario.codeType,
+        managed_kind: scenario.managedKind,
+        pinvoke_declared: true,
+        boundary_kind: "pinvoke",
+        body_interpretation: scenario.zeroRva
+          ? "not-file-backed"
+          : "native-or-runtime",
+      },
+    ]);
+    expect(boundaries.pinvoke_imports).toHaveLength(scenario.implMap ? 1 : 0);
+    expect(members.methods[0]?.body.status).toBe(scenario.status);
+    if (scenario.zeroRva)
+      expect(members.methods[0]?.body).toMatchObject({
+        rva: 0,
+        issue: null,
+        il_sha256: null,
+      });
+    if (scenario.status === "present")
+      expect(members.methods[0]?.body.il_sha256).toEqual(expect.any(String));
+  },
+);
+
+it.each(
+  [2, 4].flatMap((stringWidth) =>
+    [2, 4].flatMap((blobWidth) =>
+      [false, true].map((badName) => ({ stringWidth, blobWidth, badName })),
+    ),
+  ),
+)(
+  "keeps Field heap admission consumer-specific with string=$stringWidth/blob=$blobWidth/badName=$badName",
+  ({ stringWidth, blobWidth, badName }) => {
+    const bytes = buildManagedPeFixture({
+      pinvoke: { memberForwardedRaw: 2 },
+      methodFlags: 0x0016,
+      ...(stringWidth === 4 ? { assemblyName: "A".repeat(65536) } : {}),
+      ...(blobWidth === 4
+        ? { standaloneSignatures: [Buffer.alloc(65536)] }
+        : {}),
+    });
+    const pe = readManagedPeLayout(bytes);
+    if (pe.cli === null) throw new Error("Expected CLI fixture");
+    const { rva, size } = pe.cli.metadata;
+    const layout = readManagedMetadataLayout(
+      bytes,
+      pe.rvaToOffset(rva, size, "cli.metadata"),
+      size,
+    );
+    expect(layout.stringIndexSize).toBe(stringWidth);
+    expect(layout.blobIndexSize).toBe(blobWidth);
+    const row = metadataRowOffset(layout, 4, 1);
+    if (badName)
+      bytes.writeUIntLE(
+        stringWidth === 2 ? 0xffff : 0xffffffff,
+        row + 2,
+        stringWidth,
+      );
+    bytes.writeUIntLE(
+      blobWidth === 2 ? 0xffff : 0xffffffff,
+      row + 2 + stringWidth,
+      blobWidth,
+    );
+    const target = managedPeFixtureTarget(bytes);
+    const members = inspectManagedMembersBytes(bytes, target);
+    const native = inspectManagedNativeBoundariesBytes(bytes, target);
+    expect(members.fields).toEqual([]);
+    expect(
+      members.coverage.issues.filter(
+        ({ scope }) =>
+          scope === "metadata.#Strings" || scope === "metadata.#Blob",
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        code: "invalid-heap-index",
+        scope: badName ? "metadata.#Strings" : "metadata.#Blob",
+      }),
+    ]);
+    expect(native.pinvoke_imports).toMatchObject([
+      {
+        member_kind: "field",
+        member_token: "0x04000001",
+        member_name: badName ? null : "counter",
+      },
+    ]);
+    expect(
+      native.coverage.issues.filter(
+        ({ scope }) =>
+          scope === "metadata.#Strings" || scope === "metadata.#Blob",
+      ),
+    ).toEqual(
+      badName
+        ? [
+            expect.objectContaining({
+              code: "invalid-heap-index",
+              scope: "metadata.#Strings",
+            }),
+          ]
+        : [],
+    );
+    if (!badName)
+      expect(members.field_accesses).toContainEqual(
+        expect.objectContaining({
+          field_token: "0x04000001",
+          field_name: "counter",
+        }),
+      );
+  },
+);
+
+it.each([8, 9])(
+  "keeps reserved CustomAttributeType tag %i distinct from a valid constructor",
+  (constructor) => {
+    const value = Buffer.from([1, 0, 0, 0, 0]);
+    const bytes = buildManagedPeFixture({
+      customAttributeTypeRaw: constructor,
+      customAttributeValue: value,
+    });
+    const result = inspectManagedArtifactBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+    expect(result.attributes).toMatchObject([
+      {
+        parent_token: "0x20000001",
+        constructor_token: null,
+        type_name: null,
+        value_length: value.length,
+        value_sha256: createHash("sha256").update(value).digest("hex"),
+      },
+    ]);
+    expect(result.coverage.issues).toContainEqual(
+      expect.objectContaining({
+        code: "invalid-row",
+        scope: "metadata.CustomAttribute:0x0c000001",
+        detail: expect.stringContaining(
+          `coded index tag ${constructor - 8} is not defined`,
+        ),
+      }),
+    );
+  },
+);
+
+it.each([
+  { options: { methodRowCount: 8191 }, table: 6, count: 8191, width: 2 },
+  { options: { methodRowCount: 8192 }, table: 6, count: 8192, width: 4 },
+  { options: { memberRefRowCount: 8191 }, table: 10, count: 8191, width: 2 },
+  { options: { memberRefRowCount: 8192 }, table: 10, count: 8192, width: 4 },
+  { options: { moduleRowCount: 8192 }, table: 0, count: 8192, width: 2 },
+])(
+  "sizes CustomAttributeType from real target-table $table count $count",
+  ({ options, table, count, width }) => {
+    const bytes = buildManagedPeFixture(options);
+    const pe = readManagedPeLayout(bytes);
+    if (pe.cli === null) throw new Error("Expected CLI fixture");
+    const { rva, size } = pe.cli.metadata;
+    const layout = readManagedMetadataLayout(
+      bytes,
+      pe.rvaToOffset(rva, size, "cli.metadata"),
+      size,
+    );
+    expect(layout.table(table)?.rowCount).toBe(count);
+    expect(layout.codedIndexSize("CustomAttributeType")).toBe(width);
+  },
+);
+
+it("retains an ImplMap method identity independently of its unreadable name", () => {
+  const bytes = buildManagedPeFixture({ pinvoke: {} });
+  const pe = readManagedPeLayout(bytes);
+  if (pe.cli === null) throw new Error("Expected CLI fixture");
+  const { rva, size } = pe.cli.metadata;
+  const layout = readManagedMetadataLayout(
+    bytes,
+    pe.rvaToOffset(rva, size, "cli.metadata"),
+    size,
+  );
+  const row = metadataRowOffset(layout, 6, 1);
+  bytes.writeUIntLE(
+    layout.stringIndexSize === 2 ? 0xffff : 0xffffffff,
+    row + 8,
+    layout.stringIndexSize,
+  );
+  const result = inspectManagedNativeBoundariesBytes(
+    bytes,
+    managedPeFixtureTarget(bytes),
+  );
+  expect(result.pinvoke_imports).toMatchObject([
+    {
+      member_token: "0x06000001",
+      member_kind: "method",
+      member_name: null,
+      import_name: "MessageBoxW",
+      import_scope_name: "user32.dll",
+    },
+  ]);
+  expect(result.coverage).toMatchObject({
+    state: "partial",
+    issues: [
+      expect.objectContaining({
+        code: "invalid-heap-index",
+        scope: "metadata.#Strings",
+      }),
+    ],
   });
 });

@@ -1,5 +1,10 @@
 name: Cache npm package downloads
-description: Restore npm's download cache and save it only from trusted default-branch events.
+description: Restore npm's download cache. Trusted default-branch jobs that opt in may save it.
+inputs:
+  save:
+    description: Save the shared download cache when this event is allowed to write it.
+    required: false
+    default: "false"
 outputs:
   can-save:
     description: Whether this run may update the shared npm download cache.
@@ -23,20 +28,25 @@ runs:
           can_save=true
         fi
         cache_key="npm-download-${RUNNER_OS}-${runtime_arch}-${LOCKFILES_HASH}"
+        # Same platform only. A lockfile change can reuse tarballs from the previous key.
+        restore_key="npm-download-${RUNNER_OS}-${runtime_arch}-"
         {
           printf 'can-save=%s\n' "${can_save}"
           printf 'path=%s\n' "${cache_path}"
           printf 'key=%s\n' "${cache_key}"
+          printf 'restore-key=%s\n' "${restore_key}"
         } >> "${GITHUB_OUTPUT}"
     - name: Restore and save npm package downloads
-      if: steps.context.outputs.can-save == 'true'
+      if: steps.context.outputs.can-save == 'true' && inputs.save == 'true'
       uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
       with:
         path: ${{ steps.context.outputs.path }}
         key: ${{ steps.context.outputs.key }}
+        restore-keys: ${{ steps.context.outputs.restore-key }}
     - name: Restore npm package downloads without saving
-      if: steps.context.outputs.can-save != 'true'
+      if: steps.context.outputs.can-save != 'true' || inputs.save != 'true'
       uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
       with:
         path: ${{ steps.context.outputs.path }}
         key: ${{ steps.context.outputs.key }}
+        restore-keys: ${{ steps.context.outputs.restore-key }}

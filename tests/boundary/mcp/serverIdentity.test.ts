@@ -11,18 +11,19 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { machoImage } from "../../../src/artifacts/apple/MachoImage.fixture.js";
 import {
-  CATALOG_IDENTITY,
+  FULL_CATALOG_IDENTITY,
+  DEFAULT_CATALOG_IDENTITY,
   createCatalogDigestProfiles,
   createCatalogDigests,
+  createCatalogIdentity,
 } from "../../../src/catalogIdentity.js";
+import { COMPACT_INPUT_SCHEMA_BUDGET_BYTES } from "../../../src/config/mcpInputSchemaProfile.js";
 import { CLI_COMMAND_NAMES } from "../../../src/cliCommandNames.js";
 import { PACKAGE_METADATA } from "../../../src/generatedPackageMetadata.js";
 import { PRODUCT_IDENTITY, SDK_IDENTITY } from "../../../src/identity.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
-import {
-  expandToolAvailability,
-  sessionProvider,
-} from "../../../src/contracts/toolOutputSchemaPrimitives.js";
+import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
+import { sessionOutputSchemas } from "../../../src/contracts/toolOutputSchemaGroups.js";
 import { PROMPT_CONTRACTS } from "../../../src/contracts/promptContracts.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createServerIdentity } from "../../../src/serverIdentity.js";
@@ -112,16 +113,18 @@ describe("server and catalog identity", () => {
       packageJson.dependencies["@modelcontextprotocol/server"],
     );
     expect(new Set(CLI_COMMAND_NAMES).size).toBe(CLI_COMMAND_NAMES.length);
-    expect(CATALOG_IDENTITY.counts).toEqual({
+    expect(FULL_CATALOG_IDENTITY.counts).toEqual({
       cli_commands: CLI_COMMAND_NAMES.length,
       mcp_tools: TOOL_CONTRACTS.length,
       mcp_prompts: PROMPT_CONTRACTS.length,
     });
-    expect(CATALOG_IDENTITY.digests.combined_sha256).toMatch(/^[a-f0-9]{64}$/u);
+    expect(FULL_CATALOG_IDENTITY.digests.combined_sha256).toMatch(
+      /^[a-f0-9]{64}$/u,
+    );
   });
 
   it("covers each tool's target-content policy in the catalog digest", () => {
-    expect(createCatalogDigests()).toEqual(CATALOG_IDENTITY.digests);
+    expect(createCatalogDigests()).toEqual(FULL_CATALOG_IDENTITY.digests);
     const [first] = TOOL_CONTRACTS;
     if (first === undefined) throw new Error("expected a tool contract");
     const toggled = TOOL_CONTRACTS.map((contract) =>
@@ -131,18 +134,20 @@ describe("server and catalog identity", () => {
     );
     const digests = createCatalogDigests(toggled);
     expect(digests.combined_sha256).not.toBe(
-      CATALOG_IDENTITY.digests.combined_sha256,
+      FULL_CATALOG_IDENTITY.digests.combined_sha256,
     );
     expect(digests.tools_sha256).not.toBe(
-      CATALOG_IDENTITY.digests.tools_sha256,
+      FULL_CATALOG_IDENTITY.digests.tools_sha256,
     );
     expect(digests.prompts_sha256).toBe(
-      CATALOG_IDENTITY.digests.prompts_sha256,
+      FULL_CATALOG_IDENTITY.digests.prompts_sha256,
     );
   });
 
   it("binds output schema profile and canonical output contracts into identity", () => {
     const profiles = createCatalogDigestProfiles();
+    expect(FULL_CATALOG_IDENTITY.digests).toEqual(profiles.full.full);
+    expect(DEFAULT_CATALOG_IDENTITY.digests).toEqual(profiles.compact.full);
     const changedOutput = TOOL_CONTRACTS.map((contract, index) =>
       index === 0
         ? {
@@ -187,22 +192,25 @@ describe("server and catalog identity", () => {
 
   it("reports unknown without a live comparison and distinguishes aligned from stale", () => {
     const unknown = createServerIdentity({
+      catalog: DEFAULT_CATALOG_IDENTITY,
       startedAt: "2026-07-13T00:00:00.000Z",
       commandPath: normalizeEntrypointPath(""),
     });
     expect(unknown.alignment.state).toBe("unknown");
     expect(unknown.server.command_path).toBeNull();
     const aligned = createServerIdentity({
+      catalog: DEFAULT_CATALOG_IDENTITY,
       startedAt: "2026-07-13T00:00:00.000Z",
       commandPath: "/packaged/rea.mjs",
       expected: {
         package_version: PRODUCT_IDENTITY.packageVersion,
-        catalog_digest: CATALOG_IDENTITY.digests.combined_sha256,
+        catalog_digest: DEFAULT_CATALOG_IDENTITY.digests.combined_sha256,
         server_path: "/packaged/rea.mjs",
       },
     });
     expect(aligned.alignment).toMatchObject({ state: "aligned", reasons: [] });
     const stale = createServerIdentity({
+      catalog: DEFAULT_CATALOG_IDENTITY,
       startedAt: "2026-07-13T00:00:00.000Z",
       commandPath: "/packaged/rea.mjs",
       expected: {
@@ -218,6 +226,7 @@ describe("server and catalog identity", () => {
 
   it("keeps registration alignment unknown when the server entrypoint is absent", () => {
     const identity = createServerIdentity({
+      catalog: DEFAULT_CATALOG_IDENTITY,
       startedAt: "2026-07-13T00:00:00.000Z",
       commandPath: undefined,
       expected: { server_path: "/registered/rea.mjs" },
@@ -307,12 +316,14 @@ describe("guided prompt catalog identity", () => {
     );
     const digests = createCatalogDigests(TOOL_CONTRACTS, changed);
     expect(digests.prompts_sha256).not.toBe(
-      CATALOG_IDENTITY.digests.prompts_sha256,
+      FULL_CATALOG_IDENTITY.digests.prompts_sha256,
     );
     expect(digests.combined_sha256).not.toBe(
-      CATALOG_IDENTITY.digests.combined_sha256,
+      FULL_CATALOG_IDENTITY.digests.combined_sha256,
     );
-    expect(digests.tools_sha256).toBe(CATALOG_IDENTITY.digests.tools_sha256);
+    expect(digests.tools_sha256).toBe(
+      FULL_CATALOG_IDENTITY.digests.tools_sha256,
+    );
   });
 });
 
@@ -381,16 +392,22 @@ describe("live server identity over MCP", () => {
             server.catalogIdentity.digests.combined_sha256,
         },
       });
-      const status = z
-        .object({ result: sessionProvider })
-        .parse(response.structuredContent).result;
+      const statusSchema = sessionOutputSchemas.binary_session;
+      const status = statusSchema.parse(response.structuredContent).result;
+      expect(status.open).toBe(false);
+      for (const open of ["invalid", true]) {
+        expect(
+          statusSchema.safeParse({ result: { ...status, open } }).success,
+          `invalid session lifecycle state: ${String(open)}`,
+        ).toBe(false);
+      }
       expect(status.server_identity.catalog).toEqual(server.catalogIdentity);
       expect(status.server_identity.alignment).toMatchObject({
         state: "aligned",
         reasons: [],
       });
       expect(server.catalogIdentity.digests.tools_sha256).not.toBe(
-        CATALOG_IDENTITY.digests.tools_sha256,
+        FULL_CATALOG_IDENTITY.digests.tools_sha256,
       );
     } finally {
       await Promise.allSettled([
@@ -486,7 +503,7 @@ const activeTargetReasons = async (
     arguments: {},
   });
   const availability = expandToolAvailability(
-    z.object({ result: sessionProvider }).parse(status.structuredContent).result
+    sessionOutputSchemas.binary_session.parse(status.structuredContent).result
       .tool_availability,
   );
   return Object.fromEntries(
@@ -499,11 +516,11 @@ const activeTargetReasons = async (
 const assertLiveIdentity = async (client: Client): Promise<void> => {
   const identity = await client.callTool({
     name: "binary_session",
-    arguments: {},
+    arguments: { detail: "complete" },
   });
-  const status = z
-    .object({ result: sessionProvider })
-    .parse(identity.structuredContent).result;
+  const status = sessionOutputSchemas.binary_session.parse(
+    identity.structuredContent,
+  ).result;
   expect(Object.keys(status.server_identity.catalog).sort()).toEqual([
     "counts",
     "digests",
@@ -538,7 +555,11 @@ const assertLiveIdentity = async (client: Client): Promise<void> => {
         },
         client: { name: "identity-test", version: "9" },
         negotiated_protocol_version: expect.any(String),
-        catalog: CATALOG_IDENTITY,
+        catalog: createCatalogIdentity({
+          compactPresentation: {
+            budgetBytes: COMPACT_INPUT_SCHEMA_BUDGET_BYTES,
+          },
+        }),
         alignment: { state: "unknown" },
       },
     },
@@ -550,9 +571,9 @@ const assertSessionIdentity = async (client: Client): Promise<void> => {
     name: "binary_session",
     arguments: { expected_package_version: "1.2.0" },
   });
-  const parsed = z
-    .object({ result: sessionProvider })
-    .parse(status.structuredContent);
+  const parsed = sessionOutputSchemas.binary_session.parse(
+    status.structuredContent,
+  );
   expect({
     result: {
       ...parsed.result,

@@ -34,7 +34,11 @@ test.each([
       REA_KUNA_COMMAND: command,
       REA_KUNA_CACHE_DIR: cachePath,
     });
-    expect(inspection.available).toBe(true);
+    expect(inspection.available).toBe(cache === "ready");
+    expect(inspection.checks[0]).toMatchObject({
+      name: "installation",
+      ok: true,
+    });
     expect(inspection.checks[1]).toMatchObject({
       name: "cache",
       ok: cache === "ready",

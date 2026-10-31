@@ -2,7 +2,7 @@ import {
   relationshipCoverageLimitations,
   type RelationshipCoverage,
 } from "./relationshipCoverage.js";
-import type { FunctionDossier } from "./hopperValues.js";
+import type { FunctionDossier } from "./native/functionDossier.js";
 import { uniqueSorted } from "./canonicalOrdering.js";
 
 const callerCoveragePrefix = "Callers: ";
@@ -81,6 +81,8 @@ export const isCallerOnlyIncompleteCoverage = (
 export interface FunctionCallCoverageAssessment {
   /** Reasons the observed call sets cannot establish equality. */
   readonly blockers: readonly string[];
+  /** Explicit unresolved outgoing calls, kept separate for forward searches. */
+  readonly unresolvedCallCaveats: readonly string[];
   /** Provider caveats that remain relevant even with complete coverage. */
   readonly diagnostics: readonly string[];
 }
@@ -89,12 +91,18 @@ export interface FunctionCallCoverageAssessment {
 export const assessFunctionCallCoverage = (
   coverage: RelationshipCoverage | null,
   dossier: Pick<FunctionDossier, "unresolved_calls">,
-): FunctionCallCoverageAssessment => ({
-  blockers: uniqueSorted([
-    ...relationshipCoverageLimitations(coverage),
-    ...(dossier.unresolved_calls ?? []).map(
+): FunctionCallCoverageAssessment => {
+  const unresolvedCallCaveats = uniqueSorted(
+    (dossier.unresolved_calls ?? []).map(
       ({ address, reason }) => `Unresolved call at ${address}: ${reason}`,
     ),
-  ]),
-  diagnostics: uniqueSorted(coverage?.diagnostics ?? []),
-});
+  );
+  return {
+    blockers: uniqueSorted([
+      ...relationshipCoverageLimitations(coverage),
+      ...unresolvedCallCaveats,
+    ]),
+    unresolvedCallCaveats,
+    diagnostics: uniqueSorted(coverage?.diagnostics ?? []),
+  };
+};

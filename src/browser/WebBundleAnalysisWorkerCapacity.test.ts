@@ -18,7 +18,7 @@ vi.mock("node:v8", async (importOriginal) => {
 
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import { createWebTextArtifact } from "../domain/webContentArtifact.js";
-import type { IncludedScript } from "../domain/webBundleAnalyzerInspection.js";
+import type { IncludedScript } from "../domain/webBundleAnalyzerState.js";
 import { WebBundleAnalysisWorker } from "./WebBundleAnalysisWorker.js";
 
 it("refuses before spawning or reading source when no host result capacity remains", async () => {
@@ -50,7 +50,14 @@ it("refuses before spawning or reading source when no host result capacity remai
     const result = await worker.analyze(script, 10_000);
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected result-capacity refusal");
-    expect(result.error.error).toBeInstanceOf(AnalysisResourceConstraintError);
+    const refusal = result.error.error;
+    expect(refusal).toBeInstanceOf(AnalysisResourceConstraintError);
+    if (!(refusal instanceof AnalysisResourceConstraintError))
+      throw new Error("Expected a result-capacity refusal");
+    expect(refusal.message).toContain("host result capacity 0 bytes");
+    expect(refusal.message).toContain("still has 8388608 bytes");
+    expect(refusal.message).not.toContain("has no further room");
+    expect(refusal.remediationAction).toContain("NODE_OPTIONS");
     expect(result.error.continuation).toBe("result_capacity_exhausted");
     expect(result.error.completed).toBeNull();
     expect(sourceReads).toBe(0);

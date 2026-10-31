@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
+import { createWebPageInspection } from "../../tests/support/browser/webPageInspection.js";
 
-import { webPageInspectionSchema } from "../domain/browserObservationSchemas.js";
 import {
   AnalysisCancelledError,
   AnalysisOutputError,
@@ -13,11 +13,13 @@ import type {
 } from "../domain/webBundleAnalysis.js";
 import { analyzeWebBundleInputSchema } from "../domain/webBundleAnalysis.js";
 import { analyzeCapturedWebScript } from "../domain/webBundleAnalyzer.js";
-import { createWebTextArtifact } from "../domain/webContentArtifact.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { OwnedWorkerRuntime } from "../process/OwnedWorkerRuntime.js";
 import { err, ok } from "../domain/result.js";
 import {
   IsolatedWebBundleAnalyzer,
+  WebBundleAnalysisAdmission,
   type WebBundleAnalysisWorkerPort,
 } from "./IsolatedWebBundleAnalyzer.js";
 
@@ -298,15 +300,19 @@ it("retains cleanup ownership after mixed worker/close failure and resolves it o
     { operation: "analyze_web_bundle" },
   );
   let closeAttempts = 0;
-  const analyzer = new IsolatedWebBundleAnalyzer(() => ({
-    analyze: async () => err({ error: primary, completed: null }),
-    close: async () => {
-      closeAttempts += 1;
-      if (closeAttempts <= 2) throw closeFailure;
-      closeFailure.resolveCleanup();
-      primary.resolveCleanup();
-    },
-  }));
+  const admission = new WebBundleAnalysisAdmission();
+  const analyzer = new IsolatedWebBundleAnalyzer(
+    () => ({
+      analyze: async () => err({ error: primary, completed: null }),
+      close: async () => {
+        closeAttempts += 1;
+        if (closeAttempts <= 2) throw closeFailure;
+        closeFailure.resolveCleanup();
+        primary.resolveCleanup();
+      },
+    }),
+    admission,
+  );
   expect((await analyzer.reserve()).ok).toBe(true);
 
   const result = await analyzer.analyze(captured, noSourceMaps, input);
@@ -319,7 +325,10 @@ it("retains cleanup ownership after mixed worker/close failure and resolves it o
     completeness: { status: "partial", parsed_scripts: 0 },
   });
 
-  const replacement = new IsolatedWebBundleAnalyzer(() => inertWorker());
+  const replacement = new IsolatedWebBundleAnalyzer(
+    () => inertWorker(),
+    admission,
+  );
   analyzer.releaseReservation();
   const blocked = await replacement.reserve();
   expect(blocked.ok).toBe(false);
@@ -332,16 +341,54 @@ it("retains cleanup ownership after mixed worker/close failure and resolves it o
   replacement.releaseReservation();
 });
 
-it("enforces one process-wide capture reservation across controller instances", async () => {
-  const first = new IsolatedWebBundleAnalyzer(() => inertWorker());
-  const second = new IsolatedWebBundleAnalyzer(() => inertWorker());
+it("shares one capture reservation when analyzers use one admission", async () => {
+  const admission = new WebBundleAnalysisAdmission();
+  const first = new IsolatedWebBundleAnalyzer(() => inertWorker(), admission);
+  const second = new IsolatedWebBundleAnalyzer(() => inertWorker(), admission);
   expect((await first.reserve()).ok).toBe(true);
   const blocked = await second.reserve();
   expect(blocked.ok).toBe(false);
-  if (blocked.ok) throw new Error("Expected process-wide admission refusal");
-  expect(blocked.error._tag).toBe("AnalysisResourceConstraintError");
+  if (blocked.ok) throw new Error("Expected shared admission refusal");
+  expect(projectAnalysisError(blocked.error)).toMatchObject({
+    code: "resource_constraint",
+    details: {
+      resource: "capacity",
+      reported_limits: { concurrent_web_bundle_analyses: 1 },
+    },
+  });
   first.releaseReservation();
   expect((await second.reserve()).ok).toBe(true);
+  second.releaseReservation();
+});
+
+it("does not fail one admission when another host's worker runtime is retained", async () => {
+  let fail = true;
+  const stuck = new OwnedWorkerRuntime({
+    rootPrefix: "rea-web-host-isolation-",
+    retryCleanup: async () => {
+      if (fail) throw new Error("other host still owns its worker");
+    },
+  });
+  stuck.retainForCleanup();
+  try {
+    const analyzer = new IsolatedWebBundleAnalyzer(() => inertWorker());
+    expect((await analyzer.reserve()).ok).toBe(true);
+    analyzer.releaseReservation();
+    await expect(OwnedWorkerRuntime.retryPending()).rejects.toThrow(
+      "other host still owns its worker",
+    );
+  } finally {
+    fail = false;
+    await stuck.close();
+  }
+});
+
+it("does not share a capture reservation across independent admissions", async () => {
+  const first = new IsolatedWebBundleAnalyzer(() => inertWorker());
+  const second = new IsolatedWebBundleAnalyzer(() => inertWorker());
+  expect((await first.reserve()).ok).toBe(true);
+  expect((await second.reserve()).ok).toBe(true);
+  first.releaseReservation();
   second.releaseReservation();
 });
 
@@ -373,107 +420,12 @@ const deferred = <T>(): {
 };
 
 const inspection = (sources: readonly string[]) =>
-  webPageInspectionSchema.parse({
-    browser: {
-      product: "Fake Chrome",
-      protocol_version: "1.3",
-      revision: "1",
-      user_agent: "fake",
-      js_version: "1",
-    },
-    target: {
-      target_id: "page-1",
-      type: "page",
-      title: "App",
-      url: `${origin}/app`,
+  createWebPageInspection(
+    sources.map((source, index) => ({
+      source,
+      scriptKey: `scr_${String(index + 1).repeat(64)}`,
+      url: `${origin}/assets/${String(index)}.js`,
       origin,
-      attached: false,
-    },
-    capture_window: {
-      started_at: "2026-07-14T00:00:00.000Z",
-      ended_at: "2026-07-14T00:00:01.000Z",
-      observation_ms: 1_000,
-    },
-    completeness: {
-      status: "attach_limited",
-      conditions: ["attach_limited"],
-      policy_filtered_sections: [],
-      attach_limited_sections: ["network_requests"],
-      truncated_sections: [],
-      unavailable_sections: [],
-      excluded: [],
-      dropped_events: {
-        scripts: 0,
-        network_requests: 0,
-        console_events: 0,
-        websocket_connections: 0,
-        websocket_frames: 0,
-        webmcp_tools: 0,
-        timeline_events: 0,
-        total: 0,
-      },
-    },
-    frames: [],
-    dom: { total_nodes: 0, nodes: [] },
-    accessibility: {
-      total_nodes: 0,
-      text_capture: {
-        status: "not_approved",
-        retained_bytes: 0,
-        excluded_fields: 0,
-      },
-      nodes: [],
-    },
-    scripts: {
-      total: sources.length,
-      items: sources.map((source, index) => ({
-        script_key: `scr_${String(index + 1).repeat(64)}`,
-        url: `${origin}/assets/${String(index)}.js`,
-        origin,
-        cdp_hash: `hash-${String(index)}`,
-        length: Buffer.byteLength(source),
-        is_module: true,
-        language: "JavaScript",
-        source_map_url: null,
-        resource_reconciliation: {
-          status: "unmatched",
-          reason: "no_exact_sanitized_url",
-        },
-        source: {
-          included: true,
-          artifact: createWebTextArtifact(source, "text/javascript"),
-        },
-      })),
-    },
-    resources: [],
-    network: {
-      requests: [],
-      websocket_connections: [],
-      coverage_started_at: "2026-07-14T00:00:00.000Z",
-      prior_activity_available: false,
-    },
-    console: {
-      events: [],
-      coverage_started_at: "2026-07-14T00:00:00.000Z",
-      prior_activity_available: false,
-    },
-    workers: [],
-    metadata: {
-      responses: [],
-      dom_urls: [],
-      agent_hints: [],
-      excluded_dom_urls: 0,
-      headers_allowlisted: true,
-    },
-    storage: {
-      origin,
-      usage_bytes: null,
-      quota_bytes: null,
-      local_storage_keys: [],
-      session_storage_keys: [],
-      indexed_db_names: [],
-      cache_names: [],
-      values_redacted: true,
-    },
-    limitations: [],
-  });
+      cdpHash: `hash-${String(index)}`,
+    })),
+  );

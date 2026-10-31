@@ -1,3 +1,4 @@
+import { linuxHopperReleaseCacheDirectory } from "../../../src/application/LinuxHopperCacheDirectory.js";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
@@ -24,11 +25,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   LinuxHopperPublisher,
-  linuxHopperReleaseCacheDirectory,
   retryLinuxHopperPublisherCleanup,
 } from "../../../src/application/LinuxHopperPublisher.js";
+import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
 import {
   HOPPER_LINUX_PRIMARY_FINGERPRINT,
+  HOPPER_RELEASES_URL,
   type LinuxHopperRelease,
 } from "../../../src/application/HopperReleaseFeed.js";
 import * as signatures from "../../../src/process/DetachedPgpSignature.js";
@@ -108,6 +110,21 @@ const fixture = async (family: "deb" | "arch" = "deb") => {
   };
 };
 
+const verifyFixtureArchive = async (
+  f: Awaited<ReturnType<typeof fixture>>,
+  family: "deb" | "arch" = "deb",
+) => {
+  const result = await f.publisher.verifyArchive(
+    family,
+    f.release,
+    f.archive,
+    undefined,
+    f.publicKey,
+  );
+  if (!result.ok) throw result.error;
+  return result.value;
+};
+
 const admitFixturePublisher = (
   fingerprint: string,
   module: typeof signatures = signatures,
@@ -135,6 +152,133 @@ it.each([undefined, "", "/selected/cache", "relative/cache"])(
       });
   },
 );
+
+portableTar.each(["HOME", "XDG_CACHE_HOME"] as const)(
+  "retains and reads signed packages under the selected %s symlink traversal",
+  async (setting) => {
+    const f = await fixture("arch");
+    admitFixturePublisher(f.fingerprint);
+    const directory = await createTestTempDirectory(
+      "rea-linux-selected-cache-",
+    );
+    const physical = join(directory, "physical");
+    await mkdir(join(physical, "child"), { recursive: true });
+    await symlink(join(physical, "child"), join(directory, "alias"), "dir");
+    const selected = `${directory}/alias/..`;
+    const suffix =
+      setting === "HOME" ? ".cache/rea/hopper-releases" : "rea/hopper-releases";
+    const expected = `${physical}/${suffix}/${f.release.main_exe_hash}`;
+    const decoy = `${directory}/${suffix}/${f.release.main_exe_hash}`;
+    await mkdir(decoy, { recursive: true });
+    await writeFile(`${decoy}/release.json`, "caller evidence");
+    const publisher = new LinuxHopperPublisher(
+      { [setting]: selected },
+      async () => "arch",
+    );
+    try {
+      const verified = await verifyFixtureArchive(f, "arch");
+      expect(
+        await publisher.retainVerifiedArchive(verified, f.archive),
+      ).toEqual({
+        ok: true,
+        value: undefined,
+      });
+      expect(
+        (await readFile(`${expected}/archive`)).equals(
+          await readFile(f.archive),
+        ),
+      ).toBe(true);
+      expect(publisher.cacheRoot).toBe(`${selected}/${suffix}`);
+      expect(await publisher.inspectLauncher(f.launcher)).toMatchObject({
+        ok: true,
+        value: { source: "signed_package_cache" },
+      });
+      expect(await readFile(`${decoy}/release.json`, "utf8")).toBe(
+        "caller evidence",
+      );
+      expect(await readdir(decoy)).toEqual(["release.json"]);
+    } finally {
+      await publisher.close();
+      await f.publisher.close();
+    }
+  },
+);
+
+const feedRelease = () => ({
+  version: "1.0",
+  filename:
+    "https://www.hopperapp.com:443/downloader/public/Hopper-1.0-Linux-demo.deb",
+  file_length: "1",
+  file_hash: "a".repeat(40),
+  main_exe_hash: "b".repeat(64),
+  signature: "AQ==",
+  public: "1",
+  beta: "0",
+  vendor_label: "valid � label",
+  ...JSON.parse(
+    '{"__proto__":{"constructor":"retained"},"vendor_details":{"__proto__":"nested"}}',
+  ),
+});
+
+it.each([false, true])(
+  "retains fetched vendor release JSON with initial BOM=%s",
+  async (bom) => {
+    const root = await createTestTempDirectory("rea-linux-feed-json-");
+    const publisher = new LinuxHopperPublisher(
+      { XDG_CACHE_HOME: root },
+      async () => "deb",
+    );
+    const release = feedRelease();
+    const text = JSON.stringify({ "Ubuntu / Mint": release });
+    const network = vi.fn(
+      async () => new Response(`${bom ? "\uFEFF" : ""}${text}`),
+    );
+    vi.stubGlobal("fetch", network);
+    try {
+      const selected = await publisher.currentRelease("deb");
+      expect(selected).toEqual({ ok: true, value: release });
+      if (!selected.ok) throw selected.error;
+      expect(Object.hasOwn(selected.value, "__proto__")).toBe(true);
+      expect(selected.value.vendor_label).toBe("valid � label");
+      expect(await publisher.currentRelease("deb")).toEqual(selected);
+      expect(network).toHaveBeenCalledOnce();
+      expect(network).toHaveBeenCalledWith(
+        HOPPER_RELEASES_URL,
+        expect.any(Object),
+      );
+    } finally {
+      await publisher.close();
+    }
+  },
+);
+
+it("rejects malformed UTF-8 fetched release metadata without repairing a vendor value", async () => {
+  const root = await createTestTempDirectory("rea-linux-feed-bytes-");
+  const publisher = new LinuxHopperPublisher(
+    { XDG_CACHE_HOME: root },
+    async () => "deb",
+  );
+  const bytes = Buffer.from(JSON.stringify({ "Ubuntu / Mint": feedRelease() }));
+  const offset = bytes.indexOf(Buffer.from("�"));
+  expect(offset).toBeGreaterThanOrEqual(0);
+  const invalid = Buffer.concat([
+    bytes.subarray(0, offset),
+    Buffer.from([0xff]),
+    bytes.subarray(offset + 3),
+  ]);
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => new Response(Uint8Array.from(invalid).buffer)),
+  );
+  try {
+    expect(await publisher.currentRelease("deb")).toMatchObject({
+      ok: false,
+      error: { reason: "release_metadata" },
+    });
+  } finally {
+    await publisher.close();
+  }
+});
 
 describe("Linux signed package retention boundary", () => {
   linux(
@@ -167,23 +311,29 @@ describe("Linux signed package retention boundary", () => {
     "authenticates a real %s payload and verifies a retained install without network",
     async (family) => {
       const f = await fixture(family);
+      const vendor = {
+        label: "valid � publisher",
+        nested: { ["__proto__"]: "retained" },
+      };
+      Object.defineProperty(f.release, "__proto__", {
+        value: vendor,
+        enumerable: true,
+      });
       admitFixturePublisher(f.fingerprint);
       const network = vi.fn(() => {
         throw new Error("Offline");
       });
       vi.stubGlobal("fetch", network);
       try {
-        const verified = await f.publisher.verifyArchive(
-          family,
-          f.release,
-          f.archive,
-          undefined,
-          f.publicKey,
-        );
-        if (!verified.ok) throw verified.error;
+        const verifiedArchive = await verifyFixtureArchive(f, family);
         expect(
-          await f.publisher.retainVerifiedArchive(verified.value, f.archive),
+          await f.publisher.retainVerifiedArchive(verifiedArchive, f.archive),
         ).toEqual({ ok: true, value: undefined });
+        const cached = JSON.parse(
+          await readFile(join(f.cache, "release.json"), "utf8"),
+        );
+        expect(Object.hasOwn(cached.release, "__proto__")).toBe(true);
+        expect(cached.release["__proto__"]).toEqual(vendor);
         await f.publisher.close();
         // A new instance alone still shares process-local cryptographic proofs.
         // Reload the owner and assert actual PGP and native payload inspection.
@@ -209,6 +359,9 @@ describe("Linux signed package retention boundary", () => {
               source: "signed_package_cache",
             },
           });
+          expect(
+            JSON.parse(await readFile(join(f.cache, "release.json"), "utf8")),
+          ).toEqual(cached);
           expect(network).not.toHaveBeenCalled();
           expect(signature).toHaveBeenCalledOnce();
           expect(extraction).toHaveBeenCalledWith(
@@ -240,16 +393,9 @@ linux.each([
   const f = await fixture();
   admitFixturePublisher(f.fingerprint);
   try {
-    const verified = await f.publisher.verifyArchive(
-      "deb",
-      f.release,
-      f.archive,
-      undefined,
-      f.publicKey,
-    );
-    if (!verified.ok) throw verified.error;
+    const verifiedArchive = await verifyFixtureArchive(f, "deb");
     const retained = await f.publisher.retainVerifiedArchive(
-      verified.value,
+      verifiedArchive,
       f.archive,
     );
     if (!retained.ok) throw retained.error;
@@ -300,7 +446,7 @@ linux.each([
     // An explicitly approved fresh package can repair this entry while
     // preserving the original evidence and keeping ordinary reads strict.
     expect(
-      await f.publisher.retainVerifiedArchive(verified.value, f.archive),
+      await f.publisher.retainVerifiedArchive(verifiedArchive, f.archive),
     ).toEqual({ ok: true, value: undefined });
     const backups = (await readdir(f.publisher.cacheRoot)).filter((name) =>
       name.startsWith(`${f.release.main_exe_hash}.backup-`),
@@ -321,7 +467,7 @@ linux.each([
       ok: true,
     });
     expect(
-      await f.publisher.retainVerifiedArchive(verified.value, f.archive),
+      await f.publisher.retainVerifiedArchive(verifiedArchive, f.archive),
     ).toEqual({ ok: true, value: undefined });
     expect(
       (await readdir(f.publisher.cacheRoot)).filter((name) =>
@@ -345,16 +491,9 @@ linux.each([false, true])(
       | ReturnType<LinuxHopperPublisher["retainVerifiedArchive"]>
       | undefined;
     try {
-      const verified = await f.publisher.verifyArchive(
-        "deb",
-        f.release,
-        f.archive,
-        undefined,
-        f.publicKey,
-      );
-      if (!verified.ok) throw verified.error;
+      const verifiedArchive = await verifyFixtureArchive(f, "deb");
       expect(
-        await f.publisher.retainVerifiedArchive(verified.value, f.archive),
+        await f.publisher.retainVerifiedArchive(verifiedArchive, f.archive),
       ).toEqual({ ok: true, value: undefined });
       const staged = join(f.publisher.cacheRoot, "authenticated-fixture-stage");
       await cp(f.cache, staged, { recursive: true });
@@ -399,7 +538,7 @@ linux.each([false, true])(
         },
       );
       retention = f.publisher.retainVerifiedArchive(
-        verified.value,
+        verifiedArchive,
         f.archive,
         controller.signal,
       );
@@ -450,16 +589,9 @@ linux("restores old evidence when replacement publication fails", async () => {
   const f = await fixture();
   admitFixturePublisher(f.fingerprint);
   try {
-    const verified = await f.publisher.verifyArchive(
-      "deb",
-      f.release,
-      f.archive,
-      undefined,
-      f.publicKey,
-    );
-    if (!verified.ok) throw verified.error;
+    const verifiedArchive = await verifyFixtureArchive(f, "deb");
     expect(
-      await f.publisher.retainVerifiedArchive(verified.value, f.archive),
+      await f.publisher.retainVerifiedArchive(verifiedArchive, f.archive),
     ).toEqual({ ok: true, value: undefined });
     const broken = "{interrupted cache metadata";
     await writeFile(join(f.cache, "release.json"), broken);
@@ -479,7 +611,7 @@ linux("restores old evidence when replacement publication fails", async () => {
     syncBuiltinESMExports();
     try {
       const result = await f.publisher.retainVerifiedArchive(
-        verified.value,
+        verifiedArchive,
         f.archive,
       );
       expect(result).toMatchObject({
@@ -506,7 +638,7 @@ linux("restores old evidence when replacement publication fails", async () => {
       syncBuiltinESMExports();
     }
     expect(
-      await f.publisher.retainVerifiedArchive(verified.value, f.archive),
+      await f.publisher.retainVerifiedArchive(verifiedArchive, f.archive),
     ).toEqual({ ok: true, value: undefined });
     expect(await f.publisher.inspectLauncher(f.launcher)).toMatchObject({
       ok: true,
@@ -522,16 +654,9 @@ linux(
     const f = await fixture();
     admitFixturePublisher(f.fingerprint);
     try {
-      const verified = await f.publisher.verifyArchive(
-        "deb",
-        f.release,
-        f.archive,
-        undefined,
-        f.publicKey,
-      );
-      if (!verified.ok) throw verified.error;
+      const verifiedArchive = await verifyFixtureArchive(f, "deb");
       expect(
-        await f.publisher.retainVerifiedArchive(verified.value, f.archive),
+        await f.publisher.retainVerifiedArchive(verifiedArchive, f.archive),
       ).toEqual({ ok: true, value: undefined });
       await writeFile(join(f.cache, "public-key.asc"), f.publicKey + "\n");
       const metadata = await readFile(join(f.cache, "release.json"));
@@ -539,12 +664,14 @@ linux(
         .spyOn(nativeCommands, "execFileOutput")
         .mockRejectedValue(new Error("Fixture native inspection unavailable"));
       expect(
-        await f.publisher.retainVerifiedArchive(verified.value, f.archive),
+        await f.publisher.retainVerifiedArchive(verifiedArchive, f.archive),
       ).toMatchObject({
         ok: false,
         error: { reason: "verification_unavailable" },
       });
-      expect(await readFile(join(f.cache, "release.json"))).toEqual(metadata);
+      expect(
+        Buffer.compare(await readFile(join(f.cache, "release.json")), metadata),
+      ).toBe(0);
       expect(
         (await readdir(f.publisher.cacheRoot)).some((name) =>
           name.includes(".backup-"),
@@ -621,16 +748,9 @@ linux(
       },
     );
     try {
-      const verified = await f.publisher.verifyArchive(
-        "deb",
-        f.release,
-        f.archive,
-        undefined,
-        f.publicKey,
-      );
-      if (!verified.ok) throw verified.error;
+      const verifiedArchive = await verifyFixtureArchive(f, "deb");
       expect(
-        await f.publisher.retainVerifiedArchive(verified.value, f.archive),
+        await f.publisher.retainVerifiedArchive(verifiedArchive, f.archive),
       ).toMatchObject({ ok: false, error: { reason: "cleanup_failed" } });
       const input = {
         cacheDirectory: f.publisher.cacheRoot,
@@ -889,16 +1009,9 @@ portableTar(
   async () => {
     const f = await fixture("arch");
     admitFixturePublisher(f.fingerprint);
-    const verified = await f.publisher.verifyArchive(
-      "arch",
-      f.release,
-      f.archive,
-      undefined,
-      f.publicKey,
-    );
-    if (!verified.ok) throw verified.error;
+    const verifiedArchive = await verifyFixtureArchive(f, "arch");
     expect(
-      await f.publisher.retainVerifiedArchive(verified.value, f.archive),
+      await f.publisher.retainVerifiedArchive(verifiedArchive, f.archive),
     ).toMatchObject({ ok: true });
 
     let reachedMetadataClose!: () => void;
@@ -964,6 +1077,7 @@ linux(
         controller.abort();
         throw new Error("Fixture cleanup unavailable after cancellation");
       });
+    let retryFailure: unknown;
     try {
       expect(
         await f.publisher.verifyArchive(
@@ -977,10 +1091,22 @@ linux(
         ok: false,
         error: { reason: "cleanup_failed" },
       });
-      await expect(retryLinuxHopperPublisherCleanup()).rejects.toMatchObject({
+      try {
+        await retryLinuxHopperPublisherCleanup();
+      } catch (cause: unknown) {
+        retryFailure = cause;
+      }
+      expect(retryFailure).toBeInstanceOf(ArtifactReaderFailure);
+      expect(retryFailure).toMatchObject({
         cleanup: {
           resources: [expect.stringContaining("rea-hopper-publisher-")],
         },
+        cleanupLeases: [expect.objectContaining({ released: false })],
+      });
+      cleanup.mockRestore();
+      await retryLinuxHopperPublisherCleanup();
+      expect(retryFailure).toMatchObject({
+        cleanupLeases: [expect.objectContaining({ released: true })],
       });
     } finally {
       cleanup.mockRestore();

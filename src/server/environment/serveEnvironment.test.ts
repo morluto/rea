@@ -38,10 +38,7 @@ const serveEnvironment = async (
   if (!result.ok) throw result.error;
   return result.value;
 };
-const definitions = environmentToolDefinitions(
-  source.manifest,
-  source.evidenceId,
-);
+const definitions = environmentToolDefinitions(source);
 
 /**
  * The agentenv echo example's card, key for key. Only `name` and the tool
@@ -393,6 +390,70 @@ describe("environment catalog limits", () => {
         body: { login: "probe" },
         replay: { exact_match: true, record_ordinal: 5 },
       });
+    } finally {
+      await transport.terminateSession();
+      await client.close();
+    }
+  });
+});
+
+describe("environment tool annotations", () => {
+  it("advertises method hints with closed-world answers over MCP and keeps them off the card", async () => {
+    const folders = source.manifest.tools.find(
+      (tool) => tool.name === "post_folders",
+    );
+    if (folders === undefined) throw new Error("Missing fixture folders tool");
+    const search = {
+      ...folders,
+      name: "post_search",
+      path_template: "/api/search",
+    };
+    const entry = await serveEnvironment({
+      source: {
+        ...source,
+        manifest: {
+          ...source.manifest,
+          tools: [...source.manifest.tools, search],
+        },
+      },
+      host: "127.0.0.1",
+      port: 0,
+    });
+    served.push(entry);
+    const client = new Client({ name: "tool-hints", version: "1" });
+    const transport = new StreamableHTTPClientTransport(new URL(entry.url));
+    await client.connect(transport);
+    try {
+      const { tools } = await client.listTools();
+      const hints = new Map(
+        tools.map(({ name, annotations }) => [name, annotations]),
+      );
+      const read = { readOnlyHint: true, openWorldHint: false };
+      expect(hints.get("get_users_by_id")).toEqual({
+        ...read,
+        idempotentHint: true,
+      });
+      expect(hints.get("post_search")).toEqual({
+        ...read,
+        idempotentHint: false,
+      });
+      expect(hints.get("post_folders")).toEqual({
+        readOnlyHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      });
+      expect(hints.get("put_folders_by_uid")).toEqual({
+        readOnlyHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      });
+      expect(hints.get("delete_teams_by_id")).toEqual({
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      });
+      expect(JSON.stringify(entry.card)).not.toContain("Hint");
     } finally {
       await transport.terminateSession();
       await client.close();

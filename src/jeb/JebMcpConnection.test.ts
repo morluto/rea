@@ -1,5 +1,6 @@
 import { createServer } from "node:http";
-import { describe, expect, it } from "vitest";
+import { Client } from "@modelcontextprotocol/client";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   decodeJebToolResult,
@@ -30,9 +31,31 @@ const waitForRequestCount = async (
     throw new Error(`Expected ${expected} ${method} requests`);
 };
 
+const jebCatalogResult = (
+  paginateCatalog: boolean,
+  cursor: string | undefined,
+) => {
+  const pageTools =
+    paginateCatalog && cursor === undefined
+      ? jebTools.slice(0, 1)
+      : paginateCatalog
+        ? jebTools.slice(1)
+        : jebTools;
+  return {
+    tools: pageTools.map((name) => ({
+      name,
+      inputSchema: { type: "object" as const, properties: {} },
+    })),
+    ...(paginateCatalog && cursor === undefined
+      ? { nextCursor: "page-2" }
+      : {}),
+  };
+};
+
 const startJebHttpFixture = (
   responseDelayMs: number,
   catalogRefreshDelayMs = 0,
+  options: { readonly paginateCatalog?: boolean } = {},
 ) => {
   let callCount = 0;
   let catalogCount = 0;
@@ -78,18 +101,20 @@ const startJebHttpFixture = (
         response.on("close", () => {
           if (!response.writableEnded) responseClosed = true;
         });
+        const cursor =
+          typeof message.params?.cursor === "string"
+            ? message.params.cursor
+            : undefined;
         const sendCatalog = () => {
           if (responseClosed) return;
           response.writeHead(200, { "Content-Type": "application/json" }).end(
             JSON.stringify({
               jsonrpc: "2.0",
               id: message.id,
-              result: {
-                tools: jebTools.map((name) => ({
-                  name,
-                  inputSchema: { type: "object", properties: {} },
-                })),
-              },
+              result: jebCatalogResult(
+                options.paginateCatalog === true,
+                cursor,
+              ),
             }),
           );
         };
@@ -371,4 +396,122 @@ it("keeps caller abort and connection close as cancellations during catalog refr
       await fixture.close();
     }
   }
+});
+
+it("passes a discovery budget above the SDK default to connect and every catalog page", async () => {
+  const discoveryTimeoutMs = 120_000;
+  const connect = vi.spyOn(Client.prototype, "connect");
+  const request = vi.spyOn(Client.prototype, "request");
+  const fixture = await startJebHttpFixture(0, 0, { paginateCatalog: true });
+  const connection = createStreamableHttpJebMcpConnection(fixture.endpoint, {
+    discoveryTimeoutMs,
+    requestTimeoutMs: discoveryTimeoutMs,
+  });
+  try {
+    await expect(connection.connect()).resolves.toEqual([...jebTools]);
+    const connectTimeout = connect.mock.calls[0]?.[1]?.timeout;
+    expect(connectTimeout).toBeGreaterThan(60_000);
+    expect(connectTimeout).toBeLessThanOrEqual(discoveryTimeoutMs);
+    const listTimeouts = request.mock.calls.flatMap((call) => {
+      const message = call[0];
+      if (
+        typeof message !== "object" ||
+        message === null ||
+        !("method" in message) ||
+        message.method !== "tools/list"
+      )
+        return [];
+      const options = call[1];
+      return [
+        typeof options === "object" &&
+        options !== null &&
+        "timeout" in options &&
+        typeof options.timeout === "number"
+          ? options.timeout
+          : -1,
+      ];
+    });
+    expect(listTimeouts.length).toBeGreaterThanOrEqual(2);
+    for (const timeout of listTimeouts) {
+      expect(timeout).toBeGreaterThan(60_000);
+      expect(timeout).toBeLessThanOrEqual(discoveryTimeoutMs);
+    }
+  } finally {
+    connect.mockRestore();
+    request.mockRestore();
+    try {
+      await connection.close();
+    } finally {
+      await fixture.close();
+    }
+  }
+});
+
+it.each([false, true])(
+  "retains structured own members and nested dictionaries in a JEB reply (isError=%s)",
+  (isError) => {
+    const structured: unknown = JSON.parse(
+      '{"__proto__":{"observed":true},"success":false,"message":"missing","nested":[{"__proto__":"nested fact"}]}',
+    );
+    const decoded = decodeJebToolResult({
+      isError,
+      structuredContent: structured,
+      content: [],
+    });
+    expect(Object.hasOwn(decoded as object, "__proto__")).toBe(true);
+    expect(JSON.stringify(decoded)).toBe(JSON.stringify(structured));
+  },
+);
+
+it.each(["1e400", '{"observed":1e400}'])(
+  "rejects JEB JSON text outside the JSON value contract: %s",
+  (text) => {
+    expect(() =>
+      decodeJebToolResult({ content: [{ type: "text", text }] }),
+    ).toThrow("JSON numbers must be finite");
+  },
+);
+
+it("accepts omitted JEB content only when structured evidence establishes an observation", () => {
+  expect(
+    decodeJebToolResult({ structuredContent: { result: "ordinary field" } }),
+  ).toEqual({ result: "ordinary field" });
+  expect(() => decodeJebToolResult({})).toThrow("empty observation");
+  for (const content of [null, {}, [null], [{ type: "text", text: 42 }]])
+    expect(() =>
+      decodeJebToolResult({ content, structuredContent: { success: true } }),
+    ).toThrow();
+});
+
+it("selects structured JEB evidence ahead of text while admitting mixed content", () => {
+  const image = { type: "image", data: "AA==", mimeType: "image/png" };
+  expect(
+    decodeJebToolResult({
+      content: [image, { type: "text", text: "fallback" }],
+      structuredContent: { observed: true },
+    }),
+  ).toEqual({ observed: true });
+  expect(
+    decodeJebToolResult({
+      content: [image, { type: "text", text: "fallback" }],
+    }),
+  ).toBe("fallback");
+  for (const structuredContent of [null, [], "invalid", { observed: Infinity }])
+    expect(() =>
+      decodeJebToolResult({
+        content: [{ type: "text", text: "fallback" }],
+        structuredContent,
+      }),
+    ).toThrow();
+  expect(() => decodeJebToolResult({ content: [image] })).toThrow(
+    "empty observation",
+  );
+  expect(() =>
+    decodeJebToolResult({
+      content: [
+        { type: "text", text: "first" },
+        { type: "text", text: "second" },
+      ],
+    }),
+  ).toThrow("empty observation");
 });

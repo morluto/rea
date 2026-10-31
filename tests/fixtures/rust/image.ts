@@ -1,4 +1,4 @@
-import { deflateSync } from "node:zlib";
+import { deflateSync, zstdCompressSync } from "node:zlib";
 
 /** zlib payload matching the embedded dependency JSON shape. */
 export const rustDependencyPayload = (
@@ -16,6 +16,39 @@ export const rustDependencyPayload = (
     format: 1,
   },
 ): Buffer => deflateSync(Buffer.from(JSON.stringify(document)));
+
+/** Compress the ELF section-name table without changing other sections. */
+export const compressRustElfSectionNames = (
+  bytes: Buffer,
+  compressionType = 1,
+): Buffer => {
+  const sectionOffset = Number(bytes.readBigUInt64LE(40));
+  const sectionWidth = bytes.readUInt16LE(58);
+  const namesIndex = bytes.readUInt16LE(62);
+  const nameHeader = sectionOffset + namesIndex * sectionWidth;
+  const namesOffset = Number(bytes.readBigUInt64LE(nameHeader + 24));
+  const namesSize = Number(bytes.readBigUInt64LE(nameHeader + 32));
+  const names = Buffer.from(
+    bytes.subarray(namesOffset, namesOffset + namesSize),
+  );
+  const compressed =
+    compressionType === 2 ? zstdCompressSync(names) : deflateSync(names);
+  const compressionHeader = Buffer.alloc(24);
+  compressionHeader.writeUInt32LE(compressionType, 0);
+  compressionHeader.writeBigUInt64LE(BigInt(names.length), 8);
+  compressionHeader.writeBigUInt64LE(1n, 16);
+  compressionHeader.copy(bytes, namesOffset);
+  compressed.copy(bytes, namesOffset + compressionHeader.length);
+  bytes.writeBigUInt64LE(
+    bytes.readBigUInt64LE(nameHeader + 8) | 0x800n,
+    nameHeader + 8,
+  );
+  bytes.writeBigUInt64LE(
+    BigInt(compressionHeader.length + compressed.length),
+    nameHeader + 32,
+  );
+  return bytes;
+};
 
 export const RUSTC_HASH = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const RUSTC_PATH = `/rustc/${RUSTC_HASH}/library/core`;
@@ -46,6 +79,18 @@ export const createRustImage = (options: {
   if (options.format === "elf") writeElf(image);
   else if (options.format === "pe") writePe(image);
   else writeMacho(image);
+  return bytes;
+};
+
+/** Read-only ELF data stays independent of its section-name spelling or availability. */
+export const rustElfSectionNameFixture = (
+  name: "named" | "empty" | "unavailable",
+): Buffer => {
+  const bytes = createRustImage({ format: "elf", omitSection: true });
+  // This fixture's read-only PROGBITS header is at 384. Its PT_LOAD is writable,
+  // so compiler-path recovery must use the section rather than segment fallback.
+  if (name === "empty") bytes.writeUInt32LE(0, 384);
+  if (name === "unavailable") bytes.writeUInt16LE(0, 62);
   return bytes;
 };
 
@@ -258,6 +303,78 @@ export const createRustHashOverflowImage = (): Buffer => {
   for (let index = 0; index < 65; index += 1) {
     const hash = index.toString(16).padStart(40, "0");
     bytes.write(`/rustc/${hash}/`, 800 + index * 48, "latin1");
+  }
+  return bytes;
+};
+
+/** Valid Rust evidence beside an independently invalid Go metadata section. */
+export const createRustImageWithGoSection = (
+  format: "elf" | "macho",
+  fault:
+    | "compressed"
+    | "unmapped"
+    | "zero-fill"
+    | "duplicate"
+    | "out-of-file"
+    | "zero-address",
+): Buffer => {
+  const bytes = createRustImage({ format });
+  const count = fault === "duplicate" ? 2 : 1;
+  if (format === "elf") {
+    const nameOffset = Number(bytes.readBigUInt64LE(320 + 32));
+    const name = Buffer.from(".go.buildinfo\0");
+    name.copy(bytes, 768 + nameOffset);
+    bytes.writeBigUInt64LE(BigInt(nameOffset + name.length), 320 + 32);
+    bytes.writeUInt16LE(4 + count, 60);
+    for (let index = 0; index < count; index++) {
+      const header = 512 + index * 64;
+      bytes.writeUInt32LE(nameOffset, header);
+      bytes.writeUInt32LE(fault === "zero-fill" ? 8 : 1, header + 4);
+      bytes.writeBigUInt64LE(fault === "compressed" ? 0x800n : 0n, header + 8);
+      bytes.writeBigUInt64LE(
+        fault === "zero-address"
+          ? 0n
+          : fault === "unmapped"
+            ? 0x600000n
+            : 0x400c00n,
+        header + 16,
+      );
+      bytes.writeBigUInt64LE(
+        fault === "out-of-file" ? 4088n : 3072n,
+        header + 24,
+      );
+      bytes.writeBigUInt64LE(fault === "zero-address" ? 16n : 32n, header + 32);
+      if (fault === "zero-address")
+        Buffer.from("additional data\0", "ascii").copy(bytes, 3072);
+    }
+  } else {
+    if (fault === "compressed") throw new Error("Not a Mach-O section flag");
+    if (fault === "zero-address") throw new Error("Not an ELF section address");
+    bytes.writeUInt32LE(2 + count, 16);
+    bytes.writeUInt32LE((2 + count) * 152, 20);
+    for (let index = 0; index < count; index++) {
+      const command = 336 + index * 152;
+      const little: RustImageWrite["little"] = (offset, value, width) => {
+        if (width === 16) bytes.writeUInt16LE(value, offset);
+        else if (width === 32) bytes.writeUInt32LE(value, offset);
+        else bytes.writeBigUInt64LE(BigInt(value), offset);
+      };
+      writeMachoSegment({
+        bytes,
+        little,
+        command,
+        segment: "__EXTRA",
+        section: "__go_buildinfo",
+        body: Buffer.alloc(32),
+        fileOffset: 3072,
+        protection: fault === "unmapped" ? 0 : 3,
+        flags: fault === "zero-fill" ? 1 : 0,
+      });
+      if (fault === "out-of-file") bytes.writeUInt32LE(4088, command + 72 + 48);
+      bytes.writeBigUInt64LE(0x200000000n, command + 24);
+      bytes.writeBigUInt64LE(0x200000000n, command + 72 + 32);
+      if (fault === "unmapped") bytes.writeBigUInt64LE(0n, command + 32);
+    }
   }
   return bytes;
 };

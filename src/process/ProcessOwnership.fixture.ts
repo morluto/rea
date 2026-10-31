@@ -1,6 +1,24 @@
-import { vi } from "vitest";
+import { expect, vi } from "vitest";
 import type { ProcessOwnershipHost } from "./ProcessOwnership.js";
 import { ProcessOwnershipEvidenceOwner } from "./ProcessOwnershipEvidence.js";
+
+export const verifiedLineage = (
+  descendants: readonly {
+    readonly pid: number;
+    readonly parentPid: number;
+    readonly processGroupId: number;
+  }[],
+) => ({
+  status: "verified",
+  observedAt: expect.any(String),
+  lineage: {
+    runId: "run-token",
+    launcherPid: 100,
+    launcherParentPid: 1,
+    processGroupId: 100,
+    descendants,
+  },
+});
 
 export const createOwnership = () => ({
   runId: "run-token",

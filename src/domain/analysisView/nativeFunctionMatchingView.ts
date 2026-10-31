@@ -1,14 +1,13 @@
 import { z } from "zod";
 import {
   nativeFunctionMatchingSchema,
-  nativeFunctionMatchingContextSchema,
   nativeFunctionMatchSchema,
   nativeFunctionMatchMemberSchema,
   nativeMatchStateSchema,
   type NativeFunctionMatching,
 } from "../native/functionMatching.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
-import { parseAnalysisViewResult } from "./analysisViewParent.js";
+import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import {
   boundedViewMessages,
@@ -17,11 +16,12 @@ import {
 } from "./analysisViewCoverage.js";
 import { err, ok, type Result } from "../result.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import {
+  ownedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
 import type { JsonValue } from "../jsonValue.js";
 
 const matchRow = nativeFunctionMatchSchema.extend({
@@ -80,8 +80,6 @@ export const nativeFunctionMatchingViewItemsSchema = z.union([
     }),
   ),
 ]);
-export const nativeFunctionMatchingViewContextSchema =
-  nativeFunctionMatchingContextSchema;
 interface FunctionRow {
   readonly member: NativeFunctionMatching["matches"][number]["left"][number];
   readonly match_id: string;
@@ -94,25 +92,19 @@ interface Checked {
   recent?: { readonly key: string; readonly rows: readonly number[] };
 }
 const checked = new WeakMap<object, Checked>();
+const readReport = createAnalysisViewResultReader(nativeFunctionMatchingSchema);
 
 type Request = z.output<typeof nativeFunctionMatchingViewRequestSchema>;
 const checkedReport = (
   parent: AnalysisViewParent,
 ): Result<Checked, AnalysisError> => {
-  const source = parent.normalizedResult;
-  const reusable =
-    typeof source === "object" &&
-    source !== null &&
-    parent.sealedResult === true &&
-    isImmutableJsonSnapshot(source);
-  const cached = reusable ? checked.get(source) : undefined;
-  if (cached !== undefined) return ok(cached);
-  const parsed = parseAnalysisViewResult(nativeFunctionMatchingSchema, parent);
+  const parsed = readReport(parent);
   if (!parsed.ok) return parsed;
-  const entry: Checked = {
-    report: reusable ? (source as NativeFunctionMatching) : parsed.value,
-  };
-  if (reusable) checked.set(source, entry);
+  const report = parsed.value;
+  const cached = checked.get(report);
+  if (cached !== undefined) return ok(cached);
+  const entry: Checked = { report };
+  if (isImmutableJsonSnapshot(report)) checked.set(report, entry);
   return ok(entry);
 };
 const functionRows = (entry: Checked): readonly FunctionRow[] => {
@@ -268,9 +260,13 @@ const selectedItems = (
 /** Query immutable matching facts without copying full alias groups into selected pages. */
 export const projectNativeFunctionMatchingView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
-  if (view.kind !== "summary" && view.kind !== "function-matches")
+  admitted: AdmittedView,
+) => {
+  const view = ownedView<
+    | SummaryAnalysisView
+    | z.output<typeof nativeFunctionMatchingViewRequestSchema>
+  >(admitted, "summary", "function-matches");
+  if (view === undefined)
     return err(
       analysisViewInputError([
         {
@@ -292,7 +288,7 @@ export const projectNativeFunctionMatchingView = (
   const shared = sharedContext(parent, entry.report);
   if (view.kind === "summary")
     return ok({
-      kind: "summary",
+      kind: "summary" as const,
       view,
       ...shared,
       summary: context,
@@ -301,7 +297,7 @@ export const projectNativeFunctionMatchingView = (
   const rows = filterRows(entry, view),
     items = selectedItems(entry, view, rows);
   return ok({
-    kind: "function-matches",
+    kind: "function-matches" as const,
     view,
     ...shared,
     ...context,

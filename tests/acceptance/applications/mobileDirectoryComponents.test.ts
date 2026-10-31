@@ -207,7 +207,151 @@ cliTest.for(fixtures)(
           mode === "files" ? childPackages : [],
         );
       }
-      expect(await readFile(path)).toEqual(Buffer.from(bytes));
+      expect(Buffer.compare(await readFile(path), Buffer.from(bytes))).toBe(0);
+    }
+  },
+);
+
+cliTest.for([
+  {
+    family: "Apple IPA",
+    extension: "ipa",
+    paths: ["Payload/Fixture.app/Info.plist"],
+    command: "project-apple-application-graph",
+    operation: "project_apple_application_graph",
+  },
+  {
+    family: "Apple macOS bundle",
+    extension: "zip",
+    paths: [
+      "Fixture.app/Contents/Info.plist",
+      "Fixture.app/Contents/_CodeSignature/CodeResources",
+      "Fixture.app/Contents/Frameworks/Core.framework/Versions/A/Resources/Info.plist",
+    ],
+    command: "project-apple-application-graph",
+    operation: "project_apple_application_graph",
+  },
+  {
+    family: "Harmony Stage",
+    extension: "hap",
+    paths: ["module.json"],
+    command: "project-harmony-application-graph",
+    operation: "project_harmony_application_graph",
+  },
+  {
+    family: "Harmony FA",
+    extension: "hsp",
+    paths: ["config.json"],
+    command: "project-harmony-application-graph",
+    operation: "project_harmony_application_graph",
+  },
+  {
+    family: "Harmony App Pack",
+    extension: "app",
+    paths: ["entry.hap", "feature.hsp"],
+    command: "project-harmony-application-graph",
+    operation: "project_harmony_application_graph",
+  },
+])(
+  "preserves encrypted $family path facts through CLI and stdio MCP",
+  { timeout: 60_000 },
+  async (fixture, { cli }) => {
+    const root = await createTestTempDirectory("rea-mobile-encrypted-paths-");
+    const environment = { HOME: root, USERPROFILE: root };
+    const { call } = await connectLocalToolsMcp(environment);
+    for (const encrypted of [false, true]) {
+      const writer = new ZipWriter(new Uint8ArrayWriter());
+      for (const member of fixture.paths)
+        await writer.add(
+          member,
+          new TextReader("opaque fixture content"),
+          encrypted ? { password: "fixture-only" } : {},
+        );
+      const bytes = await writer.close();
+      const path = join(root, `${encrypted}.${fixture.extension}`);
+      await writeFile(path, bytes);
+      const inspected = await cli.run({
+        arguments: ["inspect-artifact", path, "--json"],
+        environment,
+      });
+      expect(inspected.exitCode, inspected.stderr).toBe(0);
+      const inventory = parseEvidence(inspected.json);
+      const input = { inventory_evidence: [inventory] };
+      const projected = await cli.run({
+        arguments: [fixture.command, JSON.stringify(input), "--json"],
+        environment,
+      });
+      expect(projected.exitCode, projected.stderr).toBe(0);
+      const evidence = parseEvidence(projected.json);
+      const mcp = await call(fixture.operation, input);
+      expect(mcp.isError, JSON.stringify(mcp)).not.toBe(true);
+      expect(parseEvidence(mcp.structuredContent)).toEqual(evidence);
+      const graph =
+        fixture.operation === "project_apple_application_graph"
+          ? appleApplicationProjectionResultSchema.parse(
+              evidence.normalized_result,
+            )
+          : harmonyApplicationProjectionResultSchema.parse(
+              evidence.normalized_result,
+            );
+      expect(graph.source_evidence_ids).toEqual([inventory.evidence_id]);
+      expect(graph.coverage).toEqual({
+        status: encrypted ? "partial" : "complete-within-inventory",
+        inventory_complete: true,
+      });
+      expect(
+        graph.unavailable_components.map(({ path }) => path).sort(),
+      ).toEqual(encrypted ? [...fixture.paths].sort() : []);
+      for (const component of graph.unavailable_components)
+        expect(component).toMatchObject({
+          artifact_id: null,
+          sha256: null,
+          encrypted: true,
+        });
+      expect(graph.runtime_families).toEqual([]);
+      expect(graph.bridge_candidates).toEqual([]);
+      if ("bundles" in graph) {
+        expect(graph.platforms).toEqual([
+          fixture.extension === "ipa" ? "ios" : "macos",
+        ]);
+        expect(
+          graph.bundles.map(({ info_plist_path }) => info_plist_path).sort(),
+        ).toEqual(
+          fixture.paths
+            .filter((member) => member.endsWith("Info.plist"))
+            .sort(),
+        );
+        expect(
+          graph.bundles.flatMap(({ signing_paths }) => signing_paths),
+        ).toEqual(
+          fixture.paths.filter((member) => member.endsWith("CodeResources")),
+        );
+        expect(
+          graph.bundles.flatMap(
+            ({ executable_candidates }) => executable_candidates,
+          ),
+        ).toEqual([]);
+      } else {
+        expect(graph.packaging_model).toBe(
+          fixture.extension === "hap"
+            ? "stage"
+            : fixture.extension === "hsp"
+              ? "fa"
+              : "unknown",
+        );
+        expect(graph.app_pack_children.map(({ path }) => path)).toEqual(
+          fixture.extension === "app" ? fixture.paths : [],
+        );
+        for (const child of graph.app_pack_children)
+          if (encrypted)
+            expect(child).toMatchObject({ artifact_id: null, sha256: null });
+          else {
+            expect(child.artifact_id).toMatch(/^art_/u);
+            expect(child.sha256).toMatch(/^[a-f0-9]{64}$/u);
+          }
+      }
+      if (encrypted) expect(Object.values(graph.components).flat()).toEqual([]);
+      expect(Buffer.compare(await readFile(path), Buffer.from(bytes))).toBe(0);
     }
   },
 );

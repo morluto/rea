@@ -1,4 +1,6 @@
-import type { ProviderInspectionScope } from "../providers/ProviderInspectionScope.js";
+import type { AnalysisWorkScope } from "./AnalysisWorkScope.js";
+import type { AnalysisObservation } from "../domain/analysisObservation.js";
+import type { ProviderInspectionScope } from "./ProviderInspectionScope.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import type { OfficialToolName } from "../contracts/officialToolContracts.js";
 import type { EnhancedToolName } from "../contracts/enhancedInputs.js";
@@ -9,15 +11,14 @@ import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Result } from "../domain/result.js";
-import {
-  createEvidence,
-  type Evidence,
-  type EvidenceLocation,
-  type EvidenceSubjectTarget,
+import type {
+  Evidence,
+  EvidenceLocation,
+  EvidenceSubjectTarget,
 } from "../domain/evidence.js";
-import { jsonObjectSchema, jsonValueSchema } from "../domain/jsonValue.js";
+import { jsonValueSchema } from "../domain/jsonValue.js";
 import type { ProgressReporter } from "./ProgressReporter.js";
-import type { ProviderRejectionCode } from "../contracts/providerSelection.js";
+import type { ProviderRejectionCode } from "../domain/providerSelection.js";
 import type { ProcessLineageObservation } from "../process/ProcessOwnership.js";
 import type { ProviderOperationHealth } from "../domain/providerOperationHealth.js";
 import {
@@ -26,6 +27,8 @@ import {
 } from "../domain/relationshipCoverage.js";
 
 export interface ExecutionOptions {
+  /** Ephemeral state shared only by one composed workflow. */
+  readonly workScope?: AnalysisWorkScope;
   readonly signal?: AbortSignal;
   readonly progress?: ProgressReporter;
   /**
@@ -50,16 +53,12 @@ export type AnalysisOperation =
   | "health";
 
 /** Atomic successful provider observation with exact producing provenance. */
-export interface AnalysisExecution {
-  readonly result: JsonValue;
-  readonly rawResult: JsonValue | null;
+export interface AnalysisExecution extends AnalysisObservation {
   readonly provider: ProviderIdentity;
-  readonly analysisProfile?: AnalysisProfileCommitment;
+  /** Session-issued identity of the committed record consumed by this execution. */
+  readonly evidenceId?: string;
   /** Result-specific veto of snapshot replay; Evidence remains retainable. */
   readonly cachePolicy?: "live";
-  readonly limitations: readonly string[];
-  /** Provider-owned completeness assessment for caller/callee observations. */
-  readonly relationshipCoverage?: RelationshipCoverage;
   /**
    * Whether the provider capped an `xrefs` read: true when it reported a
    * truncation, false when it explicitly reported none. Absent when it reports
@@ -67,8 +66,6 @@ export interface AnalysisExecution {
    * output.
    */
   readonly referencesTruncated?: boolean;
-  readonly locations: readonly EvidenceLocation[];
-  readonly subject: EvidenceSubjectTarget | null;
 }
 
 interface CreateAnalysisExecutionOptions {
@@ -79,7 +76,8 @@ interface CreateAnalysisExecutionOptions {
   readonly relationshipCoverage?: RelationshipCoverage;
   readonly referencesTruncated?: boolean;
   readonly locations?: readonly EvidenceLocation[];
-  readonly subject?: EvidenceSubjectTarget;
+  readonly sourceEvidence?: readonly Evidence[];
+  readonly subject?: EvidenceSubjectTarget | null;
 }
 
 /**
@@ -129,38 +127,17 @@ export function createAnalysisExecution(
       ? {}
       : { referencesTruncated: options.referencesTruncated }),
     locations: [...(options.locations ?? [])],
-    subject: options.subject ?? null,
+    ...(options.sourceEvidence === undefined
+      ? {}
+      : { sourceEvidence: Object.freeze([...options.sourceEvidence]) }),
+    ...(options.subject === undefined ? {} : { subject: options.subject }),
   };
 }
 
-/**
- * Compose one completed provider execution into its caller-visible Evidence,
- * so success and a late cancellation that retains it carry identical facts.
- */
-export const createAnalysisExecutionEvidence = (
-  operation: string,
-  input: unknown,
-  execution: AnalysisExecution,
-  confidence: "observed" | "derived",
-): Evidence =>
-  createEvidence(execution.subject ?? undefined, execution.provider, {
-    operation,
-    parameters: jsonObjectSchema.parse(input),
-    result: execution.result,
-    rawResult: execution.rawResult,
-    limitations: execution.limitations,
-    ...(execution.analysisProfile === undefined
-      ? {}
-      : { analysisProfile: execution.analysisProfile }),
-    ...(execution.relationshipCoverage === undefined
-      ? {}
-      : { relationshipCoverage: execution.relationshipCoverage }),
-    locations: execution.locations,
-    confidence,
-  });
-
 /** Provider-neutral application capability for one analysis operation. */
 export interface AnalysisOperationPort {
+  /** The session retains workflow resources whose final cleanup failed. */
+  readonly resourceScope?: RetainedResourceScope | undefined;
   execute(
     operation: AnalysisOperation,
     parameters: Readonly<Record<string, JsonValue>>,
@@ -206,6 +183,8 @@ export interface AnalysisClient extends AnalysisOperationPort {
   close(
     options?: Pick<ExecutionOptions, "progress"> & {
       readonly retainDocument?: boolean;
+      /** Report each owned cleanup failure as soon as its owner observes it. */
+      readonly onCleanupFailure?: (failure: AnalysisError) => void;
     },
   ): Promise<Result<null, AnalysisError>>;
 }

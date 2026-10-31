@@ -10,7 +10,7 @@ interface InspectorCommand {
 
 interface FakeV8InspectorOptions {
   readonly targetUrl: string;
-  readonly attached?: boolean | null;
+  readonly attached?: unknown;
   readonly targetType?: "node" | "page";
   readonly runtimeProduct?: string;
   readonly scriptUrls?: readonly string[];
@@ -227,7 +227,7 @@ const target = (
   options: {
     readonly type: "node" | "page";
     readonly port: number;
-    readonly attached: boolean | null | undefined;
+    readonly attached: unknown;
   },
 ) => ({
   id,

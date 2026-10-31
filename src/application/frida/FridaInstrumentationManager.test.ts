@@ -15,8 +15,13 @@ import { FridaScriptLoadCancelledError } from "./FridaInstrumentationPort.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
+  AnalysisTimeoutError,
 } from "../../domain/analysisErrorCore.js";
 import { FridaInstrumentationManager } from "../../frida/FridaInstrumentationManager.js";
+import { fridaCaptureLimitations } from "../../frida/fridaCaptureLimits.js";
+import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
+import { FridaInstrumentationService } from "./FridaInstrumentationService.js";
 
 const signal = <Handler extends (...args: never[]) => void>() => {
   let connected: Handler | undefined;
@@ -215,6 +220,78 @@ const startLocalAttachedSession = async (
 
 // eslint-disable-next-line max-lines-per-function -- related manager lifecycle cases share the same focused fake provider.
 describe("FridaInstrumentationManager", () => {
+  it("reports a fixed device-lookup deadline when Frida's lookup times out", async () => {
+    const bindings = new FakeDeviceManager();
+    bindings.getDeviceById = async () => {
+      throw new Error("Device not found");
+    };
+    const manager = new FridaInstrumentationManager({
+      deviceManager: bindings,
+    });
+    const listed = await manager.listProcesses({ deviceId: "local" });
+    expect(listed.ok).toBe(false);
+    if (listed.ok) return;
+    expect(listed.error).toBeInstanceOf(AnalysisTimeoutError);
+    expect(listed.error).toMatchObject({
+      operation: "list_frida_processes",
+      timeoutMs: 1_000,
+    });
+    if (!(listed.error instanceof AnalysisTimeoutError)) return;
+    expect(listed.error.userMessage).toContain("1000 ms");
+    expect(listed.error.userMessage).toContain("no runtime override");
+    expect(listed.error.remediationAction).toContain("no runtime override");
+  });
+
+  it("preserves a Frida device-manager failure instead of claiming the lookup deadline expired", async () => {
+    const bindings = new FakeDeviceManager();
+    bindings.getDeviceById = async () => {
+      throw new Error("Device manager is closed");
+    };
+    const manager = new FridaInstrumentationManager({
+      deviceManager: bindings,
+    });
+    const listed = await manager.listProcesses({ deviceId: "local" });
+    expect(listed.ok).toBe(false);
+    if (listed.ok) return;
+    expect(listed.error).toBeInstanceOf(AnalysisCapabilityUnavailableError);
+    expect(listed.error).not.toBeInstanceOf(AnalysisTimeoutError);
+    expect(listed.error).toMatchObject({
+      providerId: "frida",
+      operation: "list_frida_processes",
+      reason: "Device manager is closed",
+    });
+    expect(listed.error.message).toContain("Device manager is closed");
+    expect(listed.error.message).not.toContain("deadlineExpired");
+  });
+
+  it("names a capture cap only after that observation dropped data", () => {
+    expect(fridaCaptureLimitations({ messages_truncated: false })).toEqual([]);
+    expect(
+      fridaCaptureLimitations({ messages_truncated: true }).join("\n"),
+    ).toContain("16777216");
+    const field = fridaCaptureLimitations({
+      messages: [{ type_truncated: true }],
+    }).join("\n");
+    expect(field).toContain("4096");
+    expect(field).not.toContain("16777216");
+    const text = fridaCaptureLimitations({
+      messages: [
+        {
+          description_truncated: true,
+          payload: { messages_truncated: true, type_truncated: true },
+        },
+      ],
+    }).join("\n");
+    expect(text).toContain("32768");
+    expect(text).not.toContain("16777216");
+    expect(text).not.toContain("4096");
+    expect(
+      fridaCaptureLimitations({
+        messages: [{ payload: { messages_truncated: true } }],
+      }),
+    ).toEqual([]);
+  });
+
   it("attaches by PID when Frida omits the target from process lookup", async () => {
     const bindings = new FakeDeviceManager();
     bindings.device.getProcessByPid = async () => {
@@ -339,7 +416,13 @@ describe("FridaInstrumentationManager", () => {
     expect(bindings.device.resumed).toEqual([]);
     expect(bindings.removedRemote).toEqual([]);
 
-    await expect(manager.closeAll()).rejects.toThrow("cleanup was incomplete");
+    const closing = await manager.closeAll().catch((cause: unknown) => cause);
+    expect(closing).toBeInstanceOf(AnalysisError);
+    if (!(closing instanceof AnalysisError))
+      throw new Error("Expected typed cleanup failure");
+    expect(projectAnalysisError(closing)).toMatchObject({
+      code: "cleanup_incomplete",
+    });
     expect(bindings.device.resumed).toEqual([]);
     expect(bindings.removedRemote).toEqual([]);
 
@@ -349,6 +432,8 @@ describe("FridaInstrumentationManager", () => {
     bindings.getDeviceById = async () => replacement;
     bindings.addRemoteDevice = async () => replacement;
     await Promise.all([manager.closeAll(), manager.closeAll()]);
+    expect(started.error.cleanupIncomplete).toBe(false);
+    expect(closing.cleanupIncomplete).toBe(false);
     expect(bindings.device.resumed).toEqual([512]);
     expect(replacement.resumed).toEqual([]);
     expect(bindings.removedRemote).toEqual(["127.0.0.1:27042"]);
@@ -597,6 +682,7 @@ describe("FridaInstrumentationManager", () => {
     expect(bindings.device.session.scripts[0]?.unloadCalls).toBe(2);
     expect(bindings.device.session.scripts[0]?.isDestroyed).toBe(true);
     expect(manager.status(started.value.sessionId)).toBeUndefined();
+    if (!loaded.ok) expect(loaded.error.cleanupIncomplete).toBe(false);
   });
 
   it("closes a session when its target already destroyed the script", async () => {
@@ -1117,6 +1203,9 @@ it("redacts remote credentials and maps a missing optional binding", async () =>
   if (!failed.ok) {
     expect(failed.error.message).not.toContain(secret);
     expect(failed.error.message).not.toContain("synthetic-url-token");
+    expect(JSON.stringify(projectAnalysisError(failed.error))).not.toContain(
+      "synthetic-url-token",
+    );
   }
 
   const missing = new FridaInstrumentationManager({
@@ -1128,6 +1217,80 @@ it("redacts remote credentials and maps a missing optional binding", async () =>
   expect(unavailable.ok).toBe(false);
   if (!unavailable.ok)
     expect(unavailable.error.message).toContain("Cannot find package 'frida'");
+});
+
+it("retains the selected device or credential-free remote address on discovery and startup failures", async () => {
+  const bindings = new FakeDeviceManager();
+  bindings.getDeviceById = async () => {
+    throw new Error("Device not found");
+  };
+  bindings.addRemoteDevice = async () => {
+    throw new Error("Unable to connect to remote frida-server");
+  };
+  const manager = new FridaInstrumentationManager({ deviceManager: bindings });
+  const device = await manager.listProcesses({ deviceId: "missing-device" });
+  expect(device.ok).toBe(false);
+  if (!device.ok) {
+    expect(projectAnalysisError(device.error)).toMatchObject({
+      code: "provider_timeout",
+      details: { diagnostics: { device_id: "missing-device" } },
+    });
+  }
+  const remote = { address: "127.0.0.1:27042", token: "secret-token" };
+  for (const result of [
+    await manager.listProcesses({ remote }),
+    await manager.listDevices(remote),
+    await manager.startSession({ mode: "attach", remote, pid: 512 }),
+  ]) {
+    expect(result.ok).toBe(false);
+    if (result.ok) continue;
+    const projected = projectAnalysisError(result.error);
+    expect(projected).toMatchObject({
+      code: "capability_unavailable",
+      details: { diagnostics: { remote_address: remote.address } },
+    });
+    expect(JSON.stringify(projected)).not.toContain(remote.token);
+    expect(projected.remediation.action).toContain("selected Frida server");
+  }
+});
+
+it("redacts credentials from inherited typed failure diagnostics", async () => {
+  const bindings = new FakeDeviceManager();
+  bindings.addRemoteDevice = async () => {
+    throw new AnalysisTimeoutError("frida_device_lookup", 1000, {
+      diagnostics: { detail: "token=synthetic-secret-token" },
+    });
+  };
+  const manager = new FridaInstrumentationManager({ deviceManager: bindings });
+  const result = await manager.listProcesses({
+    remote: { address: "127.0.0.1:27042", token: "synthetic-secret-token" },
+  });
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  const projected = projectAnalysisError(result.error);
+  expect(projected).toMatchObject({
+    code: "provider_timeout",
+    details: { diagnostics: { remote_address: "127.0.0.1:27042" } },
+  });
+  expect(JSON.stringify(projected)).not.toContain("synthetic-secret-token");
+});
+
+it("does not describe a connected device's enumeration failure as a connection failure", async () => {
+  const bindings = new FakeDeviceManager();
+  bindings.device.enumerateProcesses = async () => {
+    throw new Error("process enumeration denied");
+  };
+  const manager = new FridaInstrumentationManager({ deviceManager: bindings });
+  const result = await manager.listProcesses({
+    remote: { address: "127.0.0.1:27042" },
+  });
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  const projected = projectAnalysisError(result.error);
+  expect(projected.details?.diagnostics).toMatchObject({
+    remote_address: "127.0.0.1:27042",
+  });
+  expect(projected.remediation.action).not.toContain("selected Frida server");
 });
 
 it("clears current binding failure after recovery", async () => {
@@ -1242,7 +1405,7 @@ it("bounds oversized Frida message metadata before retaining it", async () => {
   });
   expect(loaded.ok).toBe(true);
   if (loaded.ok) {
-    expect(loaded.value.messagesTruncated).toBe(true);
+    expect(loaded.value.messagesTruncated).toBe(false);
     const message = loaded.value.messages[0];
     expect(message).toMatchObject({
       description_truncated: true,
@@ -1309,10 +1472,10 @@ it.each([
       expect(message[field]).toBe(retained);
       expect(message[`${field}_truncated`] ?? false).toBe(truncated);
     }
-    expect(loaded.value.messagesTruncated).toBe(truncated);
+    expect(loaded.value.messagesTruncated).toBe(false);
     expect(manager.status(started.value.sessionId)).toMatchObject({
       messages: [message],
-      messagesTruncated: truncated,
+      messagesTruncated: false,
     });
   },
 );
@@ -1460,7 +1623,10 @@ it.each([false, true])(
     expect(loaded.error.script.messages).toContainEqual(
       expect.objectContaining({ payload: "during cleanup" }),
     );
-    expect(loaded.error.script.messagesTruncated).toBe(true);
+    expect(loaded.error.script.messagesTruncated).toBe(false);
+    expect(loaded.error.script.messages).toContainEqual(
+      expect.objectContaining({ description_truncated: true }),
+    );
     expect(loaded.error.diagnostics).toEqual(
       rejectNative ? { native_failure: nativeFailure.message } : undefined,
     );
@@ -1507,4 +1673,71 @@ it("preserves a native rejection observed before cancellation during script clea
   expect(result.error.cause).toBe(failure);
   expect(result.error.cleanupIncomplete).toBe(false);
   expect(manager.status(started.value.sessionId)?.scripts).toEqual([]);
+});
+
+it("restores the original load failure only after fallback cleanup confirms its exact owners", async () => {
+  const bindings = new FakeDeviceManager();
+  bindings.device.session.nextLoadFailure = new Error(
+    "primary native load failed",
+  );
+  bindings.device.session.nextUnloadFailureCount = 3;
+  bindings.device.session.detachFailureCount = 2;
+  const manager = new FridaInstrumentationManager({ deviceManager: bindings });
+  const service = new FridaInstrumentationService(manager);
+  const result = await service.instrument({
+    mode: "attach",
+    pid: 512,
+    deviceId: "local",
+    source: { sourceKind: "inline", source: "send(1)" },
+    durationMs: 0,
+  });
+  if (result.ok) throw new Error("Expected native load failure");
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "cleanup_incomplete",
+  });
+  const closed = await service.closeAll().catch((cause: unknown) => cause);
+  expect(closed).toBeInstanceOf(AnalysisError);
+  expect(result.error.cleanupIncomplete).toBe(true);
+  await service.closeAll();
+  expect(result.error.cleanupIncomplete).toBe(false);
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "capability_unavailable",
+    details: {
+      operation: "load_frida_script",
+      reason: "primary native load failed",
+    },
+  });
+});
+
+it("retries only unresolved sessions and resolves the typed close aggregate", async () => {
+  const bindings = new FakeDeviceManager();
+  const failing = new FakeSession();
+  failing.detachFailureCount = 1;
+  const successful = new FakeSession();
+  const sessions = [failing, successful];
+  const calls = [0, 0];
+  for (const [index, session] of sessions.entries()) {
+    const detach = session.detach.bind(session);
+    session.detach = async () => {
+      calls[index] = (calls[index] ?? 0) + 1;
+      await detach();
+    };
+  }
+  bindings.device.attach = async () => {
+    const session = sessions.shift();
+    if (session === undefined) throw new Error("Unexpected extra attach");
+    return session;
+  };
+  const manager = new FridaInstrumentationManager({ deviceManager: bindings });
+  await manager.startSession({ mode: "attach", pid: 512 });
+  await manager.startSession({ mode: "attach", pid: 513 });
+  const failure = await manager.closeAll().catch((cause: unknown) => cause);
+  if (!(failure instanceof AnalysisError))
+    throw new Error("Expected typed cleanup aggregate");
+  expect(failure.cleanupIncomplete).toBe(true);
+  expect(failure.cleanupResources).toHaveLength(1);
+  expect(calls).toEqual([1, 1]);
+  await manager.closeAll();
+  expect(calls).toEqual([2, 1]);
+  expect(failure.cleanupIncomplete).toBe(false);
 });

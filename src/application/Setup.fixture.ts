@@ -1,4 +1,4 @@
-import { skillDestinations } from "./SetupSkill.js";
+import { skillDestinations, SetupSkillInstallError } from "./SetupSkill.js";
 import type {
   ClientConfigurationInspection,
   ClientConfigurationResult,
@@ -9,7 +9,6 @@ import type {
 import type { SetupClient } from "./SupportedClients.js";
 import type { SetupHopperInstallResult } from "./SetupInstallFailure.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { SetupSkillInstallError } from "./SetupSkill.js";
 import type {
   DoctorCheck,
   DoctorProviderInspection,
@@ -18,9 +17,9 @@ import type {
 } from "./Doctor.js";
 import type { LinuxDistribution } from "./LinuxHopper.js";
 import { PRODUCT_IDENTITY, SDK_IDENTITY } from "../identity.js";
-import { CATALOG_IDENTITY } from "../catalogIdentity.js";
+import { DEFAULT_CATALOG_IDENTITY } from "../catalogIdentity.js";
 import type { ClientRegistrationStatus } from "./ClientRegistrationStatus.js";
-import { setupRegistrationCommand } from "./SetupHost.js";
+import { currentClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
 
 /** Recording setup host for service-level planning and recovery tests. */
@@ -32,7 +31,7 @@ export class FakeSetupHost implements SetupHost {
   }
   registrationCommand: readonly string[];
   registrationCommandBlocker?: string;
-  nodeVersion = "24.18.0";
+  nodeVersion = "24.22.1";
   version: string | undefined = "14.5";
   distribution: LinuxDistribution | undefined;
   hopper: string | undefined;
@@ -65,11 +64,7 @@ export class FakeSetupHost implements SetupHost {
 
   constructor(platform: NodeJS.Platform = "darwin") {
     this.platform = platform;
-    this.registrationCommand = setupRegistrationCommand(
-      platform,
-      undefined,
-      CURRENT_ENTRYPOINT_PATH,
-    );
+    this.registrationCommand = currentClientRegistrationCommand({ platform });
   }
 
   macosVersion = (): Promise<string | undefined> =>
@@ -141,7 +136,7 @@ export class FakeSetupHost implements SetupHost {
     Promise.resolve(
       this.clientInspections.get(client.name) ?? { status: "update" },
     );
-  skillNeedsInstall = (): Promise<boolean> =>
+  skillNeedsInstall: SetupHost["skillNeedsInstall"] = (): Promise<boolean> =>
     Promise.resolve(this.skill !== "unchanged");
   validateSkillDirectories = (
     clientIds: readonly string[],
@@ -228,7 +223,7 @@ export class FakeSetupHost implements SetupHost {
         cli_package_version: PRODUCT_IDENTITY.packageVersion,
         expected_skill_version: PRODUCT_IDENTITY.skillVersion,
         sdk: SDK_IDENTITY,
-        catalog: CATALOG_IDENTITY,
+        catalog: DEFAULT_CATALOG_IDENTITY,
         live_server: {
           state: "unknown",
           remediation: "Inspect the running server.",

@@ -1,5 +1,5 @@
-import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { lstat, mkdir, readlink, symlink, writeFile } from "node:fs/promises";
+import { join, sep as separator } from "node:path";
 
 import { expect, it as test } from "vitest";
 
@@ -33,7 +33,9 @@ it("reports an unconfigured Kuna as a missing optional engine", async () => {
 
 it("publishes the caller's explicit settings once the installation validates", async () => {
   const root = await createTestTempDirectory("rea-kuna-doctor-");
-  const kuna = await writeFakeKuna(root);
+  const kuna = await writeFakeKuna(root, {
+    version: { stdout: "kuna 1.986\n" },
+  });
   const cache = join(root, "cache");
 
   const inspection = await inspectKunaProvider({
@@ -46,14 +48,22 @@ it("publishes the caller's explicit settings once the installation validates", a
   expect(inspection).toMatchObject({
     configured: true,
     available: true,
-    providerVersion: "1.833",
+    providerVersion: "1.986",
     registrationEnvironment: {
       REA_KUNA_COMMAND: kuna,
       REA_KUNA_CACHE_DIR: cache,
       REA_KUNA_JOBS: "4",
     },
     checks: [
-      { name: "installation", ok: true, details: { version: "1.833" } },
+      {
+        name: "installation",
+        ok: true,
+        detail: expect.stringMatching(
+          /reports Kuna 1\.986 \(sha256 [a-f0-9]{64}\)\.$/u,
+        ),
+        remediation: null,
+        details: { version: "1.986", verified_version: "1.986" },
+      },
       {
         name: "cache",
         ok: true,
@@ -75,8 +85,10 @@ it("flags an unverified release without failing the installation", async () => {
   expect(inspection.checks[0]).toMatchObject({
     ok: true,
     detail: expect.stringContaining(
-      "this release's project layout is unverified",
+      "You may continue with the selected unverified release.",
     ),
+    remediation: expect.stringContaining("setting REA_KUNA_COMMAND"),
+    details: { verified_version: "1.986" },
   });
 });
 
@@ -97,10 +109,16 @@ it("reports a cache root REA cannot use without creating anything", async () => 
     REA_KUNA_CACHE_DIR: existing,
   });
 
+  expect(blocked.available).toBe(false);
+  expect(blocked.checks[0]).toMatchObject({ name: "installation", ok: true });
   expect(blocked.checks[1]).toMatchObject({
     name: "cache",
     ok: false,
     code: "open_options_invalid",
+  });
+  expect(blocked.registrationEnvironment).toMatchObject({
+    REA_KUNA_COMMAND: kuna,
+    REA_KUNA_CACHE_DIR: occupied,
   });
   expect(ready.checks[1]).toMatchObject({
     name: "cache",
@@ -137,6 +155,93 @@ it("reports a cache root REA cannot create under its nearest existing parent", a
     // stat reports ENOTDIR for a path beneath a regular file.
     detail: expect.stringContaining("not a directory"),
   });
+});
+
+it("reports a dangling cache link as unusable and accepts a resolving link", async () => {
+  const root = await createTestTempDirectory("rea-kuna-doctor-link-");
+  const kuna = await writeFakeKuna(root);
+  const dangling = join(root, "dangling");
+  const missing = join(root, "missing-target");
+  await symlink(missing, dangling);
+  const target = join(root, "target");
+  await mkdir(target);
+  const resolving = join(root, "resolving");
+  await symlink(target, resolving);
+
+  const direct = await inspectKunaProvider({
+    REA_KUNA_COMMAND: kuna,
+    REA_KUNA_CACHE_DIR: dangling,
+  });
+  const trailing = await inspectKunaProvider({
+    REA_KUNA_COMMAND: kuna,
+    REA_KUNA_CACHE_DIR: `${dangling}${separator}`,
+  });
+  const beneath = await inspectKunaProvider({
+    REA_KUNA_COMMAND: kuna,
+    REA_KUNA_CACHE_DIR: join(dangling, "nested", "cache"),
+  });
+  const ready = await inspectKunaProvider({
+    REA_KUNA_COMMAND: kuna,
+    REA_KUNA_CACHE_DIR: resolving,
+  });
+  const readyTrailing = await inspectKunaProvider({
+    REA_KUNA_COMMAND: kuna,
+    REA_KUNA_CACHE_DIR: `${resolving}${separator}`,
+  });
+
+  for (const blocked of [direct, trailing, beneath]) {
+    expect(blocked.available).toBe(false);
+    expect(blocked.checks[1]).toMatchObject({
+      name: "cache",
+      ok: false,
+      code: "open_options_invalid",
+      detail: expect.stringContaining(
+        `${dangling} is a symbolic link whose target does not exist.`,
+      ),
+    });
+  }
+  expect(trailing.checks[1]).toMatchObject({
+    detail: expect.stringContaining(`${dangling}${separator}`),
+    details: { cache_root: `${dangling}${separator}` },
+  });
+  for (const usable of [ready, readyTrailing]) {
+    expect(usable.available).toBe(true);
+    expect(usable.checks[1]).toMatchObject({
+      name: "cache",
+      ok: true,
+      detail: expect.stringContaining("cached in"),
+    });
+  }
+  expect(ready.checks[1]?.detail).toContain(resolving);
+  // Diagnosis neither creates the cache nor repairs the link.
+  expect(await readlink(dangling)).toBe(missing);
+  await expect(lstat(missing)).rejects.toMatchObject({ code: "ENOENT" });
+  await expect(lstat(join(dangling, "nested"))).rejects.toThrow();
+});
+
+it("keeps a trailing backslash as part of a POSIX cache path", async () => {
+  const root = await createTestTempDirectory("rea-kuna-doctor-backslash-");
+  const kuna = await writeFakeKuna(root);
+  const directory = join(root, "cache");
+  await mkdir(directory);
+  const named = `${directory}\\`;
+  await writeFile(named, "not-a-directory");
+
+  const inspection = await inspectKunaProvider({
+    REA_KUNA_COMMAND: kuna,
+    REA_KUNA_CACHE_DIR: named,
+  });
+
+  expect(inspection.available).toBe(false);
+  expect(inspection.checks[1]).toMatchObject({
+    name: "cache",
+    ok: false,
+    code: "open_options_invalid",
+    detail: expect.stringContaining(`${named} exists but is not a directory.`),
+    details: expect.objectContaining({ cache_root: named }),
+  });
+  expect((await lstat(directory)).isDirectory()).toBe(true);
+  expect((await lstat(named)).isFile()).toBe(true);
 });
 
 const doctorEnvironment = (root: string, kuna: string): NodeJS.ProcessEnv => ({
@@ -284,3 +389,30 @@ it("projects the fake Kuna through the completed doctor workflow", async () => {
     await host.close!();
   }
 });
+
+it.each([
+  ["REA_KUNA_CACHE_DIR", "relative"],
+  ["REA_KUNA_CACHE_MAX_BYTES", "0"],
+  ["REA_KUNA_PROJECT_TIMEOUT_MS", "0"],
+  ["REA_KUNA_TIMEOUT_MS", "0"],
+  ["REA_KUNA_JOBS", "33"],
+] as const)(
+  "recommends repairing %s without replacing a valid executable",
+  async (setting, value) => {
+    const root = await createTestTempDirectory("rea-kuna-setting-remediation-");
+    const command = join(root, "caller-kuna");
+    const inspection = await inspectKunaProvider({
+      REA_KUNA_COMMAND: command,
+      [setting]: value,
+    });
+    expect(inspection.available).toBe(false);
+    expect(inspection.checks[0]).toMatchObject({
+      code: "open_options_invalid",
+      classification: "config_drift",
+      details: { setting },
+      remediation: expect.stringContaining(`Correct ${setting}`),
+    });
+    expect(inspection.checks[0]?.remediation).not.toContain("REA_KUNA_COMMAND");
+    await expect(lstat(command)).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);

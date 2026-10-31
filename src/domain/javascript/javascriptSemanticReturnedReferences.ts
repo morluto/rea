@@ -4,7 +4,10 @@ import {
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
-import { semanticCallableResultExpressions } from "./javascriptSemanticCallableResults.js";
+import {
+  semanticCallableResultExpressions,
+  semanticCallableResultKind,
+} from "./javascriptSemanticCallableResults.js";
 import {
   javaScriptSourceInvocationContext,
   javaScriptGenericInvocationMethod,
@@ -64,6 +67,8 @@ interface Candidate {
 
 export interface SemanticReturnedReferenceResult {
   readonly references: readonly SemanticReturnedReference[];
+  /** Source-local callable targets resolved by the same binding/projection owner. */
+  readonly callables: ReadonlySet<t.Function>;
   /** A visible invocation-method mutation prevents a source-local result proof. */
   readonly unresolvedInvocation?: boolean;
   /** Both states close the supported source-local may-target graph. Widened joins projections without dropping represented targets; it does not claim runtime completeness. */
@@ -144,9 +149,10 @@ export const createSemanticReturnedReferences = (
     let contextsWidened = false;
     const result: {
       references: readonly SemanticReturnedReference[];
+      callables: ReadonlySet<t.Function>;
       precision: SemanticReturnedReferenceResult["precision"];
       unresolvedInvocation?: boolean;
-    } = { references: [], precision: "exact" };
+    } = { references: [], callables: functions, precision: "exact" };
     // The invocation owner retains the actual callable receiver. A bare alias
     // of fn.call has lost that receiver and cannot execute fn by itself.
     const nativeArrayIteration = (array: t.ArrayExpression) =>
@@ -666,10 +672,12 @@ export const createSemanticReturnedReferences = (
       // A direct generator/async call produces a fresh iterator/Promise, not
       // the yielded/resolved contents. Escape analysis still retains those
       // potential references for their eventual consumers.
+      const resultKind = semanticCallableResultKind(callable);
       if (
         consumption !== "potential-reference" &&
-        (callable.generator ||
-          (consumption === "direct-call" && callable.async))
+        (resultKind === "iterator" ||
+          resultKind === "async-iterator" ||
+          (consumption === "direct-call" && resultKind === "promise"))
       )
         return [];
       return semanticCallableResultExpressions(callable).flatMap(

@@ -2,12 +2,10 @@ import {
   JAVASCRIPT_APPLICATION_PROVIDER,
   JAVASCRIPT_RUNTIME_RECONCILIATION_PROVIDER,
   MANAGED_WORKFLOW_PROVIDER,
-} from "../InvestigationProviders.js";
-import {
-  isImmutableEvidence,
-  parseEvidence,
-  type Evidence,
-} from "../../domain/evidence.js";
+} from "../../domain/investigationProviders.js";
+import { isImmutableEvidence, type Evidence } from "../../domain/evidence.js";
+import { readEvidence } from "../../domain/evidenceValidation.js";
+import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import {
   type AnalysisInputIssue,
   AnalysisInputError,
@@ -45,9 +43,11 @@ export interface ApplicationGraphEvidenceInputFailure {
 /** Convert typed parser issues into this workflow's caller-facing input error. */
 export const applicationGraphEvidenceInputError = (
   operation: string,
-  failure: ApplicationGraphEvidenceInputFailure,
-): AnalysisInputError =>
-  new AnalysisInputError(operation, undefined, failure.issues);
+  failure: ApplicationGraphEvidenceInputFailure | EvidenceIntegrityError,
+): AnalysisInputError | EvidenceIntegrityError =>
+  failure instanceof EvidenceIntegrityError
+    ? failure
+    : new AnalysisInputError(operation, undefined, failure.issues);
 
 class InvalidApplicationGraphEvidence extends Error {
   constructor(readonly issues: readonly AnalysisInputIssue[]) {
@@ -87,10 +87,10 @@ export const parseApplicationGraphEvidence = (
   path: readonly (string | number)[] = [],
 ): Result<
   ApplicationGraphEvidenceSource,
-  ApplicationGraphEvidenceInputFailure
+  ApplicationGraphEvidenceInputFailure | EvidenceIntegrityError
 > =>
   captureInputValidation(() => {
-    const evidence = parseEvidenceInput(input, path);
+    const evidence = parseEvidenceInput(input);
     const owned = ownedApplicationSources.get(evidence);
     if (owned !== undefined) return owned;
     if (evidence.operation === "analyze_javascript_application") {
@@ -184,15 +184,12 @@ const staticRuntimeSource = (
     evidence.normalized_result,
     [...path, "normalized_result"],
   );
-  const unmatchedLink = result.evidence_links.find(
-    (evidenceId) => !evidence.evidence_links.includes(evidenceId),
+  assertResultEvidenceLinksInEnvelope(
+    result.evidence_links,
+    evidence,
+    path,
+    "Runtime reconciliation result",
   );
-  if (unmatchedLink !== undefined)
-    throw invalidEvidence(
-      [...path, "normalized_result"],
-      "evidence_links",
-      `Runtime reconciliation result references Evidence ${unmatchedLink} outside its envelope.`,
-    );
   const applicationLayer = result.static_layers.find(
     ({ role }) => role === "application",
   );
@@ -229,15 +226,12 @@ const managedApplicationSource = (
     evidence.normalized_result,
     [...path, "normalized_result"],
   );
-  const unmatchedLink = result.evidence_links.find(
-    (evidenceId) => !evidence.evidence_links.includes(evidenceId),
+  assertResultEvidenceLinksInEnvelope(
+    result.evidence_links,
+    evidence,
+    path,
+    "Managed application graph result",
   );
-  if (unmatchedLink !== undefined)
-    throw invalidEvidence(
-      [...path, "normalized_result"],
-      "evidence_links",
-      `Managed application graph result references Evidence ${unmatchedLink} outside its envelope.`,
-    );
   return {
     evidence,
     graph: result.graph,
@@ -245,6 +239,25 @@ const managedApplicationSource = (
     rootArtifactSha256: result.root_artifact_sha256,
     semanticGraph: null,
   };
+};
+
+const assertResultEvidenceLinksInEnvelope = (
+  resultEvidenceLinks: readonly string[],
+  evidence: Evidence,
+  path: readonly (string | number)[],
+  resultLabel:
+    | "Runtime reconciliation result"
+    | "Managed application graph result",
+): void => {
+  const unmatchedLink = resultEvidenceLinks.find(
+    (evidenceId) => !evidence.evidence_links.includes(evidenceId),
+  );
+  if (unmatchedLink !== undefined)
+    throw invalidEvidence(
+      [...path, "normalized_result"],
+      "evidence_links",
+      `${resultLabel} references Evidence ${unmatchedLink} outside its envelope.`,
+    );
 };
 
 const assertApplicationSubject = (
@@ -307,15 +320,16 @@ const requireProvider = (
     );
 };
 
-/** Parse unique, artifact-bound Evidence that may extend a native handoff. */
+/** Authenticate artifact-bound Evidence that may extend a native handoff. */
 export const parseNativeApplicationEvidence = (
   inputs: readonly unknown[],
   path: readonly (string | number)[] = [],
-): Result<readonly Evidence[], ApplicationGraphEvidenceInputFailure> =>
+): Result<
+  readonly Evidence[],
+  ApplicationGraphEvidenceInputFailure | EvidenceIntegrityError
+> =>
   captureInputValidation(() => {
-    const parsed = inputs.map((input, index) =>
-      parseEvidenceInput(input, [...path, index]),
-    );
+    const parsed = inputs.map((input) => parseEvidenceInput(input));
     const withoutSubject = parsed.findIndex(({ subject }) => subject === null);
     if (withoutSubject !== -1)
       throw invalidEvidence(
@@ -323,38 +337,29 @@ export const parseNativeApplicationEvidence = (
         "subject",
         "Native handoff Evidence requires an artifact subject.",
       );
-    const ids = parsed.map(({ evidence_id: id }) => id);
-    if (new Set(ids).size !== ids.length)
-      throw invalidEvidence(
-        path,
-        "evidence_id",
-        "Native handoff Evidence must be unique.",
-      );
     return parsed;
   });
 
 const captureInputValidation = <Value>(
   operation: () => Value,
-): Result<Value, ApplicationGraphEvidenceInputFailure> => {
+): Result<
+  Value,
+  ApplicationGraphEvidenceInputFailure | EvidenceIntegrityError
+> => {
   try {
     return ok(operation());
   } catch (cause: unknown) {
     if (cause instanceof InvalidApplicationGraphEvidence)
       return err({ issues: cause.issues });
+    if (cause instanceof EvidenceIntegrityError) return err(cause);
     throw cause;
   }
 };
 
-const parseEvidenceInput = (
-  input: unknown,
-  path: readonly (string | number)[],
-): Evidence => {
-  try {
-    return parseEvidence(input);
-  } catch (cause: unknown) {
-    if (cause instanceof z.ZodError) throw zodInputFailure(cause, input, path);
-    throw cause;
-  }
+const parseEvidenceInput = (input: unknown): Evidence => {
+  const parsed = readEvidence(input);
+  if (!parsed.ok) throw parsed.error;
+  return parsed.value;
 };
 
 const parseCallerValue = <Value>(

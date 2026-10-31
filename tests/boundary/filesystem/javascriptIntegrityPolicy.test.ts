@@ -1,5 +1,5 @@
 import {
-  primitiveCandidateExpansionSource,
+  primitiveCandidateExpansionExpression,
   primitiveByteExpansionSource,
 } from "../../fixtures/javascriptPrimitiveExpansion.js";
 import { createHash } from "node:crypto";
@@ -9,11 +9,13 @@ import { join } from "node:path";
 import { createPackage, createPackageWithOptions } from "@electron/asar";
 import { expect, it } from "vitest";
 
-import { analyzeJavaScriptApplication } from "../../support/javascriptApplicationScope.js";
+import {
+  analyzeJavaScriptApplication,
+  readJavaScriptArtifactFiles,
+} from "../../support/javascriptApplicationScope.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { createJavaScriptArtifactReader } from "../../../src/artifacts/javascript/JavaScriptArtifactReader.js";
-import { readJavaScriptArtifactFiles } from "../../support/javascriptApplicationScope.js";
 import { scanCanonicalArtifactInventory } from "../../fixtures/artifactInventory.js";
 import { createStrippedAsarAddon } from "../../fixtures/strippedAsarAddon.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -135,7 +137,10 @@ it("keeps an ASAR-named file without an ASAR header opaque during JavaScript rec
 
 it("retains semantic resource limits alongside recorded integrity contradictions", async () => {
   const { archive } = await createStrippedAsarAddon([
-    { path: "app.js", contents: primitiveCandidateExpansionSource() },
+    {
+      path: "app.js",
+      contents: `const answer = { nested: ${primitiveCandidateExpansionExpression()} };`,
+    },
     { path: "growth.js", contents: primitiveByteExpansionSource() },
   ]);
   const analyzed = await analyzeJavaScriptApplication({

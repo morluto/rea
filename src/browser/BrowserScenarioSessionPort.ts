@@ -29,6 +29,8 @@ export interface BrowserScenarioSessionPort {
   };
   /** Gaps in selected event families that prevent complete capture claims. */
   eventLimitations?(): readonly string[];
+  /** Gaps in establishing the caller's declared initial storage state. */
+  storageLimitations?(): readonly string[];
   perform(action: BrowserScenarioAction, signal?: AbortSignal): Promise<void>;
   capture(
     requested: ReadonlySet<SnapshotKind>,
@@ -39,11 +41,17 @@ export interface BrowserScenarioSessionPort {
   redactError(error: unknown): string;
 }
 
+/** Retain the exact release authority and its producer-owned diagnostic projection. */
+export type RetainBrowserScenarioCleanup = (
+  lease: AnalysisCleanupLease,
+  redactText?: (value: string) => string,
+) => void;
+
 /** Acquire one scenario session whose lifecycle the caller owns. */
 export type BrowserScenarioSessionOpener = (
   scenario: BrowserScenario,
   options: {
     readonly signal?: AbortSignal;
-    readonly retainCleanup?: (lease: AnalysisCleanupLease) => void;
+    readonly retainCleanup?: RetainBrowserScenarioCleanup;
   },
 ) => Promise<BrowserScenarioSessionPort>;

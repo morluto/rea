@@ -488,7 +488,9 @@ it.skipIf(process.platform === "win32").each([
     await rm(join(root, "out"), { recursive: true });
     const restored = execute("npm run --silent test:prepare");
     expect(restored).toContain(`Cached:    ${hits} cached, 2 total`);
-    expect(await readFile(join(root, "out/build.bin"))).toEqual(artifact);
+    expect(
+      Buffer.compare(await readFile(join(root, "out/build.bin")), artifact),
+    ).toBe(0);
     await expect(readFile(join(root, "out/seed.bin"))).rejects.toMatchObject({
       code: "ENOENT",
     });

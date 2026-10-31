@@ -7,7 +7,7 @@ import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResol
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { buildManagedPeFixture } from "../../../../src/dotnet/ManagedPe.fixture.js";
 import { ManagedStaticProvider } from "../../../../src/dotnet/ManagedStaticProvider.js";
-import { RegularFileCleanupFailure } from "../../../../src/application/RegularFileRead.js";
+import { RegularFileCleanupFailure } from "../../../../src/filesystem/OwnedRegularFile.js";
 import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
@@ -40,12 +40,14 @@ it.each([
     const controller = new AbortController();
     const reason =
       reasonKind === "cleanup"
-        ? new RegularFileCleanupFailure(
-            join(directory, "other-input.dll"),
-            new OwnedFileHandle(admitted),
-            { kind: "completed", value: null },
-            new Error("opaque caller reason, not this operation's cleanup"),
-          )
+        ? new RegularFileCleanupFailure({
+            path: join(directory, "other-input.dll"),
+            owner: new OwnedFileHandle(admitted),
+            outcome: { kind: "completed", value: null },
+            cleanupCause: new Error(
+              "opaque caller reason, not this operation's cleanup",
+            ),
+          })
         : Object.assign(
             new Error("cancel after actual managed source bytes arrive"),
             reasonKind === "filesystem" ? { code: "EACCES" } : {},

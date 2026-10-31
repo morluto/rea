@@ -1,5 +1,12 @@
+import {
+  existingGhidraAnalysisProfile,
+  ghidraPinnedLanguage,
+  resolveGhidraAnalysisProfile,
+} from "./GhidraAnalysisProfile.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
+import { resolveGhidraProject } from "./GhidraProjectSnapshot.js";
 import { DeferredAnalysisClient } from "../providers/DeferredAnalysisClient.js";
-import type { ProviderInspectionScope } from "../providers/ProviderInspectionScope.js";
+import type { ProviderInspectionScope } from "../application/ProviderInspectionScope.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import {
@@ -31,6 +38,8 @@ import {
 } from "../domain/analysisProfile.js";
 import {
   isMachOFormat,
+  RAW_ONLY_ARCHITECTURES,
+  type BinaryArchitecture,
   type BinaryTarget,
 } from "../domain/binaryTargetTypes.js";
 import {
@@ -40,7 +49,6 @@ import {
 } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { Logger } from "pino";
 import { GhidraClient } from "./GhidraClient.js";
@@ -50,14 +58,13 @@ import {
   type GhidraInstallationHost,
   type GhidraInstallationInspection,
 } from "./GhidraInstallation.js";
-import { resolveGhidraAnalysisProfile } from "./GhidraAnalysisProfile.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { resolveGhidraAnalysisSeeds } from "./GhidraAnalysisSeeds.js";
 import {
   admitGhidraLanguageOverride,
-  GhidraLanguageCatalogCleanupError,
   readGhidraLanguageCatalog,
 } from "./GhidraLanguageCatalog.js";
+import { ghidraFileFailure } from "./GhidraFileArtifacts.js";
 import {
   ghidraProcessorUnsupportedReason,
   isGhidraPspTarget,
@@ -65,6 +72,8 @@ import {
 import { resolveGhidraExtensions } from "./extensions/GhidraExtensions.js";
 import {
   CAPABILITIES,
+  existingProjectCapabilities,
+  EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
   windowsP0Capabilities,
   GHIDRA_PROVIDER_IDENTITY,
   WINDOWS_P0_NATIVE_PE_ARCHITECTURES,
@@ -80,7 +89,7 @@ import {
   windowsNativeCapabilities,
 } from "../process/WindowsAuthority.js";
 
-const SUPPORTED_ARCHITECTURES = new Set([
+const SUPPORTED_ARCHITECTURES = new Set<BinaryArchitecture>([
   "x86",
   "x86_64",
   "arm",
@@ -93,7 +102,16 @@ const SUPPORTED_ARCHITECTURES = new Set([
   "hexagon",
 ]);
 
-/** Ghidra candidate backed by an isolated ephemeral headless import. */
+/** Names every admitted family, so the refusal cannot drift from the set. */
+const admittedArchitecturesText = (): string => {
+  const rawOnly = new Set<BinaryArchitecture>(RAW_ONLY_ARCHITECTURES);
+  const admitted = [...SUPPORTED_ARCHITECTURES];
+  const detected = admitted.filter((family) => !rawOnly.has(family));
+  const raw = admitted.filter((family) => rawOnly.has(family));
+  return `Admitted families: ${detected.join(", ")}; raw-binary only: ${raw.join(", ")}.`;
+};
+
+/** Ghidra candidate backed by an isolated ephemeral headless Program session. */
 export class GhidraProvider implements AnalysisProviderCandidate {
   readonly #inspectionResources = new ArtifactResourceScope();
   readonly #inspectionWork = new Set<Promise<unknown>>();
@@ -139,9 +157,12 @@ export class GhidraProvider implements AnalysisProviderCandidate {
   }
 
   capabilities(): readonly CapabilityDescriptor[] {
-    return (this.installationHost?.platform ?? process.platform) === "win32"
-      ? windowsP0Capabilities()
-      : CAPABILITIES;
+    const platform = this.installationHost?.platform ?? process.platform;
+    return this.config.ghidraExistingProject !== undefined
+      ? existingProjectCapabilities(platform)
+      : platform === "win32"
+        ? windowsP0Capabilities()
+        : CAPABILITIES;
   }
 
   async inspectAvailability(
@@ -181,9 +202,11 @@ export class GhidraProvider implements AnalysisProviderCandidate {
     return {
       availability,
       capabilities:
-        readiness === undefined
-          ? CAPABILITIES
-          : windowsP0Capabilities(readiness),
+        this.config.ghidraExistingProject !== undefined
+          ? existingProjectCapabilities(installation.platform)
+          : readiness === undefined
+            ? CAPABILITIES
+            : windowsP0Capabilities(readiness),
     };
   }
 
@@ -192,6 +215,16 @@ export class GhidraProvider implements AnalysisProviderCandidate {
     readiness: WindowsNativeReadiness | undefined,
   ): ProviderAvailability {
     const diagnostics = ghidraInstallationDiagnostics(installation);
+    if (
+      this.config.ghidraExistingProject !== undefined &&
+      installation.platform === "win32"
+    )
+      return {
+        status: "unavailable",
+        code: "unsupported_host",
+        reason: EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
+        diagnostics,
+      };
     if (installation.status === "available" && readiness?.available === false)
       return {
         status: "unavailable",
@@ -274,8 +307,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
       return {
         status: "unsupported",
         code: "architecture_unsupported",
-        reason:
-          "Ghidra v1 requires a supported x86, x86_64, arm, arm64, MIPS, RISC-V, raw 6502, or raw m68k target profile.",
+        reason: `Ghidra v1 has no ${target.architecture} lane. ${admittedArchitecturesText()}`,
         diagnostics,
       };
     return {
@@ -383,6 +415,38 @@ export class GhidraProvider implements AnalysisProviderCandidate {
       "resolve_analysis_profile",
       options?.scope,
     );
+    if (
+      this.config.ghidraExistingProject !== undefined &&
+      target.kind === "executable" &&
+      installation.status === "available"
+    ) {
+      if (
+        installation.platform === "win32" ||
+        ghidraPinnedLanguage(target) !== undefined ||
+        !(
+          target.format === "elf" ||
+          target.format === "pe" ||
+          isMachOFormat(target.format)
+        )
+      )
+        return err(existingProjectUnsupported());
+      const project = await resolveGhidraProject(
+        this.config.ghidraExistingProject,
+        target,
+        this.#inspectionResources,
+        options?.signal,
+      );
+      return ok({
+        profile: existingGhidraAnalysisProfile(
+          target,
+          {
+            ...GHIDRA_PROVIDER_IDENTITY,
+            version: installation.providerVersion,
+          },
+          jsonValueSchema.parse(project),
+        ),
+      });
+    }
     const resolved = await resolveGhidraAnalysisProfile(
       target,
       GHIDRA_PROVIDER_IDENTITY,
@@ -397,31 +461,15 @@ export class GhidraProvider implements AnalysisProviderCandidate {
     if (override !== undefined && installation.status === "available") {
       let catalog: Awaited<ReturnType<typeof readGhidraLanguageCatalog>>;
       try {
-        catalog = await readGhidraLanguageCatalog(installation.installDir);
+        catalog = await readGhidraLanguageCatalog(
+          installation.installDir,
+          this.#inspectionResources,
+          options?.signal,
+        );
       } catch (cause: unknown) {
-        if (cause instanceof GhidraLanguageCatalogCleanupError)
-          return err(
-            new ProviderCleanupError(
-              "ghidra",
-              cause.paths,
-              {
-                reason: cause.message,
-                paths: [...cause.paths],
-                close_failures: cause.causes.map(providerFailureText),
-                ...(cause.readFailure === undefined
-                  ? {}
-                  : { read_failure: providerFailureText(cause.readFailure) }),
-              },
-              { operation: "resolve_analysis_profile", cause },
-            ),
-          );
         return err(
-          new ProviderAdapterError("ghidra", "resolve_analysis_profile", {
-            cause,
-            diagnostics: {
-              reason:
-                "Could not read the installed Ghidra language definitions.",
-            },
+          ghidraFileFailure(cause, "resolve_analysis_profile", {
+            setting: "REA_GHIDRA_LANGUAGE_ID",
           }),
         );
       }
@@ -626,6 +674,15 @@ export class GhidraProvider implements AnalysisProviderCandidate {
   }
 }
 
+/** The selected project, not the target or provider, is what this host cannot serve. */
+const existingProjectUnsupported = (): ConfigurationError => {
+  const constraint =
+    "Existing-project mode supports native ELF/PE/Mach-O programs on POSIX without fresh-import loader preparation or pinned language overrides; unset REA_GHIDRA_PROJECT_PATH to use fresh import for this target/host.";
+  return new ConfigurationError(constraint, {
+    settings: [{ setting: "REA_GHIDRA_PROJECT_PATH", constraint }],
+  });
+};
+
 const providerFailureText = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
 
@@ -636,6 +693,15 @@ const inspectWindowsP0TargetSupport = (
   // The raw 6502 lane uses the same immutable snapshot and native ownership boundary.
   if (target.format === "raw-binary" && target.architecture === "6502")
     return { status: "supported", code: null, reason: null, diagnostics };
+  // DOL is verified on POSIX hosts only; Windows P0 does not admit it, like the other non-PE lanes.
+  if (target.format === "gamecube-dol")
+    return {
+      status: "unsupported",
+      code: "target_format_unsupported",
+      reason:
+        "GameCube DOL analysis is not part of Windows Ghidra P0; it is verified on POSIX hosts only.",
+      diagnostics,
+    };
   if (target.format !== "pe")
     return {
       status: "unsupported",

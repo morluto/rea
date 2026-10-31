@@ -81,6 +81,48 @@ export const modelArtifactObjectSchema = z.strictObject({
   limitations: z.array(z.string()),
 });
 
+/** Facts proven before an interrupted model read reached final file identity checks. */
+export const modelArtifactPartialTensorSchema = z.strictObject({
+  index: count,
+  name: z.string(),
+  type: z.string(),
+  type_id: count.nullable(),
+  shape: z.array(decimal),
+  data_offset: count,
+  file_offset: count.nullable(),
+  byte_length: count.nullable(),
+  parameter_count: decimal,
+  byte_length_state: z.enum(["derived", "declared", "unknown"]),
+  storage_validation: z.enum(["consistent", "unknown", "not-established"]),
+  ...location,
+});
+
+export const modelArtifactPartialSchema = z.strictObject({
+  kind: z.literal("model-artifact-partial"),
+  artifact: z.strictObject({
+    path: localPathStringSchema,
+    observed_file_size: count,
+    header_sha256: z.null(),
+    sha256: z.null(),
+    file_identity: z.literal("unverified"),
+  }),
+  format: z.enum(["gguf", "safetensors"]),
+  version: count.nullable(),
+  byte_order: z.enum(["little", "big"]).nullable(),
+  alignment: count.nullable(),
+  declared_metadata_count: count.nullable(),
+  declared_tensor_count: count.nullable(),
+  metadata: z.array(modelMetadataSchema),
+  tensor_declarations: z.array(modelArtifactPartialTensorSchema),
+  tensors: z.array(modelTensorSchema),
+  coverage: z.strictObject({
+    header: z.enum(["partial", "complete"]),
+    metadata: z.enum(["not-started", "partial", "complete"]),
+    tensors: z.enum(["not-started", "partial", "complete"]),
+  }),
+  limitations: z.array(z.string()),
+});
+
 /** Lookup indexes are safe only after positional identities and uniqueness are proven. */
 export const modelArtifactSchema = modelArtifactObjectSchema.superRefine(
   (report, context) => {
@@ -125,6 +167,10 @@ export const modelArtifactSchema = modelArtifactObjectSchema.superRefine(
 export type ModelArtifact = z.infer<typeof modelArtifactSchema>;
 export type ModelTensor = z.infer<typeof modelTensorSchema>;
 export type ModelMetadata = z.infer<typeof modelMetadataSchema>;
+export type ModelArtifactPartial = z.infer<typeof modelArtifactPartialSchema>;
+export type ModelArtifactPartialTensor = z.infer<
+  typeof modelArtifactPartialTensorSchema
+>;
 export interface ModelArtifactInput {
   readonly path: string;
   readonly hash: "header" | "full";

@@ -7,6 +7,39 @@ import {
   bindGhidraSessionFailure,
 } from "./GhidraSessionError.js";
 import { GhidraLaunchError } from "./GhidraLauncher.js";
+import { createGhidraDiagnostics } from "./GhidraDiagnostics.js";
+
+it.each(["decompile_failed", "future_remote_failure"])(
+  "retains complete session diagnostics for non-input remote code %s",
+  (remoteCode) => {
+    const factory = bindGhidraSessionFailure((scope) =>
+      createGhidraDiagnostics({
+        scope,
+        targetPath: "/selected/target",
+        targetSha256: "a".repeat(64),
+        transport: "unix-socket",
+        providerVersion: "12.1.4",
+        profileDigest: "b".repeat(64),
+        runtimeRoot: "/owned/runtime",
+        snapshot: {
+          stdout: { text: "engine diagnostic", bytes: 17, observedBytes: 17 },
+          stderr: { text: "", bytes: 0, observedBytes: 0 },
+          exitCode: null,
+          signal: null,
+        },
+        previous: {},
+      }),
+    );
+    const failure = factory("remote", "Engine failed", undefined, {
+      remoteCode,
+    });
+    expect(failure.diagnostics).toMatchObject({
+      stdout: { text: "engine diagnostic" },
+      remote_code: remoteCode,
+    });
+    expect(failure.diagnostics).not.toHaveProperty("diagnostic_scope");
+  },
+);
 
 it("reports truncated cyclic causes in serializable diagnostics", () => {
   const cause = new Error("cyclic launcher failure");

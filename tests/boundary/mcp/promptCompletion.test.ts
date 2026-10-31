@@ -21,6 +21,7 @@ import {
 } from "../../../src/domain/artifactInspection.js";
 import { artifactInventoryResultSchema } from "../../../src/domain/artifactGraph.js";
 import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
+import { PROCESS_PROVIDER } from "../../../src/domain/process/processEvidenceProvider.js";
 import { digestCanonicalValue } from "../../../src/domain/canonicalDigest.js";
 import { createPromptCompletionSource } from "../../../src/server/promptCompletion.js";
 import { observed } from "../../fixtures/analysisExecution.js";
@@ -88,6 +89,42 @@ describe("guided prompt completion from live analysis", () => {
   });
 });
 
+it("offers only captures admitted by the process comparison identity", async () => {
+  const session = createTestBinarySession(() => client([]));
+  const captureResult = jsonValueSchema.parse(EMPTY_PROCESS_CAPTURE_EXAMPLE);
+  const unsupportedProvider = createEvidence(undefined, fixtureProvider, {
+    predicateType: "rea.process-capture",
+    operation: "capture_process_scenario",
+    parameters: {},
+    result: captureResult,
+    confidence: "observed",
+    authority: "controlled-replay",
+    environment: fixtureEnvironment,
+  });
+  const wrongPredicate = createEvidence(undefined, PROCESS_PROVIDER, {
+    predicateType: "rea.other-process-data",
+    operation: "capture_process_scenario",
+    parameters: {},
+    result: captureResult,
+    confidence: "observed",
+    authority: "controlled-replay",
+    environment: fixtureEnvironment,
+  });
+  for (const evidence of [
+    PROCESS_CAPTURE_REFERENCE,
+    unsupportedProvider,
+    wrongPredicate,
+  ])
+    expect(session.recordEvidence(evidence).ok).toBe(true);
+  const completion = createPromptCompletionSource(session, session);
+
+  expect(await completion.complete("capture", "ev_")).toEqual([
+    PROCESS_CAPTURE_REFERENCE.evidence_id,
+  ]);
+
+  await session.close();
+});
+
 describe("guided prompt completion from investigation records", () => {
   it("excludes process captures missing canonical executable identity", async () => {
     const session = createTestBinarySession(() => client([]));
@@ -101,7 +138,8 @@ describe("guided prompt completion from investigation records", () => {
       ...EMPTY_PROCESS_CAPTURE_EXAMPLE,
       manifest: { ...legacyManifest, executable_sha256 },
     };
-    const evidence = createEvidence(undefined, fixtureProvider, {
+    const evidence = createEvidence(undefined, PROCESS_PROVIDER, {
+      predicateType: "rea.process-capture",
       operation: "capture_process_scenario",
       parameters: {},
       result: legacyCapture,
@@ -121,7 +159,8 @@ describe("guided prompt completion from investigation records", () => {
 
   it("projects only validated typed identifiers from the evidence ledger", async () => {
     const session = createTestBinarySession(() => client([]));
-    const invalidCapture = createEvidence(undefined, fixtureProvider, {
+    const invalidCapture = createEvidence(undefined, PROCESS_PROVIDER, {
+      predicateType: "rea.process-capture",
       operation: "capture_process_scenario",
       parameters: {},
       result: {},
@@ -145,7 +184,7 @@ describe("guided prompt completion from investigation records", () => {
     const inspectionEvidence = createEvidence(undefined, fixtureProvider, {
       operation: "inspect_artifact",
       parameters: {},
-      result: jsonValueSchema.parse(inventoryInspection),
+      result: inventoryInspection,
       confidence: "observed",
       authority: "shipped-artifact",
       evidenceLinks: inventoryInspection.evidence_links,
@@ -387,7 +426,7 @@ const createPagedInspectionEvidence = async (
     {
       operation: "inventory_artifact",
       parameters: {},
-      result: jsonValueSchema.parse(inventoryResult),
+      result: inventoryResult,
       confidence: "observed",
       authority: "shipped-artifact",
     },
@@ -491,7 +530,7 @@ const createPagedInspectionEvidence = async (
     {
       operation: "inspect_artifact",
       parameters: {},
-      result: jsonValueSchema.parse(result),
+      result: result,
       confidence: "observed",
       authority: "shipped-artifact",
       evidenceLinks: result.evidence_links,

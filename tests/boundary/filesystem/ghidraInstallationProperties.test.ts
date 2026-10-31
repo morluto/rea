@@ -153,11 +153,15 @@ it("refuses an oversized descriptor before reading file bytes", async () => {
   };
   const resources = createInspectionResources();
   try {
-    await expect(
-      readGhidraInstallationProperties(path, {
-        resourceOwner: resources.owner,
-      }),
-    ).rejects.toMatchObject({
+    const failure = await readGhidraInstallationProperties(path, {
+      resourceOwner: resources.owner,
+    }).then(
+      () => {
+        throw new Error("Oversized properties accepted");
+      },
+      (cause) => cause as AnalysisError,
+    );
+    expect(failure).toMatchObject({
       _tag: "AnalysisResourceConstraintError",
       resource: "file-size",
       retryable: false,
@@ -167,6 +171,18 @@ it("refuses an oversized descriptor before reading file bytes", async () => {
       },
       diagnostics: { path, stage: "installation_properties" },
     });
+    expect(projectAnalysisError(failure)).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      remediation: {
+        action: expect.stringContaining(
+          "Ghidra installation-properties read allowance of 1048576 bytes (this release has no runtime override)",
+        ),
+      },
+    });
+    expect(projectAnalysisError(failure).remediation.action).toContain(
+      "Increasing an evidence-reply file-size allowance does not admit this input",
+    );
     expect(reads).toBe(0);
   } finally {
     await resources.close();

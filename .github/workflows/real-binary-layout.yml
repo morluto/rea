@@ -14,6 +14,15 @@ on:
         required: false
         type: string
         default: ""
+      remote_cache_write:
+        description: Trusted release qualification may publish the remote cache.
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      TURBO_TOKEN:
+        description: Remote cache token. Only trusted callers pass it.
+        required: false
 
 permissions:
   contents: read
@@ -21,6 +30,13 @@ permissions:
 env:
   NODE_OPTIONS: --max-old-space-size=768
   HUSKY: "0"
+  # A called workflow sees the caller event, so workflow_call is not an event
+  # name here. Writes when remote_cache_write is set, or on the default branch
+  # for push, schedule, and manual dispatch. Open pull requests stay empty-token
+  # and use the local cache only.
+  TURBO_TOKEN: "${{ (inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'))) && secrets.TURBO_TOKEN || '' }}"
+  TURBO_TEAM: ${{ vars.TURBO_TEAM }}
+  TURBO_CACHE: "${{ (inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'))) && 'local:rw,remote:rw' || 'local:rw' }}"
   REA_VERIFY_LARGE_ELF_MCP: ${{ inputs.large_mcp && '1' || '0' }}
 
 jobs:
@@ -39,6 +55,12 @@ jobs:
       - uses: ./.github/actions/portable-build-cache
         with:
           build_cache_artifact: ${{ inputs.build_cache_artifact }}
+      - name: Install ELF32 cross toolchains for source-owned fixtures
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            gcc-i686-linux-gnu gcc-arm-linux-gnueabi gcc-mips-linux-gnu gcc-mipsel-linux-gnu \
+            libc6-dev-i386-cross libc6-dev-armel-cross libc6-dev-mips-cross libc6-dev-mipsel-cross
       - name: Acquire exact upstream libraries in an isolated runner environment
         shell: bash
         run: |

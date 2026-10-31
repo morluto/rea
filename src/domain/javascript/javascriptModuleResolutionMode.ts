@@ -8,6 +8,12 @@ export const isJsonModuleTarget = (
 ): boolean =>
   path.endsWith(".json") && (kind === "json" || kind === "package-json");
 
+/** Native-addon dispatch likewise needs the exact `.node` loader suffix. */
+export const isNativeAddonModuleTarget = (
+  path: string,
+  kind: JavaScriptArtifactFileKind | undefined,
+): boolean => path.endsWith(".node") && kind === "native-addon";
+
 /** Loader evidence retained for a source-level module reference. */
 export type JavaScriptModuleResolutionMode =
   | "import"

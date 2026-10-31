@@ -61,6 +61,75 @@ cliTest.skipIf(!["darwin", "linux"].includes(process.platform))(
 );
 
 cliTest.skipIf(!["darwin", "linux"].includes(process.platform))(
+  "reports native configuration that blocks the selected engine",
+  async ({ cli }) => {
+    const home = await createTestTempDirectory("rea-doctor-native-config-");
+    const shared = {
+      HOME: home,
+      USERPROFILE: home,
+      GHIDRA_INSTALL_DIR: join(home, "missing-ghidra"),
+      HOPPER_LAUNCHER_PATH: join(home, "missing-hopper"),
+    };
+    const invalid = await cli.run({
+      arguments: ["doctor", "--provider", "hopper", "--json"],
+      environment: {
+        ...shared,
+        REA_ANALYSIS_PROVIDER: "Hopper",
+        REA_GHIDRA_STARTUP_TIMEOUT_MS: "abc",
+      },
+    });
+    expect(invalid.exitCode, invalid.stderr).toBe(1);
+    expect(invalid.json).toMatchObject({
+      healthy: false,
+      scope_checks: expect.arrayContaining([
+        expect.objectContaining({
+          name: "runtime-configuration:REA_ANALYSIS_PROVIDER",
+          ok: false,
+          classification: "config_drift",
+        }),
+        expect.objectContaining({
+          name: "runtime-configuration:REA_GHIDRA_STARTUP_TIMEOUT_MS",
+          ok: false,
+          classification: "config_drift",
+        }),
+      ]),
+    });
+
+    const jebOnly = await cli.run({
+      arguments: ["doctor", "--provider", "hopper", "--json"],
+      environment: { ...shared, REA_JEB_MCP_TIMEOUT_MS: "abc" },
+    });
+    const checks = (jebOnly.json as { checks?: { name: string }[] } | undefined)
+      ?.checks;
+    expect(
+      checks?.some((check) => check.name.startsWith("runtime-configuration:")),
+    ).toBe(false);
+  },
+);
+
+cliTest(
+  "reports MCP startup failures for a selected client",
+  async ({ cli }) => {
+    const doctor = await cli.run({
+      arguments: ["--json", "doctor", "--client", "codex"],
+      environment: { REA_GHIDRA_STARTUP_TIMEOUT_MS: "abc" },
+    });
+    expect(doctor.exitCode, doctor.stderr).toBe(1);
+    expect(doctor.stderr).toBe("");
+    expect(doctor.json).toMatchObject({
+      healthy: false,
+      scope: { mode: "explicit", clients: ["codex"], providers: [] },
+      scope_checks: expect.arrayContaining([
+        expect.objectContaining({
+          name: "runtime-configuration:REA_GHIDRA_STARTUP_TIMEOUT_MS",
+          ok: false,
+        }),
+      ]),
+    });
+  },
+);
+
+cliTest.skipIf(!["darwin", "linux"].includes(process.platform))(
   "retains a configured Hopper path in host diagnostics without launching it",
   async ({ cli }) => {
     const home = await createTestTempDirectory("rea-doctor-hopper-home-");

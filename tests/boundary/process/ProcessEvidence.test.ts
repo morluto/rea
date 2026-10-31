@@ -14,13 +14,13 @@ import { compareProcessCaptures } from "../../../src/domain/process/processCompa
 import { parseProcessCapture } from "../../../src/domain/process/processCaptureParsing.js";
 import {
   digestProcessCommitment,
-  parseProcessScenario,
+  processScenarioSchema,
   processComparisonContract,
   processScenarioCommitment,
 } from "../../../src/domain/process/processScenario.js";
 
 const captureEvidenceForSensitiveInput = (data: string) => {
-  const scenario = parseProcessScenario({
+  const scenario = processScenarioSchema.parse({
     executable: "/bin/echo",
     working_directory: "/tmp",
     events: [{ type: "input", at_ms: 0, data, sensitive: true }],
@@ -60,7 +60,7 @@ const captureEvidenceForSensitiveInput = (data: string) => {
 };
 
 const captureEvidenceForEnvironmentSecret = async (value: string) => {
-  const scenario = parseProcessScenario({
+  const scenario = processScenarioSchema.parse({
     executable: "/bin/echo",
     working_directory: "/tmp",
     environment: { API_TOKEN: value },

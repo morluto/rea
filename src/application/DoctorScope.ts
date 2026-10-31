@@ -1,4 +1,5 @@
 import { uniqueSorted } from "../domain/canonicalOrdering.js";
+import { blocksProcessStart } from "../config/processStart.js";
 import type {
   ClientRegistrationStatus,
   UnhealthyClientRegistrationStatus,
@@ -80,8 +81,33 @@ export const scopeDoctorChecks = (
   const hopperHostChecks = input.scope.providers.includes("hopper")
     ? input.checks.filter(({ name }) => name === "host")
     : [];
+  // parseConfig rejects these before the MCP server starts. Hopper's own
+  // scope already includes hopper-startup-timeout through its provider checks.
+  const blocksMcpStartup = (check: DoctorCheck): boolean =>
+    check.name.startsWith("runtime-configuration:") ||
+    check.name === "hopper-startup-timeout";
+  const blocksProcess = (check: DoctorCheck): boolean => {
+    const setting = check.details?.setting;
+    return (
+      check.name.startsWith("runtime-configuration:") &&
+      typeof setting === "string" &&
+      blocksProcessStart(setting)
+    );
+  };
+  const exercisesMcpStartup =
+    input.scope.clients.length > 0 || input.scope.providers.length > 0;
+  const startupChecks = (
+    exercisesMcpStartup
+      ? input.checks.filter(blocksMcpStartup)
+      : input.checks.filter(blocksProcess)
+  ).filter(
+    (check) =>
+      check.name !== "hopper-startup-timeout" ||
+      !input.scope.providers.includes("hopper"),
+  );
   const scopeChecks = [
     ...coreChecks,
+    ...startupChecks,
     ...hopperHostChecks,
     ...selectedProviderChecks,
     ...clientChecks,
@@ -91,6 +117,7 @@ export const scopeDoctorChecks = (
   return {
     healthy:
       coreChecks.every(({ ok }) => ok) &&
+      startupChecks.every(({ ok }) => ok) &&
       hopperHostChecks.every(({ ok }) => ok) &&
       clientChecks.every(({ ok }) => ok) &&
       skillChecks.every(({ ok }) => ok) &&
@@ -186,7 +213,12 @@ const selectedSkillCheck = (
   checks.find(({ name }) => name === "skill:identity") ?? {
     name: "skill:identity",
     ok: state === "aligned",
-    classification: state === "aligned" ? "healthy" : "config_drift",
+    classification:
+      state === "aligned"
+        ? "healthy"
+        : state === "unknown"
+          ? "unknown"
+          : "config_drift",
     ...(state === "aligned"
       ? { detail: "Installed REA skill identity is aligned." }
       : {

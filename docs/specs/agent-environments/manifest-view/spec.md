@@ -37,7 +37,11 @@ manifest are later increments.
   value anywhere in the result.
 - List records as pointers (`ordinal`, `method`, `path`, `status`,
   `content_type`) and excluded groups with reason `other-origin`,
-  `ui-page-or-asset` or `non-json`.
+  `ui-page-or-asset` or `non-json`. A write group (`POST`, `PUT`, `PATCH`,
+  `DELETE`) whose every response had no body (a 204 or 205, an empty text or a
+  recorded size of zero) and at least one succeeded is kept whatever its content
+  type: the empty reply is its answer. A missing body text alone does not count,
+  as it may be a body the capture did not keep.
 - Mark the Evidence inferred whenever any tool or excluded group is templated,
   derived otherwise; keep the parent's authority.
 - Admit the capture clone, the inline envelope, every retained pointer, group,

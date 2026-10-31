@@ -1,7 +1,6 @@
 import { redactExplicitFailure } from "../domain/explicitSensitiveFailure.js";
 import { excludeCaptureCoordinates } from "../domain/webNetworkCaptureCoordinates.js";
 import { redactExplicitText } from "../domain/explicitSensitiveValues.js";
-import { isAbsolute } from "node:path";
 import type { ExecutionOptions } from "./AnalysisProvider.js";
 import type { WebNetworkCapturePort } from "./WebNetworkCapturePort.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -57,16 +56,6 @@ export class WebNetworkCaptureService {
         }),
       );
     const input = parsed.data;
-    if (!isAbsolute(input.capture_path))
-      return failure(
-        new AnalysisInputError(OPERATION, undefined, [
-          {
-            path: ["capture_path"],
-            reason: "invalid_format",
-            message: "Expected an absolute filesystem path on this host.",
-          },
-        ]),
-      );
     if (
       input.record_ordinals !== undefined &&
       new Set(input.record_ordinals).size !== input.record_ordinals.length
@@ -88,19 +77,6 @@ export class WebNetworkCaptureService {
             reason: "invalid_format",
             message:
               "Protobuf options require explicit producer record ordinals.",
-          },
-        ]),
-      );
-    if (
-      input.protobuf?.schema !== undefined &&
-      !isAbsolute(input.protobuf.schema.descriptor_set_path)
-    )
-      return failure(
-        new AnalysisInputError(OPERATION, undefined, [
-          {
-            path: ["protobuf", "schema", "descriptor_set_path"],
-            reason: "invalid_format",
-            message: "Expected an absolute descriptor-set path on this host.",
           },
         ]),
       );
@@ -179,16 +155,25 @@ export class WebNetworkCaptureService {
     const selected =
       input.record_ordinals ?? value.records.map(({ ordinal }) => ordinal);
     const records = [];
-    for (const ordinal of selected) {
+    for (const [index, ordinal] of selected.entries()) {
       const record = safeValue.records[ordinal];
+      // A selection past the capture's records is a caller range fault.
       if (record === undefined)
         return err(
           new AnalysisInputError(OPERATION, undefined, [
-            {
-              path: ["record_ordinals"],
-              reason: "invalid_format",
-              message: `Producer ordinal ${ordinal} is outside the retained capture (${value.total_records} records).`,
-            },
+            value.total_records === 0
+              ? {
+                  path: ["record_ordinals", index],
+                  reason: "invalid_value",
+                  message: "The selected capture contains no records.",
+                }
+              : {
+                  path: ["record_ordinals", index],
+                  reason: "out_of_range",
+                  minimum: 0,
+                  maximum: value.total_records - 1,
+                  message: `Producer ordinal ${ordinal} is outside the retained capture (${value.total_records} records).`,
+                },
           ]),
         );
       records.push({
@@ -250,6 +235,9 @@ export class WebNetworkCaptureService {
             },
           }),
       sensitive_value_count: input.sensitive_values.length,
+      ...(input.capture_timeout_ms === undefined
+        ? {}
+        : { capture_timeout_ms: input.capture_timeout_ms }),
     });
     return ok(
       createEvidence(

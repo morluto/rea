@@ -47,27 +47,37 @@ export const retainOwnedCommandCleanup = (
       commandFailure.cleanupFailure !== null)
   ) {
     const supervisor = commandFailure.cleanupOwner;
-    const cleanup = new ProviderCleanupError(
-      providerId,
-      commandFailure.resources,
-      {
-        reason:
-          commandFailure.cleanupFailure ??
-          "Provider prerequisite cleanup remains incomplete",
-        ...(commandFailure.cleanupResult === undefined
-          ? {}
-          : {
-              process_cleanup: jsonValueSchema.parse(
-                commandFailure.cleanupResult,
-              ),
-            }),
-      },
-      { cause, operation },
+    const failureForStop = (
+      reason: string,
+      result: OwnedCommandFailure["cleanupResult"],
+    ): ProviderCleanupError =>
+      new ProviderCleanupError(
+        providerId,
+        commandFailure.resources,
+        {
+          reason,
+          ...(result === undefined
+            ? {}
+            : {
+                process_cleanup: jsonValueSchema.parse(result),
+              }),
+        },
+        { cause, operation },
+      );
+    const cleanup = failureForStop(
+      commandFailure.cleanupFailure ??
+        "Provider prerequisite cleanup remains incomplete",
+      commandFailure.cleanupResult,
     );
     const lease = new AnalysisCleanupLease(async () => {
       if (supervisor === undefined) throw cleanup;
       const stopped = await supervisor.stop();
-      if (stopped.status === "incomplete") throw cleanup;
+      if (stopped.status === "incomplete") {
+        const failure = failureForStop(stopped.reason, stopped.cleanupResult);
+        failure.bindCleanupResourceOwner(lease);
+        lease.bindCleanupError(failure);
+        throw failure;
+      }
     }, commandFailure.resources);
     cleanup.bindCleanupResourceOwner(lease);
     lease.bindCleanupError(cleanup);

@@ -245,11 +245,7 @@ export function dossierSummary(dossier) {
   };
 }
 
-export async function assertSession(
-  session,
-  expectedDigest,
-  expectedTargetSha256,
-) {
+export function assertSession(session, expectedDigest, expectedTargetSha256) {
   if (
     session.provider.id !== "ghidra" ||
     session.provider.version !== SUPPORTED_GHIDRA_VERSION ||

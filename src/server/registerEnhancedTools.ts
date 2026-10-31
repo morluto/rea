@@ -1,4 +1,4 @@
-import type { ToolResultDelivery } from "./toolResult.js";
+import type { ToolResultDelivery } from "./ToolResultDelivery.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import type {
   EvidenceWriter,
@@ -11,9 +11,11 @@ import type {
 
 import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
+import type { ProgressReporter } from "../application/ProgressReporter.js";
 import { EnhancedTools } from "../application/EnhancedTools.js";
 import type { ValidatedEnhancedCall } from "../application/EnhancedToolTypes.js";
 import {
+  composedLimitationBudget,
   executeComposedWorkflow,
   createWorkflowEvidence,
   workflowSnapshotRecord,
@@ -23,6 +25,7 @@ import { toolContract } from "../contracts/toolContracts.js";
 import type { ToolContract } from "../contracts/toolContractTypes.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
+import { ok } from "../domain/result.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Logger } from "pino";
 import { mcpProgressReporter } from "./mcpProgress.js";
@@ -30,6 +33,16 @@ import { logToolExecution } from "./toolLogging.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 import { executeFunctionAnalysisEvidence } from "../application/FunctionAnalysisEvidence.js";
 import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
+import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
+import { retainAnalysisResultSources } from "../application/investigation/recordEvidenceSources.js";
+import {
+  requireAnalysisViewRetention,
+  summarizeRetainedAnalysis,
+} from "../application/analysisView/AnalysisViewService.js";
+import {
+  reportOperationStart,
+  reportOperationEnd,
+} from "./operationProgress.js";
 
 /** Optional session services used by enhanced tool registration. */
 export interface EnhancedToolRegistration {
@@ -42,6 +55,7 @@ export interface EnhancedToolRegistration {
       ) => AnalysisProfileCommitment | undefined)
     | undefined;
   readonly recordEvidence: EvidenceWriter["recordEvidence"] | undefined;
+  readonly evidenceById?: EvidenceLookup | undefined;
   readonly recordUnknown: UnknownRegistryPort["recordUnknown"] | undefined;
   readonly allowsSnapshotReplay:
     | ((operation: ValidatedEnhancedCall["name"]) => boolean)
@@ -66,6 +80,7 @@ export const registerEnhancedTools = (
   const objcClasses = toolContract("get_objc_classes");
   const objcProtocols = toolContract("get_objc_protocols");
   const batchDecompile = toolContract("batch_decompile");
+  const decompileAll = toolContract("decompile_all");
   const callGraph = toolContract("get_call_graph");
   const swiftTypes = toolContract("analyze_swift_types");
   const xrefsToName = toolContract("find_xrefs_to_name");
@@ -122,12 +137,22 @@ export const registerEnhancedTools = (
       }),
   );
   server.registerTool(
+    decompileAll.name,
+    toolRegistrationOptions(decompileAll),
+    (input, context) =>
+      executeEnhancedTool(registration, decompileAll, {
+        validatedCall: { name: "decompile_all", input },
+        context,
+      }),
+  );
+  server.registerTool(
     callGraph.name,
     toolRegistrationOptions(callGraph),
-    (input, context) =>
+    ({ detail, ...input }, context) =>
       executeEnhancedTool(registration, callGraph, {
         validatedCall: { name: "get_call_graph", input },
         context,
+        detail,
       }),
   );
   server.registerTool(
@@ -160,9 +185,10 @@ export const registerEnhancedTools = (
   server.registerTool(
     analyzeFunction.name,
     toolRegistrationOptions(analyzeFunction),
-    (input, context) =>
-      executeEnhancedTool(registration, analyzeFunction, {
-        validatedCall: { name: "analyze_function", input },
+    ({ detail, ...providerInput }, context) =>
+      executeFunctionTool(registration, analyzeFunction, {
+        detail,
+        parameters: jsonParameters(providerInput),
         context,
       }),
   );
@@ -210,10 +236,19 @@ const executeEnhancedTool = async (
   },
   contract: ToolContract,
   request: {
+    readonly detail?: "complete" | "summary";
     readonly validatedCall: ValidatedEnhancedCall;
     readonly context: ServerContext;
   },
 ): Promise<CallToolResult> => {
+  if (request.detail === "summary") {
+    const ready = requireAnalysisViewRetention(request.validatedCall.name, {
+      recordEvidence: registration.recordEvidence,
+      evidenceById: registration.evidenceById,
+    });
+    if (!ready.ok)
+      return registration.delivery.toCallToolResult(ready, contract);
+  }
   const admitted = await registration.withAdmittedAnalysis(
     request.validatedCall.name,
     request.context.mcpReq.signal,
@@ -221,41 +256,34 @@ const executeEnhancedTool = async (
       const { validatedCall, context } = request;
       const name = validatedCall.name;
       const progress = mcpProgressReporter(context);
-      await progress.report({
-        phase: name,
-        completed: 0,
-        total: 1,
-        message: "started",
-      });
+      await reportOperationStart(progress, name);
       const parsedInput = validatedCall.input;
       const parameters = jsonParameters(parsedInput);
-      if (name === "analyze_function")
-        return executeFunctionTool(admittedAnalysis, registration, contract, {
-          context,
-          parameters,
-        });
       const analysis: AnalysisOperationPort = {
+        resourceScope: admittedAnalysis.resourceScope,
         execute: (operation, operationParameters, executionOptions) =>
           admittedAnalysis.execute(operation, operationParameters, {
             ...executionOptions,
             progress,
           }),
       };
-      const result = await logToolExecution(registration.logger, name, () =>
-        executeComposedWorkflow(analysis, (observed) =>
-          new EnhancedTools(observed).executeValidated(
-            validatedCall,
-            context.mcpReq.signal,
-          ),
+      let result = await logToolExecution(registration.logger, name, () =>
+        executeComposedWorkflow(
+          analysis,
+          (observed) =>
+            new EnhancedTools(observed).executeValidated(
+              validatedCall,
+              context.mcpReq.signal,
+            ),
+          composedLimitationBudget(name),
         ),
       );
-      await progress.report({
-        phase: name,
-        completed: 1,
-        total: 1,
-        message: result.ok ? "completed" : "failed",
-        terminal: true,
-      });
+      result = retainAnalysisResultSources(
+        name,
+        registration.recordEvidence,
+        result,
+      );
+      await reportOperationEnd(progress, name, result.ok);
       if (result.ok) {
         const evidence = createWorkflowEvidence({
           target: registration.activeTarget?.(),
@@ -264,6 +292,9 @@ const executeEnhancedTool = async (
           result: result.value.result,
           upstreamProfile: registration.analysisProfile?.(name),
           upstreamLimitations: result.value.limitations,
+          ...(result.value.evidenceLinks === undefined
+            ? {}
+            : { upstreamEvidenceLinks: result.value.evidenceLinks }),
         });
         const recorded = registration.recordEvidence?.(evidence);
         if (recorded !== undefined && !recorded.ok)
@@ -293,10 +324,21 @@ const executeEnhancedTool = async (
         });
         if (!unknowns.ok)
           return registration.delivery.toCallToolResult(unknowns, contract);
+        const delivered =
+          request.detail === "summary"
+            ? summarizeRetainedAnalysis(evidence, {
+                recordEvidence: registration.recordEvidence,
+                evidenceById: registration.evidenceById,
+              })
+            : ok(evidence);
+        if (!delivered.ok)
+          return registration.delivery.toCallToolResult(delivered, contract);
         return registration.delivery.toEvidenceToolResult(
-          evidence,
+          delivered.value,
           contract,
-          recorded,
+          request.detail === "summary"
+            ? registration.recordEvidence?.(delivered.value)
+            : recorded,
         );
       }
       return registration.delivery.toCallToolResult(result, contract);
@@ -307,20 +349,63 @@ const executeEnhancedTool = async (
     : registration.delivery.toCallToolResult(admitted, contract);
 };
 
+/**
+ * analyze_function owns its MCP delivery: detail selects the response shape
+ * and never reaches the provider, so parameters hold the provider input only.
+ */
 const executeFunctionTool = async (
+  registration: EnhancedToolRegistration & {
+    readonly delivery: ToolResultDelivery;
+  },
+  contract: ToolContract,
+  request: {
+    readonly detail: "complete" | "summary";
+    readonly parameters: Readonly<Record<string, JsonValue>>;
+    readonly context: ServerContext;
+  },
+): Promise<CallToolResult> => {
+  const { detail, context } = request;
+  // Fail before analysis when a retained summary cannot keep its complete source.
+  if (detail === "summary") {
+    const ready = requireAnalysisViewRetention("analyze_function", {
+      recordEvidence: registration.recordEvidence,
+      evidenceById: registration.evidenceById,
+    });
+    if (!ready.ok)
+      return registration.delivery.toCallToolResult(ready, contract);
+  }
+  const admitted = await registration.withAdmittedAnalysis(
+    "analyze_function",
+    context.mcpReq.signal,
+    async (analysis) => {
+      const progress = mcpProgressReporter(context);
+      await reportOperationStart(progress, "analyze_function");
+      return deliverFunctionAnalysis(analysis, registration, contract, {
+        ...request,
+        progress,
+      });
+    },
+  );
+  return admitted.ok
+    ? admitted.value
+    : registration.delivery.toCallToolResult(admitted, contract);
+};
+
+const deliverFunctionAnalysis = async (
   analysis: AnalysisOperationPort,
   registration: EnhancedToolRegistration & {
     readonly delivery: ToolResultDelivery;
   },
   contract: ToolContract,
   request: {
-    readonly context: ServerContext;
+    readonly detail: "complete" | "summary";
     readonly parameters: Readonly<Record<string, JsonValue>>;
+    readonly context: ServerContext;
+    readonly progress: ProgressReporter;
   },
 ): Promise<CallToolResult> => {
-  const { context, parameters } = request;
-  const progress = mcpProgressReporter(context);
-  const result = await logToolExecution(
+  const { detail, parameters, context, progress } = request;
+  let result = await logToolExecution(
     registration.logger,
     "analyze_function",
     () =>
@@ -334,15 +419,27 @@ const executeFunctionTool = async (
         },
       ),
   );
-  await progress.report({
-    phase: "analyze_function",
-    completed: 1,
-    total: 1,
-    message: result.ok ? "completed" : "failed",
-    terminal: true,
-  });
+  result = retainAnalysisResultSources(
+    "analyze_function",
+    registration.recordEvidence,
+    result,
+  );
+  await reportOperationEnd(progress, "analyze_function", result.ok);
   if (!result.ok)
     return registration.delivery.toCallToolResult(result, contract);
+  if (detail === "summary") {
+    const summary = summarizeRetainedAnalysis(result.value, {
+      recordEvidence: registration.recordEvidence,
+      evidenceById: registration.evidenceById,
+    });
+    if (!summary.ok)
+      return registration.delivery.toCallToolResult(summary, contract);
+    return registration.delivery.toEvidenceToolResult(
+      summary.value,
+      contract,
+      registration.recordEvidence?.(summary.value),
+    );
+  }
   return registration.delivery.toEvidenceToolResult(
     result.value,
     contract,

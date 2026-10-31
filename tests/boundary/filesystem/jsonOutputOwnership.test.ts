@@ -12,6 +12,7 @@ import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { OwnedStagedOutput } from "../../../src/filesystem/OwnedStagedOutput.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { writeTextParts } from "../../../src/application/JsonFiles.js";
+import { StagedOutputError } from "../../../src/filesystem/StagedOutputError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const allocation = vi.hoisted(() => ({
@@ -70,7 +71,10 @@ it("closes the descriptor and retains staged content when its final identity is 
     expect(result.error.cause).toMatchObject({
       outcome: {
         ok: false,
-        error: { message: "Cannot verify staged file identity" },
+        error: {
+          _tag: "StagedOutputError",
+          code: "identity_unverified",
+        },
       },
     });
     const stage = result.error.cleanupResources[0];
@@ -82,6 +86,8 @@ it("closes the descriptor and retains staged content when its final identity is 
     await expect(fs.access(destination)).rejects.toThrow();
     // A closed descriptor cannot re-establish identity, so retry stays incomplete.
     await expect(resources.close()).rejects.toThrow();
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(result.error.cleanupResources).toEqual([stage]);
     expect(await fs.readFile(join(stage, "content"), "utf8")).toBe(
       "owned bytes",
     );
@@ -179,6 +185,15 @@ it("reports committed output when post-publication staging cleanup remains owned
       "canonical output",
     );
     await fs.rm(join(cleanupResource, "unexpected"));
+    await resources.close();
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(result.error.cleanupResources).toEqual([]);
+    const released = projectAnalysisError(result.error);
+    expect(released).toMatchObject({
+      code: "execution_failure",
+      details: { published: true, published_path: join(root, "bundle.json") },
+    });
+    expect(released.details).not.toHaveProperty("cleanup");
   } finally {
     await resources.close();
     await rm(root, { recursive: true, force: true });
@@ -189,12 +204,14 @@ it("preserves cancellation when staging cleanup also fails", async () => {
   const root = await createTestTempDirectory("rea-json-cancel-");
   const resources = new ArtifactResourceScope();
   const controller = new AbortController();
+  let unexpected: string | undefined;
   try {
     function* cancelledParts(): Generator<string> {
       const directories = requireStages(root);
       if (directories.length !== 1)
         throw new Error("Expected one staging directory");
-      writeFileSync(join(root, directories[0]!, "unexpected"), "retain this");
+      unexpected = join(root, directories[0]!, "unexpected");
+      writeFileSync(unexpected, "retain this");
       controller.abort();
       yield "must not publish";
     }
@@ -212,14 +229,116 @@ it("preserves cancellation when staging cleanup also fails", async () => {
     // directory is reported as cleanup state, not as the cancellation cause.
     expect(result.error.cause).toBe(controller.signal.reason);
     expect(result.error.cleanupPrimary).toBeInstanceOf(AnalysisCancelledError);
-    expect(result.error.cleanupResources).toEqual([
-      expect.stringContaining(".rea-write-"),
-    ]);
+    expect(result.error.cleanupPrimary).toMatchObject({
+      operation: "export_evidence_bundle",
+    });
+    expect(result.error.cleanupPrimary?.cause).toBe(controller.signal.reason);
+    const stages = requireStages(root);
+    expect(stages).toHaveLength(1);
+    expect(result.error.cleanupResources).toEqual([join(root, stages[0]!)]);
+    expect(await fs.readFile(unexpected!, "utf8")).toBe("retain this");
     await expect(fs.access(join(root, "cancelled.json"))).rejects.toThrow();
-    const stage = requireStages(root)[0];
-    if (stage !== undefined) await fs.rm(join(root, stage, "unexpected"));
-  } finally {
+    await fs.rm(unexpected!);
     await resources.close();
+    expect(requireStages(root)).toEqual([]);
+    expect(result.error.cleanupIncomplete).toBe(false);
+    const released = projectAnalysisError(result.error);
+    expect(released).toMatchObject({
+      code: "cancelled",
+      details: { operation: "export_evidence_bundle", cleanup: "complete" },
+    });
+    expect(released.details).not.toHaveProperty("resources");
+  } finally {
+    if (unexpected !== undefined) await fs.rm(unexpected, { force: true });
+    await resources.close();
+    expect(requireStages(root)).toEqual([]);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+it("restores an unpublished write failure once its retained stage is released", async () => {
+  const root = await createTestTempDirectory("rea-json-write-retry-");
+  const resources = new ArtifactResourceScope();
+  const destination = join(root, "failed.json");
+  try {
+    function* failingParts(): Generator<string> {
+      const stage = requireStages(root)[0];
+      if (stage === undefined) throw new Error("Expected staging directory");
+      writeFileSync(join(root, stage, "unexpected"), "retain this");
+      yield "partial";
+      throw new Error("injected staged write failure");
+    }
+    const result = await writeTextParts(
+      failingParts(),
+      destination,
+      false,
+      resources,
+    );
+    if (result.ok) throw new Error("Expected staged write failure");
+    expect(result.error).toBeInstanceOf(EvidenceFileError);
+    expect(result.error.published).toBeUndefined();
+    const stage = result.error.cleanupResources[0];
+    if (stage === undefined) throw new Error("Expected retained staging");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "cleanup_incomplete",
+      details: { cleanup: "incomplete", resources: [stage] },
+    });
+    await fs.rm(join(stage, "unexpected"));
+    await resources.close();
+    expect(requireStages(root)).toEqual([]);
+    await expect(fs.access(destination)).rejects.toThrow();
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(result.error.cleanupResources).toEqual([]);
+    const released = projectAnalysisError(result.error);
+    expect(released).toMatchObject({
+      code: "execution_failure",
+      details: { operation: "write", reason: "io", path: destination },
+    });
+    expect(released.details).not.toHaveProperty("cleanup");
+    expect(released.details).not.toHaveProperty("resources");
+  } finally {
+    await resources.close().catch(() => undefined);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+it("clears an admission retry failure only after every retained owner releases", async () => {
+  const root = await createTestTempDirectory("rea-json-admission-retry-");
+  const directory = join(root, ".rea-write-owned");
+  await mkdir(directory);
+  const unexpected = join(directory, "unexpected");
+  writeFileSync(unexpected, "retain this");
+  const resources = new ArtifactResourceScope();
+  try {
+    expect(
+      await resources.release({
+        kind: "staged-output",
+        resource: directory,
+        output: await OwnedStagedOutput.create(directory),
+      }),
+    ).toMatchObject({ kind: "failed" });
+    const destination = join(root, "next.json");
+    const result = await writeTextParts(
+      ["unused"],
+      destination,
+      false,
+      resources,
+    );
+    if (result.ok) throw new Error("Expected admission retry failure");
+    expect(result.error).toBeInstanceOf(EvidenceFileError);
+    expect(result.error.cleanupResources).toEqual([directory]);
+    await expect(fs.access(destination)).rejects.toThrow();
+    // A retry that still fails keeps the same exact owner unresolved.
+    await expect(resources.retryCleanup()).rejects.toThrow();
+    expect(result.error.cleanupIncomplete).toBe(true);
+    await fs.rm(unexpected);
+    await resources.close();
+    await expect(fs.access(directory)).rejects.toThrow();
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(projectAnalysisError(result.error).code).toBe("execution_failure");
+  } finally {
+    await fs.rm(unexpected, { force: true });
+    await resources.close().catch(() => undefined);
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -342,11 +461,46 @@ it("refuses to remove unexpected files from an owned staging directory", async (
   const unexpected = join(directory, "unexpected");
   writeFileSync(unexpected, "unowned");
   try {
-    await expect(owner.close()).rejects.toThrow(/Unexpected staging entries/u);
+    await expect(owner.close()).rejects.toMatchObject({
+      _tag: "StagedOutputError",
+      code: "unexpected_entries",
+      detail: { count: 1, entries: "unexpected" },
+    });
     expect(await fs.readFile(unexpected, "utf8")).toBe("unowned");
   } finally {
     await fs.rm(unexpected, { force: true });
     await owner.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+it("keeps unexpected staging names on the publication error", async () => {
+  const root = await createTestTempDirectory("rea-staged-public-entries-");
+  const destination = join(root, "out.json");
+  const resources = new ArtifactResourceScope();
+  const close = vi
+    .spyOn(OwnedStagedOutput.prototype, "close")
+    .mockImplementation(async () => {
+      throw new StagedOutputError("unexpected_entries", {
+        count: 1,
+        entries: "unexpected",
+      });
+    });
+  try {
+    const result = await writeTextParts(["{}"], destination, false, resources);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatchObject({
+      _tag: "EvidenceFileError",
+      diagnostics: {
+        code: "unexpected_entries",
+        count: 1,
+        entries: "unexpected",
+      },
+    });
+  } finally {
+    close.mockRestore();
+    await resources.close().catch(() => undefined);
     await rm(root, { recursive: true, force: true });
   }
 });

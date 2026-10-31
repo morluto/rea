@@ -9,7 +9,8 @@ export const registerCoreAnalysisCommands = (
   cli: CliInstance,
   logger: Logger,
   runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
+  environment: Readonly<Record<string, string | undefined>>,
 ): void => {
-  registerCoreBinaryCommands(cli, logger, runDirectAnalysis);
+  registerCoreBinaryCommands(cli, logger, runDirectAnalysis, environment);
   registerCoreNativeCommands(cli, logger, runDirectAnalysis);
 };

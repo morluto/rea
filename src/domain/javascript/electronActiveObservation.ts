@@ -12,7 +12,7 @@ const absolutePathSchema = z
     "provider path must be absolute",
   );
 
-const windowIndexSchema = z.number().int().min(0);
+const windowIndexSchema = z.int().min(0);
 
 const deepLinkUrlSchema = z
   .string()
@@ -37,7 +37,7 @@ const actionSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     step_id: z.string().min(1),
     kind: z.literal("wait"),
-    duration_ms: z.number().int().min(0),
+    duration_ms: z.int().min(0),
     window_index: windowIndexSchema.optional(),
   }),
   z.strictObject({
@@ -86,7 +86,7 @@ export type ElectronActiveObservationInput = z.infer<
 
 /** Canonical active Electron event shared by the hook boundary and public timeline. */
 export const electronActiveTimelineEventSchema = z.strictObject({
-  sequence: z.number().int().min(1),
+  sequence: z.int().min(1),
   correlation_id: z.string().nullable(),
   kind: z.enum([
     "main-handler-invocation",
@@ -156,14 +156,16 @@ const ipcEventSchema = electronActiveTimelineEventSchema.extend({
   ]),
 });
 
-const processMetricSchema = z.strictObject({
-  pid: z.number().int().min(1),
+/** Process facts shared by the runtime boundary and retained active observation. */
+export const electronActiveProcessMetricSchema = z.strictObject({
+  pid: z.int().min(1),
   type: z.string().min(1),
   name: z.string().nullable(),
   service_name: z.string().nullable(),
 });
 
-const windowResultSchema = z.strictObject({
+/** Window facts shared by the runtime boundary and retained active observation. */
+export const electronActiveWindowSchema = z.strictObject({
   window_id: z.string(),
   web_contents_id: z.string(),
   url: z.string(),
@@ -197,7 +199,7 @@ const actionResultContextShape = {
   ]),
   window_index: windowIndexSchema.nullable(),
   target: z.string().nullable(),
-  elapsed_ms: z.number().int().min(0),
+  elapsed_ms: z.int().min(0),
 };
 
 const actionResultSchema = z.discriminatedUnion("status", [
@@ -223,42 +225,42 @@ export const electronActiveObservationResultSchema = z.strictObject({
     cleanup: z.literal("terminated-owned-process"),
   }),
   actions: z.array(actionResultSchema),
-  windows: z.array(windowResultSchema),
+  windows: z.array(electronActiveWindowSchema),
   processes: z.strictObject({
-    items: z.array(processMetricSchema),
+    items: z.array(electronActiveProcessMetricSchema),
   }),
   ipc: z.strictObject({
     events: z.array(ipcEventSchema),
-    observed: z.number().int().min(0),
-    dropped: z.number().int().min(0),
+    observed: z.int().min(0),
+    dropped: z.int().min(0),
   }),
   timeline: z.strictObject({
     events: z.array(electronActiveTimelineEventSchema),
-    observed: z.number().int().min(0),
-    dropped: z.number().int().min(0),
+    observed: z.int().min(0),
+    dropped: z.int().min(0),
   }),
   retention: z.strictObject({
-    budget_bytes: z.number().int().min(0),
-    estimated_retained_bytes: z.number().int().min(0),
-    event_serialized_byte_upper_bound: z.number().int().min(0),
-    retained: z.number().int().min(0),
-    dropped: z.number().int().min(0),
+    budget_bytes: z.int().min(0),
+    estimated_retained_bytes: z.int().min(0),
+    event_serialized_byte_upper_bound: z.int().min(0),
+    retained: z.int().min(0),
+    dropped: z.int().min(0),
     dropped_event_families: z.array(
       z.strictObject({
         family: z.string().min(1),
-        count: z.number().int().min(1),
+        count: z.int().min(1),
       }),
     ),
     dropped_event_roles: z.array(
       z.strictObject({
         role: z.string().min(1),
-        count: z.number().int().min(1),
+        count: z.int().min(1),
       }),
     ),
-    observed_ipc: z.number().int().min(0),
-    dropped_ipc: z.number().int().min(0),
-    observed_runtime: z.number().int().min(0),
-    dropped_runtime: z.number().int().min(0),
+    observed_ipc: z.int().min(0),
+    dropped_ipc: z.int().min(0),
+    observed_runtime: z.int().min(0),
+    dropped_runtime: z.int().min(0),
   }),
   coverage: coverageSchema,
   limitations: z.array(z.string()),

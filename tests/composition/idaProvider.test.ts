@@ -279,7 +279,6 @@ describe("IDA provider selection cancellation", () => {
 describe("IDA universal Mach-O target identity", () => {
   const openUniversal = async (registration: Record<string, unknown>) => {
     const root = await createTestTempDirectory("rea-ida-universal-");
-    roots.push(root);
     const input = join(root, "universal");
     // x86_64 and arm64 slices share one whole-file digest.
     await writeFile(input, fat([0x01000007, 0x0100000c]));

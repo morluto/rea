@@ -172,3 +172,32 @@ describe("PE resource provider budget reporting", () => {
     });
   });
 });
+
+it("names the fixed PE metadata allowance instead of host memory", async () => {
+  const root = await createTestTempDirectory("rea-pe-metadata-budget-");
+  const path = join(root, "resource.exe");
+  const name = "n".repeat(200);
+  const resources = Array.from({ length: 5500 }, (_, index) => ({
+    type: 10,
+    name: `${name}${String(index).padStart(4, "0")}`,
+    language: 1033,
+    payload: Buffer.alloc(0),
+  }));
+  await writeFile(
+    path,
+    peResourceFixture(false, resources, 12 * 1024 * 1024).bytes,
+  );
+  const result = await inspect(path);
+  if (result.ok) throw new Error("Expected a metadata refusal");
+  const error = result.error as AnalysisResourceConstraintError;
+  expect(error.resource).toBe("memory");
+  expect(error.reportedLimits).toMatchObject({
+    maximum_metadata_bytes: 8 * 1024 * 1024,
+  });
+  const projected = projectAnalysisError(error);
+  expect(projected.retryable).toBe(false);
+  expect(projected.remediation.action).toContain(
+    "PE resource metadata allowance",
+  );
+  expect(projected.remediation.action).not.toMatch(/available host memory/u);
+});

@@ -1,13 +1,11 @@
-import { json, runWithStatus } from "./lib/verify-package-core.mjs";
-
 /** Verify that an unknown --provider is rejected by the packaged CLI. */
-export async function verifyUnknownProvider({ cli, environment }) {
-  const unknownProviderExecution = await runWithStatus(
+export async function verifyUnknownProvider({ commands, cli, environment }) {
+  const unknownProviderExecution = await commands.runWithStatus(
     cli,
     ["analyze", process.execPath, "--provider", "missing-provider", "--json"],
     environment,
   );
-  const unknownProvider = json(unknownProviderExecution.stdout);
+  const unknownProvider = JSON.parse(unknownProviderExecution.stdout);
   if (
     unknownProviderExecution.status !== 1 ||
     unknownProvider.details?.selection_reason !== "unknown_provider" ||

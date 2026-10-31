@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
 import {
+  chmod,
   mkdtemp,
   rm,
+  readFile,
   stat,
   writeFile,
   open,
@@ -18,7 +20,10 @@ import { ok, err } from "../domain/result.js";
 import type { NativeCommandRunner } from "./CommandRunner.js";
 import type { NativeCallTracer } from "./LldbCallTracer.js";
 import { NativeMacOSProvider } from "./NativeMacOSProvider.js";
-import { withSignatureTarget } from "./SignatureTargetBinding.js";
+import {
+  verifySignatureTarget,
+  withSignatureTarget,
+} from "./SignatureTargetBinding.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { resolvedAnalysisError } from "../domain/analysisErrorBase.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -112,6 +117,42 @@ it("retains a snapshot root after cleanup fails alongside a digest mismatch", as
   expect(resolvedAnalysisError(result.error)._tag).toBe(
     "AnalysisArtifactChangedError",
   );
+  await expect(stat(roots[0]!)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it("retains and retries snapshot cleanup after snapshot identity drift", async () => {
+  const target = await createTarget("registered bytes");
+  const resources = new ArtifactResourceScope();
+  const result = await withSignatureTarget(
+    target,
+    resources,
+    async (binding) => {
+      await chmod(binding.snapshotPath, 0o600);
+      await writeFile(binding.snapshotPath, "replacement snapshot bytes");
+      const verified = await verifySignatureTarget(target, binding);
+      return verified.ok ? ok(signatureInspectionFixture()) : verified;
+    },
+    undefined,
+    () => createRoot(1),
+  );
+
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  expect(result.error.cleanupIncomplete).toBe(true);
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    details: {
+      diagnostics: {
+        primary_error: { code: "artifact_changed" },
+      },
+    },
+  });
+
+  await resources.close();
+  expect(result.error.cleanupIncomplete).toBe(false);
+  expect(resolvedAnalysisError(result.error)._tag).toBe(
+    "AnalysisArtifactChangedError",
+  );
+  expect(await readFile(target.path, "utf8")).toBe("registered bytes");
   await expect(stat(roots[0]!)).rejects.toMatchObject({ code: "ENOENT" });
 });
 

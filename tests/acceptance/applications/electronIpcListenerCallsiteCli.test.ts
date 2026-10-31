@@ -7,8 +7,13 @@ import { z } from "zod";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { applicationFeatureTraceResultSchema } from "../../../src/domain/javascript/javascriptFeatureTraceSchemas.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
+import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../../scripts/lib/mcp-verification-environment.mjs";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import {
+  assertSpawnArgumentsWithinLimit,
+  LINUX_4K_SINGLE_ARGUMENT_BYTES,
+} from "../../support/process/spawnArgumentLimit.js";
 
 cliTest.for(["CLI", "stdio MCP"] as const)(
   "counts exposed IPC listener callsites once and retains bridge paths through %s",
@@ -44,7 +49,9 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     ]);
 
     const mcp =
-      surface === "stdio MCP" ? await connectLocalToolsMcp() : undefined;
+      surface === "stdio MCP"
+        ? await connectLocalToolsMcp(INLINE_EVIDENCE_MCP_ENVIRONMENT)
+        : undefined;
     let applicationEvidence: unknown;
     if (surface === "CLI") {
       const response = await cli.run({
@@ -104,12 +111,24 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     };
     let traceEvidence: unknown;
     if (surface === "CLI") {
+      // Linux counts one argv string plus its trailing NUL against
+      // MAX_ARG_STRLEN (32 pages) and returns E2BIG before the CLI starts.
+      // This Evidence document is past that ceiling, so the command reads the
+      // same JSON from a file instead of argv.
+      const serialized = JSON.stringify(traceArguments);
+      expect(Buffer.byteLength(serialized)).toBeGreaterThan(
+        LINUX_4K_SINGLE_ARGUMENT_BYTES,
+      );
+      const traceInput = join(root, "trace-input.json");
+      await writeFile(traceInput, serialized);
+      const traceCommand = [
+        "trace-application-feature",
+        traceInput,
+        "--json",
+      ] as const;
+      assertSpawnArgumentsWithinLimit(traceCommand);
       const response = await cli.run({
-        arguments: [
-          "trace-application-feature",
-          JSON.stringify(traceArguments),
-          "--json",
-        ],
+        arguments: traceCommand,
       });
       expect(response.exitCode, response.stderr).toBe(0);
       traceEvidence = response.json;

@@ -1,5 +1,8 @@
 import { ProviderAdapterError } from "./providerAdapterError.js";
-import { projectAnalysisError } from "./analysisErrorProjection.js";
+import {
+  projectAnalysisError,
+  projectAnalysisErrorWithoutCapturedOutput,
+} from "./analysisErrorProjection.js";
 import type { AnalysisError } from "./analysisErrorBase.js";
 
 /** Preserve the original lifecycle failure alongside incomplete cleanup. */
@@ -28,7 +31,7 @@ export const analysisErrorWithCleanupFailure = (
         ? {}
         : { partialObservation: primary.partialObservation }),
       cleanup: {
-        reason: projected.message,
+        reason: cleanup.cleanup?.reason ?? projected.message,
         resources: [
           ...new Set([
             ...(primary.cleanupIncomplete ? primary.cleanupResources : []),
@@ -37,7 +40,10 @@ export const analysisErrorWithCleanupFailure = (
         ],
       },
       diagnostics: {
-        primary_error: projectAnalysisError(primary),
+        primary_error:
+          primary.capturedOutput === undefined
+            ? projectAnalysisError(primary)
+            : projectAnalysisErrorWithoutCapturedOutput(primary),
         cleanup_error: projected,
       },
     },

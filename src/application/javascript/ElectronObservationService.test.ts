@@ -1,6 +1,5 @@
 import { expect, it } from "vitest";
 
-import { classifyBrowserCompleteness } from "../../domain/browserCompleteness.js";
 import {
   AnalysisCancelledError,
   AnalysisOutputError,
@@ -12,14 +11,27 @@ import {
   electronTargetListSchema,
   inspectElectronPageInputSchema,
 } from "../../domain/javascript/electronObservation.js";
+import { emptyElectronPageCoverage } from "../../domain/javascript/electronPageInspection.fixture.js";
+import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { err, ok } from "../../domain/result.js";
 import type { ElectronObservationPort } from "./ElectronObservationPort.js";
 import {
   inspectElectronPage,
   listElectronTargets,
 } from "./ElectronObservationService.js";
+import {
+  expectDroppedPartial,
+  expectKeptPartial,
+  expectOwnerError,
+} from "../ownerObservationExpectation.fixture.js";
 
 const identity = { id: "electron-fixture", name: "Fixture", version: "1" };
+const pageProvider = (failure: AnalysisError): ElectronObservationPort => ({
+  identity: () => identity,
+  listTargets: async () =>
+    err(new AnalysisCancelledError("list_electron_targets")),
+  inspectPage: async () => err(failure),
+});
 const input = inspectElectronPageInputSchema.parse({
   cdp_endpoint: "http://127.0.0.1:9222",
   target_id: "electron-page",
@@ -40,33 +52,7 @@ const inspection = electronPageInspectionSchema.parse({
     file_path: "/app/index.html",
     attached: false,
   },
-  capture_window: {
-    started_at: "2026-01-01T00:00:00.000Z",
-    ended_at: "2026-01-01T00:00:00.000Z",
-    observation_ms: 0,
-  },
-  completeness: classifyBrowserCompleteness({
-    policyFilteredSections: new Set(),
-    attachLimitedSections: new Set(),
-    truncatedSections: new Set(),
-    unavailableSections: new Set(),
-    excluded: [],
-    droppedEvents: {
-      scripts: 0,
-      network_requests: 0,
-      console_events: 0,
-      websocket_connections: 0,
-      websocket_frames: 0,
-      webmcp_tools: 0,
-      timeline_events: 0,
-    },
-  }),
-  frames: [],
-  dom: { total_nodes: 0, nodes: [] },
-  scripts: { total: 0, items: [] },
-  resources: [],
-  workers: [],
-  limitations: [],
+  ...emptyElectronPageCoverage(),
 });
 
 it("converts a retained raw Electron inspection into partial Evidence", async () => {
@@ -77,13 +63,7 @@ it("converts a retained raw Electron inspection into partial Evidence", async ()
       cleanup: "transport-closed",
     },
   });
-  const provider: ElectronObservationPort = {
-    identity: () => identity,
-    listTargets: async () =>
-      err(new AnalysisCancelledError("list_electron_targets")),
-    inspectPage: async () => err(failure),
-  };
-  const result = await inspectElectronPage(provider, input);
+  const result = await inspectElectronPage(pageProvider(failure), input);
   expect(result.ok).toBe(false);
   if (!result.ok) {
     expect(result.error).toBe(failure);
@@ -116,13 +96,7 @@ it("converts a raw inspection retained by provider cleanup failure", async () =>
       },
     },
   );
-  const provider: ElectronObservationPort = {
-    identity: () => identity,
-    listTargets: async () =>
-      err(new AnalysisCancelledError("list_electron_targets")),
-    inspectPage: async () => err(failure),
-  };
-  const result = await inspectElectronPage(provider, input);
+  const result = await inspectElectronPage(pageProvider(failure), input);
   expect(result.ok).toBe(false);
   if (!result.ok) {
     expect(result.error).toBe(failure);
@@ -242,5 +216,45 @@ it.each(["list", "inspect"] as const)(
       expect(result.error.cause).toBe(reason);
     }
     expect(providerCalls).toBe(0);
+  },
+);
+
+it("keeps cancellation when the retained Electron inspection is incomplete", async () => {
+  const reason = { requested: "stop before page inspection completed" };
+  const partial = {
+    kind: "electron-page-observation",
+    inspection: { target_id: "electron-page" },
+    cleanup: "incomplete",
+  };
+  const failure = new AnalysisCancelledError("inspect_electron_page", {
+    cause: reason,
+    partialObservation: partial as never,
+  });
+  const result = await inspectElectronPage(pageProvider(failure), input);
+  expectKeptPartial(expectOwnerError(result, failure, reason), partial);
+});
+
+it.each([
+  { inspection: { requests: Number.NaN }, cleanup: "incomplete" as const },
+  {
+    inspection: { scripts: [undefined] },
+    cleanup: "transport-closed" as const,
+  },
+])(
+  "drops a non-JSON Electron inspection and keeps cancellation primary",
+  async (unsafe) => {
+    const reason = { requested: "stop before page inspection completed" };
+    const failure = new AnalysisCancelledError("inspect_electron_page", {
+      cause: reason,
+      partialObservation: {
+        kind: "electron-page-observation",
+        ...unsafe,
+      } as never,
+    });
+    const result = await inspectElectronPage(pageProvider(failure), input);
+    expectDroppedPartial(
+      expectOwnerError(result, failure, reason),
+      "Electron provider retained a non-JSON incomplete observation.",
+    );
   },
 );

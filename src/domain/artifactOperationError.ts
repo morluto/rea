@@ -7,9 +7,23 @@ import {
   type AnalysisErrorOptions,
 } from "./analysisErrorBase.js";
 
+/** The resource class that refused an artifact operation. */
+export type ArtifactLimitBoundary = "file-size" | "capacity" | "memory";
+
+/** Admission named by the producing reader, with its effective byte ceiling and its source. */
+export interface ArtifactAdmissionLimit {
+  readonly kind: "asar-header";
+  readonly requiredBytes?: number;
+  readonly maximumBytes: number;
+  readonly source: "default" | "setting" | "runtime";
+}
+
 /** Artifact inventory or extraction failed a typed safety boundary. */
 export class ArtifactOperationError extends AnalysisError {
   readonly _tag = "ArtifactOperationError";
+  override readonly userMessage: string | undefined;
+  readonly admission: ArtifactAdmissionLimit | undefined;
+  readonly boundary: ArtifactLimitBoundary | undefined;
 
   constructor(
     readonly operation:
@@ -18,6 +32,11 @@ export class ArtifactOperationError extends AnalysisError {
       | "inspect_desktop_application"
       | "inspect_pe_resources"
       | "inspect_windows_minidump"
+      | "inspect_pe_certificates"
+      | "inspect_elf_notes"
+      | "inspect_devicetree"
+      | "inspect_kernel_module"
+      | "inspect_erlang_beam"
       | "extract_artifact"
       | "decode_interface_builder"
       | "inspect_asset_catalog"
@@ -38,7 +57,11 @@ export class ArtifactOperationError extends AnalysisError {
     readonly artifactDetails?: ArtifactIntegrityDetails,
     /** The specific constraint that failed, such as the colliding path. */
     readonly detail?: string,
-    options?: AnalysisErrorOptions,
+    options?: AnalysisErrorOptions & {
+      readonly userMessage?: string;
+      readonly admission?: ArtifactAdmissionLimit;
+      readonly boundary?: ArtifactLimitBoundary;
+    },
   ) {
     super(
       artifactDetails === undefined
@@ -46,6 +69,11 @@ export class ArtifactOperationError extends AnalysisError {
         : artifactDetailsMessage(operation, reason, artifactDetails),
       options,
     );
+    this.admission = options?.admission;
+    this.boundary = options?.boundary;
+    this.userMessage =
+      options?.userMessage ??
+      (options?.admission === undefined ? undefined : detail);
   }
 }
 

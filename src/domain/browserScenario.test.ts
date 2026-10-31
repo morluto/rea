@@ -1,6 +1,65 @@
 import { expect, it } from "vitest";
 
 import { browserScenarioSchema } from "./browserScenario.js";
+import { browserScenarioActionSchema } from "./browserScenarioValues.js";
+
+const requestAction = (path: string, name = "X-Trace") => ({
+  step_id: "request",
+  action: "request",
+  method: "GET",
+  path,
+  headers: [{ name, value: { source: "literal", value: "selected" } }],
+});
+
+it("preserves same-origin request path spelling and rejects network-path prefixes", () => {
+  for (const path of ["/", "/api?x=a%2Fb", "/api//item", "/a\\b"]) {
+    expect(
+      browserScenarioActionSchema.parse(requestAction(path)),
+    ).toMatchObject({
+      path,
+    });
+  }
+  for (const path of [
+    "",
+    "relative",
+    "//other.test",
+    "/\\other.test",
+    "https://other.test/",
+  ])
+    expect(
+      browserScenarioActionSchema.safeParse(requestAction(path)).success,
+      path,
+    ).toBe(false);
+});
+
+it("keeps HTTP token characters and forbidden-header policy distinct", () => {
+  const punctuation = new Set("!#$%&'*+-.^_`|~");
+  for (let code = 0; code < 128; code += 1) {
+    const name = String.fromCharCode(code);
+    const isToken =
+      (code >= 48 && code <= 57) ||
+      (code >= 65 && code <= 90) ||
+      (code >= 97 && code <= 122) ||
+      punctuation.has(name);
+    expect(
+      browserScenarioActionSchema.safeParse(requestAction("/api", name))
+        .success,
+      JSON.stringify(name),
+    ).toBe(isToken);
+  }
+  const name = "X-Trace|Id-";
+  expect(
+    browserScenarioActionSchema.parse(requestAction("/api", name)),
+  ).toMatchObject({
+    headers: [{ name, value: { source: "literal", value: "selected" } }],
+  });
+  for (const name of ["", "é", "Host", "cookie", "Proxy-Trace", "Sec-Trace"])
+    expect(
+      browserScenarioActionSchema.safeParse(requestAction("/api", name))
+        .success,
+      name,
+    ).toBe(false);
+});
 
 it("accepts large action, secret, and storage selections", () => {
   const actions = Array.from({ length: 129 }, (_, index) => ({
@@ -195,6 +254,28 @@ it("accepts caller-selected viewport sizes and click counts without ceilings", (
     device_scale_factor: 8,
   });
   expect(parsed.actions[0]).toMatchObject({ click_count: 4 });
+});
+
+it("refuses an action step id that the provider reserves for the initial state", () => {
+  const scenario = (secondStepId: string) => ({
+    browser: { mode: "launch", executable_path: "/opt/chromium" },
+    start_url: { url: "https://app.example.test/" },
+    actions: [
+      { step_id: "open", action: "wait_for_timeout", duration_ms: 10 },
+      { step_id: secondStepId, action: "wait_for_timeout", duration_ms: 10 },
+    ],
+  });
+
+  expect(() => browserScenarioSchema.parse(scenario("scenario_start"))).toThrow(
+    /reserved/u,
+  );
+  const rejected = browserScenarioSchema.safeParse(scenario("scenario_start"));
+  expect(rejected.success).toBe(false);
+  expect(rejected.error?.issues[0]?.path).toEqual(["actions", 1, "step_id"]);
+  // Only the exact identity is reserved; a similar caller id stays valid.
+  expect(
+    browserScenarioSchema.parse(scenario("scenario_start_2")).actions,
+  ).toHaveLength(2);
 });
 
 it.each([

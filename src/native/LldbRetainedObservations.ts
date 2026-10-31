@@ -220,7 +220,7 @@ export const readLldbObservationJournal = (
       limitations: [
         ...(size > LLDB_OBSERVATION_JOURNAL_MAX_BYTES
           ? [
-              "The observation journal exceeded 8 MiB; only its bounded prefix was read.",
+              "The observation journal exceeded 8388608 bytes (8 MiB); only its bounded prefix was read. This release has no runtime override.",
             ]
           : []),
         ...(read.status === "eof"

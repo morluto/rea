@@ -14,6 +14,35 @@ import {
   listJavaScriptRuntimeTargets,
   observeJavaScriptRuntime,
 } from "./JavaScriptRuntimeObservationService.js";
+import {
+  expectDroppedPartial,
+  expectKeptPartial,
+  expectOutputError,
+  expectOwnerError,
+  expectPreemptedCancellation,
+} from "../ownerObservationExpectation.fixture.js";
+
+const observeCancelled = async (partial: unknown) => {
+  const reason = { requested: "stop before runtime observation completed" };
+  const failure = new AnalysisCancelledError("observe_javascript_runtime", {
+    cause: reason,
+    partialObservation: partial as never,
+  });
+  const result = await observeJavaScriptRuntime(
+    {
+      identity: () => ({ id: "test", name: "Test", version: "1" }),
+      listTargets: async () =>
+        err(new AnalysisCancelledError("list_javascript_runtime_targets")),
+      observe: async () => err(failure),
+    },
+    {
+      inspector_endpoint: "http://127.0.0.1:9229",
+      target_id: "target",
+      observation_ms: 0,
+    },
+  );
+  return { result, failure, reason };
+};
 
 it("preserves failed Inspector cleanup when cancellation occurs during observation", async () => {
   const controller = new AbortController();
@@ -126,11 +155,7 @@ it("does not let late cancellation hide an invalid completed Inspector report", 
     },
     { inspector_endpoint: "http://127.0.0.1:9229" },
   );
-  expect(output).toMatchObject({
-    ok: false,
-    error: { _tag: "AnalysisOutputError" },
-  });
-  if (!output.ok) expect(output.error).toBeInstanceOf(AnalysisOutputError);
+  expectOutputError(output);
 
   const controller = new AbortController();
   const late = await listJavaScriptRuntimeTargets(
@@ -147,11 +172,7 @@ it("does not let late cancellation hide an invalid completed Inspector report", 
     { inspector_endpoint: "http://127.0.0.1:9229" },
     { signal: controller.signal },
   );
-  expect(late).toMatchObject({
-    ok: false,
-    error: { _tag: "AnalysisOutputError" },
-  });
-  if (!late.ok) expect(late.error).toBeInstanceOf(AnalysisOutputError);
+  expectOutputError(late);
 });
 
 it("converts a raw runtime observation retained by cleanup failure", async () => {
@@ -309,11 +330,23 @@ it.each(["list", "observe"] as const)(
             { signal: controller.signal },
           );
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error).toBeInstanceOf(AnalysisCancelledError);
-      expect(result.error.cause).toBe(reason);
-    }
-    expect(providerCalls).toBe(0);
+    expectPreemptedCancellation(result, reason, providerCalls);
+  },
+);
+
+it("keeps cancellation when the retained runtime observation is incomplete", async () => {
+  const partial = { runtime: "partial", scripts: [] };
+  const { result, failure, reason } = await observeCancelled(partial);
+  expectKeptPartial(expectOwnerError(result, failure, reason), partial);
+});
+
+it.each([{ scripts: [undefined] }, { elapsed_ms: Number.NaN }])(
+  "drops a non-JSON runtime partial and keeps cancellation primary",
+  async (partial) => {
+    const { result, failure, reason } = await observeCancelled(partial);
+    expectDroppedPartial(
+      expectOwnerError(result, failure, reason),
+      "Inspector retained a non-JSON incomplete observation.",
+    );
   },
 );

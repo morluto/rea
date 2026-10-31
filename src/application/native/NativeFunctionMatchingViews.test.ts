@@ -1,8 +1,12 @@
+import {
+  projectAnalysisView,
+  analysisViewResultSchema,
+} from "../../domain/analysisView/analysisView.js";
+import { nativeFunctionMatchingSchema } from "../../domain/native/functionMatching.js";
 import { expect, it } from "vitest";
 import { matchNativeFunctions } from "./NativeFunctionMatchingService.js";
 import { inspectAnalysisView } from "../analysisView/AnalysisViewService.js";
-import { nativeMatchingInventory } from "../../../tests/fixtures/nativeFunctionMatching.js";
-import { analysisViewResultSchema } from "../../domain/analysisView/analysisView.js";
+import { nativeMatchingNamedInventory as nativeMatchingInventory } from "../../../tests/fixtures/nativeFunctionMatching.js";
 
 it("pages individual function facts without transferring an entire ambiguous alias group, preserving mandatory identity and source coverage", async () => {
   const entries = Array.from({ length: 500 }, (_, i) => ({
@@ -15,12 +19,12 @@ it("pages individual function facts without transferring an entire ambiguous ali
   });
   if (!matched.ok) throw matched.error;
   const source = { kind: "inline", evidence: matched.value.evidence };
-  const view = (query: unknown) => {
-    const result = inspectAnalysisView({ source, view: query });
+  const view = async (query: unknown) => {
+    const result = await inspectAnalysisView({ source, view: query });
     if (!result.ok) throw result.error;
     return analysisViewResultSchema.parse(result.value.normalized_result);
   };
-  const groups = view({
+  const groups = await view({
     kind: "function-matches",
     collection: "matches",
     fields: ["basis"],
@@ -36,7 +40,7 @@ it("pages individual function facts without transferring an entire ambiguous ali
   if (groups.kind !== "function-matches") throw new Error("Wrong view");
   expect(groups.items[0]).not.toHaveProperty("left");
   const member = `${matched.value.sources[0]!.evidence_id}/123`;
-  const functions = view({
+  const functions = await view({
     kind: "function-matches",
     collection: "functions",
     function_ids: [member],
@@ -60,7 +64,7 @@ it("pages individual function facts without transferring an entire ambiguous ali
   });
   expect(JSON.stringify(functions).length).toBeLessThan(6000);
   expect(
-    view({
+    await view({
       kind: "function-matches",
       collection: "functions",
       names: [],
@@ -68,7 +72,7 @@ it("pages individual function facts without transferring an entire ambiguous ali
     }),
   ).toMatchObject({ coverage: { total: 0 } });
   expect(
-    view({
+    await view({
       kind: "function-matches",
       collection: "functions",
       names: ["same"],
@@ -77,7 +81,7 @@ it("pages individual function facts without transferring an entire ambiguous ali
     }),
   ).toMatchObject({ coverage: { total: 500, next_offset: 1 } });
   expect(
-    view({
+    await view({
       kind: "function-matches",
       collection: "functions",
       sides: ["right"],
@@ -88,9 +92,13 @@ it("pages individual function facts without transferring an entire ambiguous ali
     coverage: { examined: 1, total: 500, exhausted: true, next_offset: null },
   });
   expect(
-    view({ kind: "function-matches", collection: "functions", states: [] }),
+    await view({
+      kind: "function-matches",
+      collection: "functions",
+      states: [],
+    }),
   ).toMatchObject({ coverage: { total: 0, exhausted: true } });
-  expect(view({ kind: "summary" })).toMatchObject({
+  expect(await view({ kind: "summary" })).toMatchObject({
     summary: {
       scope: "provider-observed-inputs",
       summary: { unresolved: 1 },
@@ -98,4 +106,39 @@ it("pages individual function facts without transferring an entire ambiguous ali
       right: { functions: 500 },
     },
   });
+});
+
+it("rebuilds native row selection when a caller's sealed flag covers only a shallow freeze", async () => {
+  const matched = await matchNativeFunctions({
+    left: nativeMatchingInventory("1", [{ address: "0x100", value: "same" }]),
+    right: nativeMatchingInventory("2", [{ address: "0x200", value: "same" }]),
+  });
+  if (!matched.ok) throw matched.error;
+  const report = nativeFunctionMatchingSchema.parse(
+    matched.value.evidence.normalized_result,
+  );
+  Object.freeze(report);
+  const parent = {
+    evidenceId: matched.value.evidence.evidence_id,
+    operation: matched.value.evidence.operation,
+    normalizedResult: report,
+    sealedResult: true,
+    limitations: [],
+  };
+  const request: Parameters<typeof projectAnalysisView>[1] = {
+    kind: "function-matches",
+    collection: "functions",
+    names: ["same"],
+    sides: ["left"],
+    fields: ["name"],
+    offset: 0,
+    limit: 1,
+  };
+  const first = projectAnalysisView(parent, request);
+  expect(first).toMatchObject({ ok: true, value: { coverage: { total: 1 } } });
+  const member = report.matches[0]?.left[0];
+  if (member === undefined) throw new Error("Expected matched left member");
+  member.name = "changed";
+  const second = projectAnalysisView(parent, request);
+  expect(second).toMatchObject({ ok: true, value: { coverage: { total: 0 } } });
 });

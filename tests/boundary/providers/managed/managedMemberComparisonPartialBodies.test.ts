@@ -19,6 +19,46 @@ const hash = (bytes: Buffer): string =>
   createHash("sha256").update(bytes).digest("hex");
 
 describe("managed member partial body comparison", () => {
+  it.each(["max_stack", "init_locals"] as const)(
+    "keeps an unavailable %s header fact unknown",
+    (field) => {
+      const left = inspect(buildManagedPeFixture(), "/tmp/header-known.dll");
+      const right = {
+        ...left,
+        result: {
+          ...left.result,
+          methods: left.result.methods.map((method) => ({
+            ...method,
+            body: { ...method.body, [field]: null },
+          })),
+        },
+      };
+      expect(compareManagedMembers(left, right).methods[0]).toMatchObject({
+        status: "unknown",
+        dimensions: ["body-coverage"],
+      });
+    },
+  );
+
+  it("retains known header differences beside incomplete CIL", () => {
+    const left = inspect(buildManagedPeFixture(), "/tmp/header-partial.dll");
+    const right = {
+      ...left,
+      result: {
+        ...left.result,
+        methods: left.result.methods.map((method) => ({
+          ...method,
+          body: { ...method.body, status: "partial" as const, max_stack: 16 },
+        })),
+      },
+    };
+    expect(compareManagedMembers(left, right).methods[0]).toMatchObject({
+      status: "changed",
+      dimensions: ["metadata", "body-coverage"],
+      limitations: expect.arrayContaining([expect.stringContaining("unknown")]),
+    });
+  });
+
   it("keeps unavailable body facets unknown and a raw-only signature difference unchanged", () => {
     const left = inspect(buildManagedPeFixture(), "/tmp/left-body-partial.dll");
     const right = inspect(
@@ -119,6 +159,42 @@ describe("managed member partial body comparison", () => {
       },
     );
     expect(bothAbsent.methods[0]).toMatchObject({
+      status: "unchanged",
+      dimensions: [],
+    });
+  });
+});
+
+describe("managed locals signature comparison", () => {
+  it("compares observed presence but not build-local tokens", () => {
+    const inspectWithLocals = (token: number, path: string) => {
+      const body = Buffer.alloc(13);
+      body.writeUInt16LE(0x3003, 0);
+      body.writeUInt16LE(8, 2);
+      body.writeUInt32LE(1, 4);
+      body.writeUInt32LE(token, 8);
+      body[12] = 0x2a;
+      const standaloneSignatures = Array.from(
+        { length: token & 0x00ff_ffff },
+        () => Buffer.from([0x07, 0x01, 0x08]),
+      );
+      return inspect(
+        buildManagedPeFixture({ ilBody: body, standaloneSignatures }),
+        path,
+      );
+    };
+    const absent = inspectWithLocals(0, "/tmp/locals-absent.dll");
+    const presentOne = inspectWithLocals(0x11000001, "/tmp/locals-one.dll");
+    const presentTwo = inspectWithLocals(0x11000002, "/tmp/locals-two.dll");
+    expect(presentOne.result.methods[0]?.body.status).toBe("present");
+    expect(presentTwo.result.methods[0]?.body.status).toBe("present");
+    expect(compareManagedMembers(absent, presentOne).methods[0]).toMatchObject({
+      status: "changed",
+      dimensions: ["metadata"],
+    });
+    expect(
+      compareManagedMembers(presentOne, presentTwo).methods[0],
+    ).toMatchObject({
       status: "unchanged",
       dimensions: [],
     });

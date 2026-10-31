@@ -1,13 +1,8 @@
 import type { ServerContext } from "@modelcontextprotocol/server";
 import { setImmediate } from "node:timers/promises";
-import { z } from "zod";
 
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import {
-  AnalysisCancelledError,
-  AnalysisInputError,
-} from "../domain/analysisErrorCore.js";
-import { describeValidationFailure } from "../domain/evidenceBundle.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { mcpProgressReporter, type McpProgressContext } from "./mcpProgress.js";
 
@@ -31,28 +26,18 @@ export const runDerivedOperation = async <Value>(
   });
   await setImmediate();
   if (context.mcpReq.signal.aborted)
-    return err(new AnalysisCancelledError(operation));
+    return err(
+      new AnalysisCancelledError(operation, {
+        cause: context.mcpReq.signal.reason,
+      }),
+    );
   let value: Value;
   try {
     value = compute();
   } catch (cause: unknown) {
     // Typed causes already name the failed constraint; keep their issues.
     if (cause instanceof AnalysisError) return err(cause);
-    return err(
-      new AnalysisInputError(
-        operation,
-        { cause },
-        cause instanceof TypeError || cause instanceof z.ZodError
-          ? [
-              {
-                path: [],
-                reason: "invalid_value",
-                message: describeValidationFailure(cause),
-              },
-            ]
-          : [],
-      ),
-    );
+    throw cause;
   }
   await progress.report({
     phase: "compute",
@@ -62,7 +47,11 @@ export const runDerivedOperation = async <Value>(
   });
   await setImmediate();
   if (context.mcpReq.signal.aborted)
-    return err(new AnalysisCancelledError(operation));
+    return err(
+      new AnalysisCancelledError(operation, {
+        cause: context.mcpReq.signal.reason,
+      }),
+    );
   await progress.report({
     phase: "complete",
     completed: 2,
@@ -71,6 +60,10 @@ export const runDerivedOperation = async <Value>(
     terminal: true,
   });
   if (context.mcpReq.signal.aborted)
-    return err(new AnalysisCancelledError(operation));
+    return err(
+      new AnalysisCancelledError(operation, {
+        cause: context.mcpReq.signal.reason,
+      }),
+    );
   return ok(value);
 };

@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import type { BinaryArchitecture } from "../binaryTargetTypes.js";
-import { localPathStringSchema } from "../localPath.js";
+import { absoluteLocalPathStringSchema } from "../localPath.js";
 
 const uint32 = z.number().int().min(0).max(0xffffffff);
 const count = z.number().int().nonnegative();
@@ -64,7 +64,7 @@ export const WINDOWS_MINIDUMP_AMD64_CONTEXT_MIN_BYTES = 0x100;
 
 /** Explicit recorded dump selection with independent read and inventory budgets. */
 export const inspectWindowsMinidumpInputSchema = z.strictObject({
-  path: localPathStringSchema.describe(
+  path: absoluteLocalPathStringSchema.describe(
     "Absolute filesystem path to a supplied Windows minidump (.dmp)",
   ),
   max_file_bytes: z

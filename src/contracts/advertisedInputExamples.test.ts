@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { advertisedInputExamples } from "./advertisedInputExamples.js";
-import { evidenceInputSchema } from "./evidenceInputContracts.js";
+import { evidenceInputSchema } from "../domain/evidenceReference.js";
 import { JAVASCRIPT_FEATURE_TRACE_EXAMPLE } from "./javascript/javascriptApplicationWorkflowExamples.js";
 import { TOOL_CONTRACTS } from "./toolContracts.js";
 import { evidenceSchema } from "../domain/evidence.js";

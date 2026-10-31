@@ -345,8 +345,9 @@ export const detectReferenceSourceLanguage = (path: string): string | null => {
   if (lower.endsWith(".d.cts")) return "TypeScript";
 
   const parts = basenameParts(filename);
-  const extension = parts.ext.toLowerCase();
-  return LANGUAGE_BY_EXTENSION.get(extension) ?? null;
+  if (parts.ext === "C") return "C++";
+  if (parts.ext === "M") return "Objective-C++";
+  return LANGUAGE_BY_EXTENSION.get(parts.ext.toLowerCase()) ?? null;
 };
 
 /** Classify a reference source path deterministically. */

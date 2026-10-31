@@ -28,7 +28,7 @@ const citedEdgeSchema = z.object({
 });
 const pathSchema = z
   .object({
-    hops: z.number().int().min(0),
+    hops: z.int().min(0),
     nodes: z.array(citedNodeSchema).min(1),
     edges: z.array(citedEdgeSchema),
     evidence_links: z.array(evidenceIdSchema).min(1),
@@ -53,9 +53,9 @@ const resultContextShape = {
   start: nativeAddressSchema,
   goal: nativeAddressSchema,
   explored: z.object({
-    nodes: z.number().int().min(0),
-    edges: z.number().int().min(0),
-    depth_reached: z.number().int().min(0),
+    nodes: z.int().min(0),
+    edges: z.int().min(0),
+    depth_reached: z.int().min(0),
   }),
   evidence_links: z.array(evidenceIdSchema).min(1),
   limitations: z.array(z.string()),
@@ -66,7 +66,7 @@ export const callPathResultSchema = z.union([
   z.object({
     ...resultContextShape,
     status: z.literal("found"),
-    shortest_hops: z.number().int().min(0),
+    shortest_hops: z.int().min(0),
     search_scope: z.object({ exhaustive: z.boolean() }),
     paths: z.array(pathSchema).min(1),
   }),

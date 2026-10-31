@@ -44,6 +44,7 @@ type SignatureOwner = Extract<
 export interface SignatureTargetBinding {
   readonly identity: string;
   readonly snapshotPath: string;
+  readonly snapshotIdentity: string;
 }
 
 const identity = (stat: BigIntStats): string =>
@@ -380,7 +381,23 @@ const bindSignatureTarget = async (
           `Signature target changed while establishing its version: ${target.path}`,
         );
       await snapshotIO(target, "seal", () => snapshot.chmod(0o400));
-      return ok({ identity: identity(opened), snapshotPath });
+      const snapshotOpened = await snapshot.stat({ bigint: true });
+      const snapshotAtPath = await lstat(snapshotPath, { bigint: true });
+      if (
+        !snapshotOpened.isFile() ||
+        !snapshotAtPath.isFile() ||
+        snapshotAtPath.isSymbolicLink() ||
+        identity(snapshotOpened) !== identity(snapshotAtPath)
+      )
+        return changedTarget(
+          target,
+          `Digest-verified signature snapshot changed while binding: ${target.path}`,
+        );
+      return ok({
+        identity: identity(opened),
+        snapshotPath,
+        snapshotIdentity: identity(snapshotOpened),
+      });
     } catch (cause: unknown) {
       return err(signatureReadFailure(target, cause));
     }
@@ -438,11 +455,32 @@ export const verifySignatureTarget = async (
     assertRegularFileActive(signal);
     const current = await lstat(target.path, { bigint: true });
     assertRegularFileActive(signal);
-    return current.isFile() && identity(current) === binding.identity
+    if (!current.isFile() || identity(current) !== binding.identity)
+      return changedTarget(
+        target,
+        `Signature target changed during inspection: ${target.path}`,
+      );
+    let snapshot: BigIntStats;
+    try {
+      snapshot = await lstat(binding.snapshotPath, { bigint: true });
+    } catch (cause: unknown) {
+      const code =
+        cause instanceof Error && "code" in cause ? cause.code : undefined;
+      if (code === "ENOENT" || code === "ENOTDIR" || code === "ELOOP")
+        return changedTarget(
+          target,
+          `Digest-verified signature snapshot is unavailable during inspection: ${target.path}`,
+        );
+      return err(signatureReadFailure(target, cause));
+    }
+    assertRegularFileActive(signal);
+    return snapshot.isFile() &&
+      !snapshot.isSymbolicLink() &&
+      identity(snapshot) === binding.snapshotIdentity
       ? ok(undefined)
       : changedTarget(
           target,
-          `Signature target changed during inspection: ${target.path}`,
+          `Digest-verified signature snapshot changed during inspection: ${target.path}`,
         );
   } catch (cause: unknown) {
     return err(signatureReadFailure(target, cause));

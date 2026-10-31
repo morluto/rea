@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { inspectManagedMembersBytes } from "./ManagedMemberInspector.js";
 import {
   buildManagedPeFixture,
+  fixtureUserStringHeap,
   managedPeFixtureTarget,
 } from "./ManagedPe.fixture.js";
 import { parseExceptionRegions } from "./ManagedMemberInstructionDecoder.js";
@@ -211,6 +212,7 @@ describe("managed CIL decoding", () => {
     fatHeader.writeUInt32LE(il.length, 4);
     fatHeader.writeUInt32LE(0x1100_0001, 8);
     const fatBytes = buildManagedPeFixture({
+      standaloneSignatures: [Buffer.from([0x07, 0x01, 0x08])],
       ilBody: Buffer.concat([fatHeader, il]),
     });
     const tiny = inspectManagedMembersBytes(
@@ -334,6 +336,90 @@ describe("managed operand extent diagnostics", () => {
   );
 });
 
+describe("managed CIL prefix completion", () => {
+  it.each([
+    ["unaligned.", [0xfe, 0x12, 1], 1],
+    ["volatile.", [0xfe, 0x13], 1],
+    ["tail.", [0xfe, 0x14], 1],
+    ["constrained.", [0xfe, 0x16, 1, 0, 0, 2], 1],
+    ["no.", [0xfe, 0x19, 4], 1],
+    ["readonly.", [0xfe, 0x1e], 1],
+    ["unaligned. volatile. chain", [0xfe, 0x12, 1, 0xfe, 0x13], 2],
+  ] as const)(
+    "retains decoded evidence but rejects a terminal %s prefix",
+    (_label, prefix, prefixCount) => {
+      const il = Buffer.from([0x00, ...prefix]);
+      const { body, coverage } = tinyBody([...il]);
+      expect(body).toMatchObject({
+        status: "malformed",
+        il_size: il.length,
+        il_sha256: createHash("sha256").update(il).digest("hex"),
+        normalized_il_sha256: null,
+        decoded_instruction_count: 1 + prefixCount,
+        opcode_counts: { nop: 1 },
+        issue: "CIL prefix chain at IL offset 1 has no following instruction",
+      });
+      expect(coverage.state).toBe("partial");
+    },
+  );
+
+  it.each([
+    [[0xfe], "Two-byte CIL opcode at IL offset 2 leaves method body"],
+    [[0x20], "Instruction ldc.i4 at IL offset 2 leaves method body"],
+    [[0xfe, 0xff], "Unsupported CIL opcode 0xfeff at IL offset 2"],
+  ] as const)(
+    "keeps the original failure after a prefix followed by %j",
+    (suffix, issue) => {
+      const { body } = tinyBody([0xfe, 0x13, ...suffix]);
+      expect(body).toMatchObject({
+        status: "malformed",
+        decoded_instruction_count: 1,
+        normalized_il_sha256: null,
+        issue,
+      });
+    },
+  );
+
+  it("locates a dangling prefix after a completed chain", () => {
+    const { body, coverage } = tinyBody([
+      0xfe, 0x12, 1, 0xfe, 0x13, 0x4a, 0xfe, 0x13,
+    ]);
+    expect(body).toMatchObject({
+      status: "malformed",
+      decoded_instruction_count: 4,
+      opcode_counts: { "unaligned.": 1, "volatile.": 2, "ldind.i4": 1 },
+      normalized_il_sha256: null,
+      issue: "CIL prefix chain at IL offset 6 has no following instruction",
+    });
+    expect(coverage.state).toBe("partial");
+  });
+
+  it("rejects a fat method ending in a prefix without a normalized fingerprint", () => {
+    expect(fatBody(Buffer.from([0xfe, 0x13]))).toMatchObject({
+      status: "malformed",
+      header_format: "fat",
+      il_size: 2,
+      decoded_instruction_count: 1,
+      opcode_counts: { "volatile.": 1 },
+      normalized_il_sha256: null,
+      issue: "CIL prefix chain at IL offset 0 has no following instruction",
+    });
+  });
+
+  it("keeps a completed prefix chain present with its fingerprint", () => {
+    const { body, coverage } = tinyBody([
+      0xfe, 0x12, 1, 0xfe, 0x13, 0x4a, 0x2a,
+    ]);
+    expect(body).toMatchObject({
+      status: "present",
+      decoded_instruction_count: 4,
+      normalized_il_sha256: expect.any(String),
+      issue: null,
+    });
+    expect(coverage.state).toBe("complete");
+  });
+});
+
 describe("managed complete operand decoding", () => {
   // The extent check must also reject nothing that fits, so every multi-byte
   // width is exercised at exactly its own size with a known value. Each body
@@ -403,6 +489,65 @@ describe("managed complete operand decoding", () => {
       opcode_counts: { nop: 1 },
       issue: "Instruction ldc.i4 at IL offset 1 leaves method body",
     });
+  });
+
+  it("retains named references and loaded literals before a truncated operand", () => {
+    const { heap, tokens } = fixtureUserStringHeap(["observed"]);
+    const literalToken = tokens[0]!;
+    const il = Buffer.from([
+      0x28, 1, 0, 0, 0x0a, 0x7e, 1, 0, 0, 0x04, 0x26, 0x72, 0, 0, 0, 0, 0x26,
+      0x20,
+    ]);
+    il.writeUInt32LE(Number.parseInt(literalToken, 16), 12);
+    const bytes = buildManagedPeFixture({
+      memberRefParentRaw: 8,
+      memberRefName: "ObservedCall",
+      fieldName: "ObservedField",
+      ilBody: Buffer.concat([Buffer.from([(il.length << 2) | 2]), il]),
+      userStringHeap: heap,
+    });
+    const result = inspectManagedMembersBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+
+    expect(result.methods[0]?.body).toMatchObject({
+      status: "malformed",
+      il_size: il.length,
+      il_sha256: createHash("sha256").update(il).digest("hex"),
+      normalized_il_sha256: null,
+      decoded_instruction_count: 5,
+      anchors: [
+        { opcode: "call", operand: "0x0a000001" },
+        { opcode: "ldsfld", operand: "0x04000001" },
+        { opcode: "pop", operand: null },
+        { opcode: "ldstr", operand: literalToken },
+        { opcode: "pop", operand: null },
+      ],
+      issue: "Instruction ldc.i4 at IL offset 17 leaves method body",
+    });
+    expect(result.call_edges).toMatchObject([
+      {
+        opcode: "call",
+        target_token: "0x0a000001",
+        target_name: "ObservedCall",
+        target_declaring_type: "Fixture.Program",
+      },
+    ]);
+    expect(result.field_accesses).toMatchObject([
+      {
+        opcode: "ldsfld",
+        field_token: "0x04000001",
+        field_name: "ObservedField",
+        field_declaring_type: "Fixture.Program",
+      },
+    ]);
+    expect(result.user_strings).toMatchObject({
+      state: "partial",
+      literals: [{ token: literalToken, value: "observed" }],
+      issues: [],
+    });
+    expect(result.coverage.state).toBe("partial");
   });
 
   it("keeps a complete operand-bearing body decodable", () => {
@@ -808,4 +953,83 @@ describe("managed exception section decoding", () => {
       issue,
     });
   });
+});
+
+describe("managed catch fact retention", () => {
+  it.each([
+    {
+      name: "local TypeDef",
+      classToken: 0x0200_0001,
+      typeRefScopeRaw: 0,
+      classType: "Fixture.Program",
+      identityResolved: true,
+    },
+    {
+      name: "TypeRef with an unavailable AssemblyRef scope",
+      classToken: 0x0100_0001,
+      typeRefScopeRaw: (9 << 2) | 2,
+      classType: "System.Runtime.Versioning.TargetFrameworkAttribute",
+      identityResolved: false,
+    },
+    {
+      name: "TypeRef with a cyclic scope",
+      classToken: 0x0100_0001,
+      typeRefScopeRaw: (1 << 2) | 3,
+      classType: "System.Runtime.Versioning.TargetFrameworkAttribute",
+      identityResolved: false,
+    },
+  ])(
+    "retains $name catch facts before a malformed later EH section",
+    ({ classToken, typeRefScopeRaw, classType, identityResolved }) => {
+      const header = Buffer.alloc(12);
+      header.writeUInt16LE(0x300b, 0);
+      header.writeUInt16LE(8, 2);
+      header.writeUInt32LE(1, 4);
+      const first = Buffer.alloc(16);
+      first[0] = 0x81;
+      first[1] = first.length;
+      first.writeUInt32LE(classToken, 12);
+      const later = Buffer.alloc(17);
+      later[0] = 0x01;
+      later[1] = later.length;
+      const il = Buffer.from([0x2a]);
+      const bytes = buildManagedPeFixture({
+        typeRefScopeRaw,
+        ilBody: Buffer.concat([header, il, Buffer.alloc(3), first, later]),
+      });
+      const result = inspectManagedMembersBytes(
+        bytes,
+        managedPeFixtureTarget(bytes),
+      );
+
+      expect(result.methods[0]?.body).toMatchObject({
+        status: "malformed",
+        il_sha256: createHash("sha256").update(il).digest("hex"),
+        normalized_il_sha256: null,
+        decoded_instruction_count: 1,
+        anchors: [{ opcode: "ret", operand: null }],
+        exception_regions: [
+          {
+            flags: 0,
+            class_token: `0x${classToken.toString(16).padStart(8, "0")}`,
+            class_type: classType,
+            class_type_name_sha256: identityResolved
+              ? expect.any(String)
+              : null,
+            class_type_identity_resolved: identityResolved,
+          },
+        ],
+        issue: "Exception section size does not contain whole clauses",
+      });
+      expect(result.coverage.state).toBe("partial");
+      if (!identityResolved)
+        expect(result.coverage.issues).toContainEqual(
+          expect.objectContaining({
+            code: "invalid-row",
+            scope: "metadata.TypeRef:0x01000001",
+          }),
+        );
+      expect(result.user_strings?.state).toBe("complete");
+    },
+  );
 });

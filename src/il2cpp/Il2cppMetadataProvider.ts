@@ -1,3 +1,4 @@
+import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
 import { Il2cppBinaryFormatFailure } from "./Il2cppBinaryFormat.js";
 import { Il2cppMetadataFormatFailure } from "./Il2cppMetadataFormat.js";
 import type { AnalysisPartialObservation } from "../domain/analysisErrorBase.js";
@@ -10,8 +11,9 @@ import {
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
-  ArtifactFileCleanupFailure,
-  ArtifactFileCancelled,
+  artifactFilePrimaryFacts,
+  type ArtifactFilePrimaryFacts,
+  artifactFileCompletion,
   bindArtifactFileCleanup,
   artifactFileCancellationCause,
   assertArtifactReadActive,
@@ -22,11 +24,13 @@ import type { Il2cppMetadataPort } from "../application/il2cpp/Il2cppMetadataPor
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { createEvidence } from "../domain/evidence.js";
 import { createIl2cppMetadataAdmission } from "./Il2cppMetadataAdmission.js";
+import { hexAddress as hex } from "./Il2cppBinaryImage.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
   AnalysisCancelledError,
+  AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
@@ -37,6 +41,7 @@ import {
   type Il2cppMetadata,
   type Il2cppMetadataProviderInput,
 } from "../domain/il2cpp/il2cppMetadata.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -62,29 +67,45 @@ const INPUT_BYTES = 256 * 1024 * 1024;
 const BINARY_BYTES = 1024 * 1024 * 1024;
 // A 12.9 MB Unity 6000.4 file with 112,232 methods serializes to 7.8 MB.
 const OUTPUT_BYTES = 64 * 1024 * 1024;
+/** Instruction form the module-array fallback matched, per architecture. */
+const inferredReferenceForm = (architecture: string) =>
+  architecture === "arm64"
+    ? "an adjacent ADRP+ADD pair"
+    : "RIP-relative LEA/MOV";
 const failureForPrimary = (
-  cause: unknown,
+  facts: ArtifactFilePrimaryFacts,
   path: string,
-  signal?: AbortSignal,
   field: "path" | "binary_path" = "path",
   maximum = INPUT_BYTES,
+  metadataPath = path,
 ): AnalysisError => {
-  if (cause instanceof AnalysisError) return cause;
+  const { cause, origin } = facts;
+  if (origin === "owned-or-classified" && cause instanceof AnalysisError)
+    return cause;
   if (cause instanceof Il2cppBinaryFormatFailure && cause.kind === "capacity")
     return new AnalysisResourceConstraintError(
       OPERATION,
       cause.reason === "native-type-text-capacity" ? "memory" : "capacity",
       cause.message,
       {},
-      { cause },
+      {
+        cause,
+        ...fixedAllowanceOptions(
+          "The IL2CPP native-link allowance",
+          cause.reason === "native-type-text-capacity" ? "parser" : "count",
+        ),
+      },
     );
   if (
     cause instanceof Il2cppBinaryFormatFailure ||
     cause instanceof Il2cppMetadataFormatFailure
   ) {
     const binary = cause instanceof Il2cppBinaryFormatFailure;
+    // Metadata names are read on demand while linking, so a metadata failure
+    // can surface while path still names the binary.
+    const target = binary ? path : metadataPath;
     return cause.kind === "unsupported"
-      ? new AnalysisUnsupportedTargetError(OPERATION, path, cause.message, {
+      ? new AnalysisUnsupportedTargetError(OPERATION, target, cause.message, {
           cause,
         })
       : new AnalysisInputError(OPERATION, { cause }, [
@@ -92,27 +113,41 @@ const failureForPrimary = (
             path: [binary ? field : "path"],
             reason: "invalid_format",
             message: binary
-              ? `Selected binary ${path} does not link to the metadata: ${cause.message}`
-              : `Selected artifact ${path} is corrupt: ${cause.message}`,
+              ? `Selected binary ${target} does not link to the metadata: ${cause.message}`
+              : `Selected artifact ${target} is corrupt: ${cause.message}`,
           },
         ]);
   }
-  if (cause instanceof ArtifactReaderFailure && cause.reason === "integrity")
+  if (
+    origin === "owned-or-classified" &&
+    cause instanceof ArtifactReaderFailure &&
+    cause.reason === "integrity"
+  )
     return new AnalysisArtifactChangedError(OPERATION, path, cause.message, {
       cause,
     });
-  if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
+  if (
+    origin === "owned-or-classified" &&
+    cause instanceof ArtifactReaderFailure &&
+    cause.reason === "cancelled"
+  )
     return new AnalysisCancelledError(OPERATION, {
       cause: artifactFileCancellationCause(cause),
     });
-  if (cause instanceof ArtifactReaderFailure) {
+  if (
+    origin === "owned-or-classified" &&
+    cause instanceof ArtifactReaderFailure
+  ) {
     if (cause.reason === "limit")
       return new AnalysisResourceConstraintError(
         OPERATION,
         "file-size",
         cause.message,
         { maximum_input_bytes: maximum },
-        { cause },
+        {
+          cause,
+          ...fixedAllowanceOptions("the fixed IL2CPP input allowance", "input"),
+        },
       );
     if (cause.reason === "path")
       return new AnalysisInputError(OPERATION, { cause }, [
@@ -124,11 +159,7 @@ const failureForPrimary = (
       return new AnalysisAccessDeniedError(OPERATION, path, cause.code, {
         cause,
       });
-    if (
-      ["ENOENT", "ENOTDIR", "ELOOP", "ENAMETOOLONG"].includes(
-        String(cause.code),
-      )
-    )
+    if (isSelectedRegularFileError(cause))
       return new AnalysisInputError(OPERATION, { cause }, [
         {
           path: [field],
@@ -153,23 +184,17 @@ const failureForPrimary = (
 const failureFor = (
   cause: unknown,
   path: string,
-  signal?: AbortSignal,
   field: "path" | "binary_path" = "path",
   maximum = INPUT_BYTES,
+  metadataPath = path,
 ): AnalysisError => {
-  const primary =
-    cause instanceof ArtifactFileCleanupFailure &&
-    cause.fileCleanupFailure.outcome.kind === "failed"
-      ? failureForPrimary(
-          cause.fileCleanupFailure.outcome.cause,
-          path,
-          signal,
-          field,
-          maximum,
-        )
-      : cause instanceof ArtifactFileCleanupFailure && signal?.aborted
-        ? new AnalysisCancelledError(OPERATION, { cause: signal.reason })
-        : failureForPrimary(cause, path, signal, field, maximum);
+  const primary = failureForPrimary(
+    artifactFilePrimaryFacts(cause),
+    path,
+    field,
+    maximum,
+    metadataPath,
+  );
   if (
     cause instanceof ArtifactReaderFailure &&
     cause.partialObservation !== undefined &&
@@ -188,8 +213,6 @@ const failureFor = (
   bindArtifactFileCleanup(cause, error);
   return error;
 };
-
-const hex = (value: bigint) => `0x${value.toString(16)}`;
 
 /** Report fields for a linked binary, with addresses as exact hexadecimal strings. */
 const binaryReport = (
@@ -211,14 +234,43 @@ const binaryReport = (
       address: hex(module.address),
       method_pointer_count: module.method_pointer_count,
     })),
-    types_field: hex(link.types_field),
+    types_field: link.types_field === null ? null : hex(link.types_field),
     types_count: link.types_count,
+    generic_methods:
+      link.generic_methods === null
+        ? null
+        : {
+            generic_method_pointers_field:
+              link.generic_methods.generic_method_pointers_field === null
+                ? null
+                : hex(link.generic_methods.generic_method_pointers_field),
+            generic_method_pointers_count:
+              link.generic_methods.generic_method_pointers_count,
+            generic_method_table: hex(
+              link.generic_methods.generic_method_table,
+            ),
+            generic_method_table_count:
+              link.generic_methods.generic_method_table_count,
+            generic_method_table_stride:
+              link.generic_methods.generic_method_table_stride,
+            method_specs_count: link.generic_methods.method_specs_count,
+            generic_insts_count: link.generic_methods.generic_insts_count,
+            issues: link.generic_methods.issues,
+          },
   },
   return_types: link.return_types,
   field_types: link.field_types,
   parameter_types: link.parameter_types,
   method_addresses: link.method_addresses,
+  generic_method_instances: link.generic_methods?.instances ?? null,
 });
+
+/**
+ * Source facts stay on the refusal. The shared report sentence would deny an
+ * Evidence record that this reader attaches and MCP retains.
+ */
+const completeReportRecovery =
+  "The IL2CPP complete-report allowance is a fixed report allowance. No complete metadata inventory is retained. Source facts already observed stay with this refusal, and complete CLI JSON does not raise the allowance. Repeating the unchanged request fails the same way.";
 
 const reportLimit = (path: string, maximumBytes: number) =>
   new AnalysisResourceConstraintError(
@@ -226,6 +278,7 @@ const reportLimit = (path: string, maximumBytes: number) =>
     "memory",
     `Complete IL2CPP metadata for ${path} exceeds the retained report budget; no complete inventory is retained.`,
     { maximum_report_bytes: maximumBytes },
+    { retryable: false, remediationAction: completeReportRecovery },
   );
 
 const sourceArtifact = (path: string, snapshot: StableArtifactSnapshot) => ({
@@ -242,6 +295,7 @@ const metadataSourceEvidence = (
     | {
         path: string;
         architecture?: string;
+        genericInstances?: boolean;
         artifact?: Il2cppMetadata["artifact"];
       }
     | undefined = undefined,
@@ -266,6 +320,9 @@ const metadataSourceEvidence = (
               ...(binary.architecture === undefined
                 ? {}
                 : { binary_architecture: binary.architecture }),
+              ...(binary.genericInstances === true
+                ? { generic_instances: true }
+                : {}),
             }),
       },
       result: {
@@ -316,6 +373,8 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
   readonly identity = IL2CPP_METADATA_PROVIDER_IDENTITY;
   readonly #resources = new ArtifactResourceScope();
   #inspecting = false;
+  /** `close()` stops admission permanently, including while an inspection is active. */
+  #admissionStopped = false;
 
   /** `outputBytes` exists so tests can reach the guard with small files. */
   constructor(
@@ -324,6 +383,7 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
   ) {}
 
   async close(): Promise<void> {
+    this.#admissionStopped = true;
     try {
       await this.#resources.close();
     } catch (cause: unknown) {
@@ -352,13 +412,29 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
       return err(
         new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
       );
+    if (this.#admissionStopped)
+      return err(
+        new AnalysisCapabilityUnavailableError(
+          IL2CPP_METADATA_PROVIDER_IDENTITY.id,
+          OPERATION,
+          "IL2CPP metadata reader is closed",
+          {
+            remediationAction:
+              "This reader has stopped admitting inspections. Create a new IL2CPP metadata reader to inspect again. Repeating the request on this reader fails the same way.",
+          },
+        ),
+      );
     if (this.#inspecting)
       return err(
         new AnalysisResourceConstraintError(
           OPERATION,
-          "memory",
+          "capacity",
           "Only one IL2CPP metadata inspection is admitted per reader.",
           { maximum_concurrent_inspections: 1 },
+          {
+            remediationAction:
+              "Retry after the active IL2CPP metadata inspection on this reader completes.",
+          },
         ),
       );
     this.#inspecting = true;
@@ -375,6 +451,9 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
             ...(input.binary_architecture === undefined
               ? {}
               : { architecture: input.binary_architecture }),
+            ...(input.generic_instances === true
+              ? { genericInstances: true }
+              : {}),
             ...(observed.binary === undefined
               ? {}
               : { artifact: observed.binary }),
@@ -428,12 +507,14 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
           | "return_types"
           | "field_types"
           | "parameter_types"
+          | "generic_method_instances"
         > = {
           binary: null,
           method_addresses: [],
           return_types: [],
           field_types: [],
           parameter_types: [],
+          generic_method_instances: null,
         };
         if (binaryPath !== undefined) {
           if (link === undefined)
@@ -456,7 +537,10 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
               decoded,
               link,
               input.binary_architecture,
-              admission,
+              {
+                ...admission,
+                genericInstances: input.generic_instances === true,
+              },
             );
             let linkStep = linking.next();
             while (!linkStep.done) {
@@ -473,9 +557,9 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
             const failure = failureFor(
               cause,
               binaryPath,
-              options?.signal,
               "binary_path",
               BINARY_BYTES,
+              input.path,
             );
             failure.partialObservation = metadataSourceEvidence(
               artifact,
@@ -494,16 +578,26 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
             "Only unencrypted global-metadata.dat versions 24, 27, 29, 31 and 39 are decoded; names, counts and string literals are observed file content, not runtime behavior.",
             binaryPath === undefined
               ? "Native code addresses and IL2CPP binary registration are not recovered without binary_path."
-              : "Method addresses come from the binary's code-generation module methodPointers, matched by module name, method count and metadata token; generic method instances, adjustor thunks and invokers are not linked, no-body means an observed zero slot, and unknown means no module claimed the method or its slot has an unresolved relocation.",
+              : `Method addresses come from the binary's code-generation module methodPointers, matched by module name, method count and metadata token; ${input.generic_instances === true ? "" : "generic method instances (see generic_instances), "}adjustor thunks and invokers are not linked, no-body means an observed zero slot, and unknown means no module claimed the method or its slot has an unresolved relocation.`,
+            ...(binaryPath !== undefined && input.generic_instances === true
+              ? [
+                  "Generic method instances come from genericMethodTable, methodSpecs, genericInsts and genericMethodPointers, with names following Il2CppDumper's GetMethodSpecName (namespace on the declaring type, nested types joined with '.', arity cut, IntPtr/UIntPtr, no byref mark). The CodeRegistration layout is the only one of the known 27.0 to 31 layouts whose counts bound every genericMethodTable row; metadata versions 24 and 39 and builds without a static CodeRegistration are refused. A generic row is no-body for an observed zero pointer slot and unknown, with no address, exactly when an issue names its row: a contradicting method spec (its name is then null), a shared method spec, an unmapped or non-executable pointer, or an unresolved relocation.",
+                ]
+              : []),
             binaryPath === undefined
               ? "Field, parameter and return types are not recovered without binary_path; type indices refer to the native binary."
               : decoded.metadata_version === 27
                 ? "Field, parameter and return type names are null for metadata version 27: versions 27.0 to 27.2 share that header number but place the Il2CppType byref flag differently, so a name could gain or lose & without warning; type indices are still reported."
-                : "Field, parameter and return type names are rendered from the binary's Il2CppType table in a C#-like form (keywords for primitives, Namespace.Outer+Inner, generic parameters by metadata name); custom modifiers, array bounds and attributes are not reported.",
+                : "Field, parameter and return type names are rendered from the binary's Il2CppType table in a C#-like form (keywords for primitives, Namespace.Outer+Inner, generic parameters by metadata name); nested generic arguments stay with the type component that declares them. An unresolved type-table slot retains its type index with a null name; a loader-unresolved value inside the type graph is refused rather than rendered from stored placeholder bytes. Custom modifiers, array bounds and attributes are not reported.",
             ...(linked.binary !== null &&
             linked.binary.code_gen_modules_field === null
               ? [
-                  "The static CodeRegistration pair was not resolved. The module array is inferred from executable bytes consistent with RIP-relative LEA/MOV referencing one array candidate; instruction boundaries and runtime use were not verified.",
+                  `The static CodeRegistration pair was not resolved. The module array is inferred from executable bytes consistent with ${inferredReferenceForm(linked.binary.architecture)} referencing one array candidate; instruction boundaries and runtime use were not verified.`,
+                ]
+              : []),
+            ...(linked.binary !== null && linked.binary.types_field === null
+              ? [
+                  `No static MetadataRegistration had the type-definition counts. The type table is inferred from executable bytes consistent with ${inferredReferenceForm(linked.binary.architecture)} referencing the one run of Il2CppType-shaped pointers long enough for every referenced type index; types_count is that run's length, at least every referenced type index but not an observed typesCount, and instruction boundaries and runtime use were not verified.`,
                 ]
               : []),
             ...(binaryPath === undefined
@@ -557,16 +651,11 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
       observe(sourceArtifact(path, snapshot));
       return snapshot;
     } catch (cause) {
-      const outcome =
-        cause instanceof ArtifactFileCleanupFailure
-          ? (cause as ArtifactFileCleanupFailure<StableArtifactSnapshot>)
-              .fileCleanupFailure.outcome
-          : cause instanceof ArtifactFileCancelled
-            ? (cause as ArtifactFileCancelled<StableArtifactSnapshot>)
-                .fileCancellation.outcome
-            : undefined;
-      if (outcome?.kind === "completed")
-        observe(sourceArtifact(path, outcome.value));
+      const completion = artifactFileCompletion(cause);
+      if (completion !== undefined)
+        observe(
+          sourceArtifact(path, completion.value as StableArtifactSnapshot),
+        );
       throw cause;
     }
   }

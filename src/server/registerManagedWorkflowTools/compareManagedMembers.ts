@@ -1,17 +1,15 @@
 import { workflowUnknownInput } from "../../application/investigation/WorkflowUnknown.js";
 import type { EvidenceMcpServer } from "../EvidenceMcpServer.js";
 import { runAdmittedToolOperation } from "../admittedToolOperation.js";
-import { recordSessionEvidenceSources } from "../sessionEvidence.js";
+import { recordEvidenceSources } from "../../application/investigation/recordEvidenceSources.js";
 
-import { compareManagedMembersEvidenceValidated } from "../../application/managed/ManagedMemberComparisonService.js";
-import { managedMemberComparisonResultSchema } from "../../domain/managed/managedMemberComparison.js";
+import { executeManagedMemberComparison } from "../../application/managed/ManagedMemberComparisonService.js";
 import { logToolExecution } from "../toolLogging.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
-import { managedWorkflowContract } from "./contract.js";
-import { resolveManagedEvidence } from "./evidence.js";
+import { toolContract } from "../../contracts/toolContracts.js";
 import type { ManagedWorkflowToolRegistration } from "./types.js";
 
-const compareContract = managedWorkflowContract("compare_managed_members");
+const compareContract = toolContract("compare_managed_members");
 
 /** Register the managed member comparison workflow tool. */
 export const registerCompareManagedMembers = (
@@ -28,45 +26,23 @@ export const registerCompareManagedMembers = (
         compareContract.name,
         context.mcpReq.signal,
         async () => {
-          const leftResolved = resolveManagedEvidence(input.left);
-          const rightResolved = resolveManagedEvidence(input.right);
-          if (!leftResolved.ok)
-            return server.delivery.toCallToolResult(
-              leftResolved,
-              compareContract,
-            );
-          if (!rightResolved.ok)
-            return server.delivery.toCallToolResult(
-              rightResolved,
-              compareContract,
-            );
-          const [left] = leftResolved.value;
-          const [right] = rightResolved.value;
-          if (left === undefined || right === undefined)
-            throw new TypeError(
-              "Managed comparison Evidence resolution failed",
-            );
-          const parsed = { left, right };
           const result = await logToolExecution(
             options.logger,
             compareContract.name,
-            () =>
-              Promise.resolve(compareManagedMembersEvidenceValidated(parsed)),
+            () => Promise.resolve(executeManagedMemberComparison(input)),
           );
           if (!result.ok)
             return server.delivery.toCallToolResult(result, compareContract);
-          const recorded = recordSessionEvidenceSources(
+          const recorded = recordEvidenceSources(
             options.recordEvidence,
-            [parsed.left, parsed.right],
+            result.value.sources,
           );
           if (!recorded.ok)
             return server.delivery.toCallToolResult(recorded, compareContract);
-          const comparison = managedMemberComparisonResultSchema.parse(
-            result.value.normalized_result,
-          );
-          const unknown = comparison.summary.unknown > 0;
+          const comparison = result.value.summary;
+          const unknown = comparison.unknown > 0;
           const unknownInput = unknown
-            ? workflowUnknownInput(result.value.evidence_id, {
+            ? workflowUnknownInput(result.value.evidence.evidence_id, {
                 question:
                   "Which managed members remain unmatched or ambiguous across these versions?",
                 severity: "medium",
@@ -86,15 +62,15 @@ export const registerCompareManagedMembers = (
             : undefined;
           const output =
             unknownInput === undefined
-              ? options.recordEvidence?.(result.value)
+              ? options.recordEvidence?.(result.value.evidence)
               : unknownInput.ok
                 ? options.recordEvidenceWithUnknown?.(
-                    result.value,
+                    result.value.evidence,
                     unknownInput.value,
                   )
                 : unknownInput;
           return server.delivery.toEvidenceToolResult(
-            result.value,
+            result.value.evidence,
             compareContract,
             output,
           );

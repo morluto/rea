@@ -1,12 +1,12 @@
-import { rm, writeFile } from "node:fs/promises";
+import { appendFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
-import { vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createIdaTarget } from "../../tests/fixtures/idaMcp.js";
 import { readIdaConfiguration } from "./IdaConfiguration.js";
 import { decodeIdaToolResult } from "./IdaMcpConnection.js";
 import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
+import * as regularFile from "../filesystem/RegularFile.js";
 
 const resourceScope: RetainedResourceScope = {
   retain: () => undefined,
@@ -76,6 +76,29 @@ describe("IDA registration and MCP result boundaries", () => {
       error: { message: expect.stringContaining("64 KiB") },
     });
   });
+});
+
+it("rejects registration growth beyond the byte limit after descriptor admission", async () => {
+  const { root } = await createIdaTarget();
+  roots.push(root);
+  const path = join(root, "mcp.json");
+  await writeFile(path, JSON.stringify({ command: "python" }));
+  const openRegularFile = regularFile.openRegularFile;
+  const admission = vi
+    .spyOn(regularFile, "openRegularFile")
+    .mockImplementation(async (...args) => {
+      const source = await openRegularFile(...args);
+      await appendFile(path, " ".repeat(65_536));
+      return source;
+    });
+  try {
+    expect(await read(path)).toMatchObject({
+      ok: false,
+      error: { message: expect.stringContaining("64 KiB") },
+    });
+  } finally {
+    admission.mockRestore();
+  }
 });
 
 describe("IDA registration descriptor ownership", () => {
@@ -249,3 +272,54 @@ describe("IDA MCP result decoding", () => {
     expect(() => decodeIdaToolResult({ content: "invalid" })).toThrow();
   });
 });
+
+it.each(["env", "headers"] as const)(
+  "preserves all explicit IDA %s keys",
+  async (field) => {
+    const { root } = await createIdaTarget();
+    roots.push(root);
+    const path = join(root, "mcp.json");
+    const mapping = JSON.parse(
+      '{"__proto__":"operator","constructor":"selected","normal":"value"}',
+    );
+    const transport =
+      field === "env"
+        ? { command: "python" }
+        : { url: "http://127.0.0.1:8745/mcp" };
+    await writeFile(path, JSON.stringify({ ...transport, [field]: mapping }));
+    const result = await read(path);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw result.error;
+    const parsed =
+      field === "env" && "env" in result.value
+        ? result.value.env
+        : "headers" in result.value
+          ? result.value.headers
+          : undefined;
+    expect(parsed).toEqual(mapping);
+    expect(Object.hasOwn(parsed ?? {}, "__proto__")).toBe(true);
+  },
+);
+
+it.each(["env", "headers"] as const)(
+  "rejects malformed explicit IDA %s values at __proto__",
+  async (field) => {
+    const { root } = await createIdaTarget();
+    roots.push(root);
+    const path = join(root, "mcp.json");
+    const transport =
+      field === "env"
+        ? { command: "python" }
+        : { url: "http://127.0.0.1:8745/mcp" };
+    for (const value of [42, null, {}]) {
+      await writeFile(
+        path,
+        JSON.stringify({
+          ...transport,
+          [field]: Object.fromEntries([["__proto__", value]]),
+        }),
+      );
+      expect((await read(path)).ok).toBe(false);
+    }
+  },
+);

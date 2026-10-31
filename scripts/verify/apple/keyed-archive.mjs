@@ -9,6 +9,7 @@ import { createHash } from "node:crypto";
 import {
   artifactCli,
   artifactMcpResult,
+  artifactMcpCall,
   withArtifactMcp,
 } from "../../lib/artifact-e2e.mjs";
 import {
@@ -53,7 +54,7 @@ try {
     });
     assert.deepEqual(page.objects, [graph.objects[1]]);
     assert.equal(page.next_offset, 2);
-    const invalid = await client.callTool({
+    const invalid = await artifactMcpCall(client, {
       name: "inspect_keyed_archive",
       arguments: { path: "../other.plist" },
     });

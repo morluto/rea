@@ -1,7 +1,69 @@
+// These boundaries require native Windows launch verification even where
+// broad process ownership would otherwise suppress host fanout on the fast tier.
+export const WINDOWS_EXECUTABLE_SELECTION_INPUTS = [
+  "src/process/WindowsExecutable*.ts",
+  "src/adb/AdbConfiguration.ts",
+  "src/apktool/ApktoolConfiguration.ts",
+  "src/application/UpdateCommandRunner.ts",
+  "tests/boundary/process/windowsExecutableSelection.test.ts",
+];
+
+// Inputs whose changes must select both real capture lanes, even at shared boundaries.
+const CAPTURE_SHARED_INPUTS = [
+  "src/process/LinuxResourceLimits*",
+  "scripts/ci/require-provider-tests.mjs",
+];
+
 // Ownership of the native-host, real-provider and website verification lanes.
 // Shared build inputs are classified once in plan.mjs rather than repeated in
 // every workflow.
-export const SCOPES = {
+const PATH_SCOPES = {
+  python: [
+    "bridge/**/*.py",
+    "tests/support/analysis-efficiency/**",
+    "scripts/run-python-tests.py",
+  ],
+  packet_capture: [
+    "tests/boundary/captures/**",
+    "tests/boundary/cli/captureCleanup.test.ts",
+    "tests/boundary/mcp/packetCaptureMcp.test.ts",
+    "tests/boundary/pcap/**",
+    "src/captures/**",
+    "src/pcap/**",
+    "src/domain/pcap/**",
+    "src/domain/analysisView/pcapCaptureView.ts",
+    "src/application/pcap/**",
+    "src/contracts/pcap/**",
+    "src/server/registerPcapTools.ts",
+    "src/domain/captures/**",
+    "src/application/captures/**",
+    "src/contracts/captures/**",
+    "src/composition/captures.ts",
+    "src/cli/captureCommands.ts",
+    "src/server/registerCaptureTools.ts",
+    ...CAPTURE_SHARED_INPUTS,
+    "scripts/verify-packet-capture.mjs",
+    ".github/workflows/real-packet-capture.yml",
+  ],
+  signal_recording: [
+    "tests/boundary/signals/**",
+    "tests/boundary/cli/signalCleanup.test.ts",
+    "tests/boundary/mcp/signalRecordingMcp.test.ts",
+    "src/signals/**",
+    "src/domain/signals/**",
+    "src/application/signals/**",
+    "src/contracts/signals/**",
+    "src/composition/signals.ts",
+    "src/cli/signalCommands.ts",
+    "src/server/registerSignalTools.ts",
+    ...CAPTURE_SHARED_INPUTS,
+    "scripts/verify-signal-recording.mjs",
+    ".github/workflows/real-signal-recording.yml",
+  ],
+  readiness: [
+    "tests/conformance/readiness/**",
+    "scripts/verify-reconstruction-readiness.mjs",
+  ],
   reverse_tools: [
     ".github/workflows/mutation.yml",
     "src/application/reverse/**",
@@ -63,6 +125,20 @@ export const SCOPES = {
   ],
   // Apple artifact CLI/MCP lane on macOS, including its focused regressions.
   apple: [
+    "src/artifacts/InesArtifactReader.ts",
+    "src/domain/inesContainer.ts",
+    "tests/fixtures/ines.ts",
+    "tests/acceptance/inesContainer.test.ts",
+    "tests/boundary/filesystem/inesArtifact.test.ts",
+    "tests/boundary/filesystem/inesCancellation.test.ts",
+    "src/hopper/BridgeLauncher.ts",
+    "src/domain/hopperErrors.ts",
+    "tests/boundary/providers/hopper/hopperMacLaunchArguments.test.ts",
+    "tests/acceptance/providers/hopperStartupRecovery.test.ts",
+    "tests/boundary/providers/hopper/hopperClient.helperFailure.test.ts",
+    "tests/boundary/providers/hopper/bridgeBootstrapCleanup.test.ts",
+    "tests/boundary/providers/hopper/bridgeTargetLease.integration.test.ts",
+    "src/artifacts/NativeDmg*.ts",
     "src/native/Apple*",
     "src/native/NativeMacOS*",
     "src/native/NativeUi*",
@@ -70,6 +146,9 @@ export const SCOPES = {
     "bridge/native/**",
     "bridge/process/**",
     "scripts/verify/apple/**",
+    "tests/acceptance/artifactDmgAttachmentRecoveryCli.test.ts",
+    "tests/boundary/providers/native/nativeDmgArtifactReader.test.ts",
+    "tests/process-global/dmgCancellationReason.test.ts",
     "tests/boundary/filesystem/installScript.test.ts",
     "tests/boundary/filesystem/nibNativeHierarchy.test.ts",
     "tests/boundary/filesystem/interfaceBuilderBundle.test.ts",
@@ -79,8 +158,11 @@ export const SCOPES = {
     "tests/boundary/cli/nativeDemangleCli.test.ts",
     "tests/boundary/cli/nativeDispatchPropertyAttributes.test.ts",
     "tests/boundary/mcp/nativeDemangleMcp.test.ts",
+    "tests/boundary/mcp/nativeMachoSummaryMcp.test.ts",
     "tests/boundary/providers/native/nativeSignatureTargetBinding.test.ts",
     "tests/boundary/cli/nativeSignatureCli.test.ts",
+    "tests/boundary/cli/nativeMachoArm64_32Cli.test.ts",
+    "tests/boundary/cli/nativeMachoEncryptionCli.test.ts",
     "tests/boundary/mcp/nativeSignatureTargetBindingMcp.test.ts",
     "src/process/capture/FilesystemSnapshot.test.ts",
     "tests/process-global/filesystemSnapshotFallbackCancellation.test.ts",
@@ -92,20 +174,45 @@ export const SCOPES = {
   ],
   // Four-host installed-package matrix and the Windows curated lane.
   package: [
+    ...WINDOWS_EXECUTABLE_SELECTION_INPUTS,
+    // Both host compilers must be exercised when their installation, options,
+    // or entrypoints change; Linux's accelerated checker cannot stand in for Go.
+    "scripts/run-typescript.*",
+    "scripts/run-turbo.mjs",
+    "turbo.json",
+    "tsconfig.json",
+    "tsconfig.build.json",
+    "tsconfig.frida-verification.json",
+    "package-lock.json",
+    ".nvmrc",
+    ".npmrc",
     ".github/actions/publish-mcp/**",
     ".github/actions/prepare-release-package/**",
     ".github/workflows/release-recovery.yml",
     "scripts/ci/release-recovery.mjs",
     "scripts/ci/verified-package.mjs",
+    "scripts/ci/qualified-package-envelope.mjs",
+    "scripts/ci/prepare-npm-publication.mjs",
     "scripts/ci/npm-release.*",
+    "scripts/ci/npm-release-state.*",
     "scripts/verify-release-artifact.mjs",
     "scripts/lib/release-package-canary.mjs",
+    "scripts/lib/verify-package-core.*",
+    "tests/boundary/mcp/packageCatalogVerification.test.ts",
     "scripts/verify-published-package.mjs",
     "tests/boundary/filesystem/releaseRecovery.test.ts",
     "tests/boundary/filesystem/mcpRegistryPublication.test.ts",
     "tests/boundary/filesystem/npmRelease.test.ts",
     "tests/boundary/process/releaseArtifactCanary.test.ts",
     "src/windows/**",
+    "src/domain/windowsNativeArtifact*.ts",
+    "src/domain/dosMz*.ts",
+    "src/domain/peCoffHeader*.ts",
+    "src/domain/result.ts",
+    "scripts/lib/verifier-source-loader.mjs",
+    "tests/boundary/process/windowsNativeArtifactVerifier.test.ts",
+    "scripts/lib/windows-native-inspection-workspace.*",
+    "tests/boundary/process/windowsNativeInspectionWorkspace.test.ts",
     "scripts/lib/windows-owned-command.mjs",
     "scripts/run-exclusive-command.mjs",
     "tests/process-global/runnerCancellation.test.ts",
@@ -125,7 +232,11 @@ export const SCOPES = {
     "scripts/windows-capabilities.mjs",
     "scripts/prepack.mjs",
     "scripts/prepare.mjs",
+    "scripts/lib/release-proposal.mjs",
+    "patches/release-please+17.3.0.patch",
+    "tests/boundary/filesystem/releaseProposal.test.ts",
     "scripts/rea.mjs",
+    "scripts/lib/cli-process-environment.mjs",
     "install.sh",
     "src/config/**",
     "src/application/Setup*.ts",
@@ -135,12 +246,17 @@ export const SCOPES = {
     "src/application/DshCordis*.ts",
     "src/cli/interactiveSetup.ts",
     "src/cli/setupCommands.ts",
+    "tests/boundary/filesystem/typescriptCompiler.test.ts",
     "tests/boundary/filesystem/binaryTarget.test.ts",
+    "src/contracts/sessionPathInputs.test.ts",
+    "tests/boundary/filesystem/directAnalysisSnapshotReplay.test.ts",
+    "tests/boundary/mcp/rawBinaryMcp.test.ts",
     "tests/boundary/filesystem/safeOutputTree.test.ts",
     "tests/boundary/providers/native/artifactProvider.archiveSafety.test.ts",
     "tests/boundary/providers/native/artifactProvider.extractionCompleteness.test.ts",
     "tests/boundary/filesystem/setupUnavailableProvider.test.ts",
     "tests/boundary/filesystem/windowsNpxRegistration.test.ts",
+    "tests/boundary/filesystem/claudeDesktopSkillUninstallWindows.test.ts",
     "tests/boundary/filesystem/clientConfigurationEnvironment.test.ts",
     "tests/boundary/filesystem/clientConfigurationLayeredEnvironment.test.ts",
     "tests/acceptance/setup/registrationRuntimeEnvironmentCli.test.ts",
@@ -317,6 +433,25 @@ export const SCOPES = {
     "scripts/fixtures/evm-interface.sol",
     "third_party/evmole/**",
   ],
+  apk_signature: [
+    ".github/workflows/real-apk-signature.yml",
+    "src/domain/apkSignature/**",
+    "src/apkSignature/**",
+    "src/application/apkSignature/**",
+    "src/composition/apkSignature.ts",
+    "src/contracts/apkSignature/**",
+    "src/cli/apkSignatureCommands.ts",
+    "src/server/registerApkSignatureTools.ts",
+    "src/server/createServer.ts",
+    "src/domain/analysisView/apkSignatureView.ts",
+    "src/domain/analysisView/analysisView.ts",
+    "src/application/analysisView/**",
+    "src/cli/analysisEvidenceDelivery.ts",
+    "src/artifacts/**",
+    "scripts/verify-apk-signature.mjs",
+    "tests/fixtures/apkSignature/**",
+    "tests/acceptance/apkSignature*.test.ts",
+  ],
   javascript_recovery: [
     ".github/workflows/real-javascript-recovery.yml",
     "src/javascript/recovery/**",
@@ -335,6 +470,7 @@ export const SCOPES = {
     "src/contracts/toolContracts.ts",
     "src/contracts/toolEffects.ts",
     "scripts/rea.mjs",
+    "scripts/lib/cli-process-environment.mjs",
     "src/process/**",
     "src/artifacts/SafeOutputTree.ts",
     "scripts/verify/javascript/recovery.mjs",
@@ -472,6 +608,8 @@ export const SCOPES = {
     "src/ghidra/GhidraJavaProperties.ts",
     "src/ghidra/GhidraReleasePolicy.ts",
     "scripts/verify-ghidra-bridge-sources.mjs",
+    "tests/conformance/ghidra/ReaArmContextProbe.java",
+    "tests/conformance/ghidra/ReaDecodeProbe.java",
     ".github/workflows/ghidra-bridge-sources.yml",
   ],
   website: [
@@ -484,19 +622,73 @@ export const SCOPES = {
   ],
 };
 
-export const CI_FLAGS = [
-  ...new Set([
-    "code",
-    "runtime",
-    "package",
-    "apple",
-    "fixtures",
-    "readiness",
-    "docs",
-    "workflows",
-    ...Object.keys(SCOPES),
+// Each lane owns its path inputs, selection policy, and required jobs. The
+// workflow stays explicit; contract tests bind it to this registry.
+const sameJobs = (paths, jobs, selection = {}) => ({
+  paths,
+  required: { fast: jobs, full: jobs },
+  ...selection,
+});
+export const CI_LANES = {
+  code: {
+    paths: [],
+    required: {
+      fast: ["build", "test-shard", "test-source"],
+      full: ["build", "test-shard"],
+    },
+  },
+  runtime: sameJobs([], ["windows-native-build", "package-e2e"]),
+  package: sameJobs(PATH_SCOPES.package, ["windows-curated"], {
+    testInputs: true,
+  }),
+  apple: sameJobs(PATH_SCOPES.apple, ["apple-artifacts"], { testInputs: true }),
+  fixtures: sameJobs([], ["conformance-fixtures"]),
+  readiness: sameJobs(PATH_SCOPES.readiness, ["reconstruction-readiness"]),
+  docs: sameJobs([], ["docs"]),
+  workflows: sameJobs([], ["static"]),
+  python: {
+    paths: PATH_SCOPES.python,
+    earlyAll: true,
+    required: { fast: ["python"], full: ["static-deep"] },
+  },
+  packet_capture: sameJobs(PATH_SCOPES.packet_capture, ["packet_capture"], {
+    testInputs: true,
+    earlyInputs: CAPTURE_SHARED_INPUTS,
+  }),
+  signal_recording: sameJobs(
+    PATH_SCOPES.signal_recording,
+    ["signal_recording"],
+    { testInputs: true, earlyInputs: CAPTURE_SHARED_INPUTS },
+  ),
+  reverse_tools: sameJobs(
+    PATH_SCOPES.reverse_tools,
+    ["reverse-tools-quality"],
+    { earlyAll: true },
+  ),
+  sqlite: sameJobs(PATH_SCOPES.sqlite, ["sqlite-runtime"], {
+    testInputs: true,
+  }),
+  browser: sameJobs(PATH_SCOPES.browser, ["browser"]),
+  binary_layout: sameJobs(PATH_SCOPES.binary_layout, ["binary_layout"]),
+  evm: sameJobs(PATH_SCOPES.evm, ["evm"]),
+  apk_signature: sameJobs(PATH_SCOPES.apk_signature, ["apk_signature"]),
+  javascript_recovery: sameJobs(PATH_SCOPES.javascript_recovery, [
+    "javascript_recovery",
   ]),
-];
+  recorded_crash: sameJobs(PATH_SCOPES.recorded_crash, ["recorded_crash"]),
+  web_network: sameJobs(PATH_SCOPES.web_network, ["web_network"]),
+  web_runtime: sameJobs(PATH_SCOPES.web_runtime, ["web_runtime"]),
+  web_source_map: sameJobs(PATH_SCOPES.web_source_map, ["web_source_map"]),
+  agentenv: sameJobs(PATH_SCOPES.agentenv, ["agentenv"]),
+  nativeaot: sameJobs(PATH_SCOPES.nativeaot, ["nativeaot"]),
+  ghidra_bridge: sameJobs(PATH_SCOPES.ghidra_bridge, ["ghidra_bridge"]),
+  website: sameJobs(PATH_SCOPES.website, ["website"]),
+};
+// An input owner omitted from the registry must never silently lose a lane.
+for (const [name, paths] of Object.entries(PATH_SCOPES))
+  if (!Object.hasOwn(CI_LANES, name) || CI_LANES[name].paths !== paths)
+    throw new Error(`CI lane registry does not own input scope: ${name}`);
+export const CI_FLAGS = Object.keys(CI_LANES);
 
 // Verifier entrypoints that only manual, licensed, or self-hosted workflows
 // run. No selected CI lane executes them, so their edits need only the static
