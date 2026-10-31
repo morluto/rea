@@ -1156,8 +1156,16 @@ observed runtime change.
 `set_address_name` and `set_addresses_names` give Ghidra sessions the same
 compact naming results as Hopper: a local function entry renames that function,
 and any other mapped address, such as a global, receives a new or renamed primary
-label. A batch applies each address separately and reports one success boolean
-per address. Use them to name many globals and helpers cheaply; use
+label. A batch decides every address from the names held before it: addresses
+that request the same name in one namespace, or a name another selected address
+holds, are rejected without applying them, so JSON member order never selects a
+winner. Every other address applies separately, and each address reports one
+success boolean. `raw_result.failures` gives each failed address's canonical
+address and reason. A contested name appears once in `raw_result.conflicts`,
+with its namespace, requesting addresses and holding addresses, and conflict
+failures refer to it by index. To move a label between
+addresses, rename its holder first and assign the name in a later call. Use
+them to name many globals and helpers cheaply; use
 `annotate_native_function` when you also want comments and a refreshed dossier.
 Ghidra name edits preserve the existing namespace. Supply either a leaf name
 such as `renamed` or a fully qualified name in that namespace, such as

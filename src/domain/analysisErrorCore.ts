@@ -146,18 +146,26 @@ export class AnalysisInputError extends AnalysisError {
   override readonly userMessage: string | undefined;
   /** Refusal-specific correction, when the generic input-contract advice cannot fix it. */
   readonly remediationAction: string | undefined;
+  /**
+   * The refused values satisfy the advertised input contract; the selected
+   * target lacks the requested fact for them. Re-reading the schema cannot
+   * correct such a refusal, so it carries no input-contract recovery.
+   */
+  readonly conformsToInputContract: boolean;
 
   constructor(
     readonly operation: string,
     options?: AnalysisErrorOptions & {
       readonly userMessage?: string;
       readonly remediationAction?: string;
+      readonly conformsToInputContract?: boolean;
     },
     readonly issues: readonly AnalysisInputIssue[] = [],
   ) {
     super(`Invalid analysis input for ${operation}`, options);
     this.userMessage = options?.userMessage;
     this.remediationAction = options?.remediationAction;
+    this.conformsToInputContract = options?.conformsToInputContract ?? false;
   }
 }
 
