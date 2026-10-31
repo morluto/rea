@@ -1237,6 +1237,31 @@ it.each(["identify_flutter_build", "inspect_dart_aot"] as const)(
   },
 );
 
+it("qualifies unlabeled Dart-shaped strings as candidates", async () => {
+  const candidate = "1.2.3 (stable) (unrelated string)";
+  const path = await buildApk("dart-pattern.apk", [
+    { path: "lib/arm64-v8a/libapp.so", bytes: aotImage() },
+    {
+      path: "lib/arm64-v8a/libflutter.so",
+      bytes: Buffer.concat([libflutter(), Buffer.from(`\0${candidate}\0`)]),
+    },
+  ]);
+  const provider = new FlutterBuildProvider();
+  onTestFinished(() => provider.close());
+  const result = await provider.execute({
+    operation: "identify_flutter_build",
+    input: { path },
+  });
+  if (!result.ok) throw result.error;
+  const value = flutterResultSchemas.identify_flutter_build.parse(
+    result.value.result,
+  );
+  expect(value.abis[0]?.libflutter.dart_version).toBe(candidate);
+  expect(result.value.limitations.join(" ")).toContain(
+    "a matching unrelated string may be reported",
+  );
+});
+
 it("reports omitted Dart labels independently of toolchain labels", async () => {
   const path = await buildApk("dart-label.apk", [
     { path: "lib/arm64-v8a/libapp.so", bytes: aotImage() },

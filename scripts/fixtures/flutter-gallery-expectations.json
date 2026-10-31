@@ -3,19 +3,19 @@
   "snapshot_hash": "65817c30a78bb44c3dc3771876b6010a",
   "engines": {
     "x86_64": {
-      "dart_version": null,
+      "dart_version": "2.14.0-151.0.dev (dev) (Tue May 25 10:58:39 2021 -0700)",
       "toolchain_lines": [
         "Android (5900059 based on r365631c) clang version 9.0.8 (https://android.googlesource.com/toolchain/llvm-project 207d7abc1a2abf3ef8d4301736d6a7ebc224a290) (based on LLVM 9.0.8svn)"
       ]
     },
     "armeabi-v7a": {
-      "dart_version": null,
+      "dart_version": "2.14.0-151.0.dev (dev) (Tue May 25 10:58:39 2021 -0700)",
       "toolchain_lines": [
         "Android (5900059 based on r365631c) clang version 9.0.8 (https://android.googlesource.com/toolchain/llvm-project 207d7abc1a2abf3ef8d4301736d6a7ebc224a290) (based on LLVM 9.0.8svn)"
       ]
     },
     "arm64-v8a": {
-      "dart_version": null,
+      "dart_version": "2.14.0-151.0.dev (dev) (Tue May 25 10:58:39 2021 -0700)",
       "toolchain_lines": [
         "Android (5900059 based on r365631c) clang version 9.0.8 (https://android.googlesource.com/toolchain/llvm-project 207d7abc1a2abf3ef8d4301736d6a7ebc224a290) (based on LLVM 9.0.8svn)"
       ]
