@@ -23,9 +23,12 @@ export const advertisedMcpToolSchemas = async (
     validateFormats: false,
   }),
 ) => {
-  const advertised = (await client.listTools()).tools.find(
+  const matches = (await client.listTools()).tools.filter(
     (tool) => tool.name === name,
   );
+  if (matches.length > 1)
+    throw new Error(`${name} has multiple advertised definitions`);
+  const advertised = matches[0];
   if (advertised?.outputSchema === undefined)
     throw new Error(`${name} must publish both schemas`);
   const inputSchema: Record<string, unknown> = advertised.inputSchema;

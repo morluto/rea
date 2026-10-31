@@ -647,6 +647,7 @@ it.each([
     expect(refreshed.limitations).toEqual(
       expect.arrayContaining(first.limitations),
     );
+    expect(refreshed.analysis_profile?.digest).toEqual(expect.any(String));
     expect(refreshed.analysis_profile?.digest).not.toBe(priorProfile.digest);
     expect(refreshed.normalized_result).toEqual(first.normalized_result);
     const starts = [...fixture.starts];

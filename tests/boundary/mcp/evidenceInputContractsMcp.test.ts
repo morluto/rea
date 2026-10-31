@@ -1,4 +1,3 @@
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { McpServer } from "@modelcontextprotocol/server";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { describe, expect, expectTypeOf, it } from "vitest";
@@ -9,6 +8,7 @@ import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { transformAdvertisedInputJsonSchema } from "../../../src/contracts/toolSchemaMetadata.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 import { advertisedSchemaErrors } from "../../fixtures/mcpAdvertisedSchemaValidity.js";
+import { mcpTest } from "../../support/mcp/mcpFixture.js";
 
 describe("Evidence input SDK boundaries", () => {
   it("borrows SDK Evidence inputs while leaving ordinary request constraints active", async () => {
@@ -37,9 +37,9 @@ describe("Evidence input SDK boundaries", () => {
     expect(invalid.issues).toBeDefined();
   });
 
-  it.each(["full", "compact"] as const)(
+  mcpTest.for(["full", "compact"] as const)(
     "advertises valid reference inputs after actual SDK conversion (%s)",
-    async (profile) => {
+    async (profile, { mcp }) => {
       const contract = toolContract("build_call_path");
       const registration = toolRegistrationOptions(contract);
       const inputSchema =
@@ -53,44 +53,38 @@ describe("Evidence input SDK boundaries", () => {
             )
           : registration.inputSchema;
       const server = new McpServer({ name: "evidence-contract", version: "1" });
-      const client = new Client({ name: "evidence-contract", version: "1" });
-      const [clientTransport, serverTransport] =
-        InMemoryTransport.createLinkedPair();
       server.registerTool(contract.name, { inputSchema }, async () => ({
         content: [],
       }));
-      try {
-        await server.connect(serverTransport);
-        await client.connect(clientTransport);
-        const { tools } = await client.listTools();
-        expect(advertisedSchemaErrors(tools)).toEqual([]);
-        const tool = tools.find(({ name }) => name === contract.name);
-        if (tool === undefined)
-          throw new Error("named contract not advertised");
-        expect(tool.inputSchema.description).toContain(
-          '{"kind":"retained-evidence","evidence_id":"ev_..."}',
-        );
-        expect(tool.inputSchema.description).toContain("parent_evidence_id");
-        const validate = new Ajv2020({
-          strict: false,
-          validateFormats: false,
-        }).compile(tool.inputSchema);
-        expect(
-          validate({
-            functions: [
-              {
-                kind: "retained-evidence",
-                evidence_id: `ev_${"a".repeat(64)}`,
-              },
-            ],
-            start: { address: "0x1000" },
-            goal: { address: "0x1001" },
-          }),
-          JSON.stringify(validate.errors),
-        ).toBe(true);
-      } finally {
-        await Promise.allSettled([client.close(), server.close()]);
-      }
+      const client = await mcp.connect(server, {
+        name: "evidence-contract",
+        version: "1",
+      });
+      const { tools } = await client.listTools();
+      expect(advertisedSchemaErrors(tools)).toEqual([]);
+      const tool = tools.find(({ name }) => name === contract.name);
+      if (tool === undefined) throw new Error("named contract not advertised");
+      expect(tool.inputSchema.description).toContain(
+        '{"kind":"retained-evidence","evidence_id":"ev_..."}',
+      );
+      expect(tool.inputSchema.description).toContain("parent_evidence_id");
+      const validate = new Ajv2020({
+        strict: false,
+        validateFormats: false,
+      }).compile(tool.inputSchema);
+      expect(
+        validate({
+          functions: [
+            {
+              kind: "retained-evidence",
+              evidence_id: `ev_${"a".repeat(64)}`,
+            },
+          ],
+          start: { address: "0x1000" },
+          goal: { address: "0x1001" },
+        }),
+        JSON.stringify(validate.errors),
+      ).toBe(true);
     },
   );
 });

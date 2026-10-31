@@ -130,7 +130,7 @@ describe("skill publication ownership", () => {
     expect(result.error.remediation).not.toContain("Check permissions");
     expect(result.error.rollbackFailures).toEqual([]);
     expect(await readFile(manifest, "utf8")).toBe("concurrent user file\n");
-    expect(await readdir(dirname(manifest))).toEqual([
+    expect((await readdir(dirname(manifest))).sort()).toEqual([
       "SKILL.md",
       "references",
     ]);

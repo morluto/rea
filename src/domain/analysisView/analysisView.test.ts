@@ -782,9 +782,15 @@ it("projects JavaScript summary and preserves selected module observations", () 
   expect(item.value.item).toMatchObject({
     path: "renderer.js",
     kind: "javascript-asset",
+    observations: expect.arrayContaining([
+      expect.objectContaining({
+        properties: expect.objectContaining({
+          source: "export const secret = 1;\n",
+          text: "should not leak",
+        }),
+      }),
+    ]),
   });
-  expect(JSON.stringify(item.value.item)).toContain("export const secret = 1;");
-  expect(JSON.stringify(item.value.item)).toContain("should not leak");
   const page = projectAnalysisView(parent, {
     kind: "page",
     collection: "modules",

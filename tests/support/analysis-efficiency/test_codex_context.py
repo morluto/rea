@@ -23,7 +23,7 @@ class ManagedCoverageTests(unittest.TestCase):
         original = {**expected, 'module_ref_count': 0, 'pinvoke_import_count': 2}
         scope, checks = project(original, expected, {'module_ref_count': 0, 'pinvoke_import_count': 2})
         self.assertEqual(scope, expected)
-        self.assertTrue(all(checks.values()))
+        self.assertEqual(checks, {'module_ref_count': True, 'pinvoke_import_count': True})
         self.assertEqual(original['pinvoke_import_count'], 2)
         for count in [3, '2', True]:
             scope, checks = project({**expected, 'pinvoke_import_count': count}, expected, {'pinvoke_import_count': 2})
