@@ -38,6 +38,7 @@ const compareApplicationVersionsFacts = {
     compareApplicationVersionsInputSchema.shape.left_native_observations,
   right_native_observations:
     compareApplicationVersionsInputSchema.shape.right_native_observations,
+  max_heap_mb: compareApplicationVersionsInputSchema.shape.max_heap_mb,
 } as const;
 
 /** Application comparison request accepting inline or same-session application Evidence. */

@@ -11,6 +11,12 @@ export const SEMANTIC_EXPRESSION_DEPTH_LIMIT = 256;
 export const SEMANTIC_GETTER_EXPANSION_LIMIT = 512;
 /** Additional selector states retained by one precise alias query. */
 export const SEMANTIC_ALIAS_SELECTION_LIMIT = 512;
+/** Worklist steps retained in one member-mutation value traversal. */
+export const SEMANTIC_MEMBER_MUTATION_WORKLIST_LIMIT = 512;
+/** Total worklist steps admitted across member-mutation indexing for one source. */
+export const SEMANTIC_MEMBER_MUTATION_TOTAL_STEPS_LIMIT = 32_768;
+/** Fixpoint rounds admitted while reconsidering iterable origins and mutations. */
+export const SEMANTIC_MEMBER_MUTATION_FIXPOINT_ROUNDS_LIMIT = 16;
 /** Bound normalized strings and transient keys independently of transport limits. */
 export const SEMANTIC_PRIMITIVE_JSON_BYTES_LIMIT = 1_048_576;
 

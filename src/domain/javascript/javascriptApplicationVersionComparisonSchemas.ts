@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { emptyArraySchema } from "../emptyArraySchema.js";
 import { evidenceSchema } from "../evidence.js";
+import { javaScriptAnalysisResourceControlsSchema } from "./javascriptAnalysisResourceControls.js";
 import {
   isValidatedImmutableJavaScriptApplicationGraph,
   javascriptApplicationGraphSchema,
@@ -67,6 +68,10 @@ export const compareApplicationVersionsInputSchema = z
     right: evidenceSchema,
     left_native_observations: z.array(evidenceSchema).default([]),
     right_native_observations: z.array(evidenceSchema).default([]),
+    max_heap_mb:
+      javaScriptAnalysisResourceControlsSchema.shape.max_heap_mb.describe(
+        "Requested heap in MiB, recorded in comparison Evidence. The CLI --max-heap-mb flag restarts Node with a larger heap when needed. Setting this field in JSON or MCP input alone does not change the process heap.",
+      ),
   })
   .superRefine(validateApplicationVersionIdentities);
 

@@ -252,6 +252,9 @@ export const compareApplicationVersionsEvidence = (
       right_evidence_id: right.evidence.evidence_id,
       left_native_evidence_ids: leftNative.map(({ evidence_id: id }) => id),
       right_native_evidence_ids: rightNative.map(({ evidence_id: id }) => id),
+      ...(input.max_heap_mb === undefined
+        ? {}
+        : { max_heap_mb: input.max_heap_mb }),
     },
     result,
   );

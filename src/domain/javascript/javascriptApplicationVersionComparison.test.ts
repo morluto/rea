@@ -17,6 +17,7 @@ import {
 import { compareJavaScriptApplicationVersions } from "./javascriptApplicationVersionComparison.js";
 import {
   applicationVersionComparisonResultSchema,
+  compareApplicationVersionsInputSchema,
   ownedApplicationVersionComparisonResultSchema,
 } from "./javascriptApplicationVersionComparisonSchemas.js";
 
@@ -437,5 +438,16 @@ describe("application version comparison graph ownership", () => {
         coverage: { ...result.coverage, status: "partial" },
       }),
     ).toThrow("Comparison coverage must match source graph completeness");
+  });
+
+  it("accepts max_heap_mb in comparison input (#6127)", () => {
+    const leftEvidence = nativeEvidence("1".repeat(64), 1);
+    const rightEvidence = nativeEvidence("2".repeat(64), 2);
+    const parsed = compareApplicationVersionsInputSchema.parse({
+      left: leftEvidence,
+      right: rightEvidence,
+      max_heap_mb: 4096,
+    });
+    expect(parsed.max_heap_mb).toBe(4096);
   });
 });

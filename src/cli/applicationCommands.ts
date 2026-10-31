@@ -9,6 +9,7 @@ import type { JsonValue } from "../domain/jsonValue.js";
 import type { Logger } from "pino";
 import { traceJavaScriptSemanticsInputSchema } from "../domain/javascript/javascriptSemanticTraceSchemas.js";
 import { registerSourceToBundleCommand } from "./sourceToBundleCommand.js";
+import { javaScriptAnalysisResourceControlsSchema } from "../domain/javascript/javascriptAnalysisResourceControls.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 
 type CliInstance = ReturnType<typeof Cli.create>;
@@ -52,6 +53,9 @@ export const registerApplicationCommands = (
     description:
       "Compare two authenticated JavaScript Application Graph versions",
     inputSchema: z.unknown(),
+    options: z.object({
+      maxHeapMb: javaScriptAnalysisResourceControlsSchema.shape.max_heap_mb,
+    }),
     workflow: async (input) => {
       const { compareApplicationVersionsEvidence } =
         await import("../application/javascript/JavaScriptApplicationWorkflowService.js");
@@ -152,12 +156,16 @@ const registerCoverageCommand = (cli: CliInstance, logger: Logger): void =>
     },
   });
 
-interface JsonCommandOptions<Schema extends z.ZodType> {
+interface JsonCommandOptions<
+  Schema extends z.ZodType,
+  Options extends z.ZodRawShape = z.ZodRawShape,
+> {
   readonly cli: CliInstance;
   readonly logger: Logger;
   readonly name: string;
   readonly description: string;
   readonly inputSchema: Schema;
+  readonly options?: z.ZodObject<Options>;
   readonly workflow: (
     input: z.output<Schema>,
   ) => Promise<
@@ -166,24 +174,42 @@ interface JsonCommandOptions<Schema extends z.ZodType> {
   >;
 }
 
-const registerJsonCommand = <Schema extends z.ZodType>({
+const registerJsonCommand = <
+  Schema extends z.ZodType,
+  Options extends z.ZodRawShape = z.ZodRawShape,
+>({
   cli,
   logger,
   name,
   description,
   inputSchema,
+  options,
   workflow,
-}: JsonCommandOptions<Schema>): void => {
+}: JsonCommandOptions<Schema, Options>): void => {
   cli.command(name, {
     description,
     args: z.object({
       inputJson: z.string().describe("Inline workflow JSON or JSON file path"),
     }),
-    run: ({ args }) =>
+    ...(options === undefined ? {} : { options }),
+    run: ({ args, options: commandOptions }) =>
       logCliCommand(logger, name, async () => {
         const input = await parseCliJsonInput(args.inputJson, name);
         if (!input.ok) return input.error;
-        const parsed = inputSchema.safeParse(input.value);
+        const mergedValue =
+          commandOptions !== undefined &&
+          typeof input.value === "object" &&
+          input.value !== null &&
+          !Array.isArray(input.value)
+            ? {
+                ...input.value,
+                ...("maxHeapMb" in commandOptions &&
+                commandOptions.maxHeapMb !== undefined
+                  ? { max_heap_mb: commandOptions.maxHeapMb }
+                  : {}),
+              }
+            : input.value;
+        const parsed = inputSchema.safeParse(mergedValue);
         if (!parsed.success)
           return {
             error: "Application workflow failed",
@@ -191,7 +217,7 @@ const registerJsonCommand = <Schema extends z.ZodType>({
               analysisInputErrorFromIssues(
                 name,
                 parsed.error.issues,
-                input.value,
+                mergedValue,
               ),
             ),
           };
