@@ -214,12 +214,17 @@ const partitionSdkDiagnostic = (
  * long call — from "missing required resultType" to a valid complete
  * result. Only fill when absent; never overwrite a handler/SDK-provided
  * discriminator such as input_required.
+ *
+ * Exported for unit tests: a tools/call wire result carrying a
+ * non-complete resultType cannot be produced through the public server
+ * API (the SDK turns a handler's input_required signal into
+ * multi-round-trip requests instead of a wire result), so the
+ * never-overwrite rule is covered directly here, not via the wire.
  */
-const ensureToolResultType = (message: JSONRPCMessage): JSONRPCMessage => {
-  if (
-    !isJSONRPCResultResponse(message) ||
-    !isCallToolResult(message.result)
-  )
+export const ensureToolResultType = (
+  message: JSONRPCMessage,
+): JSONRPCMessage => {
+  if (!isJSONRPCResultResponse(message) || !isCallToolResult(message.result))
     return message;
   if (
     (message.result as { readonly resultType?: unknown }).resultType !==

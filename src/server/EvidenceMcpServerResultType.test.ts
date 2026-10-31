@@ -1,10 +1,8 @@
 import { describe, expect, it } from "vitest";
-import {
-  Client,
-  InMemoryTransport,
-} from "@modelcontextprotocol/client";
+import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import {
   isJSONRPCResultResponse,
+  type JSONRPCMessage,
   type JSONRPCResultResponse,
 } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
@@ -12,6 +10,7 @@ import { z } from "zod";
 
 import { InvestigationRecords } from "../application/investigation/InvestigationRecords.js";
 import { EvidenceMcpServer } from "./EvidenceMcpServer.js";
+import { ensureToolResultType } from "./EvidenceMcpServerCore.js";
 import { createToolResultDelivery } from "./toolResult.js";
 
 /**
@@ -94,14 +93,71 @@ const collectToolResults = async (revision: string) => {
       (reply) =>
         typeof reply.result === "object" &&
         reply.result !== null &&
-        Array.isArray(
-          (reply.result as { content?: unknown }).content,
-        ),
+        Array.isArray((reply.result as { content?: unknown }).content),
     );
   } finally {
     await Promise.all([client.close(), serving.close()]);
   }
 };
+
+describe("ensureToolResultType (direct helper coverage)", () => {
+  // A tools/call wire result carrying a non-complete resultType cannot be
+  // produced through the public server API: the SDK turns a handler's
+  // input_required signal into multi-round-trip requests instead of a
+  // wire result (verified by experiment: no input_required wire reply is
+  // ever sent, the client instead exhausts its round-trip limit). So the
+  // never-overwrite rule is covered by calling the helper directly.
+  const toolResult = (result: Record<string, unknown>): JSONRPCMessage => ({
+    jsonrpc: "2.0",
+    id: 1,
+    result,
+  });
+
+  it("fills in complete when resultType is absent, without mutating the input", () => {
+    const input = toolResult({
+      content: [{ type: "text", text: "ok" }],
+    });
+    const filled = ensureToolResultType(input);
+    expect((filled as JSONRPCResultResponse).result).toMatchObject({
+      resultType: "complete",
+    });
+    expect(input).not.toBe(filled);
+    expect((input as JSONRPCResultResponse).result).not.toHaveProperty(
+      "resultType",
+    );
+  });
+
+  it("leaves an existing non-complete resultType unchanged", () => {
+    const input = toolResult({
+      content: [{ type: "text", text: "need more" }],
+      resultType: "input_required",
+      requestState: "test-state",
+    });
+    expect(ensureToolResultType(input)).toBe(input);
+    expect(
+      (ensureToolResultType(input) as JSONRPCResultResponse).result,
+    ).toMatchObject({ resultType: "input_required" });
+  });
+
+  it("leaves an existing complete resultType unchanged", () => {
+    const input = toolResult({
+      content: [{ type: "text", text: "ok" }],
+      resultType: "complete",
+    });
+    expect(ensureToolResultType(input)).toBe(input);
+  });
+
+  it("leaves non-tools/call messages unchanged", () => {
+    const errorResponse: JSONRPCMessage = {
+      jsonrpc: "2.0",
+      id: 1,
+      error: { code: -32603, message: "boom" },
+    };
+    expect(ensureToolResultType(errorResponse)).toBe(errorResponse);
+    const nonToolResult = toolResult({ protocolVersion: "2025-11-25" });
+    expect(ensureToolResultType(nonToolResult)).toBe(nonToolResult);
+  });
+});
 
 describe("tools/call resultType on the wire", () => {
   it.each(["2025-11-25", "2026-07-28"])(
@@ -110,14 +166,12 @@ describe("tools/call resultType on the wire", () => {
       const results = await collectToolResults(revision);
       expect(results).toHaveLength(3);
       for (const reply of results) {
-        expect(
-          (reply.result as { resultType?: unknown }).resultType,
-        ).toBe("complete");
+        expect((reply.result as { resultType?: unknown }).resultType).toBe(
+          "complete",
+        );
       }
       expect(
-        results.map(
-          (reply) => (reply.result as { isError?: boolean }).isError,
-        ),
+        results.map((reply) => (reply.result as { isError?: boolean }).isError),
       ).toEqual([undefined, true, true]);
     },
   );
