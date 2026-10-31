@@ -8,6 +8,7 @@ import {
 import {
   settleProcessCaptureJournal,
   releaseProcessResources,
+  PROCESS_CAPTURE_CLEANUP_INTERVENTION_UNKNOWN,
   ProcessCaptureResourceScope,
   createProcessCaptureObservationBuffer,
   prepareProcessCapture,
@@ -471,6 +472,7 @@ it("retains unrelated withheld processes through cleanup, capture, and JSON", as
     });
     expect(capture.residual_unknowns).toEqual([
       ...original.residual_unknowns,
+      PROCESS_CAPTURE_CLEANUP_INTERVENTION_UNKNOWN,
       {
         scope: "process",
         reason: expect.stringContaining("900 could not be verified"),
