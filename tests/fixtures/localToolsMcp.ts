@@ -1,6 +1,7 @@
 import {
   Client,
   type CallToolRequestOptions,
+  type ClientOptions,
 } from "@modelcontextprotocol/client";
 import {
   StdioClientTransport,
@@ -41,6 +42,7 @@ export async function connectLocalToolsMcp(
   environment: Readonly<Record<string, string>> = {},
   registerCleanup: (cleanup: () => Promise<void>) => void = onTestFinished,
   transportOptions: Readonly<Pick<StdioServerParameters, "maxBufferSize">> = {},
+  jsonSchemaValidator?: NonNullable<ClientOptions["jsonSchemaValidator"]>,
 ) {
   const transport = new StdioClientTransport({
     ...transportOptions,
@@ -57,7 +59,10 @@ export async function connectLocalToolsMcp(
     },
     stderr: "pipe",
   });
-  const client = new Client({ name: "local-tools-e2e", version: "1" });
+  const client = new Client(
+    { name: "local-tools-e2e", version: "1" },
+    jsonSchemaValidator === undefined ? undefined : { jsonSchemaValidator },
+  );
   registerCleanup(async () => {
     await client.close();
     await transport.close();
