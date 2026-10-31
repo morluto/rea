@@ -311,6 +311,25 @@ try {
   const customPath = process.env.GHIDRA_TARGET_PATH;
   const custom =
     customPath === undefined ? null : await verifyTarget(customPath, "custom");
+  const projectCoverage =
+    !crossFormat && !aarch64JumpTableOnly && process.platform !== "win32"
+      ? JSON.parse(
+          (
+            await exec(
+              process.execPath,
+              [
+                fileURLToPath(
+                  new URL(
+                    "./verify-real-ghidra-project-coverage.mjs",
+                    import.meta.url,
+                  ),
+                ),
+              ],
+              { timeout: 300000, maxBuffer: 16 * 1024 * 1024 },
+            )
+          ).stdout,
+        )
+      : null;
   report = {
     ok: true,
     provider: { id: "ghidra", version: SUPPORTED_GHIDRA_VERSION },
@@ -331,6 +350,7 @@ try {
       ? (crossResults[0]?.native_api_cli ?? null)
       : jumpTable.native_api_cli,
     native_value_e2e: debug.native_values,
+    selected_project_coverage: projectCoverage,
     custom_target: custom === null ? null : summary(custom),
     cleanup: "complete",
   };

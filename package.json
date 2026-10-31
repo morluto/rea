@@ -202,6 +202,7 @@
     "verify:flutter": "npm run build:cached && node scripts/verify-flutter.mjs",
     "verify:adb": "npm run build:cached && node scripts/verify-adb.mjs",
     "verify:ghidra": "npm run build:cached && node scripts/verify-real-ghidra.mjs",
+    "verify:ghidra:project-coverage": "npm run build:cached && node scripts/verify-real-ghidra-project-coverage.mjs",
     "verify:ghidra:seeds": "npm run build:cached && node scripts/verify/ghidra/seeds.mjs",
     "verify:ghidra:mips": "npm run build:cached && node scripts/verify-real-ghidra-mips.mjs",
     "verify:ghidra:ppc": "npm run build:cached && node scripts/verify-real-ghidra-ppc.mjs",

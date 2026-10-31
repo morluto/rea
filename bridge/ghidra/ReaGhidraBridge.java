@@ -179,6 +179,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private List<FunctionEntry> procedureInventory;
     private List<InventoryItem> stringInventory;
     private DecompInterface decompiler;
+    private boolean existingProject;
     /** Per-function native decompiler limit from the session; 0 leaves it unbounded. */
     private int decompileTimeoutSeconds;
     // DecompileProcess converts seconds to an int millisecond timer delay.
@@ -194,6 +195,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
         Path descriptorPath = Path.of(arguments[0]);
         SessionDescriptor descriptor = readDescriptor(descriptorPath);
+        existingProject = descriptor.existingProject;
         decompileTimeoutSeconds = descriptor.decompileTimeoutSeconds();
         // Windows retains a native immutable bearer descriptor lease until
         // runtime_close; POSIX removes it after this read. Normal cleanup removes
@@ -3603,7 +3605,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return result;
     }
 
-    private static JsonObject callRelationshipCoverage(
+    private JsonObject callRelationshipCoverage(
             CallBoundaryObservation calls, Integer missingCallers) {
         JsonObject coverage = completeResolvedCallCoverage();
         Integer omitted = calls == null ? null : calls.unrepresentedCalleeCalls();
@@ -3620,7 +3622,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             if (calls == null && missingCallers == null) directions.add("callers");
             directions.add("callees");
             coverage.add("limited_directions", directions);
-            return coverage;
+            return qualifyProjectCallCoverage(coverage, calls, missingCallers);
         }
         JsonArray limitations = new JsonArray();
         if (callerLimitation != null) limitations.add(callerLimitation);
@@ -3634,6 +3636,35 @@ public final class ReaGhidraBridge extends HeadlessScript {
             coverage.add("limitations", limitations);
             coverage.add("limited_directions", directions);
         }
+        return qualifyProjectCallCoverage(coverage, calls, missingCallers);
+    }
+
+    private JsonObject qualifyProjectCallCoverage(
+            JsonObject coverage, CallBoundaryObservation calls, Integer missingCallers) {
+        if (!existingProject) return coverage;
+        String reason = "The selected project's prior analysis completeness is unknown; " +
+            "the recorded call relationships may omit undiscovered callers or callees.";
+        String status = coverage.get("status").getAsString();
+        // A single-direction read with known omissions is still partial; an
+        // unknown project history adds a limitation rather than erasing them.
+        if (status.equals("partial") && (calls == null || missingCallers == null)) {
+            coverage.getAsJsonArray("limitations").add(reason);
+            return coverage;
+        }
+        if (status.equals("unknown")) reason += " " + coverage.get("reason").getAsString();
+        if (status.equals("partial")) {
+            for (JsonElement limitation : coverage.getAsJsonArray("limitations"))
+                reason += " " + limitation.getAsString();
+        }
+        JsonArray directions = new JsonArray();
+        if (missingCallers != null || (calls == null && missingCallers == null))
+            directions.add("callers");
+        if (calls != null || (calls == null && missingCallers == null))
+            directions.add("callees");
+        coverage.addProperty("status", "unknown");
+        coverage.addProperty("reason", reason);
+        coverage.remove("limitations");
+        coverage.add("limited_directions", directions);
         return coverage;
     }
 

@@ -1388,6 +1388,11 @@ The profile records the caller path, resolved project/name, program and content
 fingerprint. Original analysis settings and completeness remain **unknown**;
 prior annotations or edits are caller-project state, not fresh REA discoveries.
 A matching recorded import digest does not claim that the database is unedited.
+Caller and callee coverage therefore remains unknown. A single-direction query
+with known omissions remains partial and also reports the unknown project history.
+Observed call edges are still available: a path to an observed caller or callee
+can be reached, but a missing path is unknown when the project's prior analysis
+cannot establish completeness.
 Saved REA seed/analyzer reports remain historical facts in retained source Evidence;
 they are not interpreted as overrides applied by this session.
 Project content participates in snapshot identity, so different project states
