@@ -1195,6 +1195,10 @@ exit 1`,
         line.includes("not device-side verified"),
       ),
     ).toBe(!verified);
+    // The device-mutation fact is reported whatever the digest verdict.
+    expect(result.value.limitations).toContain(
+      "Push writes a private snapshot of the caller's file to the device",
+    );
     // Unrecognized checksum output stays inspectable instead of being dropped.
     expect(result.value.rawResult).toEqual(
       !verified && exit === 0

@@ -169,6 +169,14 @@ describe("tool effects", () => {
     expect(staleExceptions).toEqual([]);
   });
 
+  it("never advertises one tool as the only device-mutating operation", () => {
+    // Several tools declare mutatesDevice, so an exclusive claim misleads callers.
+    const exclusive = TOOL_CONTRACTS.filter(({ description }) =>
+      /\bonly\b[^.!?]*\bmutat/iu.test(description),
+    ).map(({ name }) => name);
+    expect(exclusive).toEqual([]);
+  });
+
   it("marks foreign execution and device mutation as destructive", () => {
     const destructive = TOOL_CONTRACTS.filter(
       ({ effects }) => effects.executesForeignCode || effects.mutatesDevice,
