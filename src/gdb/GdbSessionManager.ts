@@ -2404,9 +2404,15 @@ export const gdbOneShotCommandMayInvalidateDetachProof = (
 
 /** @internal Classify commands that can invalidate the configured output sink. */
 export const commandMayChangeInferiorOutput = (command: string): boolean => {
-  // These complete built-in inspections cannot change output routing. Keep
-  // compound commands and abbreviations under the conservative rules below.
-  if (/^[ \t]*(?:show|help)[ \t]+inferior-tty[ \t]*$/iu.test(command))
+  // These exact read-only TTY inspections ("show inferior-tty", "help
+  // inferior-tty", MI "-inferior-tty-show") cannot reconfigure the output
+  // sink, so they must not revoke the startup verification. Keep compound
+  // commands and abbreviations under the conservative rules below
+  // (fail-closed).
+  if (
+    /^[ \t]*(?:show|help)[ \t]+inferior-tty[ \t]*$/iu.test(command) ||
+    /^[ \t]*-inferior-tty-show[ \t]*$/iu.test(command)
+  )
     return false;
   const setting = /^\s*(?:set|with)\s+(\S+)/iu.exec(command)?.[1];
   const maySetInferiorTty =
