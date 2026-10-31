@@ -581,14 +581,17 @@ export const createCliResultOutput = (
       format !== "json" &&
       format !== "jsonl";
     // Delegate other human formats to Incur. Markdown stays here so admission
-    // and emitted table text use the same safe formatter.
+    // and emitted table text use the same safe formatter. A full-output token
+    // count stays here too: Incur counts only the selected data, so delegating
+    // it would report the bare result instead of the emitted envelope.
     if (
       format !== "md" &&
       format !== "json" &&
       format !== "jsonl" &&
       operationFailure === undefined &&
       !ownsFilteredOutput &&
-      !ownsSuccessfulTokenWindow
+      !ownsSuccessfulTokenWindow &&
+      !(options.tokenCount && options.fullOutput)
     )
       return false;
     if (format === "jsonl") {
