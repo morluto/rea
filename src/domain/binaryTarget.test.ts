@@ -99,6 +99,23 @@ describe("executable header parsing", () => {
     },
   );
 
+  it("accepts PowerPC BE (Xbox 360, COFF machine 0x01f2) as powerpc", () => {
+    const result = parseExecutableHeader(pe(0x01f2), "x64");
+    expect(result.ok && result.value).toMatchObject({
+      format: "pe",
+      architecture: "powerpc",
+      managed: false,
+    });
+  });
+
+  it("detects XEX2 magic and redirects to an extracted basefile", () => {
+    const bytes = Buffer.alloc(4);
+    bytes.write("XEX2", 0, "ascii");
+    const result = parseExecutableHeader(bytes, "x64");
+    expect(result.ok).toBe(false);
+    expect(result.ok ? "" : result.error).toContain("XEX2");
+  });
+
   it("rejects an OS-override machine on a native image", () => {
     const result = parseExecutableHeader(
       pe(0x8664 ^ 0x7b79, 64, 0x2002),
