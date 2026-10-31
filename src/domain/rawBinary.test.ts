@@ -305,8 +305,10 @@ describe("raw-binary admission results", () => {
   // constraint.
   const ADMISSION_GRID_SHA256 =
     "930f0a2a9fbab8177d89ca8161f21bc2cb472b095286282ca362ced5d2dbec50";
+  // The pairing grid also covers esp-flash-image (#8228); its other 16 rows
+  // still hash to d6f88becd's b6447afda4012589….
   const PAIRING_GRID_SHA256 =
-    "b6447afda4012589d57f8bc0710fa8d85066e332f932103e30556232d1f3eca7";
+    "d181949998c9ec53c74f42fe596ad7154d611130fd1d7cf6fadfbeba8735d61a";
   const architectures = [
     undefined,
     "x86",
@@ -396,7 +398,7 @@ describe("raw-binary admission results", () => {
           ]),
         ),
     );
-    expect(rows).toHaveLength(16);
+    expect(rows).toHaveLength(20);
     expect(sha256(rows)).toBe(PAIRING_GRID_SHA256);
   });
 });

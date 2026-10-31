@@ -1938,9 +1938,11 @@ describe("headless IDA cleanup verification", () => {
   });
   it("releases a privately owned worker after malformed open output using verified session inventory", async () => {
     const { producer, client, root } = await fixture("headless");
+    let ownedId: string | undefined;
     producer.beforeCall = async (name, args) => {
       if (name === "idb_open") {
-        producer.database = z.string().parse(args.preferred_session_id);
+        ownedId = z.string().parse(args.preferred_session_id);
+        producer.database = ownedId;
         producer.inputPath = z.string().parse(args.input_path);
       }
     };
@@ -1953,9 +1955,10 @@ describe("headless IDA cleanup verification", () => {
         : undefined;
     expect((await client.execute("health", {})).ok).toBe(false);
     expect((await client.close()).ok).toBe(true);
+    expect(ownedId).toEqual(expect.any(String));
     expect(
       producer.calls.find(({ name }) => name === "idb_close")?.args.database,
-    ).toMatch(/^rea-/u);
+    ).toBe(ownedId);
     expect(await readdir(root)).toEqual(["target.elf"]);
   });
 });

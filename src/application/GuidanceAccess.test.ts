@@ -318,3 +318,181 @@ it("uses only the fixed managed guide inventory for injected reads", async () =>
   );
   expect(requested).toEqual([...MANAGED_SKILL_FILES]);
 });
+
+const nestedGuide = [
+  "# Native guide",
+  "",
+  "Overview of native work.",
+  "",
+  "## Apple app resources",
+  "",
+  "Switch provider bundles here.",
+  "",
+  "## Native targets",
+  "",
+  "Annotations in Ghidra last until close.",
+  "",
+  "### Function annotations in Ghidra",
+  "",
+  "Rename functions; annotations last until close.",
+  "",
+  "## Combined recovery",
+  "",
+  "Recovery steps.",
+  "",
+  "### Step alpha",
+  "",
+  "Use alphaword here.",
+  "",
+  "### Step beta",
+  "",
+  "Use betaword here.",
+  "",
+].join("\n");
+const nestedReader = async (path: string): Promise<string> =>
+  path === "references/native-and-artifacts.md"
+    ? nestedGuide
+    : `# ${path}\n\nUnrelated guidance.\n`;
+const matchesFor = async (query: string, limit = 20) => {
+  const result = await valueOf(
+    searchGuidanceWithReader(
+      { query, limit },
+      nestedReader,
+      new ArtifactResourceScope(),
+    ),
+  );
+  if (result.status !== "matches") throw new Error(`No matches: ${query}`);
+  return result.matches;
+};
+
+it("reports a focused subsection without repeating every enclosing parent", async () => {
+  const matches = await matchesFor("function annotations");
+  expect(matches).toEqual([
+    expect.objectContaining({
+      heading: "Function annotations in Ghidra",
+      match_scope: "section",
+      matched_terms: ["function", "annotations"],
+    }),
+  ]);
+  expect(matches[0]).not.toHaveProperty("subsections");
+  expect(matches[0]).not.toHaveProperty("own_text_terms");
+});
+
+it("keeps a parent whose own text holds every term alongside its matching subsection", async () => {
+  const matches = await matchesFor("annotations close");
+  expect(
+    matches.map(({ heading, match_scope }) => [heading, match_scope]),
+  ).toEqual([
+    ["Function annotations in Ghidra", "section"],
+    ["Native targets", "section"],
+  ]);
+  expect(matches[1]?.context).not.toContain("Rename functions");
+});
+
+it("labels terms scattered across sibling subsections and points to where each occurs", async () => {
+  const matches = await matchesFor("switch provider annotations");
+  expect(matches).toHaveLength(1);
+  const [root] = matches;
+  expect(root).toMatchObject({
+    heading: "Native guide",
+    match_scope: "subsections",
+    matched_terms: ["switch", "provider", "annotations"],
+    content_length: nestedGuide.trim().length,
+    own_text_terms: [],
+    relevance: expect.stringContaining("no single subsection"),
+  });
+  expect(
+    root?.subsections?.map(({ heading, matched_terms }) => [
+      heading,
+      matched_terms,
+    ]),
+  ).toEqual([
+    ["Apple app resources", ["switch", "provider"]],
+    ["Native targets", ["annotations"]],
+  ]);
+  const pointer = root?.subsections?.[0];
+  if (pointer === undefined) throw new Error("Expected a subsection pointer");
+  const read = await readGuidanceSectionWithReader(
+    { locator: pointer.locator },
+    nestedReader,
+    new ArtifactResourceScope(),
+  );
+  expect(read).toMatchObject({
+    ok: true,
+    value: { status: "section", heading: "Apple app resources" },
+  });
+  const complete = await readGuidanceSectionWithReader(
+    { locator: root?.locator },
+    nestedReader,
+    new ArtifactResourceScope(),
+  );
+  if (!complete.ok || complete.value.status !== "section")
+    throw new Error("Expected the complete parent section");
+  expect(complete.value.content).toHaveLength(root?.content_length ?? -1);
+  expect(complete.value.content).toContain("### Step beta");
+});
+
+it("separates a parent's own terms from those found in one subsection", async () => {
+  const [combined, ...rest] = await matchesFor("recovery alphaword");
+  expect(rest).toEqual([]);
+  expect(combined).toMatchObject({
+    heading: "Combined recovery",
+    match_scope: "subsections",
+    own_text_terms: ["recovery"],
+  });
+  expect(combined?.subsections?.map(({ heading }) => heading)).toEqual([
+    "Step alpha",
+  ]);
+});
+
+it("ranks co-located terms before broader matches and treats heading words as own text", async () => {
+  const matches = await matchesFor("alphaword betaword");
+  expect(matches.map(({ heading }) => heading)).toEqual(["Combined recovery"]);
+  expect(await matchesFor("apple resources")).toEqual([
+    expect.objectContaining({
+      heading: "Apple app resources",
+      match_scope: "section",
+    }),
+  ]);
+  // The scattered parent has a heading term and the higher score.
+  const focusedFirst = await valueOf(
+    searchGuidanceWithReader(
+      { query: "recovery alphaword" },
+      async (path) =>
+        path === "SKILL.md"
+          ? "# REA\n\n## Focused\n\nThe alphaword recovery recipe.\n"
+          : nestedReader(path),
+      new ArtifactResourceScope(),
+    ),
+  );
+  if (focusedFirst.status !== "matches") throw new Error("Expected matches");
+  expect(
+    focusedFirst.matches.map(({ heading, match_scope }) => [
+      heading,
+      match_scope,
+    ]),
+  ).toEqual([
+    ["Focused", "section"],
+    ["Combined recovery", "subsections"],
+  ]);
+});
+
+it("bounds subsection pointers and counts the remainder", async () => {
+  const terms = Array.from({ length: 10 }, (_, index) => `scatterterm${index}`);
+  const guide = [
+    "# Scattered",
+    "",
+    ...terms.flatMap((term, index) => [`## Part ${index}`, "", term, ""]),
+  ].join("\n");
+  const result = await valueOf(
+    searchGuidanceWithReader(
+      { query: terms.join(" ") },
+      async (path) => (path === "SKILL.md" ? guide : `# ${path}\n`),
+      new ArtifactResourceScope(),
+    ),
+  );
+  if (result.status !== "matches") throw new Error("Expected matches");
+  expect(result.matches).toHaveLength(1);
+  expect(result.matches[0]?.subsections).toHaveLength(8);
+  expect(result.matches[0]?.omitted_subsections).toBe(2);
+});

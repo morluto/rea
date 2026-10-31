@@ -1,4 +1,6 @@
+import type { EspFlashSelection } from "../../domain/firmware/espFlashLocation.js";
 import type { InvestigationRecordPort } from "../investigation/InvestigationRecordPort.js";
+import type { ResetInvestigationReceipt } from "../../domain/investigationLifecycle.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import type { NativeLoadSelection } from "../../domain/rawBinary.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
@@ -7,6 +9,7 @@ import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js"
 import type { AnalysisProviderSelector } from "../../domain/providerSelection.js";
 import type { BinarySessionDetail } from "../../contracts/sessionStatusContract.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import type { AnalysisCleanupRetry } from "../../domain/analysisErrorRecovery.js";
 import type { Result } from "../../domain/result.js";
 import type { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import type { AnalysisSnapshotLoader } from "./BinarySessionOpen.js";
@@ -59,6 +62,7 @@ export interface BinarySessionPort
       readonly signal?: AbortSignal;
       readonly targetKind?: BinaryTarget["kind"];
       readonly loadSelection?: NativeLoadSelection;
+      readonly espFlash?: EspFlashSelection;
       readonly snapshot?: AnalysisSnapshot;
       readonly loadSnapshot?: AnalysisSnapshotLoader;
       readonly providerId?: AnalysisProviderSelector;
@@ -69,16 +73,39 @@ export interface BinarySessionPort
     path: string,
     options?: Pick<ExecutionOptions, "signal">,
   ): Promise<Result<ResolvedAppBundleResourceRoot, AnalysisError>>;
+  /**
+   * `cleanupRetry` names the caller's same-session retry; the session binds it
+   * to a failed close only while it retains that cleanup for the next close.
+   */
   close(
+    options?: Pick<ExecutionOptions, "progress"> & {
+      readonly retainProviderDocuments?: boolean;
+      readonly cleanupRetry?: AnalysisCleanupRetry;
+    },
+  ): Promise<Result<null, AnalysisError>>;
+  /** Seal runtime acquisition and release investigation state after successful cleanup. */
+  dispose(
     options?: Pick<ExecutionOptions, "progress"> & {
       readonly retainProviderDocuments?: boolean;
     },
   ): Promise<Result<null, AnalysisError>>;
+  /** Seal future acquisition/admission while previously admitted work drains. */
+  beginShutdown(): void;
+  /** Drain work, optionally checkpoint, and clear records without closing the active engine. */
+  resetInvestigation(options?: {
+    readonly savePath?: string;
+    readonly overwrite?: boolean;
+    readonly signal?: AbortSignal;
+    /** Adapter-owned cleanup joins the drained transaction before clearing records. */
+    readonly retryCleanup?: () => Promise<Result<null, AnalysisError>>;
+  }): Promise<Result<ResetInvestigationReceipt, AnalysisError>>;
   /** Save a snapshot and close while excluding later provider requests. */
   closeWithSnapshot(
     path: string,
     overwrite: boolean,
-    options?: Pick<ExecutionOptions, "progress">,
+    options?: Pick<ExecutionOptions, "progress"> & {
+      readonly cleanupRetry?: AnalysisCleanupRetry;
+    },
   ): Promise<Result<SavedAnalysisSnapshot, AnalysisError>>;
   /** Default complete detail; summary omits provider diagnostics and candidate capabilities. */
   status(options?: {

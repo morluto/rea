@@ -35,4 +35,10 @@ export const binaryTargetSummary = (target: BinaryTarget) =>
       : target.format === "gamecube-dol"
         ? { entry_point: target.entryPoint }
         : {}),
+    ...(target.format === "esp-flash-image"
+      ? {
+          flash_offset: target.espFlash.flashOffset,
+          partition_table_offset: target.espFlash.partitionTableOffset,
+        }
+      : {}),
   });

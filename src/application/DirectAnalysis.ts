@@ -1,3 +1,4 @@
+import type { EspFlashSelection } from "../domain/firmware/espFlashLocation.js";
 import { dispatchQueuedInterrupts } from "../process/queuedInterrupts.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import type { NativeLoadSelection } from "../domain/rawBinary.js";
@@ -128,6 +129,7 @@ export const runDirectAnalysis = async (
     readonly signal?: AbortSignal;
     readonly providerId?: AnalysisProviderSelector;
     readonly loadSelection?: NativeLoadSelection;
+    readonly espFlash?: EspFlashSelection;
   } = {},
 ): Promise<Result<Evidence, JsonValue>> =>
   withProcessCancellation(options.signal, (signal) =>
@@ -135,19 +137,42 @@ export const runDirectAnalysis = async (
       logger: options.logger ?? silentLogger,
       snapshotPath: options.snapshotPath,
       signal,
-      ...(options.loadSelection === undefined
-        ? {}
-        : { loadSelection: options.loadSelection }),
+      ...targetSelection(options),
       ...(options.providerId === undefined
         ? {}
         : { providerId: options.providerId }),
     }),
   );
 
+/** How the caller asks an artifact target to be read. */
+export interface ArtifactTargetSelection {
+  readonly loadSelection?: NativeLoadSelection;
+  readonly espFlash?: EspFlashSelection;
+}
+
+/** The caller's target interpretation, forwarded unchanged to every open. */
+const targetSelection = (options: {
+  readonly loadSelection?: NativeLoadSelection;
+  readonly espFlash?: EspFlashSelection;
+}) => ({
+  ...(options.loadSelection === undefined
+    ? {}
+    : { loadSelection: options.loadSelection }),
+  ...(options.espFlash === undefined ? {} : { espFlash: options.espFlash }),
+});
+
 /** Execute one provider-native semantic operation with atomic provenance. */
 export const runProviderAnalysis = async (
   dependencies: DirectAnalysisDependencies,
-  ...[path, tool, arguments_, logger = silentLogger, signal, delivery]:
+  ...[
+    path,
+    tool,
+    arguments_,
+    logger = silentLogger,
+    signal,
+    delivery,
+    selection,
+  ]:
     | readonly [
         path: string,
         tool: NativeToolName | ArtifactAnalysisOperation | ManagedToolName,
@@ -165,6 +190,15 @@ export const runProviderAnalysis = async (
           readonly detail?: "complete" | "summary";
           readonly evidenceBundlePath?: string;
         },
+      ]
+    | readonly [
+        path: string,
+        tool: ArtifactAnalysisOperation,
+        arguments_: Readonly<Record<string, JsonValue>>,
+        logger: Logger | undefined,
+        signal: AbortSignal | undefined,
+        delivery: undefined,
+        selection: ArtifactTargetSelection,
       ]
 ): Promise<Result<Evidence, JsonValue>> => {
   if (delivery !== undefined && tool !== "inspect_managed_members")
@@ -237,6 +271,7 @@ export const runProviderAnalysis = async (
       snapshotPath: undefined,
       signal: operationSignal,
       evidenceParameters,
+      ...targetSelection(selection ?? {}),
       ...(ARTIFACT_ANALYSIS_OPERATION_SET.has(tool)
         ? { createSession: dependencies.createArtifactBinarySession }
         : NATIVE_INSPECTION_OPERATIONS.has(tool)
@@ -315,6 +350,7 @@ const runAnalysis = async (
     readonly createSession?: () => BinarySession | Promise<BinarySession>;
     readonly providerId?: AnalysisProviderSelector;
     readonly loadSelection?: NativeLoadSelection;
+    readonly espFlash?: EspFlashSelection;
   },
 ): Promise<Result<Evidence, JsonValue>> => {
   const { logger, signal, snapshotPath } = options;
@@ -361,9 +397,7 @@ const runAnalysis = async (
       path,
       snapshotPath,
       signal,
-      ...(options.loadSelection === undefined
-        ? {}
-        : { loadSelection: options.loadSelection }),
+      ...targetSelection(options),
     });
     if (!prepared.ok) return err(prepared.error);
     const { snapshot } = prepared.value;
@@ -372,9 +406,7 @@ const runAnalysis = async (
       const preview = await session.previewTarget(prepared.value.target, {
         signal,
         snapshot,
-        ...(options.loadSelection === undefined
-          ? {}
-          : { loadSelection: options.loadSelection }),
+        ...targetSelection(options),
         ...(options.providerId === undefined
           ? {}
           : { providerId: options.providerId }),
@@ -413,9 +445,7 @@ const runAnalysis = async (
     }
     const openOptions = {
       signal,
-      ...(options.loadSelection === undefined
-        ? {}
-        : { loadSelection: options.loadSelection }),
+      ...targetSelection(options),
       ...(snapshot === undefined ? {} : { snapshot }),
       ...(options.providerId === undefined
         ? {}
@@ -673,6 +703,7 @@ const prepareSnapshot = async (options: {
   >;
   readonly path: string;
   readonly loadSelection?: NativeLoadSelection;
+  readonly espFlash?: EspFlashSelection;
   readonly snapshotPath: string | undefined;
   readonly signal: AbortSignal;
 }): Promise<
@@ -691,9 +722,7 @@ const prepareSnapshot = async (options: {
   if (!loaded.ok) return loaded;
   const target = await session.resolveTarget(path, {
     signal: options.signal,
-    ...(options.loadSelection === undefined
-      ? {}
-      : { loadSelection: options.loadSelection }),
+    ...targetSelection(options),
   });
   if (!target.ok) return target;
   if (!snapshotMatchesTarget(loaded.value.target, target.value))

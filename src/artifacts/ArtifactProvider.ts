@@ -1,3 +1,4 @@
+import type { EspFlashSelection } from "../domain/firmware/espFlashLocation.js";
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
 import { runtimeAsarHeaderAdmission } from "../config/runtimeAnalysisSettings.js";
 import { artifactTargetRefusal } from "../domain/apple/artifactTargetApplicability.js";
@@ -332,6 +333,7 @@ class ArtifactClient implements AnalysisClient {
                 : undefined,
             selectedPath: this.target.artifactSelectedPath,
             inputFormat: this.target.format,
+            espFlashSelection: espFlashSelection(this.target),
             outputRoot: parsed.output_root,
             environment: this.environment,
             asarHeaderAdmission: runtimeAsarHeaderAdmission(
@@ -542,11 +544,23 @@ class ArtifactClient implements AnalysisClient {
         this.environment,
         this.settings,
       ),
+      espFlashSelection: espFlashSelection(this.target),
       ...(options?.signal === undefined ? {} : { signal: options.signal }),
       integrity: parsed.integrity_policy,
     });
   }
 }
+
+/** Caller inputs of an explicitly selected ESP flash image, for its readers. */
+const espFlashSelection = (
+  target: BinaryTarget,
+): EspFlashSelection | undefined =>
+  target.format === "esp-flash-image" && target.espFlash.selected
+    ? {
+        flashOffset: target.espFlash.flashOffset ?? undefined,
+        partitionTableOffset: target.espFlash.partitionTableOffset ?? undefined,
+      }
+    : undefined;
 
 const isArtifactOperation = (
   operation: AnalysisOperation,

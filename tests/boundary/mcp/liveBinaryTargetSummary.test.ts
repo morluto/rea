@@ -1,5 +1,5 @@
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/client/validators/ajv";
-import { expect, it } from "vitest";
+import { expect, it, onTestFinished } from "vitest";
 
 import type { BinaryTarget } from "../../../src/domain/binaryTargetTypes.js";
 import { ZIP_PACKAGE_FORMATS } from "../../../src/domain/zipPackageFormat.js";
@@ -7,6 +7,8 @@ import { binaryTargetSummary } from "../../../src/application/binary/BinaryTarge
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { toolOutputSchemaWithMetadata } from "../../../src/contracts/toolSchemaMetadata.js";
 import { sessionOutputSchemas } from "../../../src/contracts/toolOutputSchemaGroups.js";
+import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
+import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { rawLoadAtEntry } from "../../../src/domain/rawBinary.fixture.js";
 
 const identity = { path: "/fixture/target", sha256: "a".repeat(64) };
@@ -213,15 +215,7 @@ it.each(["draft-2020-12", "draft-07"] as const)(
   },
 );
 
-const sessionFacts = {
-  open: true,
-  cleanup_pending: false,
-  capabilities: [],
-  analysis_run: null,
-  analysis_activity: { status: "not_observed", providers: [] },
-  provider_operation_health: null,
-  analysis_provider_binding: null,
-  analysis_provider_candidates: [],
+const protocolFacts = {
   client_features: {
     elicitation_form: false,
     elicitation_url: false,
@@ -274,7 +268,19 @@ const sessionFacts = {
 
 it.each(["draft-2020-12", "draft-07"] as const)(
   "shares live classification admission with binary_session in %s",
-  (target) => {
+  async (target) => {
+    const session = createTestBinarySession(() => {
+      throw new Error("Status schema checks must not acquire a provider");
+    });
+    onTestFinished(async () => {
+      const disposed = await session.dispose();
+      if (!disposed.ok) throw disposed.error;
+    });
+    const sessionFacts = {
+      ...jsonObjectSchema.parse(await session.status()),
+      ...protocolFacts,
+      open: true,
+    };
     const advertised = toolOutputSchemaWithMetadata(
       toolContract("binary_session"),
     )["~standard"].jsonSchema.output({ target });

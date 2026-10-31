@@ -224,6 +224,9 @@ cliTest.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
       await chmod(locked, 0o700);
     }
     expect(await readFile(target, "utf8")).toBe(original);
-    expect(await readdir(home)).toEqual([".claude.json", "owned-denied"]);
+    expect((await readdir(home)).sort()).toEqual([
+      ".claude.json",
+      "owned-denied",
+    ]);
   },
 );

@@ -3,7 +3,6 @@ import { access, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { expect, it, onTestFinished } from "vitest";
 
@@ -16,8 +15,10 @@ import { readWithoutFifoWriter } from "../../fixtures/fifoInput.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { scriptScenarioFixture } from "../../fixtures/webScriptCapture.js";
+import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
-import { createServer } from "../../../src/server/createServer.js";
+import { createTestMcp } from "../../support/mcp/mcpFixture.js";
+import { closeVerifierResources } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { webScriptExportResultSchema } from "../../../src/domain/webScriptExport.js";
 
@@ -41,16 +42,17 @@ it.skipIf(process.platform === "win32")(
       recordEvidence: undefined,
       artifactResources: artifactResources,
     });
-    const client = new Client({ name: "script-selection-test", version: "1" });
-    onTestFinished(async () => {
-      await client.close();
-      await server.close();
-      await artifactResources.close();
+    const mcp = createTestMcp();
+    onTestFinished(() =>
+      closeVerifierResources([
+        () => mcp.close(),
+        () => artifactResources.close(),
+      ]),
+    );
+    const client = await mcp.connect(server, {
+      name: "script-selection-test",
+      version: "1",
     });
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
 
     const outcome = await readWithoutFifoWriter(capturePath, () =>
       client.callTool({
@@ -105,16 +107,17 @@ it("refuses an existing output directory as invalid output_directory input", asy
     recordEvidence: undefined,
     artifactResources,
   });
-  const client = new Client({ name: "script-export-existing", version: "1" });
-  onTestFinished(async () => {
-    await client.close();
-    await server.close();
-    await artifactResources.close();
+  const mcp = createTestMcp();
+  onTestFinished(() =>
+    closeVerifierResources([
+      () => mcp.close(),
+      () => artifactResources.close(),
+    ]),
+  );
+  const client = await mcp.connect(server, {
+    name: "script-export-existing",
+    version: "1",
   });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
 
   const result = await client.callTool({
     name: "export_web_scripts",
@@ -157,17 +160,10 @@ it("publishes script bytes and retains the returned Evidence without starting an
   const session = createTestBinarySession(() => {
     throw new Error("local script export must not start an analysis provider");
   });
-  const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "script-export-retention", version: "1" });
-  onTestFinished(async () => {
-    await client.close();
-    await server.close();
-    await session.close();
+  const { client } = await createApplicationMcpHarness({
+    session,
+    clientIdentity: { name: "script-export-retention", version: "1" },
   });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
   const response = await client.callTool({
     name: "export_web_scripts",
     arguments: { capture_path: capturePath, output_directory: outputDirectory },

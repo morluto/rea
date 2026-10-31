@@ -1,3 +1,4 @@
+import type { EspFlashSelection } from "../../domain/firmware/espFlashLocation.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import type { NativeLoadSelection } from "../../domain/rawBinary.js";
 import { artifactTargetSelectedPath } from "../../domain/binaryTargetTypes.js";
@@ -33,6 +34,8 @@ export interface BinarySessionOpenOptions {
   readonly signal?: AbortSignal;
   readonly targetKind?: BinaryTarget["kind"];
   readonly loadSelection?: NativeLoadSelection;
+  /** Inputs for format=esp-flash-image. */
+  readonly espFlash?: EspFlashSelection;
   readonly snapshot?: AnalysisSnapshot;
   /**
    * Load the snapshot inside the open's turn instead of before it, so calls
@@ -90,6 +93,7 @@ export const resolveSessionOpen = async (
     ...(options.loadSelection === undefined
       ? {}
       : { loadSelection: options.loadSelection }),
+    ...(options.espFlash === undefined ? {} : { espFlash: options.espFlash }),
     ...(options.signal === undefined ? {} : { signal: options.signal }),
   });
   if (!parsed.ok) return parsed;

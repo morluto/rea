@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { analysisStringSchema } from "../native/nativeString.js";
+import { inventoryDiscoveryCoverageSchema } from "../native/inventoryCoverage.js";
 import { jsonValueSchema } from "../jsonValue.js";
 import {
   addressedValueSchema,
@@ -54,7 +55,7 @@ export const nativeInventoryViewRowSchema = z.strictObject({
 export const nativeInventorySummarySchema = z.strictObject({
   collection: z.enum(["procedures", "strings", "names"]),
   row_count: z.number().int().nonnegative(),
-  discovery_coverage: z.literal("unknown"),
+  discovery_coverage: inventoryDiscoveryCoverageSchema,
   selectable_fields: z.array(fieldSchema),
 });
 

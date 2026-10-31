@@ -7,6 +7,7 @@ import {
   type GhidraSeedCommitment,
 } from "./GhidraAnalysisSeeds.js";
 import type { GhidraLanguageOverride } from "../config/ghidraLanguageOverride.js";
+import type { GhidraRiscvCallingConvention } from "./GhidraRiscvProfile.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { mkdir, readFile, realpath } from "node:fs/promises";
 import { basename, dirname, join, posix, win32 } from "node:path";
@@ -261,6 +262,8 @@ export interface GhidraHeadlessLauncherOptions {
   readonly pspExtension?: GhidraPspExtension;
   /** Remap typed float storage for the soft-float o32 ABI after analysis. */
   readonly mipsSoftFloat?: true;
+  /** Apply this committed RISC-V calling-convention policy after analysis. */
+  readonly riscvCallingConvention?: GhidraRiscvCallingConvention;
   /** Spawn seam for provider-boundary lifecycle tests. */
   readonly spawnProcess?: typeof spawnOwnedProviderProcess;
   /** LaunchSupport probe seam for Java-free launcher fixtures. */
@@ -431,6 +434,11 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
         ...(this.options.mipsSoftFloat === undefined
           ? {}
           : { mipsSoftFloat: this.options.mipsSoftFloat }),
+        ...(this.options.riscvCallingConvention === undefined
+          ? {}
+          : {
+              riscvCallingConvention: this.options.riscvCallingConvention,
+            }),
         projectRoot: paths.projectRoot,
         targetPath: session.targetPath,
         ...(existingProject === undefined ? {} : { existingProject }),
@@ -783,6 +791,7 @@ export interface GhidraHeadlessArgumentOptions {
   readonly scriptLogPath: string;
   readonly psp?: true;
   readonly mipsSoftFloat?: true;
+  readonly riscvCallingConvention?: GhidraRiscvCallingConvention;
   readonly dosMz?: true;
   readonly dosCom?: true;
   readonly rawBinary?: GhidraRawBinaryImport;
@@ -808,6 +817,7 @@ type ExistingProjectOptions = Pick<
   | "rawBinary"
   | "languageOverride"
   | "mipsSoftFloat"
+  | "riscvCallingConvention"
   | "seedPath"
   | "disabledAnalyzers"
 > & { readonly analysisSeeds?: GhidraSeedCommitment };
@@ -836,6 +846,10 @@ const validateExistingProjectOptions = (
       throw new GhidraAdmissionError("existing_project_language_override");
     if (options.mipsSoftFloat === true)
       throw new GhidraAdmissionError("existing_project_mips_soft_float");
+    if (options.riscvCallingConvention !== undefined)
+      throw new GhidraAdmissionError(
+        "existing_project_riscv_calling_convention",
+      );
     if (
       options.seedPath !== undefined ||
       options.analysisSeeds !== undefined ||
@@ -865,6 +879,7 @@ export const ghidraHeadlessArguments = (
       options.dosMz === true ||
       options.dosCom === true ||
       options.mipsSoftFloat === true ||
+      options.riscvCallingConvention !== undefined ||
       rawBinary !== undefined ||
       override !== undefined)
   )
@@ -886,6 +901,15 @@ export const ghidraHeadlessArguments = (
       rawBinary !== undefined)
   )
     throw new GhidraAdmissionError("mips_soft_float_scope");
+  if (
+    options.riscvCallingConvention !== undefined &&
+    (options.psp === true ||
+      options.mipsSoftFloat === true ||
+      options.dosMz === true ||
+      options.dosCom === true ||
+      rawBinary !== undefined)
+  )
+    throw new GhidraAdmissionError("riscv_calling_convention_scope");
   if (
     override !== undefined &&
     (options.dosMz === true || options.dosCom === true)
@@ -1043,6 +1067,16 @@ export const ghidraHeadlessArguments = (
           scriptPath.join(bridgeDirectory, GHIDRA_BRIDGE_SOURCES.mipsSoftFloat),
         ]
       : []),
+    ...(options.riscvCallingConvention === undefined
+      ? []
+      : [
+          "-postScript",
+          scriptPath.join(
+            bridgeDirectory,
+            GHIDRA_BRIDGE_SOURCES.riscvCallingConvention,
+          ),
+          options.riscvCallingConvention,
+        ]),
     "-postScript",
     // Ghidra checks the caller's cwd before scriptPath for a basename. Select
     // the packaged source explicitly so unrelated entries cannot shadow it.
