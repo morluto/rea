@@ -397,6 +397,9 @@ const agreedSection = (
   return undefined;
 };
 
+const sectionInsideFile = (section: SectionFacts, fileBytes: number): boolean =>
+  section.size <= fileBytes - section.offset;
+
 /**
  * Section headers are optional and can declare bytes the file does not hold.
  * Only the part inside the file is a table or a report location. A table that
@@ -1096,11 +1099,19 @@ const locateSymbolCount = (
     dynsym !== undefined &&
     entrySize > 0 &&
     dynsym.size % entrySize === 0 &&
-    dynsym.size <= reader.bytes.length - dynsym.offset
+    sectionInsideFile(dynsym, reader.bytes.length)
   )
     return dynsym.size / entrySize;
+  const hashInFile =
+    hash !== undefined && sectionInsideFile(hash, reader.bytes.length);
+  if (hash !== undefined && !hashInFile)
+    issues.push({
+      code: "malformed_entry",
+      location: hex(hash.offset),
+      message: ".hash section header declares bytes past the end of the file",
+    });
   const sysv =
-    hash !== undefined && hash.size >= 8
+    hash !== undefined && hashInFile && hash.size >= 8
       ? reader.u32(hash.offset + 4)
       : tags.has(DT_HASH)
         ? sysvSymbolCount(reader, mappings, tags.get(DT_HASH)!)

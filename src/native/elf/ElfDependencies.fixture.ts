@@ -101,6 +101,10 @@ export interface ElfDependencyFixtureOptions {
   readonly duplicateSoname?: boolean;
   /** Declares this section's size past the end of the file. */
   readonly oversizedSection?: string;
+  /** Places this section's file offset past the end of the file. */
+  readonly displacedSection?: string;
+  /** Keeps the .hash section but leaves DT_HASH out of the dynamic table. */
+  readonly omitHashTag?: boolean;
 }
 
 const defaultNeeded = (): string[] => [
@@ -365,6 +369,8 @@ interface FixtureConfig {
   readonly truncateDynstr: boolean;
   readonly duplicateSoname: boolean;
   readonly oversizedSection: string | undefined;
+  readonly displacedSection: string | undefined;
+  readonly omitHashTag: boolean;
 }
 
 interface DependencyTables {
@@ -452,6 +458,8 @@ const fixtureConfig = (options: ElfDependencyFixtureOptions): FixtureConfig => {
     truncateDynstr: options.truncateDynstr === true,
     duplicateSoname: options.duplicateSoname === true,
     oversizedSection: options.oversizedSection,
+    displacedSection: options.displacedSection,
+    omitHashTag: options.omitHashTag === true,
   };
 };
 
@@ -576,7 +584,8 @@ const buildDynamicTags = (
   if (config.rpath !== null) addTag(15, tables.rpathOffset);
   if (config.runpath !== null) addTag(29, tables.runpathOffset);
   if (config.flags !== null) addTag(30, config.flags);
-  if (tables.hash.length !== 0) addTag(4, offsets.hashOff);
+  if (tables.hash.length !== 0 && !config.omitHashTag)
+    addTag(4, offsets.hashOff);
   if (tables.gnuHashBytes.length !== 0) addTag(0x6ffffef5, offsets.gnuHashOff);
   addTag(5, offsets.dynstrOff);
   addTag(6, offsets.dynsymOff);
@@ -877,7 +886,7 @@ const writeDependencySections = (
       row[1],
       row[2],
       row[3],
-      row[4],
+      row[0] === config.displacedSection ? layout.fileSize * 2 : row[4],
       // A multiple of both symbol entry sizes, so the size stays a plausible count.
       row[0] === config.oversizedSection ? layout.fileSize * 48 : row[5],
       row[6],

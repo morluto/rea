@@ -471,6 +471,49 @@ it.each([".dynsym", ".gnu.version"])(
   },
 );
 
+it("keeps readable facts when the .hash fallback section is past the file end", () => {
+  const intact = parse(elfDependencyFixture());
+  const report = parse(
+    elfDependencyFixture({
+      oversizedSection: ".dynsym",
+      displacedSection: ".hash",
+      omitHashTag: true,
+    }),
+  );
+  expect(report.coverage.status).toBe("partial");
+  expect(report.needed).toEqual(intact.needed);
+  expect(report.version_requirements.files).toEqual(
+    intact.version_requirements.files,
+  );
+  expect(report.issues).toContainEqual(
+    expect.objectContaining({
+      code: "malformed_entry",
+      message: expect.stringContaining(".hash section header"),
+    }),
+  );
+  expect(report.issues).toContainEqual(
+    expect.objectContaining({
+      code: "table_unavailable",
+      message: expect.stringContaining("Dynamic symbol count"),
+    }),
+  );
+});
+
+it("takes the symbol count from GNU hash when .hash is past the file end", () => {
+  const report = parse(
+    elfDependencyFixture({
+      oversizedSection: ".dynsym",
+      displacedSection: ".hash",
+      omitHashTag: true,
+      gnuHash: true,
+    }),
+  );
+  expect(report.coverage.status).toBe("partial");
+  expect(report.imports).toEqual(
+    parse(elfDependencyFixture({ gnuHash: true })).imports,
+  );
+});
+
 it("keeps readable names and marks truncated dynstr coverage partial", () => {
   const report = parse(elfDependencyFixture({ truncateDynstr: true }));
   expect(report.coverage.status).toBe("partial");
