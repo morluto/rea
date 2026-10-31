@@ -97,9 +97,13 @@ it does not invent an empty string or body bytes.
 The observed Playwright 1.58.2 profile can report a bracketed IPv6
 `serverIPAddress`, forwarded from Chromium's `remoteIPAddress` through
 [Playwright's HAR tracer](https://github.com/microsoft/playwright/blob/v1.58.2/packages/playwright-core/src/server/har/harTracer.ts).
+Chromium DevTools exports (declared as `WebInspector` `537.36`, the frozen
+AppleWebKit version in Chromium's user agent) report the same bracketed form:
+[its HAR writer](https://github.com/ChromeDevTools/devtools-frontend/blob/63739e8ec45ca01b9e4be9b8b05946acdadd8f1f/front_end/models/har/Log.ts)
+strips the port but not the brackets.
 REA preserves the original spelling in reported Evidence and removes brackets
-only from its validation copy, only for this declared producer and a valid IPv6
-literal. Invalid addresses, bracketed IPv4, ports and zone identifiers remain
+only from its validation copy, only for these declared producers and a valid
+IPv6 literal. Invalid addresses, bracketed IPv4, ports and zone identifiers remain
 validation failures. Producer declarations do not authenticate origin.
 
 Native mitmproxy decoding requires a caller-supplied **mitmdump 12.2.3 on
