@@ -133,7 +133,9 @@ export const discoverSetupState = async (input: {
     installHopper,
     hopperInstall,
     clients,
-    detectedClientIds: [...detectedIds],
+    detectedClientIds: detectedClients
+      .filter(({ format }) => format !== "unsupported")
+      .map(({ name }) => name),
     defaultClientIds,
     clientStates,
     ...(linuxDistribution?.packageFamily === undefined
