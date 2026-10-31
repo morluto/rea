@@ -745,6 +745,7 @@ Import an older source tree to compare with the current artifact:
 ```bash
 rea import-reference-source /absolute/path/to/source
 rea import-reference-source /absolute/path/to/source --detail summary --outline-depth 2 --json
+rea import-reference-source /absolute/path/to/source --exclude-paths '["vendor/","*.generated","!keep.generated"]'
 ```
 
 The default (`--detail full`) returns the complete `HistoricalSourceGraph`.
