@@ -619,10 +619,11 @@ export class ApktoolProvider {
           `manifest is truncated at ${String(MANIFEST_MAX_BYTES)} bytes`,
         );
       }
-      const packageName =
+      const manifestPackage =
         manifest === null || manifestRead.truncated
           ? null
           : parseManifestPackage(manifest);
+      const packageName = manifestPackage ?? metadata.packageName;
       completedDecode.metadata.package_name = packageName;
       stoppedAt = "inventory";
       const inventory = await countDecodedFiles(

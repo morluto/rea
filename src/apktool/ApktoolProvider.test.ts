@@ -482,6 +482,47 @@ it("decodes resources with target identity, metadata, and strings", async () => 
   expect(result.coverage).toBe("complete");
 });
 
+it("falls back to apktool.yml packageInfo when manifest omits package attribute", async () => {
+  const yml = [
+    "!!brut.androlib.meta.MetaInfo",
+    "packageInfo:",
+    "  cur_package: org.rea.modern",
+    "sdkInfo:",
+    "  minSdkVersion: '24'",
+    "  targetSdkVersion: '34'",
+    "versionInfo:",
+    "  versionCode: '7'",
+    "  versionName: 1.2.3",
+    "",
+  ].join("\n");
+  const manifestWithoutPackage = [
+    '<?xml version="1.0" encoding="utf-8" standalone="no"?>',
+    '<manifest xmlns:android="http://schemas.android.com/apk/res/android">',
+    '    <application android:label="@string/app_name" android:debuggable="true"/>',
+    "</manifest>",
+    "",
+  ].join("\n");
+  const { command, root } = await writeApktoolStub((stubRoot) =>
+    decodeStub({
+      ymlFile: join(stubRoot, "modern-apktool.yml"),
+      manifestFile: join(stubRoot, "modern-AndroidManifest.xml"),
+    })(stubRoot),
+  );
+  await writeFile(join(root, "modern-apktool.yml"), yml);
+  await writeFile(
+    join(root, "modern-AndroidManifest.xml"),
+    manifestWithoutPackage,
+  );
+  const apk = await apkFixture(root);
+  const result = await evidenceResult(providerOver(command), {
+    operation: "decode_android_resources",
+    input: { path: apk.path, include_strings: false },
+  });
+  expect(result.metadata).toMatchObject({
+    package_name: "org.rea.modern",
+  });
+});
+
 it.each([
   {
     name: "malformed UTF-8",
