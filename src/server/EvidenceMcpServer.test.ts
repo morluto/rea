@@ -355,9 +355,9 @@ describe("SDK validation error delivery", () => {
           text: "valid call",
         });
         for (const reply of replies) {
-          expect(reply.result.resultType).toBe(
-            revision === "2026-07-28" ? "complete" : undefined,
-          );
+          // The transport guarantees resultType on the wire in both eras
+          // (see #5273): the SDK only stamps it for 2026-era results.
+          expect(reply.result.resultType).toBe("complete");
           expect(
             Buffer.byteLength(JSON.stringify(reply)) + 1,
           ).toBeLessThanOrEqual(4096);

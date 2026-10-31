@@ -227,8 +227,14 @@ bundle exports stream canonical JSON into an atomically published file.
 On protocol revision `2026-07-28`, completed replies retain the SDK's
 `resultType: "complete"`, including the replacement for an oversized error.
 This marks completion of the MCP exchange; Evidence coverage, partial facts
-and unknowns retain their separate meaning. Legacy replies keep their existing
-framing.
+and unknowns retain their separate meaning. On the raw wire, the transport
+also adds `resultType: "complete"` to a `tools/call` result that carries no
+`resultType`, including a legacy (pre-2026) reply whose SDK encoding
+legitimately omits it; an existing `resultType` is never overwritten, and
+other methods are untouched. That wire addition is the only change for
+legacy replies: the 2025-era SDK client codec strips `resultType` on
+decode, so what a legacy SDK client sees — its existing framing and
+decoded result — is unchanged.
 
 `list_procedures`, `search_procedures`, `list_strings`, `search_strings` and
 `list_names` accept `detail: "summary"`. Complete inline delivery remains the
