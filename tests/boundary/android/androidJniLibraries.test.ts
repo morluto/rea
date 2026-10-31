@@ -17,8 +17,8 @@ import {
 import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
+import type { AndroidJniSelection } from "../../../src/domain/android/androidJniBindings.js";
 import {
-  type AndroidJniSelection,
   androidJniLibraryCheckpointSchema,
   type AndroidJniLibraryCheckpoint,
 } from "../../../src/domain/android/androidJniBindings.js";
@@ -310,7 +310,14 @@ it("retains the live reader after failed close and gates the next read on its cl
     expect(source.resources.hasPending).toBe(true);
     allowClose = true;
     const recovered = await read(source);
-    expect(recovered.libraries[0]?.facts).not.toBeNull();
+    expect(recovered.libraries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: LIBRARY,
+          facts: expect.objectContaining({ tables: expect.any(Array) }),
+        }),
+      ]),
+    );
     expect(open).toHaveBeenCalledTimes(2);
     expect(source.resources.hasPending).toBe(false);
     expect(first.cleanupIncomplete).toBe(false);

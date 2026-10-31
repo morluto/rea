@@ -11,11 +11,13 @@ import {
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
-import { semanticScopeId } from "./javascriptSemanticState.js";
-import type {
-  JavaScriptSemanticBindingState,
-  JavaScriptSemanticAnalysisState,
-  JavaScriptSemanticEffectTiming,
+import {
+  resolveSemanticBindingState,
+  semanticResolutionBlocked,
+  semanticScopeId,
+  type JavaScriptSemanticBindingState,
+  type JavaScriptSemanticAnalysisState,
+  type JavaScriptSemanticEffectTiming,
 } from "./javascriptSemanticState.js";
 
 interface StatementPosition {
@@ -49,6 +51,7 @@ interface ExpressionAncestry {
  */
 interface InitializerPositionCache {
   readonly direct: WeakMap<t.Node, StatementPosition | null>;
+  readonly topLevel: WeakMap<t.Node, StatementPosition | null>;
   readonly mutation: WeakMap<t.Node, StatementPosition | null>;
   readonly reference: WeakMap<t.Node, StatementPosition | null>;
   readonly read: WeakMap<t.Node, BindingReadPosition>;
@@ -73,6 +76,7 @@ const initializerPositionCache = (
   if (cached !== undefined) return cached;
   const created: InitializerPositionCache = {
     direct: new WeakMap(),
+    topLevel: new WeakMap(),
     mutation: new WeakMap(),
     reference: new WeakMap(),
     read: new WeakMap(),
@@ -120,37 +124,57 @@ const positionPrecedes = (
       left.declaratorIndex >= 0 &&
       left.declaratorIndex < right.declaratorIndex));
 
+/** Statement position of a node evaluated once by the program, outside loops and functions. */
+const computeTopLevelStatementPosition = (
+  node: t.Node | undefined,
+  parents: WeakMap<t.Node, t.Node>,
+): StatementPosition | null => {
+  let selected: StatementPosition | null = null;
+  let declarator: t.VariableDeclarator | undefined;
+  let child: t.Node | undefined;
+  while (node !== undefined) {
+    if (
+      (t.isFunction(node) &&
+        (child === undefined || !semanticComputedMethodKey(node, child))) ||
+      t.isLoop(node)
+    )
+      return null;
+    if (delayedInstanceFieldValue(node, child)) return null;
+    if (t.isVariableDeclarator(node)) declarator = node;
+    if (t.isStatement(node)) {
+      const enclosing = statementPosition(node, parents, declarator);
+      if (enclosing !== null) selected = enclosing;
+    }
+    if (t.isProgram(node)) return selected;
+    child = node;
+    node = parents.get(node);
+  }
+  return null;
+};
+
+// Effect ordering asks for the same capture and effect positions once per
+// candidate record, so a growing record set would repeat each ancestry walk.
+const topLevelStatementPosition = (
+  node: t.Node | undefined,
+  parents: WeakMap<t.Node, t.Node>,
+): StatementPosition | null => {
+  if (node === undefined) return null;
+  const cache = initializerPositionCache(parents);
+  const cached = cache.topLevel.get(node);
+  if (cached !== undefined) return cached;
+  const computed = computeTopLevelStatementPosition(node, parents);
+  cache.topLevel.set(node, computed);
+  return computed;
+};
+
 /** Order effects only in a non-repeating top-level activation. */
 export const semanticTopLevelEffectFollowsCapture = (
   capture: t.Node,
   effect: t.Node | undefined,
   parents: WeakMap<t.Node, t.Node>,
 ): boolean => {
-  const position = (node: t.Node | undefined): StatementPosition | null => {
-    let selected: StatementPosition | null = null;
-    let declarator: t.VariableDeclarator | undefined;
-    let child: t.Node | undefined;
-    while (node !== undefined) {
-      if (
-        (t.isFunction(node) &&
-          (child === undefined || !semanticComputedMethodKey(node, child))) ||
-        t.isLoop(node)
-      )
-        return null;
-      if (delayedInstanceFieldValue(node, child)) return null;
-      if (t.isVariableDeclarator(node)) declarator = node;
-      if (t.isStatement(node)) {
-        const enclosing = statementPosition(node, parents, declarator);
-        if (enclosing !== null) selected = enclosing;
-      }
-      if (t.isProgram(node)) return selected;
-      child = node;
-      node = parents.get(node);
-    }
-    return null;
-  };
-  const before = position(capture);
-  const after = position(effect);
+  const before = topLevelStatementPosition(capture, parents);
+  const after = topLevelStatementPosition(effect, parents);
   if (before === null || after === null) return false;
   if (positionPrecedes(before, after)) return true;
   if (
@@ -1207,3 +1231,100 @@ export const semanticEscapeFollowsCapture = (
     positionPrecedes(capturePosition, escapePosition)
   );
 };
+
+/** Explicit wrapper facts and program `var` redeclarations retain their lexical identity. */
+export const commonJsWrapperBindingDeclaration = (
+  node: t.Node,
+  name: string,
+  state: JavaScriptSemanticAnalysisState,
+): JavaScriptSemanticBindingState | undefined => {
+  if (
+    !["module", "exports", "require", "__dirname", "__filename"].includes(
+      name,
+    ) ||
+    !t.isIdentifier(node, { name })
+  )
+    return undefined;
+  const binding = resolveSemanticBindingState(state, node, name);
+  if (binding === undefined) return undefined;
+  const scope = state.scopesById.get(binding.scopeId);
+  if (
+    scope?.kind !== "program" ||
+    ![...binding.declarationKinds].every((kind) => kind === "var")
+  )
+    return undefined;
+  // The index owns explicit wrapper parameters, including ones with no source
+  // redeclaration. Babel's module classification does not invalidate that fact.
+  if (binding.hostOrigin === "commonjs-wrapper") return binding;
+  // Without an explicit host fact, preserve the legacy script-var inference.
+  return state.program.sourceType === "script" &&
+    binding.declarationKinds.size > 0
+    ? binding
+    : undefined;
+};
+
+/** Retained value and pattern stores share one source-ordered write boundary. */
+export const semanticBindingHasPriorValueWrite = (
+  site: t.Node,
+  binding: JavaScriptSemanticBindingState,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (binding.definitions.some(({ kind }) => kind === "function")) return true;
+  const writes = state.bindingWrites.get(binding.bindingId) ?? [];
+  const read = semanticBindingAtRead(binding, site, state.parentsByNode);
+  const retained =
+    read.status === "ordered"
+      ? new Set([
+          ...read.binding.initializers,
+          ...read.binding.referenceInitializers,
+        ])
+      : undefined;
+  const representedWrites = new Set<t.Node>();
+  const retainedWrites = new Set<t.Node>();
+  for (const source of [
+    ...binding.initializers,
+    ...binding.referenceInitializers,
+  ]) {
+    let owner: t.Node | undefined = source.node;
+    while (owner !== undefined && !writes.includes(owner))
+      owner = state.parentsByNode.get(owner);
+    if (owner !== undefined) {
+      representedWrites.add(owner);
+      if (retained === undefined || retained.has(source))
+        retainedWrites.add(owner);
+    } else if (
+      (retained === undefined || retained.has(source)) &&
+      semanticEffectTiming(site, source.node, state) !== "after"
+    )
+      return true;
+  }
+  return writes.some(
+    (write) =>
+      (!representedWrites.has(write) || retainedWrites.has(write)) &&
+      semanticEffectTiming(site, write, state) !== "after",
+  );
+};
+
+/** A program-level `var` redeclaration still denotes its untouched CJS wrapper parameter. */
+export const isUnmodifiedCommonJsWrapperBinding = (
+  node: t.Node,
+  name: string,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const binding = commonJsWrapperBindingDeclaration(node, name, state);
+  return (
+    binding !== undefined &&
+    !semanticBindingHasPriorValueWrite(node, binding, state)
+  );
+};
+
+/** Identify a global name only when no lexical or dynamic environment shadows it. */
+export const isUnshadowedGlobal = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  name: string,
+): boolean =>
+  t.isIdentifier(node, { name }) &&
+  (resolveSemanticBindingState(state, node, name) === undefined
+    ? !semanticResolutionBlocked(state, node, name)
+    : isUnmodifiedCommonJsWrapperBinding(node, name, state));

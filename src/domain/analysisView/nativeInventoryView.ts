@@ -1,18 +1,19 @@
 import { z } from "zod";
 import { analysisStringSchema } from "../native/nativeString.js";
+import { inventoryDiscoveryCoverageSchema } from "../native/inventoryCoverage.js";
 import { jsonValueSchema } from "../jsonValue.js";
 import {
   addressedValueSchema,
   isNativeInventoryOperation,
   nativeInventoryRowsSchemas,
 } from "../native/nativeInventory.js";
-import { err, ok, type Result } from "../result.js";
-import type { AnalysisError } from "../analysisErrorBase.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import { err, ok } from "../result.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import {
+  assertOwnedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
@@ -54,7 +55,7 @@ export const nativeInventoryViewRowSchema = z.strictObject({
 export const nativeInventorySummarySchema = z.strictObject({
   collection: z.enum(["procedures", "strings", "names"]),
   row_count: z.number().int().nonnegative(),
-  discovery_coverage: z.literal("unknown"),
+  discovery_coverage: inventoryDiscoveryCoverageSchema,
   selectable_fields: z.array(fieldSchema),
 });
 
@@ -68,8 +69,8 @@ const readStrings = createAnalysisViewResultReader(
 /** Project already completed provider observations without another provider read or sort. */
 export const projectNativeInventoryView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
+  view: AdmittedView,
+) => {
   if (
     !isNativeInventoryOperation(parent.operation) ||
     (view.kind !== "summary" && view.kind !== "native-inventory")
@@ -84,6 +85,9 @@ export const projectNativeInventoryView = (
         },
       ]),
     );
+  assertOwnedView<
+    SummaryAnalysisView | z.output<typeof nativeInventoryViewRequestSchema>
+  >(view, "summary", "native-inventory");
   const strings =
     parent.operation === "list_strings" ||
     parent.operation === "search_strings";
@@ -113,16 +117,16 @@ export const projectNativeInventoryView = (
   if (view.kind === "summary")
     return ok({
       ...shared,
-      kind: "summary",
+      kind: "summary" as const,
       view,
       summary: {
         collection: strings
-          ? "strings"
+          ? ("strings" as const)
           : parent.operation === "list_names"
-            ? "names"
-            : "procedures",
+            ? ("names" as const)
+            : ("procedures" as const),
         row_count: rows.length,
-        discovery_coverage: "unknown",
+        discovery_coverage: "unknown" as const,
         selectable_fields: fieldSchema.options,
       },
       coverage: completeWithinViewCoverage(rows.length, rows.length),
@@ -137,7 +141,7 @@ export const projectNativeInventoryView = (
   const selected = rows.slice(view.offset, view.offset + view.limit);
   return ok({
     ...shared,
-    kind: "native-inventory",
+    kind: "native-inventory" as const,
     view,
     rows: selected.map((record, index) => ({
       source_index: view.offset + index,

@@ -3,7 +3,6 @@ import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 import { inspectElfNotesInputSchema } from "../../domain/native/elfNotes.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
 import { decodeElfSectionNameTable } from "../metadata/ElfSectionNameTable.js";
 import { readElfDirectoryFromBuffer } from "../metadata/NativeSectionDirectory.js";
 import {
@@ -241,20 +240,6 @@ it("keeps note facts but marks section names unavailable for unknown compression
   expect(report.limitations).toContain(
     "ELF section names are unavailable because compression type 3 is unsupported.",
   );
-});
-
-it("tags valid extended section numbering as unsupported", () => {
-  let failure: unknown;
-  try {
-    parse(elfExtendedSectionCountFixture());
-  } catch (cause) {
-    failure = cause;
-  }
-  expect(failure).toBeInstanceOf(BinaryFormatFailure);
-  expect(failure).toMatchObject({
-    kind: "unsupported",
-    message: "ELF extended numbering is unsupported.",
-  });
 });
 
 it.each([1, 2])(

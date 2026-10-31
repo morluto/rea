@@ -1,6 +1,7 @@
 import { isDeepStrictEqual, promisify } from "node:util";
 import { resolve } from "node:path";
-import { pathToFileURL, fileURLToPath } from "node:url";
+import { pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { execFile } from "node:child_process";
 
 export const verifyPacketPage = (first, next, oracle) => {

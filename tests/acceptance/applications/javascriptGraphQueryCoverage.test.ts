@@ -55,8 +55,46 @@ cliTest(
         parseEvidence(traced.structuredContent).normalized_result,
       );
       expect(trace.summary.total_seed_matches).toBeGreaterThan(0);
-      if (seed.kind === "property")
+      expect(trace.seed).toEqual(seed);
+      expect(trace.seed_node_ids).toHaveLength(
+        trace.summary.total_seed_matches,
+      );
+      const seedNodes = trace.seed_node_ids.map((id) =>
+        trace.nodes.find(({ node_id }) => node_id === id),
+      );
+      if (seed.kind === "event") {
+        expect(seedNodes).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              kind: "event",
+              properties: expect.objectContaining({ event_name: "" }),
+            }),
+            expect.objectContaining({
+              kind: "listener",
+              properties: expect.objectContaining({ event_name: "" }),
+            }),
+          ]),
+        );
+      } else {
         expect(trace.summary.relevant_unknowns).toBeGreaterThan(0);
+        expect(seedNodes).toContainEqual(
+          expect.objectContaining({
+            kind: "expression",
+            properties: expect.objectContaining({
+              property_path: ["speed"],
+              property_slot_resolution: "unresolved",
+            }),
+          }),
+        );
+        const seedUnknown = trace.unknowns.find(
+          ({ node_id }) =>
+            node_id !== null && trace.seed_node_ids.includes(node_id),
+        );
+        expect(seedUnknown).toMatchObject({
+          family: "object-flow",
+          reason: "ambiguous-target",
+        });
+      }
     }
   },
 );

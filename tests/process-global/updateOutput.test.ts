@@ -185,14 +185,13 @@ it("reports a stream failure below the output budget as its actual cause", async
   expect(result).toMatchObject({
     ok: false,
     error: {
-      detail: expect.stringContaining(
-        "stdout stream failed: controlled stdout failure",
-      ),
+      kind: "execution",
+      detail: expect.stringContaining("controlled stdout failure"),
     },
   });
   if (!result.ok)
     expect(result.error.detail).not.toContain(
-      "complete-output retention budget",
+      String(UPDATE_COMMAND_OUTPUT_BYTES),
     );
 });
 

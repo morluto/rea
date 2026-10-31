@@ -4,11 +4,12 @@ import { pcapEvidenceSchemas } from "../pcap/pcapAnalysis.js";
 import { parseAnalysisViewResult } from "./analysisViewParent.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { err, ok, type Result } from "../result.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import {
+  ownedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
 import {
   completeWithinViewCoverage,
   pageViewCoverage,
@@ -253,9 +254,12 @@ const selectRows = (
 /** Historical packet facts are paged without reopening the source or rerunning Wireshark. */
 export const projectPcapCaptureView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
-  if (view.kind !== "summary" && view.kind !== "pcap")
+  admitted: AdmittedView,
+) => {
+  const view = ownedView<
+    SummaryAnalysisView | z.output<typeof pcapViewRequestSchema>
+  >(admitted, "summary", "pcap");
+  if (view === undefined)
     return err(
       analysisViewInputError([
         {
@@ -284,7 +288,7 @@ export const projectPcapCaptureView = (
   };
   if (view.kind === "summary")
     return ok({
-      kind: "summary",
+      kind: "summary" as const,
       view,
       ...shared,
       summary: summarize(capture),
@@ -303,14 +307,15 @@ export const projectPcapCaptureView = (
     );
     if (!text.ok) return text;
     return ok({
-      kind: "pcap",
+      kind: "pcap" as const,
       view,
       ...shared,
       source_coverage: capture.coverage,
       page: {
-        facet: "diagnostics",
+        facet: "diagnostics" as const,
         text: text.value.item.text,
-        status: value === undefined ? "unknown" : "retained",
+        status:
+          value === undefined ? ("unknown" as const) : ("retained" as const),
       },
       coverage: text.value.coverage,
       unknowns:
@@ -325,7 +330,7 @@ export const projectPcapCaptureView = (
   const selected = selectRows(capture, view);
   return selected.ok
     ? ok({
-        kind: "pcap",
+        kind: "pcap" as const,
         view,
         ...shared,
         source_coverage: capture.coverage,
