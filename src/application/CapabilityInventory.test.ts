@@ -776,6 +776,23 @@ describe("trace_feature requirements", () => {
       reason: null,
     }));
 
+  it("remains available when owner lookup is unavailable", () => {
+    expect(
+      entry(
+        "trace_feature",
+        status({
+          open: true,
+          kind: "executable",
+          capabilities: capabilities([
+            "search_strings",
+            "search_procedures",
+            "xrefs",
+          ]),
+        }),
+      ),
+    ).toMatchObject({ available: true, reason: "available" });
+  });
+
   it("needs the search operations the workflow actually calls", () => {
     expect(
       entry(

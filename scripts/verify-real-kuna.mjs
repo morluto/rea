@@ -115,7 +115,9 @@ __attribute__((noinline)) int rea_classify(int c) {
 }
 int main(int argc, char **argv) {
   if (argc < 2) return 2;
-  printf("%u %d\n", rea_checksum((const unsigned char *)argv[1], strlen(argv[1])),
+  size_t length = strlen(argv[1]);
+  printf("%u %u %d\n", rea_checksum((const unsigned char *)argv[1], length),
+         rea_checksum((const unsigned char *)argv[1], length ? length - 1 : 0),
          rea_classify(argv[1][0]));
   return 0;
 }
@@ -282,8 +284,12 @@ const quality = (text) => ({
 const verifyKuna = async (
   path,
   functions,
-  expectedCaller,
-  expectedStrings = [],
+  {
+    expectedCaller,
+    expectedStrings = [],
+    verifyNamedTrace = false,
+    minimumTraceReferences = {},
+  } = {},
 ) => {
   const sha256 = createHash("sha256")
     .update(await readFile(path))
@@ -320,6 +326,8 @@ const verifyKuna = async (
         name,
         address,
         expectedCaller,
+        verifyNamedTrace,
+        minimumTraceReferences: minimumTraceReferences[name],
         nativeIncoming: (targetAddress) =>
           nativeKunaIncomingSites({
             executable: kuna,
@@ -549,10 +557,12 @@ try {
   for (const binary of [built, stripped])
     results.push({
       binary: binary.slice(workspace.length + 1),
-      kuna: await verifyKuna(binary, [...fixtureFunctions], fixtureMain, [
-        "＿φ( °-°)/ REA unicode marker",
-        "REA wide marker",
-      ]),
+      kuna: await verifyKuna(binary, [...fixtureFunctions], {
+        expectedCaller: fixtureMain,
+        expectedStrings: ["＿φ( °-°)/ REA unicode marker", "REA wide marker"],
+        verifyNamedTrace: binary === built,
+        minimumTraceReferences: { rea_checksum: 2 },
+      }),
     });
 
   // Caller-built matrix.

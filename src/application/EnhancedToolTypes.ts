@@ -3,7 +3,7 @@ import type { z } from "zod";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import type { ContainingProcedureResolution } from "../domain/native/nativeObservation.js";
+import type { TraceContainingProcedure } from "../domain/native/nativeObservation.js";
 import { err, type Result } from "../domain/result.js";
 import {
   enhancedInputSchemas,
@@ -14,7 +14,7 @@ export type EnhancedResult = Promise<Result<JsonValue, AnalysisError>>;
 export type TraceReference = {
   readonly target_address: string;
   readonly source_address: string;
-  readonly containing_procedure: ContainingProcedureResolution;
+  readonly containing_procedure: TraceContainingProcedure;
 };
 
 /** One enhanced call whose input was parsed at its owning adapter boundary. */
