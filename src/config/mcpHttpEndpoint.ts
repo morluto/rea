@@ -25,7 +25,8 @@ export const mcpHttpPortSchema = z
   .transform(Number)
   .pipe(mcpHttpListenerPortSchema);
 
-const mcpHttpHostSchema = z.string().trim().min(1);
+/** Non-empty listener host text, shared by the `--host` flag and `MCP_HOST`. */
+export const mcpHttpHostSchema = z.string().trim().min(1);
 
 export const MCP_HTTP_PORT_CONSTRAINT =
   "MCP_PORT must be a decimal integer between 0 and 65535.";
