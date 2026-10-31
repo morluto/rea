@@ -205,7 +205,9 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
             return true;
           });
         if (!recovered) throw cause;
-        process.exitCode = stdoutClosed ? SIGPIPE_EXIT_STATUS : 1;
+        // A streamed TOON result keeps the command's own exit status.
+        if (stdoutClosed) process.exitCode = SIGPIPE_EXIT_STATUS;
+        else if (!resultOutput?.recoveredByStreaming) process.exitCode = 1;
       }
       if (!wroteOutput && !resultOutput?.handled)
         writeStdout(renderEmptyFilteredCliOutput(outputOptions) ?? "");

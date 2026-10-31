@@ -1,6 +1,7 @@
 import { constants } from "node:buffer";
 import type { Writable } from "node:stream";
 
+import { encodeLines } from "@toon-format/toon";
 import { Filter } from "incur";
 import { estimateTokenCount } from "tokenx";
 
@@ -18,6 +19,7 @@ import {
   AnalysisInputError,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
+import { bufferedJsonParts } from "../domain/jsonSerialization.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { sliceTextByTokenWindow } from "./tokenWindow.js";
 import {
@@ -78,6 +80,8 @@ export interface CliResultOutput {
   write(value: unknown, metadata: CliResultOutputMetadata): Promise<boolean>;
   /** Recover only before any delegated stdout has been written. */
   recoverFormattingFailure(cause: unknown): Promise<boolean>;
+  /** Recovery wrote the complete TOON result instead of a capacity failure. */
+  readonly recoveredByStreaming: boolean;
 }
 
 /** Install formatting once, after registration, for every ordinary CLI result. */
@@ -168,8 +172,11 @@ export const createCliResultOutput = (
         readonly originalFailure: ReturnType<
           typeof cliOperationFailureIdentity
         >;
+        /** The TOON document recovery may stream; undefined when ineligible. */
+        toonDocument?: object;
       }
     | undefined;
+  let recoveredByStreaming = false;
   const recoverFormattingFailure = async (cause: unknown): Promise<boolean> => {
     // A rejected command never reaches write(). Destination failures retain
     // handled ownership. Only a completed, unwritten result can be replaced.
@@ -180,7 +187,21 @@ export const createCliResultOutput = (
       cause.message !== "Invalid string length"
     )
       return false;
-    const { originalFailure } = completed;
+    const { originalFailure, toonDocument } = completed;
+    const toon =
+      toonDocument === undefined ? undefined : startToonLines(toonDocument);
+    if (toon !== undefined) {
+      handled = true;
+      recoveredByStreaming = true;
+      try {
+        for (const part of bufferedJsonParts(toonParts(toon)))
+          await writeOutputText(destination, part);
+      } catch (writeFailure: unknown) {
+        failed = true;
+        throw writeFailure;
+      }
+      return true;
+    }
     error = projectAnalysisError(
       retainCliPublicationOnError(
         new AnalysisResourceConstraintError(
@@ -259,6 +280,9 @@ export const createCliResultOutput = (
     get error() {
       return error;
     },
+    get recoveredByStreaming() {
+      return recoveredByStreaming;
+    },
     begin(nextOptions) {
       options = nextOptions;
       format = options.format as typeof format;
@@ -266,6 +290,7 @@ export const createCliResultOutput = (
       failed = false;
       error = undefined;
       completed = undefined;
+      recoveredByStreaming = false;
       streaming = false;
       sdkDocumentControls = false;
       sdkParts.length = 0;
@@ -580,17 +605,6 @@ export const createCliResultOutput = (
       !options.tokenCount &&
       format !== "json" &&
       format !== "jsonl";
-    // Delegate other human formats to Incur. Markdown stays here so admission
-    // and emitted table text use the same safe formatter.
-    if (
-      format !== "md" &&
-      format !== "json" &&
-      format !== "jsonl" &&
-      operationFailure === undefined &&
-      !ownsFilteredOutput &&
-      !ownsSuccessfulTokenWindow
-    )
-      return false;
     if (format === "jsonl") {
       handled = true;
       try {
@@ -639,6 +653,31 @@ export const createCliResultOutput = (
           typeof filtered === "symbol"
         ? {}
         : filtered;
+    // TOON keeps its materialized formatter. If a successful result's string
+    // exceeds the runtime limit, recovery streams this document line by line
+    // instead, except for human terminal rendering and token controls.
+    // Failures keep their compact typed capacity failure.
+    if (
+      format === "toon" &&
+      operationFailure === undefined &&
+      completed.originalFailure === undefined &&
+      !options.tokenCount &&
+      !options.tokenWindow &&
+      (options.formatExplicit || !isTerminalOutput(destination)) &&
+      typeof document === "object" &&
+      document !== null
+    )
+      completed.toonDocument = document;
+    // Delegate other human formats to Incur. Markdown stays here so admission
+    // and emitted table text use the same safe formatter.
+    if (
+      format !== "md" &&
+      format !== "json" &&
+      operationFailure === undefined &&
+      !ownsFilteredOutput &&
+      !ownsSuccessfulTokenWindow
+    )
+      return false;
     if (options.tokenCount) {
       // Incur/tokenx materialize JSON. Measure its UTF-16 expansion before
       // allowing that allocation, independently of UTF-8 bytes. Other formats
@@ -796,6 +835,55 @@ export const createCliResultOutput = (
     return true;
   }
 };
+
+interface ToonStart {
+  /** Lines encoded before writing begins. */
+  readonly lines: string[];
+  /** Further lines once the document exceeds one runtime string. */
+  readonly remaining: Iterator<string> | undefined;
+}
+
+/**
+ * Encode TOON lines until the document exceeds the runtime string limit,
+ * before anything is written. Undefined when a line cannot be built by then,
+ * leaving the typed capacity failure; a line that cannot be built after
+ * streaming starts is not recoverable.
+ */
+const startToonLines = (value: object): ToonStart | undefined => {
+  const lines: string[] = [];
+  const iterator = encodeLines(value)[Symbol.iterator]();
+  let characters = -1;
+  try {
+    for (
+      let next = iterator.next();
+      next.done !== true;
+      next = iterator.next()
+    ) {
+      lines.push(next.value);
+      characters += next.value.length + 1;
+      if (characters > constants.MAX_STRING_LENGTH)
+        return { lines, remaining: iterator };
+    }
+  } catch (cause: unknown) {
+    if (cause instanceof RangeError) return undefined;
+    throw cause;
+  }
+  return { lines, remaining: undefined };
+};
+
+/** Incur's TOON document and final newline without a document-sized string. */
+function* toonParts(start: ToonStart): Generator<string> {
+  for (let index = 0; index < start.lines.length; index += 1) {
+    const line = start.lines[index] ?? "";
+    // Release each buffered line once it has been handed to the writer.
+    start.lines[index] = "";
+    yield `${line}\n`;
+  }
+  const { remaining } = start;
+  if (remaining === undefined) return;
+  for (let next = remaining.next(); next.done !== true; next = remaining.next())
+    yield `${next.value}\n`;
+}
 
 const fullFailureEnvelope = (
   failure: unknown,
