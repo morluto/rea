@@ -1338,6 +1338,121 @@ describe("Ghidra result projection", () => {
   });
 });
 
+describe("Ghidra file-offset outcome projection", () => {
+  const remoteFailure = (remoteCode: string, message: string) =>
+    provider(installationHost(), () => ({
+      start: () => Promise.resolve(ok(sessionInfo())),
+      callTool: () =>
+        Promise.resolve(
+          err(
+            new GhidraSessionError(
+              "remote",
+              message,
+              { remote_code: remoteCode },
+              { remoteCode },
+            ),
+          ),
+        ),
+      close: () => Promise.resolve(ok(null)),
+    }));
+
+  it.each([
+    [
+      "address_unmapped",
+      "unmapped",
+      "Address 0x403030 is outside every Ghidra memory block",
+    ],
+    [
+      "address_uninitialized",
+      "uninitialized",
+      "Address 0x403010 is in uninitialized Ghidra memory block .bss",
+    ],
+    [
+      "file_mapping_absent",
+      "absent",
+      "Address 0x403010 in initialized Ghidra memory block auxiliary has no authoritative mapping to the admitted target file",
+    ],
+    [
+      "file_mapping_ambiguous",
+      "ambiguous",
+      "Address 0x403010 has 2 authoritative mappings to the admitted target file",
+    ],
+    [
+      "file_offset_unrepresentable",
+      "unrepresentable",
+      "Address 0x403010 maps to an admitted target-file offset beyond the exact JSON integer range",
+    ],
+  ] as const)(
+    "reports %s as a conforming address without an exact offset",
+    async (remoteCode, outcome, message) => {
+      const client = await createElfClient(remoteFailure(remoteCode, message));
+      // A non-canonical spelling the bridge accepts survives verbatim.
+      const result = await client.execute("address_to_file_offset", {
+        address: "0X00403010",
+      });
+      if (result.ok) throw new Error("Expected a file-offset outcome");
+      const projected = projectAnalysisError(result.error);
+      expect(projected).toMatchObject({
+        code: "invalid_request",
+        category: "invalid_input",
+        retryable: false,
+        details: {
+          operation: "address_to_file_offset",
+          issues: [
+            {
+              path: ["address"],
+              reason: "invalid_value",
+              message,
+              observed: { address: "0X00403010", file_mapping: outcome },
+            },
+          ],
+          diagnostics: { remote_code: remoteCode },
+        },
+      });
+      expect(projected.message.startsWith(`${message}. `)).toBe(true);
+      expect(projected.message).not.toContain("Analysis input is invalid");
+      expect(projected).not.toHaveProperty("recovery");
+      expect(projected.remediation.action).toContain(
+        "inspect_native_load_image",
+      );
+      expect(projected.remediation.action).not.toContain("schema");
+      expect(projected.remediation.action).not.toContain("tools/list");
+      await client.close();
+    },
+  );
+
+  it.each([
+    ["address_to_file_offset", "invalid_request"],
+    ["procedure_pseudo_code", "not_found"],
+  ] as const)(
+    "keeps schema recovery for an ordinary %s %s refusal",
+    async (operation, remoteCode) => {
+      const client = await createElfClient(
+        remoteFailure(remoteCode, "Fixture bridge rejected the request"),
+      );
+      const result = await client.execute(
+        operation,
+        operation === "address_to_file_offset"
+          ? { address: "0x403010" }
+          : { procedure: "missing" },
+      );
+      if (result.ok) throw new Error("Expected an input refusal");
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: "invalid_request",
+        message:
+          "Analysis input is invalid. Check the arguments and try again.",
+        recovery: { kind: "inspect_input_contract", operation },
+        details: {
+          issues: [
+            { path: [], message: "Fixture bridge rejected the request" },
+          ],
+        },
+      });
+      await client.close();
+    },
+  );
+});
+
 describe("Ghidra decompiler failure projection", () => {
   it("reports a procedure decompiler failure without blaming the environment", async () => {
     const code = "decompile_failed";
