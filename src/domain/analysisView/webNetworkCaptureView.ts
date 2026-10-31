@@ -247,37 +247,43 @@ const ancestorsOf = (pointer: string): string[] => {
     ancestors.push(pointer.slice(0, at));
   return ancestors;
 };
-/** Add a pointer's strict ancestors, stopping at one already present (its own ancestors are too). */
-const addAncestors = (pointer: string, into: Set<string>): void => {
-  for (
-    let at = pointer.lastIndexOf("/");
-    at !== -1;
-    at = at === 0 ? -1 : pointer.lastIndexOf("/", at - 1)
-  ) {
-    const ancestor = pointer.slice(0, at);
-    if (into.has(ancestor)) return;
-    into.add(ancestor);
-  }
+/** The only coordinates a mitmproxy headline check asks about. */
+const HEADLINE_POINTERS: ReadonlySet<string> = new Set([
+  "/type",
+  ...Object.entries(MITMPROXY_HEADLINE_FIELDS).flatMap(([side, fields]) =>
+    fields.map((field) => `/${side}/${field}`),
+  ),
+]);
+const HEADLINE_CHILD_PREFIXES = [...HEADLINE_POINTERS].map(
+  (pointer) => [pointer, `${pointer}/`] as const,
+);
+/** Headline coordinates and their ancestors: the only pointers whose own facets matter. */
+const INDEXED_POINTERS: ReadonlySet<string> = new Set(
+  [...HEADLINE_POINTERS].flatMap((pointer) => [
+    pointer,
+    ...ancestorsOf(pointer),
+  ]),
+);
+/** Mark the headline coordinates a facet lies beneath, without deriving strings from its pointer. */
+const markContainers = (pointer: string, into: Set<string>): void => {
+  for (const [coordinate, prefix] of HEADLINE_CHILD_PREFIXES)
+    if (pointer.startsWith(prefix)) into.add(coordinate);
 };
-const groupByPointer = <T extends { readonly pointer: string }>(
-  facets: readonly T[],
-): Map<string, T[]> => {
-  const groups = new Map<string, T[]>();
-  for (const facet of facets) {
-    const group = groups.get(facet.pointer);
-    if (group === undefined) groups.set(facet.pointer, [facet]);
-    else group.push(facet);
-  }
-  return groups;
+/** Two entries already decide every representation check, so keep no more. */
+const keep = <T>(groups: Map<string, T[]>, pointer: string, facet: T): void => {
+  const group = groups.get(pointer);
+  if (group === undefined) groups.set(pointer, [facet]);
+  else if (group.length < 2) group.push(facet);
 };
 
-/** A record's facet coordinates, indexed once for every headline check. */
+/** A record's facets at headline coordinates and their ancestors, indexed once. */
 type FacetIndex = {
+  /** At most two facets per pointer; a second already fails every check. */
   readonly sidecars: ReadonlyMap<string, readonly NumericSidecar[]>;
   readonly bytes: ReadonlyMap<string, readonly BinaryField[]>;
   /** The producer held a number or bytes here. */
   readonly scalars: ReadonlySet<string>;
-  /** A facet lies beneath: the producer held a container here. */
+  /** Headline coordinates with a facet beneath: the producer held a container there. */
   readonly containers: ReadonlySet<string>;
   /**
    * Withheld by a value redaction or a redacted byte descriptor; either facet
@@ -287,22 +293,30 @@ type FacetIndex = {
   /** The parent of an omitted property name; it hides no sibling values. */
   readonly omittedNames: ReadonlySet<string>;
 };
+/**
+ * Facets elsewhere in the record only mark containers, so the index holds a
+ * fixed number of entries however many facets an admitted record carries.
+ */
 const indexFacets = (record: WebNetworkCaptureRecord): FacetIndex => {
+  const sidecars = new Map<string, NumericSidecar[]>();
+  const bytes = new Map<string, BinaryField[]>();
   const containers = new Set<string>();
   const withheld = new Set<string>();
   const omittedNames = new Set<string>();
-  for (const { pointer } of record.numeric_literals)
-    addAncestors(pointer, containers);
-  for (const { pointer, state } of record.binary_fields) {
-    addAncestors(pointer, containers);
-    if (state === "redacted") withheld.add(pointer);
-  }
-  for (const redaction of record.redactions) {
-    addAncestors(redaction.pointer, containers);
-    ("scope" in redaction ? omittedNames : withheld).add(redaction.pointer);
-  }
-  const sidecars = groupByPointer(record.numeric_literals);
-  const bytes = groupByPointer(record.binary_fields);
+  const indexed = (pointer: string): boolean => {
+    markContainers(pointer, containers);
+    return INDEXED_POINTERS.has(pointer);
+  };
+  for (const sidecar of record.numeric_literals)
+    if (indexed(sidecar.pointer)) keep(sidecars, sidecar.pointer, sidecar);
+  for (const field of record.binary_fields)
+    if (indexed(field.pointer)) {
+      keep(bytes, field.pointer, field);
+      if (field.state === "redacted") withheld.add(field.pointer);
+    }
+  for (const redaction of record.redactions)
+    if (indexed(redaction.pointer))
+      ("scope" in redaction ? omittedNames : withheld).add(redaction.pointer);
   return {
     sidecars,
     bytes,
