@@ -5,6 +5,10 @@ import {
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import { readPeCoffHeader } from "../domain/peCoffHeader.js";
 import {
+  nesContainerFormat,
+  parseInesLayout,
+} from "../domain/inesContainer.js";
+import {
   regularFileCancellation,
   RegularFileCleanupFailure,
   RegularFileCancelled,
@@ -22,18 +26,13 @@ import { jsonValueSchema } from "../domain/jsonValue.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { constants, type Stats } from "node:fs";
 import { createHash } from "node:crypto";
-import {
-  access,
-  lstat,
-  realpath,
-  stat,
-  type FileHandle,
-} from "node:fs/promises";
+import { access, realpath, stat, type FileHandle } from "node:fs/promises";
 import { extname } from "node:path";
 
 import { BinaryTargetError } from "../domain/configurationErrors.js";
 import {
-  sameRegularFileState,
+  assertStableRegularFileIdentity,
+  RegularFileChangedError,
   type StableRegularFileDescriptor,
 } from "../filesystem/RegularFile.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
@@ -45,7 +44,11 @@ import type {
 } from "../domain/binaryTargetTypes.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { readMipsElfMetadata } from "./MipsElfMetadata.js";
-import { validateElfDeclaredRanges } from "../domain/elfDeclaredRanges.js";
+import {
+  validateElfDeclaredRanges,
+  type ElfDeclarationRead,
+} from "../domain/elfDeclaredRanges.js";
+import { readRiscvIsaDeclaration } from "../domain/riscvIsaDeclaration.js";
 import {
   resolveAppleBundleExecutable,
   type ResolvedAppBundle,
@@ -83,6 +86,12 @@ import { hasGodotPckHeader } from "../domain/godotPckFormat.js";
 import { hasUImageMagic } from "../domain/uimageFormat.js";
 import { hasUnityFsHeader } from "../domain/unityfsFormat.js";
 import { detectHexRecordEncoding } from "../domain/firmware/hexRecords.js";
+import { hasUf2Block } from "../domain/firmware/uf2.js";
+import {
+  DFUSE_SUFFIX_BYTES,
+  hasDfuSePrefix,
+  isDfuSeFile,
+} from "../domain/firmware/dfuse.js";
 import { hasFitImagesNode } from "../domain/firmware/fitImage.js";
 import {
   locateEspFlashLayout,
@@ -451,10 +460,13 @@ const readOpenedBinaryTarget = async (
   const artifactFormat =
     targetKind === "database"
       ? undefined
-      : await detectArtifactFormat(classificationPath, source, signal);
+      : await detectArtifactFormat(classificationPath, source, signal, path);
   if (
     targetKind === "database" ||
-    (targetKind === undefined && path.toLowerCase().endsWith(".hop"))
+    (targetKind === undefined &&
+      artifactFormat !== "ines" &&
+      artifactFormat !== "plist" &&
+      path.toLowerCase().endsWith(".hop"))
   )
     return ok({
       path,
@@ -716,6 +728,7 @@ const detectArtifactFormat = async (
   path: string,
   source: StableRegularFileDescriptor,
   signal?: AbortSignal,
+  sourcePath = path,
 ): Promise<
   | Exclude<
       BinaryTarget["format"],
@@ -736,6 +749,16 @@ const detectArtifactFormat = async (
   const lower = path.toLowerCase();
   // Fill the prefix so a short host read cannot hide a signature.
   const magic = Buffer.from(await readHandleRange(handle, 0, 4096, signal));
+  try {
+    await assertStableRegularFileIdentity(handle, sourcePath, initial, {
+      symlinks: "reject",
+      ...(signal === undefined ? {} : { signal }),
+    });
+  } catch (cause: unknown) {
+    throwIfTargetResolutionCancelled(signal);
+    throw cause;
+  }
+  throwIfTargetResolutionCancelled(signal);
   if (
     magic.length >= 8 &&
     magic.subarray(0, 8).equals(Buffer.from([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0]))
@@ -745,12 +768,37 @@ const detectArtifactFormat = async (
       "WebAssembly v1 artifacts are not supported by the native opening route",
       { constraint: "wasm_requires_static_inspection" },
     );
+  if (nesContainerFormat(magic) !== undefined) {
+    const parsed = parseInesLayout(magic, initial.size);
+    throwIfTargetResolutionCancelled(signal);
+    if (!parsed.ok)
+      throw new BinaryTargetError(path, parsed.error, {
+        constraint: "file_format_rejected",
+      });
+    return "ines";
+  }
   if (hasZipSignature(magic)) return zipRootPackageFormat(lower);
   if (hasGodotPckHeader(magic)) return "godot-pck";
   if (hasUnityFsHeader(magic)) return "unityfs";
   if (hasUImageMagic(magic)) return "uimage";
   const hexRecords = detectHexRecordEncoding(magic);
   if (hexRecords !== undefined) return hexRecords;
+  if (hasUf2Block(magic)) return "uf2";
+  if (
+    hasDfuSePrefix(magic) &&
+    initial.size >= DFUSE_SUFFIX_BYTES &&
+    isDfuSeFile(
+      magic,
+      await readHandleRange(
+        handle,
+        initial.size - DFUSE_SUFFIX_BYTES,
+        DFUSE_SUFFIX_BYTES,
+        signal,
+      ),
+      initial.size,
+    )
+  )
+    return "dfuse";
   // A C3 or S3 dump begins with its bootloader, so a layout comes first.
   const flash = await locateEspFlashLayout(
     initial.size,
@@ -835,6 +883,7 @@ const isArchiveFormat = (
   isZipPackageFormat(format) ||
   [
     "asar",
+    "ines",
     "godot-pck",
     "unityfs",
     "uimage",
@@ -843,6 +892,8 @@ const isArchiveFormat = (
     "intel-hex",
     "srec",
     "esp-image",
+    "uf2",
+    "dfuse",
     "esp-flash-image",
     "fit",
   ].includes(format);
@@ -921,12 +972,21 @@ const sha256Handle = async (
       throw new BinaryTargetError(path, "target grew while being read");
   }
   throwIfTargetResolutionCancelled(signal);
-  const [opened, currentPath] = await Promise.all([handle.stat(), lstat(path)]);
-  if (
-    !sameRegularFileState(initial, opened) ||
-    !sameRegularFileState(initial, currentPath) ||
-    position !== initial.size
-  )
+  try {
+    await assertStableRegularFileIdentity(handle, path, initial, {
+      symlinks: "reject",
+      ...(signal === undefined ? {} : { signal }),
+    });
+  } catch (cause: unknown) {
+    throwIfTargetResolutionCancelled(signal);
+    if (cause instanceof RegularFileChangedError)
+      throw new BinaryTargetError(path, "target changed while being read", {
+        cause,
+      });
+    throw cause;
+  }
+  throwIfTargetResolutionCancelled(signal);
+  if (position !== initial.size)
     throw new BinaryTargetError(path, "target changed while being read");
   return hash.digest("hex");
 };
@@ -1107,8 +1167,26 @@ const readElfMetadata = async (
   const { fileSize, hostArchitecture, signal } = options;
   const parsed = parseExecutableHeader(bytes, hostArchitecture, fileSize);
   if (!parsed.ok || parsed.value.format !== "elf") return parsed;
-  const ranges = await readElfDeclaredRanges(handle, bytes, fileSize, signal);
+  const ranges = await readElfDeclarations(
+    handle,
+    bytes,
+    validateElfDeclaredRanges(bytes, fileSize),
+    signal,
+  );
   if (!ranges.ok) return ranges;
+  if (parsed.value.architecture === "riscv")
+    return ok({
+      ...parsed.value,
+      riscv: {
+        ...parsed.value.riscv,
+        isa: await readElfDeclarations(
+          handle,
+          bytes,
+          readRiscvIsaDeclaration(bytes, fileSize),
+          signal,
+        ),
+      },
+    });
   if (parsed.value.architecture !== "mips" || parsed.value.mips.elfClass !== 32)
     return parsed;
   const declarations = await readMipsElfMetadata(
@@ -1133,15 +1211,18 @@ const readElfMetadata = async (
   });
 };
 
-/** Borrow the admitted descriptor; every request is at most one 64 KiB table chunk. */
-const readElfDeclaredRanges = async (
+/**
+ * Satisfy one ELF declaration reader from the admitted descriptor. Every
+ * request is at most one 64 KiB chunk, and the reader consumes each chunk
+ * before its next request reuses the window.
+ */
+const readElfDeclarations = async <T>(
   handle: FileHandle,
   prefix: Buffer,
-  fileSize: number,
+  steps: Generator<ElfDeclarationRead, T, Buffer>,
   signal?: AbortSignal,
-): Promise<Result<null, string>> => {
-  const ranges = validateElfDeclaredRanges(prefix, fileSize);
-  let next = ranges.next();
+): Promise<T> => {
+  let next = steps.next();
   let window: Buffer | undefined;
   while (!next.done) {
     throwIfTargetResolutionCancelled(signal);
@@ -1166,7 +1247,7 @@ const readElfDeclaredRanges = async (
       }
       bytes = bytes.subarray(0, length);
     }
-    next = ranges.next(bytes);
+    next = steps.next(bytes);
   }
   return next.value;
 };

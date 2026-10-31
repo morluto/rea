@@ -1,6 +1,7 @@
 import type { SavedAnalysisSnapshotPartialObservation } from "./savedAnalysisSnapshot.js";
 import type { AnalysisSettingLimit } from "./analysisSettings.js";
 import type { JsonValue } from "./jsonValue.js";
+import type { AnalysisCleanupRetry } from "./analysisErrorRecovery.js";
 
 /** Stable tags exposed by safe analysis-error projections. */
 const ANALYSIS_ERROR_TAGS = [
@@ -92,6 +93,7 @@ export abstract class AnalysisError extends Error {
   #ownedCleanupResources: readonly string[];
   #cleanupResourceOwner: AnalysisCleanupResourceOwner | undefined;
   #cleanupCompletionOwner: AnalysisCleanupResourceOwner | undefined;
+  #cleanupRetry: AnalysisCleanupRetry | undefined;
   #secondaryFailures: AnalysisError[] = [];
   constructor(message: string, options?: AnalysisErrorOptions) {
     super(message, options);
@@ -161,6 +163,17 @@ export abstract class AnalysisError extends Error {
   /** Observe exact completion without replacing the producer's resource facts. */
   bindCleanupCompletionOwner(owner: AnalysisCleanupResourceOwner): this {
     this.#cleanupCompletionOwner = owner;
+    return this;
+  }
+
+  /** Caller retry for the live cleanup; undefined once cleanup completes. */
+  get cleanupRetry(): AnalysisCleanupRetry | undefined {
+    return this.cleanupIncomplete ? this.#cleanupRetry : undefined;
+  }
+
+  /** Bind only from the owner retaining every reported resource for this retry. */
+  bindCleanupRetry(retry: AnalysisCleanupRetry): this {
+    this.#cleanupRetry = Object.freeze({ ...retry });
     return this;
   }
 

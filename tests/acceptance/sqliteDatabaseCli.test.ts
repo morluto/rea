@@ -10,7 +10,7 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { expect, onTestFinished } from "vitest";
+import { afterAll, expect, onTestFinished } from "vitest";
 import { z } from "zod";
 import {
   expandProviderCapabilities,
@@ -30,10 +30,23 @@ import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { expectCliMcpEvidenceParity } from "../fixtures/cliMcpEvidenceParity.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { cliTest, runFileCli } from "../support/cli/cliFixture.js";
+import {
+  cliTest,
+  createSharedMcpSession,
+  runFileCli,
+} from "../support/cli/cliFixture.js";
 
 const digest = (bytes: Buffer): string =>
   createHash("sha256").update(bytes).digest("hex");
+
+// These stateless parity cases use the same default admission settings. Keep
+// their server file-owned, while lifecycle and configuration cases use fresh
+// connections with test-owned cleanup.
+const parityMcp = createSharedMcpSession(async (registerCleanup, isClosed) => {
+  if (isClosed()) throw new Error("SQLite parity MCP session is closed");
+  return (await connectLocalToolsMcp({}, registerCleanup)).call;
+});
+afterAll(() => parityMcp.close());
 
 cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
   "unions SQLite cell slices with numeric cell paths",
@@ -319,6 +332,14 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
     const { call } = await connectLocalToolsMcp();
     const inventory = await call("inspect_sqlite_database", { path });
     expect(inventory.isError).not.toBe(true);
+    const inventoryEvidence = parseEvidence(inventory.structuredContent);
+    expect(inventoryEvidence.parameters).not.toHaveProperty(
+      "worker_timeout_ms",
+    );
+    expect(
+      sqliteDatabaseSchema.parse(inventoryEvidence.normalized_result)
+        .worker_timeout_ms,
+    ).toBe(30_000);
     const schema = z
       .object({
         normalized_result: z.object({
@@ -409,13 +430,33 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
         rows: { columns: ["id", ""], returned_rows: 1 },
       },
     });
-    for (const input of [
-      { path, columns: ["id"] },
-      { path, schema_scope: "selected_table" },
-      { path, table: "selected", columns: [] },
-      { path, table: "selected", columns: ["ID"] },
-    ])
-      expect((await call("inspect_sqlite_database", input)).isError).toBe(true);
+    for (const { input, issue } of [
+      {
+        input: { path, columns: ["id"] },
+        issue: { path: ["columns"], reason: "invalid_value" },
+      },
+      {
+        input: { path, schema_scope: "selected_table" },
+        issue: { path: ["schema_scope"], reason: "invalid_value" },
+      },
+      {
+        input: { path, table: "selected", columns: [] },
+        issue: { path: ["columns"], reason: "out_of_range", minimum: 1 },
+      },
+      {
+        input: { path, table: "selected", columns: ["ID"] },
+        issue: { path: ["columns"], reason: "invalid_format" },
+      },
+    ]) {
+      const response = await call("inspect_sqlite_database", input);
+      expect(parseMcpToolError(response).error).toMatchObject({
+        code: "invalid_request",
+        details: {
+          operation: "inspect_sqlite_database",
+          issues: expect.arrayContaining([expect.objectContaining(issue)]),
+        },
+      });
+    }
     expect(Buffer.compare(await readFile(path), before)).toBe(0);
   },
 );
@@ -719,7 +760,7 @@ cliTest
         },
       },
     });
-    const { call } = await connectLocalToolsMcp();
+    const call = await parityMcp.session.call();
     const response = await call("inspect_sqlite_database", {
       path,
       table: 'odd " table',
@@ -1197,7 +1238,7 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
       writer.close();
     }
     const original = await readFile(path);
-    const { call } = await connectLocalToolsMcp();
+    const call = await parityMcp.session.call();
     for (const schema_scope of [
       "inventory",
       "selected_table",
@@ -1413,7 +1454,7 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
   "folds ASCII trigger spelling without merging non-ASCII UTF-16 table names",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-sqlite-utf16-identity-");
-    const { call } = await connectLocalToolsMcp();
+    const call = await parityMcp.session.call();
     for (const encoding of ["UTF-16le", "UTF-16be"]) {
       const path = join(root, `${encoding}.db`);
       const producer = new DatabaseSync(path);

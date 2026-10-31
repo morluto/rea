@@ -1,6 +1,8 @@
 import { access } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { expect, it } from "vitest";
+import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { cleanupOwnedProcessGroup } from "./ProcessOwnership.js";
@@ -48,22 +50,34 @@ it("waits for an admitted late handshake before closing its process and root", a
     announceInitialize();
     await held;
   });
-  await initializing;
-  await waitFor(() => runtime.supervisor !== undefined);
-  const rootPath = runtime.rootPath;
-  expect(rootPath).toBeDefined();
-  const closing = runtime.close().then(() => {
-    closeSettled = true;
-  });
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  expect(closeSettled).toBe(false);
-  expect(runtime.supervisor).toBeDefined();
-  releaseInitialize();
-  await expect(starting).rejects.toThrow("closing");
-  await closing;
-  expect(runtime.supervisor).toBeUndefined();
-  expect(runtime.rootPath).toBeUndefined();
-  await expect(access(rootPath as string)).rejects.toThrow();
+  let closing: Promise<void> | undefined;
+  await withVerifierCleanup(async () => {
+    await awaitAcknowledgement(initializing, starting, "worker initialization");
+    await waitFor(() => runtime.supervisor !== undefined);
+    const rootPath = runtime.rootPath;
+    expect(rootPath).toBeDefined();
+    closing = runtime.close().then(() => {
+      closeSettled = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(closeSettled).toBe(false);
+    expect(runtime.supervisor).toBeDefined();
+    releaseInitialize();
+    await expect(starting).rejects.toThrow("closing");
+    await closing;
+    expect(runtime.supervisor).toBeUndefined();
+    expect(runtime.rootPath).toBeUndefined();
+    await expect(access(rootPath as string)).rejects.toThrow();
+  }, [
+    releaseInitialize,
+    async () => {
+      await starting.catch(() => undefined);
+    },
+    async () => {
+      await closing;
+    },
+    () => runtime.close(),
+  ]);
 });
 
 it("resolves a bound cleanup error after shared pending-owner retry succeeds", async () => {
@@ -87,22 +101,31 @@ it("resolves a bound cleanup error after shared pending-owner retry succeeds", a
       },
     }),
   );
-  await runtime.start(startOptions());
-  const rootPath = runtime.rootPath;
-  const error = new ProviderCleanupError("owned-worker-test", [], {
-    reason: "controlled cleanup retry",
-  });
-  await expect(runtime.stop()).resolves.toMatchObject({ status: "incomplete" });
-  runtime.bindCleanupFailure(error);
-  expect(error.cleanupIncomplete).toBe(true);
-  expect(error.cleanupResources).toContain(rootPath);
+  await withVerifierCleanup(async () => {
+    await runtime.start(startOptions());
+    const rootPath = runtime.rootPath;
+    const error = new ProviderCleanupError("owned-worker-test", [], {
+      reason: "controlled cleanup retry",
+    });
+    await expect(runtime.stop()).resolves.toMatchObject({
+      status: "incomplete",
+    });
+    runtime.bindCleanupFailure(error);
+    expect(error.cleanupIncomplete).toBe(true);
+    expect(error.cleanupResources).toContain(rootPath);
 
-  await OwnedWorkerRuntime.retryPending();
+    await OwnedWorkerRuntime.retryPending();
 
-  expect(error.cleanupIncomplete).toBe(false);
-  expect(error.cleanupResources).toEqual([]);
-  expect(runtime.rootPath).toBeUndefined();
-  await expect(access(rootPath as string)).rejects.toThrow();
+    expect(error.cleanupIncomplete).toBe(false);
+    expect(error.cleanupResources).toEqual([]);
+    expect(runtime.rootPath).toBeUndefined();
+    await expect(access(rootPath as string)).rejects.toThrow();
+  }, [
+    () => {
+      failCleanup = false;
+    },
+    () => runtime.close(),
+  ]);
 });
 
 it("observes request-stream errors and resets them for a fresh child", async () => {

@@ -27,6 +27,7 @@ type FormatsWithReaders =
   | "bun-standalone"
   | "dmg"
   | "asar"
+  | "ines"
   | "godot-pck"
   | "unityfs"
   | "uimage"
@@ -37,6 +38,8 @@ type FormatsWithReaders =
   | "intel-hex"
   | "srec"
   | "esp-image"
+  | "uf2"
+  | "dfuse"
   | "esp-flash-image"
   | "fit";
 

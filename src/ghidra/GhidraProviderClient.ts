@@ -88,7 +88,12 @@ import {
   GHIDRA_PSP_LIMITATIONS,
 } from "./GhidraPspProfile.js";
 import { ghidraPspExtensionSchema } from "./GhidraPspExtension.js";
-import { ghidraRiscvLimitations } from "./GhidraRiscvProfile.js";
+import {
+  ghidraRiscvCallingConvention,
+  ghidraRiscvCallingConventionFailure,
+  ghidraRiscvCallingConventionLimitations,
+  ghidraRiscvLimitations,
+} from "./GhidraRiscvProfile.js";
 import { ghidraPePdbLimitations } from "./GhidraPeProfile.js";
 import { unverifiedGhidraBuildLimitation } from "./GhidraReleasePolicy.js";
 import { GhidraHeadlessLauncher } from "./GhidraLauncher.js";
@@ -106,6 +111,10 @@ import {
   isGhidraInputFailureCode,
   type GhidraSessionError,
 } from "./GhidraSessionError.js";
+import {
+  ghidraFileOffsetOutcome,
+  ghidraFileOffsetUnavailable,
+} from "./GhidraFileOffsetFailure.js";
 import type { GhidraSessionInfo } from "./GhidraSessionValues.js";
 import { ghidraExtensionFailure } from "./extensions/GhidraExtensionFailures.js";
 import {
@@ -192,6 +201,19 @@ export const createGhidraProviderClient = (input: {
         diagnostics: {
           reason:
             "Resolve the soft-float MIPS storage policy into the analysis profile before opening the session.",
+        },
+      }),
+    );
+  const riscvCallingConvention = ghidraRiscvCallingConvention(target);
+  if (
+    riscvCallingConvention !==
+    committedProfile.parameters.riscv_calling_convention
+  )
+    return err(
+      new ProviderAdapterError("ghidra", "open_binary", {
+        diagnostics: {
+          reason:
+            "Resolve the RISC-V calling-convention policy into the analysis profile before opening the session.",
         },
       }),
     );
@@ -349,6 +371,10 @@ export const createGhidraProviderClient = (input: {
   const softFloatLimitations: string[] = [
     ...ghidraMipsSoftFloatLimitations(softFloat),
   ];
+  // Replaced by the reported prototype outcome once the handshake is checked.
+  const riscvCallingConventionLimitations: string[] = [
+    ...ghidraRiscvCallingConventionLimitations(riscvCallingConvention),
+  ];
   // Replaced by the reported per-program outcome once the handshake is checked.
   const disabledAnalyzerLimitations: string[] = [];
   const rawLanguage =
@@ -443,6 +469,9 @@ export const createGhidraProviderClient = (input: {
         ? { pspExtension: pspExtension.data }
         : {}),
       ...(softFloat ? { mipsSoftFloat: true as const } : {}),
+      ...(riscvCallingConvention === undefined
+        ? {}
+        : { riscvCallingConvention }),
       ...(target.format === "dos-mz" ? { dosMz: true } : {}),
       ...(target.format === "dos-com" ? { dosCom: true } : {}),
       ...(rawLanguage === undefined || target.format !== "raw-binary"
@@ -542,10 +571,12 @@ export const createGhidraProviderClient = (input: {
           info,
         );
     } else {
-      const softFloatReason = ghidraMipsSoftFloatFailure(
-        softFloat,
-        info.mips_soft_float_storage,
-      );
+      const callingConventionReason =
+        ghidraMipsSoftFloatFailure(softFloat, info.mips_soft_float_storage) ??
+        ghidraRiscvCallingConventionFailure(
+          riscvCallingConvention,
+          info.riscv_calling_convention,
+        );
       extensionFailure =
         ghidraExtensionFailure(
           extensions,
@@ -558,10 +589,10 @@ export const createGhidraProviderClient = (input: {
           info.disabled_analyzers,
           operation,
         ) ??
-        (softFloatReason === undefined
+        (callingConventionReason === undefined
           ? undefined
           : new ProviderAdapterError("ghidra", operation, {
-              diagnostics: { reason: softFloatReason },
+              diagnostics: { reason: callingConventionReason },
             }));
       if (extensionFailure === undefined && info.analysis_seeds !== undefined)
         seedLimitations.splice(
@@ -576,6 +607,15 @@ export const createGhidraProviderClient = (input: {
           ...ghidraMipsSoftFloatLimitations(
             softFloat,
             info.mips_soft_float_storage,
+          ),
+        );
+      if (extensionFailure === undefined)
+        riscvCallingConventionLimitations.splice(
+          0,
+          riscvCallingConventionLimitations.length,
+          ...ghidraRiscvCallingConventionLimitations(
+            riscvCallingConvention,
+            info.riscv_calling_convention,
           ),
         );
       if (extensionFailure === undefined)
@@ -621,6 +661,7 @@ export const createGhidraProviderClient = (input: {
     ...targetLimitations,
     ...(psp ? GHIDRA_PSP_LIMITATIONS : []),
     ...softFloatLimitations,
+    ...riscvCallingConventionLimitations,
     ...ghidraExtensionLimitations(extensions),
     ...seedLimitations,
     ...disabledAnalyzerLimitations,
@@ -767,7 +808,8 @@ export const createGhidraProviderClient = (input: {
         extensions.length > 0 ||
         seeds !== undefined ||
         disabledAnalyzers !== undefined ||
-        softFloat
+        softFloat ||
+        riscvCallingConvention !== undefined
       ) {
         const started = await startSession(operation, options);
         if (!started.ok) return started;
@@ -789,6 +831,7 @@ export const createGhidraProviderClient = (input: {
             called.error,
             projection,
             lostProviderHealth(),
+            input.value,
           ),
         );
       if (operation === "inspect_native_load_image")
@@ -999,12 +1042,14 @@ const projectSessionError = (
   failure: GhidraSessionError,
   projection: GhidraProjection,
   health?: ProviderOperationHealth,
+  request?: Readonly<Record<string, JsonValue>>,
 ): AnalysisError => {
   const primary = projectPrimarySessionError(
     operation,
     failure,
     projection,
     health,
+    request,
   );
   return failure.cleanupFailure === undefined
     ? primary
@@ -1020,6 +1065,7 @@ const projectPrimarySessionError = (
   failure: GhidraSessionError,
   { limits, programName }: GhidraProjection,
   health?: ProviderOperationHealth,
+  request?: Readonly<Record<string, JsonValue>>,
 ): AnalysisError => {
   const startupTimeoutMs = limits.ghidraStartupTimeoutMs;
   const context = {
@@ -1061,6 +1107,20 @@ const projectPrimarySessionError = (
       operation,
       physicalCause.path,
       physicalCause.reason,
+      context,
+    );
+  // A well-formed address that lacks one exact source offset keeps the
+  // bridge's reason and the caller's exact spelling, not schema advice.
+  const fileOffset =
+    failure.kind === "remote"
+      ? ghidraFileOffsetOutcome(failure.remoteCode)
+      : undefined;
+  if (fileOffset !== undefined)
+    return ghidraFileOffsetUnavailable(
+      operation,
+      fileOffset,
+      failure.message,
+      typeof request?.address === "string" ? request.address : undefined,
       context,
     );
   if (

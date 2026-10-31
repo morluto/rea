@@ -13,6 +13,16 @@ const routeViewFromEvidence = (evidence: unknown) =>
     parseEvidence(evidence).normalized_result,
   );
 
+const expectAccountRoutes = (items: unknown[]) => {
+  expect(items).toHaveLength(2);
+  expect(items).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ path: "/account" }),
+      expect.objectContaining({ path: "/account/:id" }),
+    ]),
+  );
+};
+
 const interceptedSource = "export default function Photo(){return null;}";
 const independentPaths = [
   "/checks/independent",
@@ -74,7 +84,10 @@ cliTest(
       evidence_bundle: { path: string };
     };
     const view = routeViewFromEvidence(envelope.summary);
-    expect(view.items).toHaveLength(2);
+    expect(view.items).toEqual([
+      expect.objectContaining({ path: "/reports" }),
+      expect.objectContaining({ path: "/reports/aliased" }),
+    ]);
     expect(view.coverage).toMatchObject({ total: 6, next_offset: 2 });
     expect(view.sources[0]!.sha256).toMatch(/^[a-f0-9]{64}$/u);
     await rm(path, { recursive: true });
@@ -110,7 +123,13 @@ cliTest(
       ],
     });
     expect(repeated.exitCode, repeated.stdout + repeated.stderr).toBe(0);
-    expect(routeViewFromEvidence(repeated.json).items).toHaveLength(2);
+    const nextPage = routeViewFromEvidence(repeated.json);
+    expect(nextPage.parent_evidence_id).toBe(view.parent_evidence_id);
+    expect(nextPage.coverage).toMatchObject({ total: 6, next_offset: 4 });
+    expect(nextPage.items).toEqual([
+      expect.objectContaining({ path: "/reports/help" }),
+      expect.objectContaining({ path: "/reports/history" }),
+    ]);
   },
 );
 cliTest(
@@ -182,7 +201,7 @@ it.each(["full", "compact"] as const)(
     });
     expect(response.isError).not.toBe(true);
     const selected = routeViewFromEvidence(response.structuredContent);
-    expect(selected.items).toHaveLength(2);
+    expectAccountRoutes(selected.items);
     await rm(path, { recursive: true });
     const occurrences = await call("inspect_analysis_view", {
       source: {

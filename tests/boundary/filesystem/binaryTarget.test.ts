@@ -41,6 +41,12 @@ import {
 } from "../../fixtures/espImage.js";
 import { espFlashDump } from "../../../src/domain/firmware/espFlash.fixture.js";
 import { javaClassFile } from "../../fixtures/javaClassFile.js";
+import { dfuseFile } from "../../../src/domain/firmware/dfuse.fixture.js";
+import {
+  patternBytes,
+  uf2File,
+  uf2Image,
+} from "../../../src/domain/firmware/uf2.fixture.js";
 import {
   MAX_JVM_CLASS_IDENTITY_BYTES,
   JVM_CLASS_IDENTITY_LIMIT_REASON,
@@ -476,16 +482,19 @@ describe("binary target I/O: package classification", () => {
     });
   });
 
-  it("classifies a binary plist by its magic under any extension", async () => {
-    const directory = await createTestTempDirectory("rea-bplist-target-");
-    const path = join(directory, "Model.archive");
-    await writeFile(path, buildBinary({ $archiver: "NSKeyedArchiver" }));
-    const result = await parseBinaryTarget(path);
-    expect(result.ok && result.value).toMatchObject({
-      kind: "artifact",
-      format: "plist",
-    });
-  });
+  it.each(["archive", "hop"])(
+    "classifies binary plist magic under a .%s extension",
+    async (suffix) => {
+      const directory = await createTestTempDirectory("rea-bplist-target-");
+      const path = join(directory, `Model.${suffix}`);
+      await writeFile(path, buildBinary({ $archiver: "NSKeyedArchiver" }));
+      const result = await parseBinaryTarget(path);
+      expect(result.ok && result.value).toMatchObject({
+        kind: "artifact",
+        format: "plist",
+      });
+    },
+  );
 
   it("classifies XML plists by content while preserving named formats", async () => {
     const directory = await createTestTempDirectory("rea-xml-plist-target-");
@@ -553,7 +562,9 @@ describe("binary target I/O: package classification", () => {
       error: { _tag: "BinaryTargetError" },
     });
   });
+});
 
+describe("binary target I/O: image classification", () => {
   it("classifies ESP images by bytes and refuses ESP8266 v1 images", async () => {
     const directory = await createTestTempDirectory("rea-esp-target-");
     const app = join(directory, "firmware.ota");
@@ -595,6 +606,47 @@ describe("binary target I/O: package classification", () => {
       ok: false,
       error: { _tag: "BinaryTargetError" },
     });
+  });
+});
+
+describe("binary target I/O: firmware containers", () => {
+  it("classifies UF2 by block magics and DfuSe by its prefix and suffix", async () => {
+    const directory = await createTestTempDirectory("rea-firmware-target-");
+    const uf2 = uf2File(uf2Image(0xe48b_ff56, 0x1000_0000, patternBytes(300)));
+    const dfu = dfuseFile({
+      targets: [{ alternateSetting: 0, elements: [{ address: 0, data: [1] }] }],
+    });
+    const paths = {
+      uf2: join(directory, "firmware.bin"),
+      dfuse: join(directory, "firmware.img"),
+      badCrc: join(directory, "bad-crc.dfu"),
+      shortUf2: join(directory, "short.uf2"),
+      noSuffix: join(directory, "no-suffix.dfu"),
+    };
+    // The suffix CRC is checked by inventory, not by recognition.
+    const badCrc = Buffer.from(dfu);
+    badCrc.writeUInt32LE(0x1234_5678, badCrc.length - 4);
+    await Promise.all([
+      writeFile(paths.uf2, uf2),
+      writeFile(paths.dfuse, dfu),
+      writeFile(paths.badCrc, badCrc),
+      writeFile(paths.shortUf2, uf2.subarray(0, 511)),
+      writeFile(paths.noSuffix, dfu.subarray(0, dfu.length - 16)),
+    ]);
+    for (const [path, format] of [
+      [paths.uf2, "uf2"],
+      [paths.dfuse, "dfuse"],
+      [paths.badCrc, "dfuse"],
+    ] as const)
+      expect(await parseBinaryTarget(path)).toMatchObject({
+        ok: true,
+        value: { kind: "archive", format },
+      });
+    for (const path of [paths.shortUf2, paths.noSuffix])
+      expect(await parseBinaryTarget(path)).toMatchObject({
+        ok: false,
+        error: { _tag: "BinaryTargetError" },
+      });
   });
 });
 
@@ -742,6 +794,10 @@ describe("binary target I/O: filesystem and app bundle target resolution", () =>
     await writeFile(join(directory, "sample.hop"), "database");
     await writeFile(join(directory, "text"), "hello");
     const database = await parseBinaryTarget("sample.hop", { cwd: directory });
+    expect(database).toMatchObject({
+      ok: true,
+      value: { kind: "database", format: "analysis-database" },
+    });
     expect(database.ok && database.value.sha256).toBe(
       "3549b0028b75d981cdda2e573e9cb49dedc200185876df299f912b79f69dabd8",
     );

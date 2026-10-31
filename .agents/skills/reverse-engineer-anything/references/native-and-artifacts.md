@@ -1,8 +1,11 @@
 # Native, managed, and packaged artifacts
 
-For release comparisons, export `list_procedures` Evidence from each target before
-closing it. Close clears session records: import both bundles after collecting the
-two targets, or supply portable inline Evidence. `match_native_functions` pairs unique exact names and, when supplied,
+For release comparisons on one MCP connection, retain `list_procedures` Evidence
+from each target and reuse its exact IDs after target switches or `close_binary`.
+For a handoff or new process, export the complete bundle and import it there,
+including its source closure. `reset_investigation` explicitly clears retained
+records; optional `save_path` checkpoints them before clearing.
+`match_native_functions` pairs unique exact names and, when supplied,
 complete observed body bytes. Reuse optional same-context `list_names`,
 `procedure_info`, `read_bytes` and existing `analyze_function` dossiers as
 `left_observations`/`right_observations`; an MCP `analyze_function` summary
@@ -585,6 +588,16 @@ REA. Symlinks and encrypted entries are inventory facts, not extractable files.
 The result reports the materialized directory; callers do not choose the
 destination. No separate permission grant is needed.
 
+For classic iNES cartridges, `open_binary` recognizes the byte signature without
+an executable architecture. `inspect_artifact` retains header facts and each
+PRG/CHR file unit's offset, length and SHA-256; its nested inventory's
+`ines.reconstruction` verifies the actual ordered region bytes against the
+whole-file digest. Extraction includes the original header, optional trainer
+and uninterpreted trailing bytes. These file units are not mapper/CPU bank
+maps. NES 2.0, UNIF, dirty legacy headers and truncated payloads are explicitly
+refused. No emulator or 6502 analysis is performed. See the
+[iNES guide](https://github.com/morluto/rea/blob/main/docs/ines-containers.md).
+
 Native DMG traversal automatically uses a read-only mount on supported macOS
 hosts, with an owned temporary mount directory and cleanup. It needs no approval
 flag. Unsupported hosts or mount failures remain explicit limitations; do not
@@ -613,10 +626,17 @@ semantics are unsupported. `m68k` requires an even entry and decodes the 68040
 superset of the 68000 family; Amiga/Atari containers and vector-table entry
 discovery are unsupported. Windows Ghidra P0 admits raw images only for `6502`. See [raw binary guide](https://github.com/morluto/rea/blob/main/docs/raw-binary.md).
 
+Intel HEX, S-record, UF2 and DfuSe files are containers, not raw images:
+`inspect_artifact` lists address regions (UF2 per familyID, DfuSe per element
+with its alternate setting), and `extract_artifact` writes each region. Open an
+extracted region as `raw-binary` with its start address as `entry_point`. UF2
+numbering gaps leave coverage unknown; a DfuSe suffix CRC mismatch follows
+`integrity_policy`. See [UF2 and DfuSe](https://github.com/morluto/rea/blob/main/docs/uf2-dfuse.md).
+
 ### Function annotations in Ghidra
 
 Fresh-import sessions admit annotations; existing-project reuse is read-only.
-Use `annotate_native_function` for one function name and/or entry comments, with at least one explicit change. Review its annotation readback and refreshed dossier inline. Changes are atomic and session-scoped; empty comments clear them, omitted fields preserve them. Later MCP calls observe edits until close. CLI `annotate-native-function` returns the updated analysis before discarding the session. Original executable bytes are unchanged; edits invalidate immutable snapshots. Windows P0 does not admit database mutations. For naming only, `set_address_name` / `set_addresses_names` also work with Ghidra: they name function entries or data addresses (primary labels) and return compact per-address success booleans instead of a dossier.
+Use `annotate_native_function` for one function name and/or entry comments, with at least one explicit change. Review its annotation readback and refreshed dossier inline. Changes are atomic and session-scoped; empty comments clear them, omitted fields preserve them. Later MCP calls observe edits until close. CLI `annotate-native-function` returns the updated analysis before discarding the session. Original executable bytes are unchanged; edits invalidate immutable snapshots. Windows P0 does not admit database mutations. For naming only, `set_address_name` / `set_addresses_names` also work with Ghidra: they name function entries or data addresses (primary labels) and return compact per-address success booleans instead of a dossier. Ghidra rejects batch addresses that request the same name or a name another selected address holds; `raw_result.failures` gives each failure's reason.
 
 For `compare_functions`, obtain `analyze_function` Evidence before and after the
 edit while the MCP session is open; annotation Evidence is not a comparison
@@ -654,7 +674,9 @@ For exact core-module import/export differences, use `compare_wasm_interfaces`
 with two complete inspection Evidence records (or current-session retained
 references) and explicit scope. Preserve unknown types/duplicate names; static
 interface equality is not runtime compatibility. CLI accepts complete inline
-Evidence in `rea compare-wasm-interfaces input.json --json`.
+Evidence in `rea compare-wasm-interfaces input.json --json`, or exact references
+with `--evidence-bundle /absolute/path/evidence.json`. Use the complete parent
+ID when the inspection returned a summary.
 
 ## Godot PCK
 

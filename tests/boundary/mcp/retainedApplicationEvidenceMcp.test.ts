@@ -1,10 +1,9 @@
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { afterAll, afterEach, expect, it } from "vitest";
+import { afterAll, expect, it } from "vitest";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchema } from "ajv";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
-import { createServer } from "../../../src/server/createServer.js";
+import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import {
   JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
   JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE,
@@ -14,12 +13,8 @@ import { JAVASCRIPT_EXPORT_SHAPE_COMPARISON_EXAMPLE } from "../../../src/contrac
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
-const resources: Array<{ close(): Promise<unknown> }> = [];
 const schemaValidation = createMcpSchemaValidation();
 afterAll(() => schemaValidation.clear());
-afterEach(async () => {
-  for (const resource of resources.splice(0)) await resource.close();
-});
 const retained = (evidence_id: string) => ({
   kind: "retained-evidence",
   evidence_id,
@@ -32,18 +27,14 @@ async function connect(profile?: "full" | "compact") {
   const session = createTestBinarySession(() => {
     throw new Error("references must not launch a provider");
   });
-  const server = createServer(
-    { kind: "session", session },
-    { environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: profile } },
-  );
-  const client = new Client(
-    { name: "retained-evidence-test", version: "1" },
-    { jsonSchemaValidator: schemaValidation },
-  );
-  resources.push(client, server, session);
-  const [a, b] = InMemoryTransport.createLinkedPair();
-  await server.connect(b);
-  await client.connect(a);
+  const { client } = await createApplicationMcpHarness({
+    session,
+    clientIdentity: { name: "retained-evidence-test", version: "1" },
+    schemaValidator: schemaValidation,
+    serverOptions: {
+      environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: profile },
+    },
+  });
   return { client, session };
 }
 
@@ -210,7 +201,7 @@ it("runs the same trace/compare workflows with inline and retained application E
   expect(mixed.isError).not.toBe(true);
 });
 
-it("keeps references session-scoped and expires them when close_binary clears the ledger", async () => {
+it("keeps references connection-scoped through close and expires them on explicit investigation reset", async () => {
   const first = await connect();
   const second = await connect();
   expect(first.session.recordEvidence(application).ok).toBe(true);
@@ -239,6 +230,12 @@ it("keeps references session-scoped and expires them when close_binary clears th
     arguments: {},
   });
   expect(closed.isError).not.toBe(true);
+  expect((await first.client.callTool(request)).isError).not.toBe(true);
+  const reset = await first.client.callTool({
+    name: "reset_investigation",
+    arguments: {},
+  });
+  expect(reset.isError).not.toBe(true);
   expect(parseMcpToolError(await first.client.callTool(request))).toMatchObject(
     { error: { details: { reason: "missing" } } },
   );

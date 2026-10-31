@@ -6,6 +6,7 @@ import {
   immutableJsonSnapshotMember,
 } from "./immutableJson.js";
 import {
+  artifactDfuCrc32PairSchema,
   artifactIntegrityPairOf,
   artifactSha256PairSchema,
   artifactMd5PairSchema,
@@ -31,7 +32,12 @@ const artifactIdSchema = prefixedDigestSchema("art");
 
 const inspectionObservationSchema = z.strictObject({
   observation_id: prefixedDigestSchema("aio"),
-  kind: z.enum(["root-manifest", "integrity"]),
+  kind: z.enum([
+    "root-manifest",
+    "integrity",
+    "container-header",
+    "reconstruction",
+  ]),
   subject: textSchema,
   value: jsonValueSchema,
   evidence_id: evidenceIdSchema,
@@ -56,6 +62,7 @@ const inspectionContradictionBaseSchema = z.strictObject({
 const inspectionContradictionSchema = z.union([
   inspectionContradictionBaseSchema.extend(artifactSha256PairSchema.shape),
   inspectionContradictionBaseSchema.extend(artifactMd5PairSchema.shape),
+  inspectionContradictionBaseSchema.extend(artifactDfuCrc32PairSchema.shape),
 ]);
 
 const nextProbeSchema = z.strictObject({
@@ -231,6 +238,22 @@ const allObservations = (
   ...inventory.integrity_contradictions.map((value) =>
     observation("integrity", value.contradiction_id, value, evidenceId),
   ),
+  ...(inventory.ines === undefined
+    ? []
+    : [
+        observation(
+          "container-header",
+          inventory.manifest.root_artifact_id,
+          inventory.ines.header,
+          evidenceId,
+        ),
+        observation(
+          "reconstruction",
+          inventory.manifest.root_artifact_id,
+          inventory.ines.reconstruction,
+          evidenceId,
+        ),
+      ]),
 ];
 
 const observation = (
@@ -286,7 +309,10 @@ const contradictions = (
 ): ArtifactInspectionResult["contradictions"] =>
   inventory.integrity_contradictions.map((value) => {
     const semantic = {
-      statement: `Declared integrity for ${value.logical_path} contradicts observed bytes.`,
+      statement:
+        value.logical_path === "."
+          ? "The container's declared integrity contradicts its observed bytes."
+          : `Declared integrity for ${value.logical_path} contradicts observed bytes.`,
       occurrence_id: value.occurrence_id,
       ...artifactIntegrityPairOf(value),
       evidence_id: evidenceId,
@@ -319,9 +345,17 @@ const probesFor = (
           },
         ]
       : [];
-  if (format === "intel-hex" || format === "srec")
+  if (
+    format === "intel-hex" ||
+    format === "srec" ||
+    format === "uf2" ||
+    format === "dfuse"
+  )
     return inventory.occurrences.some(
-      (row) => row.format_metadata?.kind === "hex-record-region",
+      (row) =>
+        row.format_metadata?.kind === "hex-record-region" ||
+        row.format_metadata?.kind === "uf2-region" ||
+        row.format_metadata?.kind === "dfuse-element",
     )
       ? [
           {

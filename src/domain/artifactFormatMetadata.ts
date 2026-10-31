@@ -164,6 +164,86 @@ export const nodeSeaEntryMetadataSchema = z.strictObject({
 });
 
 /**
+ * UF2 facts derived from every 512-byte block. Regions hold only valid
+ * main-flash payloads; block numbering is grouped by familyID and block count.
+ */
+export const uf2MetadataSchema = z.strictObject({
+  kind: z.literal("uf2"),
+  block_count: offset,
+  trailing_bytes: offset,
+  invalid_block_count: offset,
+  flash_block_count: offset,
+  not_main_flash_block_count: offset,
+  file_container_block_count: offset,
+  md5_block_count: offset,
+  extension_tag_block_count: offset,
+  family_count: offset,
+  /** The registry revision REA's region `family_name` values come from. */
+  family_name_registry: z.string(),
+  numbering_group_count: offset,
+  missing_block_count: offset,
+  ambiguous_numbering_group_count: offset,
+  repeated_block_count: offset,
+  out_of_order_block_count: offset,
+  block_number_out_of_range_count: offset,
+  region_count: offset,
+  data_bytes: offset,
+  duplicate_bytes: offset,
+});
+export type Uf2Metadata = z.infer<typeof uf2MetadataSchema>;
+
+/** One family's address-contiguous region; file blocks are zero-based positions. */
+export const uf2RegionMetadataSchema = z.strictObject({
+  kind: z.literal("uf2-region"),
+  family_id: uint32.nullable(),
+  /** REA's label for `family_id`, from `family_name_registry`; not file content. */
+  family_name: z.string().nullable(),
+  start_address: uint32,
+  end_address: uint32,
+  length: offset,
+  block_count: offset,
+  first_file_block: offset,
+  last_file_block: offset,
+});
+
+/** DfuSe prefix and DFU suffix facts; both CRCs use the suffix's stored form. */
+export const dfuSeMetadataSchema = z.strictObject({
+  kind: z.literal("dfuse"),
+  image_size: uint32,
+  target_count: uint32,
+  element_count: offset,
+  empty_element_count: offset,
+  overlapping_element_count: offset,
+  data_bytes: offset,
+  device_version: uint32,
+  product_id: uint32,
+  vendor_id: uint32,
+  suffix_crc: uint32,
+  computed_crc: uint32,
+});
+export type DfuSeMetadata = z.infer<typeof dfuSeMetadataSchema>;
+
+/** One DfuSe element with its target's alternate setting and name. */
+export const dfuSeElementMetadataSchema = z.strictObject({
+  kind: z.literal("dfuse-element"),
+  target_index: uint32,
+  alternate_setting: uint32,
+  target_name: z.string().nullable(),
+  element_index: uint32,
+  start_address: uint32,
+  end_address: uint32,
+  length: offset,
+});
+
+/** The device memory an element targets, which its path and bytes do not show. */
+export const dfuSeElementDeclaration = (
+  metadata: z.infer<typeof dfuSeElementMetadataSchema>,
+) => ({
+  alternate_setting: metadata.alternate_setting,
+  target_name: metadata.target_name,
+});
+
+/**
  * Intel HEX or Motorola S-record facts derived from every record. Start
  * addresses are declared values, not proven entry points.
  */
@@ -763,6 +843,10 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   espImageMetadataSchema,
   espImageSegmentMetadataSchema,
   espImageSignatureBlockMetadataSchema,
+  uf2MetadataSchema,
+  uf2RegionMetadataSchema,
+  dfuSeMetadataSchema,
+  dfuSeElementMetadataSchema,
   espFlashImageMetadataSchema,
   espFlashPartitionMetadataSchema,
   fitMetadataSchema,

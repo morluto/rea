@@ -57,6 +57,17 @@ cliTest.skipIf(process.platform === "win32")(
       expect(result.json).toMatchObject({
         code: "invalid_request",
         category: "invalid_input",
+        details: {
+          operation: "import_reference_source",
+          diagnostics: { reference_source_code: "invalid-root" },
+          issues: [
+            expect.objectContaining({
+              path: ["root"],
+              reason: "invalid_value",
+              message: expect.stringContaining(path),
+            }),
+          ],
+        },
       });
     }
     const valid = await cli.run({
