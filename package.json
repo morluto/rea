@@ -288,6 +288,7 @@
     "prepare": "node scripts/prepare.mjs",
     "verify:asset-catalog": "npm run build:cached && node scripts/verify/apple/asset-catalog.mjs",
     "verify:native-calls": "npm run build:cached && node scripts/verify-native-calls.mjs",
+    "verify:native:pascal-calls": "npm run build:cached && node scripts/verify-native-pascal-calls.mjs",
     "verify:native-ui:permissions": "npm run build:cached && node scripts/verify-native-ui.mjs --allow-permission-denial",
     "test:focused": "node scripts/run-development-tests.mjs focused",
     "test:sqlite": "npm run test:prepare && npm run test:sqlite:run",

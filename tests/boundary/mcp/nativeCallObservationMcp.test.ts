@@ -67,7 +67,16 @@ const tracer: NativeCallTracer & { calls: number } = {
           breakpoints: request.input.breakpoints.map((_, index) => ({
             index,
             location_count: 1,
-            locations: [],
+            locations: [
+              {
+                load_address: "0x1000",
+                file_address: "0x1000",
+                module: "Tool",
+                module_path: request.executable,
+                symbol: "open",
+                source_location: { file_path: null, line: 23, column: null },
+              },
+            ],
           })),
           events: [],
           resource_limit_reached: false,
@@ -133,6 +142,12 @@ it("routes observe_native_calls through MCP with schema-checked input and output
         .parse(called.structuredContent).normalized_result,
     );
     expect(result.process).toMatchObject({ pid: 99, outcome: "exited" });
+    expect(result.breakpoints[0]?.locations[0]?.source_location).toEqual({
+      file_path: null,
+      line: 23,
+      column: null,
+    });
+
     expect(result.target.environment).toEqual(
       JSON.parse(
         '{"__proto__":"selected literal value","constructor":"ordinary value"}',
