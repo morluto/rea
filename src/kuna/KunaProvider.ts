@@ -178,14 +178,33 @@ export class KunaProvider implements AnalysisProviderCandidate {
         reason: "Kuna decompiles executable images, not databases or archives.",
         diagnostics,
       };
-    if (target.format !== "elf" && target.format !== "mach-o")
+    if (
+      target.format !== "elf" &&
+      target.format !== "mach-o" &&
+      target.format !== "pe"
+    )
       return {
         status: "unsupported",
         code: "target_format_unsupported",
         reason:
           target.format === "mach-o-universal"
             ? "REA's Kuna provider has no verified universal Mach-O slice selection yet; open a thin slice or use another provider."
-            : `REA verified the Kuna provider on ELF and thin Mach-O images; ${target.format} is not admitted yet.`,
+            : `REA verified the Kuna provider on ELF, thin Mach-O and PE images; ${target.format} is not admitted yet.`,
+        diagnostics,
+      };
+    if (target.format === "pe" && target.architecture !== "x86_64")
+      return {
+        status: "unsupported",
+        code: "architecture_unsupported",
+        reason: `REA verified the Kuna provider on PE images for x86-64 only; ${target.architecture} PE is not admitted yet.`,
+        diagnostics: { ...diagnostics, architecture: target.architecture },
+      };
+    if (target.format === "pe" && target.managed !== false)
+      return {
+        status: "unsupported",
+        code: "managed_target_unsupported",
+        reason:
+          "REA verified the Kuna provider on native PE images only; managed PE targets such as .NET assemblies and normalized ReadyToRun images are not admitted yet.",
         diagnostics,
       };
     if (!VERIFIED_ARCHITECTURES.has(target.architecture))
