@@ -753,6 +753,37 @@ describe("export inventory review regressions", () => {
     });
   });
 
+  it.each([32, 64] as const)(
+    "rejects nonzero reserved fields in the ELF%s null symbol",
+    (bits) => {
+      for (const little of [true, false]) {
+        // ELF32/64 symbol records have no padding: every field in entry zero
+        // is reserved as zero by the ABI, independently of host endianness.
+        const width = bits === 64 ? 24 : 16;
+        for (let byte = 0; byte < width; byte++) {
+          const bytes = elfExportImage({
+            bits,
+            little,
+            symbols: [{ name: "kept_export" }],
+          });
+          bytes[0x100 + byte] = 1;
+          expect(() => parseNativeExports(bytes, artifact)).toThrow(
+            BinaryFormatFailure,
+          );
+        }
+        expect(
+          parse(
+            elfExportImage({
+              bits,
+              little,
+              symbols: [{ name: "kept_export" }],
+            }),
+          ).exports.map(({ name }) => name),
+        ).toEqual(["kept_export"]);
+      }
+    },
+  );
+
   it("rejects a dynamic symbol table without its null entry", () => {
     expect(() =>
       parseNativeExports(
