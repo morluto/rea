@@ -10,7 +10,8 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
@@ -40,6 +41,27 @@ const skillPublicationOperations: SkillInstallFileOperations = {
 };
 
 describe("skill publication ownership", () => {
+  it("keeps the managed installation inventory aligned with the authored bundle", async () => {
+    const authoredRoot = new URL(
+      "../../../.agents/skills/reverse-engineer-anything/",
+      import.meta.url,
+    );
+    const entries = await readdir(authoredRoot, {
+      recursive: true,
+      withFileTypes: true,
+    });
+    const authoredFiles = entries
+      .filter((entry) => entry.isFile())
+      .map((entry) =>
+        relative(
+          fileURLToPath(authoredRoot),
+          join(entry.parentPath, entry.name),
+        ).replaceAll("\\", "/"),
+      )
+      .sort();
+    expect([...MANAGED_SKILL_FILES].sort()).toEqual(authoredFiles);
+  });
+
   it.each([
     { change: "edit", existing: true },
     { change: "replacement", existing: true },

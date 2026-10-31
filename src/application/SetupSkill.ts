@@ -33,6 +33,7 @@ export const MANAGED_SKILL_FILES = [
   "references/android-applications.md",
   "references/runtime-observation.md",
   "references/evidence-workflows.md",
+  "references/recursive-semantic-naming.md",
   "references/environments.md",
 ] as const;
 
