@@ -373,6 +373,59 @@ it("fails cyclic GNU version requirement chains without a complete inventory", (
   );
 });
 
+it("reports a GNU version chain that continues past its declared count", () => {
+  const verneed = parse(
+    elfDependencyFixture({ danglingVersionLink: "verneed" }),
+  );
+  expect(verneed.coverage.status).toBe("partial");
+  expect(verneed.version_requirements.status).toBe("unreadable");
+  expect(verneed.version_requirements.files.map((file) => file.file)).toEqual([
+    "libc.so.6",
+    "libstdc++.so.6",
+  ]);
+  expect(verneed.issues).toContainEqual(
+    expect.objectContaining({
+      code: "version_unresolved",
+      message: expect.stringContaining(
+        "GNU version requirement chain continues past its declared count",
+      ),
+    }),
+  );
+
+  // The file entry whose auxiliary chain is unfinished stays out of the join.
+  const vernaux = parse(
+    elfDependencyFixture({ danglingVersionLink: "vernaux" }),
+  );
+  expect(vernaux.coverage.status).toBe("partial");
+  expect(vernaux.version_requirements.status).toBe("unreadable");
+  expect(vernaux.version_requirements.files.map((file) => file.file)).toEqual([
+    "libc.so.6",
+  ]);
+  expect(vernaux.issues).toContainEqual(
+    expect.objectContaining({
+      code: "version_unresolved",
+      message: expect.stringContaining(
+        "GNU version requirement auxiliary chain continues past its declared count",
+      ),
+    }),
+  );
+
+  const verdef = parse(elfDependencyFixture({ danglingVersionLink: "verdef" }));
+  expect(verdef.coverage.status).toBe("partial");
+  expect(verdef.version_definitions.status).toBe("unreadable");
+  expect(verdef.version_definitions.names.map((entry) => entry.name)).toEqual([
+    "libdemo.so.1",
+  ]);
+  expect(verdef.issues).toContainEqual(
+    expect.objectContaining({
+      code: "version_unresolved",
+      message: expect.stringContaining(
+        "GNU version definition chain continues past its declared count",
+      ),
+    }),
+  );
+});
+
 it("keeps readable names and marks truncated dynstr coverage partial", () => {
   const report = parse(elfDependencyFixture({ truncateDynstr: true }));
   expect(report.coverage.status).toBe("partial");

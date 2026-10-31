@@ -1073,6 +1073,27 @@ const locateSymbolCount = (
   return null;
 };
 
+/**
+ * Moves along a GNU version chain. The declared count and the links must end
+ * together: the dynamic loader follows the links, so a count that stops first
+ * would leave records it reads out of this report.
+ */
+const followVersionLink = (
+  chain: string,
+  offset: number,
+  link: number,
+  recordSize: number,
+  expectsAnother: boolean,
+): number => {
+  if (!expectsAnother) {
+    if (link !== 0) fail(`${chain} chain continues past its declared count`);
+    return offset;
+  }
+  if (link === 0) fail(`${chain} chain is cyclic`);
+  if (link < recordSize) fail(`${chain} chain ends before its declared count`);
+  return offset + link;
+};
+
 const parseVerneed = (
   reader: BinaryReader,
   bytes: Buffer,
@@ -1173,15 +1194,13 @@ const parseVerneed = (
         });
         if (name !== null || file !== null)
           pending.push([index, { name, file }]);
-        if (item + 1 < auxiliaryCount) {
-          if (auxiliaryNext === 0 || auxiliary + auxiliaryNext <= auxiliary)
-            fail("GNU version requirement auxiliary chain is cyclic");
-          if (auxiliaryNext < 16)
-            fail(
-              "GNU version requirement auxiliary chain ends before its declared count",
-            );
-          auxiliary += auxiliaryNext;
-        }
+        auxiliary = followVersionLink(
+          "GNU version requirement auxiliary",
+          auxiliary,
+          auxiliaryNext,
+          16,
+          item + 1 < auxiliaryCount,
+        );
       }
       files.push({ file, versions });
       // Join imports only against records whose whole file entry was read.
@@ -1190,13 +1209,13 @@ const parseVerneed = (
           conflicts.add(index);
         else versionNames.set(index, entry);
       }
-      if (record + 1 < count) {
-        if (next === 0 || offset + next <= offset)
-          fail("GNU version requirement chain is cyclic");
-        if (next < 16)
-          fail("GNU version requirement chain ends before its declared count");
-        offset += next;
-      }
+      offset = followVersionLink(
+        "GNU version requirement",
+        offset,
+        next,
+        16,
+        record + 1 < count,
+      );
     }
     settleConflicts();
     return { status: "present", location: table.location, files };
@@ -1279,13 +1298,13 @@ const parseVerdef = (
         index,
         base: (flags & VER_FLG_BASE) !== 0,
       });
-      if (record + 1 < count) {
-        if (next === 0 || offset + next <= offset)
-          fail("GNU version definition chain is cyclic");
-        if (next < 20)
-          fail("GNU version definition chain ends before its declared count");
-        offset += next;
-      }
+      offset = followVersionLink(
+        "GNU version definition",
+        offset,
+        next,
+        20,
+        record + 1 < count,
+      );
     }
     return { status: "present", location: table.location, names };
   } catch (cause) {

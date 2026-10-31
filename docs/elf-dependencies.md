@@ -79,7 +79,9 @@ unsupported ELF extended numbering return no complete inventory.
 
 Unreadable dynamic strings, unterminated `PT_INTERP` paths, and tables that
 cannot be located from section headers or `DT_*` tags are reported as partial
-coverage with `issues`. `$ORIGIN`, `$LIB`, and `$PLATFORM` remain unexpanded.
+coverage with `issues`. A GNU version chain whose links and declared count
+disagree keeps the records read before the conflict, marks that table
+`unreadable`, and reports partial coverage. `$ORIGIN`, `$LIB`, and `$PLATFORM` remain unexpanded.
 Derived version maxima do not establish ABI compatibility.
 
 Omitted or `complete` detail returns the inventory inline. `detail: "summary"`

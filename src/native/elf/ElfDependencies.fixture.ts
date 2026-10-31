@@ -95,6 +95,8 @@ export interface ElfDependencyFixtureOptions {
   readonly gnuBucketBelowFirstSymbol?: boolean;
   readonly cyclicVerneed?: boolean;
   readonly cyclicVernaux?: boolean;
+  /** Gives the final record of this chain a nonzero link past its count. */
+  readonly danglingVersionLink?: "verneed" | "vernaux" | "verdef";
   readonly truncateDynstr?: boolean;
   readonly duplicateSoname?: boolean;
 }
@@ -197,6 +199,7 @@ const verneedRecord = (
   next: number,
   little: boolean,
   cyclicAux: boolean,
+  finalAuxLink = 0,
 ): Buffer => {
   const header = Buffer.alloc(16);
   write16(header, 0, 1, little);
@@ -211,7 +214,8 @@ const verneedRecord = (
     write16(record, 6, version.index, little);
     write32(record, 8, nameOffsets[index] ?? 0, little);
     const last = index + 1 === versions.length;
-    write32(record, 12, cyclicAux && index === 0 ? 0 : last ? 0 : 16, little);
+    const auxLink = last ? finalAuxLink : 16;
+    write32(record, 12, cyclicAux && index === 0 ? 0 : auxLink, little);
     return record;
   });
   return concat(header, ...aux);
@@ -355,6 +359,7 @@ interface FixtureConfig {
   readonly gnuBucketBelowFirstSymbol: boolean;
   readonly cyclicVerneed: boolean;
   readonly cyclicVernaux: boolean;
+  readonly danglingVersionLink: ElfDependencyFixtureOptions["danglingVersionLink"];
   readonly truncateDynstr: boolean;
   readonly duplicateSoname: boolean;
 }
@@ -440,6 +445,7 @@ const fixtureConfig = (options: ElfDependencyFixtureOptions): FixtureConfig => {
     gnuBucketBelowFirstSymbol: options.gnuBucketBelowFirstSymbol === true,
     cyclicVerneed: options.cyclicVerneed === true,
     cyclicVernaux: options.cyclicVernaux === true,
+    danglingVersionLink: options.danglingVersionLink,
     truncateDynstr: options.truncateDynstr === true,
     duplicateSoname: options.duplicateSoname === true,
   };
@@ -481,8 +487,15 @@ const buildDependencyTables = (config: FixtureConfig): DependencyTables => {
     ...verneed.map((entry, index) => {
       const auxBytes = 16 * entry.versions.length;
       const last = index + 1 === verneed.length;
+      const dangling = last && config.danglingVersionLink === "verneed";
       const next =
-        config.cyclicVerneed && index === 0 ? 0 : last ? 0 : 16 + auxBytes;
+        config.cyclicVerneed && index === 0
+          ? 0
+          : dangling
+            ? 32
+            : last
+              ? 0
+              : 16 + auxBytes;
       return verneedRecord(
         verneedFileOffsets[index] ?? 0,
         entry.versions,
@@ -490,6 +503,7 @@ const buildDependencyTables = (config: FixtureConfig): DependencyTables => {
         next,
         little,
         config.cyclicVernaux && index === 0,
+        last && config.danglingVersionLink === "vernaux" ? 16 : 0,
       );
     }),
   );
@@ -518,7 +532,9 @@ const buildDependencyTables = (config: FixtureConfig): DependencyTables => {
           entry.index,
           entry.flags ?? 0,
           elfHash(entry.name),
-          index + 1 === verdef.length ? 0 : 28,
+          index + 1 < verdef.length || config.danglingVersionLink === "verdef"
+            ? 28
+            : 0,
           little,
         ),
       ),
