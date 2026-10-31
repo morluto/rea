@@ -170,7 +170,40 @@ The runs used two logical CPUs, 512 MiB Node/JVM heaps, a 900-second startup
 budget, and an explicit `REA_GHIDRA_DISABLED_ANALYZERS=WindowsResourceReference`
 test configuration. Default-analyzer runs exceeded the selected startup budget;
 resource-reference analysis and default-configuration completion are not
-established by these results. A Microsoft-signed Coreinfo ARM64 application also
+established by these results.
+
+A later run on a 20-core Windows x64 host with Ghidra 12.1.4 and JDK 21
+recorded how that default configuration behaves for a large MSVC/Qt
+application, and separated it from a small system executable:
+
+| Target                                 | Analyzer preset                                    | Startup budget | Result                                |
+| -------------------------------------- | -------------------------------------------------- | -------------- | ------------------------------------- |
+| `notepad.exe`, 360,448 bytes           | `ghidra-default`                                   | 900 s          | `binary_overview` returned in 231 s   |
+| `SnapGene.exe` 8.0.0, 37,611,928 bytes | `ghidra-default`                                   | 330 s          | `provider_timeout`                    |
+| `SnapGene.exe` 8.0.0, 37,611,928 bytes | `ghidra-default`                                   | 1,800 s        | `provider_timeout`                    |
+| `SnapGene.exe` 8.0.0, 37,611,928 bytes | `ghidra-default+disabled:WindowsResourceReference` | 5,400 s        | `binary_overview` returned in 2,337 s |
+
+SHA-256 `86164d9da2ba268b1d467c9abcdf872159fb3edd72af96e85806ce2c0466f98f`
+identifies the SnapGene target. The completed overview reports 9 segments and
+79,464 procedures. The run also recorded the cold-session cost of string
+searches on that completed session: the first `search_strings` request had not
+returned after 29 minutes, and three further searches on the same target did not
+complete within a further 15 minutes. These are individual observations on one
+host, not general latency guarantees. They do establish that a 37.6 MB PE can
+exceed the 330-second default through both the default and the
+`WindowsResourceReference`-disabled preset, and that the disabled preset is
+what let auto-analysis finish here.
+
+The observed `provider_timeout` for that target came from the released
+`rea-agents` 6.5.0 package, which predates the change that names the deadline
+setting in the error text. The generic message therefore carries the applied
+deadline in `details.timeout_ms` over CLI JSON, while the run itself reports
+`Ghidra startup deadline elapsed` under
+`details.diagnostics.failure_message`. Treat the deadline-setting guidance in
+[installation](installation.md) as applying to a build that contains that
+change, and read `details.timeout_ms` to learn which deadline was applied.
+
+A Microsoft-signed Coreinfo ARM64 application also
 completed focused MCP decompilation, repeated readback, source-mapped memory
 reads, unchanged-input and cleanup checks. On this constrained host the first
 function query, including cold analysis, took about 434 seconds; its identical
