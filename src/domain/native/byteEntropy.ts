@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { localPathStringSchema } from "../localPath.js";
+import { absoluteLocalPathStringSchema } from "../localPath.js";
 
 const offsetSchema = z
   .number()
@@ -10,7 +10,12 @@ const entropySchema = z.number().min(0).max(8);
 
 /** Select blocks relative to an explicit byte window; identity remains file-wide. */
 export const inspectByteEntropyInputSchema = z.strictObject({
-  path: localPathStringSchema,
+  // The description survives the compact profile's reduced advertisement, so a
+  // client on the default profile still reads the requirement that the reduced
+  // form can no longer express as a pattern.
+  path: absoluteLocalPathStringSchema.describe(
+    "Absolute local filesystem path to the file to profile; relative paths are rejected",
+  ),
   block_size: z
     .number()
     .int()
