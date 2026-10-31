@@ -53,6 +53,18 @@ it.each([
   ["an explicit undefined port", `net.connect(undefined)`, "connect"],
   ["a tls port", `tls.connect(80)`, "connect"],
   ["a createConnection port", `net.createConnection(80)`, "createConnection"],
+  // A unary operator is judged by its result: `-0` is the number zero, which is
+  // the valid lowest port, and `~-1` is also zero.
+  ["a negative-zero port", `net.connect(-0)`, "connect"],
+  ["a negative-zero expression port", `net.connect(-0.0)`, "connect"],
+  ["a unary-plus zero port", `net.connect(+0)`, "connect"],
+  ["a bitwise-not of negative one", `net.connect(~-1)`, "connect"],
+  ["a tls negative-zero port", `tls.connect(-0)`, "connect"],
+  [
+    "a createConnection negative-zero port",
+    `net.createConnection(-0)`,
+    "createConnection",
+  ],
 ] as const)("keeps the socket acquisition for %s", (_name, call, method) => {
   expect(socketAcquisitionsFor(call)).toEqual([{ kind: "acquire", method }]);
 });
