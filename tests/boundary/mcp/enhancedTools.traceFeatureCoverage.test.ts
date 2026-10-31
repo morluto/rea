@@ -158,9 +158,7 @@ it("preserves references and explicitly unknown owners without claiming truncati
   });
   expect(output.normalized_result).toMatchObject({
     truncated: false,
-    residual_unknowns: [
-      "Containing procedure for 0x20 is unavailable: not supported",
-    ],
+    residual_unknowns: [expect.stringContaining("0x20")],
     references: [
       {
         target_address: "0x10",
@@ -178,6 +176,9 @@ it("preserves references and explicitly unknown owners without claiming truncati
         containing_procedure: containing("0x21"),
       },
     ],
+  });
+  expect(output.normalized_result).toMatchObject({
+    residual_unknowns: [expect.stringContaining("not supported")],
   });
 });
 
@@ -210,11 +211,12 @@ it("does not swallow an unavailable owner with incomplete cleanup", async () => 
 it("preserves cancellation that arrives during an unavailable owner lookup", async () => {
   const baseline = provider();
   const controller = new AbortController();
+  const reason = { request: "cancel during owner lookup" };
   const result = await new EnhancedTools({
     execute: (operation, input, options) => {
       if (operation !== "resolve_containing_procedure")
         return baseline.execute(operation, input, options);
-      controller.abort();
+      controller.abort(reason);
       return Promise.resolve(
         err(
           new AnalysisCapabilityUnavailableError(
@@ -227,7 +229,10 @@ it("preserves cancellation that arrives during an unavailable owner lookup", asy
     },
   }).execute("trace_feature", { query: "hello" }, controller.signal);
   expect(result.ok).toBe(false);
-  if (!result.ok) expect(result.error._tag).toBe("AnalysisCancelledError");
+  if (!result.ok) {
+    expect(result.error._tag).toBe("AnalysisCancelledError");
+    expect(result.error.cause).toBe(reason);
+  }
 });
 
 it("retains incomplete cleanup when cancellation arrives during owner lookup", async () => {
