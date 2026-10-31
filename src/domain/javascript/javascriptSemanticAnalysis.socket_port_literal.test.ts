@@ -99,3 +99,59 @@ it.each([
 ] as const)("keeps the socket acquisition for %s", (_name, call, method) => {
   expect(socketAcquisitionsFor(call)).toEqual([{ kind: "acquire", method }]);
 });
+
+/**
+ * `net.connect({ port })` validates the member the same way the positional form
+ * validates the argument, so the same set of literal ports is decided. A
+ * positional string stays a Unix socket path, but a `port` string is coerced
+ * with `Number`, which is why `"0x50"` is a port while `"65536"` is not.
+ */
+it.each([
+  ["a port above the range", `net.connect({ port: 65536 })`],
+  ["a negative port", `net.connect({ port: -1 })`],
+  ["a fractional port", `net.connect({ port: 1.5 })`],
+  ["a NaN port", `net.connect({ port: NaN })`],
+  ["an Infinity port", `net.connect({ port: Infinity })`],
+  ["an overflowing numeric port", `net.connect({ port: 1e400 })`],
+  ["a null port", `net.connect({ port: null })`],
+  ["a boolean port", `net.connect({ port: true })`],
+  ["a BigInt port", `net.connect({ port: 0n })`],
+  ["an object port", `net.connect({ port: {} })`],
+  ["an array port", `net.connect({ port: [] })`],
+  ["an empty port string", `net.connect({ port: "" })`],
+  ["a non-numeric port string", `net.connect({ port: "abc" })`],
+  ["an out-of-range port string", `net.connect({ port: "65536" })`],
+  ["a tls port above the range", `tls.connect({ port: 65536 })`],
+] as const)(
+  "emits no socket acquisition for an options object with %s",
+  (_name, call) => {
+    expect(socketAcquisitionsFor(call)).toEqual([]);
+  },
+);
+
+it.each([
+  ["an in-range port", `net.connect({ port: 80 })`, "connect"],
+  ["the lowest port", `net.connect({ port: 0 })`, "connect"],
+  ["the highest port", `net.connect({ port: 65535 })`, "connect"],
+  ["a numeric port string", `net.connect({ port: "80" })`, "connect"],
+  ["a hex port string", `net.connect({ port: "0x50" })`, "connect"],
+  ["a padded port string", `net.connect({ port: " 80 " })`, "connect"],
+  [
+    "a Unix socket path member",
+    `net.connect({ path: "/tmp/x.sock" })`,
+    "connect",
+  ],
+  ["an object without a port", `net.connect({})`, "connect"],
+  ["an undefined port", `net.connect({ port: undefined })`, "connect"],
+  [
+    "a port beside a host",
+    `net.connect({ port: 80, host: "example.test" })`,
+    "connect",
+  ],
+  ["a tls in-range port", `tls.connect({ port: 80 })`, "connect"],
+] as const)(
+  "keeps the socket acquisition for an options object with %s",
+  (_name, call, method) => {
+    expect(socketAcquisitionsFor(call)).toEqual([{ kind: "acquire", method }]);
+  },
+);

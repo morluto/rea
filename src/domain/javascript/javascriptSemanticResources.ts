@@ -226,35 +226,38 @@ const acquisitionMethod = (
 const resourceCandidateId = (candidate: ResourceCandidate): string =>
   `resource:acquire:${String(candidate.node.start ?? -1)}:${String(candidate.node.end ?? -1)}`;
 
+/** Whether a number Node accepts as a TCP port. */
+const usablePort = (bits: number): boolean =>
+  Number.isInteger(bits) && bits >= 0 && bits <= 65535;
+
 /**
- * `net` and `tls` validate a numeric port before creating a socket, so a
- * literal port outside `[0, 65535]`, a fractional, non-finite, BigInt, boolean
- * or `null` first argument throws synchronously and no socket exists. A string
- * is a Unix socket path and an object may carry a path, so only an exactly
- * readable non-port literal is decided. `""` is a path with no length, which
- * Node also rejects.
+ * Whether an exactly readable value is not a usable port. Omission and an empty
+ * object throw `ERR_MISSING_ARGS`, which is a missing option rather than a bad
+ * one, so they stay undecided here.
  *
- * `undefined` and an empty object throw `ERR_MISSING_ARGS`, but those are a
- * missing option rather than a bad port, so they stay undecided here.
+ * A positional string is a Unix socket path, so only the empty string is
+ * rejected there. The `port` member of an options object is a port instead, and
+ * Node coerces it with `Number`, so `"0x50"` and `"8e1"` are valid while
+ * `"65536"` and `"abc"` are not.
  */
-const rejectsSocketPortLiteral = (
-  node: t.CallExpression | t.OptionalCallExpression,
+const rejectsPortValue = (
+  value: t.Node,
   context: DataEffectTraversalContext,
+  stringIsPath: boolean,
 ): boolean => {
-  const port = node.arguments[0];
-  if (port === undefined || t.isSpreadElement(port)) return false;
-  const value = unwrapJavaScriptExpression(port).node;
-  if (t.isStringLiteral(value)) return value.value.length === 0;
+  if (t.isStringLiteral(value))
+    return stringIsPath
+      ? value.value.length === 0
+      : value.value === "" || !usablePort(Number(value.value));
   if (
     t.isNullLiteral(value) ||
     t.isBigIntLiteral(value) ||
-    t.isBooleanLiteral(value)
+    t.isBooleanLiteral(value) ||
+    t.isObjectExpression(value) ||
+    t.isArrayExpression(value)
   )
     return true;
-  if (t.isNumericLiteral(value))
-    return (
-      !Number.isInteger(value.value) || value.value < 0 || value.value > 65535
-    );
+  if (t.isNumericLiteral(value)) return !usablePort(value.value);
   // `NaN` and `Infinity` are unshadowed globals, and neither is a port.
   if (
     t.isIdentifier(value) &&
@@ -280,11 +283,53 @@ const rejectsSocketPortLiteral = (
           : value.operator === "~"
             ? ~operand.value
             : undefined;
-    if (bits === undefined) return false;
     // `-0` and `~-1` are both zero, which is the valid lowest port.
-    return !Number.isInteger(bits) || bits < 0 || bits > 65535;
+    return bits === undefined ? false : !usablePort(bits);
   }
   return false;
+};
+
+/**
+ * The exactly readable `port` member of an options object, or `null` when the
+ * member set is not fully readable. A spread or computed member leaves it open,
+ * and an object without a `port` member throws `ERR_MISSING_ARGS` instead, so
+ * both stay undecided.
+ */
+const literalPortProperty = (object: t.ObjectExpression): t.Node | null => {
+  if (
+    object.properties.some(
+      (candidate) => !t.isObjectProperty(candidate) || candidate.computed,
+    )
+  )
+    return null;
+  const property = object.properties.find(
+    (candidate) =>
+      t.isObjectProperty(candidate) &&
+      semanticStaticPropertyName(candidate.key, false) === "port",
+  );
+  if (property === undefined || !t.isObjectProperty(property)) return null;
+  return unwrapJavaScriptExpression(property.value).node;
+};
+
+/**
+ * `net` and `tls` validate a numeric port before creating a socket, so a
+ * literal port Node rejects throws synchronously and no socket exists. Only an
+ * exactly readable value is decided.
+ */
+const rejectsSocketPortLiteral = (
+  node: t.CallExpression | t.OptionalCallExpression,
+  context: DataEffectTraversalContext,
+): boolean => {
+  const port = node.arguments[0];
+  if (port === undefined || t.isSpreadElement(port)) return false;
+  const value = unwrapJavaScriptExpression(port).node;
+  // `net.connect({ port })` validates the member the same way the positional
+  // form validates the argument.
+  if (t.isObjectExpression(value)) {
+    const member = literalPortProperty(value);
+    return member === null ? false : rejectsPortValue(member, context, false);
+  }
+  return rejectsPortValue(value, context, true);
 };
 
 /** Only `net`/`tls` sockets take a port in argument 0. */
