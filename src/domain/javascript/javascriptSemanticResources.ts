@@ -94,10 +94,15 @@ const rejectsOpenFlagLiteral = (
   if (flag === undefined || t.isSpreadElement(flag)) return false;
   const value = unwrapJavaScriptExpression(flag).node;
   if (t.isStringLiteral(value)) return !FS_OPEN_FLAGS.has(value.value);
-  // A non-integer or negative number is not a usable bitmask; `-0` is zero.
+  // A non-integer or out-of-int32 value is not a usable bitmask. The sign alone
+  // does not decide: Node accepts some signed bitmasks such as `-2147483648` and
+  // rejects others such as `-1`, so an in-range negative is left undecided.
   const bits = staticFlagBits(value);
   if (bits !== undefined)
-    return bits !== null && (!Number.isInteger(bits) || bits < 0);
+    return (
+      bits !== null &&
+      (!Number.isInteger(bits) || bits > 2_147_483_647 || bits < -2_147_483_648)
+    );
   // `NaN` and `Infinity` are unshadowed globals, and neither is a bitmask.
   if (
     t.isIdentifier(value) &&

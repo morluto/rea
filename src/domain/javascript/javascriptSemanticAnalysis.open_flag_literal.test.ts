@@ -30,7 +30,9 @@ it.each([
   // Node also rejects every non-string flag that is not a nullish value or a
   // usable bitmask integer.
   ["a fractional flag", `openSync(p, 1.5)`],
-  ["a negative flag", `openSync(p, -1)`],
+  // A value outside the signed 32-bit range cannot be a bitmask at all.
+  ["an int32-overflow flag", `openSync(p, 2147483648)`],
+  ["an int32-underflow flag", `openSync(p, -2147483649)`],
   ["a negated fractional flag", `openSync(p, -1.5)`],
   ["a non-finite numeric flag", `openSync(p, 1e400)`],
   ["a NaN flag", `openSync(p, NaN)`],
@@ -43,8 +45,6 @@ it.each([
   // A unary operator is judged by its result, not by its operand: `!` yields a
   // boolean and `~0` yields `-1`.
   ["a logical-not flag", `openSync(p, !0)`],
-  ["a bitwise-not flag", `openSync(p, ~0)`],
-  ["a negative bitwise-not flag", `openSync(p, ~1)`],
 ] as const)("emits no acquisition for %s", (_name, call) => {
   expect(acquisitionsFor(call)).toEqual([]);
 });
@@ -68,6 +68,17 @@ it.each([
   ["a void flag over a fraction", `openSync(p, void 1.5)`],
   ["a void flag over a string", `openSync(p, void "r")`],
   // `-0` is the valid zero bitmask, and `~-1` is `0`.
+  // The sign does not prove rejection: Node accepts some signed bitmasks such as
+  // `-2147483648` and rejects others such as `-1`, so an in-range negative is
+  // deliberately left undecided and keeps its acquisition.
+  ["a minimum int32 bitmask", `openSync(p, -2147483648)`],
+  ["a negative power-of-two bitmask", `openSync(p, -1073741824)`],
+  ["an in-range negative bitmask", `openSync(p, -1)`],
+  // `~0` is `-1` and `~1` is `-2`. Node happens to reject both, but that is the
+  // same undecidable signed-bitmask question, so they stay undecided too.
+  ["a bitwise-not of zero", `openSync(p, ~0)`],
+  ["a bitwise-not of one", `openSync(p, ~1)`],
+  ["a maximum int32 bitmask", `openSync(p, 2147483647)`],
   ["a negative-zero flag", `openSync(p, -0)`],
   ["a negative-zero expression flag", `openSync(p, -0.0)`],
   ["a unary-plus zero flag", `openSync(p, +0)`],
