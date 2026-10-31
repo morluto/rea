@@ -1,6 +1,14 @@
 import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
 import { EventEmitter } from "node:events";
-import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import {
+  chmod,
+  mkdir,
+  readFile,
+  realpath,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 
@@ -202,6 +210,43 @@ it("rejects a directory configured as the resource limiter executable", async ()
     _tag: "AnalysisCapabilityUnavailableError",
     reason: expect.stringContaining(limiter),
   });
+});
+
+it("preserves selected executable aliases while fingerprinting their resolved bytes", async () => {
+  const root = await createTestTempDirectory("rea-firmware-command-alias-");
+  const command = await executableFixture(root, "binwalk");
+  const limiter = await executableFixture(root, "prlimit");
+  const commandAlias = join(root, "selected-binwalk");
+  const limiterAlias = join(root, "selected-prlimit");
+  await symlink(command, commandAlias);
+  await symlink(limiter, limiterAlias);
+  const files = new FirmwareFileAccess();
+  try {
+    const resolved = await resolveFirmwareCommand(
+      {
+        REA_BINWALK_COMMAND: commandAlias,
+        REA_FIRMWARE_PRLIMIT_COMMAND: limiterAlias,
+      },
+      "binwalk",
+      "inspect_firmware_regions",
+      files,
+    );
+    expect(resolved).toMatchObject({
+      command: {
+        invocationPath: commandAlias,
+        resolvedPath: await realpath(command),
+      },
+      limiter: {
+        invocationPath: limiterAlias,
+        resolvedPath: await realpath(limiter),
+      },
+      sha256: createHash("sha256")
+        .update(await readFile(command))
+        .digest("hex"),
+    });
+  } finally {
+    await files.close();
+  }
 });
 
 it("keeps captured tool output when firmware stops on SIGXCPU", async () => {

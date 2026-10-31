@@ -19,7 +19,11 @@ import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.
 
 import { launcherIdentityFailure } from "./ProcessOwnershipIdentity.js";
 import { descendantsOf, liveProcesses } from "./ProcessOwnershipProcessTree.js";
-import { execFileOutput } from "./ExecFileOutput.js";
+import {
+  execFileFailureCapturedOutput,
+  execFileOutput,
+  execFileOutputFailure,
+} from "./ExecFileOutput.js";
 import {
   createDarwinProcessRunTokenReader,
   type DarwinProcessReaderCompiler,
@@ -40,6 +44,9 @@ import type {
   ProcessTableEntry,
 } from "./ProcessOwnership.js";
 import type { ProcessOwnershipEvidenceOwner } from "./ProcessOwnershipEvidence.js";
+
+/** Bound each process-table output stream before decoding or parsing rows. */
+const PROCESS_TABLE_OUTPUT_BYTES = 64 * 1024;
 
 /** Observe multiple groups from one process snapshot and one token batch. */
 export const observeOwnedProcessGroups = async (
@@ -1117,6 +1124,7 @@ export const createSystemProcessOwnershipHost = (
       {
         env: hostEnvironment,
         stopSignal: "SIGTERM",
+        maxBuffer: PROCESS_TABLE_OUTPUT_BYTES,
         ...(signal === undefined ? {} : { signal }),
       },
     );
@@ -1553,14 +1561,37 @@ export const signalProcessWithStartIdentity = async (
   }
 };
 
-/** Refusal before an owned launch when Linux `ps` is missing or incompatible. */
+/** Refusal before an owned launch when Linux process inspection is unavailable. */
 export class LinuxOwnedProcessPrerequisiteError extends AnalysisCapabilityUnavailableError {
+  readonly outputLimitBytes: number | undefined;
+
   constructor(cause: unknown) {
-    const reason = `Linux process ownership inspection requires a procps-compatible ps on REA's PATH before launching a child: ${errorMessage(cause)}`;
+    const failure = execFileOutputFailure(cause);
+    const outputLimitBytes =
+      failure?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"
+        ? PROCESS_TABLE_OUTPUT_BYTES
+        : undefined;
+    const reason =
+      outputLimitBytes === undefined
+        ? `Linux process ownership inspection requires a procps-compatible ps on REA's PATH before launching a child: ${errorMessage(cause)}`
+        : `Linux process ownership inspection is unknown because ps exceeded the ${String(outputLimitBytes)}-byte per-stream output allowance; the incomplete process table was not used.`;
     super("process-ownership", "prepare_owned_process", reason, {
       cause,
       userMessage: reason,
+      ...(failure === undefined
+        ? {}
+        : { capturedOutput: execFileFailureCapturedOutput(failure) }),
+      ...(outputLimitBytes === undefined
+        ? {}
+        : {
+            diagnostics: {
+              prerequisite: "ps",
+              reason: "output_limit",
+              max_output_bytes_per_stream: outputLimitBytes,
+            },
+          }),
     });
+    this.outputLimitBytes = outputLimitBytes;
   }
 }
 

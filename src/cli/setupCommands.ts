@@ -125,7 +125,7 @@ const registerDoctorCommand = (
       provider: z
         .array(z.enum(DOCTOR_PROVIDER_IDS))
         .default([])
-        .describe("Deep-analysis provider whose readiness is required"),
+        .describe("Analysis provider whose readiness is required"),
       skill: z
         .boolean()
         .optional()
@@ -234,7 +234,11 @@ const runSetupCommand = async (
     ]);
   const result = await runSetup(
     setupRunOptions(input, interactive, hasExplicitScope),
-    systemSetupHost(createSystemDoctorHost(environment), environment),
+    // Firmware readiness must not select an engine or change setup's install plan.
+    systemSetupHost(
+      createSystemDoctorHost(environment, undefined, { firmware: false }),
+      environment,
+    ),
     interactive
       ? (actions, context) =>
           confirmInteractiveSetup(actions, options.accessible, context)

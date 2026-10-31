@@ -4,12 +4,14 @@ import { join } from "node:path";
 import { expect, it as test, vi } from "vitest";
 
 import { createSystemDoctorHost } from "./doctorRuntime.js";
+import { FirmwareDoctor } from "./firmware/FirmwareDoctor.js";
 import { DOCTOR_PROVIDER_IDS } from "./application/DoctorProviderIds.js";
 import { providerRegistrationEnvironment } from "./application/SetupRegistrationEnvironment.js";
 import { createTestTempDirectory } from "../tests/fixtures/temporaryDirectory.js";
 import { writeJadxJarInventory } from "../tests/fixtures/android/jadxJar.js";
 import * as privateDisplay from "./hopper/LinuxPrivateDisplayProbe.js";
 import * as pythonRuntime from "./application/LinuxHopperPython.js";
+import * as kunaDoctor from "./kuna/KunaDoctor.js";
 import { err, ok } from "./domain/result.js";
 import { AnalysisError } from "./domain/analysisErrorBase.js";
 import { AnalysisCancelledError } from "./domain/analysisErrorCore.js";
@@ -421,6 +423,23 @@ const it = test.skipIf(process.platform === "win32");
 
 it("exposes jadx through the doctor provider selector", () => {
   expect(DOCTOR_PROVIDER_IDS).toContain("jadx");
+  expect(DOCTOR_PROVIDER_IDS).toContain("binwalk");
+  expect(DOCTOR_PROVIDER_IDS).toContain("unblob");
+});
+
+it("keeps firmware diagnostics out of setup's engine selection", async () => {
+  const host = createSystemDoctorHost({}, undefined, { firmware: false });
+  try {
+    const inspections = await host.providerInspections?.();
+    expect(inspections?.map(({ id }) => id)).toEqual([
+      "ghidra",
+      "ida",
+      "jadx",
+      "kuna",
+    ]);
+  } finally {
+    await host.close?.();
+  }
 });
 
 it("carries a validated REA_JADX_MCP_JAR into the provider registration environment", async () => {
@@ -509,3 +528,100 @@ const createFakeJdk = async (root: string): Promise<string> => {
   await chmod(java, 0o700);
   return javaHome;
 };
+
+test.each([false, true])(
+  "retains failed firmware cleanup through host closure after cancellation=%s",
+  async (cancelled) => {
+    const controller = new AbortController();
+    const reason = new Error("cancel firmware inspection");
+    const inspect = vi
+      .spyOn(FirmwareDoctor.prototype, "inspect")
+      .mockImplementation(async function (this: FirmwareDoctor) {
+        if (cancelled) {
+          controller.abort(reason);
+          throw new AnalysisCancelledError("doctor", { cause: reason });
+        }
+        return [];
+      });
+    const pending = vi
+      .spyOn(FirmwareDoctor.prototype, "hasPendingCleanup", "get")
+      .mockReturnValue(true);
+    const close = vi
+      .spyOn(FirmwareDoctor.prototype, "close")
+      .mockResolvedValueOnce("controlled firmware cleanup failure")
+      .mockResolvedValue(undefined);
+    const host = createSystemDoctorHost({}, controller.signal);
+    try {
+      if (cancelled)
+        await expect(host.providerInspections?.()).rejects.toMatchObject({
+          cause: reason,
+        });
+      else await host.providerInspections?.();
+      expect(inspect).toHaveBeenCalledTimes(1);
+      expect(close).not.toHaveBeenCalled();
+      await expect(host.close?.()).rejects.toMatchObject({
+        cleanupResources: ["firmware-doctor"],
+      });
+      expect(await host.close?.()).toBeUndefined();
+      expect(close).toHaveBeenCalledTimes(2);
+    } finally {
+      await host.close?.();
+      inspect.mockRestore();
+      pending.mockRestore();
+      close.mockRestore();
+    }
+  },
+);
+
+test.each([false, true])(
+  "admits firmware only after earlier provider cleanup succeeds: %s",
+  async (cleanupSucceeds) => {
+    let denied = !cleanupSucceeds;
+    const events: string[] = [];
+    const close = vi.fn(async () => {
+      events.push("kuna-cleanup");
+      if (denied) throw new Error("controlled Kuna cleanup refusal");
+    });
+    const kuna = vi
+      .spyOn(kunaDoctor, "inspectKunaProvider")
+      .mockImplementation(
+        async (_environment, _platform, { resourceScope }) => {
+          resourceScope.retain({ close }, "kuna-retained-child");
+          return {
+            id: "kuna",
+            configured: true,
+            available: false,
+            providerVersion: null,
+            registrationEnvironment: {},
+            checks: [],
+          };
+        },
+      );
+    const firmware = vi
+      .spyOn(FirmwareDoctor.prototype, "inspect")
+      .mockImplementation(async () => {
+        events.push("firmware-inspect");
+        return [];
+      });
+    const host = createSystemDoctorHost({});
+    try {
+      if (cleanupSucceeds) {
+        await host.providerInspections?.();
+        expect(events).toEqual(["kuna-cleanup", "firmware-inspect"]);
+      } else {
+        await expect(host.providerInspections?.()).rejects.toMatchObject({
+          cleanupIncomplete: true,
+          cleanupResources: ["kuna-retained-child"],
+        });
+        expect(firmware).not.toHaveBeenCalled();
+        expect(events).toEqual(["kuna-cleanup"]);
+      }
+      expect(close).toHaveBeenCalledTimes(1);
+    } finally {
+      denied = false;
+      await host.close?.();
+      kuna.mockRestore();
+      firmware.mockRestore();
+    }
+  },
+);
