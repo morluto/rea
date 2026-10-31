@@ -160,7 +160,7 @@ it.each([false, true])(
   },
 );
 
-it("maps one-shot Frida CLI target, script, duration, and remote options", async () => {
+const createFridaRecorder = () => {
   const calls: unknown[] = [];
   const provider: FridaInstrumentationPort = {
     async listDevices() {
@@ -228,6 +228,11 @@ it("maps one-shot Frida CLI target, script, duration, and remote options", async
     },
     async closeAll() {},
   };
+  return { calls, provider };
+};
+
+it("maps one-shot Frida CLI target, script, duration, and remote options", async () => {
+  const { calls, provider } = createFridaRecorder();
   const cli = createCli({}, undefined, provider);
   let stdout = "";
   let exitCode = 0;
@@ -309,6 +314,51 @@ it("maps one-shot Frida CLI target, script, duration, and remote options", async
   expect(exitCode).not.toBe(0);
   expect(calls).toHaveLength(3);
   expect(stdout).not.toContain("synthetic-secret-token");
+});
+
+it("forwards every selected spawn argument through the CLI and shared service", async () => {
+  const { calls, provider } = createFridaRecorder();
+  const cli = createCli({}, undefined, provider);
+  let stdout = "";
+  let exitCode = 0;
+  await cli.serve(
+    [
+      "instrument-with-frida",
+      "spawn",
+      "fixture-program",
+      "--script",
+      "send(1)",
+      "--argument",
+      "first",
+      "--argument",
+      "second",
+      "--duration-ms",
+      "0",
+      "--json",
+    ],
+    {
+      env: {},
+      exit: (code) => {
+        exitCode = code;
+      },
+      stdout: (text) => {
+        stdout += text;
+      },
+    },
+  );
+  expect(exitCode).toBe(0);
+  expect(JSON.parse(stdout)).toHaveProperty("evidence");
+  expect(calls).toContainEqual({
+    operation: "start",
+    input: {
+      mode: "spawn",
+      program: "fixture-program",
+      deviceId: "local",
+      argv: ["first", "second"],
+      source: { sourceKind: "inline", source: "send(1)" },
+      durationMs: 0,
+    },
+  });
 });
 
 it("keeps Frida script-file identity in original bytes when UTF-8 decoding replaces invalid bytes", async () => {
@@ -532,6 +582,11 @@ it("preserves observed devices when CLI provider cleanup fails", async () => {
 
 it.each([
   [
+    ["attach", "71", "--script", "send(1)", "--argument", ""],
+    "argument",
+    "--argument is only valid in spawn mode; remove it when attaching to a process.",
+  ],
+  [
     ["attach", "abc", "--script", "send(1)"],
     "target",
     "attach mode needs a positive integer process ID.",
@@ -554,13 +609,16 @@ it.each([
 ])(
   "names the rejected instrument-with-frida argument for %j",
   async (argv, path, message) => {
-    let starts = 0;
-    const provider = {
-      async startSession() {
-        starts += 1;
-        throw new Error("Frida must not start for invalid input");
+    const calls: string[] = [];
+    const provider = new Proxy(
+      {},
+      {
+        get: (_target, operation: string) => async () => {
+          calls.push(operation);
+          throw new Error("Frida must not be called for invalid input");
+        },
       },
-    } as unknown as FridaInstrumentationPort;
+    ) as FridaInstrumentationPort;
     const cli = createCli({}, undefined, provider);
     let stdout = "";
     await cli.serve(["instrument-with-frida", ...argv, "--json"], {
@@ -576,7 +634,7 @@ it.each([
         issues: [{ path: [path], reason: "invalid_value", message }],
       },
     });
-    expect(starts).toBe(0);
+    expect(calls).toEqual([]);
   },
 );
 
