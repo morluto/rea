@@ -171,13 +171,25 @@ they do not substitute for the real-artifact matrix. The run included a runtime
 build and cost 154.106 s / 153.592029 CPU s / 1,884,516,352 peak bytes. Subsequent
 type, touched-file lint and module checks passed, with no OOM or cleanup gap.
 
-Malformed complete source records now reach the canonical Evidence owner after
-resource admission. Schema or identity failures return
+Native function workflows send malformed complete source records to the canonical
+Evidence owner after resource admission. Schema or identity failures return
 `evidence_integrity_mismatch` in both MCP schema profiles, including the original
-`relationship_coverage` diagnostics. The directional-coverage regression still
+`relationship_coverage` diagnostics. Other workflows preserve their format-owner
+error projections. The directional-coverage regression still
 checks every malformed case and the advertised full schema. Invalid request
 envelopes and reference grammar remain request errors; no duplicate source parse
 was introduced solely to reproduce the former SDK error classification.
+
+A later review reported a possible null-source dereference in reconciliation.
+On `70db1e816`, the public request has no identity refinement; source authentication
+runs before identity-only validation. A public fixed-server MCP probe passed two
+valid controls and rejected 24 malformed source cases across full/compact profiles
+with structured `invalid_request` and accurate paths. Both complete schemas also
+rejected each of twelve cases without throwing. No provider ran. Cleanup was
+verified: 3.334 s elapsed, 3.155635 CPU s and 287,404,032 peak bytes, with no OOM.
+This authored-fixture probe disproves the reported path on that revision;
+it does not establish real passive-runtime behavior. No production change was
+needed for that finding. The accompanying JSON records its observations.
 
 ## Regression and coverage limits
 
