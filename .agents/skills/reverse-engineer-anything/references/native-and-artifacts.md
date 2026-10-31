@@ -13,6 +13,13 @@ Select columns, batch IDs and page individual facts; aliases remain unresolved.
 Unpaired observations do not prove additions/removals. Existing matched dossier
 pairs include inputs for `compare_functions`; otherwise analyze just chosen pairs.
 
+Aggregate completed comparisons with `find_changed_behavior`, selecting each
+comparison's exact `retained-evidence` ID instead of resending full records.
+Inline comparison Evidence remains accepted. References belong to the current
+server: after handoff, import the original bundle including its source closure.
+Do not substitute dossier IDs or summary views. Static differences remain
+behavior candidates, with runtime behavior unknown unless separately observed.
+
 For a matching representation refusal, inspect `details.limit` and raise
 `native.matching_representation_bytes` with `update_analysis_settings` before
 retrying the unchanged MCP request. CLI launch seed:

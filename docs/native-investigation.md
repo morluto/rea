@@ -1130,6 +1130,25 @@ and slice commitments establish the same canonical entry. The result reports
 remain separate dimensions. Equal numeric addresses without applicable coordinate
 commitments do not establish same-entry correspondence. Inspect the retained
 source Evidence and coverage when correspondence remains ambiguous.
+To aggregate already-retained comparison results, pass their exact IDs to
+`find_changed_behavior`, for example:
+
+```javascript
+await call("find_changed_behavior", {
+  comparisons: comparisons.map(({ evidence_id }) => ({
+    kind: "retained-evidence",
+    evidence_id,
+  })),
+});
+```
+
+These IDs select comparison Evidence, not function dossiers or summary views.
+Complete inline comparisons remain accepted and can be mixed with references.
+The current server must retain the comparisons and their original source closure;
+import the complete source bundle after a session handoff. Missing or damaged
+records are explicit failures. Aggregating static differences does not establish
+observed runtime change.
+
 `set_address_name` and `set_addresses_names` give Ghidra sessions the same
 compact naming results as Hopper: a local function entry renames that function,
 and any other mapped address, such as a global, receives a new or renamed primary

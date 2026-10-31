@@ -1,4 +1,5 @@
 import { resolveInvestigationEvidenceClosure } from "../application/investigation/InvestigationEvidence.js";
+import { resolveChangedBehaviorEvidence } from "../application/investigation/ChangedBehaviorEvidence.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
@@ -68,8 +69,14 @@ const registerChangedBehavior = (
       contract.name,
       context.mcpReq.signal,
       async () => {
+        const resolved = resolveChangedBehaviorEvidence(
+          input,
+          session.evidenceForAnalysis.bind(session),
+        );
+        if (!resolved.ok)
+          return server.delivery.toCallToolResult(resolved, contract);
         const computed = await runDerivedOperation(context, contract.name, () =>
-          findChangedBehavior(input),
+          findChangedBehavior(resolved.value),
         );
         if (!computed.ok)
           return server.delivery.toCallToolResult(computed, contract);
