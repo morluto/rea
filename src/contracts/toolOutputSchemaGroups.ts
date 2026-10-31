@@ -346,6 +346,12 @@ export const enhancedOutputSchemas = {
             procedure: batchProcedureIdentity,
             status: z.literal("error"),
             error: analysisErrorProjectionSchema,
+            limitations: z
+              .array(z.string())
+              .optional()
+              .describe(
+                "Caveats of this item's own provider observation when it supplied no pseudocode, including any reason the provider reported.",
+              ),
           }),
         ]),
       ),

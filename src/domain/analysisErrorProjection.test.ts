@@ -130,6 +130,38 @@ describe("agent recovery metadata", () => {
     expect(analysisErrorProjectionSchema.parse(projected)).toEqual(projected);
   });
 
+  it("omits schema recovery when a conforming request lacks a target fact", () => {
+    const issue = {
+      path: ["address"],
+      reason: "invalid_value",
+      message: "Address 0x2000 is in uninitialized memory block .bss",
+      observed: { address: "0x2000", file_mapping: "uninitialized" },
+    } as const;
+    const projected = projectAnalysisError(
+      new AnalysisInputError(
+        "address_to_file_offset",
+        {
+          userMessage: "No exact original-file offset exists.",
+          remediationAction: "Select an address inside a file-backed mapping.",
+          conformsToInputContract: true,
+        },
+        [issue],
+      ),
+    );
+
+    expect(projected).toEqual({
+      code: "invalid_request",
+      category: "invalid_input",
+      message: "No exact original-file offset exists.",
+      retryable: false,
+      remediation: {
+        action: "Select an address inside a file-backed mapping.",
+      },
+      details: { operation: "address_to_file_offset", issues: [issue] },
+    });
+    expect(analysisErrorProjectionSchema.parse(projected)).toEqual(projected);
+  });
+
   it("separates timeout-state inspection from client deadline recovery", () => {
     const projected = projectAnalysisError(
       new AnalysisTimeoutError("inspect_binary_layout", 2_500),

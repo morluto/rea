@@ -53,8 +53,9 @@ reject the summary record. Give `compare_functions` the retained dossier as
 `{"kind": "retained-evidence", "evidence_id": "<parent_evidence_id>"}`; give
 `match_native_functions` the same reference inside `left_observations` or
 `right_observations`, since its `left` and `right` take `list_procedures`
-Evidence. Request `detail: "complete"` for `build_call_path`, which accepts
-only inline complete dossiers.
+Evidence. `build_call_path.functions` also accepts retained references to the
+complete dossiers. Request `detail: "complete"` only when the record must travel
+inline.
 
 Saved records from the pre-6.6 identity projection that omitted
 `relationship_coverage: null` from its digest remain incompatible, even when
@@ -73,7 +74,9 @@ Ghidra inventories, measured load-image observations and function replies use
 `raw_result: null` when their useful facts are already preserved in
 `normalized_result`, limitations, locations and relationship coverage. Distinct
 overview details, file-offset selection roles and database types supplemented
-with derived metadata keep their upstream representation. Native load-image
+with derived metadata keep their upstream representation. When a Ghidra naming
+edit is not applied, `raw_result` keeps the bridge's `failures` and shared
+`conflicts` table without a second copy of the result booleans. Native load-image
 attestation continues to use the bridge reply locally before Evidence
 projection. Read function results from `normalized_result`; older retained
 Evidence keeps its original representation and identity.
@@ -158,7 +161,9 @@ for the error code, target details, partial observations, remediation, and the
 optional bounded `recovery` next step. `recovery.kind=inspect_input_contract`
 names the rejected operation: re-read that operation's advertised input schema
 (call `tools/list` if the catalog may be stale), correct the listed fields, and
-do not repeat the unchanged call. `recovery.kind=inspect_timeout_state` names
+do not repeat the unchanged call. A well-formed request the selected target
+cannot answer, such as an address without one exact file offset, omits this
+hint; follow its `remediation.action`. `recovery.kind=inspect_timeout_state` names
 the operation and the REA server/provider deadline. Inspect partial Evidence
 and reported cleanup state, then follow the returned remediation. Change a
 request field or REA_* setting only when the returned remediation explicitly
@@ -623,10 +628,24 @@ counts, and whether the decoded graph is incomplete. Each page repeats
 budget (XLD.app: 6.7 MB), so select `detail: "summary"` on the first call.
 Delivery detail never reaches the decoder or changes the source Evidence ID.
 
-`trace_application_feature`, `trace_javascript_semantics`,
-`compare_application_versions`, `compare_source_to_bundle`, and
-`compare_javascript_export_shapes` accept complete inline application Evidence
-or an exact reference to a record already retained by the current connection:
+Logical Evidence source fields share one input contract across domains:
+complete inline Evidence or an exact reference to a record already retained by
+the current connection. This applies to individual sources, optional sources,
+arrays and nested sources declared by the tool's input schema:
+
+| Workflows                                                                                                   | Retained-reference inputs                                                                                             |
+| ----------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `compare_functions`, `compare_process_captures`, `compare_wasm_interfaces`                                  | `left`, `right`                                                                                                       |
+| `match_native_functions`                                                                                    | `left`, `right`, `left_observations[]`, `right_observations[]`                                                        |
+| `trace_application_feature`, `trace_javascript_semantics`, `compare_source_to_bundle`                       | `application`; feature tracing also accepts `native_observations[]`                                                   |
+| `compare_application_versions`, `compare_javascript_export_shapes`                                          | `left`, `right`; version comparison also accepts both native-observation arrays                                       |
+| `reconcile_javascript_runtime`                                                                              | `static_layers[].analysis`, `runtime_observations[]`                                                                  |
+| `compare_managed_members`, `verify_managed_native_boundaries`, `import_managed_reconstruction`              | Comparison `left`/`right`; verification `managed_boundaries`/`native_observations[]`; reconstruction `static_members` |
+| `project_managed_application_graph`                                                                         | `managed_artifact`, `managed_members`, `managed_native_boundaries`                                                    |
+| `project_android_application_graph`, `project_apple_application_graph`, `project_harmony_application_graph` | `inventory_evidence[]`                                                                                                |
+| `build_call_path`, `find_changed_behavior`, `correlate_static_and_runtime`                                  | `functions[]`, `comparisons[]`, or `static_comparisons[]`/`runtime_comparisons[]`, respectively                       |
+
+For example:
 
 ```json
 {
@@ -642,11 +661,16 @@ or an exact reference to a record already retained by the current connection:
 ```
 
 Use the `evidence_id` returned by `analyze_javascript_application` (or another
-compatible application-graph producer). Comparisons accept this form in `left`
-and `right`; each side can independently be inline or retained. Native
-observation arrays continue to take complete inline Evidence. Results and their
-Evidence remain complete inline, and both input forms pass the same semantic,
-identity, authority, and provenance checks without running the producer again.
+compatible application-graph producer). When the producer returned a summary
+or inspection page, use its `normalized_result.parent_evidence_id` to select
+the complete source, rather than the view's own `evidence_id`. Each source can
+independently be inline or retained, including within one array. Both forms use
+the same application workflow and owner validation, preserve exact source
+identity, provenance, authority, coverage and partial or unknown facts, and do
+not run the producer again. A reference cannot supply facts absent from that
+record. Workflows that follow source links also require those linked records
+in the ledger. File references are accepted only where the tool explicitly
+advertises a file selector; a retained ID does not authorize a file read.
 
 References belong to the current connection's Evidence ledger. Opening another
 target or restarting the current target preserves retained records, including
@@ -659,10 +683,13 @@ Supply complete inline Evidence, repeat its producer, or import an exported
 Evidence bundle before referencing that imported record. Export a bundle before
 closing if the investigation needs it later.
 
-CLI application workflows continue to read portable inline Evidence from files
-and run the same analysis workflows; a standalone CLI invocation cannot resolve
-another MCP connection's retained records. No additional lookup call, provider
-selection, or approval step is required for a same-session follow-up.
+CLI workflows that advertise `--evidence-bundle` can resolve the same reference
+JSON from one explicitly selected local bundle, including an MCP export. They
+also accept portable inline Evidence and use the same application workflows.
+A standalone CLI invocation cannot resolve another MCP connection's ledger
+without that exported bundle. See [CLI Evidence reuse](cli.md#import-export-and-compare-evidence)
+for the supported commands. No additional lookup call, provider selection, or
+approval step is required for a same-session follow-up.
 CLI `inspect-artifact` continues to return complete portable Evidence. Save that
 JSON to a file and use `inspect-analysis-view` with inline source Evidence for
 later inventory summaries or pages; a one-shot CLI session cannot retain a
@@ -1094,6 +1121,15 @@ mapping. A successful start-address mapping does not establish that an entire
 range is contiguous in the original file, or that its bytes equal analysis
 memory after loader fixups. Uninitialized, missing, and ambiguous mappings fail
 explicitly; preserve the reported failure rather than guessing an offset.
+For Ghidra, such a well-formed address returns `invalid_request` whose message
+states the bridge's reason and whose remediation points to
+`inspect_native_load_image`. It carries no `inspect_input_contract` recovery.
+`details.issues[0].observed` keeps the caller's exact `address` and a
+`file_mapping` outcome: `unmapped` (outside every memory block),
+`uninitialized`, `absent` (no authoritative target-file source), `ambiguous`,
+or `unrepresentable` (beyond the exact JSON integer range). Initialization, not
+the loaded flag, decides whether source bytes can exist, so an initialized
+file-backed overlay still maps.
 
 For constructor-populated pointer or resource slots, a static zero is not proof
 of a later null value. Inspect the slot's `xrefs` and the writer's assembly or

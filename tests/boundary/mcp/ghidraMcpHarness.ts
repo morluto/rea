@@ -50,7 +50,7 @@ export const connectGhidraMcp = async (
     callTool: (operation, input, options) => {
       calls.push(operation);
       if (execute !== undefined) return execute(operation, input, options);
-      return Promise.resolve(ok(resultFor(operation, input)));
+      return Promise.resolve(ok(ghidraFixtureResult(operation, input)));
     },
     close: () => Promise.resolve(ok(null)),
     ...(fixture.attestDosTargetSnapshot === undefined
@@ -155,7 +155,7 @@ const resultBuilders = new Map<GhidraOperation, GhidraResultBuilder>([
     "read_binary_inventory_summary",
     () => ({
       document: "fixture",
-      segments: resultFor("list_segments", {}),
+      segments: ghidraFixtureResult("list_segments", {}),
       procedure_count: 1,
       string_count: 2,
     }),
@@ -272,7 +272,8 @@ const resultBuilders = new Map<GhidraOperation, GhidraResultBuilder>([
   ["analyze_function", () => ghidraFunctionDossier()],
 ]);
 
-const resultFor = (
+/** The harness bridge reply for one operation, before any test override. */
+export const ghidraFixtureResult = (
   operation: GhidraOperation,
   input: Readonly<Record<string, JsonValue>>,
 ): JsonValue => {

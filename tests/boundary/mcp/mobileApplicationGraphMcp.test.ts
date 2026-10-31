@@ -105,6 +105,21 @@ it("advertises and executes Android and Apple inventory projections", async () =
     provider: { id: "rea-android-application" },
   });
   const androidEvidence = parseEvidence(android.structuredContent);
+  const retainedAndroid = await client.callTool({
+    name: "project_android_application_graph",
+    arguments: {
+      inventory_evidence: apkSources.map(({ evidence_id }) => ({
+        kind: "retained-evidence",
+        evidence_id,
+      })),
+    },
+  });
+  expect(retainedAndroid.isError, JSON.stringify(retainedAndroid)).not.toBe(
+    true,
+  );
+  expect(parseEvidence(retainedAndroid.structuredContent)).toEqual(
+    androidEvidence,
+  );
   const androidBundle = await client.callTool({
     name: "get_evidence_bundle",
     arguments: {},
@@ -155,6 +170,18 @@ it("advertises and executes Android and Apple inventory projections", async () =
     operation: "project_apple_application_graph",
     provider: { id: "rea-apple-application" },
   });
+  const retainedApple = await client.callTool({
+    name: "project_apple_application_graph",
+    arguments: {
+      inventory_evidence: [
+        { kind: "retained-evidence", evidence_id: ipaInventory.evidence_id },
+      ],
+    },
+  });
+  expect(retainedApple.isError, JSON.stringify(retainedApple)).not.toBe(true);
+  expect(parseEvidence(retainedApple.structuredContent)).toEqual(
+    parseEvidence(apple.structuredContent),
+  );
 });
 
 it("projects a single inventory page as partial and links only that source", async () => {
@@ -219,6 +246,16 @@ it("projects a single inventory page as partial and links only that source", asy
   expect(unresolved).toContain(dex.artifact_format);
   expect(unresolved).toContain("unknown");
   expect(projection.evidence_links).toEqual([page.evidence_id]);
+  const retained = await client.callTool({
+    name: "project_android_application_graph",
+    arguments: {
+      inventory_evidence: [
+        { kind: "retained-evidence", evidence_id: page.evidence_id },
+      ],
+    },
+  });
+  expect(retained.isError, JSON.stringify(retained)).not.toBe(true);
+  expect(parseEvidence(retained.structuredContent)).toEqual(projection);
   const bundle = await client.callTool({
     name: "get_evidence_bundle",
     arguments: {},
@@ -379,6 +416,16 @@ it.each([
       ],
       coverage: { status: "partial", inventory_complete: true },
     });
+    const retained = await client.callTool({
+      name: operation,
+      arguments: {
+        inventory_evidence: [
+          { kind: "retained-evidence", evidence_id: inventory.evidence_id },
+        ],
+      },
+    });
+    expect(retained.isError, JSON.stringify(retained)).not.toBe(true);
+    expect(parseEvidence(retained.structuredContent)).toEqual(evidence);
     const bundle = await client.callTool({
       name: "get_evidence_bundle",
       arguments: {},
