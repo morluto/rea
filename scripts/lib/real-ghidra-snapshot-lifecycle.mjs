@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { parseAnalysisSnapshot } from "../../dist/domain/analysisSnapshot.js";
 import { parseEvidenceBundle } from "../../dist/domain/evidenceBundle.js";
 
-/** Keep mutable Ghidra observations out of immutable snapshots across target opens. */
+/** Keep live Ghidra edits distinct from historical Evidence across snapshots. */
 export async function verifyGhidraSnapshotLifecycle(
   client,
   target,
@@ -93,18 +93,18 @@ export async function verifyGhidraSnapshotLifecycle(
     const bundle = parseEvidenceBundle(
       JSON.parse(await readFile(bundlePath, "utf8")),
     );
-    assert.ok(
-      bundle.records.some(
-        (record) => record.operation === "annotate_native_function",
-      ),
+    const annotation = bundle.records.find(
+      (record) =>
+        record.operation === "annotate_native_function" &&
+        record.normalized_result.annotations.name === edited.procedure.name,
     );
-    assert.ok(
-      bundle.records.some(
-        (record) =>
-          record.operation === "inspect_native_api" &&
-          record.normalized_result.procedure.name === edited.procedure.name,
-      ),
+    const editedApi = bundle.records.find(
+      (record) =>
+        record.operation === "inspect_native_api" &&
+        record.normalized_result.procedure.name === edited.procedure.name,
     );
+    assert.ok(annotation);
+    assert.ok(editedApi);
 
     await call("close_binary");
     await call("open_binary", {
@@ -124,14 +124,13 @@ export async function verifyGhidraSnapshotLifecycle(
     const fresh = parseAnalysisSnapshot(
       JSON.parse(await readFile(freshPath, "utf8")),
     );
-    assert.ok(
-      !fresh.evidence_bundle.records.some(
-        (record) =>
-          record.operation === "annotate_native_function" ||
-          (record.operation === "inspect_native_api" &&
-            record.normalized_result.procedure.name === edited.procedure.name),
-      ),
-    );
+    for (const historical of [annotation, editedApi])
+      assert.deepEqual(
+        fresh.evidence_bundle.records.find(
+          (record) => record.evidence_id === historical.evidence_id,
+        ),
+        historical,
+      );
     await call("open_binary", {
       path: target.path,
       provider_id: "ghidra",
