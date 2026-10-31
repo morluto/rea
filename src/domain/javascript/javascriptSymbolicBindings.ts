@@ -1143,6 +1143,15 @@ export class JavaScriptSymbolicBindings {
               ? { kind: "external", path: [spec.value] }
               : symbolicUnknown("dynamic require");
         } else if (
+          value.kind === "external" &&
+          value.path.length > 2 &&
+          value.path.at(-1) === "bind" &&
+          node.arguments.length <= 1 &&
+          !node.arguments.some((argument) => t.isSpreadElement(argument))
+        ) {
+          // Binding only a receiver keeps the external method's argument order.
+          result = { kind: "external", path: value.path.slice(0, -1) };
+        } else if (
           value.kind !== "function" ||
           this.#activeFunctions.has(value.node)
         ) {
