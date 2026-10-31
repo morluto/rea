@@ -49,7 +49,10 @@ installation or connection and requires its own explicit approval. It can also
 save verified paths for an existing Ghidra installation.
 
 After selection, review the plan's exact paths and changes and approve before
-REA writes files or installs Hopper. You can cancel at any prompt.
+REA writes files or installs Hopper. The approval view also shows known manual
+completion steps for selected clients, such as Grok Bot's hosted connector.
+Approving the local changes does not complete those manual steps. You can cancel
+at any prompt.
 
 Before applying changes, REA checks your current configuration. The plan lists:
 

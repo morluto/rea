@@ -264,6 +264,8 @@ export interface SetupConfirmationContext {
   readonly clientStates: readonly SetupClientState[];
   readonly selectedClientIds: readonly string[];
   readonly clientSelectionAllowed: boolean;
+  /** Known manual completion required after the approved local changes. */
+  readonly remediation?: string;
 }
 
 /** Adapter-owned selection and confirmation for the setup workflow. */

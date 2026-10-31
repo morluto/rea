@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { runSetup } from "./Setup.js";
+import { manualRegistrationRemediation } from "./SupportedClients.js";
 import type { SetupProgressEvent } from "./SetupTypes.js";
 import { FakeSetupHost, options } from "./Setup.fixture.js";
 import { SetupSkillInstallError } from "./SetupSkill.js";
@@ -688,4 +689,41 @@ describe("setup workflow lifecycle and provider planning", () => {
     expect(applied.remediation).toContain("hosted computer");
     expect(host.configurations).toBe(0);
   });
+});
+
+describe("manual registration approval", () => {
+  it.each([true, false])(
+    "discloses manual registration before any write (apply: %s)",
+    async (approved) => {
+      const host = new FakeSetupHost();
+      host.hopper = "/fixture/Hopper";
+      host.doctorHealthy = true;
+      host.clients = [
+        {
+          name: "grok_bot",
+          displayName: "Grok Bot",
+          configPath: "/home/user/.grokbot",
+          format: "unsupported",
+        },
+      ];
+      const result = await runSetup(
+        { ...options(false), clientIds: ["grok_bot"], structured: false },
+        host,
+        async (actions, context) => {
+          expect(context?.stage).toBe("confirm");
+          expect(context).toHaveProperty(
+            "remediation",
+            manualRegistrationRemediation("grok_bot"),
+          );
+          expect(actions.map(({ kind }) => kind)).toEqual(["install_skill"]);
+          expect(host.skillInstalls).toBe(0);
+          expect(host.configurations).toBe(0);
+          return approved;
+        },
+      );
+      expect(result.status).toBe(approved ? "needs_human" : "cancelled");
+      expect(host.skillInstalls).toBe(approved ? 1 : 0);
+      expect(host.configurations).toBe(0);
+    },
+  );
 });
