@@ -115,7 +115,7 @@ export const bridgeMaxRequestBytesRecovery = (
     `The effective ${BRIDGE_MAX_REQUEST_BYTES_SETTING} value is ${String(limit.maximumBytes)} bytes (source ${limit.source}; default ${String(DEFAULT_BRIDGE_MAX_REQUEST_BYTES)}, floor ${String(MINIMUM_BRIDGE_MAX_REQUEST_BYTES)}, maximum ${String(MAXIMUM_BRIDGE_MAX_REQUEST_BYTES)}).`,
     `Set ${BRIDGE_MAX_REQUEST_BYTES_SETTING} in the environment that starts REA to a decimal integer from ${String(MINIMUM_BRIDGE_MAX_REQUEST_BYTES)} to ${String(MAXIMUM_BRIDGE_MAX_REQUEST_BYTES)}, then restart REA.`,
     peer === "Ghidra"
-      ? `The Ghidra bridge enforces no request ceiling of its own, so only the REA client applies ${BRIDGE_MAX_REQUEST_BYTES_SETTING} to Ghidra requests.`
+      ? `The Ghidra bridge bounds each request line it reads to the same setting in decoded characters and closes the connection when a line exceeds it; the client also refuses an oversized request before writing.`
       : "Restart Hopper or Cutter from that same environment so the bridge uses this ceiling.",
   ].join(" ");
 
