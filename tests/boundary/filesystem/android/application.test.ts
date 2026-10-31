@@ -464,3 +464,37 @@ it("retains an encrypted root manifest occurrence without claiming absence", asy
     expect.stringContaining("component absence is unknown"),
   );
 });
+
+// A Unix symlink entry, which ZIP inventory reports without content identity.
+const SYMLINK = {
+  msDosCompatible: false,
+  versionMadeBy: 0x0314,
+  externalFileAttributes: 0o120777 * 0x10000,
+};
+
+it("keeps a known ZIP symlink out of unavailable content", async () => {
+  const root = await createTestTempDirectory("rea-android-symlink-");
+  const path = join(root, "Fixture.apk");
+  const writer = new ZipWriter(new Uint8ArrayWriter());
+  await writer.add("AndroidManifest.xml", new TextReader("manifest"));
+  await writer.add("classes.dex", new TextReader("dex\n035\0"));
+  await writer.add("assets/current", new TextReader("assets/v1"), SYMLINK);
+  await writeFile(path, await writer.close());
+  const inventory = await inventoryApplicationPackage(path);
+  const graph = androidApplicationProjectionResultSchema.parse(
+    requireSuccessfulProjection(
+      projectAndroidApplicationEvidence({ inventory_evidence: [inventory] }),
+    ).normalized_result,
+  );
+  expect(graph.unavailable_components).toEqual([]);
+  expect(JSON.stringify(graph.components)).not.toContain("assets/current");
+  expect(graph.coverage).toEqual({
+    status: "complete-within-inventory",
+    inventory_complete: true,
+  });
+  expect(
+    graph.limitations.some((text) =>
+      text.includes("authenticated content identity"),
+    ),
+  ).toBe(false);
+});

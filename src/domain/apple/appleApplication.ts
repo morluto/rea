@@ -31,6 +31,7 @@ import {
   projectionPathSchema,
   projectedInventoryEntries,
   projectedFileComponents,
+  projectedUnavailableComponents,
   unavailableComponentSchema,
   type ProjectedInventoryEntry,
 } from "../mobileApplicationGraphProjection.js";
@@ -124,11 +125,7 @@ export const projectAppleInventory = (
   );
   // Directories have no file bytes; symlinks already have their own path-only output.
   const unavailable = attributeComponents(
-    entries.flatMap(({ kind, unavailable }) =>
-      (kind === "file" || kind === "slice") && unavailable !== undefined
-        ? [unavailable]
-        : [],
-    ),
+    projectedUnavailableComponents(entries),
     roots,
     rootFormat,
   );
