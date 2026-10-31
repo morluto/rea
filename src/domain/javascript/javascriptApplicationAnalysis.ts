@@ -58,6 +58,15 @@ const electronBoundarySummarySchema = z.strictObject({
   resolved_native_addon_bindings: countSchema,
   /** Absent in evidence produced before protocol registrations were reported. */
   protocol_registrations: countSchema.exactOptional(),
+  /**
+   * Whether the Electron boundary surface was actually recovered. Absent when no
+   * analyzed source links an Electron module, so the counts below describe an
+   * application that does not use Electron rather than a failed recovery.
+   * `empty` means Electron is imported but nothing was recovered, so the zeroes
+   * above are missing coverage and not evidence of absence. Absent in evidence
+   * produced before this field existed.
+   */
+  electron_semantics: z.enum(["recovered", "empty"]).exactOptional(),
 });
 
 const reconstructionStatisticsSchema = z.strictObject({

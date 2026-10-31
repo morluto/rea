@@ -1,4 +1,5 @@
 import type { ElectronBoundarySummary } from "../../domain/javascript/javascriptApplicationAnalysis.js";
+import { electronModuleReferenced } from "./ElectronBoundaryAnalysis.js";
 import { ELECTRON_IDENTITY_LIMITATION } from "../../domain/javascript/javascriptElectronMemberWrites.js";
 import type { ArtifactInventorySnapshot } from "../../domain/artifactInventorySnapshot.js";
 import {
@@ -356,6 +357,7 @@ const graphLimitations = (
 ): string[] => {
   const ipc = ipcContext.records;
   const pairings = ipcContext.states;
+  const electronImported = electronModuleReferenced(context.analysis);
   const electronFindings = context.analysis.files.reduce(
     (count, { javascript }) =>
       count +
@@ -396,7 +398,11 @@ const graphLimitations = (
       ? [ELECTRON_IDENTITY_LIMITATION]
       : []),
     ...(electronFindings === 0
-      ? []
+      ? electronImported
+        ? [
+            "Electron modules are referenced but no Electron boundary fact was recovered from inert syntax. Zero IPC operations and zero BrowserWindows here mean empty coverage, not evidence that the application has none.",
+          ]
+        : []
       : [
           "Electron relationships are derived from inert syntax; runtime registration, reachability, defaults, and enforcement remain unproven.",
         ]),
