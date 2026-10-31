@@ -272,6 +272,14 @@ and tool profile. Text offsets count UTF-16 code units; follow `next_offset`.
 The complete source remains retained after an oversized MCP reply. No target
 execution or network acquisition is implied, and WAT is decoded representation.
 
+For exact core-module import/export differences, use `compare_wasm_interfaces`
+with two complete inspection Evidence records (or current-session retained
+references) and explicit scope. Preserve unknown types/duplicate names; static
+interface equality is not runtime compatibility. CLI accepts complete inline
+Evidence in `rea compare-wasm-interfaces input.json --json`, or exact references
+with `--evidence-bundle /absolute/path/evidence.json`. Use the complete parent
+ID when the inspection returned a summary.
+
 ## Offline APK signatures
 
 Use `inspect_apk_signature` for a selected local APK/ZIP/AAB. Default MCP summaries
@@ -666,14 +674,6 @@ target. Ordinal-only, forwarded and hidden-version exports stay distinct;
 partial or unsupported coverage means the inventory is incomplete, not that
 exports are absent. Use `inspect_macho` for Mach-O. See
 [offline binary diagnostics](https://github.com/morluto/rea/blob/main/docs/binary-diagnostics.md).
-
-For exact core-module import/export differences, use `compare_wasm_interfaces`
-with two complete inspection Evidence records (or current-session retained
-references) and explicit scope. Preserve unknown types/duplicate names; static
-interface equality is not runtime compatibility. CLI accepts complete inline
-Evidence in `rea compare-wasm-interfaces input.json --json`, or exact references
-with `--evidence-bundle /absolute/path/evidence.json`. Use the complete parent
-ID when the inspection returned a summary.
 
 ## Godot PCK
 
