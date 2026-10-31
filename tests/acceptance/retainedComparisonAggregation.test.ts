@@ -11,6 +11,57 @@ import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
+it("recovers a missing retained closure by importing the originating bundle", async () => {
+  const comparisons = [FUNCTION_COMPARISON_EVIDENCE];
+  const { call } = await connectLocalToolsMcp();
+  const input = { comparisons };
+  const missing = parseMcpToolError(
+    await call("find_changed_behavior", input),
+  ).error;
+  expect(missing).toMatchObject({
+    code: "evidence_integrity_mismatch",
+    retryable: false,
+    details: {
+      reason: "missing",
+      reference_scope: "retained-closure",
+      evidence_id: FUNCTION_COMPARISON_EVIDENCE.evidence_id,
+      actual: null,
+    },
+  });
+  expect(missing.message).toContain("required retained Evidence closure");
+  expect(missing.remediation.action).toContain("originating Evidence bundle");
+  expect(JSON.stringify(missing)).not.toContain("inline Evidence");
+
+  const directory = await createTestTempDirectory("rea-comparison-recovery-");
+  const path = join(directory, "originating-bundle.json");
+  await writeFile(
+    path,
+    JSON.stringify(
+      createEvidenceBundle([
+        FUNCTION_COMPARISON_EXAMPLE.left,
+        FUNCTION_COMPARISON_EXAMPLE.right,
+        ...comparisons,
+      ]),
+    ),
+  );
+  const imported = await call("import_evidence_bundle", { path });
+  expect(imported.isError, JSON.stringify(imported)).not.toBe(true);
+  const response = await call("find_changed_behavior", input);
+  expect(response.isError, JSON.stringify(response)).not.toBe(true);
+  const aggregate = parseEvidence(response.structuredContent);
+  expect(
+    changedBehaviorResultSchema.parse(aggregate.normalized_result)
+      .behavior_status,
+  ).toBe("unknown");
+  expect(aggregate.evidence_links).toEqual(
+    expect.arrayContaining([
+      FUNCTION_COMPARISON_EXAMPLE.left.evidence_id,
+      FUNCTION_COMPARISON_EXAMPLE.right.evidence_id,
+      FUNCTION_COMPARISON_EVIDENCE.evidence_id,
+    ]),
+  );
+});
+
 it("aggregates selected retained observations within a caller's input budget", async () => {
   // Distinct authenticated observations may have identical derived contents.
   const comparisons = Array.from({ length: 12 }, (_, observation) =>

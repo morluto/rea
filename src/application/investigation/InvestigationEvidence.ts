@@ -1,8 +1,11 @@
 import { resolveEvidenceInput } from "../EvidenceInputResolver.js";
 import type { EvidenceReader } from "./InvestigationRecordPort.js";
 import { uniqueSorted } from "../../domain/canonicalOrdering.js";
-import type { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
-import { ok, type Result } from "../../domain/result.js";
+import {
+  EvidenceReferenceError,
+  type EvidenceIntegrityError,
+} from "../../domain/evidenceErrors.js";
+import { err, ok, type Result } from "../../domain/result.js";
 
 /** Follow exact session references without exporting unrelated records or Unknowns. */
 export const resolveInvestigationEvidenceClosure = (
@@ -19,7 +22,19 @@ export const resolveInvestigationEvidenceClosure = (
       { kind: "retained-evidence", evidence_id: evidenceId },
       lookup,
     );
-    if (!evidence.ok) return evidence;
+    if (!evidence.ok) {
+      const error = evidence.error;
+      if (error.reason !== "missing") return evidence;
+      return err(
+        new EvidenceReferenceError(
+          error.evidenceId,
+          error.reason,
+          error.expected,
+          error.actual,
+          { referenceScope: "retained-closure", cause: error },
+        ),
+      );
+    }
     visited.add(evidenceId);
     pending.push(...evidence.value.evidence_links);
   }

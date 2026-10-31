@@ -823,7 +823,7 @@ it("requires the original source closure even when the comparison reference exis
     });
     expect(parseMcpToolError(response).error).toMatchObject({
       code: "evidence_integrity_mismatch",
-      details: { reason: "missing" },
+      details: { reason: "missing", reference_scope: "retained-closure" },
     });
   } finally {
     await close(session, server, client);

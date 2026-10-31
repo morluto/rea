@@ -1146,7 +1146,11 @@ These IDs select comparison Evidence, not function dossiers or summary views.
 Complete inline comparisons remain accepted and can be mixed with references.
 The current server must retain the comparisons and their original source closure;
 import the complete source bundle after a session handoff. Missing or damaged
-records are explicit failures. Aggregating static differences does not establish
+records are explicit failures. A missing required retained record reports its exact
+`evidence_id` with `details.reference_scope: "retained-closure"`. Import the
+originating bundle with its linked sources, or re-create those observations in the
+current investigation, before retrying; resending the inline comparison alone
+does not restore its closure. Aggregating static differences does not establish
 observed runtime change.
 
 `set_address_name` and `set_addresses_names` give Ghidra sessions the same
