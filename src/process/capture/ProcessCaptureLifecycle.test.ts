@@ -418,7 +418,8 @@ it("stops waiting for a hung delivery once the exit is observed", async () => {
     {
       signal: "SIGTERM",
       delivery: "unverified",
-      reason: "delivery did not settle within 1000 ms",
+      reason:
+        "delivery did not settle within REA's fixed 1000 ms signal-delivery grace; this release has no runtime override and a larger finalization_ms does not extend it",
     },
   ]);
   expect(exit.signal, "the observed exit is kept").toBe(0);
@@ -488,7 +489,8 @@ it("stops waiting when the escalation delivery never settles and no exit arrives
   ).toMatchObject({
     signal: "SIGKILL",
     delivery: "unverified",
-    reason: "delivery did not settle within 1000 ms",
+    reason:
+      "delivery did not settle within REA's fixed 1000 ms signal-delivery grace; this release has no runtime override and a larger finalization_ms does not extend it",
   });
   expect(result.finalization?.elapsed_ms, "no exit was observed").toBeNull();
 }, 10_000);
