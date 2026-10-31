@@ -1,15 +1,11 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import {
-  McpServer,
-  STDIO_DEFAULT_MAX_BUFFER_SIZE,
-} from "@modelcontextprotocol/server";
+import { McpServer } from "@modelcontextprotocol/server";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { advertisedInputExamples } from "../../../src/contracts/advertisedInputExamples.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
-import { COMPACT_INPUT_SCHEMA_BUDGET_BYTES } from "../../../src/config/mcpInputSchemaProfile.js";
 import { emptyArraySchema } from "../../../src/domain/emptyArraySchema.js";
 import { processScenarioSchema } from "../../../src/domain/process/processScenario.js";
 import { GENERATED_MCP_TOOL_CATALOG } from "../../fixtures/mcpToolCatalog.js";
@@ -18,8 +14,6 @@ import {
   unsupportedInputLiteralSchemaError,
 } from "../../fixtures/mcpClientSchemaConstraints.js";
 import { advertisedSchemaErrors } from "../../fixtures/mcpAdvertisedSchemaValidity.js";
-import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
-import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 import { servedCatalog } from "../../../src/application/environment/environmentState.js";
 import { servedFrom } from "../../fixtures/environmentStateServing.js";
@@ -764,35 +758,16 @@ const byteEntropyContract = () => {
   return contract;
 };
 
-const compactByteEntropyServer = (): EvidenceMcpServer =>
-  new EvidenceMcpServer(
-    { name: "schema-entropy-path", version: "0" },
-    { capabilities: {} },
-    undefined,
-    createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE),
-    { budgetBytes: COMPACT_INPUT_SCHEMA_BUDGET_BYTES },
-  );
-
-/** The production default profile; a plain McpServer skips compact conversion. */
-const fullByteEntropyServer = (): McpServer =>
-  new McpServer({ name: "schema-entropy-path", version: "0" });
-
 /**
- * Connect one byte-entropy server over an in-memory transport and hand the
- * caller its client and advertisement. Only EvidenceMcpServerCore applies the
- * compact input-schema profile, so the two profiles need different servers.
+ * Advertise the byte-entropy contract on a real MCP server. This file asserts the
+ * advertised schema itself; canonical rejection over the wire for both
+ * input-schema profiles lives in
+ * tests/boundary/mcp/absoluteLocalPathSchema.test.ts.
  */
-const withByteEntropyServer = async <T>(
-  profile: "full" | "compact",
-  probe: (context: {
-    readonly client: Client;
-    readonly advertised: Record<string, unknown>;
-  }) => Promise<T>,
-): Promise<T> => {
-  const server =
-    profile === "compact"
-      ? compactByteEntropyServer()
-      : fullByteEntropyServer();
+const byteEntropyAdvertisedSchema = async (): Promise<
+  Record<string, unknown>
+> => {
+  const server = new McpServer({ name: "schema-entropy-path", version: "0" });
   const client = new Client({ name: "schema-entropy-path", version: "0" });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
@@ -809,43 +784,23 @@ const withByteEntropyServer = async <T>(
     const advertised = tools.find((tool) => tool.name === contract.name);
     if (advertised === undefined)
       throw new Error("inspect_byte_entropy was not advertised");
-    return await probe({ client, advertised: advertised.inputSchema });
+    return advertised.inputSchema;
   } finally {
     await Promise.allSettled([client.close(), server.close()]);
   }
 };
 
-it("advertises and enforces the byte-entropy absolute-path requirement in the full profile", async () => {
+it("advertises and enforces the byte-entropy absolute-path requirement", async () => {
   const contract = byteEntropyContract();
-  await withByteEntropyServer("full", async ({ advertised }) => {
-    const ajv = new Ajv2020({ strict: false, validateFormats: false });
-    const validate = ajv.compile(advertised);
-    // The runtime refuses a relative path, so the advertised contract has to
-    // refuse it too rather than invite a request that cannot succeed.
-    expect(contract.inputSchema.safeParse({ path: "sample.bin" }).success).toBe(
-      false,
-    );
-    expect(validate({ path: "sample.bin" })).toBe(false);
-    expect(validate({ path: "/file" })).toBe(true);
-  });
-});
-
-it("refuses a relative byte-entropy path through the compact profile before provider work", async () => {
-  await withByteEntropyServer("compact", async ({ client }) => {
-    // The compact profile reduces a required path property that carries two
-    // patterns down to its declared type, so the reduced advertisement alone no
-    // longer states the requirement. The server still validates the canonical
-    // input, so the request that advertisement would invite is refused here
-    // instead of reaching the handler.
-    const rejected = await client.callTool({
-      name: "inspect_byte_entropy",
-      arguments: { path: "sample.bin" },
-    });
-    expect(rejected.isError).toBe(true);
-    expect(JSON.stringify(rejected)).toContain(
-      "absolute local filesystem path",
-    );
-  });
+  const ajv = new Ajv2020({ strict: false, validateFormats: false });
+  const validate = ajv.compile(await byteEntropyAdvertisedSchema());
+  // The runtime refuses a relative path, so the advertised contract has to
+  // refuse it too rather than invite a request that cannot succeed.
+  expect(contract.inputSchema.safeParse({ path: "sample.bin" }).success).toBe(
+    false,
+  );
+  expect(validate({ path: "sample.bin" })).toBe(false);
+  expect(validate({ path: "/file" })).toBe(true);
 });
 
 it(
