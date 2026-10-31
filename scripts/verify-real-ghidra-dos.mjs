@@ -378,17 +378,33 @@ try {
     arguments: { procedure: "0xffffffffffffffff" },
   });
   assert.equal(invalid.isError, true, "Unmapped address did not fail");
+  // The CLI reads a fresh session, so compare it with MCP before the boundary
+  // helper's temporary rename and restoration.
+  const entryWindow = await call("read_function_instructions", {
+    procedure: identities.entry.address,
+  });
+  const cliWindow = await cliEvidence("instructions", identities.entry.address);
+  assert.deepEqual(cliWindow.normalized_result, entryWindow);
   await verifyGhidraAddressBoundaries(
     client,
     identities.entry.address,
     cliEvidence,
   );
-  const cliWindow = await cliEvidence("instructions", identities.entry.address);
+  const entrySymbol = entryWindow.procedure.symbol;
+  assert.ok(entrySymbol != null, "The DOS entry needs observed symbol facts");
+  // Restoring the name is itself a user edit, so Ghidra records user provenance.
   assert.deepEqual(
-    cliWindow.normalized_result,
     await call("read_function_instructions", {
       procedure: identities.entry.address,
     }),
+    {
+      ...entryWindow,
+      procedure: {
+        ...entryWindow.procedure,
+        symbol: { ...entrySymbol, source: "user_defined" },
+      },
+    },
+    "Restoring the entry name changed more than its symbol provenance",
   );
   assert.equal(
     digest(await readFile(targetPath)),
