@@ -1,5 +1,6 @@
 import { expect, it as test } from "vitest";
 
+import { functionDossierSchema } from "../../../../src/domain/native/functionDossier.js";
 import { fakeKunaCalls } from "./fakeKuna.js";
 import {
   MACHO_FUNCTIONS,
@@ -193,14 +194,24 @@ it("keeps every entry with an explicit limitation when the section table is unre
     expect(listed.result).toHaveLength(
       MACHO_FUNCTIONS.length + MACHO_INVENTORY_ENTRIES.length,
     );
-    expect(listed.limitations).toContainEqual(
-      expect.stringMatching(
-        /^REA could not read the target's Mach-O section table \(.+\), so Kuna's inventory is kept unclassified and may include data symbols\.$/u,
+    const unreadable = listed.limitations.find((limitation) =>
+      /^REA could not read the target's Mach-O section table \(.+\), so Kuna's inventory is kept unclassified and may include data symbols\.$/u.test(
+        limitation,
       ),
     );
-    expect(
-      (await run(client, "address_name", { address: "0x100008000" })).result,
-    ).toBe("global_count");
+    expect(unreadable).toBeDefined();
+    const named = await run(client, "address_name", { address: "0x100008000" });
+    expect(named.result).toBe("global_count");
+    // Direct answers keep the same caveat, including the dossier's own list.
+    const dossier = await run(client, "analyze_function", {
+      procedure: "main",
+    });
+    for (const limitations of [
+      named.limitations,
+      dossier.limitations,
+      functionDossierSchema.parse(dossier.result).limitations,
+    ])
+      expect(limitations).toContain(unreadable);
   } finally {
     expect(await client.close()).toEqual({ ok: true, value: null });
   }

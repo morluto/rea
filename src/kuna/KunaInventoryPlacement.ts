@@ -205,6 +205,27 @@ const placeAddress = (
   return UNPLACED;
 };
 
+/** What REA knows about one selected entry: its Mach-O placement, or why it has none. */
+export type KunaSelectedPlacement =
+  | KunaEntryPlacement
+  /** The section table could not be read, so the entry is unclassified. */
+  | { readonly kind: "unclassified"; readonly reason: string }
+  /** Not a Mach-O target; Kuna's entry is kept as reported. */
+  | { readonly kind: "not-applicable" };
+
+const NOT_APPLICABLE = Object.freeze({ kind: "not-applicable" } as const);
+
+/** Place one selected entry with the same rules the listings use. */
+export const placeKunaEntry = (
+  layout: KunaInventoryLayout,
+  entry: KunaInventoryFunction,
+): KunaSelectedPlacement =>
+  layout.status === "mach-o"
+    ? placeAddress(layout, BigInt(entry.address))
+    : layout.status === "unavailable"
+      ? { kind: "unclassified", reason: layout.reason }
+      : NOT_APPLICABLE;
+
 /** Kuna's inventory split by what the target's layout says each entry is. */
 interface KunaInventoryPlacements {
   readonly layout: KunaInventoryLayout;
@@ -248,6 +269,23 @@ export const kunaDataNameLimitation = (
   region: string,
 ): string =>
   `Kuna lists ${entry.name} in its function inventory, but ${entry.address} lies in ${describeRegion(region)}, so the name labels data.`;
+
+/**
+ * The caveat a direct answer about one kept entry carries: the listings'
+ * wording for one unplaced entry, or for an unreadable section table. Code
+ * and import slots carry none.
+ */
+export const kunaEntryLimitations = (
+  layout: KunaInventoryLayout,
+  placement: KunaSelectedPlacement,
+): readonly string[] =>
+  placement.kind === "unplaced" || placement.kind === "unclassified"
+    ? kunaInventoryLimitations(
+        layout,
+        [],
+        placement.kind === "unplaced" ? 1 : 0,
+      )
+    : [];
 
 /**
  * What a listing omitted as data, and what it kept without a classification,

@@ -72,11 +72,14 @@ import {
   KUNA_LAYOUT_NOT_APPLICABLE,
   kunaDataEntryMessage,
   kunaDataNameLimitation,
+  kunaEntryLimitations,
   kunaInventoryLimitations,
   MACHO_LOAD_COMMAND_PREFIX,
+  placeKunaEntry,
   placeKunaInventory,
   readKunaMachoLayout,
   type KunaInventoryLayout,
+  type KunaSelectedPlacement,
 } from "./KunaInventoryPlacement.js";
 import {
   isKunaOperation,
@@ -126,6 +129,16 @@ interface InventoryIndex {
   readonly unplaced: ReadonlySet<KunaInventoryFunction>;
   readonly byAddress: ReadonlyMap<string, KunaInventoryFunction>;
   readonly byName: ReadonlyMap<string, readonly KunaInventoryFunction[]>;
+}
+
+/**
+ * One inventory entry a procedure request selected, with its placement and
+ * the classification caveats every answer about it carries.
+ */
+interface ResolvedEntry {
+  readonly entry: KunaInventoryFunction;
+  readonly placement: KunaSelectedPlacement;
+  readonly limitations: readonly string[];
 }
 
 /** A queued single-function request found the export finished first. */
@@ -734,36 +747,44 @@ export class KunaSessionClient implements AnalysisClient {
         referenceSource: graph.value.source,
       });
     }
-    const locations = [
-      { kind: "address", address: entry.value.address } as const,
-    ];
+    // Every answer about the entry keeps what its classification left open.
+    const { entry: selected, limitations: classification } = entry.value;
+    const locations = [{ kind: "address", address: selected.address } as const];
     switch (operation) {
       case "procedure_address":
         return ok({
-          result: entry.value.address,
+          result: selected.address,
           source: null,
           locations,
-          limitations: [],
+          limitations: classification,
         });
       case "procedure_pseudo_code": {
         const pseudocode = await this.#pseudocode(
           operation,
-          entry.value,
+          selected,
           installation,
           options,
         );
         if (!pseudocode.ok) return pseudocode;
-        return ok({ ...pseudocode.value, locations });
+        return ok({
+          ...pseudocode.value,
+          locations,
+          limitations: [...pseudocode.value.limitations, ...classification],
+        });
       }
       case "procedure_assembly": {
         const assembly = await this.#assemblyText(
           operation,
-          entry.value,
+          selected,
           installation,
           options,
         );
         if (!assembly.ok) return assembly;
-        return ok({ ...assembly.value, locations });
+        return ok({
+          ...assembly.value,
+          locations,
+          limitations: [...assembly.value.limitations, ...classification],
+        });
       }
       case "analyze_function":
         return this.#withProject(operation, installation, options, (reader) =>
@@ -879,7 +900,7 @@ export class KunaSessionClient implements AnalysisClient {
       options,
     );
     if (!selected.ok) return selected;
-    const address = selected.value;
+    const { address, limitations } = selected.value;
     const locations = [{ kind: "address" as const, address }];
     if (operation === "xrefs") {
       const references = await this.#references.incoming(
@@ -892,7 +913,7 @@ export class KunaSessionClient implements AnalysisClient {
         result: [...references.value.addresses],
         source: null,
         locations,
-        limitations: [],
+        limitations,
         referenceSource: {
           kind: "kuna-xrefs",
           direction: "to",
@@ -920,7 +941,7 @@ export class KunaSessionClient implements AnalysisClient {
       source: null,
       locations,
       referenceSource: relationships.value.source,
-      limitations: [],
+      limitations,
       relationshipCoverage:
         operation === "procedure_callers"
           ? relationships.value.callersCoverage
@@ -929,14 +950,20 @@ export class KunaSessionClient implements AnalysisClient {
   }
 
   /** Exact addresses are validated by the producing graph, which also owns
-   * synthetic import nodes absent from the quick function inventory. */
+   * synthetic import nodes absent from the quick function inventory. A name
+   * resolves through the inventory and keeps its classification caveats. */
   async #referenceAddress(
     operation: string,
     raw: unknown,
     field: "address" | "procedure",
     installation: KunaInstallation,
     options: ExecutionOptions,
-  ): Promise<Result<string, AnalysisError>> {
+  ): Promise<
+    Result<
+      { readonly address: string; readonly limitations: readonly string[] },
+      AnalysisError
+    >
+  > {
     if (typeof raw !== "string" || raw.length === 0)
       return err(
         new AnalysisInputError(
@@ -946,7 +973,7 @@ export class KunaSessionClient implements AnalysisClient {
         ),
       );
     const address = normalizeKunaAddress(raw);
-    if (address !== undefined) return ok(address);
+    if (address !== undefined) return ok({ address, limitations: [] });
     if (/^0x[0-9a-f]+$/iu.test(raw))
       return err(
         new AnalysisInputError(
@@ -959,20 +986,26 @@ export class KunaSessionClient implements AnalysisClient {
     if (!index.ok) return index;
     // References to data are meaningful, so xrefs also accepts data names.
     const entry = this.#resolve(operation, raw, index.value, field);
-    return entry.ok ? ok(entry.value.address) : entry;
+    return entry.ok
+      ? ok({
+          address: entry.value.entry.address,
+          limitations: entry.value.limitations,
+        })
+      : entry;
   }
 
   /**
    * Resolve an exact inventory name, alias or entry address. A procedure
-   * selector excludes entries the layout places in data; an address selector
-   * accepts every entry.
+   * selector excludes entries the layout places in data and returns the
+   * caveats its placement leaves open; an address selector accepts every
+   * entry and claims no procedure.
    */
   #resolve(
     operation: string,
     raw: unknown,
     index: InventoryIndex,
     field: "procedure" | "address" = "procedure",
-  ): Result<KunaInventoryFunction, AnalysisError> {
+  ): Result<ResolvedEntry, AnalysisError> {
     const parsed = procedureSelectorSchema.safeParse(raw);
     if (!parsed.success)
       return err(
@@ -992,6 +1025,17 @@ export class KunaSessionClient implements AnalysisClient {
           userMessage: kunaDataEntryMessage(entry, index.data.get(entry)!),
         }),
       );
+    const selected = (entry: KunaInventoryFunction) => {
+      const placement = placeKunaEntry(index.layout, entry);
+      return ok({
+        entry,
+        placement,
+        limitations:
+          field === "procedure"
+            ? kunaEntryLimitations(index.layout, placement)
+            : [],
+      });
+    };
     if (address !== undefined) {
       const entry = index.byAddress.get(address);
       if (entry === undefined)
@@ -1000,11 +1044,12 @@ export class KunaSessionClient implements AnalysisClient {
             userMessage: `${address} is not a procedure entry Kuna found; list_procedures shows the entries it found.`,
           }),
         );
-      return refused(entry) ? dataRefusal(entry) : ok(entry);
+      return refused(entry) ? dataRefusal(entry) : selected(entry);
     }
     const named = index.byName.get(selector) ?? [];
     const matches = named.filter((entry) => !refused(entry));
-    if (matches.length === 1 && matches[0] !== undefined) return ok(matches[0]);
+    if (matches.length === 1 && matches[0] !== undefined)
+      return selected(matches[0]);
     if (matches.length === 0 && named.length === 1 && named[0] !== undefined)
       return dataRefusal(named[0]);
     return err(
@@ -1041,13 +1086,15 @@ export class KunaSessionClient implements AnalysisClient {
     const locations = [{ kind: "address", address } as const];
     const entry = index.byAddress.get(address);
     if (entry !== undefined) {
-      const region = index.data.get(entry);
+      const placement = placeKunaEntry(index.layout, entry);
       return ok({
         result: entry.name,
         source: null,
         locations,
         limitations:
-          region === undefined ? [] : [kunaDataNameLimitation(entry, region)],
+          placement.kind === "data"
+            ? [kunaDataNameLimitation(entry, placement.region)]
+            : kunaEntryLimitations(index.layout, placement),
       });
     }
     await this.#startProject(installation);
@@ -1315,7 +1362,7 @@ export class KunaSessionClient implements AnalysisClient {
 
   async #dossier(
     operation: string,
-    entry: KunaInventoryFunction,
+    { entry, limitations: classification }: ResolvedEntry,
     reader: KunaProjectReader,
     installation: KunaInstallation,
     signal: AbortSignal | undefined,
@@ -1407,6 +1454,7 @@ export class KunaSessionClient implements AnalysisClient {
         ...(relationships.ok
           ? []
           : [relationships.error.userMessage ?? relationships.error.message]),
+        ...classification,
       ],
     });
     return ok({
@@ -1423,6 +1471,7 @@ export class KunaSessionClient implements AnalysisClient {
         ...(relationships.ok
           ? []
           : [relationships.error.userMessage ?? relationships.error.message]),
+        ...classification,
       ],
       referenceSource: relationships.ok
         ? relationships.value.source

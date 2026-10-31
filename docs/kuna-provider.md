@@ -79,7 +79,7 @@ Kuna's inventory also lists Mach-O exports that are data, such as globals in `__
 - A section with `S_ATTR_PURE_INSTRUCTIONS` or `S_ATTR_SOME_INSTRUCTIONS`, or of type `S_SYMBOL_STUBS`, holds code; the entry stays.
 - A lazy or non-lazy symbol-pointer section (`__got`, `__la_symbol_ptr`) holds import slots; the entry stays.
 - Any other section, or the header and load commands before the first section, holds data. Listings and searches omit the entry and say how many they omitted in each region. Pseudocode, assembly, `analyze_function` and `procedure_address` refuse it by name or address, and call queries refuse its name, naming its region; call queries by exact address stay validated by Kuna's graph. `address_name` and `xrefs` still accept it.
-- An address outside every section and the header stays, with a limitation saying REA cannot classify it. If the section table cannot be read, every entry stays and listings say why.
+- An address outside every section and the header stays, with a limitation saying REA cannot classify it. If the section table cannot be read, every entry stays and listings say why. Answers about one such entry, including pseudocode, assembly, `analyze_function`, `procedure_address`, call queries by name and `address_name`, carry the same limitation; code and import slots carry none.
 
 A section's attributes are the format's declaration, not proof of what runs there, and a kept entry is not proven to be a function. ELF inventories are kept as Kuna reports them. On a Mach-O target, the first listing or lookup establishes the private copy that Kuna commands also use, once per session, even when a warm export answers it.
 
