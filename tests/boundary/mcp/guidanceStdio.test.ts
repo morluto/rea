@@ -12,8 +12,6 @@ it(
   "delivers guidance results the validating SDK client accepts over the stdio server",
   { timeout: 60_000 },
   async () => {
-    // The SDK client rejects structured content that does not match the
-    // advertised output schema, so each call is also a schema check.
     const client = new Client({ name: "guidance-stdio-test", version: "1" });
     const transport = new StdioClientTransport({
       command: process.execPath,
@@ -22,6 +20,15 @@ it(
     });
     await client.connect(transport);
     try {
+      // Loading the live definitions makes the SDK validate every result
+      // against the advertised, SDK-converted output schema.
+      const advertised = (await client.listTools()).tools.filter(({ name }) =>
+        ["search_guidance", "read_guidance_section"].includes(name),
+      );
+      expect(advertised.map(({ outputSchema }) => outputSchema?.type)).toEqual([
+        "object",
+        "object",
+      ]);
       const found = await client.callTool({
         name: "search_guidance",
         arguments: { query: "exact JavaScript module", limit: 1 },
