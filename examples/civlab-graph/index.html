@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="A locally editable map of U.S. government institutions and relationships."
+    />
+    <meta name="theme-color" content="#f6f7f8" />
+    <title>Civic Atlas — Government, connected</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script src="app.js" defer></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Workspace navigation">
+        <a class="brand" href="#overview" aria-label="Civic Atlas overview">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 36 36">
+              <path d="M18 3 5 9v2h26V9L18 3Z" />
+              <path d="M7 13h22M6 29h24M4 32h28" />
+              <path d="M9 14v13m6-13v13m6-13v13m6-13v13" />
+            </svg>
+          </span>
+          <span class="brand-copy">
+            <strong>Civic Atlas</strong>
+            <small>PUBLIC INSTITUTIONS</small>
+          </span>
+        </a>
+
+        <div class="workspace-label"><span class="status-dot"></span> LOCAL WORKSPACE</div>
+
+        <nav class="primary-nav" aria-label="Main navigation">
+          <button class="nav-item is-active" type="button" data-view="overview">
+            <span class="nav-icon" aria-hidden="true">⌂</span> Overview
+          </button>
+          <button class="nav-item" type="button" data-view="graph">
+            <span class="nav-icon nav-network" aria-hidden="true">⌘</span>
+            Organization graph <span class="nav-count" id="navEntityCount">0</span>
+          </button>
+          <button class="nav-item" type="button" data-view="directory">
+            <span class="nav-icon" aria-hidden="true">▤</span> Directory
+          </button>
+          <button class="nav-item" type="button" data-view="activity">
+            <span class="nav-icon" aria-hidden="true">◷</span> Recent changes
+          </button>
+        </nav>
+
+        <div class="sidebar-divider"></div>
+        <p class="sidebar-heading">WORKSPACE</p>
+        <button class="nav-item" id="structureButton" type="button">
+          <span class="nav-icon" aria-hidden="true">⚙</span> Graph structure
+        </button>
+        <button class="nav-item" id="importButton" type="button">
+          <span class="nav-icon" aria-hidden="true">↥</span> Import workspace
+        </button>
+        <input id="importFile" class="visually-hidden" type="file" accept="application/json,.json" />
+
+        <div class="sidebar-bottom">
+          <div class="local-card">
+            <span class="local-lock" aria-hidden="true">◈</span>
+            <div><strong>Your data stays here</strong><p>Saved in this browser only</p></div>
+            <span class="local-check" aria-label="Local storage enabled">✓</span>
+          </div>
+          <button class="profile-button" id="exportButton" type="button">
+            <span class="avatar">CA</span>
+            <span><strong>My workspace</strong><small>Export a backup</small></span>
+            <span class="profile-export" aria-hidden="true">↧</span>
+          </button>
+        </div>
+      </aside>
+
+      <div class="main-shell">
+        <header class="topbar">
+          <div class="breadcrumb">
+            <span class="breadcrumb-muted">Workspace</span><span aria-hidden="true">/</span>
+            <span id="breadcrumbCurrent">Overview</span>
+          </div>
+          <div class="topbar-actions">
+            <label class="global-search">
+              <span aria-hidden="true">⌕</span>
+              <input id="globalSearch" type="search" placeholder="Search institutions..." aria-label="Search institutions" />
+              <kbd>/</kbd>
+            </label>
+            <button class="button button-quiet top-export" id="topExportButton" type="button"><span aria-hidden="true">↧</span> Export</button>
+            <button class="button button-primary" id="addEntityButton" type="button"><span aria-hidden="true">＋</span> Add institution</button>
+          </div>
+        </header>
+
+        <main id="mainContent">
+          <section class="view-panel" id="overviewView" aria-labelledby="overviewTitle">
+            <div class="page-heading">
+              <div>
+                <p class="eyebrow">THE FEDERAL LANDSCAPE</p>
+                <h1 id="overviewTitle">United States Government</h1>
+                <p class="page-subtitle">A clearer view of the institutions, offices, and relationships that shape public life.</p>
+              </div>
+              <div class="snapshot-label">
+                <span class="snapshot-icon" aria-hidden="true">◷</span>
+                <span><strong>Reference snapshot</strong><small>Illustrative local workspace</small></span>
+              </div>
+            </div>
+
+            <section class="hero-card" aria-label="About the graph">
+              <div class="hero-copy">
+                <p class="hero-kicker"><span class="live-dot"></span> A MAP THAT YOU CAN MAKE YOUR OWN</p>
+                <h2>Power doesn't sit in one place.<br /><em>See how it connects.</em></h2>
+                <p>Explore a sample map of federal institutions, then add the people, offices, and connections that matter to your research.</p>
+                <div class="hero-actions">
+                  <button class="button button-light" type="button" data-open-view="graph">Explore the graph <span aria-hidden="true">→</span></button>
+                  <span class="hero-note"><span aria-hidden="true">◈</span> Private to this browser</span>
+                </div>
+              </div>
+              <div class="hero-graphic" aria-hidden="true">
+                <div class="graphic-orbit orbit-one"></div><div class="graphic-orbit orbit-two"></div>
+                <div class="graphic-center">US</div>
+                <span class="graphic-node graphic-node-one">Executive</span>
+                <span class="graphic-node graphic-node-two">Congress</span>
+                <span class="graphic-node graphic-node-three">Courts</span>
+                <span class="graphic-node graphic-node-four">Agencies</span>
+                <svg class="graphic-lines" viewBox="0 0 420 280">
+                  <path d="M210 140 96 60M210 140 327 62M210 140 91 222M210 140 329 218M96 60 327 62M91 222 329 218" />
+                </svg>
+              </div>
+              <div class="hero-watermark" aria-hidden="true">CIVIC ATLAS · LOCAL EDITION</div>
+            </section>
+
+            <div class="reference-strip">
+              <div class="reference-copy">
+                <span class="reference-mark" aria-hidden="true">✳</span>
+                <span><strong>From the reference directory</strong><small>Figures shown on graph.civlab.org/us</small></span>
+              </div>
+              <div class="reference-stat"><strong>482</strong><span>organizations</span></div>
+              <div class="reference-separator"></div>
+              <div class="reference-stat"><strong>339</strong><span>sub-agencies</span></div>
+              <span class="reference-badge">REFERENCE TOTALS</span>
+            </div>
+
+            <div class="section-title-row">
+              <div><p class="eyebrow">YOUR WORKSPACE</p><h2 class="section-title">At a glance</h2></div>
+              <span class="local-indicator"><span class="status-dot"></span> Updated locally</span>
+            </div>
+            <div class="metric-grid">
+              <article class="metric-card">
+                <div class="metric-top"><span class="metric-icon icon-blue">▤</span><span class="metric-label">IN THIS GRAPH</span></div>
+                <strong class="metric-value" id="entityMetric">0</strong>
+                <span class="metric-caption">institutions in your workspace</span>
+              </article>
+              <article class="metric-card">
+                <div class="metric-top"><span class="metric-icon icon-amber">!</span><span class="metric-label">LEADERSHIP</span></div>
+                <strong class="metric-value" id="vacantMetric">0</strong>
+                <span class="metric-caption">vacant seats tracked</span>
+              </article>
+              <article class="metric-card">
+                <div class="metric-top"><span class="metric-icon icon-violet">◷</span><span class="metric-label">LEADERSHIP</span></div>
+                <strong class="metric-value" id="actingMetric">0</strong>
+                <span class="metric-caption">acting officials tracked</span>
+              </article>
+              <article class="metric-card metric-last-change">
+                <div class="metric-top"><span class="metric-icon icon-green">↗</span><span class="metric-label">LAST CHANGE</span></div>
+                <strong class="metric-value metric-change-value" id="lastChangeMetric">Starter graph</strong>
+                <span class="metric-caption" id="lastChangeCaption">Ready for your edits</span>
+              </article>
+            </div>
+
+            <div class="overview-columns">
+              <section class="content-card branch-card" aria-labelledby="branchTitle">
+                <div class="card-heading">
+                  <div><p class="eyebrow">HOW IT'S ORGANIZED</p><h2 id="branchTitle">Branches & categories</h2></div>
+                  <button class="text-button" type="button" data-open-view="graph">View graph <span aria-hidden="true">→</span></button>
+                </div>
+                <div class="branch-list" id="branchList"></div>
+                <button class="add-category-link" type="button" id="overviewStructureButton"><span aria-hidden="true">＋</span> Customize your categories</button>
+              </section>
+              <section class="content-card activity-card" aria-labelledby="activityTitle">
+                <div class="card-heading">
+                  <div><p class="eyebrow">YOUR WORKSPACE</p><h2 id="activityTitle">Recent changes</h2></div>
+                  <button class="text-button" type="button" data-open-view="activity">View all <span aria-hidden="true">→</span></button>
+                </div>
+                <div class="activity-list activity-list-compact" id="overviewActivity"></div>
+              </section>
+            </div>
+            <p class="data-note"><span aria-hidden="true">ⓘ</span> Starter records are an illustrative subset for exploring the editor, not an authoritative government directory. Leadership status is untracked until you add it.</p>
+          </section>
+
+          <section class="view-panel is-hidden" id="graphView" aria-labelledby="graphTitle">
+            <div class="page-heading graph-heading">
+              <div><p class="eyebrow">EXPLORE RELATIONSHIPS</p><h1 id="graphTitle">Organization graph</h1><p class="page-subtitle">Select an institution to inspect, edit, or connect it to another record.</p></div>
+              <div class="graph-heading-actions">
+                <button class="button button-quiet" id="addRelationButton" type="button"><span aria-hidden="true">⤳</span> Add relationship</button>
+                <button class="button button-primary" id="graphAddEntityButton" type="button"><span aria-hidden="true">＋</span> Add institution</button>
+              </div>
+            </div>
+            <div class="graph-toolbar">
+              <div class="graph-legend"><span><i class="legend-dot legend-branch"></i> Branch</span><span><i class="legend-dot legend-agency"></i> Institution</span><span><i class="legend-line"></i> Relationship</span></div>
+              <label class="filter-select"><span>Show</span><select id="categoryFilter" aria-label="Filter graph by category"><option value="">All categories</option></select></label>
+              <button class="icon-button" id="fitGraphButton" type="button" aria-label="Fit graph to view" title="Fit graph to view">⤢</button>
+            </div>
+            <div class="graph-layout" id="graphLayout">
+              <div class="graph-stage" id="graphStage">
+                <div class="graph-scroll"><svg id="graphSvg" role="img" aria-label="Interactive government organization graph"></svg></div>
+                <div class="graph-caption"><span><kbd>Click</kbd> a node to inspect</span><span id="graphCount">0 institutions · 0 connections</span></div>
+              </div>
+              <aside class="inspector is-hidden" id="inspector" aria-label="Institution details"></aside>
+            </div>
+          </section>
+
+          <section class="view-panel is-hidden" id="directoryView" aria-labelledby="directoryTitle">
+            <div class="page-heading">
+              <div><p class="eyebrow">BROWSE RECORDS</p><h1 id="directoryTitle">Institution directory</h1><p class="page-subtitle">Search, review, and expand the records in your local graph.</p></div>
+              <button class="button button-primary" id="directoryAddEntityButton" type="button"><span aria-hidden="true">＋</span> Add institution</button>
+            </div>
+            <div class="directory-toolbar">
+              <label class="directory-search"><span aria-hidden="true">⌕</span><input id="directorySearch" type="search" placeholder="Search name, category, or notes..." aria-label="Search directory" /></label>
+              <label class="filter-select"><span>Category</span><select id="directoryCategoryFilter" aria-label="Filter directory by category"><option value="">All categories</option></select></label>
+              <label class="filter-select"><span>Leadership</span><select id="statusFilter" aria-label="Filter by leadership status"><option value="">All statuses</option><option value="untracked">Untracked</option><option value="vacant">Vacant</option><option value="acting">Acting</option><option value="filled">Confirmed</option></select></label>
+            </div>
+            <div class="directory-card content-card">
+              <div class="directory-table-wrap"><table class="directory-table">
+                <thead><tr><th>Institution</th><th>Category</th><th>Type</th><th>Leadership</th><th>Connections</th><th><span class="visually-hidden">Actions</span></th></tr></thead>
+                <tbody id="directoryRows"></tbody>
+              </table></div>
+              <div class="empty-state is-hidden" id="directoryEmpty">No institutions match this search. Try another term or add a record.</div>
+            </div>
+          </section>
+
+          <section class="view-panel is-hidden" id="activityView" aria-labelledby="activityPageTitle">
+            <div class="page-heading">
+              <div><p class="eyebrow">WORKSPACE HISTORY</p><h1 id="activityPageTitle">Recent changes</h1><p class="page-subtitle">A local audit trail of edits made to this graph. This is not a policy-change feed.</p></div>
+              <button class="button button-quiet" id="clearActivityButton" type="button">Clear activity</button>
+            </div>
+            <section class="content-card full-activity-card">
+              <div class="card-heading"><div><p class="eyebrow">LOCAL EDITS</p><h2>Activity timeline</h2></div><span class="activity-private"><span class="status-dot"></span> Private to this browser</span></div>
+              <div class="activity-list" id="fullActivity"></div>
+            </section>
+          </section>
+        </main>
+
+        <footer class="app-footer"><span>CIVIC ATLAS <span aria-hidden="true">·</span> LOCAL EDITION</span><span>Reference totals are from graph.civlab.org/us. Workspace records are yours to shape.</span></footer>
+      </div>
+    </div>
+
+    <dialog class="dialog" id="entityDialog" aria-labelledby="entityDialogTitle">
+      <form id="entityForm">
+        <div class="dialog-heading"><div><p class="eyebrow">YOUR GRAPH</p><h2 id="entityDialogTitle">Add institution</h2></div><button class="icon-button" type="button" data-close-dialog aria-label="Close">×</button></div>
+        <input id="entityId" type="hidden" />
+        <label class="form-field"><span>Institution name <b>*</b></span><input id="entityName" name="name" required maxlength="120" placeholder="e.g. Office of Information Policy" /></label>
+        <div class="form-row">
+          <label class="form-field"><span>Category <b>*</b></span><select id="entityCategory" required></select></label>
+          <label class="form-field"><span>Record type</span><input id="entityKind" maxlength="60" placeholder="Agency, office, bureau..." /></label>
+        </div>
+        <div class="form-row">
+          <label class="form-field"><span>Leadership status</span><select id="entityStatus"><option value="untracked">Not tracked</option><option value="vacant">Vacant</option><option value="acting">Acting official</option><option value="filled">Confirmed</option></select></label>
+          <label class="form-field"><span>Contains / reports to</span><select id="entityParent"><option value="">No parent relationship</option></select></label>
+        </div>
+        <label class="form-field"><span>Notes</span><textarea id="entityNotes" rows="3" maxlength="1000" placeholder="Add context, source notes, or details..."></textarea></label>
+        <p class="form-footnote">Records and leadership details are stored in this browser, not sent to a server.</p>
+        <div class="dialog-actions"><button class="button button-quiet" type="button" data-close-dialog>Cancel</button><button class="button button-primary" type="submit">Save institution</button></div>
+      </form>
+    </dialog>
+
+    <dialog class="dialog" id="relationDialog" aria-labelledby="relationDialogTitle">
+      <form id="relationForm">
+        <div class="dialog-heading"><div><p class="eyebrow">CONNECT RECORDS</p><h2 id="relationDialogTitle">Add relationship</h2></div><button class="icon-button" type="button" data-close-dialog aria-label="Close">×</button></div>
+        <input id="relationId" type="hidden" />
+        <label class="form-field"><span>From institution <b>*</b></span><select id="relationSource" required></select></label>
+        <label class="form-field"><span>Relationship <b>*</b></span><select id="relationType" required></select></label>
+        <label class="form-field"><span>To institution <b>*</b></span><select id="relationTarget" required></select></label>
+        <p class="form-footnote">Use “contains” for the hierarchy. Other relationship types appear as cross-links.</p>
+        <div class="dialog-actions"><button class="button button-quiet" type="button" data-close-dialog>Cancel</button><button class="button button-primary" type="submit">Save relationship</button></div>
+      </form>
+    </dialog>
+
+    <dialog class="dialog structure-dialog" id="structureDialog" aria-labelledby="structureDialogTitle">
+      <div class="dialog-heading"><div><p class="eyebrow">SHAPE YOUR MAP</p><h2 id="structureDialogTitle">Graph structure</h2></div><button class="icon-button" type="button" data-close-dialog aria-label="Close">×</button></div>
+      <p class="dialog-intro">Add or rename categories and relationship labels to match the structure you want to explore.</p>
+      <section class="structure-section">
+        <div class="structure-section-heading"><div><h3>Categories</h3><p>Used to group institutions in the graph.</p></div></div>
+        <div class="structure-list" id="categoryList"></div>
+        <form class="inline-add-form" id="categoryForm"><input id="newCategory" required maxlength="40" placeholder="New category name" aria-label="New category name" /><button class="button button-primary button-small" type="submit">Add category</button></form>
+      </section>
+      <section class="structure-section">
+        <div class="structure-section-heading"><div><h3>Relationship types</h3><p>“Contains” is reserved for the hierarchy.</p></div></div>
+        <div class="structure-list" id="relationshipTypeList"></div>
+        <form class="inline-add-form" id="relationshipTypeForm"><input id="newRelationshipType" required maxlength="40" placeholder="New relationship type" aria-label="New relationship type" /><button class="button button-primary button-small" type="submit">Add type</button></form>
+      </section>
+      <div class="dialog-actions"><button class="button button-quiet" type="button" data-close-dialog>Done</button></div>
+    </dialog>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <div class="visually-hidden" id="announcer" aria-live="polite"></div>
+  </body>
+</html>
