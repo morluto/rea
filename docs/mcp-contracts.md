@@ -173,6 +173,9 @@ recommendation to change it. When it names no setting, reduce supported work;
 do not invent one. Raising only the MCP
 client's deadline cannot extend this budget. These hints never include the
 complete catalog or caller arguments.
+`recovery.kind=retry_cleanup` appears only on a `close_binary`
+`cleanup_incomplete` error whose retained resources the session will retry; see
+[retained cleanup](#retained-cleanup-retry).
 Failures omit `structuredContent`, since each advertised `outputSchema`
 describes successful results. Successful replies retain their schema-validated
 structured data and matching text projection. Oversized errors are retained
@@ -872,6 +875,20 @@ inspection fails or is cancelled before a provider client exists. If no client
 remains, no provider run or health observation is available; follow the cleanup
 error's reported resources.
 
+### Retained cleanup retry
+
+A `close_binary` that retires the target clears engine replay state while
+retaining investigation Evidence and Unknown history, including when cleanup fails. When the session keeps every reported owner for the next
+`close_binary` on the same connection, its `cleanup_incomplete` error carries
+`recovery: {"kind": "retry_cleanup", "operation": "close_binary"}`.
+Keep the connection open, let the reported condition settle or resolve it, call
+`close_binary` without `snapshot_path`, and check the result. The retry does not
+rerun the failed analysis and can report `cleanup_incomplete` again.
+`retryable` still describes the failed operation and stays `false`. A failed
+`snapshot_path` save returns before retirement, keeps the target open and has
+no `retry_cleanup` hint. `open_binary`, analysis tools and one-shot CLI commands
+do not report this hint either, even when their cleanup remains pending.
+
 ## Initial target at startup
 
 MCP normally starts without a target; use `open_binary` to select one during the
@@ -1263,11 +1280,11 @@ If the client timed out or cancelled during startup, the pending query may have
 been interrupted. Reissuing `open_binary` for the same active target can reuse
 the current client, so it is not a fresh-start recovery. On the same connection:
 
-1. Keep any useful inline Evidence, or export a bundle before closing if retained
-   records are needed. `binary_session` can show the selected binding and its
+1. Keep useful inline Evidence or use the retained investigation references;
+   export a bundle before ending the process to resume later. `binary_session` can show the selected binding and its
    recorded state; target selection alone does not prove engine readiness.
 2. Call `close_binary` and check its result. It drains owned work, closes the
-   provider, and clears retained session records. A `cleanup_incomplete` result
+   provider and engine replay state while preserving investigation Evidence and Unknown history. A `cleanup_incomplete` result
    must be addressed according to its reported owned resources before retrying.
 3. Call `open_binary` with the same caller-selected path and
    `provider_id: "ghidra"`, then retry the first query with an appropriate client

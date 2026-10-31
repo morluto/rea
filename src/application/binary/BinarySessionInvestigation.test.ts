@@ -1,4 +1,4 @@
-import { access, readFile } from "node:fs/promises";
+import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { expect, it, vi } from "vitest";
 
@@ -11,6 +11,10 @@ import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { err, ok } from "../../domain/result.js";
 import type { RecordUnknownInput } from "../../domain/residualUnknown.js";
 import { OwnedStagedOutput } from "../../filesystem/OwnedStagedOutput.js";
+import type { AnalysisProviderCandidate } from "../AnalysisProvider.js";
+import { AnalysisProviderRegistry } from "./AnalysisProviderRegistry.js";
+import { BinarySession } from "./BinarySession.js";
+import { SessionProviderRouter } from "./SessionProviderRouter.js";
 import {
   ControllableAnalysisClient,
   createBinarySessionTargets,
@@ -219,6 +223,159 @@ it("preserves records through failed disposal and clears them only after its own
     await session.dispose();
   }
 });
+
+it.each(["retired", "healthy"] as const)(
+  "refuses reset while separate candidate cleanup is pending with a %s engine",
+  async (engineState) => {
+    const [target] = await createBinarySessionTargets();
+    const root = await createTestTempDirectory("rea-reset-candidate-cleanup-");
+    const ownedRoot = join(root, "candidate-owned-inspection");
+    const checkpoint = join(root, "checkpoint.json");
+    const originalCheckpoint = Buffer.from("caller-owned checkpoint");
+    await writeFile(checkpoint, originalCheckpoint);
+    const providerCalls: string[] = [];
+    const provider = createCacheProvider(providerCalls);
+    let pending = false;
+    let cleanupAllowed = false;
+    const acquireCandidateOwner = async () => {
+      await mkdir(ownedRoot);
+      await writeFile(join(ownedRoot, "observation"), "candidate-owned facts");
+      pending = true;
+    };
+    const failure = new ProviderCleanupError("fixture", [ownedRoot], {
+      reason: "Controlled registry-owned inspection cleanup refusal",
+    });
+    const closeClient = vi.fn(async () => {
+      if (engineState === "retired") await acquireCandidateOwner();
+      return ok(null);
+    });
+    const createClient = vi.fn<typeof provider.createClient>(
+      (...arguments_) => ({
+        ...provider.createClient(...arguments_),
+        close: closeClient,
+      }),
+    );
+    const closeOwnedResources = vi.fn(async () => {
+      if (!pending) return ok(null);
+      if (!cleanupAllowed) return err(failure);
+      await rm(ownedRoot, { recursive: true, force: true });
+      pending = false;
+      return ok(null);
+    });
+    const candidate: AnalysisProviderCandidate = {
+      identity: provider.identity,
+      capabilities: provider.capabilities,
+      createClient,
+      resolveAnalysisProfile: (selected, options) => {
+        if (provider.resolveAnalysisProfile === undefined)
+          throw new Error("The fixture requires its declared profile resolver");
+        return provider.resolveAnalysisProfile(selected, options);
+      },
+      inspectAvailability: () => ({
+        status: "available",
+        code: null,
+        reason: null,
+        diagnostics: {},
+      }),
+      inspectTargetSupport: () => ({
+        status: "supported",
+        code: null,
+        reason: null,
+        diagnostics: {},
+      }),
+      hasPendingOwnedResources: () => pending,
+      closeOwnedResources,
+    };
+    // The real registry owns this candidate predicate and cleanup callback;
+    // only the candidate's resource failure and native execution are simulated.
+    const registry = new AnalysisProviderRegistry([candidate]);
+    const session = new BinarySession(
+      SessionProviderRouter.selectable(registry, []),
+    );
+    const parameters = { address: "0x1000", document: "fixture" };
+    try {
+      expect((await session.open(target)).ok).toBe(true);
+      expect((await session.execute("address_name", parameters)).ok).toBe(true);
+      expect(createClient).toHaveBeenCalledTimes(1);
+      expect(registry.hasPendingOwnedResources()).toBe(false);
+      if (engineState === "healthy") {
+        const callsBefore = closeOwnedResources.mock.calls.length;
+        expect((await session.resetInvestigation()).ok).toBe(true);
+        expect(closeOwnedResources).toHaveBeenCalledTimes(callsBefore);
+        expect(closeClient).not.toHaveBeenCalled();
+      }
+      const before = seed(session);
+      if (engineState === "retired") {
+        expect(await session.close()).toEqual(err(failure));
+        expect(closeClient).toHaveBeenCalledTimes(1);
+        expect(session.activeTarget()).toBeUndefined();
+      } else {
+        await acquireCandidateOwner();
+        expect(session.activeTarget()?.path).toBe(target);
+      }
+      expect(registry.hasPendingOwnedResources()).toBe(true);
+      const cleanupCallsBefore = closeOwnedResources.mock.calls.length;
+      expect(
+        await session.resetInvestigation({
+          savePath: checkpoint,
+          overwrite: true,
+        }),
+      ).toEqual(err(failure));
+      expect(closeOwnedResources).toHaveBeenCalledTimes(cleanupCallsBefore + 1);
+      expect((await readFile(checkpoint)).equals(originalCheckpoint)).toBe(
+        true,
+      );
+      expect(await readFile(join(ownedRoot, "observation"), "utf8")).toBe(
+        "candidate-owned facts",
+      );
+      expect(session.exportEvidenceBundle()).toEqual(before);
+      expect(session.listUnknowns()[0]?.revision).toBe(2);
+      expect(registry.hasPendingOwnedResources()).toBe(true);
+      expect(closeClient).toHaveBeenCalledTimes(
+        engineState === "retired" ? 1 : 0,
+      );
+
+      cleanupAllowed = true;
+      const reset = await session.resetInvestigation({
+        savePath: checkpoint,
+        overwrite: true,
+      });
+      expect(reset).toMatchObject({
+        ok: true,
+        value: {
+          cleared_evidence_records: before.records.length,
+          cleared_unknown_revisions: before.unknowns.length,
+          cleared_unknown_heads: 1,
+          retained_target: engineState === "healthy",
+        },
+      });
+      expect(closeOwnedResources).toHaveBeenCalledTimes(cleanupCallsBefore + 2);
+      expect(registry.hasPendingOwnedResources()).toBe(false);
+      await expect(access(ownedRoot)).rejects.toMatchObject({ code: "ENOENT" });
+      expect(
+        parseEvidenceBundle(JSON.parse(await readFile(checkpoint, "utf8"))),
+      ).toEqual(before);
+      expect(session.exportEvidenceBundle()).toEqual(createEvidenceBundle([]));
+      expect(createClient).toHaveBeenCalledTimes(1);
+      expect(closeClient).toHaveBeenCalledTimes(
+        engineState === "retired" ? 1 : 0,
+      );
+      if (engineState === "healthy") {
+        expect(session.activeTarget()?.path).toBe(target);
+        expect((await session.execute("address_name", parameters)).ok).toBe(
+          true,
+        );
+        expect(createClient).toHaveBeenCalledTimes(1);
+        expect(
+          providerCalls.filter((operation) => operation === "address_name"),
+        ).toHaveLength(2);
+      }
+    } finally {
+      cleanupAllowed = true;
+      await session.dispose();
+    }
+  },
+);
 
 it("drains prior metadata writes and refuses later admissions and direct writes after disposal", async () => {
   const [target] = await createBinarySessionTargets();

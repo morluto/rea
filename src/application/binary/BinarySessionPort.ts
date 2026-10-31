@@ -12,6 +12,7 @@ import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js"
 import type { AnalysisProviderSelector } from "../../domain/providerSelection.js";
 import type { BinarySessionDetail } from "../../contracts/sessionStatusContract.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import type { AnalysisCleanupRetry } from "../../domain/analysisErrorRecovery.js";
 import type { Result } from "../../domain/result.js";
 import type { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import type { AnalysisSnapshotLoader } from "./BinarySessionOpen.js";
@@ -77,9 +78,14 @@ export interface BinarySessionPort
     path: string,
     options?: Pick<ExecutionOptions, "signal">,
   ): Promise<Result<ResolvedAppBundleResourceRoot, AnalysisError>>;
+  /**
+   * `cleanupRetry` names the caller's same-session retry; the session binds it
+   * to a failed close only while it retains that cleanup for the next close.
+   */
   close(
     options?: Pick<ExecutionOptions, "progress"> & {
       readonly retainProviderDocuments?: boolean;
+      readonly cleanupRetry?: AnalysisCleanupRetry;
     },
   ): Promise<Result<null, AnalysisError>>;
   /** Seal runtime acquisition and release investigation state after successful cleanup. */
@@ -102,7 +108,9 @@ export interface BinarySessionPort
   closeWithSnapshot(
     path: string,
     overwrite: boolean,
-    options?: Pick<ExecutionOptions, "progress">,
+    options?: Pick<ExecutionOptions, "progress"> & {
+      readonly cleanupRetry?: AnalysisCleanupRetry;
+    },
   ): Promise<Result<SavedAnalysisSnapshot, AnalysisError>>;
   /** Default complete detail; summary omits provider diagnostics and candidate capabilities. */
   status(options?: {

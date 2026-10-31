@@ -65,6 +65,7 @@ import {
 } from "./BinarySessionExecution.js";
 import { closeAnalysisClient } from "../AnalysisClientCleanup.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import type { AnalysisCleanupRetry } from "../../domain/analysisErrorRecovery.js";
 import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { profilelessNativeDispatchProfile } from "./ProfilelessNativeWorkflowSnapshot.js";
@@ -868,11 +869,15 @@ export class BinarySession
   close(
     options: Pick<ExecutionOptions, "progress"> & {
       readonly retainProviderDocuments?: boolean;
+      readonly cleanupRetry?: AnalysisCleanupRetry;
     } = {},
   ): Promise<Result<null, AnalysisError>> {
     return this.#serialize(async (admittedThrough) => {
       await this.#drainCalls(admittedThrough);
-      return this.#closeActive(options);
+      return this.#offerCleanupRetry(
+        await this.#closeActive(options),
+        options.cleanupRetry,
+      );
     });
   }
 
@@ -880,7 +885,9 @@ export class BinarySession
   closeWithSnapshot(
     path: string,
     overwrite: boolean,
-    options: Pick<ExecutionOptions, "progress"> = {},
+    options: Pick<ExecutionOptions, "progress"> & {
+      readonly cleanupRetry?: AnalysisCleanupRetry;
+    } = {},
   ): Promise<Result<SavedAnalysisSnapshot, AnalysisError>> {
     return this.#serialize(async (admittedThrough) => {
       await this.#drainCalls(admittedThrough);
@@ -898,7 +905,12 @@ export class BinarySession
         workflow_entries: snapshot.value.workflow_entries.length,
         evidence_records: snapshot.value.evidence_bundle.records.length,
       };
-      const closed = await this.#closeActive(options);
+      // A failed export or save returned above with the target still open, so
+      // only a failed retirement can offer the caller's cleanup retry.
+      const closed = this.#offerCleanupRetry(
+        await this.#closeActive(options),
+        options.cleanupRetry,
+      );
       return closed.ok
         ? ok(receipt)
         : err(retainSavedAnalysisSnapshot(closed.error, receipt));
@@ -951,6 +963,10 @@ export class BinarySession
       if (!bundles.ok) return bundles;
       const files = await this.closeFileResources();
       if (!files.ok) return files;
+      if (this.#providerRouter.hasPendingOwnedResources()) {
+        const candidates = await this.#providerRouter.closeOwnedResources();
+        if (!candidates.ok) return candidates;
+      }
       if (isAborted(options.signal)) return err(cancelled());
       const statistics = this.investigationStatistics();
       let saved: ResetInvestigationReceipt["saved_bundle"];
@@ -989,6 +1005,31 @@ export class BinarySession
         ...(saved === undefined ? {} : { saved_bundle: saved }),
       });
     });
+  }
+
+  /** Offer the caller's retry only while this session retains the failed cleanup. */
+  #offerCleanupRetry(
+    closed: Result<null, AnalysisError>,
+    retry: AnalysisCleanupRetry | undefined,
+  ): Result<null, AnalysisError> {
+    if (
+      !closed.ok &&
+      retry !== undefined &&
+      closed.error.cleanupIncomplete &&
+      this.#retainsCloseCleanup()
+    )
+      closed.error.bindCleanupRetry(retry);
+    return closed;
+  }
+
+  /** Owners the next close retries; external mutation owners retry elsewhere. */
+  #retainsCloseCleanup(): boolean {
+    return (
+      this.#pendingCleanup !== undefined ||
+      this.#pendingBundleResourceCleanup.length > 0 ||
+      this.hasPendingFileResources ||
+      this.#providerRouter.hasPendingOwnedResources()
+    );
   }
 
   async #closeActive(
@@ -1218,10 +1259,7 @@ export class BinarySession
       providerOperationHealth: client?.operationHealthSnapshot?.() ?? null,
       cleanupPending:
         this.#externalMutationCleanupFailure?.cleanupIncomplete === true ||
-        this.#pendingCleanup !== undefined ||
-        this.#pendingBundleResourceCleanup.length > 0 ||
-        this.hasPendingFileResources ||
-        this.#providerRouter.hasPendingOwnedResources(),
+        this.#retainsCloseCleanup(),
     });
   }
 
