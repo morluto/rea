@@ -1,4 +1,5 @@
 import { functionDossierSchema } from "../../domain/native/functionDossier.js";
+import { takesNoParameters } from "../../domain/native/nativeApiBoundary.js";
 import { nativeCallTargetsSchema } from "../../domain/native/nativeInstruction.js";
 import {
   nativeValueTraceInputSchema,
@@ -47,6 +48,9 @@ export const traceNativeValues = async (
     destination: string;
     reason: "max_depth" | "ambiguous_call_candidates";
   }[] = [];
+  // Analyzed procedures whose provider fixed an empty, non-variadic parameter
+  // list: calls to them have no parameter bindings to recover.
+  const parameterless = new Set<string>();
   const budget = createValueTraceBudget(input, unknowns);
   const { nodes, edges } = budget;
   let targetSha256: string | undefined;
@@ -146,6 +150,8 @@ export const traceNativeValues = async (
       });
       continue;
     }
+    if (flow.parameters.length === 0 && takesNoParameters(dossier.native_api))
+      parameterless.add(address);
     if (flow.truncated)
       budget.narrow("provider_pcode_truncated", {
         procedure: address,
@@ -377,7 +383,7 @@ export const traceNativeValues = async (
   }
   for (const binding of callBindings) {
     const parameters = parametersByProcedure.get(binding.callee) ?? [];
-    if (parameters.length === 0)
+    if (parameters.length === 0 && !parameterless.has(binding.callee))
       unknowns.push({
         procedure: binding.caller,
         address: null,

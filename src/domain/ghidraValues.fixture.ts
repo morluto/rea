@@ -88,6 +88,8 @@ export const ghidraNativeApiBoundary = () => ({
     ],
   },
   parameters: [],
+  // A non-default empty signature is Ghidra's void-input lock.
+  parameter_list: { basis: "signature" as const, variadic: false },
   jump_tables: [
     {
       dispatch_address: "0x401010",

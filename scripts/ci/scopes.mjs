@@ -610,6 +610,7 @@ const PATH_SCOPES = {
     "scripts/verify-ghidra-bridge-sources.mjs",
     "tests/conformance/ghidra/ReaArmContextProbe.java",
     "tests/conformance/ghidra/ReaDecodeProbe.java",
+    "tests/conformance/ghidra/ReaParameterListProbe.java",
     ".github/workflows/ghidra-bridge-sources.yml",
   ],
   website: [
