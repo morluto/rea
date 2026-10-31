@@ -15,22 +15,34 @@ it("recovers a missing retained closure by importing the originating bundle", as
   const comparisons = [FUNCTION_COMPARISON_EVIDENCE];
   const { call } = await connectLocalToolsMcp();
   const input = { comparisons };
-  const missing = parseMcpToolError(
-    await call("find_changed_behavior", input),
-  ).error;
-  expect(missing).toMatchObject({
-    code: "evidence_integrity_mismatch",
-    retryable: false,
-    details: {
-      reason: "missing",
-      reference_scope: "retained-closure",
-      evidence_id: FUNCTION_COMPARISON_EVIDENCE.evidence_id,
-      actual: null,
+  for (const request of [
+    input,
+    {
+      comparisons: [
+        {
+          kind: "retained-evidence",
+          evidence_id: FUNCTION_COMPARISON_EVIDENCE.evidence_id,
+        },
+      ],
     },
-  });
-  expect(missing.message).toContain("required retained Evidence closure");
-  expect(missing.remediation.action).toContain("originating Evidence bundle");
-  expect(JSON.stringify(missing)).not.toContain("inline Evidence");
+  ]) {
+    const missing = parseMcpToolError(
+      await call("find_changed_behavior", request),
+    ).error;
+    expect(missing).toMatchObject({
+      code: "evidence_integrity_mismatch",
+      retryable: false,
+      details: {
+        reason: "missing",
+        reference_scope: "retained-closure",
+        evidence_id: FUNCTION_COMPARISON_EVIDENCE.evidence_id,
+        actual: null,
+      },
+    });
+    expect(missing.message).toContain("required retained Evidence closure");
+    expect(missing.remediation.action).toContain("originating Evidence bundle");
+    expect(JSON.stringify(missing)).not.toContain("inline Evidence");
+  }
 
   const directory = await createTestTempDirectory("rea-comparison-recovery-");
   const path = join(directory, "originating-bundle.json");

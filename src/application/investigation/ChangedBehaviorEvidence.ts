@@ -34,7 +34,11 @@ export const resolveChangedBehaviorEvidence = (
           { cause: reference.error },
         ),
       );
-    const resolved = resolveEvidenceInput(reference.data, lookup);
+    const resolved = resolveEvidenceInput(
+      reference.data,
+      lookup,
+      "retained-closure",
+    );
     if (!resolved.ok) return resolved;
     comparisons.push(resolved.value);
   }

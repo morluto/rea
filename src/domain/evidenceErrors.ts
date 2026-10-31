@@ -44,7 +44,9 @@ export class ResourceSnapshotMismatchError extends AnalysisSnapshotMismatchError
 
 /** A session Evidence reference is missing or has the wrong semantic identity. */
 export class EvidenceReferenceError extends EvidenceIntegrityError {
-  /** Set by closure resolution when supplying a selected inline root is insufficient. */
+  readonly expected: string;
+  readonly actual: string | null;
+  /** Set when the consuming workflow requires retained closure. */
   readonly referenceScope: "retained-closure" | undefined;
 
   constructor(
@@ -54,14 +56,16 @@ export class EvidenceReferenceError extends EvidenceIntegrityError {
       | "wrong_operation"
       | "wrong_predicate"
       | "identity_mismatch",
-    readonly expected: string,
-    readonly actual: string | null,
-    options?: AnalysisErrorOptions & {
-      readonly referenceScope?: "retained-closure";
+    options: AnalysisErrorOptions & {
+      readonly expected: string;
+      readonly actual: string | null;
+      readonly referenceScope?: "retained-closure" | undefined;
     },
   ) {
     super(`Evidence reference ${reason}: ${evidenceId}`, options);
-    this.referenceScope = options?.referenceScope;
+    this.expected = options.expected;
+    this.actual = options.actual;
+    this.referenceScope = options.referenceScope;
   }
 }
 
