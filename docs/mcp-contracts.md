@@ -482,6 +482,9 @@ session retention refuses summary detail with `capability_unavailable`;
 For `inspect_artifact`, omission also keeps the original request parameters and
 complete output shape. Delivery selection never reaches the inventory engine;
 the complete inspection and its atomic inventory Evidence remain retained.
+A view is never more certain than its parent: a summary or other view of
+`inferred` Evidence is `inferred`. Other views are `derived`, unless the
+view kind itself infers, as described below.
 
 `inspect_analysis_view` also accepts `api-surface` for retained HAR capture Evidence,
 grouping request lines by method, origin and format-rule path template. Templated
@@ -757,6 +760,37 @@ concrete version, selection source, and complete analysis profile through
 `analysis_provider_binding`. Ambiguity and unknown, unavailable, or unsupported
 choices return typed selection details. A selected provider is never replaced
 automatically after a runtime failure.
+
+`open_binary` resolves an Apple bundle directory (`.app`, `.appex`,
+`.framework`, `.xpc`, `.systemextension`, `.bundle` or `.plugin`, compared
+case-insensitively) to the program file its `Info.plist` names in
+`CFBundleExecutable`; the Evidence subject is that program file. It reads the
+macOS `Contents/` layout or the flat root layout. A framework with `Versions/`
+may instead keep `Info.plist` in `Versions/Current/Resources/` with its program
+file in `Versions/Current/`; a flattened framework without `Versions/`, as
+Electron and Gecko apps ship it, keeps `Resources/Info.plist` beside its
+program file. An app keeps its iOS-on-Mac `Wrapper` resolution. For the
+other types, exactly one layout may declare the bundle, and its `Info.plist`,
+program directory and program file must stay inside the bundle. Resolution
+never guesses a program file. Each refusal reports one `details.constraint`:
+
+- `bundle_info_plist_missing`, with `probed_paths` listing every layout's
+  `Info.plist`.
+- `bundle_layout_ambiguous`, with `probed_paths` listing the `Info.plist`
+  files found.
+- `bundle_current_version_missing`, with `probed_paths` naming
+  `Versions/Current`.
+- `bundle_path_escapes`, with `probed_paths` naming the path that resolved
+  outside the bundle.
+- `bundle_executable_undeclared`, with `info_plist`.
+- `bundle_program_missing`, with `info_plist` and `probed_paths` naming the
+  declared program file.
+
+An unreadable or malformed `Info.plist` keeps its reason without a bundle
+constraint, and `details.path` names that file. A `.dext`, `.kext`,
+`.qlgenerator` or `.mdimporter` directory reports `bundle_type_unsupported`. A
+resource root reports its `layout` as `contents`, `root`,
+`versioned-framework` or `flattened-framework`.
 
 `open_bundle_resources` selects a separate read-only app resource session
 without resolving `CFBundleExecutable`, including when it is absent or

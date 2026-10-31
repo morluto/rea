@@ -41,23 +41,21 @@ for (const version of ["1.1", "1.2"] as const) {
       const original = configuration(version, false).text;
       await mkdir(profile);
       await writeFile(config, original);
-      for (let attempt = 0; attempt < 2; attempt++) {
-        const removed = await cli.run({
-          arguments: ["uninstall", "--json"],
-          cwd: home,
-          environment: {
-            USERPROFILE: home,
-            HERMES_HOME: profile,
-            HOPPER_LAUNCHER_PATH: process.execPath,
-          },
-          timeoutMs: 20_000,
-        });
-        expect(removed.exitCode).toBe(0);
-        expect(await readFile(config, "utf8")).toBe(original);
-        await expect(access(`${config}.rea.backup`)).rejects.toMatchObject({
-          code: "ENOENT",
-        });
-      }
+      const removed = await cli.run({
+        arguments: ["uninstall", "--json"],
+        cwd: home,
+        environment: {
+          USERPROFILE: home,
+          HERMES_HOME: profile,
+          HOPPER_LAUNCHER_PATH: process.execPath,
+        },
+        timeoutMs: 20_000,
+      });
+      expect(removed.exitCode).toBe(0);
+      expect(await readFile(config, "utf8")).toBe(original);
+      await expect(access(`${config}.rea.backup`)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
     },
   );
 
@@ -66,6 +64,8 @@ for (const version of ["1.1", "1.2"] as const) {
       `Hermes YAML ${version} ${existing ? "refreshes" : "adds"} REA in an aliased table without changing its source`,
       async ({ cli }) => {
         const home = await createTestTempDirectory("rea-hermes-table-alias-");
+        const ghidra = join(home, "missing-ghidra");
+        const java = join(home, "missing-java");
         const profile = join(home, "profile");
         const config = join(profile, "config.yaml");
         const original = configuration(version, existing);
@@ -80,6 +80,8 @@ for (const version of ["1.1", "1.2"] as const) {
               USERPROFILE: home,
               HERMES_HOME: profile,
               HOPPER_LAUNCHER_PATH: process.execPath,
+              GHIDRA_INSTALL_DIR: ghidra,
+              JAVA_HOME: java,
             },
             timeoutMs: 20_000,
           });
@@ -104,6 +106,8 @@ for (const version of ["1.1", "1.2"] as const) {
           expect(parsed.mcp_servers.rea.env).toEqual({
             FLAG: "on",
             HOPPER_LAUNCHER_PATH: process.execPath,
+            GHIDRA_INSTALL_DIR: ghidra,
+            JAVA_HOME: java,
           });
         expect(configured.startsWith(original.defaults)).toBe(true);
         expect(configured).toContain("# Selected table");

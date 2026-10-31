@@ -11,6 +11,7 @@ import { parseAndroidManifestComponents } from "./AndroidManifestComponents.js";
 import {
   AnalysisInputError,
   AnalysisOutputError,
+  AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { AndroidNativeDeclarations } from "../domain/android/androidNativeDeclarations.js";
@@ -19,11 +20,11 @@ import {
   ANDROID_JNI_REPORT_BYTES,
   projectAndroidJniBindings,
 } from "../domain/android/androidJniBindings.js";
-import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import {
   jadxAppSchema,
   type JadxClassPage,
   jadxClassSchema,
+  jadxExternalReferenceSummarySchema,
   jadxLoadSchema,
   jadxMethodSchema,
   jadxXrefsSchema,
@@ -68,7 +69,7 @@ const observedPackageSchema =
     components: observedAndroidManifestComponentsSchema,
   });
 
-const methodsOf = (summary: ClassSummary) => {
+const methodsOf = (summary: Pick<ClassSummary, "methods">) => {
   const seen = new Map<string, number>();
   return summary.methods.map((method) => {
     const index = seen.get(method.name) ?? 0;
@@ -137,26 +138,33 @@ const inputFailure = (
   ]);
 };
 
-const classSummary = async (
-  tools: JadxToolPort,
-  request: Exclude<
-    AndroidRequest,
-    {
-      operation:
-        | "inspect_android_package"
-        | "search_android_classes"
-        | "inspect_android_jni_bindings";
-    }
-  >,
-): Promise<ClassSummary> => {
-  // Only class inspection reports DEX static values; method and reference
-  // lookups keep the member-only summary so large constants cannot block them.
-  const raw = await tools.json("get_class_summary", {
-    class_name: request.input.class_name,
-    ...(request.operation === "inspect_android_class"
-      ? { dex_static_values: true }
-      : {}),
-  });
+type ClassRequest = Exclude<
+  AndroidRequest,
+  {
+    operation:
+      | "inspect_android_package"
+      | "search_android_classes"
+      | "inspect_android_jni_bindings";
+  }
+>;
+type ReferenceSummary = Pick<ClassSummary, "full_name" | "methods"> & {
+  readonly reference_target?: "external";
+};
+
+const parsedClassSummary = (
+  raw: JsonValue,
+  request: ClassRequest,
+): ClassSummary => {
+  if (
+    raw !== null &&
+    typeof raw === "object" &&
+    !Array.isArray(raw) &&
+    "reference_target" in raw
+  )
+    throw new AnalysisOutputError(
+      request.operation,
+      "External prototypes are not an APK class definition",
+    );
   if (
     raw !== null &&
     typeof raw === "object" &&
@@ -195,6 +203,68 @@ const classSummary = async (
       "JADX class member counts do not match the returned inventory",
     );
   return value;
+};
+
+const classSummary = async (
+  tools: JadxToolPort,
+  request: ClassRequest,
+): Promise<ClassSummary> =>
+  parsedClassSummary(
+    await tools.json("get_class_summary", {
+      class_name: request.input.class_name,
+      ...(request.operation === "inspect_android_class"
+        ? { dex_static_values: true }
+        : {}),
+    }),
+    request,
+  );
+
+const referenceSummary = async (
+  tools: JadxToolPort,
+  request: Extract<AndroidRequest, { operation: "trace_android_references" }>,
+): Promise<ReferenceSummary> => {
+  if (request.input.method_name === undefined)
+    return classSummary(tools, request);
+  const raw = await tools.json("get_class_summary", {
+    class_name: request.input.class_name,
+    method_name: request.input.method_name,
+    reference_target: true,
+  });
+  if (
+    raw === null ||
+    typeof raw !== "object" ||
+    Array.isArray(raw) ||
+    raw.reference_target !== "external"
+  )
+    return parsedClassSummary(raw, request);
+  const parsed = jadxExternalReferenceSummarySchema.safeParse(raw);
+  if (!parsed.success)
+    throw new AnalysisOutputError(
+      request.operation,
+      "JADX external prototype inventory is malformed",
+      { cause: parsed.error },
+    );
+  const value = parsed.data;
+  if (
+    value.class_name !== request.input.class_name ||
+    value.observed_method_count !== value.prototypes.length ||
+    value.prototypes.some(
+      (method) =>
+        method.name !== request.input.method_name ||
+        method.raw_name !== method.name,
+    ) ||
+    new Set(value.prototypes.map((method) => method.dex_descriptor)).size !==
+      value.prototypes.length
+  )
+    throw new AnalysisOutputError(
+      request.operation,
+      "JADX external prototypes do not match the selected method inventory",
+    );
+  return {
+    full_name: value.class_name,
+    methods: value.prototypes,
+    reference_target: "external",
+  };
 };
 
 const inspectPackage = async (
@@ -286,7 +356,7 @@ const searchClasses = async (
 };
 
 const matchingMethods = (
-  summary: ClassSummary,
+  summary: ReferenceSummary,
   request: Extract<
     AndroidRequest,
     { operation: "inspect_android_method" | "trace_android_references" }
@@ -304,6 +374,12 @@ const matchingMethods = (
   return candidates;
 };
 
+const overloadChoices = (
+  candidates: ReturnType<typeof matchingMethods>,
+  external = false,
+): string =>
+  `Select one of ${candidates.length} overloads: ${candidates.map((method) => `${method.overload_index}: ${method.reported_signature}${external ? ` [${method.dex_descriptor}]` : ""}`).join("; ")}`;
+
 const inspectMethod = async (
   tools: JadxToolPort,
   request: Extract<AndroidRequest, { operation: "inspect_android_method" }>,
@@ -312,11 +388,7 @@ const inspectMethod = async (
 ): Promise<JsonValue> => {
   const candidates = matchingMethods(summary, request);
   if (candidates.length > 1 && request.input.overload_index === undefined)
-    inputFailure(
-      request,
-      "overload_index",
-      `Select one of ${candidates.length} overloads: ${candidates.map((method) => `${method.overload_index}: ${method.reported_signature}`).join("; ")}`,
-    );
+    inputFailure(request, "overload_index", overloadChoices(candidates));
   const index = request.input.overload_index ?? 0;
   const selected =
     candidates[index] ??
@@ -414,6 +486,13 @@ export const analyzeJadxRequest = async (
     return inspectPackage(tools, loaded, engine);
   if (request.operation === "search_android_classes")
     return searchClasses(tools, request, loaded, engine);
+  if (request.operation === "trace_android_references")
+    return traceReferences(
+      tools,
+      request,
+      await referenceSummary(tools, request),
+      engine,
+    );
   const summary = await classSummary(tools, request);
   if (request.operation === "inspect_android_class")
     return androidResultSchemas.inspect_android_class.parse({
@@ -433,18 +512,17 @@ export const analyzeJadxRequest = async (
         ...fieldQueries(summary),
       ]),
     });
-  if (request.operation === "inspect_android_method")
-    return inspectMethod(tools, request, summary, context);
-  return traceReferences(tools, request, summary, engine);
+  return inspectMethod(tools, request, summary, context);
 };
 
 const traceReferences = async (
   tools: JadxToolPort,
   request: Extract<AndroidRequest, { operation: "trace_android_references" }>,
-  summary: ClassSummary,
+  summary: ReferenceSummary,
   engine: Engine,
 ): Promise<JsonValue> => {
   const methodName = request.input.method_name;
+  const external = summary.reference_target === "external";
   const candidates = matchingMethods(summary, request);
   if (methodName === undefined && request.input.overload_index !== undefined)
     inputFailure(
@@ -456,7 +534,7 @@ const traceReferences = async (
     inputFailure(
       request,
       "overload_index",
-      `Select one of ${candidates.length} overloads: ${candidates.map((method) => `${method.overload_index}: ${method.reported_signature}`).join("; ")}`,
+      overloadChoices(candidates, external),
     );
   const index = request.input.overload_index ?? 0;
   const selected = methodName === undefined ? undefined : candidates[index];
@@ -475,6 +553,7 @@ const traceReferences = async (
       methodName === undefined ? "get_xrefs_to_class" : "get_xrefs_to_method",
       {
         class_name: request.input.class_name,
+        ...(external ? { reference_target: true } : {}),
         ...(methodName === undefined
           ? {}
           : { method_name: methodName, overload_index: index }),
@@ -485,6 +564,20 @@ const traceReferences = async (
   );
   if (
     xrefs.target !== expectedTarget ||
+    (external &&
+      (xrefs.reference_target !== "external" ||
+        xrefs.reference_scope !== "direct_dex_invokes" ||
+        xrefs.dex_descriptor !== selected?.dex_descriptor ||
+        xrefs.items.some(
+          (item) =>
+            item.kind !== "method" ||
+            item.source_selector === undefined ||
+            item.source_selector.class_name !== item.containing_class ||
+            item.source_selector.method_name !== item.name ||
+            item.direct_invokes === undefined ||
+            item.direct_invokes_exhaustive === undefined,
+        ))) ||
+    (!external && xrefs.reference_target === "external") ||
     (selected !== undefined &&
       (xrefs.overload_index !== index ||
         xrefs.reported_signature !== selected.reported_signature)) ||
@@ -495,15 +588,23 @@ const traceReferences = async (
       request.operation,
       "JADX references are incomplete or refer to another target",
     );
-  return androidResultSchemas.trace_android_references.parse({
-    engine,
-    class_name: summary.full_name,
-    method_name: methodName ?? null,
-    overload_index: selected?.overload_index ?? null,
-    reported_signature: selected?.reported_signature ?? null,
-    dex_descriptor: selected?.dex_descriptor ?? null,
-    total: xrefs.total,
-    references: xrefs.items.map((reference) => ({
+  const positions = {
+    complete_using_nodes: 0,
+    partial_using_nodes: 0,
+    unknown_using_nodes: 0,
+    recorded_sites: 0,
+  };
+  const references = xrefs.items.map((reference) => {
+    positions.recorded_sites += reference.direct_invokes?.length ?? 0;
+    if (
+      reference.direct_invokes === undefined ||
+      reference.direct_invokes_exhaustive === undefined
+    )
+      positions.unknown_using_nodes++;
+    else if (reference.direct_invokes_exhaustive)
+      positions.complete_using_nodes++;
+    else positions.partial_using_nodes++;
+    return {
       kind: reference.kind,
       name: reference.name,
       reported_full_name: reference.full_name,
@@ -511,9 +612,25 @@ const traceReferences = async (
       top_class: reference.top_class,
       source_line: null,
       dex_offset: null,
+      ...(reference.source_selector === undefined
+        ? {}
+        : { source_selector: reference.source_selector }),
       direct_invokes: reference.direct_invokes ?? null,
       direct_invokes_exhaustive: reference.direct_invokes_exhaustive ?? null,
-    })),
+    };
+  });
+  return androidResultSchemas.trace_android_references.parse({
+    engine,
+    target_definition: external ? "external" : "defined",
+    ...(external ? { reference_scope: "direct_dex_invokes" } : {}),
+    class_name: summary.full_name,
+    method_name: methodName ?? null,
+    overload_index: selected?.overload_index ?? null,
+    reported_signature: selected?.reported_signature ?? null,
+    dex_descriptor: selected?.dex_descriptor ?? null,
+    total: xrefs.total,
+    direct_invokes_coverage: positions,
+    references,
     coverage: "complete",
     reference_unit: "using_node",
   });

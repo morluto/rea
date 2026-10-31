@@ -53,7 +53,7 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
       `${base}[0,1].value,${base}.1.value`,
       `${base}.1.value,${base}[0,1].value`,
     ]) {
-      const result = await cli.run({
+      const result = await runFileCli(cli, {
         arguments: [
           "inspect-sqlite-database",
           path,
@@ -72,7 +72,7 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
         },
       });
     }
-    const refused = await cli.run({
+    const refused = await runFileCli(cli, {
       arguments: [
         "inspect-sqlite-database",
         path,
@@ -105,7 +105,7 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
     } finally {
       database.close();
     }
-    const result = await cli.run({
+    const result = await runFileCli(cli, {
       arguments: [
         "inspect-sqlite-database",
         path,
@@ -383,7 +383,7 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
         },
       },
     });
-    const cliResult = await cli.run({
+    const cliResult = await runFileCli(cli, {
       arguments: [
         "inspect-sqlite-database",
         path,
@@ -529,7 +529,7 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
     }
     const { call } = await connectLocalToolsMcp();
     for (const limit of [1001, Number.MAX_SAFE_INTEGER]) {
-      const result = await cli.run({
+      const result = await runFileCli(cli, {
         arguments: [
           "inspect-sqlite-database",
           path,
@@ -752,7 +752,7 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
     const wal = before[1];
     expect(db).toBeDefined();
     expect(wal).toBeDefined();
-    const result = await cli.run({
+    const result = await runFileCli(cli, {
       arguments: [
         "inspect-sqlite-database",
         path,
@@ -818,7 +818,7 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
           ],
         },
       };
-      const corrupt = await cli.run({
+      const corrupt = await runFileCli(cli, {
         arguments: ["inspect-sqlite-database", selected, "--json"],
         environment: { REA_LOG_LEVEL: "silent" },
       });
@@ -854,7 +854,7 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
         },
       },
     });
-    const ambiguous = await cli.run({
+    const ambiguous = await runFileCli(cli, {
       arguments: [
         "inspect-sqlite-database",
         valid,
@@ -874,7 +874,7 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
         })
       ).isError,
     ).toBe(true);
-    const missing = await cli.run({
+    const missing = await runFileCli(cli, {
       arguments: [
         "inspect-sqlite-database",
         valid,
@@ -924,7 +924,7 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
       producer.close();
     }
     const before = await sourceState(path);
-    const control = await cli.run({
+    const control = await runFileCli(cli, {
       arguments: [
         "inspect-sqlite-database",
         path,
@@ -1011,7 +1011,7 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
     const path = createSqliteApplicationCollationFixture(root);
     const before = await sourceState(path);
     const { call } = await connectLocalToolsMcp();
-    const schema = await cli.run({
+    const schema = await runFileCli(cli, {
       arguments: [
         "inspect-sqlite-database",
         path,
@@ -1050,7 +1050,7 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
     expect(schemaResponse.isError).not.toBe(true);
     expect(schemaResponse.structuredContent).toMatchObject(expectedSchema);
 
-    const result = await cli.run({
+    const result = await runFileCli(cli, {
       arguments: [
         "inspect-sqlite-database",
         path,
@@ -1125,7 +1125,7 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
       },
     };
     for (const columns of [["b", "a"], undefined]) {
-      const result = await cli.run({
+      const result = await runFileCli(cli, {
         arguments: [
           "inspect-sqlite-database",
           path,
@@ -1146,7 +1146,7 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
       });
       expect(parseMcpToolError(response).error).toMatchObject(expectedError);
     }
-    const base = await cli.run({
+    const base = await runFileCli(cli, {
       arguments: [
         "inspect-sqlite-database",
         path,
@@ -1203,7 +1203,7 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
       "selected_table",
       "database",
     ] as const) {
-      const result = await cli.run({
+      const result = await runFileCli(cli, {
         arguments: [
           "inspect-sqlite-database",
           path,
@@ -1348,7 +1348,7 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
       native.close();
     }
 
-    const cliResult = await cli.run({
+    const cliResult = await runFileCli(cli, {
       arguments: [
         "inspect-sqlite-database",
         path,
@@ -1427,7 +1427,7 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
         producer.close();
       }
       const original = await readFile(path);
-      const result = await cli.run({
+      const result = await runFileCli(cli, {
         arguments: ["inspect-sqlite-database", path, "--json"],
         environment: { REA_LOG_LEVEL: "silent" },
       });

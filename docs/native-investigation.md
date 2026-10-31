@@ -512,8 +512,10 @@ output-budget omissions remain omissions.
 
 Source input is limited to 64 MiB. Binary and direct XML decoding reserve an
 estimated 64 MiB decode budget before parsing; this is not a hard process-memory
-bound. JSON decode memory has not been measured and has no equivalent decode
-estimate. A refused input reports non-retryable `resource_constraint` with
+bound. The XML estimate charges every element and every text, comment or CDATA
+node of the decoder's DOM at a measured upper bound, so a plist made of many
+small elements reaches it at a few MiB of source. JSON decode memory has not
+been measured and has no equivalent decode estimate. A refused input reports non-retryable `resource_constraint` with
 `reported_limits.maximum_input_bytes` or `maximum_decoded_bytes` as applicable.
 Ordinary direct-source decoding has a ceiling of 998 source nesting levels,
 derived from the existing 1000-level JSON result capacity by reserving one level

@@ -380,3 +380,78 @@ cliTest(
   },
   180_000,
 );
+
+cliTest(
+  "resolves empty-sourceRoot sources against the map URL through CLI and stdio MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-empty-source-root-");
+    // webpack 5 and tsc emit `"sourceRoot": ""` for map-relative sources.
+    const text = JSON.stringify({
+      version: 3,
+      sourceRoot: "",
+      sources: ["../src/a.ts", "webpack://app/./src/b.ts", "dir//c.ts"],
+      sourcesContent: ["a", "b", "c"],
+      names: [],
+      mappings: "AAAA,ACAA,ACAA",
+    });
+    const fixture = webSourceLocationFixture(text);
+    await mkdir(join(root, "files", "modules"), { recursive: true });
+    await writeFile(join(root, "files", "modules", "main.js"), fixture.source);
+    const manifest = join(root, "manifest.json").replaceAll("\\", "/");
+    await writeFile(manifest, JSON.stringify(fixture.manifest));
+    const map = join(root, "app.js.map");
+    await writeFile(map, text);
+    const url = "https://cdn.test/npm/app@1/dist/app.js.map";
+    const result = await cli.run({
+      arguments: [
+        "trace-web-source-location",
+        manifest,
+        "0",
+        map,
+        url,
+        "1",
+        "0",
+        "--json",
+      ],
+      environment: {
+        REA_LOG_LEVEL: "silent",
+        REA_BROWSER_EXECUTABLE: "relative-unconfigured-browser",
+      },
+      timeoutMs: 45_000,
+    });
+    expect(result.exitCode, result.stdout + result.stderr).toBe(0);
+    expect(result.json).toMatchObject({
+      normalized_result: {
+        matches: [
+          {
+            source_index: 0,
+            reported_source_root: "",
+            resolved_url: "https://cdn.test/npm/app@1/src/a.ts",
+          },
+          {
+            source_index: 1,
+            reported_source_root: "",
+            resolved_url: "webpack://app/src/b.ts",
+          },
+          {
+            source_index: 2,
+            reported_source_root: "",
+            resolved_url: "https://cdn.test/npm/app@1/dist/dir//c.ts",
+          },
+        ],
+      },
+    });
+    const { call } = await connectLocalToolsMcp({
+      REA_BROWSER_EXECUTABLE: "relative-unconfigured-browser",
+    });
+    const response = await call("trace_web_source_location", {
+      manifest_path: manifest,
+      script_index: 0,
+      source_map: { path: map, url },
+      generated_position: { line: 1, column: 0 },
+    });
+    expect(response.isError, JSON.stringify(response)).not.toBe(true);
+    expect(response.structuredContent).toEqual(result.json);
+  },
+  180_000,
+);

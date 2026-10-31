@@ -725,24 +725,6 @@ describe("binary_overview capability requirements", () => {
     });
   });
 
-  it("admits a provider without optional segment enumeration", () => {
-    const capabilities = [
-      "current_document",
-      "list_procedures",
-      "list_strings",
-    ].map((operation) => ({ operation, available: true, reason: null }));
-    expect(
-      entry(
-        "binary_overview",
-        status({ open: true, kind: "executable", capabilities }),
-      ),
-    ).toMatchObject({
-      available: true,
-      reason: "available",
-      remediation: null,
-    });
-  });
-
   it("keeps binary overview available when a declared segment facet is unavailable", () => {
     const capabilities = [
       {

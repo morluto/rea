@@ -8,6 +8,10 @@ import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory
 
 import { parseConfig } from "../config/parseConfig.js";
 import {
+  BINARY_ARCHITECTURES,
+  type BinaryTarget,
+} from "../domain/binaryTargetTypes.js";
+import {
   RecordingIdaMcp,
   createIdaTarget,
 } from "../../tests/fixtures/idaMcp.js";
@@ -208,8 +212,35 @@ describe("IDA provider target support", () => {
     ).toMatchObject({
       status: "unsupported",
       code: "architecture_unsupported",
-      reason: expect.stringContaining("Hexagon"),
+      reason: expect.stringMatching(/hexagon.*Ghidra/su),
     });
+  });
+  it("admits only the families IDA admits today, so new families stay refused", () => {
+    const config = parseConfig({});
+    if (!config.ok) throw new Error("expected valid configuration");
+    const provider = new IdaProvider(config.value, {});
+    const admitted: readonly string[] = ["x86", "x86_64", "arm", "arm64"];
+    for (const architecture of BINARY_ARCHITECTURES) {
+      // Admission reads only kind, format and family, so one ELF shape
+      // covers every recognized family, including any added later.
+      const support = provider.inspectTargetSupport({
+        path: "/tmp/fixture.elf",
+        sha256: "a".repeat(64),
+        kind: "executable",
+        format: "elf",
+        architecture,
+        availableArchitectures: [architecture],
+      } as BinaryTarget);
+      expect(support, architecture).toMatchObject(
+        admitted.includes(architecture)
+          ? { status: "supported" }
+          : {
+              status: "unsupported",
+              code: "architecture_unsupported",
+              reason: expect.stringContaining(architecture),
+            },
+      );
+    }
   });
   it("declines thin arm64_32 Mach-O targets without a verified lane", () => {
     const config = parseConfig({});

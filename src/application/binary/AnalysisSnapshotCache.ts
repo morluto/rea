@@ -155,6 +155,10 @@ export const requiresNativeSourceAdmissionBeforeReplay = (
   providerId: string | undefined,
 ): boolean => process.platform === "win32" && providerId === "ghidra";
 
+/** Limitation that marks every observation replayed from a snapshot. */
+export const SNAPSHOT_REPLAY_LIMITATION =
+  "Loaded from a local REA analysis snapshot; this call did not re-run the provider.";
+
 /** Bounded in-memory cache for one immutable binary identity. */
 export class AnalysisSnapshotCache {
   readonly #entries = new Map<string, AnalysisSnapshotEntry>();
@@ -511,7 +515,7 @@ export class AnalysisSnapshotCache {
       analysisProfile: structuredClone(profile),
       limitations: [
         ...cached.execution.limitations,
-        "Loaded from a local REA analysis snapshot; this call did not re-run the provider.",
+        SNAPSHOT_REPLAY_LIMITATION,
       ],
       ...(cached.execution.relationship_coverage === null &&
       RELATIONSHIP_OPERATIONS.has(operation)

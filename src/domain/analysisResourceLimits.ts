@@ -45,14 +45,14 @@ export const MINIMUM_HOPPER_CALLER_SCAN_BUDGET_MS = 1;
  * Largest delay Node schedules exactly. Delays above this signed 32-bit
  * boundary become a 1 ms timer, so startup and swiftc timeouts stop here.
  */
-export const MAX_PROVIDER_STARTUP_TIMEOUT_MS = 2_147_483_647;
+export const MAX_NODE_TIMER_DELAY_MS = 2_147_483_647;
 
 /**
  * Ghidra 12.1.4 converts whole seconds to a signed int millisecond delay.
  * Keep that multiplication positive and exact rather than imposing a day cap.
  */
 export const MAX_GHIDRA_DECOMPILE_TIMEOUT_SECONDS = Math.floor(
-  MAX_PROVIDER_STARTUP_TIMEOUT_MS / 1000,
+  MAX_NODE_TIMER_DELAY_MS / 1000,
 );
 
 /** Matching deadline used when the setting is unset. Today's fixed constant. */
@@ -171,3 +171,10 @@ export const MAXIMUM_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES = Math.floor(
   (NODE_MAX_STRING_LENGTH - DEBUGGER_OUTPUT_EVIDENCE_ENVELOPE_CODE_UNITS) /
     DEBUGGER_OUTPUT_JSON_ESCAPE_CODE_UNITS,
 );
+
+/**
+ * Bytes reserved for debugger control replies (Rizin cleanup readback and
+ * GDB startup or detach MI). This is not `REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES`:
+ * a caller cap below this budget must not truncate those required replies.
+ */
+export const DEBUGGER_CONTROL_REPLY_BYTES = 16 * 1024 * 1024;

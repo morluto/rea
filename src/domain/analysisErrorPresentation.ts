@@ -10,6 +10,7 @@ import {
   AnalysisTimeoutError,
 } from "./analysisErrorCore.js";
 import { ArtifactOperationError } from "./artifactOperationError.js";
+import { OPENABLE_APPLE_BUNDLE_TYPES_TEXT } from "./apple/appleBundleTypes.js";
 import {
   BinaryTargetError,
   ConfigurationError,
@@ -143,7 +144,27 @@ export const analysisErrorRemediationAction = (
     error instanceof BinaryTargetError &&
     error.constraint === "directory_requires_file"
   )
-    return "For a JavaScript/Electron application directory, call analyze_javascript_application with input_path or run `rea analyze <directory>`. For binary analysis, select its executable file.";
+    return `For a JavaScript/Electron application directory, call analyze_javascript_application with input_path or run \`rea analyze <directory>\`. For binary analysis, select its executable file or an Apple bundle directory (${OPENABLE_APPLE_BUNDLE_TYPES_TEXT}).`;
+  if (
+    error instanceof BinaryTargetError &&
+    error.constraint === "bundle_type_unsupported"
+  )
+    return `Select the bundle's program file directly, or open a bundle directory of a supported type (${OPENABLE_APPLE_BUNDLE_TYPES_TEXT}).`;
+  if (
+    error instanceof BinaryTargetError &&
+    (error.constraint === "bundle_executable_undeclared" ||
+      error.constraint === "bundle_program_missing") &&
+    error.infoPlist !== undefined
+  )
+    return `Read ${error.infoPlist} with inspect_plist (\`rea inspect-plist <path>\`) to review its CFBundleExecutable, then select an existing program file directly.`;
+  if (
+    error instanceof BinaryTargetError &&
+    (error.constraint === "bundle_info_plist_missing" ||
+      error.constraint === "bundle_layout_ambiguous" ||
+      error.constraint === "bundle_current_version_missing" ||
+      error.constraint === "bundle_path_escapes")
+  )
+    return "Review the bundle paths listed in details, then select the bundle's program file directly or repair the bundle layout.";
   if (
     error instanceof BinaryTargetError &&
     error.constraint === "load_selection_rejected"
@@ -239,7 +260,8 @@ export const analysisErrorCategory = (
   if (
     error instanceof BinaryTargetError &&
     (error.constraint === "wasm_requires_static_inspection" ||
-      error.constraint === "file_format_rejected")
+      error.constraint === "file_format_rejected" ||
+      error.constraint === "bundle_type_unsupported")
   )
     return "unsupported_target";
   if (
@@ -396,11 +418,10 @@ export const analysisErrorUserMessage = (error: AnalysisError): string => {
     return `${error.message}. Static WebAssembly inspection uses a separate optional WABT lane, not a native analysis engine.`;
   if (error instanceof BinaryTargetError)
     return error.constraint === "directory_requires_file"
-      ? "open_binary accepts files and macOS app bundles. This target is a directory; JavaScript/Electron application directories can be analyzed directly with analyze_javascript_application or `rea analyze <directory>`."
-      : error.constraint === "file_format_rejected" ||
-          error.constraint === "load_selection_rejected"
-        ? `${error.message}.`
-        : `${error.message}. Check that the path exists, is readable, and points to a supported file.`;
+      ? `open_binary accepts files and Apple bundle directories (${OPENABLE_APPLE_BUNDLE_TYPES_TEXT}). This target is another directory; JavaScript/Electron application directories can be analyzed directly with analyze_javascript_application or \`rea analyze <directory>\`.`
+      : error.constraint === undefined
+        ? `${error.message}. Check that the path exists, is readable, and points to a supported file.`
+        : `${error.message}.`;
   if (error._tag === "ProcessCaptureError")
     return (
       error.userMessage ??

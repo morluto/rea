@@ -13,7 +13,7 @@ import { parseEvidence, createEvidence } from "../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
-import { cliTest } from "../support/cli/cliFixture.js";
+import { cliTest, runFileCli } from "../support/cli/cliFixture.js";
 import {
   cudaFixture,
   peGpuFixture,
@@ -88,7 +88,7 @@ cliTest(
       const bytes = Buffer.concat([header, compressed]),
         path = join(root, `v${version}`);
       await writeFile(path, bytes);
-      const response = await cli.run({
+      const response = await runFileCli(cli, {
         arguments: [
           "inspect-gpu-code-objects",
           path,
@@ -147,7 +147,7 @@ cliTest(
       const bytes = hipFixture(payload, bundleId),
         path = join(root, name);
       await writeFile(path, bytes);
-      const response = await cli.run({
+      const response = await runFileCli(cli, {
         arguments: [
           "inspect-gpu-code-objects",
           path,
@@ -197,7 +197,7 @@ cliTest(
     }
     const path = join(root, "raw-bitcode");
     await writeFile(path, bitcode);
-    const raw = await cli.run({
+    const raw = await runFileCli(cli, {
       arguments: [
         "inspect-gpu-code-objects",
         path,
@@ -235,7 +235,7 @@ cliTest(
         ]),
         path = join(root, name);
       await writeFile(path, bytes);
-      const response = await cli.run({
+      const response = await runFileCli(cli, {
         arguments: [
           "inspect-gpu-code-objects",
           path,
@@ -319,7 +319,7 @@ cliTest(
         ]),
         path = join(root, name);
       await writeFile(path, bytes);
-      const response = await cli.run({
+      const response = await runFileCli(cli, {
         arguments: [
           "inspect-gpu-code-objects",
           path,
@@ -360,7 +360,7 @@ cliTest(
       ]),
       path = join(root, "large-parameter.cubin");
     await writeFile(path, bytes);
-    const response = await cli.run({
+    const response = await runFileCli(cli, {
       arguments: [
         "inspect-gpu-code-objects",
         path,
@@ -397,7 +397,7 @@ cliTest(
     const bytes = hipFixture(payload, "hip-amdgcn-amd-amdhsa--gfx906+xnack"),
       path = join(root, "feature.bundle");
     await writeFile(path, bytes);
-    const response = await cli.run({
+    const response = await runFileCli(cli, {
       arguments: [
         "inspect-gpu-code-objects",
         path,
@@ -442,7 +442,7 @@ cliTest(
       root = await createTestTempDirectory("rea-ptx-callprototype-"),
       path = join(root, "prototype.ptx");
     await writeFile(path, source);
-    const response = await cli.run({
+    const response = await runFileCli(cli, {
       arguments: [
         "inspect-gpu-code-objects",
         path,
@@ -492,7 +492,7 @@ cliTest(
     const bytes = cubinFixture({ extendedSectionIndex: true });
     const path = join(root, "extended.cubin");
     await writeFile(path, bytes);
-    const response = await cli.run({
+    const response = await runFileCli(cli, {
       arguments: [
         "inspect-gpu-code-objects",
         path,
@@ -540,7 +540,7 @@ cliTest(
     malformedBytes.writeBigUInt64LE(4n, sectionTable + indexTable! * 64 + 32);
     const malformedPath = join(root, "short-shndx.cubin");
     await writeFile(malformedPath, malformedBytes);
-    const malformed = await cli.run({
+    const malformed = await runFileCli(cli, {
       arguments: [
         "inspect-gpu-code-objects",
         malformedPath,
@@ -571,7 +571,7 @@ cliTest(
       const text = `.version 7.0\n.target sm_80\n.address_size 64\n.visible .entry kernel() {\n.reg .b32 ${register};\nmov.u32 ${register}, 0;\nret;\n}\n`;
       const path = join(root, `${register.slice(1)}.ptx`);
       await writeFile(path, text);
-      const response = await cli.run({
+      const response = await runFileCli(cli, {
         arguments: [
           "inspect-gpu-code-objects",
           path,
@@ -608,7 +608,7 @@ cliTest(
     const text = `.version 8.8\n.target sm_80\n.address_size 64\n.entry %kernel(.param .u32 input) {\nret;\n}\n`;
     const path = join(root, "identifiers.ptx");
     await writeFile(path, text);
-    const response = await cli.run({
+    const response = await runFileCli(cli, {
       arguments: [
         "inspect-gpu-code-objects",
         path,
@@ -671,7 +671,7 @@ cliTest(
       const text = `${preamble}${declaration}\n`,
         path = join(root, `${name}.ptx`);
       await writeFile(path, text);
-      const response = await cli.run({
+      const response = await runFileCli(cli, {
         arguments: [
           "inspect-gpu-code-objects",
           path,
@@ -721,7 +721,7 @@ cliTest(
     const text = `.version 8.8\n.target compute_80\n.address_size 64\n.entry kernel() {\nret;\n}\n`;
     const path = join(root, "target.ptx");
     await writeFile(path, text);
-    const response = await cli.run({
+    const response = await runFileCli(cli, {
       arguments: [
         "inspect-gpu-code-objects",
         path,
@@ -751,7 +751,7 @@ cliTest(
     const text = `.version 1.3\n.target sm_80\n.address_size 64\n.entry kernel {\n.param .u32 input;\nret;\n}\n`;
     const path = join(root, "legacy.ptx");
     await writeFile(path, text);
-    const response = await cli.run({
+    const response = await runFileCli(cli, {
       arguments: [
         "inspect-gpu-code-objects",
         path,
@@ -790,7 +790,7 @@ cliTest(
       malformedPath,
       `.version 1.3\n.target sm_80\n.entry kernel {\n.param .u32 input\n`,
     );
-    const malformed = await cli.run({
+    const malformed = await runFileCli(cli, {
       arguments: [
         "inspect-gpu-code-objects",
         malformedPath,
@@ -1273,7 +1273,7 @@ cliTest(
     ] as const) {
       const path = join(root, name);
       await writeFile(path, bytes);
-      const response = await cli.run({
+      const response = await runFileCli(cli, {
         arguments: [
           "inspect-gpu-code-objects",
           path,
