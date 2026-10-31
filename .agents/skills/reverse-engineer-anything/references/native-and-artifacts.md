@@ -611,6 +611,12 @@ discovery are unsupported. Windows Ghidra P0 admits raw images only for `6502`. 
 Fresh-import sessions admit annotations; existing-project reuse is read-only.
 Use `annotate_native_function` for one function name and/or entry comments, with at least one explicit change. Review its annotation readback and refreshed dossier inline. Changes are atomic and session-scoped; empty comments clear them, omitted fields preserve them. Later MCP calls observe edits until close. CLI `annotate-native-function` returns the updated analysis before discarding the session. Original executable bytes are unchanged; edits invalidate immutable snapshots. Windows P0 does not admit database mutations. For naming only, `set_address_name` / `set_addresses_names` also work with Ghidra: they name function entries or data addresses (primary labels) and return compact per-address success booleans instead of a dossier.
 
+For `compare_functions`, obtain `analyze_function` Evidence before and after the
+edit while the MCP session is open; annotation Evidence is not a comparison
+input. Export the needed Evidence before close if comparison will happen later.
+A rename can be reported as a function mismatch even for the same entry in one
+Program; inspect the selected entries, profiles and changed dimensions.
+
 ## Offline PE resource inventory
 
 Use `inspect_pe_resources` with an absolute `path`, or
