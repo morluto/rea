@@ -94,6 +94,11 @@ const desktopFactSchema = z.discriminatedUnion("kind", [
     value: z.string(),
   }),
   z.strictObject({
+    kind: z.literal("unity-il2cpp-backup-convention"),
+    offset: z.null(),
+    value: z.strictObject({ backup_directory: z.string() }),
+  }),
+  z.strictObject({
     kind: z.literal("electron-asar-convention"),
     offset: z.null(),
     value: z.string(),
@@ -162,6 +167,7 @@ export const desktopProbeSchema = z.strictObject({
   probe_id: prefixedDigestSchema("dsp"),
   operation: z.enum([
     "inspect_managed_artifact",
+    "inspect_managed_members",
     "inspect_il2cpp_metadata",
     "open_binary",
     "analyze_javascript_application",
