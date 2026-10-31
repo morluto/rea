@@ -9,10 +9,7 @@ import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { parseCliJsonInput, resolveCliJsonPaths } from "../cliJsonInput.js";
 import { logCliCommand } from "../cliLogging.js";
-import { artifactComparisonInputSchema } from "../contracts/sessionToolSchemas.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { ARTIFACT_COMPARISON_PROVIDER } from "../domain/comparisonEvidenceIdentity.js";
-import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import type { CliInstance } from "./types.js";
@@ -45,23 +42,11 @@ export const registerArtifactComparisonCommand = (
             ["left", "path"],
             ["right", "path"],
           ]);
-          const parsed = artifactComparisonInputSchema.safeParse(value);
-          if (!parsed.success)
-            return {
-              error: "Application workflow failed",
-              ...projectAnalysisError(
-                analysisInputErrorFromIssues(
-                  OPERATION,
-                  parsed.error.issues,
-                  value,
-                ),
-              ),
-            };
           const resources = new ArtifactResourceScope();
           const result = await finishAnalysisCommand(
             async () => {
               const sources = await resolveArtifactComparisonSources(
-                parsed.data,
+                value,
                 undefined,
                 { signal, resources },
               );

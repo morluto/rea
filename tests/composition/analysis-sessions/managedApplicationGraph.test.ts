@@ -1,13 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import { projectManagedApplicationGraphEvidence } from "../../../src/application/managed/ManagedApplicationGraphService.js";
-import { managedApplicationGraphReferenceInputSchema } from "../../../src/contracts/managed/managedWorkflowToolContracts.js";
+import {
+  managedApplicationGraphReferenceInputSchema,
+  managedApplicationGraphResultSchema,
+} from "../../../src/domain/managed/managedApplicationGraph.js";
 import { MANAGED_APPLICATION_GRAPH_EXAMPLE } from "../../../src/contracts/managed/managedWorkflowExamples.js";
 import { traceApplicationFeatureEvidence } from "../../../src/application/javascript/JavaScriptApplicationWorkflowService.js";
 import { MANAGED_STATIC_PROVIDER } from "../../../src/domain/investigationProviders.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { parseJavaScriptApplicationGraph } from "../../../src/domain/javascript/javascriptApplicationGraph.js";
-import { managedApplicationGraphResultSchema } from "../../../src/domain/managed/managedApplicationGraph.js";
 import {
   managedMemberInspectionSchema,
   managedNativeBoundaryInspectionSchema,
