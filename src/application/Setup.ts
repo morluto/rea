@@ -140,6 +140,7 @@ const runSetupWorkflow = async (
       REA_MCP_TOOL_FAMILIES: options.toolFamilies,
     };
   clientStates = discovery.clientStates;
+  host.prepareClientSetup?.(discovery.installHopper, providerEnvironment);
   const clientSelectionAllowed =
     options.clientIds === undefined &&
     options.readinessScope?.clients === undefined &&
@@ -211,7 +212,6 @@ const runSetupWorkflow = async (
     selectedClientIds = [...selectedActionIds]
       .filter((id) => id.startsWith("configure_client:"))
       .map((id) => id.slice("configure_client:".length));
-    skillNeedsInstall = await host.skillNeedsInstall(selectedClientIds);
     const proposedInstallAction = selectionActions.plannedActions.some(
       ({ id }) => id === "install_hopper",
     );
@@ -221,6 +221,8 @@ const runSetupWorkflow = async (
         options.installHopper ||
         (proposedInstallAction && selectedActionIds.has("install_hopper")),
     };
+    host.prepareClientSetup?.(planDiscovery.installHopper, providerEnvironment);
+    skillNeedsInstall = await host.skillNeedsInstall(selectedClientIds);
     // The offered skill action can carry a client-specific ID (for example
     // `install_skill:claude_code`); without a selected client it means the
     // shared CLI skill.

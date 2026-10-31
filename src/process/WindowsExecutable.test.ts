@@ -114,3 +114,26 @@ it("stops a pending filesystem lookup when its owner aborts", async () => {
   complete({ isFile: () => true });
   expect(lookup.stat).toHaveBeenCalledTimes(1);
 });
+
+it("allows batch launchers without selecting unsupported PATHEXT interpreters", async () => {
+  lookup.stat.mockResolvedValue({ isFile: () => true });
+  expect(
+    await findWindowsExecutable(
+      "codex",
+      { PATH: "C:\\tools", PATHEXT: ".PS1;.JS;.CMD;.EXE" },
+      { ...options(), allowBatch: true },
+    ),
+  ).toEqual({ ok: true, value: "C:\\tools\\codex.CMD" });
+  expect(lookup.stat).toHaveBeenCalledExactlyOnceWith("C:\\tools\\codex.CMD");
+});
+it("does not admit an explicitly named script without its interpreter", async () => {
+  lookup.stat.mockResolvedValue({ isFile: () => true });
+  expect(
+    await findWindowsExecutable(
+      "codex.ps1",
+      { PATH: "C:\\tools", PATHEXT: ".PS1;.CMD" },
+      { ...options(), allowBatch: true },
+    ),
+  ).toEqual({ ok: false, error: { kind: "missing" } });
+  expect(lookup.stat).not.toHaveBeenCalled();
+});

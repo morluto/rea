@@ -1605,6 +1605,93 @@ Ghidra/JDK installation; neither is inferred from startup alone.
 
 ## Agent plugins and marketplaces
 
+### Automatic setup
+
+`rea setup --client codex` and `rea setup --client claude_code` prefer the
+client's marketplace plugin for a new, provider-independent integration. This
+also applies when choosing those clients in interactive setup. The plan shows
+the exact marketplace and install commands, and requires the usual approval
+before either command runs. Setup verifies that the client reports `rea@rea`
+installed and enabled, and skips the separate MCP registration and skill copy.
+Rerunning setup leaves an enabled plugin installed without repeating the install,
+including when setup discovers an existing Hopper installation automatically.
+Codex clients without plugin commands retain direct setup, which can use REA's
+selected Bun runtime without standalone Node. Codex support is checked first;
+plugin setup checks for a supported standalone `node` on the selected client
+PATH before installation and readiness checks, even when REA itself runs on Bun.
+A missing or unsupported Node runtime stops plugin setup with installation
+guidance; setup does not install or upgrade Node.
+Claude Code's inventory command can migrate client settings, so setup defers that
+command until approval. Its plan includes the inventory and conditional install
+or enable commands even on reruns; an already enabled plugin needs no reinstall.
+Preapproval failure reports also leave Claude's inventory untouched. Interrupting
+a plugin command stops setup before subsequent client writes or readiness probes,
+while retained child cleanup remains retryable. Windows client lookup uses the
+selected PATH rather than implicitly running a same-named file in the project.
+Lookup selects only native or batch launchers (`.exe`, `.com`, `.bat`, `.cmd`);
+other PATHEXT scripts require their own interpreter and are skipped.
+Inventories larger than the 64 KiB capture limit report that limit explicitly;
+use the client plugin manager directly for those inventories.
+
+Existing direct registrations remain direct. Older Codex clients without plugin
+commands, explicitly selected provider environment settings, a Hopper installation plan,
+`--skill=false`, `--skill-client`, or `--tool-families` retain direct setup.
+These explicit direct paths do not invoke the plugin manager; remove an existing
+REA plugin in the client before deliberately selecting a direct installation.
+An unreadable plugin list or failed plugin installation stops with remediation
+that retains a bounded excerpt of the command output and timeout or cleanup
+details, including failures during installation readback;
+setup never hides that failure by creating another MCP server. Resolve a plugin
+from another source or scope in the client's plugin manager before rerunning.
+For Claude Code versions without plugin commands, update the client or explicitly
+choose direct setup with `--skill=false`.
+
+Codex CLI and its desktop app must use the same Codex home for the installed
+plugin to appear in both. Start a new chat after installation. In Claude Code,
+restart or run `/reload-plugins`; local CLI plugins do not sync back to the
+Claude chat/Cowork app. Account-level Claude plugins must be added through
+Claude's supported app or organization flow. Claude Desktop's direct MCP
+integration remains separate; setup does not change account-level plugins.
+
+`rea setup --client cursor` keeps direct MCP registration and skill installation
+by default. To opt in to a downloaded local plugin, use
+`rea setup --client cursor --cursor-plugin` and approve its plan. It installs the exact `rea-agents` version running setup, with its
+runtime dependencies and generated skill, under
+`~/.cursor/plugins/local/rea/node_modules/rea-agents`. The local Cursor manifest
+uses that release's shared plugin metadata and launches its bundled Node
+bootstrap directly. Startup does not invoke npm or depend on an `npx` cache.
+Setup uses an existing npm and supported standalone Node; it does not install
+or upgrade either. Package lifecycle scripts are disabled during acquisition.
+
+The plan shows the package, destination and registry before downloading. Setup
+stages and verifies the package before publishing it, and writes no separate
+Cursor MCP registration or skill copy. A matching installation is left in place
+on reruns, including ordinary setup without `--cursor-plugin`, so dropping the
+flag does not create a duplicate direct server. If a local plugin appears or
+becomes unreadable while an ordinary direct setup plan awaits approval, setup
+stops before registration and requires a fresh plan. Existing direct integrations stay direct; foreign, edited, linked,
+incomplete or differently versioned local plugin directories stop with
+remediation and are preserved. Move an old local installation aside deliberately
+before installing a different version. Interrupted downloads retain their owned
+cleanup until the installer process has stopped.
+
+Restart Cursor or use Developer: Reload Window, then check Customize and MCP
+settings. This is a local import, not an account-synced marketplace install.
+Enterprise policy must permit local imports, and an installed marketplace plugin
+of the same name takes precedence. Setup verifies the local package and
+configuration, not Cursor's live policy or tool connection. See
+[Cursor's local plugin instructions](https://cursor.com/docs/plugins#test-plugins-locally).
+The released npm artifact must contain the shared plugin manifest, runtime,
+icon and generated skill; a source change does not modify earlier npm releases.
+
+Remove a plugin using its owning client, for example `codex plugin remove rea@rea`
+or `claude plugin uninstall rea@rea --scope user`. For a local Cursor plugin,
+move or remove its `~/.cursor/plugins/local/rea` directory after stopping Cursor.
+`rea uninstall` manages direct
+registrations and skill copies, not client-owned plugins.
+
+### Manual plugin installation
+
 REA's npm package is the shared Claude Code and Codex plugin artifact. It
 contains `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`, and the
 canonical generated `skills/` tree. Both manifests select `./skills` and run a plain Node bootstrap pinned to
@@ -1653,13 +1740,15 @@ codex plugin add rea@rea
 Each release updates both manifest versions and their pinned server version
 together, which is when installed copies refresh the bundled skill and move to
 the new server. A plugin does not run `rea setup`, so provider
-configuration still follows the sections above. Use the plugin or a
-`rea setup` registration for a client, not both, to avoid two `rea` servers.
+configuration still follows the sections above. Use a plugin or a direct
+registration for a client, not both, to avoid two `rea` servers.
 
 `rea doctor` does not see plugin-owned state. Its client and skill checks read
 only the registrations and skill locations that `rea setup` manages, so for a
 plugin-only install `rea doctor --client <id>` and `rea doctor --skill` report
-`missing` and recommend `rea setup`. Do not follow that remediation. Check the
+`missing` and recommend `rea setup`. Setup's plugin path checks the client
+manager separately, and reports those clients under `doctor.scope.plugin_clients`.
+Do not add a direct registration to repair a plugin-only install. Check the
 plugin with the client instead (`claude plugin list` and `/mcp` in Claude
 Code, `codex plugin list` in Codex).
 

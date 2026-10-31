@@ -67,6 +67,12 @@ const registerSetupCommand = (
         .array(skillClientSchema)
         .default([])
         .describe("Existing client skill destination to update; repeatable"),
+      cursorPlugin: z
+        .boolean()
+        .default(false)
+        .describe(
+          "Opt in to downloading REA as a local Cursor plugin instead of direct setup",
+        ),
       toolFamilies: z
         .string()
         .optional()
@@ -209,6 +215,7 @@ interface SetupCommandOptions {
   readonly installHopper: boolean;
   readonly client: readonly string[];
   readonly skillClient: readonly string[];
+  readonly cursorPlugin: boolean;
   readonly toolFamilies?: string | undefined;
   readonly allDetected: boolean;
   readonly skill?: boolean | undefined;
@@ -226,15 +233,30 @@ const runSetupCommand = async (
   const { options } = input;
   const interactive = setupIsInteractive(options, input.formatExplicit);
   const hasExplicitScope = setupHasExplicitScope(options);
-  const [{ runSetup }, { systemSetupHost }, { createSystemDoctorHost }] =
-    await Promise.all([
-      import("../application/Setup.js"),
-      import("../application/SetupHost.js"),
-      import("../doctorRuntime.js"),
-    ]);
+  const [
+    { runSetup },
+    { systemSetupHost },
+    { createSystemDoctorHost },
+    { withPluginSetup },
+  ] = await Promise.all([
+    import("../application/Setup.js"),
+    import("../application/SetupHost.js"),
+    import("../doctorRuntime.js"),
+    import("../application/SetupPluginHost.js"),
+  ]);
   const result = await runSetup(
     setupRunOptions(input, interactive, hasExplicitScope),
-    systemSetupHost(createSystemDoctorHost(environment), environment),
+    withPluginSetup(
+      systemSetupHost(createSystemDoctorHost(environment), environment),
+      environment,
+      {
+        preferPlugins:
+          options.skill !== false &&
+          options.skillClient.length === 0 &&
+          options.toolFamilies === undefined,
+        cursorPlugin: options.cursorPlugin,
+      },
+    ),
     interactive
       ? (actions, context) =>
           confirmInteractiveSetup(actions, options.accessible, context)

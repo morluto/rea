@@ -181,16 +181,6 @@ export const planSetupActions = async (input: {
       clientsToConfigure: [],
       blocker: hopperCache.error.message,
     };
-  if (
-    selectedClients.length > 0 &&
-    input.host.registrationCommandBlocker !== undefined
-  )
-    return {
-      plannedActions: [],
-      selectedClients,
-      clientsToConfigure: [],
-      blocker: input.host.registrationCommandBlocker,
-    };
   const inspections = await Promise.all(
     selectedClients.map(async (client) => ({
       client,
@@ -201,6 +191,18 @@ export const planSetupActions = async (input: {
       ),
     })),
   );
+  if (
+    input.host.registrationCommandBlocker !== undefined &&
+    selectedClients.some(
+      (client) => input.host.clientSetupAction?.(client.name) === undefined,
+    )
+  )
+    return {
+      plannedActions: [],
+      selectedClients,
+      clientsToConfigure: [],
+      blocker: input.host.registrationCommandBlocker,
+    };
   const invalid = inspections.find(
     ({ inspection }) => inspection.status === "invalid",
   );
@@ -245,9 +247,17 @@ export const planSetupActions = async (input: {
       ? {}
       : { linuxPackageFamily: input.discovery.linuxPackageFamily }),
     command: input.command,
-  });
+  }).map((action) =>
+    action.kind === "configure_client"
+      ? (input.host.clientSetupAction?.(
+          action.id.slice("configure_client:".length),
+        ) ?? action)
+      : action,
+  );
   const blocker =
-    (clientPlans.length > 0
+    (clientPlans.some(
+      ({ client }) => input.host.clientSetupAction?.(client.name) === undefined,
+    )
       ? input.host.registrationCommandBlocker
       : undefined) ??
     redirectedWriteBlocker(

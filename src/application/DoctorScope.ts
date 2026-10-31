@@ -14,6 +14,8 @@ import type {
 
 /** Normalized readiness boundary included in every doctor response. */
 export interface DoctorScopeReport {
+  /** Setup verifies these through the client's plugin manager, not MCP files. */
+  readonly plugin_clients?: readonly string[];
   readonly mode: "audit-wide" | "explicit";
   readonly clients: readonly string[];
   readonly skill_clients?: readonly string[];
