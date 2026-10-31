@@ -2,6 +2,8 @@ import * as t from "@babel/types";
 import { javaScriptProgramStrictness } from "./javascriptSourceParser.js";
 import { unwrapJavaScriptExpression } from "./javascriptAstValues.js";
 import {
+  semanticTopLevelEffectIsOrderable,
+  semanticTopLevelEffectFollowsCapture,
   isUnshadowedGlobal,
   semanticEffectTiming,
   semanticBindingEffectFollowsCapture,
@@ -125,6 +127,69 @@ export function* semanticOpaqueBindingEffects(
       pending.push(child);
   }
 }
+
+/** Query a completed reference-effect snapshot. A proven earliest site owns
+ * an ordered sequence. Retain one site per activation, and preserve the exact
+ * site walk where that ordering cannot be established.
+ * Undefined means there are no relevant sites; false is a read-specific proof.
+ */
+export const createSemanticOpaqueReferenceEffectQuery = (
+  state: JavaScriptSemanticAnalysisState,
+) => {
+  const byActivation = new Map<string, t.CallExpression | null | undefined>();
+  return (
+    binding: JavaScriptSemanticBindingState,
+    read: t.Node,
+  ): boolean | undefined => {
+    if (state.opaqueEffects.byScope.size === 0) return undefined;
+    const scope = activation(binding.scopeId, state);
+    if (!byActivation.has(scope)) {
+      let first: t.CallExpression | null | undefined;
+      for (const effect of semanticOpaqueBindingEffects(
+        binding,
+        state,
+        "reference",
+      )) {
+        if (!semanticTopLevelEffectIsOrderable(effect, state.parentsByNode)) {
+          first = null;
+          break;
+        } else if (first == null) first = effect;
+        else if (
+          semanticTopLevelEffectFollowsCapture(
+            first,
+            effect,
+            state.parentsByNode,
+          )
+        )
+          continue;
+        else if (
+          semanticTopLevelEffectFollowsCapture(
+            effect,
+            first,
+            state.parentsByNode,
+          )
+        )
+          first = effect;
+        else {
+          first = null;
+          break;
+        }
+      }
+      byActivation.set(scope, first);
+    }
+    const first = byActivation.get(scope);
+    if (first === undefined) return undefined;
+    if (first !== null)
+      return semanticEffectTiming(read, first, state) !== "after";
+    for (const effect of semanticOpaqueBindingEffects(
+      binding,
+      state,
+      "reference",
+    ))
+      if (semanticEffectTiming(read, effect, state) !== "after") return true;
+    return false;
+  };
+};
 
 export const semanticBindingMayHaveOpaqueEffect = (
   binding: JavaScriptSemanticBindingState,

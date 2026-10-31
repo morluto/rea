@@ -5,8 +5,7 @@ import { logicalPathEscapesRoot } from "../artifactIdentity.js";
 import { evidenceSchema } from "../evidence.js";
 import { javascriptRuntimeUnresolvedLocationSchema } from "./javascriptRuntimeObservation.js";
 import { javascriptApplicationGraphSchema } from "./javascriptApplicationGraph.js";
-import { digestSchema } from "../digests.js";
-import { prefixedDigestSchema } from "../digests.js";
+import { digestSchema, prefixedDigestSchema } from "../digests.js";
 import { urlDeclaresQueryOrFragment } from "../urlComponents.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");

@@ -101,6 +101,8 @@ it.each([false, true])(
               { reason: "retry failed" },
               { operation: "decode_signal_recording" },
             );
+          // Only the owner can confirm release of its retained resource.
+          original.resolveCleanup();
         },
       },
     );
@@ -124,15 +126,23 @@ it.each([false, true])(
     );
     const output: unknown = JSON.parse(stdout);
     expect(output).toMatchObject({
-      code: "cleanup_incomplete",
-      details: {
-        partial_observation: evidence,
-        resources: expect.arrayContaining(["original-workspace"]),
-      },
+      code: failAgain ? "cleanup_incomplete" : "execution_failure",
+      details: { partial_observation: evidence },
     });
     if (failAgain)
       expect(output).toMatchObject({
-        details: { resources: expect.arrayContaining(["retry-workspace"]) },
+        details: {
+          cleanup: "incomplete",
+          resources: expect.arrayContaining([
+            "original-workspace",
+            "retry-workspace",
+          ]),
+        },
       });
+    else {
+      expect(original.cleanupIncomplete).toBe(false);
+      expect(output).not.toHaveProperty("details.cleanup");
+      expect(output).not.toHaveProperty("details.resources");
+    }
   },
 );

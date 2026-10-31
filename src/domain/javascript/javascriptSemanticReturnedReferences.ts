@@ -205,9 +205,10 @@ export const createSemanticReturnedReferences = (
               invocationContext.receiver?.start,
               invocationContext.receiver?.end,
               invocationContext.receiverUnknown,
+              // Parser recovery retains null argument slots; keep their index.
               invocationContext.arguments?.map((argument) => [
-                argument.start,
-                argument.end,
+                argument?.start,
+                argument?.end,
               ]),
             ];
       let readKey = JSON.stringify([

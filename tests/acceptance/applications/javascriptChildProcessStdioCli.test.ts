@@ -294,7 +294,8 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         var frameMode=null; frames.frameMode='inherit';
         spawn("frames-global",[],{stdio:frameMode});
         function mapped(mode){mode=null;arguments[0]='inherit';spawn("mapped-arguments",[],{stdio:mode})}
-        function exposed(options){let done=()=>{};eval("done=options");exec("eval-callback",done)}
+        function exposed(options){"use strict";let done=()=>{};eval("done=options");exec("eval-callback",done)}
+        function injected(options){eval("var exec=options");exec("injected-call",options)}
         function shadowed(undefined){spawn("shadowed-undefined",[],{stdio:"inherit",...undefined})}
       `,
     });
@@ -329,10 +330,10 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     const children = graph.nodes.filter(
       (node) => node.kind === "child-process",
     );
-    expect(children).toHaveLength(expected.size);
     expect(children.map((child) => child.properties.command).sort()).toEqual(
       [...expected.keys()].sort(),
     );
+    expect(children).toHaveLength(expected.size);
     const nodes = new Map(graph.nodes.map((node) => [node.node_id, node]));
     for (const child of children) {
       const command = child.properties.command as string | null;

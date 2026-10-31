@@ -249,6 +249,15 @@ global, including a computed write through a global object. The check does not
 evaluate order or reachability, so a later or guarded polyfill write also
 removes the resolved effect.
 
+Node built-in effects follow the selected binding at its read and preserve
+earlier observations across later top-level writes. Shared exports, saved child
+objects and captured methods retain their distinct identities. Recognized native
+filesystem and child-process calls preserve their exports receiver; replaced or
+unknown methods remain conservative. Writes that may replace `module.require`
+invalidate subsequent loader-derived effects, including computed keys and spreads.
+Descriptor checks use the write order at the call site. Reassigned Object/Reflect
+mutators retain references carried by their assigned values, including bound
+module receivers; saved functions and unrelated properties remain distinct.
 Local callback candidates do not establish a complete target set when a
 conditional write may leave a parameter, catch binding, or uninitialized
 variable unchanged. These calls retain candidate edges and dynamic uncertainty;

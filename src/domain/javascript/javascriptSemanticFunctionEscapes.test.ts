@@ -27,6 +27,9 @@ it.each([
   ["get.own=1;", false],
   ["const local=()=>({});get.call=local;consume(get);", true],
   ["const local=()=>({});get.call=local;consume(get.call);", false],
+  ["const local=()=>({});get.apply=local;consume(get.apply);", false],
+  ["consume(get.name);", false],
+  ["consume(get.length);", false],
 ])("preserves callback result escape sources through %s", (body, escaped) => {
   const bindings = indexedBindings(body);
   const shared = bindings.find(({ name }) => name === "shared");
