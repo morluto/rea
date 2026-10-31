@@ -631,7 +631,7 @@ export const estimateBinaryPlistExpansion = (
       return offsetSize;
     const width = binaryPlistCloneOffsetWidth(
       offsetSize,
-      trailer,
+      bytes.length,
       cloneLengths,
     );
     if (width === undefined)
@@ -650,7 +650,7 @@ export const estimateBinaryPlistExpansion = (
       normalizedReferenceSize !== referenceSize
     ) {
       const cloneBytes = cloneLengths.reduce((sum, length) => sum + length, 0);
-      estimate += 2 * (cloneBytes + objectCount * normalizedOffsetSize);
+      estimate += 2 * (cloneBytes + objectCount * normalizedOffsetSize + 32);
       if (estimate > maxBytes)
         throw fail(
           "expansion",
@@ -725,7 +725,7 @@ export const estimateBinaryPlistExpansion = (
     normalizedReferenceSize !== referenceSize
   ) {
     const cloneBytes = cloneLengths.reduce((sum, length) => sum + length, 0);
-    estimate += 2 * (cloneBytes + objectCount * normalizedOffsetSize);
+    estimate += 2 * (cloneBytes + objectCount * normalizedOffsetSize + 32);
     if (estimate > maxBytes)
       throw fail(
         "expansion",
