@@ -255,6 +255,14 @@ driver software on the device and pair with the Frida instrumentation lane
 (#1359) behind explicit mutation-authority contracts. Network transports
 beyond already-connected devices (`adb connect`) are not exposed yet.
 
+ADB does not provide an HTTP interception or SSL-unpinning workflow. A caller
+may use a separately authorized HTTP Toolkit setup with a debug/test app and
+then export a HAR for REA's offline capture inspection, but REA does not
+install a CA, change device trust settings, select a pinning-bypass script, or
+join the device lifecycle to the capture lifecycle. See [historical web
+network captures](./web-network-captures.md#android-interception-as-a-manual-composition)
+for the supported composition and its boundaries.
+
 ## Real verification
 
 `npm run verify:adb` exercises every operation against a live device. It

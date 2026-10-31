@@ -626,6 +626,44 @@ it.each(["container", "record"] as const)(
   },
 );
 
+it("retains HTTP Toolkit-style TLS errors as container evidence", () => {
+  const fixture = historicalHar();
+  const input = {
+    log: {
+      ...fixture.log,
+      _tlsErrors: [
+        {
+          cause: "cert-rejected",
+          hostname: "api.example.test",
+          message: "certificate rejected for api.example.test",
+        },
+      ],
+    },
+  };
+  const decoded = decodeHarCapture(JSON.stringify(input), [
+    "certificate rejected",
+  ]);
+
+  expect(decoded.total_records).toBe(fixture.log.entries.length);
+  expect(decoded.records[0]?.reported).not.toHaveProperty("_tlsErrors");
+  expect(decoded.container.reported).toMatchObject({
+    log: {
+      _tlsErrors: [
+        {
+          cause: "cert-rejected",
+          hostname: "api.example.test",
+          message: null,
+        },
+      ],
+      entries: null,
+    },
+  });
+  expect(decoded.container.redactions).toContainEqual({
+    pointer: "/log/_tlsErrors/0/message",
+    reason: "explicit-sensitive-value",
+  });
+});
+
 it("retains valid base64 bytes independently of declared sizes", () => {
   const fixture = historicalHar();
   const entry = fixture.log.entries[0];
