@@ -6,6 +6,7 @@ import {
   bindArtifactFileCleanup,
   artifactFileCancellationCause,
   artifactFilePrimaryFacts,
+  artifactSelectedPathErrno,
 } from "../../artifacts/ArtifactFileOperation.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
@@ -197,17 +198,14 @@ export const historicalCaptureFailure = (
     return new AnalysisAccessDeniedError(OPERATION, sourcePath, cause.code, {
       cause,
     });
-  if (
-    phase !== "decoder" &&
-    cause instanceof Error &&
-    "code" in cause &&
-    ["ENOENT", "ENOTDIR"].includes(String(cause.code))
-  )
+  const selectedPathErrno =
+    phase === "decoder" ? undefined : artifactSelectedPathErrno(cause);
+  if (selectedPathErrno !== undefined)
     return new AnalysisInputError(OPERATION, { cause }, [
       {
         path: inputPath,
         reason: "invalid_value",
-        message: `Selected ${sourceLabel} could not be read (${String(cause.code)}): ${sourcePath}.`,
+        message: `Selected ${sourceLabel} could not be read (${selectedPathErrno}): ${sourcePath}.`,
       },
     ]);
   if (

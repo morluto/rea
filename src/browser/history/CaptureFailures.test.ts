@@ -325,3 +325,51 @@ it("preserves the exact cancellation reason and an earlier reader failure", () =
   );
   expect(changed._tag).toBe("AnalysisArtifactChangedError");
 });
+
+it.each(["ENOENT", "ENOTDIR", "ELOOP", "ENAMETOOLONG"])(
+  "reports an unresolvable selected capture path (%s) as capture_path input",
+  (code) => {
+    const input = inspectWebNetworkCaptureInputSchema.parse({
+      capture_path: "/selected/input.har",
+      format: "har",
+    });
+    const cause = Object.assign(
+      new Error(`${code}: lstat '/selected/input.har'`),
+      { code },
+    );
+    expect(
+      projectAnalysisError(
+        historicalCaptureFailure(input, cause, "capture-read"),
+      ),
+    ).toMatchObject({
+      code: "invalid_request",
+      category: "invalid_input",
+      details: {
+        issues: [
+          {
+            path: ["capture_path"],
+            message: expect.stringContaining(code),
+          },
+        ],
+      },
+    });
+  },
+);
+
+it("keeps physical capture read errors as provider failures", () => {
+  const input = inspectWebNetworkCaptureInputSchema.parse({
+    capture_path: "/selected/input.har",
+    format: "har",
+  });
+  const cause = Object.assign(new Error("EIO: read '/selected/input.har'"), {
+    code: "EIO",
+  });
+  expect(
+    projectAnalysisError(
+      historicalCaptureFailure(input, cause, "capture-read"),
+    ),
+  ).toMatchObject({
+    code: "execution_failure",
+    details: { diagnostics: { phase: "capture-read" } },
+  });
+});
