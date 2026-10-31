@@ -1,4 +1,5 @@
 import * as t from "@babel/types";
+import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 
 import {
   delayedInstanceFieldValue,
@@ -55,6 +56,11 @@ interface InitializerPositionCache {
   readonly mutation: WeakMap<t.Node, StatementPosition | null>;
   readonly reference: WeakMap<t.Node, StatementPosition | null>;
   readonly read: WeakMap<t.Node, BindingReadPosition>;
+  readonly enclosingFunction: WeakMap<t.Node, t.Function | null>;
+  readonly moduleFunctionReads: WeakMap<
+    readonly t.Statement[],
+    WeakMap<t.FunctionDeclaration, number | null>
+  >;
   readonly evaluationChildren: WeakMap<
     t.Node,
     ReadonlyMap<t.Node, number> | null
@@ -80,6 +86,8 @@ const initializerPositionCache = (
     mutation: new WeakMap(),
     reference: new WeakMap(),
     read: new WeakMap(),
+    enclosingFunction: new WeakMap(),
+    moduleFunctionReads: new WeakMap(),
     evaluationChildren: new WeakMap(),
     expressionAncestry: undefined,
   };
@@ -731,6 +739,35 @@ export const semanticMutationInitializers = (
   };
 };
 
+/** Function ownership is independent of uncertain ordering within a loop. */
+const bindingEnclosingFunction = (
+  read: t.Node,
+  parents: WeakMap<t.Node, t.Node>,
+): t.Function | undefined => {
+  const cache = initializerPositionCache(parents).enclosingFunction;
+  const path: t.Node[] = [];
+  let current = read;
+  let result: t.Function | null = null;
+  while (true) {
+    const cached = cache.get(current);
+    if (cached !== undefined) {
+      result = cached;
+      break;
+    }
+    path.push(current);
+    const parent = parents.get(current);
+    if (parent === undefined || delayedInstanceFieldValue(parent, current))
+      break;
+    if (t.isFunction(parent) && !semanticComputedMethodKey(parent, current)) {
+      if (current === parent.body) result = parent;
+      break;
+    }
+    current = parent;
+  }
+  for (const node of path) cache.set(node, result);
+  return result ?? undefined;
+};
+
 /** Reuse immutable ancestry facts across reads nested in the same expression. */
 const bindingReadPosition = (
   read: t.Node,
@@ -818,6 +855,70 @@ type SemanticBindingRead = {
   readonly hasDefiniteInitializer: boolean;
   /** Unresolved reads retain all possible origins for conservative alias effects. */
   readonly binding: JavaScriptSemanticBindingState;
+};
+
+/** A hoisted function needs a module-level use after initialization, not a later declaration. */
+const moduleFunctionFirstRead = (
+  declaration: t.FunctionDeclaration,
+  body: readonly t.Statement[],
+  parents: WeakMap<t.Node, t.Node>,
+): number | null => {
+  const cache = initializerPositionCache(parents).moduleFunctionReads;
+  let reads = cache.get(body);
+  if (reads === undefined) {
+    reads = new WeakMap();
+    cache.set(body, reads);
+    const functions = new Map<string, t.FunctionDeclaration | null>();
+    for (const statement of body) {
+      const exported =
+        t.isExportNamedDeclaration(statement) ||
+        t.isExportDefaultDeclaration(statement);
+      const node = exported ? statement.declaration : statement;
+      if (!t.isFunctionDeclaration(node)) continue;
+      reads.set(node, exported ? null : Infinity);
+      if (node.id == null) continue;
+      const name = node.id.name;
+      if (functions.has(name)) {
+        const previous = functions.get(name);
+        if (previous != null) reads.set(previous, null);
+        reads.set(node, null);
+        functions.set(name, null);
+      } else functions.set(name, node);
+    }
+    const indexedReads = reads;
+    const active = new Set<t.Function>();
+    for (let index = 0; index < body.length; index++) {
+      const statement = body[index];
+      if (statement === undefined) continue;
+      traverseJavaScriptAst(statement, {
+        enter(node, parent) {
+          if (t.isFunction(node)) active.add(node);
+          if (
+            !t.isIdentifier(node) ||
+            parent === null ||
+            !t.isReferenced(node, parent)
+          )
+            return;
+          const fn = functions.get(node.name);
+          if (fn == null || active.has(fn)) return;
+          const current = indexedReads.get(fn);
+          if (current === null || current === undefined) return;
+          // Indirect activations and live exports have no proven module timing.
+          indexedReads.set(
+            fn,
+            active.size > 0 || t.isExportSpecifier(parent)
+              ? null
+              : Math.min(current, index),
+          );
+        },
+        exit(node) {
+          if (t.isFunction(node)) active.delete(node);
+        },
+      });
+    }
+  }
+  const first = reads.get(declaration);
+  return first !== undefined && Number.isFinite(first) ? first : null;
 };
 
 export const semanticBindingAtRead = (
@@ -919,11 +1020,53 @@ export const semanticBindingAtRead = (
       binding,
       hasDefiniteInitializer,
     };
+  const moduleConstBinding =
+    binding.scopeId.startsWith("scope:program:") &&
+    binding.declarationKinds.size === 1 &&
+    binding.declarationKinds.has("const") &&
+    !binding.mutable;
+  const enclosingFunction = moduleConstBinding
+    ? bindingEnclosingFunction(read, parents)
+    : undefined;
+  const functionStatementPosition = (): StatementPosition | null => {
+    if (enclosingFunction === undefined) return null;
+    if (t.isStatement(enclosingFunction))
+      return statementPosition(enclosingFunction, parents);
+    for (
+      let owner = parents.get(enclosingFunction);
+      owner !== undefined;
+      owner = parents.get(owner)
+    )
+      if (t.isStatement(owner)) return statementPosition(owner, parents);
+    return null;
+  };
+  const functionPosition = moduleConstBinding
+    ? functionStatementPosition()
+    : null;
+  const firstFunctionRead =
+    moduleConstBinding &&
+    sourcePosition !== null &&
+    functionPosition !== null &&
+    sourcePosition.body === functionPosition.body &&
+    t.isFunctionDeclaration(enclosingFunction)
+      ? moduleFunctionFirstRead(enclosingFunction, sourcePosition.body, parents)
+      : null;
+  const moduleConstInitializedBeforeActivation =
+    moduleConstBinding &&
+    sourcePosition !== null &&
+    functionPosition !== null &&
+    sourcePosition.body === functionPosition.body &&
+    (t.isFunctionDeclaration(enclosingFunction)
+      ? firstFunctionRead !== null && sourcePosition.index < firstFunctionRead
+      : positionPrecedes(sourcePosition, functionPosition));
   const uncertainOrder =
     repeatingLoop ||
     sourcePosition === null ||
     position === null ||
     sourcePosition.body !== position.body;
+  if (uncertainOrder && moduleConstInitializedBeforeActivation)
+    // Initialization coverage does not order a capture in another activation.
+    return { status: "unresolved", binding, hasDefiniteInitializer: true };
   if (uncertainOrder)
     return { status: "unresolved", binding, hasDefiniteInitializer };
   const selected = selectInitializers(binding, position, read, parents);
