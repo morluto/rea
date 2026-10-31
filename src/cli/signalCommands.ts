@@ -31,6 +31,9 @@ export const registerSignalCommands = (
     options: z
       .object({
         ...inspectSignalDecodersInputSchema.shape,
+        offset: inspectSignalDecodersInputSchema.shape.offset.describe(
+          "Number of matching decoders or help lines to skip",
+        ),
         limit: z
           .number()
           .int()
@@ -79,6 +82,9 @@ export const registerSignalCommands = (
     options: z
       .object({
         ...signalRecordingOptionsSchema.shape,
+        line_offset: signalRecordingOptionsSchema.shape.line_offset.describe(
+          "Skip this many literal LF-separated output lines",
+        ),
         line_limit: z
           .number()
           .int()

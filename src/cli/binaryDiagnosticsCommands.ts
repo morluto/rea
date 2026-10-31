@@ -209,10 +209,10 @@ export const registerBinaryDiagnosticsCommands = (
     args: z.object({ path: localPathStringSchema.describe("Local file") }),
     options: z.object({
       blockSize: inspectByteEntropyInputSchema.shape.block_size.describe(
-        "Power-of-two block size from 256 to 65536 bytes (default 4096)",
+        "Power-of-two block size from 256 to 65536 bytes",
       ),
       offset: inspectByteEntropyInputSchema.shape.offset.describe(
-        "Window start as a decimal file byte offset (default 0)",
+        "Window start as a decimal file byte offset",
       ),
       length: inspectByteEntropyInputSchema.shape.length.describe(
         "Window length in bytes; omit to extend through EOF",
@@ -358,16 +358,16 @@ export const registerBinaryDiagnosticsCommands = (
     }),
     options: z.object({
       maxFileBytes: inspectDevicetreeInputSchema.shape.max_file_bytes.describe(
-        "Maximum FDT file size in bytes (default 4194304)",
+        "Maximum FDT file size in bytes",
       ),
       maxNodes: inspectDevicetreeInputSchema.shape.max_nodes.describe(
-        "Maximum number of device-tree nodes (default 8192)",
+        "Maximum number of device-tree nodes",
       ),
       maxProperties: inspectDevicetreeInputSchema.shape.max_properties.describe(
-        "Maximum number of device-tree properties (default 32768)",
+        "Maximum number of device-tree properties",
       ),
       maxDepth: inspectDevicetreeInputSchema.shape.max_depth.describe(
-        "Maximum device-tree nesting depth (default 64)",
+        "Maximum device-tree nesting depth",
       ),
       ...analysisEvidenceDeliveryOptions,
     }),
