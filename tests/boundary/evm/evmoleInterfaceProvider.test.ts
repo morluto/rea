@@ -9,6 +9,7 @@ import { EvmoleInterfaceProvider } from "../../../src/evm/EvmoleInterfaceProvide
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
 import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
 import { waitForProviderProcessReady } from "../../fixtures/providerProcess.js";
+import { corelessPrlimit as prlimit } from "../../fixtures/corelessPrlimit.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { EvmInterfaceService } from "../../../src/application/evm/EvmInterfaceService.js";
@@ -58,8 +59,10 @@ it.runIf(!unsupportedHost).each(["SIGXCPU", "SIGXFSZ", "EFBIG"])(
         await writeFile(join(ownedPath, "resource.failure"), "F");
       return spawnOwnedProviderProcess({
         ...spawn,
-        command: process.execPath,
+        // RLIMIT_CORE=1 keeps systemd-coredump from recording the deliberate signal.
+        command: prlimit ?? process.execPath,
         arguments: [
+          ...(prlimit === undefined ? [] : ["--core=1:1", process.execPath]),
           "-e",
           failure === "EFBIG"
             ? 'process.stdout.write("resource diagnostic", () => { process.exitCode = 76; })'

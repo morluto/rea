@@ -10,6 +10,7 @@ import { PwntoolsLayoutProvider } from "../../../src/native/pwntools/PwntoolsLay
 import { PWNTOOLS_PROVIDER_IDENTITY } from "../../../src/native/pwntools/PwntoolsRelease.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
 import { waitForProviderProcessReady } from "../../fixtures/providerProcess.js";
+import { corelessPrlimit as prlimit } from "../../fixtures/corelessPrlimit.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
 import { binaryLayoutFixture } from "../../fixtures/binaryDiagnostics/layout.js";
@@ -53,8 +54,10 @@ it.runIf(!unsupportedHost).each([
           );
         return spawnOwnedProviderProcess({
           ...spawn,
-          command: process.execPath,
+          // RLIMIT_CORE=1 keeps systemd-coredump from recording the deliberate signal.
+          command: prlimit ?? process.execPath,
           arguments: [
+            ...(prlimit === undefined ? [] : ["--core=1:1", process.execPath]),
             "-e",
             failure === "EFBIG"
               ? 'process.stdout.write("resource diagnostic", () => { process.exitCode = 76; })'
