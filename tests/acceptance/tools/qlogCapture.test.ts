@@ -426,12 +426,41 @@ it("fails whole-capture validation before selection and survives malformed, unsu
   const root = await createTestTempDirectory("rea-qlog-errors-");
   const path = join(root, "input.qlog");
   const { call, client } = await connectLocalToolsMcp();
-  for (const [text, code] of [
-    [qlog([event, { ...event, time: "invalid" }]), "invalid_request"],
-    [qlog([event]).slice(0, -1), "invalid_request"],
+  for (const [text, expected] of [
+    [
+      qlog([event, { ...event, time: "invalid" }]),
+      {
+        code: "invalid_request",
+        details: {
+          operation: "inspect_web_network_capture",
+          issues: [
+            {
+              path: ["capture_path", "/traces/0/events/1"],
+              reason: "invalid_format",
+            },
+          ],
+        },
+      },
+    ],
+    [
+      qlog([event]).slice(0, -1),
+      {
+        code: "invalid_request",
+        details: {
+          operation: "inspect_web_network_capture",
+          issues: [{ path: ["capture_path", ""], reason: "invalid_format" }],
+        },
+      },
+    ],
     [
       qlog([event]).replace('"qlog_version":"0.3"', '"qlog_version":"0.4"'),
-      "capability_unavailable",
+      {
+        code: "capability_unavailable",
+        details: {
+          operation: "inspect_web_network_capture",
+          provider_id: "qlog",
+        },
+      },
     ],
     [
       qlog([
@@ -440,7 +469,20 @@ it("fails whole-capture validation before selection and survives malformed, unsu
           extension: JSON.parse("[".repeat(65) + "0" + "]".repeat(65)),
         },
       ]),
-      "invalid_request",
+      {
+        code: "invalid_request",
+        details: {
+          operation: "inspect_web_network_capture",
+          issues: [
+            expect.objectContaining({
+              reason: "out_of_range",
+              expected: {
+                maximum_capture_nesting: WEB_NETWORK_CAPTURE_LIMITS.depth,
+              },
+            }),
+          ],
+        },
+      },
     ],
   ] as const) {
     await writeFile(path, text);
@@ -452,7 +494,7 @@ it("fails whole-capture validation before selection and survives malformed, unsu
           record_ordinals: [0],
         }),
       ),
-    ).toMatchObject({ error: { code } });
+    ).toMatchObject({ error: expected });
     const failed: unknown = await execute(process.execPath, [
       cli,
       "inspect-web-network-capture",
@@ -462,8 +504,16 @@ it("fails whole-capture validation before selection and survives malformed, unsu
     ]).catch((cause: unknown) => cause);
     expect(failed).toMatchObject({
       code: 1,
-      stdout: expect.stringContaining(`"code":"${code}"`),
+      stdout: expect.any(String),
     });
+    if (
+      typeof failed !== "object" ||
+      failed === null ||
+      !("stdout" in failed) ||
+      typeof failed.stdout !== "string"
+    )
+      throw new Error("CLI failure omitted JSON output");
+    expect(JSON.parse(failed.stdout)).toMatchObject(expected);
   }
   await truncate(path, WEB_NETWORK_CAPTURE_LIMITS.inputBytes + 1);
   expect(
