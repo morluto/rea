@@ -319,7 +319,7 @@ REA phân tích mục tiêu cục bộ. Tác nhân nhận kết quả công cụ
 
 Hãy cập nhật trước; một bản phát hành gần đây có thể đã sửa lỗi.
 
-Với CLI được cài bằng npm:
+Với CLI được cài bằng `npm install --global` / `bun add --global`:
 
 ```bash
 rea update

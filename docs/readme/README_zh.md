@@ -317,7 +317,7 @@ REA 在本机分析目标。智能体会接收工具结果，其模型提供商�
 
 先更新；最近的版本可能已经修复了问题。
 
-通过 npm 安装的 CLI 使用：
+通过 `npm install --global` 或 `bun add --global` 安装的 CLI 使用：
 
 ```bash
 rea update

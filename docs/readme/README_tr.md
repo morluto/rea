@@ -313,7 +313,7 @@ REA hedefleri yerel olarak analiz eder. Ajanınız araç sonuçlarını alır ve
 
 Önce güncelleyin; yakın tarihli bir sürüm hatayı düzeltmiş olabilir.
 
-npm ile yüklenen CLI için:
+`npm install --global` veya `bun add --global` ile yüklenen CLI için:
 
 ```bash
 rea update

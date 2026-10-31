@@ -319,7 +319,7 @@ REA 在本機分析目標。AI 代理會接收工具結果，其模型提供商�
 
 先更新；最近的版本可能已經修復了問題。
 
-通過 npm 安裝的 CLI 使用：
+通過 `npm install --global` 或 `bun add --global` 安裝的 CLI 使用：
 
 ```bash
 rea update

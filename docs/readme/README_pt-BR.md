@@ -319,7 +319,7 @@ O REA analisa os alvos localmente. Seu agente recebe os resultados das ferrament
 
 Atualize primeiro; uma versão recente pode já ter corrigido o problema.
 
-Para uma CLI instalada pelo npm:
+Para uma CLI instalada pelo `npm install --global` / `bun add --global`:
 
 ```bash
 rea update

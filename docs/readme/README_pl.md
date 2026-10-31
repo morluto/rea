@@ -319,7 +319,7 @@ REA analizuje cele lokalnie. Twój agent otrzymuje wyniki narzędzi, a dostawca 
 
 Najpierw zaktualizuj REA; najnowsze wydanie mogło już naprawić ten problem.
 
-Dla CLI zainstalowanego przez npm:
+Dla CLI zainstalowanego przez `npm install --global` / `bun add --global`:
 
 ```bash
 rea update

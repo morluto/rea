@@ -319,7 +319,7 @@ REA analiza los objetivos localmente. Tu agente recibe los resultados de las her
 
 Actualiza primero; una versión reciente puede haber solucionado el problema.
 
-Para una CLI instalada mediante npm:
+Para una CLI instalada mediante `npm install --global` / `bun add --global`:
 
 ```bash
 rea update
