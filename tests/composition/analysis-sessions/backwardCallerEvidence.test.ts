@@ -1,7 +1,9 @@
 import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
 import type { AnalysisProvider } from "../../../src/application/AnalysisProvider.js";
-import { executeComposedWorkflow } from "../../../src/application/WorkflowEvidence.js";
-import { createWorkflowEvidence } from "../../../src/application/WorkflowEvidence.js";
+import {
+  executeComposedWorkflow,
+  createWorkflowEvidence,
+} from "../../../src/application/WorkflowEvidence.js";
 import { EnhancedTools } from "../../../src/application/EnhancedTools.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { ok } from "../../../src/domain/result.js";

@@ -5,6 +5,10 @@ import {
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import { readPeCoffHeader } from "../domain/peCoffHeader.js";
 import {
+  nesContainerFormat,
+  parseInesLayout,
+} from "../domain/inesContainer.js";
+import {
   regularFileCancellation,
   RegularFileCleanupFailure,
   RegularFileCancelled,
@@ -22,18 +26,13 @@ import { jsonValueSchema } from "../domain/jsonValue.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { constants, type Stats } from "node:fs";
 import { createHash } from "node:crypto";
-import {
-  access,
-  lstat,
-  realpath,
-  stat,
-  type FileHandle,
-} from "node:fs/promises";
+import { access, realpath, stat, type FileHandle } from "node:fs/promises";
 import { extname } from "node:path";
 
 import { BinaryTargetError } from "../domain/configurationErrors.js";
 import {
-  sameRegularFileState,
+  assertStableRegularFileIdentity,
+  RegularFileChangedError,
   type StableRegularFileDescriptor,
 } from "../filesystem/RegularFile.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
@@ -46,11 +45,20 @@ import type {
 import { err, ok, type Result } from "../domain/result.js";
 import { readMipsElfMetadata } from "./MipsElfMetadata.js";
 import { readXtensaElfAbi } from "./XtensaElfMetadata.js";
-import { validateElfDeclaredRanges } from "../domain/elfDeclaredRanges.js";
 import {
-  resolveAppBundleExecutable,
+  validateElfDeclaredRanges,
+  type ElfDeclarationRead,
+} from "../domain/elfDeclaredRanges.js";
+import { readRiscvIsaDeclaration } from "../domain/riscvIsaDeclaration.js";
+import {
+  resolveAppleBundleExecutable,
   type ResolvedAppBundle,
 } from "./AppBundleExecutable.js";
+import {
+  OPENABLE_APPLE_BUNDLE_TYPES_TEXT,
+  isUnopenedAppleBundleExtension,
+  openableAppleBundleExtension,
+} from "../domain/apple/appleBundleTypes.js";
 import {
   validateDosComLength,
   type ExecutableFormatHint,
@@ -79,7 +87,18 @@ import { hasGodotPckHeader } from "../domain/godotPckFormat.js";
 import { hasUImageMagic } from "../domain/uimageFormat.js";
 import { hasUnityFsHeader } from "../domain/unityfsFormat.js";
 import { detectHexRecordEncoding } from "../domain/firmware/hexRecords.js";
+import { hasUf2Block } from "../domain/firmware/uf2.js";
+import {
+  DFUSE_SUFFIX_BYTES,
+  hasDfuSePrefix,
+  isDfuSeFile,
+} from "../domain/firmware/dfuse.js";
 import { hasFitImagesNode } from "../domain/firmware/fitImage.js";
+import {
+  locateEspFlashLayout,
+  type EspFlashSelection,
+} from "../domain/firmware/espFlashLocation.js";
+import { espFlashSelectionError } from "../domain/firmware/espFlashSelection.js";
 import {
   ESP8266_REFUSAL,
   recognizeEspImage,
@@ -132,6 +151,8 @@ export interface BinaryTargetResolverOptions {
   readonly formatHint?: ExecutableFormatHint;
   readonly architecture?: BinaryArchitecture;
   readonly entryPoint?: string;
+  /** Inputs for format=esp-flash-image; rejected with any other format. */
+  readonly espFlash?: EspFlashSelection;
   readonly signal?: AbortSignal;
   readonly resources?: ArtifactResourceScope;
 }
@@ -269,6 +290,18 @@ const readOpenedBinaryTarget = async (
   const hostArchitecture = options.hostArchitecture ?? process.arch;
   const { targetKind, formatHint, signal, architecture, entryPoint } = options;
   throwIfTargetResolutionCancelled(signal);
+  // Flash inputs pair with one format; check before any hint branch.
+  const flashPairing = espFlashSelectionError({
+    format: formatHint,
+    flashOffset: options.espFlash?.flashOffset,
+    partitionTableOffset: options.espFlash?.partitionTableOffset,
+  });
+  if (flashPairing !== undefined)
+    return err(
+      new BinaryTargetError(path, flashPairing, {
+        constraint: "load_selection_rejected",
+      }),
+    );
   if (formatHint === "raw-binary") {
     if (targetKind !== undefined && targetKind !== "executable")
       return err(
@@ -356,6 +389,45 @@ const readOpenedBinaryTarget = async (
       dol: admitted.value.header,
     });
   }
+  if (formatHint === "esp-flash-image") {
+    if (targetKind !== undefined && targetKind !== "archive")
+      return err(
+        new BinaryTargetError(
+          path,
+          "ESP flash image format requires an archive target kind",
+          { constraint: "load_selection_rejected" },
+        ),
+      );
+    const selection = options.espFlash ?? {};
+    // An encrypted dump has no readable table: unknown, not malformed.
+    const located = await locateEspFlashLayout(
+      metadata.size,
+      (position, length) => readHandleRange(handle, position, length, signal),
+      selection,
+      { explicit: true, ...(signal === undefined ? {} : { signal }) },
+    );
+    if (!located.ok)
+      return err(
+        new BinaryTargetError(
+          path,
+          `ESP flash image layout is not recognized: ${located.error}`,
+          { constraint: "file_format_rejected" },
+        ),
+      );
+    return ok({
+      path,
+      sourcePath,
+      artifactSelectedPath: selectedPath,
+      sha256: await sha256Handle(handle, path, metadata, signal),
+      kind: "archive",
+      format: "esp-flash-image",
+      espFlash: {
+        selected: true,
+        flashOffset: selection.flashOffset ?? null,
+        partitionTableOffset: selection.partitionTableOffset ?? null,
+      },
+    });
+  }
   if (formatHint === "dos-com") {
     if (targetKind !== undefined && targetKind !== "executable")
       return err(
@@ -389,10 +461,13 @@ const readOpenedBinaryTarget = async (
   const artifactFormat =
     targetKind === "database"
       ? undefined
-      : await detectArtifactFormat(classificationPath, source, signal);
+      : await detectArtifactFormat(classificationPath, source, signal, path);
   if (
     targetKind === "database" ||
-    (targetKind === undefined && path.toLowerCase().endsWith(".hop"))
+    (targetKind === undefined &&
+      artifactFormat !== "ines" &&
+      artifactFormat !== "plist" &&
+      path.toLowerCase().endsWith(".hop"))
   )
     return ok({
       path,
@@ -408,6 +483,17 @@ const readOpenedBinaryTarget = async (
       artifactSelectedPath: selectedPath,
       sha256: await sha256Handle(handle, path, metadata, signal),
     };
+    if (artifactFormat === "esp-flash-image")
+      return ok({
+        ...identity,
+        kind: "archive",
+        format: artifactFormat,
+        espFlash: {
+          selected: false,
+          flashOffset: null,
+          partitionTableOffset: null,
+        },
+      });
     return isArchiveFormat(artifactFormat)
       ? ok({ ...identity, kind: "archive", format: artifactFormat })
       : ok({ ...identity, kind: "artifact", format: artifactFormat });
@@ -643,6 +729,7 @@ const detectArtifactFormat = async (
   path: string,
   source: StableRegularFileDescriptor,
   signal?: AbortSignal,
+  sourcePath = path,
 ): Promise<
   | Exclude<
       BinaryTarget["format"],
@@ -663,6 +750,16 @@ const detectArtifactFormat = async (
   const lower = path.toLowerCase();
   // Fill the prefix so a short host read cannot hide a signature.
   const magic = Buffer.from(await readHandleRange(handle, 0, 4096, signal));
+  try {
+    await assertStableRegularFileIdentity(handle, sourcePath, initial, {
+      symlinks: "reject",
+      ...(signal === undefined ? {} : { signal }),
+    });
+  } catch (cause: unknown) {
+    throwIfTargetResolutionCancelled(signal);
+    throw cause;
+  }
+  throwIfTargetResolutionCancelled(signal);
   if (
     magic.length >= 8 &&
     magic.subarray(0, 8).equals(Buffer.from([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0]))
@@ -672,12 +769,45 @@ const detectArtifactFormat = async (
       "WebAssembly v1 artifacts are not supported by the native opening route",
       { constraint: "wasm_requires_static_inspection" },
     );
+  if (nesContainerFormat(magic) !== undefined) {
+    const parsed = parseInesLayout(magic, initial.size);
+    throwIfTargetResolutionCancelled(signal);
+    if (!parsed.ok)
+      throw new BinaryTargetError(path, parsed.error, {
+        constraint: "file_format_rejected",
+      });
+    return "ines";
+  }
   if (hasZipSignature(magic)) return zipRootPackageFormat(lower);
   if (hasGodotPckHeader(magic)) return "godot-pck";
   if (hasUnityFsHeader(magic)) return "unityfs";
   if (hasUImageMagic(magic)) return "uimage";
   const hexRecords = detectHexRecordEncoding(magic);
   if (hexRecords !== undefined) return hexRecords;
+  if (hasUf2Block(magic)) return "uf2";
+  if (
+    hasDfuSePrefix(magic) &&
+    initial.size >= DFUSE_SUFFIX_BYTES &&
+    isDfuSeFile(
+      magic,
+      await readHandleRange(
+        handle,
+        initial.size - DFUSE_SUFFIX_BYTES,
+        DFUSE_SUFFIX_BYTES,
+        signal,
+      ),
+      initial.size,
+    )
+  )
+    return "dfuse";
+  // A C3 or S3 dump begins with its bootloader, so a layout comes first.
+  const flash = await locateEspFlashLayout(
+    initial.size,
+    (position, length) => readHandleRange(handle, position, length, signal),
+    {},
+    { explicit: false, ...(signal === undefined ? {} : { signal }) },
+  );
+  if (flash.ok) return "esp-flash-image";
   const esp = recognizeEspImage(magic, initial.size);
   if (esp === "esp8266")
     throw new BinaryTargetError(path, ESP8266_REFUSAL, {
@@ -754,6 +884,7 @@ const isArchiveFormat = (
   isZipPackageFormat(format) ||
   [
     "asar",
+    "ines",
     "godot-pck",
     "unityfs",
     "uimage",
@@ -762,6 +893,9 @@ const isArchiveFormat = (
     "intel-hex",
     "srec",
     "esp-image",
+    "uf2",
+    "dfuse",
+    "esp-flash-image",
     "fit",
   ].includes(format);
 
@@ -839,12 +973,21 @@ const sha256Handle = async (
       throw new BinaryTargetError(path, "target grew while being read");
   }
   throwIfTargetResolutionCancelled(signal);
-  const [opened, currentPath] = await Promise.all([handle.stat(), lstat(path)]);
-  if (
-    !sameRegularFileState(initial, opened) ||
-    !sameRegularFileState(initial, currentPath) ||
-    position !== initial.size
-  )
+  try {
+    await assertStableRegularFileIdentity(handle, path, initial, {
+      symlinks: "reject",
+      ...(signal === undefined ? {} : { signal }),
+    });
+  } catch (cause: unknown) {
+    throwIfTargetResolutionCancelled(signal);
+    if (cause instanceof RegularFileChangedError)
+      throw new BinaryTargetError(path, "target changed while being read", {
+        cause,
+      });
+    throw cause;
+  }
+  throwIfTargetResolutionCancelled(signal);
+  if (position !== initial.size)
     throw new BinaryTargetError(path, "target changed while being read");
   return hash.digest("hex");
 };
@@ -854,17 +997,27 @@ const resolveAppBundle = async (
 ): Promise<Result<ResolvedAppBundle, BinaryTargetError>> => {
   const metadata = await stat(path);
   if (!metadata.isDirectory()) return ok({ executable: path });
-  if (extname(path).toLowerCase() !== ".app")
+  if (openableAppleBundleExtension(extname(path)) !== undefined)
+    return resolveAppleBundleExecutable(path);
+  // Another Apple bundle type, such as a driver or kernel extension, is not
+  // an application directory and has no JavaScript route.
+  if (isUnopenedAppleBundleExtension(extname(path)))
     return err(
       new BinaryTargetError(
         path,
-        "this opening route requires a file or app bundle",
-        {
-          constraint: "directory_requires_file",
-        },
+        `${extname(path)} bundle directories are not opened by this route; it opens ${OPENABLE_APPLE_BUNDLE_TYPES_TEXT} bundle directories`,
+        { constraint: "bundle_type_unsupported" },
       ),
     );
-  return resolveAppBundleExecutable(path);
+  return err(
+    new BinaryTargetError(
+      path,
+      "this opening route requires a file or a supported Apple bundle directory",
+      {
+        constraint: "directory_requires_file",
+      },
+    ),
+  );
 };
 
 const readExecutableMetadata = async (
@@ -1015,7 +1168,12 @@ const readElfMetadata = async (
   const { fileSize, hostArchitecture, signal } = options;
   const parsed = parseExecutableHeader(bytes, hostArchitecture, fileSize);
   if (!parsed.ok || parsed.value.format !== "elf") return parsed;
-  const ranges = await readElfDeclaredRanges(handle, bytes, fileSize, signal);
+  const ranges = await readElfDeclarations(
+    handle,
+    bytes,
+    validateElfDeclaredRanges(bytes, fileSize),
+    signal,
+  );
   if (!ranges.ok) return ranges;
   if (parsed.value.architecture === "xtensa")
     return ok({
@@ -1024,6 +1182,19 @@ const readElfMetadata = async (
         ...parsed.value.xtensa,
         abi: await readXtensaElfAbi(handle, fileSize, () =>
           throwIfTargetResolutionCancelled(signal),
+        ),
+      },
+    });
+  if (parsed.value.architecture === "riscv")
+    return ok({
+      ...parsed.value,
+      riscv: {
+        ...parsed.value.riscv,
+        isa: await readElfDeclarations(
+          handle,
+          bytes,
+          readRiscvIsaDeclaration(bytes, fileSize),
+          signal,
         ),
       },
     });
@@ -1051,15 +1222,18 @@ const readElfMetadata = async (
   });
 };
 
-/** Borrow the admitted descriptor; every request is at most one 64 KiB table chunk. */
-const readElfDeclaredRanges = async (
+/**
+ * Satisfy one ELF declaration reader from the admitted descriptor. Every
+ * request is at most one 64 KiB chunk, and the reader consumes each chunk
+ * before its next request reuses the window.
+ */
+const readElfDeclarations = async <T>(
   handle: FileHandle,
   prefix: Buffer,
-  fileSize: number,
+  steps: Generator<ElfDeclarationRead, T, Buffer>,
   signal?: AbortSignal,
-): Promise<Result<null, string>> => {
-  const ranges = validateElfDeclaredRanges(prefix, fileSize);
-  let next = ranges.next();
+): Promise<T> => {
+  let next = steps.next();
   let window: Buffer | undefined;
   while (!next.done) {
     throwIfTargetResolutionCancelled(signal);
@@ -1084,7 +1258,7 @@ const readElfDeclaredRanges = async (
       }
       bytes = bytes.subarray(0, length);
     }
-    next = ranges.next(bytes);
+    next = steps.next(bytes);
   }
   return next.value;
 };

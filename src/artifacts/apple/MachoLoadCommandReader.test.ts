@@ -1157,6 +1157,22 @@ describe("LC_LAZY_LOAD_DYLIB_INFO image offsets", () => {
     expect(linkedit.status).toBe("malformed");
   });
 
+  it("does not alias a BOM-prefixed segment name to __LINKEDIT", async () => {
+    const result = await read(
+      machoImageWithLazyLoadDylibInfo({
+        path: "@rpath/libl.dylib",
+        flagImageOffset: 0x4001,
+        commandsBefore: [
+          segmentCommand({
+            name: "\uFEFF__LINKEDIT",
+            vmaddr: 0n,
+            vmsize: 0x100000n,
+          }),
+        ],
+      }),
+    );
+    expect(result.status).toBe("parsed");
+  });
   it("keeps a short segment parseable until a lazy-info command needs its VM range", async () => {
     const short = new Uint8Array(16);
     const view = new DataView(short.buffer);

@@ -18,7 +18,7 @@ cliTest.skipIf(process.platform === "win32")(
     await writeFile(command, `#!/bin/sh\nprintf launched > '${marker}'\n`);
     await chmod(command, 0o700);
     const registration = join(root, "ida.json");
-    const before = await readdir(root);
+    const before = (await readdir(root)).sort();
     for (const [workspaceRoot, usable] of [
       [join(root, "missing"), false],
       [file, false],
@@ -94,9 +94,9 @@ cliTest.skipIf(process.platform === "win32")(
         ]),
       });
     }
-    expect((await readdir(root)).filter((name) => name !== "ida.json")).toEqual(
-      before,
-    );
+    expect(
+      (await readdir(root)).filter((name) => name !== "ida.json").sort(),
+    ).toEqual(before);
     await expect(access(marker)).rejects.toMatchObject({ code: "ENOENT" });
   },
 );

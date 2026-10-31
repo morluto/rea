@@ -49,7 +49,7 @@ describe("executable header parsing", () => {
     // EM_XTENSA_OLD (0xabc7) predates the assigned machine and stays unrecognized.
     expect(parseExecutableHeader(elf(1, 1, 0xabc7), "x64")).toEqual({
       ok: false,
-      error: "unsupported ELF architecture",
+      error: "unsupported ELF architecture: e_machine 43975",
     });
   });
 

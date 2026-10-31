@@ -1,3 +1,4 @@
+import { ProcessAdmissionError } from "../ProcessAdmissionError.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../../domain/result.js";
@@ -134,7 +135,7 @@ export class ProcessSensitiveOutput {
   #prefix(index: number): Prefix {
     const value = this.prefixes[index];
     if (value === undefined)
-      throw new Error("Sensitive output matcher lost its prefix identity");
+      throw new ProcessAdmissionError("prefix_identity_lost");
     return value;
   }
 
@@ -342,7 +343,7 @@ export const createProcessSensitiveOutput = (
   const read = (index: number): Prefix => {
     const node = prefixes[index];
     if (node === undefined)
-      throw new Error("Sensitive output prefix is unavailable");
+      throw new ProcessAdmissionError("prefix_unavailable");
     return node;
   };
   try {

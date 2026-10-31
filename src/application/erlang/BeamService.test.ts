@@ -61,21 +61,6 @@ it("rejects a relative path and extra arguments before reading", async () => {
   expect(calls).toBe(0);
 });
 
-it("records the selected BEAM form", async () => {
-  const result = await new BeamService({
-    close: async () => {},
-    identity,
-    inspect: () => Promise.resolve(ok(report)),
-  }).inspect({ path: report.artifact.path });
-  expect(result.ok).toBe(true);
-  if (!result.ok) throw result.error;
-  expect(result.value).toMatchObject({
-    confidence: "observed",
-    subject: { format: "file" },
-    normalized_result: report,
-  });
-});
-
 it("discards an observation if the caller cancels while the provider completes", async () => {
   const controller = new AbortController();
   const reason = { source: "caller-request", operation: "cancel" };

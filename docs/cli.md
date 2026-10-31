@@ -281,6 +281,18 @@ The inventory lists each segment with its ESP-IDF load classification, the
 checksum and SHA-256 results, the descriptor and any Secure Boot v2 signature
 blocks. See [ESP images](esp-image.md) for recognition, coverage and refusals.
 
+Inspect an ESP flash dump, or one read from a flash address other than 0:
+
+```sh
+rea inspect-artifact flash.bin --json
+rea inspect-artifact dump.bin --target-format esp-flash-image --flash-offset 0x1000 --json
+rea extract-artifact flash.bin --json
+```
+
+The inventory lists the bootloader, the partition table and each partition,
+with ESP image facts for app partitions and the OTA records. See
+[ESP flash images](esp-flash-image.md) for table location, inputs and limits.
+
 Inspect a Node.js SEA carrier without running it:
 
 ```sh
@@ -316,6 +328,16 @@ Zstandard (standard method 93). They retain the shared ZIP CRC, declared-size,
 overlap and archive expansion checks. The native streaming decoder keeps the
 existing 128 MiB Zstandard window cap; frames requiring a larger window are
 refused. Deprecated method 20 and other unregistered ZIP codecs remain unsupported.
+
+Inventory and extract UF2 or DfuSe regions:
+
+```sh
+rea inspect-artifact ./firmware.uf2 --json
+rea extract-artifact ./firmware.dfu --json
+```
+
+See [UF2 and DfuSe images](uf2-dfuse.md) for recognition, families, numbering,
+the DfuSe suffix CRC and limits.
 
 Inventory and extract U-Boot FIT images:
 
@@ -651,12 +673,45 @@ with `details.reason: path-limit` and `boundary: filesystem-path`.
 For application traces and version comparisons, see
 [JavaScript application workflows](javascript-application-workflows.md).
 MCP [retained Evidence references](mcp-contracts.md#retained-application-evidence-inputs)
-belong to one connection. Separate CLI calls can consume full saved records.
-`inspect-analysis-view REQUEST.json --evidence-bundle BUNDLE.json` resolves
-the request's `retained-evidence` source ID from that authenticated bundle,
-including bundles exported from an MCP session. The same view JSON works for
-every supported parent kind; no target is reopened and no record is selected
-by file order. Omit `--evidence-bundle` when the request supplies inline Evidence.
+belong to one connection. Separate CLI calls can consume full saved records or
+resolve exact retained IDs from an explicitly selected local bundle:
+
+```bash
+rea trace-application-feature request.json --evidence-bundle /absolute/path/evidence.json --json
+```
+
+Here `request.json` uses the same logical Evidence input as MCP, for example
+`"application": {"kind":"retained-evidence","evidence_id":"ev_<64 lowercase hex characters>"}`.
+Inline records and references may be mixed in the request's declared source
+fields, including arrays and nested inputs. The bundle is read and authenticated
+once for that command; no target is reopened, no producer is rerun, and no
+record is selected by file order. Source identity, provenance, coverage and
+partial or unknown facts agree with the complete inline form. When starting
+from summary or inspection Evidence, select its
+`normalized_result.parent_evidence_id` for a workflow requiring complete source
+facts. Omit `--evidence-bundle` when all sources are inline.
+
+The JSON workflow commands supporting this option are:
+
+- `trace-application-feature`, `trace-javascript-semantics`,
+  `compare-application-versions`, `compare-javascript-export-shapes`,
+  `compare-source-to-bundle`, and `reconcile-javascript-runtime`.
+- `import-managed-reconstruction`, `verify-managed-native-boundaries`, and
+  `project-managed-application-graph`.
+- `project-android-application-graph`, `project-apple-application-graph`, and
+  `project-harmony-application-graph`.
+- `compare-wasm-interfaces` and `inspect-analysis-view`.
+
+For `inspect-analysis-view`, the request's source reference selects a parent
+from the bundle for every supported view kind. Bundles exported from MCP work
+for these commands. Its inline source form cannot also select a bundle.
+A missing ID is refused with `details.reason: "missing"`;
+supplying a bundle does not make incompatible Evidence valid for a workflow.
+`compare-managed-members` keeps its two assembly paths, and
+`compare-process-captures` keeps its two capture Evidence JSON paths. The bundle
+option above selects an input; producer options that write a new bundle, such
+as `inspect-managed-members --evidence-bundle`, retain their existing meaning.
+File selectors remain available only on contracts that explicitly support them.
 
 Compare two artifact inventories with `compare-artifacts`. It takes the same
 `left` and `right` input as MCP `compare_artifacts`: complete Evidence, or an
@@ -669,7 +724,7 @@ rea inspect-artifact new.zip --json > new.json
 rea compare-artifacts '{"left":{"kind":"evidence-file","path":"old.json"},"right":{"kind":"evidence-file","path":"new.json"}}' --json
 ```
 
-A one-shot command keeps no session Evidence, so it refuses a
+A one-shot `compare-artifacts` command keeps no session Evidence, so it refuses a
 `retained-evidence` source with `details.reason: "missing"`. Select the record
 from a saved bundle instead.
 For an artifact summary selected from a bundle, include its complete parent
@@ -853,7 +908,13 @@ rea mcp --http --port 8765
 `--host` and `--port` default to `MCP_HOST` and `MCP_PORT` from the environment,
 then to `127.0.0.1` and an ephemeral port. A bind outside loopback requires
 `MCP_ALLOWED_HOSTS` or `--allowed-hosts`, a comma-separated list of client host
-names or IP addresses without URLs or ports. For example:
+names or IP addresses without URLs or ports.
+
+Repeat `--allowed-hosts` to append names, or put multiple names in one
+comma-separated value. All occurrences are validated together and deduplicated
+after hostname normalization; the explicit list replaces `MCP_ALLOWED_HOSTS`.
+
+For example:
 
 ```sh
 rea mcp --http --host 0.0.0.0 --allowed-hosts 127.0.0.1,rea.lan

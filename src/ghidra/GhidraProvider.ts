@@ -38,6 +38,8 @@ import {
 } from "../domain/analysisProfile.js";
 import {
   isMachOFormat,
+  RAW_ONLY_ARCHITECTURES,
+  type BinaryArchitecture,
   type BinaryTarget,
 } from "../domain/binaryTargetTypes.js";
 import {
@@ -87,7 +89,7 @@ import {
   windowsNativeCapabilities,
 } from "../process/WindowsAuthority.js";
 
-const SUPPORTED_ARCHITECTURES = new Set([
+const SUPPORTED_ARCHITECTURES = new Set<BinaryArchitecture>([
   "x86",
   "x86_64",
   "arm",
@@ -100,6 +102,15 @@ const SUPPORTED_ARCHITECTURES = new Set([
   "hexagon",
   "xtensa",
 ]);
+
+/** Names every admitted family, so the refusal cannot drift from the set. */
+const admittedArchitecturesText = (): string => {
+  const rawOnly = new Set<BinaryArchitecture>(RAW_ONLY_ARCHITECTURES);
+  const admitted = [...SUPPORTED_ARCHITECTURES];
+  const detected = admitted.filter((family) => !rawOnly.has(family));
+  const raw = admitted.filter((family) => rawOnly.has(family));
+  return `Admitted families: ${detected.join(", ")}; raw-binary only: ${raw.join(", ")}.`;
+};
 
 /** Ghidra candidate backed by an isolated ephemeral headless Program session. */
 export class GhidraProvider implements AnalysisProviderCandidate {
@@ -297,8 +308,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
       return {
         status: "unsupported",
         code: "architecture_unsupported",
-        reason:
-          "Ghidra v1 requires a supported x86, x86_64, arm, arm64, MIPS, RISC-V, raw 6502, or raw m68k target profile.",
+        reason: `Ghidra v1 has no ${target.architecture} lane. ${admittedArchitecturesText()}`,
         diagnostics,
       };
     return {

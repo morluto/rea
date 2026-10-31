@@ -47,6 +47,8 @@ import {
 import {
   OwnedWorkerRuntime,
   OwnedWorkerRuntimeCleanupError,
+  WorkerCleanupRegistry,
+  processWorkerCleanup,
 } from "../../process/OwnedWorkerRuntime.js";
 import { prepareProcessOwnershipInspection } from "../../process/ProcessOwnershipObservation.js";
 import {
@@ -168,14 +170,19 @@ export class JavaScriptAnalysisWorker {
     }
   };
 
+  readonly #workerCleanup: WorkerCleanupRegistry;
+
   constructor(
     readonly limits: JavaScriptSourceAnalysisLimits = DEFAULTS,
     readonly launcher: typeof spawnOwnedProviderProcess = spawnOwnedProviderProcess,
     sourceCount?: number,
+    workerCleanup: WorkerCleanupRegistry = processWorkerCleanup,
   ) {
+    this.#workerCleanup = workerCleanup;
     this.#runtime = new OwnedWorkerRuntime({
       rootPrefix: "rea-javascript-analysis-",
       launcher,
+      cleanupRegistry: workerCleanup,
       supervisorOptions: {
         captureStdout: false,
         maxDiagnosticBytes: 256 * 1024,
@@ -301,7 +308,7 @@ export class JavaScriptAnalysisWorker {
         );
       // Host ownership preparation is outside the parser execution deadline.
       await prepareProcessOwnershipInspection(signal);
-      await OwnedWorkerRuntime.retryPending();
+      await this.#workerCleanup.retry();
       deadline = new ProviderStartupDeadline(this.limits.timeoutMs, signal);
       this.#deadline = deadline;
       await this.#start(deadline);
