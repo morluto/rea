@@ -377,5 +377,4 @@ export type ElfDependencyNeeded = z.infer<typeof neededEntrySchema>;
 export type ElfDependencyImport = z.infer<typeof importSchema>;
 export type ElfDependencyIssue = z.infer<typeof issueSchema>;
 export type ElfVersionNeedFile = z.infer<typeof versionNeedFileSchema>;
-export type ElfVersionNeed = z.infer<typeof versionNeedSchema>;
 export type ElfVersionDefinition = z.infer<typeof versionDefinitionSchema>;
