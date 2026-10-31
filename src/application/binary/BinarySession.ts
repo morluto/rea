@@ -1315,7 +1315,11 @@ export class BinarySession
     this.#observeRuntimeAvailability(name, execution);
     // Source facts belong to the observation, even when this query cannot be
     // replayed (for example a Ghidra procedure read without a document selector).
-    if (execution.ok && execution.value.sourceEvidence !== undefined) {
+    if (
+      execution.ok &&
+      options?.retainEvidence !== false &&
+      execution.value.sourceEvidence !== undefined
+    ) {
       const sourcesRecorded = recordEvidenceSources(
         (source) => this.recordEvidence(source),
         execution.value.sourceEvidence,
@@ -1324,6 +1328,7 @@ export class BinarySession
     }
     if (
       execution.ok &&
+      options?.retainEvidence !== false &&
       isSourceEvidenceRetainable(name, capability, arguments_) &&
       profile !== undefined
     ) {

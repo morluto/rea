@@ -10,6 +10,7 @@ import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { runDirectAnalysis } from "../../../src/application/DirectAnalysis.js";
+import { decompileAll } from "../../../src/application/decompileDirectory/decompileAll.js";
 import type {
   AnalysisProvider,
   CapabilityDescriptor,
@@ -232,6 +233,7 @@ const makeProvider = (
             search_procedures: [{ address: "0x1000", value: "fixture" }],
             xrefs: [],
             resolve_containing_procedure: null,
+            procedure_info: null,
             procedure_pseudo_code: "return 0;",
           };
           if (!Object.hasOwn(results, operation))
@@ -1134,6 +1136,87 @@ describe("preview and active route policies", () => {
       expect(fixture.queries.length > queries).toBe(!replayed);
     },
   );
+
+  it("replays procedure_pseudo_code without document selector from snapshot", async () => {
+    const fixture = await createSnapshotReplayFixture("rea-decompile-replay-");
+    const provider = fixture.createProvider({
+      supportedOperations: [...operations, "procedure_pseudo_code"],
+    });
+    const dependencies = fixture.dependencies(provider);
+    const options = { snapshotPath: fixture.snapshotPath };
+    const first = parseEvidence(
+      await runDirectAnalysis(
+        dependencies,
+        fixture.path,
+        "procedure_pseudo_code",
+        { procedure: "0x1000" },
+        options,
+      ).then(projectCliAnalysisResult),
+    );
+    expect(first).toMatchObject({
+      operation: "procedure_pseudo_code",
+      normalized_result: "return 0;",
+    });
+    expect(fixture.starts).toHaveLength(1);
+    expect(fixture.queries.map((q) => q.operation)).toContain(
+      "procedure_pseudo_code",
+    );
+
+    const second = parseEvidence(
+      await runDirectAnalysis(
+        dependencies,
+        fixture.path,
+        "procedure_pseudo_code",
+        { procedure: "0x1000" },
+        options,
+      ).then(projectCliAnalysisResult),
+    );
+    expect(second).toEqual(first);
+    expect(fixture.starts).toHaveLength(1);
+  });
+});
+
+describe("bulk export session evidence retention", () => {
+  it("does not retain bulk decompile_all procedure bodies in BinarySession ledger", async () => {
+    const fixture = await createSnapshotReplayFixture(
+      "rea-decompile-all-ledger-",
+    );
+    const provider = fixture.createProvider({
+      supportedOperations: [
+        ...operations,
+        "procedure_info",
+        "procedure_pseudo_code",
+      ],
+    });
+    const session = createTestBinarySession(provider);
+    try {
+      const opened = await session.open(fixture.path);
+      expect(opened.ok).toBe(true);
+      const outDir = join(dirname(fixture.path), "export-out");
+      const result = await session.withAdmittedAnalysis(
+        "decompile_all",
+        undefined,
+        (analysis) =>
+          decompileAll(
+            analysis,
+            { output_directory: outDir, layout: "address", resume: false },
+            undefined,
+          ),
+      );
+      if (!result.ok) throw result.error;
+      if (!result.value.ok) throw result.value.error;
+      expect(result.value.value).toMatchObject({
+        counts: { written: 1, failed: 0 },
+      });
+      const records = session.exportEvidenceBundle().records;
+      const procedureBodies = records.filter(
+        (r) => r.operation === "procedure_pseudo_code",
+      );
+      expect(procedureBodies).toHaveLength(0);
+    } finally {
+      await session.close();
+    }
+  });
 });
 
 describe("snapshot replay provider identity", () => {

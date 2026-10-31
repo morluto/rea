@@ -38,6 +38,13 @@ export interface ExecutionOptions {
    * supplied it.
    */
   readonly selectorOrigin?: "provider";
+  /**
+   * When false, suppress retaining execution Evidence in the session ledger
+   * and snapshot cache. Bulk operations (such as decompile_all) that persist
+   * outputs directly to disk pass false to avoid accumulating unbounded
+   * function bodies in memory.
+   */
+  readonly retainEvidence?: boolean;
 }
 
 /** Closed operations accepted by provider-backed analysis sessions. */

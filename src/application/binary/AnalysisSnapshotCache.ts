@@ -92,21 +92,32 @@ const replayDocumentSelected = (
   parameters: Readonly<Record<string, JsonValue>>,
 ): boolean =>
   !DOCUMENT_SCOPED_OPERATIONS.has(operation) ||
-  typeof parameters.document === "string";
+  typeof parameters.document === "string" ||
+  (operation === "procedure_pseudo_code" &&
+    typeof parameters.procedure === "string");
 
 /**
  * Caller and callee walks omit `document`. Their observations are still
- * Evidence. Other document-scoped reads, including `procedure_pseudo_code`
- * from `decompile_all`, already keep each body in the file-backed export.
- * Copying those bodies into the in-memory ledger would retain the export.
+ * Evidence. Decompilation of an explicit procedure (`procedure_pseudo_code`)
+ * also retains and replays without a document selector. Bulk exports
+ * (`decompile_all`) stream bodies to disk with `retainEvidence: false` so they
+ * do not accumulate in the session ledger.
  */
 const DOCUMENTLESS_SOURCE_EVIDENCE_OPERATIONS: ReadonlySet<AnalysisOperation> =
   new Set(["procedure_callers", "procedure_callees"]);
 
+const documentlessSourceSelected = (
+  operation: AnalysisOperation,
+  parameters: Readonly<Record<string, JsonValue>>,
+): boolean =>
+  DOCUMENTLESS_SOURCE_EVIDENCE_OPERATIONS.has(operation) ||
+  (operation === "procedure_pseudo_code" &&
+    typeof parameters.procedure === "string");
+
 /**
  * Whether a source observation is safe to retain as Evidence.
- * A missing document selector blocks snapshot replay. Only caller and callee
- * walks stay in the ledger without one.
+ * A missing document selector blocks snapshot replay for caller and callee walks,
+ * while explicit procedure decompilation remains retainable and cacheable.
  */
 export const isSourceEvidenceRetainable = (
   operation: AnalysisOperation,
@@ -117,7 +128,7 @@ export const isSourceEvidenceRetainable = (
   !RESOURCE_SCOPED_OPERATIONS.has(operation) &&
   (!DOCUMENT_SCOPED_OPERATIONS.has(operation) ||
     typeof parameters.document === "string" ||
-    DOCUMENTLESS_SOURCE_EVIDENCE_OPERATIONS.has(operation)) &&
+    documentlessSourceSelected(operation, parameters)) &&
   (!CURSOR_DEFAULT_OPERATIONS.has(operation) ||
     typeof parameters.address === "string") &&
   descriptor?.effects.mutatesArtifact === false &&
