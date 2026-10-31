@@ -2,7 +2,9 @@
 
 REA imports one target into an ephemeral Ghidra database. Linux/macOS support
 read-only analysis and atomic function-name/entry-comment edits; Windows P0 is
-read-only. GUI controls and persistent database mutation are unavailable.
+read-only, as is a Linux/macOS session that selects the
+[loopback bridge transport](installation.md#ghidra-bridge-transport). GUI
+controls and persistent database mutation are unavailable.
 Executable bytes remain unchanged.
 
 Use [installation](installation.md#ghidra) for supported hosts, prerequisites,

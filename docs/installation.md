@@ -1215,6 +1215,9 @@ from LaunchSupport warnings and cleanup failures. Failed rollback keeps the
 original process owner for a later cleanup retry.
 The experimental Windows transport uses authenticated IPv4 loopback with a
 private native-owned bearer descriptor and Job Object process ownership.
+A Linux or macOS host whose sandbox refuses Unix sockets can select that
+loopback transport explicitly; see
+[Ghidra bridge transport](#ghidra-bridge-transport).
 
 In the default fresh-import mode, operations begin only after default auto-analysis completes. `open_binary`
 selects and validates the target/provider binding; it does not wait for Ghidra
@@ -1501,6 +1504,36 @@ any real abort. To silence that analyzer, set
 `REA_GHIDRA_DISABLED_ANALYZERS="Objective-C Message Analyzer"`. For large
 executables that miss the startup deadline instead, raise
 `REA_GHIDRA_STARTUP_TIMEOUT_MS` and the [Ghidra heap](#ghidra-heap-and-cpu-controls).
+
+### Ghidra bridge transport
+
+On Linux and macOS, REA and its packaged Java bridge talk over a current-user
+Unix socket in the private runtime directory. Some agent sandboxes allow
+loopback TCP but refuse `socket(AF_UNIX)` with `EPERM`. There every Ghidra
+operation fails after import and auto-analysis with
+`Ghidra exited before bridge startup`, and the script log reports
+`java.net.SocketException: Operation not permitted` from
+`ReaGhidraBridge.serveUnixSocket`. Select the authenticated IPv4 loopback
+transport that Windows P0 already uses:
+
+```bash
+export REA_GHIDRA_BRIDGE_TRANSPORT=authenticated-loopback-tcp
+```
+
+The accepted values are `unix-socket` and `authenticated-loopback-tcp`. An
+unset value keeps the host default, and Windows refuses `unix-socket`. Over
+loopback the bridge listens on `127.0.0.1` at an ephemeral port, publishes only
+that host and port in the private runtime directory, and serves one client that
+presents the per-session 256-bit token; the token is never written beside the
+endpoint record. Any local process can reach the listener but cannot
+authenticate without the token, which is a weaker boundary than the owner-only
+socket file. The bridge then serves the read-only operations and withholds
+`annotate_native_function`, `set_address_name`, and `set_addresses_names`: a
+request for one of them fails as `capability_unavailable` with a reason naming
+the setting, and every result carries the transport in its limitations.
+Session diagnostics report the selected transport. `rea setup` does not forward
+this setting; add it to the environment of the REA process that runs inside
+the sandbox.
 
 ### Ghidra heap and CPU controls
 

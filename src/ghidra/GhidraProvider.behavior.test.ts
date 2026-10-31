@@ -50,6 +50,11 @@ import {
   GHIDRA_MUTATING_OPERATIONS,
   GHIDRA_SESSION_CAPABILITIES,
 } from "./GhidraSessionValues.js";
+import {
+  LOOPBACK_TRANSPORT_MUTATION_REASON,
+  LOOPBACK_TRANSPORT_EXTENSION_REASON,
+  loopbackTransportLimitations,
+} from "./GhidraProviderCapabilities.js";
 import type { Result } from "../domain/result.js";
 import { GhidraSessionError } from "./GhidraSessionError.js";
 import { silentLogger } from "../logger.js";
@@ -3850,6 +3855,182 @@ describe("Ghidra disabled analyzer applicability per program", () => {
   });
 });
 
+const transportProvider = (
+  environment: Record<string, string>,
+  host: GhidraInstallationHost,
+  seen: unknown[],
+): GhidraProvider => {
+  const config = parseConfig({ GHIDRA_INSTALL_DIR: INSTALL, ...environment });
+  if (!config.ok) throw config.error;
+  return new GhidraProvider(config.value, silentLogger, {}, host, (options) => {
+    seen.push(options);
+    return {
+      start: () => Promise.resolve(ok(sessionInfo())),
+      callTool: () => Promise.resolve(ok([])),
+      close: () => Promise.resolve(ok(null)),
+    };
+  });
+};
+const annotation = (ghidra: GhidraProvider) =>
+  ghidra
+    .capabilities()
+    .find(({ operation }) => operation === "annotate_native_function");
+
+describe("Ghidra bridge transport selection", () => {
+  it("keeps the Unix socket and full authority on POSIX hosts without a selection", async () => {
+    const seen: unknown[] = [];
+    const ghidra = transportProvider({}, installationHost(), seen);
+    const client = await createElfClient(ghidra);
+    const listed = await client.execute("list_procedures", {});
+    expect(listed.ok).toBe(true);
+    if (!listed.ok) throw listed.error;
+    expect(seen).toEqual([
+      expect.objectContaining({ transport: "unix-socket", platform: "linux" }),
+    ]);
+    expect(listed.value.limitations).not.toEqual(
+      expect.arrayContaining([loopbackTransportLimitations[0]]),
+    );
+    expect(annotation(ghidra)).toMatchObject({ available: true });
+    expect(annotation(ghidra)?.effects.mayAccessNetwork).toBe(false);
+    await client.close();
+  });
+
+  it("selects loopback on a POSIX host only through REA_GHIDRA_BRIDGE_TRANSPORT", async () => {
+    const seen: unknown[] = [];
+    const ghidra = transportProvider(
+      { REA_GHIDRA_BRIDGE_TRANSPORT: "authenticated-loopback-tcp" },
+      installationHost(),
+      seen,
+    );
+    const client = await createElfClient(ghidra);
+    const listed = await client.execute("list_procedures", {});
+    expect(listed.ok).toBe(true);
+    if (!listed.ok) throw listed.error;
+    expect(seen).toEqual([
+      expect.objectContaining({
+        transport: "authenticated-loopback-tcp",
+        platform: "linux",
+      }),
+    ]);
+    expect(listed.value.limitations).toEqual(
+      expect.arrayContaining([...loopbackTransportLimitations]),
+    );
+    expect(annotation(ghidra)).toMatchObject({
+      available: false,
+      reason: LOOPBACK_TRANSPORT_MUTATION_REASON,
+    });
+    expect(annotation(ghidra)).not.toHaveProperty("availabilityCode");
+    expect(annotation(ghidra)?.effects.mayAccessNetwork).toBe(true);
+    const withheld = (
+      capabilities: ReturnType<GhidraProvider["capabilities"]>,
+    ) =>
+      capabilities
+        .filter(({ available }) => !available)
+        .map(({ operation }) => operation)
+        .sort();
+    expect(withheld(ghidra.capabilities())).toEqual([
+      "annotate_native_function",
+      "set_address_name",
+      "set_addresses_names",
+    ]);
+    expect(
+      withheld((await ghidra.inspectReadinessSnapshot()).capabilities),
+    ).toEqual(withheld(ghidra.capabilities()));
+    expect(
+      ghidra
+        .capabilities()
+        .find(({ operation }) => operation === "procedure_pseudo_code"),
+    ).toMatchObject({
+      available: true,
+      limitations: expect.arrayContaining([...loopbackTransportLimitations]),
+      effects: expect.objectContaining({ mayAccessNetwork: true }),
+    });
+    await client.close();
+  });
+
+  it("withholds a configured NativeAOT extension under loopback and keeps the session", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "rea-loopback-extension-"));
+    try {
+      const jar = join(directory, "addon.jar");
+      await writeFile(jar, Buffer.from([0x50, 0x4b, 3, 4]));
+      const target = executableTarget("elf", "x86_64");
+      const seen: unknown[] = [];
+      const ghidra = transportProvider(
+        {
+          REA_GHIDRA_NATIVEAOT_JAR: jar,
+          REA_GHIDRA_BRIDGE_TRANSPORT: "authenticated-loopback-tcp",
+        },
+        installationHost(),
+        seen,
+      );
+      const resolved = await ghidra.resolveAnalysisProfile(target);
+      if (!resolved.ok || resolved.value.profile === null)
+        throw new Error("Expected a bound Ghidra profile");
+      // The loopback transport cannot serve extensions, so none is committed:
+      // the Java bridge would otherwise reject the profile before it opened the
+      // listener and fail the whole session.
+      expect(
+        resolved.value.profile.parameters.analysis_extensions,
+      ).toBeUndefined();
+      const client = ghidra.createClient(target, resolved.value.profile);
+      const listed = await client.execute("list_procedures", {});
+      expect(listed.ok).toBe(true);
+      if (!listed.ok) throw listed.error;
+      // The session opens over loopback instead of aborting at the bridge.
+      expect(seen).toEqual([
+        expect.objectContaining({
+          transport: "authenticated-loopback-tcp",
+          platform: "linux",
+        }),
+      ]);
+      // The withheld extension is named rather than silently dropped.
+      expect(listed.value.limitations).toEqual(
+        expect.arrayContaining([LOOPBACK_TRANSPORT_EXTENSION_REASON]),
+      );
+      await client.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses an explicit Unix socket on Windows before any readiness check", async () => {
+    const seen: unknown[] = [];
+    const target = peTarget("x86_64");
+    const resolved = await transportProvider(
+      {},
+      installationHost("win32"),
+      seen,
+    ).resolveAnalysisProfile(target);
+    if (!resolved.ok || resolved.value.profile === null)
+      throw new Error("expected an admitted PE profile");
+    const refused = transportProvider(
+      { REA_GHIDRA_BRIDGE_TRANSPORT: "unix-socket" },
+      installationHost("win32"),
+      seen,
+    );
+    // Windows capabilities keep the P0 wording; the setting changes nothing there.
+    expect(annotation(refused)).toMatchObject({
+      available: false,
+      reason: "Windows Ghidra P0 does not admit database mutation.",
+      availabilityCode: "unsupported_host",
+    });
+    const failed = await refused
+      .createClient(target, resolved.value.profile)
+      .execute("health", {});
+    expect(failed.ok).toBe(false);
+    if (failed.ok) return;
+    expect(failed.error).toMatchObject({
+      _tag: "ProviderAdapterError",
+      diagnostics: {
+        reason: expect.stringContaining(
+          "unset REA_GHIDRA_BRIDGE_TRANSPORT or select authenticated-loopback-tcp",
+        ),
+      },
+    });
+    expect(seen).toHaveLength(0);
+  });
+});
+
 describe("Ghidra queries after the owned provider is lost", () => {
   const lostProviderSession = async (
     state: "exited" | "unreachable" | "idle",
@@ -4773,6 +4954,32 @@ it("reports every Windows existing-project capability unavailable before open", 
     ).toBe(true);
   } finally {
     await ghidra.closeOwnedResources();
+  }
+});
+
+it("declares the loopback network effect for a POSIX existing-project session", async () => {
+  const loopback = provider(installationHost(), undefined, {
+    REA_GHIDRA_PROJECT_PATH: join(process.cwd(), "selected.gpr"),
+    REA_GHIDRA_BRIDGE_TRANSPORT: "authenticated-loopback-tcp",
+  });
+  const unix = provider(installationHost(), undefined, {
+    REA_GHIDRA_PROJECT_PATH: join(process.cwd(), "selected.gpr"),
+  });
+  try {
+    expect(
+      loopback.capabilities().every((c) => c.effects.mayAccessNetwork),
+    ).toBe(true);
+    expect(
+      (await loopback.inspectReadinessSnapshot()).capabilities.every(
+        (c) => c.effects.mayAccessNetwork,
+      ),
+    ).toBe(true);
+    expect(unix.capabilities().some((c) => c.effects.mayAccessNetwork)).toBe(
+      false,
+    );
+  } finally {
+    await loopback.closeOwnedResources();
+    await unix.closeOwnedResources();
   }
 });
 

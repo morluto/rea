@@ -165,7 +165,9 @@ describe("runtime configuration", () => {
       },
     ]);
   });
+});
 
+describe("runtime provider path configuration", () => {
   it("parses absolute BYO Ghidra and optional Java paths", () => {
     expect(
       parseConfig({
@@ -183,6 +185,39 @@ describe("runtime configuration", () => {
       false,
     );
     expect(parseConfig({ JAVA_HOME: "relative/jdk" }).ok).toBe(false);
+  });
+
+  it("parses the Ghidra bridge transport selection and names other values", () => {
+    const unset = parseConfig({ GHIDRA_INSTALL_DIR: "/opt/ghidra" });
+    if (!unset.ok) throw unset.error;
+    expect(unset.value.ghidraBridgeTransport).toBeUndefined();
+    for (const transport of [
+      "unix-socket",
+      "authenticated-loopback-tcp",
+    ] as const)
+      expect(
+        parseConfig({ REA_GHIDRA_BRIDGE_TRANSPORT: transport }),
+      ).toMatchObject({
+        ok: true,
+        value: { ghidraBridgeTransport: transport },
+      });
+    const rejected = parseConfig({ REA_GHIDRA_BRIDGE_TRANSPORT: "pipe" });
+    expect(rejected.ok).toBe(false);
+    if (rejected.ok) return;
+    expect(projectAnalysisError(rejected.error)).toMatchObject({
+      code: "configuration_invalid",
+      details: {
+        settings: [
+          {
+            setting: "REA_GHIDRA_BRIDGE_TRANSPORT",
+            constraint: "must be unix-socket or authenticated-loopback-tcp",
+          },
+        ],
+      },
+    });
+    expect(JSON.stringify(projectAnalysisError(rejected.error))).not.toContain(
+      "pipe",
+    );
   });
 
   it("parses an optional absolute BYO ilspycmd path", () => {

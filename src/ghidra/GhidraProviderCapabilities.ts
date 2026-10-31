@@ -63,6 +63,20 @@ export const ghidraHealthLimitations = (
       ]
     : healthLimitations;
 
+/** Reason mutation stays unavailable when a POSIX host opts into loopback. */
+export const LOOPBACK_TRANSPORT_MUTATION_REASON =
+  "The authenticated loopback bridge transport does not admit database mutation; unset REA_GHIDRA_BRIDGE_TRANSPORT to use the Unix socket transport.";
+
+/** Reason a configured analysis extension stays unloaded under loopback. */
+export const LOOPBACK_TRANSPORT_EXTENSION_REASON =
+  "A configured analysis extension (for example NativeAOT metadata recovery) loads executable code into the Ghidra process and is not served over the authenticated loopback bridge transport; it is withheld while every other operation keeps its session. Unset REA_GHIDRA_BRIDGE_TRANSPORT to use the Unix socket transport.";
+
+/** Additional limitations applied when REA_GHIDRA_BRIDGE_TRANSPORT selects loopback on a POSIX host. */
+export const loopbackTransportLimitations = Object.freeze([
+  "REA_GHIDRA_BRIDGE_TRANSPORT selects authenticated IPv4 loopback instead of the current-user Unix socket. Any local process can reach the listener but cannot authenticate without the per-session token; the endpoint file contains no bearer token.",
+  "Database mutation (annotate_native_function, set_address_name, set_addresses_names) is unavailable over the loopback transport; every other operation keeps its Unix socket contract.",
+]);
+
 const stringInventoryLimitation =
   "Only Ghidra-defined string Data is observed; packed or undefined string bytes may be absent. Completeness applies to that inventory, and an empty search does not establish that text is absent from the artifact. If an address is known, use read_bytes and xrefs to inspect bytes and references.";
 
@@ -262,6 +276,47 @@ export const existingProjectCapabilities = (
       };
     return { ...capability, limitations };
   });
+
+/**
+ * The loopback transport opens a TCP listener Node connects to on `127.0.0.1`,
+ * so the session accesses the network even though the Unix socket default does
+ * not. Session status reports the effect from the descriptor.
+ */
+export const declareLoopbackNetworkEffect = (
+  descriptor: CapabilityDescriptor,
+): CapabilityDescriptor =>
+  Object.freeze({
+    ...descriptor,
+    effects: Object.freeze({ ...descriptor.effects, mayAccessNetwork: true }),
+  });
+
+/** Capabilities advertised when a POSIX host selects the loopback transport. */
+export const loopbackTransportCapabilities =
+  (): readonly CapabilityDescriptor[] =>
+    Object.freeze(
+      CAPABILITIES.map((capability): CapabilityDescriptor => {
+        const limitations = Object.freeze([
+          ...capability.limitations,
+          ...loopbackTransportLimitations,
+        ]);
+        if (!capability.effects.mutatesArtifact)
+          return declareLoopbackNetworkEffect(
+            Object.freeze({ ...capability, limitations }),
+          );
+        // The selected transport, not the host, withholds mutation; no provider
+        // rejection code describes that, so only the reason is published.
+        const { availabilityCode: _hostCode, ...descriptor } = capability;
+        return declareLoopbackNetworkEffect(
+          Object.freeze({
+            ...descriptor,
+            available: false,
+            reason: LOOPBACK_TRANSPORT_MUTATION_REASON,
+            limitations,
+          }),
+        );
+      }),
+    );
+
 /** Capabilities advertised for the experimental Windows x64 P0 boundary. */
 export const windowsP0Capabilities = (
   readiness: WindowsNativeReadiness = inspectWindowsNativeReadiness("win32"),
