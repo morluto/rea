@@ -81,6 +81,9 @@ export const readValidatedAsarEntry = (
       }
     })(),
   );
+  // Cancellation can precede the caller's first read while it prepares output.
+  // Retain the stream error for that consumer without an unhandled error event.
+  output.on("error", () => undefined);
   const onSourceError = (cause: unknown): void => {
     const completedCancellation =
       cause instanceof ArtifactReaderFailure &&
