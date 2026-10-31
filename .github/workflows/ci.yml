@@ -344,7 +344,7 @@ jobs:
         id: npm-cache
         uses: ./.github/actions/npm-cache
       - run: npm ci
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: rea-test-runtime
           path: .
@@ -455,7 +455,7 @@ jobs:
       - name: Download previous timing report
         if: steps.history.outputs.run-id != ''
         continue-on-error: true
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ steps.history.outputs.artifact-name }}
           run-id: ${{ steps.history.outputs.run-id }}
@@ -522,7 +522,7 @@ jobs:
         uses: ./.github/actions/npm-cache
       - if: needs.changes.outputs.code == 'true' && success()
         run: npm ci
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         if: >-
           !cancelled() && needs.changes.outputs.code == 'true' &&
           (needs.test-shard.result == 'success' || needs.test-shard.result == 'failure' ||
@@ -721,11 +721,11 @@ jobs:
           assert.equal(process.arch, process.env.EXPECTED_CI_ARCHITECTURE);
           console.log(JSON.stringify({ platform: process.platform, architecture: process.arch, node: process.version }));"
       - run: npm ci
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: rea-build-cache
           path: .turbo/cache/
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: windows-native-controls
           path: native/windows/build/
@@ -765,7 +765,7 @@ jobs:
         id: npm-cache
         uses: ./.github/actions/npm-cache
       - run: npm ci
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: rea-build-cache
           path: .turbo/cache/
@@ -872,11 +872,11 @@ jobs:
           GOMAXPROCS: "2"
           GOMEMLIMIT: "3GiB"
         run: npm run typecheck -- --checkers 2
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: rea-build-cache
           path: .turbo/cache/
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: windows-native-controls
           path: native/windows/build/
@@ -899,7 +899,7 @@ jobs:
       # real engine claims remain in the separate controlled-provider workflow.
       # Run native proofs before the broad curated suite so an unrelated
       # fixture failure cannot hide the real control and recovery checks.
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: windows-process-boundary-fixture
           path: .cache/windows-process-boundary/
@@ -909,7 +909,7 @@ jobs:
       - run: >-
           npm run verify:windows-native -- .
           "${{ github.workspace }}\.cache\windows-process-boundary\process-boundary.exe"
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: windows-native-inspection-fixture
           path: .cache/windows-native-inspection-fixture/
