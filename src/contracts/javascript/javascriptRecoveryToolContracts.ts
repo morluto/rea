@@ -1,10 +1,29 @@
+import { z } from "zod";
+
 import {
   javascriptRecoveryInputSchema,
   javascriptRecoveryResultSchema,
 } from "../../domain/javascript/javascriptRecovery.js";
+import { absoluteLocalPathStringSchema } from "../../domain/localPath.js";
 import { toolContractMetadata } from "../toolEffects.js";
 import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
 import type { ToolContract } from "../toolContractTypes.js";
+
+const javascriptRecoveryMcpInputSchema = javascriptRecoveryInputSchema.extend({
+  path: absoluteLocalPathStringSchema.describe(
+    "Absolute path to a UTF-8 JavaScript file; never executed",
+  ),
+  additional_paths: z
+    .array(absoluteLocalPathStringSchema)
+    .max(16)
+    .optional()
+    .describe(
+      "Additional absolute UTF-8 JavaScript files recovered together with path; each is snapshotted separately so imports can resolve across related chunks. All inputs share a 64 MiB total budget",
+    ),
+  output_directory: absoluteLocalPathStringSchema.describe(
+    "Absolute absent output directory; parent must exist",
+  ),
+});
 
 /** Derived script artifacts from optional upstream recovery adapters. */
 export const JAVASCRIPT_RECOVERY_TOOL_CONTRACTS = [
@@ -14,7 +33,7 @@ export const JAVASCRIPT_RECOVERY_TOOL_CONTRACTS = [
     kind: "application",
     description:
       "Recover readable modules from local UTF-8 JavaScript scripts/bundles into an absent directory, using caller-supplied Wakaru ^1.13.0 (verified with 1.14.0) on Linux x64. Use additional_paths for related chunks; each input retains its own snapshot and provenance. Returns original/derived digests, extraction byte ranges, emitted source maps, warnings and analysis_input inline. Structural splitting may fall back to one module; original names and runtime equivalence remain unknown. No application code execution. Requires util-linux prlimit; one worker, 1 GiB address-space ceiling, 120-second deadline, 64 MiB total input, 128 MiB output, 10000 entries and 8 MiB per diagnostic/report stream.",
-    inputSchema: javascriptRecoveryInputSchema,
+    inputSchema: javascriptRecoveryMcpInputSchema,
     outputSchema: evidenceResultOf(javascriptRecoveryResultSchema),
     examples: [
       {

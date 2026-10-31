@@ -30,6 +30,10 @@ it("matches the host path module for absolute local paths", () => {
   expect(
     absoluteLocalPathStringSchema.safeParse("/absolute/with\0nul").success,
   ).toBe(false);
+  expect(
+    absoluteLocalPathStringSchema.safeParse("/absolute/with\nnewline\0nul")
+      .success,
+  ).toBe(false);
 });
 
 it("keeps the Windows absolute-path pattern valid in every client mode", () => {
@@ -44,4 +48,7 @@ it("keeps the Windows absolute-path pattern valid in every client mode", () => {
     expect(windowsAbsolutePathPattern.test(path), path).toBe(
       win32.isAbsolute(path),
     );
+  expect(windowsAbsolutePathPattern.test("C:\\absolute\npath\0nul")).toBe(
+    false,
+  );
 });
