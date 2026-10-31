@@ -49,7 +49,6 @@ import {
   verifyInferiorInputSink,
   type InferiorInputSink,
 } from "../process/inferiorInputSink.js";
-import { parseLinuxProcessStat } from "../process/LinuxProcessStat.js";
 
 const STARTUP_TIMEOUT_MS = 10_000;
 
@@ -489,10 +488,8 @@ const verifyGdbInferiorOutputSink = async (
       ino: tty.ino,
     },
     async () => {
-      const currentStat = parseLinuxProcessStat(
-        await readFile(statPath, "utf8"),
-      );
-      if (currentStat?.pid !== expectedPid || currentStat.startTime !== before)
+      const current = await readLinuxProcessStartTime(pid);
+      if (current !== before)
         throw new Error(
           "The GDB inferior identity changed while verifying its closed stdin descriptor.",
         );

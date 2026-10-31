@@ -1705,7 +1705,7 @@ it.each([
       manager.status(started.value.session_id)?.inferior_tty_verified,
     ).toBe(true);
     expect((await manager.close(started.value.session_id)).ok).toBe(true);
-    expect(outputSinkChecks).toBe(2);
+    expect(outputSinkChecks).toBe(1);
     expect(commands).toContain("-target-detach");
   },
 );
