@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Jarvis · REA</title>
+<style>
+  :root { color-scheme: dark; --bg:#0b1020; --panel:#121a33; --line:#24305a; --fg:#e6ebff; --dim:#8c97c4; --accent:#5ee1ff; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.5 system-ui,sans-serif; background:var(--bg); color:var(--fg); height:100vh; display:grid; grid-template-columns:300px 1fr 1fr; }
+  section { border-right:1px solid var(--line); padding:12px; overflow:auto; display:flex; flex-direction:column; gap:8px; }
+  h2 { margin:0; font-size:12px; letter-spacing:.1em; text-transform:uppercase; color:var(--accent); }
+  .msg { background:var(--panel); border-radius:8px; padding:8px 10px; white-space:pre-wrap; }
+  .me { border-left:3px solid var(--accent); }
+  .step { font-family:ui-monospace,Consolas,monospace; font-size:12px; color:var(--dim); }
+  form { display:flex; gap:6px; margin-top:auto; }
+  input { flex:1; background:var(--panel); border:1px solid var(--line); color:var(--fg); padding:8px; border-radius:6px; }
+  button { background:var(--accent); color:#001; border:0; padding:8px 12px; border-radius:6px; cursor:pointer; font-weight:600; }
+  button:disabled { opacity:.5; }
+  .item { cursor:pointer; padding:6px 8px; border-radius:6px; background:var(--panel); }
+  .item:hover { outline:1px solid var(--accent); }
+  pre { white-space:pre-wrap; word-break:break-word; margin:0; }
+  #model { color:var(--dim); font-size:12px; }
+</style>
+</head>
+<body>
+<section>
+  <h2>Vault</h2>
+  <div id="model"></div>
+  <div id="list"></div>
+</section>
+<section>
+  <h2>Chat · live steps</h2>
+  <div id="chat"></div>
+  <form id="f"><input id="t" autocomplete="off" placeholder="reverse engineer https://example.com and clone it"><button id="b">Send</button></form>
+</section>
+<section>
+  <h2>Report</h2>
+  <pre id="report">Select a teardown.</pre>
+</section>
+<script>
+const $ = (id) => document.getElementById(id);
+const chat = $("chat");
+function add(text, cls = "msg") { const d = document.createElement("div"); d.className = cls; d.textContent = text; chat.appendChild(d); chat.scrollTop = chat.scrollHeight; return d; }
+async function refresh() {
+  const s = await (await fetch("/api/status")).json();
+  $("model").textContent = "Model: " + (s.model ?? "none (no API key)");
+  const list = await (await fetch("/api/teardowns")).json();
+  $("list").replaceChildren(...list.map((e) => {
+    const d = document.createElement("div"); d.className = "item";
+    d.textContent = e.target + " · " + e.cloneStatus;
+    d.onclick = async () => { $("report").textContent = await (await fetch("/api/teardowns/" + encodeURIComponent(e.id) + "/report")).text(); };
+    return d;
+  }));
+}
+$("f").onsubmit = async (ev) => {
+  ev.preventDefault();
+  const text = $("t").value.trim(); if (!text) return;
+  $("t").value = ""; add(text, "msg me"); $("b").disabled = true;
+  const r = await fetch("/api/command", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text }) });
+  const body = await r.json();
+  if (!r.ok) { add(body.error); $("b").disabled = false; return; }
+  let shown = 0;
+  for (;;) {
+    const j = await (await fetch("/api/jobs/" + body.jobId)).json();
+    for (; shown < j.steps.length; shown++) add("› " + j.steps[shown], "step");
+    if (j.done) { add(j.error ? "Error: " + j.error : j.reply ?? ""); if (j.reportId) $("report").textContent = await (await fetch("/api/teardowns/" + encodeURIComponent(j.reportId) + "/report")).text(); break; }
+    await new Promise((r) => setTimeout(r, 700));
+  }
+  $("b").disabled = false; refresh();
+};
+refresh();
+</script>
+</body>
+</html>
