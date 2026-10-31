@@ -234,6 +234,10 @@ installed-package runtime support is documented in
 [installation](docs/installation.md#start-setup).
 Use Node.js and npm for source builds and verifier scripts; the installed
 package's Bun runtime support does not extend to those development scripts.
+Those scripts load the checkout's TypeScript source through Node's
+`stripTypeScriptTypes` in `transform` mode, which Node.js 26 removed, so the
+pinned Node.js 24 is required for development even though installed packages
+run on Node.js 26.
 
 ```bash
 npm ci

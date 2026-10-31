@@ -104,21 +104,44 @@ const loadSource = (url, context, nextLoad) => {
 };
 
 /**
+ * Report why this Node.js runtime cannot load the checkout's TypeScript source,
+ * or undefined when it can. Source files use parameter properties and other
+ * syntax that strip-only type stripping rejects, so the loader needs
+ * `stripTypeScriptTypes` in `transform` mode. Node.js 26 removed that mode
+ * together with `--experimental-transform-types` (nodejs/node#61803) while the
+ * function itself remains, so its presence alone does not establish support.
+ */
+const developmentRuntimeProblem = () => {
+  if (typeof nodeModule.registerHooks !== "function")
+    return "node:module registerHooks is unavailable";
+  if (typeof nodeModule.stripTypeScriptTypes !== "function")
+    return "node:module stripTypeScriptTypes is unavailable";
+  try {
+    nodeModule.stripTypeScriptTypes("", { mode: "transform" });
+    return undefined;
+  } catch (cause) {
+    if (errorCode(cause) === "ERR_INVALID_ARG_VALUE")
+      return 'node:module stripTypeScriptTypes does not accept mode "transform" (Node.js 26 removed TypeScript transform type stripping)';
+    throw cause;
+  }
+};
+
+/**
  * Import this checkout's verifier source without starting a compiler process.
  * One process-lifetime hook and Node's URL-keyed module cache share the source
  * graph across owners. No transformed output is cached across Node versions.
  */
 export const importVerifierSource = async (url, parent) => {
-  if (
-    typeof nodeModule.registerHooks !== "function" ||
-    typeof nodeModule.stripTypeScriptTypes !== "function"
-  )
-    throw new Error(
-      "This REA source loader requires the Node.js version pinned in .nvmrc; run nvm use and invoke source build and verifier scripts with node and npm. Installed REA packages have separate runtime support.",
-    );
-  hooks ??= nodeModule.registerHooks({
-    resolve: resolveSource,
-    load: loadSource,
-  });
+  if (hooks === undefined) {
+    const problem = developmentRuntimeProblem();
+    if (problem !== undefined)
+      throw new Error(
+        `Node.js ${process.version} cannot load REA source: ${problem}. This REA source loader requires the Node.js version pinned in .nvmrc; run nvm use and invoke source build and verifier scripts with node and npm. Installed REA packages have separate runtime support.`,
+      );
+    hooks = nodeModule.registerHooks({
+      resolve: resolveSource,
+      load: loadSource,
+    });
+  }
   return import(new URL(url, parent).href);
 };

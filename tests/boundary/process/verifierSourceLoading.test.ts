@@ -14,13 +14,35 @@ import {
 const scriptUrl = (path: string) =>
   JSON.stringify(pathToFileURL(resolve("scripts/lib", path)).href);
 
-for (const missing of ["registerHooks", "stripTypeScriptTypes"]) {
+const unsupportedRuntimes = [
+  ...["registerHooks", "stripTypeScriptTypes"].map((missing) => ({
+    name: `${missing} is unavailable`,
+    patch: `module[${JSON.stringify(missing)}] = undefined;`,
+    reason: `${missing} is unavailable`,
+  })),
+  {
+    // Node.js 26 keeps stripTypeScriptTypes but rejects mode "transform"
+    // (nodejs/node#61803), which the checkout's parameter properties need.
+    name: "stripTypeScriptTypes rejects transform mode",
+    patch: `
+const strip = module.stripTypeScriptTypes;
+module.stripTypeScriptTypes = (source, options) => {
+  if (options?.mode !== "transform") return strip(source, options);
+  const failure = new TypeError("The property 'options.mode' must be one of: 'strip'. Received 'transform'");
+  failure.code = "ERR_INVALID_ARG_VALUE";
+  throw failure;
+};`,
+    reason: 'does not accept mode "transform"',
+  },
+];
+
+for (const runtime of unsupportedRuntimes) {
   processTest(
-    `explains the development runtime requirement when ${missing} is unavailable`,
+    `explains the development runtime requirement when ${runtime.name}`,
     async ({ processes }) => {
       const source = `
 import module from "node:module";
-module[${JSON.stringify(missing)}] = undefined;
+${runtime.patch}
 module.syncBuiltinESMExports();
 const { importVerifierSource } = await import(${scriptUrl("verifier-source-loader.mjs")});
 await importVerifierSource(new URL("./src/domain/skillManifest.ts", import.meta.url));
@@ -31,6 +53,10 @@ await importVerifierSource(new URL("./src/domain/skillManifest.ts", import.meta.
         { timeoutMs: 20_000 },
       );
       expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain(
+        `Node.js ${process.version} cannot load REA source`,
+      );
+      expect(result.stderr).toContain(runtime.reason);
       expect(result.stderr).toContain("Node.js version pinned in .nvmrc");
       expect(result.stderr).toContain("source build and verifier scripts");
     },
