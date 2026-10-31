@@ -1529,7 +1529,9 @@ export class GdbSessionManager {
           } catch {
             // If MI synchronization is lost, stop only the owned debugger process.
           }
-          const stopped = await this.#stopDebuggerOnly(session);
+          const stopped = await this.#stopDebuggerOnly(session, {
+            force: true,
+          });
           if (stopped.status === "incomplete")
             return err(
               this.#retainCleanupFailure(
@@ -1677,6 +1679,10 @@ export class GdbSessionManager {
       const lineBytes =
         session.bufferBytes - (newline >= 0 && piece.at(-1) === 0x0d ? 1 : 0);
       if (lineBytes > MAX_MI_LINE_BYTES) {
+        session.bufferChunks.length = 0;
+        session.bufferTail = undefined;
+        session.bufferTailBytes = 0;
+        session.bufferBytes = 0;
         this.#failProtocol(
           session,
           `GDB emitted an MI line exceeding the ${String(MAX_MI_LINE_BYTES)} byte (16 MiB) protocol limit. This release has no runtime override.`,
@@ -1881,6 +1887,9 @@ export class GdbSessionManager {
         : session.protocolError!,
       {
         cause,
+        userMessage: session.protocolError!,
+        remediationAction:
+          "The GDB session protocol failed and the session was closed. Start a new GDB session to continue.",
         ...(stopped.status === "incomplete"
           ? {
               cleanup: {
@@ -1896,11 +1905,17 @@ export class GdbSessionManager {
 
   #stopDebuggerOnly(
     session: GdbSession,
+    options?: { readonly force?: boolean },
   ): ReturnType<typeof stopOwnedDebuggerProcess> {
     session.cleanupStarted = true;
     if (session.stopAttempt !== undefined) return session.stopAttempt;
     const attempt = Promise.resolve()
-      .then(() => this.#stopProcess(session, "GDB"))
+      .then(() =>
+        this.#stopProcess(session, "GDB", {
+          platform: this.#platform,
+          force: options?.force ?? session.protocolError !== undefined,
+        }),
+      )
       .catch((cause: unknown) => ({
         status: "incomplete" as const,
         reason: `Owned GDB shutdown failed: ${gdbErrorMessage(cause)}`,

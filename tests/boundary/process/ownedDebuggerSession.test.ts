@@ -181,6 +181,31 @@ it("retries provider detachment after a rejected attempt", async () => {
   expect(detachInferior).toHaveBeenCalledTimes(2);
 });
 
+it("terminates the debugger process immediately when forced despite failed or pending detachment", async () => {
+  const detachInferior = vi
+    .fn()
+    .mockRejectedValue(
+      new Error("GDB MI state is not synchronized; inferior state is unknown."),
+    );
+  const kill = vi.fn(() => true);
+  const session = {
+    id: "force-terminate-on-sync-loss",
+    exited: false,
+    launched: { process: { kill } },
+    detachInferior,
+    supervisor: createFakeSupervisor(),
+  };
+
+  const result = await stopOwnedDebuggerProcess(session, "GDB", {
+    platform: "linux",
+    force: true,
+  });
+
+  expect(result).toEqual({ status: "stopped" });
+  expect(detachInferior).not.toHaveBeenCalled();
+  expect(kill).toHaveBeenCalledWith("SIGTERM");
+});
+
 it("retains ownership after stop until inherited output writers close", async () => {
   let exited = false;
   let outputClosed = false;
