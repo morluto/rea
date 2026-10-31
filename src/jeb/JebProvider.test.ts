@@ -27,6 +27,7 @@ const scriptedConnection = (
 ): JebMcpConnection & { readonly calls: unknown[][] } => {
   const calls: unknown[][] = [];
   return {
+    sessionGeneration: 1,
     calls,
     async connect() {
       return Object.keys(responses);
@@ -486,6 +487,7 @@ it("forwards in-flight cancellation to the MCP call", async () => {
     entered = resolve;
   });
   const provider = providerWith({
+    sessionGeneration: 1,
     async connect() {
       return ["get_client_information"];
     },
