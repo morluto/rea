@@ -480,6 +480,7 @@ const runAnalysis = async (
       evidenceParameters,
       signal,
       evidenceProfile,
+      saveSnapshot: snapshotPath !== undefined,
     });
     if (!executed.ok) return executed;
     const { cachePolicy } = executed.value;
@@ -590,6 +591,7 @@ const executeAnalysisTool = async (input: {
   readonly evidenceParameters: Readonly<Record<string, JsonValue>>;
   readonly signal: AbortSignal;
   readonly evidenceProfile: AnalysisProfileCommitment | undefined;
+  readonly saveSnapshot: boolean;
 }): Promise<
   Result<
     {
@@ -648,7 +650,12 @@ const executeAnalysisTool = async (input: {
         : { cachePolicy: result.value.cachePolicy }),
     });
   }
-  let result = await session.execute(tool, input.arguments, { signal });
+  let result = await session.execute(tool, input.arguments, {
+    signal,
+    ...(input.saveSnapshot && tool === "procedure_pseudo_code"
+      ? { snapshotContext: "one-shot-target" as const }
+      : {}),
+  });
   if (
     tool === "xrefs" &&
     typeof input.arguments.address === "string" &&
