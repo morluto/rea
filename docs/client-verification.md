@@ -43,6 +43,30 @@ does not establish broader Pi compatibility. See the pinned upstream
 [`declarations.ts`](https://github.com/earendil-works/pi/blob/b45e0ebcc5ae2fc42a6f2f23104d10e656e6bedb/packages/codemode/src/declarations.ts)
 and [renderer usage notes](https://github.com/earendil-works/pi/blob/b45e0ebcc5ae2fc42a6f2f23104d10e656e6bedb/packages/codemode/README.md#declarations-for-the-model).
 
+<a id="llamacpp"></a>
+
+## llama.cpp
+
+The [manual stdio connection](client-configuration.md#llamacpp) was checked on
+macOS arm64 with Node.js 24.18.0, llama-server b11715 (`9d1878a43`), and the
+published `rea-agents@6.5.0` package. `GET /tools` exposed 207 REA tools without
+enabling llama.cpp's built-in tools. With the source checkout at `9e372c6`, all
+207 forwarded names, descriptions and input schemas matched a direct MCP client.
+
+Calls through `POST /tools` returned session metadata and JavaScript analysis
+Evidence for a fixture at a Unicode path. A missing target returned REA's input
+error, and a subsequent session call still succeeded. The owned llama-server
+process exited successfully after the checks. No native analysis engine or
+Windows host was exercised.
+
+A local Qwen3-1.7B Q8_0 run selected the JavaScript analysis tool and received its
+Evidence, but its follow-up answer reached the output-token limit. Other small
+Qwen3 attempts returned proposed calls as ordinary JSON text rather than tool
+calls. These runs do not establish dependable model-driven investigations.
+A request with the full catalog and task history exceeded a 16,384-token context;
+select tools for the task instead of assuming that discovery implies model fit.
+The checks exercised HTTP and stdio, not browser interaction with the Web UI.
+
 ## End-to-end, integration and golden evidence
 
 The optional `verify:qwen-client`, `verify:pi-client`, and `verify:hermes-client`

@@ -656,6 +656,12 @@ configuration paths, profiles, trust policies, and schema-limit workarounds.
 
 See [the Cordis patch and launcher setup](client-configuration.md#deepseek-harness).
 
+### llama.cpp
+
+llama-server can launch REA through its native stdio MCP configuration. This is
+a manual connection, not an automatic setup client ID. See the
+[local model setup](client-configuration.md#llamacpp).
+
 ### Other client settings
 
 See [OpenCode, Grok Build, and Grok Bot settings](client-configuration.md#other-client-settings).
