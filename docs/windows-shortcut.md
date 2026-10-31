@@ -60,7 +60,10 @@ Unknown signatures are listed and are not dropped.
 `observations` are derived only from those documented fields: whether
 arguments are present, argument character length, target extension, whether
 `ShowCommand` is minimized, and whether the icon location differs from the
-recorded target path. This workflow does not emit verdicts about intent.
+recorded target path. That comparison is `null` unless the icon and a recorded
+target are both full paths: a stored filename, relative path, or `%VAR%` form
+cannot show that two locations differ. This workflow does not emit verdicts
+about intent.
 
 A missing optional section is observed absence of that structure. It is not
 proof the shortcut never carried that data in another container.

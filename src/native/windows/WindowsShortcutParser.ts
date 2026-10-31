@@ -255,6 +255,21 @@ const extensionOf = (path: string | null | undefined): string | null => {
 const normalizePath = (path: string): string =>
   path.replaceAll("/", "\\").toLowerCase();
 
+/** A drive or UNC path. Filenames, relative paths, and `%VAR%` forms name no fixed location. */
+const isFullPath = (path: string): boolean =>
+  /^(?:[a-z]:\\|\\\\)/u.test(normalizePath(path));
+
+const iconDiffersFromTarget = (
+  icon: string | undefined,
+  targets: readonly string[],
+): boolean | null => {
+  if (icon === undefined || !isFullPath(icon)) return null;
+  const fullTargets = targets.filter(isFullPath);
+  if (fullTargets.length === 0) return null;
+  const location = normalizePath(icon);
+  return fullTargets.every((target) => normalizePath(target) !== location);
+};
+
 const targetPaths = (report: {
   readonly link_info: WindowsShortcut["link_info"];
   readonly string_data: WindowsShortcut["string_data"];
@@ -307,13 +322,6 @@ const observationsOf = (
         ? null
         : "";
   const targets = targetPaths(report);
-  const icon = report.string_data.icon_location?.value;
-  const iconDiffers =
-    icon === undefined || icon.length === 0 || targets.length === 0
-      ? null
-      : targets.every(
-          (target) => normalizePath(target) !== normalizePath(icon),
-        );
   return [
     {
       kind: "arguments_present",
@@ -338,7 +346,10 @@ const observationsOf = (
     {
       kind: "icon_location_differs_from_target",
       evidence_kind: "derived",
-      value: iconDiffers,
+      value: iconDiffersFromTarget(
+        report.string_data.icon_location?.value,
+        targets,
+      ),
     },
   ];
 };

@@ -348,9 +348,73 @@ it("marks an IDList without a TerminalID as partial", async () => {
   bytes.writeUInt16LE(2, 76 + declared);
   const report = await parse(bytes);
   expect(report.coverage.status).toBe("partial");
-  expect(report.issues.map((issue) => issue.message)).toContain(
-    "LinkTargetIDList has no TerminalID inside its declared size",
+  expect(report.issues).toContainEqual(
+    expect.objectContaining({
+      code: "malformed_structure",
+      offset: 78 + declared,
+    }),
   );
+});
+
+const iconDifference = (
+  report: Awaited<ReturnType<typeof parse>>,
+): boolean | null | undefined => {
+  const observation = report.observations.find(
+    ({ kind }) => kind === "icon_location_differs_from_target",
+  );
+  return observation?.kind === "icon_location_differs_from_target"
+    ? observation.value
+    : undefined;
+};
+
+it("leaves the icon comparison unknown when only a filename is stored", async () => {
+  const report = await parse(
+    windowsShortcutBytes({
+      linkInfo: null,
+      idList: [
+        { kind: "file", shortName: "app.exe", fileSize: 1, classType: 0x32 },
+      ],
+      iconLocation: "C:\\Tools\\app.exe",
+    }),
+  );
+  expect(iconDifference(report)).toBeNull();
+});
+
+it("leaves the icon comparison unknown for a relative target or icon", async () => {
+  const relativeTarget = await parse(
+    windowsShortcutBytes({
+      linkInfo: null,
+      relativePath: ".\\app.exe",
+      iconLocation: "C:\\Tools\\app.exe",
+    }),
+  );
+  expect(iconDifference(relativeTarget)).toBeNull();
+
+  const environmentIcon = await parse(
+    windowsShortcutBytes({
+      linkInfo: { localBasePath: "C:\\Windows\\System32\\cmd.exe" },
+      iconLocation: "%SystemRoot%\\System32\\cmd.exe",
+    }),
+  );
+  expect(iconDifference(environmentIcon)).toBeNull();
+});
+
+it("compares an icon with a full target path, ignoring case and separators", async () => {
+  const same = await parse(
+    windowsShortcutBytes({
+      linkInfo: { localBasePath: "C:\\Tools\\app.exe" },
+      iconLocation: "c:/tools/APP.exe",
+    }),
+  );
+  expect(iconDifference(same)).toBe(false);
+
+  const different = await parse(
+    windowsShortcutBytes({
+      linkInfo: { localBasePath: "C:\\Tools\\app.exe" },
+      iconLocation: "C:\\Tools\\other.exe",
+    }),
+  );
+  expect(iconDifference(different)).toBe(true);
 });
 
 it("charges the string budget before decoding a LinkInfo string", async () => {
