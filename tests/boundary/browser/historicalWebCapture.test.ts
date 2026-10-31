@@ -291,7 +291,9 @@ it("reads actual upstream HAR packages in an owned process and retains selected 
   const fixture = historicalHar();
   const first = fixture.log.entries[0];
   if (first === undefined) throw new Error("fixture missing");
-  fixture.log.entries.push(structuredClone(first));
+  const second = structuredClone(first);
+  second.request.url = "https://example.test/b";
+  fixture.log.entries.push(second);
   const text = JSON.stringify(fixture);
   const path = join(root, "capture.har");
   await writeFile(path, text);
@@ -303,7 +305,10 @@ it("reads actual upstream HAR packages in an owned process and retains selected 
   });
   expect(result.value.normalized_result).toMatchObject({
     total_records: 2,
-    records: [{ ordinal: 1 }, { ordinal: 0 }],
+    records: [
+      { ordinal: 1, reported: { request: { url: second.request.url } } },
+      { ordinal: 0, reported: { request: { url: first.request.url } } },
+    ],
     runtime_attribution: "unknown",
   });
 });

@@ -290,6 +290,7 @@ export type BinaryTarget =
         readonly format:
           | ZipPackageFormat
           | "asar"
+          | "ines"
           | "godot-pck"
           | "unityfs"
           | "uimage"
@@ -298,6 +299,8 @@ export type BinaryTarget =
           | "intel-hex"
           | "srec"
           | "esp-image"
+          | "uf2"
+          | "dfuse"
           | "fit";
       })
   | (BinaryTargetIdentity &

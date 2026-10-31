@@ -1,6 +1,7 @@
 import {
   Client,
   type CallToolRequestOptions,
+  type ClientOptions,
 } from "@modelcontextprotocol/client";
 import {
   StdioClientTransport,
@@ -36,11 +37,23 @@ const compileValidator = (schema: unknown): ValidateFunction<unknown> => {
   return validate;
 };
 
+/** Default to native tools while preserving explicit caller configuration. */
+export const localToolsMcpEnvironment = (
+  environment: Readonly<Record<string, string>> = {},
+): Record<string, string> => ({
+  PATH: process.env.PATH ?? "/usr/bin:/bin",
+  REA_LOG_LEVEL: "silent",
+  HOPPER_LAUNCHER_PATH: "/rea-unconfigured-deep-provider/hopper",
+  GHIDRA_INSTALL_DIR: process.execPath,
+  ...environment,
+});
+
 /** Start the built production server without configuring deep binary providers. */
 export async function connectLocalToolsMcp(
   environment: Readonly<Record<string, string>> = {},
   registerCleanup: (cleanup: () => Promise<void>) => void = onTestFinished,
   transportOptions: Readonly<Pick<StdioServerParameters, "maxBufferSize">> = {},
+  jsonSchemaValidator?: NonNullable<ClientOptions["jsonSchemaValidator"]>,
 ) {
   const transport = new StdioClientTransport({
     ...transportOptions,
@@ -49,15 +62,13 @@ export async function connectLocalToolsMcp(
       fileURLToPath(new URL("../../scripts/rea.mjs", import.meta.url)),
       "mcp",
     ],
-    env: {
-      PATH: process.env.PATH ?? "/usr/bin:/bin",
-      REA_LOG_LEVEL: "silent",
-      HOPPER_LAUNCHER_PATH: "/rea-unconfigured-deep-provider/hopper",
-      ...environment,
-    },
+    env: localToolsMcpEnvironment(environment),
     stderr: "pipe",
   });
-  const client = new Client({ name: "local-tools-e2e", version: "1" });
+  const client = new Client(
+    { name: "local-tools-e2e", version: "1" },
+    jsonSchemaValidator === undefined ? undefined : { jsonSchemaValidator },
+  );
   registerCleanup(async () => {
     await client.close();
     await transport.close();

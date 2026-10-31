@@ -1,3 +1,9 @@
+import {
+  nesContainerFormat,
+  parseInesLayout,
+} from "../../domain/inesContainer.js";
+import type { GodotPckAdmission } from "../GodotPckLocation.js";
+import type { PyInstallerAdmission } from "../pyinstaller/PyInstallerAdmission.js";
 import type {
   ArtifactReaderAdmission,
   ArtifactFormatAdmission,
@@ -13,7 +19,11 @@ import {
   ArtifactEmbeddedFormatProbes,
   type ArtifactEmbeddedFormatProbeFacts,
 } from "../ArtifactEmbeddedFormatProbes.js";
-import { sameRegularFileState } from "../../filesystem/RegularFile.js";
+import {
+  assertStableRegularFileIdentity,
+  RegularFileChangedError,
+  sameRegularFileState,
+} from "../../filesystem/RegularFile.js";
 import type { FileHandle } from "node:fs/promises";
 import type { Stats } from "node:fs";
 import type { StableRegularFileDescriptor } from "../../filesystem/RegularFile.js";
@@ -42,6 +52,10 @@ import {
 import type { ArtifactInventoryOptions } from "./types.js";
 import { readMachoHeaderPrefixFacts } from "../../domain/apple/machoContainer.js";
 import { hasDiskImageSignature } from "../../domain/apple/diskImageFormat.js";
+import {
+  DFUSE_SUFFIX_BYTES,
+  hasDfuSePrefix,
+} from "../../domain/firmware/dfuse.js";
 import {
   observeMzWindowsHeader,
   type MzWindowsHeaderSignatureEvidence,
@@ -224,6 +238,21 @@ const classifyRootFormat = async (
   const archiveBytes = (await handle.stat()).size;
   const evidence = probe.finish(archiveBytes);
   abortIfNeeded(signal);
+  try {
+    await assertStableRegularFileIdentity(handle, path, source.initial, {
+      symlinks: "reject",
+      ...(signal === undefined ? {} : { signal }),
+    });
+  } catch (cause: unknown) {
+    abortIfNeeded(signal);
+    if (cause instanceof RegularFileChangedError)
+      throw new ArtifactReaderFailure(
+        "integrity",
+        `Root artifact changed during classification: ${path}`,
+        { cause: cause.cause ?? cause },
+      );
+    throw cause;
+  }
   // Fill each range: a short result is end of file, not a partial host read.
   const read = async (position: number, length: number): Promise<Buffer> => {
     const bytes = Buffer.alloc(length);
@@ -257,6 +286,11 @@ const classifyRootFormat = async (
       );
     return { kind: "esp-flash-image", source, location: selected.value };
   }
+  if (nesContainerFormat(evidence.prefix) !== undefined) {
+    const parsed = parseInesLayout(evidence.prefix, archiveBytes);
+    if (!parsed.ok) throw new ArtifactReaderFailure("format", parsed.error);
+    return "ines";
+  }
   const classificationPath = artifactNameForClassification(
     selectedPath ?? path,
     path,
@@ -287,10 +321,21 @@ const classifyRootFormat = async (
     archiveBytes,
     signal,
   );
-  const classificationEvidence =
-    mzWindowsHeaderSignature === undefined
-      ? fatEvidence
-      : { ...fatEvidence, mzWindowsHeaderSignature };
+  // The probe stops at its bounded prefix, so a DfuSe trailer is read from
+  // the file's own end unless the probe already observed every byte.
+  const suffix =
+    fatEvidence.suffix === undefined &&
+    archiveBytes >= DFUSE_SUFFIX_BYTES &&
+    hasDfuSePrefix(evidence.prefix)
+      ? await read(archiveBytes - DFUSE_SUFFIX_BYTES, DFUSE_SUFFIX_BYTES)
+      : fatEvidence.suffix;
+  const classificationEvidence = {
+    ...fatEvidence,
+    ...(suffix === undefined ? {} : { suffix }),
+    ...(mzWindowsHeaderSignature === undefined
+      ? {}
+      : { mzWindowsHeaderSignature }),
+  };
   const format = classifyArtifactContent(
     classificationPath,
     classificationEvidence,

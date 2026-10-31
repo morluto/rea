@@ -71,6 +71,18 @@ export const analysisErrorProjectionSchema = z.discriminatedUnion("code", [
             unpacked: z.boolean(),
           })
           .catchall(jsonValueSchema),
+        z
+          .object({
+            logical_path: z.string(),
+            algorithm: z.literal("dfu-crc32"),
+            declared_crc32: z.string().regex(/^[a-f0-9]{8}$/u),
+            calculated_crc32: z
+              .string()
+              .regex(/^[a-f0-9]{8}$/u)
+              .nullable(),
+            unpacked: z.boolean(),
+          })
+          .catchall(jsonValueSchema),
       ]),
     })
     .strict(),

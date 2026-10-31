@@ -32,6 +32,10 @@ import {
 import { ProviderAdapterError } from "./providerAdapterError.js";
 import { UnknownRegistryError } from "./unknownRegistryError.js";
 import { projectAnalysisError } from "./analysisErrorProjection.js";
+import {
+  analysisErrorRemediationAction,
+  analysisErrorUserMessage,
+} from "./analysisErrorPresentation.js";
 import { ProviderSelectionError } from "./providerSelectionError.js";
 import { analysisErrorProjectionSchema } from "../contracts/errorSchemas.js";
 import { nativeCallPartialObservationSchema } from "./native/nativeCallPartialObservation.js";
@@ -126,6 +130,38 @@ describe("agent recovery metadata", () => {
         action:
           "Read the declared input schema or CLI usage for inspect_analysis_view; if using MCP and the catalog may be stale, call tools/list. Correct the listed fields, then retry. Do not repeat the unchanged call.",
       },
+    });
+    expect(analysisErrorProjectionSchema.parse(projected)).toEqual(projected);
+  });
+
+  it("omits schema recovery when a conforming request lacks a target fact", () => {
+    const issue = {
+      path: ["address"],
+      reason: "invalid_value",
+      message: "Address 0x2000 is in uninitialized memory block .bss",
+      observed: { address: "0x2000", file_mapping: "uninitialized" },
+    } as const;
+    const projected = projectAnalysisError(
+      new AnalysisInputError(
+        "address_to_file_offset",
+        {
+          userMessage: "No exact original-file offset exists.",
+          remediationAction: "Select an address inside a file-backed mapping.",
+          conformsToInputContract: true,
+        },
+        [issue],
+      ),
+    );
+
+    expect(projected).toEqual({
+      code: "invalid_request",
+      category: "invalid_input",
+      message: "No exact original-file offset exists.",
+      retryable: false,
+      remediation: {
+        action: "Select an address inside a file-backed mapping.",
+      },
+      details: { operation: "address_to_file_offset", issues: [issue] },
     });
     expect(analysisErrorProjectionSchema.parse(projected)).toEqual(projected);
   });
@@ -1057,9 +1093,11 @@ describe("analysis error projection: caller contract", () => {
 
 describe("analysis error projection: operational diagnostics", () => {
   it("distinguishes an observed Hopper exit from an undetermined provider failure", () => {
-    const exited = projectAnalysisError(
-      new HopperProcessError(7, { operation: "search_strings", requestId: 4 }),
-    );
+    const exitedError = new HopperProcessError(7, {
+      operation: "search_strings",
+      requestId: 4,
+    });
+    const exited = projectAnalysisError(exitedError);
     expect(exited).toMatchObject({
       code: "provider_unavailable",
       retryable: true,
@@ -1072,15 +1110,16 @@ describe("analysis error projection: operational diagnostics", () => {
         exit_code: 7,
       },
     });
-    expect(exited.message).not.toContain("Run `rea doctor`, then try again.");
-    expect(exited.remediation.action).toContain("Restart the owned provider");
-
-    const unknown = projectAnalysisError(
-      new HopperProcessError(null, {
-        operation: "search_strings",
-        requestId: 5,
-      }),
+    expect(exited.message).toBe(analysisErrorUserMessage(exitedError));
+    expect(exited.remediation.action).toBe(
+      analysisErrorRemediationAction(exitedError),
     );
+
+    const unknownError = new HopperProcessError(null, {
+      operation: "search_strings",
+      requestId: 5,
+    });
+    const unknown = projectAnalysisError(unknownError);
     expect(unknown.details).toMatchObject({
       stage: "analysis",
       provider_state: "unknown",
@@ -1089,21 +1128,27 @@ describe("analysis error projection: operational diagnostics", () => {
       request_id: 5,
       exit_code: null,
     });
-    expect(unknown.message).toContain("could not determine");
-    expect(unknown.message).not.toContain("stopped");
-    expect(unknown.remediation.action).toContain("provider_operation_health");
+    expect(unknown.message).toBe(analysisErrorUserMessage(unknownError));
+    expect(unknown.remediation.action).toBe(
+      analysisErrorRemediationAction(unknownError),
+    );
 
-    const unreachable = projectAnalysisError(
-      new HopperProcessError(null, {
+    const unreachableError = new HopperProcessError(null, {
+      operation: "search_strings",
+      providerState: "unreachable",
+    });
+    const unreachable = projectAnalysisError(unreachableError);
+    expect(unreachable).toMatchObject({
+      code: "provider_unavailable",
+      details: {
+        provider_state: "unreachable",
+        retry_action: "restart_provider",
         operation: "search_strings",
-        providerState: "unreachable",
-      }),
-    );
-    expect(unreachable.message).toContain(
-      "If Hopper may have exited, call export_evidence_bundle before close_binary",
-    );
-    expect(unreachable.message).toContain("closing clears retained records");
-    expect(unreachable.remediation.action).toContain("export_evidence_bundle");
+        exit_code: null,
+      },
+      message: analysisErrorUserMessage(unreachableError),
+      remediation: { action: analysisErrorRemediationAction(unreachableError) },
+    });
   });
 });
 

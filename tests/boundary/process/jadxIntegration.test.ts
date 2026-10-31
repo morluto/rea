@@ -441,6 +441,8 @@ it("retire sessions when APK bytes, engine bytes or JVM options change", async (
     Buffer.concat([await readFile(apk), Buffer.from("new artifact bytes")]),
   );
   const changed = await inspect();
+  expect(first.subject?.digest.sha256).toEqual(expect.any(String));
+  expect(changed.subject?.digest.sha256).toEqual(expect.any(String));
   expect(changed.subject?.digest.sha256).not.toBe(first.subject?.digest.sha256);
   await verifyCleanup(launches.slice(0, 1));
   await writeJadxJarInventory(jar, ["fixture/NewEngineMarker.class"]);

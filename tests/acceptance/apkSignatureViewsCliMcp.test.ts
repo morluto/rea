@@ -13,6 +13,7 @@ import {
 } from "../../src/domain/apkSignature/apkSignatureQuery.js";
 import { apkSignatureResultSchema } from "../../src/domain/apkSignature/apkSignatureReport.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
+import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 import {
@@ -358,16 +359,32 @@ cliTest(
         "--json",
       ],
     });
-    expect(invalid.exitCode).not.toBe(0);
-    expect(invalid.stdout).toContain("evidence_output");
-    expect(invalid.stdout).not.toContain("ENOENT");
+    expect(invalid.exitCode).toBe(1);
+    expect(invalid.json).toMatchObject({
+      code: "invalid_request",
+      details: {
+        operation: "inspect_apk_signature",
+        issues: expect.arrayContaining([
+          expect.objectContaining({
+            path: ["evidence_output"],
+            reason: "invalid_value",
+          }),
+        ]),
+      },
+    });
     const ambiguous = await call("inspect_apk_signature", {
       path: join(root, "missing.apk"),
       detail: "complete",
       view: { collection: "signers" },
     });
-    expect(ambiguous.isError).toBe(true);
-    expect(JSON.stringify(ambiguous)).toContain("view");
-    expect(JSON.stringify(ambiguous)).not.toContain("ENOENT");
+    expect(parseMcpToolError(ambiguous).error).toMatchObject({
+      code: "invalid_request",
+      details: {
+        operation: "inspect_apk_signature",
+        issues: expect.arrayContaining([
+          expect.objectContaining({ path: ["view"], reason: "invalid_value" }),
+        ]),
+      },
+    });
   },
 );
