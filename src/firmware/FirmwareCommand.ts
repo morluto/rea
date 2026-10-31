@@ -153,6 +153,40 @@ export const resolveFirmwareCommand = async (
   };
 };
 
+/**
+ * The RLIMIT_FSIZE one producer run gets. It covers every producer file,
+ * including mandatory reports and logs; outputBudget inventory still governs
+ * aggregate payload. One byte above the largest budget makes a file the kernel
+ * stops at the limit exceed that budget instead of passing as complete. An
+ * inherited ceiling can remove that byte, so inventory also rejects files
+ * that reach the returned limit.
+ */
+export const firmwareFileSizeLimit = (
+  fileSizeCeiling: number,
+  stagingBytes?: number,
+): number =>
+  Math.min(
+    fileSizeCeiling,
+    Math.max(
+      stagingBytes ?? 0,
+      FIRMWARE_LIMITS.reportBytes,
+      FIRMWARE_LIMITS.diagnosticBytes,
+    ) + 1,
+  );
+
+/**
+ * Whether a larger max_output_bytes would raise the per-run file limit. It is
+ * false when the report and diagnostic allowances or the inherited ceiling,
+ * including its last byte of headroom, set that limit instead.
+ */
+const firmwareFileSizeAdjustable = (
+  fileSizeCeiling: number,
+  stagingBytes?: number,
+): boolean =>
+  stagingBytes !== undefined &&
+  firmwareFileSizeLimit(fileSizeCeiling, stagingBytes + 1) >
+    firmwareFileSizeLimit(fileSizeCeiling, stagingBytes);
+
 /** Execute one bounded provider command and verify its owned descendants have stopped. */
 export const runFirmwareCommand = async (context: {
   engine: string;
@@ -172,21 +206,14 @@ export const runFirmwareCommand = async (context: {
   retainCleanup(supervisor: ProviderProcessSupervisor): void;
 }) => {
   const { engine, operation, signal } = context;
-  // RLIMIT_FSIZE covers every producer file, including mandatory reports/logs.
-  // Aggregate extracted payload remains governed by outputBudget inventory.
-  const fileSizeBytes = Math.min(
+  const fileSizeBytes = firmwareFileSizeLimit(
     context.fileSizeCeiling,
-    Math.max(
-      context.outputBudget?.bytes ?? 0,
-      FIRMWARE_LIMITS.reportBytes,
-      FIRMWARE_LIMITS.diagnosticBytes,
-    ),
+    context.outputBudget?.bytes,
   );
-  const fileSizeAdjustable =
-    context.outputBudget !== undefined &&
-    context.fileSizeCeiling > context.outputBudget.bytes &&
-    context.outputBudget.bytes >=
-      Math.max(FIRMWARE_LIMITS.reportBytes, FIRMWARE_LIMITS.diagnosticBytes);
+  const fileSizeAdjustable = firmwareFileSizeAdjustable(
+    context.fileSizeCeiling,
+    context.outputBudget?.bytes,
+  );
   const checkInterruption = () => {
     const failure = firmwarePhaseInterruption(
       operation,
@@ -325,6 +352,7 @@ export const runFirmwareCommand = async (context: {
           context.outputBudget.root,
           context.outputBudget.bytes,
           context.outputBudget.entries,
+          fileSizeBytes,
           operation,
           signal,
         );
