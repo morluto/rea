@@ -34,7 +34,16 @@ cliTest.for(["pubkey", "signature"])(
     expect(invalid.exitCode).toBe(1);
     expect(invalid.json).toMatchObject({
       code: "invalid_request",
-      details: { operation: "inspect_pe_certificates" },
+      details: {
+        operation: "inspect_pe_certificates",
+        issues: [
+          expect.objectContaining({
+            path: ["path"],
+            reason: "invalid_format",
+            message: expect.stringContaining("padding"),
+          }),
+        ],
+      },
     });
     // Only zero the advertised unused bit; all ASN.1 lengths stay unchanged.
     const last = at + marker.length - 1;

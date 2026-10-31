@@ -1,9 +1,10 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
+import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
 import { afterEach, expect, it, vi } from "vitest";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
-import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
@@ -319,6 +320,7 @@ it("retries failed command peers without repeating successful helper cleanup", a
 it("joins preparation during close and retains a late helper handoff", async () => {
   const client = provider();
   const ready = createDeferred<void>();
+  const entered = createDeferred<void>();
   const cleanup = new ProviderCleanupError(
     "process-ownership",
     ["late-helper"],
@@ -328,6 +330,7 @@ it("joins preparation during close and retains a late helper handoff", async () 
     cleanup.resolveCleanup();
   });
   vi.mocked(prepareOwnedCommand).mockImplementationOnce(async () => {
+    entered.resolve();
     await ready.promise;
     throw new DarwinProcessOwnershipInspectionError(
       "physical preparation failure",
@@ -335,12 +338,13 @@ it("joins preparation during close and retains a late helper handoff", async () 
     );
   });
   const pending = inspect(client);
-  await vi.waitFor(() => expect(prepareOwnedCommand).toHaveBeenCalledOnce());
   let closed = false;
-  const closing = client.close().then(() => {
-    closed = true;
-  });
-  try {
+  let closing: Promise<void> | undefined;
+  await withVerifierCleanup(async () => {
+    await awaitAcknowledgement(entered.promise, pending, "command preparation");
+    closing = client.close().then(() => {
+      closed = true;
+    });
     await Promise.resolve();
     expect(closed).toBe(false);
     ready.resolve();
@@ -351,11 +355,16 @@ it("joins preparation during close and retains a late helper handoff", async () 
     expect(close).toHaveBeenCalledOnce();
     expect(result.error.cleanupIncomplete).toBe(false);
     expect(runOwnedCommand).not.toHaveBeenCalled();
-  } finally {
-    ready.resolve();
-    await pending;
-    await closing;
-  }
+  }, [
+    () => ready.resolve(),
+    async () => {
+      await pending;
+    },
+    async () => {
+      await closing;
+    },
+    () => client.close(),
+  ]);
 });
 
 it("preserves an opaque cancellation reason before acquiring a command", async () => {
