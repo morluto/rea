@@ -98,7 +98,9 @@ export const limitationsFor = (
       return [
         ...common,
         "Names use Ghidra USER_DEFINED source. A local function entry renames that function; any other mapped address receives a new or renamed primary label. Existing symbols retain their namespace and accept leaf names or qualified names within that namespace; qualified readback can be reused without adding namespace prefixes. Readback compares the primary symbol name.",
-        "set_addresses_names applies each address in its own transaction and reports per-address success; invalid names, unmapped addresses, and readback mismatches roll back only that address.",
+        operation === "set_address_name"
+          ? "A name held by another address in the destination namespace is not moved; a false result reports its reason in raw_result.failures."
+          : "set_addresses_names decides every address from the names held before the batch: addresses requesting one destination name, or a name another selected address holds, are rejected rather than ordered. Others apply in their own transactions. raw_result.failures gives each failure's reason; raw_result.conflicts lists each contested name once with its requesting and holding addresses.",
         "Metadata edits invalidate immutable analysis snapshots and are discarded on close; this is not a saved Ghidra project.",
       ];
     case "inspect_native_load_image":
