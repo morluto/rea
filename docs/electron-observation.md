@@ -193,6 +193,9 @@ neither result means the requested host operation occurred. The existing
 `openExternal`, `openPath`, and `trashItem` blocks reject their promises.
 The `trashItem` block prevents that call from reaching the OS trash operation;
 it does not intercept other ways the application can remove files.
+Process rejection and uncaught-exception events are observed at dispatch without
+adding exception handlers. The runtime and application retain their warning,
+handler, and fatal-exit policies, including for rejected shell-block promises.
 CLI SIGINT/SIGTERM requests cancellation and awaits owned-process cleanup.
 Window IDs, URLs, and cached titles come from one main-process Electron snapshot,
 so a crashed renderer does not require a successful renderer-side title query.
