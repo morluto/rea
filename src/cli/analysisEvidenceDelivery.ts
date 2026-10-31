@@ -22,6 +22,7 @@ import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import type { ZodSafeParseResult } from "zod";
+import { bindCliEvidenceCallerPath } from "./cliEvidenceCallerPath.js";
 
 export const analysisEvidenceDeliveryOptions = {
   detail: z
@@ -42,6 +43,8 @@ interface CliEvidenceDelivery {
   readonly signal: AbortSignal;
   readonly detail: "complete" | "summary";
   readonly evidenceOutput: string | undefined;
+  /** Exact one-shot CLI target spelling, when this invocation selects a file. */
+  readonly callerInputPath?: string;
   /** Derived workflows publish their selected source closure with the result. */
   readonly sourceEvidence?: readonly Evidence[];
   /** Invocation exclusions cover final cleanup and publication paths/diagnostics. */
@@ -140,7 +143,9 @@ export const deliverCliAnalysisEvidence = async (
       { redactFailure },
     ).then(projectCliAnalysisResult);
   const complete = await finishAnalysisCommand(
-    run,
+    input.callerInputPath === undefined
+      ? run
+      : bindCliEvidenceCallerPath(input.callerInputPath, run),
     service,
     providerId,
     operation,

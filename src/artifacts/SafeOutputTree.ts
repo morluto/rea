@@ -109,10 +109,9 @@ export class SafeOutputTree {
         created = false;
         return;
       }
-      throw new SafeOutputTreeDestinationRefusal(
-        "Extraction output root already exists",
-        { cause },
-      );
+      throw new SafeOutputTreeDestinationRefusal("Output root already exists", {
+        cause,
+      });
     });
     const tree = new SafeOutputTree(canonicalOutput, platform, requested);
     tree.#createdRoot = created;
@@ -158,15 +157,13 @@ export class SafeOutputTree {
         ["ENOTDIR", "EACCES", "EPERM"].includes(String(cause.code))
       )
         throw new SafeOutputTreeDestinationRefusal(
-          "Extraction output path is unavailable",
+          "Output path is unavailable",
           { cause },
         );
       throw cause;
     });
     if (existing !== undefined)
-      throw new SafeOutputTreeDestinationRefusal(
-        "Extraction output root already exists",
-      );
+      throw new SafeOutputTreeDestinationRefusal("Output root already exists");
     await access(
       dirname(canonicalOutput),
       constants.W_OK | constants.X_OK,
@@ -177,7 +174,7 @@ export class SafeOutputTree {
         ["EACCES", "EPERM", "ENOENT", "ENOTDIR"].includes(String(cause.code))
       )
         throw new SafeOutputTreeDestinationRefusal(
-          "Extraction output parent is not writable",
+          "Output parent is not writable",
           { cause },
         );
       throw cause;
@@ -188,15 +185,13 @@ export class SafeOutputTree {
   static async resolveDestination(outputRoot: string) {
     if (!isAbsolute(outputRoot))
       throw new SafeOutputTreeDestinationRefusal(
-        "Extraction output root must be absolute",
+        "Output root must be absolute",
       );
     // Path syntax follows the host; `platform` selects only the name policy.
     const requested = absoluteCallerPath(outputRoot);
     const name = basename(requested);
     if (name === "." || name === "..")
-      throw new SafeOutputTreeDestinationRefusal(
-        "Invalid extraction output root",
-      );
+      throw new SafeOutputTreeDestinationRefusal("Invalid output directory");
     let parent: string;
     try {
       const selectedParent = dirname(requested);
@@ -204,7 +199,7 @@ export class SafeOutputTree {
       // traversal. Admit the selected directory before canonicalizing it.
       if (!(await stat(selectedParent)).isDirectory())
         throw new SafeOutputTreeDestinationRefusal(
-          "Extraction output parent must be a directory",
+          "Output parent must be a directory",
         );
       parent = await realpath(selectedParent);
     } catch (cause: unknown) {
@@ -215,12 +210,12 @@ export class SafeOutputTree {
         ["ENOENT", "ENOTDIR", "EACCES", "EPERM"].includes(String(cause.code))
       )
         throw new SafeOutputTreeDestinationRefusal(
-          "Extraction output parent is unavailable",
+          "Output parent is unavailable",
           { cause },
         );
       throw new ArtifactReaderFailure(
         "unavailable",
-        "Extraction output parent is unavailable",
+        "Output parent is unavailable",
         { cause },
       );
     }
@@ -414,7 +409,7 @@ export class SafeOutputTree {
     if (closeFailures.length > 0) {
       const closeFailure = new AggregateError(
         closeFailures,
-        "Extraction output directory handles could not be closed",
+        "Output directory handles could not be closed",
       );
       const cleanup = ArtifactReaderFailure.cleanupObservation(
         closeFailure,
@@ -483,14 +478,14 @@ export class SafeOutputTree {
     if (!complete)
       throw new ArtifactReaderFailure(
         "integrity",
-        `Extraction output cleanup could not be verified${removalFailure === undefined ? "" : `: ${removalFailure instanceof Error ? removalFailure.message : String(removalFailure)}`}`,
+        `Output cleanup could not be verified${removalFailure === undefined ? "" : `: ${removalFailure instanceof Error ? removalFailure.message : String(removalFailure)}`}`,
         {
           cause: removalFailure,
           cleanup: {
             reason:
               removalFailure instanceof Error
                 ? removalFailure.message
-                : "Extraction output root remains after rollback",
+                : "Output root remains after rollback",
             resources: [this.#outputRoot],
           },
         },
@@ -556,7 +551,7 @@ export class SafeOutputTree {
   ): Promise<readonly DirectoryLineageEntry[]> {
     const parts = relativePath.split("/");
     if (parts.pop() === undefined)
-      throw new ArtifactReaderFailure("path", "Invalid extraction path");
+      throw new ArtifactReaderFailure("path", "Invalid output path");
     let current = this.#outputRoot;
     let logicalParent = "";
     const lineage: DirectoryLineageEntry[] = [
@@ -644,7 +639,7 @@ export class SafeOutputTree {
     if (this.#rootIdentity === undefined)
       throw new ArtifactReaderFailure(
         "path",
-        `Extraction output root identity is unknown: ${this.#outputRoot}`,
+        `Output root identity is unknown: ${this.#outputRoot}`,
       );
     return this.#rootIdentity;
   }
@@ -723,7 +718,7 @@ const writeAll = async (
     if (bytesWritten === 0)
       throw new ArtifactReaderFailure(
         "unavailable",
-        "Extraction output stopped accepting bytes",
+        "Output stopped accepting bytes",
       );
     offset += bytesWritten;
   }

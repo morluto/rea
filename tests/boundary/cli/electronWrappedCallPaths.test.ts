@@ -866,6 +866,16 @@ cliTest(
     expect(joins.map((edge) => edge.properties.channel)).toEqual([
       "shallow:run",
     ]);
+    expect(joins[0]?.properties).toMatchObject({
+      pairing_basis: "observed-literal-channel-incomplete-coverage",
+      resolution: "candidate",
+    });
+    expect(application.summary.ipc).toMatchObject({
+      paired_renderer_transmissions: 0,
+    });
+    expect(
+      application.summary.ipc.ambiguous_renderer_transmissions,
+    ).toBeGreaterThan(0);
     expect(
       graph.nodes
         .flatMap((node) => node.observations)
@@ -875,6 +885,75 @@ cliTest(
             observation.properties.step_kind === "exposure",
         ),
     ).toBe(true);
+  },
+);
+
+cliTest(
+  "keeps a wrapper match provisional when a limited path can hide a competing handler",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-electron-limited-handler-");
+    let deepMember =
+      '() => { const register = (ipc) => ipc.on("shared:run", () => {}); register(e.ipcMain); }';
+    for (let index = 0; index < 129; index += 1)
+      deepMember = `{ level${index}: ${deepMember} }`;
+    await writeFixtureFiles(root, {
+      "preload.js": `const e=require("electron");
+        e.contextBridge.exposeInMainWorld("desktop", {
+          deep: ${deepMember},
+          shallow: () => e.ipcRenderer.send("shared:run")
+        });`,
+      "main.js": `const e=require("electron");
+        e.ipcMain.on("shared:run", event => event.sender.copy());`,
+    });
+    const output = await cli.run({
+      arguments: ["analyze-javascript-application", root, "--json"],
+    });
+    expect(output.exitCode, output.stderr).toBe(0);
+    const { normalized_result: application } = z
+      .object({ normalized_result: javascriptApplicationAnalysisResultSchema })
+      .parse(output.json);
+    expect(application.summary.ipc.paired_renderer_transmissions).toBe(0);
+    expect(
+      application.summary.ipc.ambiguous_renderer_transmissions,
+    ).toBeGreaterThan(0);
+    const channelEdges = application.graph.edges.filter(
+      (edge) => edge.properties.channel === "shared:run",
+    );
+    expect(
+      channelEdges.some(
+        (edge) =>
+          edge.evidence.extractor.operation === "pair-ipc-literal-channel",
+      ),
+    ).toBe(false);
+    const candidateJoin = channelEdges.find(
+      (edge) =>
+        edge.evidence.extractor.operation === "join-electron-wrapper-paths",
+    );
+    expect(candidateJoin?.properties).toMatchObject({
+      pairing_basis: "observed-literal-channel-incomplete-coverage",
+      resolution: "candidate",
+    });
+    expect(candidateJoin?.evidence.limitations?.length).toBeGreaterThan(0);
+
+    // A known second handler is not merely a hidden-coverage uncertainty.
+    await writeFile(
+      join(root, "main.js"),
+      'const e=require("electron"); e.ipcMain.on("shared:run", () => {}); e.ipcMain.on("shared:run", () => {});',
+    );
+    const competing = await cli.run({
+      arguments: ["analyze-javascript-application", root, "--json"],
+    });
+    expect(competing.exitCode, competing.stderr).toBe(0);
+    const { normalized_result: competingApplication } = z
+      .object({ normalized_result: javascriptApplicationAnalysisResultSchema })
+      .parse(competing.json);
+    expect(
+      competingApplication.graph.edges.some(
+        (edge) =>
+          edge.evidence.extractor.operation === "join-electron-wrapper-paths" &&
+          edge.properties.channel === "shared:run",
+      ),
+    ).toBe(false);
   },
 );
 

@@ -1,4 +1,5 @@
 import * as t from "@babel/types";
+import { childNodes } from "./javascriptSemanticTraversal.js";
 
 /** Syntax alone can establish an exit, but never a branch's contextual truth. */
 export type ElectronStatementFallthrough =
@@ -104,13 +105,8 @@ export class ElectronCallPathBlockPrefixes {
         }
         if (!local) breaks.add(node.label.name);
       }
-      for (const key of t.VISITOR_KEYS[node.type] ?? []) {
-        const value = (node as unknown as Record<string, unknown>)[key];
-        const children = Array.isArray(value) ? value : [value];
-        for (const child of children) {
-          if (t.isNode(child)) pending.push({ node: child, depth: depth + 1 });
-        }
-      }
+      for (const child of childNodes(node))
+        pending.push({ node: child, depth: depth + 1 });
     }
     return { ...FALLTHROUGH, breaks, uncertain };
   }

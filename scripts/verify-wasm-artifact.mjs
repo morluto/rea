@@ -62,6 +62,12 @@ const tool = (name, args, cwd) =>
     maxBuffer: 32 * 1024 * 1024,
   });
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
+const assertEvidenceParity = (cli, mcp, path) => {
+  const { caller_input_path: callerInputPath, ...cliShared } = cli;
+  assert.equal(callerInputPath, path);
+  assert.equal(Object.hasOwn(mcp, "caller_input_path"), false);
+  assert.deepEqual(cliShared, mcp);
+};
 const run = createVerifierRun();
 const root = await PrivateRuntimeRoot.create({ prefix: "rea-wabt-verifier-" });
 // Keep provider scratch outside the leased private input root. On Windows the
@@ -281,7 +287,7 @@ try {
     );
     const mcp = parseEvidence(requireMcpOutput(reply, "inspect_wasm_artifact"));
     assert.equal(cli.evidence_id, mcp.evidence_id);
-    assert.deepEqual(cli, mcp);
+    assertEvidenceParity(cli, mcp, path);
     const report = mcp.normalized_result;
     assert.equal(
       report.tool_profile.timeout_ms,
@@ -521,7 +527,7 @@ try {
       JSON.stringify(ajv.errors),
     );
     const mcp = parseEvidence(requireMcpOutput(reply, "inspect_wasm_artifact"));
-    assert.deepEqual(cli, mcp);
+    assertEvidenceParity(cli, mcp, path);
     const report = mcp.normalized_result;
     assert.equal(report.validation, "valid");
     assert.equal(report.artifact.sha256, sha256(original));
@@ -587,7 +593,7 @@ try {
       JSON.stringify(ajv.errors),
     );
     const mcp = parseEvidence(requireMcpOutput(reply, "inspect_wasm_artifact"));
-    assert.deepEqual(cli, mcp);
+    assertEvidenceParity(cli, mcp, path);
     const report = mcp.normalized_result;
     assert.equal(report.artifact.sha256, sha256(original));
     assert.equal(report.debug_name_metadata, "unknown");

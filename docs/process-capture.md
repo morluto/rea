@@ -355,9 +355,12 @@ recapture both sides with the same observation version before comparison.
 When path normalization is enabled, aliases apply to selected path identities
 at clear text delimiters. A selected executable path does not alias a longer
 sibling filename such as `tool-helper`; selected parent directories still
-normalize within descendant paths. The comparison contract records these rules as
-`path-component-boundaries-v2`, so captures made with the earlier prefix rules
-cannot be compared as if the text had the same meaning.
+normalize within descendant paths, including when the working directory or an
+observation path is spelled with a trailing `/` or `/.`. A selected filesystem
+root `/` also aliases descendant paths, without rewriting URL separators or
+HTML closing tags. The comparison contract
+records these rules as `path-component-boundaries-v3`, so captures made with the
+earlier rules cannot be compared as if the text had the same meaning.
 
 Rendered frame `lines` hold the visible rows after normalization, with trailing
 U+0020 spaces removed. Blank rows and internal spaces remain. `columns` records

@@ -8,6 +8,7 @@ import {
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import {
   isElfMetadataArchitecture,
+  type BinaryArchitecture,
   type BinaryTarget,
 } from "../domain/binaryTargetTypes.js";
 import { err, ok } from "../domain/result.js";
@@ -52,6 +53,17 @@ import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { ProviderInspectionScope } from "../application/ProviderInspectionScope.js";
 import type { ProviderRejectionCode } from "../domain/providerSelection.js";
+
+/**
+ * Families IDA admits today. Every other family is refused, including families
+ * that REA recognizes after this list was written.
+ */
+const IDA_ARCHITECTURES = new Set<BinaryArchitecture>([
+  "x86",
+  "x86_64",
+  "arm",
+  "arm64",
+]);
 
 /** Bring-your-own IDA MCP candidate; discovery performs no provider startup. */
 export class IdaProvider implements AnalysisProviderCandidate {
@@ -300,32 +312,6 @@ export class IdaProvider implements AnalysisProviderCandidate {
           "IDA does not admit caller-selected GameCube DOL images. Open the target with Ghidra and select format gamecube-dol.",
         diagnostics,
       };
-    if (
-      target.kind === "executable" &&
-      (isElfMetadataArchitecture(target.architecture) ||
-        target.architecture === "hexagon")
-    )
-      return {
-        status: "unsupported",
-        code: "architecture_unsupported",
-        reason: `REA's IDA adapter has no verified ${
-          target.architecture === "mips"
-            ? "MIPS"
-            : target.architecture === "riscv"
-              ? "RISC-V"
-              : target.architecture === "powerpc"
-                ? "PowerPC"
-                : "Hexagon"
-        } lane. Select a supported Ghidra profile instead.`,
-        diagnostics,
-      };
-    if (target.kind === "executable" && target.architecture === "arm64_32")
-      return {
-        status: "unsupported",
-        code: "architecture_unsupported",
-        reason: "REA's IDA adapter has no verified arm64_32 lane.",
-        diagnostics,
-      };
     if (target.kind !== "executable")
       return {
         status: "unsupported",
@@ -340,6 +326,18 @@ export class IdaProvider implements AnalysisProviderCandidate {
         code: "target_format_unsupported",
         reason:
           "IDA does not admit headerless raw binaries. Open the target with Ghidra and supply architecture and entry_point.",
+        diagnostics,
+      };
+    if (!IDA_ARCHITECTURES.has(target.architecture))
+      return {
+        status: "unsupported",
+        code: "architecture_unsupported",
+        // Header-declared families that Ghidra admits keep the pointer there.
+        reason:
+          isElfMetadataArchitecture(target.architecture) ||
+          target.architecture === "hexagon"
+            ? `REA's IDA adapter has no verified ${target.architecture} lane. Select a supported Ghidra profile instead.`
+            : `REA's IDA adapter has no verified ${target.architecture} lane.`,
         diagnostics,
       };
     return target.format === "mach-o-universal"

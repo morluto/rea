@@ -8,6 +8,7 @@ import { CLI_COMMAND_NAMES } from "../../../src/cliCommandNames.js";
 /** Canonical MCP operations reached by CLI commands with different names. */
 const CLI_COMMAND_TOOL_ALIASES = Object.freeze({
   "environment-build": ["export_environment_bundle"],
+  guidance: ["search_guidance", "read_guidance_section"],
   analyze: ["binary_overview"],
   inspect: ["binary_overview"],
   decompile: ["procedure_pseudo_code"],

@@ -1,7 +1,7 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { Ajv2020 } from "ajv/dist/2020.js";
-import { expect } from "vitest";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+import { afterAll, expect } from "vitest";
 import { pythonPycSchema } from "../../../src/domain/python/pythonPyc.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { createServer } from "../../../src/server/createServer.js";
@@ -34,11 +34,18 @@ const marshalInt32 = (value: number): Buffer => {
 const marshalSingleItemTuple = (item: Buffer): Buffer =>
   Buffer.concat([Buffer.from([0x29, 1]), item]);
 
+const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
+
 const connect = async (mcp: TestMcp) => {
   const session = createTestBinarySession(() => {
     throw new Error("Python pyc inspection must not start a deep provider");
   });
-  const client = await mcp.connect(createServer({ kind: "session", session }));
+  const client = await mcp.connect(
+    createServer({ kind: "session", session }),
+    undefined,
+    schemaValidation,
+  );
   return { client, session };
 };
 
@@ -148,7 +155,7 @@ mcpTest(
       if (advertised?.outputSchema === undefined)
         throw new Error("Missing inspect_python_pyc output schema");
       const outputSchema: Record<string, unknown> = advertised.outputSchema;
-      const ajv = new Ajv2020({ strict: false, validateFormats: false });
+      const ajv = schemaValidation.assertions;
       expect(ajv.validateSchema(outputSchema)).toBe(true);
       const root = await createTestTempDirectory("rea-python-pyc-mcp-");
       const path = join(root, "sample.pyc");
@@ -222,7 +229,7 @@ mcpTest(
       if (advertised?.outputSchema === undefined)
         throw new Error("Missing inspect_python_pyc output schema");
       const outputSchema: Record<string, unknown> = advertised.outputSchema;
-      const ajv = new Ajv2020({ strict: false, validateFormats: false });
+      const ajv = schemaValidation.assertions;
       const root = await createTestTempDirectory("rea-python-pyc-mcp-flags-");
       for (const testCase of [
         {

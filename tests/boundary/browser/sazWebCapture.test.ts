@@ -191,6 +191,7 @@ it("uses HTTP optional whitespace for SAZ identity codings without changing raw 
       status: "partial",
       inspected_records: 4,
     });
+    expect(report.records.map(({ ordinal }) => ordinal)).toEqual([0, 1, 2, 3]);
     if (sensitive === "gzip")
       expect(report.records[2]?.protobuf).toBeUndefined();
     else
@@ -381,6 +382,7 @@ it("keeps automatic framing applicability unknown when SAZ Content-Type is exclu
 
   const known = await inspect(["--record", "2", "--record", "3"]);
   expect(known.protobuf_coverage?.status).toBe("complete");
+  expect(known.records.map(({ ordinal }) => ordinal)).toEqual([2, 3]);
   for (const record of known.records) {
     expect(record.protobuf).toBeUndefined();
     expect(record.limitations).toEqual([]);

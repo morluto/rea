@@ -311,6 +311,22 @@ rea extract-artifact ./firmware.bin --json
 See [U-Boot uImage](uimage.md) for verified CRCs, physical component ranges,
 unknown names, resource limits and retained views. Compressed bytes stay stored.
 
+`inspect-artifact` and `extract-artifact` also read ZIP members compressed with
+Zstandard (standard method 93). They retain the shared ZIP CRC, declared-size,
+overlap and archive expansion checks. The native streaming decoder keeps the
+existing 128 MiB Zstandard window cap; frames requiring a larger window are
+refused. Deprecated method 20 and other unregistered ZIP codecs remain unsupported.
+
+Inventory and extract U-Boot FIT images:
+
+```sh
+rea inspect-artifact ./boot.itb --json
+rea extract-artifact ./boot.itb --json
+```
+
+See [U-Boot FIT images](fit-images.md) for recognition, data sources, hashes
+and limits.
+
 Inspect local model declarations without loading weights:
 
 ```bash
@@ -837,7 +853,13 @@ rea mcp --http --port 8765
 `--host` and `--port` default to `MCP_HOST` and `MCP_PORT` from the environment,
 then to `127.0.0.1` and an ephemeral port. A bind outside loopback requires
 `MCP_ALLOWED_HOSTS` or `--allowed-hosts`, a comma-separated list of client host
-names or IP addresses without URLs or ports. For example:
+names or IP addresses without URLs or ports.
+
+Repeat `--allowed-hosts` to append names, or put multiple names in one
+comma-separated value. All occurrences are validated together and deduplicated
+after hostname normalization; the explicit list replaces `MCP_ALLOWED_HOSTS`.
+
+For example:
 
 ```sh
 rea mcp --http --host 0.0.0.0 --allowed-hosts 127.0.0.1,rea.lan
@@ -1042,8 +1064,8 @@ Malformed format values and token windows fail with `INVALID_OUTPUT_VALUE` in th
 selected structured format. Token limits and offsets must be nonnegative safe
 integers; zero selects an empty window. These checks run before command execution. `--json` is indented on a terminal and compact when piped or
 redirected, which keeps large results smaller for agents and scripts; pipe
-through `jq .` for indented files. Output selection and formatting do not change
-operation status.
+through `jq .` for indented files. A formatting refusal exits nonzero even when
+the underlying operation succeeded.
 
 `--format md` escapes backslashes, pipes, and inline Markdown syntax in table
 headers and cells so source text is displayed literally, and renders cell line
@@ -1054,6 +1076,12 @@ use JSON inside their owning Markdown cells, retaining the field names and
 values instead of replacing them with an object label. Table widths are measured
 iteratively, so an admitted row page is not limited by the JavaScript function
 argument count.
+
+Markdown refuses selected NUL characters and unpaired UTF-16 surrogates because
+renderers or UTF-8 output would substitute them. TOON refuses selected unpaired
+surrogates for the same UTF-8 reason. Use JSON or YAML to retain those values.
+An authored replacement character and valid supplementary characters are not
+treated as malformed.
 
 `--format csv` and `--format tsv` export one selected row collection. Select an
 exact array path with `--filter-output` and provide comma-separated direct
@@ -1074,7 +1102,8 @@ delimiter, quotes, or line breaks are quoted and embedded quotes are doubled.
 Values are emitted as UTF-8 without Unicode normalization. Missing and `null`
 cells are empty; booleans and finite numbers use their ordinary text forms.
 String cells and headers that begin with spreadsheet formula syntax are refused
-with a structured error; JSON retains those values unchanged.
+with a structured error; unpaired surrogates in selected cells or headers are
+also refused. JSON retains those values unchanged.
 
 Delimited output does not flatten nested Evidence or nested field values.
 It returns a structured error and a nonzero status if the filter does not
@@ -1233,3 +1262,8 @@ rea inspect-pe-load-config /absolute/path/to/application.exe --json
 Reports TLS callbacks and size-covered load-config fields without execution.
 Use `--max-callbacks` and `--max-file-bytes` to set read budgets. See
 [PE TLS and load configuration](pe-load-config.md).
+
+Bun standalone executables use the existing `inspect-artifact` and
+`extract-artifact` commands to inventory and materialize embedded source,
+sourcemaps and bytecode without running the executable. See
+[Bun standalone executables](bun-standalone.md) for layout coverage and limits.

@@ -10,7 +10,7 @@ import {
   pythonPycHeader,
 } from "../../src/python/PythonPyc.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { cliTest } from "../support/cli/cliFixture.js";
+import { cliTest, runFileCli } from "../support/cli/cliFixture.js";
 
 const completePycEvidenceSchema = toolContract(
   "inspect_python_pyc",
@@ -57,7 +57,7 @@ cliTest(
           }),
         ]),
       );
-      const result = await cli.run({
+      const result = await runFileCli(cli, {
         arguments: ["inspect-python-pyc", path, "--json"],
       });
       expect(result.exitCode, result.stderr).toBe(0);
@@ -77,7 +77,7 @@ cliTest(
         }),
       ]),
     );
-    const ordinaryInt = await cli.run({
+    const ordinaryInt = await runFileCli(cli, {
       arguments: ["inspect-python-pyc", ordinaryIntPath, "--json"],
     });
     expect(ordinaryInt.exitCode, ordinaryInt.stderr).toBe(0);
@@ -95,7 +95,7 @@ cliTest(
         Buffer.alloc(7),
       ]),
     );
-    const truncated = await cli.run({
+    const truncated = await runFileCli(cli, {
       arguments: ["inspect-python-pyc", truncatedPath, "--json"],
     });
     expect(truncated.exitCode).toBe(1);
@@ -183,7 +183,7 @@ cliTest(
       const path = join(root, `inline-caches-${magic}.pyc`);
       await writeFile(path, pyc);
 
-      const result = await cli.run({
+      const result = await runFileCli(cli, {
         arguments: ["inspect-python-pyc", path, "--json"],
       });
       expect(

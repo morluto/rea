@@ -21,6 +21,14 @@ import {
   HopperStartError,
   HopperTimeoutError,
 } from "./hopperErrors.js";
+import {
+  DEFAULT_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
+  HOPPER_DEMO_DIALOG_TIMEOUT_SETTING,
+  MAXIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
+  MINIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
+  type DialogTimeoutRejection,
+  type HopperStartupFailureDiagnostic,
+} from "./hopperStartupFailure.js";
 import { ProviderAdapterError } from "./providerAdapterError.js";
 import { UnknownRegistryError } from "./unknownRegistryError.js";
 import { projectAnalysisError } from "./analysisErrorProjection.js";
@@ -786,6 +794,8 @@ describe("analysis error projection: Hopper startup failures", () => {
       [78, "x11_input_failed"],
       [79, "runtime_dependency_unavailable"],
       [80, "x11_socket_directory_unusable"],
+      [81, "demo_dialog_absent"],
+      [82, "invalid_dialog_timeout"],
     ] as const;
 
     for (const [exitCode, code] of expected) {
@@ -794,9 +804,69 @@ describe("analysis error projection: Hopper startup failures", () => {
         code: "provider_unavailable",
         details: { failure_code: code, exit_code: exitCode },
       });
+      expect(projected.details).not.toHaveProperty("launch_rejection");
       expect(projected.message).toMatch(/\S/u);
       expect(JSON.stringify(projected)).not.toContain("/proc/");
     }
+  });
+
+  it("does not attribute an absent post-authentication dialog to publisher verification", () => {
+    const projected = projectAnalysisError(new HopperProcessError(81));
+    expect(projected).toMatchObject({
+      code: "provider_unavailable",
+      details: {
+        stage: "launch",
+        failure_code: "demo_dialog_absent",
+        exit_code: 81,
+      },
+    });
+    expect(projected.details).not.toHaveProperty("launch_rejection");
+    expect(projected.message).toContain("REA_HOPPER_DEMO_DIALOG_TIMEOUT_MS");
+  });
+
+  it("reports a rejected demo dialog timeout through its setting fields", () => {
+    const dialogTimeout = {
+      setting: HOPPER_DEMO_DIALOG_TIMEOUT_SETTING,
+      value: "-5",
+      source: "setting",
+      minimum_ms: MINIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
+      maximum_ms: MAXIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
+      default_ms: DEFAULT_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
+    } satisfies DialogTimeoutRejection;
+    const projected = projectAnalysisError(
+      new HopperProcessError(82, {
+        diagnostic: {
+          component: "hopper_private_display",
+          operation: "launch",
+          reason: "invalid_dialog_timeout",
+          socket_directory: "/tmp/.X11-unix",
+          socket_directory_mode: null,
+          mount_read_only: null,
+          effective_socket_directory_mode: null,
+          effective_mount_read_only: null,
+          wsl: false,
+          strategy: "direct",
+          fallback_reason: null,
+          xvfb_stderr_bytes: 0,
+          status: "error",
+          failure_code: "invalid_dialog_timeout",
+          dialog_timeout: dialogTimeout,
+        } as HopperStartupFailureDiagnostic,
+      }),
+    );
+    expect(projected).toMatchObject({
+      code: "provider_unavailable",
+      details: {
+        stage: "launch",
+        failure_code: "invalid_dialog_timeout",
+        exit_code: 82,
+        diagnostics: { dialog_timeout: dialogTimeout },
+      },
+    });
+    expect(projected.details).not.toHaveProperty("launch_rejection");
+    expect(analysisErrorProjectionSchema.safeParse(projected).success).toBe(
+      true,
+    );
   });
 });
 

@@ -12,6 +12,7 @@ import {
   type IL2cppMetadataSectionName,
 } from "../domain/il2cpp/il2cppMetadata.js";
 import { observeIl2cppMetadataHeaderPrefix } from "../domain/il2cpp/il2cppMetadataHeaderPrefix.js";
+import { firstDeclaringTypeCycle } from "../domain/il2cpp/il2cppDeclaringTypes.js";
 import {
   readIl2cppMembers,
   readIl2cppMemberTables,
@@ -475,29 +476,12 @@ function* assignNesting(
 
 /** Each enclosing chain must reach a top-level type. */
 function* rejectNestingCycles(types: Il2cppMetadataDecoded["types"]) {
-  // 0 unvisited, 1 on the current chain, 2 reaches a top-level type.
-  let work = 0;
-  const state = new Uint8Array(types.length);
-  for (let first = 0; first < types.length; first += 1) {
-    if (work++ % 256 === 0) yield;
-    const chain: number[] = [];
-    let current = first;
-    while (current !== -1 && state[current] === 0) {
-      if (work++ % 256 === 0) yield;
-      state[current] = 1;
-      chain.push(current);
-      current = types[current]!.declaring_type;
-    }
-    if (current !== -1 && state[current] === 1)
-      throw new Il2cppMetadataFormatFailure(
-        "nested-type-conflict",
-        `type ${current} is nested inside itself through its declaring types`,
-      );
-    for (const index of chain) {
-      if (work++ % 256 === 0) yield;
-      state[index] = 2;
-    }
-  }
+  const cycle = yield* firstDeclaringTypeCycle(types);
+  if (cycle !== null)
+    throw new Il2cppMetadataFormatFailure(
+      "nested-type-conflict",
+      `type ${cycle} is nested inside itself through its declaring types`,
+    );
 }
 
 function* readTypes(tables: MetadataTables): Generator<

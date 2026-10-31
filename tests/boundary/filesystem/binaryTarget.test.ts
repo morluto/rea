@@ -51,6 +51,11 @@ import {
   rpathCommand,
   codeSignatureCommand,
 } from "../../../src/artifacts/apple/MachoImage.fixture.js";
+import {
+  FIT_EMBEDDED,
+  FIT_EXTERNAL,
+} from "../../../src/artifacts/fit/FitImage.fixture.js";
+import { devicetreeFixture } from "../../../src/firmware/devicetree/Devicetree.fixture.js";
 
 it.each([
   [4000, false],
@@ -593,6 +598,30 @@ describe("binary target I/O: image classification", () => {
       ok: false,
       error: { _tag: "BinaryTargetError" },
     });
+  });
+});
+
+it("classifies a FIT by its /images node and leaves a plain DTB rejected", async () => {
+  const directory = await createTestTempDirectory("rea-fit-target-");
+  const itb = join(directory, "boot.itb");
+  const extensionless = join(directory, "boot");
+  const dtb = join(directory, "board.dtb");
+  await Promise.all([
+    writeFile(itb, FIT_EMBEDDED),
+    writeFile(extensionless, FIT_EXTERNAL),
+    writeFile(dtb, devicetreeFixture()),
+  ]);
+  for (const path of [itb, extensionless])
+    expect(await parseBinaryTarget(path)).toMatchObject({
+      ok: true,
+      value: { kind: "archive", format: "fit" },
+    });
+  expect(await parseBinaryTarget(dtb)).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "BinaryTargetError",
+      constraint: "file_format_rejected",
+    },
   });
 });
 

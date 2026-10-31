@@ -4,7 +4,8 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { afterEach, expect, it } from "vitest";
+import { afterAll, afterEach, expect, it } from "vitest";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
@@ -23,6 +24,9 @@ import {
   startFakeCdpBrowser,
   type FakeCdpBrowser,
 } from "../../fixtures/fakeCdpBrowser.js";
+
+const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
 
 const resources: Array<{ close(): Promise<unknown> }> = [];
 const browsers: FakeCdpBrowser[] = [];
@@ -858,7 +862,10 @@ const connectBrowser = async (profile?: "full" | "compact") => {
       }),
     },
   );
-  const client = new Client({ name: "browser-mcp-test", version: "1" });
+  const client = new Client(
+    { name: "browser-mcp-test", version: "1" },
+    { jsonSchemaValidator: schemaValidation },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server, session);

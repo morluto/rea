@@ -639,6 +639,102 @@ const reconcileScriptLocation = (
   }).reconciliations.find(({ entity_kind }) => entity_kind === "script");
 };
 
+it("matches a source-free bundled script to its containing asset without suppressing independent layers", async () => {
+  const root = await createTestTempDirectory("rea-runtime-bundler-location-");
+  const source =
+    '(globalThis["webpackChunkfixture"] = globalThis["webpackChunkfixture"] || []).push([["main"],{1:(module)=>{module.exports=1;}},(__webpack_require__)=>{__webpack_require__(1);}]);\n';
+  await writeFile(join(root, "runtime.js"), source);
+  const application = await analyzeFixture(root);
+  const secondRoot = await createTestTempDirectory(
+    "rea-runtime-bundler-other-",
+  );
+  await writeFile(join(secondRoot, "runtime.js"), source);
+  const secondApplication = await analyzeFixture(secondRoot);
+  const reconcile = (sourceIncluded: boolean, twice = false) =>
+    reconcileInput({
+      static_layers: [
+        { role: "application", analysis: application },
+        ...(twice
+          ? [
+              {
+                role: "cache",
+                analysis: secondApplication,
+                runtime_mappings: [
+                  { kind: "file-root", root, artifact_prefix: "" },
+                ],
+              },
+            ]
+          : []),
+      ],
+      runtime_observations: [
+        sourceIncluded
+          ? electronRuntimeEvidence(root, source, {
+              scriptFile: "runtime.js",
+              includeWorker: false,
+            })
+          : sourceFreeRuntime(root, "runtime.js"),
+      ],
+    });
+  const withoutSource = reconcile(false);
+  const script = withoutSource.reconciliations.find(
+    ({ entity_kind }) => entity_kind === "script",
+  );
+  expect(script).toMatchObject({
+    status: "matched",
+    basis: "artifact-path",
+    confidence: "medium",
+    candidate_static_count: 1,
+  });
+  expect(
+    withoutSource.graph.nodes.find(
+      ({ node_id }) => node_id === script?.static_node_id,
+    )?.kind,
+  ).toBe("javascript-asset");
+  expect(withoutSource.static_load_states).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ status: "loaded" }),
+      expect.objectContaining({ status: "resident-in-loaded-asset" }),
+    ]),
+  );
+  expect(
+    reconcile(true).reconciliations.find(
+      ({ entity_kind }) => entity_kind === "script",
+    ),
+  ).toMatchObject({
+    status: "matched",
+    basis: "content-and-location",
+  });
+  const moduleCapture = reconcileInput({
+    static_layers: [{ role: "application", analysis: application }],
+    runtime_observations: [
+      electronRuntimeEvidence(root, "(module)=>{module.exports=1;}", {
+        scriptFile: "runtime.js",
+        includeWorker: false,
+      }),
+    ],
+  });
+  const moduleMatch = moduleCapture.reconciliations.find(
+    ({ entity_kind }) => entity_kind === "script",
+  );
+  expect(moduleMatch).toMatchObject({
+    status: "matched",
+    basis: "content-and-location",
+  });
+  expect(
+    moduleCapture.graph.nodes.find(
+      ({ node_id }) => node_id === moduleMatch?.static_node_id,
+    )?.kind,
+  ).toBe("javascript-module");
+  expect(
+    reconcile(false, true).reconciliations.find(
+      ({ entity_kind }) => entity_kind === "script",
+    ),
+  ).toMatchObject({
+    status: "ambiguous",
+    reason: "ambiguous-static-candidates",
+  });
+});
+
 it.skipIf(process.platform === "win32")(
   "keeps distinct POSIX backslash and slash script locations separate",
   async () => {

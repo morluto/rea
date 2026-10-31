@@ -14,16 +14,16 @@ import type { SanitizedBrowserUrl } from "../domain/browserObservation.js";
 import {
   browserScenarioEventSchema,
   type BrowserScenarioEvent,
+  type BrowserScenarioEventAdmission,
+  type BrowserScenarioEventBudgetReason,
+  type BrowserScenarioEventOmissions,
 } from "../domain/browserScenarioCaptureValues.js";
 import type { BrowserScenarioSecrets } from "./BrowserScenarioSecrets.js";
-import type { BrowserNetworkContentSelection } from "../domain/browserNetworkEvidence.js";
-import type { BrowserNetworkHeaders } from "../domain/browserNetworkEvidence.js";
-import type { BrowserScenarioCaptureLimits } from "../domain/browserScenarioCaptureLimits.js";
 import type {
-  BrowserScenarioEventAdmission,
-  BrowserScenarioEventBudgetReason,
-  BrowserScenarioEventOmissions,
-} from "../domain/browserScenarioCaptureValues.js";
+  BrowserNetworkContentSelection,
+  BrowserNetworkHeaders,
+} from "../domain/browserNetworkEvidence.js";
+import type { BrowserScenarioCaptureLimits } from "../domain/browserScenarioCaptureLimits.js";
 import { DEFAULT_BROWSER_SCENARIO_CAPTURE_LIMITS } from "../domain/browserScenarioCaptureLimits.js";
 import { captureNetworkBody } from "./network/PlaywrightNetworkContent.js";
 import { PlaywrightScenarioNetwork } from "./network/PlaywrightScenarioNetwork.js";
@@ -126,6 +126,7 @@ export class PlaywrightScenarioEvents {
   private readonly stopListeners = new Map<object, Set<() => void>>();
   private sealed = false;
   private sourcePrivacyIncomplete = false;
+  private opaqueRedirectObserved = false;
   private eventPrivacyFinalized = false;
 
   constructor(options: EventCaptureOptions) {
@@ -202,6 +203,12 @@ export class PlaywrightScenarioEvents {
     this.stepIndex = index;
   }
 
+  /** Manual page fetch can conceal a redirect response from Playwright. */
+  opaqueRequestRedirect(): void {
+    if (!this.sealed && this.enabled.has("network"))
+      this.opaqueRedirectObserved = true;
+  }
+
   nextSequence(): number {
     return this.sequence + 1;
   }
@@ -234,6 +241,10 @@ export class PlaywrightScenarioEvents {
         `Popup ${family} events before Page discovery are unavailable; later events are retained.`,
     );
     const gaps = [...popupGaps, ...(this.network?.limitations() ?? [])];
+    if (this.opaqueRedirectObserved)
+      gaps.push(
+        "A request step received an opaque redirect; its response status and Location may be unavailable in network events.",
+      );
     if (this.sourcePrivacyIncomplete)
       gaps.push(
         "Source transaction URLs or content were withheld because marked response values were unavailable.",

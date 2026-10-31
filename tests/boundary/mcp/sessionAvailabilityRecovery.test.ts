@@ -1,4 +1,3 @@
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it } from "vitest";
 
 import { toolContract } from "../../../src/contracts/toolContracts.js";
@@ -8,8 +7,8 @@ import { ProviderAdapterError } from "../../../src/domain/providerAdapterError.j
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { silentLogger } from "../../../src/logger.js";
-import { createServer } from "../../../src/server/createServer.js";
 import { observed } from "../../fixtures/analysisExecution.js";
+import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import {
   createBinarySessionTargets,
@@ -63,13 +62,11 @@ it("restores MCP tool availability after cancelling a target switch", async () =
       return resolveProfile(target, options);
     },
   });
-  const server = createServer(
-    { kind: "session", session },
-    { environment: {}, logger: silentLogger },
-  );
-  const client = new Client({ name: "session-recovery", version: "1" });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
+  const { client, close } = await createApplicationMcpHarness({
+    session,
+    clientIdentity: { name: "session-recovery", version: "1" },
+    serverOptions: { environment: {}, logger: silentLogger },
+  });
   const controller = new AbortController();
   const readStatus = async () => {
     const reply = await client.callTool({
@@ -81,8 +78,6 @@ it("restores MCP tool availability after cancelling a target switch", async () =
     ).result;
   };
   try {
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
     const opened = await client.callTool({
       name: "open_binary",
       arguments: { path: first },
@@ -150,9 +145,7 @@ it("restores MCP tool availability after cancelling a target switch", async () =
   } finally {
     controller.abort();
     release.resolve();
-    await client.close();
-    await server.close();
-    await session.close();
+    await close();
   }
 });
 
@@ -190,13 +183,11 @@ it("keeps a retired run and its lineage visible over MCP until cleanup succeeds"
     };
   };
   const session = createTestBinarySession(provider);
-  const server = createServer(
-    { kind: "session", session },
-    { environment: {}, logger: silentLogger },
-  );
-  const client = new Client({ name: "retained-run", version: "1" });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
+  const { client, close } = await createApplicationMcpHarness({
+    session,
+    clientIdentity: { name: "retained-run", version: "1" },
+    serverOptions: { environment: {}, logger: silentLogger },
+  });
   const readStatus = async () => {
     const reply = await client.callTool({
       name: "binary_session",
@@ -207,8 +198,6 @@ it("keeps a retired run and its lineage visible over MCP until cleanup succeeds"
     ).result;
   };
   try {
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
     expect((await readStatus()).analysis_run).toBeNull();
     expect(
       (await client.callTool({ name: "open_binary", arguments: { path } }))
@@ -249,9 +238,7 @@ it("keeps a retired run and its lineage visible over MCP until cleanup succeeds"
     });
   } finally {
     allowed = true;
-    await client.close();
-    await server.close();
-    await session.close();
+    await close();
   }
 });
 
@@ -276,13 +263,11 @@ it("keeps provider tools available after one request reaches its deadline", asyn
     close: () => Promise.resolve(ok(null)),
   });
   const session = createTestBinarySession(provider);
-  const server = createServer(
-    { kind: "session", session },
-    { environment: {}, logger: silentLogger },
-  );
-  const client = new Client({ name: "request-timeout", version: "1" });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
+  const { client, close } = await createApplicationMcpHarness({
+    session,
+    clientIdentity: { name: "request-timeout", version: "1" },
+    serverOptions: { environment: {}, logger: silentLogger },
+  });
   const availability = async () => {
     const reply = await client.callTool({
       name: "binary_session",
@@ -294,8 +279,6 @@ it("keeps provider tools available after one request reaches its deadline", asyn
     );
   };
   try {
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
     expect(
       (await client.callTool({ name: "open_binary", arguments: { path } }))
         .isError,
@@ -321,8 +304,6 @@ it("keeps provider tools available after one request reaches its deadline", asyn
       normalized_result: "after-timeout",
     });
   } finally {
-    await client.close();
-    await server.close();
-    await session.close();
+    await close();
   }
 });

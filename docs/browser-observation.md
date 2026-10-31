@@ -52,7 +52,11 @@ observations may omit the coverage field; treat omission as `unknown` rather
 than inferring completeness from the array.
 
 Passive DOM comparison checks complete node inventories and complete frame
-parent/child structure independently. Frame IDs and sibling enumeration order
+parent/child structure independently. Node value lengths are comparable only
+when both nonempty snapshots declare the same `node_value_length_unit`.
+Missing or different units leave length comparison unknown; independent node
+or frame structural differences can still prove change. Empty inventories have
+no value lengths to compare. Frame IDs and sibling enumeration order
 are capture-local and do not establish a change; duplicate IDs, missing parents,
 and cyclic ancestry remain unknown. A complete frame difference can still prove
 change when DOM nodes are incomplete, and vice versa. Partial DOM or metadata
@@ -461,7 +465,7 @@ not bound the whole process heap.
 REA retains local observation data and removes only URL userinfo credentials, explicitly declared scenario secrets, and values from structured credential/storage fields:
 
 - URL observations preserve the complete local URL, including query values, fragments, duplicate parameters, and their order. Only username/password userinfo is removed; malformed original URL strings remain available with `origin: null`.
-- DOM snapshots retain node types, node names, value lengths, and attribute names, but not text or attribute values.
+- DOM snapshots retain node types, node names, value lengths, and attribute names, but not text or attribute values. `dom.node_value_length_unit` is `utf16-code-units` for web observations and applies to every node's `node_value_length`; it counts JavaScript string code units, not Unicode code points or UTF-8 bytes. Electron observations declare `utf8-bytes` instead. Historical captures without the unit leave it unknown; reading them does not infer a unit or convert their stored lengths.
 - Supported DOM URL attributes are projected separately as resolved destinations. Empty `action` on HTML or XHTML forms and empty `formaction` on HTML or XHTML submit controls resolve to the document URL; other relative URL attributes resolve against the captured document base.
 - Accessibility structure and reported roles are retained by default, while names and descriptions require `include_accessibility_text: true`. The browser protocol may omit an individual role; that role remains unknown for comparison. Other observed accessibility differences can still establish a change.
 - Network observations retain method, status, MIME type, size, type, initiator stack location, and complete URLs with userinfo credentials removed. Redirects reported by CDP are attached as ordered `redirects` on the one request ID, with the prior request URL, CDP response URL, method/type, response status/MIME/encoded length, request timestamp, and the next `requestWillBeSent` event timestamp. CDP delivers `redirectResponse` with that next request event, so the latter is an event boundary rather than an exact response timestamp. Redirect response headers and bodies are discarded; hops outside the selected origins are discarded with the request chain. Headers are discarded after an allowlisted projection of length/encoding, structured CSP/Link/policy fields, and untrusted agent hints. Cookies and authorization headers are never retained.

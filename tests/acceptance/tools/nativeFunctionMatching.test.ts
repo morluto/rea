@@ -618,7 +618,11 @@ cliTest(
 cliTest(
   "native matching admits the request representation before authenticating observation carriers",
   async () => {
-    const { call } = await connectLocalToolsMcp();
+    // Reach the native matching representation boundary with this intentionally
+    // oversized carrier fixture, rather than stopping at MCP's lower default.
+    const { call } = await connectLocalToolsMcp({
+      REA_MCP_MAX_INPUT_ELEMENTS: "1048576",
+    });
     const left = nativeMatchingInventory("1", [
       { address: "0x10", value: "main" },
     ]);

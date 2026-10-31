@@ -75,6 +75,13 @@ DOM node indices retain their snapshot positions. Invalid rows are omitted with
 completeness diagnostics, so `total_nodes` can exceed the retained node count
 and a parent index can refer to an omitted source node.
 
+`dom.node_value_length_unit` is `utf8-bytes`: each node's `node_value_length`
+counts the bytes needed to encode its value as UTF-8, not characters. Web
+observations instead declare `utf16-code-units`. These existing measurements
+are preserved; the unit is reported once for the whole DOM, without retaining
+text values. Historical captures without the unit leave it unknown; reading
+them does not infer a unit or convert their stored lengths.
+
 Script metadata retains its execution-context frame ID when CDP supplies one and
 records admission separately in `frame_scope`. An `authorized` scope refers to
 the observed document generation; `unknown` retains the known frame ID without

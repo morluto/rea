@@ -1,7 +1,8 @@
 import { copyFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { describe, expect } from "vitest";
+import { afterAll, describe, expect } from "vitest";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { z } from "zod";
 
 import { inspectMachoSchema } from "../../../src/domain/native/nativeInspection.js";
@@ -16,6 +17,9 @@ import { mcpTest } from "../../support/mcp/mcpFixture.js";
 import { openProductionTarget } from "../../support/mcp/productionSession.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { advertisedMcpToolSchemas } from "../../fixtures/advertisedMcpTool.js";
+
+const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
 
 const evidenceOf = <Schema extends z.ZodType>(schema: Schema) =>
   z.object({
@@ -42,6 +46,230 @@ const pageSchema = z.object({
   item: z.array(z.unknown()),
   coverage: z.object({ next_offset: z.number().nullable() }),
 });
+
+const binaryUncertainFixture = () => {
+  const empty = { items: [], total: 0, exhaustive: true, limitations: [] };
+  const incomplete = <T>(item: T) => ({
+    items: [item],
+    total: null,
+    exhaustive: false,
+    limitations: ["Some binary command fields are not decoded."],
+  });
+  const segment = {
+    name: null,
+    name_bytes_hex: "ff",
+    vm_address: "0x0",
+    vm_size: null,
+    vm_size_hex: "0x20000000000000",
+    file_offset: null,
+    file_offset_hex: "0x20000000000001",
+    file_size: null,
+    file_size_hex: "0x20000000000002",
+    maximum_permissions: {
+      read: true,
+      write: false,
+      execute: false,
+      raw: "1",
+    },
+    initial_permissions: {
+      read: true,
+      write: false,
+      execute: false,
+      raw: "1",
+    },
+    sections: {
+      items: [
+        {
+          segment: null,
+          segment_bytes_hex: "ff",
+          name: null,
+          name_bytes_hex: "fe",
+          address: "0x1",
+          size: null,
+          size_hex: "0x20000000000000",
+          file_offset: 0,
+          alignment: null,
+          alignment_exponent: 53,
+          flags: [],
+        },
+      ],
+      total: 1,
+      exhaustive: true,
+      limitations: [],
+    },
+  };
+  const dependency = {
+    path: null,
+    path_bytes_hex: "fd",
+    kind: "LC_LOAD_DYLIB",
+    current_version: null,
+    compatibility_version: null,
+  };
+  const command = {
+    index: 0,
+    kind: "LC_UNKNOWN_0x7fff",
+    fields: {
+      command_code: 32767,
+      command_offset: 184,
+      cmdsize: 8,
+      command_sha256: "a".repeat(64),
+    },
+  };
+  const report = inspectMachoSchema.parse({
+    format: "mach-o",
+    selected_architecture: { name: "arm64", container_file_offset: 0 },
+    endian: "little",
+    word_size: 64,
+    file_type: "2",
+    flags: [],
+    uuid: null,
+    entrypoints: empty,
+    architectures: empty,
+    build_metadata: empty,
+    load_commands: {
+      items: [command],
+      total: 1,
+      exhaustive: true,
+      limitations: ["Some binary command fields are not decoded."],
+    },
+    dependencies: incomplete(dependency),
+    imports: empty,
+    exports: empty,
+    segments: incomplete(segment),
+    encryption: empty,
+    provenance: [],
+    limitations: [],
+  });
+  return { empty, segment, dependency, command, report };
+};
+
+mcpTest(
+  "advertises binary names and partially decoded command fields through SDK schemas",
+  async ({ mcp, onTestFinished }) => {
+    const { empty, segment, dependency, command, report } =
+      binaryUncertainFixture();
+    const source = createEvidence(
+      undefined,
+      { id: "fixture", name: "Fixture", version: "1" },
+      {
+        operation: "inspect_macho",
+        parameters: {},
+        result: report,
+      },
+    );
+    const session = createTestBinarySession(() => {
+      throw new Error("No provider expected");
+    });
+    onTestFinished(async () => {
+      await session.close();
+    });
+    const client = await mcp.connect(
+      createServer(
+        { kind: "session", session },
+        {
+          environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: "full" },
+        },
+      ),
+      undefined,
+      schemaValidation,
+    );
+    const tool = await advertisedMcpToolSchemas(
+      client,
+      "inspect_macho",
+      schemaValidation.assertions,
+    );
+    expect(
+      tool.ajv.validate(tool.outputSchema, source),
+      JSON.stringify(tool.ajv.errors),
+    ).toBe(true);
+    const view = await advertisedMcpToolSchemas(
+      client,
+      "inspect_analysis_view",
+      schemaValidation.assertions,
+    );
+    for (const [facet, expected] of [
+      ["segments", segment],
+      ["dependencies", dependency],
+      ["load_commands", command],
+    ] as const) {
+      const request = {
+        source: { kind: "inline", evidence: source },
+        view: { kind: "macho", facet },
+      };
+      expect(
+        view.ajv.validate(view.inputSchema, request),
+        JSON.stringify(view.ajv.errors),
+      ).toBe(true);
+      const reply = await client.callTool({
+        name: "inspect_analysis_view",
+        arguments: request,
+      });
+      expect(reply.isError, JSON.stringify(reply.content)).not.toBe(true);
+      expect(
+        view.ajv.validate(view.outputSchema, reply.structuredContent),
+        JSON.stringify(view.ajv.errors),
+      ).toBe(true);
+      const result = parseEvidence(reply.structuredContent).normalized_result;
+      expect(result).toMatchObject({
+        item: [expected],
+        source_exhaustive: facet === "load_commands",
+      });
+      if (facet === "load_commands")
+        expect(result).toMatchObject({
+          limitations: expect.arrayContaining([
+            "Some binary command fields are not decoded.",
+          ]),
+        });
+    }
+    // A historical record can omit all fields introduced for exact byte names.
+    const historicalSegment = {
+      name: "__TEXT",
+      vm_address: "0x0",
+      vm_size: 64,
+      file_offset: 0,
+      file_size: 64,
+      maximum_permissions: segment.maximum_permissions,
+      initial_permissions: segment.initial_permissions,
+      sections: empty,
+    };
+    const historical = createEvidence(
+      undefined,
+      { id: "fixture", name: "Fixture", version: "1" },
+      {
+        operation: "inspect_macho",
+        parameters: {},
+        result: {
+          ...report,
+          segments: {
+            items: [historicalSegment],
+            total: 1,
+            exhaustive: true,
+            limitations: [],
+          },
+        },
+      },
+    );
+    expect(
+      tool.ajv.validate(tool.outputSchema, historical),
+      JSON.stringify(tool.ajv.errors),
+    ).toBe(true);
+    const oldView = await client.callTool({
+      name: "inspect_analysis_view",
+      arguments: {
+        source: { kind: "inline", evidence: historical },
+        view: { kind: "macho", facet: "segments" },
+      },
+    });
+    expect(oldView.isError, JSON.stringify(oldView.content)).not.toBe(true);
+    expect(
+      view.ajv.validate(view.outputSchema, oldView.structuredContent),
+      JSON.stringify(view.ajv.errors),
+    ).toBe(true);
+    expect(
+      parseEvidence(oldView.structuredContent).normalized_result,
+    ).toMatchObject({ item: [historicalSegment], source_exhaustive: true });
+  },
+);
 
 mcpTest(
   "pages ambiguous imports and exact exports under the advertised MCP schema",
@@ -82,6 +310,7 @@ mcpTest(
       imports: { ...empty, items: [imported], total: 1 },
       exports: { ...empty, items: [exported], total: 1 },
       segments: empty,
+      encryption: empty,
       provenance: [],
       limitations: [],
     });
@@ -107,10 +336,13 @@ mcpTest(
           environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: "full" },
         },
       ),
+      undefined,
+      schemaValidation,
     );
     const schemas = await advertisedMcpToolSchemas(
       client,
       "inspect_analysis_view",
+      schemaValidation.assertions,
     );
     for (const [facet, expected] of [
       ["imports", imported],
@@ -183,7 +415,12 @@ describe.skipIf(process.platform !== "darwin")(
         const report = full.normalized_result;
         expect(summary.summary.uuid).toBe(report.uuid);
         expect(summary.summary.provenance_count).toBe(report.provenance.length);
-        for (const name of ["imports", "exports", "dependencies"] as const)
+        for (const name of [
+          "imports",
+          "exports",
+          "dependencies",
+          "encryption",
+        ] as const)
           expect(summary.summary.collections[name]).toEqual({
             returned: report[name].items.length,
             total: report[name].total,
@@ -206,6 +443,7 @@ describe.skipIf(process.platform !== "darwin")(
           "imports",
           "exports",
           "segments",
+          "encryption",
           "provenance",
         ] as const;
         for (const facet of facets) {

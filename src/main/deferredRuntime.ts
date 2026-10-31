@@ -205,6 +205,7 @@ export const runDeferred = async (
                   dependencies.setExitCode(1);
                   throw cause;
                 }),
+              config.mcpMaxInputElements,
             );
             return server;
           });

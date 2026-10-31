@@ -31,7 +31,7 @@ import { getterExpansionSource } from "../../../tests/fixtures/javascriptGetterE
 
 const SHA256 = "a".repeat(64);
 
-it("retains direct call literals and resolves literal queries to their call site", () => {
+it("retains direct call literals and resolves literal queries to their argument", () => {
   const source =
     'api.rpc("proc_0", 7, false, null, dynamic, ...values, `fixed`, -3);';
   const graph = graphFor(source);
@@ -57,7 +57,10 @@ it("retains direct call literals and resolves literal queries to their call site
       direction: "forward-influence",
     }),
   );
-  expect(trace.seed_node_ids).toContain(call.node_id);
+  expect(
+    trace.nodes.find((node) => node.node_id === trace.seed_node_ids[0])?.label,
+  ).toBe("argument 0");
+  expect(trace.nodes.some((node) => node.node_id === call.node_id)).toBe(true);
 });
 
 it("reports the primitive byte bound when a direct argument is too large", () => {
@@ -663,6 +666,108 @@ it("selects analyzer-produced boundaries by their method field", () => {
       }),
     ).summary.total_seed_matches,
   ).toBe(0);
+});
+
+it.each(["Number", "JSON.parse"])(
+  "connects a resolved %s boundary to its assigned result and later read",
+  (method) => {
+    const graph = graphFor(
+      `function parse(raw) { const n = ${method}(raw); return n; }`,
+    );
+    const boundary = graph.nodes.find(
+      (node) => node.kind === "boundary" && node.label === method,
+    );
+    const binding = graph.nodes.find(
+      (node) => node.kind === "binding" && node.label === "n",
+    );
+    const raw = graph.nodes.find(
+      (node) => node.kind === "parameter" && node.label === "raw",
+    );
+    const read = graph.nodes.find((node) =>
+      node.identity.role_key.endsWith("read:n"),
+    );
+    if (!boundary || !binding || !raw || !read)
+      throw new Error("Expected boundary, input, result binding, and read");
+    expect(graph.relations).toContainEqual(
+      expect.objectContaining({
+        source_node_id: boundary.node_id,
+        target_node_id: binding.node_id,
+        relation: "defines",
+        resolution: "resolved",
+      }),
+    );
+    const query = (
+      nodeId: string,
+      direction: "forward-influence" | "backward-provenance",
+    ) =>
+      queryJavaScriptSemanticGraph(
+        graph,
+        javaScriptSemanticQueryInputSchema.parse({
+          seed: { kind: "semantic-node", node_id: nodeId },
+          direction,
+        }),
+      );
+    expect(query(boundary.node_id, "forward-influence").nodes).toEqual(
+      expect.arrayContaining([binding, read]),
+    );
+    expect(query(read.node_id, "backward-provenance").nodes).toEqual(
+      expect.arrayContaining([boundary, raw]),
+    );
+  },
+);
+
+it.each([
+  "function parse(raw) { const n = Number(raw) + 1; return n; }",
+  "function parse(raw) { let n = 1; n += Number(raw); return n; }",
+  "function parse(raw) { let n = 1; n ||= Number(raw); return n; }",
+])(
+  "does not treat a transformed or conditional boundary as its assigned value: %s",
+  (source) => {
+    const graph = graphFor(source);
+    const boundary = graph.nodes.find((node) => node.kind === "boundary");
+    const binding = graph.nodes.find(
+      (node) => node.kind === "binding" && node.label === "n",
+    );
+    if (!boundary || !binding) throw new Error("Expected boundary and binding");
+    expect(graph.relations).not.toContainEqual(
+      expect.objectContaining({
+        source_node_id: boundary.node_id,
+        target_node_id: binding.node_id,
+        relation: "defines",
+      }),
+    );
+  },
+);
+
+it("keeps uncertain parser results as candidates and ignores shadowed coercions", () => {
+  const graph = graphFor(`
+    function run(raw, parser, Number) {
+      const parsed = parser.parse(raw);
+      const shadowed = Number(raw);
+      return parsed;
+    }
+  `);
+  const parser = graph.nodes.find(
+    (node) => node.kind === "boundary" && node.label === "parse",
+  );
+  const parsed = graph.nodes.find(
+    (node) => node.kind === "binding" && node.label === "parsed",
+  );
+  if (!parser || !parsed)
+    throw new Error("Expected parser boundary and binding");
+  expect(graph.relations).toContainEqual(
+    expect.objectContaining({
+      source_node_id: parser.node_id,
+      target_node_id: parsed.node_id,
+      relation: "defines",
+      resolution: "candidate",
+    }),
+  );
+  expect(
+    graph.nodes.some(
+      (node) => node.kind === "boundary" && node.label === "Number",
+    ),
+  ).toBe(false);
 });
 
 const semanticNodeFor = (roleKey: string) => {

@@ -198,6 +198,10 @@ rereading mutable files. A seed may identify a semantic or application node,
 literal, function fingerprint, property, endpoint, event, or boundary field.
 For a recovered parse, coercion, or validation boundary, its field value is the
 static operation's method name (for example, `Number`).
+When a recovered boundary call directly supplies a scalar binding, the graph
+connects the boundary to that binding; unresolved boundary calls remain
+candidates. A boundary nested inside another expression or compound assignment
+does not establish a direct result binding.
 The query declares backward provenance, forward influence, callers, or
 ownership and can restrict admitted relation kinds. REA returns every matching
 seed and the complete reachable subgraph; callers do not choose node, relation,
@@ -220,6 +224,25 @@ resulting value. Deferred callback bodies do not become inputs to the enclosing
 assignment. Computed method keys belong to the enclosing callable; parameter
 defaults and method bodies belong to the method. Uncertain later property reads
 remain opt-in through `include_ambiguous_dynamic_edges`.
+
+Binary, logical, unary, template, conditional, and sequence expressions retain
+`influences` edges from supported immediate inputs to the result, then to a
+direct declaration, assignment, call argument, or return. These are static
+dependencies, not aliases or proof that the expression executed; conditional
+operands and logical-assignment writes carry `conditional: true`. Unsupported
+operand dependencies, unmodeled receiving containers, dynamic call results,
+and sequence side effects remain unknown. An applicable
+unknown makes the trace status `partial` even when a seed was found. Literal
+operator operands, direct call arguments and directly returned scalar literals
+can also be seeds. Older graphs that only recorded a call-site literal remain
+searchable. The offered per-file node capacity also bounds the producer's
+expression and operand collections before graph projection.
+Expression nodes and unknowns share the existing per-file graph admission
+budgets; omitted facts make graph coverage truncated and the trace partial.
+Consumers that previously treated `found` as compatible with a relevant
+unknown should handle `partial` and inspect the returned unknowns. Retained
+graphs without `influences` edges remain readable but do not gain edges until
+the application is analyzed again.
 Global timer, `fetch`, `WebSocket`, `JSON.parse`, and coercion calls receive
 these built-in effects only when the file has no visible possible write to that
 global, including a computed write through a global object. The check does not

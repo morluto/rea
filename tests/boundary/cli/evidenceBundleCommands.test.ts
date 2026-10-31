@@ -11,6 +11,8 @@ import {
 import { join } from "node:path";
 
 import { expect } from "vitest";
+import { Ajv2020 } from "ajv/dist/2020.js";
+import { z } from "zod";
 
 import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
@@ -62,6 +64,99 @@ const revisionBundle = () => {
   );
   return createEvidenceBundle(records, [initial, revised]);
 };
+
+cliTest(
+  "rejects empty Evidence path arguments before filesystem selection",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-empty-evidence-path-");
+    const encoded = JSON.stringify(revisionBundle());
+    await writeFile(join(root, "bundle.json"), encoded);
+    for (const [args, field] of [
+      [["evidence-import", ""], "path"],
+      [["evidence-export", "", "refused.json"], "source"],
+      [["evidence-export", "bundle.json", ""], "output"],
+      [["compare", "", "bundle.json"], "left"],
+      [["compare", "bundle.json", ""], "right"],
+      [["evidence-export", "missing.json", ""], "output"],
+    ] as const) {
+      const result = await cli.run({
+        arguments: [...args, "--json"],
+        cwd: root,
+      });
+      expect(result.exitCode, JSON.stringify(args)).toBe(1);
+      expect(result.stderr).toBe("");
+      expect(result.json).toMatchObject({
+        code: "VALIDATION_ERROR",
+        fieldErrors: [{ path: field, code: "too_small", missing: false }],
+      });
+      expect(result.json).not.toHaveProperty("details.path");
+      expect(await readdir(root)).toEqual(["bundle.json"]);
+      expect(await readFile(join(root, "bundle.json"), "utf8")).toBe(encoded);
+    }
+  },
+);
+
+cliTest(
+  "preserves whitespace in selected Evidence filenames",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-evidence-spaced-path-");
+    const source = " bundle name.json";
+    const output = " exported bundle.json";
+    const bundle = revisionBundle();
+    const encoded = JSON.stringify(bundle);
+    await writeFile(join(root, source), encoded);
+    const imported = await cli.run({
+      arguments: ["evidence-import", source, "--json"],
+      cwd: root,
+    });
+    expect(imported.exitCode, imported.stderr).toBe(0);
+    expect(imported.json).toEqual({ imported: 2, unknowns_added: 2, total: 2 });
+    const exported = await cli.run({
+      arguments: ["evidence-export", source, output, "--json"],
+      cwd: root,
+    });
+    expect(exported.exitCode, exported.stderr).toBe(0);
+    expect(JSON.parse(await readFile(join(root, output), "utf8"))).toEqual(
+      bundle,
+    );
+    const compared = await cli.run({
+      arguments: ["compare", source, output, "--json"],
+      cwd: root,
+    });
+    expect(compared.exitCode, compared.stderr).toBe(0);
+    expect(compared.json).toMatchObject({ status: "unchanged" });
+    expect(await readFile(join(root, source), "utf8")).toBe(encoded);
+    expect((await readdir(root)).sort()).toEqual([source, output].sort());
+  },
+);
+
+cliTest(
+  "advertises the same nonempty path constraints to schema clients",
+  async ({ cli }) => {
+    const ajv = new Ajv2020({ strict: false, validateFormats: false });
+    for (const [command, valid] of [
+      ["evidence-import", { path: " bundle.json" }],
+      ["evidence-export", { source: " bundle.json", output: " exported.json" }],
+      ["compare", { left: " bundle.json", right: " other.json" }],
+    ] as const) {
+      const result = await cli.run({
+        arguments: [command, "--schema", "--json"],
+      });
+      expect(result.exitCode, result.stderr).toBe(0);
+      expect(result.stderr).toBe("");
+      const { args } = z
+        .object({ args: z.record(z.string(), z.unknown()) })
+        .parse(result.json);
+      expect(ajv.validateSchema(args), ajv.errorsText()).toBe(true);
+      const validate = ajv.compile(args);
+      expect(validate(valid), command).toBe(true);
+      for (const field of Object.keys(valid))
+        expect(validate({ ...valid, [field]: "" }), `${command}.${field}`).toBe(
+          false,
+        );
+    }
+  },
+);
 
 cliTest(
   "rejects directory exports with file-path recovery in both overwrite modes",

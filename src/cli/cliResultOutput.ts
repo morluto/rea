@@ -29,6 +29,9 @@ import {
   formatCliOutput,
   prepareDelimitedOutput,
   delimitedOutputInputError,
+  containsUnpairedSurrogate,
+  containsUnrepresentableMarkdown,
+  hasUnpairedSurrogate,
 } from "./cliOutputFormatter.js";
 import {
   cliEvidencePublicationReceipt,
@@ -155,6 +158,7 @@ export const createCliResultOutput = (
   let failed = false;
   let error: AnalysisErrorProjection | undefined;
   let streaming = false;
+  let sdkDocumentControls = false;
   const sdkParts: string[] = [];
   let sdkCompletion: Promise<void> | undefined;
   let completed:
@@ -263,21 +267,34 @@ export const createCliResultOutput = (
       error = undefined;
       completed = undefined;
       streaming = false;
+      sdkDocumentControls = false;
       sdkParts.length = 0;
       sdkCompletion = undefined;
     },
     sdkArguments(args) {
       const normalized = normalizeCliArguments(args);
+      const split = splitIncurBuiltinArguments(normalized);
+      const values = new Set(split.outputValues.map(({ index }) => index));
+      const hasFlag = (flag: string) =>
+        normalized.some((token, index) => token === flag && !values.has(index));
+      // Incur emits these documents outside command result handlers. Manifest
+      // flags precede help; schema follows help and version in its dispatcher.
+      sdkDocumentControls =
+        (options.tokenCount || options.tokenWindow) &&
+        (hasFlag("--llms") ||
+          hasFlag("--llms-full") ||
+          (hasFlag("--schema") &&
+            !["completions", "mcp", "skills"].includes(
+              split.command[0] ?? "",
+            ) &&
+            !hasFlag("--help") &&
+            !hasFlag("-h") &&
+            !hasFlag("--version")));
       // The caller's parsed controls remain authoritative: the CLI may adapt
       // CSV/TSV to JSON for Incur without changing the requested presentation.
       if (format !== "jsonl" || !options.tokenCount) return normalized;
       // Incur counts errors before REA can retain their diagnostic payload.
       // Preserve operands using the shared builtin consumption rules.
-      const values = new Set(
-        splitIncurBuiltinArguments(normalized).outputValues.map(
-          ({ index }) => index,
-        ),
-      );
       return normalized.filter(
         (token, index) => token !== "--token-count" || values.has(index),
       );
@@ -286,7 +303,8 @@ export const createCliResultOutput = (
       streaming = true;
     },
     captureSdkOutput(text) {
-      if (format !== "jsonl" || streaming || handled) return false;
+      if ((format !== "jsonl" && !sdkDocumentControls) || streaming || handled)
+        return false;
       // Incur already materializes one-shot documents. Retain references only;
       // generator events bypass this buffer and remain incremental.
       if (text.length > 0) sdkParts.push(text);
@@ -309,11 +327,28 @@ export const createCliResultOutput = (
                 destination,
                 `${estimateTokenCount(parts.join(""))}\n`,
               );
-            else
+            else if (sdkDocumentControls && options.tokenWindow) {
+              const text = parts.join("");
+              const window = sliceTextByTokenWindow(
+                text,
+                options.tokenOffset ?? 0,
+                options.tokenLimit,
+              );
+              await writeOutputText(
+                destination,
+                window.truncated
+                  ? `${window.text}\n[truncated: showing tokens ${window.start}–${window.end} of ${window.total}]\n`
+                  : text,
+              );
+            } else
               for (const part of parts)
                 await writeOutputText(destination, part);
           } else {
             const text = parts.join("");
+            if (format !== "jsonl") {
+              await writeOutputText(destination, text);
+              return;
+            }
             let result: unknown = text;
             try {
               result = JSON.parse(text);
@@ -477,6 +512,62 @@ export const createCliResultOutput = (
       return true;
     }
     const selected = selection.value;
+    const refuseUnrepresentableText = async (): Promise<true> => {
+      error = projectAnalysisError(
+        new AnalysisInputError(
+          metadata.command,
+          {
+            userMessage:
+              format === "md"
+                ? "Markdown cannot preserve NUL or unpaired UTF-16 surrogates in rendered output."
+                : "TOON cannot preserve unpaired UTF-16 surrogates in UTF-8 output.",
+            remediationAction:
+              "Use --format json or --format yaml to retain the exact code units.",
+            ...(completed?.originalFailure === undefined
+              ? {}
+              : {
+                  diagnostics: { original_failure: completed.originalFailure },
+                }),
+          },
+          [
+            {
+              path: ["--format"],
+              reason: "invalid_value",
+              message: "The selected format cannot preserve this value.",
+            },
+          ],
+        ),
+      );
+      const document = options.fullOutput
+        ? {
+            ok: false,
+            error,
+            meta: { command: metadata.command, duration: metadata.duration },
+          }
+        : error;
+      handled = true;
+      try {
+        await writeOutputText(
+          destination,
+          `${formatCliOutput(document, format)}\n`,
+        );
+      } catch (cause: unknown) {
+        failed = true;
+        throw cause;
+      }
+      return true;
+    };
+    if (
+      (format === "toon" || format === "md") &&
+      !options.tokenCount &&
+      (!options.tokenWindow ||
+        format === "md" ||
+        operationFailure !== undefined) &&
+      (format === "md"
+        ? containsUnrepresentableMarkdown(selected)
+        : containsUnpairedSurrogate(selected))
+    )
+      return refuseUnrepresentableText();
     const filtered =
       (format === "json" || format === "jsonl") &&
       ownsFilteredOutput &&
@@ -649,6 +740,8 @@ export const createCliResultOutput = (
             format,
           )
         : sliced;
+      if (format === "toon" && hasUnpairedSurrogate(outputDocument))
+        return refuseUnrepresentableText();
       handled = true;
       try {
         await writeOutputText(

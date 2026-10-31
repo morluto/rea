@@ -13,6 +13,13 @@ Select columns, batch IDs and page individual facts; aliases remain unresolved.
 Unpaired observations do not prove additions/removals. Existing matched dossier
 pairs include inputs for `compare_functions`; otherwise analyze just chosen pairs.
 
+Aggregate completed comparisons with `find_changed_behavior`, selecting each
+comparison's exact `retained-evidence` ID instead of resending full records.
+Inline comparison Evidence remains accepted. References belong to the current
+server: after handoff, import the original bundle including its source closure.
+Do not substitute dossier IDs or summary views. Static differences remain
+behavior candidates, with runtime behavior unknown unless separately observed.
+
 For a matching representation refusal, inspect `details.limit` and raise
 `native.matching_representation_bytes` with `update_analysis_settings` before
 retrying the unchanged MCP request. CLI launch seed:
@@ -516,6 +523,11 @@ names), coverage and per-collection counts. Page rows with
 `view: {kind: "managed-members", collection: "call_edges", offset: 0, limit: 64}`
 over `types`, `exported_types`, `fields`, `methods`, `member_refs`, `call_edges`,
 `field_accesses` or `user_strings`.
+Use exact `names` and `declaring_types` filters before paging supported
+collections. For a compact method lookup, request `fields: ["name",
+"declaring_type", "signature"]`; omit `body` to avoid anchors. Identity tokens,
+original `source_index`, module/MVID and source coverage remain. Check
+`unresolved_filter_rows` before interpreting an empty match as absence.
 
 ### .NET NativeAOT
 
@@ -616,6 +628,16 @@ discovery are unsupported. Windows Ghidra P0 admits raw images only for `6502`. 
 Fresh-import sessions admit annotations; existing-project reuse is read-only.
 Use `annotate_native_function` for one function name and/or entry comments, with at least one explicit change. Review its annotation readback and refreshed dossier inline. Changes are atomic and session-scoped; empty comments clear them, omitted fields preserve them. Later MCP calls observe edits until close. CLI `annotate-native-function` returns the updated analysis before discarding the session. Original executable bytes are unchanged; edits invalidate immutable snapshots. Windows P0 does not admit database mutations. For naming only, `set_address_name` / `set_addresses_names` also work with Ghidra: they name function entries or data addresses (primary labels) and return compact per-address success booleans instead of a dossier.
 
+For `compare_functions`, obtain `analyze_function` Evidence before and after the
+edit while the MCP session is open; annotation Evidence is not a comparison
+input. Export the needed Evidence before close if comparison will happen later.
+Authenticated same-artifact coordinates preserve renamed entries as
+`matched / same-entry`, with the canonical `entry_address` inline; name and
+exact-text changes remain separate dimensions. This requires compatible
+architecture, provider-owned mapping and selected-image commitments. Equal
+numeric addresses alone cannot establish correspondence; inspect retained
+source Evidence and coverage when the match remains ambiguous.
+
 ## Offline PE resource inventory
 
 Use `inspect_pe_resources` with an absolute `path`, or
@@ -700,3 +722,20 @@ refusals. ESP8266 images are refused, and flash-encrypted images are not
 recognized. Segments are not disassembled, and RISC-V or Xtensa segments
 cannot be opened as raw-binary. See
 [ESP images](https://github.com/morluto/rea/blob/main/docs/esp-image.md).
+
+## Bun standalone executables
+
+A `bun build --compile` executable stores its module graph in Mach-O
+`__BUN,__bun`, a PE or ELF `.bun` section, or an appended trailer.
+`open_binary` then `inspect_artifact` reports root format `bun-standalone` with
+the carrier, structural layout, module count, entry point, raw flags and
+compile exec-argv; each module keeps its `/$bunfs/...` source name, loader,
+encoding, sizes and SHA-256, with sourcemap, bytecode and module-info regions as
+separate children. Use summary root metadata `entry_point_logical_path` as the
+exact inventory `logical_paths` selector, then read the selected content node by
+its artifact ID; the reader owns virtual-name normalization and indexed fallback. `extract-artifact` writes stored contents through the safe
+output tree; route extracted JavaScript to `analyze_javascript_application`.
+Layout labels describe record shapes, not a detected compiler version; unknown
+or ambiguous layouts are unsupported. Bytecode is retained, not decoded, and the
+executable is never run. See
+[Bun standalone executables](https://github.com/morluto/rea/blob/main/docs/bun-standalone.md).

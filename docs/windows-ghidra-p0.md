@@ -19,12 +19,13 @@ additional permission flag or degraded mode is required.
 - a 64-bit full JDK inside that installation's declared Java range (JDK 21 or newer, with no maximum, for current 12.1 releases);
 - an explicit native, non-managed x86, x86-64, ARMNT (Thumb-2) or ARM64 PE application/DLL, or a
   [raw NMOS 6502 image](raw-binary.md#nmos-6502) with a caller-supplied entry; and
-- the 26 read-only Ghidra inventory, memory, and function-analysis operations.
+- the 27 read-only Ghidra inventory, memory, and function-analysis operations.
 
 Loaded memory reads and file offsets preserve Ghidra's observed source mappings.
 PE load-image inspection returns an explicit unsupported attestation status.
-Independent verification covers admitted DOS MZ, explicit COM, and explicit
-[raw-binary imports](raw-binary.md) on their supported hosts, including the
+Independent verification covers admitted DOS MZ, explicit COM, explicit
+[raw-binary imports](raw-binary.md), and explicit
+[GameCube DOL images](ghidra-dol.md) on their supported hosts, including the
 admitted raw NMOS 6502 mapping on Windows. Windows P0 admission remains limited
 to native PE and raw NMOS 6502 images. For x64 PE
 NativeAOT RTR 9.1, the read-only snapshot parser can report metadata through

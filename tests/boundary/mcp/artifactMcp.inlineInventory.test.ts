@@ -1,11 +1,12 @@
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../../scripts/lib/mcp-verification-environment.mjs";
 import { readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { Ajv2020 } from "ajv/dist/2020.js";
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
-import { expect, it } from "vitest";
+import { afterAll, expect, it } from "vitest";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { z } from "zod";
 import { keyedArchiveResultSchema } from "../../../src/domain/apple/keyedArchive.js";
 
@@ -25,6 +26,9 @@ import {
   analysisViewResultSchema,
   type AnalysisViewResult,
 } from "../../../src/domain/analysisView/analysisView.js";
+
+const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
 
 const assertInventorySubjectValidation = async (
   client: Client,
@@ -96,7 +100,10 @@ it("preserves keyed archive identities and rejects inconsistent inventory carrie
   );
   const session = createTestBinarySession(new ArtifactProvider(process.env));
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "keyed-mcp-test", version: "1" });
+  const client = new Client(
+    { name: "keyed-mcp-test", version: "1" },
+    { jsonSchemaValidator: schemaValidation },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {
@@ -198,16 +205,15 @@ const createInventoryViewReader = async (
   );
   if (advertised?.outputSchema === undefined)
     throw new Error("Missing advertised view schemas");
-  const ajv = new Ajv2020({ strict: false, validateFormats: false });
+  const ajv = schemaValidation.assertions;
   const inputSchema: Record<string, unknown> = advertised.inputSchema;
   const outputSchema: Record<string, unknown> = advertised.outputSchema;
-  const validateInput = ajv.compile(inputSchema);
-  const validateOutput = ajv.compile(outputSchema);
   const malformed = {
     source: { kind: "retained-evidence", evidence_id: parent.evidence_id },
     view: { kind: "inventory", collection: "nodes", logical_paths: [] },
   };
-  if (profile === "full") expect(validateInput(malformed)).toBe(false);
+  if (profile === "full")
+    expect(ajv.validate(inputSchema, malformed)).toBe(false);
   const rejected = await client.callTool({
     name: "inspect_analysis_view",
     arguments: malformed,
@@ -224,8 +230,8 @@ const createInventoryViewReader = async (
   ) => {
     const arguments_ = { source, view };
     expect(
-      validateInput(arguments_),
-      JSON.stringify(validateInput.errors),
+      ajv.validate(inputSchema, arguments_),
+      JSON.stringify(ajv.errors),
     ).toBe(true);
     const reply = await client.callTool({
       name: "inspect_analysis_view",
@@ -234,8 +240,8 @@ const createInventoryViewReader = async (
     if (reply.isError)
       throw new Error(JSON.stringify(parseMcpToolError(reply)));
     expect(
-      validateOutput(reply.structuredContent),
-      JSON.stringify(validateOutput.errors),
+      ajv.validate(outputSchema, reply.structuredContent),
+      JSON.stringify(ajv.errors),
     ).toBe(true);
     const evidence = parseEvidence(reply.structuredContent);
     return {
@@ -350,10 +356,17 @@ it.each(["full", "compact"] as const)(
     const server = createServer(
       { kind: "session", session },
       {
-        environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: profile },
+        environment: {
+          ...process.env,
+          ...INLINE_EVIDENCE_MCP_ENVIRONMENT,
+          REA_MCP_INPUT_SCHEMA_PROFILE: profile,
+        },
       },
     );
-    const client = new Client({ name: "artifact-inline-test", version: "1" });
+    const client = new Client(
+      { name: "artifact-inline-test", version: "1" },
+      { jsonSchemaValidator: schemaValidation },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {
@@ -492,7 +505,10 @@ it("refuses summary delivery without a retained Evidence owner and preserves com
   const opened = await session.open(archive);
   if (!opened.ok) throw opened.error;
   const server = createServer({ kind: "fixed", analysis: session });
-  const client = new Client({ name: "artifact-fixed-test", version: "1" });
+  const client = new Client(
+    { name: "artifact-fixed-test", version: "1" },
+    { jsonSchemaValidator: schemaValidation },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {

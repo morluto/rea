@@ -124,9 +124,11 @@ shape, with the application's own locators, paths and headers:
 }
 ```
 
-Give every step a `timeout_ms`. A step without one waits until the scenario
-is cancelled, so a locator that never matches hangs the capture, and the
-client with it. Match `wait_for` locators to exactly one element.
+Give each step that accepts `timeout_ms` a deadline. Without one, a step waits
+until it completes or the scenario is cancelled, so a locator that never
+matches hangs the capture and the client with it. The `wait_for_timeout` pause
+instead uses `duration_ms` and does not accept `timeout_ms`. Match `wait_for`
+locators to exactly one element.
 
 1. Sign in through the UI: `fill` the user and password fields (the password
    as a secret reference), submit, then `wait_for` an element only a signed-in
@@ -153,13 +155,17 @@ client with it. Match `wait_for` locators to exactly one element.
    with varied free text. After each write, and before the next one, read the
    object back by id and then its list: create 1, read 1, list, create 2,
    read 2, list; never several writes before their reads.
-4. Leave more than a second between a create and its first edit
-   (`wait_for_timeout` with `duration_ms: 1100`).
+4. Leave more than a second between two creates and between a create and its
+   first edit (`wait_for_timeout` with `duration_ms: 1100`), so lists sorted
+   by creation time show them in order.
 5. Update both objects and read each back, changing the fields a person
    would change (a name, an email address, a status, a due date) rather than
    only a description: a served update accepts only the members a recorded
-   update stored. Delete both and read each back (expect 404, or the object
-   marked deleted) and the list.
+   update stored. Run an action that turns something on or off (star,
+   bookmark, archive) twice in a row on one object, reading it back after
+   each: the second call shows whether it sets or flips the field, and the
+   environment serves the action only once a call has shown it. Delete both
+   and read each back (expect 404, or the object marked deleted) and the list.
 6. Vary what the two creates send, however you write them: the first every
    field the application takes, the second only what a person must give (its
    title or name), with the other fields left out or empty. A served create

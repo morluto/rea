@@ -9,11 +9,12 @@ import {
   type WebBundleAnalysis,
 } from "../webBundleAnalysis.js";
 import { recordedBrowserOriginSchema } from "../browserObservation.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import {
+  assertOwnedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
 import {
   boundedViewMessages,
   completeWithinViewCoverage,
@@ -119,8 +120,8 @@ const choose = <T extends object>(
 /** Historical projection of completed analyze_web_bundle Evidence. */
 export const projectWebBundleView = (
   parent: AnalysisViewParent,
-  selected: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
+  selected: AdmittedView,
+) => {
   if (selected.kind !== "web-bundle" && selected.kind !== "summary")
     return err(
       analysisViewInputError([
@@ -132,6 +133,9 @@ export const projectWebBundleView = (
       ]),
     );
 
+  assertOwnedView<
+    SummaryAnalysisView | z.output<typeof webBundleViewRequestSchema>
+  >(selected, "summary", "web-bundle");
   if (parent.operation !== "analyze_web_bundle")
     return err(
       analysisViewInputError([
@@ -216,8 +220,8 @@ export const projectWebBundleView = (
 
   if (selected.kind === "summary") {
     const summary = buildSummary();
-    const result: UnsignedAnalysisView = {
-      kind: "summary",
+    const result = {
+      kind: "summary" as const,
       view: selected,
       ...shared,
       summary,
@@ -234,8 +238,8 @@ export const projectWebBundleView = (
   const view = selected;
   if (view.collection === "summary") {
     const summary = buildSummary();
-    const result: UnsignedAnalysisView = {
-      kind: "web-bundle",
+    const result = {
+      kind: "web-bundle" as const,
       view,
       ...shared,
       completeness: report.completeness,
@@ -261,7 +265,7 @@ export const projectWebBundleView = (
     rows: readonly T[],
     matches: ((row: T, source_index: number) => boolean) | undefined,
     project: (row: T, source_index: number) => Item,
-  ): Result<UnsignedAnalysisView, AnalysisError> => {
+  ) => {
     const baseEnvelope = {
       ...shared,
       kind: "web-bundle" as const,
@@ -323,7 +327,7 @@ export const projectWebBundleView = (
     }
 
     const coverage = pageViewCoverage(view.offset, items.length, total);
-    const result: UnsignedAnalysisView = {
+    const result = {
       ...shared,
       kind: "web-bundle" as const,
       view,
