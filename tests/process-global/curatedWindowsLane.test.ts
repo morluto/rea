@@ -15,6 +15,8 @@ const workflowSchema = z.object({
       steps: z
         .array(
           z.object({
+            uses: z.string().optional(),
+            env: z.record(z.string(), z.string()).optional(),
             run: z.string().optional(),
             with: z.object({ name: z.string().optional() }).optional(),
           }),
@@ -62,6 +64,27 @@ const exists = async (path: string): Promise<boolean> =>
   );
 
 describe("curated Windows test lane", () => {
+  it.each([
+    ["ci.yml", "windows-curated"],
+    ["real-ghidra-windows.yml", "verify"],
+    ["real-cutter.yml", "cutter-upstream"],
+  ])(
+    "preserves committed bytes before %s/%s installs dependencies",
+    async (file, job) => {
+      const workflow = workflowSchema.parse(
+        parse(await readFile(join(".github", "workflows", file), "utf8")),
+      );
+      const checkout = workflow.jobs[job]?.steps?.find((step) =>
+        step.uses?.startsWith("actions/checkout@"),
+      );
+      expect(checkout?.env).toMatchObject({
+        GIT_CONFIG_COUNT: "1",
+        GIT_CONFIG_KEY_0: "core.autocrlf",
+        GIT_CONFIG_VALUE_0: "false",
+      });
+    },
+  );
+
   it("references only test files that exist", async () => {
     const paths = await explicitPaths("windows");
     expect(paths.length).toBeGreaterThan(0);

@@ -15,7 +15,9 @@
         "package": "rea-agents",
         "version": "6.8.0"
       },
-      "category": "development"
+      "category": "development",
+      "homepage": "https://rea.tools/",
+      "repository": "https://github.com/morluto/rea"
     }
   ]
 }
