@@ -298,6 +298,10 @@ verified.
 
 ## Native targets
 
+For a static Visual Basic 6 native-code OCX/DLL investigation, see the
+[VB6 workflow](vb6-native-ocx.md). Interface metadata, compiler patterns and
+reconstructed implementation remain separate evidence.
+
 After `open_binary`, use focused search, procedure, or function tools directly.
 Use `binary_overview` when target metadata or inventory context helps answer the
 question. Prefer literal search, names, decompilation, callers, callees, and
