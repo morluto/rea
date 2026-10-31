@@ -45,6 +45,9 @@ export interface AnalysisCapturedOutput {
   readonly stderr_bytes?: number;
   readonly exit_code?: number | null;
   readonly signal?: string | null;
+  /** Set when the runner reported invalid UTF-8, decoded as replacement characters. */
+  readonly stdout_invalid_utf8?: true;
+  readonly stderr_invalid_utf8?: true;
 }
 
 /** Cleanup uncertainty attached to the original typed analysis failure. */

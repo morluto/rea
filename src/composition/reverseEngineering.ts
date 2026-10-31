@@ -8,6 +8,7 @@ import {
 import {
   rizinCommand,
   RIZIN_PROVIDER_IDENTITY,
+  RIZIN_VERSION_PROBE,
 } from "../rizin/RizinCommand.js";
 import { resolveWindowsProviderExecutable } from "./resolveWindowsProviderExecutable.js";
 
@@ -33,6 +34,7 @@ export const createReverseEngineeringCommandPort = (
     ),
     arguments: rizinCommand(input),
     identity: RIZIN_PROVIDER_IDENTITY,
+    versionProbe: RIZIN_VERSION_PROBE,
   }),
 });
 

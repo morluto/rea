@@ -9,7 +9,10 @@ import {
   providerSnapshot,
 } from "../support/reverseEngineeringCompositionFixtures.js";
 
-import { TestReverseEngineeringService as ReverseEngineeringService } from "../support/reverseEngineeringService.js";
+import {
+  findsNoExecutable,
+  TestReverseEngineeringService as ReverseEngineeringService,
+} from "../support/reverseEngineeringService.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisResourceConstraintError,
@@ -34,7 +37,10 @@ it("records pathless objdump architecture support as provider capability evidenc
   const service = new CoreReverseEngineeringService({
     commands: createReverseEngineeringCommandPort(process.env),
     digest,
-    run: async () => ({ stdout: "elf64-x86-64", stderr: "" }),
+    processes: {
+      lookup: findsNoExecutable,
+      run: async () => ({ stdout: "elf64-x86-64", stderr: "" }),
+    },
   });
   try {
     const result = await service.inspectWithObjdump({
@@ -77,9 +83,12 @@ it("uses the host environment when the service environment is omitted", async ()
   let observedEnvironment: NodeJS.ProcessEnv | undefined;
   const service = new CoreReverseEngineeringService({
     commands: createReverseEngineeringCommandPort(process.env),
-    run: async (_command, _args, options) => {
-      observedEnvironment = options?.env;
-      return { stdout: "ok", stderr: "" };
+    processes: {
+      lookup: findsNoExecutable,
+      run: async (_command, _args, options) => {
+        observedEnvironment = options?.env;
+        return { stdout: "ok", stderr: "" };
+      },
     },
   });
 
@@ -490,13 +499,16 @@ it("relays caller cancellation to the admitted provider signal", async () => {
   let providerSignal: AbortSignal | undefined;
   const service = new CoreReverseEngineeringService({
     commands: createReverseEngineeringCommandPort(process.env),
-    run: async (_command, _args, options) => {
-      providerSignal = options?.signal;
-      announceStarted?.();
-      await new Promise<void>((resolve) => {
-        releaseRun = resolve;
-      });
-      return { stdout: "captured", stderr: "" };
+    processes: {
+      lookup: findsNoExecutable,
+      run: async (_command, _args, options) => {
+        providerSignal = options?.signal;
+        announceStarted?.();
+        await new Promise<void>((resolve) => {
+          releaseRun = resolve;
+        });
+        return { stdout: "captured", stderr: "" };
+      },
     },
   });
   let operation: ReturnType<typeof service.inspectWithObjdump> | undefined;
@@ -548,7 +560,7 @@ it("passes an AbortSignal-like caller value through without relaying it", async 
   const service = new CoreReverseEngineeringService({
     commands: createReverseEngineeringCommandPort(process.env),
     digest,
-    run,
+    processes: { lookup: findsNoExecutable, run },
   });
 
   try {
@@ -1033,6 +1045,19 @@ it.each([
     },
     "stdout and stderr",
   ],
+  [
+    "stdout of a nonzero exit",
+    {
+      exitCode: 2,
+      stdout: {
+        text: "captured � output",
+        bytes: 17,
+        observedBytes: 17,
+        invalidUtf8: true,
+      },
+    },
+    "stdout",
+  ],
 ] as const)(
   "records invalid UTF-8 loss for %s",
   async (_label, overrides, streams) => {
@@ -1077,6 +1102,54 @@ it.each(["objdump", "rizin"] as const)(
       );
     } finally {
       await service.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+it.each(["during", "after"] as const)(
+  "keeps invalid UTF-8 flags when cancellation ends a command %s its run",
+  async (when) => {
+    const { directory, path } = await createArtifact();
+    const controller = new AbortController();
+    const snapshot = providerSnapshot({
+      stdout: {
+        text: "captured � output",
+        bytes: 17,
+        observedBytes: 17,
+        invalidUtf8: true,
+      },
+    });
+    const service = new ReverseEngineeringService({
+      runOwned: async () => {
+        controller.abort("stop the command");
+        if (when === "during")
+          throw new OwnedCommandFailure(
+            "cancelled",
+            "Command cancelled.",
+            snapshot,
+            null,
+            { cancellation: { reason: "stop the command" } },
+          );
+        return snapshot;
+      },
+    });
+
+    try {
+      const result = await service.executeRizinCommand(
+        { path, command: "iI" },
+        { signal: controller.signal },
+      );
+      if (result.ok) throw new Error("Expected cancellation to end the call");
+      expect(result.error._tag).toBe("AnalysisCancelledError");
+      expect(result.error.capturedOutput).toMatchObject({
+        stdout: "captured � output",
+        stdout_invalid_utf8: true,
+      });
+      expect(result.error.capturedOutput).not.toHaveProperty(
+        "stderr_invalid_utf8",
+      );
+    } finally {
       await rm(directory, { recursive: true, force: true });
     }
   },

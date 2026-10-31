@@ -87,6 +87,9 @@ export interface ExecFileOutputFailure {
   readonly stdoutBytes?: number;
   readonly stderrBytes?: number;
   readonly collectionFailure?: boolean;
+  /** The decoded stream holds replacement characters for invalid UTF-8. */
+  readonly stdoutInvalidUtf8?: boolean;
+  readonly stderrInvalidUtf8?: boolean;
 }
 
 /** Read captured output metadata from a failed execFileOutput invocation. */
@@ -103,6 +106,8 @@ export const execFileOutputFailure = (
   const stdoutBytes = Reflect.get(cause, "stdoutBytes");
   const stderrBytes = Reflect.get(cause, "stderrBytes");
   const collectionFailure = Reflect.get(cause, "collectionFailure");
+  const stdoutInvalidUtf8 = Reflect.get(cause, "stdoutInvalidUtf8");
+  const stderrInvalidUtf8 = Reflect.get(cause, "stderrInvalidUtf8");
   if (typeof stdout !== "string" || typeof stderr !== "string")
     return undefined;
   return {
@@ -124,6 +129,8 @@ export const execFileOutputFailure = (
     outputTruncated:
       outputTruncated === true || code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
     ...(collectionFailure === true ? { collectionFailure: true } : {}),
+    ...(stdoutInvalidUtf8 === true ? { stdoutInvalidUtf8: true } : {}),
+    ...(stderrInvalidUtf8 === true ? { stderrInvalidUtf8: true } : {}),
   };
 };
 
@@ -142,6 +149,19 @@ export const execFileFailureCapturedOutput = (
   exit_code: typeof failure.code === "number" ? failure.code : null,
   signal: failure.signal,
   truncated: failure.outputTruncated,
+  ...capturedInvalidUtf8(failure),
+});
+
+/** Captured-output markers for the streams a runner reported as invalid UTF-8. */
+export const capturedInvalidUtf8 = (output: {
+  readonly stdoutInvalidUtf8?: boolean;
+  readonly stderrInvalidUtf8?: boolean;
+}): Pick<
+  AnalysisCapturedOutput,
+  "stdout_invalid_utf8" | "stderr_invalid_utf8"
+> => ({
+  ...(output.stdoutInvalidUtf8 === true ? { stdout_invalid_utf8: true } : {}),
+  ...(output.stderrInvalidUtf8 === true ? { stderr_invalid_utf8: true } : {}),
 });
 
 /** Run a shell-free command with no input while capturing its complete output bytes. */

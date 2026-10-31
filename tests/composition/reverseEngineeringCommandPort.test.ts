@@ -9,6 +9,7 @@ import { analysisErrorProjectionSchema } from "../../src/contracts/errorSchemas.
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "../../src/contracts/reverseEngineeringToolContracts.js";
 import { execFileOutput } from "../../src/process/ExecFileOutput.js";
+import { findsNoExecutable } from "../support/reverseEngineeringService.js";
 
 type ExecFileOutputOptions = NonNullable<Parameters<typeof execFileOutput>[2]>;
 
@@ -47,7 +48,7 @@ it("uses provider profiles supplied through the application port", async () => {
         identity: { id: "test.rizin", name: "Injected Rizin", version: null },
       }),
     },
-    run,
+    processes: { lookup: findsNoExecutable, run },
   });
 
   try {
@@ -99,7 +100,7 @@ it("does not reintroduce ambient variables absent from the captured provider env
         identity: { id: "test.rizin", name: "Captured Rizin", version: null },
       }),
     },
-    run,
+    processes: { lookup: findsNoExecutable, run },
   });
 
   try {
@@ -138,7 +139,7 @@ it("projects missing and non-file objdump targets with actionable path reasons",
         identity: { id: "test.rizin", name: "Test Rizin", version: null },
       }),
     },
-    run,
+    processes: { lookup: findsNoExecutable, run },
   });
 
   try {
@@ -213,7 +214,7 @@ it("keeps target preflight I/O failures out of invalid-input classification", as
         identity: { id: "test.rizin", name: "Test Rizin", version: null },
       }),
     },
-    run,
+    processes: { lookup: findsNoExecutable, run },
   });
 
   try {
@@ -280,7 +281,7 @@ it.each([
           identity: { id: "test.rizin", name: "Test Rizin", version: null },
         }),
       },
-      run,
+      processes: { lookup: findsNoExecutable, run },
     });
 
     try {

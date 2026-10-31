@@ -89,7 +89,41 @@ rea debug-with-rizin --inferior-tty /dev/pts/7 ./program dr
 rea execute-rizin-command ./program iI
 ```
 
-Captured stdout and stderr are retained up to a 16 MiB combined limit; `output_truncated` marks output beyond that limit. One-shot commands use the `command_timeout_ms` budget described above. That 16 MiB cap has no runtime override.
+Before a one-shot command, REA resolves the selected executable through `PATH`,
+hashes it, runs it with `-v` and reads the tool and version from its banner,
+the first line of that output, in the form Rizin and radare2 print:
+`<tool> <version>`, any build tokens, then `@ <os>-<arch>-<bits>` (for example
+`rizin 0.9.1 @ darwin-arm-64`). Any other first line identifies no tool. The command then runs the same path. Evidence
+records the tool and version as the provider name and version, and records the
+executable path, its SHA-256 and the banner in its parameters; a banner longer
+than 2,048 UTF-8 bytes is cut within that budget, between characters, and
+marked by `provider_version_banner_truncated`; a cut banner identifies no tool,
+since the cut could fall inside its version. These describe the file at that path when
+REA checked it; they cannot prove the exact bytes executed if the file changes
+before the launch. A different tool that accepts the same arguments, such as
+radare2, still runs: its Evidence names that tool and adds a limitation. A probe
+that fails, times out, prints output that is not valid UTF-8 or prints an
+unrecognized banner leaves the version unknown, and the command still runs.
+Evidence then keeps the provider name Rizin with `provider_identity: "assumed"`
+and a limitation saying the tool itself was not identified; an identified tool
+has `provider_identity: "banner"`. The
+probe's exit status and output, each stream cut to 2,048 UTF-8 bytes in the
+same way, are recorded in `provider_version_probe`,
+where `stdout_invalid_utf8` and `stderr_invalid_utf8` mark output that was not
+valid UTF-8 and so holds replacement characters.
+Each call's lookup, hash and probe use that call's `command_timeout_ms` budget
+and cancellation; a lookup or hash that reaches the deadline ends the call
+without running the command. REA probes before every command and reuses no
+reading: a launcher, such as a version-manager shim, keeps its path and SHA-256
+while the tool it runs changes, so only the call's own probe describes the tool
+that answers. Each call therefore launches the executable twice, the probe and
+then the command. If the command then fails to start, for example with `E2BIG`
+because its arguments exceed the host's launch limit, the call returns no
+Evidence; the error's `details.diagnostics` keep `provider`, the tool and
+version, and the `provider_*` parameters above. A probe that is cancelled, or
+whose cleanup is incomplete, keeps the executable path and SHA-256 there.
+
+Captured stdout and stderr are retained up to a 16 MiB combined limit; `output_truncated` marks output beyond that limit. One-shot commands use the `command_timeout_ms` budget described above. That 16 MiB cap has no runtime override. A typed failure's `captured_output` marks a stream that held invalid UTF-8 with `stdout_invalid_utf8` or `stderr_invalid_utf8`.
 
 ## Cutter bridge
 
@@ -168,6 +202,6 @@ generation error.
 
 ## Configuration and coverage
 
-The optional `REA_OBJDUMP_COMMAND`, `REA_GDB_COMMAND`, and `REA_RIZIN_COMMAND` values select executable names or paths; otherwise REA searches `PATH`. Values are passed directly to process spawning, not expanded as shell command lines. A host executable launch refusal preserves the selected command and host error code, with recovery through the corresponding command setting, PATH, or execute/search permissions. GDB does not retry that refusal with MI2; its MI2 fallback applies to protocol initialization failures. Provider versions and capabilities remain unknown until observed from the installed tool and verified in the corresponding real-provider lane.
+The optional `REA_OBJDUMP_COMMAND`, `REA_GDB_COMMAND`, and `REA_RIZIN_COMMAND` values select executable names or paths; otherwise REA searches `PATH`. Values are passed directly to process spawning, not expanded as shell command lines. A host executable launch refusal preserves the selected command and host error code, with recovery through the corresponding command setting, PATH, or execute/search permissions. GDB does not retry that refusal with MI2; its MI2 fallback applies to protocol initialization failures. Provider versions and capabilities remain unknown until observed from the installed tool and verified in the corresponding real-provider lane. The Rizin version that Evidence records is the installed tool's `-v` banner, described above; it is an observation, not lane verification.
 
 Provider capture limits are separate from the MCP response budget. A result that fits the provider limit may still exceed the default 10 MiB MCP response budget and return a transport `resource_constraint`. Configure `REA_MCP_MAX_RESPONSE_BYTES` to match a larger client receive buffer when that client supports one; otherwise use retained Evidence/export or complete CLI JSON output. See [MCP response limits](./mcp-contracts.md#tool-results).

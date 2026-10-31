@@ -1,17 +1,13 @@
-import { constants as fsConstants } from "node:fs";
-import { access, realpath, stat } from "node:fs/promises";
-import { delimiter, isAbsolute, sep } from "node:path";
+import { realpath, stat } from "node:fs/promises";
 
-import {
-  absoluteCallerPath,
-  appendCallerPath,
-} from "../../filesystem/callerPath.js";
+import { absoluteCallerPath } from "../../filesystem/callerPath.js";
 
 import type { ProcessScenario } from "../../domain/process/processScenario.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisInputError,
 } from "../../domain/analysisErrorCore.js";
+import { lookupExecutable } from "../ExecutableLookup.js";
 import { snapshotEnvironment } from "../snapshotEnvironment.js";
 import { processCaptureCancelled } from "./ProcessCaptureError.js";
 
@@ -83,47 +79,35 @@ export const resolveExecutable = async (
   workingDirectory: string,
   searchPath: string | undefined,
 ): Promise<string> => {
-  // Match Node's Unix default search path when PATH is absent. An empty
-  // PATH is different: its empty component selects the working directory.
-  const directories = (searchPath ?? "/usr/bin:/bin")
-    .split(delimiter)
-    .map((directory) =>
-      directory === ""
-        ? workingDirectory
-        : absoluteCallerPath(directory, { cwd: workingDirectory }),
+  const lookup = await lookupExecutable(
+    command,
+    () => workingDirectory,
+    searchPath,
+  );
+  if (lookup.status === "found") return lookup.path;
+  if (lookup.status === "denied")
+    throw new AnalysisAccessDeniedError(
+      "capture_process_scenario",
+      lookup.path,
+      lookup.code,
+      { cause: lookup.cause },
     );
-  const explicit =
-    isAbsolute(command) ||
-    command.includes("/") ||
-    (sep === "\\" && command.includes("\\"));
-  const candidates = explicit
-    ? [absoluteCallerPath(command, { cwd: workingDirectory })]
-    : directories.map((directory) => appendCallerPath(directory, command));
-  const failures: string[] = [];
-  for (const candidate of candidates) {
-    let metadata;
-    try {
-      metadata = await stat(candidate);
-    } catch (cause: unknown) {
-      const denial = explicit ? hostAccessDenial(candidate, cause) : undefined;
-      if (denial !== undefined) throw denial;
-      failures.push(`${candidate}${osFailure(cause)}`);
-      continue;
-    }
-    if (!metadata.isFile()) {
-      failures.push(`${candidate} (not a regular file)`);
-      continue;
-    }
-    try {
-      await access(candidate, fsConstants.X_OK);
-      return candidate;
-    } catch (cause: unknown) {
-      failures.push(`${candidate}${osFailure(cause)}`);
-    }
-  }
+  // The scenario's working directory is already resolved, so it is readable.
+  if (lookup.status === "no-working-directory")
+    throw invalidScenarioPath(
+      "working_directory",
+      `working directory could not be read: ${workingDirectory}`,
+      lookup.cause,
+    );
+  // An unbounded lookup cannot be interrupted.
+  if (lookup.status === "interrupted")
+    throw invalidScenarioPath(
+      "executable",
+      `executable lookup was interrupted: ${command}`,
+    );
   throw invalidScenarioPath(
     "executable",
-    `executable could not be resolved: ${command}; checked ${failures.join("; ")}`,
+    `executable could not be resolved: ${command}; checked ${lookup.checked.join("; ")}`,
   );
 };
 
