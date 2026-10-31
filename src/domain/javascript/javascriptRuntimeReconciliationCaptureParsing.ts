@@ -126,7 +126,7 @@ export type ParsedRuntimeCapture =
 
 /** Parse only supported passive web/Electron inspection Evidence. */
 export const parseRuntimeCaptures = (
-  observations: readonly Evidence[],
+  observations: readonly unknown[],
   path: readonly (string | number)[] = ["runtime_observations"],
 ): ParsedRuntimeCapture[] =>
   observations
@@ -140,8 +140,9 @@ export const parseRuntimeCaptures = (
       ),
     );
 
-const parseRuntimeCapture = (
-  input: Evidence,
+/** Authenticate one source before interpreting its runtime capture. */
+export const parseRuntimeCapture = (
+  input: unknown,
   evidencePath: readonly (string | number)[],
 ): ParsedRuntimeCapture => {
   const evidence = authenticateRuntimeEvidence(input, evidencePath);

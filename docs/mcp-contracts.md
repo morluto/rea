@@ -53,8 +53,9 @@ reject the summary record. Give `compare_functions` the retained dossier as
 `{"kind": "retained-evidence", "evidence_id": "<parent_evidence_id>"}`; give
 `match_native_functions` the same reference inside `left_observations` or
 `right_observations`, since its `left` and `right` take `list_procedures`
-Evidence. Request `detail: "complete"` for `build_call_path`, which accepts
-only inline complete dossiers.
+Evidence. `build_call_path.functions` also accepts retained references to the
+complete dossiers. Request `detail: "complete"` only when the record must travel
+inline.
 
 Saved records from the pre-6.6 identity projection that omitted
 `relationship_coverage: null` from its digest remain incompatible, even when
@@ -623,10 +624,24 @@ counts, and whether the decoded graph is incomplete. Each page repeats
 budget (XLD.app: 6.7 MB), so select `detail: "summary"` on the first call.
 Delivery detail never reaches the decoder or changes the source Evidence ID.
 
-`trace_application_feature`, `trace_javascript_semantics`,
-`compare_application_versions`, `compare_source_to_bundle`, and
-`compare_javascript_export_shapes` accept complete inline application Evidence
-or an exact reference to a record already retained by the current connection:
+Logical Evidence source fields share one input contract across domains:
+complete inline Evidence or an exact reference to a record already retained by
+the current connection. This applies to individual sources, optional sources,
+arrays and nested sources declared by the tool's input schema:
+
+| Workflows                                                                                                   | Retained-reference inputs                                                                                             |
+| ----------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `compare_functions`, `compare_process_captures`, `compare_wasm_interfaces`                                  | `left`, `right`                                                                                                       |
+| `match_native_functions`                                                                                    | `left`, `right`, `left_observations[]`, `right_observations[]`                                                        |
+| `trace_application_feature`, `trace_javascript_semantics`, `compare_source_to_bundle`                       | `application`; feature tracing also accepts `native_observations[]`                                                   |
+| `compare_application_versions`, `compare_javascript_export_shapes`                                          | `left`, `right`; version comparison also accepts both native-observation arrays                                       |
+| `reconcile_javascript_runtime`                                                                              | `static_layers[].analysis`, `runtime_observations[]`                                                                  |
+| `compare_managed_members`, `verify_managed_native_boundaries`, `import_managed_reconstruction`              | Comparison `left`/`right`; verification `managed_boundaries`/`native_observations[]`; reconstruction `static_members` |
+| `project_managed_application_graph`                                                                         | `managed_artifact`, `managed_members`, `managed_native_boundaries`                                                    |
+| `project_android_application_graph`, `project_apple_application_graph`, `project_harmony_application_graph` | `inventory_evidence[]`                                                                                                |
+| `build_call_path`, `find_changed_behavior`, `correlate_static_and_runtime`                                  | `functions[]`, `comparisons[]`, or `static_comparisons[]`/`runtime_comparisons[]`, respectively                       |
+
+For example:
 
 ```json
 {
@@ -642,11 +657,16 @@ or an exact reference to a record already retained by the current connection:
 ```
 
 Use the `evidence_id` returned by `analyze_javascript_application` (or another
-compatible application-graph producer). Comparisons accept this form in `left`
-and `right`; each side can independently be inline or retained. Native
-observation arrays continue to take complete inline Evidence. Results and their
-Evidence remain complete inline, and both input forms pass the same semantic,
-identity, authority, and provenance checks without running the producer again.
+compatible application-graph producer). When the producer returned a summary
+or inspection page, use its `normalized_result.parent_evidence_id` to select
+the complete source, rather than the view's own `evidence_id`. Each source can
+independently be inline or retained, including within one array. Both forms use
+the same application workflow and owner validation, preserve exact source
+identity, provenance, authority, coverage and partial or unknown facts, and do
+not run the producer again. A reference cannot supply facts absent from that
+record. Workflows that follow source links also require those linked records
+in the ledger. File references are accepted only where the tool explicitly
+advertises a file selector; a retained ID does not authorize a file read.
 
 References belong to the current connection's Evidence ledger. Opening another
 target or restarting the current target preserves retained records, including
@@ -659,10 +679,13 @@ Supply complete inline Evidence, repeat its producer, or import an exported
 Evidence bundle before referencing that imported record. Export a bundle before
 closing if the investigation needs it later.
 
-CLI application workflows continue to read portable inline Evidence from files
-and run the same analysis workflows; a standalone CLI invocation cannot resolve
-another MCP connection's retained records. No additional lookup call, provider
-selection, or approval step is required for a same-session follow-up.
+CLI workflows that advertise `--evidence-bundle` can resolve the same reference
+JSON from one explicitly selected local bundle, including an MCP export. They
+also accept portable inline Evidence and use the same application workflows.
+A standalone CLI invocation cannot resolve another MCP connection's ledger
+without that exported bundle. See [CLI Evidence reuse](cli.md#import-export-and-compare-evidence)
+for the supported commands. No additional lookup call, provider selection, or
+approval step is required for a same-session follow-up.
 CLI `inspect-artifact` continues to return complete portable Evidence. Save that
 JSON to a file and use `inspect-analysis-view` with inline source Evidence for
 later inventory summaries or pages; a one-shot CLI session cannot retain a

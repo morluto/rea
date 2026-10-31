@@ -75,8 +75,9 @@ def main():
     driver_repository = Path(__file__).resolve().parents[3]
     experiment = Path(__file__).resolve().parent
     node = shutil.which('node')
-    if subprocess.check_output([node, '--version'], text=True).strip() != 'v24.18.0':
-        raise SystemExit('Use pinned Node 24.18.0 on PATH')
+    expected_node = (repository / '.nvmrc').read_text().strip().removeprefix('v')
+    if subprocess.check_output([node, '--version'], text=True).strip() != 'v' + expected_node:
+        raise SystemExit('Use runtime-pinned Node ' + expected_node + ' on PATH')
     provider_env = {'REA_LOG_LEVEL': 'silent', 'NODE_OPTIONS': '--max-old-space-size=512'}
     if args.providers:
         declared = json.loads(args.providers.read_text())
@@ -186,6 +187,14 @@ def main():
                  'decode_signal_recording', 'inspect_signal_decoders',
                  'inspect_managed_members', 'inspect_managed_native_boundaries',
                  'inspect_artifact', 'inspect_wasm_artifact',
+                 'compare_functions', 'build_call_path', 'compare_artifacts',
+                 'compare_process_captures', 'find_changed_behavior',
+                 'compare_managed_members', 'project_managed_application_graph',
+                 'compare_wasm_interfaces', 'project_apple_application_graph',
+                 'project_android_application_graph', 'project_harmony_application_graph',
+                 'trace_application_feature', 'trace_javascript_semantics',
+                 'compare_application_versions', 'compare_javascript_export_shapes',
+                 'reconcile_javascript_runtime',
                  'inspect_evm_interface', 'get_evidence_bundle', 'export_evidence_bundle',
                  'import_evidence_bundle', 'list_unknowns', 'verify_unknown_resolution',
                  'capture_browser_scenario',
