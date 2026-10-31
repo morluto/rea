@@ -48,6 +48,26 @@ fixture servers. Custom orchestration languages, replay engines, or separate
 prepare/execute plans need an observed requirement those primitives cannot
 satisfy. A plan without execution does not establish runtime behavior.
 
+## Exercise the analyst workflow
+
+For provider-backed tool design or investigation, choose a representative
+analyst question and exercise the existing REA workflow as a whole. Compare it
+with relevant native provider behavior and, where possible, an independent
+artifact or format observation. Use the caller's selected target and authority;
+provider support is not a requirement to expose every upstream command. Record
+the provider version, target and observed coverage, and distinguish an unsupported
+operation from an empty result or an untested path.
+
+Include the boundary cases that could change the answer: provider labels versus
+source facts, addresses versus file locations, partial results, and a useful
+recovery after failure or session close when those apply to the task. Check that
+composed results keep each observation's identity, limitations and source
+association. Existing real-provider lanes and focused tests establish their
+selected scenarios; they do not by themselves establish a different workflow or
+provider equivalence. If a provider cannot be exercised, report that limitation
+and continue with the available evidence. Measure agent tool selection only with
+an actual agent evaluation; a scripted tool sequence does not establish it.
+
 ## Define the contract
 
 - Use strict inputs with explicit target identity and required fields. Preserve
