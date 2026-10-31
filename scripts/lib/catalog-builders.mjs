@@ -138,6 +138,13 @@ export const providerCatalog = (sources) => {
         ),
     },
     {
+      identity: sources.artifactProviders.WINDOWS_SHORTCUT_PROVIDER,
+      contracts:
+        sources.binaryDiagnosticsContracts.BINARY_DIAGNOSTICS_TOOL_CONTRACTS.filter(
+          ({ name }) => name === "inspect_windows_shortcut",
+        ),
+    },
+    {
       identity: sources.artifactProviders.DEVICETREE_PROVIDER,
       contracts:
         sources.binaryDiagnosticsContracts.BINARY_DIAGNOSTICS_TOOL_CONTRACTS.filter(

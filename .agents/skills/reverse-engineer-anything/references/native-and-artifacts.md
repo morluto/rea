@@ -139,6 +139,20 @@ table or overlay. Bound snapshots, loaded IAT contents, and export-forward
 resolution remain unobserved. See
 [PE import and delay-load tables](https://github.com/morluto/rea/blob/main/docs/pe-imports.md).
 
+## Windows Shell Link shortcuts
+
+Use `inspect_windows_shortcut` for an explicit local `.lnk` file when the
+question concerns the recorded target path, arguments, working directory, icon
+location, volume serial, network share names, ExtraData blocks, or Tracker
+droid identifiers. No `open_binary`, Windows SDK, COM, or target execution is
+required. The CLI equivalent is `inspect-windows-shortcut PATH`. Preserve
+artifact SHA-256, FILETIME raw decimals, IDList type bytes, and ExtraData
+signatures. Unknown IDList items and ExtraData signatures remain raw with
+SHA-256; they are not guessed. Version-1 UUID MAC and timestamp values are
+labelled derived. A missing optional section is observed absence of that
+structure. See
+[Windows Shell Link shortcuts](https://github.com/morluto/rea/blob/main/docs/windows-shortcut.md).
+
 ## PE TLS callbacks and load configuration
 
 Use `inspect_pe_load_config` for an explicit local PE32/PE32+ image when the

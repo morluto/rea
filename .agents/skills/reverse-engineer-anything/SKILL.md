@@ -256,6 +256,14 @@ explicit path or endpoint and do not need it.
   proof the image never imported APIs through another table. Bound snapshots
   and loaded IAT contents remain unobserved. See the
   [PE import guide](https://github.com/morluto/rea/blob/main/docs/pe-imports.md).
+- Windows Shell Link shortcuts: `inspect_windows_shortcut` with the explicit
+  local `.lnk` file. This built-in target-free inspection requires no Windows
+  SDK or COM. Preserve header flags and FILETIMEs, IDList items, LinkInfo
+  volume and network names, StringData arguments and icon location, ExtraData
+  signatures, and Tracker droid facts labelled derived. Unknown IDList items
+  and ExtraData signatures stay raw with SHA-256. The target path is not
+  resolved or executed. See the
+  [Windows shortcut guide](https://github.com/morluto/rea/blob/main/docs/windows-shortcut.md).
 - PE TLS callbacks and load configuration: `inspect_pe_load_config` with the
   explicit local PE32/PE32+ file. This built-in target-free inspection requires
   no Windows SDK. Preserve callback VAs as strings with their RVA, file offset

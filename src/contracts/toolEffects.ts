@@ -260,6 +260,7 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
   inspect_pe_resources: evidence,
   inspect_pe_certificates: evidence,
   inspect_pe_imports: evidence,
+  inspect_windows_shortcut: evidence,
   inspect_native_exports: evidence,
   inspect_elf_notes: evidence,
   inspect_apple_ips: evidence,

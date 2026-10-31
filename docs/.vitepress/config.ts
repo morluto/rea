@@ -34,6 +34,7 @@ export default defineConfig({
           { text: "Rust dependencies", link: "/rust-binaries" },
           { text: "PE certificates", link: "/pe-certificates" },
           { text: "PE imports", link: "/pe-imports" },
+          { text: "Windows shortcuts", link: "/windows-shortcut" },
           { text: "PE TLS/load config", link: "/pe-load-config" },
           { text: "ELF notes", link: "/elf-notes" },
           { text: "Apple IPS crash reports", link: "/apple-ips" },

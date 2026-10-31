@@ -35,6 +35,7 @@ import {
   createPeLoadConfigService,
   createPeCertificatesService,
   createPeImportsService,
+  createWindowsShortcutService,
   createNativeExportsService,
   createPeResourcesService,
   createRecordedCrashService,
@@ -48,6 +49,7 @@ import { registerKernelModuleTool } from "./registerKernelModuleTool.js";
 import { registerPeLoadConfigTool } from "./registerPeLoadConfigTool.js";
 import { registerPeCertificatesTool } from "./registerPeCertificatesTool.js";
 import { registerPeImportsTool } from "./registerPeImportsTool.js";
+import { registerWindowsShortcutTool } from "./registerWindowsShortcutTool.js";
 import { registerPeResourcesTool } from "./registerPeResourcesTool.js";
 import { registerNativeExportsTool } from "./registerNativeExportsTool.js";
 import type { EvmInterfaceService } from "../application/evm/EvmInterfaceService.js";
@@ -485,6 +487,7 @@ export const createServer = (
   const peLoadConfig = createPeLoadConfigService();
   const peCertificates = createPeCertificatesService();
   const peImports = createPeImportsService();
+  const windowsShortcut = createWindowsShortcutService();
   const electronFuses = options.electronFuses ?? createElectronFuseService();
   const pythonPyc = options.pythonPyc ?? createPythonPycService();
   const webNetworkCapture =
@@ -612,6 +615,7 @@ export const createServer = (
       peLoadConfig.close(),
       peCertificates.close(),
       peImports.close(),
+      windowsShortcut.close(),
       electronFuses.close(),
       pythonPyc.close(),
       webNetworkCapture.close(),
@@ -849,6 +853,13 @@ export const createServer = (
       registerPeImportsTool(
         server,
         peImports,
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+      );
+      registerWindowsShortcutTool(
+        server,
+        windowsShortcut,
         toolLogger,
         recordEvidence,
         analysisAdmission,
