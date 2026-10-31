@@ -141,12 +141,94 @@ it.each([
   "reports the Linux environment restriction for %s",
   async (_name, procfsOwnerUid, gidRow, expected) => {
     const host = createSystemProcessOwnershipHost("linux", {});
-    filesystem.readFile
-      .mockResolvedValueOnce(procStat(100))
-      .mockResolvedValueOnce(`Uid:\t1000\t1000\t1000\t1000\n${gidRow}`)
-      .mockResolvedValueOnce(procStat(100));
+    // Same-namespace maps: only an inspectable process reaches the comparison.
+    filesystem.readFile.mockImplementation(async (path) => {
+      switch (String(path)) {
+        case "/proc/42/stat":
+          return procStat(100);
+        case "/proc/42/status":
+          return `Uid:\t1000\t1000\t1000\t1000\n${gidRow}`;
+        case "/proc/42/uid_map":
+        case "/proc/self/uid_map":
+          return "0 0 4294967295\n";
+        default:
+          throw new Error(`unexpected path: ${String(path)}`);
+      }
+    });
     filesystem.stat.mockResolvedValueOnce({ uid: procfsOwnerUid } as never);
 
+    try {
+      const identity = (
+        await withCaller(1000, 1000, async () =>
+          host.processIdentities?.([entry], undefined, new Set([entry.pid])),
+        )
+      )?.get(entry.pid);
+
+      expect(identity).toMatchObject({ state: "readable", effectiveUid: 1000 });
+      if (expected === undefined)
+        expect(identity).not.toHaveProperty("environmentRestriction");
+      else expect(identity).toHaveProperty("environmentRestriction", expected);
+    } finally {
+      filesystem.readFile.mockReset();
+    }
+  },
+);
+
+it.each([
+  ["a different user namespace", "0 1000 1\n", "user-namespace"],
+  ["the caller's user namespace", "0 0 4294967295\n", undefined],
+] as const)(
+  "reports a user-namespace restriction only for %s",
+  async (_name, targetUidMap, expected) => {
+    const host = createSystemProcessOwnershipHost("linux", {});
+    filesystem.readFile.mockImplementation(async (path) => {
+      switch (String(path)) {
+        case "/proc/42/stat":
+          return procStat(100);
+        case "/proc/42/status":
+          return "Uid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\n";
+        case "/proc/42/uid_map":
+          return targetUidMap;
+        case "/proc/self/uid_map":
+          return "0 0 4294967295\n";
+        default:
+          throw new Error(`unexpected path: ${String(path)}`);
+      }
+    });
+    filesystem.stat.mockResolvedValueOnce({ uid: 1000 } as never);
+
+    try {
+      const identity = (
+        await withCaller(1000, 1000, async () =>
+          host.processIdentities?.([entry], undefined, new Set([entry.pid])),
+        )
+      )?.get(entry.pid);
+
+      expect(identity).toMatchObject({ state: "readable", effectiveUid: 1000 });
+      if (expected === undefined)
+        expect(identity).not.toHaveProperty("environmentRestriction");
+      else expect(identity).toHaveProperty("environmentRestriction", expected);
+    } finally {
+      filesystem.readFile.mockReset();
+    }
+  },
+);
+
+it("keeps the identity unrestricted when a user namespace map cannot be read", async () => {
+  const host = createSystemProcessOwnershipHost("linux", {});
+  filesystem.readFile.mockImplementation(async (path) => {
+    switch (String(path)) {
+      case "/proc/42/stat":
+        return procStat(100);
+      case "/proc/42/status":
+        return "Uid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\n";
+      default:
+        throw filesystemError("EACCES");
+    }
+  });
+  filesystem.stat.mockResolvedValueOnce({ uid: 1000 } as never);
+
+  try {
     const identity = (
       await withCaller(1000, 1000, async () =>
         host.processIdentities?.([entry], undefined, new Set([entry.pid])),
@@ -154,11 +236,11 @@ it.each([
     )?.get(entry.pid);
 
     expect(identity).toMatchObject({ state: "readable", effectiveUid: 1000 });
-    if (expected === undefined)
-      expect(identity).not.toHaveProperty("environmentRestriction");
-    else expect(identity).toHaveProperty("environmentRestriction", expected);
-  },
-);
+    expect(identity).not.toHaveProperty("environmentRestriction");
+  } finally {
+    filesystem.readFile.mockReset();
+  }
+});
 
 it("keeps native identity when status UID is unavailable", async () => {
   const host = createSystemProcessOwnershipHost("linux", {});

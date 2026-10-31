@@ -32,10 +32,35 @@ export const parseLinuxProcessIds = (
 /**
  * Why Linux withholds `/proc/<pid>/environ` from a caller without
  * CAP_SYS_PTRACE (PTRACE_MODE_READ_FSCREDS): the target's real, effective or
- * saved UID/GID differs from the caller's, or the target is non-dumpable, which
- * procfs reports as root ownership of `/proc/<pid>/environ`.
+ * saved UID/GID differs from the caller's, the target is non-dumpable (procfs
+ * reports root ownership of `/proc/<pid>/environ`), or the target lives in a
+ * different user namespace, such as a bubblewrap sandbox, whose credentials
+ * the kernel does not extend to this caller even though `status` shows the
+ * same UID.
  */
-export type LinuxEnvironmentRestriction = "credentials" | "non-dumpable";
+export type LinuxEnvironmentRestriction =
+  | "credentials"
+  | "non-dumpable"
+  | "user-namespace";
+
+/**
+ * Whether two `/proc/<pid>/uid_map` reads come from different user namespaces.
+ * The kernel renders the map relative to the reader, so equal readers of one
+ * namespace always see identical text; a difference therefore proves the
+ * namespaces differ. Equal text proves nothing and an unread map is unknown.
+ */
+export const linuxUserNamespaceDiffers = (
+  targetUidMap: string | undefined,
+  callerUidMap: string | undefined,
+): boolean | undefined => {
+  if (typeof targetUidMap !== "string" || typeof callerUidMap !== "string")
+    return undefined;
+  const normalize = (map: string): string => map.trim().split(/\s+/u).join(" ");
+  const caller = normalize(callerUidMap);
+  // A running process always has a mapped namespace; an empty caller map is a
+  // truncated read rather than evidence.
+  return caller === "" ? undefined : normalize(targetUidMap) !== caller;
+};
 
 /** Derive the kernel's environment restriction from one generation's procfs facts. */
 export const linuxEnvironmentRestriction = (facts: {
@@ -44,6 +69,8 @@ export const linuxEnvironmentRestriction = (facts: {
   readonly procfsOwnerUid: number | undefined;
   readonly callerUid: number | undefined;
   readonly callerGid: number | undefined;
+  /** {@link linuxUserNamespaceDiffers}; omitted when the maps were not compared. */
+  readonly userNamespaceDiffers?: boolean | undefined;
 }): LinuxEnvironmentRestriction | undefined => {
   const { uids, gids, procfsOwnerUid, callerUid, callerGid } = facts;
   if (
@@ -54,7 +81,7 @@ export const linuxEnvironmentRestriction = (facts: {
       gids.slice(0, 3).some((gid) => gid !== callerGid))
   )
     return "credentials";
-  return procfsOwnerUid !== undefined && procfsOwnerUid !== uids[1]
-    ? "non-dumpable"
-    : undefined;
+  if (procfsOwnerUid !== undefined && procfsOwnerUid !== uids[1])
+    return "non-dumpable";
+  return facts.userNamespaceDiffers === true ? "user-namespace" : undefined;
 };

@@ -12,6 +12,7 @@ import {
 import { parseLinuxProcessStat } from "./LinuxProcessStat.js";
 import {
   linuxEnvironmentRestriction,
+  linuxUserNamespaceDiffers,
   parseLinuxProcessIds,
   type LinuxEnvironmentRestriction,
 } from "./LinuxProcessStatus.js";
@@ -1148,7 +1149,21 @@ export const createSystemProcessOwnershipHost = (
     ProcessOwnershipHost["processIdentities"]
   > = async (processes, signal, credentialPids) => {
     if (processes.length === 0) return new Map();
-    if (platform === "linux")
+    if (platform === "linux") {
+      // One read of the caller's own map serves every candidate in this call.
+      let callerUidMap: Promise<string | undefined> | undefined;
+      const readUidMap = async (path: string): Promise<string | undefined> => {
+        try {
+          const text: unknown = await readFile(path, {
+            encoding: "utf8",
+            ...(signal === undefined ? {} : { signal }),
+          });
+          return typeof text === "string" ? text : undefined;
+        } catch (cause: unknown) {
+          if (isExpectedAbort(cause, signal)) throw cause;
+          return undefined;
+        }
+      };
       return new Map<number, ProcessIdentityObservation>(
         await Promise.all(
           processes.map(async ({ pid }) => {
@@ -1233,13 +1248,31 @@ export const createSystemProcessOwnershipHost = (
                 void cause;
               }
               signal?.throwIfAborted();
-              const environmentRestriction = linuxEnvironmentRestriction({
+              const callerUid = process.geteuid?.();
+              const callerGid = process.getegid?.();
+              const gids = parseLinuxProcessIds(status, "Gid");
+              const facts = {
                 uids,
-                gids: parseLinuxProcessIds(status, "Gid"),
+                gids,
                 procfsOwnerUid,
-                callerUid: process.geteuid?.(),
-                callerGid: process.getegid?.(),
-              });
+                callerUid,
+                callerGid,
+              };
+              // Status reports the same UID for a sandbox in another user
+              // namespace, yet the kernel still withholds its environment.
+              // Compare maps only when no cheaper restriction already applies.
+              let environmentRestriction = linuxEnvironmentRestriction(facts);
+              if (environmentRestriction === undefined) {
+                callerUidMap ??= readUidMap("/proc/self/uid_map");
+                const userNamespaceDiffers = linuxUserNamespaceDiffers(
+                  await readUidMap(`/proc/${String(pid)}/uid_map`),
+                  await callerUidMap,
+                );
+                environmentRestriction = linuxEnvironmentRestriction({
+                  ...facts,
+                  userNamespaceDiffers,
+                });
+              }
 
               let afterStatus: string;
               try {
@@ -1321,6 +1354,7 @@ export const createSystemProcessOwnershipHost = (
           }),
         ),
       );
+    }
     if (darwinTokens === undefined) return new Map();
     try {
       return await darwinTokens.identities(processes, signal);
