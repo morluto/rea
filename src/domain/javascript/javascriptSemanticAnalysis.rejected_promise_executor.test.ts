@@ -35,6 +35,11 @@ it.each([
   ["a void executor", `new Promise(void 1)`],
   ["a BigInt executor", `new Promise(1n)`],
   ["a RegExp executor", `new Promise(/re/)`],
+  // Babel stores an overflowing numeric literal as `Infinity`, which is not
+  // callable either.
+  ["an overflowing numeric executor", `new Promise(1e309)`],
+  ["an Infinity executor", `new Promise(Infinity)`],
+  ["a NaN executor", `new Promise(NaN)`],
   ["an array executor", `new Promise([])`],
   ["an object executor", `new Promise({})`],
 ] as const)("emits no promise for %s", (_name, source) => {

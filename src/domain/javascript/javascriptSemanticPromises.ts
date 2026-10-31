@@ -110,7 +110,10 @@ export const collectJavaScriptSemanticPromises = (
  *
  * A class expression is callable enough to pass Node's own check, so it is kept.
  */
-const rejectsPromiseExecutor = (node: t.Node): boolean => {
+const rejectsPromiseExecutor = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
   if (!t.isNewExpression(node)) return false;
   const executor = node.arguments[0];
   if (executor === undefined) return true;
@@ -119,9 +122,20 @@ const rejectsPromiseExecutor = (node: t.Node): boolean => {
   if (t.isFunctionExpression(value) || t.isArrowFunctionExpression(value))
     return false;
   if (t.isClassExpression(value)) return false;
+  // `NaN` and `Infinity` are unshadowed globals rather than literals, and neither
+  // is callable.
+  if (
+    t.isIdentifier(value) &&
+    (value.name === "NaN" || value.name === "Infinity") &&
+    isUnmodifiedGlobalReference(value, state, value.name)
+  )
+    return true;
   // Every unary operator yields a primitive, and a primitive is never callable.
+  // A numeric literal is read directly rather than through the exact-value
+  // reader, which refuses to price a non-finite literal such as `1e309`.
   return (
     t.isUnaryExpression(value) ||
+    t.isNumericLiteral(value) ||
     readExactJavaScriptLiteral(value).found ||
     t.isTemplateLiteral(value) ||
     t.isBigIntLiteral(value) ||
@@ -146,7 +160,7 @@ const collectCandidates = (
     enter: (node, parent) => {
       callableStack.enter(node, parent);
       const details = promiseCandidateDetails(node, state);
-      if (details !== null && !rejectsPromiseExecutor(node)) {
+      if (details !== null && !rejectsPromiseExecutor(node, state)) {
         output.push({
           node,
           ...details,
