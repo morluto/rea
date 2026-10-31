@@ -95,3 +95,31 @@ jobs:
           decode cortex ARM:LE:32:Cortex mrs/4/msp bx/2/lr
           decode v8m ARM:LE:32:v8-m mrs/4/msplim bx/2/lr
           decode xtensa Xtensa:LE:32:default entry/3/a1 retw.n/2
+      # A call through a writable slot keeps Ghidra's recorded target as an
+      # observed callee while callee coverage stays partial; a direct call is
+      # the complete control. The source-owned x86-64 bytes are never executed.
+      - name: Keep computed-call targets non-exhaustive in callee coverage
+        shell: bash
+        run: |
+          java_home_variable="JAVA_HOME_${GHIDRA_JAVA_MAJOR}_X64"
+          export JAVA_HOME="${!java_home_variable}"
+          probe_root="${RUNNER_TEMP}/rea-computed-call"
+          mkdir -p "${probe_root}/project"
+          {
+            printf '\270\001\000\000\000\303\314\314' # 0x1000: mov eax, 1; ret
+            printf '\270\002\000\000\000\303\314\314' # 0x1008: mov eax, 2; ret
+            printf '\377\025\052\000\000\000\303\314' # 0x1010: call [rip + 0x2a]; ret
+            printf '\377\320\303\314\314\314\314\314' # 0x1018: call rax; ret
+            printf '\350\333\377\377\377\303\314\314' # 0x1020: call 0x1000; ret
+            printf '\314%.0s' $(seq 24)               # 0x1028: int3 padding
+            printf '\000\020\000\000\000\000\000\000' # 0x1040: slot = 0x1000
+          } > "${probe_root}/computed-call.bin"
+          test "$(wc -c < "${probe_root}/computed-call.bin")" -eq 72
+          timeout 180s "${GHIDRA_INSTALL_DIR}/support/analyzeHeadless" "${probe_root}/project" ComputedCall \
+            -import "${probe_root}/computed-call.bin" -loader BinaryLoader -loader-baseAddr 0x1000 \
+            -processor x86:LE:64:default -noanalysis -readOnly -deleteProject \
+            -scriptPath "${GITHUB_WORKSPACE}/tests/conformance/ghidra;${GITHUB_WORKSPACE}/bridge/ghidra" \
+            -postScript ReaComputedCallCoverageProbe.java "${GITHUB_WORKSPACE}/bridge/ghidra" \
+            > "${probe_root}/output.log" 2>&1 || { cat "${probe_root}/output.log"; exit 1; }
+          cat "${probe_root}/output.log"
+          grep -F 'REA_COMPUTED_CALL_COVERAGE_OK slot=partial register=partial direct=complete' "${probe_root}/output.log"

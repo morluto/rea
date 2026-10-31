@@ -1145,7 +1145,7 @@ describe("Ghidra client projection", () => {
     expect(resolved.value.profile.parameters).toMatchObject({
       language_id: "auto-from-header",
       compiler_spec_id: "auto-default",
-      call_relationship_coverage: "function-body-call-coverage-v5",
+      call_relationship_coverage: "function-body-call-coverage-v6",
       function_dossier_coverage: "observed-facets-and-call-relationships-v1",
     });
 

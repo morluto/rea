@@ -126,6 +126,10 @@ before proposing another issue, and avoid treating lack of API parity as a bug.
   returned without a known read limit; it does not claim every possible runtime
   edge. Provider and execution caveats stay in `limitations` and do not imply
   incomplete relationship coverage. Missing coverage remains `unknown`.
+  A call site whose target set the provider has not established limits that
+  direction: a targetless call, a computed call whose recorded targets are
+  static candidates, or a read that cannot classify its call sites. Keep the
+  observed edges and name the limit, so a negative path stays `unknown`.
 - Declare process, filesystem, network, UI, and mutation effects truthfully;
   enforce the requested target and lifecycle.
 - Add limits only for real format, protocol, authority, or measured resource
