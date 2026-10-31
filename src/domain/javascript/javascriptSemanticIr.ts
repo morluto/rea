@@ -1,6 +1,7 @@
 import type { JavaScriptSourceRange } from "./javascriptStaticAnalysisTypes.js";
 import type {
   JavaScriptSemanticResourceLimit,
+  JavaScriptSemanticSlotPresence,
   JavaScriptSemanticValue,
 } from "./javascriptSemanticValueTypes.js";
 import type {
@@ -400,6 +401,7 @@ export interface JavaScriptSemanticObjectOperation {
   readonly objectBindingId: string | null;
   readonly targetBindingId: string | null;
   readonly propertyPath: readonly string[] | null;
+  readonly readSlotPresence?: JavaScriptSemanticSlotPresence | undefined;
   readonly resolution: "complete" | "partial";
 }
 
