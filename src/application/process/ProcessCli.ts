@@ -16,7 +16,10 @@ import {
 } from "../../domain/inputIssueProjection.js";
 import { processTraceSpecificationSchema } from "../../domain/process/processTraceSpecification.js";
 import { processScenarioSchema } from "../../domain/process/processScenario.js";
-import { compareProcessEvidence } from "./ProcessComparisonService.js";
+import {
+  compareParsedProcessEvidence,
+  readProcessComparisonSource,
+} from "./ProcessComparisonService.js";
 import { createProgressReporter } from "../ProgressReporter.js";
 import { captureProcessScenario } from "../../process/capture/ProcessHarness.js";
 import { ProcessCaptureResourceScope } from "../../process/capture/ProcessCaptureLifecycle.js";
@@ -99,18 +102,30 @@ export const compareProcessEvidenceFiles = async (
   signal?: AbortSignal,
 ) =>
   withProcessInputResources("compare_process_captures", async (resources) => {
-    const left = await readJson(
+    const leftInput = await readJson(
       leftPath,
       "compare_process_captures",
       signal,
       resources,
     );
-    const right = await readJson(
+    const left = readProcessComparisonSource(
+      "left",
+      leftInput,
+      projectCaptureFileFailure,
+    );
+    if (!left.ok) throw left.error;
+    const rightInput = await readJson(
       rightPath,
       "compare_process_captures",
       signal,
       resources,
     );
+    const right = readProcessComparisonSource(
+      "right",
+      rightInput,
+      projectCaptureFileFailure,
+    );
+    if (!right.ok) throw right.error;
     const traceSpecification =
       traceSpecPath === undefined
         ? undefined
@@ -122,19 +137,10 @@ export const compareProcessEvidenceFiles = async (
               resources,
             ),
           );
-    const result = compareProcessEvidence(
-      {
-        left,
-        right,
-        ...(traceSpecification === undefined
-          ? {}
-          : { trace_spec: traceSpecification }),
-      },
-      undefined,
-      {
-        ...(signal === undefined ? {} : { signal }),
-        projectSourceFailure: projectCaptureFileFailure,
-      },
+    const result = compareParsedProcessEvidence(
+      left.value,
+      right.value,
+      traceSpecification === undefined ? {} : { traceSpecification },
     );
     if (!result.ok) throw result.error;
     return result.value.evidence;

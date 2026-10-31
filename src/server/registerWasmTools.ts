@@ -35,6 +35,7 @@ export const registerWasmTools = (
         comparison.name,
         recordEvidence,
         await compareWasmInterfaces(rawInput, options, evidenceById),
+        { sourceOwner: "caller" },
       );
       return result.ok ? { ok: true, value: result.value.evidence } : result;
     },

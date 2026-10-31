@@ -105,6 +105,32 @@ bytes; verification cost 0.518 s / 0.282755 CPU s / 42,881,024 peak bytes.
 The optional tokenizer was unavailable, so request-token savings are unmeasured.
 Request bytes are not presented as model tokens.
 
+## Review follow-up
+
+An additional local terra/high source-only review found that the refactored
+process CLI read later selected files before authenticating the first capture.
+The shared owner now exposes authenticated source facts and their comparison;
+CLI authenticates each source before reading the next, while MCP uses the same
+readers and comparator. Two public CLI regressions cover invalid left/right
+records with missing later files. The original real captures were compared
+again without target execution and retained the exact comparison Evidence ID.
+
+Greptile found a fixed-server WASM regression: caller-supplied complete inputs
+incorrectly required a recorder. Shared retention now explicitly recognizes
+caller-owned inputs. Provider-produced sources still require a recorder;
+available recorders, their rejections and cancellation sources remain honored.
+A fixture-backed public fixed-server MCP regression and ownership/cancellation
+checks cover that distinction. These follow-up regressions are not additional
+real-provider measurements. The related nine-file run passed 103 checks;
+subsequent schema cleanup and CLI checks passed ten more selected checks.
+Type, lint, Knip and architecture/module-boundary checks were repeated.
+
+The fourteen application-analysis attempts above are separate from source-only
+review; that CLI review did not report usable model-token counts. Its cleanup
+was verified, with 57.860 s task elapsed, 4.720926 s family CPU and 427,364,352
+peak bytes. Existing captured model measurements remain tied to their recorded
+runtime fingerprints, preceding these review corrections.
+
 ## Regression and coverage limits
 
 The focused regression run passed 508 checks covering source integrity, exact

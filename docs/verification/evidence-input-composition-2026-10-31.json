@@ -1176,5 +1176,38 @@
     "all_output_bytes_and_authenticated_evidence_equal": true,
     "source_bundle_and_runtime_unchanged": true,
     "serialized_input_token_estimates": "Not measured; the optional tokenizer was unavailable. Bytes are not model token usage."
+  },
+  "review_followup": {
+    "scope": "Source review and regression checks after the recorded application model cohorts; no new real-provider measurement is inferred.",
+    "findings": [
+      {
+        "origin": "local Codex CLI gpt-6.1-terra/high source-only review",
+        "root_cause": "Process CLI read later caller-selected files before authenticating earlier capture Evidence.",
+        "fix": "Shared authenticated-source readers and parsed-fact comparator; restore sequential source admission.",
+        "regressions": "Two public CLI invalid-source/missing-later-file cases."
+      },
+      {
+        "origin": "Greptile PR review",
+        "root_cause": "Caller-owned inline WASM comparison sources incorrectly required a fixed-server recorder.",
+        "fix": "Explicit caller ownership in shared retention policy; provider default remains required and writer failures/cancellation remain preserved.",
+        "regressions": "Public fixed-server MCP comparison plus shared retention ownership/error/cancellation checks."
+      }
+    ],
+    "focused_checks": {
+      "review_related": 103,
+      "schema_cleanup_and_cli": 10
+    },
+    "actual_capture_recomparison_evidence_id": "ev_d9360c023f36af83abe76b9ee84625588d25db7453d89d449a22b8f357220969",
+    "actual_capture_recomparison_id_unchanged": true,
+    "source_review": {
+      "requested_model": "gpt-6.1-terra",
+      "reasoning": "high",
+      "task_elapsed_seconds": 57.86048012799802,
+      "family_cpu_seconds": 4.720926,
+      "peak_family_bytes": 427364352,
+      "auth_profile_removed": true,
+      "payload_cleanup_verified": true,
+      "model_tokens": "Not reported by the CLI review mode; zero-valued usage counters are not treated as measured zero cost."
+    }
   }
 }

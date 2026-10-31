@@ -35,12 +35,6 @@ export const compareProcessEvidence = (
   options: {
     readonly signal?: AbortSignal;
     readonly now?: () => number;
-    /** Keep each adapter's existing diagnostic policy over the same parsed failure. */
-    readonly projectSourceFailure?: (
-      failure: ProcessCaptureEvidenceFailure,
-      side: "left" | "right",
-      input: unknown,
-    ) => AnalysisError;
   } = {},
 ): Result<ProcessComparisonExecution, AnalysisError> => {
   const selected = resolveEvidenceRequest(
@@ -52,41 +46,40 @@ export const compareProcessEvidence = (
   );
   if (!selected.ok) return selected;
   const request = selected.value.input;
-  const left = parseCaptureSide(
-    "compare_process_captures",
-    "left",
-    request.left,
-    options.projectSourceFailure,
-  );
+  const left = readProcessComparisonSource("left", request.left);
   if (!left.ok) return left;
-  const right = parseCaptureSide(
-    "compare_process_captures",
-    "right",
-    request.right,
-    options.projectSourceFailure,
-  );
+  const right = readProcessComparisonSource("right", request.right);
   if (!right.ok) return right;
+  return compareParsedProcessEvidence(left.value, right.value, {
+    ...(request.max_capture_age_ms === undefined
+      ? {}
+      : { maxCaptureAgeMs: request.max_capture_age_ms }),
+    ...(request.trace_spec === undefined
+      ? {}
+      : { traceSpecification: request.trace_spec }),
+    ...(options.now === undefined ? {} : { now: options.now }),
+  });
+};
+
+/** Compare authenticated facts without reinterpreting or copying source carriers. */
+export const compareParsedProcessEvidence = (
+  left: ParsedProcessCaptureEvidence,
+  right: ParsedProcessCaptureEvidence,
+  options: Parameters<typeof compareProcessCaptureEvidence>[2] = {},
+): Result<ProcessComparisonExecution, AnalysisError> => {
   try {
     const { comparison, evidence } = compareProcessCaptureEvidence(
-      left.value,
-      right.value,
-      {
-        ...(request.max_capture_age_ms === undefined
-          ? {}
-          : { maxCaptureAgeMs: request.max_capture_age_ms }),
-        ...(request.trace_spec === undefined
-          ? {}
-          : { traceSpecification: request.trace_spec }),
-        ...(options.now === undefined ? {} : { now: options.now }),
-      },
+      left,
+      right,
+      options,
     );
     return ok({
       evidence,
-      sources: [left.value.record, right.value.record],
+      sources: [left.record, right.record],
       unknown: comparisonUnknownInput(
         {
-          left_evidence_id: left.value.record.evidence_id,
-          right_evidence_id: right.value.record.evidence_id,
+          left_evidence_id: left.record.evidence_id,
+          right_evidence_id: right.record.evidence_id,
           comparison_evidence_id: evidence.evidence_id,
         },
         comparison,
@@ -98,8 +91,8 @@ export const compareProcessEvidence = (
   }
 };
 
-const parseCaptureSide = (
-  operation: string,
+/** Authenticate each selected capture before a caller admits its next source. */
+export const readProcessComparisonSource = (
   side: "left" | "right",
   value: unknown,
   projectFailure?: (
@@ -108,6 +101,7 @@ const parseCaptureSide = (
     input: unknown,
   ) => AnalysisError,
 ): Result<ParsedProcessCaptureEvidence, AnalysisError> => {
+  const operation = "compare_process_captures";
   const parsed = parseProcessCaptureEvidence(value);
   if (parsed.ok) return parsed;
   const failure = parsed.error;

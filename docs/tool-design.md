@@ -167,6 +167,11 @@ page has its own identity: consumers needing complete source facts use its
 `normalized_result.parent_evidence_id`, unless their contract explicitly accepts
 that view.
 
+New provider-owned source observations require a retention owner. Existing
+caller-owned inputs can also compose on a fixed port without a recorder;
+when a recorder is available, preserve its acceptance or rejection and retain
+completed sources through cancellation.
+
 MCP supplies the current ledger lookup. CLI commands that advertise
 `--evidence-bundle` use one explicitly selected, authenticated bundle for the
 command's lifetime. Keep cleanup with that owner. A retained reference does not
