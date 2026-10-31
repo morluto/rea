@@ -1,3 +1,5 @@
+import importlib.util
+import importlib.machinery
 """Fixed core-only GDB/pwndbg operation; no caller commands or historical PID lookup."""
 import json
 import os
@@ -26,7 +28,10 @@ def inspect(request):
         gdb.execute(command, to_string=True)
     entry = request["gdbinit"]
     try:
-        exec(compile(Path(entry).read_bytes(), entry, "exec"), {"__name__": "__main__", "__file__": entry})
+        loader = importlib.machinery.SourceFileLoader('pwndbg_context', entry)
+        spec = importlib.util.spec_from_loader('pwndbg_context', loader)
+        module = importlib.util.module_from_spec(spec)
+        loader.exec_module(module)
         import pwndbg.aglib.vmmap
         import pwndbg.lib.version
     except (ImportError, OSError) as error:

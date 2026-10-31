@@ -1,3 +1,5 @@
+import importlib.util
+import importlib.machinery
 """Offline adapter to unchanged pwntools 4.15.0; never use libs/maps/libc.
 
 Owned request/snapshot/reply paths are supplied by REA. No host target-process launch,
@@ -336,5 +338,5 @@ def inspect_elf(path, cache):
 if __name__ == "__main__":
     runtime_path = Path(__file__).with_name("decoder_runtime.py")
     runtime = {"__file__": str(runtime_path), "__name__": "rea_decoder_runtime"}
-    exec(compile(runtime_path.read_bytes(), str(runtime_path), "exec"), runtime)
+    spec = importlib.util.spec_from_file_location('decoder_runtime', str(runtime_path)); module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module); runtime['main'] = module.main
     runtime["main"](sys.argv[-1], inspect_elf, LayoutFailure, PROFILE)
