@@ -109,6 +109,32 @@ const applicabilitySpecifications = [
     status: "failed",
     reason: "failed-proof",
   },
+  ...[
+    "mixed fixture outcomes",
+    "reversed mixed fixture outcomes",
+    "distinct fixture outcomes",
+    "combined fixture proof IDs",
+  ].map(
+    (name) =>
+      ({
+        name,
+        codes: ["fixture-failed"],
+        status: "failed",
+        reason: "failed-proof",
+      }) as const,
+  ),
+  {
+    name: "passing fixture with stale failed proof",
+    codes: ["inapplicable-fixture-proof"],
+    status: "open",
+    reason: "owner-mismatch",
+  },
+  {
+    name: "passing fixture with unselected failed proof",
+    codes: [],
+    status: "ready",
+    reason: null,
+  },
   {
     name: "failed verifier",
     codes: ["verifier-failed"],
@@ -204,6 +230,58 @@ export const reconstructionProofApplicabilityCases = () =>
         proof.fixtures[0]!.passed = false;
         replaceProof(input, result);
         break;
+      case "mixed fixture outcomes":
+      case "reversed mixed fixture outcomes":
+      case "distinct fixture outcomes":
+      case "combined fixture proof IDs":
+      case "passing fixture with stale failed proof":
+      case "passing fixture with unselected failed proof": {
+        const binding = input.manifest.bindings[0]!;
+        const passing = binding.fixtures[0]!;
+        proof.fixtures[0]!.passed = false;
+        if (specification.name === "distinct fixture outcomes")
+          proof.fixtures[0]!.fixture_id = "fixture.failed";
+        if (specification.name === "passing fixture with stale failed proof")
+          proof.owner_sha256 = "2".repeat(64);
+        const failed = createEvidence(
+          undefined,
+          {
+            id: "failed-fixture",
+            name: "Fixture verifier",
+            version: "1",
+          },
+          {
+            predicateType: "rea.reconstruction-proof",
+            operation: "verify_reconstruction_obligations",
+            parameters: {},
+            result,
+            confidence: "observed",
+            authority: "controlled-replay",
+          },
+        );
+        input.evidence_bundle = createEvidenceBundle([
+          ...input.evidence_bundle.records,
+          failed,
+        ]);
+        if (
+          specification.name === "passing fixture with unselected failed proof"
+        )
+          break;
+        if (specification.name === "combined fixture proof IDs")
+          passing.evidence_ids.push(failed.evidence_id);
+        else {
+          const failing = {
+            ...passing,
+            fixture_id: proof.fixtures[0]!.fixture_id,
+            evidence_ids: [failed.evidence_id],
+          };
+          binding.fixtures =
+            specification.name === "reversed mixed fixture outcomes"
+              ? [failing, passing]
+              : [passing, failing];
+        }
+        break;
+      }
       case "failed verifier":
         proof.verifiers[0]!.passed = false;
         replaceProof(input, result);

@@ -1,3 +1,4 @@
+import { ProcessAdmissionError } from "./ProcessAdmissionError.js";
 import { readFile, stat as statPath } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
 import { setTimeout as delay } from "node:timers/promises";
@@ -832,6 +833,77 @@ export const settleExitingProcessIdentities = async (
   return identities;
 };
 
+/** Corroborate Linux token-open exit races without granting signal authority. */
+export const settleVanishedTokenFacts = async (
+  facts: readonly ProcessOwnershipFact[],
+  host: ProcessOwnershipHost,
+  budget: ProcessExitSettlementBudget,
+  signal?: AbortSignal,
+): Promise<readonly ProcessOwnershipFact[]> => {
+  if ((host.platform ?? process.platform) !== "linux") return facts;
+  let pending = facts
+    .filter(
+      ({ token, identityAfter }) =>
+        token.state === "unavailable" &&
+        (token.code === "ENOENT" || token.code === "ESRCH") &&
+        !processIdentityHasExited(identityAfter),
+    )
+    .map(({ process }) => process);
+  if (pending.length === 0) return facts;
+  let current = facts;
+  const deadline = (budget.deadline ??=
+    performance.now() + PROCESS_CLEANUP_VERIFICATION_GRACE_MS);
+  for (let attempt = 0; attempt < 4 && pending.length > 0; attempt += 1) {
+    signal?.throwIfAborted();
+    if (attempt > 0) {
+      const remaining = deadline - performance.now();
+      if (remaining <= 0) break;
+      await delay(
+        Math.min(40, remaining),
+        undefined,
+        signal === undefined ? undefined : { signal },
+      );
+    }
+    const confirmed = await readNativeProcessIdentityMap(pending, host, signal);
+    const pendingPids = new Set(pending.map(({ pid }) => pid));
+    const nextPending = new Set<number>();
+    current = current.map((fact) => {
+      if (!pendingPids.has(fact.process.pid)) return fact;
+      const after = confirmed.get(fact.process.pid);
+      if (after?.state === "absent")
+        return {
+          ...fact,
+          state: "absent" as const,
+          identityAfter: after,
+          beforeExitSettlement: fact.beforeExitSettlement ?? fact,
+        };
+      const previous = fact.identityAfter;
+      if (previous.state !== "readable" || after?.state !== "readable")
+        return fact;
+      if (previous.identity !== after.identity)
+        return {
+          ...fact,
+          state: "unavailable" as const,
+          identityAfter: {
+            state: "unavailable" as const,
+            reason: "process_identity_changed_during_final_token_exit_check",
+          },
+        };
+      if (processIdentityHasExited(after))
+        return {
+          ...fact,
+          identityAfter: after,
+          beforeExitSettlement: fact.beforeExitSettlement ?? fact,
+        };
+      nextPending.add(fact.process.pid);
+      return fact;
+    });
+    pending = pending.filter(({ pid }) => nextPending.has(pid));
+  }
+  signal?.throwIfAborted();
+  return current;
+};
+
 /**
  * Read identity, token, then identity for caller-provided rows. This owner
  * never enumerates the process table; a token is tied to a generation only
@@ -889,10 +961,56 @@ export const readProcessOwnershipFacts = async (
     signal,
     credentialPids,
   );
+  // An ENOENT/ESRCH environment failure can race with process exit while
+  // /proc/PID/stat is still readable. Do not treat the token error itself as
+  // proof of exit: ask the native identity owner again, which corroborates a
+  // missing procfs entry with signal-zero ESRCH. Keep the previous live
+  // observation if the refresh is unreadable; PID reuse remains a mismatch.
+  let finalObservedAfter = observedAfter;
+  if ((host.platform ?? process.platform) === "linux") {
+    const disappearing = processes.filter(({ pid }) => {
+      const token = tokens.get(pid);
+      return (
+        token?.state === "unavailable" &&
+        (token.code === "ENOENT" || token.code === "ESRCH") &&
+        observedAfter.get(pid)?.state === "readable"
+      );
+    });
+    if (disappearing.length > 0) {
+      const refreshed = await readIdentityFacts(
+        disappearing,
+        host,
+        "after",
+        signal,
+        credentialPids,
+      );
+      const confirmed = new Map(observedAfter);
+      for (const { pid } of disappearing) {
+        const before = observedAfter.get(pid);
+        const after = refreshed.get(pid);
+        if (after?.state === "absent") {
+          confirmed.set(pid, after);
+        } else if (
+          before?.state === "readable" &&
+          after?.state === "readable"
+        ) {
+          // A recycled PID (including a zombie replacement) is not proof of
+          // the original process exit. Keep its ownership unresolved.
+          if (before.identity !== after.identity)
+            confirmed.set(pid, {
+              state: "unavailable",
+              reason: "process_identity_changed_during_environment_exit_check",
+            });
+          else if (processIdentityHasExited(after)) confirmed.set(pid, after);
+        }
+      }
+      finalObservedAfter = confirmed;
+    }
+  }
   const identityAfter = await settleExitingProcessIdentities(
     processes,
     host,
-    observedAfter,
+    finalObservedAfter,
     signal,
     options.exitSettlement,
     credentialPids,
@@ -1231,9 +1349,9 @@ export const createSystemProcessOwnershipHost = (
         liveAfterRetry.some((entry) => entry.pid === pid),
       );
       if (stillUnresolved.length > 0)
-        throw new Error(
-          `process identity snapshot is unavailable for ${String(stillUnresolved.length)} live processes`,
-        );
+        throw new ProcessAdmissionError("identity_snapshot_unavailable", {
+          live_processes: stillUnresolved.length,
+        });
     }
     return processes.map(({ pid }) => {
       const observation = identities.get(pid);
@@ -1252,7 +1370,7 @@ export const createSystemProcessOwnershipHost = (
         try {
           const processes = await listProcesses(signal);
           if (!processes.some(({ pid }) => pid === process.pid))
-            throw new Error("ps did not report REA's current process");
+            throw new ProcessAdmissionError("current_process_unreported");
         } catch (cause: unknown) {
           if (isExpectedAbort(cause, signal)) throw cause;
           throw new LinuxOwnedProcessPrerequisiteError(cause);

@@ -1,3 +1,4 @@
+import { parseEspFlashAddress } from "../domain/firmware/espFlashSelection.js";
 import { registerNativeFunctionMatchingTool } from "./registerNativeFunctionMatchingTool.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
@@ -192,6 +193,25 @@ const registerOpenLifecycleTool = ({
           ...(input.entry_point === undefined
             ? {}
             : { entryPoint: input.entry_point }),
+          ...(input.flash_offset === undefined &&
+          input.partition_table_offset === undefined
+            ? {}
+            : {
+                espFlash: {
+                  ...(input.flash_offset === undefined
+                    ? {}
+                    : {
+                        flashOffset: parseEspFlashAddress(input.flash_offset),
+                      }),
+                  ...(input.partition_table_offset === undefined
+                    ? {}
+                    : {
+                        partitionTableOffset: parseEspFlashAddress(
+                          input.partition_table_offset,
+                        ),
+                      }),
+                },
+              }),
           ...(input.provider_id === undefined
             ? {}
             : { providerId: input.provider_id }),
@@ -409,7 +429,12 @@ export const registerSessionTools = (
     }
   };
   registerProcessComparisonTool(server, session, compareContract);
-  registerArtifactComparisonTool(server, session, compareArtifactsContract);
+  registerArtifactComparisonTool(
+    server,
+    session,
+    compareArtifactsContract,
+    options.artifactResources,
+  );
   registerFunctionComparisonTool(server, session, compareFunctionsContract);
   registerNativeFunctionMatchingTool(
     server,

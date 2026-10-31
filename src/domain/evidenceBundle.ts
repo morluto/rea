@@ -2,6 +2,7 @@ import { InvalidResidualUnknownGraphError } from "./residualUnknownGraphError.js
 import { withEvidenceSubjectDeclaration } from "./evidenceSubject.js";
 import { digestSchema } from "./digests.js";
 import { EvidenceIntegrityError } from "./evidenceErrors.js";
+import { AnalysisInputError } from "./analysisErrorCore.js";
 import { err, ok, type Result } from "./result.js";
 import { describeValidationFailure } from "./validationFailure.js";
 import { equalJsonText } from "./jsonSerialization.js";
@@ -295,14 +296,26 @@ const parseBundle = (input: unknown, seal: boolean): EvidenceBundle => {
 /** Read a source bundle while preserving unexpected implementation failures. */
 export const readEvidenceBundle = (
   input: unknown,
-): Result<EvidenceBundle, EvidenceIntegrityError> => {
+  context: {
+    readonly operation: string;
+    readonly path: readonly (string | number)[];
+  },
+): Result<EvidenceBundle, AnalysisInputError | EvidenceIntegrityError> => {
   const parsed = safeParseEvidenceBundle(input);
   if (parsed.ok) return parsed;
-  const { cause } = parsed.error;
+  const { cause, kind, message } = parsed.error;
+  if (kind === "single-record")
+    return err(
+      new AnalysisInputError(
+        context.operation,
+        { cause, userMessage: message, remediationAction: message },
+        [{ path: context.path, reason: "invalid_value", message }],
+      ),
+    );
   return err(
     new EvidenceIntegrityError(cause.message, {
       cause,
-      userMessage: cause.message,
+      userMessage: message,
     }),
   );
 };

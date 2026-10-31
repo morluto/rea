@@ -295,8 +295,8 @@ const refineCreate = (
       { rules: draft.plan.rules, body: draft.plan.body! },
       draft.observed!,
       later,
-      earlierOf(draft),
-    ) ?? reexplained(draft, explained.rules, later);
+      earlierOf(draft, evidence.collection),
+    ) ?? reexplained(draft, explained.rules, later, evidence.collection);
   if (widened === undefined) return false;
   retainFixed(context, widened.body.fixed.slice(draft.plan.body!.fixed.length));
   draft.plan.rules = widened.rules;
@@ -307,11 +307,15 @@ const refineCreate = (
 };
 
 /** What the plan's earlier calls showed, for merging a later one. */
-const earlierOf = (draft: WriteDraft) => ({
+const earlierOf = (draft: WriteDraft, collection: string) => ({
   kept: draft.kept,
   clockOf: (field: string) => clockEvidence(draft, field),
   startOf: (field: string) => draft.starts.get(field),
   createCollections: draft.createCollections,
+  sentLargest: (field: string, scope: "collection" | "type") =>
+    draft.sentLargest.get(
+      scope === "collection" ? `${field} ${collection}` : field,
+    ),
   ampersands: draft.ampersands,
 });
 
@@ -338,6 +342,7 @@ const reexplained = (
   draft: WriteDraft,
   learned: readonly FieldRule[],
   later: ReturnType<typeof laterOf>,
+  collection: string,
 ) => {
   const input = draft.exemplarInput;
   if (input === undefined) return undefined;
@@ -360,7 +365,7 @@ const reexplained = (
     },
     draft.observed!,
     later,
-    earlierOf(draft),
+    earlierOf(draft, collection),
   );
 };
 
@@ -504,13 +509,21 @@ const sequencesOf = (
       : [],
   );
 
-/** Whether a later call's sequences hold what serving generates: one past the largest value their scope holds or started with and past the plan's last, spelled as the exemplar spells it. */
+/** Whether a later call's sequences hold what serving generates: one past the largest value their scope holds or started with and past the plan's last, spelled as the exemplar spells it; or, for one that takes a sent value, the value the call sent. */
 const followsSequences = (
   context: EffectContext,
   draft: WriteDraft,
-  created: Pick<StateEntity, "type" | "collection" | "fields">,
+  created: Pick<StateEntity, "type" | "collection" | "fields"> & {
+    readonly sent: JsonObject;
+    readonly observed: JsonObject;
+  },
 ): boolean =>
   sequencesOf(draft, created.collection).every(({ rule, key }) => {
+    if (rule.sent === true && Object.hasOwn(created.sent, rule.field))
+      return (
+        !Object.hasOwn(created.observed, rule.field) ||
+        same(ownMember(created.observed, rule.field), created.sent[rule.field])
+      );
     const scope = [
       ...context.state.ofType(created.type),
       ...context.startedWith(created.type),
@@ -550,6 +563,7 @@ const agreesLater = (
     ...created,
     observed: call.observed,
     startMs: call.startMs,
+    sent: call.body,
   }) &&
   !contradictsDefault(draft.plan.rules, call, created.fields) &&
   !unruledDiffers(draft.plan.rules, call.observed, {
@@ -598,6 +612,7 @@ const followsCreateRules = (
   created: Pick<StateEntity, "type" | "collection" | "fields"> & {
     readonly observed: JsonObject;
     readonly startMs: number | undefined;
+    readonly sent: JsonObject;
   },
 ): boolean =>
   draft.plan.rules.every((rule) => {
@@ -706,27 +721,45 @@ const fitClocks = (draft: WriteDraft, fields: JsonObject): void => {
   noteFixedWidths(draft.fixedWidth, fields);
 };
 
-/** Record the values a create's sequences took, which the next call follows. */
+/** Record the values a create's sequences took, which the next call follows; as serving does, the largest stays, so a lower sent value does not lower it. */
 const takeSequences = (
   draft: WriteDraft,
   created: Pick<StateEntity, "collection" | "fields">,
 ): void => {
-  for (const { rule, key } of sequencesOf(draft, created.collection)) {
-    const value = sequenceNumber(
-      ownMember(created.fields, rule.field),
-      ownMember(draft.observed, rule.field),
+  const take = (key: string, value: number | undefined) => {
+    if (value === undefined) return;
+    const taken = draft.sequences.get(key);
+    draft.sequences.set(
+      key,
+      taken === undefined ? value : Math.max(taken, value),
     );
-    if (value !== undefined) draft.sequences.set(key, value);
-  }
+  };
+  for (const { rule, key } of sequencesOf(draft, created.collection))
+    take(
+      key,
+      sequenceNumber(
+        ownMember(created.fields, rule.field),
+        ownMember(draft.observed, rule.field),
+      ),
+    );
   for (const rule of draft.plan.rules) {
     if (rule.rule !== "made-object") continue;
     const made = ownMember(created.fields, rule.field);
     for (const { member } of rule.counts) {
-      const value = isObject(made)
-        ? sequenceNumber(ownMember(made, member))
-        : undefined;
-      if (value !== undefined)
-        draft.sequences.set(madeKey(rule.field, member), value);
+      take(
+        madeKey(rule.field, member),
+        isObject(made) ? sequenceNumber(ownMember(made, member)) : undefined,
+      );
+    }
+  }
+  for (const rule of draft.plan.rules) {
+    if (rule.rule !== "echo") continue;
+    const value = sequenceNumber(ownMember(created.fields, rule.field));
+    // By type and by collection, as a sequence adopted later may count either.
+    for (const key of [rule.field, `${rule.field} ${created.collection}`]) {
+      const held = draft.sentLargest.get(key);
+      if (value !== undefined && (held === undefined || value > held))
+        draft.sentLargest.set(key, value);
     }
   }
 };

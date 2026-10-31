@@ -3,7 +3,7 @@ import {
   ghidraPinnedLanguage,
   resolveGhidraAnalysisProfile,
 } from "./GhidraAnalysisProfile.js";
-import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
 import { resolveGhidraProject } from "./GhidraProjectSnapshot.js";
 import { DeferredAnalysisClient } from "../providers/DeferredAnalysisClient.js";
 import type { ProviderInspectionScope } from "../application/ProviderInspectionScope.js";
@@ -38,6 +38,8 @@ import {
 } from "../domain/analysisProfile.js";
 import {
   isMachOFormat,
+  RAW_ONLY_ARCHITECTURES,
+  type BinaryArchitecture,
   type BinaryTarget,
 } from "../domain/binaryTargetTypes.js";
 import {
@@ -87,7 +89,7 @@ import {
   windowsNativeCapabilities,
 } from "../process/WindowsAuthority.js";
 
-const SUPPORTED_ARCHITECTURES = new Set([
+const SUPPORTED_ARCHITECTURES = new Set<BinaryArchitecture>([
   "x86",
   "x86_64",
   "arm",
@@ -99,6 +101,15 @@ const SUPPORTED_ARCHITECTURES = new Set([
   "m68k",
   "hexagon",
 ]);
+
+/** Names every admitted family, so the refusal cannot drift from the set. */
+const admittedArchitecturesText = (): string => {
+  const rawOnly = new Set<BinaryArchitecture>(RAW_ONLY_ARCHITECTURES);
+  const admitted = [...SUPPORTED_ARCHITECTURES];
+  const detected = admitted.filter((family) => !rawOnly.has(family));
+  const raw = admitted.filter((family) => rawOnly.has(family));
+  return `Admitted families: ${detected.join(", ")}; raw-binary only: ${raw.join(", ")}.`;
+};
 
 /** Ghidra candidate backed by an isolated ephemeral headless Program session. */
 export class GhidraProvider implements AnalysisProviderCandidate {
@@ -296,8 +307,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
       return {
         status: "unsupported",
         code: "architecture_unsupported",
-        reason:
-          "Ghidra v1 requires a supported x86, x86_64, arm, arm64, MIPS, RISC-V, raw 6502, or raw m68k target profile.",
+        reason: `Ghidra v1 has no ${target.architecture} lane. ${admittedArchitecturesText()}`,
         diagnostics,
       };
     return {
@@ -419,14 +429,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
           isMachOFormat(target.format)
         )
       )
-        return err(
-          new ProviderAdapterError("ghidra", "resolve_analysis_profile", {
-            diagnostics: {
-              reason:
-                "Existing-project mode supports native ELF/PE/Mach-O programs on POSIX without fresh-import loader preparation or pinned language overrides; use fresh import for this target/host.",
-            },
-          }),
-        );
+        return err(existingProjectUnsupported());
       const project = await resolveGhidraProject(
         this.config.ghidraExistingProject,
         target,
@@ -670,6 +673,15 @@ export class GhidraProvider implements AnalysisProviderCandidate {
       : inspectGhidraInstallation(options, this.installationHost);
   }
 }
+
+/** The selected project, not the target or provider, is what this host cannot serve. */
+const existingProjectUnsupported = (): ConfigurationError => {
+  const constraint =
+    "Existing-project mode supports native ELF/PE/Mach-O programs on POSIX without fresh-import loader preparation or pinned language overrides; unset REA_GHIDRA_PROJECT_PATH to use fresh import for this target/host.";
+  return new ConfigurationError(constraint, {
+    settings: [{ setting: "REA_GHIDRA_PROJECT_PATH", constraint }],
+  });
+};
 
 const providerFailureText = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);

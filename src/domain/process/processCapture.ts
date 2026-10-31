@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { observedSymlinkTarget } from "./symlinkTarget.js";
+import { observedSymlinkTarget } from "../symlinkTarget.js";
 import { utcDateTimeSchema } from "../offsetDateTime.js";
 import { jsonValueSchema } from "../jsonValue.js";
 

@@ -701,7 +701,7 @@
                 "calculated_sha256",
                 "unpacked"
               ],
-              "additionalProperties": false
+              "additionalProperties": {}
             },
             {
               "type": "object",
@@ -727,7 +727,33 @@
                 "calculated_md5",
                 "unpacked"
               ],
-              "additionalProperties": false
+              "additionalProperties": {}
+            },
+            {
+              "type": "object",
+              "properties": {
+                "logical_path": { "type": "string" },
+                "algorithm": { "type": "string", "const": "dfu-crc32" },
+                "declared_crc32": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{8}$"
+                },
+                "calculated_crc32": {
+                  "anyOf": [
+                    { "type": "string", "pattern": "^[a-f0-9]{8}$" },
+                    { "type": "null" }
+                  ]
+                },
+                "unpacked": { "type": "boolean" }
+              },
+              "required": [
+                "logical_path",
+                "algorithm",
+                "declared_crc32",
+                "calculated_crc32",
+                "unpacked"
+              ],
+              "additionalProperties": {}
             }
           ]
         }

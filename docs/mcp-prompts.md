@@ -18,6 +18,26 @@ non-string values are rejected with field paths. `action: "list"` accepts no
 workflow identifier or arguments. The MCP adapter respects the same
 `REA_MCP_TOOL_FAMILIES` scope as native prompts, including render requests.
 
+To find a section in the installed guidance bundle by analyst question, use
+`search_guidance` and pass a returned locator to `read_guidance_section`. The
+CLI equivalent is `rea guidance --query "exact JavaScript module"`, followed
+by `rea guidance --action read --locator LOCATOR`. Search is limited to the
+packaged managed skill files, works without providers or a target, and returns
+deterministically paged matches. Every non-generic query word must occur in the
+section; generic-only queries return no matches. Results are documentation; locators
+are bound to the installed bundle and report stale or unavailable guidance without
+returning cached section content. A no-match result says nothing about analysis
+capability availability.
+
+Search returns at most 20 matches per page with 500-code-unit context excerpts.
+Read retrieves the complete selected section. Admission permits 1 MiB per file,
+4 MiB per bundle, 4,096 sections, and 25,165,824 expanded UTF-16 code units before
+section text is materialized. Unreadable or oversized bundles return
+`bundle_unavailable`, with no partial index or inferred absence. Cleanup failures
+remain errors with their retained retry owner. The bundle and complete section
+are bound by fixed-size hashes in locators, so a long heading does not make its own
+locator unreadable.
+
 ## Prompt inventory
 
 | Prompt                            | Purpose                                                                              |
@@ -51,9 +71,11 @@ directly to `analyze_javascript_application` with `input_path`; it does not
 require `open_binary`. When that Evidence, or `inspect_binary_layout` Evidence,
 is already retained, it suggests `inspect_analysis_view` before tracing a
 feature seed. The CLI equivalent is `rea analyze <directory>`.
-`open_binary` and the doctor target check admit files and macOS app bundles.
-A directory outside that opening route is reported with an available analysis
-action; this does not establish support for every directory format.
+`open_binary` and the doctor target check admit files and Apple bundle
+directories (`.app`, `.appex`, `.framework`, `.xpc`, `.systemextension`,
+`.bundle` and `.plugin`). Another Apple bundle type is refused as unsupported,
+and another directory is reported with an available analysis action; this does
+not establish support for every directory format.
 
 For target paths in `compare_application_versions`, the prompt suggests
 opening each target before calling `inspect_artifact`; inspection operates on

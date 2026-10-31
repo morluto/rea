@@ -3,6 +3,7 @@ import * as t from "@babel/types";
 import { inspectElectronBrowserNode } from "./electronStaticAnalysisBrowser.js";
 import { inspectElectronIpcNode } from "./electronStaticAnalysisIpc.js";
 import { inspectElectronNativeNode } from "./electronStaticAnalysisNative.js";
+import { inspectElectronProtocolNode } from "./electronStaticAnalysisProtocol.js";
 import type { JavaScriptFindingContext } from "./javascriptStaticAnalysisState.js";
 import { electronCalleePath } from "./electronStaticAnalysisValues.js";
 import { addLocatedFinding } from "./javascriptStaticAnalysisFindings.js";
@@ -38,4 +39,5 @@ export const inspectElectronStaticNode = (
       node,
       value: { module_key: null, location: range(node) },
     });
+  inspectElectronProtocolNode(node, context);
 };

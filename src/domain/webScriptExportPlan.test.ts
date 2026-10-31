@@ -43,6 +43,19 @@ describe("captured script path projection", () => {
     expect(paths[2]).not.toBe(paths[0]);
   });
 
+  it.each(["+", "!", "$", "&", "'", "(", ")", ",", ";", "=", "@"])(
+    "preserves the portable literal URL path character %s",
+    (character) => {
+      const url = `https://a.test/app/chunk${character}name.js`;
+      const [planned] = planWebScriptExport([source(url)]);
+      expect(planned?.record.content).toMatchObject({
+        state: "exported",
+        layout: "url-path",
+        relative_path: expect.stringContaining(`/app/chunk${character}name.js`),
+      });
+    },
+  );
+
   it.each([
     ["https://a.test/main.js", "https://a.test/main.js"],
     ["https://a.test/main.js", "https://a.test/main.js?v=2"],
@@ -79,6 +92,8 @@ describe("captured script path projection", () => {
     "https://a.test/main.js#variant",
     "data:text/javascript,export{}",
     "https://a.test/%2fescape.js",
+    "https://a.test/app/chunk:part.js",
+    "https://a.test/app/chunk*part.js",
     "https://a.test/CON.js",
     "https://a.test/目录/main.js",
     "https://a.test/app",

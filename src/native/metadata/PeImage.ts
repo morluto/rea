@@ -17,6 +17,8 @@ import {
 
 const peHeaderOffset = (reader: BinaryReader): number => {
   const evidence = parseMzHeaderEvidence(reader.bytes);
+  if (!evidence.declarations.ok)
+    throw new BinaryFormatFailure("malformed", evidence.declarations.error);
   const { windowsHeader } = evidence;
   if (windowsHeader.state === "candidate")
     throw new BinaryFormatFailure(

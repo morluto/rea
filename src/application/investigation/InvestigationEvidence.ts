@@ -18,6 +18,7 @@ export const resolveInvestigationEvidenceClosure = (
     const evidence = resolveEvidenceInput(
       { kind: "retained-evidence", evidence_id: evidenceId },
       lookup,
+      "retained-closure",
     );
     if (!evidence.ok) return evidence;
     visited.add(evidenceId);

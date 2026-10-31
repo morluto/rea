@@ -7,12 +7,14 @@ import type { EvidenceBundle } from "../../domain/evidenceBundle.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { evidenceBundleForTarget } from "../../domain/evidenceBundle.js";
 import {
-  EvidenceFileError,
   EvidenceIntegrityError,
   AnalysisSnapshotMismatchError,
 } from "../../domain/evidenceErrors.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import type { AnalysisInputError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisCapabilityUnavailableError,
+  type AnalysisInputError,
+} from "../../domain/analysisErrorCore.js";
 import type { UnknownRegistryError } from "../../domain/unknownRegistryError.js";
 import type {
   RecordUnknownInput,
@@ -49,6 +51,19 @@ import {
 
 const SNAPSHOT_MUTATION_RECOVERY =
   "Export session observations through export_evidence_bundle if needed. Close the active target without saving a snapshot, then reopen it before importing or saving a snapshot.";
+
+/** A missing replay prerequisite is not an Evidence integrity failure. */
+const snapshotUnavailable = (reason: string) =>
+  new AnalysisCapabilityUnavailableError(
+    "rea",
+    "export_analysis_snapshot",
+    reason,
+    {
+      userMessage: `Analysis snapshot unavailable: ${reason}`,
+      remediationAction:
+        "Export session observations with export_evidence_bundle if needed, or call close_binary without snapshot_path to close the session.",
+    },
+  );
 
 export interface ActiveAnalysisBinding {
   readonly target: BinaryTarget;
@@ -201,8 +216,8 @@ export abstract class BinarySessionRecords {
       active?.profile ?? active?.profilelessWorkflowProfile ?? undefined;
     if (target !== undefined && profile === undefined)
       return err(
-        new EvidenceIntegrityError(
-          "Analysis snapshots require a concrete provider analysis profile",
+        snapshotUnavailable(
+          "The active target has no provider analysis profile for a snapshot.",
         ),
       );
     if (
@@ -217,8 +232,8 @@ export abstract class BinarySessionRecords {
         ))
     )
       return err(
-        new EvidenceIntegrityError(
-          "Profileless native snapshots may contain only current dispatch workflow observations",
+        snapshotUnavailable(
+          "The active session does not have a supported snapshot binding with replayable workflow observations for this target.",
         ),
       );
     return this.#snapshot.export(

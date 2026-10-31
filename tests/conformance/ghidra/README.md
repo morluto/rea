@@ -5,12 +5,20 @@ binaries and Ghidra projects are never committed.
 
 - `../c/riscv.c` and `riscv-probe.S` produce source-owned RV32/RV64 ELF images
   with double-float ABI declarations and an independently known instruction.
-  `npm run verify:ghidra:riscv` exercises real CLI/MCP discovery, decompilation,
-  output schemas, profile and snapshot identity, refusal diagnostics, immutable
-  source bytes, and owned cleanup. It requires BYO Ghidra 12.1.4/JDK 21+ and
-  RISC-V Clang/LLD/LLVM readelf; `REA_RISCV_CLANG`, `REA_RISCV_LLD` and
-  `REA_RISCV_READELF` select existing tool commands.
+  `../c/riscv-float-abi.c`, `riscv-probe.S` and `riscv-isa-probe.S` produce
+  typed and stripped RV32 ilp32 images whose calls cover every rule of the ilp32
+  policy; `riscv-checks.mjs` holds that policy's expected storage and the
+  call-site oracle. `npm run verify:ghidra:riscv` exercises real CLI/MCP
+  discovery, decompilation, argument storage, output schemas, profile and
+  snapshot identity, admission and refusal diagnostics, immutable source bytes,
+  and owned cleanup. It requires BYO Ghidra 12.1.4/JDK 21+ and RISC-V
+  Clang/LLD/LLVM readelf/LLVM objdump; `REA_RISCV_CLANG`, `REA_RISCV_LLD`,
+  `REA_RISCV_READELF` and `REA_RISCV_OBJDUMP` select existing tool commands.
 
+- `ReaDecodeProbe.java` decodes source-owned instruction bytes from a
+  language's default context and checks each mnemonic, length and optional
+  complete operand. The `ghidra-bridge-sources` CI job runs it for `ARM:LE:32:Cortex`,
+  `ARM:LE:32:v8-m` and `Xtensa:LE:32:default`; the bytes are never executed.
 - `inventory.c` produces separate x86-64 debug and stripped ELF executables.
   It covers imports, an external `puts` function, linker thunks, source symbols,
   direct calls, a targetless callback call, two referenced strings, and a

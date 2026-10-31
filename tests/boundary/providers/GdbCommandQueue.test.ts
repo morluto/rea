@@ -10,11 +10,19 @@ let directory: string | undefined;
 const managers: GdbSessionManager[] = [];
 
 afterEach(async () => {
-  await Promise.all(
-    managers
-      .splice(0)
-      .map((manager) => manager.closeAll().catch(() => undefined)),
+  const closing = managers.splice(0);
+  const outcomes = await Promise.allSettled(
+    closing.map((manager) => manager.closeAll()),
   );
+  const failures: unknown[] = [];
+  outcomes.forEach((outcome, index) => {
+    if (outcome.status === "rejected") {
+      managers.push(closing[index]!);
+      failures.push(outcome.reason);
+    }
+  });
+  if (failures.length > 0)
+    throw new AggregateError(failures, "GDB queue cleanup failed");
   if (directory !== undefined)
     await rm(directory, { recursive: true, force: true });
   directory = undefined;
@@ -49,7 +57,7 @@ process.stdin.on("data", async (chunk) => {
         catch { await new Promise((resolve) => setTimeout(resolve, 10)); }
       }
     }
-    process.stdout.write(match[1] + "^done\\n");
+    process.stdout.write(match[1] + (line.includes("-list-thread-groups") ? "^done,groups=[]\\n" : "^done\\n"));
   }
 });
 `,

@@ -99,7 +99,9 @@ nodes. REA evaluates compatible static candidates conservatively:
    content digest can match. Whole-asset digests and reconstructed module-factory source
    digests remain distinguishable in the reported basis.
 3. Without captured bytes, one unique mapped artifact path can produce a
-   medium-confidence location match.
+   medium-confidence location match. A proven factory module contained within
+   the located asset is not a competing whole-file location; separate assets
+   and independently plausible modules remain candidates.
 4. Multiple candidates remain `ambiguous`; no `observed_as` edge is emitted.
    With captured source and mapped candidates, only mapped content matches
    qualify; unrelated content matches elsewhere are excluded.

@@ -2,7 +2,7 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/server";
-import { afterEach, expect } from "vitest";
+import { afterAll, afterEach, expect } from "vitest";
 import { z } from "zod";
 
 import type { BinarySessionPort } from "../../../src/application/binary/BinarySessionPort.js";
@@ -20,6 +20,10 @@ import { createServer } from "../../../src/server/createServer.js";
 import { optionalObservationFactories } from "../../fixtures/optionalObservationProviders.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { mcpTest } from "../../support/mcp/mcpFixture.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+
+const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
 
 const failedAdapters = [
   ["browserObservation", "list_browser_targets", "rea-cdp-browser"],
@@ -128,7 +132,11 @@ mcpTest.for(failedAdapters)(
     });
     for (const [peer] of failedAdapters)
       expect(connected.loaded[peer] !== undefined).toBe(peer !== port);
-    const client = await mcp.connect(connected.server);
+    const client = await mcp.connect(
+      connected.server,
+      undefined,
+      schemaValidation,
+    );
     const names = (await client.listTools()).tools.map(({ name }) => name);
     expect(new Set(names)).toEqual(
       new Set(TOOL_CONTRACTS.map(({ name }) => name)),
@@ -252,7 +260,7 @@ mcpTest(
       electronActiveObservation: failed,
       javascriptRuntimeObservation: failed,
     });
-    const client = await mcp.connect(first.server);
+    const client = await mcp.connect(first.server, undefined, schemaValidation);
     expect((await client.listTools()).tools).toHaveLength(
       TOOL_CONTRACTS.length,
     );

@@ -21,7 +21,9 @@ describe("target-content provenance audit", () => {
       "export_evidence_bundle",
       "guided_workflows",
       "inspect_analysis_settings",
+      "read_guidance_section",
       "record_unknown",
+      "search_guidance",
       "update_analysis_settings",
     ]);
   });

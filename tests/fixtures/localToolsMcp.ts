@@ -1,8 +1,12 @@
 import {
   Client,
   type CallToolRequestOptions,
+  type ClientOptions,
 } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import {
+  StdioClientTransport,
+  type StdioServerParameters,
+} from "@modelcontextprotocol/client/stdio";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { ValidateFunction } from "ajv";
 import { fileURLToPath } from "node:url";
@@ -37,8 +41,11 @@ const compileValidator = (schema: unknown): ValidateFunction<unknown> => {
 export async function connectLocalToolsMcp(
   environment: Readonly<Record<string, string>> = {},
   registerCleanup: (cleanup: () => Promise<void>) => void = onTestFinished,
+  transportOptions: Readonly<Pick<StdioServerParameters, "maxBufferSize">> = {},
+  jsonSchemaValidator?: NonNullable<ClientOptions["jsonSchemaValidator"]>,
 ) {
   const transport = new StdioClientTransport({
+    ...transportOptions,
     command: process.execPath,
     args: [
       fileURLToPath(new URL("../../scripts/rea.mjs", import.meta.url)),
@@ -52,7 +59,10 @@ export async function connectLocalToolsMcp(
     },
     stderr: "pipe",
   });
-  const client = new Client({ name: "local-tools-e2e", version: "1" });
+  const client = new Client(
+    { name: "local-tools-e2e", version: "1" },
+    jsonSchemaValidator === undefined ? undefined : { jsonSchemaValidator },
+  );
   registerCleanup(async () => {
     await client.close();
     await transport.close();

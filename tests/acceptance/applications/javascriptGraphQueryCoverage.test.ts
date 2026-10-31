@@ -60,3 +60,52 @@ cliTest(
     }
   },
 );
+
+cliTest(
+  "traces a coercion boundary through its assigned result",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-graph-boundary-result-");
+    await writeFile(
+      join(root, "main.js"),
+      "function parse(raw) { const n = Number(raw); return n; } module.exports = parse;",
+    );
+    const analysis = await cli.run({
+      arguments: ["analyze-javascript-application", root, "--format", "json"],
+    });
+    expect(analysis.exitCode, analysis.stderr).toBe(0);
+    const application = parseEvidence(analysis.json);
+    const graph = javascriptApplicationAnalysisResultSchema.parse(
+      application.normalized_result,
+    ).semantic_graph;
+    if (graph === null) throw new Error("Expected semantic graph");
+    const read = graph.nodes.find((node) =>
+      node.identity.role_key.endsWith("read:n"),
+    );
+    if (read === undefined) throw new Error("Expected result read");
+    const query = {
+      seed: { kind: "boundary-field", field: "Number" },
+      direction: "forward-influence",
+    };
+    const request = join(root, "request.json");
+    await writeFile(request, JSON.stringify({ application, query }));
+    const result = await cli.run({
+      arguments: ["trace-javascript-semantics", request, "--format", "json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const trace = javaScriptSemanticTraceResultSchema.parse(
+      parseEvidence(result.json).normalized_result,
+    );
+    expect(trace.nodes).toContainEqual(read);
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected shared MCP session");
+    const mcp = await call("trace_javascript_semantics", {
+      application,
+      query,
+    });
+    expect(mcp.isError, JSON.stringify(mcp.content)).not.toBe(true);
+    const mcpTrace = javaScriptSemanticTraceResultSchema.parse(
+      parseEvidence(mcp.structuredContent).normalized_result,
+    );
+    expect(mcpTrace.nodes).toContainEqual(read);
+  },
+);

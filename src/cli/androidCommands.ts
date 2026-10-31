@@ -12,6 +12,7 @@ import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import { bindCliEvidenceCallerPath } from "./cliEvidenceCallerPath.js";
 import {
   analysisEvidenceDeliveryOptions,
   deliverCliAnalysisEvidence,
@@ -37,6 +38,7 @@ export const registerAndroidCommands = (
     name: string,
     operation: AndroidOperation,
     input: unknown,
+    callerPath: string,
     delivery?: {
       readonly detail: "complete" | "summary";
       readonly evidence_output?: string | undefined;
@@ -44,7 +46,9 @@ export const registerAndroidCommands = (
   ) =>
     withCommandCancellation((signal) =>
       logCliCommand(logger, name, () => {
-        const run = () => service.execute(operation, input, { signal });
+        const run = bindCliEvidenceCallerPath(callerPath, () =>
+          service.execute(operation, input, { signal }),
+        );
         const cleanup = { close: () => provider.close() };
         if (delivery !== undefined)
           return deliverCliAnalysisEvidence({
@@ -131,6 +135,7 @@ export const registerAndroidCommands = (
             );
             if (!selected.ok) return projectAnalysisError(selected.error);
             return deliverCliAnalysisEvidence({
+              callerInputPath: args.path,
               run: () =>
                 service.execute(
                   operation,
@@ -174,6 +179,7 @@ export const registerAndroidCommands = (
           );
           if (!delivery.ok) return projectAnalysisError(delivery.error);
           return deliverCliAnalysisEvidence({
+            callerInputPath: args.path,
             run: () =>
               service.execute("inspect_android_package", args, { signal }),
             service: { close: () => provider.close() },
@@ -204,6 +210,7 @@ export const registerAndroidCommands = (
         CLI_COMMANDS.searchAndroidClasses,
         "search_android_classes",
         args,
+        args.path,
       ),
   });
   cli.command(CLI_COMMANDS.inspectAndroidClass, {
@@ -219,6 +226,7 @@ export const registerAndroidCommands = (
           class_name: args.className,
           ...mappingInput(options.mappingPath),
         },
+        args.path,
         options,
       ),
   });
@@ -254,32 +262,40 @@ export const registerAndroidCommands = (
             ? {}
             : { overload_index: options.overloadIndex }),
         },
+        args.path,
         options,
       ),
   });
   cli.command(CLI_COMMANDS.traceAndroidReferences, {
     description:
-      "Trace incoming APK using nodes for a class or selected method",
+      "Trace APK using nodes for a defined class/method or an externally invoked DEX method",
     args: z.object({ path, className }),
     options: z.object({
       methodName:
         androidInputSchemas.trace_android_references.shape.method_name.describe(
-          "Declared method name; omit for class references",
+          "Defined or directly referenced external method; omit for APK class references",
         ),
       overloadIndex: cliIntegerArgument(0)
         .optional()
-        .describe("Index among same-name methods from inspect-android-class"),
+        .describe(
+          "Index among defined methods or observed external prototypes listed by an ambiguous query",
+        ),
     }),
     run: ({ args, options }) =>
-      execute(CLI_COMMANDS.traceAndroidReferences, "trace_android_references", {
-        path: args.path,
-        class_name: args.className,
-        ...(options.methodName === undefined
-          ? {}
-          : { method_name: options.methodName }),
-        ...(options.overloadIndex === undefined
-          ? {}
-          : { overload_index: options.overloadIndex }),
-      }),
+      execute(
+        CLI_COMMANDS.traceAndroidReferences,
+        "trace_android_references",
+        {
+          path: args.path,
+          class_name: args.className,
+          ...(options.methodName === undefined
+            ? {}
+            : { method_name: options.methodName }),
+          ...(options.overloadIndex === undefined
+            ? {}
+            : { overload_index: options.overloadIndex }),
+        },
+        args.path,
+      ),
   });
 };

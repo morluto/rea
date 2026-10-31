@@ -21,6 +21,7 @@ import type {
   JavaScriptAnalyzedSource,
   JavaScriptSourceAnalysisFailure,
   JavaScriptSourceAnalysisLimits,
+  JavaScriptRevokedStaticProjection,
 } from "../../domain/javascript/javascriptSourceAnalysis.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
@@ -46,6 +47,8 @@ import {
 import {
   OwnedWorkerRuntime,
   OwnedWorkerRuntimeCleanupError,
+  WorkerCleanupRegistry,
+  processWorkerCleanup,
 } from "../../process/OwnedWorkerRuntime.js";
 import { prepareProcessOwnershipInspection } from "../../process/ProcessOwnershipObservation.js";
 import {
@@ -119,6 +122,13 @@ export class JavaScriptAnalysisWorker {
   #phase = "startup";
   #lastFailure: AnalysisError | undefined;
   #estimatedRetainedBytes = 0;
+  #staticProjectionReservations: {
+    sourceIndex: number;
+    path: string;
+    bytes: number;
+  }[] = [];
+  #revokedStaticProjections: JavaScriptRevokedStaticProjection[] = [];
+  #nextSourceIndex = 0;
   #applicationProjectionFailure: AnalysisResourceConstraintError | undefined;
   #parentCapacityExhausted = false;
   #sourcesRemaining: number | undefined;
@@ -160,14 +170,19 @@ export class JavaScriptAnalysisWorker {
     }
   };
 
+  readonly #workerCleanup: WorkerCleanupRegistry;
+
   constructor(
     readonly limits: JavaScriptSourceAnalysisLimits = DEFAULTS,
     readonly launcher: typeof spawnOwnedProviderProcess = spawnOwnedProviderProcess,
     sourceCount?: number,
+    workerCleanup: WorkerCleanupRegistry = processWorkerCleanup,
   ) {
+    this.#workerCleanup = workerCleanup;
     this.#runtime = new OwnedWorkerRuntime({
       rootPrefix: "rea-javascript-analysis-",
       launcher,
+      cleanupRegistry: workerCleanup,
       supervisorOptions: {
         captureStdout: false,
         maxDiagnosticBytes: 256 * 1024,
@@ -230,6 +245,9 @@ export class JavaScriptAnalysisWorker {
       );
     this.#sourcesRemaining = sourceCount;
     this.#estimatedRetainedBytes = 0;
+    this.#staticProjectionReservations = [];
+    this.#revokedStaticProjections = [];
+    this.#nextSourceIndex = 0;
     this.#parentCapacityExhausted = false;
     this.#applicationProjectionFailure = undefined;
     this.#refreshResultBudget();
@@ -270,8 +288,10 @@ export class JavaScriptAnalysisWorker {
     let module: JavaScriptModuleSemanticIr | null = null;
     let projection: JavaScriptSemanticFileProjection | null = null;
     const id = randomUUID();
+    const sourceIndex = this.#nextSourceIndex++;
     this.#applicationProjectionFailure = undefined;
     this.#parentCapacityExhausted = false;
+    this.#revokedStaticProjections = [];
     if (this.#sourcesRemaining !== undefined)
       this.#sourcesRemaining = Math.max(0, this.#sourcesRemaining - 1);
     let deadline: ProviderStartupDeadline | undefined;
@@ -288,7 +308,7 @@ export class JavaScriptAnalysisWorker {
         );
       // Host ownership preparation is outside the parser execution deadline.
       await prepareProcessOwnershipInspection(signal);
-      await OwnedWorkerRuntime.retryPending();
+      await this.#workerCleanup.retry();
       deadline = new ProviderStartupDeadline(this.limits.timeoutMs, signal);
       this.#deadline = deadline;
       await this.#start(deadline);
@@ -342,11 +362,15 @@ export class JavaScriptAnalysisWorker {
       );
       for (;;) {
         const response = await this.#next(deadline, file.path);
-        if (response.kind === "ready" || response.id !== id)
+        // A ready frame is outside this job. A frame for another job is not
+        // this request's result; keep waiting so a later caller abort is
+        // still cancellation.
+        if (response.kind === "ready")
           throw new AnalysisOutputError(
             OPERATION,
             "JavaScript worker response names a different source job",
           );
+        if (response.id !== id) continue;
         if (response.kind === "phase") {
           this.#phase = response.phase;
           await onPhase?.(response.phase);
@@ -358,7 +382,12 @@ export class JavaScriptAnalysisWorker {
               OPERATION,
               "JavaScript worker emitted a duplicate static checkpoint",
             );
-          javascript = await this.#readCheckpoint(id, file.path, response);
+          javascript = await this.#readCheckpoint(
+            id,
+            file.path,
+            sourceIndex,
+            response,
+          );
           if (this.#parentCapacityExhausted)
             throw new AnalysisResourceConstraintError(
               OPERATION,
@@ -519,7 +548,7 @@ export class JavaScriptAnalysisWorker {
         this.#runtime.rootPath !== undefined
       ) {
         try {
-          javascript = await this.#readCheckpoint(id, file.path);
+          javascript = await this.#readCheckpoint(id, file.path, sourceIndex);
         } catch (checkpointCause: unknown) {
           void checkpointCause;
         }
@@ -573,15 +602,34 @@ export class JavaScriptAnalysisWorker {
       if (result.ok) this.#lastFailure = error;
       result = err({ error, javascript, module, projection });
     }
-    if (this.#applicationProjectionFailure !== undefined)
+    if (
+      this.#applicationProjectionFailure !== undefined ||
+      this.#revokedStaticProjections.length > 0
+    )
       return result.ok
         ? ok({
             ...result.value,
-            applicationProjectionFailure: this.#applicationProjectionFailure,
+            ...(this.#applicationProjectionFailure === undefined
+              ? {}
+              : {
+                  applicationProjectionFailure:
+                    this.#applicationProjectionFailure,
+                }),
+            ...(this.#revokedStaticProjections.length === 0
+              ? {}
+              : { revokedStaticProjections: this.#revokedStaticProjections }),
           })
         : err({
             ...result.error,
-            applicationProjectionFailure: this.#applicationProjectionFailure,
+            ...(this.#applicationProjectionFailure === undefined
+              ? {}
+              : {
+                  applicationProjectionFailure:
+                    this.#applicationProjectionFailure,
+                }),
+            ...(this.#revokedStaticProjections.length === 0
+              ? {}
+              : { revokedStaticProjections: this.#revokedStaticProjections }),
           });
     return result;
   }
@@ -709,6 +757,7 @@ export class JavaScriptAnalysisWorker {
   async #readCheckpoint(
     id: string,
     sourcePath: string,
+    sourceIndex: number,
     expected?: { readonly bytes: number; readonly sha256: string },
   ): Promise<JavaScriptStaticAnalysis> {
     const rootPath = this.#runtime.rootPath;
@@ -746,8 +795,52 @@ export class JavaScriptAnalysisWorker {
     const decoded = safeParseUtf8Json(checkpoint);
     if (!decoded.ok) throw decoded.cause;
     const facts = javaScriptWorkerStaticAnalysisSchema.parse(decoded.value);
-    const remaining = this.#remainingTotalResultBudget();
     const retainedBytes = bytes * STATIC_CHECKPOINT_RETENTION_EXPANSION;
+    // Application relationships are materialized only after all source files
+    // have been examined. Reclaim their pending reservations to keep room for
+    // later static observations, without relaxing the actual retained bound.
+    const needed =
+      retainedBytes - (this.#resultBudgetBytes - this.#estimatedRetainedBytes);
+    const liveAvailable =
+      this.#remainingParentHeapBytes() -
+      24 * JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES;
+    if (needed > 0 && retainedBytes <= liveAvailable) {
+      // Plan all revocations first so an insufficient set leaves the earlier
+      // relationships intact rather than sacrificing them for a failed read.
+      let start = this.#staticProjectionReservations.length;
+      let reclaimable = 0;
+      while (start > 0 && reclaimable < needed) {
+        start--;
+        reclaimable += this.#staticProjectionReservations[start]!.bytes;
+      }
+      if (reclaimable >= needed) {
+        const revoked = this.#staticProjectionReservations.splice(start);
+        for (const reservation of revoked) {
+          this.#estimatedRetainedBytes -= reservation.bytes;
+          this.#revokedStaticProjections.push({
+            sourceIndex: reservation.sourceIndex,
+            error: new AnalysisResourceConstraintError(
+              OPERATION,
+              "memory",
+              `Expanded application relationships for ${reservation.path} were omitted to retain static facts for later sources`,
+              { parent_result_budget_bytes: this.#resultBudgetBytes },
+              {
+                remediationAction: `Read the retained static facts or analyze fewer source files. ${JAVASCRIPT_PARENT_RESULT_BUDGET_REMEDIATION}`,
+              },
+            ),
+          });
+        }
+      }
+    }
+    // Use the same live-heap observation for the reclamation decision and
+    // admission so a second read cannot reject after revocations commit.
+    const remaining = Math.max(
+      0,
+      Math.min(
+        this.#resultBudgetBytes - this.#estimatedRetainedBytes,
+        liveAvailable,
+      ),
+    );
     this.#parentCapacityExhausted = retainedBytes > remaining;
     this.#estimatedRetainedBytes += retainedBytes;
     const expandedBytes = estimateJavaScriptStaticApplicationProjection(
@@ -756,9 +849,14 @@ export class JavaScriptAnalysisWorker {
       sourcePath,
     );
     const availableResultBudget = this.#remainingResultBudget();
-    if (expandedBytes <= availableResultBudget)
+    if (expandedBytes <= availableResultBudget) {
       this.#estimatedRetainedBytes += expandedBytes;
-    else
+      this.#staticProjectionReservations.push({
+        sourceIndex,
+        path: sourcePath,
+        bytes: expandedBytes,
+      });
+    } else
       this.#applicationProjectionFailure = new AnalysisResourceConstraintError(
         OPERATION,
         "memory",

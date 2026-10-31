@@ -169,6 +169,57 @@ const rejectsMalformedFacetAvailability = (): void => {
   ).toBe(false);
 };
 
+it.each(["imported", null] as const)(
+  "preserves same-entry correspondence across a rename from symbol origin %s",
+  (origin) => {
+    const before = dossier("int evaluate(void) { return 0; }", "0x1000");
+    before.procedure.name = "evaluate";
+    before.procedure.symbol =
+      origin === null
+        ? null
+        : { ...procedure("0x1000", "evaluate").symbol, source: origin };
+    const after = functionDossierSchema.parse({
+      ...before,
+      procedure: {
+        ...before.procedure,
+        name: "renamed_evaluate",
+        symbol: {
+          ...procedure("0x1000", "evaluate").symbol,
+          source: "user_defined",
+        },
+      },
+      pseudocode: "int renamed_evaluate(void) { return 0; }",
+    });
+    const left = observe("a", before);
+    const right = observe("a", after);
+    const result = compareFunctions(
+      functionSnapshotFixture(left),
+      functionSnapshotFixture(right),
+    );
+    expect(result.function_match).toMatchObject({
+      status: "matched",
+      method: "same-entry",
+      left_name: "evaluate",
+      right_name: "renamed_evaluate",
+    });
+    expect(result.status).toBe("changed");
+    for (const name of ["identity", "pseudocode"])
+      expect(
+        result.dimensions.find(({ dimension }) => dimension === name),
+      ).toMatchObject({ status: "changed" });
+    expect(
+      result.dimensions.find(({ dimension }) => dimension === "assembly"),
+    ).toMatchObject({ status: "unchanged" });
+    expect(
+      result.dimensions.every(
+        ({ evidence_links }) =>
+          evidence_links.includes(left.evidence_id) &&
+          evidence_links.includes(right.evidence_id),
+      ),
+    ).toBe(true);
+  },
+);
+
 const keepsGeneratedNamesAmbiguous = (): void => {
   const named = (base: "0x1000" | "0x2000", name: string) =>
     functionDossierSchema.parse({
@@ -1639,5 +1690,22 @@ describe("function comparison unnamed reference endpoints", () => {
         functionSnapshotFixture(observe("b", unnamed("data"))),
       ).dimensions.find(({ dimension }) => dimension === "references"),
     ).toMatchObject({ status: "changed" });
+  });
+});
+
+it("does not equate matching numeric entries from different providers", () => {
+  const before = dossier("return 0;", "0x1000");
+  before.procedure.name = "evaluate";
+  const after = functionDossierSchema.parse({
+    ...before,
+    procedure: { ...before.procedure, name: "renamed_evaluate" },
+  });
+  const result = compareFunctions(
+    functionSnapshotFixture(observe("a", before, "provider-a")),
+    functionSnapshotFixture(observe("a", after, "provider-b")),
+  );
+  expect(result.function_match).toMatchObject({
+    status: "ambiguous",
+    method: "explicit",
   });
 });

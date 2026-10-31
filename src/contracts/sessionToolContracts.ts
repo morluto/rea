@@ -3,7 +3,6 @@ import { matchNativeFunctionsInputSchema } from "./native/functionMatchingContra
 import { z } from "zod";
 
 import { absoluteLocalPathStringSchema } from "../domain/localPath.js";
-import { artifactComparisonInputSchema } from "../domain/artifactComparison.js";
 import { callPathInputSchema } from "../domain/callPathSchemas.js";
 import { changedBehaviorInputSchema } from "../domain/changedBehavior.js";
 import { functionComparisonInputSchema } from "../domain/functionComparisonSchemas.js";
@@ -23,6 +22,7 @@ import {
 import { binarySessionInputSchema } from "./sessionStatusContract.js";
 import {
   addressContextInputSchema,
+  artifactComparisonInputSchema,
   bundleComparisonMcpInputSchema,
   importEvidenceBundleInputSchema,
   listUnknownsInputSchema,
@@ -105,7 +105,7 @@ export const SESSION_TOOL_CONTRACTS = [
   ),
   session(
     "compare_artifacts",
-    "Compare complete artifact inventories by logical occurrence path, content identity, metadata, and graph relations. Pass the inventory Evidence nested in each inspect_artifact result as left and right, or pass its inspect_analysis_view summary while the complete parent Evidence remains retained in this session. Summary facts are not treated as a complete inventory; comparison resolves the exact retained parent. Every delta cites both complete inputs, and gaps yield truncated or unknown, never equivalence. Returns every change inline.",
+    'Compare complete artifact inventories by logical occurrence path, content identity, metadata, and graph relations. Name each side once without resending Evidence: {kind: "retained-evidence", evidence_id} selects an inspect_artifact result, its nested inventory, or its inspect_analysis_view summary retained in this session; {kind: "evidence-file", path, evidence_id?} reads one record from a local Evidence file or bundle at an absolute path. Complete inline Evidence is also accepted. Summary facts are not treated as a complete inventory; comparison resolves the exact complete parent from the same source bundle or the retained session. Every delta cites both complete inputs, and gaps yield truncated or unknown, never equivalence. Returns every change inline.',
     artifactComparisonInputSchema,
   ),
   session(
@@ -115,7 +115,7 @@ export const SESSION_TOOL_CONTRACTS = [
   ),
   session(
     "compare_functions",
-    "Compare two explicit analyze_function Evidence records or exact retained session references across identity, exact provider text, calls, references, strings, and address-normalized CFG topology. Missing or provider-incompatible facets remain truncated or unknown; every conclusion cites both Evidence sets.",
+    "Compare two explicit analyze_function Evidence records or exact retained session references across identity, exact provider text, calls, references, strings, and address-normalized CFG topology. Authenticated same-artifact entry coordinates establish correspondence independently of renamed labels; metadata and text changes remain separate. Missing or provider-incompatible facets remain truncated or unknown; every conclusion cites both Evidence sets.",
     functionComparisonInputSchema,
   ),
   session(
@@ -125,7 +125,7 @@ export const SESSION_TOOL_CONTRACTS = [
   ),
   session(
     "find_changed_behavior",
-    "Aggregate validated process, artifact, and function comparison Evidence. Runtime observations remain distinct from static behavior candidates; missing or incomplete comparisons produce unresolved findings, never causal claims. Returns every finding inline.",
+    "Aggregate validated process, artifact, and function comparison Evidence, supplied inline or by exact retained-evidence references from this session. Original records and their complete source closure remain authenticated; summaries do not substitute for comparisons. Runtime observations remain distinct from static behavior candidates; missing or incomplete comparisons produce unresolved findings, never causal claims. Returns every finding inline.",
     changedBehaviorInputSchema,
   ),
   session(
