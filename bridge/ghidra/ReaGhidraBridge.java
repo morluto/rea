@@ -962,6 +962,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private void initializeDecompiler() {
         DecompileOptions options = new DecompileOptions();
         options.setMaxInstructions(Integer.MAX_VALUE);
+        // Ghidra's default 50 MB max payload kills the decompiler response
+        // mid-decompile for very large functions — observed on a ~14k-line
+        // procedure (388,540 chars of pseudocode) that surfaced as an item
+        // error ~600 s into an unbounded-timeout decompile.
+        options.setMaxPayloadMBytes(1024);
         decompiler = new DecompInterface();
         decompiler.setOptions(options);
         decompiler.toggleCCode(true);
