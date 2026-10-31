@@ -44,7 +44,7 @@ assert.ok(
 );
 assert.ok(
   mitmdump && isAbsolute(mitmdump),
-  "Select caller-supplied mitmdump 12.2.3",
+  "Select caller-supplied mitmdump 12.3.1",
 );
 if (!inspectExisting)
   assert.ok(
@@ -157,7 +157,7 @@ async function inspect(name) {
   for (const evidence of [cliResult, mcpResult]) {
     assert.equal(evidence.authority, "historical-reference");
     assert.equal(evidence.confidence, "observed");
-    assert.equal(evidence.provider.version, "12.2.3");
+    assert.equal(evidence.provider.version, "12.3.1");
     assert.equal(evidence.normalized_result.runtime_attribution, "unknown");
     assert.deepEqual(evidence.provider, evidence.normalized_result.decoder);
     assert.equal(
@@ -386,7 +386,7 @@ const report = {
   verifier,
   producer_audit: producerAudit,
   scope:
-    "Real Linux reverse HTTP/3, mitmproxy 12.2.3, aioquic 1.2.0 and guest cURL",
+    "Real Linux reverse HTTP/3, mitmproxy 12.3.1, aioquic 1.2.0 and guest cURL",
   limitations: [
     "No local/WireGuard, browser, QUIC v2, migration, 0-RTT, mTLS or replay claim.",
     "No HAR, interruption, certificate-failure or body-completeness coverage in this profile.",

@@ -54,12 +54,12 @@ jobs:
       - name: Acquire fixed upstream native profile in runner temporary storage
         shell: bash
         run: |
-          capture_tool_root="${RUNNER_TEMP}/rea-mitmproxy-12.2.3"
+          capture_tool_root="${RUNNER_TEMP}/rea-mitmproxy-12.3.1"
           mkdir -p "${capture_tool_root}"
           curl --fail --location --retry 3 --max-time 180 \
-            https://downloads.mitmproxy.org/12.2.3/mitmproxy-12.2.3-linux-x86_64.tar.gz \
+            https://downloads.mitmproxy.org/12.3.1/mitmproxy-12.3.1-linux-x86_64.tar.gz \
             --output "${capture_tool_root}/mitmproxy.tar.gz"
-          echo '2e95286b618fa6fd33e5e62a78c2e5112571d85f42ec2bac29b97ee242bdb5c5  mitmproxy.tar.gz' \
+          echo 'f7b4237f5702f6cd21357fe6e4680a7e905f8f9b816b872230d018ea696c34d5  mitmproxy.tar.gz' \
             | (cd "${capture_tool_root}" && sha256sum --check --strict)
           tar -xzf "${capture_tool_root}/mitmproxy.tar.gz" -C "${capture_tool_root}"
           echo "REA_MITMDUMP_COMMAND=${capture_tool_root}/mitmdump" >> "${GITHUB_ENV}"

@@ -11,14 +11,14 @@ records provenance rather than vendoring a second parser implementation.
 | [lossless-json](https://github.com/josdejong/lossless-json) | npm 4.3.1 | Original JSON numeric lexemes and safe-number classification |
 | [AJV](https://github.com/ajv-validator/ajv) | npm 8.20.0 | Upstream schema validation |
 | [ajv-formats](https://github.com/ajv-validator/ajv-formats) | npm 3.0.1 | Upstream URI, timestamp and address formats |
-| [mitmproxy](https://github.com/mitmproxy/mitmproxy) | v12.2.3, commit `6c09d56e4c29a92f5ad01b03199977584b8ea14f`, MIT | Unchanged native `mitmproxy.io.tnetstring.load`; upstream `FlowWriter` / `SaveHar` for ephemeral verification fixtures |
+| [mitmproxy](https://github.com/mitmproxy/mitmproxy) | v12.3.1, commit `51c1d6b2d8d3367a773411eb7a3eeccec82b3ea7`, MIT | Unchanged native `mitmproxy.io.tnetstring.load`; upstream `FlowWriter` / `SaveHar` for ephemeral verification fixtures |
 
 The npm lockfile pins exact package versions and distribution integrity hashes;
 their original code and license files remain in the installed packages. Native
 mitmproxy is bring-your-own. REA never installs or upgrades it and rejects a
 different runtime version. The Linux verification lane downloads the official
 standalone release into runner temporary storage with fixed archive SHA-256
-`2e95286b618fa6fd33e5e62a78c2e5112571d85f42ec2bac29b97ee242bdb5c5`.
+`f7b4237f5702f6cd21357fe6e4680a7e905f8f9b816b872230d018ea696c34d5`.
 This is a pinned archive digest, not a publisher signature claim.
 
 No native captures or game/application binaries are checked in. Verification
@@ -26,7 +26,7 @@ uses source-owned Python fixtures and upstream writers. The original file
 digest/record representation is preserved independently of the decoded view;
 upstream conversion defaults are not imported into native states.
 
-The observed `SaveHar` 12.2.3 optional `postData.text: null` quirk is admitted
+The observed `SaveHar` 12.2.3/12.3.1 optional `postData.text: null` quirk is admitted
 only in a validation copy for that declared producer profile, with the original
 null retained. The upstream schemas themselves remain unchanged.
 

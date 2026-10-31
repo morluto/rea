@@ -8,7 +8,7 @@ import { MITMPROXY_CAPTURE_PROVIDER_IDENTITY } from "./CaptureRelease.js";
 import { snapshotEnvironment } from "../../process/snapshotEnvironment.js";
 const OPERATION = "inspect_web_network_capture";
 const MITMDUMP_REQUIREMENT =
-  "Native capture decoding requires Linux and an absolute REA_MITMDUMP_COMMAND path to caller-supplied mitmdump 12.2.3; HAR needs no external engine.";
+  "Native capture decoding requires Linux and an absolute REA_MITMDUMP_COMMAND path to caller-supplied mitmdump 12.3.1; HAR needs no external engine.";
 
 /** Native mitmproxy decoding is offline and uses only an explicitly configured Linux tool. */
 export class MitmproxyCaptureAdapter implements HistoricalCaptureFormatAdapter {
