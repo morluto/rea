@@ -15,6 +15,7 @@ import { streamChunkToBuffer } from "../../artifacts/StreamBytes.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
+import { outputDirectoryAdmissionRefusal } from "../../artifacts/SafeOutputTreeAdmission.js";
 import { SafeOutputTreeCreationFailure } from "../../artifacts/SafeOutputTreeCreationFailure.js";
 import { RegularFileChangedError } from "../../filesystem/RegularFile.js";
 import { withRegularFile } from "../RegularFileRead.js";
@@ -93,19 +94,17 @@ const writeBytes = async (
   return { path: written.relativePath, bytes: written.bytesWritten };
 };
 
-interface BundleTarball {
+/** The package tarball instance admitted once and retained until its owner closes it. */
+export interface BundleTarball {
   readonly path: string;
   readonly handle: FileHandle;
   readonly size: number;
 }
 
-/** Hash and copy only the instance retained before destination admission. */
-const writeTarball = async (
-  tree: SafeOutputTree,
-  directory: string,
-  relative: string,
+/** Read and hash the admitted instance, checking its complete length without retaining its contents. */
+export const bundleTarballDigest = async (
   source: BundleTarball,
-): Promise<WrittenBundleFile> => {
+): Promise<string> => {
   const hash = createHash("sha256");
   let observed = 0;
   for await (const chunk of tarballChunks(source)) {
@@ -115,7 +114,17 @@ const writeTarball = async (
     hash.update(bytes);
   }
   if (observed !== source.size) throw new RegularFileChangedError(source.path);
-  const sha256 = hash.digest("hex");
+  return hash.digest("hex");
+};
+
+/** Hash and copy only the instance retained before destination admission. */
+const writeTarball = async (
+  tree: SafeOutputTree,
+  directory: string,
+  relative: string,
+  source: BundleTarball,
+): Promise<WrittenBundleFile> => {
+  const sha256 = await bundleTarballDigest(source);
   const written = await writingBundleFile(directory, relative, () =>
     tree.write(relative, Readable.from(tarballChunks(source)), {
       bytes: source.size,
@@ -124,27 +133,6 @@ const writeTarball = async (
   );
   return { path: written.relativePath, bytes: written.bytesWritten };
 };
-
-/**
- * Only destination admission can blame the selected directory. Path failures
- * after admission are host write failures on bundle files, not argument refusals.
- */
-const directoryRefusal = (cause: unknown): unknown =>
-  cause instanceof ArtifactReaderFailure &&
-  cause.reason === "path" &&
-  cause.cleanup === undefined
-    ? new AnalysisInputError(
-        ENVIRONMENT_EXPORT_OPERATION,
-        { cause, userMessage: cause.message },
-        [
-          {
-            path: ["directory"],
-            reason: "invalid_value",
-            message: cause.message,
-          },
-        ],
-      )
-    : cause;
 
 /** The output owner anchors every create and verifies the complete tree before publication. */
 const writeBundleFiles = async (
@@ -155,7 +143,6 @@ const writeBundleFiles = async (
   const resources = new ArtifactResourceScope();
   let tree: SafeOutputTree | undefined;
   let written: WrittenBundleFile[] | undefined;
-  let admitted = false;
   let outcome:
     | {
         readonly kind: "completed";
@@ -163,16 +150,16 @@ const writeBundleFiles = async (
       }
     | { readonly kind: "failed"; readonly cause: unknown };
   try {
-    await mkdir(dirname(input.directory), { recursive: true, mode: 0o700 });
+    if (input.exclusiveDestination !== true)
+      await mkdir(dirname(input.directory), { recursive: true, mode: 0o700 });
     try {
       tree = await SafeOutputTree.create(input.directory, process.platform, {
-        acceptExistingEmpty: true,
+        acceptExistingEmpty: input.exclusiveDestination !== true,
       });
     } catch (cause: unknown) {
       if (cause instanceof SafeOutputTreeCreationFailure) tree = cause.tree;
       throw cause;
     }
-    admitted = true;
     written = [];
     for (const file of plan.files)
       written.push(
@@ -220,19 +207,41 @@ const writeBundleFiles = async (
   }
   if (outcome.kind === "failed") {
     if (owner?.published === true && written !== undefined) return written;
-    throw admitted ? outcome.cause : directoryRefusal(outcome.cause);
+    // Only a destination refusal can blame the selected directory.
+    throw outputDirectoryAdmissionRefusal(
+      ENVIRONMENT_EXPORT_OPERATION,
+      "directory",
+      outcome.cause,
+    );
   }
   return outcome.files;
 };
 
-/** Retain one tarball instance across planning output writes and final stability verification. */
-export const writeEnvironmentBundle = async (
-  input: EnvironmentExportInput,
-  plan: EnvironmentBundlePlan,
-): Promise<readonly WrittenBundleFile[]> => {
-  if (plan.packageSource.kind !== "tarball")
-    return writeBundleFiles(input, plan);
-  const path = plan.packageSource.path;
+/** A package tarball path that names no readable regular file. */
+export const packageTarballRefusal = (
+  path: string,
+  cause: unknown,
+): AnalysisInputError =>
+  new AnalysisInputError(
+    ENVIRONMENT_EXPORT_OPERATION,
+    {
+      cause,
+      userMessage: `${path} must name a readable regular package tarball.`,
+    },
+    [
+      {
+        path: ["package_tarball"],
+        reason: "invalid_value",
+        message: "The package tarball must be an existing regular file.",
+      },
+    ],
+  );
+
+/** Admit the package tarball once and retain it through `use`; a close it cannot confirm stays bound to its owner. */
+export const withBundleTarball = async <Value>(
+  path: string,
+  use: (tarball: BundleTarball) => Promise<Value>,
+): Promise<Value> => {
   const resources = new ArtifactResourceScope();
   let admitted = false;
   try {
@@ -240,11 +249,7 @@ export const writeEnvironmentBundle = async (
       path,
       async (handle, state) => {
         admitted = true;
-        return writeBundleFiles(input, plan, {
-          path,
-          handle,
-          size: state.size,
-        });
+        return use({ path, handle, size: state.size });
       },
       { resources },
     );
@@ -267,21 +272,19 @@ export const writeEnvironmentBundle = async (
           String(cause.code),
         )
       )
-        throw new AnalysisInputError(
-          ENVIRONMENT_EXPORT_OPERATION,
-          {
-            cause,
-            userMessage: `${path} must name a readable regular package tarball.`,
-          },
-          [
-            {
-              path: ["package_tarball"],
-              reason: "invalid_value",
-              message: "The package tarball must be an existing regular file.",
-            },
-          ],
-        );
+        throw packageTarballRefusal(path, cause);
     }
     throw cause;
   }
 };
+
+/** Retain one tarball instance across planning output writes and final stability verification. */
+export const writeEnvironmentBundle = (
+  input: EnvironmentExportInput,
+  plan: EnvironmentBundlePlan,
+): Promise<readonly WrittenBundleFile[]> =>
+  plan.packageSource.kind === "tarball"
+    ? withBundleTarball(plan.packageSource.path, (tarball) =>
+        writeBundleFiles(input, plan, tarball),
+      )
+    : writeBundleFiles(input, plan);

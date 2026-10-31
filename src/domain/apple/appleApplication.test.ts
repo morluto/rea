@@ -4,11 +4,12 @@ import { describe, expect, it } from "vitest";
 
 import type { ArtifactOccurrence } from "../artifactGraph.js";
 
-import { projectAppleApplication } from "./appleApplication.js";
+import { parseArtifactInventoryEvidence } from "../artifactInventoryEvidence.js";
+import { projectAppleInventory } from "./appleApplication.js";
+import { AnalysisInputError } from "../analysisErrorCore.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import { createEvidence, type Evidence } from "../evidence.js";
-import { jsonValueSchema } from "../jsonValue.js";
 
 type EntryKind = "file" | "directory" | "symlink" | "slice";
 type RootFormat = "ipa" | "zip" | "dmg" | "directory" | "asar";
@@ -80,7 +81,14 @@ const inventoryEvidence = (
     limitations: [],
   });
   const nodes = new Map([[rootId, node(rootSha, rootFormat)]]);
-  const occurrences = [occurrence(".", "file", rootId, rootFormat)];
+  const occurrences = [
+    occurrence(
+      ".",
+      rootFormat === "directory" ? "directory" : "file",
+      rootId,
+      rootFormat,
+    ),
+  ];
   for (const {
     path,
     kind = "file",
@@ -134,7 +142,7 @@ const inventoryEvidence = (
       parameters: {},
       confidence: "observed",
       authority: "shipped-artifact",
-      result: jsonValueSchema.parse({
+      result: {
         manifest: {
           manifest_id: `agm_${digestCanonicalValue(
             { root_artifact_id: rootId, graph_sha256: graphSha256 },
@@ -155,13 +163,18 @@ const inventoryEvidence = (
         integrity_contradictions: [],
         coverage: { scope: "container-entries", status: "complete" },
         limitations: [],
-      }),
+      },
     },
   );
 };
 
-const project = (evidence: Evidence) =>
-  projectAppleApplication({ inventory_evidence: [evidence] }).projection;
+const project = (evidence: Evidence) => {
+  const result = projectAppleInventory(
+    parseArtifactInventoryEvidence([evidence]),
+  );
+  if (!result.ok) throw result.error;
+  return result.value;
+};
 
 const macho = (path: string): FixtureEntry => ({ path, format: "mach-o" });
 
@@ -511,9 +524,109 @@ describe("Apple bundle layouts and containers", () => {
   });
 
   it("rejects inventories that cannot contain an Apple application", () => {
-    expect(() => project(inventoryEvidence("asar", "app.asar", []))).toThrow(
-      "Apple application projection requires IPA, directory, ZIP, or DMG inventory Evidence (got asar)",
+    try {
+      project(inventoryEvidence("asar", "app.asar", []));
+      throw new Error("Expected an unsupported inventory format to fail");
+    } catch (cause: unknown) {
+      expect(cause).toBeInstanceOf(AnalysisInputError);
+      expect(cause).toMatchObject({
+        operation: "project_apple_application_graph",
+        issues: [
+          expect.objectContaining({
+            path: [
+              "inventory_evidence",
+              0,
+              "normalized_result",
+              "manifest",
+              "root_format",
+            ],
+            message:
+              "Apple application projection requires IPA, directory, ZIP, or DMG inventory Evidence (got asar)",
+          }),
+        ],
+      });
+    }
+  });
+});
+
+describe("Shallow bundle Info.plist", () => {
+  it("reads a flattened framework's Info.plist from Resources/", () => {
+    const framework = "Contents/Frameworks/Core.framework";
+    const result = project(
+      inventoryEvidence("directory", "Fixture.app", [
+        { path: "Contents/Info.plist" },
+        macho("Contents/MacOS/Fixture"),
+        macho(`${framework}/Core`),
+        { path: `${framework}/Resources/Info.plist` },
+        { path: `${framework}/_CodeSignature/CodeResources` },
+      ]),
     );
+    expect(result.bundles.find(({ path }) => path === framework)).toEqual({
+      path: framework,
+      parent_path: ".",
+      layout: "shallow",
+      role: "framework",
+      role_basis: "path-convention",
+      info_plist_path: `${framework}/Resources/Info.plist`,
+      executable_candidates: [`${framework}/Core`],
+      signing_paths: [`${framework}/_CodeSignature/CodeResources`],
+    });
+    expect(result.platforms).toEqual(["macos"]);
+    expect(result.coverage.status).toBe("complete-within-inventory");
+  });
+
+  it.each([
+    {
+      name: "a root Info.plist over Resources/",
+      entries: [
+        { path: "Core.framework/Info.plist" },
+        { path: "Core.framework/Resources/Info.plist" },
+      ],
+      plist: "Core.framework/Info.plist",
+    },
+    {
+      name: "a folded resources/info.plist",
+      entries: [{ path: "Core.framework/resources/info.plist" }],
+      plist: "Core.framework/resources/info.plist",
+    },
+    {
+      name: "no plist from a Resources file",
+      entries: [{ path: "Core.framework/Resources" }],
+      plist: null,
+    },
+    {
+      name: "no plist from a nested bundle's Resources/",
+      entries: [{ path: "Core.framework/Data.bundle/Resources/Info.plist" }],
+      plist: null,
+    },
+  ])("selects $name in a shallow bundle", ({ entries, plist }) => {
+    const root = "Payload/Fixture.app";
+    const result = project(
+      inventoryEvidence("ipa", "Fixture.ipa", [
+        { path: `${root}/Info.plist` },
+        ...entries.map(({ path }) => ({ path: `${root}/${path}` })),
+      ]),
+    );
+    expect(
+      result.bundles.find(({ path }) => path === `${root}/Core.framework`)
+        ?.info_plist_path,
+    ).toBe(plist === null ? null : `${root}/${plist}`);
+    expect(result.platforms).toEqual(["ios"]);
+  });
+
+  it("does not classify a Resources/-only application root as iOS", () => {
+    const root = "Payload/Fixture.app";
+    const result = project(
+      inventoryEvidence("ipa", "Fixture.ipa", [
+        { path: `${root}/Resources/Info.plist` },
+      ]),
+    );
+    expect(result.bundles[0]).toMatchObject({
+      path: root,
+      layout: "shallow",
+      info_plist_path: `${root}/Resources/Info.plist`,
+    });
+    expect(result.platforms).toEqual([]);
   });
 });
 
@@ -653,7 +766,7 @@ describe("Apple application bridge candidates", () => {
       ),
     );
     const result = project(
-      inventoryEvidence("zip", "Fixture.zip", [...scripts, ...native]),
+      inventoryEvidence("ipa", "Fixture.ipa", [...scripts, ...native]),
     );
 
     expect(result.components.javascript).toHaveLength(129);
@@ -837,19 +950,17 @@ describe("Apple path conventions", () => {
 it.each(["file", "slice"] as const)(
   "retains non-encrypted unavailable %s facts without classifying content",
   (kind) => {
-    const projection = projectAppleApplication({
-      inventory_evidence: [
-        inventoryEvidence("ipa", "Fixture.ipa", [
-          { path: "Payload/Fixture.app/Info.plist", format: "plist" },
-          {
-            path: "Payload/Fixture.app/libentry.dylib",
-            kind,
-            format: "file",
-            unavailable: true,
-          },
-        ]),
-      ],
-    }).projection;
+    const projection = project(
+      inventoryEvidence("ipa", "Fixture.ipa", [
+        { path: "Payload/Fixture.app/Info.plist", format: "plist" },
+        {
+          path: "Payload/Fixture.app/libentry.dylib",
+          kind,
+          format: "file",
+          unavailable: true,
+        },
+      ]),
+    );
     expect(projection.unavailable_components).toEqual([
       {
         path: "Payload/Fixture.app/libentry.dylib",
@@ -903,5 +1014,78 @@ it.each([
     expect(result.application_roots).toEqual([]);
     expect(result.bundles).toEqual([]);
     expect(result.platforms).toEqual([]);
+  },
+);
+
+it.each(["Core.framework", "Core.FRAMEWORK"])(
+  "uses the recognized %s role for framework components",
+  (name) => {
+    const framework = `Fixture.app/Contents/Frameworks/${name}`;
+    const result = project(
+      inventoryEvidence("directory", "Fixture.app", [
+        macho(`${framework}/Core`),
+        { path: `${framework}/Info.plist` },
+      ]),
+    );
+    expect(result.components.frameworks.map(({ path }) => path)).toEqual([
+      `${framework}/Core`,
+      `${framework}/Info.plist`,
+    ]);
+  },
+);
+
+it("preserves observed unavailable bundle metadata and signing paths without inventing executable content", () => {
+  const root = "Payload/Mobile.app";
+  const result = project(
+    inventoryEvidence("ipa", "Mobile.ipa", [
+      { path: `${root}/Info.plist`, unavailable: true },
+      { path: `${root}/_CodeSignature/CodeResources`, unavailable: true },
+      { path: `${root}/Main`, unavailable: true },
+    ]),
+  );
+  expect(result.bundles[0]).toMatchObject({
+    info_plist_path: `${root}/Info.plist`,
+    signing_paths: [`${root}/_CodeSignature/CodeResources`],
+    executable_candidates: [],
+  });
+  expect(result.platforms).toEqual(["ios"]);
+  expect(result.unavailable_components).toHaveLength(3);
+});
+
+it.each(["zip", "directory", "dmg"] as const)(
+  "does not apply IPA roots to a %s inventory",
+  (format) => {
+    const result = project(
+      inventoryEvidence(format, `Sample.${format}`, [
+        { path: "Payload/App.app/Info.plist", format: "plist" },
+        { path: "Extras/Other.app/Info.plist", format: "plist" },
+      ]),
+    );
+    expect(result.root_format).toBe(format);
+    expect(result.application_roots).toEqual([]);
+    expect(result.platforms).toEqual([]);
+    expect(result.bundles).toEqual([]);
+  },
+);
+
+it.each(["ipa", "zip", "directory", "dmg"] as const)(
+  "uses only the %s root convention in a mixed inventory",
+  (format) => {
+    const source = inventoryEvidence(format, `Mixed.${format}`, [
+      { path: "Payload/App.app/Info.plist", format: "plist" },
+      { path: "Extras/Other.app/Contents/Info.plist", format: "plist" },
+      macho("Extras/Other.app/Contents/MacOS/Other"),
+      {
+        path: "Extras/Other.app/Contents/Resources/app.js",
+        format: "javascript-bundle",
+      },
+    ]);
+    const result = project(source);
+    expect(result.application_roots).toEqual([
+      format === "ipa" ? "Payload/App.app" : "Extras/Other.app",
+    ]);
+    expect(result.platforms).toEqual([format === "ipa" ? "ios" : "macos"]);
+    expect(result.components.javascript).toHaveLength(1);
+    expect(result.components.executables).toHaveLength(1);
   },
 );

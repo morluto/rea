@@ -384,8 +384,8 @@ const registerSharedReverseEngineeringEdgeCasesPart3 = (): void => {
 
   it.each([
     ["ETIMEDOUT", "AnalysisTimeoutError"],
-    ["EACCES", "AnalysisAccessDeniedError"],
-    ["EPERM", "AnalysisAccessDeniedError"],
+    ["EACCES", "AnalysisCapabilityUnavailableError"],
+    ["EPERM", "AnalysisCapabilityUnavailableError"],
     ["ABORT_ERR", "AnalysisCancelledError"],
     ["unknown", "AnalysisCapabilityUnavailableError"],
   ])(
@@ -412,7 +412,14 @@ const registerSharedReverseEngineeringEdgeCasesPart3 = (): void => {
             cause: { message: "provider failure" },
             ...(code === "ETIMEDOUT" ? { timeoutMs: 120_000 } : {}),
             ...(code === "EACCES" || code === "EPERM"
-              ? { path: "objdump", systemCode: code }
+              ? {
+                  providerId: "objdump",
+                  diagnostics: {
+                    boundary: "provider-launch",
+                    command: "objdump",
+                    system_code: code,
+                  },
+                }
               : {}),
             ...(code === "unknown"
               ? {
@@ -483,7 +490,7 @@ const registerSharedReverseEngineeringEdgeCasesPart4 = (): void => {
   });
 
   it.each(["EACCES", "EPERM"] as const)(
-    "retains captured output on a permission-denied provider result (%s)",
+    "retains raw failure output on a permission-denied provider launch (%s)",
     async (code) => {
       const { directory, path } = await createArtifact();
       const service = new ReverseEngineeringService({
@@ -506,13 +513,17 @@ const registerSharedReverseEngineeringEdgeCasesPart4 = (): void => {
         expect(result).toMatchObject({
           ok: false,
           error: {
-            _tag: "AnalysisAccessDeniedError",
-            capturedOutput: {
+            _tag: "AnalysisCapabilityUnavailableError",
+            providerId: "objdump",
+            diagnostics: {
+              boundary: "provider-launch",
+              command: "objdump",
+              system_code: code,
+            },
+            cause: {
+              code,
               stdout: "partial provider output",
               stderr: "permission diagnostic",
-            },
-            partialObservation: {
-              normalized_result: { stdout: "partial provider output" },
             },
           },
         });

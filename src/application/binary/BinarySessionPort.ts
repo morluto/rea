@@ -1,3 +1,4 @@
+import type { EspFlashSelection } from "../../domain/firmware/espFlashLocation.js";
 import type { InvestigationRecordPort } from "../investigation/InvestigationRecordPort.js";
 import type { ExecutableFormatHint } from "../../domain/dosCom.js";
 import type {
@@ -7,8 +8,10 @@ import type {
 import type { JsonValue } from "../../domain/jsonValue.js";
 import type { AnalysisSnapshot } from "../../domain/analysisSnapshot.js";
 import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js";
-import type { AnalysisProviderSelector } from "../../contracts/providerSelection.js";
+import type { AnalysisProviderSelector } from "../../domain/providerSelection.js";
+import type { BinarySessionDetail } from "../../contracts/sessionStatusContract.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import type { AnalysisCleanupRetry } from "../../domain/analysisErrorRecovery.js";
 import type { Result } from "../../domain/result.js";
 import type { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import type { AnalysisSnapshotLoader } from "./BinarySessionOpen.js";
@@ -23,21 +26,13 @@ import type {
   ProviderIdentity,
 } from "../AnalysisProvider.js";
 
-/** Receipt for an atomically saved snapshot followed by provider cleanup. */
-export interface SavedAnalysisSnapshot {
-  readonly path: string;
-  readonly bytes: number;
-  /** Eligible primitive query bindings. */
-  readonly primitive_entries: number;
-  /** Eligible composed workflow bindings, separate from primitive queries. */
-  readonly workflow_entries: number;
-  /** All retained Evidence records, including observations without a replay binding. */
-  readonly evidence_records: number;
-}
+import type { SavedAnalysisSnapshot } from "../../domain/savedAnalysisSnapshot.js";
+export type { SavedAnalysisSnapshot } from "../../domain/savedAnalysisSnapshot.js";
 
 /** Cleanup extension runs inside the close transition before final ownership checks. */
 export type BinarySessionCloseOptions = Pick<ExecutionOptions, "progress"> & {
   readonly retainProviderDocuments?: boolean;
+  readonly cleanupRetry?: AnalysisCleanupRetry;
   readonly afterResourceClose?: () => Promise<void>;
 };
 
@@ -63,7 +58,7 @@ export interface BinarySessionPort
     operation: (
       onDispatch: () => void,
     ) => Promise<Result<Value, AnalysisError>>,
-    retirementFailure: (
+    completionFailure: (
       value: Result<Value, AnalysisError>,
       error: AnalysisError,
     ) => AnalysisError,
@@ -85,6 +80,7 @@ export interface BinarySessionPort
       readonly formatHint?: ExecutableFormatHint;
       readonly architecture?: BinaryArchitecture;
       readonly entryPoint?: string;
+      readonly espFlash?: EspFlashSelection;
       readonly snapshot?: AnalysisSnapshot;
       readonly loadSnapshot?: AnalysisSnapshotLoader;
       readonly providerId?: AnalysisProviderSelector;
@@ -95,6 +91,10 @@ export interface BinarySessionPort
     path: string,
     options?: Pick<ExecutionOptions, "signal">,
   ): Promise<Result<ResolvedAppBundleResourceRoot, AnalysisError>>;
+  /**
+   * `cleanupRetry` names the caller's same-session retry; the session binds it
+   * to a failed close only while it retains that cleanup for the next close.
+   */
   close(
     options?: BinarySessionCloseOptions,
   ): Promise<Result<null, AnalysisError>>;
@@ -104,8 +104,17 @@ export interface BinarySessionPort
     overwrite: boolean,
     options?: BinarySessionCloseOptions,
   ): Promise<Result<SavedAnalysisSnapshot, AnalysisError>>;
-  status(options?: { readonly signal?: AbortSignal }): Promise<JsonValue>;
+  /** Default complete detail; summary omits provider diagnostics and candidate capabilities. */
+  status(options?: {
+    readonly signal?: AbortSignal;
+    readonly detail?: BinarySessionDetail;
+  }): Promise<JsonValue>;
   activeTarget(): BinaryTarget | undefined;
+  /** Read a snapshot with failed descriptors retained for session cleanup retry. */
+  readAnalysisSnapshot(
+    path: string,
+    signal?: AbortSignal,
+  ): Promise<Result<AnalysisSnapshot, AnalysisError>>;
   exportAnalysisSnapshot(): Result<AnalysisSnapshot, AnalysisError>;
   importAnalysisSnapshot(
     snapshot: AnalysisSnapshot,
@@ -116,6 +125,7 @@ export interface BinarySessionPort
   ): AnalysisProfileCommitment | undefined;
   allowsSnapshotReplay(operation: AnalysisOperation): boolean;
   /** Invalidate cached Evidence before an external command may mutate the target. */
+  invalidateSnapshotForExternalMutation(): void;
   recordWorkflowSnapshot(
     input: WorkflowSnapshotRecordInput,
   ): Result<null, EvidenceIntegrityError>;

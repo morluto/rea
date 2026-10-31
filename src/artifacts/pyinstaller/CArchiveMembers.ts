@@ -1,10 +1,15 @@
 import type { FileHandle } from "node:fs/promises";
 import { copyArtifactEntry, type ArtifactEntry } from "../ArtifactReader.js";
-import { isCArchiveDeclaration, type CArchiveEntry } from "./CArchiveLayout.js";
+import {
+  isCArchiveDeclaration,
+  isCArchivePythonModule,
+  type CArchiveEntry,
+} from "./CArchiveLayout.js";
 import type { PyzArchive, PyzEntry } from "./PyzArchive.js";
 import {
   RECONSTRUCTED_PYTHON_HEADER_LIMITATION,
   reconstructedPycHeader,
+  type CArchiveBytecodeHeader,
 } from "./PythonBytecode.js";
 import {
   cArchiveEntryMetadata,
@@ -14,6 +19,8 @@ import {
 import type { PyInstallerEntryMetadata } from "../../domain/artifactFormatMetadata.js";
 
 const CRYPTO_KEY_NAME = "pyimod00_crypto_key";
+
+export type CarrierPathDialect = "posix" | "windows" | "unknown";
 
 /** Parsed facts and the descriptor identity used to locate a retained image. */
 export interface PyzImage {
@@ -51,25 +58,26 @@ export const hasEncryptionMarker = (
   entries.some(
     (entry) =>
       entry.name === CRYPTO_KEY_NAME &&
-      (entry.typeCode === "m" || entry.typeCode === "M") &&
+      isCArchivePythonModule(entry) &&
       entry.uncompressedSize > 0,
   );
 
 export const projectStoredMember = (
   entry: CArchiveEntry,
   archiveStart: number,
-  pythonMagic: Buffer | undefined,
+  bytecode: CArchiveBytecodeHeader,
+  pathDialect: CarrierPathDialect,
 ): PyInstallerMember => {
   if (isCArchiveDeclaration(entry))
     return {
-      entry: fileEntry({
-        path: `__pyinstaller__/${entry.typeCode === "o" ? "runtime-options" : "dependencies"}/${String(entry.index)}`,
+      entry: projectEntry({
+        path: `__pyinstaller__/${entry.role === "runtime-option" ? "runtime-options" : "dependencies"}/${String(entry.index)}`,
         kind: "metadata",
         declaredSize: entry.uncompressedSize,
         compressedSize: entry.compressedSize,
         byteOffset: null,
         limitations:
-          entry.typeCode === "d"
+          entry.role === "dependency"
             ? [
                 "Multipackage dependency bytes belong to another executable and remain unresolved.",
               ]
@@ -79,23 +87,22 @@ export const projectStoredMember = (
       }),
       read: undefined,
     };
-  const header =
-    pythonMagic !== undefined && isBytecodeType(entry.typeCode)
-      ? reconstructedPycHeader(pythonMagic)
-      : undefined;
-  const path = canonicalMemberPath(entry.name);
-  const symlink = entry.typeCode === "n";
+  const { header } = bytecode;
+  const path = canonicalMemberPath(entry.name, pathDialect);
+  const symlink = entry.role === "symlink";
   const limitations: string[] = [];
   if (symlink) limitations.push("PyInstaller symlink target was not read.");
   if (header !== undefined)
     limitations.push(RECONSTRUCTED_PYTHON_HEADER_LIMITATION);
+  if (bytecode.limitation !== undefined) limitations.push(bytecode.limitation);
   const declaredSize = entry.uncompressedSize;
   return {
-    entry: fileEntry({
+    entry: projectEntry({
       path,
       kind: symlink ? "symlink" : "file",
       declaredSize,
       compressedSize: entry.compressedSize,
+      executable: entry.role === "binary",
       byteOffset: sourceByteOffset(entry, archiveStart),
       limitations,
       adapterKey: `carchive:${String(entry.index)}:${entry.name}`,
@@ -115,14 +122,15 @@ export const projectPyzContainer = (
   archiveStart: number,
   image: PyzImage,
   encrypted: boolean,
+  pathDialect: CarrierPathDialect,
 ): PyInstallerMember => {
   const { archive } = image;
-  const path = canonicalMemberPath(entry.name);
+  const path = canonicalMemberPath(entry.name, pathDialect);
   const byteOffset = sourceByteOffset(entry, archiveStart);
   const limitations: string[] = [];
   if (archive.kind === "opaque")
     return {
-      entry: fileEntry({
+      entry: projectEntry({
         path,
         declaredSize: entry.uncompressedSize,
         compressedSize: entry.compressedSize,
@@ -163,16 +171,12 @@ export const projectPyzContainer = (
             },
     };
   return {
-    entry: {
+    entry: projectEntry({
       path,
       kind: "directory",
       declaredSize: entry.uncompressedSize,
       compressedSize: entry.compressedSize,
-      executable: false,
-      encrypted: false,
       byteOffset,
-      declaredIntegrity: null,
-      unpacked: false,
       limitations: [
         ...limitations,
         `PyInstaller PYZ sha256 ${archive.sha256}.`,
@@ -187,7 +191,7 @@ export const projectPyzContainer = (
         archive,
         encrypted,
       ),
-    },
+    }),
     read: undefined,
   };
 };
@@ -197,6 +201,7 @@ export const projectPyzMember = (
   item: PyzEntry,
   encryptionMarker: boolean,
   pythonMagic: Buffer | undefined,
+  pathDialect: CarrierPathDialect,
   range:
     | {
         readonly handle: FileHandle;
@@ -205,20 +210,21 @@ export const projectPyzMember = (
       }
     | undefined,
 ): PyInstallerMember => {
-  const path = pyzMemberPath(canonicalMemberPath(container.name), item);
+  const path = pyzMemberPath(
+    canonicalMemberPath(container.name, pathDialect),
+    item,
+    pathDialect,
+  );
   const encrypted = pyzEntryEncrypted(item, encryptionMarker);
-  if (item.namespace)
+  if (item.role === "namespace")
     return {
-      entry: {
-        path: path,
-        kind: "directory",
+      entry: projectEntry({
+        path,
+        kind: "metadata",
         declaredSize: 0,
         compressedSize: item.length,
-        executable: false,
         encrypted,
         byteOffset: null,
-        declaredIntegrity: null,
-        unpacked: false,
         limitations: [
           "Namespace package has no importable bytecode; its declared payload is not materialized.",
           ...(encrypted
@@ -234,13 +240,13 @@ export const projectPyzMember = (
           undefined,
           encryptionMarker,
         ),
-      },
+      }),
       read: undefined,
     };
   const header =
     !encrypted &&
     pythonMagic !== undefined &&
-    (item.typeCode === 0 || item.typeCode === 1)
+    (item.role === "module" || item.role === "package")
       ? reconstructedPycHeader(pythonMagic)
       : undefined;
   const limitations: string[] = [];
@@ -252,7 +258,7 @@ export const projectPyzMember = (
     "PYZ tables declare compressed lengths; the uncompressed size is unknown until decoding.",
   );
   return {
-    entry: fileEntry({
+    entry: projectEntry({
       path: path,
       declaredSize: null,
       compressedSize: item.length,
@@ -281,14 +287,17 @@ export const projectPyzMember = (
 };
 
 /**
- * CArchive and PYZ data names treat `\` as a separator. The logical path is
+ * CArchive and PYZ data names use the carrier's path dialect. The logical path is
  * canonical; the stored spelling is kept when that conversion changes it.
  * `source_location` is an offset plus declared size, so a compressed member
  * publishes a file span only when that size is the physical extent. Otherwise
  * the span stays unknown, as ZIP does for compressed entries.
  */
-const canonicalMemberPath = (storedName: string): string =>
-  storedName.replaceAll("\\", "/");
+const canonicalMemberPath = (
+  storedName: string,
+  pathDialect: CarrierPathDialect,
+): string =>
+  pathDialect === "windows" ? storedName.replaceAll("\\", "/") : storedName;
 
 const sourceByteOffset = (
   entry: CArchiveEntry,
@@ -296,19 +305,20 @@ const sourceByteOffset = (
 ): number | null =>
   entry.compressionFlag === 0 ? archiveStart + entry.offset : null;
 
-const pyzMemberPath = (container: string, item: PyzEntry): string => {
-  if (item.typeCode === 2)
-    return `${container}/${canonicalMemberPath(item.name)}`;
+const pyzMemberPath = (
+  container: string,
+  item: PyzEntry,
+  pathDialect: CarrierPathDialect,
+): string => {
+  if (item.role === "data")
+    return `${container}/${canonicalMemberPath(item.name, pathDialect)}`;
   const dotted = item.name.replaceAll(".", "/");
-  if (item.namespace) return `${container}/${dotted}`;
-  if (item.package) return `${container}/${dotted}/__init__.pyc`;
+  if (item.role === "namespace") return `${container}/${dotted}`;
+  if (item.role === "package") return `${container}/${dotted}/__init__.pyc`;
   return `${container}/${dotted}.pyc`;
 };
 
-const isBytecodeType = (typeCode: string): boolean =>
-  typeCode === "s" || typeCode === "m" || typeCode === "M";
-
-const fileEntry = (input: {
+const projectEntry = (input: {
   readonly path: string;
   readonly declaredSize: number | null;
   readonly compressedSize: number;
@@ -316,14 +326,16 @@ const fileEntry = (input: {
   readonly limitations: readonly string[];
   readonly adapterKey: string;
   readonly formatMetadata: PyInstallerEntryMetadata;
+  readonly executable?: boolean;
   readonly encrypted?: boolean;
-  readonly kind?: "file" | "symlink" | "metadata";
+  readonly kind?: "file" | "directory" | "symlink" | "metadata";
 }): ArtifactEntry => ({
   path: input.path,
+  sourcePath: input.formatMetadata.source_name,
   kind: input.kind ?? "file",
   declaredSize: input.declaredSize,
   compressedSize: input.compressedSize,
-  executable: false,
+  executable: input.executable === true,
   encrypted: input.encrypted === true,
   byteOffset: input.byteOffset,
   declaredIntegrity: null,

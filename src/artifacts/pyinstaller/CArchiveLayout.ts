@@ -39,46 +39,70 @@ export interface PyInstallerCookie {
   readonly cookieOffset: number;
 }
 
-/** One CArchive table entry. */
+type CArchiveEntryRole =
+  | "script"
+  | "module"
+  | "package"
+  | "runtime-option"
+  | "dependency"
+  | "symlink"
+  | "binary"
+  | "pyz"
+  | "other";
+
+const CARCHIVE_ENTRY_ROLES: ReadonlyMap<string, CArchiveEntryRole> = new Map([
+  ["s", "script"],
+  ["m", "module"],
+  ["M", "package"],
+  ["o", "runtime-option"],
+  ["d", "dependency"],
+  ["n", "symlink"],
+  ["b", "binary"],
+  ["z", "pyz"],
+]);
+
+/** One CArchive table entry, retaining its source code separately from the parsed role. */
 export interface CArchiveEntry {
   readonly index: number;
   readonly tocRecordOffset: number;
   readonly tocRecordLength: number;
   readonly name: string;
   readonly typeCode: string;
+  readonly role: CArchiveEntryRole;
   readonly offset: number;
   readonly compressedSize: number;
   readonly uncompressedSize: number;
-  readonly compressionFlag: number;
+  readonly compressionFlag: 0 | 1;
 }
 
-/** Runtime options and external dependencies are declarations, never local blobs. */
-export const isCArchiveDeclaration = (
-  entry: CArchiveEntry,
-): entry is CArchiveEntry & { readonly typeCode: "o" | "d" } =>
-  entry.typeCode === "o" || entry.typeCode === "d";
+/** Role-defined declarations never own local payload bytes. */
+export const isCArchiveDeclaration = (entry: CArchiveEntry): boolean =>
+  entry.role === "runtime-option" || entry.role === "dependency";
 
-/** True when a native executable has a structurally valid CArchive cookie. */
-export const containsPyInstallerArchive = async (
+/** Importable Python modules and packages share headerless-code and marker semantics. */
+export const isCArchivePythonModule = (entry: CArchiveEntry): boolean =>
+  entry.role === "module" || entry.role === "package";
+
+/** Completed search facts; a rejected magic copy does not establish an archive. */
+export type PyInstallerCookieObservation =
+  | { readonly state: "absent" }
+  | {
+      readonly state: "rejected-candidates";
+      readonly failure: PyInstallerFailure;
+    }
+  | { readonly state: "located"; readonly cookie: PyInstallerCookie };
+
+/** Search the bounded tail completely; acquisition failures are not negative observations. */
+export const observePyInstallerCookie = async (
   handle: FileHandle,
   fileSize: number,
   signal?: AbortSignal,
-): Promise<boolean> => {
-  const found = await findPyInstallerCookie(handle, fileSize, signal);
-  return found?.ok === true;
-};
-
-/** Locate a structurally valid cookie. Invalid magic copies are skipped. */
-export const findPyInstallerCookie = async (
-  handle: FileHandle,
-  fileSize: number,
-  signal?: AbortSignal,
-): Promise<Result<PyInstallerCookie, PyInstallerFailure> | undefined> => {
+): Promise<Result<PyInstallerCookieObservation, PyInstallerFailure>> => {
   if (
     !Number.isSafeInteger(fileSize) ||
     fileSize < PYINSTALLER_COOKIE_V20_BYTES
   )
-    return undefined;
+    return ok({ state: "absent" });
   const tailSize = Math.min(fileSize, PYINSTALLER_COOKIE_SEARCH_BYTES);
   const read = await readPyInstallerBytes(handle, {
     position: fileSize - tailSize,
@@ -97,11 +121,15 @@ export const findPyInstallerCookie = async (
     if (relative < 0) break;
     const cookieOffset = fileSize - tailSize + relative;
     const parsed = parseCookieAt(observed, relative, cookieOffset, fileSize);
-    if (parsed.ok) return parsed;
+    if (parsed.ok) return ok({ state: "located", cookie: parsed.value });
     failure = parsed.error;
     from = relative;
   }
-  return failure === undefined ? undefined : err(failure);
+  return ok(
+    failure === undefined
+      ? { state: "absent" }
+      : { state: "rejected-candidates", failure },
+  );
 };
 
 /** Read and parse the TOC that a validated cookie names. */
@@ -137,6 +165,13 @@ export const parseCArchiveToc = (
 ): Result<readonly CArchiveEntry[], PyInstallerFailure> => {
   const entries: CArchiveEntry[] = [];
   let offset = 0;
+  const malformedEntry = (message: string): Result<never, PyInstallerFailure> =>
+    err(
+      pyInstallerFailure(
+        "format",
+        `CArchive table index ${String(entries.length)} at TOC offset ${String(offset)}: ${message}`,
+      ),
+    );
   while (offset < bytes.length) {
     if (entries.length >= MAX_TOC_ENTRIES)
       return err(
@@ -146,48 +181,35 @@ export const parseCArchiveToc = (
         ),
       );
     if (offset + TOC_HEADER_BYTES > bytes.length)
-      return err(
-        pyInstallerFailure(
-          "format",
-          "CArchive table of contents entry is truncated",
-        ),
-      );
+      return malformedEntry("CArchive table of contents entry is truncated");
     const entryLength = bytes.readUInt32BE(offset);
     if (entryLength < TOC_HEADER_BYTES || offset + entryLength > bytes.length)
-      return err(
-        pyInstallerFailure(
-          "format",
-          "CArchive table of contents entry extends outside the table",
-        ),
+      return malformedEntry(
+        "CArchive table of contents entry extends outside the table",
       );
     const nameBytes = bytes.subarray(
       offset + TOC_HEADER_BYTES,
       offset + entryLength,
     );
     const name = tocName(nameBytes);
-    if (!name.ok) return name;
+    if (!name.ok) return malformedEntry(name.error.message);
     const compressionFlag = bytes[offset + 16] ?? 0;
     if (compressionFlag !== 0 && compressionFlag !== 1)
-      return err(
-        pyInstallerFailure(
-          "format",
-          `CArchive compression flag ${String(compressionFlag)} is not stored or zlib`,
-        ),
+      return malformedEntry(
+        `CArchive compression flag ${String(compressionFlag)} is not stored or zlib`,
       );
     const typeCode = bytes[offset + 17] ?? 0;
     if (typeCode < 0x20 || typeCode > 0x7e)
-      return err(
-        pyInstallerFailure(
-          "format",
-          "CArchive type code is not a printable character",
-        ),
-      );
+      return malformedEntry("CArchive type code is not a printable character");
+    const sourceTypeCode = String.fromCharCode(typeCode);
     entries.push({
       index: entries.length,
       tocRecordOffset: offset,
       tocRecordLength: entryLength,
       name: name.value,
-      typeCode: String.fromCharCode(typeCode),
+      typeCode: sourceTypeCode,
+      // Other printable codes keep generic-file behavior; compression is independent.
+      role: CARCHIVE_ENTRY_ROLES.get(sourceTypeCode) ?? "other",
       offset: bytes.readUInt32BE(offset + 4),
       compressedSize: bytes.readUInt32BE(offset + 8),
       uncompressedSize: bytes.readUInt32BE(offset + 12),
@@ -320,7 +342,6 @@ const validateCArchiveMembers = (
   entries: readonly CArchiveEntry[],
   tocOffset: number,
 ): Result<null, PyInstallerFailure> => {
-  const names = new Set<string>();
   for (const entry of entries) {
     if (isCArchiveDeclaration(entry)) {
       if (
@@ -334,15 +355,6 @@ const validateCArchiveMembers = (
             `CArchive declaration at table index ${String(entry.index)} has local payload or compression`,
           ),
         );
-    } else {
-      if (names.has(entry.name))
-        return err(
-          pyInstallerFailure(
-            "integrity",
-            `Duplicate CArchive member name at table index ${String(entry.index)}`,
-          ),
-        );
-      names.add(entry.name);
     }
     if (
       entry.compressionFlag === 0 &&

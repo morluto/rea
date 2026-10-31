@@ -1,4 +1,9 @@
 import { deflateSync } from "node:zlib";
+import { pe } from "../../domain/binaryTarget.fixture.js";
+import {
+  pythonPycFixture,
+  pythonPycHeader,
+} from "../../python/PythonPyc.fixture.js";
 
 import { PYINSTALLER_COOKIE_MAGIC } from "./CArchiveLayout.js";
 
@@ -28,8 +33,10 @@ export interface CArchiveFixtureMember {
   readonly declaredUncompressedSize?: number;
 }
 
-/** Build a tiny ELF with an appended CArchive, optionally followed by a trailer. */
+/** Build a tiny native carrier with an appended CArchive and optional trailer. */
 export const cArchiveExecutable = (input: {
+  readonly carrier?: "elf" | "pe";
+  readonly peHeaderOffset?: number;
   readonly layout: "2.0" | "2.1";
   readonly pythonVersion: number;
   readonly pythonLibrary?: string;
@@ -70,12 +77,96 @@ export const cArchiveExecutable = (input: {
     tocLength: toc.length,
   });
   return Buffer.concat([
-    ELF_PREFIX,
+    input.carrier === "pe"
+      ? pe(0x8664, input.peHeaderOffset ?? 64)
+      : ELF_PREFIX,
     ...payloads,
     toc,
     cookie,
     input.trailer ?? Buffer.alloc(0),
   ]);
+};
+
+/** Inert code fixtures model the legacy full-pyc and modern marshal-only writers. */
+export const cArchiveBytecodeExecutable = () => {
+  const timestampPyc = pythonPycFixture("py38", {
+    magic: 3439,
+    header: { mtime: 123, sourceSize: 456 },
+  });
+  const hashPyc = pythonPycFixture("py38", {
+    magic: 3439,
+    header: { flags: 3, sourceHash: Buffer.from("0102030405060708", "hex") },
+  });
+  const modern = pythonPycFixture("py38", { magic: 3439, flaggedCode: true });
+  const modules = [
+    {
+      name: "legacy-stored",
+      typeCode: "m",
+      payload: timestampPyc,
+      compress: false,
+      bytes: timestampPyc,
+      derived: false,
+    },
+    {
+      name: "legacy-compressed",
+      typeCode: "m",
+      payload: hashPyc,
+      compress: true,
+      bytes: hashPyc,
+      derived: false,
+    },
+    {
+      name: "legacy-package",
+      typeCode: "M",
+      payload: timestampPyc,
+      compress: true,
+      bytes: timestampPyc,
+      derived: false,
+    },
+    {
+      name: "modern-module",
+      typeCode: "m",
+      payload: modern.subarray(16),
+      compress: true,
+      bytes: modern,
+      derived: true,
+    },
+    {
+      name: "modern-package",
+      typeCode: "M",
+      payload: timestampPyc.subarray(16),
+      compress: false,
+      bytes: Buffer.concat([pythonPycHeader(3439), timestampPyc.subarray(16)]),
+      derived: true,
+    },
+    {
+      name: "script",
+      typeCode: "s",
+      payload: modern.subarray(16),
+      compress: true,
+      bytes: modern,
+      derived: true,
+    },
+  ];
+  return {
+    modules,
+    archive: cArchiveExecutable({
+      layout: "2.1",
+      pythonVersion: 310,
+      members: [
+        ...modules,
+        {
+          name: "PYZ.pyz",
+          typeCode: "z",
+          payload: pyzArchive({
+            magic: timestampPyc.subarray(0, 4),
+            modules: [],
+          }),
+          compress: false,
+        },
+      ],
+    }),
+  };
 };
 
 /** Cookie whose package range starts before the file. */
@@ -129,7 +220,7 @@ export const pyzArchive = (input: {
 export interface PyzFixtureModule {
   readonly legacyNamespacePayload?: boolean;
   readonly compressedSuffix?: Buffer;
-  readonly name: string;
+  readonly name: string | Buffer;
   readonly typeCode: number;
   readonly body: Buffer;
 }
@@ -181,7 +272,7 @@ const marshalList = (items: readonly Buffer[]): Buffer => {
 };
 
 const marshalPair = (
-  name: string,
+  name: string | Buffer,
   typeCode: number,
   offset: number,
   length: number,
@@ -194,8 +285,8 @@ const marshalPair = (
 const smallTuple = (items: readonly Buffer[]): Buffer =>
   Buffer.concat([Buffer.from([0x29, items.length]), ...items]);
 
-const marshalString = (text: string): Buffer => {
-  const body = Buffer.from(text, "utf8");
+const marshalString = (text: string | Buffer): Buffer => {
+  const body = Buffer.isBuffer(text) ? text : Buffer.from(text, "utf8");
   if (body.length <= 255 && body.every((byte) => byte < 0x80))
     return Buffer.concat([Buffer.from([0x7a, body.length]), body]);
   const length = Buffer.alloc(4);

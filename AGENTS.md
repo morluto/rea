@@ -22,6 +22,8 @@ Keep proof of ownership separate from validity, editability, and readiness. Malf
 
 For lifecycle changes, follow [ownership and completion invariants](docs/tool-design.md#own-the-lifecycle) and select the applicable [lifecycle regressions](docs/testing.md#lifecycle-regressions). Include late handshakes, cancellation during final cleanup, mixed child outcomes, and cleanup retry where those stages exist; active-execution cancellation alone does not cover finalization.
 
+Before adding complexity for a speculative or vanishingly unlikely race or security edge case, explain the concrete failure mode, likelihood, and complexity cost to the user and get their buy-in. Do not silently expand scope for theoretical robustness.
+
 Assess brittleness in touched code during implementation, debugging, review, and maintenance. Fix the producing representation or ownership rule before adding downstream repairs. Normalize once at the owning boundary using format-aware parsers. Remove superseded representations, aliases, wrappers, and redundant tests after verifying affected consumers. Introduce abstractions only when they remove observed complexity.
 
 When fixing a bug, inspect the producing boundary and affected consumers for duplicated interpretation or unclear ownership. Complete any directly related refactor in the same change and remove superseded code. Passing regression tests alone does not establish that the brittleness is resolved. If related cleanup remains, explain what remains and why.
@@ -51,15 +53,18 @@ Optimize in this order:
 3. CPU and memory. Avoid unnecessary work and copies; bound concurrency,
    retained state and serialization growth.
 
-For changes affecting these costs, measure representative completed tasks and
-compare equivalent workflows before and after where available. Report token
-usage, elapsed time, CPU time and peak process-family memory. Separate cold
+Reserve performance measurements for changes that target performance or have a
+concrete regression concern. Routine cleanup uses correctness checks; changes
+to helper calls, imports, or representations alone do not require synthetic
+benchmarks. When measurement is warranted, measure representative completed
+tasks and compare equivalent workflows before and after where available. Report
+token usage, elapsed time, CPU time and peak process-family memory. Separate cold
 and warm runs, label estimates, and state unmeasured costs. Fewer bytes alone
 do not establish fewer tokens or faster analysis.
 
 ## Development
 
-Use [.nvmrc](.nvmrc) and `package.json#packageManager` for the pinned toolchain. Cursor Cloud may place older Node.js first on `PATH`; environment setup installs the pinned toolchain under `/usr/local/bin`.
+Use [.nvmrc](.nvmrc) and `package.json#packageManager` for the pinned toolchain. Cursor Cloud may place older Node.js first on `PATH`; environment setup installs the pinned toolchain under `/usr/local/bin`. Prefix `PATH="/usr/local/bin:$PATH"` before `node` and `npm`.
 
 - `npm ci`: install locked dependencies.
 - `npm run build:cached`: build the runtime and packaged skill.
@@ -70,13 +75,15 @@ Use [.nvmrc](.nvmrc) and `package.json#packageManager` for the pinned toolchain.
 
 Use relevant checks for the change. The complete local gate, `npm run check:pr`, is optional for broad changes or CI diagnosis. See [CONTRIBUTING.md](CONTRIBUTING.md) for development, generated-file ownership, and release conventions.
 
+Coordinate expensive checks across agents. If a test unexpectedly consumes heavy CPU, stop its owned process family and profile a bounded representative case before retrying. Inspect production work, fixture generation, subprocesses, and repeated setup; preserve regression coverage when optimizing. Follow the [test resource guidance](docs/testing.md#developer-commands).
+
 `docs/public/product-catalog.json`, `docs/verification/managed-conformance-*.json`, and `skills/` are ignored outputs. Edit source contracts and `.agents/skills/reverse-engineer-anything/`, then regenerate as needed. `.cache/mcp-tool-catalog.json` is test metadata; runtime builds and source checking do not consume it. Never commit binaries, provider project documents, credentials, `dist/`, `node_modules/`, or local planning artifacts.
 
 ## Tool and Test Changes
 
 For tool design, follow [docs/tool-design.md](docs/tool-design.md): start from the analyst question, reuse existing contracts, preserve caller choices, and return useful evidence inline. Limits must follow real format, protocol, authority, or resource constraints. Account for representation expansion before allocation; derive completeness from examined coverage.
 
-For test changes or provider claims, use [docs/testing.md](docs/testing.md). Prefer real public CLI/MCP workflows, then production-boundary integration, then producer goldens. Keep module tests for distinct semantics stronger workflows cannot reliably reproduce. Preserve malformed-input, cancellation, cleanup, permission, capacity, and target-identity coverage when pruning. Report unverified coverage explicitly; simulated providers do not establish real-provider behavior.
+For test changes or provider claims, use [docs/testing.md](docs/testing.md). Select applicable [boundary regressions](docs/testing.md#boundary-regressions) for parser, inventory, snapshot, and projection fixes. Prefer real public CLI/MCP workflows, then production-boundary integration, then producer goldens. Keep module tests for distinct semantics stronger workflows cannot reliably reproduce. Preserve malformed-input, cancellation, cleanup, permission, capacity, and target-identity coverage when pruning. Report unverified coverage explicitly; simulated providers do not establish real-provider behavior.
 
 Use Conventional Commit subjects and PR titles. Mark breaking changes with `!` or a `BREAKING CHANGE:` footer. Describe behavior changes, relevant validation, and real-provider verification scope.
 
@@ -104,10 +111,11 @@ distinguish source-derived conclusions, proposed checks, and unavailable coverag
 Address actionable automated review findings and explain disagreements.
 
 Leave the template's **Author readiness** declarations unchecked for the human
-owner to complete. Never attest to human review on their behalf. Keep the PR in
-draft until the human declares the PR initially ready. Later pushes do not
-invalidate that declaration or require another human sign-off. Keep the PR body
-and affected validation current as work changes. The readiness check validates
+owner to complete. Never attest to human review on their behalf. Draft status
+is optional; preserve the PR's current draft status unless the user asks to change
+it. Later pushes do not invalidate the readiness declaration or require another
+human sign-off. Keep the PR body and affected validation current as work changes.
+The readiness check validates
 the filled declaration; CI and automated review results do not establish that
 human review occurred, maintainer scope approval, or merge permission.
 

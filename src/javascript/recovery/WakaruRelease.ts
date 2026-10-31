@@ -1,3 +1,5 @@
+import { BOUNDED_PRODUCER_LIMITS } from "../../process/LinuxResourceLimits.js";
+
 /** Unchanged upstream source pin; executed bytes are identified separately. */
 export const WAKARU_RELEASE = {
   version: "1.14.0",
@@ -34,7 +36,8 @@ export const RECOVERY_LIMITS = {
   outputBytes: 128 * 1024 * 1024,
   outputEntries: 10000,
   reportBytes: 8 * 1024 * 1024,
-  addressSpaceBytes: 1024 * 1024 * 1024,
+  addressSpaceBytes: BOUNDED_PRODUCER_LIMITS.address_space_bytes,
+  cpuSeconds: 120,
   timeoutMs: 120000,
 } as const;
 

@@ -10,45 +10,67 @@ import { registerModelArtifactTools } from "../../../src/server/registerModelArt
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { silentLogger } from "../../../src/logger.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
-import { ggufFixture } from "../../fixtures/model/model.js";
+import { ggufFixture, safetensorsFixture } from "../../fixtures/model/model.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { mcpTest } from "../../support/mcp/mcpFixture.js";
 
-mcpTest.for([false, true])(
-  "projects partial model Evidence through an MCP tool error (retained=%s)",
-  async (retained, { mcp }) => {
+const interruptedFixture = (fullHash: boolean) => {
+  const seed = ggufFixture();
+  const count = 200_000;
+  return fullHash
+    ? safetensorsFixture(
+        JSON.stringify({
+          __metadata__: { author: "test" },
+          weight: {
+            dtype: "F32",
+            shape: [524288],
+            data_offsets: [0, 2 * 1024 * 1024],
+          },
+        }),
+        Buffer.alloc(2 * 1024 * 1024),
+      )
+    : ggufFixture({
+        tensors: [],
+        metadata: [
+          { key: "general.name", type: 8, value: seed.text("First row") },
+          {
+            key: "custom.bools",
+            type: 9,
+            value: Buffer.concat([
+              seed.u32(7),
+              seed.u64(BigInt(count)),
+              Buffer.alloc(count),
+            ]),
+          },
+        ],
+      });
+};
+
+mcpTest.for([
+  { retained: false, fullHash: false },
+  { retained: true, fullHash: false },
+  { retained: false, fullHash: true },
+  { retained: true, fullHash: true },
+])(
+  "projects partial model Evidence through an MCP tool error ($retained, fullHash=$fullHash)",
+  async ({ retained, fullHash }, { mcp }) => {
     const root = await createTestTempDirectory("rea-model-mcp-partial-");
-    const path = join(root, "model.gguf");
-    const seed = ggufFixture();
-    const count = 200_000;
-    const fixture = ggufFixture({
-      tensors: [],
-      metadata: [
-        { key: "general.name", type: 8, value: seed.text("First row") },
-        {
-          key: "custom.bools",
-          type: 9,
-          value: Buffer.concat([
-            seed.u32(7),
-            seed.u64(BigInt(count)),
-            Buffer.alloc(count),
-          ]),
-        },
-      ],
-    });
+    const path = join(root, fullHash ? "model.safetensors" : "model.gguf");
+    const fixture = interruptedFixture(fullHash);
     await writeFile(path, fixture.bytes);
-    const arrayStart =
-      24 +
-      8 +
-      Buffer.byteLength("general.name") +
-      4 +
-      8 +
-      Buffer.byteLength("First row") +
-      8 +
-      Buffer.byteLength("custom.bools") +
-      4 +
-      4 +
-      8;
+    const arrayStart = fullHash
+      ? fixture.header.length
+      : 24 +
+        8 +
+        Buffer.byteLength("general.name") +
+        4 +
+        8 +
+        Buffer.byteLength("First row") +
+        8 +
+        Buffer.byteLength("custom.bools") +
+        4 +
+        4 +
+        8;
     const sample = await open(path, "r");
     const prototype = Object.getPrototypeOf(sample) as {
       read: (
@@ -103,7 +125,11 @@ mcpTest.for([false, true])(
     try {
       const response = await client.callTool({
         name: "inspect_model_artifact",
-        arguments: { path, detail: "complete" },
+        arguments: {
+          path,
+          detail: "complete",
+          ...(fullHash ? { hash: "full" } : {}),
+        },
       });
       if (!observedArrayChunk) throw new Error(JSON.stringify(response));
       const projected = parseMcpToolError(response);
@@ -123,15 +149,30 @@ mcpTest.for([false, true])(
       } else partial = parseEvidence(details.partial_observation);
       expect(partial.normalized_result).toMatchObject({
         kind: "model-artifact-partial",
-        metadata: [
-          {
-            index: 0,
-            key: "general.name",
-            value: "First row",
-            source_offset: 24,
-            source_length: 41,
-          },
-        ],
+        ...(fullHash
+          ? {
+              format: "safetensors",
+              metadata: [
+                expect.objectContaining({ key: "author", value: "test" }),
+              ],
+              tensors: [expect.objectContaining({ name: "weight" })],
+              coverage: {
+                header: "complete",
+                metadata: "complete",
+                tensors: "complete",
+              },
+            }
+          : {
+              metadata: [
+                {
+                  index: 0,
+                  key: "general.name",
+                  value: "First row",
+                  source_offset: 24,
+                  source_length: 41,
+                },
+              ],
+            }),
         artifact: {
           path,
           header_sha256: null,

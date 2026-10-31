@@ -148,6 +148,11 @@ const addCookies = async (
       run.state.complete = false;
       continue;
     }
+    // CDP Cookie.partitionKeyOpaque means the partition exists but is not
+    // serializable. A missing partitionKey means unpartitioned, so hashing
+    // that absence would align an unresolved partition with a different cookie.
+    // https://chromedevtools.github.io/devtools-protocol/tot/Network/#type-Cookie
+    const partitionOpaque = cookie.partitionKeyOpaque === true;
     addFingerprint(run.state, {
       scope: "cookie",
       identity: {
@@ -155,9 +160,10 @@ const addCookies = async (
         path,
         name,
         partition_key: cookie.partitionKey ?? null,
+        ...(partitionOpaque ? { partition_opaque: true } : {}),
       },
       value,
-      complete: true,
+      complete: !partitionOpaque,
     });
   }
 };
@@ -190,11 +196,28 @@ const addIndexedDb = async (
     const stores = recordsValue(database.objectStores);
     if (stores.length !== database.objectStores.length)
       run.state.complete = false;
+    const version =
+      typeof database.version === "number" &&
+      Number.isSafeInteger(database.version) &&
+      database.version >= 0
+        ? database.version
+        : undefined;
+    if (version === undefined) {
+      const limitation =
+        "An IndexedDB schema fingerprint is incomplete because its database version is unavailable, invalid, or outside exact integer precision.";
+      if (!run.limitations.includes(limitation))
+        run.limitations.push(limitation);
+    }
     addFingerprint(run.state, {
       scope: "indexed_db_schema",
       identity: databaseName,
-      value: stores.map(indexedDbStoreSchema),
+      value: {
+        version: version ?? null,
+        object_stores: stores.map(indexedDbStoreSchema),
+      },
+      projectionVersion: 2,
       complete:
+        version !== undefined &&
         stores.length === database.objectStores.length &&
         indexedDbSchemaComplete(stores),
     });
@@ -296,16 +319,14 @@ const addIndexedDbRecords = async (
       run.state.complete = false;
       return;
     }
+    const examinedCount = result.objectStoreDataEntries.length;
     const entries = recordsValue(result.objectStoreDataEntries);
     if (entries.length !== result.objectStoreDataEntries.length)
       run.state.complete = false;
     for (const entry of entries) {
-      const key = stableValue(entry.key);
-      const primaryKey = stableValue(entry.primaryKey);
-      // A missing remote object is an omission, not the JavaScript value
-      // "undefined". Keep the unavailable digest null and coverage partial.
-      const value =
-        entry.value === undefined ? undefined : stableValue(entry.value);
+      const key = decodeRemoteObject(entry.key);
+      const primaryKey = decodeRemoteObject(entry.primaryKey);
+      const value = decodeRemoteObject(entry.value);
       addFingerprint(run.state, {
         scope: "indexed_db_record",
         identity: {
@@ -316,20 +337,18 @@ const addIndexedDbRecords = async (
         },
         value,
         complete:
-          remoteObjectComplete(entry.key) &&
-          remoteObjectComplete(entry.primaryKey) &&
-          remoteObjectComplete(entry.value),
+          key !== undefined && primaryKey !== undefined && value !== undefined,
       });
     }
     if (result.hasMore !== true) return;
     if (
-      entries.length === 0 ||
-      skipCount > Number.MAX_SAFE_INTEGER - entries.length
+      examinedCount === 0 ||
+      skipCount > Number.MAX_SAFE_INTEGER - examinedCount
     ) {
       run.state.complete = false;
       return;
     }
-    skipCount += entries.length;
+    skipCount += examinedCount;
   }
 };
 
@@ -361,20 +380,21 @@ const addCaches = async (
         run.state.complete = false;
         break;
       }
+      const examinedCount = result.cacheDataEntries.length;
       const entries = recordsValue(result.cacheDataEntries);
       if (entries.length !== result.cacheDataEntries.length)
         run.state.complete = false;
       for (const entry of entries) await addCacheEntry(run, cache, entry);
       returnCount = result.returnCount;
-      if (skipCount + entries.length >= returnCount) break;
+      if (skipCount + examinedCount >= returnCount) break;
       if (
-        entries.length === 0 ||
-        skipCount > Number.MAX_SAFE_INTEGER - entries.length
+        examinedCount === 0 ||
+        skipCount > Number.MAX_SAFE_INTEGER - examinedCount
       ) {
         run.state.complete = false;
         break;
       }
-      skipCount += entries.length;
+      skipCount += examinedCount;
     }
   }
 };
@@ -432,12 +452,16 @@ const addFingerprint = (
     readonly identity: unknown;
     readonly value: unknown;
     readonly complete: boolean;
+    readonly projectionVersion?: 2;
   },
 ): void => {
   state.items.push({
     scope: input.scope,
     identity_sha256: digest(input.identity),
     value_sha256: input.value === undefined ? null : digest(input.value),
+    ...(input.projectionVersion === undefined
+      ? {}
+      : { projection_version: input.projectionVersion }),
     complete:
       input.complete &&
       stableValueComplete(input.identity) &&
@@ -470,7 +494,6 @@ const stableValue = (value: unknown): unknown => {
   if (record === undefined) return String(value);
   return Object.fromEntries(
     Object.entries(record)
-      .filter(([key]) => key !== "objectId" && key !== "customPreview")
       .sort(([left], [right]) => compareUnicodeCodePoints(left, right))
       .map(([key, item]) => [key, stableValue(item)]),
   );
@@ -490,55 +513,56 @@ const stableValueComplete = (value: unknown): boolean => {
     return value.every((item) => stableValueComplete(item));
   const record = recordValue(value);
   if (record === undefined) return false;
-  const entries = Object.entries(record).filter(
-    ([key]) => key !== "objectId" && key !== "customPreview",
-  );
+  const entries = Object.entries(record);
   return entries.every(([, item]) => stableValueComplete(item));
 };
 
-const remoteObjectComplete = (value: unknown): boolean => {
+/** Decode CDP value evidence once; debugger labels/references are not content.
+ * https://chromedevtools.github.io/devtools-protocol/tot/Runtime/#type-RemoteObject
+ */
+const decodeRemoteObject = (value: unknown): unknown => {
   const record = recordValue(value);
-  if (
-    record === undefined ||
-    record.objectId !== undefined ||
-    record.preview !== undefined ||
-    record.customPreview !== undefined ||
-    !stableValueComplete(record)
-  )
-    return false;
-  switch (record.type) {
+  if (record === undefined) return undefined;
+  const { type, unserializableValue } = record;
+  const serialized = record.value;
+  const primitive = (valid: boolean): unknown =>
+    valid ? { type, value: serialized } : undefined;
+  switch (type) {
     case "undefined":
-      return (
-        record.value === undefined && record.unserializableValue === undefined
-      );
+      return serialized === undefined && unserializableValue === undefined
+        ? { type }
+        : undefined;
     case "string":
     case "boolean":
-      return (
-        typeof record.value === record.type &&
-        record.unserializableValue === undefined
+      return primitive(
+        typeof serialized === type && unserializableValue === undefined,
       );
     case "number":
-      return record.unserializableValue === undefined
-        ? typeof record.value === "number" && Number.isFinite(record.value)
-        : record.value === undefined &&
-            typeof record.unserializableValue === "string" &&
-            ["-0", "NaN", "Infinity", "-Infinity"].includes(
-              record.unserializableValue,
-            );
+      if (unserializableValue === undefined)
+        return primitive(
+          typeof serialized === "number" && Number.isFinite(serialized),
+        );
+      return serialized === undefined &&
+        typeof unserializableValue === "string" &&
+        ["-0", "NaN", "Infinity", "-Infinity"].includes(unserializableValue)
+        ? { type, unserializableValue }
+        : undefined;
     case "bigint":
-      return (
-        record.value === undefined &&
-        typeof record.unserializableValue === "string" &&
-        /^-?\d+n$/u.test(record.unserializableValue)
-      );
+      return serialized === undefined &&
+        typeof unserializableValue === "string" &&
+        /^-?\d+n$/u.test(unserializableValue)
+        ? { type, unserializableValue }
+        : undefined;
     case "object":
-      return (
-        record.unserializableValue === undefined &&
-        (record.subtype === "null"
-          ? record.value === null
-          : record.value !== null && typeof record.value === "object")
+      return primitive(
+        unserializableValue === undefined &&
+          (record.subtype === "null"
+            ? serialized === null
+            : serialized !== null &&
+              typeof serialized === "object" &&
+              stableValueComplete(serialized)),
       );
     default:
-      return false;
+      return undefined;
   }
 };

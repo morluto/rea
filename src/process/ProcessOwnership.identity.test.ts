@@ -20,6 +20,51 @@ const observedIdentity = (entry: ProcessTableEntry, identity: string) => ({
   },
 });
 
+it("keeps an unresolved earlier generation unknown when a later unrelated process has a foreign marker", async () => {
+  const row: ProcessTableEntry = {
+    pid: 920,
+    parentPid: 1,
+    processGroupId: 920,
+    state: "S",
+    command: "unrelated",
+  };
+  let readable = false;
+  const evidenceOwner = new ProcessOwnershipEvidenceOwner();
+  const signalGroup = vi.fn();
+  const host: ProcessOwnershipHost = {
+    listProcesses: async () => [row],
+    environment: async () => ({ REA_PROCESS_RUN_ID: "foreign" }),
+    processIdentities: async (entries) =>
+      new Map(
+        entries.map((entry) => [
+          entry.pid,
+          readable
+            ? observedIdentity(entry, "later-generation")
+            : { state: "unavailable" as const, reason: "identity unavailable" },
+        ]),
+      ),
+    signalGroup,
+  };
+  const relation = { leaderPid: 100, processGroupId: 100, evidenceOwner };
+  await expect(
+    verifyNoTokenOwnedProcesses("run-token", host, [], relation),
+  ).resolves.toMatchObject({
+    cleaned: false,
+    failures: [{ pid: row.pid, reason: "process-identity-unavailable" }],
+  });
+  readable = true;
+  await expect(
+    verifyNoTokenOwnedProcesses("run-token", host, [], relation),
+  ).resolves.toMatchObject({
+    cleaned: false,
+    failures: [{ pid: row.pid, reason: "process-identity-unavailable" }],
+  });
+  expect(evidenceOwner.candidates).toMatchObject([
+    { pid: row.pid, identity: undefined, applicability: "identity-unresolved" },
+  ]);
+  expect(signalGroup).not.toHaveBeenCalled();
+});
+
 it.each([undefined, "run-token"])(
   "validates a current generation with token %s when its baseline identity was unknown",
   async (runId) => {
@@ -219,6 +264,76 @@ it
   },
 );
 
+it
+  .skipIf(typeof process.getuid !== "function")
+  .each(["credentials", "non-dumpable"] as const)(
+  "records an unrelated same-UID Linux process whose environment is withheld for %s",
+  async (restriction) => {
+    const diagnostic = "EACCES: permission denied, open '/proc/908/environ'";
+    const verify = async (
+      processGroupId: number,
+      environmentRestriction: typeof restriction | undefined,
+    ) => {
+      const row: ProcessTableEntry = {
+        pid: 908,
+        parentPid: 1,
+        processGroupId,
+        uid: process.getuid!(),
+        state: "S",
+        command: "unrelated-process",
+      };
+      const host: ProcessOwnershipHost = {
+        platform: "linux",
+        signalGroup: vi.fn(),
+        listProcesses: () => Promise.resolve([row]),
+        environment: () => Promise.resolve({}),
+        runTokens: () =>
+          Promise.resolve(
+            new Map([
+              [908, { state: "unavailable", reason: diagnostic } as const],
+            ]),
+          ),
+        processIdentities: (entries) =>
+          Promise.resolve(
+            new Map(
+              entries.map((entry) => [
+                entry.pid,
+                {
+                  ...observedIdentity(entry, "current-generation"),
+                  effectiveUid: process.getuid!(),
+                  ...(environmentRestriction === undefined
+                    ? {}
+                    : { environmentRestriction }),
+                },
+              ]),
+            ),
+          ),
+      };
+      return verifyNoTokenOwnedProcesses("run-token", host, undefined, {
+        leaderPid: 100,
+        processGroupId: 100,
+        evidenceOwner: new ProcessOwnershipEvidenceOwner(),
+      });
+    };
+
+    await expect(verify(908, restriction)).resolves.toMatchObject({
+      cleaned: true,
+      unverified: [{ pid: 908, diagnostic }],
+    });
+    // EACCES alone and a withheld member of the owned group stay fail-closed.
+    for (const [processGroupId, environmentRestriction] of [
+      [908, undefined],
+      [100, restriction],
+    ] as const)
+      await expect(
+        verify(processGroupId, environmentRestriction),
+      ).resolves.toMatchObject({
+        cleaned: false,
+        failures: [{ pid: 908, reason: "environment-unreadable" }],
+      });
+  },
+);
+
 it.each(["omitted", "throws"] as const)(
   "keeps a matching token unresolved when the first native identity is %s",
   async (firstRead) => {
@@ -271,6 +386,98 @@ it.each(["omitted", "throws"] as const)(
     expect(identityReads).toBe(2);
   },
 );
+
+it("keeps a matching-token replacement through omission and retries cleanup only with fresh identity proof", async () => {
+  const row: ProcessTableEntry = {
+    pid: 913,
+    parentPid: 1,
+    processGroupId: 913,
+    state: "S",
+    command: "replacement-owner",
+  };
+  let listed = true;
+  let replaced = false;
+  let identityUnavailable = false;
+  let live = true;
+  const evidenceOwner = new ProcessOwnershipEvidenceOwner();
+  const signalGroup = vi.fn(() => {
+    live = false;
+  });
+  const host: ProcessOwnershipHost = {
+    platform: "linux",
+    listProcesses: async () => (listed && live ? [row] : []),
+    environment: async () => ({}),
+    processIdentities: async (entries) =>
+      new Map(
+        entries.map((entry) => [
+          entry.pid,
+          !live
+            ? { state: "absent" as const, reason: "not-in-snapshot" as const }
+            : identityUnavailable
+              ? { state: "unavailable" as const, reason: "native read denied" }
+              : observedIdentity(entry, replaced ? "new-owner" : "old-owner"),
+        ]),
+      ),
+    runTokens: async (entries) => {
+      // The token belongs to the replacement, but the surrounding identity
+      // reads straddle reuse and therefore cannot yet grant signal authority.
+      replaced = true;
+      return new Map(
+        entries.map(({ pid }) => [
+          pid,
+          { state: "readable" as const, runId: "run-token" },
+        ]),
+      );
+    },
+    signalGroup,
+  };
+  const ownership = {
+    runId: "run-token",
+    leaderPid: 100,
+    processGroupId: 100,
+    sweepTokenOwnedProcesses: true,
+    evidenceOwner,
+  };
+
+  await expect(
+    verifyNoTokenOwnedProcesses("run-token", host, undefined, ownership),
+  ).resolves.toMatchObject({ cleaned: false });
+  listed = false;
+  identityUnavailable = true;
+  await expect(
+    cleanupOwnedProcessGroup(ownership, host),
+  ).resolves.toMatchObject({
+    cleaned: false,
+    failures: [{ pid: row.pid, reason: "process-identity-unavailable" }],
+  });
+  expect(signalGroup).not.toHaveBeenCalled();
+  expect(live).toBe(true);
+  expect(evidenceOwner.candidates).toMatchObject([
+    { pid: row.pid, identity: undefined, applicability: "identity-unresolved" },
+  ]);
+
+  identityUnavailable = false;
+  await expect(
+    verifyNoTokenOwnedProcesses("run-token", host, undefined, ownership),
+  ).resolves.toMatchObject({
+    cleaned: false,
+    reason: "token-owned process remained after cleanup",
+  });
+  expect(signalGroup).not.toHaveBeenCalled();
+  listed = true;
+  await expect(
+    cleanupOwnedProcessGroup(ownership, host),
+  ).resolves.toMatchObject({
+    cleaned: true,
+    signaled: true,
+  });
+  expect(signalGroup).toHaveBeenCalledExactlyOnceWith(
+    row.processGroupId,
+    "SIGKILL",
+  );
+  expect(live).toBe(false);
+  expect(evidenceOwner.candidates).toEqual([]);
+});
 
 it("retains a scoped unknown generation when a later table omits its PID", async () => {
   const row: ProcessTableEntry = {

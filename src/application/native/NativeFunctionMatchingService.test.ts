@@ -2,11 +2,14 @@ import { expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import { matchNativeFunctions } from "./NativeFunctionMatchingService.js";
 import { nativeFunctionMatchingSchema } from "../../domain/native/functionMatching.js";
-import { createEvidence } from "../../domain/evidence.js";
+import { createEvidence, immutableEvidence } from "../../domain/evidence.js";
 import { createAnalysisProfile } from "../../domain/analysisProfile.js";
-import { functionDossierSchema } from "../../domain/hopperValues.js";
+import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
+import { functionDossierSchema } from "../../domain/native/functionDossier.js";
+import { procedureInfoSchema } from "../../domain/native/procedureInfo.js";
 import {
-  nativeMatchingInventory,
+  nativeMatchingNamedInventory as nativeMatchingInventory,
+  nativeMatchingInventory as unqualifiedInventory,
   nativeMatchingDetails,
   nativeMatchingTarget,
   nativeMatchingProvider,
@@ -80,10 +83,10 @@ it("retains transitive provenance without treating dependencies as native observ
 });
 
 it("keeps symbol origin unknown when supplied metadata describes a different same-address alias", async () => {
-  const left = nativeMatchingInventory("1", [
+  const left = unqualifiedInventory("1", [
     { address: "0x10", value: "reported_name" },
   ]);
-  const right = nativeMatchingInventory("2", [
+  const right = unqualifiedInventory("2", [
     { address: "0x20", value: "reported_name" },
   ]);
   const alias = createEvidence(
@@ -108,13 +111,14 @@ it("keeps symbol origin unknown when supplied metadata describes a different sam
     },
   );
   const { report } = await compare({ left, right, left_observations: [alias] });
-  expect(report.summary.matched).toBe(1);
-  expect(report.matches[0]?.left[0]?.limitations).toContain(
-    "Symbol origin unavailable; exact-name matching uses the reported name and the existing automatic-name exclusion rule.",
+  expect(report.summary.matched).toBe(0);
+  const member = report.matches
+    .flatMap((match) => match.left)
+    .find((value) => value.address === "0x10");
+  expect(member?.limitations).toContain(
+    "Symbol origin unavailable; exact-name matching is unavailable. Independent complete body bytes remain eligible.",
   );
-  expect(report.matches[0]?.left[0]?.evidence_links).toContain(
-    alias.evidence_id,
-  );
+  expect(member?.evidence_links).toContain(alias.evidence_id);
 });
 
 it("preserves contradictory symbol origins from inventory/name facts or multiple name observations, independently of byte correspondence", async () => {
@@ -180,112 +184,152 @@ it("preserves contradictory symbol origins from inventory/name facts or multiple
   }
 });
 
-it("keeps informative CFG/call/string fingerprints as unresolved candidates and refuses incomplete structural observations", async () => {
-  const profile = createAnalysisProfile(nativeMatchingProvider, {
-    fixture: "structural-candidates-v1",
-  });
-  const observe = (
-    side: "1" | "2",
-    operation: string,
-    result: Parameters<typeof createEvidence>[2]["result"],
-    complete = true,
-  ) =>
-    createEvidence(nativeMatchingTarget(side), nativeMatchingProvider, {
-      operation,
-      parameters: {},
-      result,
-      analysisProfile: profile,
-      relationshipCoverage: complete
-        ? { status: "complete" }
-        : { status: "unknown", reason: "Missing direct call coverage" },
+it.each(["", "ram:"])(
+  "keeps informative %s CFG/call/string fingerprints as unresolved candidates and refuses incomplete structural observations",
+  async (space) => {
+    const profile = createAnalysisProfile(nativeMatchingProvider, {
+      fixture: "structural-candidates-v1",
     });
-  const left = observe("1", "list_procedures", [
-    { address: "0x10", value: "old_behavior" },
-  ]);
-  const right = observe("2", "list_procedures", [
-    { address: "0x20", value: "new_behavior" },
-  ]);
-  const dossier = (side: "1" | "2", address: string) => {
-    const value = functionDossierSchema.parse(
-      nativeMatchingDetails(side, address, "0102", true)[0]!.normalized_result,
+    const observe = (
+      side: "1" | "2",
+      operation: string,
+      result: Parameters<typeof createEvidence>[2]["result"],
+      complete = true,
+    ) =>
+      createEvidence(nativeMatchingTarget(side), nativeMatchingProvider, {
+        operation,
+        parameters: {},
+        result,
+        analysisProfile: profile,
+        relationshipCoverage: complete
+          ? { status: "complete" }
+          : { status: "unknown", reason: "Missing direct call coverage" },
+      });
+    const left = observe("1", "list_procedures", [
+      { address: `${space}0x10`, value: "old_behavior" },
+    ]);
+    const right = observe("2", "list_procedures", [
+      { address: `${space}0x20`, value: "new_behavior" },
+    ]);
+    const dossier = (side: "1" | "2", address: string) => {
+      const value = functionDossierSchema.parse(
+        nativeMatchingDetails(side, address, "0102", true)[0]!
+          .normalized_result,
+      );
+      value.basic_blocks = [
+        {
+          start: address,
+          end: `0x${(BigInt(address) + 2n).toString(16)}`,
+          successors: [],
+        },
+      ];
+      value.callees = [
+        {
+          address: "0x500",
+          name: "puts",
+          symbol: {
+            primary: true,
+            dynamic: false,
+            external: true,
+            type: "function",
+            source: "imported",
+          },
+          classification: null,
+          body: { available: false, reason: "Synthetic external target" },
+        },
+      ];
+      value.unresolved_calls = [];
+      value.referenced_strings = [
+        { address: "0x900", value: "marker", source_address: address },
+      ];
+      value.procedure.address = `${space}${address}`;
+      if (value.procedure.body.available)
+        value.procedure.body.ranges = value.procedure.body.ranges.map(
+          (range) => ({
+            start: `${space}${range.start}`,
+            end: `${space}${range.end}`,
+          }),
+        );
+      value.basic_blocks = value.basic_blocks.map((block) => ({
+        start: `${space}${block.start}`,
+        end: `${space}${block.end}`,
+        successors: block.successors.map((successor) => `${space}${successor}`),
+      }));
+      value.referenced_strings[0]!.source_address = `${space}${address}`;
+      return value;
+    };
+    const l = dossier("1", "0x10"),
+      r = dossier("2", "0x20");
+    const { report } = await compare({
+      left,
+      right,
+      left_observations: [observe("1", "analyze_function", l)],
+      right_observations: [observe("2", "analyze_function", r)],
+    });
+    expect(report.summary).toEqual({
+      matched: 0,
+      only_left: 0,
+      only_right: 0,
+      unresolved: 1,
+    });
+    expect(report.matches[0]?.left[0]?.structural_candidate_sha256).toMatch(
+      /^[a-f0-9]{64}$/u,
     );
-    value.basic_blocks = [
-      {
-        start: address,
-        end: `0x${(BigInt(address) + 2n).toString(16)}`,
-        successors: [],
-      },
-    ];
-    value.callees = [
-      {
-        address: "0x500",
-        name: "puts",
-        classification: null,
-        body: { available: false, reason: "Synthetic external target" },
-      },
-    ];
-    value.unresolved_calls = [];
-    value.referenced_strings = [
-      { address: "0x900", value: "marker", source_address: address },
-    ];
-    return value;
-  };
-  const l = dossier("1", "0x10"),
-    r = dossier("2", "0x20");
-  const { report } = await compare({
-    left,
-    right,
-    left_observations: [observe("1", "analyze_function", l)],
-    right_observations: [observe("2", "analyze_function", r)],
-  });
-  expect(report.summary).toEqual({
-    matched: 0,
-    only_left: 0,
-    only_right: 0,
-    unresolved: 1,
-  });
-  expect(report.matches[0]?.left[0]?.structural_candidate_sha256).toMatch(
-    /^[a-f0-9]{64}$/u,
-  );
-  expect(report.matches[0]?.left[0]?.structural_candidate_sha256).toBe(
-    report.matches[0]?.right[0]?.structural_candidate_sha256,
-  );
-  expect(report.matches[0]?.compare_functions_input).toBeNull();
-  const incomplete = await compare({
-    left,
-    right,
-    left_observations: [observe("1", "analyze_function", l, false)],
-    right_observations: [observe("2", "analyze_function", r)],
-  });
-  expect(incomplete.report.summary.unresolved).toBe(0);
-  expect(incomplete.report.source_coverage.left_structural_candidates).toBe(0);
-  const legacy = { ...l };
-  delete legacy.facet_availability;
-  const missingFacets = await compare({
-    left,
-    right,
-    left_observations: [observe("1", "analyze_function", legacy)],
-    right_observations: [observe("2", "analyze_function", r)],
-  });
-  expect(missingFacets.report.source_coverage.left_structural_candidates).toBe(
-    0,
-  );
-  expect(missingFacets.report.summary.unresolved).toBe(0);
-  l.callees = [];
-  l.referenced_strings = [];
-  r.callees = [];
-  r.referenced_strings = [];
-  const uninformative = await compare({
-    left,
-    right,
-    left_observations: [observe("1", "analyze_function", l)],
-    right_observations: [observe("2", "analyze_function", r)],
-  });
-  expect(uninformative.report.source_coverage.left_structural_candidates).toBe(
-    0,
-  );
-  expect(uninformative.report.summary.unresolved).toBe(0);
-});
+    expect(report.matches[0]?.left[0]?.structural_candidate_sha256).toBe(
+      report.matches[0]?.right[0]?.structural_candidate_sha256,
+    );
+    expect(report.matches[0]?.compare_functions_input).toBeNull();
+    const unknownOrigin = dossier("1", "0x10");
+    if (unknownOrigin.callees[0] === undefined)
+      throw new Error("Missing fixture callee");
+    unknownOrigin.callees[0].symbol = null;
+    const unqualified = await compare({
+      left,
+      right,
+      left_observations: [observe("1", "analyze_function", unknownOrigin)],
+      right_observations: [observe("2", "analyze_function", r)],
+    });
+    expect(unqualified.report.source_coverage.left_structural_candidates).toBe(
+      0,
+    );
+    const incomplete = await compare({
+      left,
+      right,
+      left_observations: [observe("1", "analyze_function", l, false)],
+      right_observations: [observe("2", "analyze_function", r)],
+    });
+    expect(incomplete.report.summary.unresolved).toBe(0);
+    expect(incomplete.report.source_coverage.left_structural_candidates).toBe(
+      0,
+    );
+    const legacy = { ...l };
+    delete legacy.facet_availability;
+    const missingFacets = await compare({
+      left,
+      right,
+      left_observations: [observe("1", "analyze_function", legacy)],
+      right_observations: [observe("2", "analyze_function", r)],
+    });
+    expect(
+      missingFacets.report.source_coverage.left_structural_candidates,
+    ).toBe(0);
+    expect(missingFacets.report.summary.unresolved).toBe(0);
+    l.callees = [];
+    l.referenced_strings = [];
+    r.callees = [];
+    r.referenced_strings = [];
+    const uninformative = await compare({
+      left,
+      right,
+      left_observations: [observe("1", "analyze_function", l)],
+      right_observations: [observe("2", "analyze_function", r)],
+    });
+    expect(
+      uninformative.report.source_coverage.left_structural_candidates,
+    ).toBe(0);
+    expect(uninformative.report.summary.unresolved).toBe(0);
+  },
+);
 
 it("matches symbols before bytes, retains exact renamed bytes, changed pairs, unpaired observations and duplicate candidates", async () => {
   const left = nativeMatchingInventory("1", [
@@ -616,8 +660,8 @@ it("does not use generated symbols and preserves literal named FUN_ symbols when
       })),
     });
   const { report } = await compare({
-    left: nativeMatchingInventory("1", entries),
-    right: nativeMatchingInventory("2", entries),
+    left: unqualifiedInventory("1", entries),
+    right: unqualifiedInventory("2", entries),
     left_observations: [names("1")],
     right_observations: [names("2")],
   });
@@ -628,34 +672,93 @@ it("does not use generated symbols and preserves literal named FUN_ symbols when
   );
 });
 
-it("rejects tampered, non-inventory and mixed-target observations with typed failures", async () => {
+it("assigns source authentication, role selection, context, and lookup failures to their owning boundary", async () => {
   const left = nativeMatchingInventory("1", [
     { address: "0x10", value: "main" },
   ]);
-  for (const input of [
-    { left: { ...left, normalized_result: [] }, right: left },
-    { left: nativeMatchingDetails("1", "0x10", "c3")[0], right: left },
+  const cases = [
     {
-      left,
-      right: left,
-      left_observations: nativeMatchingDetails("2", "0x10", "c3"),
+      input: { left: { ...left, normalized_result: [] }, right: left },
+      tag: "EvidenceIntegrityError",
     },
     {
-      left,
-      right: left,
-      left_observations: [
-        { kind: "retained-evidence", evidence_id: `ev_${"a".repeat(64)}` },
-      ],
+      input: { left: nativeMatchingDetails("1", "0x10", "c3")[0], right: left },
+      tag: "AnalysisInputError",
+      path: ["left"],
     },
-  ]) {
+    {
+      input: {
+        left,
+        right: left,
+        left_observations: nativeMatchingDetails("2", "0x10", "c3"),
+      },
+      tag: "AnalysisInputError",
+      path: ["left_observations", 0],
+    },
+    {
+      input: {
+        left: nativeMatchingInventory("1", [
+          { address: "not-an-address", value: "main" },
+        ]),
+        right: left,
+      },
+      tag: "EvidenceIntegrityError",
+    },
+    {
+      input: { left, right: left, left_observations: [left] },
+      tag: "AnalysisInputError",
+      path: ["left_observations", 0],
+    },
+    {
+      input: {
+        left,
+        right: left,
+        left_observations: [
+          createEvidence(nativeMatchingTarget("1"), nativeMatchingProvider, {
+            operation: "procedure_info",
+            parameters: { procedure: "0x10" },
+            result: {
+              ...procedureInfoSchema.parse(
+                nativeMatchingDetails("1", "0x10", "c3")[0]!.normalized_result,
+              ),
+              entrypoint: "not-an-address",
+            },
+          }),
+        ],
+      },
+      tag: "EvidenceIntegrityError",
+    },
+    {
+      input: {
+        left,
+        right: left,
+        left_observations: [
+          { kind: "retained-evidence", evidence_id: `ev_${"a".repeat(64)}` },
+        ],
+      },
+      tag: "EvidenceIntegrityError",
+      evidenceId: `ev_${"a".repeat(64)}`,
+      reason: "missing",
+    },
+  ] as const;
+  for (const { input, tag, ...expected } of cases) {
     const result = await matchNativeFunctions(input);
     expect(result.ok).toBe(false);
-    if (!result.ok)
-      expect([
-        "AnalysisInputError",
-        "EvidenceIntegrityError",
-        "EvidenceReferenceError",
-      ]).toContain(result.error._tag);
+    if (!result.ok) {
+      expect(result.error._tag).toBe(tag);
+      if ("path" in expected) {
+        expect(result.error).toMatchObject({
+          issues: expect.arrayContaining([
+            expect.objectContaining({ path: expected.path }),
+          ]),
+        });
+      }
+      if ("evidenceId" in expected)
+        expect(result.error).toMatchObject({
+          evidenceId: expected.evidenceId,
+          reason: expected.reason,
+        });
+    }
   }
 });
 
@@ -689,6 +792,197 @@ it("cooperatively preserves the exact cancellation reason and rejects expansion 
     expect(large.error._tag).toBe("AnalysisResourceConstraintError");
 });
 
+const retainedInventories = (
+  rows: (side: "1" | "2") => readonly Record<string, unknown>[],
+) => {
+  const [left, right] = (["1", "2"] as const).map((side) =>
+    immutableEvidence(
+      createEvidence(nativeMatchingTarget(side), nativeMatchingProvider, {
+        operation: "list_procedures",
+        parameters: {},
+        result: rows(side),
+      }),
+    ),
+  );
+  const ledger = new Map([left!, right!].map((x) => [x.evidence_id, x]));
+  const reference = (record: { evidence_id: string }) => ({
+    kind: "retained-evidence" as const,
+    evidence_id: record.evidence_id,
+  });
+  return {
+    left: left!,
+    right: right!,
+    references: { left: reference(left!), right: reference(right!) },
+    lookup: (id: string) => ledger.get(id),
+  };
+};
+const ghidraRow = (side: "1" | "2", index: number) => ({
+  address: `0x${(0x400000 + index * 16 + (side === "2" ? 8 : 0)).toString(16)}`,
+  value: `subsystem_function_${index}`,
+  symbol: {
+    primary: true,
+    dynamic: false,
+    external: false,
+    type: "Function",
+    source: "imported",
+  },
+  procedure: { external: false, thunk: false, thunk_target: null },
+});
+
+it("charges a borrowed retained inventory for its emitted members, not its resident payload", async () => {
+  // One shared 40 KB string per row: ~40 KB resident, but a per-occurrence
+  // walk would charge 1000 copies of it.
+  const resident = "r".repeat(40_000);
+  const { left, right, references, lookup } = retainedInventories((side) =>
+    Array.from({ length: 1000 }, (_, i) => ({
+      ...ghidraRow(side, i),
+      provider_note: resident,
+    })),
+  );
+  const borrowed = await matchNativeFunctions(references, undefined, lookup);
+  if (!borrowed.ok) throw borrowed.error;
+  expect(
+    nativeFunctionMatchingSchema.parse(
+      borrowed.value.evidence.normalized_result,
+    ).summary.matched,
+  ).toBe(1000);
+  // Inline Evidence is authenticated by cloning, so its whole payload is charged.
+  const inline = await matchNativeFunctions({
+    left: structuredClone(left),
+    right: structuredClone(right),
+  });
+  expect(inline.ok).toBe(false);
+  if (!inline.ok)
+    expect(inline.error._tag).toBe("AnalysisResourceConstraintError");
+});
+
+it("still charges a borrowed inventory's envelope, which matching copies into its result", async () => {
+  // Limitations are prefixed into the report and Evidence; 25 distinct
+  // 1 MiB entries are charged above the allowance although rows are few.
+  const record = (side: "1" | "2", limitations: readonly string[]) =>
+    immutableEvidence(
+      createEvidence(nativeMatchingTarget(side), nativeMatchingProvider, {
+        operation: "list_procedures",
+        parameters: {},
+        result: [ghidraRow(side, 0)],
+        limitations: [...limitations],
+      }),
+    );
+  const left = record(
+      "1",
+      Array.from({ length: 25 }, (_, i) => `${"l".repeat(1024 * 1024)}${i}`),
+    ),
+    right = record("2", []);
+  const ledger = new Map([left, right].map((x) => [x.evidence_id, x]));
+  const refused = await matchNativeFunctions(
+    {
+      left: { kind: "retained-evidence", evidence_id: left.evidence_id },
+      right: { kind: "retained-evidence", evidence_id: right.evidence_id },
+    },
+    undefined,
+    (id) => ledger.get(id),
+  );
+  expect(refused.ok).toBe(false);
+  if (!refused.ok)
+    expect(refused.error._tag).toBe("AnalysisResourceConstraintError");
+});
+
+it("matches 20,000 retained Ghidra-shaped rows per side and refuses an oversized side before parsing its rows", async () => {
+  const large = retainedInventories((side) =>
+    Array.from({ length: 20_000 }, (_, i) => ghidraRow(side, i)),
+  );
+  const matched = await matchNativeFunctions(
+    large.references,
+    undefined,
+    large.lookup,
+  );
+  if (!matched.ok) throw matched.error;
+  expect(
+    nativeFunctionMatchingSchema.parse(matched.value.evidence.normalized_result)
+      .summary,
+  ).toEqual({ matched: 20_000, only_left: 0, only_right: 0, unresolved: 0 });
+  // A malformed final row would be an integrity failure if parsing began.
+  const oversized = retainedInventories((side) => [
+    ...Array.from({ length: 50_000 }, (_, i) => ghidraRow(side, i)),
+    { address: "not an address", value: 1 },
+  ]);
+  const refused = await matchNativeFunctions(
+    oversized.references,
+    undefined,
+    oversized.lookup,
+  );
+  expect(refused.ok).toBe(false);
+  if (!refused.ok)
+    expect(refused.error).toMatchObject({
+      _tag: "AnalysisResourceConstraintError",
+      reportedLimits: { maximum_bytes: 96 * 1024 * 1024 },
+      retryable: false,
+    });
+});
+
+it("enforces the caller-resolved representation allowance and names its setting", async () => {
+  const rows = (count: number) =>
+    Array.from({ length: count }, (_, i) => ({
+      address: `0x${(0x1000 + i * 16).toString(16)}`,
+      value: `function_${i}`,
+    }));
+  const small = {
+    left: nativeMatchingInventory("1", rows(100)),
+    right: nativeMatchingInventory("2", rows(100)),
+  };
+  const lowered = await matchNativeFunctions(small, {
+    representationAllowance: { maximumBytes: 64 * 1024, source: "runtime" },
+  });
+  expect(lowered.ok).toBe(false);
+  if (lowered.ok) throw new Error("Lowered allowance admitted the request");
+  expect(lowered.error).toMatchObject({
+    _tag: "AnalysisResourceConstraintError",
+    reportedLimits: { maximum_bytes: 64 * 1024 },
+    retryable: false,
+    limit: {
+      setting: "native.matching_representation_bytes",
+      effective_value: 64 * 1024,
+      source: "runtime",
+      unit: "bytes",
+      minimum: 1,
+      maximum: 1024 * 1024 * 1024,
+      applies_at: "next_operation",
+      agent_editable: true,
+    },
+  });
+  if (!(lowered.error instanceof AnalysisResourceConstraintError))
+    throw lowered.error;
+  expect(lowered.error.remediationAction).toContain(
+    "update_analysis_settings with setting native.matching_representation_bytes",
+  );
+  expect(lowered.error.remediationAction).toContain(
+    "REA_NATIVE_MATCHING_REPRESENTATION_BYTES",
+  );
+  expect((await matchNativeFunctions(small)).ok).toBe(true);
+  // A request refused by the 96 MiB default fits a raised allowance unchanged.
+  const large = {
+    left: nativeMatchingInventory("1", rows(15_000)),
+    right: nativeMatchingInventory("2", rows(15_000)),
+  };
+  const refused = await matchNativeFunctions(large);
+  expect(refused.ok).toBe(false);
+  if (!refused.ok)
+    expect(refused.error).toMatchObject({
+      limit: { effective_value: 96 * 1024 * 1024, source: "default" },
+    });
+  const raised = await matchNativeFunctions(large, {
+    representationAllowance: {
+      maximumBytes: 256 * 1024 * 1024,
+      source: "setting",
+    },
+  });
+  if (!raised.ok) throw raised.error;
+  expect(
+    nativeFunctionMatchingSchema.parse(raised.value.evidence.normalized_result)
+      .summary.matched,
+  ).toBe(15_000);
+});
+
 it("keeps duplicate candidate storage linear and emits every input occurrence exactly once", async () => {
   const entries = Array.from({ length: 1000 }, (_, i) => ({
     address: `0x${i.toString(16)}`,
@@ -703,5 +997,269 @@ it("keeps duplicate candidate storage linear and emits every input occurrence ex
   expect(report.matches[0]?.right).toHaveLength(1000);
   expect(new Set(report.matches[0]?.left.map((x) => x.function_id)).size).toBe(
     1000,
+  );
+});
+
+it("normalizes accepted body range address spaces before matching byte coverage", async () => {
+  const body = {
+    available: true as const,
+    provenance: "synthetic mixed-space body",
+    ranges: [
+      { start: "ram:0x10", end: "ram:0x10" },
+      { start: "other%ab:0x20", end: "other%ab:0x20" },
+    ],
+    total_bytes: 2,
+    span_bytes: null,
+    non_contiguous: true,
+    contains_entry: true,
+  };
+  const info = createEvidence(
+    nativeMatchingTarget("1"),
+    nativeMatchingProvider,
+    {
+      operation: "procedure_info",
+      parameters: { procedure: "ram:0x10" },
+      result: {
+        name: "main",
+        entrypoint: "ram:0x10",
+        basicblock_count: 1,
+        length: 2,
+        signature: null,
+        locals: [],
+        classification: null,
+        body,
+      },
+    },
+  );
+  const read = (address: string, value: string) =>
+    createEvidence(nativeMatchingTarget("1"), nativeMatchingProvider, {
+      operation: "read_bytes",
+      parameters: {},
+      result: {
+        address,
+        requested_bytes: 1,
+        returned_bytes: 1,
+        bytes_hex: value,
+        complete: true,
+      },
+    });
+  const { report } = await compare({
+    left: nativeMatchingInventory("1", [
+      { address: "ram:0x10", value: "main" },
+    ]),
+    right: nativeMatchingInventory("2", [{ address: "0x30", value: "main" }]),
+    left_observations: [
+      info,
+      read("ram:0x10", "01"),
+      read("other%AB:0x20", "02"),
+    ],
+  });
+  expect(report.matches[0]?.left[0]?.body_sha256).toBe(
+    createHash("sha256").update(Buffer.from("0102", "hex")).digest("hex"),
+  );
+});
+
+it("compares repeated bodies and entry membership after address-space normalization", async () => {
+  const procedure = (entrypoint: string, rangeAddress: string) =>
+    createEvidence(nativeMatchingTarget("1"), nativeMatchingProvider, {
+      operation: "procedure_info",
+      parameters: { procedure: entrypoint },
+      result: {
+        name: "main",
+        entrypoint,
+        basicblock_count: 1,
+        length: 2,
+        signature: null,
+        locals: [],
+        classification: null,
+        body: {
+          available: true,
+          provenance: "synthetic escaped-space body",
+          ranges: [
+            {
+              start: `${rangeAddress}:0x10`,
+              end: `${rangeAddress}:0x11`,
+            },
+          ],
+          total_bytes: 2,
+          span_bytes: 2,
+          non_contiguous: false,
+          contains_entry: true,
+        },
+      },
+    });
+  const first = procedure("ram%AB:0x10", "ram%ab");
+  const equivalent = procedure("ram%ab:0x10", "ram%AB");
+  const bytes = createEvidence(
+    nativeMatchingTarget("1"),
+    nativeMatchingProvider,
+    {
+      operation: "read_bytes",
+      parameters: { address: "ram%AB:0x10", length: 2 },
+      result: {
+        address: "ram%AB:0x10",
+        requested_bytes: 2,
+        returned_bytes: 2,
+        bytes_hex: "0102",
+        complete: true,
+      },
+    },
+  );
+  const { report } = await compare({
+    left: nativeMatchingInventory("1", [
+      { address: "ram%AB:0x10", value: "main" },
+    ]),
+    right: nativeMatchingInventory("2", [{ address: "0x20", value: "main" }]),
+    left_observations: [first, equivalent, bytes],
+  });
+  const member = report.matches[0]?.left[0];
+  expect(member?.body_sha256).toBe(
+    createHash("sha256").update(Buffer.from("0102", "hex")).digest("hex"),
+  );
+  expect(member?.limitations).not.toContain(
+    "Conflicting procedure observations; body and dossier remain unknown.",
+  );
+  expect(member?.evidence_links).toEqual(
+    expect.arrayContaining([first.evidence_id, equivalent.evidence_id]),
+  );
+});
+
+it("retains zero-byte reads with unavailable addresses when no request coordinate exists", async () => {
+  const info = createEvidence(
+    nativeMatchingTarget("1"),
+    nativeMatchingProvider,
+    {
+      operation: "procedure_info",
+      parameters: { procedure: "0x10" },
+      result: {
+        name: "main",
+        entrypoint: "0x10",
+        basicblock_count: 1,
+        length: 1,
+        signature: null,
+        locals: [],
+        classification: null,
+        body: {
+          available: true,
+          provenance: "synthetic body",
+          ranges: [{ start: "0x10", end: "0x10" }],
+          total_bytes: 1,
+          span_bytes: 1,
+          non_contiguous: false,
+          contains_entry: true,
+        },
+      },
+    },
+  );
+  const emptyRead = createEvidence(
+    nativeMatchingTarget("1"),
+    nativeMatchingProvider,
+    {
+      operation: "read_bytes",
+      parameters: {},
+      result: {
+        address: "unavailable",
+        requested_bytes: 1,
+        returned_bytes: 0,
+        bytes_hex: "",
+        complete: false,
+      },
+    },
+  );
+  const left = nativeMatchingInventory("1", [
+    { address: "0x10", value: "main" },
+  ]);
+  const right = nativeMatchingInventory("2", [
+    { address: "0x20", value: "main" },
+  ]);
+  const result = await matchNativeFunctions({
+    left,
+    right,
+    left_observations: [info, emptyRead],
+  });
+  if (!result.ok) throw result.error;
+  const report = nativeFunctionMatchingSchema.parse(
+    result.value.evidence.normalized_result,
+  );
+  expect(report.matches[0]?.left[0]).toMatchObject({
+    body_bytes: 1,
+    body_sha256: null,
+  });
+  expect(result.value.evidence.evidence_links).toContain(emptyRead.evidence_id);
+  expect(result.value.sources.map((source) => source.evidence_id)).toContain(
+    emptyRead.evidence_id,
+  );
+});
+
+it.each(["left_observations", "right_observations"] as const)(
+  "reports authentic mismatched provider/profile/document selections at %s without reauthentication advice",
+  async (field) => {
+    const inventory = nativeMatchingInventory("1", [
+      { address: "0x10", value: "main" },
+    ]);
+    const detail = nativeMatchingDetails("1", "0x10", "c3")[0]!;
+    const variants = [
+      createEvidence(
+        nativeMatchingTarget("1"),
+        { ...nativeMatchingProvider, version: "other" },
+        {
+          operation: detail.operation,
+          parameters: detail.parameters,
+          result: detail.normalized_result,
+        },
+      ),
+      createEvidence(nativeMatchingTarget("1"), nativeMatchingProvider, {
+        operation: detail.operation,
+        parameters: detail.parameters,
+        result: detail.normalized_result,
+        analysisProfile: createAnalysisProfile(nativeMatchingProvider, {
+          loader: "different",
+        }),
+      }),
+      createEvidence(nativeMatchingTarget("1"), nativeMatchingProvider, {
+        operation: detail.operation,
+        parameters: { ...detail.parameters, document: "another-document" },
+        result: detail.normalized_result,
+      }),
+    ];
+    for (const observation of variants) {
+      const result = await matchNativeFunctions({
+        left: inventory,
+        right: inventory,
+        [field]: [detail, observation],
+      });
+      expect(result).toMatchObject({
+        ok: false,
+        error: { _tag: "AnalysisInputError", issues: [{ path: [field, 1] }] },
+      });
+    }
+    const restored = await compare({
+      left: inventory,
+      right: inventory,
+      [field]: [detail],
+    });
+    expect(restored.report.summary.matched).toBe(1);
+  },
+);
+
+it("does not propose exact-symbol correspondence from unqualified EntryPoint labels", async () => {
+  const { report } = await compare({
+    left: unqualifiedInventory("1", [{ address: "0x10", value: "EntryPoint" }]),
+    right: unqualifiedInventory("2", [
+      { address: "0x20", value: "EntryPoint" },
+    ]),
+  });
+  expect(report.summary.matched).toBe(0);
+  expect(
+    report.matches.flatMap((match) => [...match.left, ...match.right]),
+  ).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        name: "EntryPoint",
+        limitations: expect.arrayContaining([
+          "Symbol origin unavailable; exact-name matching is unavailable. Independent complete body bytes remain eligible.",
+        ]),
+      }),
+    ]),
   );
 });

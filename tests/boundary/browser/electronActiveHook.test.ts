@@ -1,4 +1,4 @@
-import { copyFile, mkdir, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
@@ -63,6 +63,7 @@ globalThis.__nativeShellCalls = [];
 const shell = {
   openExternal: () => Promise.resolve(),
   openPath: () => Promise.resolve(),
+  trashItem: (path) => require("node:fs/promises").unlink(path),
   showItemInFolder: (path) => { globalThis.__nativeShellCalls.push(["showItemInFolder", path]); },
   writeShortcutLink: (path) => { globalThis.__nativeShellCalls.push(["writeShortcutLink", path]); return true; },
 };
@@ -298,6 +299,42 @@ process.stdout.write(JSON.stringify({
   expect(JSON.stringify(result.snapshot)).not.toContain("secret-folder");
   expect(JSON.stringify(result.snapshot)).not.toContain("payload.exe");
   electronActiveTimelineEventSchema.array().parse(result.snapshot.events);
+});
+
+it("blocks trashItem asynchronously, records the attempt, and preserves the selected file", async () => {
+  const root = await createTestTempDirectory("rea-electron-hook-trash-");
+  temporary.push(root);
+  await writeElectronFixture(root);
+  const selected = join(root, "retained.txt");
+  await writeFile(selected, "must remain");
+  const script = join(root, "trash.cjs");
+  await writeFile(
+    script,
+    `const { shell } = require("electron");
+const result = shell.trashItem(${JSON.stringify(selected)});
+const promise = result instanceof Promise;
+result.then(
+  () => { throw new Error("trashItem unexpectedly succeeded"); },
+  error => process.stdout.write(JSON.stringify({ promise, message: error.message, snapshot: globalThis.__reaElectronActiveSnapshot() }) + "\\n"),
+);
+`,
+  );
+  const execution = await runNode(script, root);
+  expect(execution.code, execution.stderr).toBe(0);
+  const result = JSON.parse(execution.stdout.trim());
+  expect(result.promise).toBe(true);
+  expect(result.message).toBe("External shell effects are blocked");
+  expect(await readFile(selected, "utf8")).toBe("must remain");
+  expect(result.snapshot.events).toContainEqual(
+    expect.objectContaining({
+      kind: "shell-attempt",
+      event: "trashItem",
+      phase: "blocked",
+      argument_shapes: ["string"],
+      error: true,
+    }),
+  );
+  expect(JSON.stringify(result.snapshot)).not.toContain(selected);
 });
 
 it("classifies a dropped browser preload as preload configuration at capture", async () => {
@@ -969,7 +1006,7 @@ it("matches native once dispatch and retains only established invocations", asyn
   await copyFile(
     fileURLToPath(
       new URL(
-        "../../../experiments/analysis-efficiency/electron-once-runtime.mjs",
+        "../../../tests/support/analysis-efficiency/electron-once-runtime.mjs",
         import.meta.url,
       ),
     ),
@@ -2637,7 +2674,7 @@ const originalRemoveListener = EventEmitter.prototype.removeListener;
 ipcMain.removeListener = function(channel, callback) {
   globalThis.__preHookRemovalCalls.push({
     receiverIsEmitter: this === ipcMain,
-    callbackName: callback.name,
+    callback,
   });
   return Reflect.apply(originalRemoveListener, this, arguments);
 };`,
@@ -2652,21 +2689,28 @@ const observations = globalThis.__preHookRemovalCalls;
 const decorate = (emitter) => {
   const native = EventEmitter.prototype.removeListener;
   emitter.removeListener = function(channel, callback) {
-    observations.push({ receiverIsEmitter: this === emitter, callbackName: callback.name });
+    observations.push({ receiverIsEmitter: this === emitter, callback });
     return Reflect.apply(native, this, arguments);
   };
   return emitter;
 };
 const scenario = (emitter) => {
+  const start = observations.length;
   const original = function original() {};
   emitter.on("ch", original);
   emitter.rawListeners("ch")[0].listener = () => {};
   emitter.removeListener("ch", original);
-  return emitter.listenerCount("ch");
+  return {
+    remaining: emitter.listenerCount("ch"),
+    forwarded: observations.slice(start).map(({ receiverIsEmitter, callback }) => ({
+      receiverIsEmitter, callbackIsOriginal: callback === original,
+    })),
+  };
 };
 const plain = scenario(decorate(new EventEmitter()));
 const hooked = scenario(ipcMain);
-console.log(JSON.stringify({ plain, hooked, observations,
+console.log(JSON.stringify({ plain: plain.remaining, hooked: hooked.remaining,
+  observations: [...plain.forwarded, ...hooked.forwarded],
   hook_error: globalThis.__reaElectronActiveSnapshot().hook_error }));
 `,
   );
@@ -2677,18 +2721,17 @@ console.log(JSON.stringify({ plain, hooked, observations,
     readonly hooked: number;
     readonly observations: readonly {
       readonly receiverIsEmitter: boolean;
-      readonly callbackName: string;
+      readonly callbackIsOriginal: boolean;
     }[];
     readonly hook_error: boolean;
   };
   expect(result.hook_error).toBe(false);
   expect(result.plain).toBe(0);
   expect(result.hooked).toBe(0);
-  expect(result.observations[0]).toEqual({
-    receiverIsEmitter: true,
-    callbackName: "original",
-  });
-  expect(result.observations[1]).toEqual(result.observations[0]);
+  expect(result.observations).toEqual([
+    { receiverIsEmitter: true, callbackIsOriginal: true },
+    { receiverIsEmitter: true, callbackIsOriginal: true },
+  ]);
 });
 
 it("forwards pre-hook on and once decorators exact registrations with an explicit gap", async () => {
@@ -2705,13 +2748,13 @@ const install = (emitter) => {
   const nativeOnce = EventEmitter.prototype.once;
   emitter.on = function(channel, callback) {
     globalThis.__preHookRegistrationCalls.push({
-      method: "on", receiverIsEmitter: this === emitter, callbackName: callback.name,
+      method: "on", receiverIsEmitter: this === emitter, callback,
     });
     return Reflect.apply(nativeOn, this, arguments);
   };
   emitter.once = function(channel, callback) {
     globalThis.__preHookRegistrationCalls.push({
-      method: "once", receiverIsEmitter: this === emitter, callbackName: callback.name,
+      method: "once", receiverIsEmitter: this === emitter, callback,
     });
     return Reflect.apply(nativeOnce, this, arguments);
   };
@@ -2729,16 +2772,17 @@ const decorate = (emitter) => {
   const nativeOn = EventEmitter.prototype.on;
   const nativeOnce = EventEmitter.prototype.once;
   emitter.on = function(channel, callback) {
-    observations.push({ method: "on", receiverIsEmitter: this === emitter, callbackName: callback.name });
+    observations.push({ method: "on", receiverIsEmitter: this === emitter, callback });
     return Reflect.apply(nativeOn, this, arguments);
   };
   emitter.once = function(channel, callback) {
-    observations.push({ method: "once", receiverIsEmitter: this === emitter, callbackName: callback.name });
+    observations.push({ method: "once", receiverIsEmitter: this === emitter, callback });
     return Reflect.apply(nativeOnce, this, arguments);
   };
   return emitter;
 };
 const scenario = (emitter) => {
+  const start = observations.length;
   const calls = [];
   const ordinary = function ordinary() { calls.push("ordinary"); };
   const oneShot = function oneShot() { calls.push("oneShot"); };
@@ -2746,12 +2790,20 @@ const scenario = (emitter) => {
   emitter.once("ch", oneShot);
   emitter.emit("ch");
   emitter.removeAllListeners("ch");
-  return calls;
+  return {
+    calls,
+    forwarded: observations.slice(start).map(({ method, receiverIsEmitter, callback }) => ({
+      method, receiverIsEmitter,
+      callbackIdentity: callback === ordinary ? "ordinary" : callback === oneShot ? "oneShot" :
+        Object.getOwnPropertyDescriptor(callback, "listener")?.value === oneShot ? "onceWrapper" : "unexpected",
+    })),
+  };
 };
 const plain = scenario(decorate(new EventEmitter()));
 const hooked = scenario(ipcMain);
 const snapshot = globalThis.__reaElectronActiveSnapshot();
-console.log(JSON.stringify({ plain, hooked, observations,
+console.log(JSON.stringify({ plain: plain.calls, hooked: hooked.calls,
+  observations: [...plain.forwarded, ...hooked.forwarded],
   calls: snapshot.events.filter((event) => event.kind === "main-event-invocation"),
   gaps: snapshot.events.filter((event) => event.kind === "ipc-observation-gap"),
   hook_error: snapshot.hook_error }));
@@ -2765,7 +2817,7 @@ console.log(JSON.stringify({ plain, hooked, observations,
     readonly observations: readonly {
       readonly method: string;
       readonly receiverIsEmitter: boolean;
-      readonly callbackName: string;
+      readonly callbackIdentity: string;
     }[];
     readonly calls: readonly unknown[];
     readonly gaps: readonly {
@@ -2778,19 +2830,19 @@ console.log(JSON.stringify({ plain, hooked, observations,
   expect(result.plain).toEqual(["ordinary", "oneShot"]);
   expect(result.hooked).toEqual(result.plain);
   expect(result.observations).toEqual([
-    { method: "on", receiverIsEmitter: true, callbackName: "ordinary" },
-    { method: "once", receiverIsEmitter: true, callbackName: "oneShot" },
+    { method: "on", receiverIsEmitter: true, callbackIdentity: "ordinary" },
+    { method: "once", receiverIsEmitter: true, callbackIdentity: "oneShot" },
     {
       method: "on",
       receiverIsEmitter: true,
-      callbackName: "bound onceWrapper",
+      callbackIdentity: "onceWrapper",
     },
-    { method: "on", receiverIsEmitter: true, callbackName: "ordinary" },
-    { method: "once", receiverIsEmitter: true, callbackName: "oneShot" },
+    { method: "on", receiverIsEmitter: true, callbackIdentity: "ordinary" },
+    { method: "once", receiverIsEmitter: true, callbackIdentity: "oneShot" },
     {
       method: "on",
       receiverIsEmitter: true,
-      callbackName: "bound onceWrapper",
+      callbackIdentity: "onceWrapper",
     },
   ]);
   expect(result.calls).toEqual([]);

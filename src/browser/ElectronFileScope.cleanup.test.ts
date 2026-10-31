@@ -1,4 +1,6 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -71,6 +73,10 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { CdpElectronProvider } from "./CdpElectronProvider.js";
+import { V8InspectorProvider } from "../inspector/V8InspectorProvider.js";
+import { observeJavaScriptRuntime } from "../application/javascript/JavaScriptRuntimeObservationService.js";
+import { startFakeV8Inspector } from "../../tests/fixtures/inspector/fakeV8Inspector.js";
+import { prependAsarJsonWhitespace } from "../../tests/fixtures/asarHeader.js";
 import {
   authorizedElectronFile,
   mapElectronFileAuthorizationFailure,
@@ -97,7 +103,9 @@ afterEach(async () => {
 });
 
 const asarPage = async (): Promise<string> => {
-  const root = await mkdtemp(join(tmpdir(), "rea-electron-file-scope-"));
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), "rea-electron-file-scope-")),
+  );
   roots.push(root);
   const archive = join(root, "app.asar");
   const json = Buffer.from(
@@ -115,6 +123,54 @@ const asarPage = async (): Promise<string> => {
   handleState.archive = archive;
   return pathToFileURL(join(archive, "index.html")).href;
 };
+
+it("retains Inspector scripts and contexts when final ASAR authorization cannot close its descriptor", async () => {
+  const scriptUrl = await asarPage();
+  const archive = handleState.archive;
+  if (archive === undefined) throw new Error("Missing fixture ASAR");
+  const inspector = await startFakeV8Inspector({
+    targetUrl: "https://example.test/entry.js",
+    scriptUrls: [scriptUrl],
+  });
+  const provider = new V8InspectorProvider();
+  const input = {
+    inspector_endpoint: inspector.endpoint,
+    target_id: inspector.targetId,
+    observation_ms: 0,
+  };
+  try {
+    const control = await observeJavaScriptRuntime(provider, input);
+    expect(control.ok).toBe(true);
+    if (!control.ok) throw control.error;
+    expect(control.value.normalized_result).toMatchObject({
+      scripts: { observed_total: 1 },
+      execution_contexts: [{ name: "node[fixture]" }],
+    });
+    await prependAsarJsonWhitespace(archive, " ");
+    handleState.failCloseCount = 1;
+    const result = await observeJavaScriptRuntime(provider, input);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected descriptor close failure");
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(result.error.partialObservation).toMatchObject({
+      normalized_result: {
+        scripts: {
+          observed_total: 1,
+          items: [
+            { location: { kind: "unresolved", reported_url: scriptUrl } },
+          ],
+        },
+        execution_contexts: [{ name: "node[fixture]" }],
+      },
+    });
+    await provider.close();
+    expect(result.error.cleanupIncomplete).toBe(false);
+  } finally {
+    handleState.failCloseCount = 0;
+    await provider.close();
+    await inspector.close();
+  }
+});
 
 it("retains a failed ASAR close through denial and retries before reopening", async () => {
   const location = await asarPage();
@@ -295,3 +351,89 @@ it("retries a failed ASAR descriptor lease during provider shutdown", async () =
 
   expect(handleState.events).toEqual(["open", "close", "close"]);
 });
+
+it.each(["completed", "read-failed", "cancelled"] as const)(
+  "retains the completed listing prefix after ASAR finalization: %s",
+  async (mode) => {
+    const archiveUrl = await asarPage();
+    const page = join(roots.at(-1)!, "first.html");
+    await writeFile(page, "first");
+    const controller = new AbortController();
+    handleState.failCloseCount = 1;
+    if (mode === "read-failed")
+      handleState.readFailure = new Error("controlled ASAR read denial");
+    if (mode === "cancelled") {
+      handleState.closeController = controller;
+      handleState.closeReason = { request: "ASAR descriptor close" };
+    }
+    let endpoint = "";
+    const server = createServer((request, response) => {
+      response.setHeader("Content-Type", "application/json");
+      response.end(
+        JSON.stringify(
+          request.url === "/json/version"
+            ? {
+                Browser: "Electron/fixture",
+                "Protocol-Version": "1.3",
+                "WebKit-Version": "revision",
+                "User-Agent": "fixture",
+                "V8-Version": "V8",
+                webSocketDebuggerUrl:
+                  endpoint.replace("http:", "ws:") +
+                  "/devtools/browser/fixture",
+              }
+            : [pathToFileURL(page).href, archiveUrl].map((url, index) => ({
+                id: `page-${index}`,
+                type: "page",
+                title: `page ${index}`,
+                url,
+                attached: false,
+                webSocketDebuggerUrl:
+                  endpoint.replace("http:", "ws:") +
+                  `/devtools/page/page-${index}`,
+              })),
+        ),
+      );
+    });
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
+    const address = server.address();
+    if (address === null || typeof address === "string")
+      throw new Error("Expected discovery port");
+    endpoint = `http://127.0.0.1:${address.port}`;
+    const provider = new CdpElectronProvider();
+    try {
+      const result = await provider.listTargets(
+        { cdp_endpoint: endpoint },
+        { signal: controller.signal },
+      );
+      if (result.ok) throw new Error("Expected ASAR finalization failure");
+      const origin = result.error.cleanupPrimary ?? result.error;
+      expect(origin.diagnostics).toMatchObject({
+        completed_prefix: {
+          examined_targets: 1,
+          allowed_targets: [{ target_id: "page-0", file_path: page }],
+          coverage: expect.stringContaining("remaining targets are unknown"),
+        },
+      });
+      expect(JSON.stringify(projectAnalysisError(result.error))).toContain(
+        "completed_prefix",
+      );
+      expect(result.error.cleanupIncomplete).toBe(true);
+      expect(handleState.events).toEqual(["open", "close"]);
+      await provider.close();
+      expect(result.error.cleanupIncomplete).toBe(false);
+      expect(handleState.events).toEqual(["open", "close", "close"]);
+      expect(origin.diagnostics).toHaveProperty("completed_prefix");
+    } finally {
+      handleState.failCloseCount = 0;
+      await provider.close();
+      await new Promise<void>((resolve, reject) =>
+        server.close((cause) =>
+          cause === undefined ? resolve() : reject(cause),
+        ),
+      );
+    }
+  },
+);

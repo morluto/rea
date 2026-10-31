@@ -1,10 +1,15 @@
 import {
-  reportLifecycleEnd,
-  reportLifecycleStart,
-} from "./lifecycleProgress.js";
+  retainSavedAnalysisSnapshot,
+  type SavedAnalysisSnapshot,
+} from "../domain/savedAnalysisSnapshot.js";
+import {
+  reportOperationEnd,
+  reportOperationStart,
+} from "./operationProgress.js";
 import { err, ok } from "../domain/result.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import type { AnalysisCleanupRetry } from "../domain/analysisErrorRecovery.js";
 import type { Result } from "../domain/result.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
 import type { LifecycleToolRegistration } from "./registerSessionTools.js";
@@ -23,6 +28,13 @@ const closeResult = async <Value>(
   }
 };
 
+/** This tool retries the session and process-capture cleanup it retains. */
+const CLOSE_RETRY: AnalysisCleanupRetry = { operation: "close_binary" };
+
+/** The process-capture scope keeps failed leases for the next close_binary. */
+const retainedProcessCleanup = (error: AnalysisError): AnalysisError =>
+  error.cleanupIncomplete ? error.bindCleanupRetry(CLOSE_RETRY) : error;
+
 /** Register provider cleanup and optional pre-close snapshot persistence. */
 export const registerCloseLifecycleTool = ({
   server,
@@ -36,6 +48,7 @@ export const registerCloseLifecycleTool = ({
     closeSession: (
       afterResourceClose: () => Promise<void>,
     ) => Promise<Result<Value, AnalysisError>>,
+    savedSnapshot?: (value: Value) => SavedAnalysisSnapshot,
   ): Promise<Result<Value, AnalysisError>> => {
     let reverseRetry:
       | Promise<PromiseSettledResult<Result<null, AnalysisError>>>
@@ -92,21 +105,32 @@ export const registerCloseLifecycleTool = ({
     const closed = sessionClose.value;
     const resources = resourceClose.value;
     const reverse = reverseCleanup.value;
-    // Keep live reverse ownership primary, but never let one successful retry
-    // acknowledge independent session or process-capture owners.
-    const failures = [
-      ...(reverse.ok ? [] : [reverse.error]),
+    const failures: AnalysisError[] = [
       ...(closed.ok ? [] : [closed.error]),
       ...(resources.ok ? [] : [resources.error]),
+      ...(reverse.ok ? [] : [reverse.error]),
     ];
-    let failure = failures[0];
-    for (const next of failures.slice(1))
-      if (failure !== undefined)
-        failure = analysisErrorWithCleanupFailure(
-          failure,
-          next,
-        ).bindCleanupDependencies([failure, next]);
-    return failure === undefined ? closed : err(failure);
+    if (failures.length === 0) return closed;
+    let combined = failures[0]!;
+    for (const next of failures.slice(1)) {
+      combined = analysisErrorWithCleanupFailure(
+        combined,
+        next,
+      ).bindCleanupDependencies([combined, next]);
+    }
+    if (!closed.ok) {
+      return err(
+        closed.error.cleanupRetry === undefined
+          ? combined
+          : combined.bindCleanupRetry(CLOSE_RETRY),
+      );
+    }
+    const retained = retainedProcessCleanup(combined);
+    return err(
+      savedSnapshot === undefined
+        ? retained
+        : retainSavedAnalysisSnapshot(retained, savedSnapshot(closed.value)),
+    );
   };
   server.registerTool(
     closeContract.name,
@@ -119,29 +143,32 @@ export const registerCloseLifecycleTool = ({
         // a later open request cannot overtake this close.
         const closing = logToolExecution(logger, closeContract.name, () =>
           closeWithResources((afterResourceClose) =>
-            session.close({ progress, afterResourceClose }),
+            session.close({ progress, cleanupRetry: CLOSE_RETRY, afterResourceClose }),
           ),
         );
-        await reportLifecycleStart(progress, closeContract.name);
+        await reportOperationStart(progress, closeContract.name);
         const closed = await closing;
-        await reportLifecycleEnd(progress, closeContract.name, closed.ok);
+        await reportOperationEnd(progress, closeContract.name, closed.ok);
         return server.delivery.toCallToolResult(closed, closeContract);
       }
       const closing = logToolExecution(logger, closeContract.name, () =>
-        closeWithResources((afterResourceClose) =>
-          session.closeWithSnapshot(snapshotPath, input.overwrite, {
-            progress,
-            afterResourceClose,
-          }),
+        closeWithResources(
+          (afterResourceClose) =>
+            session.closeWithSnapshot(snapshotPath, input.overwrite, {
+              progress,
+              cleanupRetry: CLOSE_RETRY,
+              afterResourceClose,
+            }),
+          (receipt) => receipt,
         ),
       );
-      await reportLifecycleStart(
+      await reportOperationStart(
         progress,
         closeContract.name,
         "saving snapshot; closing provider",
       );
       const closed = await closing;
-      await reportLifecycleEnd(progress, closeContract.name, closed.ok);
+      await reportOperationEnd(progress, closeContract.name, closed.ok);
       return server.delivery.toCallToolResult(
         closed.ok ? ok({ ...closed.value }) : closed,
         closeContract,

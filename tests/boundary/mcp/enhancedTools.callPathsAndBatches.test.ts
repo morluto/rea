@@ -8,6 +8,8 @@ import {
   AnalysisOutputError,
 } from "../../../src/domain/analysisErrorCore.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
+import { ENHANCED_TOOL_CONTRACTS } from "../../../src/contracts/enhancedToolContracts.js";
+import { NULL_PSEUDOCODE_GUIDANCE } from "../../../src/application/EnhancedTools.js";
 import type { RelationshipCoverage } from "../../../src/domain/relationshipCoverage.js";
 import { err, ok as resultOk } from "../../../src/domain/result.js";
 
@@ -214,6 +216,58 @@ describe("enhanced MCP graph caveats", () => {
   });
 });
 
+describe("trace_call_path MCP path selection", () => {
+  it.each(["forward", "backward"] as const)(
+    "selects the first shortest %s path through a diamond with cycles",
+    async (direction) => {
+      const expanded: string[] = [];
+      const related: Readonly<Record<string, readonly string[]>> = {
+        "0x1": ["0x3", "0x2", "0x2"],
+        "0x2": ["0x1", "0x2", "0x4"],
+        "0x3": ["0x4"],
+      };
+      const client = await connect({
+        execute: async (name, arguments_) => {
+          if (name === "procedure_address")
+            return relationshipExecution(String(arguments_.procedure));
+          expect(name).toBe(
+            direction === "forward" ? "procedure_callees" : "procedure_callers",
+          );
+          const address = String(arguments_.procedure);
+          expanded.push(address);
+          return relationshipExecution(related[address] ?? [], [], {
+            status: "complete",
+          });
+        },
+      });
+      const trace = await client.callTool({
+        name: "trace_call_path",
+        arguments: { start: "0x1", goal: "0x4", direction },
+      });
+      expect(trace.isError).not.toBe(true);
+      expect(trace.structuredContent).toMatchObject({
+        normalized_result: {
+          goal_status: "reached",
+          traversal_path: ["0x1", "0x2", "0x4"],
+          nodes: [
+            { address: "0x1", depth: 0 },
+            { address: "0x2", depth: 1 },
+            { address: "0x3", depth: 1 },
+            { address: "0x4", depth: 2 },
+          ],
+          truncated: false,
+          failures: [],
+          relationship_coverage: {
+            "0x1": { status: "complete" },
+            "0x2": { status: "complete" },
+          },
+        },
+      });
+      expect(expanded).toEqual(["0x1", "0x2"]);
+    },
+  );
+});
+
 describe("trace_call_path MCP outcome semantics", () => {
   it("reports an unreachable goal as unknown when relationship coverage is partial", async () => {
     const client = await connect({
@@ -344,7 +398,11 @@ describe("enhanced MCP batch cancellation", () => {
     {
       stage: "entry-label lookup",
       cancelAt: "address_name",
-      expectedCalls: ["procedure_address:0x1", "address_name:0x1"],
+      expectedCalls: [
+        "procedure_address:0x1",
+        "procedure_address:0x2",
+        "address_name:0x1",
+      ],
       operation: "address_name",
     },
     {
@@ -352,7 +410,9 @@ describe("enhanced MCP batch cancellation", () => {
       cancelAt: "procedure_pseudo_code",
       expectedCalls: [
         "procedure_address:0x1",
+        "procedure_address:0x2",
         "address_name:0x1",
+        "address_name:0x2",
         "procedure_pseudo_code:0x1",
       ],
       operation: "procedure_pseudo_code",
@@ -378,7 +438,7 @@ describe("enhanced MCP batch cancellation", () => {
 
       const response = await client.callTool({
         name: "batch_decompile",
-        arguments: { addresses: ["0x1"] },
+        arguments: { addresses: ["0x1", "0x2"] },
       });
 
       expect(response.isError).toBe(true);
@@ -420,7 +480,6 @@ describe("enhanced MCP batch cancellation", () => {
       "procedure_address:0x1",
       "procedure_address:0x2",
       "address_name:0x1",
-      "address_name:0x2",
     ]);
   });
 });
@@ -431,16 +490,24 @@ describe("enhanced MCP batches", () => {
       { length: 37 },
       (_, index) => `0x${index.toString(16)}`,
     );
+    let active = 0;
+    let peakActive = 0;
     const analysis: AnalysisOperationPort = {
       execute: async (name, arguments_) => {
-        if (name === "procedure_address")
-          return ok(String(arguments_.procedure));
-        if (name === "address_name")
-          return ok(`name for ${String(arguments_.address)}`);
-        if (name !== "procedure_pseudo_code")
-          throw new Error(`Unexpected operation: ${name}`);
+        active++;
+        peakActive = Math.max(peakActive, active);
         await new Promise((resolve) => setImmediate(resolve));
-        return ok(`pseudo for ${String(arguments_.procedure)}`);
+        try {
+          if (name === "procedure_address")
+            return ok(String(arguments_.procedure));
+          if (name === "address_name")
+            return ok(`name for ${String(arguments_.address)}`);
+          if (name !== "procedure_pseudo_code")
+            throw new Error(`Unexpected operation: ${name}`);
+          return ok(`pseudo for ${String(arguments_.procedure)}`);
+        } finally {
+          active--;
+        }
       },
     };
     const client = await connect(analysis);
@@ -451,6 +518,8 @@ describe("enhanced MCP batches", () => {
       },
     });
     expect(result.isError).not.toBe(true);
+    expect(peakActive).toBe(1);
+    expect(active).toBe(0);
     expect(result.structuredContent).toMatchObject({
       normalized_result: {
         items: addresses.map((address) => ({
@@ -529,6 +598,143 @@ describe("enhanced MCP batches", () => {
       succeeded: 0,
       failed: 0,
     });
+  });
+});
+
+describe("enhanced MCP batch answers without pseudocode", () => {
+  it("keeps each answer without pseudocode distinct and with its own observation's limitations", async () => {
+    const standing = "Pseudocode is fixture decompiler output.";
+    const answers: Readonly<
+      Record<string, { result: unknown; limitations: readonly string[] }>
+    > = {
+      "0x1": {
+        result: "int f(void) { return 1; }",
+        limitations: [standing, "0x1 ends in a non-returning call."],
+      },
+      "0x2": {
+        result: null,
+        limitations: [standing, "This entry failed in the provider's export."],
+      },
+      "0x3": { result: null, limitations: [] },
+      "0x4": { result: "", limitations: [standing, standing] },
+      "0x5": { result: ["not", "text"], limitations: [standing] },
+    };
+    const client = await connect({
+      execute: async (name, arguments_) => {
+        if (name === "procedure_address") return ok(arguments_.procedure);
+        if (name === "address_name") return ok(null);
+        if (name !== "procedure_pseudo_code")
+          throw new Error(`Unexpected operation: ${name}`);
+        const selector = String(arguments_.procedure);
+        if (selector === "0x6")
+          return err(
+            new AnalysisCapabilityUnavailableError(
+              "fixture",
+              name,
+              "provider failure",
+            ),
+          );
+        const answer = answers[selector];
+        if (answer === undefined) throw new Error(`Unexpected ${selector}`);
+        return resultOk(
+          createAnalysisExecution(
+            answer.result,
+            { id: "fixture", name: "Fixture analysis provider", version: "1" },
+            { limitations: answer.limitations },
+          ),
+        );
+      },
+    });
+
+    const result = await client.callTool({
+      name: "batch_decompile",
+      arguments: { addresses: ["0x1", "0x2", "0x3", "0x4", "0x5", "0x6"] },
+    });
+
+    expect(result.isError).not.toBe(true);
+    const contract = ENHANCED_TOOL_CONTRACTS.find(
+      (
+        candidate,
+      ): candidate is Extract<
+        (typeof ENHANCED_TOOL_CONTRACTS)[number],
+        { readonly name: "batch_decompile" }
+      > => candidate.name === "batch_decompile",
+    );
+    if (contract === undefined)
+      throw new Error("Missing batch_decompile contract");
+    const evidence = contract.outputSchema.parse(result.structuredContent);
+    const noPseudocode = (
+      guidance: (typeof NULL_PSEUDOCODE_GUIDANCE)[keyof typeof NULL_PSEUDOCODE_GUIDANCE],
+    ) => ({
+      code: "capability_unavailable",
+      retryable: false,
+      message: guidance.userMessage,
+      remediation: { action: guidance.remediationAction },
+      details: {
+        provider_id: "fixture",
+        operation: "procedure_pseudo_code",
+        reason: "provider returned null pseudocode",
+      },
+    });
+    expect(evidence.normalized_result).toMatchObject({
+      items: [
+        { address: "0x1", status: "ok", pseudocode: answers["0x1"]?.result },
+        {
+          address: "0x2",
+          status: "error",
+          error: noPseudocode(NULL_PSEUDOCODE_GUIDANCE.reported),
+          limitations: answers["0x2"]?.limitations,
+        },
+        // Without caveats, the guidance does not point at an absent field.
+        {
+          address: "0x3",
+          status: "error",
+          error: noPseudocode(NULL_PSEUDOCODE_GUIDANCE.none),
+        },
+        {
+          address: "0x4",
+          status: "error",
+          error: {
+            code: "unreadable_output",
+            details: { reason: "provider returned empty pseudocode" },
+          },
+          limitations: [standing],
+        },
+        {
+          address: "0x5",
+          status: "error",
+          error: {
+            code: "unreadable_output",
+            details: { reason: "provider returned non-text pseudocode" },
+          },
+          limitations: [standing],
+        },
+        {
+          address: "0x6",
+          status: "error",
+          error: {
+            code: "capability_unavailable",
+            details: { reason: "provider failure" },
+          },
+        },
+      ],
+      total: 6,
+      succeeded: 1,
+      failed: 5,
+    });
+    const { items } = evidence.normalized_result;
+    // Successful text, a caveat-free null and a typed provider failure carry
+    // no item caveats; the batch Evidence aggregates every observation's.
+    for (const index of [0, 2, 5])
+      expect(items[index]).not.toHaveProperty("limitations");
+    expect(evidence.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/: 0x1 ends in a non-returning call\.$/u),
+        expect.stringMatching(
+          /: This entry failed in the provider's export\.$/u,
+        ),
+      ]),
+    );
   });
 });
 

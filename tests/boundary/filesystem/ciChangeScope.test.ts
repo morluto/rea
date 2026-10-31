@@ -103,6 +103,62 @@ async function classify(
   return z.record(z.string(), z.unknown()).parse(JSON.parse(result.stdout));
 }
 
+it.each([
+  ["bridge/native/rea_lldb_tracer.py", "python"],
+  ["bridge/pwndbg/test_core_context.py", "python"],
+  ["tests/support/analysis-efficiency/test_signal_oracle.py", "python"],
+  ["scripts/run-python-tests.py", "python"],
+  ["scripts/verify-browser-request.mjs", "browser"],
+  ["scripts/lib/browser-request-e2e.mjs", "browser"],
+  ["scripts/fixtures/browser-request-site.mjs", "browser"],
+  ["scripts/lib/browser-nested-source-map-e2e.mjs", "web_source_map"],
+  ["scripts/lib/browser-runtime-fixture-lifecycle.mjs", "web_source_map"],
+  ["src/cliBrowserScenarioCommands.ts", "browser"],
+  ["src/application/BrowserScenarioCaptureService.ts", "browser"],
+  ["src/composition/browserScenario.ts", "browser"],
+  ["src/cli/environmentCommands.ts", "browser"],
+  ["src/application/environment/environmentBuild.ts", "browser"],
+  ["src/domain/analysisView/environmentCoverageView.ts", "browser"],
+  ["src/domain/analysisView/scenarioCaptureRecords.ts", "browser"],
+  ["src/domain/analysisView/recordedResponseBody.ts", "browser"],
+  ["src/domain/analysisView/recordedExchangeBody.ts", "browser"],
+  ["src/domain/analysisView/recordedMediaType.ts", "browser"],
+  ["src/domain/analysisView/webNetworkRouteTemplates.ts", "browser"],
+  ["src/domain/analysisView/EnvironmentManifestAccumulator.ts", "browser"],
+  ["src/domain/analysisView/EnvironmentStateAccumulator.ts", "browser"],
+  ["src/domain/analysisView/WebNetworkProjectionAccumulator.ts", "browser"],
+  ["src/captures/CaptureProvider.ts", "packet_capture"],
+  ["tests/boundary/mcp/packetCaptureMcp.test.ts", "packet_capture"],
+  ["tests/acceptance/pcapVerifier.test.ts", "packet_capture"],
+  ["tests/fixtures/pcap/offlineHttpCapture.ts", "packet_capture"],
+  ["scripts/verify-pcap.mjs", "packet_capture"],
+  ["src/signals/RecordingProvider.ts", "signal_recording"],
+  ["tests/boundary/mcp/signalRecordingMcp.test.ts", "signal_recording"],
+  ["src/process/LinuxResourceLimits.ts", "packet_capture"],
+  ["src/process/LinuxResourceLimits.ts", "signal_recording"],
+  ["scripts/ci/require-provider-tests.mjs", "packet_capture"],
+  ["scripts/ci/require-provider-tests.mjs", "signal_recording"],
+])("selects %s for %s", async (path, scope) => {
+  const { directory, base } = await fixture();
+  const head = await change(directory, [path]);
+  expect(await classify(directory, base, head)).toMatchObject({
+    [scope]: true,
+  });
+});
+
+it.each(["src/domain/webCaptureDiffSchemas.ts", "src/domain/webScreenshot.ts"])(
+  "selects real browser verification for %s without capture lanes",
+  async (path) => {
+    const { directory, base } = await fixture();
+    const head = await change(directory, [path]);
+    expect(await classify(directory, base, head)).toMatchObject({
+      browser: true,
+      packet_capture: false,
+      signal_recording: false,
+    });
+  },
+);
+
 it("reuses only scheduled qualification and preserves every explicit full request", async () => {
   const { directory, base } = await fixture();
   const reused = await classify(directory, base, base, "schedule", false, true);
@@ -647,6 +703,12 @@ it.each([
     "tests/module/example.test.ts",
     { code: true, runtime: false, browser: false, package: false },
   ],
+  ["scripts/lib/release-proposal.mjs", { code: true, package: true }],
+  ["patches/release-please+17.3.0.patch", { code: true, package: true }],
+  [
+    "tests/boundary/filesystem/releaseProposal.test.ts",
+    { code: true, package: true },
+  ],
   ["website/src/index.ts", { code: false, website: true, package: false }],
   [
     "website/public/examples/notes-electron/preload.js",
@@ -732,6 +794,14 @@ it.each([
     { code: false, ghidra_bridge: true, runtime: false, package: false },
   ],
   [
+    "tests/conformance/ghidra/ReaArmContextProbe.java",
+    { ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
+    "tests/conformance/ghidra/ReaDecodeProbe.java",
+    { ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
     "bridge/ghidra/Example.java",
     {
       code: true,
@@ -746,12 +816,81 @@ it.each([
     { code: true, runtime: true, apple: true, package: false, evm: false },
   ],
   [
+    "src/artifacts/NativeDmgArtifactReader.ts",
+    { code: true, runtime: true, apple: true, package: false, evm: false },
+  ],
+  [
+    "tests/acceptance/artifactDmgAttachmentRecoveryCli.test.ts",
+    { code: true, apple: true, package: false, runtime: false },
+  ],
+  [
+    "tests/process-global/dmgCancellationReason.test.ts",
+    { code: true, apple: true, package: false, runtime: false },
+  ],
+  [
+    "tests/boundary/providers/native/nativeDmgArtifactReader.test.ts",
+    { code: true, apple: true, package: false, runtime: false },
+  ],
+  [
     "scripts/verify/apple/example.mjs",
     { code: true, apple: true, package: false, runtime: false },
   ],
   [
+    "src/process/WindowsExecutable.ts",
+    { code: true, runtime: true, package: true },
+  ],
+  [
+    "src/process/WindowsExecutable.test.ts",
+    { code: true, runtime: true, package: true },
+  ],
+  ["src/adb/AdbConfiguration.ts", { code: true, runtime: true, package: true }],
+  [
+    "src/apktool/ApktoolConfiguration.ts",
+    { code: true, runtime: true, package: true },
+  ],
+  [
+    "src/application/UpdateCommandRunner.ts",
+    { code: true, runtime: true, package: true },
+  ],
+  [
+    "tests/boundary/process/windowsExecutableSelection.test.ts",
+    { code: true, runtime: true, package: true },
+  ],
+  ["src/hopper/BridgeLauncher.ts", { code: true, apple: true }],
+  ["src/domain/hopperErrors.ts", { code: true, apple: true }],
+  [
+    "tests/boundary/providers/hopper/hopperMacLaunchArguments.test.ts",
+    { code: true, apple: true },
+  ],
+  [
+    "tests/boundary/providers/hopper/hopperClient.helperFailure.test.ts",
+    { code: true, apple: true },
+  ],
+  [
     "src/windows/Example.ts",
     { code: true, runtime: true, package: true, apple: false, evm: false },
+  ],
+  [
+    "src/domain/windowsNativeArtifact.ts",
+    { code: true, runtime: true, package: true },
+  ],
+  ["src/domain/peCoffHeader.ts", { code: true, runtime: true, package: true }],
+  ["src/domain/dosMz.ts", { code: true, runtime: true, package: true }],
+  [
+    "scripts/lib/verifier-source-loader.mjs",
+    { code: true, runtime: true, package: true },
+  ],
+  [
+    "tests/boundary/process/windowsNativeArtifactVerifier.test.ts",
+    { code: true, package: true },
+  ],
+  [
+    "scripts/lib/windows-native-inspection-workspace.mjs",
+    { code: true, package: true },
+  ],
+  [
+    "tests/boundary/process/windowsNativeInspectionWorkspace.test.ts",
+    { code: true, package: true },
   ],
   [
     "src/domain/javascript/javascriptRuntimeStaticCandidates.ts",
@@ -777,6 +916,42 @@ it.each([
   [
     "tests/boundary/cli/nativePlistCli.test.ts",
     { code: true, apple: true, package: false, runtime: false },
+  ],
+  [
+    "src/artifacts/InesArtifactReader.ts",
+    { code: true, apple: true, package: false, runtime: true },
+  ],
+  [
+    "src/domain/inesContainer.ts",
+    { code: true, apple: true, docs: true, package: false, runtime: true },
+  ],
+  [
+    "tests/fixtures/ines.ts",
+    { code: true, apple: true, package: false, runtime: false },
+  ],
+  [
+    "tests/acceptance/inesContainer.test.ts",
+    { code: true, apple: true, package: false, runtime: false },
+  ],
+  [
+    "tests/boundary/filesystem/inesArtifact.test.ts",
+    { code: true, apple: true, package: false, runtime: false },
+  ],
+  [
+    "tests/boundary/filesystem/inesCancellation.test.ts",
+    { code: true, apple: true, package: false, runtime: false },
+  ],
+  [
+    "scripts/ci/qualified-package-envelope.mjs",
+    { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
+    "scripts/ci/prepare-npm-publication.mjs",
+    { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
+    "scripts/ci/npm-release-state.mjs",
+    { code: true, package: true, runtime: true, apple: false },
   ],
   [
     "tests/boundary/filesystem/windowsNpxRegistration.test.ts",
@@ -928,7 +1103,7 @@ it.each([
       code: true,
       runtime: true,
       agentenv: true,
-      browser: false,
+      browser: true,
       package: false,
     },
   ],
@@ -1063,9 +1238,22 @@ it("keeps unrelated test script changes off the SQLite runtime matrix", async ()
 });
 
 it.each([
+  "src/apkSignature/ApkSignatureProvider.ts",
+  "src/domain/apkSignature/apkSignatureSchemes.ts",
+  "scripts/verify-apk-signature.mjs",
+])("selects the real APK signing lane for %s", async (path) => {
+  const { directory, base } = await fixture();
+  const head = await change(directory, [path]);
+  expect(await classify(directory, base, head)).toMatchObject({
+    apk_signature: true,
+  });
+});
+
+it.each([
   ["browser", "real-browser"],
   ["binary_layout", "real-binary-layout"],
   ["evm", "real-evm-interface"],
+  ["apk_signature", "real-apk-signature"],
   ["javascript_recovery", "real-javascript-recovery"],
   ["recorded_crash", "real-recorded-crash"],
   ["web_network", "real-web-network-captures"],
@@ -1118,37 +1306,40 @@ it.each([
   },
 );
 
-it("rejects skipped selected work while allowing unselected lanes to skip", async () => {
-  const command = fileURLToPath(
-    new URL("../../../scripts/ci/required.mjs", import.meta.url),
-  );
-  const { CI_FLAGS } = await loadScopes();
-  const jobs = {
-    changes: {
-      result: "success",
-      outputs: {
-        ...Object.fromEntries(CI_FLAGS.map((flag) => [flag, "false"])),
-        tier: "fast",
-        evm: "true",
+it.each(["evm", "browser"])(
+  "rejects skipped selected %s work while allowing unselected lanes to skip",
+  async (scope) => {
+    const command = fileURLToPath(
+      new URL("../../../scripts/ci/required.mjs", import.meta.url),
+    );
+    const { CI_FLAGS } = await loadScopes();
+    const jobs = {
+      changes: {
+        result: "success",
+        outputs: {
+          ...Object.fromEntries(CI_FLAGS.map((flag) => [flag, "false"])),
+          tier: "fast",
+          [scope]: "true",
+        },
       },
-    },
-    static: { result: "success" },
-    test: { result: "success" },
-    evm: { result: "success" },
-    browser: { result: "skipped" },
-  };
-  const run = (result: string) =>
-    execFileAsync(process.execPath, [command], {
-      env: {
-        ...process.env,
-        CI_JOBS: JSON.stringify({ ...jobs, evm: { result } }),
-      },
-    });
-  await expect(run("success")).resolves.toMatchObject({ stderr: "" });
-  for (const result of ["failure", "cancelled", "skipped"]) {
-    await expect(run(result)).rejects.toMatchObject({ code: 1 });
-  }
-});
+      static: { result: "success" },
+      test: { result: "success" },
+      evm: { result: "skipped" },
+      browser: { result: "skipped" },
+    };
+    const run = (result: string) =>
+      execFileAsync(process.execPath, [command], {
+        env: {
+          ...process.env,
+          CI_JOBS: JSON.stringify({ ...jobs, [scope]: { result } }),
+        },
+      });
+    await expect(run("success")).resolves.toMatchObject({ stderr: "" });
+    for (const result of ["failure", "cancelled", "skipped"]) {
+      await expect(run(result)).rejects.toMatchObject({ code: 1 });
+    }
+  },
+);
 
 it.each([
   [
@@ -1235,12 +1426,68 @@ it.each([
     { code: true, fixtures: true, readiness: true, package: false },
   ],
   [
+    "scripts/lib/conformance-fixtures.mjs",
+    { code: true, fixtures: true, readiness: true, package: false },
+  ],
+  [
+    "scripts/build-conformance-fixtures.mjs",
+    { code: true, fixtures: true, readiness: true, package: false },
+  ],
+  [
+    "scripts/verify-conformance-fixtures.mjs",
+    { code: true, fixtures: true, readiness: true, package: false },
+  ],
+  [
     "tests/conformance/swift/fixture.swift",
     { code: true, fixtures: true, readiness: true, package: false },
   ],
   [
     "tests/conformance/readiness/javascript-cli/package.json",
     { code: true, fixtures: false, readiness: true, package: false },
+  ],
+  [
+    "scripts/verify-reconstruction-readiness.mjs",
+    {
+      code: true,
+      readiness: true,
+      fixtures: false,
+      runtime: false,
+      package: false,
+    },
+  ],
+  [
+    "scripts/lib/cli-process-environment.mjs",
+    {
+      code: true,
+      package: true,
+      runtime: true,
+      javascript_recovery: true,
+      readiness: false,
+    },
+  ],
+  [
+    "tests/conformance/readiness/report/reconstructionReadiness.ts",
+    {
+      code: true,
+      readiness: true,
+      fixtures: false,
+      runtime: false,
+      package: false,
+    },
+  ],
+  [
+    "tests/conformance/readiness/report/reconstructionReadinessExample.ts",
+    {
+      code: true,
+      readiness: true,
+      fixtures: false,
+      runtime: false,
+      package: false,
+    },
+  ],
+  [
+    "tests/conformance/readiness/report/reconstructionReadiness.test.ts",
+    { code: true, readiness: false, runtime: false, package: false },
   ],
   [
     "tests/conformance/ghidra/no-return.c",
@@ -1308,6 +1555,30 @@ it.each([
     expect(await classify(directory, base, head)).toMatchObject({
       code: true,
       ...expected,
+    });
+  },
+);
+
+it.each(["knip:production", "lint:typed"])(
+  "keeps the %s analysis command within static checks",
+  async (script) => {
+    const { directory } = await fixture();
+    const base = await change(
+      directory,
+      ["package.json"],
+      JSON.stringify({ scripts: { [script]: "node scripts/old.mjs" } }),
+    );
+    const head = await change(
+      directory,
+      ["package.json"],
+      JSON.stringify({ scripts: { [script]: "node scripts/new.mjs" } }),
+    );
+    expect(await classify(directory, base, head)).toMatchObject({
+      code: true,
+      runtime: false,
+      package: false,
+      evm: false,
+      browser: false,
     });
   },
 );
@@ -1432,7 +1703,7 @@ const workflowFile = async (name: string): Promise<unknown> =>
 
 const scopesSchema = z.object({
   CI_FLAGS: z.array(z.string()),
-  SCOPES: z.record(z.string(), z.array(z.string())),
+  CI_LANES: z.record(z.string(), z.object({ paths: z.array(z.string()) })),
   MANUAL_VERIFIERS: z.array(z.string()),
 });
 
@@ -1453,8 +1724,19 @@ const stepRuns = z.object({
   ),
 });
 
+it("runs the browser request journey in the real browser lane", async () => {
+  const workflow = stepRuns.parse(await workflowFile("real-browser.yml"));
+  const commands = workflow.jobs["real-browser"]?.steps?.map(
+    (step) => step.run,
+  );
+  expect(commands).toContain("dbus-run-session -- npm run verify:browser");
+  expect(commands).toContain(
+    "dbus-run-session -- node scripts/verify-browser-request.mjs",
+  );
+});
+
 it("owns every explicit native-host test path with the lane that runs it", async () => {
-  const { SCOPES } = await loadScopes();
+  const { CI_LANES } = await loadScopes();
   const ci = stepRuns.parse(await workflowFile("ci.yml"));
   const listed = (job: string) =>
     (ci.jobs[job]?.steps ?? [])
@@ -1463,7 +1745,9 @@ it("owns every explicit native-host test path with the lane that runs it", async
   const unowned = (job: string, scope: string) =>
     listed(job).filter(
       (path) =>
-        !(SCOPES[scope] ?? []).some((pattern) => matchesGlob(path, pattern)),
+        !(CI_LANES[scope]?.paths ?? []).some((pattern) =>
+          matchesGlob(path, pattern),
+        ),
     );
   expect(listed("apple-artifacts").length).toBeGreaterThan(0);
   expect(listed("windows-curated").length).toBeGreaterThan(0);

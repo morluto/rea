@@ -1,3 +1,4 @@
+import { webBundleAnalysisSchema } from "../../../src/domain/webBundleAnalysis.js";
 import { expect } from "vitest";
 
 import { toolContract } from "../../../src/contracts/toolContracts.js";
@@ -39,7 +40,8 @@ const inspectDeclarations = (document: unknown) => {
   const parsedEvidence = parseEvidence(parsed);
   return {
     evidence: parsedEvidence,
-    declarations: parsed.normalized_result.observations.webmcp_declarations,
+    declarations: webBundleAnalysisSchema.parse(parsed.normalized_result)
+      .observations.webmcp_declarations,
   };
 };
 

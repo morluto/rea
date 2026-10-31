@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { parseEvidence } from "../../../dist/domain/evidence.js";
-import { requireMcpOperationResult } from "../../lib/mcp-verifier-results.mjs";
+import { requireMcpOutput } from "../../lib/mcp-verifier-results.mjs";
 
 /** Compare native selection with an explicit full-inventory oracle on one live session. */
 export const verifyAndroidClassSearch = async ({ client, path, sha256 }) => {
@@ -9,11 +9,11 @@ export const verifyAndroidClassSearch = async ({ client, path, sha256 }) => {
       { name: "search_android_classes", arguments: { path, query } },
       { timeout: 150_000 },
     );
-    const result = requireMcpOperationResult(
-      response,
-      "search_android_classes",
+    assert.notEqual(response.structuredContent, undefined);
+    const evidence = parseEvidence(
+      requireMcpOutput(response, "search_android_classes"),
     );
-    const evidence = parseEvidence(response.structuredContent);
+    const result = evidence.normalized_result;
     assert.equal(evidence.subject.digest.sha256, sha256);
     assert.equal(evidence.parameters.query, query);
     assert.equal(result.query, query);

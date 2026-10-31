@@ -5,7 +5,32 @@ import { z } from "zod";
 import { CaptureFormatError } from "./CaptureFormatError.js";
 import { captureObject } from "./CaptureRedaction.js";
 
-/** Validate using the unchanged, pinned upstream HAR 1.2 draft-06 schemas. */
+const durationSchema = { type: "number", minimum: 0 };
+const optionalDurationSchema = {
+  anyOf: [durationSchema, { const: -1 }],
+};
+
+// har-schema@2.0.0 omits object types and uses the unknown `min` keyword
+// on duration fields. Own the corrections from HAR 1.2 without changing
+// producer data or mutating the installed schemas.
+const timingsSchema = {
+  $id: "timings.json#",
+  $schema: "http://json-schema.org/draft-06/schema#",
+  type: "object",
+  required: ["send", "wait", "receive"],
+  properties: {
+    send: durationSchema,
+    wait: durationSchema,
+    receive: durationSchema,
+    blocked: optionalDurationSchema,
+    dns: optionalDurationSchema,
+    connect: optionalDurationSchema,
+    ssl: optionalDurationSchema,
+    comment: { type: "string" },
+  },
+};
+
+/** Validate with pinned HAR 1.2 draft-06 schemas and the owned schema corrections. */
 export const createHarValidator = (): ((
   value: unknown,
 ) => readonly number[]) => {
@@ -19,7 +44,36 @@ export const createHarValidator = (): ((
   if (typeof plugin !== "function")
     throw new Error("Pinned AJV formats plugin is unavailable");
   plugin(ajv);
-  for (const schema of Object.values(schemas)) ajv.addSchema(schema);
+  ajv.addFormat(HAR_REQUEST_URL_FORMAT, harRequestUrlValidator(plugin));
+  const propertiesSchema = z.record(z.string(), z.unknown());
+  const correctedSchemas: Record<string, Record<string, unknown>> = {
+    timings: timingsSchema,
+    cache: { ...schemas.cache, type: "object" },
+    request: {
+      ...schemas.request,
+      properties: {
+        ...propertiesSchema.parse(schemas.request?.properties),
+        url: { type: "string", format: HAR_REQUEST_URL_FORMAT },
+      },
+    },
+    entry: {
+      ...schemas.entry,
+      properties: {
+        ...propertiesSchema.parse(schemas.entry?.properties),
+        time: durationSchema,
+      },
+    },
+    pageTimings: {
+      ...schemas.pageTimings,
+      properties: {
+        ...propertiesSchema.parse(schemas.pageTimings?.properties),
+        onContentLoad: optionalDurationSchema,
+        onLoad: optionalDurationSchema,
+      },
+    },
+  };
+  for (const [name, schema] of Object.entries(schemas))
+    ajv.addSchema(correctedSchemas[name] ?? schema);
   const validate = ajv.getSchema("har.json#");
   if (validate === undefined)
     throw new Error("Pinned HAR root schema is unavailable");
@@ -77,3 +131,24 @@ const allowObservedProducerRepresentations = (
   }
   return adaptedPlaywrightEntries;
 };
+
+const HAR_REQUEST_URL_FORMAT = "absolute-url";
+
+// HAR 1.2 defines request.url only as the absolute request URL. har-schema's
+// RFC 3986 `uri` format rejects URLs exactly as browsers serialize and send
+// them, such as an unescaped `|` or `{` in the query. Keep every RFC 3986 URL
+// admitted, even one WHATWG would rewrite. Otherwise admit only a spelling that
+// WHATWG URL serialization reproduces unchanged, so a URL admitted by this
+// branch reads the same under WHATWG as it was recorded.
+const harRequestUrlValidator = (
+  plugin: object,
+): ((value: string) => boolean) => {
+  const getFormat: unknown = Reflect.get(plugin, "get");
+  const rfc3986 = isCallable(getFormat) ? getFormat("uri") : undefined;
+  if (!isCallable(rfc3986))
+    throw new Error("Pinned AJV uri format is unavailable");
+  return (value) => rfc3986(value) === true || URL.parse(value)?.href === value;
+};
+
+const isCallable = (value: unknown): value is (argument: string) => unknown =>
+  typeof value === "function";

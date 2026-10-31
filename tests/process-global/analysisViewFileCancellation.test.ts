@@ -7,7 +7,7 @@ import {
 } from "../fixtures/analysisView.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { readEvidenceFileSource } from "../../src/application/analysisView/evidenceFileSource.js";
-import { inspectAnalysisViewWithFiles } from "../../src/application/analysisView/AnalysisViewService.js";
+import { inspectAnalysisView } from "../../src/application/analysisView/AnalysisViewService.js";
 
 // This module mock needs an isolated graph even if another service imports the workflow first.
 vi.mock("../../src/application/analysisView/evidenceFileSource.js", {
@@ -35,7 +35,7 @@ it("prefers cancellation observed after failed Evidence-file authentication", as
     return loaded;
   });
   expect(
-    await inspectAnalysisViewWithFiles(
+    await inspectAnalysisView(
       {
         source: { kind: "evidence-file", path },
         view: { kind: "environment-manifest" },

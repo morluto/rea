@@ -1,14 +1,14 @@
-import { ok as javaProbeOk } from "../domain/result.js";
+import { ok as javaProbeOk, err, ok } from "../domain/result.js";
 import type { GhidraJavaObservation } from "./GhidraJavaProbe.js";
 import { describe, expect, it } from "vitest";
 
 import { createTestBinarySession } from "../../tests/fixtures/binarySession.js";
 import { parseConfig } from "../config/parseConfig.js";
+import type { AnalysisOperation } from "../application/AnalysisProvider.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
-import { functionDossierSchema } from "../domain/hopperValues.js";
+import { functionDossierSchema } from "../domain/native/functionDossier.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import { ghidraFunctionDossier } from "../domain/ghidraValues.fixture.js";
-import { err, ok } from "../domain/result.js";
 import { silentLogger } from "../logger.js";
 import { GhidraProvider } from "./GhidraProvider.js";
 import { GhidraSessionError } from "./GhidraSessionError.js";
@@ -167,6 +167,35 @@ const open = async (session: ReturnType<typeof fixture>["session"]) => {
   expect((await session.openResolvedTarget(preview.value)).ok).toBe(true);
 };
 
+/**
+ * Windows must admit the native source with a live operation before it may
+ * replay an imported query. Use a different query so the imported entry is
+ * still the one under test.
+ */
+const admitWindowsNativeSource = async (
+  replay: ReturnType<typeof fixture>,
+  operation: AnalysisOperation,
+): Promise<AnalysisOperation | undefined> => {
+  if (process.platform !== "win32") return undefined;
+  const admission =
+    operation === "read_binary_inventory_summary"
+      ? {
+          operation: "analyze_function" as const,
+          parameters: { procedure: "0xlive" },
+        }
+      : {
+          operation: "read_binary_inventory_summary" as const,
+          parameters: {},
+        };
+  const admitted = await replay.session.execute(
+    admission.operation,
+    admission.parameters,
+  );
+  if (!admitted.ok) throw admitted.error;
+  expect(replay.calls).toEqual([admission.operation]);
+  return admission.operation;
+};
+
 describe("Ghidra relationship coverage replay", () => {
   it("retains degraded Evidence without replaying transient failures after recovery or import", async () => {
     const initial = fixture();
@@ -242,11 +271,19 @@ describe("Ghidra relationship coverage replay", () => {
       const snapshot = initial.session.exportAnalysisSnapshot();
       if (!snapshot.ok) throw snapshot.error;
       await initial.session.close();
-      const replay = fixture();
+      const liveCoverage: RelationshipCoverage = {
+        status: "unknown",
+        reason: "live fixture must not be replayed",
+      };
+      const replay = fixture("12.1.4", liveCoverage);
       expect(replay.session.importAnalysisSnapshot(snapshot.value).ok).toBe(
         true,
       );
       await open(replay.session);
+      const admittedOperation = await admitWindowsNativeSource(
+        replay,
+        "analyze_function",
+      );
       const execution = await replay.session.execute(
         "analyze_function",
         parameters,
@@ -255,7 +292,14 @@ describe("Ghidra relationship coverage replay", () => {
       expect(execution.value.relationshipCoverage ?? undefined).toEqual(
         coverage,
       );
-      expect(replay.calls).toEqual([]);
+      expect(execution.value.limitations).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining("local REA analysis snapshot"),
+        ]),
+      );
+      expect(replay.calls).toEqual(
+        admittedOperation === undefined ? [] : [admittedOperation],
+      );
       await replay.session.close();
     },
   );
@@ -263,6 +307,11 @@ describe("Ghidra relationship coverage replay", () => {
 
 describe("Ghidra snapshot profile admission", () => {
   it.each([
+    {
+      parameter: "instruction_status",
+      current: "unlisted-address-without-decode-v1",
+      legacy: undefined,
+    },
     {
       parameter: "function_boundary_observations",
       current: "ghidra-function-boundary-limitations-v4",
@@ -376,11 +425,25 @@ describe("Ghidra snapshot cache", () => {
         true,
       );
       await open(replay.session);
+      const admittedOperation = await admitWindowsNativeSource(
+        replay,
+        operation,
+      );
       const imported = await replay.session.execute(operation, parameters);
+      expect(imported).toMatchObject({
+        ok: true,
+        value: {
+          limitations: expect.arrayContaining([
+            expect.stringContaining("local REA analysis snapshot"),
+          ]),
+        },
+      });
       expect(imported.ok && imported.value.result).toEqual(
         first.ok && first.value.result,
       );
-      expect(replay.calls).toEqual([]);
+      expect(replay.calls).toEqual(
+        admittedOperation === undefined ? [] : [admittedOperation],
+      );
       await replay.session.close();
 
       const changed = fixture("12.1.5");

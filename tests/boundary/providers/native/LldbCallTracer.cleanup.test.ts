@@ -37,7 +37,11 @@ const request: Parameters<NativeCallTracer["trace"]>[0] = {
     backtrace_frames: 0,
   },
 };
-const tool = { path: process.execPath, sha256: "0".repeat(64) };
+const tool = {
+  invocationPath: process.execPath,
+  resolvedPath: process.execPath,
+  sha256: "0".repeat(64),
+};
 
 const createTracer = (
   launch?: ConstructorParameters<typeof LldbCallTracer>[1],

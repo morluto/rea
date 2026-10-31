@@ -2,12 +2,67 @@ import { describe, expect, it } from "vitest";
 
 import {
   readMetadataBlob,
+  metadataTokenFact,
   readMetadataString,
   readMetadataUserString,
 } from "./ManagedMetadataHeaps.js";
-import type { ManagedMetadataLayout } from "./ManagedMetadataLayout.js";
+import {
+  readManagedMetadataLayout,
+  type ManagedMetadataLayout,
+} from "./ManagedMetadataLayout.js";
 
 describe("managed metadata heaps", () => {
+  it("admits a metadata root that omits its empty #Blob stream", () => {
+    const bytes = Buffer.alloc(108);
+    bytes.writeUInt32LE(0x424a_5342, 0);
+    bytes.writeUInt16LE(1, 4);
+    bytes.writeUInt16LE(1, 6);
+    const version = Buffer.from("v4.0.30319\0\0", "ascii");
+    bytes.writeUInt32LE(version.length, 12);
+    version.copy(bytes, 16);
+    bytes.writeUInt16LE(0, 28);
+    bytes.writeUInt16LE(3, 30);
+    const streams = [
+      { name: "#~", offset: 80, size: 24, nameSize: 4 },
+      { name: "#Strings", offset: 104, size: 4, nameSize: 12 },
+      { name: "#GUID", offset: 108, size: 0, nameSize: 8 },
+    ] as const;
+    let header = 32;
+    for (const stream of streams) {
+      bytes.writeUInt32LE(stream.offset, header);
+      bytes.writeUInt32LE(stream.size, header + 4);
+      bytes.write(`${stream.name}\0`, header + 8, "ascii");
+      header += 8 + stream.nameSize;
+    }
+    bytes[104] = 0;
+
+    const layout = readManagedMetadataLayout(bytes, 0, bytes.length);
+    expect(layout.streamNames).toEqual(["#GUID", "#Strings", "#~"]);
+    expect(layout.blob).toBeNull();
+  });
+
+  it("accepts the empty blob entry when an empty #Blob stream is omitted", () => {
+    const layout = {
+      rootOffset: 16,
+      blob: null,
+    } as unknown as ManagedMetadataLayout;
+
+    expect(
+      Buffer.compare(
+        readMetadataBlob(Buffer.alloc(0), layout, 0, 0),
+        Buffer.alloc(0),
+      ),
+    ).toBe(0);
+    expect(() => readMetadataBlob(Buffer.alloc(0), layout, 1, 0)).toThrowError(
+      expect.objectContaining({
+        issue: expect.objectContaining({
+          code: "missing-stream",
+          scope: "metadata.#Blob",
+        }),
+      }),
+    );
+  });
+
   it("reads a blob item's compressed length from its ECMA-335 prefix", () => {
     const itemLength = 1_048_577;
     const bytes = Buffer.alloc(itemLength + 5);
@@ -31,9 +86,9 @@ describe("managed metadata heaps", () => {
       codedIndexSize: () => 2,
     };
 
-    expect(readMetadataBlob(bytes, layout, 1, layout.blob.size)).toHaveLength(
-      itemLength,
-    );
+    expect(
+      readMetadataBlob(bytes, layout, 1, layout.blob?.size ?? 0),
+    ).toHaveLength(itemLength);
   });
 
   it.each([[[0x80]], [[0xc0, 0x00, 0x00]]])(
@@ -46,7 +101,7 @@ describe("managed metadata heaps", () => {
       } as unknown as ManagedMetadataLayout;
 
       expect(() =>
-        readMetadataUserString(bytes, layout, "0x70000001"),
+        readMetadataUserString(bytes, layout, metadataTokenFact(0x70000001)),
       ).toThrowError(
         expect.objectContaining({
           issue: expect.objectContaining({

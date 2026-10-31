@@ -72,9 +72,11 @@ it.skipIf(process.platform === "win32")(
 );
 
 it.skipIf(process.platform === "win32")(
-  "returns a startup timeout when Rizin exits before its initial frame",
+  "reports Rizin exiting before its initial frame",
   async () => {
-    const provider = await makeProvider("process.exit(0);");
+    const provider = await makeProvider(
+      'process.stderr.write("early startup diagnostic\\n", () => process.exit(0));',
+    );
     const manager = createManager({
       REA_RIZIN_COMMAND: provider,
     });
@@ -84,6 +86,15 @@ it.skipIf(process.platform === "win32")(
       inferior_tty: await rizinTestInferiorTty(),
     });
     expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisCapabilityUnavailableError",
+      providerId: "rizin",
+      operation: "start_rizin_debug_session",
+      capturedOutput: { stderr: "early startup diagnostic\n" },
+    });
+    expect(result.error.cause).toBeInstanceOf(Error);
+    expect((result.error.cause as Error).message).toContain("Rizin exited");
   },
 );
 
@@ -315,11 +326,18 @@ it
         abort.signal,
       );
       await spawned;
-      abort.abort();
+      const reason = { stage: "startup cancellation" };
+      abort.abort(reason);
       const result = await starting;
       expect(result.ok).toBe(false);
-      if (!result.ok && stopMode === "is uncertain")
-        expect(result.error.message).toContain("injected stop uncertainty");
+      if (!result.ok) {
+        expect(result.error._tag).toBe("AnalysisCancelledError");
+        expect(result.error.cause).toBe(reason);
+        if (stopMode === "is uncertain")
+          expect(result.error.cleanup?.reason).toContain(
+            "injected stop uncertainty",
+          );
+      }
       await cleanup();
       if (ownedLaunch === undefined)
         throw new Error("Fixture launch was not observed");
@@ -419,10 +437,13 @@ it.skipIf(process.platform === "win32")(
     const { manager, sessionId } = await start(provider);
     expect((await manager.execute("missing", "dr")).ok).toBe(false);
     const aborted = new AbortController();
-    aborted.abort();
-    expect((await manager.execute(sessionId, "dr", aborted.signal)).ok).toBe(
-      false,
-    );
+    aborted.abort(null);
+    const result = await manager.execute(sessionId, "dr", aborted.signal);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error._tag).toBe("AnalysisCancelledError");
+      expect(result.error.cause).toBeNull();
+    }
     expect(manager.status(sessionId)?.state).toBe("ready");
     expect((await manager.close("missing")).ok).toBe(false);
   },

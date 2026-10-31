@@ -71,7 +71,7 @@ it.each([
         ({ facet }) => facet === "objc_properties_categories",
       ),
     ).toMatchObject({ status: "complete", reason: null });
-    expect(await readFile(path)).toEqual(bytes);
+    expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
   },
 );
 
@@ -105,6 +105,6 @@ it.each([
       status: "partial",
       reason: expect.stringContaining("property_decode_failed"),
     });
-    expect(await readFile(path)).toEqual(bytes);
+    expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
   },
 );

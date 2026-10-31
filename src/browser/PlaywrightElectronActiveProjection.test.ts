@@ -146,8 +146,8 @@ it("projects hook retention and dropped event families through the result schema
   expect(result.coverage.unavailable_event_families).not.toContain(
     "preload-configuration",
   );
-  expect(result.limitations).not.toContain(
-    "Preload configuration was not exposed by the observed Electron window metadata. Preload paths and execution remain unavailable.",
+  expect(result.limitations.join("\n")).not.toContain(
+    "Preload configuration was not exposed",
   );
 });
 
@@ -255,7 +255,11 @@ it("does not correlate legacy dropped families and roles", () => {
     { family: "preload", count: 1 },
     { family: "renderer-ipc", count: 1 },
   ]);
-  expect(result.limitations).toContain(
-    "Dropped preload-family events were not attributed to preload configuration; independently aggregated event families and roles cannot establish that relationship.",
+  const limitations = result.limitations.join("\n");
+  expect(limitations).toContain("Dropped preload-family events");
+  expect(limitations).toContain("not attributed to preload configuration");
+  expect(limitations).toContain(
+    "independently aggregated event families and roles",
   );
+  expect(limitations).toContain("cannot establish that relationship");
 });

@@ -42,7 +42,7 @@ export const webRuntimeScopeSchema = z.strictObject({
 export const webRuntimeSourceSchema = z.object({
   script_id: z.string().min(1),
   url: z.string(),
-  execution_context_id: z.number().int().nullable(),
+  execution_context_id: z.int().nullable(),
   reported_execution_context: jsonObjectSchema.nullable(),
   reported_script_context_aux_data: jsonObjectSchema.nullable(),
   frame_id: z.string().nullable(),
@@ -52,8 +52,8 @@ export const webRuntimeSourceSchema = z.object({
   language: z.string().nullable(),
   resource_start: z
     .object({
-      line_number: z.number().int().min(0).describe(START_LINE),
-      column_number: z.number().int().min(0).describe(START_COLUMN),
+      line_number: z.int().min(0).describe(START_LINE),
+      column_number: z.int().min(0).describe(START_COLUMN),
     })
     .nullable(),
   source: z.discriminatedUnion("state", [
@@ -61,8 +61,8 @@ export const webRuntimeSourceSchema = z.object({
       state: z.literal("captured"),
       text: z.string(),
       sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-      utf8_bytes: z.number().int().min(0),
-      utf16_units: z.number().int().min(0),
+      utf8_bytes: z.int().min(0),
+      utf16_units: z.int().min(0),
     }),
     z.object({
       state: z.enum(["unavailable", "excluded"]),
@@ -76,8 +76,8 @@ export type WebRuntimeSource = z.infer<typeof webRuntimeSourceSchema>;
 export const webRuntimeLocationSchema = z.object({
   script_id: z.string().describe(SCRIPT_ID),
   url: z.string().nullable(),
-  line_number: z.number().int().min(0).describe(RESOURCE_LINE),
-  column_number: z.number().int().min(0).nullable().describe(RESOURCE_COLUMN),
+  line_number: z.int().min(0).describe(RESOURCE_LINE),
+  column_number: z.int().min(0).nullable().describe(RESOURCE_COLUMN),
   function_name: z.string().nullable(),
   source_association: z.enum(["script_id", "unknown"]),
 });

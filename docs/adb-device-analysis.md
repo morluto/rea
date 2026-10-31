@@ -90,7 +90,7 @@ existing analysis families directly, for example
 | `read_adb_logcat`       | read               | Bounded `logcat -d -t` dump for one buffer, optional pid filter                                                                                                                                                                       |
 | `list_adb_packages`     | read               | `pm list packages -f` with scope; base APK device paths                                                                                                                                                                               |
 | `resolve_adb_packages`  | read               | Case-insensitive package-name substring search with exact-match flag                                                                                                                                                                  |
-| `inspect_adb_package`   | read               | `dumpsys package` projection: versions, install times, installer, flags, permission count                                                                                                                                             |
+| `inspect_adb_package`   | read               | `dumpsys package` projection: versions, install times, installer, flags, and count of listed requested-permission rows (including Unicode names)                                                                                      |
 | `list_adb_directory`    | read               | NUL-framed immediate children, including hidden entries: kinds, permissions, owner, group, sizes, symlink targets                                                                                                                     |
 | `pull_adb_package`      | read               | Complete split APK set from `pm path`, each file digested                                                                                                                                                                             |
 | `pull_adb_file`         | read               | One absolute device path pulled and digested                                                                                                                                                                                          |
@@ -102,6 +102,15 @@ existing analysis families directly, for example
 | `start_adb_app`         | **mutates device** | Resolves the package's launcher activity (`cmd package resolve-activity --brief`) and starts it (`am start -n`)                                                                                                                       |
 | `start_adb_activity`    | **mutates device** | Starts an intent (`am start -a` with optional URI, component, and up to 16 typed extras); preserves the activity manager's verdict                                                                                                    |
 | `stop_adb_app`          | **mutates device** | Force-stops every process of a package, ending a dynamic-analysis run                                                                                                                                                                 |
+
+Screen capture validates the PNG signature, IHDR framing, dimensions, and IHDR
+checksum before publishing. It does not validate encoding fields or decode and
+validate image contents; that limitation is retained in Evidence.
+
+When `push_adb_file` receives an existing directory, adb places the local file
+inside it under the local basename; Evidence reports that effective file path
+while retaining the caller's directory path in the input parameters. The
+private read-only staging copy preserves the source file's executable bits.
 
 For `inspect_adb_window`, `focus_contexts` retains each display header, its exact
 display ID when recognized, and every focus declaration with its original line.
@@ -131,13 +140,38 @@ and during shutdown.
 
 ## Interpret the result
 
+- **Package numeric declarations retain failures.** `inspect_adb_package`
+  admits the first valid `userId` or `appId` as `user_id`: a nonnegative safe
+  integer, including zero. A null value means no valid declaration was found.
+  Malformed declarations before or after a valid value remain in
+  `numeric_issues`: the first ten issues with command, field, reason and original
+  `raw_line`, plus the exact `total`. Reasons are `invalid_format` or
+  `unsafe_integer`. Any issue makes package coverage partial; existing section
+  omissions can also make it partial. `version_code` remains exact source text.
+- **Display nulls preserve uncertainty.** `inspect_adb_display` admits positive
+  safe integers. Absent or malformed optional values are null; `numeric_issues`
+  distinguishes malformed declarations from absence. It keeps the first ten
+  issues and exact total, with command, field, original line and reason
+  (`invalid_format`, `unsafe_integer` or `nonpositive`). The last recognized
+  labeled declaration wins, even when malformed. A physical-density label
+  suppresses bare-number fallback even when malformed; without that label, the
+  first unsigned bare number wins, including zero or an unsafe integer that
+  leaves the value null. Display coverage is complete only with known physical
+  density and no numeric issues. Missing or malformed required physical size
+  produces a protocol failure with `details.partial_observation`: an
+  `inspect_adb_display` observation from provider `adb`, reason
+  `physical_size_absent` or `physical_size_malformed`, and a `result` retaining
+  client, serial, optional display facts, numeric issues, null physical size
+  and partial coverage.
 - **Directory names retain whitespace and newlines.** Symlink targets do too,
   including trailing newlines. Records containing invalid UTF-8 remain as
   labelled hex in `unparsed_lines` and make directory coverage partial.
 - **Inferences carry their basis.** Device `kind` reports
   `kind_basis` (serial prefix or USB transport); APK `role` reports
-  `role_basis: file_name`; `emulator_observed` is the build's own
-  `ro.kernel.qemu` value, `null` when absent.
+  `role_basis: file_name`; `emulator_observed` is derived from the build's
+  `ro.kernel.qemu` property: `true` only when its value is `"1"`, `false` for
+  any other reported value, and `null` when the property is absent. The raw
+  property value remains available in `properties`.
 - **Device paths are not host paths.** `base_apk_device_path` values live on
   the device filesystem. Only pulls and captures produce host-local paths,
   each paired with byte size and SHA-256 digest. A pulled file's host name is
@@ -235,3 +269,13 @@ Record: verified against adb 34.0.5 on Linux against an Android 14
 287 services, 92 features, a real two-APK split set pulled with byte-exact
 digests, a verified push/pull roundtrip, a 1.3 MB screen capture, and the
 complete package lifecycle; see `docs/testing.md` for the lane summary.
+
+Intent integer extras use signed decimal text. The ADB argument encoder removes
+redundant leading zeros for Android's radix-sensitive `--ei` parser while retained
+Evidence keeps the caller's original spelling. Package inspection accepts both
+`userId` and Android 16's `appId` spelling for the legacy `user_id` result field.
+
+A completed push and device digest verification are separate observations. A
+verification timeout, cancellation, or output budget failure returns the typed
+failure with partial Evidence of the completed transfer. An unavailable checksum
+command or unrecognized checksum output leaves verification explicitly unknown.

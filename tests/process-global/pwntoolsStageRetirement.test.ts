@@ -1,4 +1,11 @@
-import { access, mkdir, open, readFile, writeFile } from "node:fs/promises";
+import {
+  access,
+  lstat,
+  mkdir,
+  open,
+  readFile,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -12,6 +19,8 @@ import {
 } from "vitest";
 import { z } from "zod";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
+import { primaryAnalysisError } from "../../src/domain/analysisErrorBase.js";
+import { ProviderCleanupError } from "../../src/domain/providerCleanupError.js";
 import { PwntoolsRecordedCrashProvider } from "../../src/native/pwntools/PwntoolsRecordedCrashProvider.js";
 import type { PwntoolsLauncher } from "../../src/native/pwntools/PwntoolsDecoder.js";
 import {
@@ -101,7 +110,7 @@ const fixture = async () => {
       arguments: ["-e", "process.stdout.write('basic diagnostic')"],
     });
   };
-  return { path, root, environment, basic };
+  return { path, root, environment, basic, reply };
 };
 
 const changingWorker = async (
@@ -390,6 +399,7 @@ it.runIf(supportedHost).each(["decoder", "debugger"])(
     const read = artifacts.readStableArtifact;
     let injected = false;
     let releaseAllowed = false;
+    const closeFailure = new Error("reply close refused");
     const emergencyCloses: (() => Promise<void>)[] = [];
     vi.spyOn(artifacts, "readStableArtifact").mockImplementation(
       async (...args) => {
@@ -402,7 +412,7 @@ it.runIf(supportedHost).each(["decoder", "debugger"])(
         const close = file.close.bind(file);
         emergencyCloses.push(close);
         file.close = async () => {
-          if (!releaseAllowed) throw new Error("reply close refused");
+          if (!releaseAllowed) throw closeFailure;
           await close();
         };
         const retain = resources.retain.bind(resources);
@@ -454,17 +464,47 @@ it.runIf(supportedHost).each(["decoder", "debugger"])(
       { signal: controller.signal },
     );
     if (result.ok) throw new Error("Expected the physical reply-close failure");
-    expect(result.error._tag).toBe("AnalysisOutputError");
-    expect(result.error.cause).toBeInstanceOf(ArtifactFileCleanupFailure);
-    if (!(result.error.cause instanceof ArtifactFileCleanupFailure))
+    expect(controller.signal.reason).toBe(reason);
+    const completionFailure = primaryAnalysisError(result.error);
+    if (stage === "debugger") {
+      expect(result.error).toBeInstanceOf(ProviderCleanupError);
+      expect(result.error.diagnostics).toMatchObject({
+        stage: "debugger_reply_descriptor_close",
+      });
+      expect(result.error.partialObservation).toMatchObject({
+        artifact: { path },
+        debugger: {
+          status: "available",
+          connection: "core",
+          maps: recordedCrashDebuggerFixture().maps,
+          diagnostics: { stdout: "debugger diagnostic" },
+        },
+      });
+    } else {
+      expect(launches).toBe(1);
+      expect(completionFailure).toBeInstanceOf(ProviderCleanupError);
+      expect(completionFailure.diagnostics).toMatchObject({
+        phase: "reply_descriptor_close",
+      });
+      expect(result.error.partialObservation).toMatchObject({
+        artifact: { path },
+        debugger: { status: "unavailable", requested: true },
+      });
+    }
+    expect(completionFailure.cause).toBeInstanceOf(ArtifactFileCleanupFailure);
+    if (!(completionFailure.cause instanceof ArtifactFileCleanupFailure))
       throw new Error("Expected exact file owner");
-    expect(result.error.cause.fileCleanupFailure.outcome.kind).toBe(
+    expect(completionFailure.cause.fileCleanupFailure.outcome.kind).toBe(
       "completed",
     );
+    expect(completionFailure.cause.fileCleanupFailure.cleanupCause).toBe(
+      closeFailure,
+    );
     expect(
-      result.error.cause.fileCleanupFailure.completionCancellation,
+      completionFailure.cause.fileCleanupFailure.completionCancellation,
     ).toBeUndefined();
     expect(result.error.cleanupIncomplete).toBe(true);
+    const observation = result.error.partialObservation;
     await expect(provider.close()).rejects.toMatchObject({
       cleanupIncomplete: true,
     });
@@ -472,7 +512,218 @@ it.runIf(supportedHost).each(["decoder", "debugger"])(
     releaseAllowed = true;
     await provider.close();
     expect(result.error.cleanupIncomplete).toBe(false);
+    expect(result.error.cleanupResources).toEqual([]);
+    expect(result.error.partialObservation).toBe(observation);
     expect(result.error.capturedOutput?.stdout).toContain("basic diagnostic");
     await expect(access(root.path)).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
+
+it.runIf(supportedHost).each(
+  ["resource.failure", "limits.json"].flatMap((receipt) =>
+    ["valid", "malformed", "read-failure"].map((outcome) => ({
+      receipt,
+      outcome,
+    })),
+  ),
+)(
+  "retains $outcome $receipt receipt facts while its exact descriptor awaits retry",
+  async ({ receipt, outcome }) => {
+    const { path, root, environment } = await fixture();
+    const selected = join(root.path, receipt);
+    const read = artifacts.readStableArtifact;
+    let releaseAllowed = false;
+    let injected = false;
+    const emergencyCloses: (() => Promise<void>)[] = [];
+    vi.spyOn(artifacts, "readStableArtifact").mockImplementation(
+      async (...args) => {
+        if (args[0] !== selected || injected) return read(...args);
+        injected = true;
+        return read(
+          args[0],
+          args[1],
+          args[2],
+          {
+            lstat: (filePath) => lstat(filePath, { bigint: true }),
+            open: async (filePath, flags) => {
+              const file = await open(filePath, flags);
+              const close = file.close.bind(file);
+              if (outcome === "read-failure")
+                file.read = async () => {
+                  throw new Error("receipt physical read refused");
+                };
+              emergencyCloses.push(close);
+              file.close = async () => {
+                if (!releaseAllowed)
+                  throw new Error("receipt descriptor close refused");
+                await close();
+              };
+              return file;
+            },
+          },
+          args[4],
+        );
+      },
+    );
+    const limits = recordedCrashDebuggerFixture().reported_limits;
+    const provider = new PwntoolsRecordedCrashProvider(
+      environment,
+      async (spawn) => {
+        await writeFile(
+          join(root.path, "resource.failure"),
+          receipt === "resource.failure" && outcome === "malformed" ? "F" : "M",
+        );
+        await writeFile(
+          join(root.path, "limits.json"),
+          receipt === "limits.json" && outcome === "malformed"
+            ? '{"cpu_seconds": "invalid"}'
+            : JSON.stringify(limits),
+        );
+        return spawnOwnedProviderProcess({
+          ...spawn,
+          arguments: [
+            "-e",
+            `process.exit(${String(PWNTOOLS_MEMORY_FAILURE_EXIT)})`,
+          ],
+        });
+      },
+      async () => root,
+    );
+    onTestFinished(async () => {
+      releaseAllowed = true;
+      await provider.close();
+      await Promise.all(emergencyCloses.map((close) => close()));
+    });
+    const result = await provider.inspectAndClose({
+      path,
+      include_debugger_context: false,
+    });
+    if (result.ok)
+      throw new Error("Expected the observed bridge memory failure");
+    const primary = projectAnalysisError(result.error).details?.diagnostics;
+    expect(primary).toMatchObject({
+      primary_error: {
+        code:
+          receipt === "resource.failure" && outcome !== "valid"
+            ? "execution_failure"
+            : "resource_constraint",
+        ...(receipt === "resource.failure" && outcome !== "valid"
+          ? {
+              details: {
+                diagnostics: { resource_failure_marker: { resource: null } },
+              },
+            }
+          : {
+              details: {
+                resource: "memory",
+                reported_limits:
+                  receipt === "limits.json" && outcome !== "valid"
+                    ? null
+                    : limits,
+              },
+            }),
+      },
+    });
+    if (outcome === "valid")
+      expect(JSON.stringify(primary)).toContain(
+        "receipt_finalization_failures",
+      );
+    if (outcome === "read-failure")
+      expect(JSON.stringify(primary)).toContain(
+        receipt === "resource.failure"
+          ? "receipt physical read refused"
+          : "Effective limit report unavailable",
+      );
+    await expect(provider.close()).rejects.toMatchObject({
+      cleanupIncomplete: true,
+    });
+    await expect(access(root.path)).resolves.toBeUndefined();
+    releaseAllowed = true;
+    await provider.close();
+    expect(result.error.cleanupIncomplete).toBe(false);
+    await expect(access(root.path)).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
+
+it.runIf(supportedHost)(
+  "keeps decoder and debugger children on one selected environment while later calls reconfigure",
+  async () => {
+    const { path, root, environment: selected, reply } = await fixture();
+    const environment: NodeJS.ProcessEnv = {
+      ...selected,
+      REA_ENV_MARKER: "first",
+    };
+    const originalPython = join(root.path, "..", "python-selected");
+    const { symlink } = await import("node:fs/promises");
+    await symlink(process.execPath, originalPython);
+    environment.REA_PWNTOOLS_PYTHON = originalPython;
+    const commands: string[] = [];
+    const provider = new PwntoolsRecordedCrashProvider(
+      environment,
+      async (spawn) => {
+        const request = z
+          .object({ reply_path: z.string(), gdb: z.string().optional() })
+          .parse(
+            JSON.parse(await readFile(spawn.arguments.at(-1) ?? "", "utf8")),
+          );
+        const debuggerStage = request.gdb !== undefined;
+        commands.push(spawn.command);
+        if (debuggerStage) expect(request.gdb).toBe(selected.REA_PWNDBG_GDB);
+        await writeFile(
+          request.reply_path,
+          debuggerStage
+            ? JSON.stringify({
+                ok: true,
+                value: recordedCrashDebuggerFixture(),
+              })
+            : reply,
+        );
+        environment.REA_ENV_MARKER = "changed-during-launch";
+        environment.REA_PWNTOOLS_PYTHON = "/missing-python";
+        environment.REA_PWNDBG_GDB = "/missing-gdb";
+        const child = await spawnOwnedProviderProcess({
+          ...spawn,
+          command: process.execPath,
+          arguments: ["-e", "process.stdout.write(process.env.REA_ENV_MARKER)"],
+        });
+        return child;
+      },
+      async () => {
+        environment.REA_ENV_MARKER = "changed-during-runtime";
+        environment.REA_PWNTOOLS_PYTHON = "/missing-python";
+        return PrivateRuntimeRoot.create({
+          parent: root.path,
+          prefix: "operation-",
+        });
+      },
+    );
+    onTestFinished(async () => {
+      await provider.close();
+      await root.close();
+    });
+    for (const marker of ["first", "second"]) {
+      if (marker === "second")
+        Object.assign(environment, selected, { REA_ENV_MARKER: marker });
+      const result = await provider.inspect({
+        path,
+        include_debugger_context: true,
+      });
+      expect(
+        result.ok
+          ? result.value.decoder_diagnostics.stdout
+          : result.error.capturedOutput?.stdout,
+      ).toBe(marker);
+      if (!result.ok) throw result.error;
+      expect(result.value.debugger).toMatchObject({
+        status: "available",
+        diagnostics: { stdout: marker },
+      });
+    }
+    expect(commands).toEqual([
+      originalPython,
+      originalPython,
+      process.execPath,
+      process.execPath,
+    ]);
   },
 );

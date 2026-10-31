@@ -3,7 +3,7 @@ import type { GpuCodeObjectsPort } from "../application/gpu/GpuCodeObjectsPort.j
 import {
   createGpuCodeObjectsEvidence,
   createGpuCodeObjectsPartialEvidence,
-} from "../application/gpu/GpuCodeObjectsEvidence.js";
+} from "../domain/gpu/gpuCodeObjectsEvidence.js";
 import type { ExecutionOptions } from "../application/AnalysisProvider.js";
 import type {
   GpuCodeObjects,
@@ -29,10 +29,9 @@ import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   withArtifactRegularFile,
   bindArtifactFileCleanup,
-  artifactFilePrimaryFailure,
+  artifactFilePrimaryFacts,
   artifactFileCancellationCause,
-  ArtifactFileCancelled,
-  ArtifactFileCleanupFailure,
+  artifactFileCompletion,
 } from "../artifacts/ArtifactFileOperation.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import {
@@ -47,7 +46,10 @@ import {
 } from "./GpuSource.js";
 import { GpuInventory } from "./GpuInventory.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { sameRegularFileState } from "../filesystem/RegularFile.js";
+import {
+  isSelectedRegularFileError,
+  sameRegularFileState,
+} from "../filesystem/RegularFile.js";
 
 export const GPU_CODE_OBJECTS_PROVIDER_IDENTITY = {
   id: "gpu-code-objects",
@@ -100,7 +102,7 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
             input.path,
             this.#resources,
             options?.signal,
-            (file) =>
+            ({ handle: file }) =>
               this.#read(file, input, options?.signal, (value) => {
                 progress = value;
               }),
@@ -108,9 +110,10 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
         ),
       );
     } catch (cause) {
-      const primary = artifactFilePrimaryFailure(cause);
+      const { cause: primary, origin } = artifactFilePrimaryFacts(cause);
       let error: AnalysisError;
-      if (primary instanceof AnalysisError) error = primary;
+      if (origin === "owned-or-classified" && primary instanceof AnalysisError)
+        error = primary;
       else if (primary instanceof BinaryResourceFailure)
         error = new AnalysisResourceConstraintError(
           OPERATION,
@@ -140,17 +143,15 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
                 constraint: "file_format_rejected",
               });
       } else if (
+        origin === "owned-or-classified" &&
         primary instanceof ArtifactReaderFailure &&
         primary.reason === "cancelled"
       )
         error = new AnalysisCancelledError(OPERATION, {
           cause: artifactFileCancellationCause(primary),
         });
-      else if (primary instanceof ArtifactFileCancelled)
-        error = new AnalysisCancelledError(OPERATION, {
-          cause: primary.fileCancellation.reason,
-        });
       else if (
+        origin === "owned-or-classified" &&
         primary instanceof ArtifactReaderFailure &&
         primary.reason === "integrity"
       )
@@ -171,7 +172,10 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
           primary.code,
           { cause: primary },
         );
+      else if (isSelectedRegularFileError(primary))
+        error = new BinaryTargetError(input.path, primary.message, { cause });
       else if (
+        origin === "owned-or-classified" &&
         primary instanceof ArtifactReaderFailure &&
         primary.reason === "limit"
       )
@@ -186,8 +190,7 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
             remediationAction: `${primary.message} The GPU object allowance is ${String(GPU_OBJECT_BYTES)} bytes. This release has no runtime override. Additional host memory does not raise it. Repeating the unchanged request fails the same way.`,
           },
         );
-      else if (primary instanceof Error && "code" in primary)
-        error = new BinaryTargetError(input.path, primary.message, { cause });
+      // Other coded I/O failures remain host failures (for example, EMFILE).
       else
         error = new ProviderAdapterError(this.identity.id, OPERATION, {
           cause,
@@ -209,16 +212,10 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
         );
         error = analysisErrorWithCleanupFailure(error, cleanup, OPERATION);
       }
-      const completed =
-        cause instanceof ArtifactFileCleanupFailure &&
-        cause.fileCleanupFailure.outcome.kind === "completed"
-          ? cause.fileCleanupFailure.outcome.value
-          : cause instanceof ArtifactFileCancelled
-            ? cause.fileCancellation.outcome.value
-            : undefined;
+      const completed = artifactFileCompletion(cause);
       if (completed !== undefined) {
         // The descriptor owner retains observations even when its final close fails.
-        const report = gpuCodeObjectsSchema.safeParse(completed);
+        const report = gpuCodeObjectsSchema.safeParse(completed.value);
         if (report.success)
           error.retainPartialObservation(
             createGpuCodeObjectsEvidence(report.data, this.identity, input),

@@ -255,16 +255,18 @@ it("rejects summary without retention before executing either native command", a
   expect(run).not.toHaveBeenCalled();
 });
 
-it("rejects malformed historical GDB facts and conflicting source commands", () => {
+it("rejects malformed historical GDB facts and conflicting source commands", async () => {
   const source = gdbEvidence({
     session_id: sessionId,
     command: "a different command",
   });
   expect(
-    inspectAnalysisView({
-      source: { kind: "inline", evidence: source },
-      view: { kind: "summary" },
-    }).ok,
+    (
+      await inspectAnalysisView({
+        source: { kind: "inline", evidence: source },
+        view: { kind: "summary" },
+      })
+    ).ok,
   ).toBe(false);
   const malformed = createEvidence(undefined, source.provider, {
     operation: "gdb_console",
@@ -272,16 +274,18 @@ it("rejects malformed historical GDB facts and conflicting source commands", () 
     result: { ...capture, records: [123] },
   });
   expect(
-    inspectAnalysisView({
-      source: { kind: "inline", evidence: malformed },
-      view: { kind: "summary" },
-    }).ok,
+    (
+      await inspectAnalysisView({
+        source: { kind: "inline", evidence: malformed },
+        view: { kind: "summary" },
+      })
+    ).ok,
   ).toBe(false);
 });
 
 it.each([true, false, null])(
   "preserves opaque objdump capture and unknown/change facts (%s)",
-  (changed) => {
+  async (changed) => {
     const report = {
       stdout: "opaque output 🧪\n",
       stderr: "diagnostic",
@@ -308,7 +312,7 @@ it.each([true, false, null])(
         rawResult: report,
       },
     );
-    const selected = inspectAnalysisView({
+    const selected = await inspectAnalysisView({
       source: { kind: "inline", evidence: parent },
       view: { kind: "summary" },
     });
@@ -331,10 +335,12 @@ it.each([true, false, null])(
         },
       );
       expect(
-        inspectAnalysisView({
-          source: { kind: "inline", evidence: conflicting },
-          view: { kind: "summary" },
-        }).ok,
+        (
+          await inspectAnalysisView({
+            source: { kind: "inline", evidence: conflicting },
+            view: { kind: "summary" },
+          })
+        ).ok,
       ).toBe(false);
     }
   },

@@ -10,7 +10,7 @@ import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
 import {
   evidenceResultOf,
   expandToolAvailability,
-  toolAvailabilityInventory,
+  toolAvailabilitySummaryInventory,
 } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
@@ -39,7 +39,7 @@ const expectAvailableToolInventory = async (
   const inventory = z
     .object({
       result: z.object({
-        tool_availability: toolAvailabilityInventory,
+        tool_availability: toolAvailabilitySummaryInventory,
       }),
     })
     .parse(status.structuredContent).result.tool_availability;
@@ -83,6 +83,8 @@ const callCurrentDocument = async (
     cwd: process.cwd(),
     env: {
       PATH: process.env.PATH ?? "",
+      // The fixture exercises Hopper even when other providers are installed.
+      REA_ANALYSIS_PROVIDER: "hopper",
       HOPPER_LAUNCHER_PATH: process.execPath,
       ...(target === undefined
         ? {}

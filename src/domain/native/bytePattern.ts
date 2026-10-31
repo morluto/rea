@@ -3,6 +3,9 @@ import { addressCoordinate } from "./addressCoordinate.js";
 import { AnalysisInputError } from "../analysisErrorCore.js";
 import { err, ok, type Result } from "../result.js";
 
+/** Maximum matches delivered by one byte-search page. */
+export const MAX_BYTE_SEARCH_MATCHES = 1000;
+
 /** Exact grammar belongs to the object refinement, not a repeating advertised regex. */
 export const bytePatternFields = {
   pattern: z
@@ -115,7 +118,7 @@ const coverageBlock = z
     segment: z.string(),
     start: z.string(),
     end: z.string(),
-    bytes: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    bytes: z.int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   })
   .superRefine((value, context) => {
     const start = addressCoordinate(value.start);
@@ -143,7 +146,6 @@ export const byteSearchResultSchema = z
           address: z.string(),
           segment: z.string(),
           file_offset: z
-            .number()
             .int()
             .nonnegative()
             .max(Number.MAX_SAFE_INTEGER)
@@ -153,10 +155,10 @@ export const byteSearchResultSchema = z
             .nullable(),
         }),
       )
-      .max(1000),
+      .max(MAX_BYTE_SEARCH_MATCHES),
     searched: z.strictObject({
       blocks: z.array(coverageBlock),
-      bytes: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+      bytes: z.int().nonnegative().max(Number.MAX_SAFE_INTEGER),
       skipped_uninitialized: z.array(coverageBlock),
       skipped_not_loaded: z.array(coverageBlock),
     }),

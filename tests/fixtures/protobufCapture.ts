@@ -42,6 +42,10 @@ export const protobufHar = (
   body: Buffer = protobufCaptureBody(),
   mimeType = "application/grpc-web+proto",
   additionalBodies: readonly Buffer[] = [],
+  responseHeaders: readonly {
+    readonly name: string;
+    readonly value: string;
+  }[] = [],
 ) =>
   JSON.stringify({
     log: {
@@ -65,7 +69,7 @@ export const protobufHar = (
           statusText: "OK",
           httpVersion: "HTTP/1.1",
           cookies: [],
-          headers: [],
+          headers: responseHeaders,
           redirectURL: "",
           headersSize: -1,
           bodySize: body.length,

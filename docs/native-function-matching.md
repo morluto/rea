@@ -19,15 +19,25 @@ session references as `left` and `right`:
 }
 ```
 
-Unique exact reported names are paired first. Optional `list_names` Evidence
-identifies dynamic/default names to exclude. If origin is unavailable, the
-existing automatic-name exclusion rule applies and each function retains that
-limitation. Exact names establish name correspondence, not unchanged code or
-original-source identity.
+Unique exact names with observed symbol origin are paired first. Inventory rows
+or optional `list_names` Evidence identify dynamic/default names to exclude.
+Unknown or conflicting origin does not establish name correspondence; complete
+independent body bytes remain eligible. Exact names establish name correspondence,
+not unchanged code or original-source identity. Ghidra publishes its symbol facts;
+Hopper, IDA and older imported dossiers retain unknown origin when no such facts
+were observed. Display spelling alone, including `EntryPoint` or `FUN_` prefixes,
+does not establish whether a name was generated.
+
+Authentic Evidence selected for the wrong side, role, target, provider, profile
+or document returns an input error naming the selected field or observation
+index. Re-select compatible observations; authentication or contradictory producer
+facts retain their separate integrity failures.
 
 For unmatched candidates, optionally supply `left_observations` and
-`right_observations`. `procedure_info` or existing `analyze_function` Evidence
-gives exact inclusive body ranges; `read_bytes` supplies memory bytes. Observations
+`right_observations`. `procedure_info` or existing `analyze_function` dossiers
+give exact inclusive body ranges; `read_bytes` supplies memory bytes. An MCP
+`analyze_function` summary reply is not a dossier: pass its
+`parent_evidence_id` as a `retained-evidence` reference instead. Observations
 must belong to the side's exact target/provider/profile and document context.
 Adjacent, consistent overlapping and partially returned reads compose by their
 observed extent; conflicting intervals remain gaps. A byte match requires every
@@ -78,9 +88,9 @@ inventory Evidence and the owning inventory’s `source_index`, preserving same-
 One validation, lazy member index and bounded recent filter are retained per
 immutable parent; no live target state is cached.
 
-When both functions already have unambiguous `analyze_function` dossiers, a matched
-relation includes `compare_functions_input` with directly usable retained
-references. Otherwise analyze just the selected canonical addresses in their
+When both functions already have unambiguous `analyze_function` dossiers in the
+observations, a matched relation includes `compare_functions_input` with
+directly usable retained references. Otherwise analyze just the selected canonical addresses in their
 respective targets, then compare those dossiers. Matching never claims behavioral
 equivalence. Optional informative CFG/call/string fingerprints from supplied
 dossiers connect unresolved candidate groups only. They require observed CFG,
@@ -107,9 +117,39 @@ in the JSON for all groups inline. Import the bundle into MCP for views, or
 extract its matching Evidence record to a JSON file for the existing CLI
 `inspect-analysis-view` `evidence-file` source. Input bundles are unchanged.
 
-Representation admission is bounded at 96 MiB before cloning selected observations
-and expanding matching indexes and repeated per-function source links. Work yields to cancellation. No worker/provider
-concurrency is introduced; this budget is not a bound on total process RSS.
+Representation admission is bounded before cloning selected observations
+and expanding matching indexes and repeated per-function source links. Each
+inventory row is charged before parsing for the member it becomes, including the
+report and Evidence copies that member is serialized into, so an oversized side
+is refused before its rows are parsed. Inline Evidence and bundle records are
+charged for the copies their authentication or loading creates. An exact
+session reference to retained Evidence is borrowed without a copy, so only
+what matching derives from it is charged; the inventory's own Evidence ID is
+charged once, not per function. Selected observations are charged in full.
+Measured under the 96 MiB default with Ghidra-shaped rows, about 20-character
+names and no observations, about 22,000 rows per side fit through retained
+`list_procedures` references, and about 10,000 through inline Evidence or CLI
+`source_bundle` inputs. Work yields to
+cancellation. No worker/provider concurrency is introduced; this budget is not
+a bound on total process RSS.
+
+The allowance defaults to 96 MiB and is the runtime setting
+`native.matching_representation_bytes`, from 1 byte to 1 GiB. On MCP, call
+`update_analysis_settings` with that setting and retry; it applies to the next
+operation without restarting REA. For CLI or future REA processes, set
+`REA_NATIVE_MATCHING_REPRESENTATION_BYTES` in the launch environment; `rea
+setup` copies it into client registrations. An invalid launch value is refused
+by matching only, and a runtime value repairs it. A refusal carries
+`details.limit` with the effective value, its source and bounds. Raising the
+allowance lets matching retain more in the REA process. The 1 GiB maximum is
+an REA policy, not a host-capacity claim, and peak heap during a request can
+exceed the allowance.
+
+Summary delivery happens after complete matching Evidence is constructed and
+retained. It reduces the initial reply, but does not avoid that construction or
+raise the allowance. Repeated provenance remains
+part of the complete member contract; splitting inventories into separate matches
+would change global name/body uniqueness and is not an equivalent workaround.
 
 The self-owned source fixture is [nativeFunctionMatching.c](https://github.com/morluto/rea/blob/main/tests/fixtures/nativeFunctionMatching.c).
 On Linux x86-64, compile with `cc -O2 -g0 -fno-pie -no-pie -DVERSION=1` and
@@ -118,3 +158,5 @@ It includes unchanged/changed code, a byte-identical rename, a removed/added
 observation, an inlined function, identical-code aliases and a renamed changed
 function with an observed call/string signature. Analyze without executing the
 fixture. Full-provider verification still needs caller-supplied Ghidra and Java.
+
+Malformed inline Evidence is rejected after admission with its selected input field and observation index. A structurally valid record whose authenticated contents or digest disagree remains an integrity failure; changing input diagnostics does not make that record trustworthy.

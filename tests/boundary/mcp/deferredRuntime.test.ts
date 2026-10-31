@@ -9,11 +9,13 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { resolve, join } from "node:path";
+import { resolve, join, dirname } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
+import { closeVerifierResources } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { GENERATED_MCP_TOOL_CATALOG } from "../../fixtures/mcpToolCatalog.js";
 import { PROMPT_CONTRACTS } from "../../../src/contracts/promptContracts.js";
+import { TOOL_FAMILY_DEFINITIONS } from "../../../src/contracts/toolFamilies.js";
 import { evidenceSchema } from "../../../src/domain/evidence.js";
 import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
 import { SERVER_START_FAILED } from "../../../src/main/messages.js";
@@ -44,8 +46,10 @@ const connect = async (
     { versionNegotiation: { mode } },
   );
   onTestFinished(async () => {
-    await client.close();
-    await transport.close();
+    await closeVerifierResources([
+      () => client.close(),
+      () => transport.close(),
+    ]);
   });
   await client.connect(transport);
   return { client, stderr: () => stderr };
@@ -196,9 +200,10 @@ it.each([
       client.callTool({ name: "list_unknowns", arguments: { limit: 1 } }),
     ]);
     expect(results.every((result) => result.isError !== true)).toBe(true);
-    expect(results[0]?.structuredContent).toEqual({
-      result: { items: [], total: 0, offset: 0, next_offset: null },
-    });
+    expect(results.map((result) => result.structuredContent)).toEqual([
+      { result: { items: [], total: 0, offset: 0, next_offset: null } },
+      { result: { items: [], total: 0, offset: 0, next_offset: null } },
+    ]);
     expect(await client.listTools()).toEqual(before);
     const invalid = await client.callTool({
       name: "list_unknowns",
@@ -217,6 +222,29 @@ it.each([
     expect(stderr()).toBe("");
   },
 );
+
+it("composes a scoped registration instead of serving the recorded catalog", async () => {
+  const { client, stderr } = await connect("legacy", {
+    REA_MCP_TOOL_FAMILIES: "session",
+  });
+  const advertised = (await client.listTools()).tools
+    .map(({ name }) => name)
+    .sort();
+  expect(advertised).toEqual(
+    TOOL_FAMILY_DEFINITIONS.filter(({ id }) => id === "session")
+      .flatMap(({ contracts }) => contracts.map(({ name }) => name))
+      .sort(),
+  );
+  expect(advertised).not.toContain("inspect_macho");
+  // The recorded catalog cannot verify a scoped identity, so the scope must
+  // serve real calls instead of failing every one after materialization.
+  const status = await client.callTool({
+    name: "binary_session",
+    arguments: {},
+  });
+  expect(status.isError).not.toBe(true);
+  expect(stderr()).toBe("");
+});
 
 it("preserves connection creation time across deferred materialization", async () => {
   const directory = await createTestTempDirectory("rea-mcp-started-at-");
@@ -553,37 +581,29 @@ console.log("LATE_PUBLICATION_REFUSED");
   expect(child.stderr).toBe("");
 });
 
-it.each([
-  {},
-  { REA_MCP_INPUT_SCHEMA_PROFILE: "compact" },
-  { REA_MCP_INPUT_SCHEMA_PROFILE: "full" },
-  { REA_MCP_OUTPUT_SCHEMA_PROFILE: "off" },
-])("preserves the configured catalog profile %j", async (environment) => {
-  const { client } = await connect("legacy", environment);
-  const before = await client.listTools();
-  const catalog = JSON.parse(
-    await readFile(
-      environment.REA_MCP_INPUT_SCHEMA_PROFILE === "full"
-        ? "dist/mcp-catalog-full.json"
-        : "dist/mcp-catalog.json",
-      "utf8",
-    ),
-  );
-  expect(before.tools).toHaveLength(catalog.tools.length);
-  const expected =
-    environment.REA_MCP_OUTPUT_SCHEMA_PROFILE === "off"
-      ? catalog.tools.map(
-          ({ outputSchema: _output, ...tool }: Record<string, unknown>) => tool,
-        )
-      : catalog.tools;
-  expect(before.tools).toEqual(expected);
-  const result = await client.callTool({
-    name: "list_unknowns",
-    arguments: {},
-  });
-  expect(result.isError).not.toBe(true);
-  expect(await client.listTools()).toEqual(before);
-});
+it.each([{}, { REA_MCP_OUTPUT_SCHEMA_PROFILE: "off" }])(
+  "preserves the configured catalog profile %j",
+  async (environment) => {
+    const { client } = await connect("legacy", environment);
+    const before = await client.listTools();
+    const catalog = JSON.parse(await readFile("dist/mcp-catalog.json", "utf8"));
+    expect(before.tools).toHaveLength(catalog.tools.length);
+    const expected =
+      environment.REA_MCP_OUTPUT_SCHEMA_PROFILE === "off"
+        ? catalog.tools.map(
+            ({ outputSchema: _output, ...tool }: Record<string, unknown>) =>
+              tool,
+          )
+        : catalog.tools;
+    expect(before.tools).toEqual(expected);
+    const result = await client.callTool({
+      name: "list_unknowns",
+      arguments: {},
+    });
+    expect(result.isError).not.toBe(true);
+    expect(await client.listTools()).toEqual(before);
+  },
+);
 
 it("runs the real static artifact workflow after deferred initialization", async () => {
   const { client } = await connect("legacy");
@@ -619,14 +639,46 @@ it("runs the real static artifact workflow after deferred initialization", async
 const copyCompiledPackage = async (prefix: string): Promise<string> => {
   const directory = await createTestTempDirectory(prefix);
   await cp(resolve("dist"), join(directory, "dist"), { recursive: true });
-  await mkdir(join(directory, "scripts"));
+  await mkdir(join(directory, "scripts/lib"), { recursive: true });
   await cp(resolve("scripts/rea.mjs"), join(directory, "scripts/rea.mjs"));
+  // The launcher imports its process-environment owner, as the package ships it.
+  await cp(
+    resolve("scripts/lib/cli-process-environment.mjs"),
+    join(directory, "scripts/lib/cli-process-environment.mjs"),
+  );
   await cp(resolve("package.json"), join(directory, "package.json"));
   await symlink(
     resolve("node_modules"),
     join(directory, "node_modules"),
     process.platform === "win32" ? "junction" : "dir",
   );
+  return directory;
+};
+
+// Recorder cleanup tests replace every runtime import through their loader
+// hook. Keep only resolvable sentinels so an unmodeled import fails closed.
+const createRecorderCleanupFixture = async (): Promise<string> => {
+  const directory = await createTestTempDirectory("rea-catalog-cleanup-");
+  await mkdir(join(directory, "scripts"), { recursive: true });
+  await cp(
+    resolve("scripts/record-mcp-catalog.mjs"),
+    join(directory, "scripts/record-mcp-catalog.mjs"),
+  );
+  await cp(resolve("package.json"), join(directory, "package.json"));
+  for (const path of [
+    "server/createServer.js",
+    "composition/binary.js",
+    "config/parseConfig.js",
+    "logger.js",
+    "contracts/promptContracts.js",
+  ]) {
+    const file = join(directory, "dist", path);
+    await mkdir(dirname(file), { recursive: true });
+    await writeFile(
+      file,
+      `throw new Error(${JSON.stringify(`Fixture import not replaced: ${path}`)});\n`,
+    );
+  }
   return directory;
 };
 
@@ -684,11 +736,7 @@ it.each([
 ])(
   "preserves producer failure=$producerFails and settles every recorder owner with cleanup failures=$failures",
   async ({ failures, producerFails }) => {
-    const directory = await copyCompiledPackage("rea-catalog-cleanup-");
-    await cp(
-      resolve("scripts/record-mcp-catalog.mjs"),
-      join(directory, "scripts/record-mcp-catalog.mjs"),
-    );
+    const directory = await createRecorderCleanupFixture();
     const log = join(directory, "cleanup.jsonl");
     const temporary = join(directory, "temporary");
     await mkdir(temporary);
@@ -792,7 +840,79 @@ it("rejects a corrupted build-owned catalog before starting the connection", asy
   expect(child.error).toBeUndefined();
   expect(child.status).toBe(1);
   expect(child.stdout).toBe("");
-  expect(child.stderr).toBe(
-    "REA could not start. Run `rea doctor`, then restart REA from your MCP client.\n",
+  expect(child.stderr).toBe(`${SERVER_START_FAILED}\n`);
+});
+
+it("keeps the outer SDK as the only raw-input owner during deferred materialization", () => {
+  const child = spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "--eval",
+      `
+import assert from "node:assert/strict";
+import { PassThrough } from "node:stream";
+import { serveStdio, StdioServerTransport } from "@modelcontextprotocol/server/stdio";
+import { runDeferred } from "./dist/main/deferredRuntime.js";
+import { parseConfig } from "./dist/config/parseConfig.js";
+const parsed = parseConfig({ REA_LOG_LEVEL: "silent" });
+assert.equal(parsed.ok, true);
+const input = new PassThrough();
+const output = new PassThrough();
+const received = [];
+input.on("data", chunk => received.push(Buffer.from(chunk)));
+const writes = [];
+const responses = [];
+let pendingOutput = "";
+output.on("data", chunk => {
+  pendingOutput += chunk.toString("utf8");
+  for (;;) {
+    const boundary = pendingOutput.indexOf("\\n");
+    if (boundary < 0) break;
+    responses.push(JSON.parse(pendingOutput.slice(0, boundary)));
+    pendingOutput = pendingOutput.slice(boundary + 1);
+  }
+});
+const until = async (predicate) => {
+  const deadline = Date.now() + 10000;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error("Deferred SDK control did not settle");
+    await new Promise(resolve => setTimeout(resolve, 5));
+  }
+};
+let entered = false;
+let release;
+const held = new Promise(resolve => { release = resolve; });
+let close;
+const result = await runDeferred({
+  env: { REA_LOG_LEVEL: "silent" }, stdin: input,
+  serve: (factory, options) => serveStdio(factory, { ...options, transport: new StdioServerTransport(input, output) }),
+  loadOptionalProviders: async () => { entered = true; await held; return {}; },
+  captureShutdown: owned => { close = owned; },
+  registerShutdown: () => () => {}, writeStderr: text => { throw new Error(text); }, setExitCode: () => {},
+}, parsed.value);
+assert.equal(result, 0);
+const send = value => { const bytes = Buffer.from(JSON.stringify(value) + "\\n"); writes.push(bytes); input.write(bytes); };
+try {
+  send({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "deferred-input-owner", version: "1" } } });
+  await until(() => responses.some(value => value.id === 1));
+  send({ jsonrpc: "2.0", method: "notifications/initialized" });
+  send({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "list_unknowns", arguments: {} } });
+  await until(() => entered);
+  send({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "list_unknowns", arguments: { limit: 1 } } });
+  release();
+  await until(() => responses.some(value => value.id === 2) && responses.some(value => value.id === 3));
+  await close();
+  assert.deepEqual(Buffer.concat(received), Buffer.concat(writes));
+  assert.equal(responses.filter(value => value.id === 2).length, 1);
+  assert.equal(responses.filter(value => value.id === 3).length, 1);
+  console.log("ONE_INPUT_OWNER");
+} finally { release(); await close?.(); input.destroy(); output.destroy(); }
+`,
+    ],
+    { cwd: process.cwd(), encoding: "utf8", timeout: 15000 },
   );
+  expect(child.error).toBeUndefined();
+  expect(child.status, child.stderr).toBe(0);
+  expect(child.stdout).toBe("ONE_INPUT_OWNER\n");
 });

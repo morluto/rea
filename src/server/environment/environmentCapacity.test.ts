@@ -73,11 +73,9 @@ it("charges environment identity, aggregate tools and escaped text before produc
 
 it("reserves the state card only when the state data plane is served", () => {
   const source = environmentServeSource();
-  const manifest = { ...source.manifest, tools: [] };
+  const empty = { ...source, manifest: { ...source.manifest, tools: [] } };
   const admits = (length: number, dataPlane: "none" | "state") =>
-    environmentToolDefinitions({ ...source, manifest }, "x".repeat(length), {
-      dataPlane,
-    }).ok;
+    environmentToolDefinitions(empty, "x".repeat(length), { dataPlane }).ok;
   // With no tools, the name and the card are the whole reservation: six bytes per name unit plus quotes.
   const longest = (dataPlane: "none" | "state") =>
     Math.floor(

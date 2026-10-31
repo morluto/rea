@@ -1,14 +1,11 @@
 import fs from "node:fs";
-import { lstat } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { join } from "node:path";
+import { locateReferenceSourceGitDirectory } from "./ReferenceSourceGitDirectory.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import {
-  readRegularFile,
-  RegularFileCleanupFailure,
-  retryRegularFileCleanup,
-} from "./RegularFileRead.js";
+import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
+import { readRegularFile, retryRegularFileCleanup } from "./RegularFileRead.js";
 import { referenceSourceResourceFailure } from "../reference/ReferenceSourceReaderErrors.js";
 import type { ReferenceSourceReaderError } from "../reference/ReferenceSourceReaderTypes.js";
 
@@ -33,26 +30,8 @@ export const readReferenceSourceVcs = async (
 ): Promise<Result<ReferenceSourceVcsInfo, ReferenceSourceReaderError>> => {
   try {
     return await resources.run(async () => {
-      // Like Git, a subdirectory belongs to its nearest enclosing repository;
-      // only a missing `.git` at every ancestor means no version control.
-      let repository = resolve(root);
-      for (;;) {
-        if (isAborted(signal)) return ok(unknownVcs());
-        try {
-          await lstat(join(repository, ".git"));
-          break;
-        } catch (cause: unknown) {
-          if (errorCode(cause) !== "ENOENT") return ok(unknownVcs());
-        }
-        const parent = dirname(repository);
-        if (parent === repository)
-          return ok({ kind: "none", head: null, dirty: null });
-        repository = parent;
-      }
       try {
-        const head = await resolveSourceHead(repository, resources, signal);
-        if (isAborted(signal)) return ok(unknownVcs());
-        return ok({ kind: "git", head, dirty: null });
+        return ok(await resolveSourceVcs(root, resources, signal));
       } catch (cause: unknown) {
         if (cause instanceof ArtifactReaderFailure) throw cause;
         return ok(unknownVcs());
@@ -70,11 +49,11 @@ const unknownVcs = (): ReferenceSourceVcsInfo => ({
   dirty: null,
 });
 
-const resolveSourceHead = async (
+const resolveSourceVcs = async (
   root: string,
   resources: ArtifactResourceScope,
   signal?: AbortSignal,
-): Promise<string> => {
+): Promise<ReferenceSourceVcsInfo> => {
   // isomorphic-git is loaded on first use so CLI and MCP startup skip it.
   const { resolveRef } = await import("isomorphic-git");
   let failedRead: { readonly cause: unknown } | undefined;
@@ -201,35 +180,32 @@ const resolveSourceHead = async (
     if (failedRead !== undefined) throw failedRead.cause;
     return head;
   };
-  const dotgit = join(root, ".git");
-  if (!(await lstat(dotgit)).isFile()) return readRef({ ref: "HEAD" });
-  const pointer = (await readMetadataText(dotgit)).replace(/\r?\n$/u, "");
-  if (!pointer.startsWith("gitdir: ") || pointer.length === 8)
-    throw new Error("Invalid Git directory pointer");
-  const gitdir = resolve(root, pointer.slice(8));
-  let commonDirectory: string;
-  try {
-    commonDirectory = resolve(
-      gitdir,
-      (await readMetadataText(join(gitdir, "commondir"))).replace(
-        /\r?\n$/u,
-        "",
-      ),
-    );
-  } catch (cause: unknown) {
-    if (errorCode(cause) !== "ENOENT") throw cause;
-    return readRef({ gitdir, ref: "HEAD" });
-  }
-  const head = (await readMetadataText(join(gitdir, "HEAD"))).trim();
-  if (!head.startsWith("ref: ")) return readRef({ gitdir, ref: "HEAD" });
-  const ref = head.slice(5);
-  const privateRef = ["refs/bisect/", "refs/rewritten/", "refs/worktree/"].some(
-    (prefix) => ref.startsWith(prefix),
+  const locations = await locateReferenceSourceGitDirectory(
+    root,
+    readMetadataText,
+    signal,
   );
-  return readRef({
-    gitdir: privateRef ? gitdir : commonDirectory,
+  if (locations === undefined) return { kind: "none", head: null, dirty: null };
+  const { gitDirectory, commonDirectory } = locations;
+  if (gitDirectory === commonDirectory) {
+    const head = await readRef({ gitdir: gitDirectory, ref: "HEAD" });
+    return isAborted(signal)
+      ? unknownVcs()
+      : { kind: "git", head, dirty: null };
+  }
+  const headText = (await readMetadataText(join(gitDirectory, "HEAD"))).trim();
+  const ref = headText.startsWith("ref: ") ? headText.slice(5) : "HEAD";
+  const privateRef =
+    ref === "HEAD" ||
+    ["refs/bisect/", "refs/rewritten/", "refs/worktree/"].some((prefix) =>
+      ref.startsWith(prefix),
+    );
+  const head = await readRef({
+    gitdir: privateRef ? gitDirectory : commonDirectory,
     ref,
   });
+  if (isAborted(signal)) return unknownVcs();
+  return { kind: "git", head, dirty: null };
 };
 
 const errorCode = (cause: unknown): string | undefined =>

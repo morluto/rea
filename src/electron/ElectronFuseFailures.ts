@@ -1,6 +1,7 @@
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   ArtifactFileCleanupFailure,
+  artifactFileCompletion,
   artifactFileCancellationCause,
   bindArtifactFileCleanup,
 } from "../artifacts/ArtifactFileOperation.js";
@@ -56,13 +57,14 @@ export const electronFuseFailure = (
     bindArtifactFileCleanup(cause, cleanup);
     if (cause instanceof ArtifactFileCleanupFailure) {
       const outcome = cause.fileCleanupFailure.outcome;
+      const cancellation = artifactFileCompletion(cause)?.cancellation;
       const primary =
         outcome.kind === "failed"
           ? electronFuseFailure(outcome.cause, path, operation)
-          : cause.fileCleanupFailure.completionCancellation === undefined
+          : cancellation === undefined
             ? undefined
             : new AnalysisCancelledError(operation, {
-                cause: cause.fileCleanupFailure.completionCancellation.reason,
+                cause: cancellation.reason,
               });
       if (primary !== undefined)
         return analysisErrorWithCleanupFailure(

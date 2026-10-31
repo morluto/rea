@@ -1,5 +1,6 @@
 import { stat } from "node:fs/promises";
 import { win32 } from "node:path";
+import { windowsPathEntries } from "../process/WindowsExecutable.js";
 
 import { ProviderStartupDeadline } from "../process/ProviderDeadline.js";
 import { ABORTED, waitForAbortable } from "../process/AbortablePromise.js";
@@ -20,25 +21,6 @@ export interface WindowsExecutableLookup {
  * are malformed rather than UNC, so neither may take this branch.
  */
 const isUncPath = (value: string): boolean => /^[\\/]{2}(?![\\/])/u.test(value);
-
-const splitWindowsPath = (value: string): readonly string[] => {
-  const entries: string[] = [];
-  let start = 0;
-  let quoted = false;
-  for (let index = 0; index < value.length; index += 1) {
-    if (value[index] === '"') quoted = !quoted;
-    else if (value[index] === ";" && !quoted) {
-      entries.push(value.slice(start, index));
-      start = index + 1;
-    }
-  }
-  entries.push(value.slice(start));
-  return entries.flatMap((entry) => {
-    if (entry.startsWith('"') && entry.endsWith('"') && entry.length >= 2)
-      return [entry.slice(1, -1)];
-    return entry.includes('"') ? [] : [entry];
-  });
-};
 
 const isRegularFile = async (path: string): Promise<boolean> => {
   try {
@@ -70,7 +52,7 @@ export const resolveWindowsProviderExecutable = async (
 
   const pathValue = environment.PATH ?? environment.Path ?? environment.path;
   if (pathValue === undefined) return executable;
-  const pathEntries = splitWindowsPath(pathValue);
+  const pathEntries = windowsPathEntries(pathValue);
   const explicitExtension = win32.extname(executable).toLowerCase();
   if (explicitExtension !== "" && ![".com", ".exe"].includes(explicitExtension))
     return executable;

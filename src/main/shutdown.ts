@@ -47,8 +47,11 @@ export const createShutdown = (input: {
     if (shutdownAttempt !== undefined) return shutdownAttempt;
     const pending = cleanupOwners.filter(({ closed }) => !closed);
     const attempt = (async () => {
-      // HTTP handlers can still own provider resources after cancellation.
-      // A failed drain keeps every shared owner available for a later retry.
+      // Seal before the drain and owner closes. A tool call admitted before
+      // shutdown can reach session.open() after that close and would otherwise
+      // start a provider the completed shutdown never retires. A failed drain
+      // still keeps every shared owner available for a later cleanup retry.
+      session.beginShutdown();
       await handle.prepareShutdown?.();
       const results = await Promise.allSettled(
         pending.map(async (owner) => {

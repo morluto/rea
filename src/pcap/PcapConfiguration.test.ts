@@ -1,9 +1,17 @@
 import { describe, expect, it } from "vitest";
 
+import { chmod, mkdir, realpath, symlink, writeFile } from "node:fs/promises";
+import { join, relative } from "node:path";
+
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import {
   CAPINFOS_COMMAND_ENV,
   TSHARK_COMMAND_ENV,
+  locateWiresharkTool,
+  parseWiresharkVersion,
   resolvePcapTools,
+  selectWiresharkTool,
+  wiresharkExecutableIdentity,
 } from "./PcapConfiguration.js";
 import { parseCapinfosOutput, parseTsharkJsonOutput } from "./PcapOutput.js";
 
@@ -20,12 +28,50 @@ describe("resolvePcapTools", () => {
     });
   });
 
-  it("falls back to PATH resolution without the environment keys", () => {
-    expect(resolvePcapTools({})).toEqual({
+  it("keeps bare PATH selections for the Windows PATH/PATHEXT launcher", () => {
+    expect(resolvePcapTools({}, "win32")).toEqual({
       tshark: { command: "tshark", source: "path" },
       capinfos: { command: "capinfos", source: "path" },
     });
   });
+
+  it("fails closed when no absolute PATH entry holds the tool", () => {
+    expect(() => resolvePcapTools({ PATH: "relative-only" }, "linux")).toThrow(
+      /tshark was not found in an absolute PATH entry/u,
+    );
+  });
+
+  // Windows X_OK reports existence only, so executable-bit selection is POSIX-only.
+  it.skipIf(process.platform === "win32")(
+    "selects the same executable as the packet tools ahead of a relative PATH entry",
+    async () => {
+      const root = await createTestTempDirectory("rea-wireshark-shared-");
+      const decoy = join(root, "relative-decoy");
+      const installed = join(root, "installed");
+      for (const directory of [decoy, installed]) {
+        await mkdir(directory);
+        for (const tool of ["tshark", "capinfos"]) {
+          await writeFile(join(directory, tool), "");
+          await chmod(join(directory, tool), 0o700);
+        }
+      }
+      const environment = {
+        PATH: [relative(process.cwd(), decoy), installed].join(":"),
+      };
+
+      const pcap = resolvePcapTools(environment, "linux");
+      expect(pcap).toEqual({
+        tshark: { command: join(installed, "tshark"), source: "path" },
+        capinfos: { command: join(installed, "capinfos"), source: "path" },
+      });
+      expect(pcap.tshark.command).toBe(
+        locateWiresharkTool(
+          selectWiresharkTool(environment, "tshark"),
+          environment,
+        ),
+      );
+    },
+  );
 
   it("rejects a relative tshark path explicitly", () => {
     expect(() =>
@@ -38,6 +84,89 @@ describe("resolvePcapTools", () => {
       resolvePcapTools({ [CAPINFOS_COMMAND_ENV]: "capinfos" }),
     ).toThrow(/must be an absolute path/u);
   });
+});
+
+describe("locateWiresharkTool", () => {
+  it("keeps an environment selection as the configured absolute path", () => {
+    expect(
+      locateWiresharkTool(
+        { command: "/opt/wireshark/tshark", source: "environment" },
+        { PATH: "/usr/bin" },
+      ),
+    ).toBe("/opt/wireshark/tshark");
+  });
+
+  // Windows X_OK reports existence only, so executable-bit selection is POSIX-only.
+  it.skipIf(process.platform === "win32")(
+    "uses the first absolute PATH entry holding an executable regular file",
+    async () => {
+      const root = await createTestTempDirectory("rea-wireshark-path-");
+      // An absolute PATH entry that does not exist must be skipped.
+      const missingDirectory = join(root, "missing-directory");
+      const notExecutable = join(root, "not-executable");
+      const directoryEntry = join(root, "directory-entry");
+      const selected = join(root, "selected");
+      const later = join(root, "later");
+      for (const directory of [notExecutable, directoryEntry, selected, later])
+        await mkdir(directory);
+      await writeFile(join(notExecutable, "tshark"), "");
+      await chmod(join(notExecutable, "tshark"), 0o600);
+      await mkdir(join(directoryEntry, "tshark"));
+      for (const directory of [selected, later]) {
+        await writeFile(join(directory, "tshark"), "");
+        await chmod(join(directory, "tshark"), 0o700);
+      }
+      const PATH = [
+        "relative-entry",
+        missingDirectory,
+        notExecutable,
+        directoryEntry,
+        selected,
+        later,
+      ].join(":");
+
+      expect(
+        locateWiresharkTool({ command: "tshark", source: "path" }, { PATH }),
+      ).toBe(join(selected, "tshark"));
+      expect(
+        locateWiresharkTool(
+          { command: "tshark", source: "path" },
+          { PATH: [missingDirectory, notExecutable, directoryEntry].join(":") },
+        ),
+      ).toBeUndefined();
+      expect(
+        locateWiresharkTool({ command: "tshark", source: "path" }, {}),
+      ).toBeUndefined();
+    },
+  );
+});
+
+describe("parseWiresharkVersion", () => {
+  it("admits Wireshark 4.x banners for either tool and rejects other majors", () => {
+    expect(
+      parseWiresharkVersion(
+        "\nTShark (Wireshark) 4.6.9 (Git v4.6.9 packaged as 4.6.9-1)\n",
+        "tshark",
+      ),
+    ).toBe("TShark (Wireshark) 4.6.9 (Git v4.6.9 packaged as 4.6.9-1)");
+    expect(
+      parseWiresharkVersion("Capinfos (Wireshark) 4.0.17\n", "capinfos"),
+    ).toBe("Capinfos (Wireshark) 4.0.17");
+    expect(parseWiresharkVersion("tcpdump 4.99.4\n", "tshark")).toBeNull();
+    expect(() =>
+      parseWiresharkVersion("TShark (Wireshark) 3.6.2\n", "tshark"),
+    ).toThrow(/requires Wireshark 4\.x/u);
+  });
+});
+
+it("projects executable snapshots to compact identity facts", () => {
+  const bytes = new Uint8Array(64);
+  const identity = wiresharkExecutableIdentity({
+    bytes,
+    sha256: "a".repeat(64),
+  });
+  expect(identity).toEqual({ bytes: 64, sha256: "a".repeat(64) });
+  expect(Object.values(identity)).not.toContain(bytes);
 });
 
 const REAL_CAPINFOS = [
@@ -67,6 +196,22 @@ describe("parseCapinfosOutput", () => {
         "c94f94742b3288b9a979711509ed5eab3028576301f8938319de3c22a6f5c40b",
     });
   });
+
+  it.each(["128 bytes", "128 bytes - 256 bytes (range)"])(
+    "preserves the file-header snapshot limit alongside inferred %s",
+    (inferred) => {
+      const output = REAL_CAPINFOS.replace(
+        "Packet size limit:   file hdr: 262144 bytes",
+        `Packet size limit:   file hdr: 262144 bytes\nPacket size limit:   inferred: ${inferred}`,
+      );
+      expect(parseCapinfosOutput(output).snapshotLength).toBe(262144);
+      expect(
+        parseCapinfosOutput(
+          output.replace("file hdr: 262144 bytes", "file hdr: (not set)"),
+        ).snapshotLength,
+      ).toBeNull();
+    },
+  );
 
   it("retains timestamps from the older capinfos labels", () => {
     const output = REAL_CAPINFOS.replace(
@@ -152,7 +297,8 @@ describe("parseCapinfosOutput", () => {
   });
 });
 
-const REAL_TSHARK_JSON = JSON.stringify([
+// Synthetic producer observations without raw DNS bytes: identity remains unknown.
+const PARTIAL_TSHARK_JSON = JSON.stringify([
   {
     _source: {
       layers: {
@@ -160,9 +306,10 @@ const REAL_TSHARK_JSON = JSON.stringify([
         "frame.protocols": ["sll:ethertype:ip:udp:dns"],
         "ip.src": ["192.168.1.1"],
         "ip.dst": ["8.8.8.8"],
-        "dns.qry.name": ["example.com"],
-        "dns.flags.response": ["1"],
-        "dns.a": ["93.184.216.34"],
+        dns: {
+          "dns.qry.name": "example.com",
+          "dns.a": "93.184.216.34",
+        },
       },
     },
   },
@@ -192,7 +339,7 @@ const REAL_TSHARK_JSON = JSON.stringify([
 
 describe("parseTsharkJsonOutput", () => {
   it("projects endpoints, DNS, TLS SNI, protocols, and HTTP URIs", async () => {
-    const result = await parseTsharkJsonOutput(REAL_TSHARK_JSON);
+    const result = await parseTsharkJsonOutput(PARTIAL_TSHARK_JSON);
     expect(result.endpoints).toEqual(
       expect.arrayContaining([
         { address: "192.168.1.1", port: null, packet_count: 3 },
@@ -203,10 +350,13 @@ describe("parseTsharkJsonOutput", () => {
     expect(result.dnsQueries).toEqual([
       {
         query: "example.com",
-        response_addresses: ["93.184.216.34"],
-        response_address_count: 1,
+        query_labels_hex: null,
+        response_addresses: [],
+        response_address_count: 0,
       },
     ]);
+    expect(result.unattributedDnsAddresses).toEqual(["93.184.216.34"]);
+    expect(result.partial).toBe(true);
     expect(result.tlsSniValues).toEqual(["example.com"]);
     expect(result.httpRequestUris).toEqual(["http://example.com/page"]);
     expect(result.protocolDistribution).toEqual(
@@ -247,3 +397,22 @@ describe("parseTsharkJsonOutput", () => {
     });
   });
 });
+
+it.skipIf(process.platform === "win32")(
+  "resolves Wireshark tools through native PATH traversal instead of a decoy directory",
+  async () => {
+    const root = await createTestTempDirectory("rea-wireshark-native-path-");
+    const intended = join(root, "intended");
+    await mkdir(join(intended, "nested"), { recursive: true });
+    await symlink(join(intended, "nested"), join(root, "alias"));
+    for (const directory of [root, intended])
+      for (const tool of ["tshark", "capinfos"])
+        await writeFile(join(directory, tool), "", { mode: 0o755 });
+    const selected = resolvePcapTools({ PATH: `${root}/alias/..` });
+    for (const tool of ["tshark", "capinfos"] as const)
+      expect(await realpath(selected[tool].command)).toBe(join(intended, tool));
+    expect(() => resolvePcapTools({ PATH: `${root}/missing/..` })).toThrow(
+      /tshark was not found/u,
+    );
+  },
+);

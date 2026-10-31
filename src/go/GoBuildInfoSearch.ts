@@ -6,9 +6,14 @@ import {
   type FileMapping,
 } from "../native/metadata/BinaryContainer.js";
 
+export interface GoBuildInfoSearchRange extends FileMapping {
+  /** Native file mapping containing inline strings after a named Mach-O header. */
+  readonly inline_mapping?: FileMapping;
+}
+
 const fallbackSearchRanges = (
   container: BinaryContainer,
-): readonly FileMapping[] => {
+): readonly GoBuildInfoSearchRange[] => {
   if (container.format === "elf")
     return (container.load_regions ?? [])
       .filter((region) => region.write && !region.execute)
@@ -46,9 +51,9 @@ const fallbackSearchRanges = (
 export const goBuildInfoSearch = (
   bytes: Buffer,
   container: BinaryContainer,
-): readonly FileMapping[] => {
+): readonly GoBuildInfoSearchRange[] => {
   const reader = new BinaryReader(bytes, container.byte_order === "little");
-  const named: FileMapping[] = [];
+  const named: GoBuildInfoSearchRange[] = [];
   for (const section of container.sections) {
     if (section.format === "elf" && section.name === ".go.buildinfo") {
       if (named.length !== 0)
@@ -113,6 +118,7 @@ export const goBuildInfoSearch = (
           "Mach-O build-info section",
         ),
         address: section.address,
+        inline_mapping: section.segment_mapping,
       };
       if (
         mappedFileOffset(

@@ -1,9 +1,14 @@
 import { DatabaseSync } from "node:sqlite";
 import { readFile, writeFile } from "node:fs/promises";
 import { expect, it as nativeTest, onTestFinished } from "vitest";
-import { SQLITE_NATIVE_LIMITS_AVAILABLE } from "../../fixtures/sqlite/database.js";
+import {
+  createSqliteApplicationCollationFixture,
+  createSqliteLongNameFixture,
+  SQLITE_NATIVE_LIMITS_AVAILABLE,
+} from "../../fixtures/sqlite/database.js";
 import { inspectSqliteDatabaseSnapshot } from "../../../src/sqlite/SqliteDatabaseInspection.js";
 import { SqliteInspectionFailure } from "../../../src/sqlite/SqliteDatabaseLimits.js";
+import { jsonByteLength } from "../../../src/domain/jsonSerialization.js";
 import {
   createTestWorkspace,
   removeTestWorkspace,
@@ -234,6 +239,128 @@ it("counts schema names once when enforcing the complete reply budget", async ()
     16 * 1024 * 1024,
   );
 });
+
+it.each(["UTF-16le", "UTF-16be"] as const)(
+  "budgets %s catalog names by returned JSON rather than internal hex identity",
+  async (encoding) => {
+    const workspace = await createTestWorkspace("rea-sqlite-catalog-names-");
+    onTestFinished(() => removeTestWorkspace(workspace.root));
+    const { path, names } = createSqliteLongNameFixture(
+      workspace.root,
+      encoding,
+    );
+    for (const schema_scope of ["inventory", "database"] as const) {
+      const inspection = inspectSqliteDatabaseSnapshot(path, {
+        path,
+        schema_scope,
+      });
+      expect(inspection.database_encoding).toBe(encoding);
+      expect(inspection.schema).toMatchObject({
+        scope: schema_scope,
+        completeness: "complete",
+      });
+      expect(inspection.schema.tables).toHaveLength(names.length);
+      expect(inspection.schema.tables.map((table) => table.name)).toEqual(
+        expect.arrayContaining(names),
+      );
+      for (const table of inspection.schema.tables) {
+        expect(table.columns_completeness).toBe(
+          schema_scope === "inventory" ? "not_requested" : "complete",
+        );
+        if (schema_scope === "database") {
+          expect(table.sql).toBe(`CREATE TABLE "${table.name}"(value TEXT)`);
+          expect(table.columns).toMatchObject([
+            { name: "value", declared_type: "TEXT" },
+          ]);
+        } else {
+          expect(table.sql).toBeUndefined();
+          expect(table.columns).toEqual([]);
+        }
+      }
+      expect(jsonByteLength({ ok: true, inspection })).toBeLessThan(
+        16 * 1024 * 1024,
+      );
+    }
+  },
+);
+
+it("keeps unrelated catalog names outside the selected-table reply budget", async () => {
+  const path = await createDatabase(
+    "CREATE TABLE selected(value TEXT); INSERT INTO selected VALUES ('retained');",
+  );
+  const producer = new DatabaseSync(path);
+  try {
+    producer.exec("BEGIN");
+    for (let index = 0; index < 60; index++) {
+      const name = `unrelated_${index}_${"x".repeat(300 * 1024)}`;
+      producer.exec(`CREATE TABLE "${name}" (value TEXT)`);
+    }
+    producer.exec("COMMIT");
+  } finally {
+    producer.close();
+  }
+  const selected = inspectSqliteDatabaseSnapshot(path, {
+    path,
+    table: "selected",
+  });
+  expect(selected.schema).toMatchObject({
+    scope: "selected_table",
+    completeness: "complete",
+    tables: [{ name: "selected" }],
+    indexes: [],
+    views: [],
+    triggers: [],
+  });
+  expect(selected.schema.tables).toHaveLength(1);
+  expect(selected.rows).toMatchObject({
+    returned_rows: 1,
+    values: [[{ type: "text", value: "retained" }]],
+  });
+  expect(() =>
+    inspectSqliteDatabaseSnapshot(path, { path, table: "absent" }),
+  ).toThrowError(
+    expect.objectContaining({
+      reason: "selection",
+      message:
+        "Selected ordinary table does not exist with that exact name: absent",
+    }),
+  );
+  for (const schema_scope of ["inventory", "database"] as const)
+    expect(() =>
+      inspectSqliteDatabaseSnapshot(path, { path, schema_scope }),
+    ).toThrowError(expect.objectContaining({ reason: "output-limit" }));
+});
+
+it.each(["inventory", "selected_table", "database"] as const)(
+  "reads sqlite_schema rows using PRAGMA row-source facts in %s scope",
+  async (schema_scope) => {
+    const path = await createDatabase(
+      "CREATE TABLE records(id INTEGER); INSERT INTO records VALUES (1);",
+    );
+    const result = inspectSqliteDatabaseSnapshot(path, {
+      path,
+      table: "sqlite_schema",
+      columns: ["name", "type"],
+      schema_scope,
+    });
+
+    expect(result.rows).toMatchObject({
+      table: "sqlite_schema",
+      columns: ["name", "type"],
+      values: [
+        [
+          { type: "text", value: "records" },
+          { type: "text", value: "table" },
+        ],
+      ],
+    });
+    expect(result.schema.tables).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "sqlite_schema" }),
+      ]),
+    );
+  },
+);
 
 it("rejects malformed schema bytes instead of returning replacement text", async () => {
   const path = await createDatabase(
@@ -562,5 +689,86 @@ nativeTest.skipIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
     expect(() =>
       inspectSqliteDatabaseSnapshot(path, { path, schema_scope: "database" }),
     ).toThrow("DatabaseSync.limits");
+  },
+);
+
+it("classifies SQLite's result-column capacity refusal without blaming the database", async () => {
+  const path = await createDatabase(
+    "CREATE TABLE records(email TEXT); INSERT INTO records VALUES ('sample');",
+  );
+  const reader = new DatabaseSync(path, { readOnly: true });
+  const engineColumnLimit = (() => {
+    try {
+      return reader.limits.column;
+    } finally {
+      reader.close();
+    }
+  })();
+  const columns = (count: number): string[] =>
+    Array.from({ length: count }, () => "email");
+  const atLimit = inspectSqliteDatabaseSnapshot(path, {
+    path,
+    table: "records",
+    columns: columns(engineColumnLimit),
+  });
+  expect(atLimit.rows).toMatchObject({
+    columns: columns(engineColumnLimit),
+    returned_rows: 1,
+  });
+  expect(() =>
+    inspectSqliteDatabaseSnapshot(path, {
+      path,
+      table: "records",
+      columns: columns(engineColumnLimit + 1),
+    }),
+  ).toThrow(
+    expect.objectContaining({
+      reason: "column-limit",
+      selectedColumns: engineColumnLimit + 1,
+      engineColumnLimit,
+      message: expect.stringContaining("too many columns in result set"),
+    }),
+  );
+});
+
+it.each(["inventory", "selected_table", "database"] as const)(
+  "keeps unavailable row sources separate from generated expressions in %s scope",
+  async (schema_scope) => {
+    const workspace = await createTestWorkspace("rea-sqlite-collation-");
+    onTestFinished(() => removeTestWorkspace(workspace.root));
+    const path = createSqliteApplicationCollationFixture(workspace.root);
+    const before = await readFile(path);
+    const schema = inspectSqliteDatabaseSnapshot(path, {
+      path,
+      schema_scope: "database",
+    });
+    expect(schema.rows).toBeNull();
+    expect(schema.schema.tables[0]).toMatchObject({
+      name: "items",
+      without_rowid: true,
+      sql: expect.stringContaining("COLLATE APPLICATION_COLLATION"),
+      columns: [
+        expect.objectContaining({ name: "name", hidden: 0 }),
+        expect.objectContaining({ name: "value", hidden: 0 }),
+        expect.objectContaining({ name: "generated_value", hidden: 2 }),
+      ],
+    });
+    for (const columns of [undefined, ["value"], ["generated_value"]])
+      expect(() =>
+        inspectSqliteDatabaseSnapshot(path, {
+          path,
+          table: "items",
+          schema_scope,
+          ...(columns === undefined ? {} : { columns }),
+        }),
+      ).toThrow(
+        expect.objectContaining({
+          reason: "row-evaluation",
+          message: expect.stringMatching(
+            /rows of table "items".*(?:no query solution|no such collation sequence)/,
+          ),
+        }),
+      );
+    expect(Buffer.compare(await readFile(path), before)).toBe(0);
   },
 );

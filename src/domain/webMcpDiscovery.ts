@@ -14,8 +14,8 @@ import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
 export const discoverWebMcpToolsInputSchema = z.strictObject({
   cdp_endpoint: browserObservationEndpointSchema,
   allowed_origins: browserAllowedOriginsSchema,
-  target_id: z.string().trim().min(1),
-  observation_ms: z.number().int().min(0).default(100),
+  target_id: z.string().min(1),
+  observation_ms: z.int().min(0).default(100),
   command_timeout_ms: webRuntimeCommandTimeoutSchema,
 });
 export type DiscoverWebMcpToolsInput = z.infer<
@@ -43,8 +43,8 @@ const webMcpToolSchema = z.object({
   registration_source: z
     .object({
       url: z.string(),
-      line: z.number().int().min(0).nullable(),
-      column: z.number().int().min(0).nullable(),
+      line: z.int().min(0).nullable(),
+      column: z.int().min(0).nullable(),
     })
     .nullable(),
   trust: z.literal("page-declared-untrusted"),
@@ -60,7 +60,7 @@ export const webMcpDiscoverySchema = z.object({
   }),
   status: z.enum(["available", "unavailable"]),
   tools: z.object({
-    total: z.number().int().min(0),
+    total: z.int().min(0),
     items: z.array(webMcpToolSchema),
   }),
   completeness: browserCompletenessSchema,

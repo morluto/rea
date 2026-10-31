@@ -23,8 +23,10 @@ import {
 } from "../../src/domain/evidenceBundle.js";
 import { jsonObjectSchema } from "../../src/domain/jsonValue.js";
 import { il2cppMetadataSchema } from "../../src/domain/il2cpp/il2cppMetadata.js";
+import { createEmptyIl2cppMetadataFixture } from "../../src/domain/il2cpp/il2cppMetadata.fixture.js";
 import {
   createIl2cppMetadataFixture,
+  createLinkedIl2cppMetadataFixture,
   FIXTURE_IMAGES,
   FIXTURE_METHODS,
   FIXTURE_TYPES,
@@ -32,6 +34,8 @@ import {
 import {
   createElfFixture,
   createIl2cppBinaryFixture,
+  createIl2cppDyldBindFixture,
+  createIl2cppRegistrationTailFixture,
   createUniversalFixture,
   FIXTURE_BINARY_BASE,
   FIXTURE_METHOD_ADDRESSES,
@@ -51,6 +55,68 @@ const parseMetadataSummary = (value: unknown) =>
   il2cppMetadataSummaryViewResultSchema.parse(
     parseEvidence(value).normalized_result,
   );
+
+cliTest(
+  "rejects impossible imported metadata owners through CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-il2cpp-owner-view-");
+    const path = join(root, "metadata.dat");
+    const report = createEmptyIl2cppMetadataFixture();
+    const type = {
+      name: "Type",
+      namespace: "",
+      method_start: -1,
+      method_count: 0,
+      nested_type_start: -1,
+      nested_type_count: 0,
+      declaring_type: -1,
+    };
+    report.types = [type, { ...type, name: "Nested", declaring_type: 0 }];
+    report.methods = [{ name: "Run", declaring_type: 0 }];
+    const { call } = await connectLocalToolsMcp();
+    for (const scenario of [
+      "valid",
+      "self",
+      "cycle",
+      "type-range",
+      "method-range",
+    ] as const) {
+      const value = structuredClone(report);
+      if (scenario === "self") value.types[0]!.declaring_type = 0;
+      if (scenario === "cycle") value.types[0]!.declaring_type = 1;
+      if (scenario === "type-range") value.types[1]!.declaring_type = 999;
+      if (scenario === "method-range") value.methods[0]!.declaring_type = 999;
+      const evidence = createEvidence(
+        { path, format: "file", sha256: value.artifact.sha256 },
+        { id: "il2cpp-metadata", name: "IL2CPP", version: "1" },
+        {
+          operation: "inspect_il2cpp_metadata",
+          parameters: { path },
+          result: value,
+        },
+      );
+      const request = {
+        source: { kind: "inline", evidence },
+        view: { kind: "il2cpp-metadata", collection: "methods" },
+      };
+      const query = join(root, `${scenario}.json`);
+      await writeFile(query, JSON.stringify(request));
+      const cliResult = await runFileCli(cli, {
+        arguments: ["inspect-analysis-view", query, "--json"],
+      });
+      const mcp = await call("inspect_analysis_view", request);
+      if (scenario === "valid") {
+        expect(cliResult.exitCode, cliResult.stderr).toBe(0);
+        expect(mcp.isError, JSON.stringify(mcp)).not.toBe(true);
+      } else {
+        expect(cliResult.exitCode, scenario).toBe(1);
+        expect(cliResult.json).toMatchObject({ code: "invalid_request" });
+        expect(parseMcpToolError(mcp).error.code).toBe("invalid_request");
+      }
+    }
+  },
+  30000,
+);
 
 cliTest(
   "validates generic-container extents before returning CLI or MCP metadata",
@@ -75,7 +141,7 @@ cliTest(
       });
       expect(response.isError).not.toBe(true);
       expect(parseCliMetadata(response.structuredContent)).toEqual(report);
-      expect(await readFile(path)).toEqual(bytes);
+      expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
     }
     for (const [records, declaredCount, declaredBytes] of [
       [0, 1, 0],
@@ -120,7 +186,7 @@ cliTest(
       });
       expect(response.isError).toBe(true);
       expect(parseMcpToolError(response).error).toMatchObject(expected);
-      expect(await readFile(path)).toEqual(fixture.bytes);
+      expect(Buffer.compare(await readFile(path), fixture.bytes)).toBe(0);
     }
   },
   30000,
@@ -195,6 +261,9 @@ cliTest(
       return_types: null,
       field_types: null,
       parameter_types: null,
+      generic_method_instances: null,
+      generic_method_instance_states: null,
+      generic_method_issues: null,
     });
     expect(view.summary).not.toHaveProperty("sections");
     expect(view.summary.binary).toBeNull();
@@ -432,7 +501,7 @@ const assertRetainedNativeSelections = async (
 it("queries compact retained metadata through the real SDK with exact row identities and fields", async () => {
   const root = await createTestTempDirectory("rea-il2cpp-sdk-selection-");
   const path = join(root, "global-metadata.dat");
-  const fixture = createIl2cppMetadataFixture({ version: 31 });
+  const fixture = createLinkedIl2cppMetadataFixture({ version: 31 });
   await writeFile(path, fixture.bytes);
   const binaryPath = join(root, "GameAssembly.dylib");
   const binaryBytes = createIl2cppBinaryFixture();
@@ -676,13 +745,15 @@ cliTest(
     const before = await readFile(bundle);
     const overwrite = await runFileCli(cli, { arguments: args });
     expect(overwrite.exitCode).toBe(1);
-    expect(await readFile(bundle)).toEqual(before);
+    expect(Buffer.compare(await readFile(bundle), before)).toBe(0);
     const saved = await readEvidenceBundle(bundle);
     if (!saved.ok) throw saved.error;
     const evidence = saved.value.records[0];
     if (evidence === undefined)
       throw new Error("Missing exported source Evidence");
-    expect(JSON.stringify(overwrite.json)).toContain(evidence.evidence_id);
+    expect(overwrite.json).toMatchObject({
+      details: { partial_observation: { evidence_id: evidence.evidence_id } },
+    });
     expect(
       il2cppMetadataSchema.parse(evidence.normalized_result).methods,
     ).toEqual(FIXTURE_METHODS);
@@ -765,7 +836,7 @@ cliTest(
     const root = await createTestTempDirectory("rea-il2cpp-binary-");
     const path = join(root, "global-metadata.dat");
     const binaryPath = join(root, "GameAssembly.dylib");
-    await writeFile(path, createIl2cppMetadataFixture().bytes);
+    await writeFile(path, createLinkedIl2cppMetadataFixture().bytes);
     await writeFile(
       binaryPath,
       createUniversalFixture([
@@ -852,12 +923,271 @@ cliTest(
 );
 
 cliTest(
+  "keeps a dyld-bound method slot unresolved through CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-il2cpp-dyld-bind-");
+    const path = join(root, "global-metadata.dat");
+    const binaryPath = join(root, "GameAssembly.dylib");
+    await writeFile(path, createLinkedIl2cppMetadataFixture().bytes);
+    await writeFile(binaryPath, createIl2cppDyldBindFixture(0n));
+
+    const result = await runFileCli(cli, {
+      arguments: [
+        "inspect-il2cpp-metadata",
+        path,
+        "--binary",
+        binaryPath,
+        "--json",
+      ],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const report = parseCliMetadata(result.json);
+    expect(report.method_addresses[1]).toEqual({
+      state: "unknown",
+      address: null,
+      rva: null,
+    });
+    expect(report.method_addresses[4]).toEqual({
+      state: "no-body",
+      address: null,
+      rva: null,
+    });
+
+    const { client, call } = await connectLocalToolsMcp();
+    const response = await call("inspect_il2cpp_metadata", {
+      path,
+      binary_path: binaryPath,
+      detail: "complete",
+    });
+    expect(response.isError, JSON.stringify(response)).not.toBe(true);
+    expect(
+      parseCliMetadata(response.structuredContent).method_addresses,
+    ).toEqual(report.method_addresses);
+    await client.ping();
+  },
+  30000,
+);
+
+cliTest(
+  "retains unknown dyld-bound type names and source identity through CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-il2cpp-type-bind-");
+    const path = join(root, "global-metadata.dat");
+    const binaryPath = join(root, "GameAssembly.dylib");
+    await writeFile(path, createLinkedIl2cppMetadataFixture().bytes);
+    const inspect = async (bytes: Buffer) => {
+      await writeFile(binaryPath, bytes);
+      const output = await runFileCli(cli, {
+        arguments: [
+          "inspect-il2cpp-metadata",
+          path,
+          "--binary",
+          binaryPath,
+          "--json",
+        ],
+      });
+      expect(output.exitCode, output.stderr).toBe(0);
+      const report = parseCliMetadata(output.json);
+      expect(report.binary?.artifact).toEqual({
+        path: binaryPath,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+        bytes: bytes.length,
+      });
+      expect(Buffer.compare(await readFile(binaryPath), bytes)).toBe(0);
+      return report;
+    };
+    const control = await inspect(createIl2cppBinaryFixture());
+    expect(control.return_types[0]?.name).toBe(FIXTURE_RETURN_TYPE_NAME);
+    const { client, call } = await connectLocalToolsMcp();
+    for (const raw of [
+      0n,
+      FIXTURE_BINARY_BASE + 0x980n,
+      FIXTURE_BINARY_BASE + 0x9b0n,
+    ]) {
+      const report = await inspect(createIl2cppDyldBindFixture(raw, 0x900));
+      for (const collection of [
+        "return_types",
+        "field_types",
+        "parameter_types",
+      ] as const)
+        expect(report[collection]).toEqual(
+          control[collection].map((row) =>
+            row.type === 0 ? { ...row, name: null } : row,
+          ),
+        );
+      expect(report.methods).toEqual(control.methods);
+      expect(report.method_addresses).toEqual(control.method_addresses);
+      expect(report.limitations).toContainEqual(
+        expect.stringContaining("unresolved type-table slot"),
+      );
+      // One transport round trip covers the nullable name contract; all stored
+      // placeholder variants above cross the real CLI workflow.
+      if (raw === 0n) {
+        const response = await call("inspect_il2cpp_metadata", {
+          path,
+          binary_path: binaryPath,
+          detail: "complete",
+        });
+        expect(response.isError, JSON.stringify(response)).not.toBe(true);
+        expect(parseCliMetadata(response.structuredContent)).toEqual(report);
+      }
+    }
+    await client.ping();
+  },
+  30000,
+);
+
+cliTest(
+  "links ABI count padding and declared zero-fill registration tails through CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory(
+      "rea-il2cpp-registration-layout-",
+    );
+    const path = join(root, "global-metadata.dat");
+    await writeFile(path, createLinkedIl2cppMetadataFixture().bytes);
+    const { client, call } = await connectLocalToolsMcp();
+    for (const tailBytes of [0, 8, 16] as const) {
+      const bytes = createIl2cppRegistrationTailFixture(tailBytes);
+      bytes.fill(0xff, 0x604, 0x608);
+      const binaryPath = join(root, `registration-${tailBytes}.dylib`);
+      await writeFile(binaryPath, bytes);
+      const output = await runFileCli(cli, {
+        arguments: [
+          "inspect-il2cpp-metadata",
+          path,
+          "--binary",
+          binaryPath,
+          "--json",
+        ],
+      });
+      expect(output.exitCode, output.stderr).toBe(0);
+      const report = parseCliMetadata(output.json);
+      expect(report.binary).toMatchObject({
+        code_gen_modules_field: "0x100000600",
+        types_field: "0x100000fb0",
+        types_count: 4,
+        artifact: {
+          path: binaryPath,
+          sha256: createHash("sha256").update(bytes).digest("hex"),
+          bytes: bytes.length,
+        },
+      });
+      expect(report.return_types.map((row) => row.name)).toEqual(
+        Array.from({ length: 5 }, () => FIXTURE_RETURN_TYPE_NAME),
+      );
+      expect(report.method_addresses.map((row) => row.state)).toEqual([
+        "code",
+        "code",
+        "code",
+        "code",
+        "no-body",
+      ]);
+      if (tailBytes === 16) {
+        const response = await call("inspect_il2cpp_metadata", {
+          path,
+          binary_path: binaryPath,
+          detail: "complete",
+        });
+        expect(response.isError, JSON.stringify(response)).not.toBe(true);
+        expect(parseCliMetadata(response.structuredContent)).toEqual(report);
+      }
+      expect(Buffer.compare(await readFile(binaryPath), bytes)).toBe(0);
+    }
+    await client.ping();
+  },
+  30000,
+);
+
+cliTest(
+  "keeps nested IL2CPP generic arguments on their declaring type components",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-il2cpp-nested-generics-");
+    const cases = [
+      {
+        name: "top-level",
+        metadata: createLinkedIl2cppMetadataFixture(),
+        binary: createIl2cppBinaryFixture(),
+        expected: "System.Größe<int>[]",
+      },
+      {
+        name: "nested-own-parameter",
+        metadata: createLinkedIl2cppMetadataFixture({
+          typeNames: { 0: "Outer`1", 1: "Inner`2" },
+          typeNamespaces: { 0: "Game", 1: "" },
+          genericTypeArgumentCounts: { 0: 1, 1: 2 },
+        }),
+        binary: createIl2cppBinaryFixture({
+          genericDefinitionTypeIndex: 1,
+          genericArgumentTypeIndices: [3, 3],
+        }),
+        expected: "Game.Outer<int>+Inner<int>[]",
+      },
+      {
+        name: "nested-inherited-only",
+        metadata: createLinkedIl2cppMetadataFixture({
+          typeNames: { 0: "Outer`1", 1: "Leaf`1" },
+          typeNamespaces: { 0: "Game", 1: "" },
+          genericTypeArgumentCounts: { 0: 1, 1: 1 },
+        }),
+        binary: createIl2cppBinaryFixture({
+          genericDefinitionTypeIndex: 1,
+          genericArgumentTypeIndices: [3],
+        }),
+        expected: "Game.Outer<int>+Leaf[]",
+      },
+    ] as const;
+    const { client, call } = await connectLocalToolsMcp();
+    for (const entry of cases) {
+      const path = join(root, `${entry.name}.dat`);
+      const binaryPath = join(root, `${entry.name}.dylib`);
+      await writeFile(path, entry.metadata.bytes);
+      await writeFile(binaryPath, entry.binary);
+      const cliResult = await runFileCli(cli, {
+        arguments: [
+          "inspect-il2cpp-metadata",
+          path,
+          "--binary",
+          binaryPath,
+          "--json",
+        ],
+      });
+      expect(cliResult.exitCode, cliResult.stderr).toBe(0);
+      const cliReport = parseCliMetadata(cliResult.json);
+      expect(cliReport.return_types[0]?.name).toBe(entry.expected);
+      expect(
+        cliReport.field_types.some((row) => row.name === entry.expected),
+      ).toBe(true);
+      expect(
+        cliReport.parameter_types.some((row) => row.name === entry.expected),
+      ).toBe(true);
+
+      const response = await call("inspect_il2cpp_metadata", {
+        path,
+        binary_path: binaryPath,
+        detail: "complete",
+      });
+      expect(response.isError, JSON.stringify(response)).not.toBe(true);
+      const mcpReport = parseCliMetadata(response.structuredContent);
+      expect(mcpReport.return_types[0]?.name).toBe(entry.expected);
+      expect(
+        mcpReport.field_types.some((row) => row.name === entry.expected),
+      ).toBe(true);
+      expect(
+        mcpReport.parameter_types.some((row) => row.name === entry.expected),
+      ).toBe(true);
+    }
+    await client.ping();
+  },
+  30000,
+);
+
+cliTest(
   "marks a module array found through an x86-64 instruction as derived",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-il2cpp-inlined-");
     const path = join(root, "global-metadata.dat");
     const binaryPath = join(root, "GameAssembly.so");
-    await writeFile(path, createIl2cppMetadataFixture().bytes);
+    await writeFile(path, createLinkedIl2cppMetadataFixture().bytes);
     await writeFile(
       binaryPath,
       createElfFixture(
@@ -897,7 +1227,7 @@ cliTest(
     const binaryPath = join(root, "libil2cpp.so");
     const seeds = join(root, "seeds.tsv");
     const shifted = join(root, "shifted.tsv");
-    await writeFile(path, createIl2cppMetadataFixture().bytes);
+    await writeFile(path, createLinkedIl2cppMetadataFixture().bytes);
     await writeFile(binaryPath, createElfFixture(createIl2cppBinaryFixture()));
     const run = (output: string, extra: readonly string[] = []) =>
       runFileCli(cli, {
@@ -977,4 +1307,228 @@ cliTest(
       },
     });
   },
+);
+
+cliTest(
+  "seeds generic method instances with --generic-instances and refuses them without --binary",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-il2cpp-generic-");
+    const path = join(root, "global-metadata.dat");
+    const binaryPath = join(root, "libil2cpp.so");
+    const seeds = join(root, "seeds.tsv");
+    await writeFile(
+      path,
+      createIl2cppMetadataFixture({ version: 31, genericOwners: true }).bytes,
+    );
+    await writeFile(
+      binaryPath,
+      createElfFixture(createIl2cppBinaryFixture({ genericMethods: {} })),
+    );
+    const linked = await runFileCli(cli, {
+      arguments: [
+        "inspect-il2cpp-metadata",
+        path,
+        "--binary",
+        binaryPath,
+        "--generic-instances",
+        "--ghidra-seeds",
+        seeds,
+        "--json",
+      ],
+    });
+    expect(linked.exitCode, linked.stderr).toBe(0);
+    const written = await readFile(seeds, "utf8");
+    expect(written.slice(0, written.indexOf("# metadata_sha256"))).toBe(
+      [
+        "0x100000200\tfunction\tGame.Player$$.ctor",
+        "0x100000210\tfunction\tGame.Player$$Update",
+        "0x100000220\tfunction\tGame.Player.Slot$$Add",
+        "0x100000230\tfunction\tSystem.Größe$$.ctor",
+        "0x100000240\tfunction\tSystem.Größe<int>$$.ctor",
+        "# folded 0x100000200 Game.Player$$.ctor also Game.Player.Slot$$Add<Größe<int>,_int>",
+        "",
+      ].join("\n"),
+    );
+
+    const unlinked = await runFileCli(cli, {
+      arguments: [
+        "inspect-il2cpp-metadata",
+        path,
+        "--generic-instances",
+        "--json",
+      ],
+    });
+    expect(unlinked.exitCode).not.toBe(0);
+    expect(unlinked.json).toMatchObject({
+      code: "invalid_request",
+      details: { issues: [{ path: ["generic_instances"] }] },
+    });
+  },
+);
+
+cliTest(
+  "keeps IL2CPP rank-one arrays distinct from vectors in CLI type rows",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-il2cpp-array-kind-");
+    const path = join(root, "global-metadata.dat");
+    const binaryPath = join(root, "GameAssembly.dylib");
+    await writeFile(
+      path,
+      createLinkedIl2cppMetadataFixture({ version: 31 }).bytes,
+    );
+
+    const makeBinary = (kind: "vector" | "array", rank = 1) => {
+      const bytes = createIl2cppBinaryFixture();
+      // Type record 0 is the returned type; slot 3 is the fixture's `int`.
+      const typeRecord = 0x980;
+      const intType = FIXTURE_BINARY_BASE + 0x9b0n;
+      if (kind === "vector") {
+        bytes.writeBigUInt64LE(intType, typeRecord);
+        return bytes;
+      }
+      // ARRAY points to Il2CppArrayType: element pointer, then rank byte.
+      const arrayType = 0xb00;
+      bytes.writeBigUInt64LE(
+        FIXTURE_BINARY_BASE + BigInt(arrayType),
+        typeRecord,
+      );
+      bytes.writeUInt32LE(0x14 << 16, typeRecord + 8);
+      bytes.writeBigUInt64LE(intType, arrayType);
+      bytes.writeUInt8(rank, arrayType + 8);
+      return bytes;
+    };
+
+    const inspect = async (binary: Buffer) => {
+      await writeFile(binaryPath, binary);
+      const result = await runFileCli(cli, {
+        arguments: [
+          "inspect-il2cpp-metadata",
+          path,
+          "--binary",
+          binaryPath,
+          "--json",
+        ],
+      });
+      return result;
+    };
+
+    const vector = await inspect(makeBinary("vector"));
+    expect(vector.exitCode, vector.stderr).toBe(0);
+    const vectorType = parseCliMetadata(vector.json).return_types[0];
+    expect(vectorType?.name).toBe("int[]");
+
+    const rankOne = await inspect(makeBinary("array", 1));
+    expect(rankOne.exitCode, rankOne.stderr).toBe(0);
+    const rankOneType = parseCliMetadata(rankOne.json).return_types[0];
+    expect(rankOneType?.name).toBe("int[*]");
+    expect(rankOneType?.type).toBe(vectorType?.type);
+
+    const rankTwo = await inspect(makeBinary("array", 2));
+    expect(rankTwo.exitCode, rankTwo.stderr).toBe(0);
+    expect(parseCliMetadata(rankTwo.json).return_types[0]?.name).toBe("int[,]");
+
+    const malformed = await inspect(makeBinary("array", 0));
+    expect(malformed.exitCode).not.toBe(0);
+    expect(JSON.stringify(malformed.json)).toContain("array rank is zero");
+  },
+);
+
+cliTest.skipIf(process.platform === "win32")(
+  "refuses a Ghidra seed path below a regular file as caller input",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-il2cpp-seeds-parent-");
+    const path = join(root, "global-metadata.dat");
+    const binaryPath = join(root, "libil2cpp.so");
+    const parent = join(root, "regular-file");
+    await writeFile(path, createLinkedIl2cppMetadataFixture().bytes);
+    await writeFile(binaryPath, createElfFixture(createIl2cppBinaryFixture()));
+    await writeFile(parent, "unchanged");
+    const result = await runFileCli(cli, {
+      arguments: [
+        "inspect-il2cpp-metadata",
+        path,
+        "--binary",
+        binaryPath,
+        "--ghidra-seeds",
+        join(parent, "seeds.tsv"),
+        "--json",
+      ],
+    });
+    expect(result.exitCode).not.toBe(0);
+    expect(result.json).toMatchObject({
+      code: "invalid_request",
+      category: "invalid_input",
+      details: {
+        issues: [
+          {
+            path: ["ghidra_seeds"],
+            message: expect.stringContaining("not a directory"),
+          },
+        ],
+      },
+    });
+    expect(await readFile(parent, "utf8")).toBe("unchanged");
+  },
+);
+
+cliTest(
+  "preserves unreadable and recorded-invalid generic method identities through CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-il2cpp-method-identity-");
+    const path = join(root, "global-metadata.dat");
+    await writeFile(
+      path,
+      createIl2cppMetadataFixture({ version: 31, genericOwners: true }).bytes,
+    );
+    const { call } = await connectLocalToolsMcp();
+    for (const entry of [
+      {
+        name: "unreadable",
+        options: { methodSpecs: 0xffffffffffffffffn },
+        methods: [null, null, null],
+      },
+      {
+        name: "recorded-negative",
+        options: { firstSpecMethod: -1 },
+        methods: [-1, 2, 4],
+      },
+    ] as const) {
+      const binaryPath = join(root, entry.name + ".so");
+      await writeFile(
+        binaryPath,
+        createElfFixture(
+          createIl2cppBinaryFixture({ genericMethods: entry.options }),
+        ),
+      );
+      const result = await cli.run({
+        arguments: [
+          "inspect-il2cpp-metadata",
+          path,
+          "--binary",
+          binaryPath,
+          "--generic-instances",
+          "--json",
+        ],
+      });
+      expect(result.exitCode, result.stderr).toBe(0);
+      expect(
+        parseCliMetadata(result.json).generic_method_instances?.map(
+          (row) => row.method,
+        ),
+      ).toEqual(entry.methods);
+      const response = await call("inspect_il2cpp_metadata", {
+        path,
+        binary_path: binaryPath,
+        generic_instances: true,
+        detail: "complete",
+      });
+      expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
+      expect(
+        parseCliMetadata(
+          response.structuredContent,
+        ).generic_method_instances?.map((row) => row.method),
+      ).toEqual(entry.methods);
+    }
+  },
+  60000,
 );

@@ -5,6 +5,7 @@ import {
   localPathStringSchema,
 } from "../localPath.js";
 import { canonicalBase64Schema } from "../stringPatterns.js";
+import { firstDeclaringTypeCycle } from "./il2cppDeclaringTypes.js";
 
 /** Unsigned little-endian signature observed at file offset zero. */
 export const IL2CPP_METADATA_MAGIC = 0xfab11baf;
@@ -109,6 +110,12 @@ export const inspectIl2cppMetadataInputSchema = z.strictObject({
     .describe(
       "Slice to read from a universal Mach-O binary_path; required for universal binaries and rejected otherwise",
     ),
+  generic_instances: z
+    .boolean()
+    .optional()
+    .describe(
+      "Also link generic method instances (genericMethodTable rows) to code addresses with Il2CppDumper-style Type<Args>$$Method<Args> names; needs binary_path",
+    ),
 });
 
 export type IL2cppMetadataSectionName = z.infer<
@@ -207,7 +214,7 @@ export const il2cppMethodAddressSchema = z.strictObject({
 /** Index into the binary Il2CppType table and its C#-like display name. */
 export const il2cppTypeReferenceSchema = z.strictObject({
   type: optionalIndex,
-  /** Null for type index -1, and for every row of a version 27 report. */
+  /** Null for type index -1, unresolved native type-table slots, and version 27. */
   name: z.string().nullable(),
 });
 
@@ -217,6 +224,51 @@ export const il2cppCodeGenModuleSchema = z.strictObject({
   address: il2cppAddressSchema,
   method_pointer_count: count,
 });
+
+/** A genericMethodTable, method spec or pointer record that contradicts another table. */
+export const il2cppGenericMethodIssueSchema = z.strictObject({
+  /** genericMethodTable index of the row this issue leaves unknown. */
+  row: count,
+  /** Address of the contradicting record: the row, its method spec or its pointer slot. */
+  address: il2cppAddressSchema,
+  message: z.string(),
+});
+
+/** Registration facts behind the generic method instance rows. */
+export const il2cppGenericMethodLinkSchema = z.strictObject({
+  /**
+   * CodeRegistration's genericMethodPointersCount, followed by the array
+   * pointer; null with the count and stride when the table is empty, because
+   * no row then selects one CodeRegistration layout.
+   */
+  generic_method_pointers_field: il2cppAddressSchema.nullable(),
+  generic_method_pointers_count: count.nullable(),
+  /** MetadataRegistration's genericMethodTable array. */
+  generic_method_table: il2cppAddressSchema,
+  generic_method_table_count: count,
+  /** 16 when rows carry an adjustor thunk index (27.1 and later), else 12. */
+  generic_method_table_stride: z
+    .union([z.literal(12), z.literal(16)])
+    .nullable(),
+  method_specs_count: count,
+  generic_insts_count: count,
+  issues: z.array(il2cppGenericMethodIssueSchema),
+});
+
+/**
+ * One generic method instance; row position is its genericMethodTable index.
+ * state is `code`, `no-body` for a zero pointer slot, or `unknown` exactly
+ * when an issue names the row; an issued row keeps no address.
+ */
+export const il2cppGenericMethodInstanceSchema =
+  il2cppMethodAddressSchema.extend({
+    /** Il2CppMethodSpec index. */
+    method_spec: count,
+    /** Recorded definition index, including invalid values; null when unreadable. */
+    method: z.number().int().nullable(),
+    /** Il2CppDumper-style name; null only on an unknown row whose method spec an issue names. */
+    name: z.string().nullable(),
+  });
 
 /** Identity and registration facts of the linked native binary. */
 export const il2cppBinaryLinkSchema = z.strictObject({
@@ -237,9 +289,15 @@ export const il2cppBinaryLinkSchema = z.strictObject({
   /** The code-generation module pointer array. */
   code_gen_modules_array: il2cppAddressSchema,
   code_gen_modules: z.array(il2cppCodeGenModuleSchema),
-  /** MetadataRegistration's typesCount field, followed by the types pointer. */
-  types_field: il2cppAddressSchema,
+  /**
+   * MetadataRegistration's typesCount field, followed by the types pointer;
+   * null when no static registration had the counts and executable byte-pattern
+   * candidates identified the type table, whose run length is then types_count.
+   */
+  types_field: il2cppAddressSchema.nullable(),
   types_count: count,
+  /** Null unless generic_instances was requested. */
+  generic_methods: il2cppGenericMethodLinkSchema.nullable(),
 });
 
 /** Unrefined report fields, shared with projections that omit row collections. */
@@ -281,6 +339,10 @@ export const il2cppMetadataObjectSchema = z.strictObject({
   return_types: z.array(il2cppTypeReferenceSchema),
   field_types: z.array(il2cppTypeReferenceSchema),
   parameter_types: z.array(il2cppTypeReferenceSchema),
+  /** Null unless generic_instances was requested; one row per genericMethodTable entry. */
+  generic_method_instances: z
+    .array(il2cppGenericMethodInstanceSchema)
+    .nullable(),
   limitations: z.array(z.string()),
 });
 
@@ -302,18 +364,42 @@ export const il2cppMetadataBinaryCollections = [
 ] as const;
 
 /** Historical reports retain omission instead of inventing empty member or binary inventories. */
-const il2cppMetadataParentObjectSchema = il2cppMetadataObjectSchema.partial({
-  fields: true,
-  properties: true,
-  events: true,
-  parameters: true,
-  string_literals: true,
-  binary: true,
-  method_addresses: true,
-  return_types: true,
-  field_types: true,
-  parameter_types: true,
-});
+const il2cppMetadataParentObjectSchema = il2cppMetadataObjectSchema
+  .partial({
+    fields: true,
+    properties: true,
+    events: true,
+    parameters: true,
+    string_literals: true,
+    binary: true,
+    method_addresses: true,
+    return_types: true,
+    field_types: true,
+    parameter_types: true,
+    generic_method_instances: true,
+  })
+  .extend({
+    // A link retained before generic instances existed omits generic_methods.
+    binary: il2cppBinaryLinkSchema
+      .partial({ generic_methods: true })
+      .nullable()
+      .optional(),
+  });
+
+/** code rows carry both an address and an RVA that agree with the image base; other rows neither. */
+const codeRowContradicts = (
+  row: { state: string; address: string | null; rva: string | null },
+  imageBase: string | undefined,
+) =>
+  row.state === "code"
+    ? row.address === null ||
+      row.rva === null ||
+      imageBase === undefined ||
+      (addressPattern.test(row.address) &&
+        addressPattern.test(row.rva) &&
+        addressPattern.test(imageBase) &&
+        BigInt(row.address) !== BigInt(imageBase) + BigInt(row.rva))
+    : row.address !== null || row.rva !== null;
 
 const validateMetadataFacts = (
   report: z.infer<typeof il2cppMetadataParentObjectSchema>,
@@ -359,18 +445,7 @@ const validateMetadataFacts = (
           });
       });
   report.method_addresses?.forEach((row, index) => {
-    if (
-      row.state === "code"
-        ? row.address === null ||
-          row.rva === null ||
-          report.binary == null ||
-          (addressPattern.test(row.address) &&
-            addressPattern.test(row.rva) &&
-            addressPattern.test(report.binary.image_base) &&
-            BigInt(row.address) !==
-              BigInt(report.binary.image_base) + BigInt(row.rva))
-        : row.address !== null || row.rva !== null
-    )
+    if (codeRowContradicts(row, report.binary?.image_base))
       context.addIssue({
         code: "custom",
         path: ["method_addresses", index],
@@ -378,7 +453,29 @@ const validateMetadataFacts = (
           "Only a code row carries an address and RVA; both are then present.",
       });
   });
-  for (const collection of ["fields", "properties", "events"] as const)
+  report.types.forEach((row, index) => {
+    if (row.declaring_type >= report.types.length)
+      context.addIssue({
+        code: "custom",
+        path: ["types", index, "declaring_type"],
+        message: "Enclosing type is outside the retained type definitions.",
+      });
+  });
+  const cycleWalk = firstDeclaringTypeCycle(report.types);
+  let cycle = cycleWalk.next();
+  while (!cycle.done) cycle = cycleWalk.next();
+  if (cycle.value !== null)
+    context.addIssue({
+      code: "custom",
+      path: ["types", cycle.value, "declaring_type"],
+      message: "Enclosing type relationships contain a cycle.",
+    });
+  for (const collection of [
+    "methods",
+    "fields",
+    "properties",
+    "events",
+  ] as const)
     report[collection]?.forEach((row, index) => {
       if (row.declaring_type >= report.types.length)
         context.addIssue({
@@ -421,6 +518,87 @@ const validateMetadataFacts = (
         message: `A linked binary needs one ${collection} row per metadata row; none without one.`,
       });
   }
+  // Evidence retained before generic instances existed omits the collection.
+  if (report.generic_method_instances !== undefined) {
+    const generic = report.binary?.generic_methods ?? null;
+    if (
+      (generic === null) !== (report.generic_method_instances === null) ||
+      (generic !== null &&
+        report.generic_method_instances!.length !==
+          generic.generic_method_table_count)
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["generic_method_instances"],
+        message:
+          "Generic method instances need one row per genericMethodTable entry and its registration facts; neither without the other.",
+      });
+    if (
+      generic !== null &&
+      [
+        generic.generic_method_pointers_field,
+        generic.generic_method_pointers_count,
+        generic.generic_method_table_stride,
+      ].some(
+        (value) =>
+          (value === null) !== (generic.generic_method_table_count === 0),
+      )
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["binary", "generic_methods"],
+        message:
+          "Only an empty genericMethodTable leaves the pointer field, pointer count and stride unselected; a nonempty one selects all three.",
+      });
+  } else if (report.binary?.generic_methods != null)
+    context.addIssue({
+      code: "custom",
+      path: ["generic_method_instances"],
+      message: "Generic registration facts need their instance rows.",
+    });
+  // Exactly the rows an issue names are unknown, and only they lose a name.
+  const issued = new Set(
+    report.binary?.generic_methods?.issues.map((issue) => issue.row),
+  );
+  const unmatched = new Set(issued);
+  report.generic_method_instances?.forEach((row, index) => {
+    unmatched.delete(index);
+    if (codeRowContradicts(row, report.binary?.image_base))
+      context.addIssue({
+        code: "custom",
+        path: ["generic_method_instances", index],
+        message:
+          "Only a code row carries an address and RVA; both are then present.",
+      });
+    if (
+      (row.state === "unknown") !== issued.has(index) ||
+      (row.name === null && row.state !== "unknown")
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["generic_method_instances", index, "state"],
+        message:
+          "A row is unknown exactly when an issue names it, and only then may its name be null.",
+      });
+    if (
+      row.name !== null &&
+      (row.method === null ||
+        row.method < 0 ||
+        row.method >= report.methods.length)
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["generic_method_instances", index, "method"],
+        message:
+          "A named generic instance needs a definition inside the retained methods.",
+      });
+  });
+  if (unmatched.size > 0)
+    context.addIssue({
+      code: "custom",
+      path: ["binary", "generic_methods", "issues"],
+      message: "Every generic method issue names an existing instance row.",
+    });
   report.string_literals?.forEach((row, index) => {
     if ((row.value === null) === (row.value_base64 === null))
       context.addIssue({
@@ -449,3 +627,6 @@ export type Il2cppMetadataSection = z.infer<typeof il2cppMetadataSectionSchema>;
 export type Il2cppMetadata = z.infer<typeof il2cppMetadataSchema>;
 
 export type Il2cppMethodAddress = z.infer<typeof il2cppMethodAddressSchema>;
+export type Il2cppGenericMethodInstance = z.infer<
+  typeof il2cppGenericMethodInstanceSchema
+>;

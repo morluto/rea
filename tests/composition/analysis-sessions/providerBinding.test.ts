@@ -1,10 +1,11 @@
-import { writeFile } from "node:fs/promises";
+import { mkdir, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 import { z } from "zod";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 
 import {
   createAnalysisExecution,
@@ -21,6 +22,7 @@ import { composeBinarySession } from "../../../src/application/binary/BinarySess
 import { SessionProviderRouter } from "../../../src/application/binary/SessionProviderRouter.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
+import { thinMach } from "../../../src/domain/binaryTarget.fixture.js";
 import { ProviderAdapterError } from "../../../src/domain/providerAdapterError.js";
 import { err, ok } from "../../../src/domain/result.js";
 
@@ -127,55 +129,54 @@ describe("target-bound provider routing", () => {
     expect(beta.clients[0]?.closed).toBe(true);
   });
 
-  it("preserves bundle-root identity for artifact inventory operations", async () => {
-    const target = await databaseTarget();
-    const analysis = deepProvider("alpha");
-    const artifact = auxiliaryProvider("artifact", "inventory_artifact");
-    const session = selectableSession([analysis.provider], artifact);
-
-    expect((await session.open(target, { providerId: "alpha" })).ok).toBe(true);
-    const result = await session.execute("inventory_artifact", {});
-    if (!result.ok) throw result.error;
-
-    expect(result).toMatchObject({
-      ok: true,
-      value: {
-        subject: {
-          path: target,
-          sha256: "f".repeat(64),
-          format: "directory",
-        },
-      },
-    });
-  });
-
-  it("preserves the active client when a provider switch is cancelled while draining", async () => {
+  it("preserves the active client when a provider switch is cancelled with a call in flight", async () => {
     const target = await databaseTarget();
     const alpha = deepProvider("alpha");
     const beta = deepProvider("beta");
     const pending = deferred<ReturnType<typeof successfulExecution>>();
+    const callStarted = deferred<void>();
+    const profileStarted = deferred<void>();
     alpha.pending = pending.promise;
+    alpha.onPending = () => callStarted.resolve();
+    beta.onProfile = () => profileStarted.resolve();
     const session = selectableSession([alpha.provider, beta.provider]);
-    expect((await session.open(target, { providerId: "alpha" })).ok).toBe(true);
-    const running = session.execute("address_name", { address: "0x1" });
-    await new Promise<void>((resolve) => setImmediate(resolve));
-
     const controller = new AbortController();
-    const switching = session.open(target, {
+    const reason = new Error("cancel provider switch");
+    let running: Promise<unknown> | undefined;
+    let switching: ReturnType<typeof session.open> | undefined;
+    onTestFinished(async () => {
+      controller.abort(reason);
+      pending.resolve(successfulExecution("alpha"));
+      await Promise.allSettled([
+        ...(running === undefined ? [] : [running]),
+        ...(switching === undefined ? [] : [switching]),
+      ]);
+      expect(await session.close()).toEqual(ok(null));
+    });
+    expect((await session.open(target, { providerId: "alpha" })).ok).toBe(true);
+    running = session.execute("address_name", { address: "0x1" });
+    await awaitAcknowledgement(callStarted.promise, running, "provider call");
+
+    switching = session.open(target, {
       providerId: "beta",
       signal: controller.signal,
     });
-    while (beta.profileResolutions === 0)
-      await new Promise<void>((resolve) => setImmediate(resolve));
-    controller.abort();
+    await awaitAcknowledgement(
+      profileStarted.promise,
+      switching,
+      "provider profile resolution",
+    );
+    expect(alpha.clients[0]?.closed).toBe(false);
+    controller.abort(reason);
     pending.resolve(successfulExecution("alpha"));
 
     expect(await running).toMatchObject({ ok: true });
     const cancelled = await switching;
     expect(cancelled).toEqual({
       ok: false,
-      error: new AnalysisCancelledError("open_binary"),
+      error: new AnalysisCancelledError("open_binary", { cause: reason }),
     });
+    if (!cancelled.ok) expect(cancelled.error.cause).toBe(reason);
     expect(alpha.clients[0]?.closed).toBe(false);
     expect(beta.clients).toHaveLength(0);
     expect(await bindingStatus(session)).toMatchObject({
@@ -186,8 +187,47 @@ describe("target-bound provider routing", () => {
     const retained = await session.execute("address_name", { address: "0x2" });
     expect(retained.ok && retained.value.provider.id).toBe("alpha");
     expect(alpha.clients).toHaveLength(1);
-    await session.close();
+    expect(await session.close()).toEqual(ok(null));
     expect(alpha.clients[0]?.closed).toBe(true);
+  });
+});
+
+it("preserves bundle-root identity for artifact inventory operations", async () => {
+  const directory = await createTestTempDirectory("rea-provider-bundle-");
+  const target = join(directory, "Fixture.app");
+  const executable = join(target, "Fixture");
+  const infoPlist = join(target, "Info.plist");
+  await mkdir(target);
+  await writeFile(
+    infoPlist,
+    "<plist><dict><key>CFBundleExecutable</key><string>Fixture</string></dict></plist>",
+  );
+  await writeFile(executable, thinMach(0xfeedfacf, 0x0100000c));
+  const analysis = deepProvider("alpha");
+  const artifact = auxiliaryProvider("artifact", "inventory_artifact");
+  const session = selectableSession([analysis.provider], artifact);
+  onTestFinished(async () => {
+    await session.close();
+  });
+
+  expect((await session.open(target, { providerId: "alpha" })).ok).toBe(true);
+  expect(session.activeTarget()).toMatchObject({
+    path: await realpath(executable),
+    sourcePath: await realpath(target),
+    bundleInfoPlist: await realpath(infoPlist),
+  });
+  const result = await session.execute("inventory_artifact", {});
+  if (!result.ok) throw result.error;
+
+  expect(result).toMatchObject({
+    ok: true,
+    value: {
+      subject: {
+        path: target,
+        sha256: "f".repeat(64),
+        format: "directory",
+      },
+    },
   });
 });
 
@@ -233,7 +273,8 @@ interface DeepProviderFixture {
   readonly clients: ClientState[];
   available: boolean;
   fail: boolean;
-  profileResolutions: number;
+  onProfile: (() => void) | undefined;
+  onPending: (() => void) | undefined;
   pending: Promise<ReturnType<typeof successfulExecution>> | undefined;
 }
 
@@ -247,7 +288,8 @@ const deepProvider = (id: string): DeepProviderFixture => {
     clients: [],
     available: true,
     fail: false,
-    profileResolutions: 0,
+    onProfile: undefined,
+    onPending: undefined,
     pending: undefined,
   };
   const provider: AnalysisProviderCandidate = {
@@ -274,7 +316,7 @@ const deepProvider = (id: string): DeepProviderFixture => {
       diagnostics: {},
     }),
     resolveAnalysisProfile: () => {
-      fixture.profileResolutions += 1;
+      fixture.onProfile?.();
       return Promise.resolve(
         ok({
           profile: createAnalysisProfile(
@@ -296,7 +338,10 @@ const deepProvider = (id: string): DeepProviderFixture => {
             return Promise.resolve(
               err(new ProviderAdapterError(id, operation)),
             );
-          if (fixture.pending !== undefined) return fixture.pending;
+          if (fixture.pending !== undefined) {
+            fixture.onPending?.();
+            return fixture.pending;
+          }
           return Promise.resolve(successfulExecution(id, profile?.provider));
         },
         close: () => {

@@ -26,7 +26,8 @@ const ANDROID_NON_LOCALE_QUALIFIERS = new Set([
 // and variant has 8 bytes (BinaryResourceParser / ResConfig).
 const MAX_ANDROID_LOCALE_SUFFIX = 2 + 3 + (1 + 4) + (1 + 3) + (1 + 8);
 
-const localeQualifierSchema = z
+/** Locale language tags admitted by Android resource table selection. */
+export const androidLocaleQualifierSchema = z
   .string()
   .min(2)
   .max(MAX_ANDROID_LOCALE_SUFFIX)
@@ -39,9 +40,6 @@ const localeQualifierSchema = z
     (value) => !ANDROID_NON_LOCALE_QUALIFIERS.has(value.toLowerCase()),
     "Android resource configuration qualifiers are not locales",
   );
-
-/** Locale language tags admitted by Android resource table selection. */
-export const androidLocaleQualifierSchema = localeQualifierSchema;
 
 /** Normalize an admitted request alias at the locale-selection owner. */
 export const androidLocaleDirectorySuffix = (locale: string): string =>
@@ -155,7 +153,6 @@ export const stringTableSchema = z.strictObject({
     }),
   ),
   total_count: z
-    .number()
     .int()
     .nonnegative()
     .nullable()
@@ -163,7 +160,6 @@ export const stringTableSchema = z.strictObject({
       "Total valid string entries before output limits, or null if the table was not examined or was malformed",
     ),
   unparsed_count: z
-    .number()
     .int()
     .nonnegative()
     .nullable()
@@ -184,7 +180,7 @@ export const apktoolResultSchemas = {
     client,
     target: z.strictObject({
       path: localPathStringSchema,
-      bytes: z.number().int().nonnegative(),
+      bytes: z.int().nonnegative(),
       sha256: digestSchema,
     }),
     metadata: z.strictObject({
@@ -218,7 +214,7 @@ export const apktoolResultSchemas = {
       .describe(
         "Selected table facts, included when locales is supplied or string_tables_only is true",
       ),
-    decoded_file_count: z.number().int().nonnegative(),
+    decoded_file_count: z.int().nonnegative(),
     coverage: z.enum(["complete", "partial"]),
   }),
 } as const;

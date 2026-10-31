@@ -15,9 +15,15 @@ const clientIdentity = {
   tshark_command: "/usr/bin/tshark",
   tshark_source: "path",
   tshark_version: "TShark (Wireshark) 4.6.6",
+  tshark_resolved_path: null,
+  tshark_sha256: null,
+  tshark_identity_status: "unresolved",
   capinfos_command: "/usr/bin/capinfos",
   capinfos_source: "path",
   capinfos_version: "Capinfos (Wireshark) 4.6.6",
+  capinfos_resolved_path: null,
+  capinfos_sha256: null,
+  capinfos_identity_status: "unresolved",
 };
 
 it("advertises exact valid pcap schemas and records inline evidence through MCP", async () => {

@@ -11,7 +11,10 @@ import {
   selectedCdpCommandTimeoutMs,
 } from "../../domain/browserDeadline.js";
 import { CdpTargetSessionOwner } from "../CdpTargetSessionOwner.js";
-import { sanitizeBrowserUrl } from "../../domain/browserObservation.js";
+import {
+  classifyCdpFrameUrl,
+  observeMainFrameUrl,
+} from "../CdpCaptureDocuments.js";
 import {
   WEB_RUNTIME_LIMITS,
   type webRuntimeTargetSchema,
@@ -19,6 +22,7 @@ import {
 import type { z } from "zod";
 import { authorizeCdpTarget } from "../CdpAuthorizedTarget.js";
 import { authorizedMainFrame } from "../CdpAuthorizedMainFrame.js";
+import { cdpOriginScopeRefusal } from "../CdpOriginScopeError.js";
 import {
   discoverCdpEndpoint,
   type CdpEndpointDiscovery,
@@ -88,7 +92,7 @@ export class CdpRuntimeSession {
       owner,
     );
     try {
-      const tree = runtimeFrameTreeSchema.parse(
+      const frame = runtimeMainFrame(
         await runtimeDeadline(
           operation,
           options.signal,
@@ -103,11 +107,9 @@ export class CdpRuntimeSession {
           "command",
           "Page.getFrameTree",
         ),
+        allowedOrigins,
       );
-      const frame = tree.frameTree.frame;
-      const url = sanitizeBrowserUrl(frame.url);
-      if (url.origin === null)
-        throw new BrowserObservationError(operation, "target_not_allowed");
+      const url = runtimeFrameUrl(frame, operation);
       return new CdpRuntimeSession(
         transport,
         discovery,
@@ -200,22 +202,26 @@ export class CdpRuntimeSession {
 
   /** Check document identity before joining any live node or final coverage evidence. */
   async assertDocument(): Promise<void> {
-    const frame = runtimeFrameTreeSchema.parse(
+    const frame = runtimeMainFrame(
       await this.command("Page.getFrameTree"),
-    ).frameTree.frame;
-    const url = sanitizeBrowserUrl(frame.url);
+      this.allowedOrigins,
+    );
     if (
       frame.id !== this.target.frame_id ||
       (frame.loaderId ?? null) !== this.target.loader_id ||
-      (this.target.loader_id === null && url.url !== this.target.initial_url)
+      (this.target.loader_id === null &&
+        ((frame.url !== undefined && frame.url !== this.target.initial_url) ||
+          frame.scope === "outside_policy" ||
+          frame.scope === "unsupported"))
     )
       throw new BrowserObservationError(this.operation, "target_changed", {
         detail: `Selected target ${this.target.target_id} changed document during ${this.operation}.`,
       });
-    if (url.origin === null || !this.allowedOrigins.has(url.origin))
-      throw new BrowserObservationError(this.operation, "target_not_allowed", {
-        detail: `Selected target ${this.target.target_id} moved to an unselected origin during ${this.operation}.`,
-      });
+    runtimeFrameUrl(
+      frame,
+      this.operation,
+      `Selected target ${this.target.target_id} moved to an unselected origin during ${this.operation}.`,
+    );
   }
 
   /** Cleanup uses its own deadline after caller cancellation, then closes REA's transport. */
@@ -318,6 +324,30 @@ export class CdpRuntimeSession {
         );
   }
 }
+
+/** Runtime validates document IDs; CDP owns URL and scope interpretation. */
+const runtimeMainFrame = (
+  result: unknown,
+  allowedOrigins: ReadonlySet<string>,
+) => ({
+  ...runtimeFrameTreeSchema.parse(result).frameTree.frame,
+  ...classifyCdpFrameUrl(observeMainFrameUrl(result), allowedOrigins),
+});
+
+const runtimeFrameUrl = (
+  frame: ReturnType<typeof runtimeMainFrame>,
+  operation: BrowserObservationOperation,
+  detail?: string,
+) => {
+  if (frame.scope === "outside_policy" || frame.scope === "unsupported")
+    throw cdpOriginScopeRefusal(
+      operation,
+      detail === undefined ? {} : { detail },
+    );
+  if (frame.url === undefined || frame.origin === null)
+    throw new BrowserObservationError(operation, "protocol_error");
+  return { url: frame.url, origin: frame.origin };
+};
 
 /** Apply a disposable command deadline without turning timeout into caller cancellation. */
 export const runtimeDeadline = async <T>(

@@ -41,7 +41,7 @@ export const closeOwnedWebResources = async (
         ),
       ),
     ];
-    throw new ProviderCleanupError(
+    const aggregate = new ProviderCleanupError(
       "web-workflow",
       [...new Set(normalized.flatMap(({ resources }) => resources))],
       {
@@ -63,5 +63,13 @@ export const closeOwnedWebResources = async (
           : { remediationAction: recoveryActions.join("; ") }),
       },
     );
+    const dependencies = failures.filter(
+      (cause): cause is AnalysisError =>
+        cause instanceof AnalysisError && cause.cleanupIncomplete,
+    );
+    // Opaque or already-resolved rejections supply no live release authority.
+    if (dependencies.length === failures.length)
+      aggregate.bindCleanupDependencies(dependencies);
+    throw aggregate;
   }
 };

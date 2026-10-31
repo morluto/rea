@@ -6,6 +6,11 @@ import { createServer, type Socket } from "node:net";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
+import {
+  authenticatedServer,
+  writeDescriptor,
+} from "../../fixtures/cutterBridgeProtocol.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { CutterBridgeClient } from "../../../src/cutter/CutterBridgeClient.js";
 import { CutterBridgeService } from "../../../src/cutter/CutterBridgeService.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
@@ -370,3 +375,120 @@ it("cancels active discovery sockets, stops queued probes and recovers on the sa
     await new Promise<void>((resolve) => peer.close(() => resolve()));
   }
 });
+
+it.skipIf(process.platform === "win32")(
+  "retains a generation-error command until authenticated terminal proof",
+  async () => {
+    const directory = await createTestTempDirectory(
+      "rea-cutter-generation-proof-",
+    );
+    await chmod(directory, 0o700);
+    const sessionId = "27d3e3f1-f1e5-49ae-91ec-95af1f343a5a";
+    const token = "synthetic-cutter-bridge-token-for-test";
+    let terminal = false;
+    let commands = 0;
+    let pendingRequestId = "";
+    const peer = authenticatedServer(
+      token,
+      sessionId,
+      (request, respond) => {
+        if (request.kind === "status")
+          respond({
+            ok: true,
+            session_id: sessionId,
+            completed_commands:
+              terminal && pendingRequestId !== ""
+                ? [
+                    {
+                      request_id: pendingRequestId,
+                      execution_state: "not_started",
+                    },
+                  ]
+                : [],
+            completed_connection: terminal
+              ? "000000000000ffff"
+              : "0000000000000000",
+          });
+        else if (request.kind === "ack")
+          respond({ ok: true, acknowledged: true });
+        else {
+          commands++;
+          pendingRequestId = String(request.request_id);
+          respond(
+            commands === 1
+              ? { ok: false, error: "active-document-generation-changed" }
+              : { ok: true, execution_state: "complete", output: "observed" },
+          );
+        }
+      },
+      true,
+    );
+    await new Promise<void>((resolve) => peer.listen(0, "127.0.0.1", resolve));
+    const address = peer.address();
+    if (address === null || typeof address === "string")
+      throw new Error("Missing listener");
+    await writeDescriptor(directory, sessionId, address.port, token);
+    const service = new CutterBridgeService(
+      new CutterBridgeClient({ REA_CUTTER_BRIDGE_DIR: directory }),
+    );
+    const server = new McpServer({
+      name: "cutter-generation-proof",
+      version: "1",
+    });
+    registerCutterTools(
+      server,
+      service,
+      silentLogger,
+      createToolResultDelivery(undefined),
+    );
+    const client = new Client({
+      name: "cutter-generation-proof",
+      version: "1",
+    });
+    const [ct, st] = InMemoryTransport.createLinkedPair();
+    try {
+      await server.connect(st);
+      await client.connect(ct);
+      const invoke = () =>
+        client.callTool({
+          name: "cutter_command",
+          arguments: {
+            session_id: sessionId,
+            expected_generation: 0,
+            command: "pd 1",
+          },
+        });
+      const first = await invoke();
+      expect(parseMcpToolError(first).error).toMatchObject({
+        code: "cleanup_incomplete",
+        details: {
+          partial_observation: {
+            normalized_result: {
+              execution_state: "unknown",
+              error: "active-document-generation-changed",
+            },
+          },
+        },
+      });
+      const blocked = await invoke();
+      expect(parseMcpToolError(blocked).error.code).toBe("cleanup_incomplete");
+      expect(commands).toBe(1);
+      terminal = true;
+      const recovered = await invoke();
+      expect(recovered.isError).not.toBe(true);
+      const evidence = toolContract("cutter_command").outputSchema.parse(
+        recovered.structuredContent,
+      );
+      expect(evidence.normalized_result).toMatchObject({
+        execution_state: "complete",
+        output: "observed",
+      });
+      expect(commands).toBe(2);
+    } finally {
+      terminal = true;
+      await Promise.allSettled([client.close(), server.close()]);
+      await service.close();
+      await new Promise<void>((resolve) => peer.close(() => resolve()));
+    }
+  },
+);

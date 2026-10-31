@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { JAVASCRIPT_STATIC_FACT_BYTES } from "../domain/javascript/javascriptAnalysisResourceControls.js";
 import { digestSchema } from "../domain/digests.js";
 import { WEB_RUNTIME_LIMITS } from "../domain/webRuntime.js";
 import { webPageInspectionSchema } from "../domain/browserObservationSchemas.js";
@@ -16,7 +17,7 @@ export const WEB_BUNDLE_WORKER_LIMITS = {
   totalTimeoutMs: DEFAULT_WEB_BUNDLE_TOTAL_TIMEOUT_MS,
   protocolBytes: 64 * 1024,
   sourceBytes: 8 * WEB_RUNTIME_LIMITS.sourceBytes,
-  resultBytes: 8 * 1024 * 1024,
+  resultBytes: JAVASCRIPT_STATIC_FACT_BYTES,
 } as const;
 
 const includedSourceSchema = z.strictObject({

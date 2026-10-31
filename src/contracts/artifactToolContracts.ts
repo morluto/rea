@@ -1,3 +1,4 @@
+import { requireOutputSchema } from "./toolOutputSchemaPrimitives.js";
 import { z } from "zod";
 
 import type { ToolContract } from "./toolContractTypes.js";
@@ -5,7 +6,6 @@ import { artifactOutputSchemas } from "./toolOutputSchemaGroups.js";
 import { artifactIntegrityPolicySchema } from "../domain/artifactIntegrityPolicy.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { toolContractMetadata } from "./toolEffects.js";
-import { requireOutputSchema } from "./toolOutputSchemaPrimitives.js";
 import { appleAssetCatalogInputSchema } from "../domain/apple/appleAssetCatalog.js";
 import { dylibResolutionInputSchema } from "../domain/apple/dylibResolution.js";
 import { keyedArchiveInputSchema } from "../domain/apple/keyedArchive.js";
@@ -52,12 +52,13 @@ const examples: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {
 };
 
 const artifact = <
-  Name extends string,
+  Name extends keyof typeof artifactOutputSchemas,
   Schema extends z.ZodType<Readonly<Record<string, unknown>>>,
 >(
   name: Name,
   description: string,
   inputSchema: Schema,
+  retainedSummary?: ToolContract["retainedSummary"],
 ) => {
   const outputSchema = requireOutputSchema(artifactOutputSchemas, name);
   return {
@@ -65,6 +66,8 @@ const artifact = <
     ...toolContractMetadata(name),
     description,
     kind: "artifact-provider",
+    requiresActiveTarget: true,
+    ...(retainedSummary === undefined ? {} : { retainedSummary }),
     inputSchema,
     outputSchema,
     examples: [
@@ -80,21 +83,22 @@ const artifact = <
 export const ARTIFACT_TOOL_CONTRACTS = [
   artifact(
     "inspect_artifact",
-    "Inspect an active archive or application package in one call. By default returns the complete content-addressed artifact graph once, as the typed nested inventory Evidence, with root and integrity observations, integrity contradictions, hypotheses, unexplored branches, limitations, and next probes inline. For PCK and large containers prefer detail summary: it retains the complete inspection and returns its derived summary view; read exact paths, batch occurrence/content IDs and selected fields with inspect_analysis_view using parent_evidence_id. This changes delivery, not inventory coverage. Read-only DMG mounting is used automatically on supported macOS hosts. Integrity mismatches fail by default; record-and-continue keeps mismatches explicitly untrusted. It does not extract files; use extract_artifact to materialize regular contents of supported formats. DMG extraction is unavailable; use a caller-managed read-only mount on macOS to access its files.",
+    "Inspect an active archive or application package, including Node.js SEA carriers, in one call. By default returns the complete content-addressed artifact graph once, as the typed nested inventory Evidence, with root and integrity observations, integrity contradictions, hypotheses, unexplored branches, limitations, and next probes inline. Bun standalone inventory describes stored module, sourcemap and opaque bytecode regions. For PCK, Bun and large containers prefer detail summary: it retains the complete inspection and returns its derived summary view; read exact paths, batch occurrence/content IDs and selected fields with inspect_analysis_view using parent_evidence_id. This changes delivery, not inventory coverage. Classic iNES includes header facts, PRG/CHR file-region hashes and byte-exact reconstruction evidence; mapper execution and CPU bank mappings remain unobserved. Read-only DMG mounting is used automatically on supported macOS hosts. Integrity mismatches fail by default; record-and-continue keeps mismatches explicitly untrusted. It does not extract files; use extract_artifact to materialize regular contents of supported formats. DMG extraction is unavailable; use a caller-managed read-only mount on macOS to access its files.",
     artifactInspectionInputSchema,
+    { evidenceParameters: "preserve-detail" },
   ),
   artifact(
     "extract_artifact",
-    "Extract all regular files from a supported active archive or application package into a fresh temporary directory chosen by REA. The result includes its location. DMG extraction is unavailable; use a caller-managed read-only mount on macOS to access its files. Rejects traversal and symlink escapes, never overwrites, and verifies cleanup. Integrity mismatches fail by default; record-and-continue extracts the observed bytes and returns each mismatch as an explicitly untrusted integrity contradiction.",
+    "Extract regular files (including Node.js SEA scripts and assets) exposed by a supported active archive reader into a fresh temporary directory chosen by REA. A nested archive exposed as a file is copied as a file; inspect and extract it separately to unpack its contents. The result includes its location. DMG extraction is unavailable; use a caller-managed read-only mount on macOS to access its files. Rejects traversal and symlink escapes, never overwrites, and verifies cleanup. Integrity mismatches fail by default; record-and-continue extracts the observed bytes and returns each mismatch as an explicitly untrusted integrity contradiction.",
     artifactExtractionInputSchema,
   ),
   artifact(
     "decode_interface_builder",
     "Decode compiled storyboard and nib archives inside the active Apple app bundle, including keyed property lists and NIBArchive object tables, into a bounded object, hierarchy, and connection graph. This is static archive parsing; unrecognized archive classes and unresolved code handlers remain explicit unknowns. A full app graph is often several megabytes; detail summary retains it and returns documents with node, edge and coverage counts, then page rows, optionally one document's, with inspect_analysis_view kind interface-builder.",
     z.strictObject({
-      max_documents: z.number().int().min(1).max(64).default(64),
-      max_objects: z.number().int().min(1).max(20_000).default(20_000),
-      max_connections: z.number().int().min(1).max(40_000).default(40_000),
+      max_documents: z.int().min(1).max(64).default(64),
+      max_objects: z.int().min(1).max(20_000).default(20_000),
+      max_connections: z.int().min(1).max(40_000).default(40_000),
       detail: analysisDetailSchema
         .unwrap()
         .optional()
@@ -102,6 +106,7 @@ export const ARTIFACT_TOOL_CONTRACTS = [
           "Omitted or complete returns the complete decoded graph Evidence. summary retains that complete Evidence in this session and returns its inspect_analysis_view summary; use normalized_result.parent_evidence_id for interface-builder pages.",
         ),
     }),
+    { evidenceParameters: "omit-detail" },
   ),
   artifact(
     "inspect_keyed_archive",

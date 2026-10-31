@@ -13,15 +13,15 @@ import {
   LinuxHopperTemporaryCleanupOwner,
   systemLinuxHopperInstallHost,
   type LinuxDistribution,
-  type LinuxHopperDownload,
   type LinuxHopperInstallHost,
   type LinuxHopperLauncherStatus,
-  type LinuxPackageFamily,
   type LinuxPackageInstallFailure,
   type LinuxPackageInstallOutcome,
 } from "./LinuxHopper.js";
+import type { HopperDownload } from "./HopperDownload.js";
 import { err, ok } from "../domain/result.js";
 import {
+  type LinuxPackageFamily,
   HopperReleaseError,
   type LinuxHopperRelease,
 } from "./HopperReleaseFeed.js";
@@ -74,7 +74,7 @@ class RecordingLinuxHost implements LinuxHopperInstallHost {
     Promise.resolve(this.distributionValue);
   release = (family: LinuxPackageFamily) =>
     Promise.resolve(ok(releasesFor(new Uint8Array([1, 2, 3]))[family]));
-  download = (url: string): Promise<LinuxHopperDownload> => {
+  download = (url: string): Promise<HopperDownload> => {
     this.downloads.push(url);
     return Promise.resolve({ ok: this.archiveOk, bytes: this.archive });
   };
@@ -144,21 +144,35 @@ class RecordingLinuxHost implements LinuxHopperInstallHost {
   };
 }
 
+const TESTED_DISTRIBUTIONS = [
+  ['ID=ubuntu\nVERSION_ID="24.04"\n', "deb"],
+  ["ID=fedora\nVERSION_ID=41\n", "rpm"],
+  ['ID=nobara\nVERSION_ID="44"\nID_LIKE="rhel centos fedora"\n', "rpm"],
+  ["ID=arch\n", "arch"],
+  ["ID=cachyos\nID_LIKE=arch\n", "arch"],
+  ['ID=omarchy\nID_LIKE=arch\nVERSION_ID="4.0.4"\n', "arch"],
+] as const;
+
 describe("Linux Hopper host classification", () => {
-  it.each([
-    ['ID=ubuntu\nVERSION_ID="24.04"\n', "deb"],
-    ["ID=fedora\nVERSION_ID=41\n", "rpm"],
-    ['ID=nobara\nVERSION_ID="44"\nID_LIKE="rhel centos fedora"\n', "rpm"],
-    ["ID=arch\n", "arch"],
-    ["ID=cachyos\nID_LIKE=arch\n", "arch"],
-    ['ID=omarchy\nID_LIKE=arch\nVERSION_ID="4.0.4"\n', "arch"],
-  ] as const)(
+  it.each(TESTED_DISTRIBUTIONS)(
     "accepts an explicitly supported distribution",
     (document, family) => {
-      expect(parseLinuxDistribution(document)).toMatchObject({
+      expect(parseLinuxDistribution(document, "x64")).toMatchObject({
         packageFamily: family,
         hopperSetupSupported: true,
       });
+    },
+  );
+
+  it.each(TESTED_DISTRIBUTIONS)(
+    "keeps the x86_64-only Hopper package off an arm64 host running %s",
+    (document, family) => {
+      const distribution = parseLinuxDistribution(document, "arm64");
+      expect(distribution).toMatchObject({
+        packageFamily: family,
+        hopperSetupSupported: false,
+      });
+      expect(supportsReaHost(distribution)).toBe(true);
     },
   );
 
@@ -193,7 +207,9 @@ describe("Linux Hopper host classification", () => {
   ])(
     "rejects vendor/version combinations without a tested Hopper installer",
     (document) => {
-      expect(parseLinuxDistribution(document).hopperSetupSupported).toBe(false);
+      expect(parseLinuxDistribution(document, "x64").hopperSetupSupported).toBe(
+        false,
+      );
     },
   );
 
@@ -207,14 +223,16 @@ describe("Linux Hopper host classification", () => {
   ])(
     "hosts REA on a distribution Hopper has no tested package for: %s",
     (document) => {
-      const distribution = parseLinuxDistribution(document);
+      const distribution = parseLinuxDistribution(document, "x64");
       expect(distribution.hopperSetupSupported).toBe(false);
       expect(supportsReaHost(distribution)).toBe(true);
     },
   );
 
   it("withholds host support from a distribution with no package family", () => {
-    expect(supportsReaHost(parseLinuxDistribution("ID=nixos\n"))).toBe(false);
+    expect(supportsReaHost(parseLinuxDistribution("ID=nixos\n", "x64"))).toBe(
+      false,
+    );
     expect(supportsReaHost(undefined)).toBe(false);
   });
 });
@@ -257,6 +275,32 @@ describe("Linux Hopper installation", () => {
           args: expect.arrayContaining([executable, "/tmp/Hopper package"]),
         }),
       );
+    },
+  );
+
+  it.each([true, false])(
+    "keeps installed apt dependencies at their versions while Hopper may upgrade (root: %s)",
+    (isRoot) => {
+      const prefix = isRoot ? [] : ["pkexec"];
+      expect(
+        linuxPackageManagerCommands("deb", "/tmp/Hopper package", isRoot).map(
+          ({ executable, args }) => [executable, ...args],
+        ),
+      ).toEqual([
+        [
+          ...prefix,
+          "apt-get",
+          "install",
+          "-y",
+          "--no-upgrade",
+          "xvfb",
+          "xauth",
+          "python3",
+          "libx11-6",
+          "libxtst6",
+        ],
+        [...prefix, "apt-get", "install", "-y", "/tmp/Hopper package"],
+      ]);
     },
   );
 });
@@ -361,11 +405,14 @@ describe("Linux Hopper cleanup and failure details", () => {
     const directory = await createTestTempDirectory("rea-hopper-status-");
     const launcher = join(directory, "Hopper");
     await writeFile(launcher, "fixture launcher");
-    const host = systemLinuxHopperInstallHost({
-      ...process.env,
-      HOME: directory,
-      XDG_CACHE_HOME: join(directory, "cache"),
-    });
+    const host = systemLinuxHopperInstallHost(
+      {
+        ...process.env,
+        HOME: directory,
+        XDG_CACHE_HOME: join(directory, "cache"),
+      },
+      async () => undefined,
+    );
     const command = vi
       .spyOn(nativeCommands, "execFileOutput")
       .mockResolvedValue({
@@ -483,7 +530,10 @@ describe("Linux Hopper temporary cleanup ownership", () => {
         attempts += 1;
         throw new Error("still busy");
       }),
-    ).toContain("/tmp/rea-hopper");
+    ).toMatchObject({
+      reason: expect.stringContaining("/tmp/rea-hopper"),
+      resources: ["/tmp/rea-hopper"],
+    });
     expect(
       await owner.retry(async () => {
         attempts += 1;
@@ -514,3 +564,69 @@ function releasesFor(
 }
 
 const installFixture = (host: RecordingLinuxHost) => installLinuxHopper(host);
+
+it("retains archive staging failure after download and cleans the owned temporary directory", async () => {
+  const host = new RecordingLinuxHost();
+  host.writeArchive = async () => {
+    throw Object.assign(new Error("archive write denied"), { code: "EACCES" });
+  };
+  expect(await installLinuxHopper(host)).toMatchObject({
+    status: "failed",
+    reason: "archive_write",
+    operationFailure: {
+      operation: "archive_write",
+      path: "/tmp/rea test/hopper.deb",
+      systemCode: "EACCES",
+      detail: "archive write denied",
+    },
+  });
+  expect(host.downloads).toHaveLength(1);
+  expect(host.installed).toEqual([]);
+  expect(host.cleaned).toEqual(["/tmp/rea test"]);
+});
+
+it("keeps an installed launcher inspection failure distinct from confirmed absence", async () => {
+  const host = new RecordingLinuxHost();
+  host.launcherStatusValue = {
+    status: "inspection_failed",
+    operation: "hash",
+    path: "/opt/hopper/bin/Hopper",
+    detail: "read denied",
+    systemCode: "EACCES",
+  };
+  expect(await installLinuxHopper(host)).toMatchObject({
+    status: "failed",
+    reason: "launcher_inspection",
+    operationFailure: { operation: "hash", systemCode: "EACCES" },
+  });
+  host.launcherStatusValue = "missing";
+  expect(await installLinuxHopper(host)).toMatchObject({
+    status: "failed",
+    reason: "launcher_missing",
+  });
+});
+
+it("reports missing ldd as unresolved launcher inspection while retaining actual absence", async () => {
+  const root = await createTestTempDirectory(
+    "rea-hopper-inspection-diagnostic-",
+  );
+  const launcher = join(root, "inert-launcher");
+  await writeFile(launcher, "inert fixture; never executed");
+  const host = systemLinuxHopperInstallHost(
+    { PATH: root },
+    async () => undefined,
+  );
+  try {
+    expect(await host.launcherStatus(launcher, "0".repeat(64))).toMatchObject({
+      status: "inspection_failed",
+      operation: "dependencies",
+      path: launcher,
+      systemCode: "ENOENT",
+    });
+    expect(
+      await host.launcherStatus(join(root, "absent"), "0".repeat(64)),
+    ).toBe("missing");
+  } finally {
+    await host.close?.();
+  }
+});

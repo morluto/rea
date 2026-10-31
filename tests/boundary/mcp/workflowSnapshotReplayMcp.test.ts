@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisResult.js";
 import { parseConfig } from "../../../src/config/parseConfig.js";
 import { access, chmod, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -18,6 +19,7 @@ import {
   createTestBinarySession,
 } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { readAnalysisSnapshot } from "../../../src/application/binary/AnalysisSnapshotFiles.js";
 import { ok } from "../../../src/domain/result.js";
@@ -74,33 +76,48 @@ describe("MCP external command snapshot retirement", () => {
         name: "execute_rizin_command",
         arguments: { path: targetPath, command: "iI" },
       });
-      const readyDeadline = Date.now() + 5_000;
-      while (Date.now() < readyDeadline) {
-        try {
-          await access(startedPath);
-          break;
-        } catch {
-          await new Promise((resolve) => setTimeout(resolve, 10));
-        }
-      }
-      await expect(access(startedPath)).resolves.toBeUndefined();
-
       let closeSettled = false;
-      const closeRequest = mcp
-        .callTool({
-          name: "close_binary",
-          arguments: { snapshot_path: snapshotPath },
-        })
-        .finally(() => {
-          closeSettled = true;
+      const closeStarted = createDeferred<void>();
+      let closeRequest: ReturnType<typeof mcp.callTool> | undefined;
+      try {
+        const readyDeadline = Date.now() + 5_000;
+        while (Date.now() < readyDeadline) {
+          try {
+            await access(startedPath);
+            break;
+          } catch {
+            await new Promise((resolve) => setTimeout(resolve, 10));
+          }
+        }
+        await expect(access(startedPath)).resolves.toBeUndefined();
+        closeRequest = mcp
+          .callTool(
+            {
+              name: "close_binary",
+              arguments: { snapshot_path: snapshotPath },
+            },
+            { onprogress: () => closeStarted.resolve() },
+          )
+          .finally(() => {
+            closeSettled = true;
+          });
+        // Close queues its transition before sending its first progress event.
+        await awaitAcknowledgement(
+          closeStarted.promise,
+          closeRequest,
+          "snapshot close progress",
+        );
+        expect(closeSettled).toBe(false);
+        await expect(access(snapshotPath)).rejects.toMatchObject({
+          code: "ENOENT",
         });
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      expect(closeSettled).toBe(false);
-      await expect(access(snapshotPath)).rejects.toMatchObject({
-        code: "ENOENT",
-      });
-
-      await writeFile(releasePath, "release");
+      } finally {
+        await writeFile(releasePath, "release");
+        await Promise.allSettled([
+          analysisRequest,
+          ...(closeRequest === undefined ? [] : [closeRequest]),
+        ]);
+      }
       const analyzed = await analysisRequest;
       expect(analyzed.isError, JSON.stringify(analyzed.content)).not.toBe(true);
       const evidence = toolContract("execute_rizin_command").outputSchema.parse(
@@ -150,7 +167,7 @@ describe("MCP external command snapshot retirement", () => {
   );
 });
 
-describe("MCP composed workflow target admission", () => {
+describe("MCP composed workflow target admission: reverse engineering", () => {
   it.skipIf(process.platform === "win32")(
     "drains a reverse-engineering call and keeps its Evidence exportable when close_binary refuses the snapshot",
     async () => {
@@ -235,7 +252,9 @@ describe("MCP composed workflow target admission", () => {
       );
     },
   );
+});
 
+describe("MCP composed workflow target admission: lifecycle queues", () => {
   it("keeps a composed result and snapshot on its admitted target across queued close and open", async () => {
     const { targetPaths, snapshotPath } = await createWorkflowFiles(
       "rea-mcp-admitted-workflow-",
@@ -263,18 +282,38 @@ describe("MCP composed workflow target admission", () => {
       name: "binary_overview",
       arguments: {},
     });
-    await entered.promise;
-    const closeRequest = mcp.callTool({
-      name: "close_binary",
-      arguments: { snapshot_path: snapshotPath },
-      _meta: { progressToken: "close-race" },
-    });
-    await closeStarted.promise;
-    const openRequest = mcp.callTool({
-      name: "open_binary",
-      arguments: { path: secondPath },
-    });
-    release.resolve();
+    let closeRequest: ReturnType<typeof mcp.callTool> | undefined;
+    let openRequest: ReturnType<typeof mcp.callTool> | undefined;
+    try {
+      await awaitAcknowledgement(
+        entered.promise,
+        analysisRequest,
+        "workflow provider entry",
+      );
+      closeRequest = mcp.callTool({
+        name: "close_binary",
+        arguments: { snapshot_path: snapshotPath },
+        _meta: { progressToken: "close-race" },
+      });
+      await awaitAcknowledgement(
+        closeStarted.promise,
+        closeRequest,
+        "workflow close progress",
+      );
+      openRequest = mcp.callTool({
+        name: "open_binary",
+        arguments: { path: secondPath },
+      });
+    } finally {
+      release.resolve();
+      await Promise.allSettled([
+        analysisRequest,
+        ...(closeRequest === undefined ? [] : [closeRequest]),
+        ...(openRequest === undefined ? [] : [openRequest]),
+      ]);
+    }
+    if (closeRequest === undefined || openRequest === undefined)
+      throw new Error("Expected queued close and open requests");
 
     const analyzed = await analysisRequest;
     expect(analyzed.isError, JSON.stringify(analyzed.content)).not.toBe(true);
@@ -426,9 +465,10 @@ describe("MCP composed workflow snapshot replay", () => {
       "binary_overview",
       {},
       { snapshotPath },
-    );
+    ).then(projectCliAnalysisResult);
 
-    expect(replay).toEqual(output);
+    expect(output).not.toHaveProperty("caller_input_path");
+    expect(replay).toEqual({ ...output, caller_input_path: targetPath });
     expect(calls).toEqual(afterAnalysisCalls);
     expect(starts).toEqual(afterAnalysisStarts);
   });
@@ -726,9 +766,7 @@ const makeProvider = (
                   ]
                 : operation === "list_documents"
                   ? ["fixture"]
-                  : operation === "list_procedures"
-                    ? ["0x1000"]
-                    : [{ address: "0x1000", value: "fixture" }];
+                  : [{ address: "0x1000", value: "fixture" }];
           return ok(createAnalysisExecution(result, identity));
         },
         close: () => Promise.resolve(ok(null)),

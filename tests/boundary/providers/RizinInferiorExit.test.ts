@@ -164,6 +164,7 @@ setInterval(() => {}, 1000);
     );
     targets.add(supervisor);
     let descriptorOpen = true;
+    let ambiguousPolicyReadbackSent = false;
     const staleInventory = { value: false };
     const stopAttempts = { value: 0 };
     let commandTail = Promise.resolve();
@@ -191,9 +192,9 @@ setInterval(() => {}, 1000);
                 descriptorOpen = false;
                 if (mode !== "ambiguous-policy" && mode !== "stale-retry") {
                   launched.process.kill("SIGUSR1");
-                  if (mode === "exit")
+                  if (mode === "exit") {
                     expect(await supervisor.waitForExit(1_000)).toBe(true);
-                  else
+                  } else
                     await expect
                       .poll(() => readFile(redirected, "utf8"), {
                         timeout: 1_000,
@@ -201,7 +202,12 @@ setInterval(() => {}, 1000);
                       .toBe("redirected");
                 }
               } else if (line === "e dbg.exitkills") {
-                if (mode === "ambiguous-policy" && !descriptorOpen) {
+                if (
+                  mode === "ambiguous-policy" &&
+                  !descriptorOpen &&
+                  !ambiguousPolicyReadbackSent
+                ) {
+                  ambiguousPolicyReadbackSent = true;
                   // End the identified process only during the final policy query.
                   launched.process.kill("SIGUSR1");
                   expect(await supervisor.waitForExit(1_000)).toBe(true);
@@ -223,6 +229,7 @@ setInterval(() => {}, 1000);
       {
         spawnProcess: injected.spawnProcess,
         stopProcess: createStopProcess(mode, stopAttempts),
+        readProcessTracerPid: async () => process.pid,
       },
     );
     try {

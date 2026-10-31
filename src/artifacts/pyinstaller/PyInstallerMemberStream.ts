@@ -15,6 +15,43 @@ interface MemberStreamOptions {
   readonly complete?: (bytes: number) => Promise<void>;
 }
 
+/** Observe a bounded plaintext prefix, then drain the existing stream owner. */
+export const readPyInstallerMemberPrefix = async (
+  openSource: (signal: AbortSignal) => Promise<Readable>,
+  options: Omit<MemberStreamOptions, "header" | "charge" | "complete">,
+  length: number,
+): Promise<Buffer> => {
+  const stopped = new AbortController();
+  const prefixComplete = new Error("PyInstaller member prefix observed");
+  const signal = AbortSignal.any([options.signal, stopped.signal]);
+  const source = await openSource(signal);
+  const stream = pyInstallerMemberStream(source, {
+    ...options,
+    header: undefined,
+    signal,
+  });
+  const prefix = Buffer.alloc(length);
+  let copied = 0;
+  stream.output.on("data", (chunk: Buffer) => {
+    copied += chunk.copy(prefix, copied, 0, length - copied);
+    if (copied === length) stopped.abort(prefixComplete);
+  });
+  try {
+    await stream.completion;
+  } catch (cause: unknown) {
+    // Only our accepted early stop is successful. Native I/O, malformed zlib,
+    // declaration failures, and caller cancellation keep their original reason.
+    if (
+      !(cause instanceof ArtifactReaderFailure) ||
+      cause.reason !== "cancelled" ||
+      cause.cause !== prefixComplete
+    )
+      throw cause;
+  }
+  abortIfNeeded(options.signal);
+  return prefix.subarray(0, copied);
+};
+
 /** Backpressure bounds plaintext independently of the untrusted declared size. */
 export const pyInstallerMemberStream = (
   source: Readable,
@@ -23,6 +60,7 @@ export const pyInstallerMemberStream = (
   let bytes = 0;
   let headerSent = false;
   let completing = false;
+  let failure: ArtifactReaderFailure | undefined;
   const prependHeader = (): void => {
     if (!headerSent && options.header !== undefined)
       output.push(options.header);
@@ -104,35 +142,43 @@ export const pyInstallerMemberStream = (
   };
   options.signal.addEventListener("abort", onAbort, { once: true });
   const onSourceFailure = (cause: unknown): void => {
-    output.destroy(
+    failure ??=
       cause instanceof ArtifactReaderFailure
         ? cause
         : new ArtifactReaderFailure(
             "io",
             "PyInstaller member source could not be read",
             { cause },
-          ),
-    );
+          );
+    output.destroy(failure);
   };
   source.on("error", onSourceFailure);
   const inflate = options.compressed ? createInflate() : undefined;
-  inflate?.on("error", (cause: unknown) =>
-    output.destroy(
-      new ArtifactReaderFailure(
-        "format",
-        "Compressed PyInstaller member is not a complete zlib stream",
-        { cause },
-      ),
-    ),
-  );
+  inflate?.on("error", (cause: unknown) => {
+    failure ??=
+      cause instanceof ArtifactReaderFailure
+        ? cause
+        : new ArtifactReaderFailure(
+            "format",
+            "Compressed PyInstaller member is not a complete zlib stream",
+            { cause },
+          );
+    output.destroy(failure);
+  });
   const completion = (
     inflate === undefined
       ? pipeline(source, output)
       : pipeline(source, inflate, output)
-  ).finally(() => {
-    options.signal.removeEventListener("abort", onAbort);
-    source.removeListener("error", onSourceFailure);
-  });
+  )
+    .catch((cause: unknown) => {
+      // Pipeline can reject with the native error that caused a mapped output
+      // failure. Completion and output must expose the same boundary reason.
+      throw failure ?? cause;
+    })
+    .finally(() => {
+      options.signal.removeEventListener("abort", onAbort);
+      source.removeListener("error", onSourceFailure);
+    });
   // Preserve rejection for the owning scope without an early unhandled promise.
   void completion.catch(() => undefined);
   if (options.signal.aborted) onAbort();

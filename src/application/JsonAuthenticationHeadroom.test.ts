@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
-import {
-  estimateJsonValueBytes,
-  requireAuthenticationHeadroom,
-} from "./JsonAuthenticationHeadroom.js";
+import { requireAuthenticationHeadroom } from "./JsonAuthenticationHeadroom.js";
+import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 describe("JSON authentication headroom", () => {
   it("does not queue every row while deciding whether a wide report can fit", () => {
     let pending = 0;
@@ -48,12 +46,28 @@ describe("JSON authentication headroom", () => {
       },
     });
   });
-  it("estimates parsed JSON at no less than its UTF-16 text", () => {
+  it("reports parsed storage in authentication refusals", () => {
     const text = "x".repeat(1000);
-    expect(estimateJsonValueBytes(text)).toBeGreaterThanOrEqual(2000);
-    expect(
-      estimateJsonValueBytes({ outer: [text, { inner: text }] }),
-    ).toBeGreaterThan(2 * estimateJsonValueBytes(text));
+    const projectedBytes: number[] = [];
+    for (const value of [text, { outer: [text, { inner: text }] }]) {
+      const result = requireAuthenticationHeadroom(value, {
+        operation: "inspect_analysis_view",
+        path: "/tmp/bundle.json",
+        description: "Cannot authenticate bundle",
+        availableBytes: 0,
+      });
+      if (result.ok) throw new Error("Expected authentication refusal");
+      expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
+      const bytes = result.error.reportedLimits?.projected_value_bytes;
+      if (typeof bytes !== "number")
+        throw new Error("Expected parsed storage bytes in refusal diagnostics");
+      projectedBytes.push(bytes);
+    }
+    const [scalar, nested] = projectedBytes;
+    if (scalar === undefined || nested === undefined)
+      throw new Error("Expected scalar and nested refusal diagnostics");
+    expect(scalar).toBeGreaterThanOrEqual(2000);
+    expect(nested).toBeGreaterThan(2 * scalar);
   });
 
   it("refuses authentication when live heap headroom cannot hold its copies", () => {
@@ -95,17 +109,24 @@ it.each([
   ],
   ["surrogate boundaries", { text: "😀\ud800x\udfff".repeat(2000) }],
 ])("reserves actual escaped JSON storage for %s", (_label, value) => {
+  const allowance = 64 * 1024;
   const result = requireAuthenticationHeadroom(value, {
     operation: "inspect_analysis_view",
     path: "/tmp/bundle.json",
     description: "Cannot authenticate bundle",
-    availableBytes: estimateJsonValueBytes(value) * 2 + 1,
+    availableBytes: allowance,
   });
+  if (result.ok) throw new Error("Expected authentication refusal");
+  expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
+  expect(result.error.reportedLimits?.projected_value_bytes).toBeLessThan(
+    allowance / 2,
+  );
   expect(result).toMatchObject({
     ok: false,
     error: {
       _tag: "AnalysisResourceConstraintError",
       reportedLimits: {
+        available_heap_bytes: allowance,
         serialized_json_utf16_bytes: JSON.stringify(value).length * 2,
       },
     },

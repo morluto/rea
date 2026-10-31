@@ -1,4 +1,7 @@
 import { z } from "zod";
+import { browserExclusionSchema } from "./browserCompleteness.js";
+import { webPageInspectionSchema } from "./browserObservationSchemas.js";
+import { javaScriptRouteInventorySchema } from "./javascript/javascriptRouteInventory.js";
 
 import {
   MAX_BROWSER_DEADLINE_MS,
@@ -8,7 +11,10 @@ import {
   optionalBrowserDeadlineMs,
 } from "./browserDeadline.js";
 import { emptyArraySchema } from "./emptyArraySchema.js";
-import { inspectWebPageWithSourceInputSchema } from "./browserObservation.js";
+import {
+  inspectWebPageWithSourceInputSchema,
+  recordedBrowserOriginSchema,
+} from "./browserObservation.js";
 import {
   webTextArtifactMetadataSchema,
   webTextArtifactSchema,
@@ -223,15 +229,15 @@ export const webBundleResultAdmissionFailure = (input: {
 
 const sourceLocationSchema = z.object({
   script_key: z.string(),
-  line: z.number().int().min(1).nullable(),
-  column: z.number().int().min(0).nullable(),
+  line: z.int().min(1).nullable(),
+  column: z.int().min(0).nullable(),
 });
 
 const basisSchema = z.object({
   script_key: z.string(),
   artifact_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-  line: z.number().int().min(1).nullable(),
-  column: z.number().int().min(0).nullable(),
+  line: z.int().min(1).nullable(),
+  column: z.int().min(0).nullable(),
   detector: z.string(),
 });
 
@@ -242,25 +248,27 @@ const findingSchema = z.object({
 });
 
 const originalSourceSchema = z.object({
-  source_index: z.number().int().min(0).optional(),
-  declaration_index: z.number().int().min(0).optional(),
+  source_index: z.int().min(0).optional(),
+  declaration_index: z.int().min(0).optional(),
   source: z.string().nullable(),
   artifact: webTextArtifactSchema.nullable(),
 });
 const originalModuleEdgeSchema = z.object({
+  // Historical observations omit this link to original_sources declarations.
+  declaration_index: z.int().min(0).optional(),
   from_source: z.string(),
   kind: z.enum(["static_import", "dynamic_import", "require"]),
   specifier: z.string(),
   resolved_source: z.string().nullable(),
 });
 const sourceMapMappingSchema = z.object({
-  source_index: z.number().int().min(0).optional(),
-  declaration_index: z.number().int().min(0).optional(),
-  generated_line: z.number().int().min(1),
-  generated_column: z.number().int().min(0),
+  source_index: z.int().min(0).optional(),
+  declaration_index: z.int().min(0).optional(),
+  generated_line: z.int().min(1),
+  generated_column: z.int().min(0),
   source: z.string().nullable(),
-  original_line: z.number().int().min(1),
-  original_column: z.number().int().min(0),
+  original_line: z.int().min(1),
+  original_column: z.int().min(0),
   name: z.string().nullable(),
 });
 const sourceMapContextShape = {
@@ -275,6 +283,11 @@ const parsedSourceMapShape = {
   original_module_edges: z.array(originalModuleEdgeSchema),
   mappings: z.array(sourceMapMappingSchema),
 };
+const responseIdentitySchema = z.object({
+  sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+  bytes: z.int().min(0),
+  representation: z.literal("fetch-response-body-bytes"),
+});
 
 const sourceMapSchema = z.union([
   z.object({
@@ -292,7 +305,18 @@ const sourceMapSchema = z.union([
   z.object({
     ...sourceMapContextShape,
     ...parsedSourceMapShape,
-    status: z.enum(["fetch_failed", "invalid", "policy_filtered"]),
+    status: z.enum(["fetch_failed", "invalid"]),
+    artifact: z.null(),
+    /** Older observations omit this; completed bytes need it only when text is absent. */
+    response_identity: responseIdentitySchema.exactOptional(),
+    original_sources: emptyArraySchema,
+    original_module_edges: emptyArraySchema,
+    mappings: emptyArraySchema,
+    limitation: z.string(),
+  }),
+  z.object({
+    ...sourceMapContextShape,
+    status: z.literal("policy_filtered"),
     artifact: z.null(),
     original_sources: emptyArraySchema,
     original_module_edges: emptyArraySchema,
@@ -308,9 +332,15 @@ const webTextArtifactSummarySchema = webTextArtifactMetadataSchema.extend({
 export const webSourceMapsSchema = z
   .object({
     status: z.enum(["not_requested", "included", "partial", "unavailable"]),
-    requested: z.number().int().min(0),
-    processed: z.number().int().min(0),
+    requested: z.int().min(0),
+    processed: z.int().min(0),
     items: z.array(sourceMapSchema),
+    /** Capture exclusions retain counts/reasons without disallowed URL details. */
+    excluded: z
+      .array(
+        browserExclusionSchema.extend({ section: z.literal("source_maps") }),
+      )
+      .optional(),
     limitation: z.string().min(1).optional(),
   })
   .superRefine((sourceMaps, context) => {
@@ -337,7 +367,9 @@ export const webSourceMapsSchema = z
       (status) => status === "included" || status === "partial",
     ).length;
     const allowedStatuses =
-      sourceMaps.processed < sourceMaps.requested
+      sourceMaps.processed < sourceMaps.requested ||
+      sourceMaps.excluded?.some(({ count }) => count === null || count > 0) ===
+        true
         ? retained === 0
           ? ["unavailable"]
           : ["partial"]
@@ -360,12 +392,36 @@ export const webSourceMapsSchema = z
 export type WebSourceMapItem = z.infer<typeof sourceMapSchema>;
 export type WebSourceMaps = z.infer<typeof webSourceMapsSchema>;
 
+/** Completed fetch facts retained when source-map acquisition stops early. */
+export const webSourceMapFetchPartialObservationSchema = z.object({
+  kind: z.literal("web-source-map-fetch"),
+  source_maps: webSourceMapsSchema,
+});
+export type WebSourceMapFetchPartialObservation = z.infer<
+  typeof webSourceMapFetchPartialObservationSchema
+>;
+
+/** Captured page and completed maps before bundle analysis has begun. */
+export const webBundleAcquisitionPartialObservationSchema = z.object({
+  kind: z.literal("web-bundle-acquisition"),
+  inspection: webPageInspectionSchema,
+  source_maps: webSourceMapsSchema,
+  analysis_status: z.literal("not_performed"),
+});
+export type WebBundleAcquisitionPartialObservation = z.infer<
+  typeof webBundleAcquisitionPartialObservationSchema
+>;
+
 /** Provider-neutral result of JavaScript bundle reverse engineering. */
 export const webBundleAnalysisSchema = z.object({
+  route_inventory: javaScriptRouteInventorySchema.exactOptional(),
   capture: z.object({
     target_url: z.string(),
-    scripts_observed: z.number().int().min(0),
-    scripts_analyzed: z.number().int().min(0),
+    // Older saved observations omit this field; current analyses retain the
+    // validated HTTP(S) target origin or null when no browser origin exists.
+    target_origin: recordedBrowserOriginSchema.nullable().optional(),
+    scripts_observed: z.int().min(0),
+    scripts_analyzed: z.int().min(0),
     source_artifacts: z.array(webTextArtifactSummarySchema),
   }),
   observations: z.object({
@@ -375,7 +431,7 @@ export const webBundleAnalysisSchema = z.object({
           script_key: z.string(),
           url: z.string(),
           artifact_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-          bytes: z.number().int().min(0),
+          bytes: z.int().min(0),
         }),
       ),
       edges: z.array(
@@ -438,9 +494,9 @@ export const webBundleAnalysisSchema = z.object({
   ),
   completeness: z.object({
     status: z.enum(["complete", "partial"]),
-    parsed_scripts: z.number().int().min(0),
-    parse_failures: z.number().int().min(0),
-    visited_ast_nodes: z.number().int().min(0),
+    parsed_scripts: z.int().min(0),
+    parse_failures: z.int().min(0),
+    visited_ast_nodes: z.int().min(0),
   }),
   limitations: z.array(z.string()),
 });

@@ -2,6 +2,7 @@ import { buffer } from "node:stream/consumers";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { deflateSync } from "node:zlib";
+import { randomBytes } from "node:crypto";
 import { expect, it, vi } from "vitest";
 import { withPyInstallerReader } from "../../../tests/fixtures/pyinstallerReader.js";
 import {
@@ -11,17 +12,208 @@ import {
 } from "../../../tests/fixtures/artifactInventory.js";
 import {
   cArchiveExecutable,
+  cArchiveBytecodeExecutable,
   pyzArchive,
   PYTHON_39_MAGIC,
 } from "./CArchive.fixture.js";
 import { readPyzArchive } from "./PyzArchive.js";
+import { marshalCode } from "../../python/PythonPyc.fixture.js";
 import { createEvidence } from "../../domain/evidence.js";
-import { jsonValueSchema } from "../../domain/jsonValue.js";
 import { parseArtifactInventoryEvidence } from "../../domain/artifactInventoryEvidence.js";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
 } from "../ArtifactReader.js";
+
+it.each([0, 1, 2])(
+  "identifies malformed CArchive compression at table index %i",
+  async (index) => {
+    const original = cArchiveExecutable({
+      layout: "2.1",
+      pythonVersion: 309,
+      members: ["a", "b", "c"].map((name) => ({
+        name,
+        typeCode: "x",
+        payload: Buffer.from(name),
+        compress: false,
+      })),
+    });
+    const toc = 64 + original.readUInt32BE(original.length - 88 + 12);
+    let record = toc;
+    for (let row = 0; row < index; row++)
+      record += original.readUInt32BE(record);
+    await withPyInstallerReader(original, async (reader) => {
+      const entries = [];
+      for await (const entry of reader.entries()) entries.push(entry);
+      expect(entries).toHaveLength(3);
+    });
+    const malformed = Buffer.from(original);
+    malformed[record + 16] = 2;
+    await expect(
+      withPyInstallerReader(malformed, async (reader) => {
+        for await (const _entry of reader.entries()) {
+          /* force TOC admission */
+        }
+      }),
+    ).rejects.toMatchObject({
+      reason: "format",
+      message: expect.stringContaining(
+        `table index ${index} at TOC offset ${record - toc}`,
+      ),
+    });
+  },
+);
+
+it.each([
+  ["empty", Buffer.alloc(0)],
+  ["short", Buffer.from("630000", "hex")],
+  ["unrecognized", Buffer.from("not marshal")],
+  [
+    "unknown magic resembling TYPE_CODE",
+    Buffer.from("e30d0d0a000000000000000000000000", "hex"),
+  ],
+])(
+  "preserves a CArchive module with %s prefix despite known sibling magic",
+  async (_description, payload) => {
+    await withPyInstallerReader(
+      cArchiveExecutable({
+        layout: "2.1",
+        pythonVersion: 309,
+        members: [
+          { name: "module", typeCode: "m", payload, compress: true },
+          {
+            name: "PYZ.pyz",
+            typeCode: "z",
+            payload: pyzArchive({ magic: PYTHON_39_MAGIC, modules: [] }),
+            compress: false,
+          },
+        ],
+      }),
+      async (reader) => {
+        const entries = [];
+        for await (const entry of reader.entries()) entries.push(entry);
+        const module = entries.find((entry) => entry.path === "module")!;
+        expect(module.formatMetadata).toMatchObject({
+          bytecode_header: "unknown",
+          bytecode_magic: null,
+        });
+        expect(module.limitations.join(" ")).toContain(
+          "original bytes are preserved",
+        );
+        expect(await buffer(await reader.open(module))).toEqual(payload);
+      },
+    );
+  },
+);
+
+it("fills short descriptor reads when distinguishing both CArchive module layouts", async () => {
+  const fixture = cArchiveBytecodeExecutable();
+  await withPyInstallerReader(fixture.archive, async (reader, handle) => {
+    const read = handle.read;
+    const spy = vi.spyOn(handle, "read").mockImplementation(function (
+      this: unknown,
+      ...args: unknown[]
+    ) {
+      if (typeof args[2] === "number" && args[2] > 1) args[2] = 1;
+      return Reflect.apply(read, this, args);
+    });
+    try {
+      const entries = [];
+      for await (const entry of reader.entries()) entries.push(entry);
+      for (const module of fixture.modules) {
+        const entry = entries.find((item) => item.path === module.name)!;
+        expect(await buffer(await reader.open(entry))).toEqual(module.bytes);
+      }
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+it.each(["unused compressed input", "wrong declared size"])(
+  "keeps %s as an integrity failure after CArchive module prefix inspection",
+  async (fault) => {
+    const payload = marshalCode("py38", {
+      bytecode: randomBytes(256 * 1024),
+    });
+    await withPyInstallerReader(
+      cArchiveExecutable({
+        layout: "2.1",
+        pythonVersion: 309,
+        members: [
+          {
+            name: "module",
+            typeCode: "m",
+            payload,
+            compress: true,
+            ...(fault === "unused compressed input"
+              ? { compressedSuffix: Buffer.from("junk") }
+              : { declaredUncompressedSize: payload.length + 1 }),
+          },
+          {
+            name: "PYZ.pyz",
+            typeCode: "z",
+            payload: pyzArchive({ magic: PYTHON_39_MAGIC, modules: [] }),
+            compress: false,
+          },
+        ],
+      }),
+      async (reader) => {
+        const entries = [];
+        for await (const entry of reader.entries()) entries.push(entry);
+        const module = entries.find((entry) => entry.path === "module")!;
+        expect(module.formatMetadata).toMatchObject({
+          bytecode_header: "derived",
+        });
+        await expect(buffer(await reader.open(module))).rejects.toMatchObject({
+          reason: "integrity",
+          message: expect.stringContaining(
+            fault === "unused compressed input"
+              ? "complete declared source span"
+              : "size disagrees",
+          ),
+        });
+      },
+    );
+  },
+);
+
+it.each(["malformed zlib", "declared plaintext overrun"] as const)(
+  "preserves %s discovered before a CArchive module prefix is accepted",
+  async (fault) => {
+    const payload = cArchiveBytecodeExecutable().modules[1]!.bytes;
+    const bytes = cArchiveExecutable({
+      layout: "2.1",
+      pythonVersion: 310,
+      members: [
+        {
+          name: "module",
+          typeCode: "m",
+          payload,
+          compress: true,
+          ...(fault === "declared plaintext overrun"
+            ? { declaredUncompressedSize: 2 }
+            : {}),
+        },
+        {
+          name: "PYZ.pyz",
+          typeCode: "z",
+          payload: pyzArchive({ magic: payload.subarray(0, 4), modules: [] }),
+          compress: false,
+        },
+      ],
+    });
+    if (fault === "malformed zlib") bytes[64] = 0; // First member follows the ELF prefix.
+    await withPyInstallerReader(bytes, async (reader) => {
+      const list = async () => {
+        for await (const entry of reader.entries()) void entry;
+      };
+      await expect(list()).rejects.toMatchObject({
+        reason: fault === "malformed zlib" ? "format" : "limit",
+      });
+    });
+  },
+);
 
 it("keeps compressed source locations unknown when stored and decoded lengths coincide", async () => {
   const payload = Buffer.alloc(11, 0x61);
@@ -45,34 +237,44 @@ it("keeps compressed source locations unknown when stored and decoded lengths co
   );
 });
 
-it("bounds an admitted drive-prefixed CArchive path before diagnostic serialization", async () => {
-  await withPyInstallerReader(
-    cArchiveExecutable({
-      layout: "2.1",
-      pythonVersion: 309,
-      members: [
-        {
-          name: "C:" + "x".repeat(10 * 1024 * 1024),
-          typeCode: "x",
-          payload: Buffer.from("x"),
-          compress: false,
-        },
-      ],
-    }),
-    async (reader) => {
-      const failure = await reader
-        .entries()
-        [Symbol.asyncIterator]()
-        .next()
-        .then(
-          () => undefined,
-          (cause: unknown) => cause,
-        );
-      expect(failure).toMatchObject({ reason: "path" });
-      expect((failure as Error).message.length).toBeLessThan(1024);
-    },
-  );
-});
+it.each([
+  ["admitted drive-prefixed path", 1024 * 1024, "path"],
+  ["directory facts above their retained allowance", 10 * 1024 * 1024, "limit"],
+] as const)(
+  "bounds %s before diagnostic serialization",
+  async (_case, length, reason) => {
+    await withPyInstallerReader(
+      cArchiveExecutable({
+        layout: "2.1",
+        pythonVersion: 309,
+        members: [
+          {
+            // ELF carrier names use POSIX semantics: C:relative is a literal
+            // name, while C:/absolute is refused by the logical-path owner.
+            name: "C:/" + "x".repeat(length),
+            typeCode: "x",
+            payload: Buffer.from("x"),
+            compress: false,
+          },
+        ],
+      }),
+      async (reader) => {
+        const failure = await reader
+          .entries()
+          [Symbol.asyncIterator]()
+          .next()
+          .then(
+            () => undefined,
+            (cause: unknown) => cause,
+          );
+        expect(failure).toMatchObject({ reason });
+        if (reason === "limit")
+          expect(failure).toMatchObject({ boundary: "memory" });
+        expect((failure as Error).message.length).toBeLessThan(1024);
+      },
+    );
+  },
+);
 
 it.each(["magic", "marshal"])(
   "reuses the private bytes of an opaque outer-compressed PYZ (%s)",
@@ -127,6 +329,7 @@ it.each([true, false])(
     };
     await withPyInstallerReader(
       cArchiveExecutable({
+        carrier: "pe",
         layout: "2.1",
         pythonVersion: 309,
         members: [
@@ -161,7 +364,7 @@ it.each([true, false])(
               parameters: { page: index },
               confidence: "observed",
               authority: "shipped-artifact",
-              result: jsonValueSchema.parse({
+              result: {
                 ...inventory,
                 nodes: index === 0 ? inventory.nodes : [],
                 edges: index === 0 ? inventory.edges : [],
@@ -174,7 +377,7 @@ it.each([true, false])(
                         row,
                       ]
                     : [row],
-              }),
+              },
             },
           ),
         );
@@ -198,7 +401,7 @@ it.each([true, false])(
   },
 );
 
-it.each(["duplicate", "size", "offset", "overlap"])(
+it.each(["size", "offset", "overlap"])(
   "bounds %s diagnostics for large nondeclaration names",
   async (mode) => {
     const name = "member".repeat(200_000);
@@ -213,12 +416,7 @@ it.each(["duplicate", "size", "offset", "overlap"])(
       layout: "2.1",
       pythonVersion: 309,
       members:
-        mode === "duplicate" || mode === "overlap"
-          ? [
-              first,
-              { ...first, name: mode === "duplicate" ? name : name + "-b" },
-            ]
-          : [first],
+        mode === "overlap" ? [first, { ...first, name: name + "-b" }] : [first],
     });
     const toc = 64 + bytes.readUInt32BE(bytes.length - 88 + 12);
     if (mode === "offset")
@@ -239,7 +437,7 @@ it.each(["duplicate", "size", "offset", "overlap"])(
       expect(failure.reason).toBe(mode === "offset" ? "format" : "integrity");
       expect(failure.message.length).toBeLessThan(128);
       expect(failure.message).toContain(
-        `table index ${mode === "duplicate" || mode === "overlap" ? 1 : 0}`,
+        `table index ${mode === "overlap" ? 1 : 0}`,
       );
     });
   },
@@ -373,7 +571,9 @@ for (const typeCode of ["o", "d"] as const) {
           path,
           inventory,
         );
-        expect(await readFile(join(output, realPath))).toEqual(payload);
+        expect(
+          Buffer.compare(await readFile(join(output, realPath)), payload),
+        ).toBe(0);
       },
     );
   });
@@ -596,8 +796,11 @@ it.each(["x", "s", "empty-module"])(
           inventory,
         );
         expect(
-          (await readFile(join(output, "PYZ.pyz/app.pyc"))).subarray(16),
-        ).toEqual(Buffer.from("readable module"));
+          Buffer.compare(
+            (await readFile(join(output, "PYZ.pyz/app.pyc"))).subarray(16),
+            Buffer.from("readable module"),
+          ),
+        ).toBe(0);
       },
     );
   },
@@ -634,6 +837,86 @@ it.each([
   });
 });
 
+it.each([false, true])(
+  "preserves PYZ role paths, bytecode and encryption with marker %s",
+  async (marker) => {
+    const body = Buffer.from("role payload");
+    await withPyInstallerReader(
+      cArchiveExecutable({
+        layout: "2.1",
+        pythonVersion: 309,
+        members: [
+          ...(marker
+            ? [
+                {
+                  name: "pyimod00_crypto_key",
+                  typeCode: "m",
+                  payload: Buffer.from("key"),
+                  compress: false,
+                },
+              ]
+            : []),
+          {
+            name: "PYZ.pyz",
+            typeCode: "z",
+            compress: false,
+            payload: pyzArchive({
+              magic: PYTHON_39_MAGIC,
+              modules: [
+                { name: "app.mod", typeCode: 0, body },
+                { name: "app.pkg", typeCode: 1, body },
+                { name: "assets/config.json", typeCode: 2, body },
+                { name: "app.ns", typeCode: 3, body: Buffer.alloc(0) },
+              ],
+            }),
+          },
+        ],
+      }),
+      async (reader, _handle, path) => {
+        const entries: ArtifactEntry[] = [];
+        for await (const entry of reader.entries()) entries.push(entry);
+        const inventory = await scanCanonicalArtifactInventory(path);
+        for (const [logicalPath, code, bytecode] of [
+          ["PYZ.pyz/app/mod.pyc", 0, true],
+          ["PYZ.pyz/app/pkg/__init__.pyc", 1, true],
+          ["PYZ.pyz/assets/config.json", 2, false],
+          ["PYZ.pyz/app/ns", 3, false],
+        ] as const) {
+          const entry = entries.find(
+            (candidate) => candidate.path === logicalPath,
+          );
+          expect(entry).toMatchObject({
+            encrypted: code === 3 ? false : marker,
+            formatMetadata: {
+              type_code: code,
+              bytecode_header: bytecode
+                ? marker
+                  ? "unknown"
+                  : "derived"
+                : "not-bytecode",
+            },
+          });
+          expect(
+            inventory.occurrences.find(
+              (row) => row.logical_path === logicalPath,
+            ),
+          ).toMatchObject({
+            entry_kind: code === 3 ? "metadata" : "file",
+            encrypted: code === 3 ? false : marker,
+            format_metadata: { type_code: code },
+          });
+          if (!marker && code !== 3) {
+            const bytes = await buffer(await reader.open(entry!));
+            expect(bytes.subarray(bytecode ? 16 : 0).equals(body)).toBe(true);
+            if (bytecode)
+              expect(bytes.subarray(0, 4).equals(PYTHON_39_MAGIC)).toBe(true);
+          }
+        }
+      },
+    );
+  },
+);
+
 it("retains legacy namespace payload extents without materializing them", async () => {
   const image = pyzArchive({
     magic: PYTHON_39_MAGIC,
@@ -661,7 +944,7 @@ it("retains legacy namespace payload extents without materializing them", async 
       expect(
         inventory.occurrences.find((row) => row.logical_path === "PYZ.pyz/ns"),
       ).toMatchObject({
-        entry_kind: "directory",
+        entry_kind: "metadata",
         declared_size: 0,
         compressed_size: length,
         format_metadata: {
@@ -785,7 +1068,7 @@ it.each([false, true])(
             (row) => row.logical_path === "PYZ.pyz/legacy",
           ),
         ).toMatchObject({
-          entry_kind: "directory",
+          entry_kind: "metadata",
           encrypted: marker,
           compressed_size: expect.any(Number),
           format_metadata: {
@@ -797,7 +1080,7 @@ it.each([false, true])(
             (row) => row.logical_path === "PYZ.pyz/empty",
           ),
         ).toMatchObject({
-          entry_kind: "directory",
+          entry_kind: "metadata",
           encrypted: false,
           compressed_size: 0,
           format_metadata: { encryption_source: null },
@@ -904,7 +1187,7 @@ it("retains the producer's nonzero namespace offset without inventing data", asy
       expect(
         inventory.occurrences.find((row) => row.logical_path === "PYZ.pyz/ns"),
       ).toMatchObject({
-        entry_kind: "directory",
+        entry_kind: "metadata",
         declared_size: 0,
         compressed_size: 0,
         format_metadata: {
@@ -1181,7 +1464,9 @@ it.each([true, false])(
           source,
           inventory,
         );
-        expect(await readFile(join(output, path))).toEqual(file.payload);
+        expect(
+          Buffer.compare(await readFile(join(output, path)), file.payload),
+        ).toBe(0);
       },
     );
   },

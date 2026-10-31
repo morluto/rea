@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
-import type { JavaScriptApplicationAnalysisResult } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
+import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { buildJavaScriptNativeHandoffs } from "../../../src/domain/javascript/javascriptNativeHandoff.js";
 import { analyzeJavaScriptApplication } from "../../../src/application/javascript/JavaScriptApplicationService.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -20,8 +20,9 @@ const analyzeFixture = async (source: string) => {
       scope,
     );
     if (!result.ok) throw result.error;
-    return result.value
-      .normalized_result as unknown as JavaScriptApplicationAnalysisResult;
+    return javascriptApplicationAnalysisResultSchema.parse(
+      result.value.normalized_result,
+    );
   } finally {
     await scope.close();
   }
@@ -38,8 +39,8 @@ it("does not request native-addon members from erased TypeScript names", async (
   ).toEqual([]);
   expect(
     buildJavaScriptNativeHandoffs(
-      typeImport.graph.nodes,
-      typeImport.graph.edges,
+      typeImport.graph,
+      new Set(typeImport.graph.nodes.map((node) => node.node_id)),
       [],
     ).flatMap((handoff) => handoff.requested_exports),
   ).toEqual([]);
@@ -53,8 +54,8 @@ it("does not request native-addon members from erased TypeScript names", async (
   ).toEqual([]);
   expect(
     buildJavaScriptNativeHandoffs(
-      typeReexport.graph.nodes,
-      typeReexport.graph.edges,
+      typeReexport.graph,
+      new Set(typeReexport.graph.nodes.map((node) => node.node_id)),
       [],
     ).flatMap((handoff) => handoff.requested_exports),
   ).toEqual([]);
@@ -71,9 +72,11 @@ it("does not request native-addon members from erased TypeScript names", async (
     mixedExports[0]?.observations[0]?.properties.requested_members,
   ).toEqual(["load"]);
   expect(
-    buildJavaScriptNativeHandoffs(mixed.graph.nodes, mixed.graph.edges, []).map(
-      (handoff) => handoff.requested_exports,
-    ),
+    buildJavaScriptNativeHandoffs(
+      mixed.graph,
+      new Set(mixed.graph.nodes.map((node) => node.node_id)),
+      [],
+    ).map((handoff) => handoff.requested_exports),
   ).toEqual([["load"]]);
 
   const value = await analyzeFixture(

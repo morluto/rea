@@ -84,12 +84,23 @@ it("shares a typed string scan across concurrent searches and exact address read
     expect(commands.filter((command) => command !== "--version")).toEqual([
       "strings",
     ]);
-    expect(
-      await client.execute("list_strings", { address: "invalid" }),
-    ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });
+    for (const address of ["invalid", "0x1ffffffffffffffff"])
+      expect(await client.execute("list_strings", { address })).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "AnalysisInputError",
+          issues: [{ path: ["address"], reason: "invalid_format" }],
+        },
+      });
     expect(
       await client.execute("search_strings", { pattern: "[", mode: "regex" }),
-    ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });
+    ).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisInputError",
+        issues: [{ path: ["pattern"], reason: "invalid_format" }],
+      },
+    });
     expect((await run(client, "list_strings")).result).toHaveLength(2);
   } finally {
     expect(await client.close()).toEqual({ ok: true, value: null });

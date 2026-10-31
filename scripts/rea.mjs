@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 
 import { access } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { prepareCliProcessEnvironment } from "./lib/cli-process-environment.mjs";
 
 // Route production MCP before importing Incur. Incur owns registration helpers
 // such as `mcp add`, while the MCP runtime serves the tool catalog over stdio
@@ -11,10 +13,25 @@ const args = process.argv.slice(2);
 const { default: packageJson } = await import("../package.json", {
   with: { type: "json" },
 });
-process.env.REA_PACKAGE_VERSION = packageJson.version;
-const isMcpEntry = args[0] === "--mcp" || args[0] === "mcp";
+prepareCliProcessEnvironment(
+  process.env,
+  process.platform,
+  packageJson.version,
+);
+const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const builtinArgumentRuntime = "dist/cli-runtime/cliBuiltinArguments.js";
+const builtinArguments = (await compiledRuntimeExists([builtinArgumentRuntime]))
+  ? await import("../dist/cli-runtime/cliBuiltinArguments.js")
+  : undefined;
+const isShellCompletion =
+  builtinArguments?.cliCompletionShell?.(process.env) !== undefined;
+const doctorArguments = isShellCompletion
+  ? undefined
+  : builtinArguments?.productionMcpDoctorArguments(args);
+const isMcpEntry =
+  !isShellCompletion && (args[0] === "--mcp" || args[0] === "mcp");
 const isMcpMode = isMcpEntry && args.length === 1;
-const isMcpDoctorMode = args[0] === "mcp" && args[1] === "doctor";
+const isMcpDoctorMode = doctorArguments !== undefined;
 // Only flags may follow the entry: `mcp add --http` stays Incur's `mcp add`,
 // while `mcp -h --http` reaches the HTTP entry's own help.
 const isMcpHttpMode =
@@ -25,30 +42,9 @@ const isMcpHttpMode =
 const SIGPIPE_EXIT_STATUS = 141;
 // Set once the reader of CLI output has closed the pipe.
 let stdoutClosed = false;
-const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-
-// Windows home lookup throws for an empty USERPROFILE. Dependencies resolve
-// home during import, before REA's own resolver can apply its account fallback.
-if (process.platform === "win32" && process.env.USERPROFILE === "") {
-  delete process.env.USERPROFILE;
-}
-
-// Playwright's registry assumes one of its three desktop host platforms when
-// it chooses the browser cache directory. Termux reports `android`, although
-// its Node runtime and filesystem are POSIX-compatible. Keep the cache path
-// explicit so REA can start on Termux. Browser launch still requires a
-// caller-supplied Android-compatible Chromium executable.
-if (
-  process.platform === "android" &&
-  process.env.PLAYWRIGHT_BROWSERS_PATH === undefined
-) {
-  const cacheRoot =
-    process.env.XDG_CACHE_HOME ?? join(process.env.HOME ?? ".", ".cache");
-  process.env.PLAYWRIGHT_BROWSERS_PATH = join(cacheRoot, "ms-playwright");
-}
-
-const runtimeFiles =
-  isMcpMode || isMcpHttpMode
+const runtimeFiles = [
+  builtinArgumentRuntime,
+  ...(isMcpMode || isMcpHttpMode
     ? ["dist/mcp/main.js"]
     : isMcpDoctorMode
       ? ["dist/mcp/main.js", "dist/cli-runtime/mcpDoctor.js"]
@@ -56,7 +52,8 @@ const runtimeFiles =
           "dist/cli-runtime/cli.js",
           "dist/cli-runtime/cliOutput.js",
           "dist/cli-runtime/cliResultOutput.js",
-        ];
+        ]),
+];
 
 if (!(await compiledRuntimeExists(runtimeFiles))) {
   process.stderr.write(
@@ -71,45 +68,94 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
   await runMcpHttpEntrypoint(args.slice(1));
 } else if (isMcpDoctorMode) {
   guardClosedStdout();
-  const { runProductionMcpDoctorCli } =
-    await import("../dist/cli-runtime/mcpDoctor.js");
-  const result = await runProductionMcpDoctorCli(args.slice(2), {
-    dispatcherPath: fileURLToPath(import.meta.url),
-    packageRoot,
-  });
-  writeStdout(result.output);
-  process.exitCode = result.exitCode;
+  // Doctor runs outside Incur, so handle its global timing flag here. Keep a
+  // token consumed by --format as a value, even when it looks like a flag.
+  const outputValues = new Set(
+    builtinArguments
+      .splitIncurBuiltinArguments(doctorArguments)
+      .outputValues.map(({ index }) => index),
+  );
+  const doctorCliArguments = doctorArguments.filter(
+    (argument, index) => argument !== "--timings" || outputValues.has(index),
+  );
+  const timingRequested = doctorCliArguments.length !== doctorArguments.length;
+  const started = performance.now();
+  try {
+    const { runProductionMcpDoctorCli } =
+      await import("../dist/cli-runtime/mcpDoctor.js");
+    const result = await runProductionMcpDoctorCli(doctorCliArguments, {
+      dispatcherPath: fileURLToPath(import.meta.url),
+      packageRoot,
+      stdoutIsTerminal: process.stdout.isTTY === true,
+    });
+    writeStdout(result.output);
+    process.exitCode = result.exitCode;
+  } finally {
+    if (timingRequested)
+      process.stderr.write(
+        `${JSON.stringify({ rea_timings: { version: 1, command_ms: Math.round(performance.now() - started) } })}\n`,
+      );
+  }
 } else {
-  const { cliConfigurationError, closeCliJavaScriptResources, createCli } =
-    await import("../dist/cli-runtime/cli.js");
-  const { createCliResultOutput } =
-    await import("../dist/cli-runtime/cliResultOutput.js");
   const {
-    normalizeCliArguments,
+    cliConfigurationError,
     renderCliOutputArgumentError,
     renderEmptyFilteredCliOutput,
-    validateCliOutputArguments,
+    renderVersionReport,
+    parseCliOutputArguments,
   } = await import("../dist/cli-runtime/cliOutput.js");
   guardClosedStdout();
-  const cliArgs = normalizeCliArguments(args);
-  const outputArguments = validateCliOutputArguments(cliArgs);
+  const cliArgs = isShellCompletion
+    ? args
+    : builtinArguments.normalizeCliArguments(args);
+  // Completion words are transport data, including partial output flags.
+  const outputOptions = parseCliOutputArguments(
+    isShellCompletion ? [] : cliArgs,
+  );
+  const outputArguments = outputOptions.validation;
+  // `--version` with an explicit format reports the runtime as a document;
+  // plain `--version` stays Incur's bare version string.
+  const versionOutput = renderVersionReport(
+    outputOptions,
+    {
+      packageName: packageJson.name,
+      packageVersion: packageJson.version,
+      versions: process.versions,
+      platform: process.platform,
+      architecture: process.arch,
+    },
+    process.stdout.isTTY === true,
+  );
   const configurationError = cliConfigurationError(process.env);
   let dispatchFailure;
+  let closeCliResources;
   // Incur can exit from the callback below before this function returns.
   // That callback owns the status, including a closed-pipe exit of 141.
   let exiting = false;
   try {
     // Doctor is the readiness report for this failure. Other commands still stop
     // here so they do not run with an unusable log level.
-    if (configurationError !== undefined && !isDoctorCommand(cliArgs)) {
+    if (
+      configurationError !== undefined &&
+      (isShellCompletion ||
+        builtinArguments.splitIncurBuiltinArguments(cliArgs).command[0] !==
+          "doctor")
+    ) {
       process.stderr.write(`${configurationError}\n`);
       process.exitCode = 1;
     } else if (!outputArguments.ok) {
       writeStdout(renderCliOutputArgumentError(outputArguments));
       process.exitCode = 1;
+    } else if (versionOutput !== undefined) {
+      writeStdout(versionOutput);
     } else {
+      const cliRuntime = await import("../dist/cli-runtime/cli.js");
+      closeCliResources = cliRuntime.closeCliResources;
+      const { createCli } = cliRuntime;
+      const { createCliResultOutput } =
+        await import("../dist/cli-runtime/cliResultOutput.js");
       let wroteOutput = false;
-      const resultOutput = createCliResultOutput(cliArgs, process.stdout);
+      const resultOutput = createCliResultOutput(outputOptions, process.stdout);
       try {
         await createCli(process.env, resultOutput).serve(cliArgs, {
           stdout: (output) => {
@@ -119,6 +165,7 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
               return;
             }
             if (output.length > 0) wroteOutput = true;
+            if (resultOutput?.captureSdkOutput(output)) return;
             writeStdout(output);
           },
           // A command failure caused by the closed pipe keeps the pipe's status.
@@ -126,26 +173,25 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
           // shutdown is reported here because this callback is what exits.
           exit: (code) => {
             exiting = true;
-            const status = stdoutClosed ? SIGPIPE_EXIT_STATUS : code;
-            void Promise.resolve()
-              .then(() => closeCliJavaScriptResources())
-              .then(
-                () => {
-                  process.exit(status);
-                },
-                (cleanup) => {
-                  process.stderr.write(
-                    `Failed to close the JavaScript analysis worker: ${cleanupFailureText(cleanup)}\n`,
-                  );
-                  process.exit(
-                    stdoutClosed
-                      ? SIGPIPE_EXIT_STATUS
-                      : status === 0
-                        ? 1
-                        : status,
-                  );
-                },
-              );
+            void (async () => {
+              let status = code;
+              try {
+                await closeCliResources();
+              } catch (cleanup) {
+                process.stderr.write(
+                  `Failed to close CLI resources: ${cleanupFailureText(cleanup)}\n`,
+                );
+                if (status === 0) status = 1;
+              }
+              try {
+                await resultOutput?.finishSdkOutput(code);
+              } catch (cause) {
+                if (!stdoutClosed)
+                  process.stderr.write(`${cleanupFailureText(cause)}\n`);
+                if (status === 0) status = 1;
+              }
+              process.exit(stdoutClosed ? SIGPIPE_EXIT_STATUS : status);
+            })();
           },
         });
       } catch (cause) {
@@ -162,15 +208,24 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
         process.exitCode = stdoutClosed ? SIGPIPE_EXIT_STATUS : 1;
       }
       if (!wroteOutput && !resultOutput?.handled)
-        writeStdout(renderEmptyFilteredCliOutput(cliArgs) ?? "");
+        writeStdout(renderEmptyFilteredCliOutput(outputOptions) ?? "");
+      // An SDK failure exits through the callback, which owns its pending write.
+      if (!exiting)
+        await resultOutput?.finishSdkOutput(
+          typeof process.exitCode === "number" ? process.exitCode : 0,
+        );
     }
   } catch (cause) {
+    if (cause?.code === "EPIPE") {
+      stdoutClosed = true;
+      process.exitCode = SIGPIPE_EXIT_STATUS;
+    }
     dispatchFailure = cause;
   } finally {
     // Serve and output rendering can throw after a worker is parked. Stop it
     // on that path too, and keep the dispatch failure when both fail.
     try {
-      await closeCliJavaScriptResources();
+      await closeCliResources?.();
     } catch (cleanup) {
       // The exit callback reports this same shared failure and then exits.
       if (!exiting) {
@@ -184,28 +239,12 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
       }
     }
   }
-  if (!exiting && dispatchFailure !== undefined) throw dispatchFailure;
-}
-
-/** True when the first positional command is `doctor`, after global output flags. */
-function isDoctorCommand(arguments_) {
-  const valuedFlags = new Set([
-    "--format",
-    "--filter-output",
-    "--token-limit",
-    "--token-offset",
-  ]);
-  for (let index = 0; index < arguments_.length; index += 1) {
-    const argument = arguments_[index];
-    if (argument === "--") return arguments_[index + 1] === "doctor";
-    if (valuedFlags.has(argument)) {
-      index += 1;
-      continue;
-    }
-    if (argument.startsWith("-")) continue;
-    return argument === "doctor";
-  }
-  return false;
+  if (
+    !exiting &&
+    dispatchFailure !== undefined &&
+    !(stdoutClosed && dispatchFailure?.code === "EPIPE")
+  )
+    throw dispatchFailure;
 }
 
 /**

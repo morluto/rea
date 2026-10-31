@@ -12,10 +12,22 @@ import { readMachoImage } from "../../../src/native/metadata/MachoImage.js";
 import { readBinaryContainer } from "../../../src/native/metadata/readBinaryContainer.js";
 import {
   createGoBinaryFixture,
+  createGoBinaryByteStringFixture,
+  createGoPeHeaderPointerFixture,
   createGoSplitElfFixture,
   createGoOverlappingElfFixture,
   GO_MODULE_TEXT,
 } from "../../fixtures/go/image.js";
+
+it("uses the shared ELF classifier for Go image architecture", () => {
+  const fixture = createGoBinaryFixture({ omitBuildInfo: true });
+  fixture.bytes.writeUInt16LE(164, 18); // ELF EM_HEXAGON.
+  expect(readGoBinaryImage(fixture.bytes)).toMatchObject({
+    format: "elf",
+    architecture: "hexagon",
+    build_info: null,
+  });
+});
 
 it("preserves exact Mach-O protection masks for Go fallback selection", () => {
   const { bytes } = createGoBinaryFixture({
@@ -176,10 +188,40 @@ it.each([
           offset: fixture.moduleOffset,
           bytes: fixture.moduleBytes.length,
         },
+        module: {
+          path: "example.com/tool/cmd/tool",
+          main: { path: "example.com/tool", version: "(devel)", sum: "" },
+          dependencies: [
+            {
+              path: "example.com/dependency",
+              version: "v1.2.3",
+              replacement: { path: "../dependency", version: "", sum: "" },
+            },
+          ],
+          complete: true,
+        },
       },
     });
   },
 );
+
+it("reads inline build strings past the ELF build-info discovery section", () => {
+  const fixture = createGoBinaryFixture();
+  const buildInfoSection = 256 + 64 * 2;
+  fixture.bytes.writeBigUInt64LE(32n, buildInfoSection + 32);
+
+  expect(readGoBinaryImage(fixture.bytes).build_info).toMatchObject({
+    header_offset: fixture.headerOffset,
+    encoding: "inline",
+    go_version: "go1.26.0",
+    module_text: GO_MODULE_TEXT,
+    version_location: { offset: fixture.versionOffset, bytes: 8 },
+    module_location: {
+      offset: fixture.moduleOffset,
+      bytes: fixture.moduleBytes.length,
+    },
+  });
+});
 
 it.each(["elf", "pe", "macho"] as const)(
   "follows mapped pointers in legacy %s metadata",
@@ -236,6 +278,23 @@ it("refuses mapped pointer lengths outside the file instead of rounding 64-bit a
   expect(() => readGoBinaryImage(length.bytes)).toThrowError(/limit|length/i);
 });
 
+it.each(["file bytes", "zero-fill"])(
+  "refuses a header-backed PE module descriptor contradicted by %s",
+  (alias) => {
+    const { bytes } = createGoPeHeaderPointerFixture(64, "descriptors");
+    const section = 152 + bytes.readUInt16LE(148) + 40;
+    bytes.writeUInt16LE(2, 134);
+    bytes.write(".alias", section, "ascii");
+    bytes.writeUInt32LE(16, section + 8);
+    bytes.writeUInt32LE(528, section + 12);
+    if (alias === "file bytes") {
+      bytes.writeUInt32LE(16, section + 16);
+      bytes.writeUInt32LE(1536, section + 20);
+    }
+    expect(() => readGoBinaryImage(bytes)).toThrowError(/ambiguous/i);
+  },
+);
+
 it("refuses overlong or truncated varints before decoding or allocating strings", () => {
   const fixture = createGoBinaryFixture();
   fixture.bytes.fill(
@@ -263,6 +322,12 @@ it("refuses invalid module framing and preserves BOMs without replacement decodi
   expect(readGoBinaryImage(bom.bytes).build_info).toMatchObject({
     go_version: "\ufeffgo1.26.0",
     module_text: "\ufeffpath\tx\n",
+    module: {
+      path: null,
+      unparsed_lines: ["\ufeffpath\tx"],
+      unparsed_line_bytes_base64: [],
+      complete: false,
+    },
   });
 });
 
@@ -298,6 +363,13 @@ it("preserves non-UTF8 compiler and module bytes without rejecting other observe
       )
       .toString("base64"),
   });
+});
+
+it("retains parsed neighboring module records and exact invalid UTF-8 lines at the image boundary", () => {
+  const fixture = createGoBinaryByteStringFixture();
+  expect(readGoBinaryImage(fixture.bytes).build_info).toEqual(
+    fixture.expectedBuildInfo,
+  );
 });
 
 it.each([0, 4, 16])("ignores unused inline pointer width %s", (width) => {
@@ -358,8 +430,13 @@ it("distinguishes unsupported containers from malformed recognized images", () =
     /truncated/i,
   );
   const pe = createGoBinaryFixture({ format: "pe" });
+  expect(() => readGoBinaryImage(pe.bytes.subarray(0, 144))).toThrowError(
+    /range|truncated/i,
+  );
   pe.bytes.writeUInt32LE(0xfffffff0, 60);
-  expect(() => readGoBinaryImage(pe.bytes)).toThrowError(/range|truncated/i);
+  expect(() => readGoBinaryImage(pe.bytes)).toThrowError(
+    /MZ Windows new-header candidate is unresolved/i,
+  );
 });
 
 it("reports JVM class files as unsupported images instead of fat Mach-O containers", () => {
@@ -502,6 +579,15 @@ it.each(legacyLayouts)(
       module_text: "",
       module_bytes_base64: "",
       module_location: { offset: fixture.moduleField, bytes: 0 },
+      module: {
+        path: null,
+        main: null,
+        dependencies: [],
+        settings: [],
+        unparsed_lines: [],
+        unparsed_line_bytes_base64: [],
+        complete: true,
+      },
     });
   },
 );

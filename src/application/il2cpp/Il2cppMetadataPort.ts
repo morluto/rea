@@ -12,7 +12,7 @@ import type { Result } from "../../domain/result.js";
 /** Replaceable offline metadata reader with no target-execution or decryption authority. */
 export interface Il2cppMetadataPort {
   readonly identity: ProviderIdentity;
-  close?(): Promise<void>;
+  close(): Promise<void>;
   inspect(
     input: Il2cppMetadataProviderInput,
     options?: ExecutionOptions,

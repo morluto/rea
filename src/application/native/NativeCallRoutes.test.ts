@@ -1,6 +1,10 @@
+import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
 import { describe, expect, it } from "vitest";
 import { readNativeCallRoutes } from "./NativeCallRoutes.js";
-import { createAnalysisExecution } from "../AnalysisProvider.js";
+import {
+  createAnalysisExecution,
+  type AnalysisOperation,
+} from "../AnalysisProvider.js";
 import { ghidraReferenceEdge } from "../../domain/ghidraValues.fixture.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
 import { err, ok } from "../../domain/result.js";
@@ -575,3 +579,63 @@ describe("missing unresolved-call observations", () => {
     expect(calls).toBe(1);
   });
 });
+
+it.each([false, true])(
+  "preserves capability cleanup ownership (incomplete=%s)",
+  async (incomplete) => {
+    const failure = new AnalysisCapabilityUnavailableError(
+      provider.id,
+      "procedure_references",
+      "Typed references unavailable",
+      incomplete
+        ? { cleanup: { reason: "release failed", resources: ["route-owner"] } }
+        : undefined,
+    );
+    const owner = {
+      cleanupResources: incomplete ? ["route-owner"] : ([] as string[]),
+    };
+    failure.bindCleanupResourceOwner(owner);
+    const lease = new AnalysisCleanupLease(async () => {
+      owner.cleanupResources = [];
+    }, owner);
+    lease.bindCleanupError(failure);
+    const calls: string[] = [];
+    const analysis = {
+      execute: async (operation: AnalysisOperation) => {
+        calls.push(operation);
+        return operation === "procedure_references"
+          ? err(failure)
+          : ok(createAnalysisExecution(["0x2000"], provider));
+      },
+    };
+    const result = await readNativeCallRoutes(analysis, "0x1000");
+    expect(calls).toEqual(
+      incomplete
+        ? ["procedure_references"]
+        : ["procedure_references", "procedure_callees"],
+    );
+    if (incomplete) {
+      expect(result.outcome).toEqual(err(failure));
+      if (result.outcome.ok) throw new Error("Expected retained cleanup error");
+      expect(result.outcome.error).toBe(failure);
+      expect(result.outcome.error.cleanupResources).toEqual(["route-owner"]);
+      await lease.release();
+      expect(result.outcome.error.cleanupResources).toEqual([]);
+      const recovered = await readNativeCallRoutes(analysis, "0x1000");
+      expect(recovered.outcome.ok).toBe(true);
+      expect(calls).toEqual([
+        "procedure_references",
+        "procedure_references",
+        "procedure_callees",
+      ]);
+    } else {
+      expect(result.outcome.ok).toBe(true);
+      expect(result.routes).toContainEqual(
+        expect.objectContaining({
+          address: "0x2000",
+          relation: "provider_call",
+        }),
+      );
+    }
+  },
+);

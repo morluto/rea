@@ -27,10 +27,37 @@ selected fields.
 Conflicting base architectures retain both values, mark object/report/target
 coverage partial and annotate the affected kernels. CUBIN flags establish a base
 architecture: `base-only` explicitly leaves feature-profile agreement unknown,
-including `a` variants. A standalone declaration is `single-source`, and
+including `a` and `f` variants. A standalone declaration is `single-source`, and
 unexamined payloads remain `unexamined`. An exact AMDGPU target is normalized at
 its note owner for comparison with a Clang bundle declaration; raw values remain
 intact. Unresolved feature comparisons stay `unknown`.
+
+A HIP target ID identifies a toolchain target, not its payload representation.
+Recognized raw or wrapped LLVM bitcode stays `unsupported` for kernel metadata
+inspection, with the bundle ID, range and selected payload digest retained.
+Bitcode validity and inner targets remain unexamined; malformed recognized ELF
+still reports `malformed`. Standalone bitcode is outside GPU container coverage.
+
+HIP bundle and metadata note recognition accept both the legacy `amdgcn` triple
+and LLVM's `amdgpu` subarchitecture triples, including declared generic processors
+such as `gfx11-generic` and `gfx9-4-generic`. Notes with the empty or explicit
+`unknown` environment use the same processor and feature comparison while
+retaining their raw triple spelling. CUDA's legacy fatbinary compression flag is
+retained as an unsupported codec with its encoded and decoded extents;
+compressed bytes are not treated as PTX text. CCOB is recognized by the exact
+four signature bytes `CCOB`; high-bit-corrupted bytes are not decoded as ASCII
+and accepted as a bundle. CCOB v1 has no stored total size: the completed zlib
+or Zstd stream determines its encoded extent. Embedded `CCOB` text is ordinary
+compressed data; zero-byte alignment after the stream belongs to neither
+payload. If decoding fails or its codec is unsupported, a later `CCOB` marker
+is only an uncertain recovery candidate. The affected row retains that
+limitation and discovery remains partial.
+
+The declared decoded length bounds decompression. An understated length can
+stop decoding before codec completion, so any subsequent recovery extent stays
+unknown; the decoder does not expand its allowance to prove the bad declaration.
+Interrupted observations omit unfinished v1 rows. A terminal capacity row
+qualifies its retained range as the containing tail and does not infer siblings.
 
 `cuda_target_header` retains the OS ABI, normalized raw `e_flags` and exact
 header location. CUDA OS ABI `0x33` and the observed `0x41` flags layout use
@@ -43,8 +70,8 @@ target remains unexamined; an empty filtered result does not establish that
 no enclosed code declares that target. Discovering every inner declaration
 requires decoding those payloads.
 
-HIP IDs with one or two separators before the architecture retain the declared
-target. If a recognized AMDGPU bundle ID does not expose a target, the same
+HIP bundle IDs retain the declared processor and v2-v3 `+feature` suffixes for
+exact selection. If a recognized AMDGPU bundle ID does not expose a target, the same
 bounded note-discovery owner used for standalone AMDGPU files establishes it
 before filtering. Those directory/note reads share the inspection work budget;
 successive queries can select the target returned by inventory.
@@ -81,15 +108,42 @@ Kernel representations have different meanings:
 - PTX reports parameter declarations and virtual registers. Shared bytes cover
   supported static declarations inside that entry; they do not establish module
   shared memory, dynamic allocation or physical device resources.
+  PTX 1.0–1.3 declares entry parameters in the body; PTX 1.4 and later uses the
+  entry parameter list. Entry-scoped `.pragma` statements before the body do
+  not end the declaration or suppress its body resources. A `.target
+  compute_xx` spelling is retained as written;
+  NVIDIA PTX defines it as a synonym for `.target sm_xx` when comparing its
+  target identity with the fatbin declaration. `.callprototype` formal
+  parameters are excluded from entry virtual-register counts. Parameter names
+  remain available when pointer qualifiers are understood or an unsupported
+  qualifier prevents layout decoding. A pointer's `.align` describes the
+  pointed-to memory and does not change parameter layout alignment. Spaced,
+  joined and partly joined pointer qualifiers have the same meaning. Parameter
+  alignment before or after the scalar type retains its layout and name.
+  Parameter names and following declarations are retained when an array
+  extent uses a parenthesized expression or when dimensions are
+  multidimensional, even though those forms do not currently yield a layout.
+  PTX target selection uses the highest-numbered module-scope `.target`
+  directive, including directives after entry declarations; unsupported or
+  conflicting target profiles leave the effective target unknown.
   Scalar register declarations count each bare or percent-prefixed name and
-  each parameterized range. Unsupported declaration forms or overflowing totals
+  each parameterized range, including compact keywords such as `.reg.b32`.
+  Unsupported declaration forms or overflowing totals
   retain an unknown count and partial decoding coverage. Unsupported parameter
   layouts and unknown shared-memory declarations likewise retain their known
   facts, explicit limitations and partial coverage through retained pages.
-- CUBIN identifies CUDA entry symbols and reads numeric `nv.info` records and
-  native section declarations. Global register declarations also cover compiler
+- CUBIN identifies CUDA entry symbols and reads numeric `nv.info` records,
+  including V2 kernel-parameter sizes, and native section declarations. Global
+  register declarations also cover compiler
   versions that leave the older text-section register field empty.
-- AMDGPU reads v3+ MessagePack notes. Argument counts include hidden ABI arguments
+  Conflicting register declarations keep the physical count unknown, preserve the
+  kernel's other facts, and mark object/report/target decoding coverage partial.
+- AMDGPU reads v3+ MessagePack notes. V3 processor identity comes from the
+  `EF_AMDGPU_MACH` field in ELF `e_flags`; known processor values are selectable
+  even when the note omits `amdhsa.target`. This inventory reports the processor
+  only; it does not interpret version-specific feature flags. Unknown processor values remain unknown. A known
+  processor conflict between ELF flags and note metadata leaves the processor
+  unresolved. Argument counts include hidden ABI arguments
   when present; SGPR/VGPR counts and fixed group/private segment sizes retain
   their declared meanings. Legacy YAML metadata remains unsupported.
 
@@ -119,7 +173,9 @@ A location with `container_id: null` uses original file offsets. Other locations
 use that inventoried object's decoded byte coordinates. Follow its parent,
 encoded location and digest to trace decompressed metadata back to a native
 section and the original file. Decoded offsets are never presented as physical
-file offsets.
+file offsets. Reads from an ELF or PE GPU section stay within that declared
+section extent, so neighboring native section bytes cannot complete a
+truncated embedded bundle header.
 
 The CLI uses the same service and contracts:
 
@@ -164,3 +220,5 @@ failures preserve earlier successfully parsed declarations and the original
 failure reason. Standalone PTX recognition tries a small header first, then
 continues within the existing 16 MiB text budget when leading comments or
 whitespace obscure its directives; admitted full-file probe bytes are reused.
+After those comments and whitespace, `.version` must be the first PTX module
+token; later PTX-looking text does not identify an arbitrary binary as PTX.

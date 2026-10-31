@@ -1,6 +1,11 @@
+import type { EspFlashSelection } from "../../domain/firmware/espFlashLocation.js";
 import type { ExecutableFormatHint } from "../../domain/dosCom.js";
-import type { BinaryArchitecture } from "../../domain/binaryTargetTypes.js";
-import type { AnalysisProviderSelector } from "../../contracts/providerSelection.js";
+import type {
+  BinaryArchitecture,
+  BinaryTarget,
+} from "../../domain/binaryTargetTypes.js";
+import { artifactTargetSelectedPath } from "../../domain/binaryTargetTypes.js";
+import type { AnalysisProviderSelector } from "../../domain/providerSelection.js";
 import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js";
 import {
   snapshotMatchesBinding,
@@ -9,7 +14,7 @@ import {
 } from "../../domain/analysisSnapshot.js";
 import type { AnalysisSnapshot } from "../../domain/analysisSnapshot.js";
 import { parseBinaryTarget } from "../BinaryTargetResolver.js";
-import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
+import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import {
   EvidenceIntegrityError,
   AnalysisSnapshotMismatchError,
@@ -34,6 +39,8 @@ export interface BinarySessionOpenOptions {
   readonly formatHint?: ExecutableFormatHint;
   readonly architecture?: BinaryArchitecture;
   readonly entryPoint?: string;
+  /** Inputs for format=esp-flash-image. */
+  readonly espFlash?: EspFlashSelection;
   readonly snapshot?: AnalysisSnapshot;
   /**
    * Load the snapshot inside the open's turn instead of before it, so calls
@@ -61,6 +68,7 @@ export interface ResolvedSessionOpen {
 }
 
 interface ResolveSessionOpenInput {
+  readonly resources: ArtifactResourceScope;
   readonly router: SessionProviderRouter;
   readonly current: CurrentOpenBinding | undefined;
   readonly path: string;
@@ -88,6 +96,7 @@ export const resolveSessionOpen = async (
 ): Promise<Result<ResolvedSessionOpen, AnalysisError>> => {
   const { path, options } = input;
   const parsed = await parseBinaryTarget(path, {
+    resources: input.resources,
     ...(options.targetKind === undefined
       ? {}
       : { targetKind: options.targetKind }),
@@ -100,6 +109,7 @@ export const resolveSessionOpen = async (
     ...(options.entryPoint === undefined
       ? {}
       : { entryPoint: options.entryPoint }),
+    ...(options.espFlash === undefined ? {} : { espFlash: options.espFlash }),
     ...(options.signal === undefined ? {} : { signal: options.signal }),
   });
   if (!parsed.ok) return parsed;
@@ -151,6 +161,8 @@ const sameSessionTarget = (
   current.path === target.path &&
   // Native admission is bound to the requested path, not just its realpath.
   (current.sourcePath ?? current.path) === (target.sourcePath ?? target.path) &&
+  // Artifact name hints and companions depend on the selected spelling.
+  artifactTargetSelectedPath(current) === artifactTargetSelectedPath(target) &&
   snapshotMatchesTarget(snapshotTarget(current), target);
 
 interface ValidateSnapshotInput {

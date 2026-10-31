@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, realpath, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -67,9 +67,14 @@ export class PrivateRuntimeRoot {
       );
       return new PrivateRuntimeRoot(runtime.observation.path, runtime);
     }
-    const path = await mkdtemp(
-      join(options.parent ?? tmpdir(), options.prefix ?? "rea-provider-"),
-    );
+    const selectedParent = options.parent ?? tmpdir();
+    // The final dot requires a native directory lookup, preserving the host's
+    // failure code and path. An explicitly empty selection remains invalid.
+    await stat(selectedParent === "" ? selectedParent : `${selectedParent}/.`);
+    // Canonicalize only after native admission so consumers share one physical
+    // spelling without collapsing an invalid file/.. traversal on Darwin.
+    const parent = await realpath(selectedParent);
+    const path = await mkdtemp(join(parent, options.prefix ?? "rea-provider-"));
     // POSIX mkdtemp establishes owner-only access atomically. Return its owner
     // without a fallible permission rewrite and rollback after allocation.
     return new PrivateRuntimeRoot(path);

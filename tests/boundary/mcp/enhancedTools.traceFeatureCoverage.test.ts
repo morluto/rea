@@ -7,6 +7,7 @@ import { AnalysisOutputError } from "../../../src/domain/analysisErrorCore.js";
 import { err, ok } from "../../../src/domain/result.js";
 
 import { closeEnhancedToolResources, connect } from "./enhancedToolsHarness.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 
 afterEach(closeEnhancedToolResources);
 
@@ -116,11 +117,6 @@ const expectedTrace = (
       source_address: "0x21",
       containing_procedure: containing("0x21"),
     },
-    ...extraMatches.map(() => ({
-      target_address: "0x10",
-      source_address: "0x20",
-      containing_procedure: containing("0x20"),
-    })),
   ].filter(
     ({ target_address }) => !emptyReferenceTargets.includes(target_address),
   ),
@@ -200,7 +196,7 @@ describe("trace_feature reference coverage", () => {
     ]);
     expect(
       output.normalized_result,
-      "every reference is still reported with its containing procedure",
+      "each target's reference set is reported once with its containing procedure",
     ).toEqual(
       expectedTrace(
         [],
@@ -265,5 +261,158 @@ describe("trace_feature reference coverage", () => {
 
     expect(result.ok).toBe(false);
     expect(calls.filter((call) => call.startsWith("xrefs:"))).toEqual([]);
+  });
+});
+
+it("preserves string search qualifications in trace matches without fabricating them for procedures", async () => {
+  const baseline = provider({ duplicateProcedure: true });
+  const row = {
+    address: "0x10",
+    value: "hello",
+    provider_value: "provider display",
+    decoding: { available: false, reason: "Typed bytes were unavailable." },
+    string: {
+      encoding: "utf-8",
+      encoding_status: "inferred",
+      termination: "missing",
+      byte_length: 5,
+    },
+  } as const;
+  const output = await trace({
+    execute: (operation, input, options) =>
+      operation === "search_strings"
+        ? Promise.resolve(ok(createAnalysisExecution([row], PROVIDER)))
+        : baseline.execute(operation, input, options),
+  });
+  expect(output.normalized_result).toMatchObject({
+    matches: [
+      { ...row, type: "string" },
+      { type: "procedure", address: "0x10", value: "hello" },
+    ],
+  });
+  expect(
+    (output.normalized_result as { matches: object[] }).matches[1],
+  ).not.toHaveProperty("string");
+});
+
+it("retains each same-address string encoding and reuses the address reference observation", async () => {
+  const calls: string[] = [];
+  const baseline = provider({ calls });
+  // Kuna's canonical inventory identity includes the encoding at each address.
+  const rows = ["ascii", "utf8", "utf16"].map((encoding) => ({
+    address: "0x10",
+    value: "hello",
+    string: {
+      encoding,
+      encoding_status: "observed" as const,
+      termination: "present_or_not_required" as const,
+      byte_length: encoding === "utf16" ? 12 : 6,
+    },
+  }));
+  const output = await trace({
+    execute: (operation, input, options) =>
+      operation === "search_strings"
+        ? Promise.resolve(ok(createAnalysisExecution(rows, PROVIDER)))
+        : baseline.execute(operation, input, options),
+  });
+  expect(output.normalized_result).toMatchObject({
+    matches: rows.map((row) => ({ ...row, type: "string" })),
+    references: [
+      {
+        target_address: "0x10",
+        source_address: "0x20",
+        containing_procedure: containing("0x20"),
+      },
+    ],
+  });
+  expect(calls.filter((call) => call.startsWith("xrefs:"))).toEqual([
+    "xrefs:0x10",
+  ]);
+  expect(
+    calls.filter((call) => call.startsWith("resolve_containing_procedure:")),
+  ).toEqual(["resolve_containing_procedure:0x20"]);
+});
+
+it("keeps duplicate reference rows reported by one provider observation", async () => {
+  const baseline = provider();
+  const output = await trace({
+    execute: (operation, input, options) =>
+      operation === "xrefs"
+        ? Promise.resolve(
+            ok(createAnalysisExecution(["0x20", "0x20"], PROVIDER)),
+          )
+        : baseline.execute(operation, input, options),
+  });
+  expect(output.normalized_result).toMatchObject({
+    references: ["0x10", "0x10", "0x11", "0x11"].map((address) => ({
+      target_address: address,
+      source_address: "0x20",
+      containing_procedure: containing("0x20"),
+    })),
+  });
+});
+
+it.each([
+  null,
+  {},
+  { query_address: "0x20", found: true, procedure: null },
+  { query_address: "0x20", found: false, procedure: null },
+])(
+  "returns a typed failure for malformed trace reference resolution: %j",
+  async (resolution) => {
+    const baseline = provider();
+    const client = await connect({
+      execute: (operation, input, options) =>
+        operation === "resolve_containing_procedure"
+          ? Promise.resolve(ok(createAnalysisExecution(resolution, PROVIDER)))
+          : baseline.execute(operation, input, options),
+    });
+    const result = await client.callTool({
+      name: "trace_feature",
+      arguments: { query: "hello" },
+    });
+    expect(JSON.stringify(result.content)).not.toContain(
+      "Output validation error",
+    );
+    expect(parseMcpToolError(result).error).toMatchObject({
+      code: "unreadable_output",
+      details: { operation: "resolve_containing_procedure" },
+    });
+  },
+);
+
+it("retains a validated containing procedure and its unavailable body facts", async () => {
+  const baseline = provider();
+  const resolution = {
+    query_address: "0x20",
+    found: true,
+    procedure: {
+      address: "0x20",
+      name: "hello_caller",
+      classification: null,
+      body: { available: false, reason: "Provider has no function ranges." },
+    },
+  } as const;
+  const output = await trace({
+    execute: (operation, input, options) =>
+      operation === "resolve_containing_procedure"
+        ? Promise.resolve(
+            ok(
+              createAnalysisExecution(
+                { ...resolution, query_address: String(input.address) },
+                PROVIDER,
+              ),
+            ),
+          )
+        : baseline.execute(operation, input, options),
+  });
+  expect(output.normalized_result).toMatchObject({
+    references: [
+      { source_address: "0x20", containing_procedure: resolution },
+      {
+        source_address: "0x21",
+        containing_procedure: { ...resolution, query_address: "0x21" },
+      },
+    ],
   });
 });

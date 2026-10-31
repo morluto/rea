@@ -3,7 +3,7 @@ import type { ModelArtifactPort } from "../application/model/ModelArtifactPort.j
 import {
   createModelArtifactEvidence,
   createModelArtifactPartialEvidence,
-} from "../application/model/ModelArtifactEvidence.js";
+} from "../domain/model/modelArtifactEvidence.js";
 import type { ExecutionOptions } from "../application/AnalysisProvider.js";
 import type {
   ModelArtifact,
@@ -30,10 +30,9 @@ import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   withArtifactRegularFile,
   bindArtifactFileCleanup,
-  artifactFilePrimaryFailure,
+  artifactFilePrimaryFacts,
   artifactFileCancellationCause,
-  ArtifactFileCancelled,
-  ArtifactFileCleanupFailure,
+  artifactFileCompletion,
 } from "../artifacts/ArtifactFileOperation.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ModelHeaderReader } from "./ModelHeaderReader.js";
@@ -41,15 +40,16 @@ import { GgufHeader } from "./GgufHeader.js";
 import { readSafetensorsHeader } from "./SafetensorsHeader.js";
 import {
   ModelFormatFailure,
-  rejectModel,
   MODEL_REPORT_BYTES,
   modelCapacityRemediation,
   modelCapacityReportedLimits,
 } from "./ModelFormat.js";
-import { safetensorsBits } from "./ModelTensorTypes.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { sameRegularFileState } from "../filesystem/RegularFile.js";
+import {
+  isSelectedRegularFileError,
+  sameRegularFileState,
+} from "../filesystem/RegularFile.js";
 
 export const MODEL_ARTIFACT_PROVIDER_IDENTITY = {
   id: "model-artifact",
@@ -57,7 +57,6 @@ export const MODEL_ARTIFACT_PROVIDER_IDENTITY = {
   version: "1",
 } as const;
 const OPERATION = "inspect_model_artifact";
-
 /** One admitted descriptor and bounded report at a time; retained cleanup blocks new work. */
 export class ModelArtifactProvider implements ModelArtifactPort {
   readonly identity = MODEL_ARTIFACT_PROVIDER_IDENTITY;
@@ -102,7 +101,7 @@ export class ModelArtifactProvider implements ModelArtifactPort {
             input.path,
             this.#resources,
             options?.signal,
-            (file) =>
+            ({ handle: file }) =>
               this.#read(file, input, options?.signal, (progress) => {
                 partialProgress = progress;
               }),
@@ -110,9 +109,10 @@ export class ModelArtifactProvider implements ModelArtifactPort {
         ),
       );
     } catch (cause) {
-      const primary = artifactFilePrimaryFailure(cause);
+      const { cause: primary, origin } = artifactFilePrimaryFacts(cause);
       let error: AnalysisError;
-      if (primary instanceof AnalysisError) error = primary;
+      if (origin === "owned-or-classified" && primary instanceof AnalysisError)
+        error = primary;
       else if (primary instanceof ModelFormatFailure) {
         const limit = primary.kind === "capacity" ? primary.limit : undefined;
         error =
@@ -140,17 +140,15 @@ export class ModelArtifactProvider implements ModelArtifactPort {
                   constraint: "file_format_rejected",
                 });
       } else if (
+        origin === "owned-or-classified" &&
         primary instanceof ArtifactReaderFailure &&
         primary.reason === "cancelled"
       )
         error = new AnalysisCancelledError(OPERATION, {
           cause: artifactFileCancellationCause(primary),
         });
-      else if (primary instanceof ArtifactFileCancelled)
-        error = new AnalysisCancelledError(OPERATION, {
-          cause: primary.fileCancellation.reason,
-        });
       else if (
+        origin === "owned-or-classified" &&
         primary instanceof ArtifactReaderFailure &&
         primary.reason === "integrity"
       )
@@ -172,6 +170,7 @@ export class ModelArtifactProvider implements ModelArtifactPort {
           { cause: primary },
         );
       else if (
+        origin === "owned-or-classified" &&
         primary instanceof ArtifactReaderFailure &&
         primary.reason === "limit"
       )
@@ -182,7 +181,7 @@ export class ModelArtifactProvider implements ModelArtifactPort {
           {},
           { cause: primary },
         );
-      else if (primary instanceof Error && "code" in primary)
+      else if (isSelectedRegularFileError(primary))
         error = new BinaryTargetError(input.path, primary.message, { cause });
       else
         error = new ProviderAdapterError(this.identity.id, OPERATION, {
@@ -205,16 +204,10 @@ export class ModelArtifactProvider implements ModelArtifactPort {
         );
         error = analysisErrorWithCleanupFailure(error, cleanup, OPERATION);
       }
-      const completed =
-        cause instanceof ArtifactFileCleanupFailure &&
-        cause.fileCleanupFailure.outcome.kind === "completed"
-          ? cause.fileCleanupFailure.outcome.value
-          : cause instanceof ArtifactFileCancelled
-            ? cause.fileCancellation.outcome.value
-            : undefined;
+      const completed = artifactFileCompletion(cause);
       if (completed !== undefined) {
         // The descriptor owner retains observations even when its final close fails.
-        const report = modelArtifactSchema.safeParse(completed);
+        const report = modelArtifactSchema.safeParse(completed.value);
         if (report.success)
           error.retainPartialObservation(
             createModelArtifactEvidence(report.data, this.identity, input),
@@ -223,7 +216,8 @@ export class ModelArtifactProvider implements ModelArtifactPort {
       if (
         error.partialObservation === undefined &&
         partialProgress !== undefined &&
-        (partialProgress.metadata.length > 0 ||
+        (partialProgress.coverage.header === "complete" ||
+          partialProgress.metadata.length > 0 ||
           partialProgress.tensor_declarations.length > 0 ||
           partialProgress.tensors.length > 0)
       ) {
@@ -259,85 +253,77 @@ export class ModelArtifactProvider implements ModelArtifactPort {
       );
     const reader = new ModelHeaderReader(file, Number(initial.size), signal);
     const first = await reader.take(4);
-    if (
-      (first[0] === 0x80 && (first[1] ?? 0) >= 2 && (first[1] ?? 0) <= 5) ||
-      first.equals(Buffer.from([0x50, 0x4b, 3, 4]))
-    )
-      throw new ModelFormatFailure(
-        "unsupported",
-        "PyTorch pickle/ZIP model deserialization is unsupported; supply GGUF or safetensors instead",
-      );
     const format = first.equals(Buffer.from("GGUF")) ? "gguf" : "safetensors";
-    let partial: ModelArtifactPartial | undefined;
-    if (format === "gguf") {
-      partial = {
-        kind: "model-artifact-partial",
-        artifact: {
-          path: input.path,
-          observed_file_size: Number(initial.size),
-          header_sha256: null,
-          sha256: null,
-          file_identity: "unverified",
-        },
-        format,
-        version: null,
-        byte_order: null,
-        alignment: null,
-        declared_metadata_count: null,
-        declared_tensor_count: null,
-        metadata: [],
-        tensor_declarations: [],
-        tensors: [],
-        coverage: {
-          header: "partial",
-          metadata: "not-started",
-          tensors: "not-started",
-        },
-        limitations: [
-          "This partial observation contains only rows fully parsed before the interrupted read.",
-          "Header and full-file digests and final file identity are unknown because finalization did not complete.",
-          "No model behavior or tensor payload values were interpreted.",
-        ],
-      };
-      retainProgress?.(partial);
-    }
+    const partial: ModelArtifactPartial = {
+      kind: "model-artifact-partial",
+      artifact: {
+        path: input.path,
+        observed_file_size: Number(initial.size),
+        header_sha256: null,
+        sha256: null,
+        file_identity: "unverified",
+      },
+      format,
+      version: null,
+      byte_order: null,
+      alignment: null,
+      declared_metadata_count: null,
+      declared_tensor_count: null,
+      metadata: [],
+      tensor_declarations: [],
+      tensors: [],
+      coverage: {
+        header: "partial",
+        metadata: "not-started",
+        tensors: "not-started",
+      },
+      limitations: [
+        "This partial observation contains only rows fully parsed before the interrupted read.",
+        "Header and full-file digests and final file identity are unknown because finalization did not complete.",
+        "No model behavior or tensor payload values were interpreted.",
+      ],
+    };
+    retainProgress?.(partial);
     const parsed =
       format === "gguf"
         ? await new GgufHeader(reader).read({
             onHeader: (info) => {
-              if (partial === undefined) return;
               partial.version = info.version;
               partial.byte_order = info.byte_order;
               partial.declared_metadata_count = info.declared_metadata_count;
               partial.declared_tensor_count = info.declared_tensor_count;
               partial.coverage.metadata = "partial";
             },
-            onMetadata: (row) => partial?.metadata.push(row),
+            onMetadata: (row) => partial.metadata.push(row),
+            onAlignment: (alignment) => {
+              partial.alignment = alignment;
+            },
             onMetadataComplete: () => {
-              if (partial !== undefined) partial.coverage.metadata = "complete";
+              partial.coverage.metadata = "complete";
             },
             onTensorsStarted: () => {
-              if (partial !== undefined) partial.coverage.tensors = "partial";
+              partial.coverage.tensors = "partial";
             },
-            onTensorDeclaration: (row) =>
-              partial?.tensor_declarations.push(row),
+            onTensorDeclaration: (row) => partial.tensor_declarations.push(row),
+            onLimitation: (message) => partial.limitations.push(message),
           })
         : await readSafetensorsHeader(reader, first);
-    const intervals = parsed.tensors
-      .filter((row) => row.byte_length !== null)
-      .sort((a, b) => a.file_offset - b.file_offset);
-    let end = parsed.tensor_data_offset;
-    for (const row of intervals) {
-      if (row.file_offset < end && row.byte_length !== 0)
-        rejectModel(`Overlapping tensor byte ranges at ${row.name}`);
-      end = Math.max(end, row.file_offset + (row.byte_length ?? 0));
-    }
-    if (partial !== undefined && format === "gguf") {
-      partial.tensor_declarations = [];
-      partial.tensors = parsed.tensors;
-      partial.coverage.tensors = "complete";
-      partial.coverage.header = "complete";
-    }
+    partial.version = parsed.version;
+    partial.byte_order = parsed.byte_order;
+    partial.alignment = parsed.alignment;
+    partial.metadata = parsed.metadata;
+    partial.declared_metadata_count = parsed.metadata.length;
+    partial.declared_tensor_count = parsed.tensors.length;
+    partial.tensor_declarations = [];
+    partial.tensors = parsed.tensors;
+    partial.limitations = [
+      ...new Set([...partial.limitations, ...parsed.limitations]),
+    ];
+    partial.coverage = {
+      header: "complete",
+      metadata: "complete",
+      tensors: "complete",
+    };
     const header_length = reader.position;
     const hashes = await reader.finish(input.hash === "full");
     const after = await file.stat({ bigint: true });
@@ -393,18 +379,6 @@ export class ModelArtifactProvider implements ModelArtifactPort {
           : group.bytes + row.byte_length;
       groups.set(row.type, group);
     }
-    const unknownTypes = [
-      ...new Set(
-        parsed.tensors
-          .filter(
-            (row) =>
-              row.byte_length === null ||
-              (format === "safetensors" &&
-                safetensorsBits(row.type) === undefined),
-          )
-          .map((row) => row.type),
-      ),
-    ];
     const report = {
       artifact: {
         path: input.path,
@@ -453,11 +427,7 @@ export class ModelArtifactProvider implements ModelArtifactPort {
               "Metadata arrays retain at most eight elements per array; remaining values are omitted, with exact declared counts and source byte ranges.",
             ]
           : []),
-        ...(unknownTypes.length
-          ? [
-              `Unknown tensor types prevent storage-size validation: ${unknownTypes.join(", ")}`,
-            ]
-          : []),
+        ...parsed.limitations,
       ],
     };
     if (jsonValueByteLength(report, MODEL_REPORT_BYTES) > MODEL_REPORT_BYTES)

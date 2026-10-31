@@ -52,7 +52,7 @@ export const nativeDecompileSchema = z.object({
   addr: idaAddressSchema,
   ok: z.boolean(),
   pseudocode: z.string().min(1).optional(),
-  lines: z.number().int().nonnegative().optional(),
+  lines: z.int().nonnegative().optional(),
   error: z.string().optional(),
 });
 
@@ -83,15 +83,18 @@ export const nativeXrefsSchema = z
   .length(1);
 
 /**
- * Native regexes fold bytes, while REA's insensitive literal search folds
- * Unicode strings. Include every non-ASCII value as a candidate, then apply
- * REA's exact predicate. Ill-formed UTF-16 cannot cross upstream JSON/UTF-8.
+ * Native regexes fold bytes, while REA's insensitive literal search uses
+ * ECMAScript Unicode simple case folding. Non-ASCII patterns can match ASCII
+ * values (for example long s matches S), so leave those queries unfiltered.
+ * For ASCII patterns include every non-ASCII value, then apply REA's predicate.
+ * Ill-formed UTF-16 cannot cross upstream JSON/UTF-8.
  */
 export const nativeLiteralSearchPattern = (
   pattern: string,
   caseSensitive: boolean,
 ): string | undefined => {
   if (/[\uD800-\uDFFF]/u.test(pattern)) return undefined;
+  if (!caseSensitive && /[\u0080-\u{10ffff}]/u.test(pattern)) return undefined;
   let literal = (caseSensitive ? pattern : pattern.toLowerCase()).replace(
     /[.*+?^${}()|[\]\\]/gu,
     "\\$&",

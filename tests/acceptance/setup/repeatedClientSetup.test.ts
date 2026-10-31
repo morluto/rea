@@ -82,6 +82,84 @@ cliTest(
 );
 
 cliTest(
+  "combines explicitly selected undetected clients with all detected clients",
+  async ({ cli }) => {
+    const home = await createTestTempDirectory(
+      "rea-explicit-detected-clients-",
+    );
+    await mkdir(join(home, ".codex"));
+    const run = (selection: readonly string[], mode: string) =>
+      cli.run({
+        arguments: ["setup", ...selection, "--skill=false", "--json", mode],
+        cwd: home,
+        environment: {
+          HOME: home,
+          USERPROFILE: home,
+          TMPDIR: home,
+          XDG_CONFIG_HOME: join(home, ".config"),
+          XDG_DATA_HOME: join(home, ".local", "share"),
+          XDG_CACHE_HOME: join(home, ".cache"),
+          XDG_STATE_HOME: join(home, ".local", "state"),
+        },
+      });
+    const configurations = [
+      join(home, ".cursor", "mcp.json"),
+      join(home, ".codex", "config.toml"),
+    ];
+    const combined = [
+      "--client",
+      "cursor",
+      "--client",
+      "cursor",
+      "--all-detected",
+    ];
+    for (const [selection, expected] of [
+      [["--client", "cursor"], ["cursor"]],
+      [["--all-detected"], ["codex"]],
+      [combined, ["cursor", "codex"]],
+    ] as const) {
+      const preview = await run(selection, "--dry-run");
+      expect(preview.exitCode, preview.stdout).toBe(0);
+      expect(preview.json).toMatchObject({
+        status: "planned",
+        plannedActions: expected.map((id) => ({
+          id: `configure_client:${id}`,
+        })),
+        appliedActions: [],
+      });
+      for (const path of configurations)
+        await expect(access(path)).rejects.toMatchObject({ code: "ENOENT" });
+    }
+
+    const applied = await run(combined, "--yes");
+    expect(applied.exitCode, applied.stdout).toBe(0);
+    expect(applied.json).toMatchObject({
+      status: "ready",
+      plannedActions: [
+        { id: "configure_client:cursor" },
+        { id: "configure_client:codex" },
+      ],
+      appliedActions: ["configured_cursor", "configured_codex"],
+      clients: {
+        cursor: { status: "configured" },
+        codex: { status: "configured" },
+      },
+      doctor: {
+        healthy: true,
+        scope: {
+          mode: "explicit",
+          clients: ["codex", "cursor"],
+          providers: [],
+          skill: false,
+        },
+      },
+    });
+    for (const path of configurations)
+      expect(await readFile(path, "utf8")).toContain("rea");
+  },
+);
+
+cliTest(
   "uninstall preserves user edits made after an earlier setup",
   async ({ cli }) => {
     const home = await createTestTempDirectory("rea-current-uninstall-backup-");

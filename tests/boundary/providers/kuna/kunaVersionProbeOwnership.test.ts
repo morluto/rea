@@ -382,12 +382,12 @@ it("keeps a file-operation primary linked to every retained file and process own
       resources: ["/tmp/kuna-test-source"],
     },
   });
-  const fileFailure = new RegularFileCleanupFailure(
-    "/tmp/kuna-test-source",
-    fileHandle,
-    { kind: "failed", cause: primary },
-    new Error("descriptor close refused"),
-  );
+  const fileFailure = new RegularFileCleanupFailure({
+    path: "/tmp/kuna-test-source",
+    owner: fileHandle,
+    outcome: { kind: "failed", cause: primary },
+    cleanupCause: new Error("descriptor close refused"),
+  });
   kunaResources.bindFailure(fileFailure, primary);
   expect(primary.cleanupIncomplete).toBe(true);
   expect(primary.cleanupResources).toEqual([

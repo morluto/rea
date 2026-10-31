@@ -10,13 +10,13 @@ import {
   AnalysisTimeoutError,
   AnalysisOutputError,
 } from "../../../src/domain/analysisErrorCore.js";
-import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import {
   createEvidence,
   evidenceSchema,
 } from "../../../src/domain/evidence.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { RizinDebugSessionManager } from "../../../src/rizin/RizinDebugSessionManager.js";
+import { closeOwnedDebuggerSessions } from "../../../src/process/ownedDebuggerSession.js";
 import {
   DigestFileCleanupFailure,
   ReverseEngineeringService as CoreReverseEngineeringService,
@@ -313,7 +313,9 @@ it("preserves an independent timeout after cleanup succeeds", async () => {
     },
   });
   expect(error.cleanupIncomplete).toBe(false);
-  expect(projectAnalysisError(error).details).not.toHaveProperty("cleanup");
+  expect((result as { details: unknown }).details).not.toHaveProperty(
+    "cleanup",
+  );
 });
 
 it("keeps a digest timeout primary when cancellation arrives during descriptor cleanup", async () => {
@@ -377,11 +379,12 @@ it("does not project cancellation cleanup as incomplete after a successful retry
     }),
   };
 
-  await runObjdump(service);
+  const result = await runObjdump(service);
 
   expect(error.cleanupIncomplete).toBe(false);
-  expect(projectAnalysisError(error).details).toMatchObject({
-    cleanup: "complete",
+  expect(result).toMatchObject({
+    code: "cancelled",
+    details: { cleanup: "complete" },
   });
 });
 
@@ -516,119 +519,273 @@ it("retains failed run services and settles their owners before another CLI laun
   }
 });
 
-it("parses the Rizin inferior TTY as an option and passes it to the manager", async () => {
-  const commands = new Map<
-    string,
-    {
-      run(input: {
-        args: Record<string, unknown>;
-        options: Record<string, unknown>;
-      }): Promise<unknown>;
-    }
-  >();
-  const cli = {
-    command: (
-      name: string,
-      definition: {
+it.each([false, true])(
+  "passes the Rizin TTY and uses final cleanup outcome (retry=%s)",
+  async (retryClose) => {
+    process.exitCode = 0;
+    const commands = new Map<
+      string,
+      {
         run(input: {
           args: Record<string, unknown>;
           options: Record<string, unknown>;
         }): Promise<unknown>;
-      },
-    ) => {
-      commands.set(name, definition);
-      return cli;
-    },
-  } as unknown as CliInstance;
-  const evidence = createEvidence(
-    undefined,
-    { id: "rizin.debugger", name: "Rizin debugger", version: null },
-    {
-      predicateType: "rea.debugger.command-observation",
-      operation: "rizin_debug_command",
-      parameters: {
-        session_id: "session-1",
-        command: "dr",
-        inferior_tty: "/dev/pts/7",
-      },
-      result: { output: "registers" },
-    },
-  );
-  const start = vi
-    .spyOn(RizinDebugSessionManager.prototype, "start")
-    .mockResolvedValue(ok({ session_id: "session-1", backend: null }));
-  const execute = vi
-    .spyOn(RizinDebugSessionManager.prototype, "execute")
-    .mockResolvedValue(
-      ok({
-        evidence,
-        result: {
-          command: "dr",
-          output: "registers",
-          output_scope: "command_and_interleaved_session_output",
-          output_truncated: false,
-          completion_status: "complete",
-          backend: null,
+      }
+    >();
+    const cli = {
+      command: (
+        name: string,
+        definition: {
+          run(input: {
+            args: Record<string, unknown>;
+            options: Record<string, unknown>;
+          }): Promise<unknown>;
         },
-      }),
+      ) => {
+        commands.set(name, definition);
+        return cli;
+      },
+    } as unknown as CliInstance;
+    const evidence = createEvidence(
+      undefined,
+      { id: "rizin.debugger", name: "Rizin debugger", version: null },
+      {
+        predicateType: "rea.debugger.command-observation",
+        operation: "rizin_debug_command",
+        parameters: {
+          session_id: "session-1",
+          command: "dr",
+          inferior_tty: "/dev/pts/7",
+        },
+        result: { output: "registers" },
+        rawResult: { output: "registers" },
+      },
     );
-  vi.spyOn(RizinDebugSessionManager.prototype, "close").mockResolvedValue(
-    ok({ target_state: "unknown" }),
-  );
-  vi.spyOn(RizinDebugSessionManager.prototype, "closeAll").mockResolvedValue(
-    undefined,
-  );
-  registerReverseEngineeringCommands(cli, pino({ enabled: false }), {});
-  const command = commands.get(CLI_COMMANDS.debugWithRizin);
-  if (command === undefined)
-    throw new Error("Rizin CLI command was not registered");
+    const start = vi
+      .spyOn(RizinDebugSessionManager.prototype, "start")
+      .mockResolvedValue(ok({ session_id: "session-1", backend: null }));
+    const execute = vi
+      .spyOn(RizinDebugSessionManager.prototype, "execute")
+      .mockResolvedValue(
+        ok({
+          evidence,
+          result: {
+            command: "dr",
+            output: "registers",
+            output_scope: "command_and_interleaved_session_output",
+            output_truncated: false,
+            completion_status: "complete",
+            backend: null,
+          },
+        }),
+      );
+    vi.spyOn(RizinDebugSessionManager.prototype, "close").mockResolvedValue(
+      retryClose
+        ? err(
+            new AnalysisOutputError(
+              "close_rizin_debug_session",
+              "first close incomplete",
+              {
+                cleanup: { reason: "retry pending", resources: ["session-1"] },
+              },
+            ),
+          )
+        : ok({ target_state: "unknown" }),
+    );
+    vi.spyOn(RizinDebugSessionManager.prototype, "closeAll").mockResolvedValue(
+      undefined,
+    );
+    registerReverseEngineeringCommands(cli, pino({ enabled: false }), {});
+    const command = commands.get(CLI_COMMANDS.debugWithRizin);
+    if (command === undefined)
+      throw new Error("Rizin CLI command was not registered");
 
-  await command.run({
-    args: { path: "./sample.bin", command: "dr" },
-    options: { inferiorTty: "/dev/pts/7" },
-  });
+    await command.run({
+      args: { path: "./sample.bin", command: "dr" },
+      options: { inferiorTty: "/dev/pts/7" },
+    });
 
-  expect(start).toHaveBeenCalledWith(
-    { path: "./sample.bin", command: "dr", inferior_tty: "/dev/pts/7" },
-    expect.any(AbortSignal),
-  );
-  expect(execute).toHaveBeenCalledWith(
-    "session-1",
-    "dr",
-    expect.any(AbortSignal),
-  );
+    expect(process.exitCode).toBe(0);
+    expect(start).toHaveBeenCalledWith(
+      { path: "./sample.bin", command: "dr", inferior_tty: "/dev/pts/7" },
+      expect.any(AbortSignal),
+    );
+    expect(execute).toHaveBeenCalledWith(
+      "session-1",
+      "dr",
+      expect.any(AbortSignal),
+    );
 
-  const parserCli = Cli.create("rea-test", { version: "1.0.0", sync: false });
-  registerReverseEngineeringCommands(
-    parserCli as unknown as CliInstance,
-    pino({ enabled: false }),
-    {},
-  );
-  const commandContract = Cli.toCommands
-    .get(parserCli)
-    ?.get(CLI_COMMANDS.debugWithRizin);
-  expect(commandContract).toBeDefined();
-  const argsSchema =
-    commandContract === undefined
-      ? undefined
-      : Reflect.get(commandContract, "args");
-  const optionsSchema =
-    commandContract === undefined
-      ? undefined
-      : Reflect.get(commandContract, "options");
-  if (
-    !(argsSchema instanceof z.ZodObject) ||
-    !(optionsSchema instanceof z.ZodObject)
-  )
-    throw new Error("Rizin CLI args/options schemas were not registered");
-  expect(argsSchema.parse({ path: "./sample.bin", command: "dr" })).toEqual({
-    path: "./sample.bin",
-    command: "dr",
-  });
-  expect(optionsSchema.parse({ inferiorTty: "/dev/pts/7" })).toMatchObject({
-    inferiorTty: "/dev/pts/7",
-  });
-});
+    const parserCli = Cli.create("rea-test", { version: "1.0.0", sync: false });
+    registerReverseEngineeringCommands(
+      parserCli as unknown as CliInstance,
+      pino({ enabled: false }),
+      {},
+    );
+    const commandContract = Cli.toCommands
+      .get(parserCli)
+      ?.get(CLI_COMMANDS.debugWithRizin);
+    expect(commandContract).toBeDefined();
+    const argsSchema =
+      commandContract === undefined
+        ? undefined
+        : Reflect.get(commandContract, "args");
+    const optionsSchema =
+      commandContract === undefined
+        ? undefined
+        : Reflect.get(commandContract, "options");
+    if (
+      !(argsSchema instanceof z.ZodObject) ||
+      !(optionsSchema instanceof z.ZodObject)
+    )
+      throw new Error("Rizin CLI args/options schemas were not registered");
+    expect(argsSchema.parse({ path: "./sample.bin", command: "dr" })).toEqual({
+      path: "./sample.bin",
+      command: "dr",
+    });
+    expect(optionsSchema.parse({ inferiorTty: "/dev/pts/7" })).toMatchObject({
+      inferiorTty: "/dev/pts/7",
+    });
+  },
+);
+
+it.each(["incomplete", "interrupt", "control"] as const)(
+  "reports final Rizin cleanup %s as a typed outcome",
+  async (mode) => {
+    const commands = new Map<
+      string,
+      { run(input: unknown): Promise<unknown> }
+    >();
+    const cli = {
+      command(
+        name: string,
+        definition: { run(input: unknown): Promise<unknown> },
+      ) {
+        commands.set(name, definition);
+        return cli;
+      },
+    } as unknown as CliInstance;
+    const previous = process.exitCode;
+    const evidence = createEvidence(
+      undefined,
+      { id: "rizin.debugger", name: "Rizin debugger", version: null },
+      {
+        predicateType: "rea.debugger.command-observation",
+        operation: "rizin_debug_command",
+        parameters: {
+          session_id: "fixture-session",
+          command: "dr",
+          inferior_tty: "/dev/pts/7",
+        },
+        result: { output: "registers" },
+        rawResult: { output: "registers" },
+      },
+    );
+    const sessions = new Map([["fixture-session", { id: "fixture-session" }]]);
+    vi.spyOn(RizinDebugSessionManager.prototype, "start").mockResolvedValue(
+      ok({ session_id: "fixture-session", backend: null }),
+    );
+    const execute = vi
+      .spyOn(RizinDebugSessionManager.prototype, "execute")
+      .mockResolvedValue(
+        ok({
+          evidence,
+          result: {
+            command: "dr",
+            output: "registers",
+            output_scope: "command_and_interleaved_session_output",
+            output_truncated: false,
+            completion_status: "complete",
+            backend: null,
+          },
+        }),
+      );
+    vi.spyOn(RizinDebugSessionManager.prototype, "close").mockImplementation(
+      async () => {
+        if (mode === "incomplete")
+          return err(
+            new AnalysisOutputError(
+              "close_rizin_debug_session",
+              "stop unconfirmed",
+              {
+                cleanup: {
+                  reason: "stop unconfirmed",
+                  resources: ["fixture-session"],
+                },
+              },
+            ),
+          );
+        sessions.clear();
+        return ok({ target_state: "unknown" });
+      },
+    );
+    let abortedAtCleanupEnd = false;
+    let signal: AbortSignal | undefined;
+    const closeAll = vi
+      .spyOn(RizinDebugSessionManager.prototype, "closeAll")
+      .mockImplementation(async () => {
+        signal = execute.mock.calls[0]?.[2];
+        await new Promise<void>((resolve) =>
+          setImmediate(() => {
+            if (mode === "interrupt") process.emit("SIGINT");
+            resolve();
+          }),
+        );
+        abortedAtCleanupEnd = signal?.aborted === true;
+        await closeOwnedDebuggerSessions(
+          sessions,
+          async () => ({ status: "incomplete", reason: "stop unconfirmed" }),
+          "Rizin",
+        );
+      });
+    registerReverseEngineeringCommands(cli, pino({ enabled: false }), {});
+    const command = commands.get(CLI_COMMANDS.debugWithRizin);
+    if (command === undefined)
+      throw new Error("Rizin CLI command was not registered");
+    try {
+      process.exitCode = 0;
+      const result = await command.run({
+        args: { path: "./sample.bin", command: "dr" },
+        options: { inferiorTty: "/dev/pts/7" },
+      });
+      expect(closeAll).toHaveBeenCalledOnce();
+      if (mode === "control") {
+        expect(result).toBe(evidence);
+        expect(process.exitCode).toBe(0);
+        expect(abortedAtCleanupEnd).toBe(false);
+      } else if (mode === "interrupt") {
+        expect(result).toMatchObject({
+          code: "cancelled",
+          details: {
+            partial_observation: {
+              operation: "rizin_debug_command",
+              parameters: { session_id: "fixture-session" },
+            },
+          },
+        });
+        expect(process.exitCode).toBe(130);
+        expect(abortedAtCleanupEnd).toBe(true);
+      } else {
+        expect(result).toMatchObject({
+          code: "cleanup_incomplete",
+          details: {
+            cleanup: "incomplete",
+            resources: ["fixture-session"],
+            partial_observation: {
+              operation: "rizin_debug_command",
+              parameters: { session_id: "fixture-session" },
+            },
+          },
+        });
+        expect(sessions.size).toBe(1);
+        expect(process.exitCode).toBe(1);
+      }
+    } finally {
+      process.exitCode = previous;
+      vi.restoreAllMocks();
+    }
+  },
+);
 
 it("reports concurrent CLI admission as retryable capacity and admits work after release", async () => {
   const { directory, path } = await createArtifact();

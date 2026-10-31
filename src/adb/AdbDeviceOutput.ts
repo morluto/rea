@@ -169,7 +169,7 @@ export const parseGetpropOutput = (
   }
   const properties = DEVICE_PROPERTY_WHITELIST.flatMap((name) => {
     const value = values.get(name);
-    return value === undefined || value === ""
+    return value === undefined
       ? []
       : [{ name, value } satisfies AdbDeviceProperty];
   });
@@ -246,6 +246,7 @@ export interface AdbPackagePathEntry {
  */
 export const parsePmPathOutput = (
   stdout: string,
+  platform: NodeJS.Platform = process.platform,
 ): {
   paths: readonly AdbPackagePathEntry[];
   rejectedPaths: readonly {
@@ -268,7 +269,7 @@ export const parsePmPathOutput = (
       continue;
     }
     const devicePath = match[1]!;
-    const validated = adbHostFileName(devicePath);
+    const validated = adbHostFileName(devicePath, platform);
     if (!validated.ok) {
       rejectedPaths.push({
         device_path: devicePath,

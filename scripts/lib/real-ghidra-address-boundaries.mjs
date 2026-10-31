@@ -11,7 +11,10 @@ export async function verifyGhidraAddressBoundaries(client, entry, cli) {
     assert.notEqual(reply.isError, true, JSON.stringify(reply));
     return reply.structuredContent.normalized_result;
   };
-  const before = await query("analyze_function", { procedure: entry });
+  const before = await query("analyze_function", {
+    procedure: entry,
+    detail: "complete",
+  });
   // The segmented parser used to discard the high 32 bits and alias this entry.
   const overflow = (0x100000000n + BigInt(entry)).toString(16);
   const representations = [
@@ -52,7 +55,7 @@ export async function verifyGhidraAddressBoundaries(client, entry, cli) {
     }
   }
   assert.deepEqual(
-    await query("analyze_function", { procedure: entry }),
+    await query("analyze_function", { procedure: entry, detail: "complete" }),
     before,
     "Rejected oversized annotations changed the aliased function",
   );

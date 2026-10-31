@@ -7,23 +7,31 @@ import type {
   JavaScriptSemanticChildProcessSpawn,
 } from "./javascriptSemanticIr.js";
 import { createSemanticCallableIdStack } from "./javascriptSemanticCallableStack.js";
-import { createSemanticExpressionShapeResolver } from "./javascriptSemanticExpressionShapes.js";
 import {
+  createSemanticExpressionShapeResolver,
+  optionsAfterOptionalArgv,
+  type JavaScriptExpressionShapeResolver,
+} from "./javascriptSemanticExpressionShapes.js";
+import {
+  readExactJavaScriptLiteral,
   semanticStaticPropertyName,
+  staticJavaScriptTruthiness,
   staticObjectProperty,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
-  isUnshadowedGlobal,
   resolveSemanticBindingState,
   semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
+import {
+  isUnshadowedGlobal,
+  semanticBindingAtRead,
+} from "./javascriptSemanticMutationInitializers.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
-import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
+import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
-import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import {
   builtinDataEffectMethod,
   dataEffectLiteralString,
@@ -41,9 +49,7 @@ interface ChildProcessAnalysis {
   readonly childProcessInteractions: readonly JavaScriptSemanticChildProcessInteraction[];
 }
 
-type ChildSpawnContext = ReturnType<
-  typeof createSemanticExpressionShapeResolver
->;
+type ChildSpawnContext = JavaScriptExpressionShapeResolver;
 
 interface SpawnCandidate {
   readonly node: t.CallExpression | t.OptionalCallExpression;
@@ -65,8 +71,10 @@ export const collectJavaScriptSemanticChildProcesses = (
   state: JavaScriptSemanticAnalysisState,
   callables: readonly JavaScriptSemanticCallable[],
 ): ChildProcessAnalysis => {
-  const candidates = collectSpawns(program, state, callables);
   const context = createSemanticExpressionShapeResolver(state);
+  const candidates = collectSpawns(program, state, callables).filter(
+    (candidate) => !forkRejectsStdioArray(candidate, context),
+  );
   const childProcessSpawns = candidates.map((candidate) =>
     immutableSpawn(candidate, context),
   );
@@ -92,7 +100,7 @@ const collectSpawns = (
   );
   const callableStack = createSemanticCallableIdStack(admittedCallables);
   const ancestors: t.Node[] = [];
-  traverseJavaScriptAst(program, {
+  traverseJavaScriptValueAst(program, state.erasedSyntaxNodes, {
     enter: (node, parent) => {
       callableStack.enter(node, parent);
       if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
@@ -143,7 +151,7 @@ const immutableSpawn = (
     projectedResultBindings: candidate.projectedResultBindings,
     command,
     argvCount,
-    environmentSupplied: objectHasProperty(options, "env"),
+    environmentSupplied: environmentSupplied(options, context),
     stdioMode: stdioMode(options, candidate.method, context),
     resolution: command === null ? "partial" : "complete",
   };
@@ -177,7 +185,7 @@ const collectInteractions = (
     spawnByNode,
     spawnsByBinding,
   };
-  traverseJavaScriptAst(program, {
+  traverseJavaScriptValueAst(program, state.erasedSyntaxNodes, {
     enter: (node, parent) => {
       callableStack.enter(node, parent);
       if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
@@ -381,22 +389,15 @@ const spawnArguments = (
   const args = candidate.node.arguments;
   if (t.isSpreadElement(args[0])) return { options: args[0], argvCount: null };
   const second = args[1] && unwrapJavaScriptExpression(args[1]).node;
-  const third = args[2] && unwrapJavaScriptExpression(args[2]).node;
-  const expressionShape = context;
   const argv =
     candidate.method !== "exec" && t.isArrayExpression(second)
       ? second
       : undefined;
-  // Only a proven argv array or nullish placeholder admits third-slot options.
-  // Otherwise the second argument may itself be options, ignoring the third.
+  // exec(command[, options][, callback]) has no argv slot.
   const options =
-    candidate.method === "exec" || second === undefined
+    candidate.method === "exec"
       ? second
-      : argv !== undefined ||
-          expressionShape.isArray(second) ||
-          expressionShape.isNullish(second)
-        ? third
-        : second;
+      : optionsAfterOptionalArgv(args, context);
   return {
     options,
     argvCount:
@@ -407,35 +408,99 @@ const spawnArguments = (
   };
 };
 
-const objectHasProperty = (object: t.Node | undefined, name: string): boolean =>
-  t.isObjectExpression(object) &&
-  object.properties.some(
-    (property) =>
-      !t.isSpreadElement(property) &&
-      semanticStaticPropertyName(property.key, property.computed) === name,
-  );
+/**
+ * Node replaces a falsy `options.env` with a copy of the parent environment, so
+ * a nullish, empty-string, zero or `false` value passes the whole environment
+ * through instead of supplying one.
+ */
+const environmentSupplied = (
+  options: t.Node | undefined,
+  context: ChildSpawnContext,
+): boolean => {
+  const lookup = staticObjectProperty(options, "env", context.isNullish);
+  if (lookup.status !== "explicit") return false;
+  const value = unwrapJavaScriptExpression(lookup.value).node;
+  if (context.isNullish(value)) return false;
+  return staticJavaScriptTruthiness(value) !== false;
+};
 
 const stdioMode = (
   options: t.Node | undefined,
   method: JavaScriptSemanticChildProcessSpawn["method"],
   context: ChildSpawnContext,
 ): string => {
+  // Async exec/execFile do not forward options.stdio to their underlying spawn.
+  if (method === "exec" || method === "execFile") return "default";
   if (options === undefined) return "default";
   const expression = unwrapJavaScriptExpression(options).node;
-  if (
-    context.isNullish(expression) ||
-    ((method === "exec" || method === "execFile") &&
-      context.isCallback(expression))
-  )
-    return "default";
+  if (context.isNullish(expression)) return "default";
   const lookup = staticObjectProperty(expression, "stdio", context.isNullish);
-  if (lookup.status === "missing") return "default";
+  if (lookup.status === "missing")
+    return unsetStdioMode(expression, method, context);
   if (lookup.status !== "explicit") return "dynamic";
-  const value = unwrapJavaScriptExpression(lookup.property.value).node;
-  if (context.isNullish(value)) return "default";
+  const value = unwrapJavaScriptExpression(lookup.value).node;
+  if (context.isNullish(value))
+    return unsetStdioMode(expression, method, context);
   if (t.isStringLiteral(value)) return value.value;
   if (t.isArrayExpression(value)) return "array";
+  // fork ignores any other known stdio value and falls back to `silent`.
+  if (method === "fork" && staticJavaScriptTruthiness(value) !== undefined)
+    return unsetStdioMode(expression, method, context);
   return "dynamic";
+};
+
+/**
+ * Node's `fork` requires an explicit `stdio` array to carry the IPC channel. An
+ * array that provably omits `"ipc"` throws ERR_CHILD_PROCESS_IPC_REQUIRED
+ * synchronously, before any child process exists, so it is not a spawn at all.
+ * A string `stdio` is normalised with `"ipc"` appended, so only the array form
+ * can omit it; a spread or unreadable element may still supply the channel and
+ * is therefore left alone.
+ */
+const forkRejectsStdioArray = (
+  candidate: SpawnCandidate,
+  context: ChildSpawnContext,
+): boolean => {
+  if (candidate.method !== "fork") return false;
+  const { options } = spawnArguments(candidate, context);
+  if (options === undefined) return false;
+  const expression = unwrapJavaScriptExpression(options).node;
+  if (context.isNullish(expression)) return false;
+  const lookup = staticObjectProperty(expression, "stdio", context.isNullish);
+  if (lookup.status !== "explicit") return false;
+  const value = unwrapJavaScriptExpression(lookup.value).node;
+  if (!t.isArrayExpression(value)) return false;
+  const literals = value.elements.map((element) =>
+    element === null || t.isSpreadElement(element)
+      ? undefined
+      : readExactJavaScriptLiteral(element),
+  );
+  if (literals.some((literal) => literal === undefined || !literal.found))
+    return false;
+  return !literals.some(
+    (literal) =>
+      literal !== undefined && literal.found && literal.value === "ipc",
+  );
+};
+
+/**
+ * Without a string or array `stdio`, Node's `fork` pipes the standard streams
+ * when `silent` is truthy and inherits them otherwise.
+ */
+const unsetStdioMode = (
+  options: t.Node,
+  method: JavaScriptSemanticChildProcessSpawn["method"],
+  context: ChildSpawnContext,
+): string => {
+  if (method !== "fork") return "default";
+  const silent = staticObjectProperty(options, "silent", context.isNullish);
+  if (silent.status === "missing") return "default";
+  if (silent.status !== "explicit") return "dynamic";
+  const value = unwrapJavaScriptExpression(silent.value).node;
+  if (context.isNullish(value)) return "default";
+  const truthy = staticJavaScriptTruthiness(value);
+  if (truthy === undefined) return "dynamic";
+  return truthy ? "pipe" : "default";
 };
 
 const objectBinding = (

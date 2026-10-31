@@ -10,7 +10,7 @@ describe("execFileBoundedOutput", () => {
         "-e",
         "process.stdout.write('x'.repeat(70000)); process.stderr.write('failure detail');",
       ],
-      { env: process.env, limit: 64 * 1024 },
+      { env: {}, limit: 64 * 1024 },
     );
     expect(result.exitCode).toBe(0);
     expect(Buffer.byteLength(result.stdout)).toBeLessThan(64 * 1024 + 50);
@@ -26,7 +26,7 @@ describe("execFileBoundedOutput", () => {
         "-e",
         "process.stdout.write('x'.repeat(70000)); process.stderr.write('package conflict'); process.exitCode = 1;",
       ],
-      { env: process.env, limit: 64 * 1024 },
+      { env: {}, limit: 64 * 1024 },
     );
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toBe("package conflict");
@@ -40,7 +40,7 @@ describe("execFileBoundedOutput", () => {
         "-e",
         "process.stderr.write('warning '.repeat(10000)); process.stderr.write('error: final conflict'); process.exitCode = 1;",
       ],
-      { env: process.env, limit: 64 * 1024 },
+      { env: {}, limit: 64 * 1024 },
     );
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("[output omitted]");

@@ -5,7 +5,7 @@ import {
   type AnalysisSnapshot,
 } from "../../domain/analysisSnapshot.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
-import { workflowAnalysisProfile } from "../InvestigationProviders.js";
+import { workflowAnalysisProfile } from "../WorkflowAnalysisProfile.js";
 import type { SessionProviderRoute } from "./SessionProviderRouter.js";
 
 /** Return the exact currently declared native dispatch reader profile, if any. */

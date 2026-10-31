@@ -1,3 +1,8 @@
+import { selectCdpDiscoveryTarget } from "./CdpDiscoveryTargets.js";
+import {
+  DEFAULT_ASAR_HEADER_ADMISSION,
+  type AsarHeaderAdmission,
+} from "../config/asarHeaderAdmission.js";
 import type {
   ExecutionOptions,
   ProviderIdentity,
@@ -46,6 +51,14 @@ import {
 /** Passive Electron provider for local file pages exposed by loopback CDP. */
 export class CdpElectronProvider implements ElectronObservationPort {
   readonly #owner = new CdpTargetSessionOwner();
+  readonly #asarHeaderAdmission: AsarHeaderAdmission;
+
+  /** The admission comes from the composition root's environment; default otherwise. */
+  constructor(
+    asarHeaderAdmission: AsarHeaderAdmission = DEFAULT_ASAR_HEADER_ADMISSION,
+  ) {
+    this.#asarHeaderAdmission = asarHeaderAdmission;
+  }
   #activeOperations = 0;
   #closing = false;
   #closePromise: Promise<void> | undefined;
@@ -148,6 +161,7 @@ export class CdpElectronProvider implements ElectronObservationPort {
           target.url,
           options.signal,
           "list_electron_targets",
+          this.#asarHeaderAdmission,
         );
         if (path === undefined) {
           examined += 1;
@@ -184,6 +198,7 @@ export class CdpElectronProvider implements ElectronObservationPort {
             non_page: nonPage,
           },
           limitations: [
+            ...(discovery.limitations ?? []),
             "Every local file page exposed by the selected loopback CDP endpoint is eligible for listing.",
             ...(unconnectable === 0
               ? []
@@ -192,7 +207,7 @@ export class CdpElectronProvider implements ElectronObservationPort {
                 ]),
             ...(allowed.some((target) => target.attached === null)
               ? [
-                  "CDP discovery omitted attachment state for one or more targets; attached is reported as unknown.",
+                  "CDP discovery could not establish debugger attachment state for one or more targets.",
                 ]
               : []),
           ],
@@ -269,8 +284,9 @@ export class CdpElectronProvider implements ElectronObservationPort {
         options.signal,
       );
       const target = await authorizeTarget(
-        discovery.targets,
+        discovery,
         input.target_id,
+        this.#asarHeaderAdmission,
         options.signal,
       );
       targetSession = await openCdpTargetSession(
@@ -293,6 +309,7 @@ export class CdpElectronProvider implements ElectronObservationPort {
             discovery,
             target,
             input,
+            asarHeaderAdmission: this.#asarHeaderAdmission,
             ...(options.signal === undefined ? {} : { signal: options.signal }),
             ...(options.progress === undefined
               ? {}
@@ -415,12 +432,18 @@ export class CdpElectronProvider implements ElectronObservationPort {
 }
 
 const authorizeTarget = async (
-  targets: readonly CdpEndpointTarget[],
+  discovery: CdpEndpointDiscovery,
   targetId: string,
+  asarHeaderAdmission: AsarHeaderAdmission,
   signal?: AbortSignal,
 ): Promise<CdpEndpointTarget> => {
   throwIfElectronOperationCancelled(signal, "inspect_electron_page");
-  const target = targets.find(({ id }) => id === targetId);
+  const target = selectCdpDiscoveryTarget(
+    discovery.targets,
+    targetId,
+    "inspect_electron_page",
+    discovery.ambiguousTargetIds,
+  );
   if (target === undefined)
     throw new BrowserObservationError("inspect_web_page", "target_not_found");
   if (target.type !== "page")
@@ -429,6 +452,7 @@ const authorizeTarget = async (
     target.url,
     signal,
     "inspect_electron_page",
+    asarHeaderAdmission,
   );
   throwIfElectronOperationCancelled(signal, "inspect_electron_page");
   if (path === undefined)
@@ -454,9 +478,8 @@ const providerError = (
     operation,
   );
   if (fileFailure !== undefined) return fileFailure;
-  return cause instanceof BrowserObservationError &&
-    cause.operation !== operation
-    ? new BrowserObservationError(operation, cause.reason, { cause })
+  return cause instanceof BrowserObservationError
+    ? cause.forOperation(operation)
     : cause instanceof AnalysisError
       ? cause
       : new ProviderAdapterError(CDP_ELECTRON_PROVIDER_IDENTITY.id, operation, {

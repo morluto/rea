@@ -61,9 +61,9 @@ it.skipIf(process.platform === "win32")(
       configuredProvider: provider,
     });
     const response = await executeRizinCommand(client, artifact);
-    expect(JSON.stringify(response.structuredContent)).toContain(
-      "captured-environment-provider",
-    );
+    expect(response.structuredContent).toMatchObject({
+      raw_result: { stdout: "captured-environment-provider" },
+    });
   },
 );
 
@@ -89,9 +89,9 @@ it.skipIf(process.platform === "win32")(
     });
 
     const response = await executeRizinCommand(client, artifact);
-    expect(JSON.stringify(response.structuredContent)).toContain(
-      "explicit-override",
-    );
+    expect(response.structuredContent).toMatchObject({
+      raw_result: { stdout: "explicit-override" },
+    });
     expect(JSON.stringify(response.structuredContent)).not.toContain(
       '"captured"',
     );
@@ -122,9 +122,9 @@ it.skipIf(process.platform === "win32")(
     providerEnvironment.REA_RIZIN_COMMAND = configured;
 
     const response = await executeRizinCommand(client, artifact);
-    expect(JSON.stringify(response.structuredContent)).toContain(
-      "explicit-snapshot",
-    );
+    expect(response.structuredContent).toMatchObject({
+      raw_result: { stdout: "explicit-snapshot" },
+    });
     expect(JSON.stringify(response.structuredContent)).not.toContain(
       '"captured"',
     );

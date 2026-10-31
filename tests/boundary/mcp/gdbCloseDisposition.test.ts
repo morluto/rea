@@ -63,7 +63,7 @@ createInterface({ input: process.stdin }).on('line', line => {
     ? (live ? 'done,groups=[{id="i1",type="process",pid="4242"}]' : 'done,groups=[]')
     : command === '-thread-info'
       ? 'done,threads=[{id="1",state="running"}]'
-    : disposition || command === '-gdb-set auto-load off' || command === '-gdb-exit'
+    : disposition || command === '-gdb-set auto-load off' || command === '-gdb-exit' || command === '-gdb-show mi-async'
       ? 'done' : 'error,msg="Unmodeled fixture command"';
   process.stdout.write(token + '^' + result + '\\n' + (disposition ? '*stopped,reason="exited-normally",stopped-threads="all"\\n' : '') + '(gdb)\\n', () => {
     if (line.includes('-gdb-exit')) process.exit(0);

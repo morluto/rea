@@ -2,11 +2,17 @@ import { z } from "zod";
 
 import {
   hasCompleteInventoryCoverage,
+  parseArtifactInventoryEvidence,
+  ArtifactInventoryCarrierError,
   type ParsedInventorySet,
 } from "./artifactInventoryEvidence.js";
-import { evidenceSchema, type Evidence } from "./evidence.js";
-import { digestSchema } from "./digests.js";
-import { prefixedDigestSchema } from "./digests.js";
+import { evidenceInputSchema } from "./evidenceReference.js";
+import { getEvidenceInputContract } from "./evidenceInputContract.js";
+import { AnalysisInputError } from "./analysisErrorCore.js";
+import { EvidenceIntegrityError } from "./evidenceErrors.js";
+import { analysisInputErrorFromIssues } from "./inputIssueProjection.js";
+import { err, ok, type Result } from "./result.js";
+import { digestSchema, prefixedDigestSchema } from "./digests.js";
 
 /** Evidence-scoped identifier schemas shared by application graph projections. */
 export const projectionEvidenceIdSchema = prefixedDigestSchema("ev");
@@ -14,8 +20,44 @@ export const projectionPathSchema = z.string().min(1);
 
 /** Inventory pages accepted by every application graph projection. */
 export const applicationInventoryProjectionInputSchema = z.strictObject({
-  inventory_evidence: z.array(evidenceSchema).min(1),
+  inventory_evidence: z.array(evidenceInputSchema).min(1),
 });
+
+const applicationInventoryRequestSchema = getEvidenceInputContract(
+  applicationInventoryProjectionInputSchema,
+).frameSchema;
+
+/** Resolve the request and authenticate inventory pages once for all projections. */
+export const readApplicationInventoryProjection = (
+  input: unknown,
+  operation: string,
+): Result<ParsedInventorySet, AnalysisInputError | EvidenceIntegrityError> => {
+  const frame = applicationInventoryRequestSchema.safeParse(input);
+  if (!frame.success)
+    return err(
+      analysisInputErrorFromIssues(operation, frame.error.issues, input, {
+        cause: frame.error,
+      }),
+    );
+  try {
+    return ok(parseArtifactInventoryEvidence(frame.data.inventory_evidence));
+  } catch (cause: unknown) {
+    if (cause instanceof EvidenceIntegrityError) return err(cause);
+    if (!(cause instanceof ArtifactInventoryCarrierError)) throw cause;
+    return err(
+      new AnalysisInputError(operation, { cause, userMessage: cause.message }, [
+        {
+          path: [
+            "inventory_evidence",
+            ...(cause.index === undefined ? [] : [cause.index, "operation"]),
+          ],
+          reason: "invalid_value",
+          message: cause.message,
+        },
+      ]),
+    );
+  }
+};
 
 /** One authenticated inventory entry retained by application graph projections. */
 export const projectedComponentSchema = z.strictObject({
@@ -36,12 +78,6 @@ export const unavailableComponentSchema = z.strictObject({
 });
 
 export type ProjectedComponent = z.infer<typeof projectedComponentSchema>;
-
-/** A projection and the authenticated source Evidence used to derive it. */
-export interface MobileApplicationProjectionWithSources<Projection> {
-  readonly projection: Projection;
-  readonly sources: readonly Evidence[];
-}
 
 /** Path-pair hypotheses connecting managed content to a native library. */
 export const projectedBridgeCandidateSchema = <
@@ -72,7 +108,7 @@ export const projectionCoverage = (
   inventory_complete: inventory.complete,
 });
 
-/** One occurrence, preserving entry kind and either authenticated or unavailable content. */
+/** One occurrence with resolved content, unavailable identity, or an unresolved node reference. */
 export type ProjectedInventoryEntry = {
   readonly path: string;
   readonly kind: ParsedInventorySet["inventory"]["occurrences"][number]["entry_kind"];
@@ -82,16 +118,21 @@ export type ProjectedInventoryEntry = {
       readonly component: undefined;
       readonly unavailable: z.infer<typeof unavailableComponentSchema>;
     }
+  | { readonly component: undefined; readonly unavailable: undefined }
 );
 
-/** Interpret identity once, before application-specific attribution and classification. */
+/** Resolve available identities and report references outside the supplied pages. */
 export const projectedInventoryEntries = (
   inventory: ParsedInventorySet["inventory"],
-): ProjectedInventoryEntry[] => {
+): {
+  readonly entries: ProjectedInventoryEntry[];
+  readonly limitations: string[];
+} => {
   const nodes = new Map(
     inventory.nodes.map((node) => [node.artifact_id, node]),
   );
-  return inventory.occurrences
+  const limitations: string[] = [];
+  const entries = inventory.occurrences
     .filter(({ logical_path }) => logical_path !== ".")
     .map((occurrence): ProjectedInventoryEntry => {
       const path = occurrence.logical_path;
@@ -111,10 +152,12 @@ export const projectedInventoryEntries = (
           },
         };
       const node = nodes.get(occurrence.artifact_id);
-      if (node === undefined)
-        throw new TypeError(
-          "Application projection occurrence has no artifact node",
+      if (node === undefined) {
+        limitations.push(
+          `Inventory occurrence ${JSON.stringify(path)} references ${occurrence.artifact_id} (${occurrence.artifact_format}), whose node is outside the supplied pages. Its content SHA-256 and component classification remain unknown; the source Evidence retains the occurrence.`,
         );
+        return { path, kind, component: undefined, unavailable: undefined };
+      }
       return {
         path,
         kind,
@@ -127,6 +170,7 @@ export const projectedInventoryEntries = (
         unavailable: undefined,
       };
     });
+  return { entries, limitations };
 };
 
 /** Directory trees and links retain inventory identity but are not file components. */

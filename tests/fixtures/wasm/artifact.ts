@@ -11,6 +11,8 @@ export const wasmArtifactFixture = (
   sections: [],
   imports: [],
   exports: [],
+  debug_name_metadata: "not-present",
+  custom_section_warnings: [],
   headers: "",
   details: "",
   wat: {
@@ -31,7 +33,7 @@ export const wasmArtifactFixture = (
         arguments:
           tool === "wasm-objdump"
             ? ["-h", "-x", "module.wasm"]
-            : ["--enable-all", "module.wasm"],
+            : ["--enable-all", "--ignore-custom-section-errors", "module.wasm"],
       }),
     ),
     timeout_ms: 30_000,

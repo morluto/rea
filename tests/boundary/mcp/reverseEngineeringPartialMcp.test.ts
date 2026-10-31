@@ -1,11 +1,18 @@
 import pino from "pino";
+import type { CallToolResult } from "@modelcontextprotocol/server";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { expect, it, vi } from "vitest";
 
 import { TestReverseEngineeringService as ReverseEngineeringService } from "../../support/reverseEngineeringService.js";
-import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisInputError,
+} from "../../../src/domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import type { FridaDeviceList } from "../../../src/domain/fridaDiscovery.js";
 import {
   createBinarySessionTargets,
   createCacheProvider,
@@ -34,6 +41,50 @@ const createTimedOutRizinService = (): ReverseEngineeringService =>
       });
     },
   });
+
+it("keeps a non-Evidence partial with a caller-selected evidence_id inline in a reverse tool error", async () => {
+  const { server, handler } = createReverseEngineeringMcpHarness();
+  const partial = {
+    devices: [],
+    cleanup_error: null,
+    evidence_id: "caller-selected",
+  };
+  const observation: FridaDeviceList = partial;
+  const reason = { request: "cancel inspection" };
+  const failure = new AnalysisCancelledError("inspect_with_objdump", {
+    cause: reason,
+    partialObservation: observation,
+  });
+  const service = new ReverseEngineeringService();
+  vi.spyOn(service, "inspectWithObjdump").mockResolvedValue(err(failure));
+  const recordEvidence = vi.fn(() => ok("added" as const));
+  registerReverseEngineeringTools(
+    server,
+    service,
+    pino({ enabled: false }),
+    createToolResultDelivery(2 * 1024 * 1024),
+    recordEvidence,
+  );
+
+  const result = (await invokeWithLiveSignal(handler("inspect_with_objdump"), {
+    path: "package.json",
+    operation: "file_headers",
+  })) as CallToolResult;
+  const projected = parseMcpToolError(result);
+  expect(projected.error).toMatchObject({
+    code: "cancelled",
+    message: projectAnalysisError(failure).message,
+    details: { operation: "inspect_with_objdump" },
+  });
+  expect(projected.error.details?.partial_observation).toEqual(partial);
+  expect(result.structuredContent).toEqual(projected);
+  expect(recordEvidence).not.toHaveBeenCalled();
+  expect(failure.cause).toBe(reason);
+  expect(failure.partialObservation).toBe(partial);
+  expect(result._meta).toEqual({
+    provenance: { untrusted_content: true, source: "analysis_target" },
+  });
+});
 
 it("records partial Evidence and references it in the original MCP error", async () => {
   const { server, handler } = createReverseEngineeringMcpHarness();
@@ -212,11 +263,9 @@ it("invalidates the snapshot in the legacy Rizin admission path", async () => {
 it("skips snapshot invalidation for malformed Rizin input", async () => {
   const { server, handler } = createReverseEngineeringMcpHarness();
   const invalidateSnapshot = vi.fn();
-  const executeRizinCommand = vi.fn(async () =>
-    err(new AnalysisInputError("execute_rizin_command")),
-  );
+  const executeRizinCommandValidated = vi.fn();
   const service = {
-    executeRizinCommand,
+    executeRizinCommandValidated,
   } as unknown as ReverseEngineeringService;
   registerReverseEngineeringTools(
     server,
@@ -231,10 +280,17 @@ it("skips snapshot invalidation for malformed Rizin input", async () => {
 
   const response = (await invokeWithLiveSignal(invoke, {
     path: "package.json",
-  })) as { readonly isError?: boolean };
+  })) as CallToolResult;
 
-  expect(response.isError).toBe(true);
-  expect(executeRizinCommand).toHaveBeenCalledOnce();
+  expect(parseMcpToolError(response).error).toMatchObject({
+    code: "invalid_request",
+    details: {
+      issues: [
+        { path: ["command"], reason: "missing_argument", expected: "string" },
+      ],
+    },
+  });
+  expect(executeRizinCommandValidated).not.toHaveBeenCalled();
   expect(invalidateSnapshot).not.toHaveBeenCalled();
 });
 
@@ -274,7 +330,7 @@ it("preserves the Rizin operation error when analysis retirement also fails", as
   const retirement = new AnalysisInputError("rebind");
   const service = {
     retryCleanup: async () => ok(null),
-    executeRizinCommand: async () => err(primary),
+    executeRizinCommandValidated: async () => err(primary),
   } as unknown as ReverseEngineeringService;
   const observedOperationResult = vi.fn();
   registerReverseEngineeringTools(
@@ -327,6 +383,7 @@ it.skipIf(process.platform === "win32").each(["success", "timeout"])(
     expect((await session.open(target)).ok).toBe(true);
     expect(session.activeTarget()?.path).toBe(target);
     const originalDigest = session.activeTarget()?.sha256;
+    expect(originalDigest).toEqual(expect.any(String));
 
     const { server, handler } = createReverseEngineeringMcpHarness();
     const service = new ReverseEngineeringService({
@@ -399,6 +456,7 @@ it.skipIf(process.platform === "win32").each(["success", "timeout"])(
     expect(session.activeTarget()).toBeUndefined();
     expect((await session.execute("address_name", {})).ok).toBe(false);
     expect((await session.open(target)).ok).toBe(true);
+    expect(session.activeTarget()?.sha256).toEqual(expect.any(String));
     expect(session.activeTarget()?.sha256).not.toBe(originalDigest);
     await session.close();
     await rm(dirname(target), { recursive: true, force: true });
@@ -506,7 +564,7 @@ it("does not treat a malformed partial observation as retained Evidence", async 
   );
   const service = {
     inspectWithObjdump: async () => err(invalidError),
-    executeRizinCommand: async () => err(invalidError),
+    executeRizinCommandValidated: async () => err(invalidError),
   } as unknown as ReverseEngineeringService;
   const recordEvidence = vi.fn(() => ok("added" as const));
   registerReverseEngineeringTools(
@@ -574,7 +632,7 @@ it("returns admission failures without invoking a reverse-engineering provider",
   const inspectWithObjdump = vi.fn();
   const service = {
     inspectWithObjdump,
-    executeRizinCommand: vi.fn(),
+    executeRizinCommandValidated: vi.fn(),
   } as unknown as ReverseEngineeringService;
   const admission: WithAdmittedAnalysis = async () =>
     err(new AnalysisInputError("inspect_with_objdump"));

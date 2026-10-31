@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisResult.js";
 import { chmod, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -17,10 +18,8 @@ import {
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
-import {
-  REA_WORKFLOW_PROVIDER,
-  workflowAnalysisProfile,
-} from "../../../src/application/InvestigationProviders.js";
+import { REA_WORKFLOW_PROVIDER } from "../../../src/domain/investigationProviders.js";
+import { workflowAnalysisProfile } from "../../../src/application/WorkflowAnalysisProfile.js";
 import { HOPPER_PROVIDER_IDENTITY } from "../../../src/hopper/HopperProviderCapabilities.js";
 
 import { resolveHopperAnalysisProfile } from "../../../src/hopper/HopperAnalysisProfile.js";
@@ -41,14 +40,16 @@ describe("direct analysis snapshot files", () => {
     vi.stubEnv("REA_ANALYSIS_PROVIDER", "environment-provider");
 
     await expect(
-      createDirectAnalysis(process.env).runDirectAnalysis(
-        targetPath,
-        "binary_overview",
-        {},
-        {
-          providerId: "request-provider",
-        },
-      ),
+      createDirectAnalysis(process.env)
+        .runDirectAnalysis(
+          targetPath,
+          "binary_overview",
+          {},
+          {
+            providerId: "request-provider",
+          },
+        )
+        .then(projectCliAnalysisResult),
     ).resolves.toMatchObject({
       error: "Analysis failed",
       code: "capability_unavailable",
@@ -98,14 +99,16 @@ describe("direct analysis snapshot files", () => {
     vi.stubEnv("HOPPER_LAUNCHER_PATH", launcherPath);
 
     await expect(
-      createDirectAnalysis(process.env).runDirectAnalysis(
-        process.execPath,
-        "binary_overview",
-        {},
-        {
-          snapshotPath,
-        },
-      ),
+      createDirectAnalysis(process.env)
+        .runDirectAnalysis(
+          process.execPath,
+          "binary_overview",
+          {},
+          {
+            snapshotPath,
+          },
+        )
+        .then(projectCliAnalysisResult),
     ).resolves.not.toEqual(evidence);
   });
 });

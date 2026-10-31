@@ -47,6 +47,35 @@ it("accepts zero parent, process-group, and session IDs as native facts", () => 
   ).toMatchObject({ parentPid: 0, processGroupId: 0, sessionId: 0 });
 });
 
+it("retains identity when Linux teardown reports unavailable group and session IDs", () => {
+  // Linux v6.8 fs/proc/array.c: do_task_stat initializes pgid/sid to -1
+  // and only replaces them while lock_task_sighand succeeds.
+  expect(
+    parseLinuxProcessStat(
+      statRecord({
+        parentPid: "0",
+        processGroupId: "-1",
+        sessionId: "-1",
+        state: "X",
+        flags: "4",
+      }),
+    ),
+  ).toEqual({
+    pid: 42,
+    startTime: "987654",
+    lifecycle: "dead",
+    parentPid: 0,
+    processGroupId: -1,
+    sessionId: -1,
+  });
+  expect(
+    parseLinuxProcessStat(statRecord({ processGroupId: "-2" })),
+  ).toBeUndefined();
+  expect(
+    parseLinuxProcessStat(statRecord({ sessionId: "-2" })),
+  ).toBeUndefined();
+});
+
 it("distinguishes zombie lifecycle and rejects malformed or missing identity fields", () => {
   expect(parseLinuxProcessStat(statRecord({ state: "Z" }))?.lifecycle).toBe(
     "zombie",

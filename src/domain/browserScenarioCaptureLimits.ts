@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-const positiveSafeInteger = z.number().int().safe().positive();
+const positiveSafeInteger = z.int().safe().positive();
 
 export const DEFAULT_BROWSER_SCENARIO_CAPTURE_LIMITS = {
   max_events: 10_000,

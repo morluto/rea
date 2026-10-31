@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdtemp, open, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { verifyInferiorInputSink } from "./inferiorInputSink.js";
 
@@ -32,9 +32,13 @@ describe.skipIf(process.platform !== "linux")(
   "inferior standard input verification",
   () => {
     it("treats the null device as independent of the debugger", async () => {
+      const verifyOwnedIdentity = vi.fn(async () => undefined);
       await expect(
-        withChild("ignore", (pid) => verifyInferiorInputSink(pid, terminal)),
+        withChild("ignore", (pid) =>
+          verifyInferiorInputSink(pid, terminal, verifyOwnedIdentity),
+        ),
       ).resolves.toBe("not-inherited");
+      expect(verifyOwnedIdentity).toHaveBeenCalledTimes(2);
     });
 
     it("treats an open regular input file as independent of the debugger", async () => {
@@ -68,6 +72,38 @@ describe.skipIf(process.platform !== "linux")(
       await expect(
         withChild("pipe", (pid) => verifyInferiorInputSink(pid, terminal)),
       ).rejects.toThrow(/unverified/u);
+    });
+
+    it("accepts a stably closed stdin only after the owner rechecks identity", async () => {
+      const child = spawn(
+        "/bin/sh",
+        ["-c", "exec 0<&-; printf ready; exec sleep 30"],
+        { stdio: ["ignore", "pipe", "ignore"] },
+      );
+      try {
+        if (child.pid === undefined) throw new Error("Inferior did not start");
+        await new Promise<void>((resolve) =>
+          child.stdout.once("data", resolve),
+        );
+        const verifyOwnedIdentity = vi.fn(async () => undefined);
+        await expect(
+          verifyInferiorInputSink(
+            String(child.pid),
+            terminal,
+            verifyOwnedIdentity,
+          ),
+        ).resolves.toBe("not-inherited");
+        expect(verifyOwnedIdentity).toHaveBeenCalledTimes(3);
+      } finally {
+        if (child.exitCode === null) {
+          const exited = new Promise<void>((resolve, reject) => {
+            child.once("exit", () => resolve());
+            child.once("error", reject);
+          });
+          child.kill("SIGKILL");
+          await exited;
+        }
+      }
     });
   },
 );

@@ -98,7 +98,7 @@ it("resolves zero offsets for nonnullable fields to their own field address", ()
     "protocolName",
     "typeName",
     "typeMetadataRecord",
-    "classDescriptorName",
+    "moduleName",
   ] as const) {
     expect(relative(0x20n, kind)).toEqual({ kind: "target", target: 0x20n });
   }

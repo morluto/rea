@@ -1,12 +1,8 @@
-import type { WebPageInspection } from "./browserObservationSchemas.js";
 import { analyzeScript } from "./webBundleAnalyzerInspection.js";
 import {
   createWebBundleAnalysisAccumulator,
-  isIncludedScript,
   type IncludedScript,
 } from "./webBundleAnalyzerState.js";
-import { buildCapturedWebBundleAnalysis } from "./webBundleAnalyzerResult.js";
-import type { WebBundleAnalysis } from "./webBundleAnalysis.js";
 import {
   webBundleScriptAnalysisSchema,
   type WebBundleScriptAnalysis,
@@ -17,7 +13,7 @@ export const analyzeCapturedWebScript = (
   script: IncludedScript,
 ): WebBundleScriptAnalysis => {
   const accumulator = createWebBundleAnalysisAccumulator();
-  analyzeScript(script, accumulator);
+  const routeFacts = analyzeScript(script, accumulator);
   const failed = accumulator.failedScripts.length > 0;
   const recovered = accumulator.recoveredScripts.length > 0;
   return webBundleScriptAnalysisSchema.parse({
@@ -26,6 +22,7 @@ export const analyzeCapturedWebScript = (
     parse_status: failed ? "failed" : recovered ? "recovered" : "parsed",
     visited_ast_nodes: accumulator.visitedNodes,
     widened_return_references: accumulator.widenedScripts.length > 0,
+    route_facts: routeFacts,
     observations: {
       edges: accumulator.edges,
       routes: accumulator.routes,
@@ -34,22 +31,4 @@ export const analyzeCapturedWebScript = (
     },
     inferences: accumulator.inferences,
   });
-};
-
-/** Analyze selected captured JavaScript source without execution. */
-export const analyzeCapturedWebBundle = (
-  inspection: WebPageInspection,
-  sourceMaps: WebBundleAnalysis["observations"]["source_maps"] = {
-    status: "not_requested",
-    requested: 0,
-    processed: 0,
-    items: [],
-  },
-): WebBundleAnalysis => {
-  const sourceScripts = inspection.scripts.items.filter(isIncludedScript);
-  return buildCapturedWebBundleAnalysis(
-    inspection,
-    sourceMaps,
-    sourceScripts.map(analyzeCapturedWebScript),
-  );
 };

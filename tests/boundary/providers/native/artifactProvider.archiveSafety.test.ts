@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "../../../../src/cli/projectCliAnalysisResult.js";
 import { lstat, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -69,7 +70,9 @@ describe("artifact archive safety", () => {
       );
       expect(
         parseEvidence(
-          await runProviderAnalysis(path, "inventory_artifact", {}),
+          await runProviderAnalysis(path, "inventory_artifact", {}).then(
+            projectCliAnalysisResult,
+          ),
         ),
       ).toMatchObject({
         operation: "inventory_artifact",

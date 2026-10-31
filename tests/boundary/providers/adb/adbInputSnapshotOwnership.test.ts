@@ -40,6 +40,7 @@ const fixture = async () => {
   const root = await createTestTempDirectory("rea-adb-input-owner-");
   const binary = join(root, "adb");
   const source = join(root, "payload.bin");
+  const devicePath = "/data/local/tmp/payload.bin";
   const bytes = Buffer.from("immutable payload");
   await writeFile(source, bytes);
   const digest = createHash("sha256").update(bytes).digest("hex");
@@ -56,27 +57,44 @@ const fixture = async () => {
       return output(
         `Android Debug Bridge version 1.0.41\nVersion 34.0.5-stub\nInstalled as ${binary}\n`,
       );
-    return output("");
+    throw new Error(`Unexpected ADB fixture command: ${JSON.stringify(args)}`);
   });
   vi.mocked(execFileBytes).mockImplementation(async (_binary, args) => {
-    if (args[2] === "push") {
+    if (args[2] === "shell" && args[3] === "test" && args[5] === devicePath) {
+      if (args[4] === "-d")
+        throw Object.assign(new Error("Selected destination is a file"), {
+          code: 1,
+          stdout: "",
+          stderr: "",
+          signal: null,
+          killed: false,
+        });
+      if (args[4] === "-e")
+        return { stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
+    }
+    if (args[2] === "push" && args[4] === devicePath) {
       snapshotPath = args[3]!;
       consumedBytes = await readFile(snapshotPath);
       if (consumedBytes.byteLength === 0)
         throw new Error("adb received an empty local snapshot");
+      return { stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
     }
-    if (args[3] === "sha256sum") {
+    if (
+      args[2] === "shell" &&
+      args[3] === "sha256sum" &&
+      args[4] === devicePath
+    ) {
       if (consumedBytes === undefined)
         throw new Error("checksum requested before a push was consumed");
       const consumedDigest = createHash("sha256")
         .update(consumedBytes)
         .digest("hex");
       return {
-        stdout: Buffer.from(`${consumedDigest}  /data/local/tmp/payload.bin\n`),
+        stdout: Buffer.from(`${consumedDigest}  ${devicePath}\n`),
         stderr: Buffer.alloc(0),
       };
     }
-    return { stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
+    throw new Error(`Unexpected ADB fixture command: ${JSON.stringify(args)}`);
   });
   const provider = new AdbProvider({ environment: { REA_ADB_PATH: binary } });
   onTestFinished(() => provider.close());
@@ -91,7 +109,7 @@ const fixture = async () => {
       input: {
         serial: "device",
         local_path: source,
-        device_path: "/data/local/tmp/payload.bin",
+        device_path: devicePath,
         overwrite: true,
       },
     },
@@ -126,9 +144,9 @@ test("retains failed snapshot cleanup ownership and retries it on close", async 
       sha256: f.digest,
     },
   });
-  await expect(readFile(f.snapshotPath())).resolves.toEqual(
-    await readFile(f.source),
-  );
+  expect(
+    Buffer.compare(await readFile(f.snapshotPath()), await readFile(f.source)),
+  ).toBe(0);
 
   await f.provider.close();
   await expect(lstat(dirname(f.snapshotPath()))).rejects.toMatchObject({
@@ -354,9 +372,10 @@ test.each([
     const secondary = result.error.secondaryFailures[0];
     expect(secondary).toBeInstanceOf(AnalysisOutputError);
     expect(secondary?.cause).toBeInstanceOf(AdbInputSnapshotFailure);
-    expect(
-      (secondary?.cause as AdbInputSnapshotFailure).cleanupCause,
-    ).toBeDefined();
+    const snapshotFailure = secondary?.cause;
+    if (!(snapshotFailure instanceof AdbInputSnapshotFailure))
+      throw new Error("Expected snapshot cleanup failure");
+    expect(snapshotFailure.cleanupCause).toBeDefined();
   },
 );
 
@@ -446,7 +465,7 @@ test.each([
             }),
       },
     });
-    await expect(readFile(localPath)).resolves.toEqual(pulledBytes);
+    expect(Buffer.compare(await readFile(localPath), pulledBytes)).toBe(0);
     const originatingError = result.error;
     await f.provider.close();
     expect(closeAttempts).toBe(failClose ? 2 : 1);
@@ -663,7 +682,12 @@ test.each([false, true])(
         dirname(f.snapshotPath()),
       );
     else expect(result.error.cleanupIncomplete).toBe(false);
-    expect(await readFile(f.source)).toEqual(Buffer.from("immutable payload"));
+    expect(
+      Buffer.compare(
+        await readFile(f.source),
+        Buffer.from("immutable payload"),
+      ),
+    ).toBe(0);
     await f.provider.close();
   },
 );

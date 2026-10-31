@@ -4,19 +4,21 @@ import { AnalysisUnsupportedTargetError } from "../analysisErrorCore.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
 import { err, ok, type Result } from "../result.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import { ownedView, type AdmittedView } from "./analysisViewShape.js";
 import { EnvironmentManifestAccumulator } from "./EnvironmentManifestAccumulator.js";
 import {
   TEMPLATE_RULES,
   type TemplateRule,
 } from "./environmentManifestRules.js";
 import { admitHarCaptureParent } from "./WebNetworkProjectionAccumulator.js";
-import { admitScenarioCaptureParent } from "./scenarioCaptureRecords.js";
-import { ROUTE_RULES } from "./webNetworkRouteTemplates.js";
+import {
+  admitScenarioCaptureParent,
+  type ScenarioResponseBodyRetention,
+} from "./scenarioCaptureRecords.js";
+import { environmentManifestFields } from "./environmentManifestSchema.js";
+
+export { environmentManifestFields };
 
 /** Opt-in template rules, each listed at most once; shared by every view that groups tools. */
 export const templateRulesSchema = z
@@ -40,92 +42,6 @@ export const environmentManifestViewRequestSchema = z.strictObject({
     ),
 });
 
-const manifestRuleSchema = z.enum([...ROUTE_RULES, ...TEMPLATE_RULES]);
-const jsonTypeNameSchema = z.enum([
-  "string",
-  "number",
-  "boolean",
-  "object",
-  "array",
-  "null",
-]);
-const toolSchema = z.strictObject({
-  name: z.string(),
-  method: z.string(),
-  path_template: z.string(),
-  api_surface_template: z
-    .string()
-    .describe("Four-rule template of the tool's earliest record."),
-  params: z.array(
-    z.strictObject({
-      index: z.number().int().nonnegative(),
-      name: z.string(),
-      rule: manifestRuleSchema,
-      basis: z.literal("inferred"),
-      observed_values: z.array(z.string()),
-    }),
-  ),
-  query_parameter_names: z.array(z.string()),
-  body_shape: z
-    .strictObject({
-      type: z.literal("object"),
-      properties: z.record(z.string(), jsonTypeNameSchema),
-    })
-    .nullable(),
-  statuses: z.array(z.number()),
-  content_types: z.array(z.string()),
-  record_ordinals: z.array(z.number().int().nonnegative()),
-});
-export const environmentManifestFields = {
-  origin: z
-    .string()
-    .describe("Primary origin: the origin with the most JSON-like records."),
-  name: z
-    .string()
-    .describe(
-      "Kebab-case environment name derived from the primary origin host.",
-    ),
-  tools: z.array(toolSchema),
-  records: z
-    .array(
-      z.strictObject({
-        ordinal: z.number().int().nonnegative(),
-        method: z.string(),
-        path: z.string(),
-        status: z.number().nullable(),
-        content_type: z.string().nullable(),
-      }),
-    )
-    .describe(
-      "Pointers to the retained parent records cited by tools; no bodies.",
-    ),
-  excluded: z.array(
-    z.strictObject({
-      method: z.string(),
-      origin: z.string(),
-      path_template: z.string(),
-      reason: z.enum(["other-origin", "ui-page-or-asset", "non-json"]),
-    }),
-  ),
-  unknowns: z.array(
-    z.strictObject({
-      kind: z.enum([
-        "authorization-model",
-        "response-semantics",
-        "state-transition",
-      ]),
-      statement: z.string(),
-    }),
-  ),
-  templated_groups: z
-    .number()
-    .int()
-    .nonnegative()
-    .describe(
-      "Tools and excluded groups that carry at least one templated segment.",
-    ),
-};
-
 /** The records, coverage and identity a manifest projects from, for either parent kind. */
 export interface CaptureParent {
   readonly operation:
@@ -133,6 +49,10 @@ export interface CaptureParent {
     | "capture_browser_scenario";
   readonly records: readonly WebNetworkCaptureRecord[];
   readonly total_records: number;
+  readonly scenarioResponseBodies?: ReadonlyMap<
+    number,
+    ScenarioResponseBodyRetention
+  >;
   readonly limitations: readonly string[];
   readonly artifact: { readonly path: string; readonly sha256: string | null };
 }
@@ -150,6 +70,7 @@ const admitCaptureParent = (
           operation: "capture_browser_scenario",
           records: scenario.value.records,
           total_records: scenario.value.totalRecords,
+          scenarioResponseBodies: scenario.value.responseBodies,
           limitations: scenario.value.limitations,
           artifact: { path: "", sha256: null },
         })
@@ -207,30 +128,47 @@ const addCaptureRecords = (
   ]);
   if (!limitations.ok) return limitations;
   for (const record of capture.records) {
-    const added = target.accumulator.add(record);
+    const added = target.accumulator.add(
+      record,
+      capture.scenarioResponseBodies?.get(record.ordinal),
+    );
     if (!added.ok) return added;
   }
   return ok(undefined);
 };
 
+/** Create the manifest budget with its selected query names and template rules. */
+export const createEnvironmentManifestAccumulator = (
+  view: AdmittedView,
+): EnvironmentManifestAccumulator => {
+  const selected = ownedView<
+    z.output<typeof environmentManifestViewRequestSchema>
+  >(view, "environment-manifest");
+  return selected === undefined
+    ? new EnvironmentManifestAccumulator()
+    : new EnvironmentManifestAccumulator(
+        undefined,
+        selected.include_query_parameter_names,
+        selected.template_rules,
+      );
+};
+
 /** Project retained request lines, from a HAR or a browser scenario, into a replayable tool surface; templates are inferences. */
 export const projectEnvironmentManifestView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-  accumulator = view.kind === "environment-manifest"
-    ? new EnvironmentManifestAccumulator(
-        undefined,
-        view.include_query_parameter_names,
-        view.template_rules,
-      )
-    : new EnvironmentManifestAccumulator(),
-): Result<UnsignedAnalysisView, AnalysisError> => {
-  if (view.kind !== "environment-manifest")
+  admitted: AdmittedView,
+  accumulator = createEnvironmentManifestAccumulator(admitted),
+) => {
+  const view = ownedView<z.output<typeof environmentManifestViewRequestSchema>>(
+    admitted,
+    "environment-manifest",
+  );
+  if (view === undefined)
     return err(
       new AnalysisUnsupportedTargetError(
         "inspect_analysis_view",
         parent.evidenceId,
-        `View ${view.kind} is unsupported for parent operation ${parent.operation}; environment-manifest requires inspect_web_network_capture or capture_browser_scenario.`,
+        `View ${admitted.kind} is unsupported for parent operation ${parent.operation}; environment-manifest requires inspect_web_network_capture or capture_browser_scenario.`,
       ),
     );
   const grouped = groupCaptureRecords(parent, view.kind, view.template_rules, {
@@ -247,7 +185,7 @@ export const projectEnvironmentManifestView = (
   const manifest = accumulator.finish();
   if (!manifest.ok) return manifest;
   return ok({
-    kind: "environment-manifest",
+    kind: "environment-manifest" as const,
     view,
     parent_evidence_id: parent.evidenceId,
     parent_operation: capture.operation,
