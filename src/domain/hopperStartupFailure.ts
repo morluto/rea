@@ -62,7 +62,7 @@ const failures = [
   [
     72,
     "unsupported_hopper_build",
-    "This Hopper build is not supported for unattended Linux analysis. Unset HOPPER_LAUNCHER_PATH and rerun rea setup --yes --install-hopper, or update REA.",
+    "This Hopper build is not supported for unattended Linux analysis. The binary does not match the current official demo or a retained authenticated package. Unset or update HOPPER_LAUNCHER_PATH, then run rea setup --yes --install-hopper to install the current authenticated build, or update REA.",
   ],
   [
     73,

@@ -3,7 +3,7 @@ import {
   supportsJavaScriptRuntime,
 } from "../domain/runtimeVersion.js";
 import { hopperLauncherDiscovery } from "./HopperLauncherDiscovery.js";
-import { macosMajorVersion } from "../domain/macosVersion.js";
+import type { HopperReleaseError } from "./HopperReleaseFeed.js";
 import { LINUX_HOPPER_SETUP_HOSTS, supportsReaHost } from "./LinuxHopper.js";
 import type {
   DoctorCheck,
@@ -268,9 +268,12 @@ const optionalHopperVersionCheck = async (
   if (host.platform !== "linux" || hopperPath === undefined) return undefined;
   const inspected = await host.inspectLinuxHopper(hopperPath);
   const buildCheck = check("hopper-version", inspected.ok, hopperPath, {
-    remediation: unsupportedHopperRemediation(
-      host.configuredHopperPath === hopperPath,
-    ),
+    remediation: inspected.ok
+      ? ""
+      : hopperVerificationRemediation(
+          inspected.error,
+          host.configuredHopperPath === hopperPath,
+        ),
     classification:
       !inspected.ok &&
       [
@@ -371,8 +374,16 @@ const providerDoctorChecks = (
 
 const unsupportedHopperRemediation = (configured: boolean): string =>
   configured
-    ? "Check HOPPER_LAUNCHER_PATH and its publisher verification evidence. Run rea setup to install and retain an authenticated official Hopper package for offline use."
-    : "Run rea setup to install and retain an authenticated official Hopper package for offline use.";
+    ? "The configured HOPPER_LAUNCHER_PATH binary does not match the current official Linux demo or any retained authenticated package. If this build was extracted from an older official .deb, run rea setup --yes --install-hopper to install and retain the current authenticated build. Otherwise check HOPPER_LAUNCHER_PATH and its publisher verification evidence."
+    : "Run rea setup --yes --install-hopper to install and retain an authenticated official Hopper package for offline use.";
+
+const hopperVerificationRemediation = (
+  error: HopperReleaseError,
+  configured: boolean,
+): string =>
+  error.reason === "unsupported_hopper_build"
+    ? unsupportedHopperRemediation(configured)
+    : `Hopper publisher verification could not complete: ${error.message} Resolve the reported verification failure, then rerun rea doctor.`;
 
 const providerCheckName = (providerId: string, name: string): boolean =>
   name === providerId || name.startsWith(`${providerId}-`);
