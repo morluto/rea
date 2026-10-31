@@ -1,15 +1,7 @@
 import type { z } from "zod";
 
 import type { JsonValue } from "../domain/jsonValue.js";
-import type { ToolEffects } from "./toolEffects.js";
-
-/** Caller-visible MCP execution hints. */
-interface ToolAnnotations {
-  readonly readOnlyHint: boolean;
-  readonly destructiveHint: boolean;
-  readonly idempotentHint: boolean;
-  readonly openWorldHint: boolean;
-}
+import type { DerivedToolAnnotations, ToolEffects } from "./toolEffects.js";
 
 /** One validated example request for an MCP tool contract. */
 export interface ToolExample {
@@ -55,10 +47,16 @@ export interface ToolContract<
   readonly title: string;
   readonly description: string;
   readonly kind: ToolKind;
+  /** This handler dispatches through the active binary-analysis session. */
+  readonly requiresActiveTarget?: boolean;
+  /** Adapter delivery of a retained summary; detail never reaches analysis. */
+  readonly retainedSummary?: {
+    readonly evidenceParameters: "omit-detail" | "preserve-detail";
+  };
   readonly inputSchema: InputSchema;
   readonly outputSchema: OutputSchema;
   readonly effects: ToolEffects;
-  readonly annotations: ToolAnnotations;
+  readonly annotations: DerivedToolAnnotations;
   /**
    * Results, successful or failed, can contain text that originates from the
    * analysis target. MCP delivery marks such results as untrusted data.

@@ -128,7 +128,7 @@ it("preserves the caller's exact abort reason before invocation", async () => {
   expect(calls).toBe(0);
 });
 
-it("cancels before invocation and after an acquired observation", async () => {
+it("retains the acquired observation when cancellation arrives during inspection", async () => {
   const controller = new AbortController();
   const service = new RecordedCrashService({
     inspectAndClose(input, options) {
@@ -161,76 +161,68 @@ it("cancels before invocation and after an acquired observation", async () => {
       normalized_result: recordedCrashFixture(),
     });
   }
-  const untouched = new RecordedCrashService({
+});
+
+it.each([
+  "different-path",
+  "invalid-digest",
+  "outside-range",
+  "owner-base64",
+  "descriptor-base64",
+])("rejects provider evidence at the next boundary: %s", async (problem) => {
+  const fixture = recordedCrashFixture();
+  if (problem === "different-path") fixture.artifact.path = "/different.elf";
+  if (problem === "invalid-digest") fixture.artifact.sha256 = "unobserved";
+  if (problem === "owner-base64") fixture.notes[0]!.owner_bytes_base64 = "A";
+  if (problem === "descriptor-base64")
+    fixture.notes[0]!.descriptor_bytes_base64 = "A";
+  if (problem === "outside-range")
+    fixture.segments.push({
+      index: 0,
+      type: "PT_LOAD",
+      type_id: 1,
+      offset: "0x200",
+      header_location: { offset: "0x0", bytes: "0x38" },
+      file_backing: "file",
+      file_size: "0x1",
+      memory_size: "0x1",
+      virtual_address: "0x20000000000001",
+      physical_address: "0x0",
+      alignment: "0x1",
+      flags: "0x5",
+    });
+  const service = new RecordedCrashService({
+    inspectAndClose(input, options) {
+      return this.inspect(input, options);
+    },
+    identity: RECORDED_CRASH_TEST_PROVIDER,
+    inspect: () => Promise.resolve(ok(fixture)),
+  });
+  expect(
+    await service.inspect({ path: "/artifacts/source-owned.core" }),
+  ).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisOutputError",
+      capturedOutput: fixture.diagnostics,
+    },
+  });
+  const controller = new AbortController();
+  const lateInvalid = await new RecordedCrashService({
     inspectAndClose(input, options) {
       return this.inspect(input, options);
     },
     identity: RECORDED_CRASH_TEST_PROVIDER,
     inspect: () => {
-      throw new Error("must not run");
+      controller.abort();
+      return Promise.resolve(ok(fixture));
     },
+  }).inspect(
+    { path: "/artifacts/source-owned.core" },
+    { signal: controller.signal },
+  );
+  expect(lateInvalid).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisOutputError" },
   });
-  expect(
-    await untouched.inspect(
-      { path: "/source.elf" },
-      { signal: controller.signal },
-    ),
-  ).toMatchObject({ ok: false, error: { _tag: "AnalysisCancelledError" } });
 });
-
-it.each(["different-path", "invalid-digest", "outside-range"])(
-  "rejects provider evidence at the next boundary: %s",
-  async (problem) => {
-    const fixture = recordedCrashFixture();
-    if (problem === "different-path") fixture.artifact.path = "/different.elf";
-    if (problem === "invalid-digest") fixture.artifact.sha256 = "unobserved";
-    if (problem === "outside-range")
-      fixture.segments.push({
-        index: 0,
-        type: "PT_LOAD",
-        offset: "0x200",
-        header_location: { offset: "0x0", bytes: "0x38" },
-        file_backing: "file",
-        file_size: "0x1",
-        memory_size: "0x1",
-        virtual_address: "0x20000000000001",
-        physical_address: "0x0",
-        alignment: "0x1",
-        flags: "0x5",
-      });
-    const service = new RecordedCrashService({
-      inspectAndClose(input, options) {
-        return this.inspect(input, options);
-      },
-      identity: RECORDED_CRASH_TEST_PROVIDER,
-      inspect: () => Promise.resolve(ok(fixture)),
-    });
-    expect(
-      await service.inspect({ path: "/artifacts/source-owned.core" }),
-    ).toMatchObject({
-      ok: false,
-      error: {
-        _tag: "AnalysisOutputError",
-        capturedOutput: fixture.diagnostics,
-      },
-    });
-    const controller = new AbortController();
-    const lateInvalid = await new RecordedCrashService({
-      inspectAndClose(input, options) {
-        return this.inspect(input, options);
-      },
-      identity: RECORDED_CRASH_TEST_PROVIDER,
-      inspect: () => {
-        controller.abort();
-        return Promise.resolve(ok(fixture));
-      },
-    }).inspect(
-      { path: "/artifacts/source-owned.core" },
-      { signal: controller.signal },
-    );
-    expect(lateInvalid).toMatchObject({
-      ok: false,
-      error: { _tag: "AnalysisOutputError" },
-    });
-  },
-);

@@ -68,7 +68,7 @@ const { createAgentEvaluationCommands } = await import(${JSON.stringify(
 const { OwnedCommandFailure, prepareOwnedCommand } = await import(${JSON.stringify(
         new URL("../../../dist/process/OwnedCommand.js", import.meta.url).href,
       )});
-const { closeVerifierResources } = await import(${JSON.stringify(
+const { withVerifierCleanup } = await import(${JSON.stringify(
         new URL("../../../scripts/lib/verifier-cleanup.mjs", import.meta.url)
           .href,
       )});
@@ -76,8 +76,7 @@ await prepareOwnedCommand();
 const root = ${JSON.stringify(root)}, fixture = ${JSON.stringify(fixture)};
 const commands = createAgentEvaluationCommands({ codex: fixture, evaluationRoot: root,
   evaluationEnvironment: process.env, timeoutMs: 1000, repositoryRoot: root });
-let primaryError;
-try {
+await withVerifierCleanup(async () => {
 for (const name of ["runCodex", "runProcess", "readCommandVersion"]) {
   await assert.rejects(() => name === "runCodex" ? commands.runCodex("fixture", []) :
     name === "runProcess" ? commands.runProcess(fixture, [], root, 1000) : commands.readCommandVersion(fixture), error => {
@@ -109,12 +108,7 @@ await assert.rejects(() => commands.runProcess(fixture, [], root, 2000), error =
   assert.ok(error.snapshot.stderr.bytes <= 32768);
   return true;
 });
-} catch (cause) {
-  primaryError = cause;
-  throw cause;
-} finally {
-  await closeVerifierResources([() => commands.close()], primaryError);
-}
+}, [() => commands.close()]);
 console.log(JSON.stringify({ passed: true, timeoutHelpers: 3, controls: 7, childrenClosed: children.every(x => x.closed) }));
 `,
     );

@@ -23,7 +23,9 @@ export const inspectObjcClassImportBindings = (input: {
 }): ObjcClassImportBindingScan => {
   const { bytes, layout, fixups, addresses, addressesComplete, maxRecords } =
     input;
-  if (addresses === undefined || addresses.length === 0)
+  // An explicitly truncated candidate scan keeps its limitation even when no
+  // candidate was retained.
+  if (addresses === undefined || (addresses.length === 0 && addressesComplete))
     return {
       bindings: [],
       coverage: {

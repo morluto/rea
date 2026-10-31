@@ -29,6 +29,9 @@ try {
       new URL("../bridge/native/NativeUIChildren.swift", import.meta.url),
     ),
     fileURLToPath(
+      new URL("../bridge/native/NativeUIValues.swift", import.meta.url),
+    ),
+    fileURLToPath(
       new URL(
         "../tests/conformance/native/native-ui-children/main.swift",
         import.meta.url,

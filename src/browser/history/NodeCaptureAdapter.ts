@@ -1,12 +1,17 @@
 import { fileURLToPath } from "node:url";
 import type { HistoricalCaptureFormatAdapter } from "./HistoricalCaptureFormatAdapter.js";
 import {
+  DEFAULT_CAPTURE_DECODER_HEAP,
+  resolveCaptureDecoderHeap,
+  type CaptureDecoderHeap,
+} from "../../config/captureDecoderHeap.js";
+import { CAPTURE_DECODER_SEMI_SPACE_MIB } from "../../domain/analysisResourceLimits.js";
+import {
   NODE_CAPTURE_HEAP_ENFORCED,
   HAR_CAPTURE_PROVIDER_IDENTITY,
   SAZ_CAPTURE_PROVIDER_IDENTITY,
   QLOG_CAPTURE_PROVIDER_IDENTITY,
-  NODE_CAPTURE_HEAP_LIMITS,
-  NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES,
+  captureDecoderProcessMemoryLimitBytes,
 } from "./CaptureRelease.js";
 import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
 
@@ -14,7 +19,22 @@ import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCo
 export class NodeCaptureAdapter implements HistoricalCaptureFormatAdapter {
   readonly identity;
   readonly limitations;
-  constructor(readonly format: "har" | "saz" | "qlog") {
+  readonly heap: CaptureDecoderHeap;
+  /**
+   * `environment` is the selected startup environment. Omitted means the
+   * default heap, not ambient `process.env`. An invalid setting is refused.
+   * `heap` is an already parsed fact and is not read from `environment` again.
+   */
+  constructor(
+    readonly format: "har" | "saz" | "qlog",
+    environment?: Readonly<Record<string, string | undefined>>,
+    heap?: CaptureDecoderHeap,
+  ) {
+    this.heap =
+      heap ??
+      (environment === undefined
+        ? DEFAULT_CAPTURE_DECODER_HEAP
+        : resolveCaptureDecoderHeap(environment));
     this.identity =
       format === "har"
         ? HAR_CAPTURE_PROVIDER_IDENTITY
@@ -32,10 +52,13 @@ export class NodeCaptureAdapter implements HistoricalCaptureFormatAdapter {
         : [];
   }
   async command(requestPath: string) {
+    const memoryLimitBytes = captureDecoderProcessMemoryLimitBytes(
+      this.heap.oldGenerationMiB,
+    );
     if (
       this.format !== "har" &&
       !NODE_CAPTURE_HEAP_ENFORCED &&
-      NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES === null
+      memoryLimitBytes === null
     )
       throw new AnalysisCapabilityUnavailableError(
         this.identity.id,
@@ -45,17 +68,15 @@ export class NodeCaptureAdapter implements HistoricalCaptureFormatAdapter {
     return {
       command: process.execPath,
       arguments: [
-        `--max-old-space-size=${NODE_CAPTURE_HEAP_LIMITS.oldGenerationMiB}`,
-        `--max-semi-space-size=${NODE_CAPTURE_HEAP_LIMITS.semiSpaceMiB}`,
+        `--max-old-space-size=${String(this.heap.oldGenerationMiB)}`,
+        `--max-semi-space-size=${String(CAPTURE_DECODER_SEMI_SPACE_MIB)}`,
         "--v8-pool-size=1",
         "--single-threaded",
         fileURLToPath(new URL("./NodeCaptureProcess.js", import.meta.url)),
         requestPath,
         this.format,
       ],
-      ...(NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES === null
-        ? {}
-        : { memoryLimitBytes: NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES }),
+      ...(memoryLimitBytes === null ? {} : { memoryLimitBytes }),
     };
   }
 }

@@ -2,13 +2,14 @@ import * as t from "@babel/types";
 
 import type { javascriptBootstrapAt } from "./javascriptBootstrap.js";
 import { semanticStaticPropertyKey } from "./javascriptAstValues.js";
+import { semanticIdentifierRole } from "./javascriptSemanticProjection.js";
 import {
   resolveSemanticBindingState,
   semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
-import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
-import { argumentValue } from "./javascriptStaticAnalysisHelpers.js";
+import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
+import { evaluateSemanticExpression } from "./javascriptSemanticValues.js";
 
 type Bootstrap = NonNullable<ReturnType<typeof javascriptBootstrapAt>>;
 
@@ -89,7 +90,7 @@ const loaderShape = (
   const calls: t.CallExpression[] = [];
   const modules = new Set<string>();
   const returns: (t.Expression | null | undefined)[] = [];
-  traverseJavaScriptAst(loader.body, {
+  traverseJavaScriptValueAst(loader.body, state.erasedSyntaxNodes, {
     skip: (node) => t.isFunction(node),
     enter: (node) => {
       if (t.isReturnStatement(node)) returns.push(node.argument);
@@ -284,11 +285,12 @@ const moduleObjectContained = (
   state: JavaScriptSemanticAnalysisState,
 ): boolean => {
   let contained = true;
-  traverseJavaScriptAst(loader.body, {
+  traverseJavaScriptValueAst(loader.body, state.erasedSyntaxNodes, {
     enter: (node, parent, readAncestors) => {
       if (!contained || !t.isIdentifier(node) || parent === null) return;
       const ancestors = readAncestors();
-      if (!t.isReferenced(node, parent, ancestors.at(-2))) return;
+      if (semanticIdentifierRole(node, parent, () => ancestors) === null)
+        return;
       if (bindingOf(state, node) !== moduleId) return;
       contained =
         !ancestors.some((ancestor) => t.isFunction(ancestor)) &&
@@ -328,7 +330,7 @@ const withCacheReads = (
   if (shape.cacheId === undefined) return shape;
   const sites = new Set(shape.cacheSites);
   let contained = true;
-  traverseJavaScriptAst(loader.body, {
+  traverseJavaScriptValueAst(loader.body, state.erasedSyntaxNodes, {
     skip: (node) => t.isFunction(node),
     enter: (node, parent) => {
       if (
@@ -438,24 +440,106 @@ const referencesAreContained = (
     [...tracked.keys()].flatMap((id) => state.bindingsById.get(id)?.name ?? []),
   );
   const replacedKeys = new Set<string>();
+  const unreadDefinitions = unreadRuntimeDefinitions(
+    call,
+    shape,
+    loaderIds,
+    state,
+  );
   let contained = true;
-  traverseJavaScriptAst(call, {
+  traverseJavaScriptValueAst(call, state.erasedSyntaxNodes, {
     skip: () => !contained,
     enter: (node, parent, readAncestors) => {
       if (!t.isIdentifier(node) || !names.has(node.name) || parent === null)
         return;
       const ancestors = readAncestors();
-      if (!t.isReferenced(node, parent, ancestors.at(-2))) return;
+      if (semanticIdentifierRole(node, parent, () => ancestors) === null)
+        return;
       const id = bindingOf(state, node);
       const role = id === undefined ? undefined : tracked.get(id);
       if (role === undefined) return;
       const use: Use = { node, parent, ancestors, shape, loaderIds, state };
       if (role !== "loader") contained = containedUse(role, use);
       else if (exposedTableUse(use) === "escaped") contained = false;
-      else exposedSlotWrite(use, replacedKeys);
+      else {
+        const activation = [...ancestors]
+          .reverse()
+          .find((ancestor) => t.isFunction(ancestor));
+        contained =
+          (activation !== undefined && unreadDefinitions.has(activation)) ||
+          exposedSlotWrite(use, replacedKeys);
+      }
     },
   });
   return contained ? { replacedKeys } : undefined;
+};
+
+/**
+ * A function stored on the confined runtime cannot execute until its member is
+ * read. Keep this proof local to the bootstrap's existing loader/table def-use
+ * boundary: aliases, dynamic member reads and escapes invalidate it. Merely
+ * defining Webpack's chunk installer does not install any chunks.
+ */
+const unreadRuntimeDefinitions = (
+  call: t.CallExpression,
+  shape: LoaderShape,
+  loaderIds: ReadonlySet<string>,
+  state: JavaScriptSemanticAnalysisState,
+): ReadonlySet<t.Node> => {
+  const definitions = new Map<t.Node, string>();
+  const readKeys = new Set<string>();
+  let confined = true;
+  traverseJavaScriptValueAst(call, state.erasedSyntaxNodes, {
+    enter: (node, parent, readAncestors) => {
+      // A helper invoked as `loader.helper()` can obtain the namespace through
+      // its receiver instead of a tracked loader identifier.
+      if (t.isThisExpression(node)) confined = false;
+      if (!t.isIdentifier(node) || parent === null) return;
+      const ancestors = readAncestors();
+      if (
+        semanticIdentifierRole(node, parent, () => ancestors) === null ||
+        !loaderIds.has(bindingOf(state, node) ?? "")
+      )
+        return;
+      if (
+        t.isCallExpression(parent) &&
+        (parent.callee === node ||
+          (parent === shape.dispatch && parent.arguments.at(-1) === node))
+      )
+        return;
+      if (!t.isMemberExpression(parent) || parent.object !== node) {
+        confined = false;
+        return;
+      }
+      const key = semanticStaticPropertyKey(parent.property, parent.computed);
+      if (key === null) {
+        confined = false;
+        return;
+      }
+      const assignment = ancestors.at(-2);
+      if (
+        t.isAssignmentExpression(assignment, { operator: "=" }) &&
+        assignment.left === parent
+      ) {
+        if (
+          key !== "m" &&
+          key !== "c" &&
+          t.isFunction(assignment.right) &&
+          t.isExpressionStatement(ancestors.at(-3))
+        )
+          definitions.set(assignment.right, key);
+        return;
+      }
+      readKeys.add(key);
+    },
+  });
+  return new Set(
+    confined
+      ? [...definitions]
+          .filter(([, key]) => !readKeys.has(key))
+          .map(([node]) => node)
+      : [],
+  );
 };
 
 interface Use {
@@ -522,13 +606,9 @@ const exposedTableUse = (use: Use): "other" | "contained" | "escaped" => {
   return entryWritten ? "escaped" : "contained";
 };
 
-/**
- * `loader.m[key] = factory` or `delete loader.c[key]` replaces a literal slot.
- * Writes with runtime keys are chunk installation, which adds modules under
- * their own ids; they are not treated as replacing a declared slot.
- */
-const exposedSlotWrite = (use: Use, replacedKeys: Set<string>): void => {
-  const { parent, ancestors } = use;
+/** Unknown computed writes may replace any existing slot; fresh installation is unproven. */
+const exposedSlotWrite = (use: Use, replacedKeys: Set<string>): boolean => {
+  const { parent, ancestors, state } = use;
   const slot = ancestors.at(-2);
   const write = ancestors.at(-3);
   if (
@@ -545,11 +625,21 @@ const exposedSlotWrite = (use: Use, replacedKeys: Set<string>): void => {
       t.isUpdateExpression(write)
     )
   )
-    return;
-  const key = slot.computed
-    ? argumentValue(slot.property)
-    : semanticStaticPropertyKey(slot.property, false);
-  if (key !== undefined && key !== null) replacedKeys.add(key);
+    return true;
+  if (!slot.computed) {
+    const key = semanticStaticPropertyKey(slot.property, false);
+    if (key === null) return false;
+    replacedKeys.add(key);
+    return true;
+  }
+  const key = evaluateSemanticExpression(slot.property, state);
+  if (
+    key.status !== "literal" ||
+    (typeof key.value !== "string" && typeof key.value !== "number")
+  )
+    return false;
+  replacedKeys.add(String(key.value));
+  return true;
 };
 
 const bindingOf = (

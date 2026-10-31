@@ -42,9 +42,11 @@ export interface GgufProgress {
     declared_tensor_count: number;
   }): void;
   onMetadata(row: ModelMetadata): void;
+  onAlignment(alignment: number): void;
   onMetadataComplete(): void;
   onTensorsStarted(): void;
   onTensorDeclaration(row: ModelArtifactPartialTensor): void;
+  onLimitation(message: string): void;
 }
 
 /** Explicit-endian GGUF v2/v3 metadata and tensor-directory parser. */
@@ -248,6 +250,7 @@ export class GgufHeader {
     tensor_data_offset: number;
     metadata: ModelMetadata[];
     tensors: ModelTensor[];
+    limitations: string[];
   }> {
     const versionBytes = await this.reader.take(4);
     const littleVersion = versionBytes.readUInt32LE();
@@ -286,10 +289,12 @@ export class GgufHeader {
       const key = await this.#text(true, 65535);
       // Numeric hierarchy components occur in standardized base_model.{id} keys.
       if (
-        !/^[a-z0-9]+(?:_[a-z0-9]+)*(?:\.[a-z0-9]+(?:_[a-z0-9]+)*)*$/u.test(key)
+        !/^[a-z0-9]+(?:[_-][a-z0-9]+)*(?:\.[a-z0-9]+(?:[_-][a-z0-9]+)*)*$/u.test(
+          key,
+        )
       )
         rejectModel(
-          "GGUF metadata keys require ASCII lower-snake-case hierarchy components",
+          "GGUF metadata keys require lowercase ASCII hierarchy components",
         );
       if (keys.has(key)) rejectModel(`Duplicate GGUF metadata key ${key}`);
       keys.add(key);
@@ -318,14 +323,22 @@ export class GgufHeader {
             "GGUF general.alignment must be a positive UINT32 multiple of eight",
           );
         alignment = parsed.value;
+        progress?.onAlignment(alignment);
       }
       metadata.push(row);
       progress?.onMetadata(row);
     }
+    if (!keys.has("general.alignment")) progress?.onAlignment(alignment);
     progress?.onMetadataComplete();
     progress?.onTensorsStarted();
     const tensors: ModelArtifactPartialTensor[] = [];
     const names = new Set<string>();
+    const limitations = new Set<string>();
+    const note = (message: string): void => {
+      if (limitations.has(message)) return;
+      limitations.add(message);
+      progress?.onLimitation(message);
+    };
     for (let index = 0; index < tensorCount; index++) {
       this.reader.guarantee((tensorCount - index) * 20);
       const start = this.reader.position;
@@ -350,17 +363,30 @@ export class GgufHeader {
       const type = ggmlType(id);
       let length: number | null = null;
       if (type !== undefined) {
-        if (BigInt(shape[0] ?? "1") % BigInt(type[1]) !== 0n)
+        const [, rowElementMultiple, blockBytes, limitation] = type;
+        if (BigInt(shape[0] ?? "1") % BigInt(rowElementMultiple) !== 0n)
           rejectModel(
-            `GGUF tensor ${name} first dimension is not divisible by the quantization block size`,
+            `GGUF tensor ${name} first dimension must be a multiple of ${String(rowElementMultiple)} elements`,
           );
-        const bytes = (parameters / BigInt(type[1])) * BigInt(type[2]);
-        if (bytes > BigInt(this.reader.size))
-          rejectModel(
-            `GGUF tensor ${name} declared byte length exceeds the file`,
-          );
-        length = Number(bytes);
-      }
+        if (
+          limitation !== undefined &&
+          (parameters !== 0n || limitation.kind === "type-identity")
+        )
+          note(limitation.reason);
+        if (parameters === 0n) length = 0;
+        else if (blockBytes !== null) {
+          const bytes =
+            (parameters / BigInt(rowElementMultiple)) * BigInt(blockBytes);
+          if (bytes > BigInt(this.reader.size))
+            rejectModel(
+              `GGUF tensor ${name} declared byte length exceeds the file`,
+            );
+          length = Number(bytes);
+        }
+      } else
+        note(
+          `Unknown tensor type UNKNOWN_${String(id)} prevents storage-size validation.`,
+        );
       const tensor = {
         index,
         name,
@@ -380,10 +406,14 @@ export class GgufHeader {
       tensors.push(tensor);
       progress?.onTensorDeclaration(tensor);
     }
+    const directoryEnd = this.reader.position;
+    const alignedDataOffset = Math.ceil(directoryEnd / alignment) * alignment;
     const tensor_data_offset =
-      tensorCount === 0
-        ? this.reader.position
-        : Math.ceil(this.reader.position / alignment) * alignment;
+      tensorCount === 0 && this.reader.size === directoryEnd
+        ? directoryEnd
+        : alignedDataOffset;
+    if (tensor_data_offset > this.reader.size)
+      rejectModel("GGUF tensor data section begins outside the file");
     for (const tensor of tensors) {
       const offset = BigInt(tensor_data_offset) + BigInt(tensor.data_offset);
       if (
@@ -399,6 +429,15 @@ export class GgufHeader {
       storage_validation:
         tensor.byte_length === null ? "unknown" : "consistent",
     }));
+    const intervals = completeTensors
+      .filter((row) => row.byte_length !== null)
+      .sort((a, b) => a.file_offset - b.file_offset);
+    let end = tensor_data_offset;
+    for (const row of intervals) {
+      if (row.file_offset < end && row.byte_length !== 0)
+        rejectModel(`Overlapping tensor byte ranges at ${row.name}`);
+      end = Math.max(end, row.file_offset + (row.byte_length ?? 0));
+    }
     return {
       version,
       byte_order: this.#little ? "little" : "big",
@@ -406,6 +445,7 @@ export class GgufHeader {
       tensor_data_offset,
       metadata,
       tensors: completeTensors,
+      limitations: [...limitations],
     };
   }
 }

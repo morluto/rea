@@ -1,3 +1,8 @@
+import { readFieldDefinitionRow } from "./ManagedFieldDefinitionRows.js";
+import {
+  readMethodDefinitionRow,
+  type ManagedMethodImplementationFlags,
+} from "./ManagedMethodDefinitionRows.js";
 import {
   admitManagedProjection,
   managedDecodeBudget,
@@ -8,11 +13,13 @@ import {
   type ManagedNativeBoundaryInspection,
   type ManagedParseIssue,
 } from "../domain/managed/managedArtifact.js";
-import type { ManagedMetadataLayout } from "./ManagedMetadataLayout.js";
+import {
+  MANAGED_CODED_INDEXES,
+  type ManagedMetadataLayout,
+} from "./ManagedMetadataLayout.js";
 import {
   metadataRowCursor,
-  metadataCodedToken,
-  metadataCodedTokenInvalidReason,
+  decodeMetadataCodedIndex,
   metadataToken,
   readMetadataString,
 } from "./ManagedMetadataHeaps.js";
@@ -31,15 +38,24 @@ type NativeImport = ManagedNativeBoundaryInspection["pinvoke_imports"][number];
 type NativeImplementation =
   ManagedNativeBoundaryInspection["native_implementations"][number];
 
-interface MemberCore {
+type MemberCore = {
   readonly token: string;
   readonly rowOffset: number;
-  readonly kind: NativeImport["member_kind"];
   readonly name: string;
   readonly flags: number;
-  readonly implFlags: number | null;
-  readonly rva: number | null;
-}
+} & (
+  | {
+      readonly kind: "field";
+      readonly implFlags: null;
+      readonly rva: null;
+    }
+  | {
+      readonly kind: "method";
+      readonly implFlags: number;
+      readonly rva: number;
+      readonly implementation: ManagedMethodImplementationFlags;
+    }
+);
 
 const flagsHex = (value: number): string =>
   `0x${value.toString(16).padStart(4, "0")}`;
@@ -80,19 +96,15 @@ export const parseFields = (
   const table = layout.table(4);
   for (let row = 1; row <= (table?.rowCount ?? 0); row += 1) {
     readManagedValue(() => {
-      const cursor = metadataRowCursor(bytes, layout, 4, row);
-      const flags = cursor.readUInt16();
-      const name = readMetadataString(
+      const { token, rowOffset, flags, nameIndex } = readFieldDefinitionRow(
         bytes,
         layout,
-        cursor.readIndex(layout.stringIndexSize),
-        heapExtent,
+        row,
       );
-      cursor.readIndex(layout.blobIndexSize);
-      const token = metadataToken(4, row);
+      const name = readMetadataString(bytes, layout, nameIndex, heapExtent);
       fields.set(token, {
         token,
-        rowOffset: cursor.start,
+        rowOffset,
         kind: "field",
         name,
         flags,
@@ -114,27 +126,25 @@ export const parseMethods = (
   const table = layout.table(6);
   for (let row = 1; row <= (table?.rowCount ?? 0); row += 1) {
     readManagedValue(() => {
-      const cursor = metadataRowCursor(bytes, layout, 6, row);
-      const rva = cursor.readUInt32();
-      const implFlags = cursor.readUInt16();
-      const flags = cursor.readUInt16();
-      const name = readMetadataString(
-        bytes,
-        layout,
-        cursor.readIndex(layout.stringIndexSize),
-        heapExtent,
-      );
-      cursor.readIndex(layout.blobIndexSize);
-      cursor.readIndex(layout.tableIndexSize(8));
-      const token = metadataToken(6, row);
+      const {
+        token,
+        rowOffset,
+        rva,
+        implFlags,
+        flags,
+        nameIndex,
+        implementation,
+      } = readMethodDefinitionRow(bytes, layout, row);
+      const name = readMetadataString(bytes, layout, nameIndex, heapExtent);
       methods.set(token, {
         token,
-        rowOffset: cursor.start,
+        rowOffset,
         kind: "method",
         name,
         flags,
         implFlags,
         rva,
+        implementation,
       });
     }, issues);
   }
@@ -169,28 +179,24 @@ export const parseImplMaps = ({
       const memberForwardedRaw = cursor.readIndex(
         layout.codedIndexSize("MemberForwarded"),
       );
-      const memberForwardedReason = metadataCodedTokenInvalidReason(
+      const memberForwarded = decodeMetadataCodedIndex(
         memberForwardedRaw,
-        1,
-        [4, 6],
+        MANAGED_CODED_INDEXES.MemberForwarded.bits,
+        MANAGED_CODED_INDEXES.MemberForwarded.tables,
         layout.rowCounts,
       );
-      if (memberForwardedReason !== null || memberForwardedRaw === 0)
+      if (memberForwarded.kind !== "valid")
         issues.push({
           code: "invalid-row",
           scope: `metadata.ImplMap:${metadataToken(28, row)}`,
           offset: memberForwardedOffset,
           detail:
-            memberForwardedReason === null
+            memberForwarded.kind === "null"
               ? "ImplMap MemberForwarded coded index 0x0 is null, but the column must reference a Field or MethodDef row"
-              : `ImplMap MemberForwarded coded index 0x${memberForwardedRaw.toString(16)} is invalid: ${memberForwardedReason}`,
+              : `ImplMap MemberForwarded coded index 0x${memberForwardedRaw.toString(16)} is invalid: ${memberForwarded.reason}`,
         });
-      const memberToken = metadataCodedToken(
-        memberForwardedRaw,
-        1,
-        [4, 6],
-        layout.rowCounts,
-      );
+      const memberToken =
+        memberForwarded.kind === "valid" ? memberForwarded.token : null;
       const importName = readMetadataString(
         bytes,
         layout,
@@ -220,7 +226,12 @@ export const parseImplMaps = ({
         mapping_flags: mappingFlags,
         mapping_flags_hex: flagsHex(mappingFlags),
         member_token: memberToken,
-        member_kind: member?.kind ?? "unknown",
+        member_kind:
+          memberForwarded.kind !== "valid"
+            ? "unknown"
+            : memberForwarded.table === 4
+              ? "field"
+              : "method",
         member_name: member?.name ?? null,
         import_name: importName,
         import_scope_token: importScopeToken,
@@ -310,67 +321,32 @@ export const nativeImplementations = (
   const implementations: NativeImplementation[] = [];
   for (const method of methods) {
     if (method.kind !== "method") continue;
-    const implFlags = method.implFlags ?? 0;
-    const codeType = codeTypeFor(implFlags);
-    const managedKind = managedKindFor(implFlags);
-    const pinvokeDeclared =
-      pinvokeTokens.has(method.token) || (method.flags & 0x2000) !== 0;
+    const { codeType, managedKind, pinvokeFlag } = method.implementation;
+    const pinvokeDeclared = pinvokeTokens.has(method.token) || pinvokeFlag;
     if (!pinvokeDeclared && codeType === "il" && managedKind === "managed")
       continue;
     implementations.push({
       token: method.token,
       row_offset: method.rowOffset,
       name: method.name,
-      rva: method.rva ?? 0,
+      rva: method.rva,
       flags: method.flags,
-      impl_flags: implFlags,
+      impl_flags: method.implFlags,
       code_type: codeType,
       managed_kind: managedKind,
       pinvoke_declared: pinvokeDeclared,
       boundary_kind: boundaryKind(pinvokeDeclared, codeType, managedKind),
       body_interpretation:
-        codeType === "il" && managedKind === "managed" && !pinvokeDeclared
-          ? "managed-cil"
-          : method.rva === 0
-            ? "not-file-backed"
-            : "native-or-runtime",
+        method.rva === 0 ? "not-file-backed" : "native-or-runtime",
     });
   }
   return implementations;
 };
 
-const codeTypeFor = (implFlags: number): NativeImplementation["code_type"] => {
-  switch (implFlags & 0x0003) {
-    case 0x0000:
-      return "il";
-    case 0x0001:
-      return "native";
-    case 0x0002:
-      return "optil";
-    case 0x0003:
-      return "runtime";
-    default:
-      return "unknown";
-  }
-};
-
-const managedKindFor = (
-  implFlags: number,
-): NativeImplementation["managed_kind"] => {
-  switch (implFlags & 0x0004) {
-    case 0x0000:
-      return "managed";
-    case 0x0004:
-      return "unmanaged";
-    default:
-      return "unknown";
-  }
-};
-
 const boundaryKind = (
   pinvokeDeclared: boolean,
-  codeType: NativeImplementation["code_type"],
-  managedKind: NativeImplementation["managed_kind"],
+  codeType: ManagedMethodImplementationFlags["codeType"],
+  managedKind: ManagedMethodImplementationFlags["managedKind"],
 ): NativeImplementation["boundary_kind"] => {
   if (pinvokeDeclared) return "pinvoke";
   if (codeType === "native") return "native-body";

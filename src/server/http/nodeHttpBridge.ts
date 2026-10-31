@@ -111,9 +111,7 @@ const responseHeaders = (
   headers: Headers,
   closeConnection: boolean,
 ): Record<string, string | string[]> => {
-  const fields: Record<string, string | string[]> = {};
-  for (const [name, value] of headers)
-    if (name !== "set-cookie") fields[name] = value;
+  const fields: Record<string, string | string[]> = Object.fromEntries(headers);
   const cookies = headers.getSetCookie();
   if (cookies.length > 0) fields["set-cookie"] = cookies;
   if (closeConnection) fields.connection = "close";

@@ -64,19 +64,19 @@ const OTHER_MEANS_LIMITATION =
 const MISSING_SENTINEL_LIMITATION =
   "A missing sentinel means fuse state is unknown, not that every fuse is disabled.";
 
-const byteSchema = z.number().int().min(0).max(255);
+const byteSchema = z.int().min(0).max(255);
 const fuseStateSchema = z.enum(["enabled", "disabled", "removed", "unknown"]);
 
 /** One fuse byte, with a version-1 name when the pinned table covers its index. */
 export const electronFuseSchema = z.strictObject({
-  index: z.number().int().nonnegative(),
+  index: z.int().nonnegative(),
   name: z.string().min(1).nullable(),
   state: fuseStateSchema,
   raw_byte: byteSchema,
 });
 
 const electronFuseSentinelSchema = z.strictObject({
-  sentinel_offset: z.number().int().nonnegative(),
+  sentinel_offset: z.int().nonnegative(),
   wire_version: byteSchema.nullable(),
   declared_length: byteSchema.nullable(),
   fuses: z.array(electronFuseSchema),
@@ -84,18 +84,19 @@ const electronFuseSentinelSchema = z.strictObject({
 });
 
 const electronFuseSliceSchema = z.strictObject({
-  index: z.number().int().nonnegative(),
-  file_offset: z.number().int().nonnegative(),
-  size: z.number().int().nonnegative(),
+  index: z.int().nonnegative(),
+  file_offset: z.int().nonnegative(),
+  size: z.int().nonnegative(),
   architecture: z.string().min(1).nullable(),
-  sentinel_count: z.number().int().nonnegative(),
+  hidden: z.boolean().exactOptional(),
+  sentinel_count: z.int().nonnegative(),
   sentinels: z.array(electronFuseSentinelSchema),
 });
 
 const implicationLocation = {
   relationship: z.literal("derivation"),
-  slice_index: z.number().int().nonnegative(),
-  sentinel_offset: z.number().int().nonnegative(),
+  slice_index: z.int().nonnegative(),
+  sentinel_offset: z.int().nonnegative(),
 };
 
 /** Derived runtime meaning of one observed fuse byte. The fuse bytes stay observed. */
@@ -138,7 +139,7 @@ export const electronFuseReportSchema = z
         selected_path: localPathStringSchema,
         resolved_path: localPathStringSchema,
         sha256: digestSchema,
-        bytes: z.number().int().nonnegative(),
+        bytes: z.int().nonnegative(),
         format: z.enum(["mach-o", "mach-o-universal", "pe", "elf"]),
       })
       .describe(

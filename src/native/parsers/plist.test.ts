@@ -1,15 +1,22 @@
 import { expect, it } from "vitest";
-import { buildBinary } from "plist";
+import { buildBinary, type PlistValue } from "plist";
+import { MAX_JSON_DEPTH, jsonValueSchema } from "../../domain/jsonValue.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
+import { plistUidValue } from "../../domain/apple/plistUid.js";
+import { createPlistNumberProjection } from "../../domain/apple/plistNumbers.js";
+import { projectPlistValue } from "../../domain/apple/plistValue.js";
+import { parseXmlPropertyList } from "../../domain/propertyListKeys.js";
 import {
   decodeBinaryPlistScalars,
   scanBinaryPlistScalars,
+  UnsupportedBinaryPlistUidError,
 } from "../../artifacts/apple/PlistScalars.js";
 
 import {
   parsePlistBinary,
-  parsePlistJson,
+  readPlistJson,
   parsePlistXml,
-  plistJsonNeedsNumberTypes,
+  parsePlistXmlSource,
 } from "./plist.js";
 import { estimateBinaryPlistExpansion } from "../../artifacts/apple/PropertyListDecodeBudget.js";
 import {
@@ -17,14 +24,133 @@ import {
   binaryPlistWithOverlappingDateAndData,
 } from "../../../tests/fixtures/binaryPlistObjectTable.js";
 
+it("retains binary dictionary identity after native plist number projection", () => {
+  const result = parsePlistBinary(
+    Buffer.from(buildBinary({ nested: { CF$UID: 7 }, reference: { UID: 7 } })),
+  );
+  expect(result.ok).toBe(true);
+  if (!result.ok) throw result.error;
+  const value = result.value.value as Record<string, unknown>;
+  expect(value).toEqual({ nested: { CF$UID: 7 }, reference: { UID: 7 } });
+  expect(plistUidValue(value["nested"])).toBeUndefined();
+  expect(plistUidValue(value["reference"])).toBe(7);
+});
+
+it("projects wide integers in binary CF$UID dictionaries as data", () => {
+  const bytes = Buffer.alloc(27 + 3 + 32);
+  bytes.write("bplist00");
+  bytes.set([0xd1, 1, 2, 0x56], 8);
+  bytes.write("CF$UID", 12);
+  bytes[18] = 0x13;
+  bytes.writeBigInt64BE(9007199254740993n, 19);
+  const result = parsePlistBinary(
+    binaryPlistObjectTable(bytes, [8, 11, 18], 27),
+  );
+  expect(result.ok).toBe(true);
+  if (!result.ok) throw result.error;
+  expect(result.value.value).toEqual({
+    CF$UID: { $plist_type: "integer", decimal: "9007199254740993" },
+  });
+});
+
+it.each([
+  "binary data",
+  "XML data",
+  "JSON integer",
+  "JSON unsafe integer",
+] as const)(
+  "bounds ordinary %s by the projected JSON capacity, including scalar wrappers",
+  (encoding) => {
+    // One level for typed scalar fields and one for normalized_result.value.
+    const maximum = MAX_JSON_DEPTH - 2;
+    for (const depth of [maximum, maximum + 1]) {
+      let binary: PlistValue = Buffer.from([0, 1]);
+      if (encoding === "binary data")
+        for (let level = 0; level < depth; level += 1) binary = [binary];
+      const parsed =
+        encoding === "binary data"
+          ? parsePlistBinary(Buffer.from(buildBinary(binary)))
+          : encoding === "XML data"
+            ? parsePlistXml(
+                `<plist>${"<array>".repeat(depth)}<data>AAE=</data>${"</array>".repeat(depth)}</plist>`,
+              )
+            : readPlistJson(
+                "[".repeat(depth) +
+                  (encoding === "JSON unsafe integer"
+                    ? "9007199254740993"
+                    : "1") +
+                  "]".repeat(depth),
+              ).project(
+                encoding === "JSON unsafe integer"
+                  ? `<plist>${"<array>".repeat(depth)}<integer>9007199254740993</integer>${"</array>".repeat(depth)}</plist>`
+                  : undefined,
+              );
+      if (depth > maximum) {
+        expect(parsed.ok).toBe(false);
+        if (parsed.ok) throw new Error("Expected nesting refusal");
+        if (parsed.error instanceof UnsupportedBinaryPlistUidError)
+          throw parsed.error;
+        const failure = projectAnalysisError(parsed.error);
+        expect(failure).toMatchObject({
+          code: "resource_constraint",
+          retryable: false,
+          details: { reported_limits: { maximum_nesting_depth: maximum } },
+        });
+        expect(failure.remediation.action).toContain(
+          `${maximum}-level native plist nesting allowance (no runtime override)`,
+        );
+      } else {
+        if (!parsed.ok) throw parsed.error;
+        expect(() =>
+          jsonValueSchema.parse({ value: parsed.value.value }),
+        ).not.toThrow();
+        let leaf: unknown = parsed.value.value;
+        for (let level = 0; level < depth; level += 1) {
+          expect(Array.isArray(leaf)).toBe(true);
+          leaf = (leaf as unknown[])[0];
+        }
+        expect(leaf).toEqual(
+          encoding === "JSON unsafe integer"
+            ? { $plist_type: "integer", decimal: "9007199254740993" }
+            : encoding === "JSON integer"
+              ? 1
+              : { $plist_type: "data", base64: "AAE=" },
+        );
+      }
+    }
+  },
+);
+
+it.each(["<bogus/>", "<plist><data>ＡＡＥ=</data></plist>"])(
+  "keeps malformed XML conversion %s separate from nesting refusal",
+  (source) => {
+    const parsed = parsePlistXml(source);
+    expect(parsed.ok).toBe(false);
+    if (parsed.ok) throw new Error("Expected malformed conversion failure");
+    expect(projectAnalysisError(parsed.error)).toMatchObject({
+      code: "unreadable_output",
+      details: { reason: "plutil XML conversion was not a readable plist" },
+    });
+  },
+);
+
 const parseWithoutMutatingSource = (bytes: Buffer) => {
   const original = Buffer.from(bytes);
   const parsed = parsePlistBinary(bytes);
   expect(parsed.ok).toBe(true);
   if (!parsed.ok) throw parsed.error;
-  expect(bytes).toEqual(original);
+  expect(Buffer.compare(bytes, original)).toBe(0);
   return parsed.value;
 };
+
+it("keeps malformed XML source structure separate from retained unknown scalars", () => {
+  const parsed = parsePlistXmlSource(
+    Buffer.from("<plist><dict><key>missing</key></dict></plist>"),
+  );
+  expect(parsed.ok).toBe(false);
+  if (parsed.ok) throw new Error("Expected malformed source structure");
+  expect(parsed.error.message).toContain("Missing value for key");
+});
 
 const binaryPlistWithNegativeZero = (): Buffer => {
   const bytes = Buffer.from(
@@ -244,6 +370,7 @@ it("does not treat a malformed date marker as a valid date scalar", () => {
       reachableWideIntegerOffsets: [],
       overlappingWideIntegerOffsets: [],
       reachableNumericOffsets: [],
+      uidOffsetsToNormalize: [],
     }),
   ).toBe(bytes);
 });
@@ -436,15 +563,16 @@ it("rejects a truncated binary plist source", () => {
 
 it("retains complete segmented XML keys in native plist fallback evidence", () => {
   const parsed = parsePlistXml(
-    "<plist><dict><key>user<![CDATA[ID]]></key><integer>42</integer><key>__pro<![CDATA[to__]]></key><string>omitted</string><key>Blob</key><data>AA==</data></dict></plist>",
+    "<plist><dict><key>user<![CDATA[ID]]></key><integer>42</integer><key>__pro<![CDATA[to__]]></key><string>retained</string><key>Blob</key><data>AA==</data></dict></plist>",
   );
   if (!parsed.ok) throw parsed.error;
   expect(parsed.value.value).toEqual({
     userID: 42,
+    ["__proto__"]: "retained",
     Blob: { $plist_type: "data", base64: "AA==" },
   });
-  expect(parsed.value.limitations).toContain(
-    "1 dictionary entry keyed __proto__ was omitted because REA results cannot represent that key.",
+  expect(parsed.value.limitations).not.toContainEqual(
+    expect.stringContaining("omitted"),
   );
 });
 
@@ -452,7 +580,9 @@ it("does not relabel integral CDATA reals as integers in native JSON or XML evid
   const xml =
     "<plist><dict><key>integer</key><integer>9007199254740992</integer><key>real</key><real>9007199254<![CDATA[740992]]></real></dict></plist>";
   for (const parsed of [
-    parsePlistJson('{"integer":9007199254740992,"real":9007199254740992}', xml),
+    readPlistJson(
+      '{"integer":9007199254740992,"real":9007199254740992}',
+    ).project(xml),
     parsePlistXml(xml),
   ]) {
     if (!parsed.ok) throw parsed.error;
@@ -467,8 +597,10 @@ it("does not relabel integral CDATA reals as integers in native JSON or XML evid
 });
 
 it("keeps exact decimal text for JSON integers that XML shows are integers", () => {
-  const parsed = parsePlistJson(
+  const attempt = readPlistJson(
     '{"Max":18446744073709551615,"Min":-9223372036854775808,"Near":9007199254740993,"Edge":9007199254740992,"Safe":9007199254740991,"Real":1e21,"Ratio":0.5}',
+  );
+  const parsed = attempt.project(
     [
       "<plist><dict>",
       "<key>Max</key><integer>18446744073709551615</integer>",
@@ -500,9 +632,9 @@ it("keeps exact decimal text for JSON integers that XML shows are integers", () 
 
 it("keeps integral JSON reals beyond the safe range as reals", () => {
   const output = '{"Real":9007199254740992,"Large":100000000000000000000}';
-  expect(plistJsonNeedsNumberTypes(output)).toBe(true);
-  const parsed = parsePlistJson(
-    output,
+  const attempt = readPlistJson(output);
+  expect(attempt.needsNumberTypes).toBe(true);
+  const parsed = attempt.project(
     "<plist><dict><key>Real</key><real>9007199254740992</real><key>Large</key><real>1e+20</real></dict></plist>",
   );
   if (!parsed.ok) throw new Error("expected plist JSON to parse");
@@ -517,7 +649,9 @@ it.each([
     "<plist><array><integer>9007199254740992</integer><real>9007199254740992</real></array></plist>",
   ],
 ])("does not label an unsafe JSON number an integer %s", (_case, xml) => {
-  const parsed = parsePlistJson("[9007199254740992,9007199254740992]", xml);
+  const parsed = readPlistJson("[9007199254740992,9007199254740992]").project(
+    xml,
+  );
   if (!parsed.ok) throw new Error("expected plist JSON to parse");
   expect(parsed.value.value).toEqual([9007199254740992, 9007199254740992]);
   expect(parsed.value.limitations).toEqual([
@@ -527,18 +661,140 @@ it.each([
 
 it("requests element types only for unsafe integral JSON numbers", () => {
   expect(
-    plistJsonNeedsNumberTypes(
+    readPlistJson(
       '{"Safe":9007199254740991,"Real":1e21,"Text":"9007199254740993"}',
-    ),
+    ).needsNumberTypes,
   ).toBe(false);
-  expect(plistJsonNeedsNumberTypes("{")).toBe(false);
+  expect(readPlistJson("{").needsNumberTypes).toBe(false);
 });
 
 it("reports no limitation when every JSON integer is exact", () => {
-  const parsed = parsePlistJson('{"Count":42,"Nested":[-1,0]}');
+  const parsed = readPlistJson('{"Count":42,"Nested":[-1,0]}').project();
   if (!parsed.ok) throw new Error("expected plist JSON to parse");
   expect(parsed.value.value).toEqual({ Count: 42, Nested: [-1, 0] });
   expect(parsed.value.limitations).toEqual([]);
+});
+
+it("projects retained JSON facts afresh for each XML classification", () => {
+  const attempt = readPlistJson('[9007199254740993,-0.0,{"nested":[42]}]');
+  const xml =
+    "<plist><array><integer>9007199254740993</integer><real>-0.0</real><dict><key>nested</key><array><integer>42</integer></array></dict></array></plist>";
+  expect(attempt.needsNumberTypes).toBe(true);
+  const first = attempt.project(xml);
+  if (!first.ok) throw first.error;
+  expect(first.value.value).toEqual([
+    { $plist_type: "integer", decimal: "9007199254740993" },
+    { $plist_type: "real", value: "-0" },
+    { nested: [42] },
+  ]);
+  if (!Array.isArray(first.value.value)) throw new Error("expected an array");
+  for (const item of first.value.value) {
+    if (item !== null && typeof item === "object")
+      Object.defineProperty(item, "changed", { value: true, enumerable: true });
+  }
+  first.value.value.length = 0;
+  const repeated = attempt.project(xml);
+  if (!repeated.ok) throw repeated.error;
+  expect(repeated.value.value).toEqual([
+    { $plist_type: "integer", decimal: "9007199254740993" },
+    { $plist_type: "real", value: "-0" },
+    { nested: [42] },
+  ]);
+  expect(repeated.value.limitations).toEqual(first.value.limitations);
+  const unclassified = attempt.project();
+  if (!unclassified.ok) throw unclassified.error;
+  expect(unclassified.value.value).toEqual([
+    9007199254740992,
+    { $plist_type: "real", value: "-0" },
+    { nested: [42] },
+  ]);
+  expect(unclassified.value.limitations).toEqual([
+    expect.stringContaining("1 negative-zero real value(s)"),
+    expect.stringContaining("1 number(s)"),
+  ]);
+});
+
+it("keeps marker-shaped source dictionaries as ordinary JSON data", () => {
+  const attempt = readPlistJson(
+    '{"value":42,"digits":"9007199254740995","$plist_type":"integer","decimal":"authored","unsafe":9007199254740993}',
+  );
+  const parsed = attempt.project(
+    "<plist><dict><key>value</key><integer>42</integer><key>digits</key><string>9007199254740995</string><key>$plist_type</key><string>integer</string><key>decimal</key><string>authored</string><key>unsafe</key><integer>9007199254740993</integer></dict></plist>",
+  );
+  if (!parsed.ok) throw parsed.error;
+  expect(parsed.value.value).toEqual({
+    value: 42,
+    digits: "9007199254740995",
+    $plist_type: "integer",
+    decimal: "authored",
+    unsafe: { $plist_type: "integer", decimal: "9007199254740993" },
+  });
+});
+
+it("uses only surviving duplicate JSON entries for number types and limitations", () => {
+  const overwritten = readPlistJson(
+    '{"Count":9007199254740993,"Count":42,"Zero":-0.0,"Zero":0}',
+  );
+  expect(overwritten.needsNumberTypes).toBe(false);
+  const overwrittenParsed = overwritten.project();
+  if (!overwrittenParsed.ok) throw overwrittenParsed.error;
+  expect(overwrittenParsed.value.value).toEqual({ Count: 42, Zero: 0 });
+  expect(overwrittenParsed.value.limitations).toEqual([]);
+  const surviving = readPlistJson('{"Count":42,"Count":9007199254740993}');
+  expect(surviving.needsNumberTypes).toBe(true);
+  const parsed = surviving.project(
+    "<plist><dict><key>Count</key><integer>9007199254740993</integer></dict></plist>",
+  );
+  if (!parsed.ok) throw parsed.error;
+  expect(parsed.value.value).toEqual({
+    Count: { $plist_type: "integer", decimal: "9007199254740993" },
+  });
+  expect(parsed.value.limitations).toEqual([
+    expect.stringContaining("1 integer value(s)"),
+  ]);
+});
+
+it("preserves numeric source facts inside prototype-named dictionary entries", () => {
+  const attempt = readPlistJson(
+    '{"__proto__":{"integer":9007199254740993,"zero":-0.0,"__proto__":7},"kept":42}',
+  );
+  expect(attempt.needsNumberTypes).toBe(true);
+  const parsed = attempt.project();
+  if (!parsed.ok) throw parsed.error;
+  expect(parsed.value.value).toEqual({
+    ["__proto__"]: {
+      integer: 9007199254740992,
+      zero: { $plist_type: "real", value: "-0" },
+      ["__proto__"]: 7,
+    },
+    kept: 42,
+  });
+  expect(parsed.value.limitations).toEqual([
+    expect.stringContaining("1 negative-zero real value(s)"),
+    expect.stringContaining("1 number(s)"),
+  ]);
+});
+
+it("retains malformed JSON without requesting XML and preserves final XML error precedence", () => {
+  const malformed = readPlistJson('{"Count":9007199254740993} trailing');
+  expect(malformed.needsNumberTypes).toBe(false);
+  const jsonFailure = malformed.project();
+  if (jsonFailure.ok) throw new Error("expected JSON syntax failure");
+  expect(jsonFailure.error.cause).toBeInstanceOf(SyntaxError);
+  const repeatedFailure = malformed.project();
+  if (repeatedFailure.ok)
+    throw new Error("expected repeated JSON syntax failure");
+  expect(repeatedFailure.error).not.toBe(jsonFailure.error);
+  expect(repeatedFailure.error.message).toBe(jsonFailure.error.message);
+  expect(repeatedFailure.error.cause).toBe(jsonFailure.error.cause);
+
+  const invalidXml = "<plist><dict><key>unclosed";
+  const xmlFailure = malformed.project(invalidXml);
+  const validJsonXmlFailure = readPlistJson("42").project(invalidXml);
+  if (xmlFailure.ok || validJsonXmlFailure.ok)
+    throw new Error("expected XML syntax failure");
+  expect(xmlFailure.error.message).toBe(validJsonXmlFailure.error.message);
+  expect(xmlFailure.error.message).not.toBe(jsonFailure.error.message);
 });
 
 it("recovers exact XML integers from their element literals", () => {
@@ -573,9 +829,9 @@ it("keeps integral XML reals beyond the safe range as reals", () => {
 
 it("keeps negative-zero reals distinct in native JSON and XML evidence", () => {
   for (const parsed of [
-    parsePlistJson(
+    readPlistJson(
       '{"Negative":-0.0,"Spelled":-0,"Positive":0.0,"Integer":0,"Ratio":1.25}',
-    ),
+    ).project(),
     parsePlistXml(
       "<plist><dict><key>Negative</key><real>-0.0</real><key>Spelled</key><real>-0</real><key>Positive</key><real>0.0</real><key>Integer</key><integer>-0</integer><key>Ratio</key><real>1.25</real></dict></plist>",
     ),
@@ -591,7 +847,7 @@ it("keeps negative-zero reals distinct in native JSON and XML evidence", () => {
 });
 
 it("reports no negative-zero limitation for positive zero", () => {
-  const parsed = parsePlistJson('{"Positive":0.0,"Integer":0}');
+  const parsed = readPlistJson('{"Positive":0.0,"Integer":0}').project();
   if (!parsed.ok) throw parsed.error;
   expect(parsed.value.limitations).toEqual([]);
 });
@@ -626,3 +882,114 @@ it("keeps CFPropertyList's non-finite real spellings in XML evidence", () => {
     expect.stringContaining("1 XML scalar value(s) could not be established"),
   ]);
 });
+
+it("retains nested own dictionary names consistently in native JSON, XML and binary projections", () => {
+  const value = Object.fromEntries([
+    [
+      "__proto__",
+      Object.fromEntries([
+        ["__proto__", "nested"],
+        ["constructor", "authored"],
+      ]),
+    ],
+    ["CFBundleExecutable", "Selected"],
+  ]);
+  const xml =
+    "<plist><dict><key>__proto__</key><dict><key>__proto__</key><string>nested</string><key>constructor</key><string>authored</string></dict><key>CFBundleExecutable</key><string>Selected</string></dict></plist>";
+  for (const parsed of [
+    readPlistJson(JSON.stringify(value)).project(),
+    parsePlistXml(xml),
+    parsePlistBinary(Buffer.from(buildBinary(value))),
+  ]) {
+    if (!parsed.ok) throw parsed.error;
+    expect(JSON.stringify(parsed.value.value)).toBe(JSON.stringify(value));
+    expect(jsonValueSchema.parse(parsed.value.value)).toEqual(value);
+    expect(parsed.value.bundle.executable).toBe("Selected");
+    expect(parsed.value.limitations).not.toContainEqual(
+      expect.stringContaining("omitted"),
+    );
+  }
+});
+
+it.each([
+  [
+    "integer",
+    "<integer>9007199254740992</integer>",
+    "9007199254740992",
+    { $plist_type: "integer", decimal: "9007199254740992" },
+  ],
+  [
+    "real",
+    "<real>9007199254740992</real>",
+    "9007199254740992",
+    9007199254740992,
+  ],
+  [
+    "integer/real collision",
+    "<integer>9007199254740992</integer><real>9007199254740992</real>",
+    "9007199254740992,9007199254740992",
+    9007199254740992,
+  ],
+] as const)(
+  "shares %s association across native JSON, XML and archive projection",
+  (_label, elements, json, expected) => {
+    const xml = `<plist><array>${elements}</array></plist>`;
+    const nativeJson = readPlistJson(`[${json}]`).project(xml);
+    const nativeXml = parsePlistXml(xml);
+    if (!nativeJson.ok) throw nativeJson.error;
+    if (!nativeXml.ok) throw nativeXml.error;
+    const decoded = parseXmlPropertyList(xml);
+    const numbers = createPlistNumberProjection(decoded.numberLiterals);
+    const archive = numbers.project(projectPlistValue(decoded.value).value);
+    const values = json.split(",").map(() => expected);
+    expect(nativeJson.value.value).toEqual(values);
+    expect(nativeXml.value.value).toEqual(values);
+    expect(archive).toEqual(values);
+  },
+);
+
+it("retains JSON source spelling when XML integers collide after rounding", () => {
+  const xml =
+    "<plist><array><integer>9007199254740992</integer><integer>9007199254740993</integer></array></plist>";
+  const json = readPlistJson("[9007199254740992,9007199254740993]").project(
+    xml,
+  );
+  const converted = parsePlistXml(xml);
+  if (!json.ok) throw json.error;
+  if (!converted.ok) throw converted.error;
+  expect(json.value.value).toEqual([
+    { $plist_type: "integer", decimal: "9007199254740992" },
+    { $plist_type: "integer", decimal: "9007199254740993" },
+  ]);
+  expect(converted.value.value).toEqual([9007199254740992, 9007199254740992]);
+  expect(json.value.limitations).toEqual([
+    expect.stringContaining("2 integer value(s)"),
+  ]);
+  expect(converted.value.limitations).toEqual([
+    expect.stringContaining("XML conversion"),
+    expect.stringContaining("2 number(s)"),
+  ]);
+});
+
+it.each(["\n", "\r\n", "\r", "\u2028", "\u2029"])(
+  "retains native OpenStep fields after line comments ending in %j",
+  (newline) => {
+    const source =
+      "// exported metadata" +
+      newline +
+      "{ CFBundleIdentifier = org.example.original; // note" +
+      newline +
+      "CFBundleName = Retained;\n }";
+    const result = parsePlistXmlSource(Buffer.from(source));
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        value: {
+          CFBundleIdentifier: "org.example.original",
+          CFBundleName: "Retained",
+        },
+        bundle: { identifier: "org.example.original", name: "Retained" },
+      },
+    });
+  },
+);

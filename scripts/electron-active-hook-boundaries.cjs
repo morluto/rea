@@ -350,6 +350,8 @@ const createElectronActiveBoundaryPatches = ({
       Promise.reject(new Error("External shell effects are blocked")),
     openPath: () =>
       Promise.reject(new Error("External shell effects are blocked")),
+    trashItem: () =>
+      Promise.reject(new Error("External shell effects are blocked")),
     // Synchronous `void`: reveals a path in the host file manager.
     showItemInFolder: () => undefined,
     // Synchronous `boolean`: creates or replaces a Windows shortcut file.

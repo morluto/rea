@@ -5,7 +5,14 @@ import type { FileHandle } from "node:fs/promises";
 import { pipeline } from "node:stream/promises";
 import { getHeapStatistics } from "node:v8";
 
-import { asStream, none } from "stream-chain";
+import {
+  asStream,
+  flushable,
+  getFunctionList,
+  isFlushable,
+  isFunctionList,
+  none,
+} from "stream-chain";
 import fun from "stream-chain/fun.js";
 import parser from "stream-json/parser.js";
 import streamValues from "stream-json/streamers/stream-values.js";
@@ -208,6 +215,7 @@ export const readJsonObjectFile = (
                 handle,
                 stats.size,
                 path,
+                operation,
                 signal,
                 (bytes) => {
                   hash.update(bytes);
@@ -216,13 +224,7 @@ export const readJsonObjectFile = (
               ),
               asStream(
                 fun(
-                  parser({
-                    jsonStreaming: false,
-                    streamValues: false,
-                    packKeys: false,
-                    packStrings: false,
-                    packNumbers: false,
-                  }),
+                  jsonTokenizers(operation, stats.size, path),
                   packJsonScalars(operation, stats.size, path),
                   (token: parser.Token): typeof none | Promise<typeof none> => {
                     const opens =
@@ -374,6 +376,7 @@ export const readJsonInputFile = (
               handle,
               stats.size,
               path,
+              operation,
               signal,
               undefined,
               physicalRead,
@@ -382,13 +385,7 @@ export const readJsonInputFile = (
             // stream boundary. Admission still precedes scalar/value assembly.
             asStream(
               fun(
-                parser({
-                  jsonStreaming: false,
-                  streamValues: false,
-                  packKeys: false,
-                  packStrings: false,
-                  packNumbers: false,
-                }),
+                jsonTokenizers(operation, stats.size, path),
                 packJsonScalars(operation, stats.size, path),
                 admitJsonAssembly(
                   operation,
@@ -434,24 +431,52 @@ export const readJsonInputFile = (
     },
   );
 
+/** Keep parser failures inside the tokenizer while retaining synchronous stage fusion. */
+const jsonTokenizers = (
+  operation: string,
+  size: number,
+  path: string,
+): parser.TokenSource => {
+  const tokenizer = parser({
+    jsonStreaming: false,
+    streamValues: false,
+    packKeys: false,
+    packStrings: false,
+    packNumbers: false,
+  });
+  if (!isFunctionList(tokenizer))
+    throw new Error("JSON tokenizer does not expose its processor stages");
+  return fun(
+    ...getFunctionList(tokenizer).map((processor) => {
+      const tokenize = (value: unknown): unknown => {
+        try {
+          return processor(value);
+        } catch (cause: unknown) {
+          const failure = jsonReadFailure(cause, operation, size, path);
+          if (failure !== undefined) throw failure;
+          // The pinned tokenizer reports grammar violations with plain Error;
+          // native runtime failures keep their distinct types and identities.
+          if (cause instanceof Error && cause.constructor === Error)
+            throw invalidJson(operation, cause.message, { cause });
+          throw cause;
+        }
+      };
+      return isFlushable(processor) ? flushable(tokenize) : tokenize;
+    }),
+  ) as parser.TokenSource;
+};
+
 const jsonReadFailure = (
   cause: unknown,
   operation: string,
   size: number,
   path: string,
 ): JsonInputFileFailure | undefined => {
-  if (cause instanceof AnalysisResourceConstraintError) return cause;
   if (
-    cause instanceof TypeError &&
-    "code" in cause &&
-    cause.code === "ERR_ENCODING_INVALID_ENCODED_DATA"
+    cause instanceof AnalysisInputError ||
+    cause instanceof AnalysisResourceConstraintError
   )
-    return invalidJson(operation, "JSON input is not valid UTF-8", cause);
-  if (
-    cause instanceof SyntaxError ||
-    (cause instanceof Error && cause.message.startsWith("Parser "))
-  )
-    return invalidJson(operation, cause.message, cause);
+    return cause;
   if (
     cause instanceof Error &&
     ((cause instanceof RangeError &&
@@ -633,6 +658,7 @@ async function* decodedChunks(
   handle: FileHandle,
   admittedBytes: number,
   path: string,
+  operation: string,
   signal: AbortSignal | undefined,
   observe?: (bytes: Uint8Array) => void,
   physicalRead: JsonInputPhysicalReadObservation = {},
@@ -642,9 +668,30 @@ async function* decodedChunks(
   const checked = (text: string): string => {
     if (leading && text.length > 0) {
       leading = false;
-      if (text.startsWith("\uFEFF")) throw new JsonByteOrderMarkError();
+      if (text.startsWith("\uFEFF"))
+        throw invalidJson(operation, JSON_BYTE_ORDER_MARK_MESSAGE, {
+          userMessage: JSON_BYTE_ORDER_MARK_MESSAGE,
+        });
     }
     return text;
+  };
+  const decode = (
+    bytes?: Uint8Array,
+    options?: Parameters<typeof decoder.decode>[1],
+  ): string => {
+    try {
+      return decoder.decode(bytes, options);
+    } catch (cause: unknown) {
+      if (
+        cause instanceof TypeError &&
+        "code" in cause &&
+        cause.code === "ERR_ENCODING_INVALID_ENCODED_DATA"
+      )
+        throw invalidJson(operation, "JSON input is not valid UTF-8", {
+          cause,
+        });
+      throw cause;
+    }
   };
   const bytes = Buffer.allocUnsafe(READ_CHUNK_BYTES);
   let observedBytes = 0;
@@ -664,17 +711,10 @@ async function* decodedChunks(
     if (observedBytes > admittedBytes) throw new RegularFileChangedError(path);
     const chunk = bytes.subarray(0, read.bytesRead);
     observe?.(chunk);
-    yield checked(decoder.decode(chunk, { stream: true }));
+    yield checked(decode(chunk, { stream: true }));
   }
   if (observedBytes !== admittedBytes) throw new RegularFileChangedError(path);
-  yield checked(decoder.decode());
-}
-
-/** A streamed JSON file begins with a byte-order mark; reported as invalid JSON. */
-class JsonByteOrderMarkError extends SyntaxError {
-  constructor() {
-    super(JSON_BYTE_ORDER_MARK_MESSAGE);
-  }
+  yield checked(decode());
 }
 
 const readPrefix = async (
@@ -720,16 +760,21 @@ const readNativeJson = async (
   );
   return parsed.ok
     ? ok(parsed.value)
-    : err(invalidJson(operation, parsed.error, parsed.cause));
+    : err(
+        invalidJson(operation, parsed.error, {
+          cause: parsed.cause,
+          ...(parsed.userMessage === undefined
+            ? {}
+            : { userMessage: parsed.userMessage }),
+        }),
+      );
 };
 
 const invalidJson = (
   operation: string,
   message: string,
-  cause?: unknown,
+  options?: { readonly cause?: unknown; readonly userMessage?: string },
 ): AnalysisInputError =>
-  new AnalysisInputError(
-    operation,
-    cause === undefined ? undefined : { cause },
-    [{ path: [], reason: "invalid_format", expected: "JSON", message }],
-  );
+  new AnalysisInputError(operation, options, [
+    { path: [], reason: "invalid_format", expected: "JSON", message },
+  ]);

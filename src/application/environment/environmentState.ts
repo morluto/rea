@@ -6,10 +6,11 @@ import {
   type StateType,
   type StateView,
 } from "../../domain/analysisView/environmentStateRules.js";
+import type { StateWritePlan } from "../../domain/analysisView/environmentStateWriteRules.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import type {
-  AnalysisInputIssue,
+import {
   AnalysisResourceConstraintError,
+  type AnalysisInputIssue,
 } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { err, ok, type Result } from "../../domain/result.js";
@@ -22,6 +23,13 @@ import {
   type EnvironmentManifestTool,
   type EnvironmentSource,
 } from "./environmentSource.js";
+import { STATE_INTAKE_LIMIT_BYTES } from "./environmentStateDocument.js";
+import { initialStateBytes } from "./environmentStateStore.js";
+import {
+  describeWrite,
+  writeBody,
+  writeQuery,
+} from "./environmentStateWriteDescription.js";
 import {
   environmentToolDefinitions,
   type EnvironmentDataPlane,
@@ -41,11 +49,28 @@ export interface EnvironmentState {
   readonly views: ReadonlyMap<string, StateView>;
   readonly entities: readonly StateEntity[];
   readonly documents: readonly StateDocument[];
+  /** Write plans keyed by tool name. */
+  readonly writes: ReadonlyMap<string, StateWritePlan>;
+  /** The instant the served clock starts from, or null when the capture has no times. */
+  readonly writeClock: string | null;
 }
 
-/** Serving from the state is read-only: tools whose requests may change state are not served. */
-const servedFromState = (tool: EnvironmentManifestTool): boolean =>
-  !changesState(tool.method, tool.path_template);
+/** The write plans a catalog serves from, and the views naming calls that only read: none before a state is derived. */
+type ServedWrites = Pick<EnvironmentState, "writes"> &
+  Partial<Pick<EnvironmentState, "views">>;
+
+/** Serving from the state serves read tools, calls the capture shows reading only, and the write tools whose effect it confirmed. */
+const servedFromState = (
+  tool: EnvironmentManifestTool,
+  state: ServedWrites,
+): boolean => {
+  const view = state.views?.get(tool.name);
+  return (
+    !changesState(tool.method, tool.path_template) ||
+    (view?.shape === "recorded" && view.reason === "query-body") ||
+    state.writes.get(tool.name)?.served === true
+  );
+};
 
 /** The tools an environment serves and the data plane its card declares. */
 export interface ServedCatalog {
@@ -53,27 +78,45 @@ export interface ServedCatalog {
   readonly dataPlane: EnvironmentDataPlane;
 }
 
-/** The catalog an environment serves: every manifest tool for replay, the read tools and the data plane from a state. */
+/** The catalog an environment serves: every manifest tool for replay; from a state, the read tools, the confirmed write tools and the data plane. */
 export const servedCatalog = (
   source: EnvironmentSource,
-  fromState: boolean,
+  state: ServedWrites | undefined,
   name: string,
   operation: string = ENVIRONMENT_SERVE_OPERATION,
 ): Result<ServedCatalog, AnalysisResourceConstraintError> => {
-  const dataPlane: EnvironmentDataPlane = fromState ? "state" : "none";
-  const catalogSource: EnvironmentSource = fromState
-    ? {
-        ...source,
-        manifest: {
-          ...source.manifest,
-          tools: source.manifest.tools.filter(servedFromState),
+  const dataPlane: EnvironmentDataPlane =
+    state === undefined ? "none" : "state";
+  const tools = environmentToolDefinitions(
+    state === undefined
+      ? source
+      : {
+          ...source,
+          manifest: {
+            ...source.manifest,
+            tools: source.manifest.tools.filter((tool) =>
+              servedFromState(tool, state),
+            ),
+          },
         },
-      }
-    : source;
-  const tools = environmentToolDefinitions(catalogSource, name, {
-    operation,
-    dataPlane,
-  });
+    name,
+    {
+      operation,
+      dataPlane,
+      ...(state === undefined
+        ? {}
+        : {
+            describe: (tool) =>
+              describeWrite(
+                state.writes.get(tool.name),
+                writeQuery(state.writes.get(tool.name), source),
+              ),
+            body: (tool, recorded) =>
+              writeBody(state.writes.get(tool.name), recorded),
+            query: (tool) => writeQuery(state.writes.get(tool.name), source),
+          }),
+    },
+  );
   return tools.ok ? ok({ tools: tools.value, dataPlane }) : tools;
 };
 
@@ -162,6 +205,8 @@ export const loadEnvironmentState = (
     views: new Map(view.views.map((entry) => [entry.tool, entry])),
     entities: view.entities,
     documents: view.documents,
+    writes: new Map(view.writes.map((plan) => [plan.tool, plan])),
+    writeClock: view.write_clock,
   });
 };
 
@@ -214,6 +259,29 @@ export interface PreparedState extends ServedState {
   >;
 }
 
+/** The derived state, unless data/get would write it past what data/add loads back, so its own report could not be restored. */
+export const admitServedState = (
+  state: EnvironmentState,
+  operation: string,
+): Result<EnvironmentState, AnalysisResourceConstraintError> => {
+  const bytes = initialStateBytes(state);
+  return bytes > STATE_INTAKE_LIMIT_BYTES
+    ? err(
+        new AnalysisResourceConstraintError(
+          operation,
+          "capacity",
+          "The derived state is larger than data/add loads, so it cannot be served",
+          { max_state_bytes: STATE_INTAKE_LIMIT_BYTES, state_bytes: bytes },
+          {
+            retryable: false,
+            remediationAction:
+              "Capture fewer or smaller responses, or serve the environment as replay only.",
+          },
+        ),
+      )
+    : ok(state);
+};
+
 const unavailable = (error: AnalysisError): PreparedState => {
   const { code, message } = projectAnalysisError(error);
   return {
@@ -232,19 +300,20 @@ export const prepareServedState = (
   } = {},
 ): PreparedState => {
   const operation = options.operation ?? ENVIRONMENT_SERVE_OPERATION;
-  // The state catalog depends only on the manifest and name, so checking it first spares deriving a state that cannot be served.
-  const catalog = servedCatalog(
-    source,
-    true,
-    options.name ?? source.manifest.name,
-    operation,
-  );
-  if (!catalog.ok) return unavailable(catalog.error);
+  const name = options.name ?? source.manifest.name;
+  // The read catalog depends only on the manifest and name, so checking it first spares deriving a state that cannot be served.
+  const reads = servedCatalog(source, { writes: new Map() }, name, operation);
+  if (!reads.ok) return unavailable(reads.error);
   const derived = deriveEnvironmentState(source, captureValue, operation);
-  return derived.ok
+  if (!derived.ok) return unavailable(derived.error);
+  const admitted = admitServedState(derived.value, operation);
+  if (!admitted.ok) return unavailable(admitted.error);
+  // Served write tools join the catalog, so the whole catalog is admitted again.
+  const catalog = servedCatalog(source, derived.value, name, operation);
+  return catalog.ok
     ? {
         state: derived.value,
         report: { served: true, evidence_id: derived.value.evidenceId },
       }
-    : unavailable(derived.error);
+    : unavailable(catalog.error);
 };

@@ -1,29 +1,28 @@
 import { procedureInfoSchema } from "../domain/native/procedureInfo.js";
 import { z } from "zod";
+import { utcDateTimeSchema } from "../domain/offsetDateTime.js";
 
-import {
-  procedureIdentitySchema,
-  functionDossierSchema,
-} from "../domain/hopperValues.js";
+import { functionDossierSchema } from "../domain/native/functionDossier.js";
 import { analysisProfileSchema } from "../domain/analysisProfile.js";
 import {
   evidenceSchema,
   validateAnalysisProfileProvider,
 } from "../domain/evidence.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
+import { jsonObjectSchema } from "../domain/jsonValue.js";
 import {
   PROVIDER_REJECTION_CODES,
   type ProviderRejectionCode,
-} from "./providerSelection.js";
+} from "../domain/providerSelection.js";
 import {
   PROVIDER_FAILURE_STAGES,
   PROVIDER_OPERATION_STATES,
   PROVIDER_RETRY_ACTIONS,
 } from "../domain/providerOperationHealth.js";
-import { analysisErrorProjectionSchema } from "./errorSchemas.js";
-import { relationshipCoverageSchema } from "../domain/relationshipCoverage.js";
-import { ZIP_PACKAGE_FORMATS } from "../domain/zipPackageFormat.js";
-import { objcClassImportIdentitySchema } from "../domain/native/objcSwiftMetadata.js";
+import {
+  objcClassDiscoveryCoverageSchema,
+  objcClassImportIdentitySchema,
+} from "../domain/native/objcSwiftMetadata.js";
+import { BINARY_SESSION_SUMMARY_OMITTED_FIELDS } from "./sessionStatusContract.js";
 
 /** Specialize the single normalized result inside a complete Evidence record. */
 export const evidenceResultOf = <Schema extends z.ZodType>(schema: Schema) =>
@@ -48,33 +47,6 @@ export const requireOutputSchema = <
     throw new Error(`Missing output schema for ${name}`);
   return schema;
 };
-
-export const targetFormatSchema = z.enum([
-  "hopper",
-  "analysis-database",
-  "mach-o",
-  "mach-o-universal",
-  "elf",
-  "pe",
-  "dos-mz",
-  "dos-com",
-  "raw-binary",
-  ...ZIP_PACKAGE_FORMATS,
-  "asar",
-  "godot-pck",
-  "dmg",
-  "pkg",
-  "plist",
-  "javascript",
-  "source-map",
-]);
-
-export const targetKindSchema = z.enum([
-  "executable",
-  "database",
-  "archive",
-  "artifact",
-]);
 
 const providerCapabilityFacts = {
   operation: z.string(),
@@ -174,27 +146,27 @@ export const expandProviderCapabilities = (
   );
 
 const processCoordinates = {
-  launcher_pid: z.number().int().min(1),
-  process_group_id: z.number().int().min(1),
+  launcher_pid: z.int().min(1),
+  process_group_id: z.int().min(1),
 };
 
 const processLineageObservation = z.discriminatedUnion("status", [
   z.object({
     status: z.literal("unavailable"),
-    observed_at: z.iso.datetime(),
+    observed_at: utcDateTimeSchema,
     ...processCoordinates,
     reason: z.string().min(1),
   }),
   z.object({
     status: z.literal("verified"),
-    observed_at: z.iso.datetime(),
+    observed_at: utcDateTimeSchema,
     ...processCoordinates,
-    launcher_parent_pid: z.number().int().min(0),
+    launcher_parent_pid: z.int().min(0),
     descendants: z.array(
       z.object({
-        pid: z.number().int().min(1),
-        parent_pid: z.number().int().min(0),
-        process_group_id: z.number().int().min(1),
+        pid: z.int().min(1),
+        parent_pid: z.int().min(0),
+        process_group_id: z.int().min(1),
       }),
     ),
   }),
@@ -225,19 +197,19 @@ export const analysisActivity = z.object({
       provider: providerIdentity,
       active: z
         .object({
-          request_id: z.number().int().min(1),
+          request_id: z.int().min(1),
           operation: z.string().min(1),
-          elapsed_ms: z.number().int().min(0),
+          elapsed_ms: z.int().min(0),
           caller_state: z.enum(["waiting", "cancelled"]),
         })
         .nullable(),
-      queued_requests: z.number().int().min(0),
+      queued_requests: z.int().min(0),
     }),
   ),
 });
 
 const providerOperationRequest = z.object({
-  request_id: z.number().int().min(1),
+  request_id: z.int().min(1),
   operation: z.string().min(1),
   stage: z.enum(PROVIDER_FAILURE_STAGES),
 });
@@ -247,7 +219,7 @@ export const providerOperationHealth = z
     state: z.enum(PROVIDER_OPERATION_STATES),
     stage: z.enum(PROVIDER_FAILURE_STAGES).nullable(),
     retry_action: z.enum(PROVIDER_RETRY_ACTIONS).nullable(),
-    exit_code: z.number().int().nullable(),
+    exit_code: z.int().nullable(),
     requests: z.array(providerOperationRequest),
   })
   .nullable();
@@ -256,43 +228,48 @@ const providerRejectionCode: z.ZodType<ProviderRejectionCode> = z.enum(
   PROVIDER_REJECTION_CODES,
 );
 
-const providerDiagnostics = z.record(z.string(), jsonValueSchema);
-
-const providerAvailability = z.discriminatedUnion("status", [
-  z.object({
+const providerAvailabilityStates = {
+  unknown: z.object({
     status: z.literal("unknown"),
     code: z.null(),
     reason: z.string().min(1),
-    diagnostics: providerDiagnostics,
   }),
-  z.object({
+  available: z.object({
     status: z.literal("available"),
     code: z.null(),
     reason: z.null(),
-    diagnostics: providerDiagnostics,
   }),
-  z.object({
+  unavailable: z.object({
     status: z.literal("unavailable"),
     code: providerRejectionCode,
     reason: z.string().min(1),
-    diagnostics: providerDiagnostics,
+  }),
+};
+
+const providerAvailability = z.discriminatedUnion("status", [
+  providerAvailabilityStates.unknown.extend({
+    diagnostics: jsonObjectSchema,
+  }),
+  providerAvailabilityStates.available.extend({
+    diagnostics: jsonObjectSchema,
+  }),
+  providerAvailabilityStates.unavailable.extend({
+    diagnostics: jsonObjectSchema,
   }),
 ]);
 
-const providerTargetSupport = z.discriminatedUnion("status", [
-  z.object({
+const providerTargetSupportStates = {
+  unknown: z.object({
     status: z.literal("unknown"),
     code: z.null(),
     reason: z.string().min(1),
-    diagnostics: providerDiagnostics,
   }),
-  z.object({
+  supported: z.object({
     status: z.literal("supported"),
     code: z.null(),
     reason: z.null(),
-    diagnostics: providerDiagnostics,
   }),
-  z.object({
+  unsupported: z.object({
     status: z.literal("unsupported"),
     code: z.enum([
       "target_kind_unsupported",
@@ -302,9 +279,45 @@ const providerTargetSupport = z.discriminatedUnion("status", [
       "managed_target_unsupported",
     ]),
     reason: z.string().min(1),
-    diagnostics: providerDiagnostics,
+  }),
+};
+
+const providerTargetSupport = z.discriminatedUnion("status", [
+  providerTargetSupportStates.unknown.extend({
+    diagnostics: jsonObjectSchema,
+  }),
+  providerTargetSupportStates.supported.extend({
+    diagnostics: jsonObjectSchema,
+  }),
+  providerTargetSupportStates.unsupported.extend({
+    diagnostics: jsonObjectSchema,
   }),
 ]);
+
+/** Complete candidate facts, including provider-owned diagnostics and capability sets. */
+export const analysisProviderCandidate = z.object({
+  provider: providerIdentity,
+  availability: providerAvailability,
+  target_support: providerTargetSupport,
+  selected: z.boolean(),
+  capabilities: z.array(providerCapabilitySet),
+});
+
+/** Summary candidate: the same status, code, and reason without diagnostics or capabilities. */
+export const analysisProviderCandidateSummary = z.strictObject({
+  provider: providerIdentity,
+  availability: z.discriminatedUnion("status", [
+    providerAvailabilityStates.unknown.strict(),
+    providerAvailabilityStates.available.strict(),
+    providerAvailabilityStates.unavailable.strict(),
+  ]),
+  target_support: z.discriminatedUnion("status", [
+    providerTargetSupportStates.unknown.strict(),
+    providerTargetSupportStates.supported.strict(),
+    providerTargetSupportStates.unsupported.strict(),
+  ]),
+  selected: z.boolean(),
+});
 
 const clientFeatureNameSchema = z.enum([
   "elicitation_form",
@@ -406,45 +419,93 @@ export const TOOL_ANNOTATION_NAMES = Object.keys(
   toolAvailabilityFacts.annotations.shape,
 ) as (keyof z.output<typeof toolAvailabilityFacts.annotations>)[];
 
-const toolAvailabilityGroupFacts = {
+const toolAvailabilityStatusGroupFacts = {
   names: z.array(z.string().min(1)).min(1),
-  surface: toolAvailabilityFacts.surface,
   default_mode_available: toolAvailabilityFacts.default_mode_available,
   modes: toolAvailabilityFacts.modes,
   client_requirements: toolAvailabilityFacts.client_requirements.optional(),
+};
+
+const toolAvailabilityGroupFacts = {
+  names: toolAvailabilityStatusGroupFacts.names,
+  surface: toolAvailabilityFacts.surface,
+  default_mode_available:
+    toolAvailabilityStatusGroupFacts.default_mode_available,
+  modes: toolAvailabilityStatusGroupFacts.modes,
+  client_requirements: toolAvailabilityStatusGroupFacts.client_requirements,
   effects: z.array(toolAvailabilityFacts.effects.keyof()),
   annotations: z.array(toolAvailabilityFacts.annotations.keyof()),
 };
 
-const toolAvailabilityGroup = z.discriminatedUnion("available", [
-  z.strictObject({
-    ...toolAvailabilityGroupFacts,
-    available: z.literal(true),
-    reason: z.literal("available"),
-    remediation: z.null(),
-  }),
-  z.strictObject({
-    ...toolAvailabilityGroupFacts,
-    available: z.literal(false),
-    reason: toolUnavailabilityReason,
-    remediation: z.string().nullable(),
-  }),
-]);
+const toolAvailabilityGroupOf = <Facts extends z.ZodRawShape>(facts: Facts) =>
+  z.discriminatedUnion("available", [
+    z.strictObject({
+      ...facts,
+      available: z.literal(true),
+      reason: z.literal("available"),
+      remediation: z.null(),
+    }),
+    z.strictObject({
+      ...facts,
+      available: z.literal(false),
+      reason: toolUnavailabilityReason,
+      remediation: z.string().nullable(),
+    }),
+  ]);
 
 /** Complete inventory with explicit inherited client requirements and enabled flags. */
 export const toolAvailabilityInventory = z.strictObject({
   client_requirements: toolAvailabilityFacts.client_requirements,
-  groups: z.array(toolAvailabilityGroup),
+  groups: z.array(toolAvailabilityGroupOf(toolAvailabilityGroupFacts)),
 });
 export type ToolAvailabilityInventory = z.output<
   typeof toolAvailabilityInventory
 >;
 
+/**
+ * Summary inventory: every tool name with its current availability, reason,
+ * remediation, modes, and client requirements, grouped by those facts alone.
+ * Static surface, effect, and annotation flags are omitted, not false.
+ */
+export const toolAvailabilitySummaryInventory = z.strictObject({
+  client_requirements: toolAvailabilityFacts.client_requirements,
+  groups: z.array(toolAvailabilityGroupOf(toolAvailabilityStatusGroupFacts)),
+});
+export type ToolAvailabilitySummaryInventory = z.output<
+  typeof toolAvailabilitySummaryInventory
+>;
+
+/** One tool's current availability without its static catalog flags. */
+export type ToolAvailabilitySummary = Omit<
+  ToolAvailability,
+  "surface" | "effects" | "annotations"
+>;
+
+const isCompleteToolAvailabilityInventory = (
+  inventory: ToolAvailabilityInventory | ToolAvailabilitySummaryInventory,
+): inventory is ToolAvailabilityInventory =>
+  inventory.groups.every((group) => "surface" in group);
+
 /** Expand the wire representation once at the consuming boundary. */
-export const expandToolAvailability = (
+export function expandToolAvailability(
   inventory: ToolAvailabilityInventory,
-): readonly ToolAvailability[] =>
-  inventory.groups.flatMap((group) =>
+): readonly ToolAvailability[];
+export function expandToolAvailability(
+  inventory: ToolAvailabilityInventory | ToolAvailabilitySummaryInventory,
+): readonly (ToolAvailability | ToolAvailabilitySummary)[];
+export function expandToolAvailability(
+  inventory: ToolAvailabilityInventory | ToolAvailabilitySummaryInventory,
+): readonly (ToolAvailability | ToolAvailabilitySummary)[] {
+  if (!isCompleteToolAvailabilityInventory(inventory))
+    return inventory.groups.flatMap(({ names, ...group }) =>
+      names.map((name) => ({
+        ...group,
+        name,
+        client_requirements:
+          group.client_requirements ?? inventory.client_requirements,
+      })),
+    );
+  return inventory.groups.flatMap((group) =>
     group.names.map((name) =>
       toolAvailability.parse({
         ...group,
@@ -466,8 +527,10 @@ export const expandToolAvailability = (
       }),
     ),
   );
+}
 
-export const sessionProvider = z
+/** Session status facts shared by every detail level and session kind. */
+export const sessionProviderFacts = z
   .object({
     cleanup_pending: z.boolean(),
     capabilities: z.array(providerCapabilitySet),
@@ -485,16 +548,6 @@ export const sessionProvider = z
         analysis_profile: analysisProfileSchema,
       })
       .nullable(),
-    analysis_provider_candidates: z.array(
-      z.object({
-        provider: providerIdentity,
-        availability: providerAvailability,
-        target_support: providerTargetSupport,
-        selected: z.boolean(),
-        capabilities: z.array(providerCapabilitySet),
-      }),
-    ),
-    tool_availability: toolAvailabilityInventory,
     client_features: z.object({
       elicitation_form: z.boolean(),
       elicitation_url: z.boolean(),
@@ -524,9 +577,9 @@ export const sessionProvider = z
       skill: z.object({ name: z.string(), expected_version: z.string() }),
       catalog: z.strictObject({
         counts: z.strictObject({
-          cli_commands: z.number().int().min(0),
-          mcp_tools: z.number().int().min(0),
-          mcp_prompts: z.number().int().min(0),
+          cli_commands: z.int().min(0),
+          mcp_tools: z.int().min(0),
+          mcp_prompts: z.int().min(0),
         }),
         digests: z.strictObject({
           tools_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
@@ -548,26 +601,33 @@ export const sessionProvider = z
   })
   .passthrough();
 
+/**
+ * Fields whose shape `detail` selects. A summary must list what it omits and
+ * carry only summary candidates and tool groups; complete detail must carry
+ * diagnostics, candidate capabilities and static tool flags, and no omission list.
+ */
+export const sessionStatusDetailShapes = [
+  {
+    detail: z.literal("summary"),
+    omitted_fields: z
+      .array(z.enum(BINARY_SESSION_SUMMARY_OMITTED_FIELDS))
+      .min(1),
+    analysis_provider_candidates: z.array(analysisProviderCandidateSummary),
+    tool_availability: toolAvailabilitySummaryInventory,
+  },
+  {
+    detail: z.literal("complete"),
+    omitted_fields: z.never().optional(),
+    analysis_provider_candidates: z.array(analysisProviderCandidate),
+    tool_availability: toolAvailabilityInventory,
+  },
+] as const;
+
 export const nullableText = z.string().nullable();
-export const addressList = z.array(z.string());
 export const addressedEntry = z.object({
   address: z.string(),
   name: z.string(),
 });
-export const containingProcedureResolution = z.discriminatedUnion("found", [
-  z.object({
-    query_address: z.string(),
-    found: z.literal(true),
-    procedure: procedureIdentitySchema,
-  }),
-  z.object({
-    query_address: z.string(),
-    found: z.literal(false),
-    procedure: z.null(),
-    reason: z.enum(["outside_segments", "not_in_procedure"]),
-  }),
-]);
-
 const unavailable = z.object({
   available: z.literal(false),
   reason: z.string(),
@@ -602,14 +662,14 @@ export const procedureInfoOutput = evidenceResultOf(procedureInfoSchema);
 export const symbolDiscoveryOutput = (property: "classes" | "protocols") =>
   evidenceResultOf(
     z.object({
-      count: z.number().int().min(0),
+      count: z.int().min(0),
       [property]: z.array(addressedEntry),
     }),
   );
 
 export const objcClassDiscoveryOutput = evidenceResultOf(
   z.object({
-    count: z.number().int().min(0),
+    count: z.int().min(0),
     classes: z.array(
       addressedEntry.extend({
         binding_identity: objcClassImportIdentitySchema
@@ -619,33 +679,8 @@ export const objcClassDiscoveryOutput = evidenceResultOf(
           .optional(),
       }),
     ),
-    identity_coverage: z.strictObject({
-      status: z.enum([
-        "complete",
-        "partial",
-        "unsupported",
-        "not_requested",
-        "unknown",
-        "not_applicable",
-      ]),
-      reason: z.string().nullable(),
-    }),
+    identity_coverage: objcClassDiscoveryCoverageSchema,
   }),
 );
-
-export const graphNode = z.discriminatedUnion("status", [
-  z.object({
-    address: z.string(),
-    status: z.literal("ok"),
-    calls: z.array(z.string()),
-    relationship_coverage: relationshipCoverageSchema,
-    limitations: z.array(z.string()).optional(),
-  }),
-  z.object({
-    address: z.string(),
-    status: z.literal("error"),
-    error: analysisErrorProjectionSchema,
-  }),
-]);
 
 export const functionDossierOutput = evidenceResultOf(functionDossierSchema);

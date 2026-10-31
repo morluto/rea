@@ -1,3 +1,4 @@
+import { runWithExecutionLimits } from "./PlaywrightElectronExecution.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -38,7 +39,6 @@ import {
   runElectronActions,
   readApplicationState,
   readFinalApplicationState,
-  runWithExecutionLimits,
 } from "./PlaywrightElectronActiveActions.js";
 import { projectElectronActiveCapture } from "./PlaywrightElectronActiveProjection.js";
 import { readElectronFuseImage } from "../electron/ElectronFuseReader.js";
@@ -192,7 +192,15 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
         options.signal,
         startupDeadline,
       );
-      actions = await runElectronActions(application, input, options);
+      const actionOutcome = await runElectronActions(
+        application,
+        input,
+        options,
+        this.#resources,
+      );
+      actions = actionOutcome.actions;
+      if (actionOutcome.cleanupError !== undefined)
+        throw actionOutcome.cleanupError;
       const state = await readFinalApplicationState(
         application,
         options.signal,
@@ -218,9 +226,14 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
           ],
         };
       }
-      if (cause instanceof AnalysisError && cause.cleanupIncomplete)
+      if (cause instanceof AnalysisError && cause.cleanupIncomplete) {
+        if (capture !== undefined)
+          cause.retainPartialObservation({
+            kind: "electron-active-observation",
+            capture,
+          });
         outcome = err(cause);
-      else if (options.signal?.aborted === true)
+      } else if (options.signal?.aborted === true)
         outcome = err(
           new BrowserObservationError(OPERATION, "cancelled", {
             ...cancellationCause(cause, options.signal),
@@ -371,6 +384,7 @@ export const safeElectronEnvironment = (
       "TMPDIR",
       "USER",
       "DISPLAY",
+      "XAUTHORITY",
       "WAYLAND_DISPLAY",
       ...(platform === "win32"
         ? [

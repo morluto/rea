@@ -1,11 +1,6 @@
-import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import {
-  AnalysisInputError,
-  AnalysisCancelledError,
-  AnalysisUnsupportedTargetError,
-} from "../domain/analysisErrorCore.js";
+import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { ArtifactOperationError } from "../domain/artifactOperationError.js";
-import { BinaryTargetError } from "../domain/configurationErrors.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import {
   artifactFileCancellationCause,
@@ -24,6 +19,9 @@ export const translateArtifactFailure = (
       cause.details,
       cause.message,
       {
+        ...(cause.userMessage === undefined
+          ? {}
+          : { userMessage: cause.userMessage }),
         cause:
           cause.reason === "cancelled"
             ? artifactFileCancellationCause(cause)
@@ -35,19 +33,26 @@ export const translateArtifactFailure = (
         ...(cause.admission === undefined
           ? {}
           : { admission: cause.admission }),
+        ...(cause.boundary === undefined ? {} : { boundary: cause.boundary }),
       },
     );
+    if (cause.admission !== undefined)
+      error.bindLimit({
+        ...analysisSettingLimit(
+          "asar.max_header_bytes",
+          cause.admission.maximumBytes,
+          cause.admission.source,
+        ),
+        ...(cause.admission.requiredBytes === undefined
+          ? {}
+          : { required_value: cause.admission.requiredBytes }),
+      });
     bindArtifactFileCleanup(cause, error);
     return error;
   }
-  // Caller-selection, target and unsupported-target failures are already typed;
-  // keep their correction details instead of reducing them to an I/O failure.
-  if (
-    cause instanceof AnalysisInputError ||
-    cause instanceof AnalysisCancelledError ||
-    cause instanceof AnalysisUnsupportedTargetError ||
-    cause instanceof BinaryTargetError
-  )
-    return cause;
-  return new ArtifactOperationError(operation, "io");
+  // Keep typed Evidence and other analysis failures instead of reducing them to I/O.
+  if (cause instanceof AnalysisError) return cause;
+  return new ArtifactOperationError(operation, "io", undefined, undefined, {
+    cause,
+  });
 };

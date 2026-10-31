@@ -33,7 +33,7 @@ it("preserves ADB key, action and component admission when making advertised pat
           .success,
     },
     {
-      previous: /^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]*)?$/u,
+      previous: /^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._$-]*)?$/u,
       max: 512,
       accepts: (component: string) =>
         adbInputSchemas.start_adb_activity.safeParse({
@@ -52,6 +52,8 @@ it("preserves ADB key, action and component admission when making advertised pat
     "-",
     "android.intent.action.VIEW",
     "com.example/.MainActivity",
+    "com.example/.Outer$InnerActivity",
+    "com.example.Outer$InnerActivity",
     "com.example/",
     "com.example/a/b",
     "a\n",
@@ -97,6 +99,12 @@ it("admits empty string extras and validates typed extra text at domain admissio
     { type: "int", value: "-2147483648" },
     { type: "long", value: "9007199254740993" },
     { type: "float", value: "-1.25" },
+    { type: "float", value: "1e-3" },
+    { type: "float", value: "1E-3" },
+    { type: "float", value: ".5" },
+    { type: "float", value: "1." },
+    { type: "float", value: "0x1.8p1" },
+    { type: "float", value: "NaN" },
   ] as const;
   for (const { type, value } of accepted)
     expect(
@@ -110,7 +118,8 @@ it("admits empty string extras and validates typed extra text at domain admissio
     { type: "boolean", value: "True" },
     { type: "int", value: "1.5" },
     { type: "long", value: "" },
-    { type: "float", value: "1e3" },
+    { type: "float", value: "garbage" },
+    { type: "float", value: "0x1.8" },
   ] as const;
   for (const { type, value } of rejected) {
     const result = adbInputSchemas.start_adb_activity.safeParse({

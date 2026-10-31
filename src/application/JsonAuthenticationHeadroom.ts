@@ -57,10 +57,6 @@ const estimateJsonStorage = (
   return { valueBytes, serializedUtf16Bytes: serializedCharacters * 2 };
 };
 
-/** Conservative parsed JSON bytes, independent of its escaped representation. */
-export const estimateJsonValueBytes = (value: unknown): number =>
-  estimateJsonStorage(value).valueBytes;
-
 /** Refuse before authentication when live heap headroom cannot hold its validation and commitment working copies. */
 export const requireAuthenticationHeadroom = (
   value: unknown,

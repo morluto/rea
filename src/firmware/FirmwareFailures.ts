@@ -2,6 +2,7 @@ import type { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js"
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   ArtifactFileCleanupFailure,
+  artifactFileCompletion,
   artifactFileCancellationCause,
   bindArtifactFileCleanup,
 } from "../artifacts/ArtifactFileOperation.js";
@@ -154,13 +155,14 @@ export const firmwareFailure = (
       treeCleanupLease?.bindCleanupError(cleanup);
     if (cause instanceof ArtifactFileCleanupFailure) {
       const outcome = cause.fileCleanupFailure.outcome;
+      const cancellation = artifactFileCompletion(cause)?.cancellation;
       const primary =
         outcome.kind === "failed"
           ? firmwareFailure(outcome.cause, context)
-          : cause.fileCleanupFailure.completionCancellation !== undefined
+          : cancellation !== undefined
             ? firmwareCancellation(
                 operation,
-                cause.fileCleanupFailure.completionCancellation.reason,
+                cancellation.reason,
                 deadline,
                 publication,
               )

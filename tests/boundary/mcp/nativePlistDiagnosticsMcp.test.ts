@@ -14,8 +14,9 @@ it.skipIf(process.platform !== "darwin")(
     await writeFile(program, thinMach(0xfeedfacf, 0x100000c));
     await mkdir(join(root, "Contents"));
     const path = join(root, "Contents/Info.plist");
-    const source =
-      "<plist><dict><key>number</key><integer> 42 </integer></dict></plist>";
+    // Malformed OpenStep remains conversion-only; supported XML now reads its
+    // original source and keeps malformed scalar literals as explicit unknowns.
+    const source = "{ number = ;";
     await writeFile(path, source);
     const { call } = await connectLocalToolsMcp({
       HOME: root,

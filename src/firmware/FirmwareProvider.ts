@@ -1,4 +1,6 @@
-import { join, isAbsolute } from "node:path";
+import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
+import { assertArtifactCommandPath } from "../process/ArtifactCommandPath.js";
+import { join } from "node:path";
 import type { FirmwareAnalysisPort } from "../application/firmware/FirmwareAnalysisPort.js";
 import {
   createAnalysisExecution,
@@ -15,7 +17,6 @@ import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import {
   AnalysisCancelledError,
-  AnalysisInputError,
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -24,7 +25,8 @@ import { jsonValueSchema } from "../domain/jsonValue.js";
 import { err, ok } from "../domain/result.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import type { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
-import type { SafeOutputTree } from "../artifacts/SafeOutputTree.js";
+import { SafeOutputTree } from "../artifacts/SafeOutputTree.js";
+import { outputDirectoryAdmissionRefusal } from "../artifacts/SafeOutputTreeAdmission.js";
 import { publishFirmwareExtraction } from "./FirmwarePublication.js";
 import {
   BINWALK_PROVIDER_IDENTITY,
@@ -130,6 +132,18 @@ const limitations = [
   "extraction_gaps lists regions that were carved or left unextracted and names extractor dependencies the producer reported as missing. A listed gap does not mean the target is corrupt or that a retained region is empty.",
   "The actual launcher executable is hashed. Interpreter, shared libraries and installed Python package dependencies are not independently attested; source revision remains unknown for caller-supplied builds.",
 ] as const;
+
+/** Unblob's safe-link handling rewrites absolute targets inside its output. */
+const UNBLOB_LINK_TARGET_LIMITATION =
+  "Symlink link_target values are read from Unblob's extracted tree, not from the firmware's filesystem metadata. Unblob rewrites absolute targets relative to the extraction root, so a relative link_target may have been stored as an absolute path in the image.";
+
+const publishedSymlinks = (result: unknown): boolean => {
+  const parsed = firmwareResultSchemas.extract_firmware.safeParse(result);
+  return (
+    parsed.success &&
+    parsed.data.unpublished_entries.some((entry) => entry.kind === "symlink")
+  );
+};
 
 /** Queued bring-your-own firmware adapters with private snapshots and owned cleanup. */
 export class FirmwareProvider implements FirmwareAnalysisPort {
@@ -314,6 +328,8 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
     request: FirmwareRequest,
     options?: ExecutionOptions,
   ): Promise<Outcome> {
+    // Capture configuration after queue admission; later operations may select updates.
+    const environment = snapshotEnvironment(this.environment);
     let root: PrivateRuntimeRoot | undefined;
     let rootLease: AnalysisCleanupLease | undefined;
     const engineName =
@@ -334,8 +350,18 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
         throw new AnalysisCancelledError(request.operation, {
           cause: signal.reason,
         });
+      if (request.operation === "extract_firmware")
+        await SafeOutputTree.checkDestination(
+          request.input.output_directory,
+        ).catch((cause: unknown) => {
+          throw outputDirectoryAdmissionRefusal(
+            request.operation,
+            "output_directory",
+            cause,
+          );
+        });
       const command = await resolveFirmwareCommand(
-        this.environment,
+        environment,
         engineName,
         request.operation,
         this.#files,
@@ -346,17 +372,23 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
       const ownedRootLease = new AnalysisCleanupLease(() => ownedRoot.close());
       rootLease = ownedRootLease;
       const target = await this.#files.snapshot(request, root.path, signal);
-      const run = (
+      const run = async (
         args: readonly string[],
         outputBudget?: { root: string; bytes: number; entries: number },
-      ) =>
-        runFirmwareCommand({
+      ) => {
+        for (const selected of [command.command, command.limiter])
+          await assertArtifactCommandPath(selected, request.operation, {
+            signal,
+          });
+        const output = await runFirmwareCommand({
           engine: engineName,
           operation: request.operation,
-          ...command,
+          fileSizeCeiling: command.fileSizeCeiling,
+          command: command.command.invocationPath,
+          limiter: command.limiter.invocationPath,
           args,
           cwd: root?.path ?? "",
-          environment: this.environment,
+          environment,
           signal,
           deadline,
           retainCleanup: (supervisor) => {
@@ -373,6 +405,20 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
             ? {}
             : { outputBudget, acceptReportedExtractionFailure: true }),
         });
+        for (const selected of [command.command, command.limiter])
+          await assertArtifactCommandPath(selected, request.operation, {
+            capturedOutput: {
+              stdout: output.stdout.text,
+              stderr: output.stderr.text,
+              stdout_bytes: output.stdout.bytes,
+              stderr_bytes: output.stderr.bytes,
+              exit_code: output.exit_code ?? null,
+              signal: output.signal,
+              truncated: false,
+            },
+          });
+        return output;
+      };
       const versionRun = await run(["--version"]);
       const version = versionRun.stdout.text.trim();
       if (versionRun.stdout.bytes > 1024)
@@ -391,7 +437,7 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
       const engine = {
         name: engineName,
         version: admitted.version,
-        executable_path: command.command,
+        executable_path: command.command.resolvedPath,
         executable_sha256: command.sha256,
         source_revision: null,
         worker_count: 1 as const,
@@ -430,14 +476,6 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
         });
         raw = { report, execution: processRun, version_execution: versionRun };
       } else {
-        if (!isAbsolute(request.input.output_directory))
-          throw new AnalysisInputError(request.operation, undefined, [
-            {
-              path: ["output_directory"],
-              reason: "invalid_format",
-              message: "Extraction output directory must be absolute",
-            },
-          ]);
         const outputRoot = join(root.path, "extracted");
         const processRun = await run(
           [
@@ -541,6 +579,9 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
             rawResult: raw,
             limitations: [
               ...limitations,
+              ...(engineName === "unblob" && publishedSymlinks(result)
+                ? [UNBLOB_LINK_TARGET_LIMITATION]
+                : []),
               ...(admitted.status === "compatible"
                 ? [admitted.limitation]
                 : []),

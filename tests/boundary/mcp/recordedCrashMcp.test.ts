@@ -7,12 +7,13 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { ok } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import {
   recordedCrashFixture,
   RECORDED_CRASH_TEST_PROVIDER,
 } from "../../fixtures/binaryDiagnostics/recordedCrash.js";
 
-it("advertises exact valid schemas and records inline recorded-core evidence without a binary target", async () => {
+it("records inline recorded-core evidence with compact schemas and canonical path checks", async () => {
   const value = recordedCrashFixture();
   let providerClosed = false;
   let providerCalls = 0;
@@ -58,7 +59,6 @@ it("advertises exact valid schemas and records inline recorded-core evidence wit
   expect(ajv.validateSchema(inputSchema)).toBe(true);
   expect(ajv.validateSchema(outputSchema)).toBe(true);
   expect(ajv.validate(inputSchema, { path: value.artifact.path })).toBe(true);
-  expect(ajv.validate(inputSchema, { path: "relative.elf" })).toBe(false);
   expect(
     ajv.validate(inputSchema, {
       path: value.artifact.path,
@@ -82,13 +82,10 @@ it("advertises exact valid schemas and records inline recorded-core evidence wit
   expect(evidence.subject?.digest.sha256).toBe(value.artifact.sha256);
   expect(parsed.normalized_result).toEqual(value);
   expect(session.evidenceById(evidence.evidence_id)).toEqual(evidence);
-  expect(
-    (
-      await client.callTool({
-        name: "inspect_recorded_crash",
-        arguments: { path: "relative.elf" },
-      })
-    ).isError,
-  ).toBe(true);
+  const relative = await client.callTool({
+    name: "inspect_recorded_crash",
+    arguments: { path: "relative.elf" },
+  });
+  expect(parseMcpToolError(relative).error.code).toBe("invalid_request");
   expect(providerCalls).toBe(1);
 });

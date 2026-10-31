@@ -272,7 +272,11 @@ export class HopperRequestQueue {
     try {
       entry.transmitted = true;
       this.send(
-        { id: entry.id, method: entry.method, params: entry.params },
+        {
+          id: entry.id,
+          method: entry.method,
+          params: entry.params,
+        },
         () =>
           this.accept(
             entry.id,

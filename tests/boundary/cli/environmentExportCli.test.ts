@@ -9,7 +9,7 @@ import {
 } from "node:fs/promises";
 import { join, sep } from "node:path";
 
-import { describe, expect } from "vitest";
+import { expect } from "vitest";
 
 import {
   analysisViewCaptureEvidence,
@@ -50,9 +50,15 @@ cliTest(
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
-      details: { operation: "environment-export" },
+      code: "cleanup_incomplete",
+      details: {
+        operation: "environment-export",
+        cleanup: "incomplete",
+        resources: [files.manifestPath],
+        diagnostics: { input_path: files.manifestPath, input_role: "manifest" },
+        cleanup_reason: "controlled persistent close failure",
+      },
     });
-    expect(JSON.stringify(result.json)).toContain("cleanup");
     await expect(readFile(join(directory, "README.md"))).rejects.toMatchObject({
       code: "ENOENT",
     });
@@ -69,13 +75,13 @@ const BUNDLE_FILES = [
   "tasks/smoke.json",
 ];
 
-describe("rea environment-export", () => {
-  cliTest(
-    "writes the bundle folder from the fixture pair and prints the written files with sizes",
-    async ({ cli }) => {
-      const root = await createTestTempDirectory("rea-environment-export-cli-");
-      const files = await writeEnvironmentServeFiles(root);
-      const directory = join(root, "bundle");
+cliTest(
+  "refuses unaddressable service names before writing a bundle",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-bundle-hostname-cli-");
+    const files = await writeEnvironmentServeFiles(root);
+    for (const name of ["4294967296", "123", "a".repeat(64)]) {
+      const directory = join(root, `bundle-${name}`);
       const result = await cli.run({
         arguments: [
           "environment-export",
@@ -83,145 +89,183 @@ describe("rea environment-export", () => {
           "--evidence",
           files.capturePath,
           directory,
+          "--name",
+          name,
           "--json",
         ],
         timeoutMs: 30_000,
       });
-      expect(result.stderr).toBe("");
-      expect(result.exitCode).toBe(0);
+      expect(result.exitCode).toBe(1);
       expect(result.json).toMatchObject({
-        status: "exported",
+        code: "invalid_request",
+        details: {
+          operation: "environment-export",
+          issues: [{ path: ["name"] }],
+        },
+      });
+      await expect(stat(directory)).rejects.toMatchObject({ code: "ENOENT" });
+    }
+  },
+);
+
+cliTest(
+  "writes the bundle folder from the fixture pair and prints the written files with sizes",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-environment-export-cli-");
+    const files = await writeEnvironmentServeFiles(root);
+    const directory = join(root, "bundle");
+    const result = await cli.run({
+      arguments: [
+        "environment-export",
+        files.manifestPath,
+        "--evidence",
+        files.capturePath,
         directory,
-        name: "grafana-example",
-        // The served read tools of the state the export derived, as the bundle's server serves them.
-        tool_count: 14,
-        state: { served: true, evidence_id: expect.stringMatching(/^ev_/u) },
-        package_source: { kind: "registry" },
-      });
-      const document = result.json as {
-        files: { path: string; bytes: number }[];
-      };
-      expect(document.files.map((file) => file.path).sort()).toEqual(
-        BUNDLE_FILES,
-      );
-      const written = (
-        await readdir(directory, { recursive: true, withFileTypes: true })
+        "--json",
+      ],
+      timeoutMs: 30_000,
+    });
+    expect(result.stderr).toBe("");
+    expect(result.exitCode).toBe(0);
+    expect(result.json).toMatchObject({
+      status: "exported",
+      directory,
+      name: "grafana-example",
+      // The served read tools of the state the export derived, as the bundle's server serves them.
+      tool_count: 14,
+      state: { served: true, evidence_id: expect.stringMatching(/^ev_/u) },
+      package_source: { kind: "registry" },
+    });
+    const document = result.json as {
+      files: { path: string; bytes: number }[];
+    };
+    expect(document.files.map((file) => file.path).sort()).toEqual(
+      BUNDLE_FILES,
+    );
+    const written = (
+      await readdir(directory, { recursive: true, withFileTypes: true })
+    )
+      .filter((entry) => entry.isFile())
+      .map((entry) =>
+        join(entry.parentPath, entry.name)
+          .slice(directory.length + 1)
+          .split(sep)
+          .join("/"),
       )
-        .filter((entry) => entry.isFile())
-        .map((entry) =>
-          join(entry.parentPath, entry.name)
-            .slice(directory.length + 1)
-            .split(sep)
-            .join("/"),
-        )
-        .sort();
-      expect(written).toEqual(BUNDLE_FILES);
-      expect(
+      .sort();
+    expect(written).toEqual(BUNDLE_FILES);
+    expect(
+      Buffer.compare(
         await readFile(join(directory, "envs/grafana-example/manifest.json")),
-      ).toEqual(await readFile(files.manifestPath));
-      expect(
+        await readFile(files.manifestPath),
+      ),
+    ).toBe(0);
+    expect(
+      Buffer.compare(
         await readFile(join(directory, "envs/grafana-example/evidence.json")),
-      ).toEqual(await readFile(files.capturePath));
-      const dockerfile = await readFile(
-        join(directory, "envs/grafana-example/Dockerfile"),
-        "utf8",
-      );
-      expect(dockerfile).toMatch(/^FROM node:24\.18\.0-bookworm-slim\n/u);
-      expect(dockerfile).toContain(
-        'CMD ["rea","environment-serve","/env/manifest.json","--evidence","/env/evidence.json"]',
-      );
-      const verifier = await readFile(
-        join(directory, "artifacts/check_grafana-example/verify.py"),
-        "utf8",
-      );
-      expect(verifier).toContain("TOOL_COUNT = 14\n");
-      expect(verifier).toContain('TOOL = "get_annotations"\n');
-      expect(verifier).toContain("EXPECTED_STATUS = 200\n");
-      expect(await readFile(join(directory, "README.md"), "utf8")).toContain(
-        "This bundle serves from the state",
-      );
-    },
-  );
+        await readFile(files.capturePath),
+      ),
+    ).toBe(0);
+    const dockerfile = await readFile(
+      join(directory, "envs/grafana-example/Dockerfile"),
+      "utf8",
+    );
+    const pinnedNodeVersion = (
+      await readFile(new URL("../../../.nvmrc", import.meta.url), "utf8")
+    ).trim();
+    expect(dockerfile.split("\n")[0]).toBe(
+      `FROM node:${pinnedNodeVersion}-bookworm-slim`,
+    );
+    expect(dockerfile).toContain(
+      'CMD ["rea","environment-serve","/env/manifest.json","--evidence","/env/evidence.json"]',
+    );
+    const verifier = await readFile(
+      join(directory, "artifacts/check_grafana-example/verify.py"),
+      "utf8",
+    );
+    expect(verifier).toContain("TOOL_COUNT = 14\n");
+    expect(verifier).toContain('TOOL = "get_annotations"\n');
+    expect(verifier).toContain("EXPECTED_STATUS = 200\n");
+    expect(await readFile(join(directory, "README.md"), "utf8")).toContain(
+      "This bundle serves from the state",
+    );
+  },
+);
 
-  cliTest(
-    "refuses a non-empty directory with a typed invalid request and leaves it unchanged",
-    async ({ cli }) => {
-      const root = await createTestTempDirectory(
-        "rea-environment-export-busy-",
-      );
-      const files = await writeEnvironmentServeFiles(root);
-      const directory = join(root, "occupied");
-      await mkdir(directory);
-      await writeFile(join(directory, "notes.txt"), "keep");
-      const result = await cli.run({
-        arguments: [
-          "environment-export",
-          files.manifestPath,
-          "--evidence",
-          files.capturePath,
-          directory,
-          "--json",
-        ],
-        timeoutMs: 30_000,
-      });
-      expect(result.exitCode).toBe(1);
-      expect(result.json).toMatchObject({
-        error: "Application workflow failed",
-        code: "invalid_request",
-        category: "invalid_input",
-        details: {
-          operation: "environment-export",
-          issues: [{ path: ["directory"], reason: "invalid_value" }],
-        },
-      });
-      expect(result.stdout).toContain("not empty");
-      expect(await readdir(directory)).toEqual(["notes.txt"]);
-    },
-  );
+cliTest(
+  "refuses a non-empty directory with a typed invalid request and leaves it unchanged",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-environment-export-busy-");
+    const files = await writeEnvironmentServeFiles(root);
+    const directory = join(root, "occupied");
+    await mkdir(directory);
+    await writeFile(join(directory, "notes.txt"), "keep");
+    const result = await cli.run({
+      arguments: [
+        "environment-export",
+        files.manifestPath,
+        "--evidence",
+        files.capturePath,
+        directory,
+        "--json",
+      ],
+      timeoutMs: 30_000,
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      error: "Application workflow failed",
+      code: "invalid_request",
+      category: "invalid_input",
+      details: {
+        operation: "environment-export",
+        issues: [{ path: ["directory"], reason: "invalid_value" }],
+      },
+    });
+    expect(result.stdout).toContain("not empty");
+    expect(await readdir(directory)).toEqual(["notes.txt"]);
+  },
+);
 
-  cliTest(
-    "refuses a manifest whose parent is not the supplied evidence before creating the directory",
-    async ({ cli }) => {
-      const root = await createTestTempDirectory(
-        "rea-environment-export-mismatch-",
-      );
-      const files = await writeEnvironmentServeFiles(
-        root,
-        environmentServeFixture(),
-      );
-      const other = join(root, "other.json");
-      await writeFile(
+cliTest(
+  "refuses a manifest whose parent is not the supplied evidence before creating the directory",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory(
+      "rea-environment-export-mismatch-",
+    );
+    const files = await writeEnvironmentServeFiles(
+      root,
+      environmentServeFixture(),
+    );
+    const other = join(root, "other.json");
+    await writeFile(
+      other,
+      JSON.stringify(analysisViewCaptureEvidence(analysisViewCaptureFixture())),
+    );
+    const directory = join(root, "bundle");
+    const result = await cli.run({
+      arguments: [
+        "environment-export",
+        files.manifestPath,
+        "--evidence",
         other,
-        JSON.stringify(
-          analysisViewCaptureEvidence(analysisViewCaptureFixture()),
-        ),
-      );
-      const directory = join(root, "bundle");
-      const result = await cli.run({
-        arguments: [
-          "environment-export",
-          files.manifestPath,
-          "--evidence",
-          other,
-          directory,
-          "--json",
-        ],
-        timeoutMs: 30_000,
-      });
-      expect(result.exitCode).toBe(1);
-      expect(result.json).toMatchObject({
-        error: "Application workflow failed",
-        code: "invalid_request",
-        details: {
-          operation: "environment-export",
-          issues: [{ path: ["evidence", "evidence_id"] }],
-        },
-      });
-      expect(result.stdout).toContain("different capture");
-      expect(await readdir(root)).not.toContain("bundle");
-    },
-  );
-});
+        directory,
+        "--json",
+      ],
+      timeoutMs: 30_000,
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      error: "Application workflow failed",
+      code: "invalid_request",
+      details: {
+        operation: "environment-export",
+        issues: [{ path: ["evidence", "evidence_id"] }],
+      },
+    });
+    expect(result.stdout).toContain("different capture");
+    expect(await readdir(root)).not.toContain("bundle");
+  },
+);
 
 cliTest.skipIf(process.platform === "win32")(
   "produces readable private files independently of an owner-read-masking umask",
@@ -254,8 +298,11 @@ cliTest.skipIf(process.platform === "win32")(
       ).toBeGreaterThan(0);
     }
     expect(
-      await readFile(join(directory, "envs/grafana-example/evidence.json")),
-    ).toEqual(await readFile(files.capturePath));
+      Buffer.compare(
+        await readFile(join(directory, "envs/grafana-example/evidence.json")),
+        await readFile(files.capturePath),
+      ),
+    ).toBe(0);
   },
 );
 
@@ -291,10 +338,13 @@ cliTest.skipIf(process.platform === "win32")(
       package_source: { kind: "tarball", path: packagePath },
     });
     expect(
-      await readFile(
-        join(physical, "bundle/envs/grafana-example/rea-agents.tgz"),
+      Buffer.compare(
+        await readFile(
+          join(physical, "bundle/envs/grafana-example/rea-agents.tgz"),
+        ),
+        bytes,
       ),
-    ).toEqual(bytes);
+    ).toBe(0);
     await expect(
       readFile(join(root, "bundle/README.md")),
     ).rejects.toMatchObject({ code: "ENOENT" });

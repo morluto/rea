@@ -3,43 +3,40 @@ import {
   BinaryFormatFailure,
   BinaryReader,
   type BinaryContainer,
+  type ElfDynamicSegment,
   type FileMapping,
   type ImageSection,
   type LoadRegion,
   type ZeroFillMapping,
 } from "./BinaryContainer.js";
-import { readNativeDirectoryFromBuffer } from "./NativeSectionDirectory.js";
+import { elfArchitecture } from "../../domain/elfFixedHeader.js";
+import { readElfDirectoryFromBuffer } from "./NativeSectionDirectory.js";
 
 /** Read ELF sections and file-backed program mappings without interpreting language metadata. */
-export const readElfImage = (bytes: Buffer): BinaryContainer => {
-  const directory = readNativeDirectoryFromBuffer(bytes, "elf");
-  const {
-    bits,
-    program_offset: phOffset,
-    program_count: phCount,
-    program_width: phWidth,
-  } = directory;
+export const readElfImage = (
+  bytes: Buffer,
+): Extract<BinaryContainer, { format: "elf" }> => {
+  const directory = readElfDirectoryFromBuffer(bytes);
+  const { bits } = directory;
   const reader = new BinaryReader(bytes, directory.little);
-  const wide = bits === 64;
-  const phStart = reader.table(
-    phOffset,
-    phCount,
-    phWidth,
-    "ELF program headers",
-  );
   const mappings: FileMapping[] = [];
   const loadRegions: LoadRegion[] = [];
   const executableMappings: FileMapping[] = [];
   const zeroFills: ZeroFillMapping[] = [];
   const sections: ImageSection[] = [];
-  for (let index = 0; index < phCount; index++) {
-    const offset = phStart + index * phWidth;
-    if (reader.u32(offset) !== 1) continue;
-    const flags = reader.u32(offset + (wide ? 4 : 24));
-    const fileOffset = reader.word(offset + (wide ? 8 : 4), bits);
-    const address = reader.word(offset + (wide ? 16 : 8), bits);
-    const size = reader.word(offset + (wide ? 32 : 16), bits);
-    const memorySize = reader.word(offset + (wide ? 40 : 20), bits);
+  const dynamicSegments: ElfDynamicSegment[] = [];
+  for (const program of directory.programs) {
+    if (program.type === 2) {
+      dynamicSegments.push(program);
+      continue;
+    }
+    const {
+      flags,
+      file_offset: fileOffset,
+      virtual_address: address,
+      file_size: size,
+      memory_size: memorySize,
+    } = program;
     if (size > memorySize || address + memorySize > 1n << BigInt(bits))
       throw new BinaryFormatFailure(
         "malformed",
@@ -66,7 +63,6 @@ export const readElfImage = (bytes: Buffer): BinaryContainer => {
       zeroFills.push({ address: address + size, size: memorySize - size });
   }
   for (const section of directory.sections) {
-    if (section.name === "" || section.name_state === "unavailable") continue;
     const range = declaredFileRange(bytes.length, section.offset, section.size);
     const file_backed = section.type !== 8 && range.file_backed;
     const compressed = (section.flags & 0x800n) !== 0n;
@@ -77,10 +73,10 @@ export const readElfImage = (bytes: Buffer): BinaryContainer => {
       (section.flags & 1n) === 0n &&
       (section.flags & 4n) === 0n &&
       (section.flags & 2n) !== 0n;
-    if (section.name === null && !read_only) continue;
+    if ((section.name === null || section.name === "") && !read_only) continue;
     sections.push({
       format: "elf",
-      name: section.name ?? "",
+      name: section.name,
       type: section.type,
       address: section.address,
       declared_range: { offset: section.offset, size: section.size },
@@ -92,6 +88,11 @@ export const readElfImage = (bytes: Buffer): BinaryContainer => {
   }
   return {
     format: "elf",
+    elf: {
+      machine: directory.machine,
+      type: directory.elf_type,
+      dynamicSegments,
+    },
     architecture: architectureForElfMachine(directory.machine),
     bits,
     byte_order: reader.little ? "little" : "big",
@@ -100,22 +101,35 @@ export const readElfImage = (bytes: Buffer): BinaryContainer => {
     executable_mappings: executableMappings,
     zero_fills: zeroFills,
     sections,
+    ...(directory.section_names_limitation === undefined
+      ? {}
+      : { section_names_limitation: directory.section_names_limitation }),
   };
 };
 
 /** Map ELF machine identifiers to stable architecture names. */
-const architectureForElfMachine = (machine: number): string => {
-  const names = new Map([
-    [3, "386"],
-    [8, "mips"],
-    [20, "ppc"],
-    [21, "ppc64"],
-    [22, "s390"],
-    [40, "arm"],
-    [62, "amd64"],
-    [183, "arm64"],
-    [243, "riscv"],
-    [258, "loongarch"],
-  ]);
-  return names.get(machine) ?? `elf-machine-${machine}`;
+export const architectureForElfMachine = (machine: number): string => {
+  const architecture = elfArchitecture(machine);
+  if (architecture !== undefined) {
+    switch (architecture) {
+      case "x86":
+        return "386";
+      case "x86_64":
+        return "amd64";
+      case "powerpc":
+        return "ppc";
+      default:
+        return architecture;
+    }
+  }
+  switch (machine) {
+    case 21:
+      return "ppc64";
+    case 22:
+      return "s390";
+    case 258:
+      return "loongarch";
+    default:
+      return `elf-machine-${machine}`;
+  }
 };

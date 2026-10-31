@@ -1,6 +1,14 @@
+import {
+  selectArtifactCommandPath,
+  type ArtifactCommandPath,
+} from "../process/ArtifactCommandPath.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import {
+  FIRMWARE_TOOL_REQUIREMENTS,
+  type FirmwareEngineName,
+} from "../contracts/firmware/firmwareToolRequirements.js";
 import { randomUUID } from "node:crypto";
-import { access, realpath, stat } from "node:fs/promises";
+import { access, stat } from "node:fs/promises";
 import { constants } from "node:fs";
 import { isAbsolute } from "node:path";
 import {
@@ -10,8 +18,8 @@ import {
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type {
-  AnalysisCapturedOutput,
   AnalysisError,
+  AnalysisCapturedOutput,
 } from "../domain/analysisErrorBase.js";
 import { projectAnalysisErrorWithoutCapturedOutput } from "../domain/analysisErrorProjection.js";
 import type { FirmwareDeadline } from "./FirmwareDeadline.js";
@@ -23,6 +31,8 @@ import {
   firmwareProcessLimitRecovery,
   firmwareSignalLimitError,
 } from "./FirmwareFailures.js";
+import { prlimitArgumentVector } from "../process/LinuxResourceLimits.js";
+import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
 import {
   spawnOwnedProviderProcess,
   ProviderProcessSupervisor,
@@ -30,7 +40,6 @@ import {
   type ProviderProcessSnapshot,
   type SpawnedOwnedProviderProcess,
 } from "../process/ProviderProcess.js";
-import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
 import { FIRMWARE_LIMITS } from "./FirmwareRelease.js";
 import {
   FirmwareFileAccess,
@@ -42,7 +51,7 @@ export type FirmwareLauncher = (
   options: OwnedProviderProcessSpawnOptions,
 ) => Promise<SpawnedOwnedProviderProcess>;
 
-/** Captured tool output for one finished firmware command. */
+/** Captured tool output for one finished firmware command, including byte coverage. */
 const capturedFirmwareOutput = (
   snapshot: ProviderProcessSnapshot,
 ): AnalysisCapturedOutput => ({
@@ -65,19 +74,22 @@ export const firmwareToolUnavailable = (
     userMessage: reason,
   });
 
+/** Firmware engines run only on Linux; discovery and execution share this check. */
+export const firmwareHostSupported = (platform: NodeJS.Platform): boolean =>
+  platform === "linux";
+
 /** Resolve explicitly supplied executable paths; never install or search for engines. */
 export const resolveFirmwareCommand = async (
   environment: Readonly<Record<string, string | undefined>>,
-  engine: "binwalk" | "unblob",
+  engine: FirmwareEngineName,
   operation: string,
   files: FirmwareFileAccess,
   signal?: AbortSignal,
 ) => {
-  const variable =
-    engine === "binwalk" ? "REA_BINWALK_COMMAND" : "REA_UNBLOB_COMMAND";
+  const variable = FIRMWARE_TOOL_REQUIREMENTS[engine].commandEnvironment;
   const configured = environment[variable];
   if (
-    process.platform !== "linux" ||
+    !firmwareHostSupported(process.platform) ||
     configured === undefined ||
     !isAbsolute(configured)
   )
@@ -86,19 +98,23 @@ export const resolveFirmwareCommand = async (
       operation,
       `This integration requires Linux and an absolute ${variable} path to the caller-supplied tool`,
     );
-  const command = await realpath(configured).catch((cause: unknown) => {
-    throw firmwareToolUnavailable(
-      engine,
-      operation,
-      `${variable} is unavailable: ${cause instanceof Error ? cause.message : String(cause)}`,
-    );
-  });
+  const selection = await selectArtifactCommandPath(configured, signal).catch(
+    (cause: unknown) => {
+      if (cause instanceof ArtifactReaderFailure) throw cause;
+      throw firmwareToolUnavailable(
+        engine,
+        operation,
+        `${variable} is unavailable: ${cause instanceof Error ? cause.message : String(cause)}`,
+      );
+    },
+  );
+  const command = selection.invocationPath;
   let sha256: string;
   try {
     await access(command, constants.R_OK | constants.X_OK);
     if (!(await stat(command)).isFile())
       throw new TypeError("Configured path is not a regular file");
-    sha256 = await files.hash(command, signal);
+    sha256 = await files.hash(selection.resolvedPath, signal);
   } catch (cause: unknown) {
     if (cause instanceof ArtifactReaderFailure) throw cause;
     throw firmwareToolUnavailable(
@@ -115,18 +131,26 @@ export const resolveFirmwareCommand = async (
       operation,
       "REA_FIRMWARE_PRLIMIT_COMMAND must be absolute",
     );
+  let limiterSelection: ArtifactCommandPath;
   try {
-    await access(limiter, constants.X_OK);
+    limiterSelection = await selectArtifactCommandPath(limiter, signal);
+    await access(limiterSelection.resolvedPath, constants.X_OK);
     if (!(await stat(limiter)).isFile())
       throw new TypeError("Configured path is not a regular file");
   } catch (cause: unknown) {
+    if (cause instanceof ArtifactReaderFailure) throw cause;
     throw firmwareToolUnavailable(
       engine,
       operation,
       `Resource limiter is not an executable regular file: ${limiter}: ${cause instanceof Error ? cause.message : String(cause)}; provide util-linux prlimit`,
     );
   }
-  return { command, limiter, sha256 };
+  return {
+    command: selection,
+    limiter: limiterSelection,
+    sha256,
+    fileSizeCeiling: await files.fileSizeCeiling(signal),
+  };
 };
 
 /** Execute one bounded provider command and verify its owned descendants have stopped. */
@@ -135,6 +159,8 @@ export const runFirmwareCommand = async (context: {
   operation: string;
   command: string;
   limiter: string;
+  /** Observed inherited soft/hard file policy; never raised by metadata headroom. */
+  fileSizeCeiling: number;
   args: readonly string[];
   cwd: string;
   environment: Readonly<Record<string, string | undefined>>;
@@ -146,6 +172,21 @@ export const runFirmwareCommand = async (context: {
   retainCleanup(supervisor: ProviderProcessSupervisor): void;
 }) => {
   const { engine, operation, signal } = context;
+  // RLIMIT_FSIZE covers every producer file, including mandatory reports/logs.
+  // Aggregate extracted payload remains governed by outputBudget inventory.
+  const fileSizeBytes = Math.min(
+    context.fileSizeCeiling,
+    Math.max(
+      context.outputBudget?.bytes ?? 0,
+      FIRMWARE_LIMITS.reportBytes,
+      FIRMWARE_LIMITS.diagnosticBytes,
+    ),
+  );
+  const fileSizeAdjustable =
+    context.outputBudget !== undefined &&
+    context.fileSizeCeiling > context.outputBudget.bytes &&
+    context.outputBudget.bytes >=
+      Math.max(FIRMWARE_LIMITS.reportBytes, FIRMWARE_LIMITS.diagnosticBytes);
   const checkInterruption = () => {
     const failure = firmwarePhaseInterruption(
       operation,
@@ -159,12 +200,14 @@ export const runFirmwareCommand = async (context: {
   const spawned = await (context.launcher ?? spawnOwnedProviderProcess)({
     command: context.limiter,
     arguments: [
-      `--as=${FIRMWARE_LIMITS.addressSpaceBytes}`,
-      `--fsize=${context.outputBudget?.bytes ?? FIRMWARE_LIMITS.reportBytes}`,
-      "--core=0",
-      `--cpu=${FIRMWARE_LIMITS.cpuSeconds}`,
-      "--",
-      context.command,
+      ...prlimitArgumentVector(
+        {
+          address_space_bytes: FIRMWARE_LIMITS.addressSpaceBytes,
+          file_bytes: fileSizeBytes,
+          cpu_seconds: FIRMWARE_LIMITS.cpuSeconds,
+        },
+        context.command,
+      ),
       ...context.args,
     ],
     expectedCommand: null,
@@ -193,6 +236,39 @@ export const runFirmwareCommand = async (context: {
       throw firmwareCancellation(operation, signal.reason, context.deadline);
     throw cause;
   });
+  let failure: AnalysisError | undefined;
+  const isFailedExit = (code: number | null | undefined) =>
+    code !== undefined &&
+    code !== 0 &&
+    !(context.acceptReportedExtractionFailure === true && code === 1);
+  const completedFailure = (snapshot: ProviderProcessSnapshot) => {
+    if (isFailedExit(snapshot.exitCode)) {
+      const signalLimit = firmwareSignalLimitError(
+        operation,
+        snapshot.signal,
+        fileSizeBytes,
+        fileSizeAdjustable,
+        capturedFirmwareOutput(snapshot),
+      );
+      if (signalLimit !== undefined) return signalLimit;
+      return new ProviderAdapterError(engine, operation, {
+        diagnostics: {
+          reason:
+            "Tool failed; inspect exit status and stderr for format, dependency, sandbox or resource-limit failures",
+          exit_code: snapshot.exitCode ?? null,
+          signal: snapshot.signal ?? null,
+          stdout: snapshot.stdout.text,
+          stderr: snapshot.stderr.text,
+          stdout_bytes: snapshot.stdout.bytes,
+          stderr_bytes: snapshot.stderr.bytes,
+          truncated: snapshot.diagnosticTruncated === true,
+        },
+        remediationAction: `Inspect exit status and stderr for format, dependency, sandbox, or resource-limit failures. ${firmwareProcessLimitRecovery(fileSizeBytes, fileSizeAdjustable)} A format or dependency failure is not repaired by changing analysis_timeout_ms.`,
+      });
+    }
+    return undefined;
+  };
+  let completedFailureObserved = false;
   let diagnosticTruncated = false;
   const supervisor = new ProviderProcessSupervisor(
     {
@@ -206,6 +282,17 @@ export const runFirmwareCommand = async (context: {
       onDiagnostic: (event) => {
         if (event.type === "output" && event.truncated === true)
           diagnosticTruncated = true;
+        // Root exit and inherited-pipe closure are different observations.
+        // Retain a completed failure before drain or cleanup can be interrupted,
+        // while cancellation already present at exit keeps its precedence.
+        if (
+          event.type === "exit" &&
+          failure === undefined &&
+          !diagnosticTruncated &&
+          firmwarePhaseInterruption(operation, signal, context.deadline) ===
+            undefined
+        )
+          completedFailureObserved = isFailedExit(event.code);
       },
     },
   );
@@ -229,7 +316,6 @@ export const runFirmwareCommand = async (context: {
       );
     }
   };
-  let failure: AnalysisError | undefined;
   try {
     while (!(await supervisor.waitForOutputClose(100))) {
       checkDiagnostics();
@@ -246,13 +332,15 @@ export const runFirmwareCommand = async (context: {
     checkDiagnostics();
     checkInterruption();
   } catch (cause: unknown) {
-    failure = firmwareFailure(cause, context);
+    failure ??= firmwareFailure(cause, context);
   }
   const stopped = await supervisor.stop();
   // Cleanup is an awaited part of this phase. Preserve a prior observed failure,
   // otherwise retain an interruption that arrived while stopping owned resources.
   failure ??= firmwarePhaseInterruption(operation, signal, context.deadline);
   const snapshot = supervisor.snapshot();
+  // Capture diagnostics only after owned cleanup has drained the inherited pipes.
+  if (completedFailureObserved) failure = completedFailure(snapshot);
   if (stopped.status === "incomplete") {
     context.retainCleanup(supervisor);
     const previous =
@@ -277,38 +365,6 @@ export const runFirmwareCommand = async (context: {
     );
   }
   if (failure !== undefined) throw failure;
-  if (
-    snapshot.exitCode !== 0 &&
-    !(
-      context.acceptReportedExtractionFailure === true &&
-      snapshot.exitCode === 1
-    )
-  ) {
-    const fileSizeBytes =
-      context.outputBudget?.bytes ?? FIRMWARE_LIMITS.reportBytes;
-    const fileSizeAdjustable = context.outputBudget !== undefined;
-    const signalLimit = firmwareSignalLimitError(
-      operation,
-      snapshot.signal,
-      fileSizeBytes,
-      fileSizeAdjustable,
-      capturedFirmwareOutput(snapshot),
-    );
-    if (signalLimit !== undefined) throw signalLimit;
-    throw new ProviderAdapterError(engine, operation, {
-      diagnostics: {
-        reason:
-          "Tool failed; inspect exit status and stderr for format, dependency, sandbox or resource-limit failures",
-        exit_code: snapshot.exitCode ?? null,
-        signal: snapshot.signal ?? null,
-        stdout: snapshot.stdout.text,
-        stderr: snapshot.stderr.text,
-        stdout_bytes: snapshot.stdout.bytes,
-        stderr_bytes: snapshot.stderr.bytes,
-      },
-      remediationAction: `Inspect exit status and stderr for format, dependency, sandbox, or resource-limit failures. ${firmwareProcessLimitRecovery(fileSizeBytes, fileSizeAdjustable)} A format or dependency failure is not repaired by changing analysis_timeout_ms.`,
-    });
-  }
   return {
     stdout: snapshot.stdout,
     stderr: snapshot.stderr,

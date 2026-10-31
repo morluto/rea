@@ -12,6 +12,7 @@ import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { OwnedStagedOutput } from "../../../src/filesystem/OwnedStagedOutput.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { writeTextParts } from "../../../src/application/JsonFiles.js";
+import { StagedOutputError } from "../../../src/filesystem/StagedOutputError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const allocation = vi.hoisted(() => ({
@@ -70,7 +71,10 @@ it("closes the descriptor and retains staged content when its final identity is 
     expect(result.error.cause).toMatchObject({
       outcome: {
         ok: false,
-        error: { message: "Cannot verify staged file identity" },
+        error: {
+          _tag: "StagedOutputError",
+          code: "identity_unverified",
+        },
       },
     });
     const stage = result.error.cleanupResources[0];
@@ -200,12 +204,14 @@ it("preserves cancellation when staging cleanup also fails", async () => {
   const root = await createTestTempDirectory("rea-json-cancel-");
   const resources = new ArtifactResourceScope();
   const controller = new AbortController();
+  let unexpected: string | undefined;
   try {
     function* cancelledParts(): Generator<string> {
       const directories = requireStages(root);
       if (directories.length !== 1)
         throw new Error("Expected one staging directory");
-      writeFileSync(join(root, directories[0]!, "unexpected"), "retain this");
+      unexpected = join(root, directories[0]!, "unexpected");
+      writeFileSync(unexpected, "retain this");
       controller.abort();
       yield "must not publish";
     }
@@ -223,16 +229,16 @@ it("preserves cancellation when staging cleanup also fails", async () => {
     // directory is reported as cleanup state, not as the cancellation cause.
     expect(result.error.cause).toBe(controller.signal.reason);
     expect(result.error.cleanupPrimary).toBeInstanceOf(AnalysisCancelledError);
-    expect(result.error.cleanup).toMatchObject({
-      reason: expect.stringContaining("Unexpected staging entries"),
-      resources: [expect.stringContaining(".rea-write-")],
+    expect(result.error.cleanupPrimary).toMatchObject({
+      operation: "export_evidence_bundle",
     });
-    expect(result.error.cleanupResources).toEqual([
-      expect.stringContaining(".rea-write-"),
-    ]);
+    expect(result.error.cleanupPrimary?.cause).toBe(controller.signal.reason);
+    const stages = requireStages(root);
+    expect(stages).toHaveLength(1);
+    expect(result.error.cleanupResources).toEqual([join(root, stages[0]!)]);
+    expect(await fs.readFile(unexpected!, "utf8")).toBe("retain this");
     await expect(fs.access(join(root, "cancelled.json"))).rejects.toThrow();
-    const stage = requireStages(root)[0];
-    if (stage !== undefined) await fs.rm(join(root, stage, "unexpected"));
+    await fs.rm(unexpected!);
     await resources.close();
     expect(requireStages(root)).toEqual([]);
     expect(result.error.cleanupIncomplete).toBe(false);
@@ -243,9 +249,9 @@ it("preserves cancellation when staging cleanup also fails", async () => {
     });
     expect(released.details).not.toHaveProperty("resources");
   } finally {
-    for (const stage of requireStages(root))
-      await fs.rm(join(root, stage, "unexpected"), { force: true });
+    if (unexpected !== undefined) await fs.rm(unexpected, { force: true });
     await resources.close();
+    expect(requireStages(root)).toEqual([]);
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -455,11 +461,46 @@ it("refuses to remove unexpected files from an owned staging directory", async (
   const unexpected = join(directory, "unexpected");
   writeFileSync(unexpected, "unowned");
   try {
-    await expect(owner.close()).rejects.toThrow(/Unexpected staging entries/u);
+    await expect(owner.close()).rejects.toMatchObject({
+      _tag: "StagedOutputError",
+      code: "unexpected_entries",
+      detail: { count: 1, entries: "unexpected" },
+    });
     expect(await fs.readFile(unexpected, "utf8")).toBe("unowned");
   } finally {
     await fs.rm(unexpected, { force: true });
     await owner.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+it("keeps unexpected staging names on the publication error", async () => {
+  const root = await createTestTempDirectory("rea-staged-public-entries-");
+  const destination = join(root, "out.json");
+  const resources = new ArtifactResourceScope();
+  const close = vi
+    .spyOn(OwnedStagedOutput.prototype, "close")
+    .mockImplementation(async () => {
+      throw new StagedOutputError("unexpected_entries", {
+        count: 1,
+        entries: "unexpected",
+      });
+    });
+  try {
+    const result = await writeTextParts(["{}"], destination, false, resources);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatchObject({
+      _tag: "EvidenceFileError",
+      diagnostics: {
+        code: "unexpected_entries",
+        count: 1,
+        entries: "unexpected",
+      },
+    });
+  } finally {
+    close.mockRestore();
+    await resources.close().catch(() => undefined);
     await rm(root, { recursive: true, force: true });
   }
 });

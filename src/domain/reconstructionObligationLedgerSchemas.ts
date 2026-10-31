@@ -4,8 +4,7 @@ import { STABLE_IDENTIFIER_PATTERN } from "./stringPatterns.js";
 
 import { evidenceAuthoritySchema } from "./evidence.js";
 import { evidenceBundleSchema } from "./evidenceBundle.js";
-import { digestSchema } from "./../domain/digests.js";
-import { prefixedDigestSchema } from "./../domain/digests.js";
+import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
 import { canonicalJson } from "./comparisonSemantics.js";
 import {
   reconstructionObligationCoverage,
@@ -181,7 +180,7 @@ export const reconstructionObligationManifestSchema = z.strictObject({
 
 export const reviewedReconstructionObligationSchema = z.strictObject({
   obligation_id: stableIdSchema,
-  obligation_version: z.number().int().min(1),
+  obligation_version: z.int().min(1),
   title: textSchema,
   application_layer: obligationLayerSchema,
   family: textSchema,
@@ -210,11 +209,15 @@ const diagnosticSchema = z.strictObject({
     "weak-original-case-authority",
     "missing-case",
     "weak-fixture-authority",
+    "inapplicable-fixture-proof",
+    "fixture-failed",
     "missing-verifier",
     "verifier-does-not-enumerate",
     "missing-verifier-result",
     "weak-verifier-authority",
     "verifier-failed",
+    "verifier-unavailable",
+    "inapplicable-verifier-proof",
     "static-only",
     "contradiction",
     "contradiction-evidence-missing",
@@ -230,7 +233,7 @@ const diagnosticSchema = z.strictObject({
 
 export const reconstructionObligationSchema = z.strictObject({
   obligation_id: stableIdSchema,
-  obligation_version: z.number().int().min(1),
+  obligation_version: z.int().min(1),
   title: textSchema,
   origin: z.enum(["generated", "reviewed"]),
   application_layer: obligationLayerSchema,
@@ -265,7 +268,7 @@ const countBySchema = <Schema extends z.ZodType>(
   z.array(
     z.strictObject({
       key,
-      count: z.number().int().min(0),
+      count: z.int().min(0),
     }),
   );
 
@@ -310,10 +313,10 @@ export const reconstructionObligationLedgerSchema = z
       status: z.enum(["complete", "partial"]),
     }),
     summary: z.strictObject({
-      total: z.number().int().min(0),
-      required: z.number().int().min(0),
-      verified: z.number().int().min(0),
-      required_open: z.number().int().min(0),
+      total: z.int().min(0),
+      required: z.int().min(0),
+      verified: z.int().min(0),
+      required_open: z.int().min(0),
       by_status: countBySchema(obligationStatusSchema),
       by_application_layer: countBySchema(obligationLayerSchema),
       by_evidence_authority: countBySchema(evidenceAuthoritySchema).describe(

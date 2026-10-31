@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { Stats } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, relative } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { PassThrough } from "node:stream";
 
 import { describe, expect, it } from "vitest";
@@ -12,19 +12,25 @@ import { TestReverseEngineeringService as ReverseEngineeringService } from "../s
 import { providerSnapshot } from "../support/reverseEngineeringCompositionFixtures.js";
 import { createReverseEngineeringService } from "../../src/composition/reverseEngineering.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
+import { AnalysisCancelledError } from "../../src/domain/analysisErrorCore.js";
 import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "../../src/contracts/reverseEngineeringToolContracts.js";
 
-describe("reverse engineering command services", () => {
-  it("documents the shared combined capture limit for both command tools", () => {
-    for (const contract of REVERSE_ENGINEERING_TOOL_CONTRACTS)
-      expect(contract.description).toContain("shared 16 MiB combined limit");
-    expect(REVERSE_ENGINEERING_TOOL_CONTRACTS[0]?.description).toContain(
-      "does not follow local debug links by default",
-    );
-    for (const contract of REVERSE_ENGINEERING_TOOL_CONTRACTS)
-      expect(contract.description).toContain("command_timeout_ms");
-  });
+it("documents the shared combined capture limit for both command tools", () => {
+  expect(REVERSE_ENGINEERING_TOOL_CONTRACTS.map(({ name }) => name)).toEqual(
+    expect.arrayContaining(["inspect_with_objdump", "execute_rizin_command"]),
+  );
+  for (const contract of REVERSE_ENGINEERING_TOOL_CONTRACTS)
+    expect(contract.description).toContain("shared 16 MiB combined limit");
+  expect(
+    REVERSE_ENGINEERING_TOOL_CONTRACTS.find(
+      ({ name }) => name === "inspect_with_objdump",
+    )?.description,
+  ).toContain("does not follow local debug links by default");
+  for (const contract of REVERSE_ENGINEERING_TOOL_CONTRACTS)
+    expect(contract.description).toContain("command_timeout_ms");
+});
 
+describe("reverse engineering command services", () => {
   it("uses compatible local DWARF link flags and disables debuginfod through the environment", async () => {
     const directory = await mkdtemp(join(tmpdir(), "rea-reverse-tools-"));
     const path = join(directory, "fixture.bin");
@@ -56,7 +62,7 @@ describe("reverse engineering command services", () => {
       if (!result.ok) return;
       expect(calls).toEqual([
         {
-          command: "/tools/objdump",
+          command: resolve("/tools/objdump"),
           args: ["-W", "-WK", path],
           env: expect.objectContaining({ DEBUGINFOD_URLS: "" }),
         },
@@ -266,7 +272,7 @@ it("uses one selected environment snapshot for provider selection and execution"
     expect(result.ok).toBe(true);
     expect(calls).toEqual([
       {
-        command: "/selected/rizin",
+        command: resolve("/selected/rizin"),
         env: {
           REA_RIZIN_COMMAND: "/selected/rizin",
           PATH: "/selected/bin",
@@ -389,7 +395,7 @@ describe("Rizin command service", () => {
       );
       expect(calls).toEqual([
         {
-          command: "/tools/rizin",
+          command: resolve("/tools/rizin"),
           args: ["-N", "-q", "-e", "scr.color=0", "-c", command, lookupPath],
         },
       ]);
@@ -412,7 +418,7 @@ describe("Rizin command service", () => {
       expect(result.value.parameters).toMatchObject({
         path: callerPath,
         command,
-        provider_executable: "/tools/rizin",
+        provider_executable: resolve("/tools/rizin"),
       });
       expect(result.value.parameters.command_arguments).toEqual(calls[0]?.args);
       expect(result.value.provider.id).toBe("rizin");
@@ -574,11 +580,46 @@ it("shares one preflight deadline across stat and digest", async () => {
   expect(performance.now() - started).toBeLessThan(280);
 });
 
+it("retains an explicit null reason when digest admission is already cancelled", async () => {
+  const controller = new AbortController();
+  controller.abort(null);
+  await expect(
+    digestFile("/tmp/rea-cancelled-digest", controller.signal),
+  ).rejects.toMatchObject({
+    _tag: "AnalysisCancelledError",
+    cause: null,
+  });
+});
+
+it("retains an object reason when cancellation interrupts an active digest stream", async () => {
+  const controller = new AbortController();
+  const reason = { source: "caller digest cancellation" };
+  const stat = async (): Promise<Stats> => ({ isFile: () => true }) as Stats;
+  const open = () => {
+    const stream = new PassThrough();
+    queueMicrotask(() => controller.abort(reason));
+    return stream as unknown as ReturnType<
+      typeof import("node:fs").createReadStream
+    >;
+  };
+  const failure: unknown = await digestFile(
+    "/tmp/rea-cancelled-stream",
+    controller.signal,
+    stat,
+    1_000,
+    open,
+  ).catch((cause: unknown) => cause);
+  expect(failure).toBeInstanceOf(AnalysisCancelledError);
+  if (!(failure instanceof AnalysisCancelledError))
+    throw new Error("Expected digest cancellation");
+  expect(failure.cause).toBe(reason);
+});
+
 it("forwards selected and omitted deadlines through the production command runner", async () => {
   const directory = await mkdtemp(join(tmpdir(), "rea-owned-timeout-"));
   const path = join(directory, "fixture.bin");
   await writeFile(path, "before");
-  const timeouts: number[] = [];
+  const timeouts: (number | null)[] = [];
   const service = new ReverseEngineeringService({
     runOwned: async (_spawn, limits) => {
       timeouts.push(limits.timeoutMs);

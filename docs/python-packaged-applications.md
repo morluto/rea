@@ -6,23 +6,51 @@ MCP. They read archive bytes without launching the application. Bytecode
 source decompilation, encrypted PYZ recovery, zipapp and PEX analysis are outside
 this capability.
 
+`extract_artifact.coverage` preserves the inventory producer's source traversal
+scope and certainty. Successful publication proves that the selected inventoried
+regular files were written and verified; it does not prove that every source
+entry was representable or every embedded payload was decoded. For example, a
+directory containing an invalid UTF-8 filename can publish its representable
+files successfully while coverage remains `unknown`. Extraction retains the
+inventory's command provenance and limitations, plus the selected occurrences'
+path-qualified derivation notices. A reconstructed `.pyc` header therefore stays
+identified as derived bytes in the extraction result.
+
 ## Facts and focused queries
 
 The root occurrence's `format_metadata` records the CArchive layout (2.0 or
 2.1), archive and cookie offsets, table extent, entry count, raw Python version,
 normalized major/minor when known, library name and encryption marker. Member
 metadata retains the original name, table index, type, compression flag,
-relative offset and known directory record extent. Logical paths use archive
-path rules; the source name retains its spelling, including backslashes.
+relative offset and known directory record extent. Logical paths follow the
+carrier's path dialect: backslashes separate components for PE carriers, while
+they remain literal filename characters for POSIX carriers. The source name
+always retains its stored spelling in occurrence `source_path` and
+`format_metadata.source_name`. For PYZ rows, that source is the exact module or
+data key in the PYZ table, not a reconstructed filesystem name;
+`format_metadata.container_name` identifies the containing PYZ image. If the
+carrier dialect is unconfirmed, REA preserves backslashes verbatim instead of
+inferring POSIX semantics.
 `relative_offset` is relative to the CArchive start for CArchive rows, or to
 the decoded PYZ image for PYZ rows. A CArchive directory record starts at
 `archive_start + toc_offset + directory_record_offset`; its size is
 `directory_record_size`. PYZ row directory extents remain unknown.
+CArchive type `b` retains PyInstaller's executable-member declaration in the
+generic `executable` fact; type `x` remains non-executable. This comes from the
+archive type code, not the filename or member contents.
+Distinct CArchive rows retain their table-index identities even when they
+share a logical path. Inventory can preserve both a file and a decoded PYZ
+directory at that path, including the PYZ children; extraction refuses a
+destination conflict instead of silently omitting those children.
 
-Namespace packages remain directories. Their `relative_offset` and
+Namespace packages remain metadata declarations at their projected query path;
+they do not claim a destination directory. Their `relative_offset` and
 `compressed_size` preserve any payload declared by older producers, while
 `declared_size` is zero because no bytecode is materialized for a namespace.
 Every declared span must end before the PYZ table of contents.
+Malformed CArchive TOC rows identify their zero-based table index and byte offset
+within the TOC, including truncated headers, invalid names, compression flags,
+and type codes. The failure retains its original format reason.
 PYZ `compression_flag` is derived from storage: nonempty payloads are compressed,
 including legacy namespaces; an empty namespace has no compressed payload.
 
@@ -48,6 +76,15 @@ merge order, including metadata/file aliases. Malformed TOC diagnostics name the
 table index; original names remain available in the supplied artifact.
 Path failures use bounded escaped previews and report the original length;
 accepted paths and retained source names are not shortened.
+
+`compare_artifacts` compares these node-less records as declarations using the
+container, container name, source name and type code. Equal option or dependency
+declarations can therefore compare unchanged without implying that an external
+dependency's bytes were found. For materialized PyInstaller members, the same
+fields participate in the metadata delta independently of content identity;
+archive offsets and table positions remain location facts, not declaration
+identity. Missing declaration facts and unavailable non-metadata content remain
+unknown.
 
 Request `detail: "summary"` for a compact inspection, then query retained
 Evidence with `inspect_analysis_view`. An inventory view can select
@@ -87,6 +124,10 @@ Outer-compressed PYZ images have a separate per-reader capacity of 128 private
 files, bounding retained inodes and image identities. The complete image count
 is admitted before any temporary file is created; excess images return a
 capacity failure. This is a resource policy, not a PyInstaller format limit.
+Artifact errors retain this distinction as `details.boundary: "capacity"`, with
+the actual allowance in the diagnosis and `details.detail`. Changing output
+detail does not reduce that allowance's input scope; these operations do not
+select a narrower member path during inventory.
 Only a zero-byte read establishes EOF; short successful descriptor reads fill
 the bounded range. Compressed members must consume their complete declared
 input span; trailing junk and concatenated streams are refused.
@@ -95,8 +136,15 @@ returns a resource failure.
 
 Supported final Python bytecode magic values cover Python 3.7 through 3.14.
 Supported marshal directory values are lists, tuples, strings, integers and
-bytes. An unsupported magic or directory stays an opaque member with a
-limitation and `pyz_status: "opaque"`; its module contents remain unknown.
+bytes, including interned Unicode strings used for module names. Unicode strings
+use CPython's UTF-8 `surrogatepass` encoding, preserving lone surrogate code
+points in decoded module names. Directory values follow the identified CPython marshal semantics; for
+example, a long integer with a zero most-significant digit is malformed and is
+not normalized into a valid table value. An unsupported magic or malformed or
+unsupported directory stays an opaque member with a limitation and
+`pyz_status: "opaque"`; no child entries from that table are projected, and
+their module contents remain unknown. The original PYZ member and its digest
+remain available independently. Healthy CArchive siblings are still inventoried.
 Any opaque PYZ makes producer traversal coverage unknown, including retained
 summaries and exhausted queries. Per-archive reasons remain on the opaque
 occurrences; the coverage observation summarizes their count without repeating
@@ -107,11 +155,15 @@ The directory declares compressed module lengths, so uncompressed declared
 sizes and source spans inside decoded data remain unknown.
 
 PYZ modules receive a derived 16-byte `.pyc` header from their own supported
-magic. CArchive bytecode receives that header only when every sibling PYZ magic
-and the cookie's Python version agree. Otherwise it retains its original bytes
-and `bytecode_header: "unknown"`. `bytecode_magic` and graph derivation edges
-identify synthesized headers; member digests cover the resulting derived files.
-These headers do not establish successful execution or decompilation.
+magic. CArchive scripts receive that header only when every sibling PYZ magic
+and the cookie's Python version agree. Under the same agreement, CArchive
+modules (`m`/`M`) receive a header only when their decompressed prefix identifies
+headerless marshal code. Legacy modules that retain a `.pyc` header, and modules
+whose prefix is unrecognized, preserve their original bytes and report
+`bytecode_header: "unknown"`. A header prefix does not establish that the entire
+file is valid. `bytecode_magic` and graph derivation edges identify synthesized
+headers; member digests cover the resulting derived files. These headers do not
+establish successful execution or decompilation.
 
 The nonempty CArchive Python module `pyimod00_crypto_key` (`m`/`M`) is recorded
 as an encryption marker; a same-named data file or script is not. Affected

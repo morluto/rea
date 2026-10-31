@@ -1,6 +1,6 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 
 import {
   inventoryFirmwareOutput,
@@ -10,6 +10,16 @@ import { readFirmwareCommandReport } from "../../../src/firmware/FirmwareCommand
 import { FIRMWARE_LIMITS } from "../../../src/firmware/FirmwareRelease.js";
 import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import { SafeOutputTree } from "../../../src/artifacts/SafeOutputTree.js";
+import {
+  normalizeBinwalkReport,
+  normalizeUnblobReport,
+} from "../../../src/firmware/FirmwareReports.js";
+import {
+  firmwareResultSchemas,
+  firmwareRequestSchema,
+} from "../../../src/domain/firmware/firmwareAnalysis.js";
+import { createHash } from "node:crypto";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 it.each([
@@ -160,4 +170,240 @@ it("orders extracted firmware paths by code point independently of host locale",
     "z.bin",
     "\u00e4.bin",
   ]);
+});
+
+it.skipIf(process.platform !== "linux")(
+  "refuses raw filenames that cannot round-trip through UTF-8 instead of omitting their bytes",
+  async () => {
+    const root = await createTestTempDirectory("rea-firmware-raw-name-");
+    await writeFile(
+      Buffer.concat([
+        Buffer.from(`${root}/bad`),
+        Buffer.from([0xff]),
+        Buffer.from(".bin"),
+      ]),
+      "123",
+    );
+    await writeFile(join(root, "good.bin"), "1234");
+    await expect(
+      inventoryFirmwareOutput(root, 4, 10, "extract_firmware"),
+    ).rejects.toMatchObject({
+      _tag: "AnalysisOutputError",
+      diagnostics: { raw_name_hex: "626164ff2e62696e" },
+    });
+  },
+);
+
+it.each([
+  { bytes: 1, files: 10, expected: "max_output_bytes" },
+  { bytes: 10, files: 1, expected: "max_output_files" },
+])(
+  "reports the selected $expected staging budget as a deterministic resource refusal",
+  async ({ bytes, files, expected }) => {
+    const root = await createTestTempDirectory("rea-firmware-staging-");
+    await writeFile(join(root, "a"), "1");
+    await writeFile(join(root, "b"), "2");
+    await expect(
+      inventoryFirmwareOutput(root, bytes, files, "extract_firmware"),
+    ).rejects.toMatchObject({
+      _tag: "AnalysisResourceConstraintError",
+      resource: "capacity",
+      reportedLimits: { [expected]: 1 },
+      retryable: false,
+      remediationAction: expect.stringContaining(expected),
+    });
+  },
+);
+
+it("attributes missing sources to the selected path without relabeling snapshot destination failure", async () => {
+  const root = await createTestTempDirectory("rea-firmware-source-");
+  const files = new FirmwareFileAccess();
+  const request = (path: string) =>
+    firmwareRequestSchema.parse({
+      operation: "inspect_firmware_regions",
+      input: { path },
+    });
+  await expect(
+    files.snapshot(
+      request(join(root, "absent")),
+      root,
+      new AbortController().signal,
+    ),
+  ).rejects.toMatchObject({
+    _tag: "AnalysisInputError",
+    issues: [{ path: ["path"], reason: "invalid_value" }],
+  });
+  const source = join(root, "source");
+  await writeFile(source, "firmware");
+  await expect(
+    files.snapshot(
+      request(source),
+      join(root, "missing-workspace"),
+      new AbortController().signal,
+    ),
+  ).rejects.toMatchObject({ code: "ENOENT" });
+  await files.close();
+});
+
+it("does not activate an abort-bound source during awaited destination setup", async () => {
+  const root = await createTestTempDirectory("rea-firmware-publish-abort-");
+  const source = join(root, "source");
+  const bytes = Buffer.from("firmware");
+  await writeFile(source, bytes);
+  const files = new FirmwareFileAccess();
+  const tree = await SafeOutputTree.create(join(root, "published"));
+  const controller = new AbortController();
+  const reason = { stop: "during destination setup" };
+  const write = tree.write.bind(tree);
+  const spy = vi.spyOn(tree, "write").mockImplementation(async (...args) => {
+    controller.abort(reason);
+    // Yield a turn while the source has no consumer, reproducing the handoff.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    return write(...args);
+  });
+  try {
+    await expect(
+      files.publish(
+        {
+          path: source,
+          relativePath: "nested/file",
+          kind: "file",
+          size: bytes.length,
+          linkTarget: null,
+        },
+        createHash("sha256").update(bytes).digest("hex"),
+        tree,
+        controller.signal,
+      ),
+    ).rejects.toMatchObject({ reason: "cancelled", cause: reason });
+  } finally {
+    spy.mockRestore();
+    await tree.rollback();
+    await files.close();
+  }
+  await expect(access(join(root, "published"))).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+  expect(Buffer.compare(await readFile(source), bytes)).toBe(0);
+});
+
+it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "keeps denied source access distinct from invalid paths and producer failures",
+  async () => {
+    const root = await createTestTempDirectory("rea-firmware-source-denial-");
+    const source = join(root, "input");
+    await writeFile(source, "firmware", { mode: 0o000 });
+    const files = new FirmwareFileAccess();
+    try {
+      await expect(
+        files.snapshot(
+          firmwareRequestSchema.parse({
+            operation: "inspect_firmware_regions",
+            input: { path: source },
+          }),
+          root,
+          new AbortController().signal,
+        ),
+      ).rejects.toMatchObject({
+        _tag: "AnalysisAccessDeniedError",
+        path: source,
+        systemCode: "EACCES",
+      });
+    } finally {
+      await chmod(source, 0o600);
+      await files.close();
+    }
+  },
+);
+
+it("retains unfamiliar Unblob report members from JSON files through public diagnostics", async () => {
+  const root = await createTestTempDirectory("rea-firmware-report-metadata-");
+  const inputPath = join(root, "input.bin");
+  const reportPath = join(root, "report.json");
+  const sha256 = "a".repeat(64);
+  const unfamiliar: unknown = JSON.parse(
+    '{"__typename__":"FutureReport","__proto__":{"source":"local","empty":null},"constructor":false,"prototype":0,"nested":{"__proto__":"retained"}}',
+  );
+  const record = {
+    task: { path: inputPath, depth: 0, blob_id: "", is_multi_file: false },
+    reports: [
+      { __typename__: "HashReport", sha256 },
+      {
+        __typename__: "StatReport",
+        path: inputPath,
+        size: 4,
+        is_dir: false,
+        is_file: true,
+        is_link: false,
+        link_target: null,
+      },
+      unfamiliar,
+    ],
+    subtasks: [],
+  };
+  await writeFile(reportPath, JSON.stringify([record]));
+  const files = new FirmwareFileAccess();
+  try {
+    const raw = await files.report(reportPath, "extract_firmware");
+    const normalized = normalizeUnblobReport(raw, {
+      inputPath,
+      outputRoot: join(root, "output"),
+      sha256,
+      length: 4,
+      offset: 0,
+      maxDepth: 3,
+    });
+    const diagnostics =
+      firmwareResultSchemas.extract_firmware.shape.diagnostics.parse(
+        normalized.diagnostics,
+      );
+    expect(JSON.stringify(diagnostics)).toBe(
+      JSON.stringify([{ input_path: "$input", report: unfamiliar }]),
+    );
+    expect(normalized.coverage).toBe("partial");
+    for (const malformed of [{}, { __typename__: null }, { __typename__: 1 }]) {
+      expect(() =>
+        normalizeUnblobReport(
+          [{ ...record, reports: [...record.reports.slice(0, 2), malformed] }],
+          {
+            inputPath,
+            outputRoot: join(root, "output"),
+            sha256,
+            length: 4,
+            offset: 0,
+            maxDepth: 3,
+          },
+        ),
+      ).toThrow();
+    }
+  } finally {
+    await files.close();
+  }
+});
+
+it("rejects Binwalk extraction activity under every own JSON member", async () => {
+  const root = await createTestTempDirectory(
+    "rea-firmware-report-extractions-",
+  );
+  const reportPath = join(root, "report.json");
+  const inputPath = join(root, "input.bin");
+  const files = new FirmwareFileAccess();
+  try {
+    for (const extractions of [
+      "{}",
+      '{"__proto__":null}',
+      '{"ordinary":false}',
+    ]) {
+      await writeFile(
+        reportPath,
+        `[{"Analysis":{"file_path":${JSON.stringify(inputPath)},"file_map":[],"extractions":${extractions}}}]`,
+      );
+      const raw = await files.report(reportPath, "inspect_firmware_regions");
+      const normalize = () => normalizeBinwalkReport(raw, inputPath, 4);
+      if (extractions === "{}") expect(normalize()).toEqual([]);
+      else expect(normalize).toThrow("Expected one inspection-only report");
+    }
+  } finally {
+    await files.close();
+  }
 });

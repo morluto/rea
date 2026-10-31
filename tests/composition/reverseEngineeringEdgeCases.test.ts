@@ -10,10 +10,12 @@ import {
 } from "../support/reverseEngineeringCompositionFixtures.js";
 
 import { TestReverseEngineeringService as ReverseEngineeringService } from "../support/reverseEngineeringService.js";
-import { AnalysisCapabilityUnavailableError } from "../../src/domain/analysisErrorCore.js";
+import {
+  AnalysisCapabilityUnavailableError,
+  AnalysisResourceConstraintError,
+} from "../../src/domain/analysisErrorCore.js";
 import { ReverseEngineeringService as CoreReverseEngineeringService } from "../../src/application/reverse/ReverseEngineeringService.js";
 import { createReverseEngineeringCommandPort } from "../../src/composition/reverseEngineering.js";
-import { AnalysisResourceConstraintError } from "../../src/domain/analysisErrorCore.js";
 import { objdumpCommand } from "../../src/objdump/ObjdumpCommand.js";
 import {
   OwnedCommandFailure,
@@ -21,6 +23,8 @@ import {
 } from "../../src/process/OwnedCommand.js";
 import type { ProviderProcessSupervisor } from "../../src/process/ProviderProcess.js";
 import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "../../src/contracts/reverseEngineeringToolContracts.js";
+import { awaitAcknowledgement } from "../fixtures/lifecycleAcknowledgement.js";
+import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
 
 registerSharedReverseEngineeringEdgeCaseTests();
 registerOwnedRizinCommandEvidenceTests({ sweepTokenOwnedProcesses: true });
@@ -115,15 +119,13 @@ it.each(["cancellation", "deadline"] as const)(
       run: async () => ({ stdout: "", stderr: "" }),
     });
 
-    try {
-      if (interruption === "deadline") vi.useFakeTimers();
-      const resultPromise = service.inspectWithObjdump(
-        { path, operation: "file_headers" },
-        { signal: controller.signal },
-      );
-      await statStarted;
+    const resultPromise = service.inspectWithObjdump(
+      { path, operation: "file_headers", command_timeout_ms: 1_000 },
+      { signal: controller.signal },
+    );
+    await withVerifierCleanup(async () => {
+      await awaitAcknowledgement(statStarted, resultPromise, "stat request");
       if (interruption === "cancellation") controller.abort();
-      else await vi.advanceTimersByTimeAsync(120_000);
       await expect(resultPromise).resolves.toMatchObject({
         ok: false,
         error: {
@@ -135,10 +137,18 @@ it.each(["cancellation", "deadline"] as const)(
       });
       rejectStat?.(new Error("late stat failure"));
       await Promise.resolve();
-    } finally {
-      vi.useRealTimers();
-      await rm(directory, { recursive: true, force: true });
-    }
+    }, [
+      () => {
+        controller.abort();
+        rejectStat?.(new Error("stat fixture cleanup"));
+      },
+      async () => {
+        await resultPromise;
+      },
+      async () => {
+        await rm(directory, { recursive: true, force: true });
+      },
+    ]);
   },
 );
 
@@ -307,7 +317,13 @@ it("rejects malformed Rizin requests before touching the provider", async () => 
 
   expect(result).toMatchObject({
     ok: false,
-    error: { _tag: "AnalysisInputError", operation: "execute_rizin_command" },
+    error: {
+      _tag: "AnalysisInputError",
+      operation: "execute_rizin_command",
+      issues: [
+        { path: ["command"], reason: "missing_argument", expected: "string" },
+      ],
+    },
   });
   expect(run).not.toHaveBeenCalled();
 });
@@ -370,11 +386,17 @@ it("rejects work after reaching the concurrent provider-operation limit", async 
     },
   });
 
-  try {
-    const admitted = Array.from({ length: 8 }, () =>
-      service.executeRizinCommand({ path, command: "iI" }),
+  const admitted = Array.from({ length: 8 }, () =>
+    service.executeRizinCommand({ path, command: "iI" }),
+  );
+  await withVerifierCleanup(async () => {
+    const rejection = service.executeRizinCommand({ path, command: "iI" });
+    await awaitAcknowledgement(
+      rejection.then(() => {}),
+      Promise.all(admitted),
+      "capacity response",
     );
-    const rejected = await service.executeRizinCommand({ path, command: "iI" });
+    const rejected = await rejection;
 
     expect(rejected.ok).toBe(false);
     if (!rejected.ok) {
@@ -385,9 +407,6 @@ it("rejects work after reaching the concurrent provider-operation limit", async 
           max_concurrent_operations: 8,
           active_operations: 8,
         });
-      expect(rejected.error.message).toContain(
-        "Concurrent reverse-engineering operation capacity reached (8 operations).",
-      );
     }
     expect(providerCalls).toBe(0);
 
@@ -395,10 +414,15 @@ it("rejects work after reaching the concurrent provider-operation limit", async 
     const results = await Promise.all(admitted);
     expect(results.every((result) => result.ok)).toBe(true);
     expect(providerCalls).toBe(8);
-  } finally {
-    releaseProviders?.();
-    await rm(directory, { recursive: true, force: true });
-  }
+  }, [
+    () => releaseProviders?.(),
+    async () => {
+      await Promise.allSettled(admitted);
+    },
+    async () => {
+      await rm(directory, { recursive: true, force: true });
+    },
+  ]);
 });
 
 it("cancels when an AbortSignal becomes aborted during listener registration", async () => {
@@ -435,7 +459,10 @@ it("cancels when an AbortSignal becomes aborted during listener registration", a
 it("drains an active provider operation before service shutdown resolves", async () => {
   const { directory, path } = await createArtifact();
   let signal: AbortSignal | undefined;
-  let releaseRun: (() => void) | undefined;
+  let releaseRun!: () => void;
+  const runGate = new Promise<void>((resolve) => {
+    releaseRun = resolve;
+  });
   let runStarted: (() => void) | undefined;
   const started = new Promise<void>((resolve) => {
     runStarted = resolve;
@@ -444,30 +471,39 @@ it("drains an active provider operation before service shutdown resolves", async
     run: async (_command, _args, options) => {
       signal = options?.signal;
       runStarted?.();
-      await new Promise<void>((resolve) => {
-        releaseRun = resolve;
-      });
+      await runGate;
       return { stdout: "finished", stderr: "" };
     },
   });
 
-  try {
-    const operation = service.executeRizinCommand({ path, command: "iI" });
-    await started;
+  const operation = service.executeRizinCommand({ path, command: "iI" });
+  let closing: Promise<void> | undefined;
+  await withVerifierCleanup(async () => {
+    await awaitAcknowledgement(started, operation, "provider command");
     let closed = false;
-    const closing = service.close().then(() => {
+    closing = service.close().then(() => {
       closed = true;
     });
     expect(signal?.aborted).toBe(true);
     expect(closed).toBe(false);
-    releaseRun?.();
+    releaseRun();
     await closing;
     expect(closed).toBe(true);
-    await operation;
-  } finally {
-    releaseRun?.();
-    await rm(directory, { recursive: true, force: true });
-  }
+    await expect(operation).resolves.toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError" },
+    });
+  }, [
+    releaseRun,
+    async () => {
+      await operation;
+    },
+    async () => {
+      await closing;
+    },
+    () => service.close(),
+    () => rm(directory, { recursive: true, force: true }),
+  ]);
 });
 
 it("relays caller cancellation to the admitted provider signal", async () => {
@@ -478,27 +514,26 @@ it("relays caller cancellation to the admitted provider signal", async () => {
   const started = new Promise<void>((resolve) => {
     announceStarted = resolve;
   });
-  let releaseRun: (() => void) | undefined;
+  let releaseRun!: () => void;
+  const runGate = new Promise<void>((resolve) => {
+    releaseRun = resolve;
+  });
   let providerSignal: AbortSignal | undefined;
   const service = new CoreReverseEngineeringService({
     commands: createReverseEngineeringCommandPort(process.env),
     run: async (_command, _args, options) => {
       providerSignal = options?.signal;
       announceStarted?.();
-      await new Promise<void>((resolve) => {
-        releaseRun = resolve;
-      });
+      await runGate;
       return { stdout: "captured", stderr: "" };
     },
   });
-  let operation: ReturnType<typeof service.inspectWithObjdump> | undefined;
-
-  try {
-    operation = service.inspectWithObjdump(
-      { path, operation: "file_headers" },
-      { signal: controller.signal },
-    );
-    await started;
+  const operation = service.inspectWithObjdump(
+    { path, operation: "file_headers" },
+    { signal: controller.signal },
+  );
+  await withVerifierCleanup(async () => {
+    await awaitAcknowledgement(started, operation, "provider command");
     controller.abort();
     expect(addAbortListener).toHaveBeenCalledWith(
       "abort",
@@ -506,16 +541,20 @@ it("relays caller cancellation to the admitted provider signal", async () => {
       { once: true },
     );
     expect(providerSignal?.aborted).toBe(true);
-    releaseRun?.();
+    releaseRun();
     await expect(operation).resolves.toMatchObject({
       ok: false,
       error: { _tag: "AnalysisCancelledError" },
     });
-  } finally {
-    releaseRun?.();
-    if (operation !== undefined) await operation.catch(() => undefined);
-    await rm(directory, { recursive: true, force: true });
-  }
+  }, [
+    () => controller.abort(),
+    releaseRun,
+    async () => {
+      await operation;
+    },
+    () => service.close(),
+    () => rm(directory, { recursive: true, force: true }),
+  ]);
 });
 
 it("passes an AbortSignal-like caller value through without relaying it", async () => {
@@ -1041,6 +1080,34 @@ it.each([
           `Captured ${streams} bytes contain invalid or incomplete UTF-8; replacement characters in the text capture do not preserve the original bytes.`,
         );
     } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+it.each(["objdump", "rizin"] as const)(
+  "preserves successful %s output-loss facts independently of process completion",
+  async (provider) => {
+    const { directory, path } = await createArtifact();
+    const service = new ReverseEngineeringService({
+      runOwned: async () => providerSnapshot({ diagnosticTruncated: true }),
+    });
+    try {
+      const result =
+        provider === "objdump"
+          ? await service.inspectWithObjdump({ path, operation: "symbols" })
+          : await service.executeRizinCommand({ path, command: "iI" });
+      if (!result.ok) throw result.error;
+      expect(result.value.normalized_result).toMatchObject({
+        exit_code: 0,
+        output_truncated: true,
+        completion_status: "complete",
+      });
+      expect(result.value.limitations).toContain(
+        "Captured provider output is partial because bytes were omitted; process completion is reported separately.",
+      );
+    } finally {
+      await service.close();
       await rm(directory, { recursive: true, force: true });
     }
   },

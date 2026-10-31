@@ -10,7 +10,7 @@ import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceSc
 import { DirectoryArtifactReader } from "../../../src/artifacts/DirectoryArtifactReader.js";
 import { inventoryArtifact } from "../../fixtures/artifactInventory.js";
 import { AsarArtifactReader } from "../../../src/artifacts/AsarArtifactReader.js";
-import { scanCanonicalArtifactInventory as scanCanonicalArtifactInventoryOwned } from "../../../src/artifacts/inventory/scanCanonical.js";
+import { scanCanonicalArtifactInventoryInScope } from "../../../src/artifacts/inventory/scanCanonical.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const CONTENT = "module.exports = 42;\n";
@@ -226,27 +226,29 @@ describe("ASAR captured-byte identity", () => {
     onTestFinished(() => resourceScope.close());
     try {
       await expect(
-        scanCanonicalArtifactInventoryOwned(
-          fixture.bundle,
-          { resourceScope },
-          () => ({
-            format: directory.format,
-            entries: (signal) => directory.entries(signal),
-            provenance: () => directory.provenance(),
-            close: () => directory.close(),
-            async open(entry, signal) {
-              const source = await directory.open(entry, signal);
-              return Readable.from(
-                (async function* () {
-                  yield* source;
-                  await fixture.replace();
-                  expect((await lstat(fixture.archive)).size).toBe(
-                    originalSize,
-                  );
-                })(),
-              );
-            },
-          }),
+        resourceScope.run(() =>
+          scanCanonicalArtifactInventoryInScope(
+            fixture.bundle,
+            { resourceScope },
+            () => ({
+              format: directory.format,
+              entries: (signal) => directory.entries(signal),
+              provenance: () => directory.provenance(),
+              close: () => directory.close(),
+              async open(entry, signal) {
+                const source = await directory.open(entry, signal);
+                return Readable.from(
+                  (async function* () {
+                    yield* source;
+                    await fixture.replace();
+                    expect((await lstat(fixture.archive)).size).toBe(
+                      originalSize,
+                    );
+                  })(),
+                );
+              },
+            }),
+          ),
         ),
       ).rejects.toMatchObject({
         reason: "integrity",
@@ -310,11 +312,15 @@ describe("ASAR captured-byte identity", () => {
     const resourceScope = new ArtifactResourceScope();
     onTestFinished(() => resourceScope.close());
     try {
-      const failure: unknown = await scanCanonicalArtifactInventoryOwned(
-        fixture.archive,
-        { resourceScope },
-        () => reader,
-      ).catch((cause: unknown) => cause);
+      const failure: unknown = await resourceScope
+        .run(() =>
+          scanCanonicalArtifactInventoryInScope(
+            fixture.archive,
+            { resourceScope },
+            () => reader,
+          ),
+        )
+        .catch((cause: unknown) => cause);
       expect(failure).toMatchObject({
         cleanup: { resources: [attempts[0]] },
         partialObservation: {

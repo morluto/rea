@@ -7,7 +7,7 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { applicationVersionComparisonResultSchema } from "../../../src/domain/javascript/javascriptApplicationVersionComparisonSchemas.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest } from "../../support/cli/cliFixture.js";
+import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
 
 cliTest(
   "keeps unavailable source-selection scopes unknown in version comparisons",
@@ -69,7 +69,7 @@ cliTest(
     ) => {
       const inputPath = join(root, `${name}.json`);
       await writeFile(inputPath, JSON.stringify({ left, right }));
-      const response = await cli.run({
+      const response = await runFileCli(cli, {
         arguments: ["compare-application-versions", inputPath, "--json"],
         environment: { REA_LOG_LEVEL: "silent" },
       });
@@ -452,5 +452,102 @@ cliTest(
           other.match.status !== "matched",
       ),
     ).toBe(true);
+  },
+);
+
+cliTest(
+  "matches unchanged module exports after a sibling file changes",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-export-version-");
+    const util = {
+      v1: "module.exports = { greet: () => 1 };\n",
+      v2: "module.exports = { greet: () => 2 };\n",
+    };
+    const analyze = async (
+      name: string,
+      version: string,
+      utilSource: string,
+    ) => {
+      const application = join(root, name);
+      await mkdir(join(application, "src"), { recursive: true });
+      await writeFile(
+        join(application, "package.json"),
+        JSON.stringify({
+          name: "export-fixture",
+          version,
+          main: "src/main.js",
+        }),
+      );
+      await writeFile(
+        join(application, "src/main.js"),
+        'const util = require("./util.js");\nmodule.exports = { start: () => util.greet() };\n',
+      );
+      await writeFile(join(application, "src/util.js"), utilSource);
+      const response = await cli.run({
+        arguments: ["analyze-javascript-application", application, "--json"],
+        environment: { REA_LOG_LEVEL: "silent" },
+      });
+      expect(response.exitCode, response.stderr).toBe(0);
+      return parseEvidence(response.json);
+    };
+    const compare = async (left: unknown, right: unknown) => {
+      const inputPath = join(root, `comparison-${Math.random()}.json`);
+      await writeFile(inputPath, JSON.stringify({ left, right }));
+      const response = await runFileCli(cli, {
+        arguments: ["compare-application-versions", inputPath, "--json"],
+        environment: { REA_LOG_LEVEL: "silent" },
+      });
+      expect(response.exitCode, response.stderr).toBe(0);
+      return applicationVersionComparisonResultSchema.parse(
+        parseEvidence(response.json).normalized_result,
+      );
+    };
+    const exportsOf = (evidence: { normalized_result: unknown }) =>
+      javascriptApplicationAnalysisResultSchema
+        .parse(evidence.normalized_result)
+        .graph.nodes.filter(({ observations }) =>
+          observations.some(
+            ({ properties }) => properties.semantic_role === "export-binding",
+          ),
+        );
+    const base = await analyze("base", "1.0.0", util.v1);
+    // Only package.json differs: both JavaScript files are byte-identical.
+    const bumped = await analyze("bumped", "1.0.1", util.v1);
+    const edited = await analyze("edited", "1.0.1", util.v2);
+    const baseExports = exportsOf(base);
+    expect(baseExports.length).toBeGreaterThanOrEqual(2);
+
+    const unchanged = await compare(base, bumped);
+    for (const node of baseExports)
+      expect(unchanged.items).toContainEqual(
+        expect.objectContaining({
+          left_node_id: node.node_id,
+          status: "unchanged",
+          match: expect.objectContaining({
+            basis: "exact-module-source-digest",
+            confidence: "exact",
+          }),
+        }),
+      );
+    expect(
+      unchanged.items.filter(
+        ({ node_kind, status }) =>
+          node_kind === "javascript-module" && status !== "unchanged",
+      ),
+    ).toEqual([]);
+
+    // An edited file's export is not paired by name alone.
+    const changed = await compare(base, edited);
+    const utilExport = baseExports.find(({ observations }) =>
+      observations.some(
+        ({ properties }) => properties.module_path === "src/util.js",
+      ),
+    );
+    expect(changed.items).toContainEqual(
+      expect.objectContaining({
+        left_node_id: utilExport?.node_id,
+        status: "removed",
+      }),
+    );
   },
 );

@@ -125,6 +125,7 @@ test("verify maps cancellation after final descriptor close exactly once", async
 test("close failure during final cancellation retains owner and resolves its marker on retry", async () => {
   const { path, contents } = await makeCapture();
   const snapshot = await PcapSnapshot.create();
+  onTestFinished(() => snapshot.close());
   const identity = {
     bytes: contents.length,
     sha256: createHash("sha256").update(contents).digest("hex"),
@@ -141,6 +142,7 @@ test("close failure during final cancellation retains owner and resolves its mar
       controller.abort(reason);
       throw closeFailure;
     });
+  onTestFinished(() => closeSpy.mockRestore());
 
   const error = await snapshot
     .verify(identity, path, controller.signal)
@@ -191,6 +193,7 @@ test("retains an open descriptor after failed close and releases it on retry", a
       retained = this.handle;
       throw closeFailure;
     });
+  onTestFinished(() => closeSpy.mockRestore());
 
   const error = await snapshot.verify(identity, path).catch((e) => e);
   expect(error).toBeInstanceOf(ProviderCleanupError);

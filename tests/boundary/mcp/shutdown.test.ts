@@ -280,3 +280,127 @@ it("retries failed MCP cleanup owners on a repeated signal and unregisters after
     2, 2, 1, 1,
   ]);
 });
+
+const idleShutdownDependencies = (): RuntimeDependencies => ({
+  env: {},
+  serve: () => {
+    throw new Error("unused fixture transport");
+  },
+  writeStderr: () => undefined,
+  setExitCode: () => undefined,
+  registerShutdown: () => () => undefined,
+});
+
+it("does not leave a provider running when a target open is queued behind shutdown", async () => {
+  const [target] = await createBinarySessionTargets();
+  if (target === undefined) throw new Error("Missing fixture target");
+  let created = 0;
+  let closed = 0;
+  let releaseHealth: (() => void) | undefined;
+  const session = createTestBinarySession(() => {
+    created += 1;
+    return {
+      execute: async (operation) => {
+        if (operation === "health" && created === 1)
+          await new Promise<void>((resolve) => {
+            releaseHealth = resolve;
+          });
+        return observed(null);
+      },
+      close: async () => {
+        closed += 1;
+        return ok(null);
+      },
+    };
+  });
+  const opening = session.open(target);
+  await expect.poll(() => releaseHealth).toBeTypeOf("function");
+  let closeQueued = false;
+  const originalClose = session.close.bind(session);
+  session.close = (...args) => {
+    closeQueued = true;
+    return originalClose(...args);
+  };
+  const lifecycle = createShutdown({
+    handle: { close: async () => undefined },
+    session,
+    dependencies: idleShutdownDependencies(),
+    serverLogger: pino({ enabled: false }),
+  });
+
+  const shuttingDown = lifecycle.shutdown();
+  await expect.poll(() => closeQueued).toBe(true);
+  const reopening = session.open(target);
+  const resources = session.openBundleResources(target);
+  releaseHealth?.();
+
+  expect((await opening).ok).toBe(true);
+  await shuttingDown;
+  await expect(reopening).resolves.toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisCancelledError", operation: "open_binary" },
+  });
+  await expect(resources).resolves.toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisCancelledError",
+      operation: "open_bundle_resources",
+    },
+  });
+  expect(session.activeTarget()).toBeUndefined();
+  expect(session.activeBundleResourceRoot()).toBeUndefined();
+  expect(created).toBe(closed);
+});
+
+it("rejects target acquisition after shutdown has settled", async () => {
+  const [target] = await createBinarySessionTargets();
+  if (target === undefined) throw new Error("Missing fixture target");
+  let created = 0;
+  const session = createTestBinarySession(() => {
+    created += 1;
+    return {
+      execute: async () => observed(null),
+      close: async () => ok(null),
+    };
+  });
+  const lifecycle = createShutdown({
+    handle: { close: async () => undefined },
+    session,
+    dependencies: idleShutdownDependencies(),
+    serverLogger: pino({ enabled: false }),
+  });
+
+  await lifecycle.shutdown();
+  await expect(session.open(target)).resolves.toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisCancelledError", operation: "open_binary" },
+  });
+  await expect(session.openBundleResources(target)).resolves.toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisCancelledError",
+      operation: "open_bundle_resources",
+    },
+  });
+  expect(created).toBe(0);
+  expect(session.activeTarget()).toBeUndefined();
+});
+
+it("opens a target again after an ordinary close", async () => {
+  const [target] = await createBinarySessionTargets();
+  if (target === undefined) throw new Error("Missing fixture target");
+  let created = 0;
+  const session = createTestBinarySession(() => {
+    created += 1;
+    return {
+      execute: async () => observed(null),
+      close: async () => ok(null),
+    };
+  });
+
+  expect((await session.open(target)).ok).toBe(true);
+  expect((await session.close()).ok).toBe(true);
+  expect((await session.open(target)).ok).toBe(true);
+  expect(created).toBe(2);
+  expect(session.activeTarget()?.path).toBe(target);
+});

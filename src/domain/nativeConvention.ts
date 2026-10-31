@@ -24,14 +24,17 @@ const DESKTOP_IL2CPP_LIBRARIES = new Set([
 ]);
 
 /**
- * A runtime family named by one filename or directory segment.
- * Only recognized complete library and framework names establish a convention.
+ * A runtime family named by the library filename or a containing framework.
+ * A library-named ancestor directory does not establish a convention.
  */
 export const nativeRuntimeConvention = (
   path: string,
 ): NativeRuntimeConvention | null => {
-  for (const segment of path.split("/")) {
+  const segments = path.split("/");
+  for (const [index, segment] of segments.entries()) {
     const folded = foldSegment(segment);
+    if (index !== segments.length - 1 && !folded.endsWith(".framework"))
+      continue;
     if (REACT_NATIVE_SEGMENTS.has(folded)) return "react-native";
     if (FLUTTER_SEGMENTS.has(folded)) return "flutter";
     if (UNITY_SEGMENTS.has(folded)) return "unity";

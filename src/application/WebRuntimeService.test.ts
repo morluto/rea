@@ -282,3 +282,43 @@ it("drops a non-JSON execution partial and keeps timeout primary", async () => {
   );
   expect(projectAnalysisError(error).category).toBe("timeout");
 });
+
+it.each(["observe", "inspect"] as const)(
+  "keeps %s cancellation primary when completed-shaped partial cannot be promoted within origin scope",
+  async (operation) => {
+    const partial =
+      operation === "observe" ? webExecutionFixture() : webListenersFixture();
+    const reason = { stop: "retained fact projection" };
+    const failure = new AnalysisCancelledError(
+      operation === "observe"
+        ? "observe_web_execution"
+        : "inspect_web_event_listeners",
+      { cause: reason, partialObservation: partial },
+    );
+    const service = new WebRuntimeService({
+      identity: runtimeIdentity,
+      observeExecution: async () => err(failure),
+      inspectEventListeners: async () => err(failure),
+    });
+    const input = {
+      cdp_endpoint: "http://127.0.0.1:9222",
+      target_id: "selected-page",
+      allowed_origins: ["https://selected.example"],
+    };
+    const result =
+      operation === "observe"
+        ? await service.observe({ ...input, observation_ms: 5 })
+        : await service.inspect({ ...input, selector: "#selected" });
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisCancelledError",
+        cause: reason,
+        partialObservation: partial,
+      },
+    });
+    if (result.ok) throw new Error("Expected original cancellation");
+    expect(result.error).toBe(failure);
+    expect(result.error.partialObservation).not.toHaveProperty("evidence_id");
+  },
+);

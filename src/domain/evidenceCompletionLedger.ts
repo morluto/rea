@@ -28,12 +28,12 @@ export const evidenceCompletionRecordSchema = z.strictObject({
 });
 
 const completionSummarySchema = z.strictObject({
-  total: z.number().int().min(1),
-  pass: z.number().int().nonnegative(),
-  fail: z.number().int().nonnegative(),
-  unsupported: z.number().int().nonnegative(),
-  truncated: z.number().int().nonnegative(),
-  unknown: z.number().int().nonnegative(),
+  total: z.int().min(1),
+  pass: z.int().nonnegative(),
+  fail: z.int().nonnegative(),
+  unsupported: z.int().nonnegative(),
+  truncated: z.int().nonnegative(),
+  unknown: z.int().nonnegative(),
   complete: z.boolean(),
 });
 
@@ -144,8 +144,3 @@ export const createEvidenceCompletionLedger = (
     summary: summarize(records),
   });
 };
-
-/** Parse a completion ledger and reject non-canonical or tampered content. */
-export const parseEvidenceCompletionLedger = (
-  input: unknown,
-): EvidenceCompletionLedger => evidenceCompletionLedgerSchema.parse(input);

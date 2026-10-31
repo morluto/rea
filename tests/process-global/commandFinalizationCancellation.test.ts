@@ -5,11 +5,18 @@ import { Cli } from "incur";
 import { afterEach, expect, it, vi } from "vitest";
 
 import * as analysisViewService from "../../src/application/analysisView/AnalysisViewService.js";
+import * as evidenceInputResolver from "../../src/application/EvidenceInputResolver.js";
 import { WasmArtifactService } from "../../src/application/wasm/WasmArtifactService.js";
 import { registerAnalysisViewCommands } from "../../src/cli/analysisViewCommands.js";
+import { registerCutterCommands } from "../../src/cli/cutterCommands.js";
 import { registerWasmCommands } from "../../src/cli/wasmCommands.js";
 import { wasmArtifactModule } from "../../src/composition/wasm.js";
+import { analysisErrorProjectionSchema } from "../../src/contracts/errorSchemas.js";
+import { toolContract } from "../../src/contracts/toolContracts.js";
+import { CutterBridgeService } from "../../src/cutter/CutterBridgeService.js";
 import { AnalysisOutputError } from "../../src/domain/analysisErrorCore.js";
+import * as analysisView from "../../src/domain/analysisView/analysisView.js";
+import { parseEvidence } from "../../src/domain/evidence.js";
 import { createEvidenceBundle } from "../../src/domain/evidenceBundle.js";
 import { ProviderCleanupError } from "../../src/domain/providerCleanupError.js";
 import { err, ok } from "../../src/domain/result.js";
@@ -55,6 +62,186 @@ afterEach(() => {
   vi.restoreAllMocks();
   host.listeners.clear();
 });
+
+const cutterDiscoveryFixture = () =>
+  toolContract("list_cutter_sessions").outputSchema.parse({
+    sessions: [
+      {
+        session_id: "00000000-0000-4000-8000-000000000001",
+        pid: 41,
+        document_generation: 7,
+        current_file: "C:\\Caller files\\token=literal%2F.bin",
+        cutter_version: "2.3.4",
+        identity_status: "partial",
+      },
+      {
+        session_id: "00000000-0000-4000-8000-000000000002",
+        pid: 42,
+        document_generation: 0,
+        current_file: null,
+        cutter_version: null,
+        identity_status: "partial",
+      },
+    ],
+    bridge_directory: "/caller/Cutter bridge/token=literal%2F/证据",
+    discovery_status: "sessions_found",
+    bridge_directory_security: "unverified_platform_acl",
+  });
+
+const finalCloseGate = () => {
+  let enter!: () => void;
+  let release!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    enter = resolve;
+  });
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return { enter, release, entered, pending };
+};
+
+it.each([
+  "control",
+  "cleanup-failure",
+  "interrupt",
+  "interrupt-cleanup-failure",
+  "queued-interrupt",
+] as const)(
+  "retains registered Cutter discovery through final close: %s",
+  async (scenario) => {
+    const discoverySchema = toolContract("list_cutter_sessions").outputSchema;
+    const discovery = cutterDiscoveryFixture();
+    const cleanup = new ProviderCleanupError(
+      "cutter",
+      [],
+      { reason: "controlled discovery close failure" },
+      { operation: "list_cutter_sessions" },
+    );
+    const failsCleanup =
+      scenario === "cleanup-failure" ||
+      scenario === "interrupt-cleanup-failure";
+    const expectsInterrupt =
+      scenario === "interrupt" ||
+      scenario === "interrupt-cleanup-failure" ||
+      scenario === "queued-interrupt";
+    const gate = finalCloseGate();
+    let closed = false;
+    let interruptHandled = false;
+    let queuedInterrupt: Promise<void> | undefined;
+    const interrupt = () => {
+      const listener = host.listeners.get("SIGINT");
+      interruptHandled = listener !== undefined;
+      listener?.();
+    };
+    const list = vi
+      .spyOn(CutterBridgeService.prototype, "listSessions")
+      .mockResolvedValue(ok(discovery));
+    const close = vi
+      .spyOn(CutterBridgeService.prototype, "close")
+      .mockImplementation(async () => {
+        gate.enter();
+        await gate.pending;
+        if (
+          scenario === "interrupt" ||
+          scenario === "interrupt-cleanup-failure"
+        )
+          interrupt();
+        if (scenario === "queued-interrupt")
+          queuedInterrupt = new Promise<void>((resolve) => {
+            setImmediate(() => {
+              interrupt();
+              resolve();
+            });
+          });
+        closed = true;
+        if (failsCleanup) throw cleanup;
+      });
+    const cli = Cli.create("cutter-discovery-finalization-test", {
+      sync: false,
+    });
+    registerCutterCommands(cli, silentLogger, {});
+    let output = "";
+    let settled = false;
+    let pending: Promise<void> | undefined;
+    const previousExitCode = process.exitCode;
+    let exitCode: typeof process.exitCode;
+    try {
+      process.exitCode = undefined;
+      pending = cli
+        .serve(["list-cutter-sessions", "--json"], {
+          stdout: (part) => {
+            expect(closed).toBe(true);
+            output += part;
+          },
+          exit: () => {},
+        })
+        .then(() => {
+          settled = true;
+        });
+      await Promise.race([gate.entered, pending]);
+      expect(close).toHaveBeenCalledOnce();
+      expect(settled).toBe(false);
+      expect(output).toBe("");
+      gate.release();
+      await pending;
+      await queuedInterrupt;
+      exitCode = process.exitCode;
+    } finally {
+      gate.release();
+      try {
+        try {
+          await pending;
+        } finally {
+          await queuedInterrupt;
+        }
+      } finally {
+        process.exitCode = previousExitCode;
+      }
+    }
+
+    expect(list).toHaveBeenCalledOnce();
+    expect(list).toHaveBeenCalledWith({ signal: expect.any(AbortSignal) });
+    expect(close).toHaveBeenCalledOnce();
+    expect(closed).toBe(true);
+    expect(interruptHandled).toBe(expectsInterrupt);
+    expect(host.listeners.size).toBe(0);
+    expect(exitCode).toBe(
+      expectsInterrupt ? 130 : failsCleanup ? 1 : undefined,
+    );
+    const result: unknown = JSON.parse(output);
+    if (scenario === "control") {
+      expect(result).toEqual(discovery);
+      return;
+    }
+
+    const error = analysisErrorProjectionSchema.parse(result);
+    expect(error.code).toBe(failsCleanup ? "cleanup_incomplete" : "cancelled");
+    expect(error.details?.partial_observation).toEqual(discovery);
+    expect(discoverySchema.parse(error.details?.partial_observation)).toEqual(
+      discovery,
+    );
+    if (expectsInterrupt) expect(error.category).toBe("cancelled");
+    if (failsCleanup) expect(error.details?.resources).toEqual([]);
+    if (scenario === "cleanup-failure")
+      expect(error.details?.diagnostics).toEqual({
+        reason: "controlled discovery close failure",
+      });
+    if (scenario === "interrupt-cleanup-failure")
+      expect(error.details?.diagnostics).toMatchObject({
+        primary_error: {
+          code: "cancelled",
+          details: { operation: "list_cutter_sessions" },
+        },
+        cleanup_error: {
+          code: "cleanup_incomplete",
+          details: {
+            resources: [],
+            diagnostics: { reason: "controlled discovery close failure" },
+          },
+        },
+      });
+  },
+);
 
 it.each([
   "control",
@@ -145,6 +332,43 @@ it.each([
   },
 );
 
+const referenceViewEvidence = async (
+  request: Parameters<typeof analysisViewService.inspectAnalysisView>[0],
+  evidenceBundlePath: string,
+  phase: string,
+) => {
+  if (phase !== "projection") return undefined;
+  const result = await analysisViewService.inspectAnalysisView(
+    request,
+    undefined,
+    { evidenceBundlePath },
+  );
+  if (!result.ok) throw new Error("Expected completed reference Evidence");
+  return result.value;
+};
+
+type PreparedView = ReturnType<
+  typeof analysisView.prepareAnalysisViewProjection
+>;
+
+const expectRetainedProjection = (
+  observation: unknown,
+  reference: Awaited<ReturnType<typeof referenceViewEvidence>>,
+  projected: ReturnType<PreparedView["project"]> | undefined,
+  parent: ReturnType<typeof analysisViewLayoutEvidence>,
+) => {
+  if (!projected?.ok || reference === undefined)
+    throw new Error("Expected a completed page and reference Evidence");
+  const partial = parseEvidence(observation);
+  expect(partial).toEqual(reference);
+  expect(partial.normalized_result).toEqual(projected.value);
+  expect(partial).toMatchObject({
+    operation: "inspect_analysis_view",
+    evidence_links: [parent.evidence_id],
+    subject: parent.subject,
+  });
+};
+
 it.each([
   ["bundle", "control", "close"],
   ["bundle", "SIGINT", "close"],
@@ -160,7 +384,7 @@ it.each([
   ["bundle", "SIGINT", "projection"],
   ["bundle", "SIGTERM", "projection"],
   ["bundle", "SIGINT", "authentication-failure"],
-  ["bundle", "SIGTERM", "projection-failure"],
+  ["bundle", "SIGTERM", "source-resolution-failure"],
 ] as const)(
   "preserves the analysis-view result and exit status for %s: %s during %s",
   async (source, signal, phase) => {
@@ -174,7 +398,7 @@ it.each([
           ? {
               kind: "retained-evidence",
               evidence_id:
-                phase === "projection-failure"
+                phase === "source-resolution-failure"
                   ? `ev_${"f".repeat(64)}`
                   : parent.evidence_id,
             }
@@ -213,14 +437,38 @@ it.each([
         });
       });
     };
-    const originalProject = analysisViewService.inspectAnalysisViewValidated;
-    let projected: ReturnType<typeof originalProject> | undefined;
+    const expectedProjection = await referenceViewEvidence(
+      request,
+      path,
+      phase,
+    );
+    // Intercept the prepared owner, whose project method keeps its admission
+    // budget and calls the domain projector lexically rather than by export.
+    const originalPrepare = analysisView.prepareAnalysisViewProjection;
+    let projected: ReturnType<PreparedView["project"]> | undefined;
     const project = vi
-      .spyOn(analysisViewService, "inspectAnalysisViewValidated")
+      .fn<(parent: Parameters<PreparedView["project"]>[0]) => void>()
+      .mockName("preparedProjection.project");
+    vi.spyOn(analysisView, "prepareAnalysisViewProjection").mockImplementation(
+      (...args) => {
+        const projection = originalPrepare(...args);
+        const originalProject = projection.project;
+        vi.spyOn(projection, "project").mockImplementation((parent) => {
+          project(parent);
+          projected = originalProject.call(projection, parent);
+          if (phase === "projection") queueInterrupt();
+          return projected;
+        });
+        return projection;
+      },
+    );
+    const originalResolve = evidenceInputResolver.resolveEvidenceInput;
+    const resolve = vi
+      .spyOn(evidenceInputResolver, "resolveEvidenceInput")
       .mockImplementation((...args) => {
-        projected = originalProject(...args);
-        if (phase.startsWith("projection")) queueInterrupt();
-        return projected;
+        const resolved = originalResolve(...args);
+        if (phase === "source-resolution-failure") queueInterrupt();
+        return resolved;
       });
     const originalClose = OwnedFileHandle.prototype.close;
     const close = vi
@@ -268,11 +516,20 @@ it.each([
         signal === "SIGINT" ? 130 : signal === "SIGTERM" ? 143 : 0,
       );
       if (signal !== "control") expect(interruptHandled).toBe(true);
+      expect(project).toHaveBeenCalledTimes(
+        Number(signal === "control" || phase === "projection"),
+      );
       if (phase.startsWith("authentication"))
-        expect(project).not.toHaveBeenCalled();
+        expect(resolve).not.toHaveBeenCalled();
+      if (phase === "projection" || phase === "source-resolution-failure")
+        expect(resolve).toHaveBeenCalledOnce();
       if (phase === "projection") {
-        if (!projected?.ok) throw new Error("Expected a completed page");
-        expect(result.details.partial_observation).toEqual(projected.value);
+        expectRetainedProjection(
+          result.details.partial_observation,
+          expectedProjection,
+          projected,
+          parent,
+        );
       }
     } finally {
       await pendingInterrupt;

@@ -1,4 +1,4 @@
-import type { ToolResultDelivery } from "../toolResult.js";
+import type { ToolResultDelivery } from "../ToolResultDelivery.js";
 import { APPLICATION_TOOL_CONTRACTS } from "../../contracts/applicationToolContracts.js";
 import type { Evidence } from "../../domain/evidence.js";
 import type { ApplicationToolRegistration } from "./types.js";

@@ -316,6 +316,22 @@ it("retains process supervision after an incomplete stop and disposes after a re
   let disposals = 0;
   let outputUnrefs = 0;
   const signals: NodeJS.Signals[] = [];
+  const detachInferior = vi
+    .fn<
+      () => Promise<{
+        readonly status: "detached";
+        readonly outputSink: "durable";
+        readonly inputSink: "durable";
+      }>
+    >()
+    .mockResolvedValueOnce({
+      status: "detached",
+      outputSink: "durable",
+      inputSink: "durable",
+    })
+    .mockRejectedValue(
+      new Error("debugger transport closed during termination"),
+    );
   const session = {
     id: "debugger-session",
     exited: false,
@@ -327,12 +343,7 @@ it("retains process supervision after an incomplete stop and disposes after a re
         },
       },
     },
-    detachInferior: async () =>
-      ({
-        status: "detached",
-        outputSink: "durable",
-        inputSink: "durable",
-      }) as const,
+    detachInferior,
     supervisor: {
       waitForExit: async (): Promise<boolean> => {
         waits += 1;
@@ -366,6 +377,7 @@ it("retains process supervision after an incomplete stop and disposes after a re
   expect(retry).toEqual({ status: "stopped" });
   expect(disposals).toBe(1);
   expect(waits).toBe(3);
+  expect(detachInferior).toHaveBeenCalledOnce();
 });
 
 it("refuses Windows job-backed debugger termination before signaling", async () => {
@@ -788,12 +800,6 @@ it("retains an owned debugger when inferior detach does not settle", async () =>
       },
       detachInferior: () => {
         detachCalls += 1;
-        if (detachCalls > 1)
-          return Promise.resolve({
-            status: "detached",
-            outputSink: "durable",
-            inputSink: "durable",
-          } as const);
         return new Promise<{
           readonly status: "detached";
           readonly outputSink: "durable";
@@ -844,7 +850,7 @@ it("retains an owned debugger when inferior detach does not settle", async () =>
     expect(
       await stopOwnedDebuggerProcess(session, "GDB", { platform: "linux" }),
     ).toEqual({ status: "stopped" });
-    expect(detachCalls).toBe(2);
+    expect(detachCalls).toBe(1);
     expect(signals).toEqual(["SIGTERM"]);
     expect(disposals).toBe(1);
   } finally {

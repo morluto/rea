@@ -83,6 +83,12 @@ describe("curated Windows test lane", () => {
     );
   });
 
+  it("keeps real Git dependency-patch admission in the Windows lane", async () => {
+    expect(await explicitPaths("windows")).toContain(
+      "tests/boundary/filesystem/releaseProposal.test.ts",
+    );
+  });
+
   it("keeps Windows environment identity and layered setup regressions in the lane", async () => {
     expect(await explicitPaths("windows")).toEqual(
       expect.arrayContaining([
@@ -137,6 +143,41 @@ describe("curated Windows test lane", () => {
     expect(download).toBeGreaterThanOrEqual(0);
     expect(verify).toBeGreaterThan(download);
     expect(build).toBeGreaterThan(verify);
+  });
+
+  it("executes native behavior and recovery proofs before unrelated curated tests", async () => {
+    const workflow = workflowSchema.parse(
+      parse(await readFile(WORKFLOW, "utf8")),
+    );
+    const steps = workflow.jobs["windows-curated"]?.steps ?? [];
+    const build = steps.findIndex(
+      (step) => step.run === "npm run build:cached",
+    );
+    const boundary = steps.findIndex(
+      (step) => step.with?.name === "windows-process-boundary-fixture",
+    );
+    const native = steps.findIndex((step) =>
+      step.run?.startsWith("npm run verify:windows-native -- "),
+    );
+    const inspectionFixture = steps.findIndex(
+      (step) => step.with?.name === "windows-native-inspection-fixture",
+    );
+    const inspection = steps.findIndex(
+      (step) =>
+        step.run === "node scripts/verify-windows-native-inspection.mjs",
+    );
+    const curated = steps.findIndex(
+      (step) =>
+        step.run?.includes("src/windows/WindowsNativeLoader.test.ts") &&
+        step.run.includes("npx vitest run"),
+    );
+    expect(build).toBeGreaterThanOrEqual(0);
+    expect(boundary).toBeGreaterThan(build);
+    expect(native).toBeGreaterThan(boundary);
+    expect(steps[native]?.run).toContain("process-boundary.exe");
+    expect(inspectionFixture).toBeGreaterThan(native);
+    expect(inspection).toBeGreaterThan(inspectionFixture);
+    expect(curated).toBeGreaterThan(inspection);
   });
 });
 

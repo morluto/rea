@@ -4,17 +4,23 @@ import { isAbsolute, join, relative, sep } from "node:path";
 
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { resolveTreePath } from "../../domain/apple/dyldPaths.js";
+import { observedSymlinkTarget } from "../../domain/symlinkTarget.js";
 import {
   dylibResolutionInputSchema,
   dylibResolutionResultSchema,
+  machoImageSlices,
   traceDylibLoading,
   type DylibResolutionResult,
   type DylibTreeEntry,
   type DylibTreeView,
   type MachoImageFacts,
 } from "../../domain/apple/dylibResolution.js";
-import { projectInputIssues } from "../../domain/inputIssueProjection.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
+import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
+import {
+  ArtifactReaderFailure,
+  type ArtifactReaderTraversal,
+} from "../ArtifactReader.js";
+import { ArtifactTraversalObservation } from "../ArtifactTraversalObservation.js";
 import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
 import { consumeWithOrderedReads } from "../OrderedReads.js";
 import {
@@ -25,6 +31,7 @@ import { ArtifactResourceScope } from "../ArtifactResourceScope.js";
 import { assertArtifactReadActive } from "../ArtifactFileOperation.js";
 
 const OPERATION = "trace_dylib_resolution";
+const WINDOWS = process.platform === "win32";
 /** Concurrent four-byte magic reads while enumerating bundle roots. */
 const MAGIC_READ_CONCURRENCY = 8;
 
@@ -66,12 +73,7 @@ class FilesystemTreeView implements DylibTreeView {
   image(path: string): Promise<MachoImageFacts> {
     const cached = this.#images.get(path);
     if (cached !== undefined) return cached;
-    const pending = this.files
-      .image(join(this.root, path))
-      .then(({ facts, identity }) => {
-        this.#identities.set(path, identity);
-        return facts;
-      });
+    const pending = this.#readImage(path);
     this.#images.set(path, pending);
     return pending;
   }
@@ -81,13 +83,49 @@ class FilesystemTreeView implements DylibTreeView {
     return this.#identities.get(path);
   }
 
+  /**
+   * Host path of a root-relative dyld path. The resolver passes only plain
+   * components, so a path that lands outside the root is a reader defect and
+   * is refused before any file is opened.
+   */
+  hostPath(path: string): string {
+    const absolute = join(this.root, path);
+    const inside = relative(this.root, absolute);
+    if (inside === ".." || inside.startsWith(`..${sep}`) || isAbsolute(inside))
+      throw new ArtifactReaderFailure(
+        "path",
+        `${path} maps outside the analyzed root`,
+      );
+    return absolute;
+  }
+
+  async #readImage(path: string): Promise<MachoImageFacts> {
+    const { facts, identity } = await this.files.image(this.hostPath(path));
+    this.#identities.set(path, identity);
+    return facts;
+  }
+
   async #readEntry(path: string): Promise<DylibTreeEntry | undefined> {
     assertArtifactReadActive(this.signal);
-    const absolute = join(this.root, path);
+    // A dyld path component is a POSIX name. Windows reads `\` as a separator
+    // and `:` as a stream delimiter, so no file in this tree has that name.
+    if (WINDOWS && /[\\:]/u.test(path)) return undefined;
+    const absolute = this.hostPath(path);
     try {
       const metadata = await lstat(absolute);
-      if (metadata.isSymbolicLink())
-        return { kind: "symlink", target: await readlink(absolute) };
+      if (metadata.isSymbolicLink()) {
+        const observed = observedSymlinkTarget(
+          await readlink(absolute, { encoding: "buffer" }),
+        );
+        if (observed.text === null)
+          return { kind: "symlink", target: null, targetHex: observed.hex };
+        const target = observed.text;
+        // Windows link text separates components with `\`.
+        return {
+          kind: "symlink",
+          target: WINDOWS ? target.replaceAll("\\", "/") : target,
+        };
+      }
       if (metadata.isDirectory()) return { kind: "directory" };
       return metadata.isFile() ? { kind: "file" } : undefined;
     } catch (cause: unknown) {
@@ -109,10 +147,11 @@ export const traceDylibResolution = async (options: {
 }): Promise<DylibResolutionResult> => {
   const parsed = dylibResolutionInputSchema.safeParse(options.parameters);
   if (!parsed.success)
-    throw new AnalysisInputError(
+    throw analysisInputErrorFromIssues(
       OPERATION,
+      parsed.error.issues,
+      options.parameters,
       { cause: parsed.error },
-      projectInputIssues(parsed.error.issues, options.parameters),
     );
   const resources = options.resourceScope ?? new ArtifactResourceScope();
   return await resources.run(async () => {
@@ -134,12 +173,15 @@ export const traceDylibResolution = async (options: {
         files,
         options.signal,
       );
-      const { roots: requested, unclassified } =
-        parsed.data.roots !== undefined
-          ? { roots: parsed.data.roots, unclassified: [] }
-          : options.enumerateRoots
-            ? await executableRoots(root, view, files, options.signal)
-            : { roots: [target], unclassified: [] };
+      const {
+        roots: requested,
+        unclassified,
+        traversal,
+      } = parsed.data.roots !== undefined
+        ? { roots: parsed.data.roots, unclassified: [], traversal: undefined }
+        : options.enumerateRoots
+          ? await executableRoots(root, view, files, resources, options.signal)
+          : { roots: [target], unclassified: [], traversal: undefined };
       const roots = await requireMachoRoots(
         view,
         requested,
@@ -148,6 +190,7 @@ export const traceDylibResolution = async (options: {
       const trace = await traceDylibLoading(view, {
         roots,
         unclassified,
+        ...(traversal === undefined ? {} : { rootEnumeration: traversal }),
         ...(parsed.data.architecture === undefined
           ? {}
           : { architecture: parsed.data.architecture }),
@@ -158,7 +201,7 @@ export const traceDylibResolution = async (options: {
       for (const { path } of trace.images)
         digests.set(
           path,
-          await files.sha256(join(root, path), view.identity(path)),
+          await files.sha256(view.hostPath(path), view.identity(path)),
         );
       const targetDigest =
         digests.get(target) ??
@@ -193,32 +236,78 @@ const executableRoots = async (
   root: string,
   view: FilesystemTreeView,
   files: DylibFileAccess,
+  resources: ArtifactResourceScope,
   signal?: AbortSignal,
-): Promise<{ readonly roots: string[]; readonly unclassified: string[] }> => {
+): Promise<{
+  readonly roots: string[];
+  readonly unclassified: string[];
+  readonly traversal: ArtifactReaderTraversal;
+}> => {
   const roots: string[] = [];
   const unclassified: string[] = [];
+  const traversal = new ArtifactTraversalObservation();
+  let symlinks = 0;
+  let firstSymlink: string | undefined;
   // Bundles hold tens of thousands of files and few Mach-O images, so the
   // magic reads overlap the walk while results are classified in walk order.
-  await consumeWithOrderedReads(
-    new DirectoryArtifactReader(root).entries(signal),
-    MAGIC_READ_CONCURRENCY,
-    (entry) =>
-      entry.kind === "file" ? files.startsWithMachoMagic(entry) : undefined,
-    async (entry, macho) => {
-      if (!macho) return;
-      const facts = await view.image(entry.path);
-      if (facts.status === "malformed" || facts.status === "unsupported")
-        unclassified.push(entry.path);
-      else if (
-        facts.status === "parsed" &&
-        facts.slices.some(({ file_type: type }) => type === "execute")
-      )
-        roots.push(entry.path);
-    },
-  );
+  const reader = new DirectoryArtifactReader(root);
+  let outcome:
+    | { readonly kind: "completed" }
+    | { readonly kind: "failed"; readonly cause: unknown } = {
+    kind: "completed",
+  };
+  try {
+    await consumeWithOrderedReads(
+      reader.entries(signal, traversal),
+      MAGIC_READ_CONCURRENCY,
+      (entry) => {
+        // The ordered-read owner skips consume() when read() returns undefined.
+        // Discovery facts for skipped entries belong at this selection boundary.
+        if (entry.kind === "symlink") {
+          symlinks += 1;
+          firstSymlink ??= entry.path;
+        }
+        return entry.kind === "file"
+          ? files.startsWithMachoMagic(entry)
+          : undefined;
+      },
+      async (entry, macho) => {
+        if (!macho) return;
+        const facts = await view.image(entry.path);
+        if (facts.status === "malformed" || facts.status === "unsupported")
+          unclassified.push(entry.path);
+        else if (
+          facts.status === "parsed" &&
+          machoImageSlices(facts).some(
+            ({ file_type: type }) => type === "execute",
+          )
+        )
+          roots.push(entry.path);
+      },
+    );
+  } catch (cause: unknown) {
+    outcome = { kind: "failed", cause };
+  }
+  const released = await resources.release({
+    kind: "reader",
+    reader,
+    resource: `executable-root reader for ${root}`,
+  });
+  if (released.kind === "failed")
+    throw resources.cleanupFailure(outcome, [released]);
+  if (outcome.kind === "failed") throw outcome.cause;
+  assertArtifactReadActive(signal);
+  if (symlinks > 0)
+    traversal.onCoverage({
+      status: "unknown",
+      limitations: [
+        `Executable-root discovery did not follow ${symlinks} symlink(s); their root roles and possible descendants are unknown. First path: ${JSON.stringify(firstSymlink)}.`,
+      ],
+    });
   return {
     roots: roots.sort(compare),
     unclassified: unclassified.sort(compare),
+    traversal: traversal.snapshot(),
   };
 };
 
@@ -250,6 +339,11 @@ const requireMachoRoots = async (
     const lookup = await resolveTreePath(view, path);
     if (lookup.kind === "escapes")
       throw reject("path", `Root ${path} resolves outside the analyzed root`);
+    if (lookup.kind === "undetermined")
+      throw reject(
+        "path",
+        `Root ${path} crosses symlink ${lookup.path} with non-UTF-8 target bytes ${lookup.targetHex}`,
+      );
     if (lookup.kind !== "file")
       throw reject(
         "path",

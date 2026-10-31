@@ -34,6 +34,7 @@ describe("HopperClient restart", () => {
         name: "REA Hopper bridge",
         version: "1.0.0",
         processId: expect.any(Number),
+        maxRequestBytes: 16 * 1024 * 1024,
       },
     });
   });
@@ -50,6 +51,7 @@ describe("HopperClient restart", () => {
         name: "REA Hopper bridge",
         version: "1.0.0",
         processId: expect.any(Number),
+        maxRequestBytes: 16 * 1024 * 1024,
       },
     });
     await expect(client.callTool("echo", { value: "fresh" })).resolves.toEqual({

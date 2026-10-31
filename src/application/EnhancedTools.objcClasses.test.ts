@@ -10,8 +10,8 @@ import { EnhancedTools } from "./EnhancedTools.js";
 import type { BinaryArchitecture } from "../domain/binaryTargetTypes.js";
 import { objcSwiftMetadataSchema } from "../domain/native/objcSwiftMetadata.js";
 import { err, ok } from "../domain/result.js";
-import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
 import {
+  AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
   AnalysisCancelledError,
 } from "../domain/analysisErrorCore.js";
@@ -183,6 +183,29 @@ it.each([
   },
 );
 
+it("reports no applicable identity scan when names contain no owned class labels", async () => {
+  const execute = vi.fn(
+    createPort({
+      names: [
+        { address: "0x1000", value: "__objc_class_HuntRoot_class" },
+        { address: "0x2000", value: "PTR__OBJC_CLASS_$_NSAlert_100028668" },
+        { address: "0x3000", value: "s__OBJC_CLASS_$_NSAlert_10002ed0d" },
+      ],
+    }).execute,
+  );
+  const tools = new EnhancedTools({ execute });
+  await expect(tools.execute("get_objc_classes", {})).resolves.toEqual({
+    ok: true,
+    value: {
+      count: 0,
+      classes: [],
+      identity_coverage: { status: "not_applicable", reason: null },
+    },
+  });
+  expect(execute).toHaveBeenCalledTimes(1);
+  expect(execute.mock.calls[0]?.[0]).toBe("list_names");
+});
+
 describe("Objective-C class import identity composition", () => {
   it("joins only exact same-target bind slots and preserves literal filter selection", async () => {
     const tools = new EnhancedTools(createPort());
@@ -209,7 +232,22 @@ describe("Objective-C class import identity composition", () => {
       ok: true,
       value: {
         count: 1,
-        classes: [{ address: "0x1000", name: "OBJC_CLASS_$_Document$GOT" }],
+        classes: [
+          {
+            address: "0x1000",
+            name: "OBJC_CLASS_$_Document$GOT",
+            binding_identity: {
+              symbol: "_OBJC_CLASS_$_Document",
+              binding_source: "chained",
+              library_ordinal: 1,
+              library: "/System/Library/Frameworks/AppKit.framework/AppKit",
+              weak: false,
+              addend: "0",
+              slot_addresses: ["0x1000"],
+            },
+          },
+        ],
+        identity_coverage: { status: "complete", reason: null },
       },
     });
   });
@@ -274,6 +312,12 @@ describe("Objective-C class import identity composition", () => {
   it("keeps names with unknown identity when binding inspection is unavailable", async () => {
     const tools = new EnhancedTools(
       createPort({
+        names: [
+          { address: "0x1000", value: "OBJC_CLASS_$_Document$GOT" },
+          { address: "0x1000", value: "OBJC_CLASS_$_Document" },
+          { address: "0x2000", value: "OBJC_CLASS_$_Document" },
+          { address: "0x2000", value: "OBJC_CLASS_$_Document" },
+        ],
         metadataFailure: new AnalysisCapabilityUnavailableError(
           provider.id,
           "inspect_native_dispatch_metadata",
@@ -284,8 +328,16 @@ describe("Objective-C class import identity composition", () => {
     await expect(tools.execute("get_objc_classes", {})).resolves.toMatchObject({
       ok: true,
       value: {
-        count: 2,
-        identity_coverage: { status: "unknown" },
+        count: 3,
+        classes: [
+          { address: "0x1000", name: "OBJC_CLASS_$_Document$GOT" },
+          { address: "0x1000", name: "OBJC_CLASS_$_Document" },
+          { address: "0x2000", name: "OBJC_CLASS_$_Document" },
+        ],
+        identity_coverage: {
+          status: "unknown",
+          reason: "No static Mach-O reader",
+        },
       },
     });
   });

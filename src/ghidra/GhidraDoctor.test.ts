@@ -8,7 +8,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runDoctor, type DoctorHost } from "../application/Doctor.js";
 import { createDoctorHostFixture } from "../application/Doctor.fixture.js";
 import { providerRegistrationEnvironment } from "../application/SetupRegistrationEnvironment.js";
-import { WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON } from "../process/WindowsAuthority.js";
 import * as nativeLoader from "../windows/WindowsNativeLoader.js";
 import {
   inspectGhidraInstallation,
@@ -199,7 +198,7 @@ describe("Windows Ghidra doctor authority", () => {
     vi.spyOn(nativeLoader, "systemWindowsNativeAuthority").mockReturnValue({
       available: false,
       failureStage: "artifact",
-      reason: WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON,
+      reason: "Authored native artifact unavailable diagnostic",
     });
   });
   afterEach(() => vi.restoreAllMocks());
@@ -243,7 +242,7 @@ describe("Windows Ghidra doctor authority", () => {
     ).toMatchObject({
       ok: false,
       classification: "missing_dependency",
-      detail: WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON,
+      detail: "Authored native artifact unavailable diagnostic",
       remediation: expect.stringContaining("matching Windows x64 REA package"),
     });
   });
@@ -267,7 +266,7 @@ describe("Windows Ghidra doctor authority", () => {
       expect.objectContaining({
         name: "ghidra-native_authority",
         classification: "missing_dependency",
-        detail: WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON,
+        detail: "Authored native artifact unavailable diagnostic",
       }),
     );
   });
@@ -278,7 +277,7 @@ describe("Windows native doctor failure diagnostics", () => {
     vi.spyOn(nativeLoader, "systemWindowsNativeAuthority").mockReturnValue({
       available: false,
       failureStage: "artifact",
-      reason: WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON,
+      reason: "Authored native artifact unavailable diagnostic",
     });
   });
   afterEach(() => vi.restoreAllMocks());
@@ -371,7 +370,7 @@ describe("Windows native doctor failure diagnostics", () => {
       expect.objectContaining({
         name: "native_authority",
         code: "runtime_missing",
-        detail: WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON,
+        detail: "Authored native artifact unavailable diagnostic",
       }),
     );
   });

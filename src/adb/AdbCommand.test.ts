@@ -16,7 +16,7 @@ const probe = (signal?: AbortSignal) =>
     "push_adb_file",
     "device",
     "/device/path",
-    "/host/adb",
+    { binary: "/host/adb", pathSource: "environment", environment: {} },
     {
       timeoutMs: 100,
       maxOutputBytes: 1024,
@@ -40,7 +40,7 @@ it("classifies the complete diagnostic before shortening its displayed reason", 
     runAdbCapture(
       "pull_adb_file",
       { device: "device", path: "/remote/file", localPath },
-      "/host/adb",
+      { binary: "/host/adb", pathSource: "environment", environment: {} },
       [],
       { timeoutMs: 100, maxOutputBytes: 2048 },
       undefined,
@@ -200,7 +200,7 @@ it.each([true, false])(
     const result = await runAdbCapture(
       volatileOutput ? "read_adb_logcat" : "install_adb_package",
       { device: "device" },
-      "/host/adb",
+      { binary: "/host/adb", pathSource: "environment", environment: {} },
       volatileOutput ? ["logcat", "-d"] : ["install", "app.apk"],
       { timeoutMs: 100, maxOutputBytes: 1024, volatileOutput },
       undefined,
@@ -209,20 +209,15 @@ it.each([true, false])(
     if (result.ok) throw new Error("Expected a capture allowance refusal");
     const projected = projectAnalysisError(result.error);
     expect(projected.retryable).toBe(volatileOutput);
-    expect(projected.remediation.action).toContain(
-      "The adb output capture allowance",
-    );
-    expect(projected.remediation.action).toContain(
-      volatileOutput
-        ? "live output may change between requests"
-        : "Repeating the unchanged request fails the same way.",
-    );
-    expect(projected.remediation.action).toContain("1024 bytes");
-    expect(projected.remediation.action).toContain("no runtime override");
+    expect(projected).toMatchObject({
+      code: "resource_constraint",
+      details: { reported_limits: { max_output_bytes: 1024 } },
+    });
+    expect(projected.details?.limit).toBeUndefined();
   },
 );
 
-it("names the effective adb deadline and says it has no runtime override", async () => {
+it("reports the effective fixed adb deadline", async () => {
   vi.mocked(execFileBytes).mockRejectedValueOnce(
     Object.assign(new Error("deadline"), {
       code: "ETIMEDOUT",
@@ -235,7 +230,7 @@ it("names the effective adb deadline and says it has no runtime override", async
   const result = await runAdbCapture(
     "pull_adb_file",
     { device: "device" },
-    "/host/adb",
+    { binary: "/host/adb", pathSource: "environment", environment: {} },
     ["pull", "/remote"],
     { timeoutMs: 600_000, maxOutputBytes: 1024 },
     undefined,
@@ -247,12 +242,7 @@ it("names the effective adb deadline and says it has no runtime override", async
     code: "provider_timeout",
     details: { timeout_ms: 600_000 },
   });
-  expect(projected.message).toContain("600000 ms");
-  expect(projected.message).toContain("no runtime override");
-  expect(projected.remediation.action).toContain("no runtime override");
-  expect(projected.remediation.action).not.toContain(
-    "REA_JADX_OPERATION_TIMEOUT_MS",
-  );
+  expect(projected.details?.limit).toBeUndefined();
 });
 
 it("keeps a physical failure even when the later abort reason is that same error", async () => {
@@ -265,7 +255,7 @@ it("keeps a physical failure even when the later abort reason is that same error
   const result = await runAdbCapture(
     "inspect_adb_device",
     { device: "device" },
-    "/host/adb",
+    { binary: "/host/adb", pathSource: "environment", environment: {} },
     [],
     { timeoutMs: 100, maxOutputBytes: 1024 },
     controller.signal,

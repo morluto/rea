@@ -1,3 +1,9 @@
+import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import {
+  AnalysisCleanupLease,
+  AnalysisCleanupLeaseGroup,
+} from "../artifacts/AnalysisCleanupLease.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { regularFileCancellation } from "../filesystem/OwnedRegularFile.js";
 import { createHash } from "node:crypto";
 import { chmod, mkdtemp, open as openFile, rm, stat } from "node:fs/promises";
@@ -6,15 +12,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 
-import type {
-  ExecutionOptions,
-  ProviderAvailability,
-} from "../application/AnalysisProvider.js";
 import {
+  type ExecutionOptions,
+  type ProviderAvailability,
   createAnalysisExecution,
-  createAnalysisExecutionEvidence,
   type AnalysisExecution,
 } from "../application/AnalysisProvider.js";
+import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import {
   MAX_FLUTTER_LIBRARY_PATH_BYTES,
   type FlutterRequest,
@@ -26,11 +30,14 @@ import {
   AnalysisInputError,
   AnalysisResourceConstraintError,
   AnalysisUnsupportedTargetError,
+  AnalysisProtocolError,
 } from "../domain/analysisErrorCore.js";
-import { AnalysisProtocolError } from "../domain/analysisErrorCore.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
-import { AnalysisError } from "../domain/analysisErrorBase.js";
+import {
+  AnalysisError,
+  type AnalysisPartialObservation,
+} from "../domain/analysisErrorBase.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
@@ -57,6 +64,7 @@ import {
   readSnapshotHeader,
 } from "./DartElf.js";
 import { readElfBuildIds } from "./ElfBuildId.js";
+import { privateWorkspaceFailure } from "../process/privateWorkspaceFailure.js";
 
 /** Stable identity for the Flutter build-identification provider. */
 export const FLUTTER_PROVIDER_IDENTITY = {
@@ -221,10 +229,15 @@ const inputFailureMessage = (path: string, cause: unknown): string => {
   return `The APK could not be read as a package: ${path}: ${message}`;
 };
 
-/** Provider-owned storage failures must never be attributed to caller input. */
+/**
+ * Provider-owned storage failures must never be attributed to caller input.
+ * `workspacePath` is the owned root once allocated, so a failure without its
+ * own errno path still names the workspace it occurred in.
+ */
 const mapOwnedIoFailure = (
   operation: string,
   cause: unknown,
+  workspacePath: string | null,
 ): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
   const cancellation = regularFileCancellation(cause);
@@ -239,24 +252,27 @@ const mapOwnedIoFailure = (
     "code" in cause &&
     typeof cause.code === "string"
   )
-    return new AnalysisResourceConstraintError(
+    return privateWorkspaceFailure(
+      FLUTTER_PROVIDER_IDENTITY.id,
       operation,
-      "file-size",
-      `Provider-owned Flutter snapshot storage failed (${cause.code}): ${cause.message}`,
-      null,
-      { cause },
+      cause,
+      workspacePath,
     );
   return new AnalysisProtocolError(operation, { cause });
 };
 
-/** ZIP format failures describe caller bytes; its descriptor is provider-owned. */
+/**
+ * ZIP format failures describe caller bytes. A system error comes from the
+ * provider-owned snapshot descriptor, so it propagates unchanged to the
+ * snapshot owner, which maps it against the owned workspace.
+ */
 const mapPackageFailure = (
   operation: string,
   path: string,
   cause: unknown,
-): AnalysisError =>
+): unknown =>
   cause instanceof Error && "code" in cause && typeof cause.code === "string"
-    ? mapOwnedIoFailure(operation, cause)
+    ? cause
     : mapInputFailure(operation, path, cause);
 
 interface FlutterLibrary {
@@ -360,8 +376,11 @@ export class FlutterBuildProvider {
   >();
   private readonly removeRoot: (path: string) => Promise<void>;
   private readonly cleanupFailures = new Map<string, readonly unknown[]>();
+  private readonly rootLeases = new Map<string, AnalysisCleanupLease>();
+  private readonly operations = new ArtifactResourceScope();
 
   constructor(options: FlutterProviderOptions = {}) {
+    this.operations.addCloseHook(() => this.closeRoots());
     this.removeRoot =
       options.removeRoot ??
       ((path) => rm(path, { recursive: true, force: true }));
@@ -382,9 +401,17 @@ export class FlutterBuildProvider {
     try {
       root = await mkdtemp(join(tmpdir(), "rea-flutter-"));
     } catch (cause) {
-      throw mapOwnedIoFailure(operation, cause);
+      // No workspace exists yet; the errno path names the attempted template.
+      throw mapOwnedIoFailure(operation, cause, null);
     }
     this.ownedRoots.set(root, new Set());
+    this.rootLeases.set(
+      root,
+      new AnalysisCleanupLease(async () => {
+        if (!(await this.cleanupRoot(root)))
+          throw this.cleanupError(root, operation);
+      }, [root]),
+    );
     const snapshotPath = join(root, "input.apk");
     const readSource = async <T>(read: () => Promise<T>): Promise<T> => {
       try {
@@ -401,12 +428,11 @@ export class FlutterBuildProvider {
       // stops the write promptly instead of draining the whole file.
       let source: OwnedFileHandle;
       try {
-        source = this.ownResource(
-          root,
-          new OwnedFileHandle(
-            await openRegularFile(path, { symlinks: "follow", signal }),
-          ),
-        );
+        const { handle } = await openRegularFile(path, {
+          symlinks: "follow",
+          signal,
+        });
+        source = this.ownResource(root, new OwnedFileHandle(handle));
       } catch (cause) {
         if (cause instanceof RegularFileAdmissionFailure) {
           this.ownResource(root, cause.owner);
@@ -479,10 +505,18 @@ export class FlutterBuildProvider {
       const sha256 = await sha256File(operation, snapshotPath, signal);
       return { root, path: snapshotPath, bytes: info.size, sha256 };
     } catch (cause) {
-      await this.discardRoot(root);
-      if (signal?.aborted === true)
-        throw new AnalysisCancelledError(operation, { cause });
-      throw mapOwnedIoFailure(operation, cause);
+      const primary =
+        signal?.aborted === true
+          ? new AnalysisCancelledError(operation, { cause: signal.reason })
+          : mapOwnedIoFailure(operation, cause, root);
+      const released = await this.discardRoot(root);
+      if (!released)
+        throw this.withCleanup(
+          primary,
+          this.cleanupError(root, operation),
+          operation,
+        );
+      throw primary;
     }
   }
 
@@ -511,6 +545,18 @@ export class FlutterBuildProvider {
 
   /** Close every owned handle before removing its root; retain any failure. */
   private async discardRoot(root: string): Promise<boolean> {
+    const lease = this.rootLeases.get(root);
+    if (lease === undefined) return true;
+    try {
+      await lease.release();
+      this.rootLeases.delete(root);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private async cleanupRoot(root: string): Promise<boolean> {
     const resources = this.ownedRoots.get(root);
     if (resources === undefined) return true;
     const attempts = await Promise.allSettled(
@@ -544,29 +590,23 @@ export class FlutterBuildProvider {
     };
   }
 
-  /** Retain failed snapshot cleanup ownership and retry it on close. */
-  async close(): Promise<void> {
-    const failures: {
-      readonly root: string;
-      readonly causes: readonly unknown[];
-    }[] = [];
-    for (const root of [...this.ownedRoots.keys()]) {
-      if (!(await this.discardRoot(root)))
-        failures.push({ root, causes: this.cleanupFailures.get(root)! });
-    }
-    if (failures.length > 0)
-      throw new ProviderCleanupError(
-        FLUTTER_PROVIDER_IDENTITY.id,
-        failures.map(({ root }) => root),
-        {
-          reason: failures
-            .flatMap(({ causes }) =>
-              causes.map((cause) =>
-                cause instanceof Error ? cause.message : String(cause),
-              ),
-            )
-            .join("; "),
-          retained_roots: failures.map(({ root, causes }) => ({
+  private cleanupError(
+    root: string,
+    operation: string,
+    completedObservation?: AnalysisPartialObservation,
+  ): ProviderCleanupError {
+    const causes = this.cleanupFailures.get(root) ?? [];
+    const error = new ProviderCleanupError(
+      FLUTTER_PROVIDER_IDENTITY.id,
+      [root],
+      {
+        reason: causes
+          .map((cause) =>
+            cause instanceof Error ? cause.message : String(cause),
+          )
+          .join("; "),
+        retained_roots: [
+          {
             path: root,
             failures: causes.map((cause) => ({
               name: cause instanceof Error ? cause.name : "UnknownError",
@@ -577,28 +617,104 @@ export class FlutterBuildProvider {
                 ? { code: cause.code }
                 : {}),
             })),
-          })),
+          },
+        ],
+      },
+      {
+        cause: new AggregateError(causes, "Flutter snapshot cleanup failed"),
+        operation,
+        ...(completedObservation === undefined ? {} : { completedObservation }),
+      },
+    );
+    const lease = this.rootLeases.get(root);
+    if (lease !== undefined) new AnalysisCleanupLeaseGroup(error, [lease]);
+    return error;
+  }
+
+  private withCleanup(
+    primary: AnalysisError,
+    cleanup: AnalysisError,
+    operation: string,
+  ): AnalysisError {
+    return analysisErrorWithCleanupFailure(
+      primary,
+      cleanup,
+      operation,
+    ).bindCleanupDependencies([primary, cleanup]);
+  }
+
+  /** Stop admission and drain active snapshots before attempting retained cleanup. */
+  async close(): Promise<void> {
+    await this.operations.close();
+  }
+
+  private async closeRoots(
+    roots = [...this.ownedRoots.keys()],
+    operation = "close_flutter_build",
+  ): Promise<void> {
+    const failures: AnalysisError[] = [];
+    for (const root of roots) {
+      if (!(await this.discardRoot(root)))
+        failures.push(this.cleanupError(root, operation));
+    }
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1)
+      throw new ProviderCleanupError(
+        FLUTTER_PROVIDER_IDENTITY.id,
+        failures.flatMap((failure) => failure.cleanupResources),
+        {
+          reason: failures
+            .map((failure) => failure.diagnostics?.reason ?? failure.message)
+            .join("; "),
+          retained_roots: failures.flatMap((failure) => {
+            const roots = failure.diagnostics?.retained_roots;
+            return Array.isArray(roots) ? roots : [];
+          }),
         },
         {
-          cause: new AggregateError(
-            failures.flatMap(({ causes }) => causes),
-            "Flutter snapshot cleanup failed",
-          ),
-          operation: "close_flutter_build",
+          cause: new AggregateError(failures),
+          operation,
         },
-      );
+      ).bindCleanupDependencies(failures);
   }
 
   async execute(
     request: FlutterRequest,
     options?: ExecutionOptions,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
-    if (options?.signal?.aborted === true)
-      return err(
-        new AnalysisCancelledError(request.operation, {
-          cause: options.signal.reason,
-        }),
+    try {
+      return await this.operations.run(() =>
+        this.executeOwned(request, options),
       );
+    } catch (cause) {
+      return err(mapOwnedIoFailure(request.operation, cause, null));
+    }
+  }
+
+  private async executeOwned(
+    request: FlutterRequest,
+    options?: ExecutionOptions,
+  ): Promise<Result<AnalysisExecution, AnalysisError>> {
+    const cancellation = (): AnalysisCancelledError | undefined =>
+      options?.signal?.aborted === true
+        ? new AnalysisCancelledError(request.operation, {
+            cause: options.signal.reason,
+          })
+        : undefined;
+    const beforeCleanup = cancellation();
+    if (beforeCleanup !== undefined) return err(beforeCleanup);
+    // Only failed roots are safe to retry here: concurrent admitted snapshots
+    // retain their own live resources until their operations finish.
+    try {
+      await this.closeRoots(
+        [...this.cleanupFailures.keys()],
+        request.operation,
+      );
+    } catch (cause) {
+      return err(mapOwnedIoFailure(request.operation, cause, null));
+    }
+    const afterCleanup = cancellation();
+    if (afterCleanup !== undefined) return err(afterCleanup);
     const { path } = request.input;
     const signal = options?.signal;
     let snapshot: OwnedSnapshot | undefined;
@@ -630,28 +746,53 @@ export class FlutterBuildProvider {
               libraries,
             );
     } catch (cause) {
-      result = err(mapOwnedIoFailure(request.operation, cause));
-    } finally {
-      if (snapshot !== undefined) await this.discardRoot(snapshot.root);
+      result = err(
+        mapOwnedIoFailure(request.operation, cause, snapshot?.root ?? null),
+      );
     }
-    // Cancellation observed after the awaited snapshot removal still keeps
-    // the completed facts, composed exactly as the uncancelled Evidence.
-    if (signal?.aborted === true)
-      return err(
-        new AnalysisCancelledError(request.operation, {
-          cause: signal.reason,
-          ...(result.ok
-            ? {
-                partialObservation: createAnalysisExecutionEvidence(
+    const cleanup =
+      snapshot !== undefined && !(await this.discardRoot(snapshot.root))
+        ? this.cleanupError(
+            snapshot.root,
+            request.operation,
+            result.ok
+              ? createAnalysisExecutionEvidence(
                   request.operation,
                   request.input,
                   result.value,
                   "observed",
-                ),
-              }
-            : {}),
+                )
+              : undefined,
+          )
+        : undefined;
+    // Cancellation observed after the awaited snapshot removal still keeps
+    // the completed facts, composed exactly as the uncancelled Evidence.
+    if (signal?.aborted === true && result.ok) {
+      result = err(
+        new AnalysisCancelledError(request.operation, {
+          cause: signal.reason,
+          partialObservation: createAnalysisExecutionEvidence(
+            request.operation,
+            request.input,
+            result.value,
+            "observed",
+          ),
         }),
       );
+    }
+    if (cleanup !== undefined) {
+      if (!result.ok)
+        return err(this.withCleanup(result.error, cleanup, request.operation));
+      cleanup.retainPartialObservation(
+        createAnalysisExecutionEvidence(
+          request.operation,
+          request.input,
+          result.value,
+          "observed",
+        ),
+      );
+      return err(cleanup);
+    }
     return result;
   }
 
@@ -920,7 +1061,7 @@ export class FlutterBuildProvider {
               )
               .map(
                 (entry) =>
-                  `lib/${entry.abi}/libapp.so carries ${String(entry.libapp.snapshot_hash_sources)} snapshot section(s); a complete AOT payload carries two, so the library is truncated or nonstandard`,
+                  `lib/${entry.abi}/libapp.so carries ${String(entry.libapp.snapshot_hash_sources)} observed snapshot header(s); complete coverage of the supported legacy split VM/isolate profile requires two independent sources. Unified and other layouts remain unverified`,
               ),
             ...abis
               .filter(
@@ -1125,14 +1266,42 @@ export class FlutterBuildProvider {
             section.offset < previous.offset + previous.size,
         ),
     );
-    if (sections.length === 0)
+    if (sections.length === 0) {
+      // This is a profile diagnostic, not aliases for the split data sources.
+      // Probe only after the legacy selection fails, leaving its normal path
+      // and two-source completeness rule unchanged.
+      const unified = await readElfSymbols(
+        bounded,
+        ["_kDartSnapshotData", "_kDartSnapshotText"],
+        signal,
+      );
+      if (unified.symbols.length > 0)
+        return err(
+          new AnalysisUnsupportedTargetError(
+            "inspect_dart_aot",
+            path,
+            "Observed unified Dart snapshot exports; this reader supports the legacy split VM/isolate profile (Dart 2.14 FullAOT kind 3). The unified profile is unsupported, not missing legacy data",
+            {
+              diagnostics: {
+                supported_profile: "dart-2.14-split-full-aot",
+                observed_exports: unified.symbols.map(
+                  ({ name, offset, size }) => ({ name, offset, size }),
+                ),
+                abi: selected.abi,
+                libapp_sha256: imageSha256,
+                libapp_bytes: imageLength,
+              },
+            },
+          ),
+        );
       return err(
         new AnalysisUnsupportedTargetError(
           "inspect_dart_aot",
           path,
-          `No recognizable Dart snapshot symbols were found: ${inventory.failures.map((failure) => failure.reason).join("; ")}`,
+          `No recognizable legacy split Dart snapshot symbols were found: ${inventory.failures.map((failure) => failure.reason).join("; ")}`,
         ),
       );
+    }
     const pool = await projectStringPool(isolateData, signal);
     const snapshotPartial =
       inventory.failures.length > 0 ||

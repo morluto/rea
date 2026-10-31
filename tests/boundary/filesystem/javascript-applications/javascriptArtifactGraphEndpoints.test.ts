@@ -7,8 +7,42 @@ import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js
 import { scanCanonicalArtifactInventory } from "../../../fixtures/artifactInventory.js";
 import { readJavaScriptArtifactFiles } from "../../../support/javascriptApplicationScope.js";
 import { createJavaScriptArtifactReader } from "../../../../src/artifacts/javascript/JavaScriptArtifactReader.js";
-import { analyzeJavaScriptArtifactFiles } from "../../../../src/application/javascript/JavaScriptArtifactAnalysis.js";
-import { buildJavaScriptArtifactGraph } from "../../../../src/application/javascript/JavaScriptArtifactGraphBuilder.js";
+import { analyzeArtifactFiles } from "../../../fixtures/javascriptArtifactAnalysis.js";
+import { immutableArtifactGraph } from "../../../fixtures/javascriptArtifactGraph.js";
+
+it("keeps an endpoint uncertain after mutation through a declared inherited field", async () => {
+  const root = await createTestTempDirectory("rea-js-erased-field-");
+  await writeFile(
+    join(root, "app.ts"),
+    `
+    const options = { url: "/before" };
+    class Base { field = options; }
+    class Derived extends Base { declare field: { url: string }; }
+    new Derived().field.url = "/after";
+    const target = options.url;
+    fetch(target);
+  `,
+  );
+  const snapshot = await scanCanonicalArtifactInventory(root, {});
+  const reader = createJavaScriptArtifactReader(root, "directory");
+  try {
+    const files = await readJavaScriptArtifactFiles(reader, snapshot);
+    const { analysis } = await analyzeArtifactFiles(files);
+    const graph = await immutableArtifactGraph(snapshot, files, analysis);
+    const endpoints = graph.nodes.filter(({ kind }) => kind === "endpoint");
+    expect(endpoints).toHaveLength(1);
+    expect(endpoints[0]?.observations[0]).toMatchObject({
+      properties: { value: "target", resolution: "partial" },
+      evidence: {
+        authority: "ast-static-analysis",
+        state: "observed",
+        limitations: [expect.stringContaining("not an exact literal")],
+      },
+    });
+  } finally {
+    await reader.close();
+  }
+});
 
 it("keeps ambiguous endpoint candidates inferred through artifact graph projection", async () => {
   const root = await createTestTempDirectory("rea-js-endpoint-certainty-");
@@ -17,8 +51,8 @@ it("keeps ambiguous endpoint candidates inferred through artifact graph projecti
   const reader = createJavaScriptArtifactReader(root, "directory");
   try {
     const files = await readJavaScriptArtifactFiles(reader, snapshot);
-    const analysis = analyzeJavaScriptArtifactFiles(files);
-    const graph = buildJavaScriptArtifactGraph(snapshot, files, analysis);
+    const { analysis } = await analyzeArtifactFiles(files);
+    const graph = await immutableArtifactGraph(snapshot, files, analysis);
     const endpoints = graph.nodes.filter(({ kind }) => kind === "endpoint");
     const candidate = endpoints.find(({ observations }) =>
       observations.some(
@@ -87,8 +121,8 @@ it("preserves partial and exact endpoint identity through graph projection", asy
   const reader = createJavaScriptArtifactReader(root, "directory");
   try {
     const files = await readJavaScriptArtifactFiles(reader, snapshot);
-    const analysis = analyzeJavaScriptArtifactFiles(files);
-    const graph = buildJavaScriptArtifactGraph(snapshot, files, analysis);
+    const { analysis } = await analyzeArtifactFiles(files);
+    const graph = await immutableArtifactGraph(snapshot, files, analysis);
     const endpoints = graph.nodes.filter(({ kind }) => kind === "endpoint");
     const partialNodes = endpoints.filter(({ observations }) =>
       observations.some(
@@ -119,6 +153,53 @@ it("preserves partial and exact endpoint identity through graph projection", asy
         state: "observed",
         limitations: [expect.stringContaining("not an exact literal")],
       },
+    });
+  } finally {
+    await reader.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+it("projects path data records as inferred route candidates", async () => {
+  const root = await createTestTempDirectory("rea-js-route-property-");
+  await writeFile(
+    join(root, "app.js"),
+    'const ops = [{ type: "set", path: "updatedAt", value: 1 }];\n' +
+      'const routes = [{ path: "/settings", component: Settings }];',
+  );
+  const snapshot = await scanCanonicalArtifactInventory(root, {});
+  const reader = createJavaScriptArtifactReader(root, "directory");
+  try {
+    const files = await readJavaScriptArtifactFiles(reader, snapshot);
+    const { analysis } = await analyzeArtifactFiles(files);
+    const graph = await immutableArtifactGraph(snapshot, files, analysis);
+    const route = (value: string) =>
+      graph.nodes
+        .find(
+          ({ kind, observations }) =>
+            kind === "endpoint" &&
+            observations.some(({ properties }) => properties.value === value),
+        )
+        ?.observations.find(({ properties }) => properties.value === value);
+
+    expect(route("updatedAt")?.properties).toMatchObject({
+      endpoint_kind: "route",
+      mechanism: "property:path",
+      interpretation: "candidate",
+    });
+    expect(route("updatedAt")?.evidence).toMatchObject({
+      authority: "static-relationship-inference",
+      state: "inferred",
+      confidence: "low",
+    });
+    expect(route("updatedAt")?.evidence.limitations).toEqual(
+      expect.arrayContaining([expect.stringContaining("no router fields")]),
+    );
+    expect(route("/settings")?.properties.interpretation).toBeUndefined();
+    expect(route("/settings")?.evidence).toMatchObject({
+      authority: "ast-static-analysis",
+      state: "observed",
+      confidence: "exact",
     });
   } finally {
     await reader.close();

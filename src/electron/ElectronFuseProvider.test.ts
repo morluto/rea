@@ -1,6 +1,13 @@
 import { resolveElectronFuseTarget } from "./ElectronFusePath.js";
 import { RegularFileChangedError } from "../filesystem/RegularFile.js";
-import { mkdir, symlink, writeFile, truncate, rename } from "node:fs/promises";
+import {
+  mkdir,
+  symlink,
+  writeFile,
+  truncate,
+  rename,
+  stat,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -25,11 +32,100 @@ import { readElectronFuseImage } from "./ElectronFuseReader.js";
 
 const provider = new ElectronFuseProvider();
 
+const symlinkDirectory = (target: string, path: string): Promise<void> =>
+  symlink(target, path, process.platform === "win32" ? "dir" : undefined);
+
 const inspect = async (path: string) => {
   const result = await provider.inspect({ path });
   if (!result.ok) throw result.error;
   return result.value;
 };
+
+it.skipIf(process.platform === "win32")(
+  "rejects undecodable symlink targets rather than selecting a replacement sibling",
+  async () => {
+    const root = await createTestTempDirectory("rea-electron-link-encoding-");
+    const framework = join(root, "Electron Framework.framework");
+    await mkdir(framework);
+    await writeFile(join(framework, "\uFFFD"), thinFuseImage([0x31]).bytes);
+    const alias = join(framework, "alias");
+    await symlink(Buffer.from([0xff]), alias);
+    await expect(stat(alias)).rejects.toMatchObject({ code: "ENOENT" });
+    const result = await provider.inspect({ path: alias });
+    expect(result.ok).toBe(false);
+    if (!result.ok)
+      expect(result.error).toMatchObject({
+        issues: [
+          {
+            reason: "invalid_value",
+            message: expect.stringContaining("not valid UTF-8"),
+          },
+        ],
+      });
+    const validName = "\uFEFFbinary";
+    await writeFile(join(framework, validName), thinFuseImage([0x31]).bytes);
+    const validAlias = join(framework, "valid-alias");
+    await symlink(validName, validAlias);
+    expect(
+      (await inspect(validAlias)).slices[0]?.sentinels[0]?.fuses[0]?.state,
+    ).toBe("enabled");
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "rejects framework links whose terminal separator requires a directory",
+  async () => {
+    const root = await createTestTempDirectory("rea-electron-link-directory-");
+    const framework = join(root, "Electron Framework.framework");
+    await mkdir(join(framework, "Versions", "A"), { recursive: true });
+    await writeFile(
+      join(framework, "Versions", "A", "Electron Framework"),
+      thinFuseImage([0x31]).bytes,
+    );
+    for (const suffix of ["/", "/."]) {
+      const alias = join(framework, `alias${suffix.length}`);
+      await symlink(`Versions/A/Electron Framework${suffix}`, alias);
+      await expect(stat(alias)).rejects.toMatchObject({ code: "ENOTDIR" });
+      const result = await provider.inspect({ path: alias });
+      expect(result.ok).toBe(false);
+    }
+    await symlink("A/", join(framework, "Versions", "Current"));
+    const validAlias = join(framework, "Electron Framework");
+    await symlink("Versions/Current/Electron Framework", validAlias);
+    const report = await inspect(validAlias);
+    expect(report.slices[0]?.sentinels[0]?.fuses[0]?.state).toBe("enabled");
+  },
+);
+
+it("preserves the hidden ARM64 marker through fuse scanning and reporting", async () => {
+  const root = await createTestTempDirectory(
+    "rea-electron-fuses-hidden-arm64-",
+  );
+  const universal = universalFuseImage();
+  // Model Apple's ARM32/hidden-ARM64 layout: keep both physical FAT rows,
+  // but declare only the visible ARM32 row in nfat_arch.
+  universal.bytes.writeUInt32BE(1, 4);
+  universal.bytes.writeUInt32BE(12, 8);
+  universal.bytes.writeUInt32BE(9, 12);
+  universal.bytes.writeUInt32LE(0xfeedface, universal.left.fileOffset);
+  universal.bytes.writeUInt32LE(12, universal.left.fileOffset + 4);
+  universal.bytes.writeUInt32LE(9, universal.left.fileOffset + 8);
+  const path = join(root, "hidden-arm64");
+  await writeFile(path, universal.bytes);
+
+  const report = await inspect(path);
+  expect(report.slices).toHaveLength(2);
+  expect(report.slices[0]).not.toHaveProperty("hidden");
+  expect(report.slices[1]).toMatchObject({
+    architecture: "arm64",
+    hidden: true,
+    file_offset: universal.right.fileOffset,
+    sentinel_count: 1,
+    sentinels: [
+      { sentinel_offset: universal.right.sentinelOffset, complete: true },
+    ],
+  });
+});
 
 describe("Electron fuse wire reading", () => {
   it("reads thin Mach-O, universal Mach-O, PE, and ELF wires", async () => {
@@ -48,6 +144,7 @@ describe("Electron fuse wire reading", () => {
     await writeFile(join(root, "app.elf"), elf.bytes);
 
     const thinReport = await inspect(join(root, "thin"));
+    expect(thinReport.slices[0]).not.toHaveProperty("hidden");
     expect(thinReport.artifact).toMatchObject({
       format: "mach-o",
       bytes: thin.bytes.length,
@@ -80,6 +177,8 @@ describe("Electron fuse wire reading", () => {
     ]);
 
     const universalReport = await inspect(join(root, "universal"));
+    for (const slice of universalReport.slices)
+      expect(slice).not.toHaveProperty("hidden");
     expect(universalReport.artifact.format).toBe("mach-o-universal");
     expect(universalReport.slices).toMatchObject([
       {
@@ -265,7 +364,7 @@ describe("Electron fuse path and container admission", () => {
     await mkdir(join(versions, "A"), { recursive: true });
     const binary = join(versions, "A", "Electron Framework");
     await writeFile(binary, image.bytes);
-    await symlink("A", join(versions, "Current"));
+    await symlinkDirectory("A", join(versions, "Current"));
     await symlink(
       "Versions/Current/Electron Framework",
       join(versions, "..", "Electron Framework"),
@@ -470,6 +569,40 @@ describe("direct Electron Framework binary selection", () => {
       ],
     });
   });
+
+  it.runIf(process.platform === "win32")(
+    "walks a backslash-separated Windows link target before accepting a file",
+    async () => {
+      const { app, framework } = await frameworkFixture(
+        "rea-electron-fuses-nested-escape-backslash-",
+      );
+      const versions = join(framework, "Versions");
+      await mkdir(join(app, "Contents", "Other", "subdir"), {
+        recursive: true,
+      });
+      await writeFile(
+        join(app, "Contents", "Other", "subdir", "Electron Framework"),
+        elfFuseImage([ELECTRON_FUSE_STATE_BYTES.enabled]).bytes,
+      );
+      await symlinkDirectory("../../../Other", join(versions, "nested"));
+      await symlinkDirectory("nested\\subdir", join(versions, "Current"));
+
+      const result = await provider.inspect({
+        path: join(versions, "Current", "Electron Framework"),
+      });
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toMatchObject({
+        _tag: "AnalysisInputError",
+        issues: [
+          expect.objectContaining({
+            path: ["path"],
+            message: expect.stringContaining("escapes"),
+          }),
+        ],
+      });
+    },
+  );
 
   it("rejects a framework directory that is a symlink outside the bundle", async () => {
     const root = await createTestTempDirectory(
@@ -771,7 +904,7 @@ it("follows the active framework binary while an inactive A version remains", as
       thinFuseImage([state]).bytes,
     );
   }
-  await symlink("B", join(framework, "Versions", "Current"));
+  await symlinkDirectory("B", join(framework, "Versions", "Current"));
   await symlink(
     "Versions/Current/Electron Framework",
     join(framework, "Electron Framework"),

@@ -4,6 +4,7 @@ import { describe, expect, it, onTestFinished, vi } from "vitest";
 import type { WindowsNativeAuthority } from "./WindowsNativeLoader.js";
 import {
   quoteWindowsProcessArgument,
+  WindowsNativeControlUnavailableError,
   WindowsOwnedProcess,
 } from "./WindowsOwnedProcess.js";
 
@@ -292,7 +293,45 @@ describe("Windows Job Object memory limits", () => {
   it("refuses a requested limit before launch when the artifact lacks the control", () => {
     const { native, calls } = authority();
     expect(() => launch(native, LIMIT)).toThrow(
-      "does not support Job Object memory limits",
+      expect.objectContaining({
+        constructor: WindowsNativeControlUnavailableError,
+        control: "job-memory-limit",
+        retryable: false,
+        message: expect.stringContaining(
+          "does not support Job Object memory limits",
+        ),
+      }),
+    );
+    expect(calls).toEqual([]);
+  });
+
+  it("refuses protocol stdin before launch when the artifact lacks the control", () => {
+    const { native, calls } = authority();
+    const earlier = {
+      ...native,
+      inspection: { ...native.inspection, protocolStdin: false },
+    };
+    expect(
+      () =>
+        new WindowsOwnedProcess(
+          "C:\\runtime\\bun.exe",
+          [],
+          undefined,
+          {},
+          false,
+          {
+            authority: earlier,
+            protocolStdin: true,
+          },
+        ),
+    ).toThrow(
+      expect.objectContaining({
+        constructor: WindowsNativeControlUnavailableError,
+        control: "protocol-stdin",
+        message: expect.stringContaining(
+          "does not support owned protocol stdin",
+        ),
+      }),
     );
     expect(calls).toEqual([]);
   });
@@ -619,6 +658,58 @@ describe("Windows output backpressure and cleanup", () => {
         calls.filter((call) => call.operation === "process_poll"),
       ).toHaveLength(2);
       expect(child.outputIncomplete).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("Windows output poll failure", () => {
+  it("keeps polling after failed native polls and reports the run once", async () => {
+    vi.useFakeTimers();
+    try {
+      const { native, calls } = authority({
+        polls: [
+          { malformed: true },
+          { malformed: true },
+          {
+            stdout: Buffer.from("frame\n"),
+            stderr: Buffer.alloc(0),
+            stdoutEnded: false,
+            stderrEnded: false,
+            exitCode: null,
+            activeProcesses: 1,
+          },
+          { ...settledPoll, stderr: Buffer.alloc(0), exitCode: 0 },
+        ],
+      });
+      const child = launch(native);
+      const errors: unknown[] = [];
+      child.on("error", (error) => errors.push(error));
+      const output: Buffer[] = [];
+      child.stdout.on("data", (chunk: Buffer) => output.push(chunk));
+      let closed = false;
+      child.once("close", () => (closed = true));
+      const polls = () =>
+        calls.filter((call) => call.operation === "process_poll").length;
+      // Failed polls back off 250 ms instead of retrying at the idle cadence.
+      await vi.advanceTimersByTimeAsync(25);
+      expect(polls()).toBe(1);
+      await vi.advanceTimersByTimeAsync(249);
+      expect(polls()).toBe(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(polls()).toBe(2);
+      await vi.advanceTimersByTimeAsync(249);
+      expect(polls()).toBe(2);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(polls()).toBe(3);
+      // Output resumes the immediate cadence (Node clamps a 0 ms timer to 1 ms).
+      await vi.advanceTimersByTimeAsync(1);
+      expect(polls()).toBe(4);
+      expect(errors).toHaveLength(1);
+      expect(Buffer.concat(output).toString()).toBe("frame\n");
+      expect(child.exitCode).toBe(0);
+      expect(closed).toBe(true);
     } finally {
       vi.useRealTimers();
     }

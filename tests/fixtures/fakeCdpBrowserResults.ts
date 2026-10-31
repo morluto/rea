@@ -10,6 +10,23 @@ export const resultFor = (
   switch (command.method) {
     case "Target.attachToTarget":
       return attachToTargetResult(options);
+    case "Page.getLayoutMetrics":
+      return {
+        cssVisualViewport: {
+          pageX: 0,
+          pageY: 0,
+          clientWidth: 1,
+          clientHeight: 1,
+          scale: 1,
+        },
+        visualViewport: {
+          pageX: 0,
+          pageY: 0,
+          clientWidth: 1,
+          clientHeight: 1,
+          scale: 1,
+        },
+      };
     case "Page.getFrameTree":
       return frameTreeResult(port, options, frameTreeReads);
     case "Page.getResourceTree":

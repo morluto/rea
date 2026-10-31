@@ -52,14 +52,16 @@ describe("Ghidra DOS import commitment", () => {
     });
   });
   it("rejects a 32-bit interpretation even when artifact and profile hashes match", () => {
-    expect(rejectedHandshake(session("x86:LE:32:default")).message).toBe(
-      "Ghidra bridge handshake identity is invalid",
-    );
+    expect(rejectedHandshake(session("x86:LE:32:default"))).toMatchObject({
+      _tag: "GhidraAdmissionError",
+      code: "handshake_identity",
+    });
   });
   it("rejects compiler drift independently of the language", () => {
-    expect(rejectedHandshake(session(undefined, "windows")).message).toBe(
-      "Ghidra bridge handshake identity is invalid",
-    );
+    expect(rejectedHandshake(session(undefined, "windows"))).toMatchObject({
+      _tag: "GhidraAdmissionError",
+      code: "handshake_identity",
+    });
   });
 });
 
@@ -140,6 +142,75 @@ describe("Ghidra MIPS soft-float storage report", () => {
   });
 });
 
+describe("Ghidra RISC-V calling-convention report", () => {
+  const valid = {
+    policy: "ilp32-prototype-v1",
+    functions: 11,
+    definitions: 11,
+  };
+  it("accepts the exact committed policy outcome", () => {
+    const parsed = parseGhidraSessionInfo(
+      { ...session(), riscv_calling_convention: valid },
+      expected,
+    );
+    if (!parsed.ok) throw parsed.error;
+    expect(parsed.value.riscv_calling_convention).toEqual(valid);
+  });
+  it.each([
+    ["an unknown policy", { ...valid, policy: "ilp32f-prototype-v1" }],
+    ["the MIPS policy", { ...valid, policy: "o32-soft-float-prototype-v1" }],
+    ["a negative count", { ...valid, definitions: -1 }],
+    ["a fractional count", { ...valid, functions: 1.5 }],
+    ["a missing count", { policy: valid.policy, functions: 2 }],
+    ["an undeclared field", { ...valid, prototype: "__rea_ilp32" }],
+    ["a non-object report", "ilp32-prototype-v1"],
+  ])("rejects %s", (_label, report) => {
+    expect(
+      parseGhidraSessionInfo(
+        { ...session(), riscv_calling_convention: report },
+        expected,
+      ).ok,
+    ).toBe(false);
+  });
+});
+
+describe("Ghidra disabled analyzer report", () => {
+  const valid = {
+    format: "rea-ghidra-disabled-analyzers-v1",
+    analyzers: [
+      { name: "Decompiler Switch Analysis", status: "disabled" },
+      { name: "Objective-C Message Analyzer", status: "not_applicable" },
+    ],
+  };
+  it("accepts disabled and not-applicable outcomes in configured order", () => {
+    const parsed = parseGhidraSessionInfo(
+      { ...session(), disabled_analyzers: valid },
+      expected,
+    );
+    if (!parsed.ok) throw parsed.error;
+    expect(parsed.value.disabled_analyzers).toEqual(valid);
+  });
+  it.each([
+    [
+      "an unknown analyzer reported as accepted",
+      {
+        ...valid,
+        analyzers: [{ name: "REA Unknown Analyzer", status: "unknown" }],
+      },
+    ],
+    ["an empty outcome list", { ...valid, analyzers: [] }],
+    ["another report format", { ...valid, format: "rea-ghidra-seeds-v1" }],
+    ["an undeclared field", { ...valid, skipped: [] }],
+  ])("rejects %s", (_label, report) => {
+    expect(
+      parseGhidraSessionInfo(
+        { ...session(), disabled_analyzers: report },
+        expected,
+      ).ok,
+    ).toBe(false);
+  });
+});
+
 describe("Ghidra mutation handshake", () => {
   it("requires the exact mutation authority and rejects duplicate capabilities", () => {
     const value = session();
@@ -201,4 +272,33 @@ describe("Ghidra mutation handshake", () => {
       ).toBe(false);
     }
   });
+});
+
+it("admits unknown analysis completeness only for a committed read-only existing project", () => {
+  const value = {
+    ...session(),
+    existing_project: true,
+    read_only: true,
+    analysis_complete: null,
+    capabilities: GHIDRA_SESSION_CAPABILITIES.filter(
+      (name) => !GHIDRA_MUTATING_OPERATIONS.has(name),
+    ),
+  };
+  const project = {
+    ...expected,
+    expectedReadOnly: true,
+    expectedExistingProject: true,
+  };
+  expect(parseGhidraSessionInfo(value, project).ok).toBe(true);
+  expect(parseGhidraSessionInfo(value, expected).ok).toBe(false);
+  for (const analysis_complete of [false, true])
+    expect(
+      parseGhidraSessionInfo({ ...value, analysis_complete }, project).ok,
+    ).toBe(false);
+  expect(
+    parseGhidraSessionInfo(
+      { ...value, capabilities: [...GHIDRA_SESSION_CAPABILITIES] },
+      project,
+    ).ok,
+  ).toBe(false);
 });

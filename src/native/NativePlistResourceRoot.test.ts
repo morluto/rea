@@ -4,7 +4,7 @@ import { NativeMacOSProvider } from "./NativeMacOSProvider.js";
 import { resolveBundleResourcePlistSelection } from "./NativePlistSource.js";
 import { NativeFixtureRunner } from "../../tests/fixtures/nativeCommands.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-import { writeFile } from "node:fs/promises";
+import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 
 it("inspects a resolved app plist without executable identity", async () => {
   const bundle = await createTestTempDirectory("rea-plist-resource-root-");
@@ -44,3 +44,39 @@ it("inspects a resolved app plist without executable identity", async () => {
       },
     });
 });
+
+it.skipIf(process.platform === "win32")(
+  "preserves physical selected plist paths in resource-only roots",
+  async () => {
+    const bundle = await createTestTempDirectory("rea-plist-resource-path-");
+    const physical = join(bundle, "physical");
+    await mkdir(join(physical, "child"), { recursive: true });
+    await writeFile(join(bundle, "Info.plist"), "lexical decoy");
+    await writeFile(join(physical, "Info.plist"), "selected source");
+    await symlink(join(physical, "child"), join(bundle, "alias"));
+    const root = {
+      callerPath: bundle,
+      canonicalPath: bundle,
+      infoPlistPath: join(bundle, "Info.plist"),
+      layout: "root" as const,
+      executableSha256: null,
+    };
+    for (const requested of [
+      "alias/../Info.plist",
+      `${bundle}/alias/../Info.plist`,
+      "physical/Info.plist",
+    ]) {
+      const selected = resolveBundleResourcePlistSelection(root, requested);
+      if (!selected.ok) throw selected.error;
+      expect(selected.value.origin).toBe("selected");
+      expect(await readFile(selected.value.path, "utf8")).toBe(
+        "selected source",
+      );
+    }
+    const directory = resolveBundleResourcePlistSelection(root, "Info.plist/");
+    if (!directory.ok) throw directory.error;
+    await expect(readFile(directory.value.path)).rejects.toMatchObject({
+      code: "ENOTDIR",
+    });
+  },
+);

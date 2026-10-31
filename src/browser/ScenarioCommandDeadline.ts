@@ -1,3 +1,4 @@
+import { createRequire } from "node:module";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import {
   browserDeadlineRetry,
@@ -12,6 +13,9 @@ import {
 import type { BrowserScenario } from "../domain/browserScenario.js";
 
 const OPERATION = "capture_browser_scenario" as const;
+type ScenarioCommandDeadlinePhase =
+  | Extract<CdpCommandDeadlinePhase, "handshake" | "command">
+  | "launch";
 
 const pendingScenarioCommands = new WeakMap<
   BrowserObservationError,
@@ -23,9 +27,14 @@ export const scenarioCommandTimeoutMs = (
   scenario: Pick<BrowserScenario, "command_timeout_ms">,
 ): number => selectedCdpCommandTimeoutMs(scenario.command_timeout_ms);
 
-const playwrightTimedOut = (cause: unknown): cause is Error =>
-  cause instanceof Error &&
-  (cause.name === "TimeoutError" || cause.message.startsWith("Timeout "));
+const playwrightTimedOut = (cause: unknown): cause is Error => {
+  if (!(cause instanceof Error) || cause.name !== "TimeoutError") return false;
+  // Check the public producer type without loading Playwright at MCP startup.
+  const { errors } = createRequire(import.meta.url)(
+    "playwright-core",
+  ) as typeof import("playwright-core");
+  return cause instanceof errors.TimeoutError;
+};
 
 /**
  * `capture-browser-scenario` accepts only scenario JSON, so recovery names
@@ -33,16 +42,19 @@ const playwrightTimedOut = (cause: unknown): cause is Error =>
  */
 const scenarioCommandDeadlineRecovery = (
   timeoutMs: number,
-  phase: Extract<CdpCommandDeadlinePhase, "handshake" | "command">,
+  phase: ScenarioCommandDeadlinePhase,
   method?: string,
 ): { readonly userMessage: string; readonly remediationAction: string } => {
-  const shared = cdpCommandDeadlineRecovery(timeoutMs, phase, method);
+  const userMessage =
+    phase === "launch"
+      ? `Browser launch and persistent-context startup exceeded its ${String(timeoutMs)} ms command_timeout_ms deadline (deadlineExpired). This is not the caller observation window, the ${String(CDP_DISCOVERY_RESPONSE_TIMEOUT_MS)} ms CDP discovery deadline, or the ${String(CDP_CLEANUP_GRACE_MS)} ms cleanup grace.`
+      : cdpCommandDeadlineRecovery(timeoutMs, phase, method).userMessage;
   const increase =
     timeoutMs < MAX_BROWSER_DEADLINE_MS
       ? `Set command_timeout_ms in the capture-browser-scenario JSON above ${String(timeoutMs)} (integer milliseconds from 1 to ${String(MAX_BROWSER_DEADLINE_MS)}; omitted means ${String(DEFAULT_CDP_COMMAND_TIMEOUT_MS)}).`
       : `command_timeout_ms is already at the maximum ${String(MAX_BROWSER_DEADLINE_MS)} ms; do not increase it further.`;
   return {
-    userMessage: shared.userMessage,
+    userMessage,
     remediationAction: `${increase} ${browserDeadlineRetry} command_timeout_ms does not raise the fixed protocol, retained-event, or source byte budgets, the ${String(CDP_DISCOVERY_RESPONSE_TIMEOUT_MS)} ms CDP discovery response deadline, or the ${String(CDP_CLEANUP_GRACE_MS)} ms cleanup grace. Those have no runtime override.`,
   };
 };
@@ -91,7 +103,7 @@ export const releaseLateScenarioCommand = async (
 };
 
 /**
- * Bound one Playwright CDP handshake or command by the scenario command deadline.
+ * Bound browser startup, a CDP handshake or a command by the scenario deadline.
  * The underlying operation stays reachable after a timeout so its owner can
  * close the returned handle or restore a mutation that lands late.
  * Playwright's own timeout, when it rejects first, is reported as that deadline.
@@ -99,8 +111,9 @@ export const releaseLateScenarioCommand = async (
 export const withScenarioCommandDeadline = async <T>(
   work: () => Promise<T>,
   timeoutMs: number,
-  phase: Extract<CdpCommandDeadlinePhase, "handshake" | "command">,
+  phase: ScenarioCommandDeadlinePhase,
   method?: string,
+  launchExecutablePath?: string,
 ): Promise<T> => {
   let operation: Promise<T>;
   try {
@@ -110,10 +123,27 @@ export const withScenarioCommandDeadline = async <T>(
   }
   let timer: ReturnType<typeof setTimeout> | undefined;
   let settled = false;
-  const recovery = (): {
-    readonly userMessage: string;
-    readonly remediationAction: string;
-  } => scenarioCommandDeadlineRecovery(timeoutMs, phase, method);
+  const deadlineFailure = (cause?: Error): BrowserObservationError => {
+    const deadline = scenarioCommandDeadlineRecovery(timeoutMs, phase, method);
+    return new BrowserObservationError(OPERATION, "timeout", {
+      detail: deadline.userMessage,
+      remediationAction: deadline.remediationAction,
+      cause,
+      diagnostics: {
+        phase,
+        command_timeout_ms: timeoutMs,
+        ...(launchExecutablePath === undefined
+          ? {}
+          : { executable_path: launchExecutablePath }),
+        ...(method === undefined ? {} : { method }),
+        // Discovered CDP URLs can carry transport userinfo in Playwright's
+        // native message. Preserve that cause without projecting it here.
+        ...(cause === undefined || phase !== "launch"
+          ? {}
+          : { producer_message: cause.message }),
+      },
+    });
+  };
   try {
     return await new Promise<T>((resolve, reject) => {
       const fail = (cause: unknown): void => {
@@ -122,11 +152,7 @@ export const withScenarioCommandDeadline = async <T>(
         reject(cause);
       };
       timer = setTimeout(() => {
-        const deadline = recovery();
-        const timeout = new BrowserObservationError(OPERATION, "timeout", {
-          detail: deadline.userMessage,
-          remediationAction: deadline.remediationAction,
-        });
+        const timeout = deadlineFailure();
         pendingScenarioCommands.set(timeout, operation);
         fail(timeout);
       }, timeoutMs);
@@ -138,14 +164,7 @@ export const withScenarioCommandDeadline = async <T>(
         },
         (cause: unknown) => {
           if (playwrightTimedOut(cause)) {
-            const deadline = recovery();
-            fail(
-              new BrowserObservationError(OPERATION, "timeout", {
-                detail: deadline.userMessage,
-                remediationAction: deadline.remediationAction,
-                cause,
-              }),
-            );
+            fail(deadlineFailure(cause));
             return;
           }
           fail(cause);

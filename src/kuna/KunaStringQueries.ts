@@ -64,9 +64,11 @@ export class KunaStringQueries {
       address === undefined
     )
       return err(
-        new AnalysisInputError(operation, {
-          userMessage: "Use an explicit hexadecimal u64 string address.",
-        }),
+        new AnalysisInputError(
+          operation,
+          { userMessage: "Use an explicit hexadecimal u64 string address." },
+          [{ path: ["address"], reason: "invalid_format" }],
+        ),
       );
     const inventory = await this.#load(installation, operation, signal);
     if (!inventory.ok)

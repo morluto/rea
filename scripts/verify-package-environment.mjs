@@ -1,6 +1,6 @@
 import { chmod, mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { supportedClients } from "../dist/application/SupportedClients.js";
 
 /** Create an isolated prefix, fake PATH, client configs, and environment. */
@@ -41,7 +41,7 @@ export async function verifyPackageEnvironment({
   await writeFile(swVers, "#!/bin/sh\necho 14.5\n");
   await writeFile(
     npx,
-    '#!/bin/sh\nprintf "%s\\n" "$*" > "$REA_NPX_LOG"\necho "│ ✓ Cursor: isolated │"\n',
+    '#!/bin/sh\nexec "$REA_VERIFY_NODE" "$REA_VERIFY_NPX_SCRIPT" "$@"\n',
   );
   await writeFile(hopper, "#!/bin/sh\nexit 0\n");
   await Promise.all([
@@ -98,6 +98,10 @@ export async function verifyPackageEnvironment({
     REA_ANALYSIS_PROVIDER: "auto",
     ...packageHopperEnvironment(root),
     REA_NPX_LOG: npxLog,
+    REA_VERIFY_NODE: process.execPath,
+    REA_VERIFY_NPX_SCRIPT: fileURLToPath(
+      new URL("./lib/verify-package-runner-fixture.mjs", import.meta.url),
+    ),
     REA_REFERENCE_SECRET_PATTERNS_JSON: JSON.stringify([".env"]),
   };
   return {

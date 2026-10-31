@@ -1,25 +1,22 @@
 import { setImmediate } from "node:timers/promises";
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import { ok } from "../../domain/result.js";
-import { resolveSourceToBundleReference } from "../../application/javascript/SourceToBundleReference.js";
 import {
   requireAnalysisViewRetention,
   inspectAnalysisViewValidated,
 } from "../../application/analysisView/AnalysisViewService.js";
 import type { EvidenceMcpServer } from "../EvidenceMcpServer.js";
 import { runAdmittedToolOperation } from "../admittedToolOperation.js";
-import { resolveApplicationEvidenceRequest } from "../../application/EvidenceInputResolver.js";
-import { recordSessionEvidenceSources } from "../sessionEvidence.js";
+import { recordEvidenceSources } from "../../application/investigation/recordEvidenceSources.js";
 
-import { compareSourceToBundleEvidenceValidated } from "../../application/javascript/JavaScriptApplicationWorkflowService.js";
-import { applicationToolContract } from "../../contracts/applicationToolContracts.js";
-import { sourceToBundleComparisonResultSchema } from "../../domain/javascript/sourceToBundleComparisonSchemas.js";
+import { executeSourceToBundleComparison } from "../../application/javascript/JavaScriptApplicationWorkflowService.js";
+import { toolContract } from "../../contracts/toolContracts.js";
 import { logToolExecution } from "../toolLogging.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
 import { recordApplicationResult } from "./helpers.js";
 import type { ApplicationToolRegistration } from "./types.js";
 
-const contract = applicationToolContract("compare_source_to_bundle");
+const contract = toolContract("compare_source_to_bundle");
 
 /** Register conservative historical-source to bundle comparison. */
 export const registerCompareSourceToBundleTool = (
@@ -44,35 +41,22 @@ export const registerCompareSourceToBundleTool = (
             if (!retention.ok)
               return server.delivery.toCallToolResult(retention, contract);
           }
-          const resolved = resolveApplicationEvidenceRequest(
-            input,
-            options.evidenceById,
-          );
-          if (!resolved.ok)
-            return server.delivery.toCallToolResult(resolved, contract);
-          const reference = await resolveSourceToBundleReference(
-            resolved.value.reference,
-            context.mcpReq.signal,
-            options.artifactResources,
-          );
-          if (!reference.ok)
-            return server.delivery.toCallToolResult(reference, contract);
-          const parsed = {
-            ...reference.value,
-            application: resolved.value.application,
-          };
           const result = await logToolExecution(
             options.logger,
             contract.name,
             () =>
-              Promise.resolve(compareSourceToBundleEvidenceValidated(parsed)),
+              executeSourceToBundleComparison(
+                input,
+                contract.inputSchema,
+                options.evidenceById,
+                options.artifactResources,
+                { signal: context.mcpReq.signal },
+              ),
           );
           if (!result.ok)
             return server.delivery.toCallToolResult(result, contract);
-          const parent = result.value;
-          const comparison = sourceToBundleComparisonResultSchema.parse(
-            parent.normalized_result,
-          );
+          const parent = result.value.evidence;
+          const comparison = result.value.result;
           // Stage the projection against the owned parent before committing any session facts.
           const selected =
             input.view === undefined
@@ -100,9 +84,9 @@ export const registerCompareSourceToBundleTool = (
             );
           if (!selected.ok)
             return server.delivery.toCallToolResult(selected, contract);
-          const recorded = recordSessionEvidenceSources(
+          const recorded = recordEvidenceSources(
             options.recordEvidence,
-            [parsed.application],
+            result.value.sources,
           );
           if (!recorded.ok)
             return server.delivery.toCallToolResult(recorded, contract);

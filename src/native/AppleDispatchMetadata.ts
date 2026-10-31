@@ -1,7 +1,11 @@
 import { createHash } from "node:crypto";
+import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
 import {
+  DEFAULT_DISPATCH_METADATA_INPUT_BYTES,
+  MAXIMUM_DISPATCH_METADATA_INPUT_BYTES,
   objcSwiftMetadataSchema,
   nativeDispatchMetadataResultSchema,
+  type DispatchMetadataInputAdmission,
   type ObjcSwiftMetadata,
 } from "../domain/native/objcSwiftMetadata.js";
 import {
@@ -10,13 +14,17 @@ import {
 } from "../domain/binaryTargetTypes.js";
 import {
   AnalysisCancelledError,
+  AnalysisArtifactChangedError,
+  AnalysisAccessDeniedError,
   AnalysisCapabilityUnavailableError,
   AnalysisResourceConstraintError,
+  AnalysisUnsupportedTargetError,
 } from "../domain/analysisErrorCore.js";
 import {
   ArtifactFileCleanupFailure,
   artifactFileCancellationCause,
-  artifactFilePrimaryFailure,
+  artifactFilePrimaryFacts,
+  type ArtifactFilePrimaryFacts,
   bindArtifactFileCleanup,
   withArtifactRegularFile,
 } from "../artifacts/ArtifactFileOperation.js";
@@ -24,7 +32,6 @@ import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { fixedNativeAllowance } from "../domain/native/nativeDeadlines.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
@@ -35,6 +42,7 @@ import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
 import { pushDispatchCoverage } from "./AppleDispatchCoverage.js";
 import { parsePointerFixups } from "./AppleMachoFixups.js";
+import { BinaryFormatFailure } from "./metadata/BinaryContainer.js";
 import {
   parseMachoLayout,
   UnsupportedMachoMetadataFormatError,
@@ -46,7 +54,11 @@ import {
   type DispatchRecordBudget,
   type SwiftRelativeTargetLocation,
 } from "./AppleSwiftDispatchFacets.js";
-import { decodeSwiftClassVtables } from "./AppleSwiftVtables.js";
+import { createSwiftClassVtableDecoder } from "./AppleSwiftVtables.js";
+import {
+  decodeSwiftNominalTypes,
+  createSwiftContextReader,
+} from "./AppleSwiftNominalTypes.js";
 import { inspectObjcClassImportBindings } from "./AppleObjcClassImportBindings.js";
 
 /** Decode validated little-endian 64-bit Apple Objective-C metadata without loading target code. */
@@ -201,7 +213,13 @@ export const decodeAppleDispatchMetadata = (
     budget,
     result,
   });
+  const contextReader = createSwiftContextReader({
+    u32,
+    string,
+    relative: swiftRelative,
+  });
   const swift = decodeSwiftDispatchFacets({
+    contextReader,
     sections,
     segments,
     readers,
@@ -214,28 +232,46 @@ export const decodeAppleDispatchMetadata = (
     ({ name }) => name === "__swift5_types",
   )) {
     if (section.size % 4 !== 0)
-      throw new RangeError("Misaligned Swift type section");
+      throw new BinaryFormatFailure(
+        "malformed",
+        "Misaligned Swift type section",
+      );
     for (let index = 0; index < section.size / 4 && index < maxRecords; index++)
       typeEntries.push(section.address + BigInt(index * 4));
     if (section.size / 4 > maxRecords) budget.truncated = true;
   }
-  const vtables = decodeSwiftClassVtables({
+  const admit = () => budget.admit();
+  const executable = (address: bigint) =>
+    segments.some(
+      (segment) =>
+        segment.executable &&
+        address >= segment.address &&
+        address < segment.address + segment.size,
+    );
+  const vtables = createSwiftClassVtableDecoder({
+    result,
+    readers: {
+      u32,
+      relative: swiftRelative,
+      location,
+      evidence,
+      admit,
+      executable,
+    },
+  });
+  const declarations = decodeSwiftNominalTypes({
+    contextReader,
     entries: typeEntries,
     result,
+    visitor: vtables.visitor,
     readers: {
       u32,
       relative: swiftRelative,
       string,
       location,
       evidence,
-      admit: () => budget.admit(),
-      executable: (address) =>
-        segments.some(
-          (segment) =>
-            segment.executable &&
-            address >= segment.address &&
-            address < segment.address + segment.size,
-        ),
+      executable,
+      admit,
     },
   });
   pushDispatchCoverage({
@@ -248,56 +284,100 @@ export const decodeAppleDispatchMetadata = (
     objcClassListScanTruncated,
     truncated: budget.truncated,
     fixups,
-    vtables,
+    declarations,
+    vtables: vtables.facts(),
     swift,
   });
   return objcSwiftMetadataSchema.parse(result);
 };
 
+const OPERATION = "inspect_native_dispatch_metadata";
+const MEBIBYTE = 1024 * 1024;
+const bytesWithUnits = (bytes: number): string =>
+  Number.isInteger(bytes / (MEBIBYTE * 1024))
+    ? `${String(bytes)} bytes (${String(bytes / (MEBIBYTE * 1024))} GiB)`
+    : Number.isInteger(bytes / MEBIBYTE)
+      ? `${String(bytes)} bytes (${String(bytes / MEBIBYTE)} MiB)`
+      : `${String(bytes)} bytes`;
+
+/** Refuse a file larger than the effective budget, naming how to raise it if possible. */
+const inputBudgetExceeded = (
+  admission: Omit<DispatchMetadataInputAdmission, "retained_bytes">,
+  observedBytes: number | null,
+): AnalysisResourceConstraintError => {
+  const budget = `${admission.source === "caller" ? "the selected max_input_bytes" : "the default input budget"} of ${bytesWithUnits(admission.maximum_bytes)}`;
+  const observed =
+    observedBytes === null ? "" : ` (${String(observedBytes)} bytes)`;
+  const remediationAction =
+    observedBytes === null
+      ? "The file grew while it was read. Retry once the file is stable."
+      : observedBytes <= MAXIMUM_DISPATCH_METADATA_INPUT_BYTES
+        ? `Retry with max_input_bytes (CLI --max-input-bytes) of at least ${String(observedBytes)}, at most ${bytesWithUnits(MAXIMUM_DISPATCH_METADATA_INPUT_BYTES)}; REA holds that many bytes in memory for the read.`
+        : `The file exceeds the largest selectable budget of ${bytesWithUnits(MAXIMUM_DISPATCH_METADATA_INPUT_BYTES)}; use a deep analysis provider for its Objective-C and Swift metadata.`;
+  return new AnalysisResourceConstraintError(
+    OPERATION,
+    "memory",
+    `Apple static metadata input${observed} exceeds ${budget}.`,
+    {
+      input_bytes: admission.maximum_bytes,
+      input_bytes_source: admission.source,
+      maximum_selectable_input_bytes: MAXIMUM_DISPATCH_METADATA_INPUT_BYTES,
+      ...(observedBytes === null
+        ? {}
+        : { observed_input_bytes: observedBytes }),
+    },
+    { retryable: false, remediationAction },
+  );
+};
+
+/** Optional per-read selections beyond the record budget. */
+export interface AppleDispatchMetadataOptions {
+  readonly signal?: AbortSignal | undefined;
+  readonly objcClassImportAddresses?: readonly string[] | undefined;
+  readonly objcClassImportAddressesComplete?: boolean | undefined;
+  /** Caller-selected input budget; the default applies when omitted. */
+  readonly maxInputBytes?: number | undefined;
+}
+
 /**
- * Read digest-verified target bytes under a 64 MiB static metadata budget.
- * The caller's scope retains the target descriptor when its final close fails.
+ * Read digest-verified target bytes under the effective input budget and
+ * decode their static metadata. The caller's scope retains the target
+ * descriptor when its final close fails.
  */
 export const inspectAppleDispatchMetadata = async (
   target: BinaryTarget,
   maxRecords: number,
   resources: ArtifactResourceScope,
-  signal?: AbortSignal,
-  objcClassImportAddresses?: readonly string[],
-  objcClassImportAddressesComplete = true,
+  options: AppleDispatchMetadataOptions = {},
 ) => {
+  const { signal } = options;
   if (target.kind !== "executable" || !isMachOFormat(target.format))
     throw new TypeError("Apple dispatch metadata requires a Mach-O target");
-  const maximumBytes = 64 * 1024 * 1024;
-  const capacityError = () =>
-    new AnalysisResourceConstraintError(
-      "inspect_native_dispatch_metadata",
-      "memory",
-      `Apple static metadata input exceeds its ${String(maximumBytes)}-byte (64 MiB) snapshot budget. This release has no runtime override.`,
-      { input_bytes: maximumBytes },
-      fixedNativeAllowance(
-        "The Apple static metadata snapshot allowance",
-        "parser",
-        `${String(maximumBytes)} bytes`,
-      ),
-    );
+  const admission =
+    options.maxInputBytes === undefined
+      ? {
+          maximum_bytes: DEFAULT_DISPATCH_METADATA_INPUT_BYTES,
+          source: "default" as const,
+        }
+      : { maximum_bytes: options.maxInputBytes, source: "caller" as const };
+  const maximumBytes = admission.maximum_bytes;
   const cancelled = () =>
-    new AnalysisCancelledError("inspect_native_dispatch_metadata", {
+    new AnalysisCancelledError(OPERATION, {
       cause: signal?.reason,
     });
   const { bytes, digest } = await withArtifactRegularFile(
     target.path,
     resources,
     signal,
-    async (handle) => {
-      const before = await handle.stat();
-      if (before.size > maximumBytes) throw capacityError();
+    async ({ handle, initial: before }) => {
+      if (before.size > maximumBytes)
+        throw inputBudgetExceeded(admission, before.size);
       if (signal?.aborted) throw cancelled();
       const read = await readBoundedFileBytes(handle, maximumBytes, {
         signal,
         cancellationFailure: () => cancelled(),
       });
-      if (read === undefined) throw capacityError();
+      if (read === undefined) throw inputBudgetExceeded(admission, null);
       const sha256 = createHash("sha256").update(read).digest("hex");
       if (sha256 !== target.sha256)
         throw new EvidenceIntegrityError(
@@ -312,18 +392,17 @@ export const inspectAppleDispatchMetadata = async (
     target_architecture: target.architecture,
     provider: APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE.provider,
     analysis_profile_digest: APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE.digest,
+    input_admission: { ...admission, retained_bytes: bytes.length },
     result: decodeAppleDispatchMetadata(
       bytes,
       maxRecords,
       { path: target.path, sha256: digest },
       target.architecture,
-      objcClassImportAddresses,
-      objcClassImportAddressesComplete,
+      options.objcClassImportAddresses,
+      options.objcClassImportAddressesComplete ?? true,
     ),
   });
 };
-
-const OPERATION = "inspect_native_dispatch_metadata";
 
 /** Translate the owned target read, keeping a failed close beside its physical outcome. */
 export const appleDispatchMetadataFailure = (
@@ -337,7 +416,10 @@ export const appleDispatchMetadataFailure = (
         : undefined;
     const previous =
       physical?.outcome.kind === "failed"
-        ? appleDispatchMetadataFailure(artifactFilePrimaryFailure(cause), path)
+        ? appleDispatchMetadataPrimaryFailure(
+            artifactFilePrimaryFacts(cause),
+            path,
+          )
         : physical?.completionCancellation === undefined
           ? undefined
           : new AnalysisCancelledError(OPERATION, {
@@ -356,23 +438,82 @@ export const appleDispatchMetadataFailure = (
     bindArtifactFileCleanup(cause, failure);
     return failure;
   }
-  if (cause instanceof AnalysisError) return cause;
-  if (cause instanceof UnsupportedMachoMetadataFormatError)
-    return new AnalysisCapabilityUnavailableError(
-      IDENTITY.id,
-      OPERATION,
-      cause.message,
-      { cause },
-    );
-  if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
-    return new AnalysisCancelledError(OPERATION, {
-      cause: artifactFileCancellationCause(cause),
+  return appleDispatchMetadataPrimaryFailure(
+    artifactFilePrimaryFacts(cause),
+    path,
+  );
+};
+
+const appleDispatchMetadataPrimaryFailure = (
+  { cause, origin }: ArtifactFilePrimaryFacts,
+  path: string,
+): AnalysisError => {
+  if (origin === "owned-or-classified") {
+    if (cause instanceof AnalysisError) return cause;
+    if (cause instanceof BinaryFormatFailure)
+      return new AnalysisUnsupportedTargetError(
+        OPERATION,
+        path,
+        cause.message,
+        {
+          cause,
+          remediationAction:
+            cause.kind === "malformed"
+              ? "Select a Mach-O artifact with well-formed metadata sections, reopen the target, then retry."
+              : "Select a supported little-endian 64-bit Mach-O artifact, reopen the target, then retry.",
+        },
+      );
+    if (cause instanceof UnsupportedMachoMetadataFormatError)
+      return new AnalysisCapabilityUnavailableError(
+        IDENTITY.id,
+        OPERATION,
+        cause.message,
+        { cause },
+      );
+    if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
+      return new AnalysisCancelledError(OPERATION, {
+        cause: artifactFileCancellationCause(cause),
+      });
+    if (
+      cause instanceof ArtifactReaderFailure &&
+      cause.reason === "unavailable"
+    )
+      return new AnalysisCapabilityUnavailableError(
+        IDENTITY.id,
+        OPERATION,
+        cause.message,
+        { cause },
+      );
+    if (cause instanceof ArtifactReaderFailure && cause.reason === "integrity")
+      return new AnalysisArtifactChangedError(OPERATION, path, cause.message, {
+        cause,
+      });
+    if (cause instanceof ArtifactReaderFailure && cause.reason === "path")
+      return new AnalysisArtifactChangedError(OPERATION, path, cause.message, {
+        cause,
+      });
+  }
+  const readCause =
+    origin === "owned-or-classified" &&
+    cause instanceof ArtifactReaderFailure &&
+    cause.reason === "io"
+      ? cause.cause
+      : cause;
+  if (
+    readCause instanceof Error &&
+    "code" in readCause &&
+    (readCause.code === "EACCES" || readCause.code === "EPERM")
+  )
+    return new AnalysisAccessDeniedError(OPERATION, path, readCause.code, {
+      cause,
     });
-  if (cause instanceof ArtifactReaderFailure && cause.reason === "unavailable")
-    return new AnalysisCapabilityUnavailableError(
-      IDENTITY.id,
+  // This path already belongs to the bound target; loss of readability is a
+  // change to that artifact, rather than a new caller input-selection error.
+  if (isSelectedRegularFileError(readCause))
+    return new AnalysisArtifactChangedError(
       OPERATION,
-      cause.message,
+      path,
+      `Bound metadata target could not be read (${readCause.code}): ${path}`,
       { cause },
     );
   return new ProviderAdapterError(IDENTITY.id, OPERATION, {

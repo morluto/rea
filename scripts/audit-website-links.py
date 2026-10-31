@@ -19,7 +19,7 @@ from website import authored_markdown
 @lru_cache(maxsize=None)
 def github_api(endpoint):
     """Read GitHub evidence through the caller's gh installation and authentication."""
-    result = subprocess.run(["gh", "api", endpoint], capture_output=True, text=True, timeout=20)
+    result = subprocess.run(["gh", "api", endpoint], capture_output=True, encoding="utf-8", timeout=20)
     if result.returncode:
         raise ValueError(result.stderr.strip())
     return json.loads(result.stdout)
@@ -32,7 +32,8 @@ def github_target(url):
         return None
     repo = f"repos/{parts[0]}/{parts[1]}"
     if url.hostname == "raw.githubusercontent.com" and len(parts) >= 4:
-        return f"{repo}/contents/{'/'.join(parts[3:])}?ref={quote(parts[2], safe='')}"
+        # Raw URLs omit the blob segment; share ref/path resolution below.
+        parts = [*parts[:2], "blob", *parts[2:]]
     if len(parts) == 2:
         return repo
     kind = parts[2]

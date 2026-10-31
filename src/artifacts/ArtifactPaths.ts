@@ -2,9 +2,13 @@ import { posix } from "node:path";
 
 import { logicalPathNfc } from "../domain/artifactIdentity.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
-import { ArtifactReaderFailure, type ArtifactEntry } from "./ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  artifactFixedLimitFailure,
+  type ArtifactEntry,
+} from "./ArtifactReader.js";
 
-const DRIVE_PREFIX = /^[A-Za-z]:/u;
+const ABSOLUTE_DRIVE_PATH = /^[A-Za-z]:[\\/]/u;
 
 // Bound diagnostic JSON expansion to 768 characters before formatting. This is
 // a presentation budget, never a limit on accepted paths or retained facts.
@@ -31,13 +35,44 @@ const ENGLISH_UNICODE_CASE_NOTE =
 /** Inventory limitation when logical names collide under English Unicode case folding. */
 export const ENGLISH_UNICODE_CASE_INVENTORY_LIMITATION = `Logical archive names collide under English (en-US) Unicode case folding; a case-insensitive destination cannot store both spellings. ${ENGLISH_UNICODE_CASE_NOTE}`;
 
-/** User-facing prefix for a destination that cannot keep two logical spellings. */
-export const DESTINATION_CASE_COLLISION_PREFIX =
-  "Destination filesystem cannot store both ";
+/** A rejected destination create whose directory listing identifies another spelling. */
+export class DestinationCaseCollisionFailure extends ArtifactReaderFailure {
+  constructor(
+    readonly requestedPath: string,
+    readonly existingPath: string,
+    options?: ErrorOptions,
+  ) {
+    super(
+      "path",
+      `Destination filesystem cannot store both ${requestedPath} and ${existingPath}; inventory retains both logical names.`,
+      options,
+    );
+    this.name = "DestinationCaseCollisionFailure";
+  }
+}
+
+/** The destination rejected a name before a file or directory was acquired. */
+export class DestinationPathUnrepresentableFailure extends ArtifactReaderFailure {
+  constructor(
+    readonly requestedPath: string,
+    options: ErrorOptions,
+  ) {
+    super(
+      "path",
+      `Destination filesystem cannot represent ${pathDiagnostic(requestedPath)}.`,
+      options,
+    );
+    this.name = "DestinationPathUnrepresentableFailure";
+  }
+}
 
 /** Normalize slash-separated logical names; backslashes are literal components. */
 export const normalizeArtifactPath = (input: string): string => {
-  if (input.includes("\0") || input.startsWith("/") || DRIVE_PREFIX.test(input))
+  if (
+    input.includes("\0") ||
+    input.startsWith("/") ||
+    ABSOLUTE_DRIVE_PATH.test(input)
+  )
     throw new ArtifactReaderFailure(
       "path",
       `Artifact path is absolute or unsafe: ${pathDiagnostic(input)}`,
@@ -56,16 +91,59 @@ export const normalizeArtifactPath = (input: string): string => {
   return normalized;
 };
 
-/** Reject exact and same-spelling prefix collisions. Case-distinct names stay distinct. */
+/** Reject prefix collisions and optionally bound the allocated path tree. */
 export class ArtifactPathRegistry {
   readonly #root: PathTrieNode = { kind: undefined, children: new Map() };
+  #nodeCount = 0;
+
+  constructor(
+    private readonly budget?: {
+      readonly maxParts: number;
+      readonly maxNodes: number;
+    },
+  ) {}
 
   add(path: string, kind: ArtifactEntry["kind"]): void {
     if (!hasDestinationPath(kind)) return;
+    this.#visit(path, kind);
+  }
+
+  /** Account for distinct prefixes without claiming file/directory validity. */
+  reservePath(path: string): void {
+    this.#visit(path);
+  }
+
+  #visit(path: string, kind?: DestinationEntryKind): void {
     const parts = path.split("/");
+    if (this.budget !== undefined && parts.length > this.budget.maxParts)
+      throw artifactFixedLimitFailure(
+        "Artifact path depth",
+        this.budget.maxParts,
+        "path parts",
+      );
+    if (this.budget !== undefined) {
+      let observed = this.#root;
+      for (const [index, part] of parts.entries()) {
+        const existing = observed.children.get(part);
+        if (existing === undefined) {
+          if (parts.length - index > this.budget.maxNodes - this.#nodeCount)
+            throw artifactFixedLimitFailure(
+              "Artifact path tree",
+              this.budget.maxNodes,
+              "path nodes",
+            );
+          break;
+        }
+        observed = existing;
+      }
+    }
     let node = this.#root;
     for (const [index, part] of parts.entries()) {
-      if (node.kind !== undefined && node.kind !== "directory")
+      if (
+        kind !== undefined &&
+        node.kind !== undefined &&
+        node.kind !== "directory"
+      )
         throw new ArtifactReaderFailure(
           "path",
           `Artifact prefix conflict: ${pathDiagnostic(path)}`,
@@ -74,9 +152,10 @@ export class ArtifactPathRegistry {
       if (child === undefined) {
         child = { kind: undefined, children: new Map() };
         node.children.set(part, child);
+        if (this.budget !== undefined) this.#nodeCount++;
       }
       node = child;
-      if (index === parts.length - 1) {
+      if (kind !== undefined && index === parts.length - 1) {
         if (node.kind !== undefined && node.kind !== kind)
           throw new ArtifactReaderFailure(
             "path",
@@ -89,7 +168,7 @@ export class ArtifactPathRegistry {
           );
       }
     }
-    node.kind = kind;
+    if (kind !== undefined) node.kind = kind;
   }
 }
 
@@ -168,10 +247,11 @@ const caseCollisionLimitation = (
  * Name the directory-listing spelling that differs from the requested segment
  * only by English (en-US) Unicode case. Exact matches are the same logical name.
  */
-export const destinationCaseCollisionMessage = (
+export const destinationCaseCollision = (
   requestedPath: string,
   existingNames: readonly string[],
-): string | undefined => {
+  options?: ErrorOptions,
+): DestinationCaseCollisionFailure | undefined => {
   const slash = requestedPath.lastIndexOf("/");
   const segment = slash < 0 ? requestedPath : requestedPath.slice(slash + 1);
   if (existingNames.includes(segment)) return undefined;
@@ -181,7 +261,11 @@ export const destinationCaseCollisionMessage = (
     .sort(compareUnicodeCodePoints)[0];
   if (existing === undefined) return undefined;
   const parent = slash < 0 ? "" : requestedPath.slice(0, slash + 1);
-  return `${DESTINATION_CASE_COLLISION_PREFIX}${requestedPath} and ${parent}${existing}; inventory retains both logical names.`;
+  return new DestinationCaseCollisionFailure(
+    requestedPath,
+    `${parent}${existing}`,
+    options,
+  );
 };
 
 const englishUnicodeCaseCollisions = (

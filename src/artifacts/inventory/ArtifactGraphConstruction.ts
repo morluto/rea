@@ -1,4 +1,12 @@
+import { artifactFormatDescriptor } from "../artifactFormats.js";
 import { hasGodotPckHeader } from "../../domain/godotPckFormat.js";
+import { hasUImageMagic } from "../../domain/uimageFormat.js";
+import { hasUnityFsHeader } from "../../domain/unityfsFormat.js";
+import { detectHexRecordEncoding } from "../../domain/firmware/hexRecords.js";
+import { recognizeEspImage } from "../../domain/firmware/espImage.js";
+import { hasUf2Block } from "../../domain/firmware/uf2.js";
+import { isDfuSeFile } from "../../domain/firmware/dfuse.js";
+import { hasFitImagesNode } from "../../domain/firmware/fitImage.js";
 import type { ArtifactClassificationEvidence } from "../ArtifactClassificationProbe.js";
 import { asarHeaderAdmissionFailure } from "../AsarHeader.js";
 import { hasDestinationPath } from "../ArtifactPaths.js";
@@ -13,8 +21,9 @@ import {
   artifactEdgeId,
   artifactIdForContent,
   occurrenceIdForLocation,
+  logicalPathNfc,
 } from "../../domain/artifactIdentity.js";
-import type { ArtifactEntry } from "../ArtifactReader.js";
+import type { ArtifactEntry, ArtifactReader } from "../ArtifactReader.js";
 import type {
   ArtifactCommand,
   ArtifactEdge,
@@ -23,19 +32,19 @@ import type {
 } from "../../domain/artifactGraph.js";
 import {
   hasZipSignature,
-  isZipPackageFormat,
   zipPackageFormatForPath,
   type ZipPackageFormat,
 } from "../../domain/zipPackageFormat.js";
+import { parseMzHeaderEvidence } from "../../domain/dosMz.js";
 import {
-  observeMzWindowsHeader,
-  parseDosMzHeader,
-} from "../../domain/dosMz.js";
-import {
-  classifyFatContainerIdentity,
+  classifyFatContainerEvidence,
   readFatContainerHeader,
   readMachoHeaderPrefixFacts,
 } from "../../domain/apple/machoContainer.js";
+import {
+  nesContainerFormat,
+  parseInesLayout,
+} from "../../domain/inesContainer.js";
 
 /** Mutable internal occurrence used until root-bound IDs are known. */
 export interface MutableOccurrence {
@@ -50,8 +59,10 @@ export interface MutableOccurrence {
   compressed_size: number | null;
   executable: boolean;
   encrypted: boolean;
+  unpacked?: boolean;
   hash_status: ArtifactOccurrence["hash_status"];
   source_location: ArtifactOccurrence["source_location"];
+  source_path?: string;
   declared_integrity?: NonNullable<ArtifactOccurrence["declared_integrity"]>;
   format_metadata?: NonNullable<ArtifactOccurrence["format_metadata"]>;
   limitations: string[];
@@ -81,8 +92,12 @@ export const createOccurrence = (
   entry: ArtifactEntry,
   path: string,
   parent: string | null,
-  duplicateOrdinal = 0,
+  options: {
+    readonly duplicateOrdinal?: number;
+    readonly sourceFormat?: ArtifactReader["format"];
+  } = {},
 ): MutableOccurrence => {
+  const duplicateOrdinal = options.duplicateOrdinal ?? 0;
   const role =
     entry.kind === "metadata"
       ? { kind: "package-metadata" as const, format: "unknown" as const }
@@ -106,6 +121,10 @@ export const createOccurrence = (
     artifact_id: null,
     parent_occurrence_id: parent,
     logical_path: path,
+    ...(entry.sourcePath !== undefined ||
+    entry.path !== logicalPathNfc(entry.path)
+      ? { source_path: entry.sourcePath ?? entry.path }
+      : {}),
     entry_kind: entry.kind,
     artifact_kind: role.kind,
     artifact_format: role.format,
@@ -113,13 +132,20 @@ export const createOccurrence = (
     compressed_size: entry.compressedSize,
     executable: entry.executable,
     encrypted: entry.encrypted,
+    ...(entry.unpacked ||
+    (options.sourceFormat === "asar" && entry.kind === "file")
+      ? { unpacked: entry.unpacked }
+      : {}),
     hash_status: entry.encrypted ? "unavailable" : "not-hashed",
     source_location:
       entry.encrypted ||
       entry.byteOffset === null ||
       entry.declaredSize === null
         ? null
-        : { offset: entry.byteOffset, length: entry.declaredSize },
+        : {
+            offset: entry.byteOffset,
+            length: entry.byteLength ?? entry.declaredSize,
+          },
     limitations: [...entry.limitations],
     ...(entry.declaredIntegrity === null
       ? {}
@@ -192,12 +218,12 @@ export const materializeDirectoryNodes = (
 };
 
 export const createRootNode = (input: {
-  readonly digest: {
-    readonly sha256: string;
-    readonly bytes: number;
-    readonly prefix: Buffer;
-    readonly fatSliceHeaders?: ArtifactClassificationEvidence["fatSliceHeaders"];
-  } | null;
+  readonly digest:
+    | ({
+        readonly sha256: string;
+        readonly bytes: number;
+      } & ArtifactClassificationEvidence)
+    | null;
   readonly occurrences: readonly MutableOccurrence[];
 }): ArtifactNode =>
   createArtifactNode({
@@ -221,11 +247,7 @@ export const createRootNode = (input: {
     format:
       input.digest === null
         ? "directory"
-        : classifyArtifactBytes(
-            input.digest.prefix,
-            input.digest.bytes,
-            input.digest.fatSliceHeaders,
-          ),
+        : classifyArtifactBytes(input.digest, input.digest.bytes),
     contentState: "materialized",
   });
 
@@ -265,9 +287,7 @@ export const rootOccurrenceFor = (
   logical_path: ".",
   entry_kind: metadata.format === "directory" ? "directory" : "file",
   artifact_kind:
-    metadata.format === "directory" ||
-    isZipPackageFormat(metadata.format) ||
-    ["asar", "godot-pck", "dmg", "pkg", "pyinstaller"].includes(metadata.format)
+    artifactFormatDescriptor(metadata.format)?.occurrenceContainer === true
       ? "container"
       : artifactRoleForFormat(metadata.path, metadata.format).kind,
   artifact_format: metadata.format,
@@ -275,7 +295,8 @@ export const rootOccurrenceFor = (
   compressed_size: null,
   executable: metadata.executable,
   encrypted:
-    metadata.formatMetadata?.kind === "godot-pck" &&
+    (metadata.formatMetadata?.kind === "godot-pck" ||
+      metadata.formatMetadata?.kind === "unityfs") &&
     metadata.formatMetadata.directory_status === "encrypted",
   hash_status: "verified",
   source_location: null,
@@ -333,7 +354,9 @@ export const createArtifactEdges = (
     const sourceCandidates =
       sourcePath === undefined ? [] : (byPath.get(sourcePath) ?? []);
     const mappedSource =
-      sourceCandidates.length === 1 && sourceCandidates[0]?.artifact_id !== null
+      sourceCandidates.length === 1 &&
+      sourceCandidates[0]?.entry_kind === "file" &&
+      sourceCandidates[0].artifact_id !== null
         ? sourceCandidates[0]
         : undefined;
     if (sourcePath !== undefined) {
@@ -343,7 +366,9 @@ export const createArtifactEdges = (
               occurrence: `Source-map target is unknown because multiple occurrences share ${JSON.stringify(sourcePath)}.`,
               coverage: `Source-map relationships are unknown because multiple occurrences share ${JSON.stringify(sourcePath)}.`,
             }
-          : sourceCandidates.length === 1 && mappedSource === undefined
+          : sourceCandidates.length === 1 &&
+              sourceCandidates[0]?.entry_kind === "file" &&
+              mappedSource === undefined
             ? {
                 occurrence: `Source-map target identity is unknown because the matching occurrence at ${JSON.stringify(sourcePath)} has no content identity.`,
                 coverage: `Source-map relationships are unknown because the matching occurrence at ${JSON.stringify(sourcePath)} has no content identity.`,
@@ -513,27 +538,31 @@ export const classifyArtifactContent = (
 ): {
   readonly kind: ArtifactOccurrence["artifact_kind"];
   readonly format: ArtifactOccurrence["artifact_format"];
+  readonly contentFormat: ArtifactNode["format"];
 } => {
-  const { prefix, asarHeader, fatSliceHeaders } = evidence;
-  const format = classifyArtifactBytes(prefix, fileSize, fatSliceHeaders);
+  const { prefix, asarHeader } = evidence;
+  const contentFormat = classifyArtifactBytes(evidence, fileSize);
   const byPath = classifyArtifactPath(path);
+  let role: ReturnType<typeof classifyArtifactPath>;
   if (
-    format === "plist" &&
+    contentFormat === "plist" &&
     !hasBinaryPlistSignature(prefix) &&
     (["javascript", "source-map", "entitlements"].includes(byPath.kind) ||
       path.toLowerCase().endsWith(".asar"))
   )
-    return byPath;
-  if (
-    format === "file" &&
+    role = byPath;
+  else if (
+    contentFormat === "file" &&
     path.toLowerCase().endsWith(".asar") &&
     asarHeader.state !== "rejected"
   ) {
-    if (asarHeader.state === "limit") throw asarHeaderAdmissionFailure();
+    if (asarHeader.state === "limit")
+      throw asarHeaderAdmissionFailure(asarHeader.admission);
     if (asarHeader.state === "matched")
-      return { kind: "container", format: "asar" };
-  }
-  return artifactRoleForFormat(path, format);
+      role = { kind: "container", format: "asar" };
+    else role = artifactRoleForFormat(path, contentFormat);
+  } else role = artifactRoleForFormat(path, contentFormat);
+  return { ...role, contentFormat };
 };
 
 const artifactRoleForFormat = (
@@ -549,7 +578,8 @@ const artifactRoleForFormat = (
       format: zipPackageFormatForPath(path) ?? format,
     };
   if (format === "plist") return { kind: "plist", format };
-  if (format === "godot-pck") return { kind: "container", format };
+  if (artifactFormatDescriptor(format)?.roleContainer === true)
+    return { kind: "container", format };
   return {
     kind: ["native-addon", "dynamic-library"].includes(byPath.kind)
       ? byPath.kind
@@ -560,20 +590,34 @@ const artifactRoleForFormat = (
 
 /** Classify storage bytes independently of path names, roles, and permissions. */
 export const classifyArtifactBytes = (
-  prefix: Buffer,
-  fileSize = prefix.length,
-  fatSliceHeaders?: ArtifactClassificationEvidence["fatSliceHeaders"],
+  evidence: ArtifactClassificationEvidence,
+  fileSize = evidence.prefix.length,
 ): ArtifactNode["format"] => {
+  const { prefix, suffix, mzWindowsHeaderSignature } = evidence;
+  // A header-only region has the signature but not the declared cartridge
+  // extent. Keep it as a file instead of inventing another container.
+  if (
+    nesContainerFormat(prefix) === "ines" &&
+    parseInesLayout(prefix, fileSize).ok
+  )
+    return "ines";
   if (hasZipSignature(prefix)) return "zip";
   if (hasGodotPckHeader(prefix)) return "godot-pck";
+  if (hasUnityFsHeader(prefix)) return "unityfs";
+  if (hasUImageMagic(prefix)) return "uimage";
+  const hexRecords = detectHexRecordEncoding(prefix);
+  if (hexRecords !== undefined) return hexRecords;
+  if (hasUf2Block(prefix)) return "uf2";
+  if (suffix !== undefined && isDfuSeFile(prefix, suffix, fileSize))
+    return "dfuse";
+  if (recognizeEspImage(prefix, fileSize) === "esp-image") return "esp-image";
+  if (hasFitImagesNode(prefix)) return "fit";
   if (hasBinaryPlistSignature(prefix)) return "plist";
   if (hasXmlPlistSignature(prefix)) return "plist";
-  const fatFormat = classifyFatArtifact(prefix, fileSize, fatSliceHeaders);
+  const fatFormat = classifyFatArtifact(evidence, fileSize);
   if (fatFormat !== null) return fatFormat;
   if (prefix.length >= 4) {
-    const magic = prefix.readUInt32BE(0);
-    if ([0xfeedface, 0xfeedfacf, 0xcefaedfe, 0xcffaedfe].includes(magic))
-      return "mach-o";
+    if (readMachoHeaderPrefixFacts(prefix).format !== null) return "mach-o";
     if (prefix.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46])))
       return "elf";
   }
@@ -584,49 +628,47 @@ export const classifyArtifactBytes = (
       prefix.length < Math.min(fileSize, 64)
     )
       return "unknown";
-    const windowsHeader = observeMzWindowsHeader(prefix, fileSize);
+    const mzEvidence = parseMzHeaderEvidence(
+      prefix,
+      fileSize,
+      mzWindowsHeaderSignature,
+    );
+    const { windowsHeader } = mzEvidence;
     if (windowsHeader.state === "signature-needed") return "unknown";
+    if (windowsHeader.state === "candidate") return "unknown";
     if (windowsHeader.state === "declared") {
       const windowsOffset = windowsHeader.offset;
       if (
         windowsHeader.signature === "PE" &&
         windowsOffset >= 64 &&
-        windowsOffset <= prefix.length - 4
+        (windowsOffset <= prefix.length - 4 ||
+          (mzWindowsHeaderSignature?.offset === windowsOffset &&
+            mzWindowsHeaderSignature.bytes.length >= 4))
       )
         return "pe";
       return "unknown";
     }
-    if (parseDosMzHeader(prefix, fileSize).ok) return "dos-mz";
+    if (mzEvidence.dos.ok) return "dos-mz";
     return "unknown";
   }
   return "file";
 };
 
 const classifyFatArtifact = (
-  prefix: Buffer,
+  evidence: ArtifactClassificationEvidence,
   fileSize: number,
-  fatSliceHeaders?: ArtifactClassificationEvidence["fatSliceHeaders"],
 ): ArtifactNode["format"] | null => {
+  const { prefix, fatSliceHeaders } = evidence;
   const fatHeader =
     fatSliceHeaders?.header ?? readFatContainerHeader(prefix, fileSize);
   if (fatHeader.state === "needs-data" || fatHeader.state === "malformed")
     return "unknown";
   if (fatHeader.state === "not-fat") return null;
-  const identity = classifyFatContainerIdentity(fatHeader, (offset) => {
-    if (fatSliceHeaders?.sliceHeadersByOffset.has(offset) === true)
-      return fatSliceHeaders.sliceHeadersByOffset.get(offset)?.magic;
-    const slice = fatHeader.slices.find(
-      (candidate) => candidate.offset === offset,
-    );
-    if (slice === undefined || offset >= prefix.length) return undefined;
-    const available = Math.max(
-      0,
-      Math.min(slice.size, prefix.length - offset, 12),
-    );
-    return readMachoHeaderPrefixFacts(
-      prefix.subarray(offset, offset + available),
-    ).magic;
-  });
+  const identity = classifyFatContainerEvidence(
+    fatHeader,
+    prefix,
+    fatSliceHeaders?.sliceHeadersByOffset,
+  );
   return identity.state === "mach-o" ? "mach-o-universal" : "unknown";
 };
 

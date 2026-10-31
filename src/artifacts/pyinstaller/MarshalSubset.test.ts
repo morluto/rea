@@ -20,6 +20,74 @@ it("reads a Python 3.9 reference-flagged PYZ table", () => {
   ]);
 });
 
+it("decodes CPython marshal Unicode with surrogatepass", () => {
+  expect(
+    readMarshalSubset(
+      bytes(
+        "5b01000000290275080000006e6f64655fedb3bf29036900000000690c0000006901000000",
+      ),
+    ),
+  ).toEqual({
+    ok: true,
+    value: [["node_\udcff", [0, 12, 1]]],
+  });
+});
+
+it("retains a surrogate-bearing Unicode string in its marshal reference slot", () => {
+  expect(readMarshalSubset(bytes("2902f50400000061edb3bf7200000000"))).toEqual({
+    ok: true,
+    value: ["a\udcff", "a\udcff"],
+  });
+});
+
+it.each([
+  ["", ""],
+  ["c2a2", "\u00a2"],
+  ["e282ac", "\u20ac"],
+  ["efbbbf", "\ufeff"],
+  ["f0908080", "\ud800\udc00"],
+  ["f48fbfbf", "\udbff\udfff"],
+  ["eda080", "\ud800"],
+  ["edbfbf", "\udfff"],
+  ["eda080edbfbf", "\ud800\udfff"],
+])("preserves CPython Unicode code points for UTF-8 %s", (hex, value) => {
+  const body = bytes(hex);
+  const length = Buffer.alloc(4);
+  length.writeInt32LE(body.length);
+  // Unicode and reference-flagged interned Unicode use the same codec.
+  for (const type of [0x75, 0xf4])
+    expect(
+      readMarshalSubset(Buffer.concat([Buffer.from([type]), length, body])),
+    ).toEqual({ ok: true, value });
+});
+
+it.each([
+  "80",
+  "c080",
+  "c2",
+  "c241",
+  "e08080",
+  "eda0",
+  "eda041",
+  "f0808080",
+  "f09080",
+  "f4908080",
+  "f5808080",
+])("rejects malformed UTF-8 %s despite surrogatepass", (malformed) => {
+  const body = bytes(malformed);
+  const length = Buffer.alloc(4);
+  length.writeInt32LE(body.length);
+  expect(
+    readMarshalSubset(Buffer.concat([Buffer.from([0x75]), length, body])),
+  ).toMatchObject({
+    ok: false,
+    error: {
+      reason: "format",
+      message: "PYZ marshal string is not valid UTF-8",
+    },
+  });
+});
+
 it("resolves a shared string through a reference reserved before the tuple", () => {
   const parsed = readMarshalSubset(
     bytes(
@@ -34,6 +102,13 @@ it("resolves a shared string through a reference reserved before the tuple", () 
   ]);
 });
 
+it("does not allocate a new reference slot for a flagged TYPE_REF", () => {
+  const parsed = readMarshalSubset(
+    bytes("2904fa0161f200000000fa01627201000000"),
+  );
+  expect(parsed).toEqual({ ok: true, value: ["a", "a", "b", "b"] });
+});
+
 it("reads a long integer that fits in a safe integer", () => {
   const parsed = readMarshalSubset(
     bytes(
@@ -43,6 +118,33 @@ it("reads a long integer that fits in a safe integer", () => {
   expect(parsed.ok).toBe(true);
   if (!parsed.ok) return;
   expect(parsed.value).toEqual([["big", [0, 2 ** 40, 5]]]);
+});
+
+it.each(["6c0200000003000000", "6cfeffffff03000000"])(
+  "rejects marshal long %s with a zero most-significant digit as malformed",
+  (hex) => {
+    expect(readMarshalSubset(bytes(hex))).toMatchObject({
+      ok: false,
+      error: {
+        reason: "format",
+        message: "PYZ marshal long is not normalized",
+      },
+    });
+  },
+);
+
+it("reads the zero-digit marshal long encoding as zero", () => {
+  expect(readMarshalSubset(bytes("6c00000000"))).toEqual({
+    ok: true,
+    value: 0,
+  });
+});
+
+it("keeps positive over-budget marshal long digit counts as resource refusals", () => {
+  expect(readMarshalSubset(bytes("6c09000000"))).toMatchObject({
+    ok: false,
+    error: { reason: "limit" },
+  });
 });
 
 it("reads a negative 32-bit integer", () => {
@@ -59,4 +161,27 @@ it("rejects a marshal type outside the subset", () => {
   expect(parsed.ok).toBe(false);
   if (parsed.ok) return;
   expect(parsed.error.reason).toBe("format");
+});
+
+it.each([
+  ["string", "73ffffffff"],
+  ["list", "5bffffffff"],
+  ["tuple", "28ffffffff"],
+])("classifies a negative marshal %s size as malformed", (_kind, hex) => {
+  const parsed = readMarshalSubset(bytes(hex));
+  expect(parsed).toMatchObject({
+    ok: false,
+    error: { reason: "format" },
+  });
+});
+
+it.each([
+  ["string", "7301000100"],
+  ["list", "5ba1860100"],
+])("keeps positive marshal %s budget refusals as limits", (_kind, hex) => {
+  const parsed = readMarshalSubset(bytes(hex));
+  expect(parsed).toMatchObject({
+    ok: false,
+    error: { reason: "limit" },
+  });
 });

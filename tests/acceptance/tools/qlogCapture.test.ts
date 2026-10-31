@@ -29,9 +29,7 @@ const event = {
   time: 1791819895000.25,
   data: {
     header: { packet_type: "1RTT", packet_number: 5 },
-    frames: [
-      { frame_type: "stream", stream_id: 0, offset: 10, length: 5, fin: true },
-    ],
+    frames: [{ frame_type: "stream", stream_id: 0, offset: 10, length: 5 }],
   },
 };
 const qlog = (events: unknown[]) =>
@@ -47,6 +45,72 @@ const qlog = (events: unknown[]) =>
     ],
   });
 
+const expectRecoveredCapture = async (
+  call: Awaited<ReturnType<typeof connectLocalToolsMcp>>["call"],
+  path: string,
+): Promise<void> => {
+  const response = await call("inspect_web_network_capture", {
+    capture_path: path,
+    format: "qlog",
+  });
+  expect(response.isError, JSON.stringify(response)).not.toBe(true);
+  const capture = webNetworkCaptureSchema.parse(
+    parseEvidence(response.structuredContent).normalized_result,
+  );
+  expect(capture).toMatchObject({
+    format: "qlog",
+    records: [{ reported: { name: "transport:packet_sent" } }],
+  });
+};
+
+it("does not classify hidden custom event data as incomplete transport facts", async () => {
+  const root = await createTestTempDirectory("rea-qlog-hidden-extension-");
+  const path = join(root, "input.qlog");
+  await writeFile(
+    path,
+    qlog([
+      { name: "extension:custom", time: 1, data: { body: "ordinary" } },
+      {
+        ...event,
+        data: {
+          ...event.data,
+          frames: [{ ...event.data.frames[0], fin: false }],
+        },
+      },
+    ]),
+  );
+  const { call } = await connectLocalToolsMcp();
+  for (const sensitive of [[], ["data"]]) {
+    const response = await call("inspect_web_network_capture", {
+      capture_path: path,
+      format: "qlog",
+      sensitive_values: sensitive,
+    });
+    expect(response.isError, JSON.stringify(response)).not.toBe(true);
+    const mcp = parseEvidence(response.structuredContent);
+    const cliResult = await execute(process.execPath, [
+      cli,
+      "inspect-web-network-capture",
+      path,
+      "qlog",
+      ...sensitive.flatMap((value) => ["--sensitive-value", value]),
+      "--json",
+    ]);
+    const cliEvidence = parseEvidence(JSON.parse(cliResult.stdout));
+    expect(cliEvidence.normalized_result).toEqual(mcp.normalized_result);
+    const capture = webNetworkCaptureSchema.parse(mcp.normalized_result);
+    if (capture.format !== "qlog") throw new Error("qlog format required");
+    expect(capture.qlog.traces[0]?.incomplete_fact_records).toEqual(
+      sensitive.length === 0 ? [] : [1],
+    );
+    if (sensitive.length > 0)
+      expect(capture.records[0]?.reported).toEqual({
+        name: "extension:custom",
+        time: 1,
+      });
+  }
+});
+
 const assertAdditionalQlogFacets = async (
   call: Awaited<ReturnType<typeof connectLocalToolsMcp>>["call"],
   retained: { kind: string; evidence_id: string },
@@ -60,7 +124,7 @@ const assertAdditionalQlogFacets = async (
       { kind: "qlog", facet: "loss-declarations", trace_index: 0 },
       [{ record_ordinal: 1, packet_number: { state: "reported", value: "5" } }],
     ],
-    [{ kind: "qlog", facet: "incomplete-records", trace_index: 0 }, []],
+    [{ kind: "qlog", facet: "incomplete-records", trace_index: 0 }, [0]],
     [
       {
         kind: "qlog",
@@ -79,7 +143,7 @@ const assertAdditionalQlogFacets = async (
         stream_id: "0",
         direction: "sent",
       },
-      ["15"],
+      [],
     ],
     [{ kind: "qlog", facet: "traces", offset: 99 }, []],
   ] as const) {
@@ -206,7 +270,15 @@ it("pages original trace-scoped facts after source deletion without conflating s
   );
   expect(contribution.normalized_result).toMatchObject({
     page: {
-      items: [{ record_ordinal: 0, frame_index: 0, offset: "10", length: "5" }],
+      items: [
+        {
+          record_ordinal: 0,
+          frame_index: 0,
+          offset: "10",
+          length: "5",
+          fin: null,
+        },
+      ],
     },
     coverage: { total: 1, exhausted: true },
   });
@@ -354,12 +426,41 @@ it("fails whole-capture validation before selection and survives malformed, unsu
   const root = await createTestTempDirectory("rea-qlog-errors-");
   const path = join(root, "input.qlog");
   const { call, client } = await connectLocalToolsMcp();
-  for (const [text, code] of [
-    [qlog([event, { ...event, time: "invalid" }]), "invalid_request"],
-    [qlog([event]).slice(0, -1), "invalid_request"],
+  for (const [text, expected] of [
+    [
+      qlog([event, { ...event, time: "invalid" }]),
+      {
+        code: "invalid_request",
+        details: {
+          operation: "inspect_web_network_capture",
+          issues: [
+            {
+              path: ["capture_path", "/traces/0/events/1"],
+              reason: "invalid_format",
+            },
+          ],
+        },
+      },
+    ],
+    [
+      qlog([event]).slice(0, -1),
+      {
+        code: "invalid_request",
+        details: {
+          operation: "inspect_web_network_capture",
+          issues: [{ path: ["capture_path", ""], reason: "invalid_format" }],
+        },
+      },
+    ],
     [
       qlog([event]).replace('"qlog_version":"0.3"', '"qlog_version":"0.4"'),
-      "capability_unavailable",
+      {
+        code: "capability_unavailable",
+        details: {
+          operation: "inspect_web_network_capture",
+          provider_id: "qlog",
+        },
+      },
     ],
     [
       qlog([
@@ -368,7 +469,20 @@ it("fails whole-capture validation before selection and survives malformed, unsu
           extension: JSON.parse("[".repeat(65) + "0" + "]".repeat(65)),
         },
       ]),
-      "invalid_request",
+      {
+        code: "invalid_request",
+        details: {
+          operation: "inspect_web_network_capture",
+          issues: [
+            expect.objectContaining({
+              reason: "out_of_range",
+              expected: {
+                maximum_capture_nesting: WEB_NETWORK_CAPTURE_LIMITS.depth,
+              },
+            }),
+          ],
+        },
+      },
     ],
   ] as const) {
     await writeFile(path, text);
@@ -380,7 +494,7 @@ it("fails whole-capture validation before selection and survives malformed, unsu
           record_ordinals: [0],
         }),
       ),
-    ).toMatchObject({ error: { code } });
+    ).toMatchObject({ error: expected });
     const failed: unknown = await execute(process.execPath, [
       cli,
       "inspect-web-network-capture",
@@ -390,8 +504,16 @@ it("fails whole-capture validation before selection and survives malformed, unsu
     ]).catch((cause: unknown) => cause);
     expect(failed).toMatchObject({
       code: 1,
-      stdout: expect.stringContaining(`"code":"${code}"`),
+      stdout: expect.any(String),
     });
+    if (
+      typeof failed !== "object" ||
+      failed === null ||
+      !("stdout" in failed) ||
+      typeof failed.stdout !== "string"
+    )
+      throw new Error("CLI failure omitted JSON output");
+    expect(JSON.parse(failed.stdout)).toMatchObject(expected);
   }
   await truncate(path, WEB_NETWORK_CAPTURE_LIMITS.inputBytes + 1);
   expect(
@@ -404,14 +526,7 @@ it("fails whole-capture validation before selection and survives malformed, unsu
   ).toMatchObject({ error: { code: "invalid_request" } });
   await writeFile(path, qlog([event]));
   await client.ping();
-  expect(
-    (
-      await call("inspect_web_network_capture", {
-        capture_path: path,
-        format: "qlog",
-      })
-    ).isError,
-  ).not.toBe(true);
+  await expectRecoveredCapture(call, path);
 }, 60_000);
 
 runtimeTest.skipIf(process.versions.bun !== undefined || !hasMemoryBound)(
@@ -450,14 +565,7 @@ runtimeTest.skipIf(process.versions.bun !== undefined || !hasMemoryBound)(
     });
     await writeFile(path, qlog([event]));
     await client.ping();
-    expect(
-      (
-        await call("inspect_web_network_capture", {
-          capture_path: path,
-          format: "qlog",
-        })
-      ).isError,
-    ).not.toBe(true);
+    await expectRecoveredCapture(call, path);
   },
   60_000,
 );

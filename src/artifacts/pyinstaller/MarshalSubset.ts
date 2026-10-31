@@ -1,4 +1,5 @@
 import { err, ok, type Result } from "../../domain/result.js";
+import { decodeMarshalUtf8 } from "../../domain/python/marshalUtf8.js";
 import {
   pyInstallerFailure,
   type PyInstallerFailure,
@@ -67,18 +68,19 @@ const readObject = (
   if (!code.ok) return code;
   const flag = (code.value & FLAG_REF) !== 0;
   const type = code.value & ~FLAG_REF;
+  if (type === 0x72) return readReference(cursor);
   if (type === 0x69) return storeScalar(cursor, flag, readInt32(cursor));
   if (type === 0x6c) return storeScalar(cursor, flag, readLong(cursor));
   if (type === 0x7a || type === 0x5a)
     return storeScalar(cursor, flag, readShortAscii(cursor));
   if (type === 0x61 || type === 0x41)
     return storeScalar(cursor, flag, readCountedAscii(cursor));
-  if (type === 0x75) return storeScalar(cursor, flag, readUtf8(cursor));
+  if (type === 0x74 || type === 0x75)
+    return storeScalar(cursor, flag, readUtf8(cursor));
   if (type === 0x73) return storeScalar(cursor, flag, readByteString(cursor));
   if (type === 0x28) return readSequence(cursor, flag, readInt32(cursor));
   if (type === 0x29) return readSequence(cursor, flag, readByte(cursor));
   if (type === 0x5b) return readSequence(cursor, flag, readInt32(cursor));
-  if (type === 0x72) return readReference(cursor, flag);
   return err(
     pyInstallerFailure(
       "format",
@@ -103,7 +105,11 @@ const readSequence = (
   count: Result<number, PyInstallerFailure>,
 ): Result<MarshalValue, PyInstallerFailure> => {
   if (!count.ok) return count;
-  if (count.value < 0 || count.value > MAX_SEQUENCE)
+  if (count.value < 0)
+    return err(
+      pyInstallerFailure("format", "PYZ marshal sequence has a negative count"),
+    );
+  if (count.value > MAX_SEQUENCE)
     return err(
       pyInstallerFailure(
         "limit",
@@ -126,7 +132,6 @@ const readSequence = (
 
 const readReference = (
   cursor: MarshalCursor,
-  flag: boolean,
 ): Result<MarshalValue, PyInstallerFailure> => {
   const index = readInt32(cursor);
   if (!index.ok) return index;
@@ -138,7 +143,6 @@ const readReference = (
         "PYZ marshal reference does not point at a completed value",
       ),
     );
-  if (flag) cursor.refs.push(value);
   return ok(value);
 };
 
@@ -181,17 +185,12 @@ const readUtf8 = (
   if (!length.ok) return length;
   const bytes = readBytes(cursor, length.value);
   if (!bytes.ok) return bytes;
-  try {
-    return ok(
-      new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-        bytes.value,
-      ),
-    );
-  } catch {
+  const value = decodeMarshalUtf8(bytes.value);
+  if (!value.ok)
     return err(
       pyInstallerFailure("format", "PYZ marshal string is not valid UTF-8"),
     );
-  }
+  return ok(value.value.text);
 };
 
 const readByteString = (
@@ -215,6 +214,7 @@ const readLong = (
       pyInstallerFailure("limit", "PYZ marshal integer exceeds the safe range"),
     );
   let magnitude = 0n;
+  let mostSignificantDigit = 0;
   for (let index = 0; index < count; index += 1) {
     const digit = readUint16(cursor);
     if (!digit.ok) return digit;
@@ -222,8 +222,13 @@ const readLong = (
       return err(
         pyInstallerFailure("format", "PYZ marshal long digit is out of range"),
       );
+    mostSignificantDigit = digit.value;
     magnitude += BigInt(digit.value) << BigInt(15 * index);
   }
+  if (count > 0 && mostSignificantDigit === 0)
+    return err(
+      pyInstallerFailure("format", "PYZ marshal long is not normalized"),
+    );
   if (magnitude > BigInt(Number.MAX_SAFE_INTEGER))
     return err(
       pyInstallerFailure("limit", "PYZ marshal integer exceeds the safe range"),
@@ -236,7 +241,11 @@ const readBytes = (
   cursor: MarshalCursor,
   length: number,
 ): Result<Buffer, PyInstallerFailure> => {
-  if (!Number.isSafeInteger(length) || length < 0 || length > MAX_STRING_BYTES)
+  if (length < 0)
+    return err(
+      pyInstallerFailure("format", "PYZ marshal string has a negative length"),
+    );
+  if (!Number.isSafeInteger(length) || length > MAX_STRING_BYTES)
     return err(
       pyInstallerFailure(
         "limit",

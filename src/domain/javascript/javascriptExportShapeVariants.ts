@@ -312,10 +312,11 @@ const diffPair = (
   return paths.flatMap((path) => {
     const leftField = fieldAtPath(left, leftFields, path);
     const rightField = fieldAtPath(right, rightFields, path);
+    const leftPresence = fieldPresence(left, leftField, path);
+    const rightPresence = fieldPresence(right, rightField, path);
     const status = fieldChangeStatus({
-      leftShape: left,
-      rightShape: right,
-      path,
+      leftPresence,
+      rightPresence,
       leftField,
       rightField,
     });
@@ -326,11 +327,11 @@ const diffPair = (
         path,
         discriminant,
         presence: {
-          left: fieldPresence(left, leftField, path),
-          right: fieldPresence(right, rightField, path),
+          left: leftPresence,
+          right: rightPresence,
         },
-        left: fieldAvailability(leftField),
-        right: fieldAvailability(rightField),
+        left: fieldAvailability(leftField, leftPresence),
+        right: fieldAvailability(rightField, rightPresence),
         left_source_range: left.source_range,
         right_source_range: right.source_range,
         evidence_links: evidenceLinks,
@@ -365,24 +366,20 @@ const fieldAtPath = (
 };
 
 interface FieldChangeInput {
-  readonly leftShape: Shape;
-  readonly rightShape: Shape;
-  readonly path: string;
+  readonly leftPresence: PropertyPresence;
+  readonly rightPresence: PropertyPresence;
   readonly leftField: Field | undefined;
   readonly rightField: Field | undefined;
 }
 
 const fieldChangeStatus = ({
-  leftShape,
-  rightShape,
-  path,
+  leftPresence,
+  rightPresence,
   leftField,
   rightField,
 }: FieldChangeInput):
   | JavaScriptExportShapeComparisonChange["status"]
   | null => {
-  const leftPresence = fieldPresence(leftShape, leftField, path);
-  const rightPresence = fieldPresence(rightShape, rightField, path);
   if (
     leftField !== undefined &&
     rightField !== undefined &&
@@ -412,16 +409,22 @@ const fieldPresence = (
   path: string,
 ): PropertyPresence => {
   if (field !== undefined) return field.presence;
-  return propertyCoverageComplete(shape, parentPointer(path))
-    ? "absent"
-    : "unknown-coverage";
+  for (
+    let parent = parentPointer(path);
+    parent !== null;
+    parent = parentPointer(parent)
+  ) {
+    const coverage = shape.property_coverage.find(
+      (entry) => entry.path === parent,
+    );
+    if (coverage?.status === "complete") return "absent";
+    const ancestor = shape.fields.find((entry) => entry.path === parent);
+    if (ancestor !== undefined)
+      return ancestor.presence === "absent" ? "absent" : "unknown-coverage";
+    if (coverage !== undefined) return "unknown-coverage";
+  }
+  return "unknown-coverage";
 };
-
-const propertyCoverageComplete = (shape: Shape, path: string | null): boolean =>
-  path !== null &&
-  shape.property_coverage.some(
-    (coverage) => coverage.path === path && coverage.status === "complete",
-  );
 
 const parentPointer = (path: string): string | null => {
   if (path === "") return null;
@@ -429,7 +432,16 @@ const parentPointer = (path: string): string | null => {
   return separator < 0 ? null : path.slice(0, separator);
 };
 
-const fieldAvailability = (field: Field | undefined): ValueAvailability => {
+const fieldAvailability = (
+  field: Field | undefined,
+  presence: PropertyPresence,
+): ValueAvailability => {
+  if (field === undefined && presence === "unknown-coverage")
+    return {
+      availability: "unknown",
+      reason:
+        "Property presence is not established by the retained parent coverage.",
+    };
   if (field === undefined || field.presence === "absent")
     return { availability: "absent" };
   if (field.state === "unknown")
@@ -453,7 +465,10 @@ const selectionAvailability = (
   side: "left" | "right",
 ): ValueAvailability => ({
   availability: "unknown",
-  reason: `${capitalize(side)} export selection is ${selection.status}.`,
+  reason:
+    selection.status === "selected"
+      ? `${capitalize(side)} export is selected; the counterpart selection is unavailable for comparison.`
+      : `${capitalize(side)} export selection is ${selection.status}.`,
 });
 
 const emptyShapeAvailability = (

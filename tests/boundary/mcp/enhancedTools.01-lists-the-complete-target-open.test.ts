@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it } from "vitest";
 import { PROCEDURES, inventory, jsonResult } from "./enhancedToolsHarness.js";
@@ -11,9 +14,9 @@ import type {} from "../../../src/domain/jsonValue.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
-import { ok as resultOk } from "../../../src/domain/result.js";
-import { err } from "../../../src/domain/result.js";
+import { ok as resultOk, err } from "../../../src/domain/result.js";
 import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
+import { nativeDispatchMetadataResultSchema } from "../../../src/domain/native/objcSwiftMetadata.js";
 
 const targetObservation = (value: unknown) =>
   resultOk(
@@ -62,29 +65,24 @@ const functionDossier = {
   limitations: [],
 };
 
+const capabilityUnavailable = (operation: string, message: string) =>
+  Promise.resolve(
+    err(new AnalysisCapabilityUnavailableError("fixture", operation, message)),
+  );
+
 const fixturePort = (): AnalysisOperationPort => ({
   // oxlint-disable-next-line complexity -- this fixture exhaustively serves the registered MCP surface.
   execute: (name, arguments_) => {
     switch (name) {
       case "read_binary_inventory_summary":
-        return Promise.resolve(
-          err(
-            new AnalysisCapabilityUnavailableError(
-              "fixture",
-              name,
-              "This fixture exercises composed overview",
-            ),
-          ),
+        return capabilityUnavailable(
+          name,
+          "This fixture exercises composed overview",
         );
       case "inspect_native_dispatch_metadata":
-        return Promise.resolve(
-          err(
-            new AnalysisCapabilityUnavailableError(
-              "fixture",
-              name,
-              "No byte reader or exact native seed in this symbol-only fixture",
-            ),
-          ),
+        return capabilityUnavailable(
+          name,
+          "No byte reader or exact native seed in this symbol-only fixture",
         );
       case "procedure_address": {
         const procedure = inventory(PROCEDURES).find(
@@ -152,6 +150,11 @@ const fixturePort = (): AnalysisOperationPort => ({
           ok(typeof procedure === "string" ? `pseudo:${procedure}` : "invalid"),
         );
       }
+      case "procedure_info":
+        return capabilityUnavailable(
+          name,
+          "This fixture does not report function bodies",
+        );
       case "procedure_callees": {
         const procedure = arguments_.procedure;
         return Promise.resolve(
@@ -214,11 +217,16 @@ const fixturePort = (): AnalysisOperationPort => ({
 });
 
 const resources: Array<{ close(): Promise<void> }> = [];
+let decompileOutput: string | undefined;
 
 afterEach(async () => {
   await Promise.all(
     resources.splice(0).map(async (resource) => resource.close()),
   );
+  if (decompileOutput !== undefined) {
+    await rm(decompileOutput, { recursive: true, force: true });
+    decompileOutput = undefined;
+  }
 });
 
 const connect = async (analysis: AnalysisOperationPort = fixturePort()) => {
@@ -256,6 +264,8 @@ describe("enhanced MCP tools", () => {
   // oxlint-disable-next-line max-lines-per-function -- one exhaustive registration test guards the public tool catalog.
   it("executes all enhanced tools through production registration", async () => {
     const client = await connect();
+    const outputParent = await mkdtemp(join(tmpdir(), "rea-decompile-all-"));
+    decompileOutput = outputParent;
     const calls = [
       ["get_objc_classes", { pattern: "Fixture" }],
       ["get_objc_protocols", {}],
@@ -264,13 +274,15 @@ describe("enhanced MCP tools", () => {
       ["analyze_swift_types", { category: "classes", pattern: "Fixture" }],
       ["find_xrefs_to_name", { name: "entry" }],
       ["binary_overview", {}],
-      ["analyze_function", { procedure: "0x1" }],
+      // This server retains no Evidence, so the complete dossier is the deliverable shape.
+      ["analyze_function", { procedure: "0x1", detail: "complete" }],
       ["inspect_native_api", { procedure: "0x1" }],
       ["trace_feature", { query: "hello" }],
       ["trace_call_path", { start: "0x1", goal: "0x2" }],
       ["trace_native_ui_action", { action: "missing-selector" }],
       ["inspect_native_dispatch_metadata", { max_records: 100 }],
       ["trace_native_values", { procedure: "0x1" }],
+      ["decompile_all", { output_directory: join(outputParent, "out") }],
     ] as const;
     const results = await Promise.all(
       calls.map(async ([name, arguments_]) =>
@@ -437,6 +449,11 @@ describe("enhanced MCP tools", () => {
         }),
       ],
     });
+    expect(results[14]).toMatchObject({
+      counts: { selected: 6, written: 6, failed: 0, excluded: 0 },
+      layout_status: "address",
+    });
+    expect(JSON.stringify(results[14])).not.toContain("pseudo:");
   });
 });
 
@@ -481,3 +498,54 @@ it("retains unlocated provider symbols through the advertised native dispatch MC
     },
   });
 });
+
+it.each([
+  { addresses: ["0x2000", "0x3000"], candidates: 2, numeric: null },
+  { addresses: ["ram:0x2000", "rom:0x2000"], candidates: 2, numeric: null },
+  { addresses: ["0x2000", "0X002000"], candidates: 1, numeric: 8192 },
+  {
+    addresses: ["overlay%2f1:0x2000", "overlay%2F1:0X002000"],
+    candidates: 1,
+    numeric: null,
+  },
+])(
+  "retains implementation identity and source spelling through MCP: $addresses",
+  async ({ addresses, candidates, numeric }) => {
+    const ordinary = fixturePort();
+    const client = await connect({
+      execute: (operation, parameters, options) =>
+        operation === "list_names"
+          ? Promise.resolve(
+              targetObservation(
+                addresses.map((address) => ({
+                  address,
+                  value: "-[Fixture buildTapped:]",
+                })),
+              ),
+            )
+          : ordinary.execute(operation, parameters, options),
+    });
+    const response = await client.callTool({
+      name: "inspect_native_dispatch_metadata",
+      arguments: {},
+    });
+    expect(
+      response.isError,
+      JSON.stringify(response.structuredContent),
+    ).not.toBe(true);
+    const result = nativeDispatchMetadataResultSchema.parse(
+      jsonResult(response),
+    ).result;
+    expect(result.objc_dispatch_implementations).toHaveLength(candidates);
+    expect(result.objc_classes[0]?.methods).toMatchObject([
+      { selector: "buildTapped:", address: numeric },
+    ]);
+    expect(
+      result.objc_dispatch_implementations
+        .flatMap(({ evidence }) =>
+          evidence.map(({ location }) => location.address),
+        )
+        .sort(),
+    ).toEqual([...addresses].sort());
+  },
+);

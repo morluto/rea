@@ -18,7 +18,11 @@ export const commandObservationSchema = z.strictObject({
 /** The GDB owner retains ordered records and derives its stream groupings. */
 export const gdbCommandResultSchema = z.strictObject({
   command: z.string(),
-  mi: z.string(),
+  mi: z
+    .string()
+    .describe(
+      "The console command's independently framed MI result record; empty when a separate read-only query proves completion but raw stdout prevents identifying the original result class.",
+    ),
   records: z.array(z.string()),
   console: z.string(),
   target: z.string(),

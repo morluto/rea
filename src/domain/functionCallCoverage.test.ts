@@ -108,6 +108,7 @@ describe("assessFunctionCallCoverage", () => {
         "Read limit reached.",
         "Unresolved call at 0x1004: Computed target.",
       ],
+      unresolvedCallCaveats: ["Unresolved call at 0x1004: Computed target."],
       diagnostics: ["Indirect calls are unresolved."],
     });
   });

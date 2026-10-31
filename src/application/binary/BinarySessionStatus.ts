@@ -1,8 +1,9 @@
+import { z } from "zod";
 import { artifactTargetRefusal } from "../../domain/apple/artifactTargetApplicability.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import type { ResolvedAppBundleResourceRoot } from "../AppBundleExecutable.js";
 import { binaryTargetSummary } from "./BinaryTargetSummary.js";
-import type { JsonValue } from "../../domain/jsonValue.js";
+import { jsonObjectSchema, type JsonValue } from "../../domain/jsonValue.js";
 import type { ProviderOperationHealth } from "../../domain/providerOperationHealth.js";
 import type {
   CapabilityDescriptor,
@@ -12,6 +13,9 @@ import type {
 } from "../AnalysisProvider.js";
 import {
   PROVIDER_EFFECT_NAMES,
+  providerCapabilitySet,
+  analysisProviderCandidate,
+  analysisProviderCandidateSummary,
   type ProviderCapabilitySet,
 } from "../../contracts/toolOutputSchemaPrimitives.js";
 import type {
@@ -19,6 +23,7 @@ import type {
   SessionProviderRouter,
 } from "./SessionProviderRouter.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
+import type { BinarySessionDetail } from "../../contracts/sessionStatusContract.js";
 
 interface BinarySessionStatusInput {
   readonly target: BinaryTarget | undefined;
@@ -35,6 +40,7 @@ interface BinarySessionStatusInput {
   readonly requestActivitySnapshots: readonly ProviderRequestActivitySnapshot[];
   readonly providerOperationHealth?: ProviderOperationHealth | null;
   readonly cleanupPending?: boolean;
+  readonly detail?: BinarySessionDetail;
   readonly signal?: AbortSignal;
 }
 
@@ -51,6 +57,7 @@ export const binarySessionStatus = async ({
   requestActivitySnapshots,
   providerOperationHealth,
   cleanupPending = false,
+  detail = "complete",
   signal,
 }: BinarySessionStatusInput): Promise<JsonValue> => {
   const routeCapabilities = (
@@ -97,20 +104,31 @@ export const binarySessionStatus = async ({
   const analysisProviderCandidates =
     bundleResourceRoot !== undefined
       ? []
-      : (await router.candidateStatuses(route, signal)).map((candidate) => ({
-          provider: providerSummary(candidate.provider),
-          availability: structuredClone(candidate.availability),
-          target_support: structuredClone(candidate.targetSupport),
-          selected: candidate.selected,
-          capabilities: providerCapabilitySets(
-            candidate.capabilities
-              .slice()
-              .filter(({ operation }) => operation !== "inventory_artifact")
-              .sort((left, right) =>
-                compareUnicodeCodePoints(left.operation, right.operation),
-              ),
-          ),
-        }));
+      : (await router.candidateStatuses(route, signal)).map((candidate) =>
+          detail === "summary"
+            ? {
+                provider: providerSummary(candidate.provider),
+                availability: providerStateSummary(candidate.availability),
+                target_support: providerStateSummary(candidate.targetSupport),
+                selected: candidate.selected,
+              }
+            : {
+                provider: providerSummary(candidate.provider),
+                availability: structuredClone(candidate.availability),
+                target_support: structuredClone(candidate.targetSupport),
+                selected: candidate.selected,
+                capabilities: providerCapabilitySets(
+                  candidate.capabilities
+                    .slice()
+                    .filter(
+                      ({ operation }) => operation !== "inventory_artifact",
+                    )
+                    .sort((left, right) =>
+                      compareUnicodeCodePoints(left.operation, right.operation),
+                    ),
+                ),
+              },
+        );
   const common = {
     cleanup_pending: cleanupPending,
     capabilities,
@@ -150,6 +168,57 @@ export const binarySessionStatus = async ({
       };
 };
 
+/** Capability surfaces a registration may narrow without hiding provider facts. */
+const advertisedCapabilitySurfaces = z.object({
+  capabilities: z.array(providerCapabilitySet),
+  analysis_provider_candidates: z.array(
+    z.union([analysisProviderCandidate, analysisProviderCandidateSummary]),
+  ),
+});
+
+/**
+ * Restrict a session status report to operations whose tools the caller
+ * advertises. Availability must already be computed from the complete status:
+ * composed tools still depend on direct operations this projection hides.
+ */
+export const restrictAdvertisedCapabilities = (
+  status: unknown,
+  isOperationAdvertised: (operation: string) => boolean,
+): Readonly<Record<string, JsonValue>> => {
+  const object = jsonObjectSchema.parse(status);
+  const { capabilities, analysis_provider_candidates } =
+    advertisedCapabilitySurfaces.parse(object);
+  return jsonObjectSchema.parse({
+    ...object,
+    capabilities: restrictCapabilitySets(capabilities, isOperationAdvertised),
+    analysis_provider_candidates: analysis_provider_candidates.map(
+      (candidate) => ({
+        ...candidate,
+        ...("capabilities" in candidate
+          ? {
+              capabilities: restrictCapabilitySets(
+                candidate.capabilities,
+                isOperationAdvertised,
+              ),
+            }
+          : {}),
+      }),
+    ),
+  });
+};
+
+const restrictCapabilitySets = (
+  sets: readonly ProviderCapabilitySet[],
+  isOperationAdvertised: (operation: string) => boolean,
+): ProviderCapabilitySet[] =>
+  sets.flatMap((set) => {
+    const groups = set.groups.flatMap((group) => {
+      const operations = group.operations.filter(isOperationAdvertised);
+      return operations.length === 0 ? [] : [{ ...group, operations }];
+    });
+    return groups.length === 0 ? [] : [{ ...set, groups }];
+  });
+
 const requestActivityStatus = (
   snapshots: readonly ProviderRequestActivitySnapshot[],
 ) => {
@@ -184,6 +253,19 @@ const requestActivityStatus = (
     providers,
   };
 };
+
+/** Keep a provider-owned status, code, and reason; diagnostics stay in complete detail. */
+const providerStateSummary = <
+  State extends {
+    readonly status: string;
+    readonly code: string | null;
+    readonly reason: string | null;
+  },
+>({
+  status,
+  code,
+  reason,
+}: State) => ({ status, code, reason });
 
 const providerSummary = ({
   id,

@@ -63,7 +63,7 @@ const createScenario = async (removeOnSecondRead: boolean) => {
 };
 
 captureCliTest(
-  "keeps a stable symlink observation complete through the public CLI",
+  "retains a stable symlink while reporting its unfollowed scope through the public CLI",
   async ({ cli }) => {
     const fixture = await createScenario(false);
     const result = await cli.run({
@@ -83,7 +83,7 @@ captureCliTest(
     expect((await lstat(fixture.link)).isSymbolicLink()).toBe(true);
     expect(result.json).toMatchObject({
       normalized_result: {
-        truncated: false,
+        truncated: true,
         files_before: expect.arrayContaining([
           expect.objectContaining({
             path: "root_0:vanishing-link",
@@ -99,7 +99,17 @@ captureCliTest(
           }),
         ]),
         truncation_details: {
-          filesystem_after: { enumeration_truncated: false },
+          filesystem_after: {
+            enumeration_truncated: true,
+            enumeration_reasons: ["symlink_not_followed"],
+            enumeration_omissions: [
+              {
+                path: "root_0:vanishing-link",
+                reason: "symlink_not_followed",
+                system_code: null,
+              },
+            ],
+          },
         },
       },
     });

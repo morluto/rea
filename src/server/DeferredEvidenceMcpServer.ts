@@ -7,7 +7,7 @@ import type {
 } from "@modelcontextprotocol/server";
 import type { PromptCompletionSource } from "./promptCompletion.js";
 import type { RecordedMcpCatalog } from "../recordedMcpCatalog.js";
-import type { ToolResultDelivery } from "./toolResult.js";
+import type { ToolResultDelivery } from "./ToolResultDelivery.js";
 import {
   EvidenceMcpServerCore,
   currentMcpRequestSignal,
@@ -60,17 +60,22 @@ export class DeferredEvidenceMcpServer extends EvidenceMcpServerCore {
     private readonly initialize: (
       server: DeferredEvidenceMcpServer,
     ) => Promise<void>,
+    maximumInputElements?: number,
   ) {
     super(
       catalog.info,
       {
         capabilities: catalog.capabilities,
         instructions: catalog.instructions,
+        ...(maximumInputElements === undefined
+          ? {}
+          : { maxToolInputElements: maximumInputElements }),
       },
       undefined,
       delivery,
       undefined,
-      false,
+      // `main.ts` only defers the exact full advertisement catalog.
+      "full",
       catalog.identity,
     );
     for (const tool of catalog.tools) {

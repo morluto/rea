@@ -63,7 +63,7 @@ redaction, and its live status clears only after a confirmed retry.
 
 ## Formats and upstream profiles
 
-HAR uses unchanged `har-schema@2.0.0` draft-06 schemas, `ajv@8.20.0`,
+HAR uses `har-schema@2.0.0` draft-06 schemas, `ajv@8.20.0`,
 `ajv-formats@3.0.1`, `jsonc-parser@3.3.1` JSON visitor, and
 `lossless-json@4.3.1` numeric representations, pinned in the npm lockfile.
 Only the HAR 1.2 profile is supported. Unknown extensions remain reported
@@ -71,6 +71,25 @@ evidence. Duplicate object keys, including equal values and escaped spellings,
 are rejected before materialization. Prototype-named members such as
 `__proto__` are preserved as ordinary own JSON members without prototype
 mutation. Original capture files remain unchanged.
+REA owns specific schema corrections because pinned upstream schemas omit
+object types and use the unrecognized `min` keyword. The pinned schema also
+checks `request.url` as an RFC 3986 `uri`, while HAR 1.2 defines it only as the
+absolute request URL. REA additionally admits a URL that WHATWG URL
+serialization reproduces unchanged, which is how browsers record and send it,
+for example with an unescaped `|` or `{` in the query. Every URL the RFC 3986
+check accepts stays admitted, even when WHATWG would rewrite it, such as an
+uppercase host. Spellings that fail the RFC 3986 check and that WHATWG would
+rewrite, such as a backslash authority, a tab or a space, still fail.
+Following
+[HAR 1.2](https://github.com/ahmadnassri/har-spec/blob/81adb2fcf845e81ff3de728cf6829a0e6ad63e95/versions/1.2.md#timings),
+`timings` must be an object with nonnegative `send`, `wait` and `receive`;
+optional `blocked`, `dns`, `connect` and `ssl` may be absent, `-1`, or
+nonnegative. Entry `time` must be nonnegative; page `onContentLoad` and `onLoad`
+may be absent, `-1`, or nonnegative. `cache` must be an object, while its optional
+`beforeRequest` and `afterRequest` retain their specified nullable forms.
+Invalid values fail with their source JSON pointer before record selection or
+sensitivity projection. Measurements are not invented or repaired. Decoder
+provenance names these corrections as `har-schema-corrections@1`.
 The observed mitmproxy 12.2.3 `SaveHar` profile can emit `postData.text: null`
 for a missing request body. REA preserves that reported null, omitting the
 optional field only from its validation copy for this exact producer profile;
@@ -130,6 +149,19 @@ Selecting `record_ordinals` (CLI `--record`) also decodes retained bodies with
 recognized protobuf or gRPC content types. Whole-capture inspection does not
 perform this extra work. The original binary sidecar, SHA-256 and producer
 ordinal remain the source; decoding adds flat body, frame and field facts.
+Automatic binary Protobuf admission validates reserved MIME parameters:
+`encoding` may be `binary`, while `charset` and the reserved `version` must be
+absent. Illegal profiles retain the source body, add a limitation, and leave
+protobuf coverage partial. Ordinary non-encoding parameters remain accepted;
+an explicit framing choice interprets bytes independently of the MIME profile.
+Admission follows HTTP token and quoted-string syntax: unterminated quotes and
+conflicting repeated reserved parameters remain invalid. Repeated headers with
+implicit binary encoding and `encoding=binary` agree without rewriting either
+header. Invalid declarations remain visible even with explicit framing, and
+declared gRPC bodies still receive credential checks before a MIME refusal.
+An excluded HAR `mimeType` remains unknown for automatic interpretation even
+when a visible Content-Type header exists. That header can still identify the
+transport for credential checks; explicit wire framing remains independent.
 
 Native gRPC admits only data-frame flags 0/1; gRPC-web additionally admits its
 terminal trailer frame. `grpc-web-text` supports independently padded base64
@@ -137,6 +169,10 @@ chunks. Its offsets refer to **base64-decoded body bytes**; other offsets refer
 to retained body bytes. Every field has a body-scoped `field_id` derived from
 its byte offset, a `frame_index`, and a `parent_field_id` for schema-driven
 nested messages or groups. Repeated field numbers remain separate occurrences.
+Trailer blocks are parsed as HTTP field bytes. Valid UTF-8 values are retained;
+when a field contains opaque non-UTF-8 bytes, that field is omitted and the
+trailer frame is partial, while other valid trailer fields remain available.
+The retained body and frame byte range preserve the original opaque value.
 
 Without a schema, varints and fixed-width values retain exact unsigned decimal
 representations. Length-delimited UTF-8, nested-message and packed readings
@@ -151,11 +187,33 @@ fully qualified message type. All imports must be included. REA never fetches
 schemas or executes the selected application. Descriptor identity and parser
 version remain in the body facts. Scalars, repeated numeric packing and nested
 messages are interpreted alongside the unchanged wire facts; disagreements
-remain explicit. Map semantics, extensions and required-field validation are
+remain explicit. Descriptor admission rejects duplicate field numbers within
+each message, including nested messages and oneof fields, before schema
+annotation. This does not reject repeated occurrences in captured wire bytes
+or reuse of a number in a different message. Fully qualified message, enum,
+service and extension names must also identify one declaration across the
+descriptor set, including nested and synthetic map-entry messages. Different
+packages or enclosing messages may reuse a local type name. Schema-admission
+failures retain the partial capture Evidence and its original artifact identity.
+REA also requires an unambiguous descriptor file identity. Repeated exact file
+names are coalesced only when protobuf-es equality confirms matching field
+presence, declared values and retained opaque unknown/custom-option fields.
+Opaque fields must match in their retained order and bytes; REA does not
+interpret them. Conflicting definitions are refused rather than selecting a
+file by its position. This is REA's supplied-schema admission policy, separate
+from protobuf wire validity and the [first-occurrence precedence in protoc v32.1](https://github.com/protocolbuffers/protobuf/blob/v32.1/src/google/protobuf/compiler/command_line_interface.cc#L1402).
+The descriptor-set byte count and SHA-256 continue to identify the complete
+original input, including repeated file facts.
+Map semantics, extensions and required-field validation are
 unsupported. A supplied schema does not establish the sender's actual schema.
 An invalid nested interpretation records `schema_status: "invalid-message"`
 and `schema_error` locally; later outer fields remain available. Valid string
-contents, including a leading U+FEFF, are preserved.
+contents, including a leading U+FEFF, are preserved. Descriptor wire failures
+name `protobuf.schema.descriptor_set_path` with the wire reason and byte offset;
+a missing selected type names `protobuf.schema.message_type`. Duplicate field
+numbers in a message are refused before registry construction, independently of
+declaration order. Resource exhaustion and cancellation keep their own outcomes
+and previously admitted capture Evidence remains available.
 
 ```bash
 # Compile your own schema with your existing protoc, including local imports:
@@ -257,12 +315,20 @@ not register or wrap the Fiddler MCP server.
 - `numeric_literals` preserve HAR number lexemes and native integer/float
   representations, including unsafe integers and non-finite native floats.
   Values that cannot be safely represented as JSON numbers are `null` in the
-  reported view. Unsafe standard HAR numeric fields fail schema validation;
-  unsafe extension numbers remain available through their sidecars.
+  reported view. Schema-valid HAR numbers are admitted even when they cannot
+  be published safely as JSON numbers; their exact lexemes remain in
+  `numeric_literals`. Standard numeric fields must still satisfy the pinned
+  schema, including integer requirements judged from the numeric lexeme.
 - `binary_fields` retain exposed bytes, base64 and SHA-256 independently of
   declared sizes. Valid HAR `content.encoding: "base64"` is decoded exactly;
   producer-decoded Unicode text, missing text and unknown encodings do not
-  establish original body bytes. Post-data parameters do not reconstruct a
+  establish original body bytes. Response readers expose decoded text only when
+  `encoding` is absent or supported base64 bytes decode as UTF-8. Other declared
+  encodings remain opaque: original text and encoding stay in Evidence, while
+  replay and state extraction treat the decoded body as unavailable. A redacted
+  encoding declaration does not establish plain text. See the
+  [HAR content representation](https://github.com/ahmadnassri/har-spec/blob/81adb2fcf845e81ff3de728cf6829a0e6ad63e95/versions/1.2.md#content).
+  Post-data parameters do not reconstruct a
   multipart body. Native byte fields also have an exact UTF-8 display view
   when valid; binary sidecars establish their actual representation. Native
   missing content and empty content remain distinct.
@@ -270,6 +336,10 @@ not register or wrap the Fiddler MCP server.
   sensitive-value exclusions. Redacted byte fields retain neither original
   bytes nor their digest. Unknown extension names and token-looking query
   parameters do not establish sensitivity.
+  HAR authentication fields, transport URLs and base64 content are interpreted
+  only inside `log.entries`. Similarly named unknown fields in the document
+  container remain opaque evidence; explicit sensitive-value declarations still
+  apply to both scopes.
 
 Mark sensitive literal string/UTF-8 byte values with MCP `sensitive_values`, or
 repeat CLI `--sensitive-value`. These declarations are never persisted in
@@ -410,7 +480,10 @@ agent environment later serves from retained Evidence. The view reuses the
 api-surface grouping, then keeps the groups on the primary origin, the origin
 with the most JSON-like records (`application/json`, `application/*+json`,
 `text/plain`, `text/markdown`), whose path starts with `/api/` or `/apis/` or
-whose content types are JSON-like. Every other group is listed under
+whose content types are JSON-like, and the write groups answered with no body
+(a bodiless `204 DELETE`). Empty retained response text establishes a bodiless
+write only when its encoding is understood and unredacted; an opaque or hidden
+encoding leaves the body unknown. Every other group is listed under
 `excluded` with reason `other-origin`, `ui-page-or-asset` or `non-json`, and
 retained records without a usable request line are counted in a limitation.
 
@@ -560,7 +633,8 @@ refused for them, as the manifest is not.
 
 Each `GET` tool whose template ends in a parameter is an item tool, and its
 type's `collection_template` is the template without that parameter; any other
-`GET` tool is a list tool of its own template. Empty segments are ignored, so a
+`GET` tool is a list tool of its own template. Interior empty segments remain
+meaningful: `/api/books` and `/api//books` name distinct collections. A single
 trailing slash names the same collection. An item tool proves its type's
 `id_field` when every initial response carries the requested path value in the
 same field of one entity object (`id_basis: "path-parameter"`). The object is
@@ -587,27 +661,44 @@ collection path: an item view's latest values win over a list view's, a view
 whose latest values differ keeps them in `view_fields`, and a field whose value
 changed between one tool's observations with no recorded write between is named
 in the type's `volatile_fields`, keeping the latest value. A value that changed
-across a write under another root may be that write's effect, so every tool of
-its type is a recorded view with reason `fields-differ`; so is a value one tool
-read before a write and another tool read after it. Repeated reads of one full request line also keep the type recorded when list membership changes across a write, including transitions to or from an empty list, or when entity fields are added or removed. Different query strings remain distinct request lines. Sparse responses do not erase the last observation of a field supplied by another request line. Entities are ordered
-by type, collection and first sighting; that order is a list's state order.
+across a write under another root may be that write's effect, so the type's
+initial reads end at the earliest write within the change, reads that overlap
+it are left out, and the state is extracted again once; the same holds for a
+value one tool read before a write and another tool read after it, and for
+repeated reads of one full request line whose list membership changes across a
+write, including transitions to or from an empty list, or whose entity fields
+are added or removed. A type whose reads still disagree keeps every tool a
+recorded view with reason `fields-differ`. Different query strings remain distinct request lines. Sparse responses do not erase the last observation of a field supplied by another request line. Entities are ordered
+by type and collection, and within a collection as the first line that lists
+every entity any initial read shows in it and names no sort, direction or
+random parameter (`random`, `rand`, `shuffle`, `seed`) lists them; a collection
+without such a line keeps its entities' earliest sightings. That order is a
+list's state order.
 Every entity cites its `record_ordinals`.
 
 `views` lists one plan per read tool in tool order:
 
-| Shape      | Plan                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `item`     | The entity object at `pointer` (the root, one member, or `/0` or `/<member>/0`), the ordered `fields` the view shows and the `required_fields` every recording had, and `envelope_ordinal`: the recording whose response, with the entity replaced, every item response shares                                                                                                                                                                                                                                              |
-| `list`     | The array at `pointer`, its `fields`, `membership` (`all`: every entity of the collection in state order, when each recording listed exactly that, had no query, no item-total member (`total`, `count`, `totalCount`, `item_count`, `totalcount`, `itemcount`, but not `total_pages` or `per_page`; a number or a string of digits) differing from the number listed, and no `has_more`, `next` or next-page token member set; `recorded`: the entities each recording listed) and `counters` that equal the number listed |
-| `document` | The latest initial value of a list tool whose responses hold no identified list, when its initial reads share one request line; held in `documents` with that `path`, whether or not the capture writes it, unless its value changed across any recorded write between those reads (`fields-differ`)                                                                                                                                                                                                                        |
-| `recorded` | A `reason` the tool replays its recordings instead                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| Shape      | Plan                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `item`     | The entity object at `pointer` (the root, one member, or `/0` or `/<member>/0`), the ordered `fields` the view shows and the `required_fields` every recording had (the fields include those only reads after the type's first write show, of entities that hold its identity, when no initial entity holds them, as Vikunja adds `subscription` to the tasks it creates; they are never required), and `envelope_ordinal`: the recording whose response, with the entity replaced, every item response shares, leaving out the `per_response_members` each response there mints: a top-level UUID or clock that differed on every repeat of every concrete path the view answers, with no write between, and never stayed the same on a repeat elsewhere; list views name theirs too                                                                                                                                                                                                                                                                                                                                                                         |
+| `list`     | The array at `pointer`, its `fields`, `membership` (`all`: every entity of the collection in state order, when each recording listed exactly that, had no query or only paging parameters (`limit`, `offset`, `page`, `per_page`, `perpage`, `page_size`, `pagesize`, `maxsize`, `max_results`, `maxresults`, `size`, `start`, `_start`, `_end`, ignoring case), no item-total member (`total`, `count`, `totalCount`, `item_count`, `totalcount`, `itemcount`, `numberOfElements`, but not `total_pages` or `per_page`; a number or a string of digits; top-level, or in a top-level object beside the list such as `pageInfo.totalRows`) differing from the number listed, and no `has_more`, `next` or next-page token member set; `recorded`: the entities each recording listed, except on the lines `all_record_ordinals` names, which each meet those conditions on their own and list every entity), `counters` that equal the number listed, and `listed_ids`: top-level members that list two or more listed entities' identity values in list order (Paperless's `all`), which a rendered list sets to its own unless it is a page of more matches |
+| `document` | The latest initial value of a list tool whose responses hold no identified list, when its initial reads share one request line; held in `documents` with that `path`, whether or not the capture writes it, unless its value changed across any recorded write between those reads (`fields-differ`); its `per_response_members` are the members of the value each response on that path mints                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `recorded` | A `reason` the tool replays its recordings instead                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 
 An item or list plan is kept only when it reproduces the latest initial
 recording of each request line from the state, comparing JSON values without
 regard to member order; a volatile field compares its recorded value. Each
-plan lists the `checked_record_ordinals`. Otherwise the tool is a recorded view
+plan lists the `checked_record_ordinals`. A request line that shows the
+entities in another representation (an expanding or reducing query, or one
+asking for some fields only) is left out of those checks when a query key tells
+it from the others: the plan lists its latest recordings in
+`projected_record_ordinals` and the keys in `projected_query_keys` (`name`,
+with a `value` or `absent: true`), and serving replays calls matching them and
+calls asking for fields the checked lines do not show.
+Otherwise the tool is a recorded view
 with reason `envelope-varies`, `fields-differ` or `list-differs`; the other
-reasons are `query-body` (a query `POST`), `no-init-recording`,
+reasons are `query-body` (a query `POST`, or one the capture shows only reading),
+`method-replay` (a safe `HEAD`, `OPTIONS` or `TRACE` call), `no-init-recording`,
 `body-unusable`, `no-identity` (an item read without a proved identity),
 `path-varies` (another read under more than one path, as a template with a
 parameter before its end), `query-varies` (another read of one path under
@@ -615,24 +706,300 @@ more than one query) and `rendered-oversize` (a document value whose JSON
 renders to more than 256 KiB). A document holds the value of its one `path`, so for such
 a template it says nothing about the template's other paths. A body is usable
 when its content type is
-JSON-like, it is UTF-8 text of at most 256 KiB, every number survives native
-conversion exactly, and no member is named `__proto__`.
+JSON-like, it is UTF-8 text of at most 256 KiB, and every number survives native
+conversion exactly. JSON member names, including `__proto__`, remain ordinary
+own data members through extraction and serving.
+
+A list view also learns, from its checked lines that do not list the whole
+collection, what each query parameter does, and names the result in `query`.
+Each such line is explained by the first combination of roles that lists
+exactly what it recorded from the collection's initial entities:
+
+| Role        | Parameter                                                                                                                                                                                                                                                                | Effect                                                                                                                                                                                                                                               |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `filter`    | any other, on a `field` every listed item holds the value in; one not named like the field (`shelf`, or `shelf_id`, for `shelf`) stands only when lines giving it two different values agree on it                                                                       | entities whose field equals the value as text, or whose array field holds it directly or as an object's `id`, `slug` or `name`                                                                                                                       |
+| `search`    | `q`, `query`, `search`, `searchTerm`, `term`, `keyword`(s)                                                                                                                                                                                                               | entities with one of `fields` containing the value, ignoring case; the fields are those it matched in the listed items, URLs only where nothing else matched; a term that matched no field leaves the parameter inert until another line's term does |
+| `sort`      | a name asking for an order in any common spelling: `sort`, `_sort`, `sort[]`, `sort[0][field]`, `sorters[...]`, `sortBy`, `sort-column`, `sortKey`, `order`, `orderBy`, `ordering`                                                                                       | ordered by the field the value names (`name`, `-name`, `name:desc`, `name-ASC`): numbers by value, text ignoring case, null last ascending, ties in state order                                                                                      |
+| `direction` | a direction name (`dir`, `direction`, `sortDir`, `sortOrder`, `sortDirection`, `order_direction`, json-server's `_order`, and `order`) given `asc`, `desc`, `ascending` or `descending`; given anything else, `order` is a `sort` and the others are ordinary parameters | the sort's direction                                                                                                                                                                                                                                 |
+| `limit`     | `limit`, `per_page`, `perPage`, `page_size`, `size`, `count`, `take`, `itemsPerPage`, `maxSize`, `max_results`, `maxResults`                                                                                                                                             | page size; zero or a negative value lists every match                                                                                                                                                                                                |
+| `offset`    | `offset`, `start`, `_start`, `skip`                                                                                                                                                                                                                                      | matches skipped before the page                                                                                                                                                                                                                      |
+| `page`      | `page`                                                                                                                                                                                                                                                                   | page number, counted from `first` (1 or 0, whichever explains the line)                                                                                                                                                                              |
+| `inert`     | any that names no order or direction; never a true `reverse`, or a paging value that is not a safe integer                                                                                                                                                               | changes nothing for its recorded `values`; other values are not computed                                                                                                                                                                             |
+
+No two parameters of one call take the same `sort`, `direction` or paging role,
+and a line with more than 12 query parameters is left unexplained. Lines that
+disagree on a parameter's role drop it, inert values gather and search fields
+unite. `query.record_ordinals` are the lines the merged roles
+reproduce, envelope and fields included, and `query.totals` the envelope
+members that count every match before paging on each of them, top-level or one
+level down in a paging object (`/pageInfo/totalRows`); a `number`-of-items
+member counts the page. The roles are inferences from the
+recorded lines; a line they do not reproduce keeps its recorded members.
+
+`writes` lists one plan per tool whose request may change state, in tool
+order. Its `effect` is `create` for a `POST` to a type's
+`collection_template`, `update` for a `PUT`, `PATCH` or `POST` to that template
+plus one trailing parameter, or to that item path plus one action segment,
+`delete` for a `DELETE` to it, `document` for a `PUT`, `PATCH` or `POST` to a
+document's path, an `update` or `delete` of each entity a write at the
+collection names by id in its body, a `create` for a `POST` whose answer names
+an id (at its top level, in an object member or in the one object of a
+one-element array member) that a later item read of a type first shows (served
+only with the path values its recorded call sent, unless it creates into the
+type's own collection, whose path has no parameters, and a `path` rule stores
+each of its path values), and otherwise `none` with reason `no-state-target`. A plan is built from the tool's first successful call: its
+request body must be a usable JSON object (as response bodies are usable), or
+absent for an item action (a scenario request is absent when Playwright exposed
+no body and it names no `Content-Type`, which the bodies browsers send carry), and
+the written entity must show in that call's response or in a later read before
+the next write. Each field of a created entity gets the first rule that
+explains it: generated `identity` (a sequence, UUID or token, by the recorded
+value's shape), `echo` of a body member (`sorted` when the application stored
+its strings in code-point order rather than as sent), `copy` of a body string of
+8 or more characters, a `path` value, a `slug` of a body member, a `clock` value within 10
+minutes of the request in its recorded format, a `sequence` one past the
+largest value of its collection or type, and never below its `start`, a `unique` UUID, opaque token or
+integer of 10 or more digits that no entity of the type holds (where every one
+holds a distinct integer of the same length, as time-based ids do), a
+`nested-clock` object whose clocks the request stamped, a `made-object` no
+other entity of the type holds otherwise, whose `clocks` the request stamped and
+whose other members hold the entity's own identity (`own`), one past the largest
+value held objects show (`counts`, each from a `start`), or what every held
+object shows, a `template` around
+a generated value, a `reference` to an entity, or a `composed` string; other
+fields keep the observed value. When the first read of a created entity before
+the next write shows fields the create's answer lacks, its clocks to another
+precision, or values the answer had not loaded (an empty, zero or `false` value,
+Go's zero time, or an object whose members are each loaded so), the observed
+entity takes them (`observation.read`, whose `unloaded` points to the values the
+answer had not loaded). An item read
+that agrees with the answer otherwise lends its fields and clock spellings and
+no longer confirms the create; one that disagrees or omits an answer field its
+item view renders still checks it. Clock agreement uses the coarser recorded
+precision, including microseconds. A list read
+only adds fields the answer lacks and still checks it. Serving answers a create
+in its answer's shape and clock precision, with empty lists and maps the call
+did not send spelled (`null`, `[]` or `{}`) as its answer spelled them and the
+values it had not loaded as it answered them (unless the call sent one the plan
+stores as sent), leaving out members the read added inside an object the answer
+showed, and stores the fields of both,
+as the item read-back shows them, with its clock precision. Updates
+answer empty lists and maps they did not send as their answers spelled them
+too; a member a call sent is answered as sent. An update or delete that answers
+with the entity leaves out a field only later reads showed, which no initial
+entity holds, when the entity does not hold it, as Vikunja's reads of tasks it
+did not create show no `subscription`. A `reference` is an object
+holding fields of the
+entity a sent member names, as the state holds it (a parent beside `parentId`),
+or a list of them, one per id a sent list names, in its order (`many`, tags
+beside `tagIds`):
+the member is accepted with any value, serving looks the entity up and refuses a
+call naming one the environment does not hold or holds in more than one
+collection, and the field is absent, from the entity and the create's answer,
+when the call does not send the member. An id naming entities of one type in
+several collections teaches no reference. Each later create widens its plan
+when, explained on its own, it agrees with it: both calls show the same fields
+but for a reference whose member a call without it did not send, or sent as
+`null` or `[]` and stored so (one an earlier create added stays, and a call may
+send the member empty as that create did; one leaving it out stores no such field
+when the create the plan observes showed none), every field both rule they rule alike (an echo one showed
+sorted stays sorted, unless a call stored its strings out of order as sent),
+and a field neither rules holds one value, unless the later call's rule for it
+spells the earlier calls' value too: a `composed` or `template` string, or a
+`sequence` started at that value (`start`), as Vikunja numbers a project's tasks
+past those deleted before the capture. Two `made-object` rules agree in their
+clocks and own members, and a count only the later call shows starts at the
+first object's value; a later create's made object must hold clocks its own
+request stamped, in the rule's format. Members either call sent are accepted, only those every call sent are
+required, and an echoed member a call left out takes the value that call stored
+(`body.defaults`). A member one call sent and stored as sent, and another left
+out and the application numbered one past the others, takes the value a call
+sends, else that number (a `sequence` with `sent`), whichever call came first,
+unless a call that left it out stored a fixed value (its `body.defaults`) or
+the number a later call was given is not above every value an earlier create
+sent in the sequence's scope (the type, or the later call's collection); an empty value a call sent is not applied to a call that leaves it out;
+a later call that sends it must have stored what it sent, and the next number
+follows the largest value any call took, a deleted entity's included. A member a create sent empty (`""`, `null`, `false`, `[]` or
+`{}`), as a form sends a field left as it was, is not required: a call that
+leaves it out is applied as sending that value (`body.blank`), unless a call
+that left it out showed a default, which it then keeps. A call may send it as any
+recorded call sent it empty, even after a default is learned, and one leaving it
+out is applied as the earliest did, as when one create sent `false` and another
+`null`. A clock rule widens to `trimmed` only when no held entity or
+earlier call showed that clock at a fixed width, and a slug to spelling `&` as
+the word (`ampersand: "and"`) only when no call the plan accepted nor entity the
+type held dropped one. A later
+create that disagrees leaves the plan as it was. A field the first create left
+unexplained, such as an address whose two parts were the same text, takes the
+`composed` rule a later create learns for it when that rule spells the first
+create's value too, and the first create's body contract is learned again with
+it. A `composed` string or `template` a later create's answer shows otherwise
+or leaves out is `unexplained-change`. A create whose observed reference
+differs from the
+entity the plan rebuilds, whether or not it sent the reference member, is
+`unexplained-change`. So is a create that left out an echoed member yet shows a
+value different from the learned default, or that stored a field no rule writes
+otherwise than the plan keeps it.
+A `composed` string is literal text and parts read from the fields other rules
+write: a field's value, its slug, or a clock's calendar digits
+(`YYYYMMDDhhmmss`, `YYYYMMDD`, `YYYY-MM-DD` or `YYYY/MM/DD`, in the clock's
+zone). A slug drops `&` unless the application spells it as the word, as Go's
+gosimple/slug and JavaScript's slugify do (`ampersand: "and"`, on a `slug` rule
+or part). When a create slugs no `&`, the entities the type holds show which,
+and no `slug` rule is learned when they spell it both ways; a create whose slug
+spells `&` otherwise than they do, or alongside one whose
+slug neither spelling gives, has no `slug` rule; such a held slug also keeps a
+later create from widening the spelling. An update learns the spelling the same way: a later update whose slug spells
+`&` as the word refines a rule an earlier update learned from a name without
+`&`, unless an accepted call or a held entity dropped it, and every earlier
+update must still replay. An update whose slug spells no `&` takes the spelling the
+entity's earlier value and the type's other entities show, as a create does,
+and learns no slug rule when they spell it both ways. A create composes a string only when at least one other entity of the
+type spells it with the same parts and none spells it otherwise. Where one text
+could come from two sources serving could tell apart, such as an id that equals
+the title's slug, the entities the type holds must leave exactly one reading. A
+`composed` string that reads a field besides the generated value a `template`
+would rebuild it around replaces the template. A clock format
+is `trimmed` when the field's values differ only in how many fraction digits
+they show and none ends a fraction in a zero, as Go spells nanoseconds: its
+`fraction` is the most it shows, and serving drops trailing zeros and the point
+with them. Other clocks the plan stamps take that spelling too unless their own
+value shows a fixed width. A body that wraps one
+object in a one-element array is that object, wrapped so on every call
+(`body.envelope`). An update's members
+echo when stored as sent. A clock sent back as the entity held it and stored as
+a fresh clock near the call is a `clock`, and a member stored as the slug of
+another member stored as sent is a `slug`, both accepted with any value, as a
+whole-object write that sends what it read shows. A save that echoes an
+already-derived slug or holds a clock in its own second remains compatible
+with that derivation in either call order; earlier saves must also reproduce
+a newly learned slug. Any other member stored
+differently is accepted only with its
+recorded value (`body.fixed`) and stores the value the call that showed it
+recorded (the `value` of its `constant` rule), and a field it changed without
+sending (an empty list or map one answer spells `null` and another `[]` or `{}`
+is unchanged) must be a clock, a nested clock, an increment, a slug, a fresh `unique`
+value, a `stamp` of the acting user, a value `derived` from the one member it
+stores nowhere, a `reference` to the entity a sent member names (kept by a call that names the entity the field already repeats), a `composed` string whose parts read members it stored as sent
+or fields it left as they were and spell the value before the call too, or for
+an item action a `set` of a scalar to the value it showed (a `toggle` once a
+later call flips back the boolean an earlier one set, when no call found it set
+already), or, for a `PUT`, a
+member it left out that the application cleared to an empty value, which calls
+that leave it out then store (`body.defaults`) as long as every call that left
+it out stored that value (a call naming a `reference` field's entity by its
+member does not leave the field out), or the plan is
+`unexplained-change`; an increment, slug, stamp, derived
+value, set or toggle must hold for every call of the tool, and an action is
+served only once a call found what it sets already set, or flipped back what it
+toggles. A write is served only
+with the query its first call sent, which serving applies to a call that
+leaves a parameter out and the catalog advertises as required. Every member every call sent is required, except by `PATCH` and
+`POST` updates and members a create sent empty. The state holds an update's
+clock as the first read of the entity after it spells the same instant at a
+coarser precision in the same zone and separator: replay and serving store every
+update's clocks in the spelling of the read the plan keeps as
+`observation.read`, so a later update whose read spells them otherwise
+contradicts the plan, while answers keep the update's own; a create's clocks
+stay as answered. A `PUT` default must agree with what every call that left the
+member out stored, as its answer shows it or, where the answer leaves it out,
+the read after the call.
+
+A read on a line `query` answers is checked against the query evaluated over
+the replayed state. It covers the collection only when every parameter sorts or
+pages and the answer holds every match; otherwise it covers the entities it
+lists, and those the line or the read listed that the state no longer holds.
+
+The view then replays the timeline on a copy of the initial state. Modelled
+writes apply their effect; only a `2xx` write is modelled or an example, and
+any other write (a redirect, an unanswered or unmodelled one) leaves the entity
+below whose item path it wrote unknown until a read shows it again (a whole
+collection when the path names no held entity), and taints what it wrote at or
+above. A read the served environment would answer from the state is compared
+with its recording as the read plans are, as the whole response it would serve:
+the entity or list rendered into the envelope of the item view's or the line's
+base recording, with the members the state still holds. A 400, 404 or 410, a
+`null` body, or an object marked deleted (`deleted`, `isDeleted` or `is_deleted`
+`true`, as EspoCRM answers a read of a deleted record) agrees with an entity the
+copy does not hold; such a read drops a held entity it names and adopts none,
+while an initial read keeps the record it shows held, as its item read answers it.
+The item view records the flag its reads set as `deleted_flag`, a field it shows
+even when only a query read showed it, which serving answers by: later reads of
+a served-deleted entity show it marked deleted, and a served delete answers with
+the flag as its recorded answer showed it. A match confirms
+the writes that changed its entity or collection since it was last read, less
+those whose entity a read since showed absent, which no longer count for the
+collection; a mismatch contradicts them, or, when an unmodelled write came after them, is
+checked only on the members they sent; a mismatch no write explains marks the related writes since as
+`side-effect`. A plan is `served` when a read confirmed it and none
+contradicted it; otherwise its `reason` is the first of its build reason
+(`no-call`, `body-unusable`, `no-observation`, `unexplained-change`),
+`contradicted` (with `contradicted_by`), `side-effect`, `unconfirmed` and `incomplete-entities` (an update or delete that answers with the entity, when no initial entity holds every field its recorded answer shows but those only later reads showed, counting for an update the fields its rules write, so it could answer only for entities the environment created). An otherwise served plan whose learned rules generate clock values is withheld with `unknown-clock` when no global clock start is established; its learned rules and confirming reads remain retained.
+`checked_record_ordinals` lists the confirming reads, `insert` places created
+entities (sorted by a field the collection's recorded order shows, else last;
+a create a whole listing in collection order placed last is placed again by a
+field a later such listing shows it sorted by and no earlier one ruled out, the
+type's id field last),
+and `write_clock` is the end of the last timed record, to the next second, when
+all request completions are known; otherwise it is null. An
+update that writes the field its type's creates are sorted by moves its entity
+to where the new value sorts (its own `insert`); a bulk update moves each entity
+it writes in turn, as replay applies them. When a read listing the whole
+collection in its own order, not one its query sorts, fails after an update and the type's creates are not sorted by a field
+that update writes, the view tries the order serving gives when each write since
+a list in the collection's own order showed its entity moves it in turn by such a
+field, against the others' values before their own writes, when
+the entities no write has changed since a list in the collection's own order last
+showed them already follow it, as serving moves only the entities a write
+changes, and unless an earlier read listing the whole collection in its own
+order showed a write that changed such a field where moving it by that order
+would not have put it, a create was placed by a sort that excludes it, or a read listing the whole
+collection in its own order, not one its query sorts, that placed a create did
+not follow it; on a match, the type's creates
+and updates take that order, as Grafana keeps folders by title though no earlier
+read could tell that from creation order, or from id order where both ascend.
+An update moves its entity by its creates' sort only when a list read showed a
+create placed, in replay as in serving, so no read confirms an update by a sort
+a create only guessed from the initial order.
 
 Values in the state are recorded data, so the view refuses the same parents as
 the manifest, including those inspected with `sensitive_values`, and a
 `capture_browser_scenario` parent must have selected response bodies. Types and
 identity are inferences, so the Evidence is always inferred. `unknowns` states
 that the state establishes no authorization model, no way the application
-computes responses or derived values, and no effects of writes. The state
+computes responses or derived values, and write effects only as modelled from
+recorded calls. The state
 accumulator charges the manifest's admission and grouping, every record line,
 each body as temporary bytes before it is decoded and parsed, and every value
 it keeps, within the same 96 MiB budget. Documents hold whole recorded response
 values whose recorded text and rendered JSON are each at most 256 KiB, so a
-capture with many read-only paths yields a correspondingly larger state result. The view performs no network activity
-and serves nothing; `rea environment-serve` derives it from the capture at
-startup, serves read tools from it and loads replacement states through the
-AgentEnv data plane, as
+capture with many read-only paths yields a correspondingly larger state result.
+The view performs no network activity and serves nothing; `rea environment-serve`
+derives it from the capture at startup, serves read tools and the served write
+plans from it and loads replacement states through the AgentEnv data plane, as
 [serve from the state](agent-environments.md#serve-from-the-state) describes.
+
+## Environment coverage
+
+`view: {"kind":"environment-coverage"}` with the same `template_rules` reports
+what the state an environment derives from the parent would serve, without the
+state's entities: `reads.state` counts read tools answered from the state,
+`reads.recorded` those that replay their recordings with
+`reads.recorded_reasons` per view reason, `writes.served` lists the write tools
+whose effect later reads confirmed, and `writes.withheld` lists every other
+write tool with its reason, the record its plan was built from
+(`exemplar_ordinal`), the read that disagreed (`contradicted_by`) and a `hint`
+about what to record next. Hints are advice; they never change what is served.
+The view projects the environment-state view and summarizes it, so it refuses
+every parent that view refuses, with the same errors, and it is always
+inferred. Call it after each recording to see which writes an environment
+built from it would serve. It does not apply the serve-time admission checks:
+an environment whose served catalog exceeds the discovery budget, or whose
+state exceeds what `data/add` loads, serves replay, and `rea environment-build`
+then reports `coverage: null`; otherwise the build prints this summary as its
+`coverage`. See
+[Build a bundle in one step](agent-environments.md#build-a-bundle-in-one-step)
+for the hint per reason.
 
 ## Resource and lifecycle boundaries
 
@@ -641,8 +1008,25 @@ budget. Those budgets have no runtime override. `capture_timeout_ms` does not
 raise them. Exceeding a budget returns no partial success.
 Oversized selected captures return an input error identifying `capture_path`
 and the byte budget; owned reply/output failures remain output or provider errors.
-HAR, SAZ and qlog run in an owned
-192 MiB Node old-generation heap with one V8 worker. Mitmproxy decoding applies
+An explicit complete-reply refusal names the 100663296-byte allowance and its
+lack of a runtime override. Record selection, paging, delivery mode and worker
+memory do not increase that allowance; a smaller producer export is a narrower
+observation, and the refusal leaves no completed capture Evidence to retrieve.
+Cancellation during reply-file finalization retains validated completed capture
+facts as partial observations. Malformed or unvalidated replies are not promoted.
+HAR, SAZ and qlog run in an owned Node old-generation heap with one V8 worker.
+`REA_CAPTURE_DECODER_OLD_GENERATION_MIB` is a decimal integer of mebibytes from
+8 to 16384. Unset uses 192, the previous constant. Invalid values fail
+configuration and name the setting; they do not fall back to 192. The setting
+seeds the launch value. In MCP, set `capture.decoder_old_generation_mib`
+through `update_analysis_settings` for decoders belonging to newly accepted
+operations, without restarting REA. Changing the launch environment still
+requires a new process. A memory failure names the effective mebibytes, known
+source, default, floor, and maximum. The decoder
+passes that value as `--max-old-space-size` and removes inherited
+`NODE_OPTIONS`, so additional host memory and `NODE_OPTIONS` do not raise the
+heap. The 8 MiB semi-space stays fixed; a smaller old generation aborts Node
+during startup instead of enforcing a limit. Mitmproxy decoding applies
 Linux limits of 768 MiB address space, 30 seconds CPU and 96 MiB file output;
 both commands use `capture_timeout_ms` (default 30000) and independently supervised
 process cleanup. Owned decoder diagnostics retain at most 1 MiB across stdout
@@ -650,15 +1034,21 @@ and stderr; the collector drops overflow as it arrives, reports the limit
 failure and verifies cleanup. Heap limits alone do not establish aggregate RSS limits.
 SAZ and qlog refuse decoding when neither a Node heap limit nor a Windows Job Object bound can be enforced. Existing HAR availability is preserved.
 When REA runs on Bun, the HAR/SAZ/qlog decoder runs on Bun, which ignores these V8 heap
-flags; its limitations and resource failures then omit the heap sizes. On
+flags; its limitations and resource failures then omit the V8 heap sizes. On
 Windows, the decoder's owned Job Object instead limits its committed memory to
-704 MiB, the 192 MiB budget plus a 512 MiB reserve for Bun itself. The
-limitations state that limit, and reaching it returns `resource_constraint`
-with `process_memory_limit_bytes`, whatever exit status Bun reports.
+the effective `REA_CAPTURE_DECODER_OLD_GENERATION_MIB` value plus a 512 MiB
+reserve for Bun itself. The default 192 MiB setting therefore yields 704 MiB.
+The limitations state that limit, and reaching it returns `resource_constraint`
+with `process_memory_limit_bytes`, whatever exit status Bun reports. Other Bun
+hosts enforce no decoder heap limit, so raising the setting does not bound them.
 
 Observed decoder memory exhaustion returns `resource_constraint`, with the
-selected capture, applicable limits and retained process diagnostics. HAR/SAZ/qlog's
-old-generation heap is fixed; inherited `NODE_OPTIONS` cannot raise it.
+selected capture, applicable limits and retained process diagnostics. Raising
+host memory or `NODE_OPTIONS` does not raise the old-generation heap. Update
+`capture.decoder_old_generation_mib` through MCP, or set
+`REA_CAPTURE_DECODER_OLD_GENERATION_MIB` before starting a new REA process.
+Retry after owned cleanup completes; the update does not release resources.
+See the [settings design](design/limits-and-recovery.md#failure-and-retry).
 Record selection happens after complete decoding and does not reduce that
 workload. Use a smaller capture exported by its producer or another decoder
 with sufficient capacity, retaining the original for provenance. Subsets do
@@ -729,7 +1119,7 @@ by null; there is no single events pointer shared by all traces.
 | Original event and loss declaration | Observed endpoint report; `recovery:packet_lost` does not prove actual network loss. Missing packet number/type remains unknown.                                                                                                                                              |
 | STREAM ranges and byte totals       | Derived per trace and direction from reported offsets and lengths using exact integer arithmetic. `unique_bytes` unions intervals; `frame_length_sum` includes overlaps; `repeated_bytes` is their difference. Overlap alone does not prove retransmission or equal contents. |
 | FIN final sizes                     | Reported offset plus length where FIN is true; multiple conflicting sizes remain visible. A final size does not establish complete coverage or a received body.                                                                                                               |
-| Incomplete fact records             | Ordinals with omitted/redacted interpretable frame metadata; usable fields in other records survive. An empty list does not establish complete logging or capture.                                                                                                            |
+| Incomplete fact records             | Ordinals with omitted/redacted interpretable frame metadata, including an unknown STREAM FIN; usable fields such as known ranges in that record survive. An empty list does not establish complete logging or capture.                                                        |
 | HTTP bodies and causality           | `body_bytes: "not-reported"`; lengths and headers are metadata, with no reconstructed body, hash, timing causality or live process attribution.                                                                                                                               |
 
 QUIC integer fields interpreted here accept exact nonnegative JSON integer

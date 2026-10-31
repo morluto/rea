@@ -4,6 +4,7 @@ import { PassThrough, Writable } from "node:stream";
 import { z } from "zod";
 
 import type { ProcessCleanupResult } from "../process/ProcessOwnership.js";
+import { RuntimeControlUnavailableError } from "../process/RuntimeControlUnavailableError.js";
 import {
   requireWindowsNativeAuthority,
   windowsHandleSchema,
@@ -11,7 +12,7 @@ import {
 } from "./WindowsNativeLoader.js";
 
 const launchSchema = z.strictObject({
-  pid: z.number().int().positive().max(0xffff_ffff),
+  pid: z.int().positive().max(0xffff_ffff),
   handle: windowsHandleSchema,
   jobAssigned: z.literal(true),
   killOnOwnerClose: z.literal(true),
@@ -21,18 +22,14 @@ const pollSchema = z.strictObject({
   stderr: z.instanceof(Buffer),
   stdoutEnded: z.boolean(),
   stderrEnded: z.boolean(),
-  exitCode: z.number().int().nonnegative().max(0xffff_ffff).nullable(),
-  activeProcesses: z.number().int().nonnegative(),
+  exitCode: z.int().nonnegative().max(0xffff_ffff).nullable(),
+  activeProcesses: z.int().nonnegative(),
 });
 // A commit-limited job reports its applied limit at launch and its
 // notification state on every poll; an unlimited job reports neither.
 const limitedPollSchema = pollSchema.extend({
   memoryLimitReached: z.boolean(),
-  peakJobMemoryBytes: z
-    .number()
-    .int()
-    .nonnegative()
-    .max(Number.MAX_SAFE_INTEGER),
+  peakJobMemoryBytes: z.int().nonnegative().max(Number.MAX_SAFE_INTEGER),
 });
 
 /** Optional native job controls for one owned Windows process tree. */
@@ -45,12 +42,39 @@ export interface WindowsOwnedProcessOptions {
   readonly authority?: WindowsNativeAuthority;
 }
 
+/** Native job control that an admitted artifact may predate. */
+export type WindowsNativeControl = "protocol-stdin" | "job-memory-limit";
+
+const NATIVE_CONTROL_NAMES: Readonly<Record<WindowsNativeControl, string>> = {
+  "protocol-stdin": "owned protocol stdin",
+  "job-memory-limit": "Job Object memory limits",
+};
+
+/** A requested launch control is absent from the admitted native artifact. */
+export class WindowsNativeControlUnavailableError extends RuntimeControlUnavailableError {
+  readonly code = "windows-native-control-unavailable";
+
+  constructor(readonly control: WindowsNativeControl) {
+    super(
+      `The bundled Windows native artifact does not support ${NATIVE_CONTROL_NAMES[control]}; use a matching current Windows x64 REA package.`,
+      {
+        remediationAction:
+          "Install the matching current Windows x64 REA package; its native inspection must prove this control. REA does not launch without it, so retrying the unchanged installation will not succeed.",
+      },
+    );
+    this.name = "WindowsNativeControlUnavailableError";
+  }
+}
+
 /** Encode one ordinary Windows argv token using the CRT backslash rules. */
 export const quoteWindowsProcessArgument = (value: string): string => {
   if (value.includes("\0"))
     throw new TypeError("Windows process argument contains NUL");
   return `"${value.replace(/(\\*)"/gu, '$1$1\\"').replace(/(\\+)$/u, "$1$1")}"`;
 };
+
+// Back off after a failed native poll instead of retrying at the idle cadence.
+const POLL_RETRY_MS = 250;
 
 /** Process events and streams backed by a retained native Job Object. */
 export class WindowsOwnedProcess extends EventEmitter {
@@ -96,18 +120,14 @@ export class WindowsOwnedProcess extends EventEmitter {
     this.#memoryLimitBytes = options.memoryLimitBytes;
     this.#authority = options.authority ?? requireWindowsNativeAuthority();
     if (protocolStdin && this.#authority.inspection.protocolStdin !== true)
-      throw new Error(
-        "The bundled Windows native artifact does not support owned protocol stdin; use a matching current Windows x64 REA package.",
-      );
+      throw new WindowsNativeControlUnavailableError("protocol-stdin");
     // A requested limit is never dropped: an artifact without the control
     // refuses the launch instead of starting an unlimited process.
     if (
       this.#memoryLimitBytes !== undefined &&
       this.#authority.inspection.jobMemoryLimit !== true
     )
-      throw new Error(
-        "The bundled Windows native artifact does not support Job Object memory limits; use a matching current Windows x64 REA package.",
-      );
+      throw new WindowsNativeControlUnavailableError("job-memory-limit");
     const entries = Object.entries(environment)
       .filter((entry): entry is [string, string] => entry[1] !== undefined)
       .map(([key, value]) => `${key}=${value}`);
@@ -197,7 +217,6 @@ export class WindowsOwnedProcess extends EventEmitter {
   async #writeInput(chunk: unknown): Promise<void> {
     const bytes = z.instanceof(Buffer).parse(chunk);
     const written = z
-      .number()
       .int()
       .nonnegative()
       .max(Number.MAX_SAFE_INTEGER)
@@ -400,24 +419,18 @@ export class WindowsOwnedProcess extends EventEmitter {
       } else this.#schedule(idle ? 25 : 0);
     } catch (cause: unknown) {
       const failure = cause instanceof Error ? cause : new Error(String(cause));
-      // Native polling is not atomic: it may drain one stream before a later
-      // read (stderr or job state) fails. Retrying cannot recover those bytes.
-      this.#outputIncomplete = true;
+      const repeated = this.#failure !== undefined;
       this.#failure = failure.message;
       // Native lifecycle failures belong to the error/cleanup channels, never
-      // the captured stderr observation produced by the child itself.
-      if (this.listenerCount("error") > 0) this.emit("error", failure);
-      // Observation never terminates the job. Back off to a low-frequency
-      // referenced retry so naturally exiting descendants can still settle.
-      this.#consecutivePollFailures = Math.min(
-        this.#consecutivePollFailures + 1,
-        6,
-      );
-      this.#schedule(
-        Math.min(5_000, 250 * 2 ** (this.#consecutivePollFailures - 1)),
-      );
-      // Poll failures keep the job for another observation. A process_close
-      // failure leaves #releasePending so cleanup retries that close alone.
+      // the captured stderr observation produced by the child itself. A run of
+      // consecutive failures is reported once.
+      if (!repeated && this.listenerCount("error") > 0)
+        this.emit("error", failure);
+      // Poll failures keep the job for another observation. Without one, a
+      // single failed poll would stop output and exit delivery for the rest of
+      // the process lifetime. A process_close failure leaves #releasePending so
+      // cleanup retries that close alone.
+      this.#schedule(POLL_RETRY_MS);
     }
   }
 

@@ -1,6 +1,11 @@
 import { z } from "zod";
 
 import {
+  isJsonLike,
+  mediaTypeEssence,
+} from "../../domain/analysisView/recordedMediaType.js";
+
+import {
   analysisViewResultSchema,
   type AnalysisViewResult,
 } from "../../domain/analysisView/analysisView.js";
@@ -9,18 +14,19 @@ import {
   readRecordedResponseBody,
   type RecordedResponseBody,
 } from "../../domain/analysisView/recordedResponseBody.js";
-import { isJsonLike } from "../../domain/analysisView/EnvironmentManifestAccumulator.js";
 import {
-  mediaTypeEssence,
   readRecordedRequestLine,
+  type RecordedRequestLine,
 } from "../../domain/analysisView/webNetworkRouteTemplates.js";
-import { browserScenarioCaptureSchema } from "../../domain/browserScenarioCapture.js";
+import { retainedBrowserScenarioCaptureSchema } from "../../domain/browserScenarioCapture.js";
+import type { BrowserScenarioEvent } from "../../domain/browserScenarioCaptureValues.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisInputError,
   type AnalysisInputIssue,
 } from "../../domain/analysisErrorCore.js";
-import { immutableEvidence, type Evidence } from "../../domain/evidence.js";
+import type { Evidence } from "../../domain/evidence.js";
+import { safeParseImmutableEvidence } from "../../domain/evidenceValidation.js";
 import { parseExactJson } from "../../domain/exactJsonNumber.js";
 import { projectInputIssues } from "../../domain/inputIssueProjection.js";
 import { immutableJsonSnapshotMember } from "../../domain/immutableJson.js";
@@ -136,39 +142,51 @@ export const parseEvidenceFile = (
   role: "manifest" | "evidence" | "state",
   value: unknown,
 ): Result<Evidence, AnalysisError> => {
-  try {
-    for (const key of ["parameters", "raw_result", "normalized_result"])
-      immutableJsonSnapshotMember(value, key);
-    return ok(immutableEvidence(value));
-  } catch (cause: unknown) {
-    if (!(cause instanceof z.ZodError)) throw cause;
-    return err(
-      inputError(
-        operation,
-        projectInputIssues(cause.issues, value).map((issue) => ({
-          ...issue,
-          path: [role, ...issue.path],
-        })),
-        `The ${role} file is not authenticated REA Evidence JSON.`,
-      ),
-    );
-  }
+  for (const key of ["parameters", "raw_result", "normalized_result"])
+    immutableJsonSnapshotMember(value, key);
+  const parsed = safeParseImmutableEvidence(value);
+  return parsed.ok
+    ? parsed
+    : err(
+        schemaInputError(
+          operation,
+          { prefix: [role], cause: parsed.error, value },
+          `The ${role} file is not authenticated REA Evidence JSON.`,
+        ),
+      );
 };
 
-const recordedExchange = (
+/** A schema refusal of `value`, found at `prefix`; issue paths extend the prefix and the schema failure is retained. */
+const schemaInputError = (
+  operation: string,
+  failure: {
+    readonly prefix: readonly (string | number)[];
+    readonly cause: z.ZodError;
+    readonly value: unknown;
+  },
+  userMessage: string,
+): AnalysisInputError =>
+  new AnalysisInputError(
+    operation,
+    { userMessage, cause: failure.cause },
+    projectInputIssues(failure.cause.issues, failure.value).map((issue) => ({
+      ...issue,
+      path: [...failure.prefix, ...issue.path],
+    })),
+  );
+
+/** Combine an already parsed request line with its record's retained response body. */
+export const recordedExchange = (
   record: WebNetworkCaptureRecord,
-): RecordedExchange | undefined => {
-  const line = readRecordedRequestLine(record.reported, true, () => true);
-  if (line === null || line.kind !== "line") return undefined;
-  return {
-    ordinal: record.ordinal,
-    path: line.path,
-    query: line.query === undefined || line.query === "" ? null : line.query,
-    status: line.status,
-    contentType: line.rawMime === "" ? null : line.rawMime,
-    ...readRecordedResponseBody(record, REPLAY_BODY_LIMIT_BYTES),
-  };
-};
+  line: Extract<RecordedRequestLine, { readonly kind: "line" }>,
+): RecordedExchange => ({
+  ordinal: record.ordinal,
+  path: line.path,
+  query: line.query === undefined || line.query === "" ? null : line.query,
+  status: line.status,
+  contentType: line.rawMime === "" ? null : line.rawMime,
+  ...readRecordedResponseBody(record, REPLAY_BODY_LIMIT_BYTES),
+});
 
 /** Authenticate a view Evidence file and require one view kind; a refusal names the file role. */
 export const parseViewEvidence = <Kind extends AnalysisViewResult["kind"]>(
@@ -185,14 +203,27 @@ export const parseViewEvidence = <Kind extends AnalysisViewResult["kind"]>(
 > => {
   const evidence = parseEvidenceFile(operation, role, value);
   if (!evidence.ok) return evidence;
-  const view = analysisViewResultSchema.safeParse(
-    evidence.value.normalized_result,
+  const message = `The ${role} file is not ${kind} view Evidence.`;
+  if (evidence.value.operation !== "inspect_analysis_view")
+    return err(
+      inputError(
+        operation,
+        [
+          {
+            path: [role, "operation"],
+            reason: "invalid_value",
+            expected: "inspect_analysis_view",
+            message: `The ${role} file must be inspect_analysis_view Evidence of kind ${kind}.`,
+          },
+        ],
+        message,
+      ),
+    );
+  const normalized = immutableJsonSnapshotMember(
+    evidence.value,
+    "normalized_result",
   );
-  if (
-    evidence.value.operation !== "inspect_analysis_view" ||
-    !view.success ||
-    view.data.kind !== kind
-  )
+  if (immutableJsonSnapshotMember(normalized, "kind") !== kind)
     return err(
       inputError(
         operation,
@@ -204,7 +235,21 @@ export const parseViewEvidence = <Kind extends AnalysisViewResult["kind"]>(
             message: `The ${role} file must be inspect_analysis_view Evidence of kind ${kind}.`,
           },
         ],
-        `The ${role} file is not ${kind} view Evidence.`,
+        message,
+      ),
+    );
+  // The discriminator selected the requested view, so any failure is in that view's payload.
+  const view = analysisViewResultSchema.safeParse(normalized);
+  if (!view.success)
+    return err(
+      schemaInputError(
+        operation,
+        {
+          prefix: [role, "normalized_result"],
+          cause: view.error,
+          value: normalized,
+        },
+        message,
       ),
     );
   return ok({
@@ -213,89 +258,157 @@ export const parseViewEvidence = <Kind extends AnalysisViewResult["kind"]>(
   });
 };
 
-/** Authenticate the evidence file and require complete capture Evidence of either kind. */
-const parseCaptureEvidence = (
+/** What replay needs from a parent capture once its payload has been validated. */
+interface CaptureFacts {
+  readonly records: readonly WebNetworkCaptureRecord[];
+  readonly captureKind: EnvironmentCaptureKind;
+  readonly captureSha256: string | null;
+  /** Whether the capture recorded response bodies: a browser scenario does only when they were selected. */
+  readonly responseBodies: boolean;
+  /** Whether the capture recorded request bodies, likewise. */
+  readonly requestBodies: boolean;
+  /** A browser scenario's retained events, including those no record represents; null for a HAR. */
+  readonly scenarioEvents: readonly BrowserScenarioEvent[] | null;
+}
+
+/** Authenticated capture identity and the facts derived from its validated payload. */
+export interface ParsedEnvironmentCapture extends CaptureFacts {
+  readonly evidenceId: string;
+}
+
+/** Issue paths of a capture payload refusal start here. */
+const CAPTURE_PAYLOAD_PATH = ["evidence", "normalized_result"] as const;
+
+/** Validate a capture_browser_scenario payload; its failures name the payload fields. */
+const parseScenarioCapture = (
+  operation: string,
+  normalized: unknown,
+  parameters: unknown,
+  purpose: "manifest" | "replay",
+): Result<CaptureFacts, AnalysisError> => {
+  const scenario = retainedBrowserScenarioCaptureSchema.safeParse(normalized);
+  if (!scenario.success)
+    return err(
+      schemaInputError(
+        operation,
+        {
+          prefix: CAPTURE_PAYLOAD_PATH,
+          cause: scenario.error,
+          value: normalized,
+        },
+        "The evidence file is not a complete browser scenario capture.",
+      ),
+    );
+  const definition = z
+    .object({ scenario_sha256: z.string() })
+    .safeParse(parameters);
+  return ok({
+    records: scenarioCaptureRecords(scenario.data, purpose).records,
+    captureKind: "browser-scenario",
+    captureSha256: definition.success ? definition.data.scenario_sha256 : null,
+    responseBodies: scenario.data.scenario.network_content.response_body,
+    requestBodies: scenario.data.scenario.network_content.request_body,
+    scenarioEvents: scenario.data.events.items,
+  });
+};
+
+/** Validate an inspect_web_network_capture payload as HAR; its failures name the payload fields. */
+const parseHarCapture = (
+  operation: string,
+  normalized: unknown,
+): Result<CaptureFacts, AnalysisError> => {
+  const records = immutableJsonSnapshotMember(normalized, "records");
+  if (Array.isArray(records))
+    for (let index = 0; index < records.length; index += 1) {
+      const record = immutableJsonSnapshotMember(records, String(index));
+      immutableJsonSnapshotMember(record, "reported");
+    }
+  // An owned snapshot is validated once and borrowed, so deriving the state reuses this validation.
+  const capture = safeParseOwnedWebNetworkCapture(normalized);
+  if (!capture.success)
+    return err(
+      schemaInputError(
+        operation,
+        {
+          prefix: CAPTURE_PAYLOAD_PATH,
+          cause: capture.error,
+          value: normalized,
+        },
+        "The evidence file is not a complete web network capture.",
+      ),
+    );
+  // The manifest view projects HAR captures only, and replay reads HAR's response fields.
+  if (capture.data.format !== "har")
+    return err(
+      inputError(
+        operation,
+        [
+          {
+            path: [...CAPTURE_PAYLOAD_PATH, "format"],
+            reason: "invalid_value",
+            expected: "har",
+            message: `Agent environments replay HAR captures; this capture's format is ${capture.data.format}.`,
+          },
+        ],
+        "The evidence file is not a HAR capture.",
+      ),
+    );
+  return ok({
+    records: capture.data.records,
+    captureKind: "web-network-capture",
+    captureSha256: capture.data.artifact.sha256,
+    responseBodies: true,
+    requestBodies: true,
+    scenarioEvents: null,
+  });
+};
+
+/**
+ * Authenticate the evidence file and require complete capture Evidence of
+ * either kind. Only an operation no capture schema owns blames the operation;
+ * a recognized operation's payload failures name the payload fields. A browser
+ * capture's request bodies are kept only for the manifest purpose.
+ */
+export const parseCaptureEvidence = (
   operation: string,
   value: unknown,
-): Result<
-  {
-    readonly records: readonly WebNetworkCaptureRecord[];
-    readonly evidenceId: string;
-    readonly captureKind: EnvironmentCaptureKind;
-    readonly captureSha256: string | null;
-  },
-  AnalysisError
-> => {
+  purpose: "manifest" | "replay" = "replay",
+): Result<ParsedEnvironmentCapture, AnalysisError> => {
   const evidence = parseEvidenceFile(operation, "evidence", value);
   if (!evidence.ok) return evidence;
-  const { evidence_id: evidenceId } = evidence.value;
   const normalized = immutableJsonSnapshotMember(
     evidence.value,
     "normalized_result",
   );
-  if (evidence.value.operation === "capture_browser_scenario") {
-    const scenario = browserScenarioCaptureSchema.safeParse(normalized);
-    const definition = z
-      .object({ scenario_sha256: z.string() })
-      .safeParse(evidence.value.parameters);
-    if (scenario.success)
-      return ok({
-        records: scenarioCaptureRecords(scenario.data, "replay").records,
-        evidenceId,
-        captureKind: "browser-scenario",
-        captureSha256: definition.success
-          ? definition.data.scenario_sha256
-          : null,
-      });
-  } else if (evidence.value.operation === "inspect_web_network_capture") {
-    const records = immutableJsonSnapshotMember(normalized, "records");
-    if (Array.isArray(records))
-      for (let index = 0; index < records.length; index += 1) {
-        const record = immutableJsonSnapshotMember(records, String(index));
-        immutableJsonSnapshotMember(record, "reported");
-      }
-    // An owned snapshot is validated once and borrowed, so deriving the state reuses this validation.
-    const capture = safeParseOwnedWebNetworkCapture(normalized);
-    if (capture.success) {
-      // The manifest view projects HAR captures only, and replay reads HAR's response fields.
-      if (capture.data.format !== "har")
-        return err(
-          inputError(
-            operation,
-            [
-              {
-                path: ["evidence", "normalized_result", "format"],
-                reason: "invalid_value",
-                expected: "har",
-                message: `Agent environments replay HAR captures; this capture's format is ${capture.data.format}.`,
-              },
-            ],
-            "The evidence file is not a HAR capture.",
-          ),
-        );
-      return ok({
-        records: capture.data.records,
-        evidenceId,
-        captureKind: "web-network-capture",
-        captureSha256: capture.data.artifact.sha256,
-      });
-    }
-  }
-  return err(
-    inputError(
-      operation,
-      [
-        {
-          path: ["evidence", "operation"],
-          reason: "invalid_value",
-          expected: "inspect_web_network_capture or capture_browser_scenario",
-          message:
-            "The evidence file must be complete inspect_web_network_capture or capture_browser_scenario Evidence.",
-        },
-      ],
-      "The evidence file is not web network capture or browser scenario Evidence.",
-    ),
-  );
+  const capture =
+    evidence.value.operation === "capture_browser_scenario"
+      ? parseScenarioCapture(
+          operation,
+          normalized,
+          evidence.value.parameters,
+          purpose,
+        )
+      : evidence.value.operation === "inspect_web_network_capture"
+        ? parseHarCapture(operation, normalized)
+        : err(
+            inputError(
+              operation,
+              [
+                {
+                  path: ["evidence", "operation"],
+                  reason: "invalid_value",
+                  expected:
+                    "inspect_web_network_capture or capture_browser_scenario",
+                  message:
+                    "The evidence file must be inspect_web_network_capture or capture_browser_scenario Evidence.",
+                },
+              ],
+              "The evidence file is not web network capture or browser scenario Evidence.",
+            ),
+          );
+  return capture.ok
+    ? ok({ ...capture.value, evidenceId: evidence.value.evidence_id })
+    : capture;
 };
 
 /**
@@ -314,9 +427,10 @@ const indexExchanges = (
     for (const ordinal of tool.record_ordinals) {
       if (exchanges.has(ordinal)) continue;
       const record = byOrdinal.get(ordinal);
-      const exchange =
-        record === undefined ? undefined : recordedExchange(record);
-      if (exchange !== undefined) exchanges.set(ordinal, exchange);
+      if (record === undefined) continue;
+      const line = readRecordedRequestLine(record.reported, true, () => true);
+      if (line?.kind === "line")
+        exchanges.set(ordinal, recordedExchange(record, line));
     }
   return exchanges;
 };
@@ -339,8 +453,20 @@ export const loadEnvironmentSource = (
   if (!manifest.ok) return manifest;
   const capture = parseCaptureEvidence(operation, evidenceValue);
   if (!capture.ok) return capture;
-  const parentId = manifest.value.view.parent_evidence_id;
-  if (parentId !== capture.value.evidenceId)
+  return composeEnvironmentSource(manifest.value, capture.value, operation);
+};
+
+/** Cross-check admitted manifest and capture facts, retaining only the replay source. */
+export const composeEnvironmentSource = (
+  manifest: {
+    readonly view: EnvironmentManifest;
+    readonly evidenceId: string;
+  },
+  capture: ParsedEnvironmentCapture,
+  operation: string = ENVIRONMENT_SERVE_OPERATION,
+): Result<EnvironmentSource, AnalysisError> => {
+  const parentId = manifest.view.parent_evidence_id;
+  if (parentId !== capture.evidenceId)
     return err(
       inputError(
         operation,
@@ -349,18 +475,18 @@ export const loadEnvironmentSource = (
             path: ["evidence", "evidence_id"],
             reason: "invalid_value",
             expected: parentId,
-            message: `The manifest cites parent Evidence ${parentId}; the evidence file is ${capture.value.evidenceId}.`,
+            message: `The manifest cites parent Evidence ${parentId}; the evidence file is ${capture.evidenceId}.`,
           },
         ],
         "The manifest was projected from a different capture than the supplied evidence file.",
       ),
     );
   return ok({
-    manifest: manifest.value.view,
-    manifestEvidenceId: manifest.value.evidenceId,
-    evidenceId: capture.value.evidenceId,
-    captureKind: capture.value.captureKind,
-    captureSha256: capture.value.captureSha256,
-    exchanges: indexExchanges(manifest.value.view, capture.value.records),
+    manifest: manifest.view,
+    manifestEvidenceId: manifest.evidenceId,
+    evidenceId: capture.evidenceId,
+    captureKind: capture.captureKind,
+    captureSha256: capture.captureSha256,
+    exchanges: indexExchanges(manifest.view, capture.records),
   });
 };

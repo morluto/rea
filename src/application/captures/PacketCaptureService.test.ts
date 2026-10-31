@@ -37,6 +37,7 @@ it("retains provider metadata in a late-cancellation observation", async () => {
     diagnostics: "",
     tool: {
       configured_path: "/fixture/tshark",
+      selection_source: "environment",
       path: "/fixture/tshark",
       sha256: "b".repeat(64),
       version_banner: "TShark fixture",

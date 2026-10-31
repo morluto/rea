@@ -4,7 +4,7 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
 import * as artifact from "../../scripts/lib/artifact-e2e.mjs";
-import { closeVerifierResources } from "../../scripts/lib/verifier-cleanup.mjs";
+import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
 
 const [mode, target] = process.argv.slice(2);
 assert.ok(
@@ -138,8 +138,7 @@ async function standaloneConnections() {
       },
       stderr: "pipe",
     });
-    let failure;
-    try {
+    await withVerifierCleanup(async () => {
       await client.connect(transport);
       const version = client.getServerVersion();
       assert.ok(version);
@@ -152,15 +151,7 @@ async function standaloneConnections() {
       if (mode === "concurrent")
         await Promise.all([status(client), status(client)]);
       else await status(client);
-    } catch (cause) {
-      failure = cause;
-      throw cause;
-    } finally {
-      await closeVerifierResources(
-        [() => client.close(), () => transport.close()],
-        failure,
-      );
-    }
+    }, [() => client.close(), () => transport.close()]);
   }
 }
 

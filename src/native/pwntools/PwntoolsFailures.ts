@@ -2,6 +2,7 @@ import {
   artifactFileCancellationCause,
   bindArtifactFileCleanup,
 } from "../../artifacts/ArtifactFileOperation.js";
+import { completedStableArtifactObservation } from "../../artifacts/StableArtifactObservation.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import {
   AnalysisError,
@@ -65,6 +66,29 @@ export const pwntoolsDecoderFailure = (
   failureEvidence: PwntoolsFailureEvidence = {},
   context: PwntoolsFailureContext = DEFAULT_CONTEXT,
 ): AnalysisError => {
+  const error = classifyPwntoolsDecoderFailure(
+    cause,
+    phase,
+    path,
+    executablePath,
+    failureEvidence,
+    context,
+  );
+  if (phase === "artifact-read") {
+    const observation = completedStableArtifactObservation(cause, path);
+    if (observation !== undefined) error.retainPartialObservation(observation);
+  }
+  return error;
+};
+
+const classifyPwntoolsDecoderFailure = (
+  cause: unknown,
+  phase: string,
+  path: string,
+  executablePath: string,
+  failureEvidence: PwntoolsFailureEvidence,
+  context: PwntoolsFailureContext,
+): AnalysisError => {
   const limitReport = failureEvidence.limits;
   if (cause instanceof AnalysisError) return cause;
   if (cause instanceof OwnedCommandFailure) {
@@ -83,10 +107,19 @@ export const pwntoolsDecoderFailure = (
               truncated:
                 context.precedingOutput.truncated || currentOutput.truncated,
             };
-    const outputOptions =
-      combinedOutput === undefined
-        ? undefined
-        : { capturedOutput: combinedOutput };
+    const outputOptions = {
+      ...(combinedOutput === undefined
+        ? {}
+        : { capturedOutput: combinedOutput }),
+      ...(failureEvidence.finalizationFailures === undefined
+        ? {}
+        : {
+            diagnostics: {
+              receipt_finalization_failures:
+                failureEvidence.finalizationFailures,
+            },
+          }),
+    };
     if (cause.cleanupFailure !== null)
       return new ProviderCleanupError(
         context.providerId,
@@ -298,6 +331,11 @@ export const pwntoolsDecoderFailure = (
     diagnostics: {
       phase,
       path,
+      ...(failureEvidence.finalizationFailures === undefined
+        ? {}
+        : {
+            receipt_finalization_failures: failureEvidence.finalizationFailures,
+          }),
       ...(context.precedingOutput === undefined
         ? {}
         : { preceding_output: { ...context.precedingOutput } }),
@@ -343,6 +381,7 @@ export const pwntoolsUnavailable = (
     rejections: [
       {
         providerId: context.providerId,
+        origin: "availability",
         code: "provider_unavailable",
         reason,
         diagnostics: {

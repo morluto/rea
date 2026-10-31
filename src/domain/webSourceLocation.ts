@@ -16,8 +16,8 @@ import {
 
 /** JavaScript source-map positions use UTF-16 columns and one-based lines. */
 export const webSourcePositionSchema = z.strictObject({
-  line: z.number().int().min(1),
-  column: z.number().int().min(0),
+  line: z.int().min(1),
+  column: z.int().min(0),
 });
 
 /** Trace one explicit generated position through an explicitly paired local map. */
@@ -49,7 +49,7 @@ const originalContentSchema = z.discriminatedUnion("state", [
     state: z.literal("embedded"),
     text: z.string(),
     utf8_sha256: digestSchema,
-    utf8_bytes: z.number().int().min(0),
+    utf8_bytes: z.int().min(0),
     representation: z.literal("UTF-8 encoding of decoded sourcesContent text"),
   }),
   z.strictObject({
@@ -63,16 +63,16 @@ export const webSourceMapMatchSchema = z.discriminatedUnion("state", [
   z.strictObject({ state: z.literal("generated-only") }),
   z.strictObject({
     state: z.literal("mapped"),
-    flattened_source_index: z.number().int().min(0),
-    section_path: z.array(z.number().int().min(0)),
-    source_index: z.number().int().min(0),
+    flattened_source_index: z.int().min(0),
+    section_path: z.array(z.int().min(0)),
+    source_index: z.int().min(0),
     reported_source: z.string().nullable(),
     reported_source_root: z.string().nullable(),
     resolved_url: z.string().nullable(),
     ignored: z.boolean(),
     content: originalContentSchema,
     original_position: webSourcePositionSchema.extend({
-      offset: z.number().int().min(0).nullable(),
+      offset: z.int().min(0).nullable(),
       content_position: z.enum([
         "verified-in-embedded-text",
         "outside-embedded-text",
@@ -92,7 +92,7 @@ export const webSourceMapReportSchema = z.strictObject({
     z.strictObject({
       id: z.literal("node-v8"),
       version: z.string().min(1),
-      v8_heap_limit_bytes: z.number().int().min(1),
+      v8_heap_limit_bytes: z.int().min(1),
     }),
     // Bun reports V8-shaped heap statistics but does not enforce V8 heap flags.
     // On Windows REA instead enforces a Job Object commit limit on the codec.
@@ -101,7 +101,7 @@ export const webSourceMapReportSchema = z.strictObject({
       version: z.string().min(1),
       node_compatibility_version: z.string().min(1),
       v8_heap_limit_bytes: z.null(),
-      process_memory_limit_bytes: z.number().int().min(1).nullable(),
+      process_memory_limit_bytes: z.int().min(1).nullable(),
     }),
   ]),
   format: z.enum(["regular", "indexed"]),
@@ -148,14 +148,14 @@ export type WebSourceMapReport = z.output<typeof webSourceMapReportSchema>;
 export const webSourceLocationResultSchema = webSourceMapReportSchema.extend({
   manifest: capturedWebManifestIdentitySchema,
   source: webArtifactFileSchema.extend({
-    script_index: z.number().int().min(0),
+    script_index: z.int().min(0),
     script: exportedWebScriptSchema,
   }),
   source_map: webArtifactFileSchema.extend({
     url: z.string().min(1),
     association: z.literal("caller-selected"),
   }),
-  generated_offset: z.number().int().min(0),
+  generated_offset: z.int().min(0),
   source_authenticity: z.literal("unknown"),
   execution: z.literal("unknown"),
   limitations: z.array(z.string()),

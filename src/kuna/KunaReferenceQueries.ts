@@ -4,7 +4,7 @@ import {
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import type { FunctionDossier } from "../domain/hopperValues.js";
+import type { FunctionDossier } from "../domain/native/functionDossier.js";
 import type { RelationshipCoverage } from "../domain/relationshipCoverage.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -306,15 +306,22 @@ export class KunaReferenceQueries {
   }
 
   #parsed<T>(
-    parsed: Result<T, string>,
+    parsed: Result<
+      T,
+      { readonly code: string; readonly field?: string | undefined }
+    >,
     label: string,
   ): Result<T, AnalysisError> {
-    return parsed.ok
-      ? parsed
-      : err(
-          new ProviderAdapterError(KUNA_PROVIDER_ID, "kuna:references", {
-            userMessage: `Kuna's ${label} cannot be used: ${parsed.error}`,
-          }),
-        );
+    if (parsed.ok) return parsed;
+    const { code, field } = parsed.error;
+    return err(
+      new ProviderAdapterError(KUNA_PROVIDER_ID, "kuna:references", {
+        diagnostics: {
+          code,
+          ...(field === undefined ? {} : { field }),
+        },
+        userMessage: `Kuna's ${label} cannot be used: ${code}`,
+      }),
+    );
   }
 }

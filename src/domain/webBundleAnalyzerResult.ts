@@ -1,5 +1,8 @@
+import { buildJavaScriptRouteInventorySteps } from "./javascript/javascriptRouteInventory.js";
+import { completeSemanticSteps } from "./javascript/javascriptSemanticTraversal.js";
 import { RETURNED_REFERENCE_WIDENING_LIMITATION } from "./javascript/javascriptSemanticCoverage.js";
 import type { WebPageInspection } from "./browserObservationSchemas.js";
+import { browserOriginSchema } from "./browserObservation.js";
 import {
   webBundleAnalysisSchema,
   type WebBundleAnalysis,
@@ -85,7 +88,7 @@ export const buildCapturedWebBundleAnalysis = (
     "script_sources",
   );
   const omittedSourceMaps =
-    sourceMaps.status === "not_requested"
+    sourceMaps.status === "not_requested" || sourceMaps.excluded !== undefined
       ? undefined
       : captureBudgetOmission(inspection, "source_maps");
   const sourceMapIncomplete =
@@ -101,6 +104,65 @@ export const buildCapturedWebBundleAnalysis = (
     omittedSourceScripts !== undefined ||
     omittedSourceMaps !== undefined;
   return webBundleAnalysisSchema.parse({
+    route_inventory: completeSemanticSteps(
+      buildJavaScriptRouteInventorySteps(
+        inspection.scripts.items.map((script) => {
+          const result = byKey.get(script.script_key);
+          const analyzed = result?.status === "analyzed" ? result : undefined;
+          return {
+            key: script.script_key,
+            path: null,
+            url: script.url,
+            container_sha256: null,
+            sha256: script.source.included
+              ? script.source.artifact.sha256
+              : null,
+            status:
+              analyzed === undefined || analyzed.parse_status === "failed"
+                ? ("unavailable" as const)
+                : analyzed.parse_status === "recovered"
+                  ? ("partial" as const)
+                  : ("complete" as const),
+            reason: !script.source.included
+              ? script.source.reason
+              : result?.status === "unavailable"
+                ? result.reason
+                : analyzed === undefined
+                  ? "No route syntax result was returned"
+                  : analyzed.parse_status === "failed"
+                    ? "Script parsing failed"
+                    : analyzed.parse_status === "recovered"
+                      ? "Script parsing recovered from errors"
+                      : null,
+            facts: analyzed?.route_facts ?? null,
+          };
+        }),
+        undefined,
+        [
+          ...(omittedScripts === undefined
+            ? []
+            : [
+                {
+                  unit: "script-records" as const,
+                  count: omittedScripts,
+                  reason: captureBudgetReason("script records", omittedScripts),
+                },
+              ]),
+          ...(omittedSourceScripts === undefined
+            ? []
+            : [
+                {
+                  unit: "script-sources" as const,
+                  count: omittedSourceScripts,
+                  reason: captureBudgetReason(
+                    "script source artifacts",
+                    omittedSourceScripts,
+                  ),
+                },
+              ]),
+        ],
+      ),
+    ),
     capture: buildCaptureObservation(
       inspection,
       sourceScripts,
@@ -170,15 +232,19 @@ const buildCaptureObservation = (
   inspection: WebPageInspection,
   sourceScripts: IncludedScript[],
   attemptedScripts: number,
-) => ({
-  target_url: inspection.target.url,
-  scripts_observed: inspection.scripts.total,
-  // This preserves the historical meaning: source scripts submitted for
-  // analysis, including worker/deadline failures; explicitly unstarted suffixes
-  // are excluded. Successfully parsed scripts are counted separately below.
-  scripts_analyzed: attemptedScripts,
-  source_artifacts: sourceScripts.map(sourceArtifact),
-});
+) => {
+  const targetOrigin = browserOriginSchema.safeParse(inspection.target.origin);
+  return {
+    target_url: inspection.target.url,
+    target_origin: targetOrigin.success ? targetOrigin.data : null,
+    scripts_observed: inspection.scripts.total,
+    // This preserves the historical meaning: source scripts submitted for
+    // analysis, including worker/deadline failures; explicitly unstarted suffixes
+    // are excluded. Successfully parsed scripts are counted separately below.
+    scripts_analyzed: attemptedScripts,
+    source_artifacts: sourceScripts.map(sourceArtifact),
+  };
+};
 
 const sourceArtifact = (script: IncludedScript) => {
   if (!script.source.included) throw new TypeError("Filtered source changed");

@@ -42,8 +42,13 @@ export interface MappedRuntimePath {
 /** Precomputed mapping scope and graph paths for static load-state decisions. */
 export interface StaticRuntimeScope {
   readonly artifactPrefixes: readonly string[];
+  /** Prefixes beneath which a runtime script or worker had no artifact path. */
+  readonly untranslatedArtifactPrefixes: readonly string[];
   readonly pathsByNodeId: ReadonlyMap<string, readonly string[]>;
 }
+
+/** Where one static node falls relative to the runtime-exercised mappings. */
+export type StaticRuntimeScopeMembership = "outside" | "within" | "uncertain";
 
 /** Index statically reconstructed entities that can receive runtime matches. */
 export const collectStaticRuntimeCandidates = (
@@ -79,13 +84,9 @@ export const mappedRuntimePaths = (
       });
   }
   for (const mapping of layer.runtimeMappings) {
-    const suffix =
-      mapping.kind === "file-root" && entity.location.kind === "file"
-        ? pathBelowRoot(mapping.root, entity.location.value)
-        : mapping.kind === "url-prefix" && entity.location.kind === "url"
-          ? pathBelowUrlPrefix(mapping.prefix, entity.location.value)
-          : null;
-    if (suffix === null) continue;
+    const translation = translateRuntimeLocation(mapping, entity.location);
+    if (translation.kind !== "translated") continue;
+    const suffix = translation.suffix;
     const path = safeArtifactPath(mapping.artifact_prefix, suffix);
     if (path === null) continue;
     paths.push({
@@ -107,18 +108,27 @@ export const createStaticRuntimeScope = (
   layer: ParsedStaticLayer,
   entities: readonly RuntimeReconciliationEntity[],
 ): StaticRuntimeScope => ({
-  artifactPrefixes: activeArtifactPrefixes(layer, entities),
+  ...exercisedArtifactPrefixes(layer, entities),
   pathsByNodeId: indexStaticPaths(layer.graph),
 });
 
-/** Whether one static node falls under a mapping exercised by this runtime set. */
-export const staticNodeWithinRuntimeScope = (
+/**
+ * Classify one static node against the mappings exercised by this runtime set.
+ * A node beneath a prefix whose runtime script or worker location could not be
+ * translated is uncertain: that location may name it, so absence is unproven.
+ */
+export const staticNodeRuntimeScope = (
   node: ApplicationNode,
   scope: StaticRuntimeScope,
-): boolean =>
-  (scope.pathsByNodeId.get(node.node_id) ?? []).some((path) =>
-    scope.artifactPrefixes.some((prefix) => pathWithinPrefix(path, prefix)),
-  );
+): StaticRuntimeScopeMembership => {
+  const paths = scope.pathsByNodeId.get(node.node_id) ?? [];
+  const beneath = (prefixes: readonly string[]): boolean =>
+    paths.some((path) =>
+      prefixes.some((prefix) => pathWithinPrefix(path, prefix)),
+    );
+  if (beneath(scope.untranslatedArtifactPrefixes)) return "uncertain";
+  return beneath(scope.artifactPrefixes) ? "within" : "outside";
+};
 
 const candidatesForLayer = (
   layer: ParsedStaticLayer,
@@ -391,38 +401,87 @@ const absoluteFilePathStyle = (path: string): "posix" | "windows" | null => {
   return path.startsWith("/") ? "posix" : null;
 };
 
-const pathBelowUrlPrefix = (prefix: string, value: string): string | null => {
-  let base: URL;
-  let candidate: URL;
-  try {
-    base = new URL(prefix);
-    candidate = new URL(value);
-  } catch (cause: unknown) {
-    // Invalid input is represented by the null return.
-    void cause;
-    return null;
-  }
+/**
+ * How a runtime location relates to one mapping: outside it, beneath it with
+ * an artifact-relative suffix, or beneath it without any artifact path.
+ */
+type RuntimeLocationTranslation =
+  | { readonly kind: "outside" }
+  | { readonly kind: "untranslatable" }
+  | { readonly kind: "translated"; readonly suffix: string };
+
+const OUTSIDE_MAPPING: RuntimeLocationTranslation = { kind: "outside" };
+
+const translateRuntimeLocation = (
+  mapping: ParsedStaticLayer["runtimeMappings"][number],
+  location: RuntimeReconciliationEntity["location"],
+): RuntimeLocationTranslation => {
+  if (mapping.kind === "url-prefix")
+    return location.kind === "url"
+      ? pathBelowUrlPrefix(mapping.prefix, location.value)
+      : OUTSIDE_MAPPING;
+  const suffix =
+    location.kind === "file"
+      ? pathBelowRoot(mapping.root, location.value)
+      : null;
+  return suffix === null ? OUTSIDE_MAPPING : { kind: "translated", suffix };
+};
+
+const pathBelowUrlPrefix = (
+  prefix: string,
+  value: string,
+): RuntimeLocationTranslation => {
+  const base = URL.parse(prefix);
+  const candidate = URL.parse(value);
   if (
+    base === null ||
+    candidate === null ||
     base.origin !== candidate.origin ||
     !candidate.pathname.startsWith(base.pathname)
   )
-    return null;
-  try {
-    return relativeLogicalPath(
-      decodeURIComponent(candidate.pathname.slice(base.pathname.length)),
-    );
-  } catch (cause: unknown) {
-    // Undecodable path segments are represented by the null return.
-    void cause;
-    return null;
-  }
+    return OUTSIDE_MAPPING;
+  const encoded = candidate.pathname.slice(base.pathname.length);
+  // The prefix itself names the mapped directory or a page, not a file below it.
+  if (encoded === "") return OUTSIDE_MAPPING;
+  const decoded = decodeUrlPathSegments(encoded);
+  const suffix = decoded === null ? null : relativeLogicalPath(decoded);
+  return suffix === null
+    ? { kind: "untranslatable" }
+    : { kind: "translated", suffix };
 };
 
-const activeArtifactPrefixes = (
+/**
+ * Decode each URL path segment separately. An encoded slash is a byte inside
+ * one segment, never an artifact directory boundary, so a segment containing
+ * one after decoding has no artifact path. An encoded backslash stays a literal
+ * name byte, and malformed or non-UTF-8 escapes have no artifact path.
+ */
+const decodeUrlPathSegments = (value: string): string | null => {
+  const segments: string[] = [];
+  for (const segment of value.split("/")) {
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(segment);
+    } catch (cause: unknown) {
+      // Malformed escapes are represented by the null return.
+      void cause;
+      return null;
+    }
+    if (decoded.includes("/")) return null;
+    segments.push(decoded);
+  }
+  return segments.join("/");
+};
+
+const exercisedArtifactPrefixes = (
   layer: ParsedStaticLayer,
   entities: readonly RuntimeReconciliationEntity[],
-): string[] => {
+): Pick<
+  StaticRuntimeScope,
+  "artifactPrefixes" | "untranslatedArtifactPrefixes"
+> => {
   const prefixes = new Set<string>();
+  const untranslated = new Set<string>();
   if (
     layer.result.format === "directory" &&
     entities.some(
@@ -432,18 +491,26 @@ const activeArtifactPrefixes = (
     )
   )
     prefixes.add("");
-  for (const mapping of layer.runtimeMappings)
-    if (
-      entities.some(({ location }) =>
-        mapping.kind === "file-root" && location.kind === "file"
-          ? pathBelowRoot(mapping.root, location.value) !== null
-          : mapping.kind === "url-prefix" && location.kind === "url"
-            ? pathBelowUrlPrefix(mapping.prefix, location.value) !== null
-            : false,
+  for (const mapping of layer.runtimeMappings) {
+    const prefix = normalizeArtifactPrefix(mapping.artifact_prefix);
+    for (const entity of entities) {
+      if (prefixes.has(prefix) && untranslated.has(prefix)) break;
+      const translation = translateRuntimeLocation(mapping, entity.location);
+      if (translation.kind === "translated") prefixes.add(prefix);
+      // Only scripts and workers can correspond to load-state nodes.
+      else if (
+        translation.kind === "untranslatable" &&
+        (entity.kind === "script" || entity.kind === "worker")
       )
-    )
-      prefixes.add(normalizeArtifactPrefix(mapping.artifact_prefix));
-  return [...prefixes].sort(compareUnicodeCodePoints);
+        untranslated.add(prefix);
+    }
+  }
+  return {
+    artifactPrefixes: [...prefixes].sort(compareUnicodeCodePoints),
+    untranslatedArtifactPrefixes: [...untranslated].sort(
+      compareUnicodeCodePoints,
+    ),
+  };
 };
 
 const normalizeArtifactPrefix = (prefix: string): string =>
