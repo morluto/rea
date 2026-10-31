@@ -285,6 +285,7 @@ const PATH_SCOPES = {
     "tests/boundary/providers/ghidra/ghidraTransport.test.ts",
     "tests/boundary/providers/ghidra/ghidraTargetSnapshot.test.ts",
     "tests/boundary/providers/ghidra/ghidraLauncher.test.ts",
+    "tests/boundary/providers/adb/adbInputSnapshotOwnership.test.ts",
     "tests/boundary/providers/hopper/hopperClient.cleanupRetry.test.ts",
     "src/windows/WindowsNativeLoader.test.ts",
     "src/windows/WindowsOwnedProcess.test.ts",

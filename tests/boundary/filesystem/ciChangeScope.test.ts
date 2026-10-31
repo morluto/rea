@@ -1478,6 +1478,18 @@ it.each([
   expect(await classify(directory, base, head)).toMatchObject(expected);
 });
 
+it("selects the Windows package lane for ADB snapshot ownership coverage", async () => {
+  const { directory, base } = await fixture();
+  const head = await change(directory, [
+    "tests/boundary/providers/adb/adbInputSnapshotOwnership.test.ts",
+  ]);
+  expect(await classify(directory, base, head)).toMatchObject({
+    code: true,
+    runtime: true,
+    package: true,
+  });
+});
+
 it("unions provider scopes across mixed changes and deletions", async () => {
   const { directory } = await fixture();
   const base = await change(directory, ["src/evm/client.ts"]);
