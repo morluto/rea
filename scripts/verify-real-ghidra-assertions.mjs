@@ -138,7 +138,14 @@ function assertNativeApiBoundary(observed, requireJumpTable) {
     ) ||
     observed.pseudocode?.classification !== "decompiler-generated-non-source" ||
     observed.pseudocode.compilable !== false ||
-    !observed.decompiler_artifacts?.includes("pointer-arithmetic")
+    !observed.decompiler_artifacts?.includes("pointer-arithmetic") ||
+    // false is only asserted by imported or user-defined signatures; otherwise null.
+    !(
+      observed.varargs === null ||
+      observed.varargs === true ||
+      (observed.varargs === false &&
+        ["imported", "user_defined"].includes(observed.signature_source))
+    )
   )
     throw new Error(
       `Ghidra native API boundary drifted: ${JSON.stringify(observed)}`,

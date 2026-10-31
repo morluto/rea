@@ -62,6 +62,7 @@ export const ghidraNativeApiBoundary = () => ({
   provenance: "ghidra-high-function",
   signature_source: "analysis",
   calling_convention: "__cdecl",
+  varargs: null,
   return_type: {
     role: "return" as const,
     ordinal: null,

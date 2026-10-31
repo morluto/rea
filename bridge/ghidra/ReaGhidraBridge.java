@@ -51,6 +51,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonNull;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.google.gson.JsonPrimitive;
 
 import ghidra.app.util.headless.HeadlessScript;
 import ghidra.app.decompiler.DecompInterface;
@@ -2495,6 +2496,12 @@ public final class ReaGhidraBridge extends HeadlessScript {
 
         JsonArray parameters = new JsonArray();
         result.add("parameters", parameters);
+
+        // hasVarArgs() is a stored flag that defaults to false, so false asserts fixed arity
+        // only for imported (e.g. DWARF) or user-defined signatures; a set flag is always evidence.
+        boolean variadic = function.hasVarArgs();
+        boolean arityAsserted = "imported".equals(signatureSource) || "user_defined".equals(signatureSource);
+        result.add("varargs", variadic || arityAsserted ? new JsonPrimitive(variadic) : JsonNull.INSTANCE);
 
         JsonArray jumpTables = new JsonArray();
         result.add("jump_tables", jumpTables);
