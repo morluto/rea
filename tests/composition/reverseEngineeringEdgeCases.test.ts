@@ -475,11 +475,12 @@ it("drains an active provider operation before service shutdown resolves", async
     },
   });
 
-  try {
-    const operation = service.executeRizinCommand({ path, command: "iI" });
-    await started;
+  const operation = service.executeRizinCommand({ path, command: "iI" });
+  let closing: Promise<void> | undefined;
+  await withVerifierCleanup(async () => {
+    await awaitAcknowledgement(started, operation, "provider command");
     let closed = false;
-    const closing = service.close().then(() => {
+    closing = service.close().then(() => {
       closed = true;
     });
     expect(signal?.aborted).toBe(true);
@@ -487,11 +488,21 @@ it("drains an active provider operation before service shutdown resolves", async
     releaseRun?.();
     await closing;
     expect(closed).toBe(true);
-    await operation;
-  } finally {
-    releaseRun?.();
-    await rm(directory, { recursive: true, force: true });
-  }
+    await expect(operation).resolves.toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError" },
+    });
+  }, [
+    () => releaseRun?.(),
+    async () => {
+      await operation;
+    },
+    async () => {
+      await closing;
+    },
+    () => service.close(),
+    () => rm(directory, { recursive: true, force: true }),
+  ]);
 });
 
 it("relays caller cancellation to the admitted provider signal", async () => {
@@ -515,14 +526,12 @@ it("relays caller cancellation to the admitted provider signal", async () => {
       return { stdout: "captured", stderr: "" };
     },
   });
-  let operation: ReturnType<typeof service.inspectWithObjdump> | undefined;
-
-  try {
-    operation = service.inspectWithObjdump(
-      { path, operation: "file_headers" },
-      { signal: controller.signal },
-    );
-    await started;
+  const operation = service.inspectWithObjdump(
+    { path, operation: "file_headers" },
+    { signal: controller.signal },
+  );
+  await withVerifierCleanup(async () => {
+    await awaitAcknowledgement(started, operation, "provider command");
     controller.abort();
     expect(addAbortListener).toHaveBeenCalledWith(
       "abort",
@@ -535,11 +544,15 @@ it("relays caller cancellation to the admitted provider signal", async () => {
       ok: false,
       error: { _tag: "AnalysisCancelledError" },
     });
-  } finally {
-    releaseRun?.();
-    if (operation !== undefined) await operation.catch(() => undefined);
-    await rm(directory, { recursive: true, force: true });
-  }
+  }, [
+    () => controller.abort(),
+    () => releaseRun?.(),
+    async () => {
+      await operation;
+    },
+    () => service.close(),
+    () => rm(directory, { recursive: true, force: true }),
+  ]);
 });
 
 it("passes an AbortSignal-like caller value through without relaying it", async () => {

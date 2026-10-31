@@ -229,6 +229,15 @@ mcpTest.for(failedAdapters)(
       arguments: { unexpected: true },
     });
     expect(malformed.isError).toBe(true);
+    expect(parseMcpToolError(malformed)).toMatchObject({
+      error: {
+        code: "invalid_request",
+        category: "invalid_input",
+        retryable: false,
+        recovery: { kind: "inspect_input_contract", operation },
+        details: { operation },
+      },
+    });
     expect(JSON.stringify(malformed)).not.toContain(failure);
   },
 );

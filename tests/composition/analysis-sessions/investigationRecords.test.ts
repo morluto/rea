@@ -11,18 +11,23 @@ import {
   createTestProviderRouter,
 } from "../../fixtures/binarySession.js";
 
-const createSession = (
-  records: InvestigationRecords = new InvestigationRecords(),
-) => {
-  const session = new BinarySession(
-    createTestProviderRouter(createCacheProvider([])),
-    records,
-  );
+const ownSession = (session: BinarySession): BinarySession => {
   onTestFinished(async () => {
-    await session.close();
+    const closed = await session.close();
+    if (!closed.ok) throw closed.error;
   });
   return session;
 };
+
+const createSession = (
+  records: InvestigationRecords = new InvestigationRecords(),
+) =>
+  ownSession(
+    new BinarySession(
+      createTestProviderRouter(createCacheProvider([])),
+      records,
+    ),
+  );
 
 it("uses the composed record owner and preserves best-effort post-commit notifications", async () => {
   const records = new InvestigationRecords();
@@ -65,10 +70,7 @@ it("uses the composed record owner and preserves best-effort post-commit notific
 
 it("notifies after snapshot and Evidence import both commit, and rejects mismatched targets atomically", async () => {
   const [first, second] = await createBinarySessionTargets();
-  const source = createTestBinarySession(createCacheProvider([]));
-  onTestFinished(async () => {
-    await source.close();
-  });
+  const source = ownSession(createTestBinarySession(createCacheProvider([])));
   expect((await source.open(first)).ok).toBe(true);
   expect(
     (

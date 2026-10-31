@@ -1,4 +1,5 @@
 import { readFile, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 
 import {
@@ -406,7 +407,11 @@ cliTest.for([
             expect(child).toMatchObject({ artifact_id: null, sha256: null });
           else {
             expect(child.artifact_id).toMatch(/^art_/u);
-            expect(child.sha256).toMatch(/^[a-f0-9]{64}$/u);
+            expect(child.sha256).toBe(
+              createHash("sha256")
+                .update("opaque fixture content")
+                .digest("hex"),
+            );
           }
       }
       if (encrypted) expect(Object.values(graph.components).flat()).toEqual([]);

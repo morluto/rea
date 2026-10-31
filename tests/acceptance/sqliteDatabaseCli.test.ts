@@ -430,13 +430,33 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
         rows: { columns: ["id", ""], returned_rows: 1 },
       },
     });
-    for (const input of [
-      { path, columns: ["id"] },
-      { path, schema_scope: "selected_table" },
-      { path, table: "selected", columns: [] },
-      { path, table: "selected", columns: ["ID"] },
-    ])
-      expect((await call("inspect_sqlite_database", input)).isError).toBe(true);
+    for (const { input, issue } of [
+      {
+        input: { path, columns: ["id"] },
+        issue: { path: ["columns"], reason: "invalid_value" },
+      },
+      {
+        input: { path, schema_scope: "selected_table" },
+        issue: { path: ["schema_scope"], reason: "invalid_value" },
+      },
+      {
+        input: { path, table: "selected", columns: [] },
+        issue: { path: ["columns"], reason: "out_of_range", minimum: 1 },
+      },
+      {
+        input: { path, table: "selected", columns: ["ID"] },
+        issue: { path: ["columns"], reason: "invalid_format" },
+      },
+    ]) {
+      const response = await call("inspect_sqlite_database", input);
+      expect(parseMcpToolError(response).error).toMatchObject({
+        code: "invalid_request",
+        details: {
+          operation: "inspect_sqlite_database",
+          issues: expect.arrayContaining([expect.objectContaining(issue)]),
+        },
+      });
+    }
     expect(Buffer.compare(await readFile(path), before)).toBe(0);
   },
 );

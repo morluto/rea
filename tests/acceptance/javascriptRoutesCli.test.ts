@@ -13,6 +13,16 @@ const routeViewFromEvidence = (evidence: unknown) =>
     parseEvidence(evidence).normalized_result,
   );
 
+const expectAccountRoutes = (items: unknown[]) => {
+  expect(items).toHaveLength(2);
+  expect(items).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ path: "/account" }),
+      expect.objectContaining({ path: "/account/:id" }),
+    ]),
+  );
+};
+
 const interceptedSource = "export default function Photo(){return null;}";
 const independentPaths = [
   "/checks/independent",
@@ -191,7 +201,7 @@ it.each(["full", "compact"] as const)(
     });
     expect(response.isError).not.toBe(true);
     const selected = routeViewFromEvidence(response.structuredContent);
-    expect(selected.items).toHaveLength(2);
+    expectAccountRoutes(selected.items);
     await rm(path, { recursive: true });
     const occurrences = await call("inspect_analysis_view", {
       source: {
