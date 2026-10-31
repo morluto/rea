@@ -313,7 +313,7 @@ it("reconstructs every graph field from dictionary pages without changing nulls,
     expect(rows).toHaveLength(1);
     const row = rows[0]!;
     expect(row.source_index).toBe(0);
-    expect(row.level).toBe(["01", "10", "2"][offset]);
+    expect(row.level).toBe(["2", "10", "01"][offset]);
     expect(value.coverage).toMatchObject({ total: 3, exhausted: offset === 2 });
     if (row.status !== "ok") throw new Error("Expected recorded node");
     const coverage = row.relationship_coverage;
@@ -473,6 +473,43 @@ it("keeps graph row identity stable when source object key insertion order chang
   );
 });
 
+it("orders canonical numeric graph depths before nonnumeric keys across pages", async () => {
+  const node = graph().graph["2"]![0]!;
+  const source = parent("get_call_graph", {
+    graph: {
+      beta: [node],
+      "01": [node],
+      "10": [node],
+      "2": [node],
+      "1": [node],
+      "0": [node],
+    },
+    limitations: [],
+  });
+  const pages = [];
+  for (const offset of [0, 3]) {
+    const { value } = await project(source, {
+      kind: "native-observation",
+      offset,
+      limit: 3,
+    });
+    if (
+      value.kind !== "native-observation" ||
+      value.parent_operation !== "get_call_graph"
+    )
+      throw new Error("Expected graph page");
+    expect(value.items.rows.every((row) => row.source_index === 0)).toBe(true);
+    expect(value.coverage).toMatchObject({
+      total: 6,
+      exhausted: offset === 3,
+    });
+    pages.push(value.items.rows.map((row) => row.level));
+  }
+  expect(pages).toEqual([
+    ["0", "1", "2"],
+    ["10", "01", "beta"],
+  ]);
+});
 it("keeps context identity across authenticated target path aliases while preserving selected paths", async () => {
   const original = parent("procedure_callers", []);
   const rebound = rebindEvidenceToTargetPath(original, {
