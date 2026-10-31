@@ -422,6 +422,21 @@ establish canonical function identity. A successful seed without a native def-us
 model still returns its procedure and an explicit coverage unknown. A new trace
 can retry failed selectors.
 
+Paging and traversal completeness are separate facts. `page_truncated` means the
+page omits retained nodes, and the edges they source, before `offset` or after
+`next_offset`. Every page repeats `traversal`: `complete`, or `truncated` with
+`reasons` naming each observed cause: the `max_depth`, `max_functions`,
+`max_call_sites`, `max_nodes` or `max_edges` budget, the fixed
+`node_payload_bytes` allowance, `provider_pcode_truncated`, or
+`ambiguous_call_candidates`. Each cause also has a located unknown. A budget is
+reported only after it rejects work, so an exactly filled budget is not
+truncation; a depth or candidate limit is reported only when no other path
+analyzes or queues that destination. `total_nodes` and `total_edges` count
+retained rows. `truncated` remains true for either kind of omission. Failed
+analyses and unresolved calls stay in `unknowns` and do not truncate the
+traversal. Each page reruns analysis; pages are not pinned to one snapshot
+across session edits.
+
 The raw Java `is_dead` flag can remain set after Ghidra decodes a live block;
 `block_membership` reports actual syntax-tree membership separately.
 
