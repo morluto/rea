@@ -2,12 +2,14 @@ import { readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { expect, it as test } from "vitest";
+import { expect, it as test, vi } from "vitest";
 
 import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { analysisErrorRemediationAction } from "../../../src/domain/analysisErrorPresentation.js";
 import { cleanupRetryRemediation } from "../../../src/domain/analysisErrorRecovery.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createServer } from "../../../src/server/createServer.js";
+import { ToolResultDelivery } from "../../../src/server/ToolResultDelivery.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import {
@@ -58,6 +60,7 @@ it("names the same-connection close_binary retry for an unproven Kuna export sto
   const program = join(fixture.root, "program.elf");
   await writeFile(program, elfProgram());
   const targetBytes = await readFile(program);
+  const delivery = vi.spyOn(ToolResultDelivery.prototype, "toCallToolResult");
   try {
     const opened = await call("open_binary", { path: program });
     expect(opened.isError, JSON.stringify(opened.content)).not.toBe(true);
@@ -67,6 +70,9 @@ it("names the same-connection close_binary retry for an unproven Kuna export sto
     await expect.poll(() => exportsOf(fixture.kuna)).toHaveLength(1);
 
     const failed = parseMcpToolError(await call("close_binary"));
+    const delivered = delivery.mock.calls.at(-1)?.[0];
+    if (delivered === undefined || delivered.ok)
+      throw new Error("Expected the typed close failure at delivery");
     expect(failed.error).toMatchObject({
       code: "cleanup_incomplete",
       retryable: false,
@@ -78,8 +84,9 @@ it("names the same-connection close_binary retry for an unproven Kuna export sto
         diagnostics: { reason: "decompile-project stop unproven" },
       },
     });
+    // The owner's guidance stays first; the retry offer is appended once.
     expect(failed.error.remediation.action).toBe(
-      `Provider cleanup could not be fully confirmed. Review the reported local resources before opening another target. ${cleanupRetryRemediation({ operation: "close_binary" })}`,
+      `${analysisErrorRemediationAction(delivered.error)} ${cleanupRetryRemediation({ operation: "close_binary" })}`,
     );
     expect(await sessionStatus(client)).toMatchObject({
       open: false,
@@ -109,6 +116,7 @@ it("names the same-connection close_binary retry for an unproven Kuna export sto
     expect(await readdir(join(fixture.cacheRoot, "staging"))).toEqual([]);
     expect(Buffer.compare(await readFile(program), targetBytes)).toBe(0);
   } finally {
+    delivery.mockRestore();
     unproven.release();
     await client.close();
     await server.close();

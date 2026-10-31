@@ -4,11 +4,12 @@ import { projectAnalysisError } from "./analysisErrorProjection.js";
 import { analysisErrorWithCleanupFailure } from "./analysisErrorCleanup.js";
 import { AnalysisCancelledError } from "./analysisErrorCore.js";
 import { cleanupRetryRemediation } from "./analysisErrorRecovery.js";
+import { analysisErrorRemediationAction } from "./analysisErrorPresentation.js";
 import { analysisErrorProjectionSchema } from "../contracts/errorSchemas.js";
 
 const CLOSE_RETRY = { operation: "close_binary" } as const;
-const GENERIC_CLEANUP_ACTION =
-  "Provider cleanup could not be fully confirmed. Review the reported local resources before opening another target.";
+// Guidance comes from its owning formatters; tests check composition, not prose.
+const RETRY_ACTION = cleanupRetryRemediation(CLOSE_RETRY);
 it("preserves the binary cleanup default and an explicitly owned nonbinary operation", () => {
   expect(new ProviderCleanupError("ghidra", ["database"], {}).operation).toBe(
     "close_binary",
@@ -105,11 +106,15 @@ it.each(["alpha", "beta"])(
 );
 
 it("offers a bound cleanup retry only while that cleanup remains incomplete", () => {
-  const unbound = projectAnalysisError(
-    new ProviderCleanupError("kuna", ["staging"], { reason: "stop unproven" }),
-  );
+  const plain = new ProviderCleanupError("kuna", ["staging"], {
+    reason: "stop unproven",
+  });
+  const unbound = projectAnalysisError(plain);
   expect(unbound).not.toHaveProperty("recovery");
-  expect(unbound.remediation.action).toBe(GENERIC_CLEANUP_ACTION);
+  expect(unbound.remediation.action).toBe(
+    analysisErrorRemediationAction(plain),
+  );
+  expect(unbound.remediation.action).not.toContain(RETRY_ACTION);
 
   const retained = new ProviderCleanupError("kuna", ["staging"], {
     reason: "stop unproven",
@@ -122,7 +127,7 @@ it("offers a bound cleanup retry only while that cleanup remains incomplete", ()
     details: { resources: ["staging"] },
   });
   expect(offered.remediation.action).toBe(
-    `${GENERIC_CLEANUP_ACTION} ${cleanupRetryRemediation(CLOSE_RETRY)}`,
+    `${analysisErrorRemediationAction(retained)} ${RETRY_ACTION}`,
   );
   expect(analysisErrorProjectionSchema.parse(offered)).toEqual(offered);
 
@@ -131,7 +136,7 @@ it("offers a bound cleanup retry only while that cleanup remains incomplete", ()
   const released = projectAnalysisError(retained);
   expect(released.code).toBe("execution_failure");
   expect(released).not.toHaveProperty("recovery");
-  expect(released.remediation.action).toBe(GENERIC_CLEANUP_ACTION);
+  expect(released.remediation.action).not.toContain(RETRY_ACTION);
 });
 
 it("keeps a retry offer with the owner of the composed resources", () => {
@@ -146,7 +151,11 @@ it("keeps a retry offer with the owner of the composed resources", () => {
   // A peer's offer cannot cover resources the composition adds.
   const unbound = projectAnalysisError(composed);
   expect(unbound).not.toHaveProperty("recovery");
-  expect(unbound.remediation.action).toBe(GENERIC_CLEANUP_ACTION);
+  // The composition keeps the cleanup owner's remediation, not its retry offer.
+  expect(unbound.remediation.action).toBe(
+    analysisErrorRemediationAction(retained),
+  );
+  expect(unbound.remediation.action).not.toContain(RETRY_ACTION);
 
   composed.bindCleanupRetry(CLOSE_RETRY);
   const offered = projectAnalysisError(composed);
@@ -156,8 +165,9 @@ it("keeps a retry offer with the owner of the composed resources", () => {
     details: { execution_failure: "cancelled" },
   });
   expect(offered.remediation.action).toBe(
-    `${GENERIC_CLEANUP_ACTION} ${cleanupRetryRemediation(CLOSE_RETRY)}`,
+    `${analysisErrorRemediationAction(retained)} ${RETRY_ACTION}`,
   );
+  expect(offered.remediation.action.split(RETRY_ACTION)).toHaveLength(2);
 
   retained.resolveCleanup();
   expect(composed.cleanupIncomplete).toBe(false);
