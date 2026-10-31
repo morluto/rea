@@ -103,12 +103,13 @@ export const traceNativeValues = async (
       });
       continue;
     }
-    const evidence = createAnalysisExecutionEvidence(
-      "analyze_function",
-      { procedure: next.procedure },
-      execution.value,
-      "observed",
-    );
+    const partialEvidence = () =>
+      createAnalysisExecutionEvidence(
+        "analyze_function",
+        { procedure: next.procedure },
+        execution.value,
+        "observed",
+      );
     const parsed = functionDossierSchema.safeParse(execution.value.result);
     if (!parsed.success || execution.value.subject == null)
       return err(
@@ -116,7 +117,7 @@ export const traceNativeValues = async (
           "trace_native_values",
           "Function dossier lacks validated facts or artifact identity",
           parsed.success ? undefined : { cause: parsed.error },
-        ).retainPartialObservation(evidence),
+        ).retainPartialObservation(partialEvidence()),
       );
     const dossier = parsed.data;
     const address = dossier.procedure.address;
@@ -129,7 +130,7 @@ export const traceNativeValues = async (
         new AnalysisOutputError(
           "trace_native_values",
           "Cross-function target digest mismatch",
-        ).retainPartialObservation(evidence),
+        ).retainPartialObservation(partialEvidence()),
       );
     const evidenceId = execution.value.evidenceId;
     if (evidenceId === undefined)
@@ -138,7 +139,7 @@ export const traceNativeValues = async (
           "rea",
           "trace_native_values",
           "The function observation has no Evidence retention owner.",
-        ).retainPartialObservation(evidence),
+        ).retainPartialObservation(partialEvidence()),
       );
     procedures.push({
       address,
