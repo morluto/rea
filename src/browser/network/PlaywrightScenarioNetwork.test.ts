@@ -174,6 +174,26 @@ const bodyText = (event: BrowserScenarioEvent) => {
 
 afterEach(() => vi.useRealTimers());
 
+it.each([600, 999])(
+  "retains a browser response with status %s",
+  async (status) => {
+    const { collector, events } = harness();
+    const request = new RequestFixture("nonstandard-status");
+    const response = new ResponseFixture(request, "retained");
+    vi.spyOn(response, "status").mockReturnValue(status);
+    collector.request(request);
+    collector.response(response);
+    collector.finished(request);
+    await collector.finish();
+    expect(events.find((event) => event.kind === "response")?.status).toBe(
+      status,
+    );
+    expect(events.some((event) => event.kind === "request-finished")).toBe(
+      true,
+    );
+  },
+);
+
 it.each([true, false])(
   "protects source body and headers before the binding is saved (body selected: %s)",
   async (responseBody) => {

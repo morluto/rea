@@ -10,6 +10,10 @@ const statusClass = z.enum([
   "3xx",
   "4xx",
   "5xx",
+  "6xx",
+  "7xx",
+  "8xx",
+  "9xx",
   "failed",
   "unknown",
 ]);
