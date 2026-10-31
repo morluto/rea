@@ -202,7 +202,156 @@ describe("CLI advertised input schemas", () => {
       expect(validate({ commandTimeoutMs })).toBe(false);
     }
   });
+});
 
+describe("CLI selector schemas", () => {
+  it("enforces nonempty selector bounds and absolute mapping paths in Android and browser CLI schemas", async () => {
+    const cli = createCli({});
+    const ajv = new Ajv2020({ strict: false });
+
+    const inspectAndroidClass = await advertisedSchema(
+      cli,
+      "inspect-android-class",
+    );
+    const validateAndroidClassArgs = ajv.compile(
+      inspectAndroidClass.args ?? {},
+    );
+    const validateAndroidClassOptions = ajv.compile(
+      inspectAndroidClass.options ?? {},
+    );
+    const androidClassArgsParser = parserSchema(
+      cli,
+      "inspect-android-class",
+      "args",
+    );
+    const androidClassOptionsParser = parserSchema(
+      cli,
+      "inspect-android-class",
+      "options",
+    );
+
+    for (const className of ["", "com.example.App"]) {
+      const valid = className !== "";
+      const input = { path: "/targets/app.apk", className };
+      expect(validateAndroidClassArgs(input)).toBe(valid);
+      expect(androidClassArgsParser?.safeParse(input).success).toBe(valid);
+    }
+
+    const absoluteMapping =
+      process.platform === "win32" ? "C:\\mapping.txt" : "/targets/mapping.txt";
+    for (const mappingPath of [undefined, "", "mapping.txt", absoluteMapping]) {
+      const valid =
+        mappingPath === undefined || mappingPath === absoluteMapping;
+      const input = mappingPath === undefined ? {} : { mappingPath };
+      expect(validateAndroidClassOptions(input)).toBe(valid);
+      expect(androidClassOptionsParser?.safeParse(input).success).toBe(valid);
+    }
+
+    const inspectAndroidMethod = await advertisedSchema(
+      cli,
+      "inspect-android-method",
+    );
+    const validateAndroidMethodArgs = ajv.compile(
+      inspectAndroidMethod.args ?? {},
+    );
+    const androidMethodArgsParser = parserSchema(
+      cli,
+      "inspect-android-method",
+      "args",
+    );
+    for (const methodName of ["", "doWork"]) {
+      const valid = methodName !== "";
+      const input = {
+        path: "/targets/app.apk",
+        className: "com.example.App",
+        methodName,
+      };
+      expect(validateAndroidMethodArgs(input)).toBe(valid);
+      expect(androidMethodArgsParser?.safeParse(input).success).toBe(valid);
+    }
+
+    const captureWebScreenshot = await advertisedSchema(
+      cli,
+      "capture-web-screenshot",
+    );
+    const validateScreenshotArgs = ajv.compile(captureWebScreenshot.args ?? {});
+    const screenshotArgsParser = parserSchema(
+      cli,
+      "capture-web-screenshot",
+      "args",
+    );
+    for (const targetId of ["", "target-1"]) {
+      const valid = targetId !== "";
+      const input = { endpoint: "http://127.0.0.1:9222", targetId };
+      expect(validateScreenshotArgs(input)).toBe(valid);
+      expect(screenshotArgsParser?.safeParse(input).success).toBe(valid);
+    }
+
+    const inspectWebEventListeners = await advertisedSchema(
+      cli,
+      "inspect-web-event-listeners",
+    );
+    const validateListenerArgs = ajv.compile(
+      inspectWebEventListeners.args ?? {},
+    );
+    const listenerArgsParser = parserSchema(
+      cli,
+      "inspect-web-event-listeners",
+      "args",
+    );
+    for (const targetId of ["", "target-1"]) {
+      const valid = targetId !== "";
+      const input = {
+        endpoint: "http://127.0.0.1:9222",
+        targetId,
+        selector: "button",
+      };
+      expect(validateListenerArgs(input)).toBe(valid);
+      expect(listenerArgsParser?.safeParse(input).success).toBe(valid);
+    }
+    for (const selector of ["", "button"]) {
+      const valid = selector !== "";
+      const input = {
+        endpoint: "http://127.0.0.1:9222",
+        targetId: "target-1",
+        selector,
+      };
+      expect(validateListenerArgs(input)).toBe(valid);
+      expect(listenerArgsParser?.safeParse(input).success).toBe(valid);
+    }
+  });
+
+  it("uses the owning contracts for sibling browser and Android selectors", async () => {
+    const cli = createCli({});
+    const ajv = new Ajv2020({ strict: false });
+    for (const command of [
+      "inspect-web-page",
+      "analyze-web-bundle",
+      "observe-web-session",
+      "discover-webmcp-tools",
+      "observe-web-execution",
+    ]) {
+      const advertised = await advertisedSchema(cli, command);
+      const validate = ajv.compile(advertised.args ?? {});
+      const parser = parserSchema(cli, command, "args");
+      for (const targetId of ["", "target-1"]) {
+        const input = { endpoint: "http://127.0.0.1:9222", targetId };
+        expect(validate(input), command).toBe(targetId !== "");
+        expect(parser?.safeParse(input).success, command).toBe(targetId !== "");
+      }
+    }
+    const trace = await advertisedSchema(cli, "trace-android-references");
+    const validate = ajv.compile(trace.options ?? {});
+    const parser = parserSchema(cli, "trace-android-references", "options");
+    for (const methodName of [undefined, "", "method"]) {
+      const input = methodName === undefined ? {} : { methodName };
+      expect(validate(input)).toBe(methodName !== "");
+      expect(parser?.safeParse(input).success).toBe(methodName !== "");
+    }
+  });
+});
+
+describe("CLI input defaults", () => {
   it("accepts the one-argument keyed-archive call and keeps its constraints", async () => {
     const cli = createCli({});
     const advertised = await advertisedSchema(cli, "inspect-keyed-archive");
