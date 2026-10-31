@@ -616,6 +616,87 @@ describe("decompile_all resume", () => {
   });
 });
 
+describe("decompile_all retained body coverage", () => {
+  const directory = useOutputDirectory();
+
+  it("keeps the retained body-coverage caveat when a resume skips every file", async () => {
+    const created = await run(
+      harness({ info: "unavailable" }).tools,
+      directory(),
+    );
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    expect(
+      (created.value as { limitations: string[] }).limitations.join("\n"),
+    ).toContain("procedure_info");
+
+    const file = join(directory(), "functions/0x1000.c");
+    const before = await readFile(file, "utf8");
+    const resumed = await run(
+      harness({ info: "unavailable" }).tools,
+      directory(),
+      { resume: true },
+    );
+    expect(resumed.ok).toBe(true);
+    if (!resumed.ok) return;
+    expect(resumed.value).toMatchObject({
+      counts: { requested: 0, skipped: 3, written: 0 },
+      resume: true,
+    });
+    const limitations = (
+      resumed.value as { limitations: string[] }
+    ).limitations.join("\n");
+    expect(limitations).not.toContain("procedure_info");
+    expect(limitations).toContain("retain an unavailable function body");
+    expect(await readFile(file, "utf8")).toBe(before);
+    const index = decompileDirectoryIndexSchema.parse(
+      JSON.parse(
+        await readFile(
+          join(directory(), DECOMPILE_DIRECTORY_INDEX_NAME),
+          "utf8",
+        ),
+      ),
+    );
+    expect(index.limitations.join("\n")).toContain(
+      "retain an unavailable function body",
+    );
+    expect(index.functions.map((record) => record.body.available)).toEqual([
+      false,
+      false,
+      false,
+    ]);
+  });
+
+  it("keeps the retained body caveat when a resume selects nothing", async () => {
+    expect(
+      (await run(harness({ info: "unavailable" }).tools, directory())).ok,
+    ).toBe(true);
+    const resumed = await run(
+      harness({ info: "unavailable" }).tools,
+      directory(),
+      { resume: true, name: "NoSuchFunction" },
+    );
+    expect(resumed.ok).toBe(true);
+    if (!resumed.ok) return;
+    expect(resumed.value).toMatchObject({
+      counts: { selected: 0, skipped: 0 },
+    });
+    expect(
+      (resumed.value as { limitations: string[] }).limitations.join("\n"),
+    ).toContain("retain an unavailable function body");
+  });
+
+  it("does not claim a retained unavailable body when every body is available", async () => {
+    expect((await run(harness().tools, directory())).ok).toBe(true);
+    const resumed = await run(harness().tools, directory(), { resume: true });
+    expect(resumed.ok).toBe(true);
+    if (!resumed.ok) return;
+    expect(
+      (resumed.value as { limitations: string[] }).limitations.join("\n"),
+    ).not.toContain("unavailable function body");
+  });
+});
+
 describe("decompile_all filters and layout", () => {
   const directory = useOutputDirectory();
 
