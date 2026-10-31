@@ -184,6 +184,12 @@ export const objcDispatchImplementationSchema = z.strictObject({
   selector: z.string().min(1),
   method_type: z.enum(["instance", "class"]),
   implementation_address: z.string().nullable(),
+  /**
+   * File offset of `implementation_address`, in the same artifact coordinates
+   * as `location.file_offset`. Null when no reader mapped the implementation;
+   * absent in older Evidence. `location` is the method record, not the code.
+   */
+  implementation_file_offset: z.int().nonnegative().nullable().optional(),
   /** Category that adds this method, when it is not defined by the class itself. */
   category: z.string().nullable().optional(),
   location: nativeMetadataLocationSchema,
@@ -598,6 +604,7 @@ export const inspectNativeDispatchMetadata = (
           selector,
           method_type: methodType,
           implementation_address: address,
+          implementation_file_offset: null,
           location: { address, file_offset: null },
           decode: { status: "partial", reason: "symbol_name_only" },
           evidence,

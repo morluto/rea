@@ -378,7 +378,9 @@ bounded typed call references. Direct references, resolved indirect references,
 ambiguous candidates, inferred untyped provider callees and targetless call
 sites remain distinct. A static route does not establish runtime reachability.
 Swift/closure dispatch requires resolved static references; unavailable ABI
-forms remain unknown.
+forms remain unknown. A handler node's `location` pairs the implementation
+address with its `implementation_file_offset`, or an unknown offset; the method
+record's own location remains in the node's Evidence.
 
 Incomplete reference kinds do not discard known typed calls or partial
 provider call references. A `provider_call` with `observed` resolution retains
@@ -835,6 +837,11 @@ complete observation.
   non-generic, non-resilient class vtable descriptors. Records include exact virtual addresses/file offsets and
   artifact evidence. Vtable indexes are metadata word offsets; witness indexes
   start after the conformance header. Names unavailable in metadata remain null.
+  An Objective-C implementation's `location` is its method-list entry; the
+  reader maps `implementation_address` separately into
+  `implementation_file_offset`, which uses the same file coordinates as
+  `location.file_offset`, including a universal slice's container offset.
+  Unmapped implementations and symbol-only records keep it null.
   The selected Mach-O header must match the requested CPU family for both thin
   files and universal slices before metadata decoding. CPU subtypes and
   capability bits remain source facts; an `arm64` request may select an

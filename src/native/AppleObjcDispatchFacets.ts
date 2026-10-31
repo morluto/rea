@@ -188,6 +188,7 @@ export const decodeObjcDispatchFacets = (input: {
         method_type: methodType,
         ...(category === undefined ? {} : { category }),
         implementation_address: implementationLocation?.address ?? null,
+        implementation_file_offset: implementationLocation?.file_offset ?? null,
         location: read.location(entry),
         decode:
           implementationLocation === null

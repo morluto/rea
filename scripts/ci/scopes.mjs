@@ -152,6 +152,11 @@ const PATH_SCOPES = {
     "tests/boundary/filesystem/installScript.test.ts",
     "tests/boundary/filesystem/nibNativeHierarchy.test.ts",
     "tests/boundary/filesystem/interfaceBuilderBundle.test.ts",
+    // Compiled UI handler joins: metadata reader, graph and trace workflow.
+    "src/domain/native/objcSwiftMetadata.ts",
+    "src/domain/native/nativeInvestigationGraph.ts",
+    "src/application/native/NativeUiActionTrace.ts",
+    "tests/acceptance/nativeUiHandlerLocation.test.ts",
     "tests/boundary/cli/nativePlistCli.test.ts",
     "tests/boundary/cli/nativePlistPrototypeKeyCli.test.ts",
     "tests/boundary/cli/nativePlistSelectionFailureCli.test.ts",

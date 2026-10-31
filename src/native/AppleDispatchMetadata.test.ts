@@ -1212,11 +1212,13 @@ describe("Apple dispatch binary metadata", () => {
         },
         { name: "Fixture", is_meta_class: true },
       ]);
+      // The method entry and its code are distinct locations in one image.
       expect(result.objc_dispatch_implementations).toMatchObject([
         {
           selector: "performAction:",
           implementation_address: "0x100000700",
-          location: { file_offset: 0x488 },
+          implementation_file_offset: 0x700,
+          location: { address: "0x100000488", file_offset: 0x488 },
           decode: { status: "decoded" },
         },
       ]);
@@ -1315,6 +1317,8 @@ describe("Apple dispatch coverage ownership", () => {
     const result = decodeAppleDispatchMetadata(bytes, 100, provenance);
     expect(result.objc_dispatch_implementations[0]).toMatchObject({
       implementation_address: null,
+      implementation_file_offset: null,
+      location: { address: "0x100000488", file_offset: 0x488 },
       decode: { status: "partial" },
     });
     expect(
@@ -1387,6 +1391,8 @@ describe("Apple dispatch coverage ownership", () => {
         category: "FixtureCategory",
         class_name: "(FixtureCategory)",
         implementation_address: "0x100000700",
+        implementation_file_offset: 0x700,
+        location: { address: "0x100000b88", file_offset: 0xb88 },
       }),
     );
     expect(
@@ -1951,6 +1957,7 @@ describe("universal Apple dispatch metadata", () => {
     });
     expect(result.objc_dispatch_implementations[0]).toMatchObject({
       implementation_address: "0x100000700",
+      implementation_file_offset: offset + 0x700,
       location: { file_offset: offset + 0x488 },
     });
   });
@@ -2035,6 +2042,7 @@ describe("byte-swapped universal Apple dispatch metadata", () => {
       });
       expect(result.objc_dispatch_implementations[0]).toMatchObject({
         implementation_address: "0x100000700",
+        implementation_file_offset: 256 + 0x700,
         location: { file_offset: 256 + 0x488 },
       });
     },
