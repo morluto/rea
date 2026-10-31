@@ -242,7 +242,10 @@ export const createCli = (
   });
   presentOmittableDefaults(cli);
   if (resultOutput !== undefined) streamCliCommandResults(cli, resultOutput);
-  const serveStrict = rejectSurplusCliArguments(cli);
+  const serveStrict = rejectSurplusCliArguments(
+    cli,
+    PRODUCT_IDENTITY.cliBinary,
+  );
   presentCliArgumentErrors(cli);
   const serveDeclared = excludeDeclaredSensitiveArguments(cli);
   const serve = cli.serve.bind(cli);
