@@ -204,7 +204,22 @@ const decodeDirectoryString = (
   }
 };
 
-const integerHex = (content: Buffer, budget: DecodedNameBudget): string => {
+// X.690 8.3.1 and 8.3.2 hold for BER as well as DER: an INTEGER has at least
+// one content octet, and its first nine bits are never all zeros or all ones.
+// Padded encodings would otherwise collapse onto the minimal serial's hex.
+const integerHex = (
+  content: Buffer,
+  budget: DecodedNameBudget,
+  label: string,
+): string => {
+  if (content.length === 0) return fail(`${label} INTEGER is empty.`);
+  const second = content[1];
+  if (
+    second !== undefined &&
+    ((content[0] === 0x00 && second < 0x80) ||
+      (content[0] === 0xff && second >= 0x80))
+  )
+    return fail(`${label} INTEGER is not minimally encoded.`);
   let start = 0;
   while (start < content.length - 1 && content[start] === 0) start += 1;
   chargeDecodedName(budget, (content.length - start) * 2);
@@ -434,7 +449,11 @@ export const parseCertificate = (
   return {
     start: node.start,
     end: node.end,
-    serial_hex: integerHex(serial.content, names),
+    serial_hex: integerHex(
+      serial.content,
+      names,
+      "TBSCertificate serialNumber",
+    ),
     issuer: decodeName(issuer, names),
     subject: decodeName(subject, names),
     not_before: validityTime(notBefore, names),
@@ -474,7 +493,11 @@ const signerIdentifier = (
       return fail("SignerInfo issuerAndSerialNumber is truncated.");
     return {
       issuer: decodeName(name, names),
-      serial_hex: integerHex(serial.content, names),
+      serial_hex: integerHex(
+        serial.content,
+        names,
+        "SignerInfo issuerAndSerialNumber serialNumber",
+      ),
       subject_key_identifier_hex: null,
     };
   }
