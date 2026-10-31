@@ -43,10 +43,29 @@ const retainedTextBytes = (...strings: readonly (string | null)[]): number =>
     0,
   );
 
+/** Which fixed export inventory allowance refused the image. */
+export type NativeExportLimit = "rows" | "retained_text";
+
+/**
+ * A fixed inventory allowance was exhausted. `limit` identifies the exhausted
+ * allowance so consumers derive its units from the producer, not from text:
+ * `rows` is an entry count and `retained_text` a byte budget.
+ */
+export class NativeExportLimitFailure extends BinaryResourceFailure {
+  constructor(
+    readonly limit: NativeExportLimit,
+    allowance: number,
+    message: string,
+  ) {
+    super("structure", allowance, message);
+    this.name = "NativeExportLimitFailure";
+  }
+}
+
 const checkRetainedText = (bytes: number): void => {
   if (bytes > MAXIMUM_RETAINED_TEXT_BYTES)
-    throw new BinaryResourceFailure(
-      "structure",
+    throw new NativeExportLimitFailure(
+      "retained_text",
       MAXIMUM_RETAINED_TEXT_BYTES,
       `Export names exceed the ${String(MAXIMUM_RETAINED_TEXT_BYTES)}-byte retained-text allowance`,
     );
@@ -74,8 +93,8 @@ const hex = (value: bigint | number) => `0x${value.toString(16)}`;
 
 const rowBudget = (count: number, label: string): void => {
   if (count > MAX_NATIVE_EXPORT_ROWS)
-    throw new BinaryResourceFailure(
-      "structure",
+    throw new NativeExportLimitFailure(
+      "rows",
       MAX_NATIVE_EXPORT_ROWS,
       `${label} declares ${String(count)} entries, above the ${String(MAX_NATIVE_EXPORT_ROWS)}-entry export inventory allowance`,
     );

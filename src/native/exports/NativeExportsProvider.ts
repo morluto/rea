@@ -14,6 +14,7 @@ import {
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import type { NativeExportsPort } from "../../application/binaryDiagnostics/NativeExportsPort.js";
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+import type { ResourceConstraintRecovery } from "../../domain/analysisErrorCore.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
@@ -35,7 +36,11 @@ import {
   BinaryFormatFailure,
   BinaryResourceFailure,
 } from "../metadata/BinaryContainer.js";
-import { parseNativeExports } from "./NativeExportParser.js";
+import {
+  NativeExportLimitFailure,
+  type NativeExportLimit,
+  parseNativeExports,
+} from "./NativeExportParser.js";
 
 const OPERATION = "inspect_native_exports";
 
@@ -86,6 +91,30 @@ const fileSizeRemediation = (input: InspectNativeExportsInput): string =>
     ? `The image exceeds the ${String(MAX_INSPECT_NATIVE_EXPORTS_FILE_BYTES)}-byte input ceiling this operation accepts. This release has no runtime override. Select a smaller artifact.`
     : `Raise max_file_bytes above ${String(input.max_file_bytes)} bytes or select a smaller artifact; the limit is the caller-selected input read budget.`;
 
+/** Recovery for one exhausted allowance, chosen from the parser's structured tag. */
+const limitRecovery = (
+  limit: NativeExportLimit | null,
+  maximum: number,
+): ResourceConstraintRecovery => {
+  switch (limit) {
+    case "rows":
+      return fixedAllowanceOptions(
+        `The ${String(maximum)}-entry native export inventory allowance`,
+        "count",
+      );
+    case "retained_text":
+      return fixedAllowanceOptions(
+        `The ${String(maximum)}-byte native export retained-text allowance`,
+        "bytes",
+      );
+    case null:
+      return fixedAllowanceOptions(
+        "The native export structural decoding allowance",
+        "parser",
+      );
+  }
+};
+
 const nativeExportsFailurePrimary = (
   facts: ArtifactFilePrimaryFacts,
   input: InspectNativeExportsInput,
@@ -120,9 +149,9 @@ const nativeExportsFailurePrimary = (
       { boundary: cause.boundary, maximum: cause.maximum_bytes },
       {
         cause,
-        ...fixedAllowanceOptions(
-          "The native export inventory allowance",
-          "count",
+        ...limitRecovery(
+          cause instanceof NativeExportLimitFailure ? cause.limit : null,
+          cause.maximum_bytes,
         ),
       },
     );
