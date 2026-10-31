@@ -189,11 +189,13 @@ typed interfaces.
 
 `compare_wasm_interfaces` accepts two complete `inspect_wasm_artifact` Evidence
 records, or exact retained references in the current MCP session, and required
-`scope: "imports" | "exports" | "both"`. It reads no files and needs no active
-WABT toolchain. CLI uses portable inline Evidence in one JSON document:
+`scope: "imports" | "exports" | "both"`. It uses producer-owned typed facts
+without rereading the artifact and needs no active WABT toolchain. CLI accepts
+portable inline Evidence in one JSON document, or
+resolves the same retained-reference inputs from an explicit saved bundle:
 
 ```bash
-rea compare-wasm-interfaces comparison-input.json --json
+rea compare-wasm-interfaces comparison-input.json --evidence-bundle /absolute/path/evidence.json --json
 ```
 
 ```json
@@ -204,8 +206,10 @@ rea compare-wasm-interfaces comparison-input.json --json
 }
 ```
 
-The references above are MCP-only; put complete Evidence objects in the CLI
-input. Resolve summary delivery to its retained complete parent before comparing.
+Omit `--evidence-bundle` when the CLI input contains complete inline records.
+Resolve summary delivery to its complete `normalized_result.parent_evidence_id`
+before comparing. References preserve that exact source identity and coverage;
+the bundle supplies no facts absent from the selected record.
 Results retain both input Evidence IDs, artifact paths/digests/lengths and every
 selected occurrence. Unique names are added, removed, changed or unchanged;
 duplicate names and unsupported signatures are unknown. Incomplete or historical

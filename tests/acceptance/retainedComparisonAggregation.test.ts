@@ -15,17 +15,27 @@ it("recovers a missing retained closure by importing the originating bundle", as
   const comparisons = [FUNCTION_COMPARISON_EVIDENCE];
   const { call } = await connectLocalToolsMcp();
   const input = { comparisons };
-  for (const request of [
-    input,
+  const retainedRequest = {
+    comparisons: [
+      {
+        kind: "retained-evidence",
+        evidence_id: FUNCTION_COMPARISON_EVIDENCE.evidence_id,
+      },
+    ],
+  };
+  const requests = [
     {
-      comparisons: [
-        {
-          kind: "retained-evidence",
-          evidence_id: FUNCTION_COMPARISON_EVIDENCE.evidence_id,
-        },
-      ],
+      input,
+      // The inline comparison is already supplied; its missing dependencies
+      // still require their originating retained Evidence closure.
+      missingIds: FUNCTION_COMPARISON_EVIDENCE.evidence_links,
     },
-  ]) {
+    {
+      input: retainedRequest,
+      missingIds: [FUNCTION_COMPARISON_EVIDENCE.evidence_id],
+    },
+  ];
+  for (const { input: request, missingIds } of requests) {
     const missing = parseMcpToolError(
       await call("find_changed_behavior", request),
     ).error;
@@ -35,10 +45,10 @@ it("recovers a missing retained closure by importing the originating bundle", as
       details: {
         reason: "missing",
         reference_scope: "retained-closure",
-        evidence_id: FUNCTION_COMPARISON_EVIDENCE.evidence_id,
         actual: null,
       },
     });
+    expect(missingIds).toContain(missing.details?.evidence_id);
     expect(missing.message).toContain("required retained Evidence closure");
     expect(missing.remediation.action).toContain("originating Evidence bundle");
     expect(JSON.stringify(missing)).not.toContain("inline Evidence");
@@ -72,6 +82,9 @@ it("recovers a missing retained closure by importing the originating bundle", as
       FUNCTION_COMPARISON_EVIDENCE.evidence_id,
     ]),
   );
+  const retained = await call("find_changed_behavior", retainedRequest);
+  expect(retained.isError, JSON.stringify(retained)).not.toBe(true);
+  expect(parseEvidence(retained.structuredContent)).toEqual(aggregate);
 });
 
 it("aggregates selected retained observations within a caller's input budget", async () => {
