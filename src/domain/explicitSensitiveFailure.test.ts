@@ -187,6 +187,59 @@ it("keeps a named timeout control through explicit-value redaction", () => {
   expect(JSON.stringify(projected)).not.toContain("explicit-secret");
 });
 
+it.each([
+  {
+    name: "populated startup diagnostics",
+    options: {
+      envName: "REA_GHIDRA_STARTUP_TIMEOUT_MS",
+      elapsedMs: 251,
+      targetBytes: 4096,
+    },
+    values: ["private"],
+    expected: {
+      env_name: "REA_GHIDRA_STARTUP_TIMEOUT_MS",
+      elapsed_ms: 251,
+      target_bytes: 4096,
+    },
+  },
+  {
+    name: "zero measurements",
+    options: { elapsedMs: 0, targetBytes: 0 },
+    values: ["private"],
+    expected: { elapsed_ms: 0, target_bytes: 0 },
+  },
+  {
+    name: "omitted measurements",
+    options: {},
+    values: ["private"],
+    expected: {},
+  },
+  {
+    name: "explicitly excluded setting name",
+    options: { envName: "REA_GHIDRA_STARTUP_TIMEOUT_MS", elapsedMs: 251 },
+    values: ["private", "REA_GHIDRA"],
+    expected: { env_name: "[REDACTED]_STARTUP_TIMEOUT_MS", elapsed_ms: 251 },
+  },
+])(
+  "preserves $name through timeout redaction and projection",
+  ({ options, values, expected }) => {
+    const error = new AnalysisTimeoutError("list_documents", 250, {
+      ...options,
+      diagnostics: { note: "private startup" },
+    });
+    const projected = projectAnalysisError(
+      redactExplicitFailure(error, values),
+    );
+    expect(projected.code).toBe("provider_timeout");
+    expect(projected.details).toEqual({
+      operation: "list_documents",
+      timeout_ms: 250,
+      ...expected,
+      diagnostics: { note: "[REDACTED] startup" },
+    });
+  },
+);
+
 it("keeps unsupported profile reasons distinct from malformed input", () => {
   const error = new AnalysisCapabilityUnavailableError(
     "mitmproxy",

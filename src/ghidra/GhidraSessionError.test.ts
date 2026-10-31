@@ -207,6 +207,28 @@ it.each([null, undefined, new Error("original cause")])(
   },
 );
 
+it("preserves the captured startup elapsed time through refresh and cleanup joins", () => {
+  const cleanup = new ProviderCleanupError("ghidra", ["owned-file"], {});
+  const original = new GhidraSessionError(
+    "timeout",
+    "Ghidra startup deadline elapsed",
+    {},
+    { timeoutMs: 250, elapsedMs: 251 },
+  );
+
+  const refreshed = original.withDiagnostics({ stage: "refreshed" });
+  expect(refreshed.elapsedMs).toBe(251);
+
+  const joined = refreshed.withCleanupFailure(cleanup);
+  expect(joined).toMatchObject({
+    kind: "timeout",
+    timeoutMs: 250,
+    elapsedMs: 251,
+    diagnostics: { stage: "refreshed" },
+  });
+  cleanup.resolveCleanup();
+});
+
 it("preserves the compiler root cleanup dependency through launch and session projection", () => {
   const cleanup = new ProviderCleanupError(
     "process-ownership",

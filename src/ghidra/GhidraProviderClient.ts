@@ -1232,9 +1232,19 @@ const projectPrimarySessionError = (
             limits.ghidraExistingProject !== undefined,
           )
         : undefined;
+    const targetBytes = admittedTargetBytes(failure);
     return new AnalysisTimeoutError(operation, timeoutMs, {
       ...context,
       ...guidance,
+      ...(guidance === undefined
+        ? {}
+        : {
+            envName: "REA_GHIDRA_STARTUP_TIMEOUT_MS",
+            ...(failure.elapsedMs === undefined
+              ? {}
+              : { elapsedMs: failure.elapsedMs }),
+            ...(targetBytes === undefined ? {} : { targetBytes }),
+          }),
       ...(uncertainty === undefined
         ? {}
         : {
@@ -1435,6 +1445,26 @@ const memoryCgroupSchema = z.object({
     .union([z.number().int().nonnegative(), z.literal("max")])
     .nullable(),
 });
+
+/** Recover the admitted target size from a failure's retained win32 admission. */
+const admittedTargetBytes = (
+  failure: GhidraSessionError,
+): number | undefined => {
+  const admission = failure.diagnostics.target_admission;
+  if (
+    typeof admission !== "object" ||
+    admission === null ||
+    Array.isArray(admission)
+  )
+    return undefined;
+  const source = admission.source;
+  if (typeof source !== "object" || source === null || Array.isArray(source))
+    return undefined;
+  const { size } = source;
+  return typeof size === "number" && Number.isSafeInteger(size) && size >= 0
+    ? size
+    : undefined;
+};
 
 const GHIDRA_PROCESS_TREE_MEMORY_ACTION =
   "A memory limit covers Ghidra's native decompiler processes as well as its Java heap, and their number follows the available CPUs, so a larger GHIDRA_HEADLESS_MAXMEM does not help. Raise the container or host memory limit, or allow fewer CPUs with a longer REA_GHIDRA_STARTUP_TIMEOUT_MS.";
