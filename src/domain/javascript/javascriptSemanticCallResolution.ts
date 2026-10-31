@@ -12,9 +12,19 @@ import {
   semanticEffectTiming,
 } from "./javascriptSemanticMutationInitializers.js";
 import {
+  semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
   runtimeFunctionParameters,
 } from "./javascriptAstValues.js";
+import {
+  MAX_CLASS_CANDIDATES,
+  fieldProofIsSingle,
+  getClassRegistry,
+  lookupSuperMethod,
+  lookupUnitOneMethod,
+  proveGetterReceiver,
+  proveUnitTwoReceiver,
+} from "./javascriptSemanticClassReceivers.js";
 import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
@@ -78,6 +88,8 @@ const resolveCallables = (
       reason: "Direct local callable.",
     };
   if (t.isIdentifier(node)) return resolveIdentifier(node, context);
+  if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node))
+    return resolveMemberCall(node, context);
   if (t.isConditionalExpression(node) || t.isLogicalExpression(node))
     return resolveAlternatives(
       t.isConditionalExpression(node) ? node.consequent : node.left,
@@ -165,6 +177,98 @@ const resolveAlternatives = (
     ...(candidates.some((candidate) => candidate.cycleDependent)
       ? { cycleDependent: true as const }
       : {}),
+  };
+};
+
+const resolveMemberCall = (
+  node: t.MemberExpression | t.OptionalMemberExpression,
+  context: CallResolutionContext,
+): LocalCallableResolution => {
+  const key = semanticStaticPropertyKey(node.property, node.computed);
+  // Never read a noncomputed method-key Identifier as a lexical value.
+  if (key === null || t.isPrivateName(node.property))
+    return {
+      callableIds: [],
+      complete: false,
+      reason: `Unsupported computed class method call target.`,
+    };
+  const registry = getClassRegistry(context.state);
+  const object = unwrapJavaScriptExpression(node.object).node;
+  if (t.isSuper(object)) {
+    const lookup = lookupSuperMethod(node, key, context.state, registry);
+    if (lookup.callableIds.length === 0)
+      return {
+        callableIds: [],
+        complete: false,
+        reason: lookup.reason,
+      };
+    return {
+      callableIds: [...lookup.callableIds],
+      complete: false,
+      reason: lookup.reason,
+    };
+  }
+  if (t.isCallExpression(object) || t.isOptionalCallExpression(object)) {
+    const proof = proveGetterReceiver(
+      object,
+      node,
+      context.state,
+      context.seenInitializers,
+      registry,
+    );
+    if (proof.status === "unknown")
+      return {
+        callableIds: [],
+        complete: false,
+        reason: proof.reason,
+      };
+    const lookup = lookupUnitOneMethod(proof.classes, key, registry);
+    if (lookup.callableIds.length === 0)
+      return {
+        callableIds: [],
+        complete: false,
+        reason: lookup.reason,
+      };
+    return {
+      callableIds: [...lookup.callableIds],
+      complete: false,
+      reason: `Class method ${key} resolves through a getter return.`,
+    };
+  }
+  const proof = proveUnitTwoReceiver(
+    node.object,
+    node,
+    context.state,
+    context.seenInitializers,
+    registry,
+  );
+  if (proof.status === "unknown")
+    return {
+      callableIds: [],
+      complete: false,
+      reason: proof.reason,
+    };
+  const lookup = lookupUnitOneMethod(proof.classes, key, registry);
+  if (lookup.callableIds.length > MAX_CLASS_CANDIDATES)
+    return {
+      callableIds: [],
+      complete: false,
+      reason: `Class method ${key} exceeds the per-site candidate cap.`,
+    };
+  if (lookup.callableIds.length === 0 && lookup.complete === false)
+    return {
+      callableIds: [],
+      complete: false,
+      reason: lookup.reason,
+    };
+  // A repeated field write keeps the target ambiguous even for one class.
+  const single = fieldProofIsSingle(node.object, node, context.state, registry);
+  return {
+    callableIds: [...lookup.callableIds],
+    complete: lookup.complete && single,
+    reason: single
+      ? lookup.reason
+      : `Class method ${key} has multiple field writes.`,
   };
 };
 
