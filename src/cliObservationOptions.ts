@@ -94,8 +94,6 @@ export const electronPageInspectionOptions = z.object({
 
 export const javascriptApplicationOptions = z.object({
   ...javascriptRouteDeliveryOptions,
-  // incur only coerces ZodNumber argv fields; domain z.int() constructs
-  // ZodNumberFormat. Preserve the canonical bounds in this CLI adapter.
   maxSemanticNodes: cliIntegerArgument(1, JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM)
     .optional()
     .describe(
