@@ -203,6 +203,7 @@ export interface ArtifactReader {
     | "intel-hex"
     | "srec"
     | "esp-image"
+    | "esp-flash-image"
     | "fit"
     | "file";
   entries(

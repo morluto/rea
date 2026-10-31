@@ -300,6 +300,17 @@ v2 signature blocks. `extract-artifact` / `extract_artifact` writes one file
 per segment and signature block. Reading is portable and needs no external
 tool. See [ESP images](esp-image.md).
 
+## Inspect ESP flash dumps
+
+Use the same tools on a whole-flash dump, such as `esptool read-flash 0 ALL`
+output. The inventory reports the bootloader, the partition table and how it
+was found, each partition with its declared type, flags and digest, ESP image
+facts for the bootloader and each app partition, and the OTA records with a
+derived selection; the running partition stays unknown. Extraction writes
+each partition, `nvs_keys` included, as an ordinary file. For a dump that
+does not start at flash address 0, select `esp-flash-image` with
+`flash_offset`. See [ESP flash images](esp-flash-image.md).
+
 ## Inspect extracted devicetrees
 
 Use [`inspect_devicetree`](devicetree.md) / `rea inspect-devicetree` on an

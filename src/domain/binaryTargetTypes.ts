@@ -302,9 +302,26 @@ export type BinaryTarget =
       })
   | (BinaryTargetIdentity &
       NonExecutableMetadata & {
+        readonly kind: "archive";
+        readonly format: "esp-flash-image";
+        /** How the dump is read; null inputs take their defaults. */
+        readonly espFlash: EspFlashTargetSelection;
+      })
+  | (BinaryTargetIdentity &
+      NonExecutableMetadata & {
         readonly kind: "artifact";
         readonly format: "plist" | "javascript" | "source-map";
       });
+
+/** Caller inputs that select how an ESP flash dump is read. */
+export interface EspFlashTargetSelection {
+  /** The caller selected the format, so the table scan runs without a bootloader. */
+  readonly selected: boolean;
+  /** Flash address of the dump's first byte. */
+  readonly flashOffset: number | null;
+  /** Flash address of the partition table. */
+  readonly partitionTableOffset: number | null;
+}
 
 /** Whether an executable target contains a thin or universal Mach-O image. */
 export const isMachOFormat = (

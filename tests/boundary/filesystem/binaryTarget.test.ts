@@ -35,9 +35,11 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { ESP8266_REFUSAL } from "../../../src/domain/firmware/espImage.js";
 import {
   ESP32C3_APP_SEGMENTS,
+  ESP32C3_BOOTLOADER_SEGMENTS,
   esp8266Image,
   espImage,
 } from "../../fixtures/espImage.js";
+import { espFlashDump } from "../../../src/domain/firmware/espFlash.fixture.js";
 import { javaClassFile } from "../../fixtures/javaClassFile.js";
 import {
   MAX_JVM_CLASS_IDENTITY_BYTES,
@@ -592,6 +594,120 @@ describe("binary target I/O: package classification", () => {
     expect(result).toMatchObject({
       ok: false,
       error: { _tag: "BinaryTargetError" },
+    });
+  });
+});
+
+describe("binary target I/O: ESP flash layouts", () => {
+  it("detects a flash layout before the bootloader it begins with", async () => {
+    const directory = await createTestTempDirectory("rea-esp-flash-target-");
+    const dump = join(directory, "flash.bin");
+    const bootloader = join(directory, "bootloader.bin");
+    const image = espImage({ segments: ESP32C3_BOOTLOADER_SEGMENTS });
+    await Promise.all([
+      writeFile(dump, espFlashDump({ bootloader: { at: 0, bytes: image } })),
+      writeFile(bootloader, image),
+    ]);
+    expect(await parseBinaryTarget(dump)).toMatchObject({
+      ok: true,
+      value: {
+        kind: "archive",
+        format: "esp-flash-image",
+        espFlash: {
+          selected: false,
+          flashOffset: null,
+          partitionTableOffset: null,
+        },
+      },
+    });
+    expect(await parseBinaryTarget(bootloader)).toMatchObject({
+      ok: true,
+      value: { kind: "archive", format: "esp-image" },
+    });
+  });
+
+  it("keeps refusing an ESP8266 dump that has an ESP-IDF-style table", async () => {
+    const directory = await createTestTempDirectory("rea-esp8266-flash-");
+    const dump = join(directory, "esp8266-flash.bin");
+    await writeFile(
+      dump,
+      espFlashDump({ bootloader: { at: 0, bytes: esp8266Image() } }),
+    );
+    expect(await parseBinaryTarget(dump)).toMatchObject({
+      ok: false,
+      error: {
+        constraint: "file_format_rejected",
+        reason: ESP8266_REFUSAL,
+      },
+    });
+  });
+
+  it("reads a selected flash dump with caller inputs and refuses bad pairings", async () => {
+    const directory = await createTestTempDirectory("rea-esp-flash-select-");
+    const esp32 = espImage({
+      segments: ESP32C3_BOOTLOADER_SEGMENTS,
+      chipId: 0,
+    });
+    const partial = join(directory, "from-0x1000.bin");
+    const noise = join(directory, "noise.bin");
+    await Promise.all([
+      writeFile(
+        partial,
+        espFlashDump({ bootloader: { at: 0x1000, bytes: esp32 } }).subarray(
+          0x1000,
+        ),
+      ),
+      writeFile(noise, Buffer.alloc(0x1_0000, 0x5a)),
+    ]);
+    expect(
+      await parseBinaryTarget(partial, {
+        formatHint: "esp-flash-image",
+        espFlash: { flashOffset: 0x1000 },
+      }),
+    ).toMatchObject({
+      ok: true,
+      value: {
+        kind: "archive",
+        format: "esp-flash-image",
+        espFlash: {
+          selected: true,
+          flashOffset: 0x1000,
+          partitionTableOffset: null,
+        },
+      },
+    });
+    for (const [options, reason] of [
+      [
+        { espFlash: { flashOffset: 0x1000 } },
+        "flash_offset and partition_table_offset apply only with format=esp-flash-image",
+      ],
+      [
+        {
+          formatHint: "esp-flash-image",
+          espFlash: { partitionTableOffset: 0x8800 },
+        },
+        "partition_table_offset must be a multiple of 0x1000, as ESP-IDF requires",
+      ],
+    ] as const)
+      expect(await parseBinaryTarget(partial, options)).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "BinaryTargetError",
+          constraint: "load_selection_rejected",
+          reason,
+        },
+      });
+    // Ciphertext is not recognized as a layout: unknown, not malformed.
+    expect(
+      await parseBinaryTarget(noise, { formatHint: "esp-flash-image" }),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        constraint: "file_format_rejected",
+        reason: expect.stringContaining(
+          "ESP flash image layout is not recognized",
+        ),
+      },
     });
   });
 });

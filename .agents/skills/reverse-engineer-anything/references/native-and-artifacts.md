@@ -13,6 +13,13 @@ Select columns, batch IDs and page individual facts; aliases remain unresolved.
 Unpaired observations do not prove additions/removals. Existing matched dossier
 pairs include inputs for `compare_functions`; otherwise analyze just chosen pairs.
 
+Aggregate completed comparisons with `find_changed_behavior`, selecting each
+comparison's exact `retained-evidence` ID instead of resending full records.
+Inline comparison Evidence remains accepted. References belong to the current
+server: after handoff, import the original bundle including its source closure.
+Do not substitute dossier IDs or summary views. Static differences remain
+behavior candidates, with runtime behavior unknown unless separately observed.
+
 For a matching representation refusal, inspect `details.limit` and raise
 `native.matching_representation_bytes` with `update_analysis_settings` before
 retrying the unchanged MCP request. CLI launch seed:
@@ -611,6 +618,16 @@ discovery are unsupported. Windows Ghidra P0 admits raw images only for `6502`. 
 Fresh-import sessions admit annotations; existing-project reuse is read-only.
 Use `annotate_native_function` for one function name and/or entry comments, with at least one explicit change. Review its annotation readback and refreshed dossier inline. Changes are atomic and session-scoped; empty comments clear them, omitted fields preserve them. Later MCP calls observe edits until close. CLI `annotate-native-function` returns the updated analysis before discarding the session. Original executable bytes are unchanged; edits invalidate immutable snapshots. Windows P0 does not admit database mutations. For naming only, `set_address_name` / `set_addresses_names` also work with Ghidra: they name function entries or data addresses (primary labels) and return compact per-address success booleans instead of a dossier.
 
+For `compare_functions`, obtain `analyze_function` Evidence before and after the
+edit while the MCP session is open; annotation Evidence is not a comparison
+input. Export the needed Evidence before close if comparison will happen later.
+Authenticated same-artifact coordinates preserve renamed entries as
+`matched / same-entry`, with the canonical `entry_address` inline; name and
+exact-text changes remain separate dimensions. This requires compatible
+architecture, provider-owned mapping and selected-image commitments. Equal
+numeric addresses alone cannot establish correspondence; inspect retained
+source Evidence and coverage when the match remains ambiguous.
+
 ## Offline PE resource inventory
 
 Use `inspect_pe_resources` with an absolute `path`, or
@@ -695,6 +712,32 @@ refusals. ESP8266 images are refused, and flash-encrypted images are not
 recognized. Segments are not disassembled, and RISC-V or Xtensa segments
 cannot be opened as raw-binary. See
 [ESP images](https://github.com/morluto/rea/blob/main/docs/esp-image.md).
+
+## ESP flash images
+
+A whole-flash dump opens as `esp-flash-image`. `root_format_metadata` holds
+`partition_table` (its `method`: `default`, `caller` or a derived
+`scan`), `bootloader` and `apps` ESP image facts, the `otadata` records,
+`partitions_outside_dump` and `boot_selection`. Every table has a
+`boot_selection`: its `basis` names the bootloader's branch (`no-otadata`
+without otadata, `none` when the bootloader rejects the table, `unknown`
+when a record is missing), and it lists its `assumptions`;
+`running_partition` is always `unknown`. Each image names its entry
+`path`. With `detail: "summary"` the root kind is `esp-flash-image-summary`
+and each image is a compact `summary` (chip, entry point, segment count,
+classified load ranges, signature block count, descriptor identity,
+integrity); complete detail keeps every segment. Partition rows
+(`partitions/<label>.bin`) carry the declared `type`, `subtype`, names,
+`flash_address`, `size` and flags; `encrypted` is a storage flag, not
+proof of ciphertext. `written_offset`/`written_end` bound the bytes that
+are not erased: an app slot whose facts say `erased` can still hold an older
+image, and a limitation says so. For a dump read from another flash address, call
+`open_binary` with `format: "esp-flash-image"` and `flash_offset`; an
+`esp-image` whose `flash_dump` is set names that offset in a next probe; a
+relocated table can be named with `partition_table_offset`. No table found
+means unknown, often flash encryption. Extraction writes `nvs_keys` as
+ordinary data. See
+[ESP flash images](https://github.com/morluto/rea/blob/main/docs/esp-flash-image.md).
 
 ## Bun standalone executables
 

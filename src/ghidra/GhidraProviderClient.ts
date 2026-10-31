@@ -63,6 +63,7 @@ import {
   type ProviderOperationHealth,
 } from "../domain/providerOperationHealth.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { Logger } from "pino";
@@ -252,6 +253,10 @@ export const createGhidraProviderClient = (input: {
       }),
     );
   const project = projectProfile.data;
+  const projection: GhidraProjection = {
+    limits: config,
+    programName: project?.program_name,
+  };
   const seedProfile = ghidraSeedCommitmentSchema
     .optional()
     .safeParse(committedProfile.parameters.analysis_seeds);
@@ -637,7 +642,7 @@ export const createGhidraProviderClient = (input: {
         projectSessionError(
           operation,
           started.error,
-          config,
+          projection,
           lostProviderHealth(),
         ),
       );
@@ -667,7 +672,7 @@ export const createGhidraProviderClient = (input: {
           targetPath: target.path,
           readSnapshot: client.readTargetSnapshot?.bind(client),
           projectFailure: (operation, failure) =>
-            projectSessionError(operation, failure, config),
+            projectSessionError(operation, failure, projection),
         })
       : undefined;
   const projectExecution = (
@@ -702,7 +707,7 @@ export const createGhidraProviderClient = (input: {
         projectSessionError(
           operation,
           called.error,
-          config,
+          projection,
           lostProviderHealth(),
         ),
       );
@@ -743,7 +748,12 @@ export const createGhidraProviderClient = (input: {
       client,
       languageOverride: importLanguage,
       mapSessionError: (failure) =>
-        projectSessionError(operation, failure, config, lostProviderHealth()),
+        projectSessionError(
+          operation,
+          failure,
+          projection,
+          lostProviderHealth(),
+        ),
       nativeAotResult: derived,
       signal,
     });
@@ -816,7 +826,7 @@ export const createGhidraProviderClient = (input: {
           projectSessionError(
             operation,
             called.error,
-            config,
+            projection,
             lostProviderHealth(),
           ),
         );
@@ -860,7 +870,7 @@ export const createGhidraProviderClient = (input: {
                 projectSessionError(
                   operation,
                   started.error,
-                  config,
+                  projection,
                   lostProviderHealth(),
                 ),
               );
@@ -1017,16 +1027,22 @@ type GhidraProjectionLimits = Pick<
   | "ghidraExistingProject"
 >;
 
+/** Projection inputs: live configured limits and the program passed to `-process`. */
+interface GhidraProjection {
+  readonly limits: GhidraProjectionLimits;
+  readonly programName: string | undefined;
+}
+
 const projectSessionError = (
   operation: AnalysisOperation,
   failure: GhidraSessionError,
-  limits: GhidraProjectionLimits,
+  projection: GhidraProjection,
   health?: ProviderOperationHealth,
 ): AnalysisError => {
   const primary = projectPrimarySessionError(
     operation,
     failure,
-    limits,
+    projection,
     health,
   );
   return failure.cleanupFailure === undefined
@@ -1041,7 +1057,7 @@ const projectSessionError = (
 const projectPrimarySessionError = (
   operation: AnalysisOperation,
   failure: GhidraSessionError,
-  limits: GhidraProjectionLimits,
+  { limits, programName }: GhidraProjection,
   health?: ProviderOperationHealth,
 ): AnalysisError => {
   const startupTimeoutMs = limits.ghidraStartupTimeoutMs;
@@ -1194,6 +1210,15 @@ const projectPrimarySessionError = (
       ? "Ghidra's output for this operation is incomplete. No OutOfMemoryError was confirmed; a memory cause cannot be ruled out."
       : undefined;
   if (memoryFailure !== undefined) return memoryFailure;
+  if (
+    programName !== undefined &&
+    output?.text.some((text) => reportsMissingProgram(text, programName))
+  )
+    return missingProjectProgram(
+      programName,
+      limits.ghidraExistingProject?.programName !== undefined,
+      context,
+    );
   const killed = projectSigkill(operation, failure, context, {
     restart: exitedProviderMessage(operation, failure, health),
     uncertainty,
@@ -1249,7 +1274,59 @@ const observedJvmFailureSchema = z.object({
 interface GhidraFailureOutputView {
   readonly oomText: string | undefined;
   readonly complete: boolean | undefined;
+  readonly text: readonly string[];
 }
+
+/** Ghidra's headless refusal when `-process` names no program in the project. */
+const GHIDRA_MISSING_PROGRAM = "Requested project program file(s) not found: ";
+
+/**
+ * Match only the exact name REA passed to `-process`, so a longer program name
+ * or unrelated output cannot be read as this refusal.
+ */
+const reportsMissingProgram = (text: string, programName: string): boolean =>
+  text.split(/\r?\n/u).some((line) => {
+    const needle = `${GHIDRA_MISSING_PROGRAM}${programName}`;
+    const at = line.indexOf(needle);
+    if (at === -1) return false;
+    const next = line.charAt(at + needle.length);
+    return next === "" || next === " ";
+  });
+
+/** Guidance for a `-process` name that selects no root program in the project. */
+export const ghidraMissingProgramGuidance = (
+  programName: string,
+  configured: boolean,
+) => {
+  const origin = configured
+    ? "set by REA_GHIDRA_PROGRAM_NAME"
+    : "defaulted from the target file name because REA_GHIDRA_PROGRAM_NAME is unset";
+  return {
+    constraint: `Ghidra found no root program named ${JSON.stringify(programName)} (${origin}) in the selected REA_GHIDRA_PROJECT_PATH project.`,
+    remediationAction:
+      "Set REA_GHIDRA_PROGRAM_NAME to the exact name of a root program in the selected project, in the environment that starts REA (your shell or the MCP client's registration), then restart REA and open the target again. REA did not modify the project or fall back to a fresh import.",
+  };
+};
+
+/** The selected project is preserved; only the program choice is reported. */
+const missingProjectProgram = (
+  programName: string,
+  configured: boolean,
+  context: {
+    readonly cause: GhidraSessionError;
+    readonly diagnostics: Readonly<Record<string, JsonValue>>;
+  },
+): ConfigurationError => {
+  const { constraint, remediationAction } = ghidraMissingProgramGuidance(
+    programName,
+    configured,
+  );
+  return new ConfigurationError(constraint, {
+    ...context,
+    settings: [{ setting: "REA_GHIDRA_PROGRAM_NAME", constraint }],
+    remediationAction,
+  });
+};
 
 /** Read the scoped capture once; unavailable fields remain unconfirmed. */
 const readGhidraFailureOutput = (
@@ -1267,6 +1344,14 @@ const readGhidraFailureOutput = (
     oomText: observedLines.length === 0 ? undefined : observedLines.join("\n"),
     complete:
       typeof scoped.complete === "boolean" ? scoped.complete : undefined,
+    text: [scoped.stdout, scoped.stderr].flatMap((stream) =>
+      stream !== null &&
+      typeof stream === "object" &&
+      !Array.isArray(stream) &&
+      typeof stream.text === "string"
+        ? [stream.text]
+        : [],
+    ),
   };
 };
 

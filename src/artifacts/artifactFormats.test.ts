@@ -37,6 +37,7 @@ type FormatsWithReaders =
   | "intel-hex"
   | "srec"
   | "esp-image"
+  | "esp-flash-image"
   | "fit";
 
 const readerFormatsMatch: Equal<ArtifactReaderFormat, FormatsWithReaders> =

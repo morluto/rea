@@ -93,6 +93,7 @@ export const ARTIFACT_FORMAT_IDS = [
   "intel-hex",
   "srec",
   "esp-image",
+  "esp-flash-image",
   "fit",
   "unknown",
 ] as const;
