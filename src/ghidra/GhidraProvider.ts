@@ -292,15 +292,19 @@ export class GhidraProvider implements AnalysisProviderCandidate {
         reason: mipsReason,
         diagnostics,
       };
+    // A universal Mach-O is thinned to its admitted slice before import. Any
+    // other multi-architecture Mach-O has no slice range Ghidra can enforce.
     if (
       isMachOFormat(target.format) &&
-      target.availableArchitectures.length > 1
+      (target.format === "mach-o-universal"
+        ? !target.availableArchitectures.includes(target.architecture)
+        : target.availableArchitectures.length > 1)
     )
       return {
         status: "unsupported",
         code: "architecture_unsupported",
         reason:
-          "Ghidra v1 cannot enforce the selected architecture when importing a universal Mach-O; analyze a thinned Mach-O slice instead.",
+          "Ghidra v1 can import only the admitted slice of a universal Mach-O, and this target has no admitted slice for its selected architecture; analyze a thinned Mach-O slice instead.",
         diagnostics,
       };
     if (!SUPPORTED_ARCHITECTURES.has(target.architecture))

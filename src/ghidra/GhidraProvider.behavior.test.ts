@@ -553,7 +553,7 @@ describe("Ghidra Mach-O slice support", () => {
       ]),
     );
   });
-  it("refuses universal targets whose selected slice cannot be enforced", () => {
+  it("admits universal targets with an admitted slice and refuses unenforceable ones", () => {
     const ghidra = provider();
     const universal: BinaryTarget = {
       path: "/tmp/fixture",
@@ -566,24 +566,31 @@ describe("Ghidra Mach-O slice support", () => {
     };
 
     expect(ghidra.inspectTargetSupport(universal)).toMatchObject({
-      status: "unsupported",
-      code: "architecture_unsupported",
-      reason: expect.stringContaining("universal Mach-O"),
-      diagnostics: {
-        architecture: "arm64",
-        available_architectures: ["x86_64", "arm64"],
-      },
+      status: "supported",
     });
     expect(
       ghidra.inspectTargetSupport(executableTarget("mach-o", "arm64")),
     ).toMatchObject({ status: "supported" });
-
-    expect(
-      ghidra.inspectTargetSupport({
-        ...universal,
-        availableArchitectures: ["arm64"] as const,
-      }),
-    ).toMatchObject({ status: "supported" });
+    for (const unenforceable of [
+      { ...universal, availableArchitectures: ["x86_64"] as const },
+      {
+        path: universal.path,
+        sha256: universal.sha256,
+        kind: "executable",
+        format: "mach-o",
+        architecture: "arm64",
+        availableArchitectures: ["x86_64", "arm64"],
+      } satisfies BinaryTarget,
+    ])
+      expect(ghidra.inspectTargetSupport(unenforceable)).toMatchObject({
+        status: "unsupported",
+        code: "architecture_unsupported",
+        reason: expect.stringContaining("universal Mach-O"),
+        diagnostics: {
+          architecture: "arm64",
+          available_architectures: unenforceable.availableArchitectures,
+        },
+      });
   });
 });
 
