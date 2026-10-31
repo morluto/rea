@@ -71,12 +71,7 @@ describe.each(["attached", "headless"] as const)(
             operation,
             parametersFor(operation),
           );
-          if (mode === "headless" && operation === "procedure_callers")
-            expect(execution).toMatchObject({
-              ok: false,
-              error: { _tag: "AnalysisCapabilityUnavailableError" },
-            });
-          else if (!execution.ok) throw execution.error;
+          if (!execution.ok) throw execution.error;
         } finally {
           expect((await client.close()).ok).toBe(true);
         }
