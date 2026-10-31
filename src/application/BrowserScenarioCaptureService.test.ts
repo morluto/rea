@@ -159,6 +159,29 @@ it.each([{ steps: [undefined] }, { started_at: Number.NaN }])(
   },
 );
 
+it("returns Evidence when a completed capture reports incomplete cleanup", async () => {
+  const degraded: BrowserScenarioCapture = {
+    ...capture,
+    browser: { ...capture.browser, cleanup: "incomplete" },
+    limitations: [
+      ...capture.limitations,
+      "Browser cleanup could not be confirmed: browser close timed out. Reported resources may remain: browser_transport.",
+    ],
+  };
+  const provider: BrowserScenarioCapturePort = {
+    identity: () => ({ id: "fixture", name: "fixture", version: "1" }),
+    captureScenario: async () => ok(degraded),
+  };
+  const result = await captureBrowserScenario(provider, scenario);
+  expect(result.ok).toBe(true);
+  if (!result.ok)
+    throw new Error("Expected the completed capture returned as Evidence");
+  expect(result.value.evidence_id).toMatch(/^ev_/);
+  expect(result.value.normalized_result).toMatchObject({
+    browser: { cleanup: "incomplete" },
+  });
+});
+
 it("rejects a successful capture that is not a completed scenario", async () => {
   const provider: BrowserScenarioCapturePort = {
     identity: () => ({ id: "fixture", name: "fixture", version: "1" }),

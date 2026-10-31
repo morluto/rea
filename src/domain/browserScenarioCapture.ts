@@ -16,7 +16,11 @@ export const retainedBrowserScenarioCaptureSchema = z
     browser: z.strictObject({
       mode: z.enum(["launch", "connect"]),
       process_ownership: z.enum(["provider-owned", "external"]),
-      cleanup: z.enum(["terminated-owned-process", "disconnected-external"]),
+      cleanup: z.enum([
+        "terminated-owned-process",
+        "disconnected-external",
+        "incomplete",
+      ]),
       product: z.string().min(1),
       version: z.string().min(1),
     }),
@@ -130,11 +134,7 @@ export type BrowserScenarioCaptureData = Omit<
   BrowserScenarioCapture,
   "browser" | "steps" | "completeness" | "events"
 > & {
-  readonly browser: Omit<BrowserScenarioCapture["browser"], "cleanup"> & {
-    readonly cleanup:
-      | BrowserScenarioCapture["browser"]["cleanup"]
-      | "incomplete";
-  };
+  readonly browser: BrowserScenarioCapture["browser"];
   readonly steps: readonly BrowserScenarioCapture["steps"][number][];
   readonly events: Omit<BrowserScenarioCapture["events"], "items"> & {
     readonly items: readonly BrowserScenarioCapture["events"]["items"][number][];
