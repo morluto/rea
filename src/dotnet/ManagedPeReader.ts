@@ -143,7 +143,11 @@ const architectureFor = (
   managed: boolean,
 ): ManagedPeLayout["architecture"] => {
   const decoded = decodePeMachine(machine);
-  if (decoded === undefined || (decoded.nativeOsOverride && !managed))
+  if (
+    decoded === undefined ||
+    (decoded.nativeOsOverride && !managed) ||
+    decoded.architecture === "powerpc"
+  )
     throw managedFailure(
       "invalid-directory",
       "pe.machine",

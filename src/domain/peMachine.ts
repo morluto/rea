@@ -5,7 +5,7 @@ import {
 } from "./peOptionalHeader.js";
 import { err, ok, type Result } from "./result.js";
 
-export type PeArchitecture = Exclude<HeaderArchitecture, "hexagon">;
+export type PeArchitecture = Exclude<HeaderArchitecture, "hexagon"> | "powerpc";
 
 /** A decoded COFF machine and whether it carried a ReadyToRun OS override. */
 export interface PeMachine {
@@ -27,6 +27,8 @@ const architectureForMachine = (
       return "arm";
     case 0xaa64:
       return "arm64";
+    case 0x01f2:
+      return "powerpc";
   }
   return undefined;
 };

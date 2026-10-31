@@ -167,8 +167,8 @@ type NonExecutableMetadata = {
 
 type ExecutableTarget = BinaryTargetIdentity & {
   readonly kind: "executable";
-  readonly architecture: HeaderArchitecture;
-  readonly availableArchitectures: readonly HeaderArchitecture[];
+  readonly architecture: HeaderArchitecture | "powerpc";
+  readonly availableArchitectures: readonly (HeaderArchitecture | "powerpc")[];
 };
 
 /**

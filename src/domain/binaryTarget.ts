@@ -84,8 +84,8 @@ export type ExecutableMetadata =
       readonly format: "pe";
       /** Original unsigned COFF machine, before CPU-family normalization. */
       readonly peMachine: number;
-      readonly architecture: HeaderArchitecture;
-      readonly availableArchitectures: readonly HeaderArchitecture[];
+      readonly architecture: HeaderArchitecture | "powerpc";
+      readonly availableArchitectures: readonly (HeaderArchitecture | "powerpc")[];
       readonly executableRole:
         | "application"
         | "shared-library"
@@ -120,6 +120,13 @@ export const parseExecutableHeader = (
   mzWindowsHeaderSignature?: MzWindowsHeaderSignatureEvidence,
   fatEvidence?: FatSliceHeaderEvidence,
 ): Result<ExecutableMetadata, string> => {
+  if (
+    bytes.length >= 4 &&
+    bytes.subarray(0, 4).equals(Buffer.from([0x58, 0x45, 0x58, 0x32]))
+  )
+    return err(
+      "XEX2 executable: extract the PE basefile externally (e.g. XexTool -b) and open that PE instead; REA does not decrypt or decompress XEX",
+    );
   if (
     bytes.length >= 4 &&
     bytes.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46]))
