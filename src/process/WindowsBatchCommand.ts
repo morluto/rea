@@ -74,8 +74,12 @@ export const windowsBatchCommand = (options: {
   const tokens = [options.batchPath, ...options.arguments].map(
     quoteWindowsBatchToken,
   );
+  // Wrap the quoted-token command line in an extra pair of quotes so that
+  // cmd.exe's `/s` switch strips *this* outer pair and leaves the inner
+  // per-token quotes intact. Without the extra pair, `/s` strips the first and
+  // last token quotes, corrupting the executable path and its arguments.
   return {
     command: comSpec,
-    arguments: ["/d", "/e:on", "/v:off", "/s", "/c", `"${tokens.join(" ")}"`],
+    arguments: ["/d", "/e:on", "/v:off", "/s", "/c", `" ${tokens.join(" ")} "`],
   };
 };
