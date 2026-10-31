@@ -136,7 +136,8 @@ it("fails a successful sweep when either required report is absent or empty", as
     }
     const result = execute("bash", ["-eu", "-c", command], {
       cwd: directory,
-      env: { ...process.env, REPORT_BASE: base },
+      // Exercise the report guard without loading the developer shell startup file.
+      env: { ...process.env, BASH_ENV: "", REPORT_BASE: base },
     });
     if (state === "complete")
       await expect(result).resolves.toMatchObject({ stderr: "" });

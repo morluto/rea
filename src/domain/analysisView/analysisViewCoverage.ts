@@ -1,16 +1,33 @@
 import { uniqueSorted } from "../canonicalOrdering.js";
 import { z } from "zod";
 
-export const analysisViewCoverageSchema = z.strictObject({
-  status: z.enum(["complete-within-view", "page", "empty"]),
-  examined: z.int().nonnegative(),
-  total: z.int().nonnegative(),
-  next_offset: z.int().nonnegative().nullable(),
-  exhausted: z.boolean(),
-});
+export const analysisViewCoverageSchema = z.union([
+  z.strictObject({
+    status: z.enum(["complete-within-view", "page", "empty"]),
+    examined: z.int().nonnegative(),
+    total: z.int().nonnegative(),
+    next_offset: z.int().nonnegative().nullable(),
+    exhausted: z.boolean(),
+  }),
+  z.strictObject({
+    status: z.literal("unknown"),
+    examined: z.literal(0),
+    total: z.null(),
+    next_offset: z.null(),
+    exhausted: z.null(),
+  }),
+]);
 
 export type AnalysisViewCoverage = z.output<typeof analysisViewCoverageSchema>;
 
+/** No selected inference was examined; neither total nor exhaustion is established. */
+export const unknownViewCoverage = (): AnalysisViewCoverage => ({
+  status: "unknown",
+  examined: 0,
+  total: null,
+  next_offset: null,
+  exhausted: null,
+});
 /** Coverage for a summary, facet, or single selected object. */
 export const completeWithinViewCoverage = (
   examined: number,

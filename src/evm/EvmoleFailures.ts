@@ -39,16 +39,17 @@ import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 export const evmReplyBudgetFailure = (
   reason: string,
   options: AnalysisErrorOptions,
+  replyBudget = EVM_INTERFACE_LIMITS.outputBytes,
 ) =>
   new AnalysisResourceConstraintError(
     "inspect_evm_interface",
     "file-size",
     reason,
-    { maximum_reply_bytes: EVM_INTERFACE_LIMITS.outputBytes },
+    { maximum_reply_bytes: replyBudget },
     {
       ...options,
       ...fixedAllowanceOptions(
-        `The complete EVMole worker reply allowance of ${String(EVM_INTERFACE_LIMITS.outputBytes)} bytes (this release has no runtime override)`,
+        `The complete EVMole worker reply allowance of ${String(replyBudget)} bytes (this release has no runtime override)`,
         "report",
       ),
     },

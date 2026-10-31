@@ -1511,12 +1511,15 @@ const currentProcessUid = (): number | undefined =>
 const environmentWithheldFromInspection = (
   diagnostic: string,
   observedUid: number | undefined,
+  platform: NodeJS.Platform | undefined,
   restriction?: LinuxEnvironmentRestriction,
 ): boolean => {
-  if (restriction !== undefined) return true;
+  const accessDenied =
+    platform !== "linux" || /^(?:EACCES|EPERM)(?::|$)/u.test(diagnostic);
+  if (restriction !== undefined) return accessDenied;
   const uid = currentProcessUid();
   if (uid !== undefined && observedUid !== undefined && observedUid !== uid)
-    return true;
+    return accessDenied;
   return (
     diagnostic === PLATFORM_BINARY_ENVIRONMENT_WITHHELD ||
     diagnostic === RESTRICTED_PROCESS_ENVIRONMENT_WITHHELD
@@ -1589,6 +1592,7 @@ const scanTokenOwnedProcesses = async (
       environmentWithheldFromInspection(
         candidate.diagnostic,
         candidate.process.uid,
+        host.platform,
       )
     ) {
       withheld.push(candidate);
@@ -1793,6 +1797,7 @@ const scanWithOwnershipEvidence = async (
       environmentWithheldFromInspection(
         fact.token.reason,
         observed?.effectiveUid,
+        host.platform,
         observed?.environmentRestriction,
       )
     ) {

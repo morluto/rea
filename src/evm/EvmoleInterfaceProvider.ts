@@ -7,7 +7,7 @@ import { access, readFile, stat, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { z } from "zod";
+import type { z } from "zod";
 import {
   createAnalysisExecution,
   type ExecutionOptions,
@@ -48,6 +48,7 @@ import {
   AnalysisUnsupportedTargetError,
   AnalysisInputError,
   AnalysisOutputError,
+  AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
 import {
   projectAnalysisError,
@@ -58,8 +59,9 @@ import {
   DEFAULT_EVM_TIMEOUT_MS,
   type InspectEvmInterfaceInput,
   evmInterfaceSchema,
+  evmEncodingKind,
+  evmCompilerSelection,
 } from "../domain/evm/evmInterface.js";
-import { solidityMetadataSchema } from "../domain/evm/solidityMetadata.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -71,16 +73,14 @@ import {
   evmReplyBudgetFailure,
   type EvmFileSizeFailureEvidence,
 } from "./EvmoleFailures.js";
-import {
-  evmoleInterfaceReplySchema,
-  projectEvmoleFunctions,
-} from "./EvmoleInterfaceAdapter.js";
+import { projectEvmoleFunctions } from "./EvmoleInterfaceAdapter.js";
 import {
   EVMOLE_PROVIDER_IDENTITY,
   EVM_CPU_SECONDS,
   EVM_INTERFACE_LIMITS,
   EVM_FILE_SIZE_FAILURE_EXIT,
 } from "./EvmoleRelease.js";
+import { evmWorkerReplySchema } from "./EvmInterfaceWorkerContract.js";
 import { decodeEvmBytecodeCarrier } from "./EvmBytecodeCarrier.js";
 import {
   selectEvmWorkerLimits,
@@ -199,24 +199,7 @@ export const evmLimiterAvailability = async (
       };
 };
 
-const replySchema = z.discriminatedUnion("ok", [
-  z.strictObject({
-    ok: z.literal(true),
-    version: z.literal("0.9.3"),
-    bytecode: z.strictObject({
-      sha256: z.string().regex(/^[a-f0-9]{64}$/),
-      bytes: z.int().nonnegative(),
-      hex: z.string().regex(/^(?:[a-f0-9]{2})*$/),
-      metadata: solidityMetadataSchema.optional(),
-    }),
-    raw: evmoleInterfaceReplySchema,
-  }),
-  z.strictObject({
-    ok: z.literal(false),
-    reason: z.enum(["format", "decoder", "output-limit", "unsupported"]),
-    message: z.string(),
-  }),
-]);
+const replySchema = evmWorkerReplySchema;
 type Launcher = NonNullable<Parameters<typeof runOwnedCommand>[2]>["launcher"];
 type EvmOutcome = Result<EvmInterfaceExecution, AnalysisError>;
 type EvmRuntimeRoot = Pick<PrivateRuntimeRoot, "path" | "close">;
@@ -437,6 +420,8 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
     environment: Readonly<NodeJS.ProcessEnv>,
     options?: ExecutionOptions,
   ): Promise<Result<EvmInterfaceExecution, AnalysisError>> {
+    const encoding = evmEncodingKind(input.encoding);
+    const compilerSelection = evmCompilerSelection(input.encoding);
     const pending = await this.#retire();
     if (pending !== undefined) return err(pending);
     let root: Pick<PrivateRuntimeRoot, "path" | "close"> | undefined;
@@ -577,6 +562,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
           snapshot_path: snapshotPath,
           reply_path: replyPath,
           failure_marker_path: join(root.path, "resource.failure"),
+          file_size_bytes: workerLimits.fileSizeBytes,
           encoding: input.encoding,
         }),
         { flag: "wx", mode: 0o600 },
@@ -691,79 +677,201 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
         throw failure;
       }
       if (!reply.ok) {
+        if (
+          reply.compiler_diagnostics !== undefined &&
+          (compilerSelection === undefined ||
+            reply.carrier_sha256 !== carrier.sha256)
+        )
+          throw new AnalysisOutputError(
+            OPERATION,
+            "Compiler failure diagnostics do not bind to the selected carrier.",
+            { capturedOutput },
+          );
+        const diagnostics =
+          compilerSelection === undefined
+            ? undefined
+            : {
+                carrier_path: input.path,
+                carrier_sha256: carrier.sha256,
+                carrier_bytes: carrier.bytes.length,
+                compiler_selection: compilerSelection,
+                ...(reply.compiler_diagnostics === undefined
+                  ? {}
+                  : { compiler_diagnostics: reply.compiler_diagnostics }),
+                ...(reply.compiler_diagnostics_omitted === undefined
+                  ? {}
+                  : {
+                      compiler_diagnostics_omitted:
+                        reply.compiler_diagnostics_omitted,
+                    }),
+              };
         if (reply.reason === "unsupported")
           throw new AnalysisUnsupportedTargetError(
             OPERATION,
             input.path,
             reply.message,
-            { capturedOutput },
+            { capturedOutput, diagnostics },
           );
-        if (reply.reason === "format")
-          throw new AnalysisInputError(OPERATION, { capturedOutput }, [
-            {
-              path: ["path"],
-              reason: "invalid_format",
-              message: reply.message,
-            },
-          ]);
+        if (reply.reason === "resource")
+          throw new AnalysisResourceConstraintError(
+            OPERATION,
+            "capacity",
+            reply.message,
+            null,
+            { capturedOutput, diagnostics },
+          );
+        if (reply.reason === "format" || reply.reason === "selection")
+          throw new AnalysisInputError(
+            OPERATION,
+            { capturedOutput, diagnostics },
+            [
+              {
+                path: reply.reason === "selection" ? ["encoding"] : ["path"],
+                reason:
+                  reply.reason === "selection"
+                    ? "invalid_value"
+                    : "invalid_format",
+                message: reply.message,
+              },
+            ],
+          );
         if (reply.reason === "output-limit")
-          throw evmReplyBudgetFailure(reply.message, {
-            capturedOutput,
-          });
+          throw evmReplyBudgetFailure(
+            reply.message,
+            {
+              capturedOutput,
+              diagnostics,
+            },
+            workerLimits.fileSizeBytes,
+          );
         throw new ProviderAdapterError(EVMOLE_PROVIDER_IDENTITY.id, OPERATION, {
           diagnostics: {
             phase,
             failure_kind: reply.reason,
             reason: reply.message,
+            ...diagnostics,
             stdout: execution.stdout.text,
             stderr: execution.stderr.text,
             captured_output: { ...capturedOutput },
           },
         });
       }
-      const selectedBytes = decodeEvmBytecodeCarrier(
-        carrier.bytes,
-        input.encoding,
-      );
-      const selectedHex = Buffer.from(selectedBytes).toString("hex");
-      const decodedHash = createHash("sha256")
-        .update(selectedBytes)
-        .digest("hex");
+      const compilerArtifact = reply.compiler_artifact;
+      if (compilerSelection !== undefined) {
+        if (
+          compilerArtifact === undefined ||
+          reply.carrier_sha256 !== carrier.sha256 ||
+          compilerArtifact.selection.source_unit !==
+            compilerSelection.source_unit ||
+          compilerArtifact.selection.contract_name !==
+            compilerSelection.contract_name ||
+          compilerArtifact.selection.bytecode_kind !==
+            compilerSelection.bytecode_kind ||
+          (compilerArtifact.status === "concrete"
+            ? compilerArtifact.object?.toLowerCase() !== reply.bytecode.hex ||
+              reply.raw === null
+            : reply.raw !== null)
+        )
+          throw new AnalysisOutputError(
+            OPERATION,
+            "Compiler worker changed the selected carrier or exact compiler selection.",
+            { capturedOutput },
+          );
+      } else {
+        if (typeof input.encoding !== "string")
+          throw new AnalysisOutputError(
+            OPERATION,
+            "Compiler encoding has no parsed compiler selection.",
+            { capturedOutput },
+          );
+        const selectedBytes = decodeEvmBytecodeCarrier(
+          carrier.bytes,
+          input.encoding,
+        );
+        if (
+          compilerArtifact !== undefined ||
+          reply.raw === null ||
+          Buffer.from(selectedBytes).toString("hex") !== reply.bytecode.hex
+        )
+          throw new AnalysisOutputError(
+            OPERATION,
+            "Decoded bytecode does not match the selected raw/hex carrier.",
+            { capturedOutput },
+          );
+      }
       if (
-        decodedHash !== reply.bytecode.sha256 ||
-        selectedHex !== reply.bytecode.hex ||
-        selectedBytes.length !== reply.bytecode.bytes
+        reply.bytecode.hex !== null &&
+        (createHash("sha256")
+          .update(Buffer.from(reply.bytecode.hex, "hex"))
+          .digest("hex") !== reply.bytecode.sha256 ||
+          reply.bytecode.hex.length / 2 !== reply.bytecode.bytes)
       )
         throw new AnalysisOutputError(
           OPERATION,
-          "Decoded bytecode representation does not match the selected carrier, encoding or reported SHA-256.",
+          "Decoded byte identity does not match reported bytecode.",
           { capturedOutput },
         );
       const limitations = [
         `Configured worker resource soft limits: address_space_bytes=${String(workerLimits.addressSpaceBytes)}, cpu_seconds=${String(workerLimits.cpuSeconds)}, file_size_bytes=${String(workerLimits.fileSizeBytes)}. Selected from inherited tighter limits; original hard limits are retained. Effective worker limits are not independently probed.`,
         "Upstream may also report terminal metadata while recovering selectors. Its reported values are retained in raw_result, but integer precision and non-text-key coverage are unknown in the JS binding; complete original bytecode remains available.",
         "Recovered selectors, argument strings and mutability are upstream inferences, not verified ABI signatures or names. Empty results do not prove the absence of callable dispatch.",
-        "Bytecode kind, hardfork and deployed-contract authenticity are unknown. This inspection performs no target runtime execution, chain/RPC lookup or network request.",
+        compilerArtifact === undefined
+          ? "Bytecode kind, hardfork and deployed-contract authenticity are unknown. This inspection performs no target runtime execution, chain/RPC lookup or network request."
+          : "Creation/deployed kind and compiler metadata are recorded compiler-artifact facts, not authenticated compilation or deployment evidence. Hardfork and deployed-contract authenticity remain unknown. No compiler, source acquisition, chain/RPC lookup or target runtime execution is performed.",
         "Original carrier and decoded bytecode SHA-256 are distinct identities; SHA-256 is not the Ethereum Keccak code hash.",
         "Terminal CBOR metadata is an independently decoded candidate, not proof of Solidity origin, source identity or deployment. Nested or unsupported values retain explicit unavailable interpretation and original byte ranges.",
         `The owned worker has a 256 MiB JavaScript heap. The profile maxima are ${String(EVM_INTERFACE_LIMITS.addressSpaceBytes)} address-space bytes and ${String(EVM_CPU_SECONDS)} CPU seconds; the configured soft limits above retain tighter inherited limits. The command deadline is timeout_ms at ${String(timeoutMs)} ms (default ${String(DEFAULT_EVM_TIMEOUT_MS)}). Those byte, address-space, and CPU maxima have no runtime override, and timeout_ms does not raise them. Virtual address space is distinct from resident memory; limits fail without partial success.`,
       ];
+      if (compilerArtifact !== undefined) {
+        if (compilerArtifact.status !== "concrete")
+          limitations.push(
+            "Interface inference is unavailable because the selected compiler object is absent or contains unresolved library placeholders. Decoded hex and byte digest are unavailable; no addresses were substituted.",
+          );
+        if (
+          compilerArtifact.link_references === null ||
+          compilerArtifact.immutable_references === null
+        )
+          limitations.push(
+            "Omitted compiler link/immutable reference facets were not supplied; missing facets do not establish absence of references.",
+          );
+        if (compilerArtifact.reference_bounds === "unavailable")
+          limitations.push(
+            "Selected compiler bytecode is absent; recorded reference spans are retained but their byte bounds cannot be verified.",
+          );
+        if (compilerArtifact.metadata.parse_status !== "valid")
+          limitations.push(
+            "Recorded selected-contract metadata is absent, malformed or resource-limited; compiler version and settings are unavailable.",
+          );
+        if (compilerArtifact.diagnostics === null)
+          limitations.push(
+            "Compiler diagnostics were not supplied; their absence does not establish successful compilation.",
+          );
+      }
       const validated = evmInterfaceSchema.safeParse({
         artifact: {
           path: input.path,
           sha256: carrier.sha256,
           bytes: carrier.bytes.length,
-          encoding: input.encoding,
+          encoding,
         },
         bytecode: {
           ...reply.bytecode,
           digest_algorithm: "sha256",
-          kind: "unknown",
+          kind: compilerArtifact?.selection.bytecode_kind ?? "unknown",
           deployment_authenticity: "unknown",
           hardfork: "unknown",
         },
+        ...(compilerArtifact === undefined
+          ? {}
+          : {
+              compiler_artifact: compilerArtifact,
+              inference_status:
+                compilerArtifact.status === "concrete"
+                  ? "examined"
+                  : "unavailable",
+            }),
         evidence_kind: "inferred",
-        functions: projectEvmoleFunctions(reply.raw),
+        functions: reply.raw === null ? [] : projectEvmoleFunctions(reply.raw),
         discovery_completeness: "unknown",
         runtime_execution: "not-performed",
         diagnostics: {

@@ -8,7 +8,9 @@ import { evmInterfaceEvidence } from "../../domain/evm/evmInterfaceEvidence.js";
 import {
   inspectEvmInterfaceInputSchema,
   evmInterfaceSchema,
+  matchesEvmInterfaceInput,
 } from "../../domain/evm/evmInterface.js";
+import { jsonValueSchema } from "../../domain/jsonValue.js";
 import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
@@ -48,8 +50,7 @@ export class EvmInterfaceService {
     const report = evmInterfaceSchema.safeParse(execution.result);
     if (
       !report.success ||
-      report.data.artifact.path !== input.value.path ||
-      report.data.artifact.encoding !== input.value.encoding ||
+      !matchesEvmInterfaceInput(report.data, input.value) ||
       execution.subject?.format !== "file" ||
       execution.subject?.path !== input.value.path ||
       execution.subject.sha256 !== report.data.artifact.sha256
@@ -62,7 +63,10 @@ export class EvmInterfaceService {
         ),
       );
     return completeProviderEvidence(
-      evmInterfaceEvidence(input.value, execution),
+      evmInterfaceEvidence(input.value, {
+        ...execution,
+        result: jsonValueSchema.parse(report.data),
+      }),
       options?.signal,
       outputOptions?.capturedOutput,
     );

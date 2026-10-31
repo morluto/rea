@@ -319,6 +319,7 @@
     "verify:apk-signature": "npm run build:cached && node scripts/verify-apk-signature.mjs",
     "verify:evm:interface": "npm run build:cached && node scripts/verify-evm-interface.mjs",
     "verify:solidity:metadata": "npm run build:cached && node scripts/verify-solidity-metadata.mjs",
+    "verify:solc:artifacts": "npm run build:cached && node scripts/verify-solc-artifacts.mjs",
     "verify:recorded:crash": "npm run build:cached && node scripts/verify-recorded-crash.mjs",
     "mcp-catalog:check:built": "node scripts/generate-mcp-tool-catalog.mjs --check",
     "compile": "node scripts/clean-build-output.mjs && node scripts/run-typescript.mjs -p tsconfig.build.json && node scripts/record-catalog-digests.mjs && node scripts/record-mcp-catalog.mjs && node scripts/bundle-runtime.mjs",

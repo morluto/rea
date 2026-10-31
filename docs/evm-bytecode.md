@@ -8,6 +8,7 @@ portable primitive. It does not require an active native binary target.
 ```sh
 rea inspect-evm-interface ./runtime.hex hex --json
 rea inspect-evm-interface ./runtime.bin raw --json
+rea inspect-evm-interface ./compiler-output.json solc-json --source-unit contracts/Example.sol --contract-name Example --bytecode-kind deployed --json
 ```
 
 ```json
@@ -30,7 +31,8 @@ license](https://github.com/morluto/rea/blob/main/third_party/evmole/README.md) 
 
 ## Evidence semantics
 
-- `encoding` is required: raw bytes or UTF-8 hex, with optional `0x` prefix and
+- `encoding` is required: `"raw"`, `"hex"`, or an exact compiler-selection object
+  with `kind: "solc-json"`. Hex permits an optional `0x` prefix and
   outer ASCII whitespace. Odd hex, interior separators, BOM, non-ASCII whitespace
   and invalid UTF-8 are rejected. Empty bytecode is valid and has unknown coverage.
 - Carrier SHA-256 identifies the exact original file, including prefix/casing
@@ -57,10 +59,52 @@ license](https://github.com/morluto/rea/blob/main/third_party/evmole/README.md) 
 - Selectors, argument strings and state mutability are **inferences**. Function
   names/signatures are not looked up. Optimized code may produce different
   mutability candidates; recovered types are not a verified source ABI.
-- Runtime/init-code identity, deployed authenticity, hardfork and discovery
-  completeness remain unknown. Empty candidates do not prove no callable interface.
+- Raw/hex runtime/init-code identity remains unknown. Compiler selection records
+  creation/deployed kind from the selected artifact; it does not establish deployment.
+  Deployed authenticity, hardfork and discovery completeness remain unknown.
+  Empty candidates do not prove no callable interface.
 - Analysis is offline: no target runtime execution, implicit chain/RPC/explorer
   lookup, wallet action, transaction broadcast or network request.
+
+## Exact Solidity compiler artifacts
+
+Select an existing solc Standard JSON output with:
+
+```json
+{
+  "path": "/artifacts/compiler-output.json",
+  "encoding": {
+    "kind": "solc-json",
+    "source_unit": "contracts/Example.sol",
+    "contract_name": "Example",
+    "bytecode_kind": "deployed"
+  }
+}
+```
+
+All three selection identities are required within `encoding`;
+use `creation` to select `evm.bytecode`, or `deployed` for `evm.deployedBytecode`.
+Source-unit keys are exact compiler identities, not filesystem paths. REA does
+not match basenames, choose another contract or run a compiler. Selection is
+invalid with raw/hex encoding. The CLI uses positional `solc-json` with
+`--source-unit`, `--contract-name` and `--bytecode-kind` as shown above.
+
+`compiler_artifact` retains the exact source/contract identities, selected bytecode JSON pointer and
+contract/bytecode/object source ranges, exact object text, diagnostics, link/immutable references and
+recorded metadata. Ranges count UTF-16 code units in the UTF-8-decoded JSON text
+and include JSON syntax. Duplicate properties, malformed objects and invalid
+reference spans fail precisely. Recorded compiler/settings metadata remains
+unauthenticated; source paths and URLs do not trigger reads or acquisition.
+
+Concrete selected hex enters the existing EVMole inference engine. Missing
+objects and unresolved library placeholders retain compiler evidence with
+`inference_status: "unavailable"`, null decoded hex/digest and an unknown byte
+count when absent. REA does not substitute library addresses. Compiler errors
+and warnings remain visible alongside selected bytecode or unavailable inference.
+Legacy fixed-width placeholders retain opaque source-qualified names, including
+absolute, relative and package source prefixes; REA does not resolve those names.
+Their width and bytecode offsets use UTF-8 bytes; JSON source coordinates remain
+UTF-16 code units, including when source names contain Unicode.
 
 ## Selected interface delivery and retained views
 
@@ -90,6 +134,16 @@ remains `inferred`. It preserves stderr/truncation and records stdout text lengt
 Complete-within-view coverage covers returned candidates; discovery completeness
 remains unknown even for an empty or exhausted collection. Analysis still runs;
 delivery selection does not save interpreter work or change source parameters.
+Compiler-artifact summaries retain exact selection, diagnostics and reference
+facts. They omit the object bytecode text and raw metadata text, recording
+`object_code_units` and metadata `raw_code_units` instead (null means absent).
+Parsed compiler version/settings and metadata parse status remain visible.
+Access exact omitted source fields from the complete parent Evidence through the
+normal ledger/export workflow using `parent_evidence_id`; views do not reacquire
+or reinterpret the compiler output. When inference is unavailable, summary/function coverage is `unknown`,
+with null total/exhaustion; an empty candidate list does not establish zero
+functions. A `bytecode_hex` page returns a typed input error when decoded bytes
+are unavailable.
 
 Use `normalized_result.parent_evidence_id` with `inspect_analysis_view` source
 kind `retained-evidence`. EVM view kind `evm` pages `functions` by original row
@@ -108,6 +162,20 @@ use its complete operation when an equivalent workflow is required. The one-shot
 CLI keeps its existing complete result.
 
 ## Resource and lifecycle limits
+
+Compiler JSON is preflighted to 128 nesting levels and 65,536 AST nodes before
+recursive tree allocation. A conservative 512-byte node estimate reserves about
+32 MiB per tree within the worker heap; this is an allocation estimate, not a
+measured memory guarantee. Oversized nested metadata keeps its raw text with
+`resource-limited` parse status and unknown compiler/settings. Recorded compiler
+diagnostics survive selection and downstream inference failures under
+`details.diagnostics.compiler_diagnostics`, bound to the original carrier digest
+and exact selection.
+Reply encoding accounts for repeated reference names and escaped UTF-8 JSON in
+bounded parts before allocating a complete reply. Reply-budget failures retain
+the carrier identity, exact selection and compiler diagnostics when they fit.
+If diagnostics alone exceed the reply budget, the failure explicitly reports
+`compiler_diagnostics_omitted: "reply-budget"`.
 
 Inputs are limited to 4 MiB, complete replies to 16 MiB and combined diagnostic
 output to 1 MiB. An owned worker has a 256 MiB JavaScript heap; its profile
@@ -144,7 +212,7 @@ Reserved file-size exits require a matching private marker written by the
 worker's EFBIG branch. Bare launcher exits or unwritable markers retain process
 diagnostics with the resource cause unverified.
 
-Source/metadata, proxy resolution, storage/CFG and fork-explicit execution/traces
+Proxy resolution, storage/CFG and fork-explicit execution/traces
 remain separate increments under #972, with materially different result or
 execution authority. This primitive makes no deployment or runtime behavior claim.
 
@@ -164,3 +232,14 @@ It compiles the owned fixture with unoptimized, viaIR, content-hash-free and
 CBOR-free settings, verifies the observed trailer facts and reports local decode
 timings. No contract is executed. This lane does not establish the complete
 Linux EVM provider's CLI/MCP, resource-limit or cleanup behavior.
+Verify compiler-artifact selection through actual CLI and stdio MCP with an
+owned solc 0.8.30 fixture:
+
+```bash
+REA_VERIFY_SOLC_MODULE=/absolute/path/to/solc/index.js npm run verify:solc:artifacts
+```
+
+The verifier compiles its source-owned fixture only; the inspection operation
+never invokes a compiler. It checks exact source/contract/kind selection,
+raw/hex engine equivalence, original JSON coordinates, diagnostics, unlinked and
+absent objects, converted advertised schemas, summary retention and cleanup.
