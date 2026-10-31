@@ -168,6 +168,9 @@ recommendation to change it. When it names no setting, reduce supported work;
 do not invent one. Raising only the MCP
 client's deadline cannot extend this budget. These hints never include the
 complete catalog or caller arguments.
+`recovery.kind=retry_cleanup` appears only on a `close_binary`
+`cleanup_incomplete` error whose retained resources the session will retry; see
+[retained cleanup](#retained-cleanup-retry).
 Failures omit `structuredContent`, since each advertised `outputSchema`
 describes successful results. Successful replies retain their schema-validated
 structured data and matching text projection. Oversized errors are retained
@@ -833,6 +836,20 @@ File cleanup can also remain after snapshot publication or after profile
 inspection fails or is cancelled before a provider client exists. If no client
 remains, no provider run or health observation is available; follow the cleanup
 error's reported resources.
+
+### Retained cleanup retry
+
+A `close_binary` that retires the target clears session records even when
+cleanup fails. When the session keeps every reported owner for the next
+`close_binary` on the same connection, its `cleanup_incomplete` error carries
+`recovery: {"kind": "retry_cleanup", "operation": "close_binary"}`.
+Keep the connection open, let the reported condition settle or resolve it, call
+`close_binary` without `snapshot_path`, and check the result. The retry does not
+rerun the failed analysis and can report `cleanup_incomplete` again.
+`retryable` still describes the failed operation and stays `false`. A failed
+`snapshot_path` save returns before retirement, keeps the target open and has
+no `retry_cleanup` hint. `open_binary`, analysis tools and one-shot CLI commands
+do not report this hint either, even when their cleanup remains pending.
 
 ## Initial target at startup
 
