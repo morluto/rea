@@ -278,7 +278,7 @@
     "predocs:dev": "npm run docs:generate",
     "docs:dev": "vitepress dev docs",
     "predocs:build": "npm run docs:generate",
-    "docs:build": "vitepress build docs",
+    "docs:build": "vitepress build docs && node scripts/check-doc-verification-records.mjs",
     "docs:preview": "vitepress preview docs",
     "docs:generate": "node scripts/check-dependency-install.mjs && node scripts/run-exclusive.mjs artifacts npm run docs:prepare",
     "docs:check": "node scripts/check-dependency-install.mjs && node scripts/run-exclusive.mjs artifacts node scripts/run-turbo.mjs run docs:check:built && npm run test:local -- tests/conformance/readmeConsistency.test.ts",
