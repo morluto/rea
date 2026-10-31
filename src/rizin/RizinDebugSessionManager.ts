@@ -449,6 +449,8 @@ export class RizinDebugSessionManager {
     const arguments_ = [
       "-N",
       "-0",
+      "-e",
+      "scr.color=0",
       "-d",
       "-R",
       `stdout=${ttyPath}`,
