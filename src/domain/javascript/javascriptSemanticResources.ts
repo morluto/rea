@@ -67,7 +67,7 @@ export const collectJavaScriptSemanticResources = (
   const acquisitions = collectAcquisitions(program, context).filter(
     (candidate) =>
       !socketPortInFirstArgument(candidate) ||
-      tlsOptionsReplaceFirstArgument(candidate) ||
+      tlsOptionsReplaceFirstArgument(candidate, context) ||
       !rejectsSocketPortLiteral(candidate.node, context),
   );
   return [
@@ -290,25 +290,53 @@ const rejectsPortValue = (
 };
 
 /**
- * The exactly readable `port` member of an options object, or `null` when the
- * member set is not fully readable. A spread or computed member leaves it open,
- * and an object without a `port` member throws `ERR_MISSING_ARGS` instead, so
- * both stay undecided.
+ * The value of the last readable member named `name`. `undefined` means the
+ * object has no such member and `null` means one is present but not exactly
+ * readable, because JavaScript uses the last matching member and a later spread
+ * or computed key can add or override one.
  */
-const literalPortProperty = (object: t.ObjectExpression): t.Node | null => {
-  if (
-    object.properties.some(
-      (candidate) => !t.isObjectProperty(candidate) || candidate.computed,
-    )
-  )
-    return null;
-  const property = object.properties.find(
-    (candidate) =>
-      t.isObjectProperty(candidate) &&
-      semanticStaticPropertyName(candidate.key, false) === "port",
-  );
-  if (property === undefined || !t.isObjectProperty(property)) return null;
-  return unwrapJavaScriptExpression(property.value).node;
+const lastMemberValue = (
+  object: t.ObjectExpression,
+  name: string,
+): t.Node | null | undefined => {
+  for (let index = object.properties.length - 1; index >= 0; index -= 1) {
+    const property = object.properties[index];
+    if (property === undefined) continue;
+    if (!t.isObjectProperty(property) || property.computed) return null;
+    if (semanticStaticPropertyName(property.key, false) !== name) continue;
+    return unwrapJavaScriptExpression(property.value).node;
+  }
+  return undefined;
+};
+
+/**
+ * Whether an options object proves it selects a Unix socket, in which case Node
+ * never validates `port`. `true` is a non-empty literal `path`; `null` means the
+ * `path` member is present but not readable, so a socket may still be selected.
+ */
+const optionsSelectUnixSocket = (
+  object: t.ObjectExpression,
+): boolean | null => {
+  const path = lastMemberValue(object, "path");
+  if (path === null) return null;
+  if (path === undefined) return false;
+  if (!t.isStringLiteral(path)) return null;
+  return path.value !== "";
+};
+
+/**
+ * Whether an options object supplies a usable port of its own, which is what
+ * makes `tls.connect(-1, { port: 443 })` succeed. `null` means the member is not
+ * readable, so the answer stays open.
+ */
+const optionsSupplyPort = (
+  object: t.ObjectExpression,
+  context: DataEffectTraversalContext,
+): boolean | null => {
+  const port = lastMemberValue(object, "port");
+  if (port === undefined) return false;
+  if (port === null) return null;
+  return !rejectsPortValue(port, context, false);
 };
 
 /**
@@ -324,10 +352,14 @@ const rejectsSocketPortLiteral = (
   if (port === undefined || t.isSpreadElement(port)) return false;
   const value = unwrapJavaScriptExpression(port).node;
   // `net.connect({ port })` validates the member the same way the positional
-  // form validates the argument.
+  // form validates the argument, but a Unix socket path member wins over it.
   if (t.isObjectExpression(value)) {
-    const member = literalPortProperty(value);
-    return member === null ? false : rejectsPortValue(member, context, false);
+    const socket = optionsSelectUnixSocket(value);
+    if (socket !== false) return false;
+    const member = lastMemberValue(value, "port");
+    return member === undefined || member === null
+      ? false
+      : rejectsPortValue(member, context, false);
   }
   return rejectsPortValue(value, context, true);
 };
@@ -340,13 +372,20 @@ const socketPortInFirstArgument = (
 /**
  * `tls.connect` merges a later options object over its first argument, so
  * `tls.connect(-1, { port: 443 })` creates a socket even though `-1` is not a
- * port. Node's `net.connect` keeps validating that argument, so the rescue
- * applies to the `tls` specifier only.
+ * port. Only an object that actually supplies its own port or Unix socket path
+ * rescues the argument: `tls.connect(-1, {})` and
+ * `tls.connect(65536, { servername: "x" })` still throw. Node's `net.connect`
+ * keeps validating the argument, so the rescue applies to `tls` only.
  */
 const tlsOptionsReplaceFirstArgument = (
   candidate: ResourceCandidate,
+  context: DataEffectTraversalContext,
 ): boolean => {
   if (candidate.specifier !== "tls") return false;
   const options = candidate.node.arguments[1];
-  return options !== undefined && t.isObjectExpression(options);
+  if (options === undefined || !t.isObjectExpression(options)) return false;
+  const socket = optionsSelectUnixSocket(options);
+  if (socket !== false) return true;
+  const port = optionsSupplyPort(options, context);
+  return port !== false;
 };
