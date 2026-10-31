@@ -45,6 +45,10 @@ import {
   type ProcessStartTimeReader,
   verifyOwnedInferiorsEnded,
 } from "../process/ownedDebuggerSession.js";
+import {
+  verifyInferiorInputSink,
+  type InferiorInputSink,
+} from "../process/inferiorInputSink.js";
 
 const STARTUP_TIMEOUT_MS = 10_000;
 
@@ -442,7 +446,7 @@ const verifyGdbInferiorOutputSink = async (
   pid: string,
   selectedTty: string,
   rememberIdentity: (identity: OwnedInferiorIdentity) => void,
-): Promise<void> => {
+): Promise<InferiorInputSink> => {
   if (process.platform !== "linux")
     throw new Error(
       "GDB cannot confirm live inferior output descriptors outside Linux /proc.",
@@ -473,7 +477,25 @@ const verifyGdbInferiorOutputSink = async (
     throw new Error(
       "The GDB inferior identity changed during descriptor readback.",
     );
+  // Preserve the proven identity even if fd 0 cannot be classified. A later
+  // retry can then confirm that the inferior ended after GDB exits.
   rememberIdentity({ pid, startTime: before });
+  const inputSink = await verifyInferiorInputSink(
+    pid,
+    {
+      path: ttyPath,
+      dev: tty.dev,
+      ino: tty.ino,
+    },
+    async () => {
+      const current = await readLinuxProcessStartTime(pid);
+      if (current !== before)
+        throw new Error(
+          "The GDB inferior identity changed while verifying its closed stdin descriptor.",
+        );
+    },
+  );
+  return inputSink;
 };
 
 class GdbCommandProcessExitError extends Error {
@@ -576,7 +598,7 @@ export class GdbSessionManager {
     pid: string,
     selectedTty: string,
     rememberIdentity: (identity: OwnedInferiorIdentity) => void,
-  ) => Promise<void>;
+  ) => Promise<InferiorInputSink>;
   readonly #readInferiorProcessStartTime: ProcessStartTimeReader | undefined;
   readonly #maxSessions: DebuggerAdmissionLimit;
   readonly #maxPendingCommands: DebuggerAdmissionLimit;
@@ -601,7 +623,7 @@ export class GdbSessionManager {
         pid: string,
         selectedTty: string,
         rememberIdentity: (identity: OwnedInferiorIdentity) => void,
-      ) => Promise<void>;
+      ) => Promise<InferiorInputSink>;
       /** @internal Read-only process identity observer for lifecycle tests. */
       readonly readInferiorProcessStartTime?: ProcessStartTimeReader;
       /** @internal Test seam. Production uses REA_DEBUGGER_MAX_SESSIONS. */
@@ -809,10 +831,37 @@ export class GdbSessionManager {
     >
   > {
     let launched: SpawnedOwnedProviderProcess;
+    const callerRunId = Object.hasOwn(this.#environment, "REA_PROCESS_RUN_ID")
+      ? this.#environment.REA_PROCESS_RUN_ID
+      : undefined;
+    if (
+      callerRunId !== undefined &&
+      (/[\r\n]/u.test(callerRunId) || /^\s|\s$/u.test(callerRunId))
+    ) {
+      releaseReservation();
+      return err(
+        new AnalysisCapabilityUnavailableError(
+          "gdb",
+          "start_gdb_session",
+          "The caller's REA_PROCESS_RUN_ID contains a line break or boundary whitespace and cannot be preserved for the inferior.",
+        ),
+      );
+    }
     try {
       const spawnOptions: OwnedProviderProcessSpawnOptions = {
         command: this.#command,
-        arguments: ["--nx", "--quiet", `--interpreter=${miVersion}`],
+        arguments: [
+          "--nx",
+          "--quiet",
+          `--interpreter=${miVersion}`,
+          // GDB inherits REA's ownership token; the inferior must see the
+          // caller's value (or none) so a later sweep cannot mistake it for an
+          // owned process. Applied before any inferior exists, so no MI request.
+          "-iex",
+          callerRunId === undefined
+            ? "unset environment REA_PROCESS_RUN_ID"
+            : `set environment REA_PROCESS_RUN_ID =${callerRunId}`,
+        ],
         runId: randomUUID(),
         stdin: "pipe",
         hostEnvironment: this.#environment,
@@ -1989,7 +2038,7 @@ export class GdbSessionManager {
       throw new Error(
         "GDB no longer reports the caller-selected inferior TTY; detachment cannot be confirmed safely.",
       );
-    await this.#verifyInferiorOutputSink(
+    const inputSink = await this.#verifyInferiorOutputSink(
       inferiorPids[0]!,
       session.inferiorTty!,
       (identity) =>
@@ -1998,6 +2047,10 @@ export class GdbSessionManager {
           identity,
         ),
     );
+    if (inputSink !== "durable" && inputSink !== "not-inherited")
+      throw new Error(
+        "GDB inferior descriptor readback did not confirm an independent input sink.",
+      );
     const detached = await this.#request(session, "-target-detach");
     if (
       detached.completion_status !== "complete" ||
@@ -2009,7 +2062,11 @@ export class GdbSessionManager {
     // The sole recursively inventoried inferior is now detached. Retain this
     // fact for owned shutdown even if the MI transport becomes unavailable.
     session.noInferiorVerified = true;
-    return { status: "detached", outputSink: "durable" };
+    return {
+      status: "detached",
+      outputSink: "durable",
+      inputSink,
+    };
   }
 
   async #settleExitedCommands(
@@ -2414,22 +2471,164 @@ export const commandMayChangeInferiorOutput = (command: string): boolean => {
   const firstToken = gdbCommandWord(command);
   const mayBeTtyCommand =
     firstToken !== undefined && "tty".startsWith(firstToken);
+  // `s` is GDB's built-in alias for `step`, not a `source` abbreviation.
+  // Require the unambiguous `sour` prefix before treating it as source.
+  const mayBeSourceCommand =
+    firstToken !== undefined &&
+    firstToken.length >= 2 &&
+    firstToken !== "s" &&
+    "source".startsWith(firstToken);
   const mayDefineAlias =
     firstToken !== undefined && "alias".startsWith(firstToken);
-  const mayRunWithOutputRedirection =
+  const runCommand =
     firstToken !== undefined &&
-    ["run", "start", "starti"].some((name) => name.startsWith(firstToken)) &&
-    /[<>]{1,2}|&>/u.test(command.slice(firstToken.length));
+    ["run", "start", "starti"].some((name) => name.startsWith(firstToken));
+  const runTail = runCommand ? command.slice(firstToken.length) : "";
+  // GDB passes run arguments through a shell. Scan shell syntax once so quoted
+  // or escaped metacharacters in arguments and paths remain ordinary text.
+  const runRedirection = runCommand
+    ? classifyRunRedirection(runTail)
+    : { mayChangeOutput: false };
   return (
     maySetInferiorTty ||
     mayBeTtyCommand ||
+    mayBeSourceCommand ||
     mayDefineAlias ||
     /\binferior-tty\b/iu.test(command) ||
-    /^\s*(?:wit(?:h)?(?:\s|$)|tty(?:\s|$)|source\b|py\w*|define\b)/iu.test(
-      command,
-    ) ||
-    mayRunWithOutputRedirection
+    /^\s*(?:wit(?:h)?(?:\s|$)|tty(?:\s|$)|py\w*|define\b)/iu.test(command) ||
+    runRedirection.mayChangeOutput
   );
+};
+
+const classifyRunRedirection = (tail: string): { mayChangeOutput: boolean } => {
+  let quote: "'" | '"' | undefined;
+  let escaped = false;
+  let token = "";
+  let tokenStart = -1;
+  let tokenPlain = true;
+  let previousToken: { value: string; end: number; plain: boolean } | undefined;
+  const inputs: Array<{
+    descriptor: string | undefined;
+    target: "missing" | "path" | "close";
+  }> = [];
+  let awaitingInputTarget = false;
+  let outputOrControl = false;
+  let malformed = false;
+  const finishToken = (end: number): void => {
+    if (tokenStart < 0) return;
+    previousToken = {
+      value: token,
+      end,
+      plain: tokenPlain,
+    };
+    token = "";
+    tokenStart = -1;
+    tokenPlain = true;
+  };
+
+  for (let index = 0; index < tail.length; index += 1) {
+    const char = tail[index]!;
+    if (escaped) {
+      token += char;
+      escaped = false;
+      continue;
+    }
+    if (quote !== undefined) {
+      if (char === quote) quote = undefined;
+      else if (char === "\\" && quote === '"') escaped = true;
+      else token += char;
+      continue;
+    }
+    if (char === "\\") {
+      if (tokenStart < 0) tokenStart = index;
+      tokenPlain = false;
+      if (awaitingInputTarget) {
+        inputs.at(-1)!.target = "path";
+        awaitingInputTarget = false;
+      }
+      escaped = true;
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      if (tokenStart < 0) tokenStart = index;
+      tokenPlain = false;
+      if (awaitingInputTarget) {
+        inputs.at(-1)!.target = "path";
+        awaitingInputTarget = false;
+      }
+      quote = char;
+      continue;
+    }
+    if (/\s/u.test(char)) {
+      if (char === "\r" || char === "\n") outputOrControl = true;
+      finishToken(index);
+      continue;
+    }
+    if (char === "<" || char === ">") {
+      finishToken(index);
+      if (char === ">") {
+        outputOrControl = true;
+        previousToken = undefined;
+        continue;
+      }
+      const descriptor =
+        previousToken?.end === index &&
+        previousToken.plain &&
+        /^\d+$/u.test(previousToken.value)
+          ? /^0+$/u.test(previousToken.value)
+            ? "0"
+            : previousToken.value
+          : undefined;
+      if (tail[index + 1] === "&" && tail[index + 2] === "-") {
+        inputs.push({ descriptor, target: "close" });
+        index += 2;
+      } else {
+        const next = tail[index + 1];
+        if (next === ">") {
+          // POSIX `<>` opens stdin for reading and writing when no descriptor
+          // is supplied. It does not redirect stdout or stderr.
+          if (descriptor !== undefined && descriptor !== "0")
+            outputOrControl = true;
+          inputs.push({ descriptor, target: "missing" });
+          index += 1;
+          awaitingInputTarget = true;
+          previousToken = undefined;
+          continue;
+        }
+        if (next === "<") outputOrControl = true;
+        inputs.push({ descriptor, target: "missing" });
+        awaitingInputTarget = true;
+      }
+      previousToken = undefined;
+      continue;
+    }
+    if (char === ";" || char === "|" || char === "&") {
+      outputOrControl = true;
+      previousToken = undefined;
+      continue;
+    }
+    if (tokenStart < 0) tokenStart = index;
+    if (awaitingInputTarget) {
+      inputs.at(-1)!.target = "path";
+      awaitingInputTarget = false;
+    }
+    token += char;
+  }
+  finishToken(tail.length);
+  malformed ||= quote !== undefined || escaped;
+  const inputOnly =
+    !malformed &&
+    !outputOrControl &&
+    inputs.length > 0 &&
+    inputs.every(
+      ({ descriptor, target }) =>
+        (descriptor === undefined || descriptor === "0") &&
+        (target === "close" || target === "path"),
+    );
+  return {
+    mayChangeOutput:
+      malformed || outputOrControl || (inputs.length > 0 && !inputOnly),
+  };
 };
 
 /** Await a serialized command turn, preserving the caller's cancellation reason. */

@@ -3,6 +3,7 @@ import { open, stat, writeFile, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, onTestFinished, test, vi } from "vitest";
 
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { PcapSnapshot } from "../../../src/pcap/PcapSnapshot.js";
@@ -152,6 +153,11 @@ test("close failure during final cancellation retains owner and resolves its mar
   });
   expect(error.cause).toBe(reason);
   expect(error.cleanupResources).toContain(snapshot.path);
+  expect(projectAnalysisError(error).details).toMatchObject({
+    cleanup: "incomplete",
+    cleanup_reason: "Owned snapshot descriptor close failed",
+    resources: [snapshot.path],
+  });
   expect(error.secondaryFailures).toHaveLength(1);
   expect(error.secondaryFailures[0]).toMatchObject({
     _tag: "ProviderAdapterError",

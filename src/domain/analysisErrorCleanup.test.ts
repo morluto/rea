@@ -94,6 +94,19 @@ it("keeps dependency-owned resources empty after the final owner releases", () =
   );
 });
 
+it("marks a composed cancellation incomplete while its cleanup owner is pending", () => {
+  const cancellation = new AnalysisCancelledError("inspect_pcap_capture");
+  const cleanup = new ProviderCleanupError("fixture", ["owned-snapshot"], {});
+
+  cancellation.bindCleanupDependencies([cleanup]);
+
+  expect(cancellation.cleanupIncomplete).toBe(true);
+  expect(cancellation.cleanupResources).toEqual(["owned-snapshot"]);
+  cleanup.resolveCleanup();
+  expect(cancellation.cleanupIncomplete).toBe(false);
+  expect(cancellation.cleanupResources).toEqual([]);
+});
+
 it("keeps primary diagnostics separate from historical cleanup diagnostics with the same keys", () => {
   const primary = new AnalysisInputError("inspect", {
     diagnostics: {

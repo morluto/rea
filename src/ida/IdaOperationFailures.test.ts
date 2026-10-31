@@ -519,7 +519,7 @@ describe("headless IDA procedure lookup failures", () => {
     ["Not found", "procedure_assembly", "_missing"],
     ["Not found", "procedure_pseudo_code", "main\nsecond line"],
   ] as const)(
-    "reports the upstream %s answer for %s of %s as an invalid request naming the procedure",
+    "reports the upstream %s answer for %s of %s as a non-retryable invalid request naming the procedure",
     async (upstream, operation, procedure) => {
       const client = await missingProcedureFixture((query) =>
         lookup(query, null, upstream),
@@ -540,7 +540,7 @@ describe("headless IDA procedure lookup failures", () => {
         );
         expect(
           projected.retryable,
-          "an unchanged invalid request is not retryable",
+          "an unchanged deterministic invalid request is not retryable",
         ).toBe(false);
         expect(
           projected.details,

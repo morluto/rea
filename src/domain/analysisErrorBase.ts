@@ -219,6 +219,7 @@ export abstract class AnalysisError extends Error {
         new WeakRef(this),
       ];
     }
+    this.cleanupIncomplete = pending.size > 0;
     if (pending.size === 0) this.resolveCleanup();
     return this;
   }

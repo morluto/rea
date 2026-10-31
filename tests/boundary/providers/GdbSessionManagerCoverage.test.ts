@@ -149,13 +149,60 @@ it.each([
   ["inferior-tty /tmp/output", true],
   ["tty /dev/pts/2", true],
   ["source commands.gdb", true],
+  ["sour commands.gdb", true],
   ["python print(1)", true],
   ["define start\nrun", true],
+  ["run < input.txt", false],
+  ["run <input.txt", false],
+  ["run <&-", false],
+  ["run 0<&-", false],
+  ["run <&- --mode fast", false],
+  ["run 0<&- arg", false],
+  ["run < first.txt < second.txt", false],
+  ["run <&- < input.txt", false],
+  ["run 0<input.txt", false],
+  ["run arg<input.txt", false],
+  ["run arg2<input.txt", false],
+  ["run <input.txt --mode fast", false],
+  ["run < input.txt --mode fast", false],
+  ["run arg < input.txt", false],
+  ["run '2'<input.txt", false],
+  ["run \\2<input.txt", false],
+  ['run <"input>name"', false],
+  ["run <'input;|&>name'", false],
+  ['run "arg>name" < input.txt', false],
+  ["run <input\\>name", false],
+  ["run <>input.txt", false],
+  ["run 0<>input.txt", false],
+  ["run 00<>input.txt", false],
+  ["run 1<>output.txt", true],
+  ["run 2<>error.txt", true],
+  ['run <"input>name" > out', true],
+  ['run <"unterminated', true],
+  ["run 2<input.txt", true],
+  ["run 2<&-", true],
+  ["run 00<input.txt", false],
+  ["run 0000<&-", false],
+  ["run 01<input.txt", true],
+  ["run 01<&-", true],
   ["run > /tmp/output", true],
+  ["run < input.txt > /tmp/output", true],
+  ["run < input.txt; echo done", true],
+  ["run < input.txt\ncontinue", true],
   ["t 1", false],
   ["tt /dev/pts/2", true],
 ] as const)("classifies inferior output mutations: %s", (command, expected) => {
   expect(commandMayChangeInferiorOutput(command)).toBe(expected);
+});
+
+it("classifies malformed input-only close arguments without regex backtracking", () => {
+  const command = `run <&- ${"arg ".repeat(28)}&`;
+  expect(commandMayChangeInferiorOutput(command)).toBe(true);
+});
+
+it("classifies malformed input redirection arguments without regex backtracking", () => {
+  const command = `run <input ${"arg ".repeat(28)}&`;
+  expect(commandMayChangeInferiorOutput(command)).toBe(true);
 });
 
 // GDB's built-in aliases are full commands, not abbreviations of python,
@@ -1585,7 +1632,7 @@ const managerWithFakeSpawner = (
     platform: "linux",
     environment: { REA_GDB_COMMAND: "fake-gdb" },
     spawnProcess,
-    verifyInferiorOutputSink: async () => undefined,
+    verifyInferiorOutputSink: async () => "durable",
     ...options,
   });
   managers.push(manager);
@@ -1614,6 +1661,54 @@ const startWithVerifiedInferiorTty = async (
   if (!started.ok) throw new Error("GDB did not start with its selected TTY");
   return { manager, sessionId: started.value.session_id, commands };
 };
+
+it.each([
+  "run < input.txt",
+  "run <&-",
+  "run 0<&-",
+  "run <&- --mode fast",
+  "run 0<&- arg",
+  "run < first.txt < second.txt",
+  "run 0<&- < input.txt",
+])(
+  "retains detach proof for the input-only redirection %s",
+  async (runCommand) => {
+    const commands: string[] = [];
+    let outputSinkChecks = 0;
+    const fake = createFakeSpawner((_child, token, command) => {
+      commands.push(command);
+      const response = command.includes("inferior-tty-show")
+        ? '^done,inferior_tty_terminal="/dev/pts/42"'
+        : command.includes("list-thread-groups")
+          ? '^done,groups=[{id="i1",pid="123"}]'
+          : "^done";
+      fake.children[0]?.stdout.write(`${token}${response}\n`);
+    });
+    const manager = managerWithFakeSpawner(fake.spawnProcess, {
+      verifyInferiorOutputSink: async () => {
+        outputSinkChecks += 1;
+        // A regular file on stdin is independent of the durable selected output
+        // terminal and is permitted by the production descriptor classifier.
+        return "not-inherited";
+      },
+    });
+    const started = await manager.start(undefined, {
+      inferiorTty: "/dev/pts/42",
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+
+    expect(
+      (await manager.execute(started.value.session_id, runCommand)).ok,
+    ).toBe(true);
+    expect(
+      manager.status(started.value.session_id)?.inferior_tty_verified,
+    ).toBe(true);
+    expect((await manager.close(started.value.session_id)).ok).toBe(true);
+    expect(outputSinkChecks).toBe(1);
+    expect(commands).toContain("-target-detach");
+  },
+);
 
 const createProvider = async (body: string): Promise<string> => {
   directory ??= await mkdtemp(join(tmpdir(), "rea-gdb-coverage-"));
@@ -1709,6 +1804,64 @@ it("rejects a pre-cancelled GDB start and an unconfigured executable", async () 
     });
   }
 });
+
+it("restores the caller's run ID for the inferior through a startup directive", async () => {
+  const seen: string[][] = [];
+  const spawn = async (options: OwnedProviderProcessSpawnOptions) => {
+    seen.push([...options.arguments]);
+    return createFakeSpawner().spawnProcess(options);
+  };
+  for (const [environment, expected] of [
+    [{}, "unset environment REA_PROCESS_RUN_ID"],
+    [
+      { REA_PROCESS_RUN_ID: "caller-run" },
+      "set environment REA_PROCESS_RUN_ID =caller-run",
+    ],
+    [
+      { REA_PROCESS_RUN_ID: "=caller-run" },
+      "set environment REA_PROCESS_RUN_ID ==caller-run",
+    ],
+  ] as const) {
+    seen.length = 0;
+    const manager = new GdbSessionManager({
+      platform: "linux",
+      environment,
+      spawnProcess: spawn,
+    });
+    managers.push(manager);
+    await manager.start();
+    expect(seen[0]).toContain("-iex");
+    expect(seen[0]?.at(-1)).toBe(expected);
+  }
+});
+
+it.each([
+  "a\nb",
+  "a\rb",
+  " caller-run",
+  "\tcaller-run",
+  "caller-run ",
+  "caller-run\t",
+])(
+  "refuses a caller run ID that cannot be expressed as one directive: %j",
+  async (runId) => {
+    const manager = new GdbSessionManager({
+      platform: "linux",
+      environment: { REA_PROCESS_RUN_ID: runId },
+      spawnProcess: async () => {
+        throw new Error("must not spawn");
+      },
+    });
+    managers.push(manager);
+
+    const started = await manager.start();
+
+    expect(started.ok).toBe(false);
+    if (!started.ok) {
+      expect(started.error.message).toContain("cannot be preserved");
+    }
+  },
+);
 
 it("retries MI2 after an MI3 process exits before its startup prompt", async () => {
   const provider = await createProvider(`
@@ -2537,6 +2690,52 @@ it.each([
   },
 );
 
+it("retains ownership when descriptor readback omits input confirmation", async () => {
+  const commands: string[] = [];
+  let inferiorAlive = true;
+  const fake = createFakeSpawner((child, token, command) => {
+    commands.push(command);
+    const response = command.includes("inferior-tty-show")
+      ? '^done,inferior_tty_terminal="/dev/pts/42"'
+      : command.includes("list-thread-groups")
+        ? '^done,groups=[{id="i1",pid="123"}]'
+        : "^done";
+    child.stdout.write(`${token}${response}\n`);
+  });
+  const manager = managerWithFakeSpawner(fake.spawnProcess, {
+    // Exercise malformed output from the injected descriptor boundary.
+    verifyInferiorOutputSink: async (pid, _tty, rememberIdentity) => {
+      rememberIdentity({ pid, startTime: "controlled-inferior" });
+      return undefined as never;
+    },
+    readInferiorProcessStartTime: async () =>
+      inferiorAlive ? "controlled-inferior" : null,
+  });
+  const started = await expectGdbSessionStarted(manager, undefined, {
+    inferiorTty: "/dev/pts/42",
+  });
+
+  const closed = await manager.close(started.value.session_id);
+
+  expect(closed.ok).toBe(false);
+  expect(manager.status(started.value.session_id)).toBeDefined();
+  expect(commands).not.toContain("-target-detach");
+  expect(fake.children[0]?.killSignals).toEqual([]);
+
+  const gdb = fake.children[0];
+  if (gdb === undefined) throw new Error("Fake GDB did not spawn");
+  gdb.exitLeader(0);
+  gdb.closeInheritedOutput();
+  inferiorAlive = false;
+  const retried = await manager.close(started.value.session_id);
+
+  expect(retried).toMatchObject({
+    ok: true,
+    value: { target_state: "unknown" },
+  });
+  expect(manager.status(started.value.session_id)).toBeUndefined();
+});
+
 it.each([false, true])(
   "retains verified detach when MI becomes unavailable with a queued follower: %s",
   async (withFollower) => {
@@ -2713,6 +2912,7 @@ it.each([
         if (capturedStartTime === undefined)
           throw new Error("Controlled inferior identity was unreadable");
         rememberIdentity({ pid: observedPid, startTime: capturedStartTime });
+        return "durable";
       },
       readInferiorProcessStartTime: async (observedPid) => {
         if (observedPid !== pid || !inferiorAlive) return null;

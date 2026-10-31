@@ -92,7 +92,11 @@ const DETACH_TIMEOUT_MS = 1_000;
 const MAX_LATE_DEBUGGER_OUTPUT_BYTES = 64 * 1024;
 export type OwnedDebuggerDetachResult =
   | { readonly status: "no-inferior" }
-  | { readonly status: "detached"; readonly outputSink: "durable" };
+  | {
+      readonly status: "detached";
+      readonly outputSink: "durable";
+      readonly inputSink: "durable" | "not-inherited";
+    };
 export interface OwnedInferiorIdentity {
   readonly pid: string;
   readonly startTime: string;
@@ -149,6 +153,7 @@ const detachOutcomes = new WeakMap<
   object,
   "confirmed" | "unconfirmed" | "inferior-ended"
 >();
+const stopAttempts = new WeakMap<object, Promise<OwnedDebuggerStopResult>>();
 
 const isVerifiedDetachResult = (
   result: unknown,
@@ -159,7 +164,10 @@ const isVerifiedDetachResult = (
     ("status" in result &&
       result.status === "detached" &&
       "outputSink" in result &&
-      result.outputSink === "durable"));
+      result.outputSink === "durable" &&
+      "inputSink" in result &&
+      (result.inputSink === "durable" ||
+        result.inputSink === "not-inherited")));
 
 const waitForInferiorDetach = async (
   session: object,
@@ -169,9 +177,11 @@ const waitForInferiorDetach = async (
   if (attempt === undefined) {
     // Providers may use `this` to access their command transport.
     const pending = Promise.resolve().then(() => detach.call(session));
-    const tracked = pending.then(
+    let tracked!: Promise<OwnedDebuggerDetachResult>;
+    tracked = pending.then(
       (result) => {
-        detachAttempts.delete(session);
+        if (detachAttempts.get(session) === tracked)
+          detachAttempts.delete(session);
         detachOutcomes.set(
           session,
           isVerifiedDetachResult(result) ? "confirmed" : "unconfirmed",
@@ -179,7 +189,8 @@ const waitForInferiorDetach = async (
         return result;
       },
       (cause: unknown) => {
-        detachAttempts.delete(session);
+        if (detachAttempts.get(session) === tracked)
+          detachAttempts.delete(session);
         detachOutcomes.set(session, "unconfirmed");
         throw cause;
       },
@@ -187,7 +198,7 @@ const waitForInferiorDetach = async (
     attempt = tracked;
     detachAttempts.set(session, tracked);
   }
-  let timer!: NodeJS.Timeout;
+  let timer: NodeJS.Timeout | undefined;
   try {
     return await Promise.race([
       attempt,
@@ -196,7 +207,7 @@ const waitForInferiorDetach = async (
       }),
     ]);
   } finally {
-    clearTimeout(timer);
+    if (timer !== undefined) clearTimeout(timer);
   }
 };
 
@@ -260,7 +271,7 @@ const finishExitedDebuggerSession = async (
  * The caller must permanently close command admission before the first attempt;
  * retries retain completed detach facts while process termination is pending.
  */
-export const stopOwnedDebuggerProcess = async (
+const performOwnedDebuggerStop = async (
   session: OwnedDebuggerProcess,
   debuggerName: string,
   options: { readonly platform?: NodeJS.Platform } = {},
@@ -298,6 +309,16 @@ export const stopOwnedDebuggerProcess = async (
       "already_exited",
     );
   }
+  try {
+    session.supervisor.limitAdditionalOutputBytes(
+      MAX_LATE_DEBUGGER_OUTPUT_BYTES,
+    );
+  } catch (cause: unknown) {
+    return {
+      status: "incomplete",
+      reason: `Owned ${debuggerName} output capture could not be bounded while the debugger remains active: ${cause instanceof Error ? cause.message : String(cause)}`,
+    };
+  }
   if (platform === "win32")
     return {
       status: "incomplete",
@@ -329,7 +350,7 @@ export const stopOwnedDebuggerProcess = async (
         detachOutcomes.set(session, "unconfirmed");
         return {
           status: "incomplete",
-          reason: `Owned ${debuggerName} provider did not confirm no inferior or detachment with a durable output sink.`,
+          reason: `Owned ${debuggerName} provider did not confirm no inferior, or detachment with both a durable output sink and a durable or non-inherited input sink.`,
         };
       }
       detachOutcomes.set(session, "confirmed");
@@ -364,6 +385,25 @@ export const stopOwnedDebuggerProcess = async (
   );
 };
 
+/** Share one complete shutdown attempt so overlapping callers cannot detach or signal twice. */
+export const stopOwnedDebuggerProcess = (
+  session: OwnedDebuggerProcess,
+  debuggerName: string,
+  options: { readonly platform?: NodeJS.Platform } = {},
+): Promise<OwnedDebuggerStopResult> => {
+  const existing = stopAttempts.get(session);
+  if (existing !== undefined) return existing;
+
+  let tracked!: Promise<OwnedDebuggerStopResult>;
+  tracked = performOwnedDebuggerStop(session, debuggerName, options).finally(
+    () => {
+      if (stopAttempts.get(session) === tracked) stopAttempts.delete(session);
+    },
+  );
+  stopAttempts.set(session, tracked);
+  return tracked;
+};
+
 /**
  * Stop every owned session and retain failed sessions for possible recovery.
  * Callers must block replacement admission and drain in-flight starts until
@@ -376,25 +416,24 @@ export const closeOwnedDebuggerSessions = async <
   stop: (session: Session) => Promise<OwnedDebuggerStopResult>,
   debuggerName: string,
 ): Promise<void> => {
+  const entries = [...sessions.entries()];
   const results = await Promise.allSettled(
-    [...sessions.entries()].map(async ([key, session]) => ({
-      key,
-      session,
-      result: await stop(session),
-    })),
+    entries.map(async ([, session]) => stop(session)),
   );
   const failures: Error[] = [];
-  for (const settled of results) {
+  for (const [index, [key, session]] of entries.entries()) {
+    const settled = results[index]!;
+    const identity = `Owned ${debuggerName} session ${JSON.stringify(session.id)} (key ${JSON.stringify(key)})`;
     if (settled.status === "rejected") {
+      const cause: unknown = settled.reason;
       failures.push(
-        settled.reason instanceof Error
-          ? settled.reason
-          : new Error(String(settled.reason)),
+        new Error(
+          `${identity}: ${cause instanceof Error ? cause.message : String(cause)}`,
+          { cause },
+        ),
       );
-      continue;
-    }
-    const { key, session, result } = settled.value;
-    if (result.status === "incomplete") failures.push(new Error(result.reason));
+    } else if (settled.value.status === "incomplete")
+      failures.push(new Error(`${identity}: ${settled.value.reason}`));
     else if (sessions.get(key) === session) sessions.delete(key);
   }
   if (failures.length > 0)

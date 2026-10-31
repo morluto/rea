@@ -94,9 +94,12 @@ export class WindowsOwnedProcess extends EventEmitter {
   // alone; kill and poll still need the job or process handle.
   #releasePending = false;
   #failure: string | undefined;
+  #consecutivePollFailures = 0;
   #timer: NodeJS.Timeout | undefined;
+  #shutdownRequested = false;
   #blockedWake: NodeJS.Timeout | undefined;
   readonly #blockedOutput = new Set<PassThrough>();
+  #discardingOutput = false;
   #unreferenced = false;
   #cleanup: Promise<ProcessCleanupResult> | undefined;
   readonly #memoryLimitBytes: number | undefined;
@@ -238,11 +241,14 @@ export class WindowsOwnedProcess extends EventEmitter {
           .number()
           .parse(this.#authority.call("process_alive", [this.#handle])) > 0
       );
-    return this.#closed
-      ? false
-      : z
-          .boolean()
-          .parse(this.#authority.call("process_terminate", [this.#handle]));
+    if (this.#closed) return false;
+    const signaled = z
+      .boolean()
+      .parse(this.#authority.call("process_terminate", [this.#handle]));
+    // Only an explicit termination decision may release the owner-exit guard.
+    // A failed observation alone must never close a kill-on-owner-close job.
+    this.#shutdownRequested = true;
+    return signaled;
   }
 
   /** Terminate and verify that the entire job has settled before releasing it. */
@@ -284,6 +290,16 @@ export class WindowsOwnedProcess extends EventEmitter {
     let timer: NodeJS.Timeout | undefined;
     try {
       const signaled = this.kill();
+      this.#consecutivePollFailures = 0;
+      // A recovery backoff may be seconds away; explicit cleanup resumes
+      // prompt polling so buffered output cannot outlive the deadline.
+      if (this.#timer !== undefined) {
+        clearTimeout(this.#timer);
+        this.#timer = undefined;
+      }
+      // From here on, output that would block a consumer is discarded so the
+      // job's closed pipes stay observable until cleanup settles.
+      this.#discardingOutput = true;
       this.#discardBlockedOutput();
       this.#schedule();
       const settled = await Promise.race([
@@ -318,7 +334,7 @@ export class WindowsOwnedProcess extends EventEmitter {
     )
       return;
     this.#timer = setTimeout(() => this.#poll(), delay);
-    if (this.#unreferenced) this.#timer.unref();
+    if (this.#shutdownRequested || this.#unreferenced) this.#timer.unref();
   }
 
   #scheduleBlockedWake(): void {
@@ -383,6 +399,7 @@ export class WindowsOwnedProcess extends EventEmitter {
         state = limited;
       }
       this.#failure = undefined;
+      this.#consecutivePollFailures = 0;
       // Stop native reads while either consumer is backpressured. A slower
       // cadence still accumulates unbounded unread output in the parent heap.
       const idle = state.stdout.length === 0 && state.stderr.length === 0;
@@ -424,6 +441,11 @@ export class WindowsOwnedProcess extends EventEmitter {
       return;
     }
     if (stream.write(bytes)) return;
+    if (this.#discardingOutput) {
+      this.#outputIncomplete = true;
+      stream.destroy();
+      return;
+    }
     this.#blockedOutput.add(stream);
     const unblock = () => {
       stream.off("drain", unblock);
