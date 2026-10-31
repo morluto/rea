@@ -10,7 +10,8 @@ the real Ghidra input-capacity regression
 [#8281](https://github.com/morluto/rea/issues/8281).
 The [machine-readable receipt](evidence-input-composition-2026-10-31.json)
 retains all fourteen model attempts, artifact identities, oracle provenance,
-tool profiles, actual usage, resource measurements and limitations.
+tool profiles, actual usage, resource measurements and limitations. It also
+records the thirteen subsequent scripted public-transport attempts below.
 
 ## Runtime and measurement scope
 
@@ -105,6 +106,36 @@ bytes; verification cost 0.518 s / 0.282755 CPU s / 42,881,024 peak bytes.
 The optional tokenizer was unavailable, so request-token savings are unmeasured.
 Request bytes are not presented as model tokens.
 
+## Fresh-connection public transport matrix
+
+The real transport matrix completed all nine supported domain lanes on built revision `7e10c1cc9` (`63746cf7b340358ac5ce609761ea3198ae3a62e24df52f62ed5be16893940021`). It used public stdio MCP and CLI, real artifacts and authentic exported Evidence; no model or fixture provider ran.
+
+| Lane        | Attempts | Scope seconds, all attempts | CPU seconds, all attempts | Max kernel peak MiB | CLI calls, including negatives |
+| ----------- | -------: | --------------------------: | ------------------------: | ------------------: | -----------------------------: |
+| native      |        1 |                      35.915 |                 34.674174 |              927.99 |                              0 |
+| javascript  |        3 |                      34.324 |                 33.094918 |              658.91 |                              8 |
+| managed     |        2 |                      37.341 |                 36.221694 |              694.65 |                              9 |
+| android     |        1 |                      20.208 |                 19.569397 |              696.40 |                              4 |
+| harmony-app |        1 |                      16.714 |                 15.950327 |              495.68 |                              4 |
+| harmony-hap |        1 |                      16.294 |                 15.886932 |              508.47 |                              4 |
+| apple       |        1 |                      25.453 |                 24.824482 |              642.90 |                              8 |
+| wasm        |        2 |                      22.648 |                 22.027649 |              791.67 |                              4 |
+| process     |        1 |                       9.056 |                  8.586552 |              472.58 |                              2 |
+
+Producer/export costs from the failed JS/managed harness attempts are included. Three harness assumptions and one actual SDK transport-capacity failure are retained individually. Every payload cleanup and kernel observation verified; no OOM or increased allowance.
+
+Fresh imported references match complete CLI inline and selected-bundle outputs where those command contracts support them. Small APP/process/correlation inputs also match admitted MCP inline. Larger MCP inline forms hit the unchanged 1024-element guard. Native and selected managed-member comparisons have no equivalent Evidence-input CLI form; process accepts two complete capture files, and artifact comparison uses explicit evidence-file selectors.
+
+The 27,823,016-byte WASM inline arguments exceeded the default 10,485,760-byte stdio frame buffer and closed the connection before application admission. The resumed attempt reused the same authentic bundle: fresh MCP references and both supported complete CLI forms agree. No WABT replay or limit increase.
+
+Process capture comparison and behavior aggregation preserve changed/unknown facts. Correlation with genuine native comparison Evidence remains unknown with one unresolved branch under an explicit noncausal hypothesis.
+
+These are scripted transport-task costs with uncontrolled caches, not a before/after benchmark or model-token measurement. Earlier WASM inspection/process capture costs are linked in the prior verification report. Later source-only diagnostic fixes have separate focused validation.
+
+The accompanying JSON retains all thirteen attempts, exact kernel counters,
+source/result identities and hashes, CLI arm receipts, failures and limits.
+These scripted costs do not add to the model-token table.
+
 ## Review follow-up
 
 An additional local terra/high source-only review found that the refactored
@@ -130,6 +161,23 @@ review; that CLI review did not report usable model-token counts. Its cleanup
 was verified, with 57.860 s task elapsed, 4.720926 s family CPU and 427,364,352
 peak bytes. Existing captured model measurements remain tied to their recorded
 runtime fingerprints, preceding these review corrections.
+
+The additional seven-file boundary run passed 161 checks after the CLI's JSON
+parser was corrected to keep public command names in malformed-input diagnostics.
+It includes 17 fixed-server cases for six JavaScript and three mobile consumers,
+direct inline analysis views, missing references, wrong source roles, summary
+retention and default input admission. These use complete authored fixtures;
+they do not substitute for the real-artifact matrix. The run included a runtime
+build and cost 154.106 s / 153.592029 CPU s / 1,884,516,352 peak bytes. Subsequent
+type, touched-file lint and module checks passed, with no OOM or cleanup gap.
+
+Malformed complete source records now reach the canonical Evidence owner after
+resource admission. Schema or identity failures return
+`evidence_integrity_mismatch` in both MCP schema profiles, including the original
+`relationship_coverage` diagnostics. The directional-coverage regression still
+checks every malformed case and the advertised full schema. Invalid request
+envelopes and reference grammar remain request errors; no duplicate source parse
+was introduced solely to reproduce the former SDK error classification.
 
 ## Regression and coverage limits
 

@@ -253,11 +253,7 @@ const registerEvidenceJsonCommand = ({
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, name, async () => {
-          const input = await parseCliJsonInput(
-            args.inputJson,
-            operation,
-            signal,
-          );
+          const input = await parseCliJsonInput(args.inputJson, name, signal);
           if (!input.ok) return input.error;
           const result = await runEvidenceInputCommand(
             operation,

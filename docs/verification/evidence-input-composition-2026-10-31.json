@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "record_date": "2026-10-31",
-  "scope": "Factual record of 14 actual local Codex CLI attempts: six initial primary tasks, one interrupted supplemental task, and seven final-runtime tasks. Original source records remain unchanged. This receipt excludes raw transcripts, authentication, account configuration, ambient environment and private workspace paths.",
+  "scope": "Factual record of 14 actual local Codex CLI attempts: six initial primary tasks, one interrupted supplemental task, and seven final-runtime tasks. Original source records remain unchanged. This receipt excludes raw transcripts, authentication, account configuration, ambient environment and private workspace paths. Additional verification records 13 scripted public-transport attempts across nine real-artifact lanes and focused source/CLI/MCP boundary checks; these have no model-token measurement.",
   "model_identity": {
     "requested_alias": "gpt-6.1-terra",
     "reasoning": "high",
@@ -1209,5 +1209,1826 @@
       "payload_cleanup_verified": true,
       "model_tokens": "Not reported by the CLI review mode; zero-valued usage counters are not treated as measured zero cost."
     }
+  },
+  "public_transport_matrix": {
+    "schema_version": 1,
+    "date": "2026-10-31",
+    "scope": "Actual deterministic public stdioMCP/CLI transport matrix, no models or simulated/providerfixture Evidence.13attempts across9lanes; all failed harness/capacity attempts retained.",
+    "client": {
+      "node": "24.22.1",
+      "MCP_SDK_client": "2.3.1",
+      "model_invocations": 0,
+      "token_measurement": "not performed; no byte-to-token claim"
+    },
+    "runtime": {
+      "built_source_head": "7e10c1cc9d2ff8371e5cf9ba3f77c834f644e759",
+      "built_runtime_sha256": "63746cf7b340358ac5ce609761ea3198ae3a62e24df52f62ed5be16893940021",
+      "source_state": "Actual perattempt HEAD/dirty recorded. Later source-only CLI diagnostic naming/test expectation fixes were not rebuilt during this matrix and are verified separately by parent focused7file/161test gate."
+    },
+    "bounds": {
+      "CPU_quota_percent": 100,
+      "hard_memory_bytes": 4294967296,
+      "early_stop_bytes": 3221225472,
+      "swap_bytes": 0,
+      "tasks": 192,
+      "case_seconds": 300,
+      "MCP_call_seconds": 120,
+      "owned_CLI_seconds": 120,
+      "default_MCP_input_elements": 1024,
+      "default_SDK_stdio_buffer_bytes": 10485760,
+      "allowances_raised": false
+    },
+    "methods": [
+      "Genuine summary producers ran once per declared source selection, exported bundle and closed original connection. Harness retries reused the same export, no producer replay.",
+      "Fresh target-free servers imported authentic bundles; binary_session.open stayedfalse. Missing beforeimport/unknownID/malformedkind/wrongrole and managedsameID negatives were tested; negative calls did not mutate registry.",
+      "Large MCPinline inputs either hit explicit1024-element refusal before schema/workflow, or the distinct10MiB SDKframe boundary. Supported CLI forms and MCPrefs still return complete equivalent Evidence.",
+      "Public CLI syntax was preserved: native noCLI; managed membercomparison PE-pathproducer only; process2complete capture paths; artifact comparison explicit evidence-file selectors.",
+      "Successful full structural Evidence equality preserves identity,links,coverage,partial/unknown andlimitations; reference-only native/member workflows are not claimed to have unsupported CLIparity."
+    ],
+    "measurement_limits": [
+      "Perlane totals sum ALL attempt scopeelapsed/CPU and take max kernelpeak, including failed harness attempts. Raw perattempt figures remain below.",
+      "Kernel CPU/memory are payload-exit counters with observeralive, not sampled peaks; remote model compute absent. Orchestration/editing and earlier sourceproducer costs are not included.",
+      "Fresh processes, preinstalled tools, uncontrolled OS/filesystem caches; no before/after/cold/warm benchmark or token-saving claim.",
+      "WASM/process reused earlier authentic producer data. Common upstream sourceinspection/capture costs are in prior verification receipts, not new analysis.",
+      "Optional static/runtime correlation is an explicit hypothesis only, actualresultunknown/unresolved1; no causal inference."
+    ],
+    "artifacts": {
+      "agent-browser-entry": {
+        "file_name": "bin/agent-browser.js",
+        "bytes": 3184,
+        "sha256": "8e382f4a5ba22f45e1e0339abfe5a55ed95a19540b16a69ee3faf31c8dc8216a",
+        "provenance": {
+          "kind": "existing-installed-npm-package-entrypoint",
+          "package": "agent-browser",
+          "version": "0.27.0",
+          "repository_from_package_metadata": "https://github.com/vercel-labs/agent-browser",
+          "publisher_authenticity": "not independently established"
+        },
+        "independent_oracles": [
+          "agent-browser-entry",
+          "agent-browser-locations"
+        ]
+      },
+      "css-wasm": {
+        "file_name": "tree-sitter-css.wasm",
+        "bytes": 128668,
+        "sha256": "8a23977fe271357cce6f254ef88c9bebf3854602d8046605aef6a45c02135c59",
+        "provenance": {
+          "kind": "existing-installed-copy-matching-pinned-repository-corpus-member",
+          "project": "VS Code Tree-sitter published WASM package",
+          "version": "0.3.1",
+          "upstream_url": "https://registry.npmjs.org/@vscode/tree-sitter-wasm/-/tree-sitter-wasm-0.3.1.tgz",
+          "transport_sha256": "985684b2cfbe5e8f90499a9f36e37519887c7d4e2697d0457d0f1e923ce5184c",
+          "transport_scope": "Published corpus provenance; transport archive was not reacquired for this validation."
+        },
+        "independent_oracles": ["base-artifacts", "wasm-interface"]
+      },
+      "jq": {
+        "file_name": "jq",
+        "bytes": 30800,
+        "sha256": "90b1eef4498f31836342898fc6e97cfeb8a197c4366773a0fb120ae02a45ea52",
+        "provenance": {
+          "kind": "existing-system-installed-file",
+          "publisher_authenticity": "not established by file identity"
+        },
+        "independent_oracles": ["base-artifacts", "jq-disassembly"]
+      },
+      "newpipe-apk": {
+        "file_name": "NewPipe_v0.29.1.apk",
+        "bytes": 11507122,
+        "sha256": "18447bfb1e06d113edc88df93f471827280de06f6f3d4dc42f56f28b9c1bab79",
+        "provenance": {
+          "kind": "official-public-release-matching-repository-corpus-pin",
+          "url": "https://github.com/TeamNewPipe/NewPipe/releases/download/v0.29.1/NewPipe_v0.29.1.apk",
+          "version": "0.29.1"
+        },
+        "independent_oracles": ["mobile-bytes"]
+      },
+      "nuget-cli": {
+        "file_name": "NuGet.CommandLine.XPlat.dll",
+        "bytes": 756736,
+        "sha256": "ddea7807716a77a166cc321ddfad566e80569d9919dd8ecdf0ce50e4e9059642",
+        "provenance": {
+          "kind": "existing-local-dotnet-SDK-copy",
+          "SDK_version": "8.0.427",
+          "assembly_version": "6.11.2.1",
+          "publisher_authenticity": "not independently established"
+        },
+        "independent_oracles": ["base-artifacts", "managed-getter"]
+      },
+      "process-capture-bundle": {
+        "file_name": "captures.bundle.json",
+        "bytes": 15199,
+        "sha256": "55da0f130dc2265aae54261d49949471e5c929163c2b7314b42e95df3325b739",
+        "provenance": {
+          "kind": "two-authentic-controlled-local-jq-captures",
+          "executable_artifact_id": "jq",
+          "scenario": "jq -cn with explicit before/after revision filters and equal comparison contracts; capture producers ran separately from static model trial."
+        },
+        "independent_oracles": [
+          "process-capture",
+          "process-output",
+          "process-inline"
+        ]
+      },
+      "rectangle-zip": {
+        "file_name": "Rectangle2.0.4.zip",
+        "bytes": 5080855,
+        "sha256": "0b9b8b11edeb3237e3224c619a6f6bfb5e5996a477048be6ff4b98b0346aedc9",
+        "provenance": {
+          "kind": "official-public-release",
+          "url": "https://github.com/rxhanson/Rectangle/releases/download/v2.0.4/Rectangle2.0.4.zip",
+          "version": "2.0.4"
+        },
+        "independent_oracles": ["base-artifacts", "rectangle-members"]
+      },
+      "shark-app": {
+        "file_name": "Shark-default-v1.0.8-signed.app",
+        "bytes": 1867667,
+        "sha256": "b2344fb11bb31477c5c44734c2d26fd29adcab40719712664e48f973ae0909d3",
+        "provenance": {
+          "kind": "exact-regular-ZIP-member",
+          "parent_artifact_id": "shark-zip",
+          "member_path": "Shark-default-v1.0.8-signed.app"
+        },
+        "independent_oracles": ["shark-app-member", "mobile-bytes"]
+      },
+      "shark-hap": {
+        "file_name": "Shark-v1.0.8-entry-default.hap",
+        "bytes": 3061314,
+        "sha256": "177659902ed83329a5fbda867c7985660aa2d33f71cbc8ac8baf53b7da4caac8",
+        "provenance": {
+          "kind": "exact-regular-APP-member",
+          "parent_artifact_id": "shark-app",
+          "member_path": "entry-default.hap"
+        },
+        "independent_oracles": ["shark-app-member", "mobile-bytes"]
+      }
+    },
+    "lanes": [
+      {
+        "lane": "native",
+        "attempts": 1,
+        "all_attempt_scope_seconds_sum": 35.915,
+        "all_attempt_CPU_usec_sum": 34674174,
+        "max_kernel_peak_bytes": 973070336,
+        "MCP_completed_calls": 31,
+        "CLI_arms_output_files": 0,
+        "successful_attempt": "native-01",
+        "notes": "Fresh imported inventory+dossier refs support path/comparison/matching inclnested observation arrays. Inline forms refused1024; these operations have no CLI counterparts. Staticfacts only, unresolved/truncated data preserved."
+      },
+      {
+        "lane": "javascript",
+        "attempts": 3,
+        "all_attempt_scope_seconds_sum": 34.324,
+        "all_attempt_CPU_usec_sum": 33094918,
+        "max_kernel_peak_bytes": 690913280,
+        "MCP_completed_calls": 35,
+        "CLI_arms_output_files": 8,
+        "successful_attempt": "javascript-03",
+        "notes": "Feature+semantic MCPrefs == CLIinline == CLIbundle refs; both large MCPinline forms refused default1024. One genuine producer across3attempts. Partial/unselected-source facts preserved."
+      },
+      {
+        "lane": "managed",
+        "attempts": 2,
+        "all_attempt_scope_seconds_sum": 37.341,
+        "all_attempt_CPU_usec_sum": 36221694,
+        "max_kernel_peak_bytes": 728391680,
+        "MCP_completed_calls": 41,
+        "CLI_arms_output_files": 9,
+        "successful_attempt": "managed-02",
+        "notes": "Graph3-way parity; member comparison refs use genuine distinct Program/anonymous selections. Same-ID refusal checked. Selected-Evidence CLI member comparison unavailable: existing command produces from2PEpaths."
+      },
+      {
+        "lane": "android",
+        "attempts": 1,
+        "all_attempt_scope_seconds_sum": 20.208,
+        "all_attempt_CPU_usec_sum": 19569397,
+        "max_kernel_peak_bytes": 730226688,
+        "MCP_completed_calls": 17,
+        "CLI_arms_output_files": 4,
+        "successful_attempt": "android-01",
+        "notes": "Graph3-way parity with real APK; manifest/3DEX/4ABI path facts and JNIinferences preserved. FullinlineMCP refused1024."
+      },
+      {
+        "lane": "harmony-app",
+        "attempts": 1,
+        "all_attempt_scope_seconds_sum": 16.714,
+        "all_attempt_CPU_usec_sum": 15950327,
+        "max_kernel_peak_bytes": 519761920,
+        "MCP_completed_calls": 17,
+        "CLI_arms_output_files": 4,
+        "successful_attempt": "harmony-app-01",
+        "notes": "Small realAPP full MCPinline also admitted:4-way equality. Inventory remains shallow, innerHAP/signature semantics unknown."
+      },
+      {
+        "lane": "harmony-hap",
+        "attempts": 1,
+        "all_attempt_scope_seconds_sum": 16.294,
+        "all_attempt_CPU_usec_sum": 15886932,
+        "max_kernel_peak_bytes": 533172224,
+        "MCP_completed_calls": 17,
+        "CLI_arms_output_files": 4,
+        "successful_attempt": "harmony-hap-01",
+        "notes": "Graph3-way parity; Stage/Ark/resource roles remain path hints, no signature/bytecode/runtime claim. FullinlineMCP refused1024."
+      },
+      {
+        "lane": "apple",
+        "attempts": 1,
+        "all_attempt_scope_seconds_sum": 25.453,
+        "all_attempt_CPU_usec_sum": 24824482,
+        "max_kernel_peak_bytes": 674127872,
+        "MCP_completed_calls": 21,
+        "CLI_arms_output_files": 8,
+        "successful_attempt": "apple-01",
+        "notes": "Applegraph3-way parity plus compare_artifacts MCPrefs==CLIinline==CLIexplicit evidence-file selectors. Symlink availabilityunknown preserved; artifact CLI has no generic bundle flag."
+      },
+      {
+        "lane": "wasm",
+        "attempts": 2,
+        "all_attempt_scope_seconds_sum": 22.648,
+        "all_attempt_CPU_usec_sum": 22027649,
+        "max_kernel_peak_bytes": 830128128,
+        "MCP_completed_calls": 21,
+        "CLI_arms_output_files": 4,
+        "successful_attempt": "wasm-02",
+        "notes": "Existing authentic14MBbundle, no WABT replay. Fresh MCPrefs == full CLIinline == CLIbundle refs. MCPinline unavailable at default10MiB frame limit; actual failed attempt retained separately from1024admission."
+      },
+      {
+        "lane": "process",
+        "attempts": 1,
+        "all_attempt_scope_seconds_sum": 9.056,
+        "all_attempt_CPU_usec_sum": 8586552,
+        "max_kernel_peak_bytes": 495534080,
+        "MCP_completed_calls": 20,
+        "CLI_arms_output_files": 2,
+        "successful_attempt": "process-01",
+        "notes": "Existing authenticcaptures, no capture replay. MCPref/inline == CLIcomplete-capture-file pair; aggregate ref/inline equal. Imported genuine nativecomparison and explicit correlation ref/inline equal, unknown/unresolved1, no causalclaim. No selected-bundle CLI process option."
+      }
+    ],
+    "attempts": [
+      {
+        "attempt": "android-01",
+        "lane": "android",
+        "artifact_id": "newpipe-apk",
+        "source_head": "7e10c1cc9d2ff8371e5cf9ba3f77c834f644e759",
+        "source_dirty": true,
+        "built_runtime_sha256": "63746cf7b340358ac5ce609761ea3198ae3a62e24df52f62ed5be16893940021",
+        "harness_sha256": "0ae5954705a398dee5fdd893cc3664b61c298a64895e135df32610ac00c6f40c",
+        "scope_elapsed_seconds": 20.208,
+        "CPU_usec": 19569397,
+        "peak_process_family_bytes": 730226688,
+        "kernel_payload_exit_observation_verified": true,
+        "cleanup_verified": true,
+        "OOM": 0,
+        "OOM_kill": 0,
+        "resource_abort": null,
+        "payload_exit_code": 0,
+        "MCP_calls": {
+          "completed": 17,
+          "typed_error_results": 5,
+          "by_tool": {
+            "open_binary": 1,
+            "inspect_artifact": 1,
+            "export_evidence_bundle": 1,
+            "close_binary": 1,
+            "binary_session": 4,
+            "project_android_application_graph": 6,
+            "import_evidence_bundle": 1,
+            "get_evidence_bundle": 2
+          },
+          "transport_interrupted_attempts": 0
+        },
+        "CLI_arms": {
+          "output_files": 4,
+          "completed_command_receipts": 4,
+          "arms": [
+            {
+              "arm": "graph-cli-inline",
+              "command": "project-android-application-graph",
+              "syntax": "COMMAND INPUT_JSON --json [--evidence-bundle BUNDLE]",
+              "input_sha256": "371324919957bab8d89fc1a41db087ecf682bf24f83e6a1fc79d2b6378ad2e24",
+              "input_bytes": 1519195,
+              "output_sha256": "797dd46faa2674b92b15b672866fc2eafc7fef0ffb81a30450577eb6fb0d29a8",
+              "output_bytes": 7740,
+              "exit": 0,
+              "elapsed_ms": 2966.651,
+              "receipt_sha256": "6cb19918388b026ad560f9d5bd7314fdf068756a1024505554cfb08d8fe433a5"
+            },
+            {
+              "arm": "graph-cli-missing-context",
+              "command": "project-android-application-graph",
+              "syntax": "COMMAND INPUT_JSON --json [--evidence-bundle BUNDLE]",
+              "input_sha256": "219d31de32c202d720bed52c486079cb2a866b855a97314578eaa434c702245d",
+              "input_bytes": 138,
+              "output_sha256": "7252ca8c73c1d467d47327875852d2eb3bc5814d33a0cfdef4aefc0d48304702",
+              "output_bytes": 856,
+              "exit": 1,
+              "elapsed_ms": 2260.39,
+              "receipt_sha256": "7973d2928df41a31cedf08da4bb41516bbcf599186cc149fc7a4f557f4d19d37"
+            },
+            {
+              "arm": "graph-cli-reference",
+              "command": "project-android-application-graph",
+              "syntax": "COMMAND INPUT_JSON --json [--evidence-bundle BUNDLE]",
+              "input_sha256": "219d31de32c202d720bed52c486079cb2a866b855a97314578eaa434c702245d",
+              "input_bytes": 138,
+              "output_sha256": "797dd46faa2674b92b15b672866fc2eafc7fef0ffb81a30450577eb6fb0d29a8",
+              "output_bytes": 7740,
+              "exit": 0,
+              "elapsed_ms": 3163.593,
+              "receipt_sha256": "4ec5a1c4f18ac7789c8deb3879e8d1fc272fd6c8d7ae5393496bda19948c26a8"
+            },
+            {
+              "arm": "graph-cli-wrong-source-role",
+              "command": "project-android-application-graph",
+              "syntax": "COMMAND INPUT_JSON --json [--evidence-bundle BUNDLE]",
+              "input_sha256": "48637c9186665e28ecb9a1a03c1ae715ce0fb4901f6ee59f014a75be74dea61d",
+              "input_bytes": 138,
+              "output_sha256": "e2018837de3d3ae9baf4f3baba5790d3b24a375ce87849f600d2eb97da006183",
+              "output_bytes": 764,
+              "exit": 1,
+              "elapsed_ms": 2912.329,
+              "receipt_sha256": "ceba628a80785f0dcef360883fc35c98617e53a1c2e1c708ee95aa9e988361c3"
+            }
+          ],
+          "unrecorded_commands": []
+        },
+        "source_evidence_ids": [
+          "ev_7913ac380e2fd5067b8577354c9d09716d1437fd2f8dee0d344a83af2378104a",
+          "ev_d961e65ef320db021fa5a51e963edd8adf1160879a6326026d840c0a321dedf6"
+        ],
+        "bundle": {
+          "sha256": "fa499d0464a40ddc2f5159c893d68b8f50aa8e6d2b0080de22f2f3e5fc326825",
+          "bytes": 3046685,
+          "records": 3,
+          "unchanged": true
+        },
+        "outcome": "passed-supported-contracts",
+        "failure_note": null,
+        "producer_closed_before_consumer": true,
+        "zero_consumer_producer_calls": true,
+        "results": [
+          {
+            "name": "graph",
+            "evidence_id": "ev_d9b65ab886e8c5358447b1e4649adfe0cdff7407ce20b99796d87a60761692c7",
+            "normalized_result_sha256": "80ed46f7a668d0f6f332ba27871538b389618a779f6d5bb5c3cd6889b8743643",
+            "actual_reply_sha256": "d3f5c85ec30c7f293a3107781cd1c882b1e3f491c6038ba9a4f1aef1a59ef156",
+            "MCP_inline": "default1024-element-refusal",
+            "CLI_parity": {
+              "complete_MCP_reference_CLI_inline_CLI_reference_equality": true
+            },
+            "CLI_unavailable": null,
+            "status": null,
+            "coverage": {
+              "status": "complete-within-inventory",
+              "inventory_complete": true
+            },
+            "summary": null,
+            "limitations_count": 7
+          }
+        ],
+        "raw_outer_command_receipt_sha256": "ef1985c7d7c365de39fc290bedb0fec25ba572742294e1c24f2d904339f5f9c2",
+        "raw_resource_receipt_sha256": "ae762dd83ec01092dea2ef54d0b512b1bf3961f9fee1d53e55b4b64adf000570"
+      },
+      {
+        "attempt": "apple-01",
+        "lane": "apple",
+        "artifact_id": "rectangle-zip",
+        "source_head": "7e10c1cc9d2ff8371e5cf9ba3f77c834f644e759",
+        "source_dirty": true,
+        "built_runtime_sha256": "63746cf7b340358ac5ce609761ea3198ae3a62e24df52f62ed5be16893940021",
+        "harness_sha256": "1d7e3c0241e81c6050e857bebea68a7e3012bced5a5d386cac390ae7eb2ff6da",
+        "scope_elapsed_seconds": 25.453,
+        "CPU_usec": 24824482,
+        "peak_process_family_bytes": 674127872,
+        "kernel_payload_exit_observation_verified": true,
+        "cleanup_verified": true,
+        "OOM": 0,
+        "OOM_kill": 0,
+        "resource_abort": null,
+        "payload_exit_code": 0,
+        "MCP_calls": {
+          "completed": 21,
+          "typed_error_results": 8,
+          "by_tool": {
+            "open_binary": 1,
+            "inspect_artifact": 1,
+            "export_evidence_bundle": 1,
+            "close_binary": 1,
+            "binary_session": 4,
+            "project_apple_application_graph": 6,
+            "import_evidence_bundle": 1,
+            "get_evidence_bundle": 2,
+            "compare_artifacts": 4
+          },
+          "transport_interrupted_attempts": 0
+        },
+        "CLI_arms": {
+          "output_files": 8,
+          "completed_command_receipts": 8,
+          "arms": [
+            {
+              "arm": "artifacts-cli-file-missing-id",
+              "command": "compare-artifacts",
+              "syntax": "COMMAND INPUT_JSON --json; selected form uses {kind:evidence-file,path,evidence_id} on each side",
+              "input_sha256": "82c589f539b80a23f613562c6ddb07c11de891413c58641e49b31eb7163acb88",
+              "input_bytes": 517,
+              "output_sha256": "74eb37060ea4c89c6fbdc7eb8e730e3a3eb54f9164671505170e428664de7a7f",
+              "output_bytes": 1576,
+              "exit": 1,
+              "elapsed_ms": 2553.992,
+              "receipt_sha256": "ba46b8cc456cd2096b5966ba1d842449331bb4dc0f006f694e12c12deaf49b4b"
+            },
+            {
+              "arm": "artifacts-cli-inline",
+              "command": "compare-artifacts",
+              "syntax": "COMMAND INPUT_JSON --json; selected form uses {kind:evidence-file,path,evidence_id} on each side",
+              "input_sha256": "30fa6ae443a63d0d222fb32ae34d257c16c336a3516c5ffc1673d3d211c3228c",
+              "input_bytes": 635331,
+              "output_sha256": "162b71db7b8266fc5c41fa207802b66d8bed5236c121bd484bbb617cf74ff9fb",
+              "output_bytes": 5448,
+              "exit": 0,
+              "elapsed_ms": 2579.646,
+              "receipt_sha256": "4595c882e3af131cca842a667ca71beb262b3394c5b69f6b50aa036d985efbe2"
+            },
+            {
+              "arm": "artifacts-cli-missing-context",
+              "command": "compare-artifacts",
+              "syntax": "COMMAND INPUT_JSON --json; selected form uses {kind:evidence-file,path,evidence_id} on each side",
+              "input_sha256": "c4189ae706fac5876211cabfdb3a605b11e862cce0161c0d3385770ac5abfcfb",
+              "input_bytes": 243,
+              "output_sha256": "e8d9785d063b46a4338d978df8937bfb637c5225ae160d60dcdacb714313303f",
+              "output_bytes": 802,
+              "exit": 1,
+              "elapsed_ms": 1939.933,
+              "receipt_sha256": "f139e86091940e004a3d77cdc8ad96769f115a626cd1252f05eadb453d76c0af"
+            },
+            {
+              "arm": "artifacts-cli-selected-file",
+              "command": "compare-artifacts",
+              "syntax": "COMMAND INPUT_JSON --json; selected form uses {kind:evidence-file,path,evidence_id} on each side",
+              "input_sha256": "f6bd17fb6614caf82d8935e997822e3177c60230952a364eecab72d35b581919",
+              "input_bytes": 517,
+              "output_sha256": "162b71db7b8266fc5c41fa207802b66d8bed5236c121bd484bbb617cf74ff9fb",
+              "output_bytes": 5448,
+              "exit": 0,
+              "elapsed_ms": 2749.454,
+              "receipt_sha256": "32a089b1f6466882b6d3c6d7f510739ef29006242427b8e35121205c4417c4c3"
+            },
+            {
+              "arm": "graph-cli-inline",
+              "command": "project-apple-application-graph",
+              "syntax": "COMMAND INPUT_JSON --json [--evidence-bundle BUNDLE]",
+              "input_sha256": "f4c9a9c51e2556cbc002b26e098cb9e381ad739a948a7c60e49cb2319a6cb60e",
+              "input_bytes": 317682,
+              "output_sha256": "4068af82691fc0e82f7ec32587c6124fa836c51f965073c80526c5a303b00b28",
+              "output_bytes": 28531,
+              "exit": 0,
+              "elapsed_ms": 2094.129,
+              "receipt_sha256": "4385c3863060cf8451811f33a9515d2774ea75a5a73da96cbe22038dd62051f8"
+            },
+            {
+              "arm": "graph-cli-missing-context",
+              "command": "project-apple-application-graph",
+              "syntax": "COMMAND INPUT_JSON --json [--evidence-bundle BUNDLE]",
+              "input_sha256": "3fbfe6fd7d25d09e0befef6fb4e3d065f088c97b06e59b18928f4801a72c1256",
+              "input_bytes": 138,
+              "output_sha256": "b975e44c6e3f559b961d17059b5d7520f25c37dda62ea173e40da79a6f666c68",
+              "output_bytes": 856,
+              "exit": 1,
+              "elapsed_ms": 2223.693,
+              "receipt_sha256": "1ffa07fda2b850f333ce5d17e54be121fd735d51eaf87958abb169381e26f795"
+            },
+            {
+              "arm": "graph-cli-reference",
+              "command": "project-apple-application-graph",
+              "syntax": "COMMAND INPUT_JSON --json [--evidence-bundle BUNDLE]",
+              "input_sha256": "3fbfe6fd7d25d09e0befef6fb4e3d065f088c97b06e59b18928f4801a72c1256",
+              "input_bytes": 138,
+              "output_sha256": "4068af82691fc0e82f7ec32587c6124fa836c51f965073c80526c5a303b00b28",
+              "output_bytes": 28531,
+              "exit": 0,
+              "elapsed_ms": 2011.641,
+              "receipt_sha256": "cdec128f4d45f7544aee9b2f553932fa1bd95d9e300c73e9311c673664a78b9a"
+            },
+            {
+              "arm": "graph-cli-wrong-source-role",
+              "command": "project-apple-application-graph",
+              "syntax": "COMMAND INPUT_JSON --json [--evidence-bundle BUNDLE]",
+              "input_sha256": "d8afc8807230e4e91224f73c1626536b6fe6e4c6cb0c6843afa1b529aaed030d",
+              "input_bytes": 138,
+              "output_sha256": "96a649806c258037c1fd0712ba14d891eb3f4cf050dfb59f5b8b2aaf56951cab",
+              "output_bytes": 758,
+              "exit": 1,
+              "elapsed_ms": 2337.506,
+              "receipt_sha256": "f3192ede7516bb5417837e0f82f4db51481ba2781de0d68c2fed6f8698b0ae12"
+            }
+          ],
+          "unrecorded_commands": []
+        },
+        "source_evidence_ids": [
+          "ev_23ed0f86edeb2ae1c17345fbd28ccfafff290e944147c26ddf984410337918d0",
+          "ev_a1fc683933f6f7f17d33883645fb37ea6127b63eb2fcbc8a117711608dd82ad3"
+        ],
+        "bundle": {
+          "sha256": "8daa6286b28aadf5ba0d41038046805e5c69874eaa0bc5daf0e265360fcae79d",
+          "bytes": 642903,
+          "records": 3,
+          "unchanged": true
+        },
+        "outcome": "passed-supported-contracts",
+        "failure_note": null,
+        "producer_closed_before_consumer": true,
+        "zero_consumer_producer_calls": true,
+        "results": [
+          {
+            "name": "graph",
+            "evidence_id": "ev_8c514288778171c79c59f2c999967619147e139c57ec71cd1ad195a651baa453",
+            "normalized_result_sha256": "39b597b93793e062094873a1370e107504265e733333902e4cd6185ee5de6c0a",
+            "actual_reply_sha256": "ee444460fc0d3df47f0b6b8948211acb1e3cc28934268777f0284bfb289cdd36",
+            "MCP_inline": "default1024-element-refusal",
+            "CLI_parity": {
+              "complete_MCP_reference_CLI_inline_CLI_reference_equality": true
+            },
+            "CLI_unavailable": null,
+            "status": null,
+            "coverage": {
+              "status": "complete-within-inventory",
+              "inventory_complete": true
+            },
+            "summary": null,
+            "limitations_count": 8
+          },
+          {
+            "name": "artifacts",
+            "evidence_id": "ev_e2ee78bfbcc74d5e234b8a65c1bb4580f62721f4630d8607349fcb36a4c4121d",
+            "normalized_result_sha256": "7e5eb19870f3fd51444274b407792456a98ebb7d6b4ca8affcf1215a21358068",
+            "actual_reply_sha256": "4ff066a1d56c8d3e0213366a3ef97d01aaa19ca8d1b36c7afbf5c1e0952c1db5",
+            "MCP_inline": "default1024-element-refusal",
+            "CLI_parity": {
+              "complete_MCP_reference_CLI_inline_CLI_explicit_selected_file_equality": true
+            },
+            "CLI_unavailable": null,
+            "status": "unknown",
+            "coverage": null,
+            "summary": null,
+            "limitations_count": 3
+          }
+        ],
+        "raw_outer_command_receipt_sha256": "89681727d8b8584686b67b8d16af4159c3ac7e74ddcbabfb29cfda367897bcce",
+        "raw_resource_receipt_sha256": "463fb2d69281af932397cd2ff66938f416fc06dadcc5c070ea96d4862306b3c5"
+      },
+      {
+        "attempt": "harmony-app-01",
+        "lane": "harmony-app",
+        "artifact_id": "shark-app",
+        "source_head": "7e10c1cc9d2ff8371e5cf9ba3f77c834f644e759",
+        "source_dirty": true,
+        "built_runtime_sha256": "63746cf7b340358ac5ce609761ea3198ae3a62e24df52f62ed5be16893940021",
+        "harness_sha256": "0ae5954705a398dee5fdd893cc3664b61c298a64895e135df32610ac00c6f40c",
+        "scope_elapsed_seconds": 16.714,
+        "CPU_usec": 15950327,
+        "peak_process_family_bytes": 519761920,
+        "kernel_payload_exit_observation_verified": true,
+        "cleanup_verified": true,
+        "OOM": 0,
+        "OOM_kill": 0,
+        "resource_abort": null,
+        "payload_exit_code": 0,
+        "MCP_calls": {
+          "completed": 17,
+          "typed_error_results": 4,
+          "by_tool": {
+            "open_binary": 1,
+            "inspect_artifact": 1,
+            "export_evidence_bundle": 1,
+            "close_binary": 1,
+            "binary_session": 4,
+            "project_harmony_application_graph": 6,
+            "import_evidence_bundle": 1,
+            "get_evidence_bundle": 2
+          },
+          "transport_interrupted_attempts": 0
+        },
+        "CLI_arms": {
+          "output_files": 4,
+          "completed_command_receipts": 4,
+          "arms": [
+            {
+              "arm": "graph-cli-inline",
+              "command": "project-harmony-application-graph",
+              "syntax": "COMMAND INPUT_JSON --json [--evidence-bundle BUNDLE]",
+              "input_sha256": "c42116e37822d50dd7be47a7bc0ee226d3358f26ed6b35a325ee245b1df4aba0",
+              "input_bytes": 5950,
+              "output_sha256": "0001af5a4a3c4d1c67aaf8cd20630ee9a13c87ea7f12137ea5406d797887bf88",
+              "output_bytes": 5158,
+              "exit": 0,
+              "elapsed_ms": 2994.299,
+              "receipt_sha256": "37ce21310221a64f779b421d87232fdd1f9b65c56ced22806ecb374362398b8d"
+            },
+            {
+              "arm": "graph-cli-missing-context",
+              "command": "project-harmony-application-graph",
+              "syntax": "COMMAND INPUT_JSON --json [--evidence-bundle BUNDLE]",
+              "input_sha256": "e8bbcf4b076e26ed426cbb71ec1d0a6252913e563925b25124d71d318e61b208",
+              "input_bytes": 138,
+              "output_sha256": "b5ad4202c355090f013b7297320e2ade5a0508388e5f7aab442f59259b1093c4",
+              "output_bytes": 856,
+              "exit": 1,
+              "elapsed_ms": 2121.806,
+              "receipt_sha256": "12a5141ed001e37100551c8431c65031c0b8d6cbdf7130824592b002456a47b9"
+            },
+            {
+              "arm": "graph-cli-reference",
+              "command": "project-harmony-application-graph",
+              "syntax": "COMMAND INPUT_JSON --json [--evidence-bundle BUNDLE]",
+              "input_sha256": "e8bbcf4b076e26ed426cbb71ec1d0a6252913e563925b25124d71d318e61b208",
+              "input_bytes": 138,
+              "output_sha256": "0001af5a4a3c4d1c67aaf8cd20630ee9a13c87ea7f12137ea5406d797887bf88",
+              "output_bytes": 5158,
+              "exit": 0,
+              "elapsed_ms": 2218.17,
+              "receipt_sha256": "1abeb505eb9802f39d9aca4d74d2dbe2767903f74949a781e7c73383535d96ca"
+            },
+            {
+              "arm": "graph-cli-wrong-source-role",
+              "command": "project-harmony-application-graph",
+              "syntax": "COMMAND INPUT_JSON --json [--evidence-bundle BUNDLE]",
+              "input_sha256": "ca6864f5bd7b60ef2de9d83dc3c3a0229b889866867a4b8fcf05a41d0233f40b",
+              "input_bytes": 138,
+              "output_sha256": "658dd5c9b3fe5c758c91180c36a2a98b9acec2885882be3e7c0025edfdf607b2",
+              "output_bytes": 764,
+              "exit": 1,
+              "elapsed_ms": 2274.238,
+              "receipt_sha256": "f3e1591a047cb3d028f1973acf4313e04e760eb6934b3b3b30a54382d2b4b99a"
+            }
+          ],
+          "unrecorded_commands": []
+        },
+        "source_evidence_ids": [
+          "ev_06fa019a6fca96d6e4e3195df0520562e249aa283902dd10a52fb58c7f3dde2a",
+          "ev_66602655d6e7fa7076146997ef1bee7fb0023b306275e37f2bb5e4f6da613499"
+        ],
+        "bundle": {
+          "sha256": "3a526ab0113f80ada26ff5a0631fc95dac91485946f20584fc5a76f5ee8eb880",
+          "bytes": 19523,
+          "records": 3,
+          "unchanged": true
+        },
+        "outcome": "passed-supported-contracts",
+        "failure_note": null,
+        "producer_closed_before_consumer": true,
+        "zero_consumer_producer_calls": true,
+        "results": [
+          {
+            "name": "graph",
+            "evidence_id": "ev_391e76c5a80b32b0920479f0749eaef42878da22b02d44cde98f30f392d28c13",
+            "normalized_result_sha256": "0d6c7bab4fbafcbe8a1a0c9de509e3a5954fd9bb06d858db252fa2a66e7a34c0",
+            "actual_reply_sha256": "8aeae332ea8b88cb4886aa2436b56ce21ce05f810e8da68dd432fd5deae7c19a",
+            "MCP_inline": "complete-MCP-inline-parity",
+            "CLI_parity": {
+              "complete_MCP_reference_CLI_inline_CLI_reference_equality": true
+            },
+            "CLI_unavailable": null,
+            "status": null,
+            "coverage": {
+              "status": "complete-within-inventory",
+              "inventory_complete": true
+            },
+            "summary": null,
+            "limitations_count": 9
+          }
+        ],
+        "raw_outer_command_receipt_sha256": "2ca28f534f32438171df20358ebc797d01f1dd6d4871f876db805f5973dc6c3e",
+        "raw_resource_receipt_sha256": "e0a8890df2a9ddb546ba51000371a0f36345f57440ec1bff01cb97fbe65b4d38"
+      },
+      {
+        "attempt": "harmony-hap-01",
+        "lane": "harmony-hap",
+        "artifact_id": "shark-hap",
+        "source_head": "7e10c1cc9d2ff8371e5cf9ba3f77c834f644e759",
+        "source_dirty": true,
+        "built_runtime_sha256": "63746cf7b340358ac5ce609761ea3198ae3a62e24df52f62ed5be16893940021",
+        "harness_sha256": "1d7e3c0241e81c6050e857bebea68a7e3012bced5a5d386cac390ae7eb2ff6da",
+        "scope_elapsed_seconds": 16.294,
+        "CPU_usec": 15886932,
+        "peak_process_family_bytes": 533172224,
+        "kernel_payload_exit_observation_verified": true,
+        "cleanup_verified": true,
+        "OOM": 0,
+        "OOM_kill": 0,
+        "resource_abort": null,
+        "payload_exit_code": 0,
+        "MCP_calls": {
+          "completed": 17,
+          "typed_error_results": 5,
+          "by_tool": {
+            "open_binary": 1,
+            "inspect_artifact": 1,
+            "export_evidence_bundle": 1,
+            "close_binary": 1,
+            "binary_session": 4,
+            "project_harmony_application_graph": 6,
+            "import_evidence_bundle": 1,
+            "get_evidence_bundle": 2
+          },
+          "transport_interrupted_attempts": 0
+        },
+        "CLI_arms": {
+          "output_files": 4,
+          "completed_command_receipts": 4,
+          "arms": [
+            {
+              "arm": "graph-cli-inline",
+              "command": "project-harmony-application-graph",
+              "syntax": "COMMAND INPUT_JSON --json [--evidence-bundle BUNDLE]",
+              "input_sha256": "dd5bc96a694adc714bc7ed6bae6d62bdb90b764c547393fb2a1432289ed7026f",
+              "input_bytes": 64475,
+              "output_sha256": "e76a813817fbf7248228dcac7a107d2b5e1e1896d41b292b074bf49e21a6b913",
+              "output_bytes": 16063,
+              "exit": 0,
+              "elapsed_ms": 2579.432,
+              "receipt_sha256": "567fed1e53e80853673ee1694c49132c94c13b24cae46f645776af89318c58d6"
+            },
+            {
+              "arm": "graph-cli-missing-context",
+              "command": "project-harmony-application-graph",
+              "syntax": "COMMAND INPUT_JSON --json [--evidence-bundle BUNDLE]",
+              "input_sha256": "e2519bec92adfbb92ade41ad60f1b1efdea0d6c03e45f57eab3e94b27741b956",
+              "input_bytes": 138,
+              "output_sha256": "c1b96a2a087c2ca13d705caae9c4266d87fe1f4cfdf6e661dc03cca36438596d",
+              "output_bytes": 856,
+              "exit": 1,
+              "elapsed_ms": 2175.388,
+              "receipt_sha256": "df8feb31876030d29cc6240ac360027b1526b7692010893ae9331a6e9c236320"
+            },
+            {
+              "arm": "graph-cli-reference",
+              "command": "project-harmony-application-graph",
+              "syntax": "COMMAND INPUT_JSON --json [--evidence-bundle BUNDLE]",
+              "input_sha256": "e2519bec92adfbb92ade41ad60f1b1efdea0d6c03e45f57eab3e94b27741b956",
+              "input_bytes": 138,
+              "output_sha256": "e76a813817fbf7248228dcac7a107d2b5e1e1896d41b292b074bf49e21a6b913",
+              "output_bytes": 16063,
+              "exit": 0,
+              "elapsed_ms": 2587.581,
+              "receipt_sha256": "05f9ed3602c69ef545c9353eeff652486a651f75bff890e8ec58c72071419561"
+            },
+            {
+              "arm": "graph-cli-wrong-source-role",
+              "command": "project-harmony-application-graph",
+              "syntax": "COMMAND INPUT_JSON --json [--evidence-bundle BUNDLE]",
+              "input_sha256": "09df54af157e1ccfb1f9a2beaa5c755221dac267a9e0bb0b877b3ecbff2792b3",
+              "input_bytes": 138,
+              "output_sha256": "658dd5c9b3fe5c758c91180c36a2a98b9acec2885882be3e7c0025edfdf607b2",
+              "output_bytes": 764,
+              "exit": 1,
+              "elapsed_ms": 2528.308,
+              "receipt_sha256": "4409c3f3f6d7b0df5ab542221193c2b0d426ea364a4d0eb0a1432e7641bd8d18"
+            }
+          ],
+          "unrecorded_commands": []
+        },
+        "source_evidence_ids": [
+          "ev_344e1e7628c1ff2121b1fdebdbfc14e63c12b7f8c61042ae617a83c5354c38ee",
+          "ev_8e81e991aee54cdbe3396d4174d0119e94b79240b4a55e2e70b2f94fdb2d9d35"
+        ],
+        "bundle": {
+          "sha256": "3431c0a347f331c3effacf7984ecb890f3fef46d8b00b03b50980023b065cd4a",
+          "bytes": 136549,
+          "records": 3,
+          "unchanged": true
+        },
+        "outcome": "passed-supported-contracts",
+        "failure_note": null,
+        "producer_closed_before_consumer": true,
+        "zero_consumer_producer_calls": true,
+        "results": [
+          {
+            "name": "graph",
+            "evidence_id": "ev_88c25f50ab0735f809e7447aa729e9ce2be64b84048b56d24c680becf2cb28e2",
+            "normalized_result_sha256": "f4518c9d3284031e4adea3d4138789d5d78d0af2b1d10dab1ee0de2b70d15a02",
+            "actual_reply_sha256": "f779587fc7ca72340a3db3a131d307f3c371e836a64bbe3348193f66d24cf3c1",
+            "MCP_inline": "default1024-element-refusal",
+            "CLI_parity": {
+              "complete_MCP_reference_CLI_inline_CLI_reference_equality": true
+            },
+            "CLI_unavailable": null,
+            "status": null,
+            "coverage": {
+              "status": "complete-within-inventory",
+              "inventory_complete": true
+            },
+            "summary": null,
+            "limitations_count": 7
+          }
+        ],
+        "raw_outer_command_receipt_sha256": "1d498421a67197c2f5fa91db994ed4559ef1e9f71df003677cfd63cef13a9a8e",
+        "raw_resource_receipt_sha256": "8b2a6419012df37de3a172a47d2c544c0f70dcd2d57b81c899642807f36e9501"
+      },
+      {
+        "attempt": "javascript-01",
+        "lane": "javascript",
+        "artifact_id": "agent-browser-entry",
+        "source_head": "7e10c1cc9d2ff8371e5cf9ba3f77c834f644e759",
+        "source_dirty": true,
+        "built_runtime_sha256": "63746cf7b340358ac5ce609761ea3198ae3a62e24df52f62ed5be16893940021",
+        "harness_sha256": "0d1d616bc8581822c84468c0855b940675ff037b162a4219198ce339f846870f",
+        "scope_elapsed_seconds": 6.65,
+        "CPU_usec": 6194774,
+        "peak_process_family_bytes": 466661376,
+        "kernel_payload_exit_observation_verified": true,
+        "cleanup_verified": true,
+        "OOM": 0,
+        "OOM_kill": 0,
+        "resource_abort": null,
+        "payload_exit_code": 1,
+        "MCP_calls": {
+          "completed": 4,
+          "typed_error_results": 0,
+          "by_tool": {
+            "analyze_javascript_application": 1,
+            "export_evidence_bundle": 1,
+            "close_binary": 1,
+            "binary_session": 1
+          },
+          "transport_interrupted_attempts": 0
+        },
+        "CLI_arms": {
+          "output_files": 0,
+          "completed_command_receipts": 0,
+          "arms": [],
+          "unrecorded_commands": []
+        },
+        "source_evidence_ids": [
+          "ev_73f59e34d58539cffa3fef9a28fe444b734fa50549dc5d410cad7d7163daa521"
+        ],
+        "bundle": {
+          "sha256": "66232b6eb01b3dbf435949a1cd94cb2532b7f989b91cdf952a105b3cee231bda",
+          "bytes": 616150,
+          "records": 2,
+          "unchanged": null
+        },
+        "outcome": "harness-source-identity-assumption",
+        "failure_note": "Selector assumed canonical-path; actual typed source-module observation uses artifact-local-key. Genuine producer/export retained and reused.",
+        "producer_closed_before_consumer": null,
+        "zero_consumer_producer_calls": true,
+        "results": [],
+        "raw_outer_command_receipt_sha256": "d8853634589c8be65bc597fe562fe5a9d2d891b9542641d5fd0820d64dee70ed",
+        "raw_resource_receipt_sha256": "5285092a2ff4c43558974f35eb7fac1daf67c605560353bb727f827b25d2bd82"
+      },
+      {
+        "attempt": "javascript-02",
+        "lane": "javascript",
+        "artifact_id": "agent-browser-entry",
+        "source_head": "7e10c1cc9d2ff8371e5cf9ba3f77c834f644e759",
+        "source_dirty": true,
+        "built_runtime_sha256": "63746cf7b340358ac5ce609761ea3198ae3a62e24df52f62ed5be16893940021",
+        "harness_sha256": "7d104443d70fe3c020977502489ef3447df3d89412482f0aba8b30400ece78a9",
+        "scope_elapsed_seconds": 3.941,
+        "CPU_usec": 3705443,
+        "peak_process_family_bytes": 373411840,
+        "kernel_payload_exit_observation_verified": true,
+        "cleanup_verified": true,
+        "OOM": 0,
+        "OOM_kill": 0,
+        "resource_abort": null,
+        "payload_exit_code": 1,
+        "MCP_calls": {
+          "completed": 14,
+          "typed_error_results": 8,
+          "by_tool": {
+            "binary_session": 2,
+            "trace_application_feature": 6,
+            "import_evidence_bundle": 1,
+            "get_evidence_bundle": 2,
+            "trace_javascript_semantics": 3
+          },
+          "transport_interrupted_attempts": 0
+        },
+        "CLI_arms": {
+          "output_files": 0,
+          "completed_command_receipts": 0,
+          "arms": [],
+          "unrecorded_commands": []
+        },
+        "source_evidence_ids": [],
+        "bundle": {
+          "sha256": "66232b6eb01b3dbf435949a1cd94cb2532b7f989b91cdf952a105b3cee231bda",
+          "bytes": 616150,
+          "records": 2,
+          "unchanged": null
+        },
+        "outcome": "harness-error-projection-assumption",
+        "failure_note": "Default1024 refusal worked; harness expected max_input_elements at wrong nesting. Same original export reused.",
+        "producer_closed_before_consumer": null,
+        "zero_consumer_producer_calls": true,
+        "results": [],
+        "raw_outer_command_receipt_sha256": "229c1a76f7957b6785989ac1237ec68fb266048542143c37c8d977e1949ee2b7",
+        "raw_resource_receipt_sha256": "acdc47ad619d6d8e6a68ac7bbc9995b16c0b64006d2d664861fb9fcf198fad2a"
+      },
+      {
+        "attempt": "javascript-03",
+        "lane": "javascript",
+        "artifact_id": "agent-browser-entry",
+        "source_head": "7e10c1cc9d2ff8371e5cf9ba3f77c834f644e759",
+        "source_dirty": true,
+        "built_runtime_sha256": "63746cf7b340358ac5ce609761ea3198ae3a62e24df52f62ed5be16893940021",
+        "harness_sha256": "81858a348907cdaceb250228dc0a2423d05c0d51ecee824241cd1ad2c80b0f64",
+        "scope_elapsed_seconds": 23.733,
+        "CPU_usec": 23194701,
+        "peak_process_family_bytes": 690913280,
+        "kernel_payload_exit_observation_verified": true,
+        "cleanup_verified": true,
+        "OOM": 0,
+        "OOM_kill": 0,
+        "resource_abort": null,
+        "payload_exit_code": 0,
+        "MCP_calls": {
+          "completed": 17,
+          "typed_error_results": 9,
+          "by_tool": {
+            "binary_session": 3,
+            "trace_application_feature": 6,
+            "import_evidence_bundle": 1,
+            "get_evidence_bundle": 2,
+            "trace_javascript_semantics": 5
+          },
+          "transport_interrupted_attempts": 0
+        },
+        "CLI_arms": {
+          "output_files": 8,
+          "completed_command_receipts": 8,
+          "arms": [
+            {
+              "arm": "feature-cli-inline",
+              "command": "trace-application-feature",
+              "syntax": "COMMAND INPUT_JSON --json [--evidence-bundle BUNDLE]",
+              "input_sha256": "84b1cb83b75423f104c69f76d3e4eb061e7f9d703b7edc072126144314316fdf",
+              "input_bytes": 604529,
+              "output_sha256": "7372742b055a89224be01fb5cc9a663811726d5f74d87bfd85211319081ae4bf",
+              "output_bytes": 64076,
+              "exit": 0,
+              "elapsed_ms": 2702.281,
+              "receipt_sha256": "115c2cbbfc02d4bbe445abf6389c05495a40d4ea1b8b72031db9193bf966c261"
+            },
+            {
+              "arm": "feature-cli-missing-context",
+              "command": "trace-application-feature",
+              "syntax": "COMMAND INPUT_JSON --json [--evidence-bundle BUNDLE]",
+              "input_sha256": "f534edd7d43a5504dffc2796d6074c2d492c261c7d4d66bcc58686d15e114230",
+              "input_bytes": 262,
+              "output_sha256": "77e86f8d90340f9fc4ad8e9774e9a846af591e97ca48a4367754d83effe3dde9",
+              "output_bytes": 847,
+              "exit": 1,
+              "elapsed_ms": 2261.674,
+              "receipt_sha256": "b3326d0ef51ead158592e361049ae73659a3f8aabb44e3e7a80c1c974662df15"
+            },
+            {
+              "arm": "feature-cli-reference",
+              "command": "trace-application-feature",
+              "syntax": "COMMAND INPUT_JSON --json [--evidence-bundle BUNDLE]",
+              "input_sha256": "f534edd7d43a5504dffc2796d6074c2d492c261c7d4d66bcc58686d15e114230",
+              "input_bytes": 262,
+              "output_sha256": "7372742b055a89224be01fb5cc9a663811726d5f74d87bfd85211319081ae4bf",
+              "output_bytes": 64076,
+              "exit": 0,
+              "elapsed_ms": 2243.416,
+              "receipt_sha256": "0141b214be616f9a7a388508ecd4331468a8c1f9ca55e8ceb0e04a5844bdc115"
+            },
+            {
+              "arm": "feature-cli-wrong-source-role",
+              "command": "trace-application-feature",
+              "syntax": "COMMAND INPUT_JSON --json [--evidence-bundle BUNDLE]",
+              "input_sha256": "0d3f17857e407528caab3e9790b1028688ea106e7e704e604da76ea6723b0390",
+              "input_bytes": 262,
+              "output_sha256": "5c498487a3b20ae997feab560e646bc434cd2f999e1a5e77e16a00eb0d0d64c1",
+              "output_bytes": 748,
+              "exit": 1,
+              "elapsed_ms": 2692.942,
+              "receipt_sha256": "b290decf1e064e979e9cec97aa42fe6c069524534f6f4e534c3276e9483bebd9"
+            },
+            {
+              "arm": "semantic-cli-inline",
+              "command": "trace-javascript-semantics",
+              "syntax": "COMMAND INPUT_JSON --json [--evidence-bundle BUNDLE]",
+              "input_sha256": "7c922341dda3289d225e52d914a0e45f53160f41d69bcbc389741fa16ebb497a",
+              "input_bytes": 604549,
+              "output_sha256": "c3db176dfa0277de95ba756b1198bae9c7693c982776770b1528637bf5dadb61",
+              "output_bytes": 6091,
+              "exit": 0,
+              "elapsed_ms": 2765.772,
+              "receipt_sha256": "a511a6ecf36b95b6218ecf4ea5897ba828d37a95fffe4fbcfd73a62e3be70b93"
+            },
+            {
+              "arm": "semantic-cli-missing-context",
+              "command": "trace-javascript-semantics",
+              "syntax": "COMMAND INPUT_JSON --json [--evidence-bundle BUNDLE]",
+              "input_sha256": "770d316254a469240f48f037bee16666c3f702177b447eaf0ad3718827b18f43",
+              "input_bytes": 282,
+              "output_sha256": "77e86f8d90340f9fc4ad8e9774e9a846af591e97ca48a4367754d83effe3dde9",
+              "output_bytes": 847,
+              "exit": 1,
+              "elapsed_ms": 2123.255,
+              "receipt_sha256": "cd8dac85432d56245aa615d50c0354da7646a8ceb071b5a83fbb2d6845b9b93b"
+            },
+            {
+              "arm": "semantic-cli-reference",
+              "command": "trace-javascript-semantics",
+              "syntax": "COMMAND INPUT_JSON --json [--evidence-bundle BUNDLE]",
+              "input_sha256": "770d316254a469240f48f037bee16666c3f702177b447eaf0ad3718827b18f43",
+              "input_bytes": 282,
+              "output_sha256": "c3db176dfa0277de95ba756b1198bae9c7693c982776770b1528637bf5dadb61",
+              "output_bytes": 6091,
+              "exit": 0,
+              "elapsed_ms": 2386.479,
+              "receipt_sha256": "3db2e9112e77f646e95ff34e8d69e48f9e9f600ba69ee6720f165cf38188b3fd"
+            },
+            {
+              "arm": "semantic-cli-wrong-source-role",
+              "command": "trace-javascript-semantics",
+              "syntax": "COMMAND INPUT_JSON --json [--evidence-bundle BUNDLE]",
+              "input_sha256": "5f147be4934dc2a0c740322a18fd114aea8acb53534c5aca2e1adbdc6140cb8e",
+              "input_bytes": 282,
+              "output_sha256": "bfc86b7bff3835601f3b242b2253c8dda6ee2250bb9e8356dab50563bedca0d6",
+              "output_bytes": 751,
+              "exit": 1,
+              "elapsed_ms": 2354.597,
+              "receipt_sha256": "f2a104e2b3c456e57fbeb4893a24b714ba38c6f31e500ec1191596ff5cd5c2a8"
+            }
+          ],
+          "unrecorded_commands": []
+        },
+        "source_evidence_ids": [
+          "ev_73f59e34d58539cffa3fef9a28fe444b734fa50549dc5d410cad7d7163daa521"
+        ],
+        "bundle": {
+          "sha256": "66232b6eb01b3dbf435949a1cd94cb2532b7f989b91cdf952a105b3cee231bda",
+          "bytes": 616150,
+          "records": 2,
+          "unchanged": true
+        },
+        "outcome": "passed-supported-contracts",
+        "failure_note": null,
+        "producer_closed_before_consumer": true,
+        "zero_consumer_producer_calls": true,
+        "results": [
+          {
+            "name": "feature",
+            "evidence_id": "ev_22ba6c0041089032045b3c16732fd1c08750dad1675fdb5a8be69cb3e741ce09",
+            "normalized_result_sha256": "c9f8d15cbbe36237cab96b00a9fb1cafeb24b211636eb41efc5dc477a401a234",
+            "actual_reply_sha256": "cb873c1c266b51dc70056b075bb81e68fc488e9d688b1895ad8f3b642a655fb6",
+            "MCP_inline": "default1024-element-refusal",
+            "CLI_parity": {
+              "complete_MCP_reference_CLI_inline_CLI_reference_equality": true
+            },
+            "CLI_unavailable": null,
+            "status": null,
+            "coverage": {
+              "status": "partial",
+              "source_graph_status": "partial",
+              "total_seed_matches": 1
+            },
+            "summary": null,
+            "limitations_count": 5
+          },
+          {
+            "name": "semantic",
+            "evidence_id": "ev_53d5b19ce0cbdacf37910631e16a848549866cbb4de46b0fcb3b4785c86337ab",
+            "normalized_result_sha256": "b250fcc8a6de2f9037ccfe094cb1b4de498b34d311e6a6a73f9797d38693f83a",
+            "actual_reply_sha256": "9ab5687f1155f6e463d58240175e122a954907effe81a2032ca1d57a00b51e14",
+            "MCP_inline": "default1024-element-refusal",
+            "CLI_parity": {
+              "complete_MCP_reference_CLI_inline_CLI_reference_equality": true
+            },
+            "CLI_unavailable": null,
+            "status": "found",
+            "coverage": {
+              "status": "partial"
+            },
+            "summary": null,
+            "limitations_count": 13
+          }
+        ],
+        "raw_outer_command_receipt_sha256": "34b0d6de4a46f1e8826f3aee704a2cb5d92e7136d4b63e0c5e0be1659ab34f0f",
+        "raw_resource_receipt_sha256": "f5ac33652f000cacc8545f89b8dd83858339091229639cd28fb5e14f1fff3ae2"
+      },
+      {
+        "attempt": "managed-01",
+        "lane": "managed",
+        "artifact_id": "nuget-cli",
+        "source_head": "7e10c1cc9d2ff8371e5cf9ba3f77c834f644e759",
+        "source_dirty": true,
+        "built_runtime_sha256": "63746cf7b340358ac5ce609761ea3198ae3a62e24df52f62ed5be16893940021",
+        "harness_sha256": "81858a348907cdaceb250228dc0a2423d05c0d51ecee824241cd1ad2c80b0f64",
+        "scope_elapsed_seconds": 21.327,
+        "CPU_usec": 20802841,
+        "peak_process_family_bytes": 716390400,
+        "kernel_payload_exit_observation_verified": true,
+        "cleanup_verified": true,
+        "OOM": 0,
+        "OOM_kill": 0,
+        "resource_abort": null,
+        "payload_exit_code": 1,
+        "MCP_calls": {
+          "completed": 23,
+          "typed_error_results": 10,
+          "by_tool": {
+            "inspect_managed_artifact": 1,
+            "inspect_managed_members": 2,
+            "export_evidence_bundle": 1,
+            "close_binary": 1,
+            "binary_session": 3,
+            "project_managed_application_graph": 6,
+            "import_evidence_bundle": 1,
+            "get_evidence_bundle": 2,
+            "compare_managed_members": 6
+          },
+          "transport_interrupted_attempts": 0
+        },
+        "CLI_arms": {
+          "output_files": 5,
+          "completed_command_receipts": 4,
+          "arms": [
+            {
+              "arm": "graph-cli-inline",
+              "command": "project-managed-application-graph",
+              "syntax": "COMMAND INPUT_JSON --json [--evidence-bundle BUNDLE]",
+              "input_sha256": "3cfd14f8e321f4117a324bcc2beaafccc8b0234463b0913eb9c26424f5c38101",
+              "input_bytes": 1247672,
+              "output_sha256": "c412c979610e6f5df439a76a309ac6d6b51d2014b98580a2c124ff6012a921c5",
+              "output_bytes": 44485,
+              "exit": 0,
+              "elapsed_ms": 3004.226,
+              "receipt_sha256": "1bac1fd3401ee87b509a5fc790b052be945b991034ac9271d59e6455538ee98b"
+            },
+            {
+              "arm": "graph-cli-missing-context",
+              "command": "project-managed-application-graph",
+              "syntax": "COMMAND INPUT_JSON --json [--evidence-bundle BUNDLE]",
+              "input_sha256": "c0fc740ebec48f5fb4eaff702b9206c0c9f3e7ebf75e504732e9911df1fe96f3",
+              "input_bytes": 265,
+              "output_sha256": "add714c3bb79cbd6dff943bf806a89bacd07d613abf91d8096b0ba2986395fe9",
+              "output_bytes": 814,
+              "exit": 1,
+              "elapsed_ms": 2110.97,
+              "receipt_sha256": "d81cfa839c9bcb5497dec3af26b3d6ac327784a56ffedbe4de37a7dcb5d93f34"
+            },
+            {
+              "arm": "graph-cli-reference",
+              "command": "project-managed-application-graph",
+              "syntax": "COMMAND INPUT_JSON --json [--evidence-bundle BUNDLE]",
+              "input_sha256": "c0fc740ebec48f5fb4eaff702b9206c0c9f3e7ebf75e504732e9911df1fe96f3",
+              "input_bytes": 265,
+              "output_sha256": "c412c979610e6f5df439a76a309ac6d6b51d2014b98580a2c124ff6012a921c5",
+              "output_bytes": 44485,
+              "exit": 0,
+              "elapsed_ms": 3416.484,
+              "receipt_sha256": "dbfeac00e7de8583d14ff494733defc5f1eb3fe39ffd96c31dbafddcc02163ee"
+            },
+            {
+              "arm": "graph-cli-wrong-source-role",
+              "command": "project-managed-application-graph",
+              "syntax": "COMMAND INPUT_JSON --json [--evidence-bundle BUNDLE]",
+              "input_sha256": "a0873801f349c88cb940e0537bb2281f23c2ea7fee78f7f6feba2e695e28b2ab",
+              "input_bytes": 265,
+              "output_sha256": "dd55289cf9b2be1b64c4d6d502af7f6cdf932fac41590ba1894e9f090cc1e043",
+              "output_bytes": 770,
+              "exit": 1,
+              "elapsed_ms": 2475.263,
+              "receipt_sha256": "d9f7b180021bb1bf2043c2691105036e98be3d5ae437703063dfa642dbe49388"
+            }
+          ],
+          "unrecorded_commands": [
+            {
+              "arm": "members-cli-inline.output.json",
+              "output_sha256": "b361938a31f4e436768b9707d5aa1fdbac16946432b9ed89a9c986434d0f7417",
+              "observed_error_code": "VALIDATION_ERROR",
+              "exit": "not retained in command receipt; harness aborted before writing it"
+            }
+          ]
+        },
+        "source_evidence_ids": [
+          "ev_66da1e751fda71ecd0a6cb30ccd6c831e3953553c89740c8c170bff8bc8cc389",
+          "ev_a0618cd67a3dff3b2d05153f2781ed91d01e551d08aa7e40b590ac97ee6b9ef8",
+          "ev_c2ccb747eee32a8fee31c4a48d8e994b12b613e4603b6e0a130799fa782f7777"
+        ],
+        "bundle": {
+          "sha256": "11ac63842299c0ac641a320ec9b2a5161b454a8a322d57724fd5f2ffb2fddfa4",
+          "bytes": 2114329,
+          "records": 6,
+          "unchanged": null
+        },
+        "outcome": "harness-unsupported-CLI-grammar",
+        "failure_note": "Member comparison CLI accepts two PE paths, not selected Evidence JSON. Existing graph CLI parity passed; same original export reused.",
+        "producer_closed_before_consumer": null,
+        "zero_consumer_producer_calls": true,
+        "results": [],
+        "raw_outer_command_receipt_sha256": "f6a1d1dc5939a7208ef793e82c1fec0eea60ac626fc76ad1acd6f5ff9c92e03f",
+        "raw_resource_receipt_sha256": "2816f07e1bc0268f6e2a9a8c82ea594311bd2ad90595affed9a62758ef3b4fa7"
+      },
+      {
+        "attempt": "managed-02",
+        "lane": "managed",
+        "artifact_id": "nuget-cli",
+        "source_head": "7e10c1cc9d2ff8371e5cf9ba3f77c834f644e759",
+        "source_dirty": true,
+        "built_runtime_sha256": "63746cf7b340358ac5ce609761ea3198ae3a62e24df52f62ed5be16893940021",
+        "harness_sha256": "4ba5d793e40cbf539abf794c2b44b6d7edb5a36e998123fc11922d1f00c567af",
+        "scope_elapsed_seconds": 16.014,
+        "CPU_usec": 15418853,
+        "peak_process_family_bytes": 728391680,
+        "kernel_payload_exit_observation_verified": true,
+        "cleanup_verified": true,
+        "OOM": 0,
+        "OOM_kill": 0,
+        "resource_abort": null,
+        "payload_exit_code": 0,
+        "MCP_calls": {
+          "completed": 18,
+          "typed_error_results": 10,
+          "by_tool": {
+            "binary_session": 3,
+            "project_managed_application_graph": 6,
+            "import_evidence_bundle": 1,
+            "get_evidence_bundle": 2,
+            "compare_managed_members": 6
+          },
+          "transport_interrupted_attempts": 0
+        },
+        "CLI_arms": {
+          "output_files": 4,
+          "completed_command_receipts": 4,
+          "arms": [
+            {
+              "arm": "graph-cli-inline",
+              "command": "project-managed-application-graph",
+              "syntax": "COMMAND INPUT_JSON --json [--evidence-bundle BUNDLE]",
+              "input_sha256": "3cfd14f8e321f4117a324bcc2beaafccc8b0234463b0913eb9c26424f5c38101",
+              "input_bytes": 1247672,
+              "output_sha256": "c412c979610e6f5df439a76a309ac6d6b51d2014b98580a2c124ff6012a921c5",
+              "output_bytes": 44485,
+              "exit": 0,
+              "elapsed_ms": 3038.9,
+              "receipt_sha256": "999912534ebec93fcc649ed51963e4e97c4703568f857a8d58491362c2fefd11"
+            },
+            {
+              "arm": "graph-cli-missing-context",
+              "command": "project-managed-application-graph",
+              "syntax": "COMMAND INPUT_JSON --json [--evidence-bundle BUNDLE]",
+              "input_sha256": "c0fc740ebec48f5fb4eaff702b9206c0c9f3e7ebf75e504732e9911df1fe96f3",
+              "input_bytes": 265,
+              "output_sha256": "add714c3bb79cbd6dff943bf806a89bacd07d613abf91d8096b0ba2986395fe9",
+              "output_bytes": 814,
+              "exit": 1,
+              "elapsed_ms": 2462.415,
+              "receipt_sha256": "de50b5eae428084bea4b28d9c4674d910a83065d177a9cbe5e6ef6a54fc1f47a"
+            },
+            {
+              "arm": "graph-cli-reference",
+              "command": "project-managed-application-graph",
+              "syntax": "COMMAND INPUT_JSON --json [--evidence-bundle BUNDLE]",
+              "input_sha256": "c0fc740ebec48f5fb4eaff702b9206c0c9f3e7ebf75e504732e9911df1fe96f3",
+              "input_bytes": 265,
+              "output_sha256": "c412c979610e6f5df439a76a309ac6d6b51d2014b98580a2c124ff6012a921c5",
+              "output_bytes": 44485,
+              "exit": 0,
+              "elapsed_ms": 3175.737,
+              "receipt_sha256": "88e87f6a4f7aee99c499fbc267d8c47ff29be183cea36a579dbd45223cb5a689"
+            },
+            {
+              "arm": "graph-cli-wrong-source-role",
+              "command": "project-managed-application-graph",
+              "syntax": "COMMAND INPUT_JSON --json [--evidence-bundle BUNDLE]",
+              "input_sha256": "a0873801f349c88cb940e0537bb2281f23c2ea7fee78f7f6feba2e695e28b2ab",
+              "input_bytes": 265,
+              "output_sha256": "dd55289cf9b2be1b64c4d6d502af7f6cdf932fac41590ba1894e9f090cc1e043",
+              "output_bytes": 770,
+              "exit": 1,
+              "elapsed_ms": 2749.849,
+              "receipt_sha256": "20c92b5f898a5fcaea79c68d183c43bebd28aa57dc80ce621d10ee3b6a28469f"
+            }
+          ],
+          "unrecorded_commands": []
+        },
+        "source_evidence_ids": [
+          "ev_66da1e751fda71ecd0a6cb30ccd6c831e3953553c89740c8c170bff8bc8cc389",
+          "ev_a0618cd67a3dff3b2d05153f2781ed91d01e551d08aa7e40b590ac97ee6b9ef8",
+          "ev_c2ccb747eee32a8fee31c4a48d8e994b12b613e4603b6e0a130799fa782f7777"
+        ],
+        "bundle": {
+          "sha256": "11ac63842299c0ac641a320ec9b2a5161b454a8a322d57724fd5f2ffb2fddfa4",
+          "bytes": 2114329,
+          "records": 6,
+          "unchanged": true
+        },
+        "outcome": "passed-supported-contracts",
+        "failure_note": null,
+        "producer_closed_before_consumer": true,
+        "zero_consumer_producer_calls": true,
+        "results": [
+          {
+            "name": "graph",
+            "evidence_id": "ev_408bb551fed7ac6e63940ed2e2e83a8404c8f75af327a181098cac2efb9b1107",
+            "normalized_result_sha256": "c2d36028b7564c91e29e5631a7d675e62ff4788bdc909023145b6a74417ae488",
+            "actual_reply_sha256": "765e882262da30103ac9027e5ab3b87f1cfb092d7016296fae843d0708aa445a",
+            "MCP_inline": "default1024-element-refusal",
+            "CLI_parity": {
+              "complete_MCP_reference_CLI_inline_CLI_reference_equality": true
+            },
+            "CLI_unavailable": null,
+            "status": null,
+            "coverage": {
+              "status": "partial"
+            },
+            "summary": null,
+            "limitations_count": 5
+          },
+          {
+            "name": "members",
+            "evidence_id": "ev_26bff8c0c7a2cc5a13209c40ef0d640305b6e221c05d2b41b6bf0d8d0b1224da",
+            "normalized_result_sha256": "1e31e162983f06b9e715e4fa58a414d996e5b01fd1b4e170417578fc630c1022",
+            "actual_reply_sha256": "ea84b71f2b646ac38d2c5b86f68af358b236b7adcc370bdc39a309f95dc51f89",
+            "MCP_inline": "default1024-element-refusal",
+            "CLI_parity": null,
+            "CLI_unavailable": "Existing CLI accepts two artifact paths and runs producer inspections; selected Evidence/--evidence-bundle inputs are not supported for this command.",
+            "status": null,
+            "coverage": {
+              "status": "partial",
+              "left_status": "complete",
+              "right_status": "complete"
+            },
+            "summary": null,
+            "limitations_count": 8
+          }
+        ],
+        "raw_outer_command_receipt_sha256": "5bc74b251e4be374101ae9807191e6ae270ca0884efb5c84909067e40b492653",
+        "raw_resource_receipt_sha256": "0460877a645a54f8bdffb15a5c5ef3b4b57cf8089efd5a353e65f85784287264"
+      },
+      {
+        "attempt": "native-01",
+        "lane": "native",
+        "artifact_id": "jq",
+        "source_head": "7e10c1cc9d2ff8371e5cf9ba3f77c834f644e759",
+        "source_dirty": true,
+        "built_runtime_sha256": "63746cf7b340358ac5ce609761ea3198ae3a62e24df52f62ed5be16893940021",
+        "harness_sha256": "81858a348907cdaceb250228dc0a2423d05c0d51ecee824241cd1ad2c80b0f64",
+        "scope_elapsed_seconds": 35.915,
+        "CPU_usec": 34674174,
+        "peak_process_family_bytes": 973070336,
+        "kernel_payload_exit_observation_verified": true,
+        "cleanup_verified": true,
+        "OOM": 0,
+        "OOM_kill": 0,
+        "resource_abort": null,
+        "payload_exit_code": 0,
+        "MCP_calls": {
+          "completed": 31,
+          "typed_error_results": 13,
+          "by_tool": {
+            "open_binary": 1,
+            "list_procedures": 1,
+            "procedure_callees": 1,
+            "analyze_function": 2,
+            "export_evidence_bundle": 2,
+            "close_binary": 1,
+            "binary_session": 4,
+            "build_call_path": 6,
+            "import_evidence_bundle": 1,
+            "get_evidence_bundle": 2,
+            "compare_functions": 5,
+            "match_native_functions": 5
+          },
+          "transport_interrupted_attempts": 0
+        },
+        "CLI_arms": {
+          "output_files": 0,
+          "completed_command_receipts": 0,
+          "arms": [],
+          "unrecorded_commands": []
+        },
+        "source_evidence_ids": [
+          "ev_681e6e6b603413f6dc0eeff8ca31acb3875d1d72d97b5e2de837460c2c03b0f9",
+          "ev_6a73ba03158b02af19dc76fe1865647b1dbeeaff7e7c4eed20a5f8fc58caff59",
+          "ev_df9c037f6b8a7c14d87b43162eac21246fa6a47f739361f653f459ec094d2df6"
+        ],
+        "bundle": {
+          "sha256": "0a3adad6ab39bfe29320e1f070a8e598382d2f17c4d6c19079bd6ff16dfe0937",
+          "bytes": 3097994,
+          "records": 8,
+          "unchanged": true
+        },
+        "outcome": "passed-supported-contracts",
+        "failure_note": null,
+        "producer_closed_before_consumer": true,
+        "zero_consumer_producer_calls": true,
+        "results": [
+          {
+            "name": "path",
+            "evidence_id": "ev_b3a67463b568bd4dd5f338a995014b937dc3572a8e8557f72433a86dd98f44be",
+            "normalized_result_sha256": "32aeea7af5a251e6140ab169ebf860dec796c92b5cb369dde7388d06674a236b",
+            "actual_reply_sha256": "314398a30dc2fc69a5b0c48ed02e1c3196f61c58947349dbbe20412292f2925b",
+            "MCP_inline": "default1024-element-refusal",
+            "CLI_parity": null,
+            "CLI_unavailable": null,
+            "status": "found",
+            "coverage": null,
+            "summary": null,
+            "limitations_count": 77
+          },
+          {
+            "name": "functions",
+            "evidence_id": "ev_a287514fc988745a27e6b1a52bfe3833bafdaebc956aace351b420ef36982259",
+            "normalized_result_sha256": "435b6811e6cebcdc7fbf759063c80f2a1af1230cb3e02d18129d594f91cf04e3",
+            "actual_reply_sha256": "a038a9f6ab1a5dd595298652ecccaed563b9ba42d7f7e5501a6613d5f0d9138c",
+            "MCP_inline": "default1024-element-refusal",
+            "CLI_parity": null,
+            "CLI_unavailable": null,
+            "status": "changed",
+            "coverage": null,
+            "summary": null,
+            "limitations_count": 28
+          },
+          {
+            "name": "matching",
+            "evidence_id": "ev_3aea60bbe5bcea71c2454fa1f560bc7a3a3df9534125471322ae5c6302cf6737",
+            "normalized_result_sha256": "73ec328c668981d0fbbfd14bccd0f6e1d2f11bd8eda308358334dccd51771af4",
+            "actual_reply_sha256": "7ba60ae9e42775d116d57f92e4a47bd2e88ce34e4b96c86eb62e9173a9fa58c8",
+            "MCP_inline": "default1024-element-refusal",
+            "CLI_parity": null,
+            "CLI_unavailable": null,
+            "status": null,
+            "coverage": null,
+            "summary": null,
+            "limitations_count": 14
+          }
+        ],
+        "raw_outer_command_receipt_sha256": "e70f8eed2d35ba08a86be636fbbd0b3b5870ec063947919be20745a9800577f5",
+        "raw_resource_receipt_sha256": "be59c7f6ce5af700d05dde44d2aafa5d1303a41d876e49cbe901a49898d5fd39"
+      },
+      {
+        "attempt": "process-01",
+        "lane": "process",
+        "artifact_id": "process-capture-bundle",
+        "source_head": "7e10c1cc9d2ff8371e5cf9ba3f77c834f644e759",
+        "source_dirty": true,
+        "built_runtime_sha256": "63746cf7b340358ac5ce609761ea3198ae3a62e24df52f62ed5be16893940021",
+        "harness_sha256": "1d7e3c0241e81c6050e857bebea68a7e3012bced5a5d386cac390ae7eb2ff6da",
+        "scope_elapsed_seconds": 9.056,
+        "CPU_usec": 8586552,
+        "peak_process_family_bytes": 495534080,
+        "kernel_payload_exit_observation_verified": true,
+        "cleanup_verified": true,
+        "OOM": 0,
+        "OOM_kill": 0,
+        "resource_abort": null,
+        "payload_exit_code": 0,
+        "MCP_calls": {
+          "completed": 20,
+          "typed_error_results": 7,
+          "by_tool": {
+            "binary_session": 3,
+            "compare_process_captures": 6,
+            "import_evidence_bundle": 2,
+            "get_evidence_bundle": 2,
+            "find_changed_behavior": 4,
+            "correlate_static_and_runtime": 3
+          },
+          "transport_interrupted_attempts": 0
+        },
+        "CLI_arms": {
+          "output_files": 2,
+          "completed_command_receipts": 2,
+          "arms": [
+            {
+              "arm": "captures-cli-inline",
+              "command": "compare-process-captures",
+              "syntax": "COMMAND LEFT_COMPLETE_EVIDENCE_JSON RIGHT_COMPLETE_EVIDENCE_JSON --json",
+              "input_sha256": "ac7fbce0dd24ce96fbb1cfbf7e8d07c826dca08c318dc0429822dab920814060",
+              "input_bytes": 14406,
+              "output_sha256": "12572c553d2a473500fddc3caa01d7d5bbbaee11ab1431aef37a8a86321d0802",
+              "output_bytes": 5250,
+              "exit": 0,
+              "elapsed_ms": 2334.864,
+              "receipt_sha256": "8b34f92bde135cbcfc6cfaded0319594dc0dcbdd36b57e7daf813139583bfa0a"
+            },
+            {
+              "arm": "captures-cli-wrong-source-role",
+              "command": "compare-process-captures",
+              "syntax": "COMMAND LEFT_COMPLETE_EVIDENCE_JSON RIGHT_COMPLETE_EVIDENCE_JSON --json",
+              "input_sha256": "20d12d3fc7e1bc9680c7ed5159eacb322a277a91482023a0153acbb3ffbcd436",
+              "input_bytes": 12460,
+              "output_sha256": "355800523fc017a499fdf61fa4a9d83d3a4f69efd8d2e19edbd27f68f94ceb02",
+              "output_bytes": 776,
+              "exit": 1,
+              "elapsed_ms": 2289.876,
+              "receipt_sha256": "1bb4901bb336ab1fcda0f482f3796c6f04905f4682cd5cba63f0cf6e58f3cc8d"
+            }
+          ],
+          "unrecorded_commands": []
+        },
+        "source_evidence_ids": [
+          "ev_33bb6e0546183b842d986bbf422e3d1f7281030aee543689d25e2efe2baebd28",
+          "ev_681e6e6b603413f6dc0eeff8ca31acb3875d1d72d97b5e2de837460c2c03b0f9",
+          "ev_892da4f0557c355c1127634b9c69780d2e9f7dc64ddc75e39093dba382e4b525",
+          "ev_a287514fc988745a27e6b1a52bfe3833bafdaebc956aace351b420ef36982259",
+          "ev_d9360c023f36af83abe76b9ee84625588d25db7453d89d449a22b8f357220969",
+          "ev_df9c037f6b8a7c14d87b43162eac21246fa6a47f739361f653f459ec094d2df6"
+        ],
+        "bundle": {
+          "sha256": "55da0f130dc2265aae54261d49949471e5c929163c2b7314b42e95df3325b739",
+          "bytes": 15199,
+          "records": 2,
+          "unchanged": true
+        },
+        "outcome": "passed-supported-contracts",
+        "failure_note": null,
+        "producer_closed_before_consumer": true,
+        "zero_consumer_producer_calls": true,
+        "results": [
+          {
+            "name": "behavior",
+            "evidence_id": "ev_5396afe64e4b21c11f64b730c6d605b42cffd2e072d0c272ed0db559456a84f2",
+            "normalized_result_sha256": null,
+            "actual_reply_sha256": "866c6ffad7c3fec8db4d363196a36b19f83a7ee919398d04689e58ce0dde7300",
+            "MCP_inline": "complete-MCP-inline-parity",
+            "CLI_parity": null,
+            "CLI_unavailable": null,
+            "status": "observed_changed",
+            "coverage": null,
+            "summary": null,
+            "limitations_count": 10
+          },
+          {
+            "name": "optional-correlation",
+            "evidence_id": "ev_68dab303764a8a1351578295bb5c94b720405b66ec815581958bb2153fb8a650",
+            "normalized_result_sha256": null,
+            "actual_reply_sha256": "179930cb771c35c4360109c14d966211fdc4dbdf65e18e7489c472429e46c8d7",
+            "MCP_inline": "complete-MCP-inline-parity",
+            "CLI_parity": null,
+            "CLI_unavailable": null,
+            "status": "unknown",
+            "coverage": null,
+            "summary": {
+              "hypotheses": 0,
+              "contradictions": 0,
+              "unresolved": 1
+            },
+            "limitations_count": 3
+          },
+          {
+            "name": "captures",
+            "evidence_id": "ev_d9360c023f36af83abe76b9ee84625588d25db7453d89d449a22b8f357220969",
+            "normalized_result_sha256": "14faf03ada1d5ea827af5b797d6b7d7b94ff3fdd5e38c0c949e9f8d2269e00b0",
+            "actual_reply_sha256": "fc8387c0c42082380389452c1fa71e2221f8e9552750537cb461261aa8ca1d38",
+            "MCP_inline": "complete-MCP-inline-parity",
+            "CLI_parity": {
+              "complete_MCP_reference_CLI_Evidence_files_equality": true
+            },
+            "CLI_unavailable": "CLI accepts complete Evidence file pairs; no selected-bundle reference option exists.",
+            "status": "changed",
+            "coverage": null,
+            "summary": null,
+            "limitations_count": 21
+          }
+        ],
+        "raw_outer_command_receipt_sha256": "244eac3c5b6ed22064528de401ad7545a53220026a87a452061041227342cec7",
+        "raw_resource_receipt_sha256": "14966dbd9dc6d42589de68565d9a569028af3f06772397e180543b3f301e77f6"
+      },
+      {
+        "attempt": "wasm-01",
+        "lane": "wasm",
+        "artifact_id": "css-wasm",
+        "source_head": "7e10c1cc9d2ff8371e5cf9ba3f77c834f644e759",
+        "source_dirty": true,
+        "built_runtime_sha256": "63746cf7b340358ac5ce609761ea3198ae3a62e24df52f62ed5be16893940021",
+        "harness_sha256": "1d7e3c0241e81c6050e857bebea68a7e3012bced5a5d386cac390ae7eb2ff6da",
+        "scope_elapsed_seconds": 6.353,
+        "CPU_usec": 6166135,
+        "peak_process_family_bytes": 741670912,
+        "kernel_payload_exit_observation_verified": true,
+        "cleanup_verified": true,
+        "OOM": 0,
+        "OOM_kill": 0,
+        "resource_abort": null,
+        "payload_exit_code": 1,
+        "MCP_calls": {
+          "completed": 10,
+          "typed_error_results": 4,
+          "by_tool": {
+            "binary_session": 2,
+            "compare_wasm_interfaces": 5,
+            "import_evidence_bundle": 1,
+            "get_evidence_bundle": 2
+          },
+          "transport_interrupted_attempts": 1
+        },
+        "CLI_arms": {
+          "output_files": 0,
+          "completed_command_receipts": 0,
+          "arms": [],
+          "unrecorded_commands": []
+        },
+        "source_evidence_ids": [],
+        "bundle": {
+          "sha256": "acb0cb6c3e0d520f83144e106e171c3ecebba70c5c0498bbb0113185a3e4bf95",
+          "bytes": 13925066,
+          "records": 4,
+          "unchanged": null
+        },
+        "outcome": "observed-default-SDK-frame-capacity",
+        "failure_note": "Actual27823016-byte inline arguments exceeded default10485760-byte SDKstdio buffer; connection closed before1024-element admission. Ref comparison had succeeded. Same authentic bundle reused; no limits raised.",
+        "producer_closed_before_consumer": null,
+        "zero_consumer_producer_calls": true,
+        "results": [],
+        "raw_outer_command_receipt_sha256": "d2f9329e9a4cc58322255702b212f00a7d6d6ad71d8d82477f30e368eb687bd4",
+        "raw_resource_receipt_sha256": "f6525fe80be106b72ea9f8898c09ced3e7a9e7fca8181e6aa8e993d7e375609e"
+      },
+      {
+        "attempt": "wasm-02",
+        "lane": "wasm",
+        "artifact_id": "css-wasm",
+        "source_head": "7e10c1cc9d2ff8371e5cf9ba3f77c834f644e759",
+        "source_dirty": true,
+        "built_runtime_sha256": "63746cf7b340358ac5ce609761ea3198ae3a62e24df52f62ed5be16893940021",
+        "harness_sha256": "5df9e8da8ca635fc8f3938573f5148f6b87f45f5c14490218bd5a65b0b083983",
+        "scope_elapsed_seconds": 16.295,
+        "CPU_usec": 15861514,
+        "peak_process_family_bytes": 830128128,
+        "kernel_payload_exit_observation_verified": true,
+        "cleanup_verified": true,
+        "OOM": 0,
+        "OOM_kill": 0,
+        "resource_abort": null,
+        "payload_exit_code": 0,
+        "MCP_calls": {
+          "completed": 11,
+          "typed_error_results": 4,
+          "by_tool": {
+            "binary_session": 3,
+            "compare_wasm_interfaces": 5,
+            "import_evidence_bundle": 1,
+            "get_evidence_bundle": 2
+          },
+          "transport_interrupted_attempts": 0
+        },
+        "CLI_arms": {
+          "output_files": 4,
+          "completed_command_receipts": 4,
+          "arms": [
+            {
+              "arm": "exports-cli-inline",
+              "command": "compare-wasm-interfaces",
+              "syntax": "COMMAND INPUT_JSON --json [--evidence-bundle BUNDLE]",
+              "input_sha256": "2b4dd215ca79a454cf78ab6fb35ac05cdbdbb5e02b46198bbf4970916b4f227e",
+              "input_bytes": 27823017,
+              "output_sha256": "9d2dd8cdc7f72d863b30662b05fc73960d20c49cb1472f67f77c3173063e1f97",
+              "output_bytes": 3732,
+              "exit": 0,
+              "elapsed_ms": 3706.572,
+              "receipt_sha256": "c84df677833aa2de16609d0a83c36d26ab6f13bc8eec6e9f8babaf99dfd117cc"
+            },
+            {
+              "arm": "exports-cli-missing-context",
+              "command": "compare-wasm-interfaces",
+              "syntax": "COMMAND INPUT_JSON --json [--evidence-bundle BUNDLE]",
+              "input_sha256": "7e5056031244e1c7dec5f417a06634e348d989139a134e6911acd1b5b8bd65f7",
+              "input_bytes": 261,
+              "output_sha256": "986c9d251501a7b72905d1dd14a2210f82c27a7305132d708b0e4010be9ca806",
+              "output_bytes": 802,
+              "exit": 1,
+              "elapsed_ms": 1846.982,
+              "receipt_sha256": "6929ca32cf1802a9d6e19c2ca073753e144d0ab21d1ac4400656b36eb8f65165"
+            },
+            {
+              "arm": "exports-cli-reference",
+              "command": "compare-wasm-interfaces",
+              "syntax": "COMMAND INPUT_JSON --json [--evidence-bundle BUNDLE]",
+              "input_sha256": "7e5056031244e1c7dec5f417a06634e348d989139a134e6911acd1b5b8bd65f7",
+              "input_bytes": 261,
+              "output_sha256": "9d2dd8cdc7f72d863b30662b05fc73960d20c49cb1472f67f77c3173063e1f97",
+              "output_bytes": 3732,
+              "exit": 0,
+              "elapsed_ms": 3027.952,
+              "receipt_sha256": "06c38f565b9de677b98ca1e4c2f8e0a27138f006c2540471983d6134b907c0d6"
+            },
+            {
+              "arm": "exports-cli-wrong-source-role",
+              "command": "compare-wasm-interfaces",
+              "syntax": "COMMAND INPUT_JSON --json [--evidence-bundle BUNDLE]",
+              "input_sha256": "739fa460ed693c898031481b06ca68830b6b68487a35c95dd0361808177f5861",
+              "input_bytes": 261,
+              "output_sha256": "4a82841234259d8b034de25facaccf01ee3314be4cbf50c1520f93cfbcc83000",
+              "output_bytes": 621,
+              "exit": 1,
+              "elapsed_ms": 2621.199,
+              "receipt_sha256": "35efd0fcd7a55670845001941b38fb67b3c43c867c15ea053a3f11c2fcb555c2"
+            }
+          ],
+          "unrecorded_commands": []
+        },
+        "source_evidence_ids": [
+          "ev_27ff1c46b138fd9809ab403aa2db919b440b0d822006cdc18a44e651f2508f43"
+        ],
+        "bundle": {
+          "sha256": "acb0cb6c3e0d520f83144e106e171c3ecebba70c5c0498bbb0113185a3e4bf95",
+          "bytes": 13925066,
+          "records": 4,
+          "unchanged": true
+        },
+        "outcome": "passed-supported-contracts",
+        "failure_note": null,
+        "producer_closed_before_consumer": true,
+        "zero_consumer_producer_calls": true,
+        "results": [
+          {
+            "name": "exports",
+            "evidence_id": "ev_b32346965c153a067abff9698aeba1ccbace34c78ac2071ac18311250b68c6da",
+            "normalized_result_sha256": "3ac2132f1693e92833495e49ec793a40e131718c8eee9db80842a24e0c9641fd",
+            "actual_reply_sha256": "f5394ca19e4615babb43a7091ba53932fc5a88dfea7b6b015c4861d5caa2f435",
+            "MCP_inline": "unavailable-default10MiB-stdio-frame-capacity",
+            "CLI_parity": {
+              "complete_MCP_reference_CLI_inline_CLI_reference_equality": true
+            },
+            "CLI_unavailable": null,
+            "status": null,
+            "coverage": "complete-within-inputs",
+            "summary": null,
+            "limitations_count": 3
+          }
+        ],
+        "raw_outer_command_receipt_sha256": "d5804ca30f1d867bdcf360b9e16b4e7a0f75f75c00f8de998de16dbfdf6cbd09",
+        "raw_resource_receipt_sha256": "9a3f71b04e4e49d60f2d0ebbd8027a3378b45ab7c12f800a91796b5edff1c4db"
+      }
+    ],
+    "known_transport_gap": {
+      "attempt": "wasm-01",
+      "actual_inline_arguments_UTF8_bytes": 27823016,
+      "default_stdio_buffer_bytes": 10485760,
+      "observed": "Connection closed before1024element admission; no typed application-capacity result.",
+      "resumed_attempt": "wasm-02",
+      "positive_required_parity": "Fresh imported MCPrefs == complete CLIinline == CLIselected-bundle refs",
+      "source_inspection_replayed": false
+    },
+    "audit": {
+      "attempts": 13,
+      "successful_domain_lanes": 9,
+      "failed_harness_attempts": 3,
+      "preserved_transport_capacity_attempts": 1,
+      "all_payload_cleanup_verified": true,
+      "all_resource_observations_verified": true,
+      "all_OOM_events_zero": true,
+      "all_consumer_producer_replay_zero": true,
+      "single_built_runtime": true
+    },
+    "source_receipt_sha256": "2ec40f17a2b49b619528e4d3fe008a1e7a5653ae2a27240a5eec5414ab25c39b"
+  },
+  "additional_boundary_checks": {
+    "runs": [
+      {
+        "check": "focused-source-CLI-MCP",
+        "source_state": "7e10c1cc9 plus CLI diagnostic-name fix and boundary tests",
+        "files": 7,
+        "tests": 161,
+        "elapsed_seconds": 154.106,
+        "CPU_usec": 153592029,
+        "peak_process_family_bytes": 1884516352,
+        "kernel_payload_exit_observation_verified": true,
+        "cleanup_verified": true,
+        "memory_events": {
+          "low": 0,
+          "high": 0,
+          "max": 0,
+          "oom": 0,
+          "oom_kill": 0,
+          "oom_group_kill": 0
+        },
+        "log_sha256": "9fd5f8b9823651a71b8546d8ee62a4054fe54b715fed1adcad4f5e07bfafe8f0"
+      },
+      {
+        "check": "typecheck-touched-lint-module-boundaries",
+        "source_state": "7e10c1cc9 plus CLI diagnostic-name fix and boundary tests",
+        "files": null,
+        "tests": null,
+        "elapsed_seconds": 20.937,
+        "CPU_usec": 20691983,
+        "peak_process_family_bytes": 1142951936,
+        "kernel_payload_exit_observation_verified": true,
+        "cleanup_verified": true,
+        "memory_events": {
+          "low": 0,
+          "high": 0,
+          "max": 0,
+          "oom": 0,
+          "oom_kill": 0,
+          "oom_group_kill": 0
+        },
+        "log_sha256": "041ace1484c9790277e1cc8b8021eedaeea126868efc5b42042d60b525aad3e5"
+      }
+    ],
+    "fixed_server_fixture_scope": "17 checks cover six JavaScript and three mobile consumers, direct inline inspect_analysis_view, missing references, role errors, summary retention and unchanged 1024-element admission; authored fixtures do not establish real providers.",
+    "CLI_regression": "Shared JSON parsing preserves public hyphenated command names in malformed-inline/file diagnostics; canonical application operation still owns dispatch.",
+    "canonical_source_errors": "Malformed complete source schemas/identities are diagnosed by EvidenceIntegrityError after resource admission, consistently across full and compact profiles; request-envelope/reference-grammar failures remain invalid_request. The direction coverage regression retains all malformed permutations and checks the relationship_coverage diagnostic."
   }
 }

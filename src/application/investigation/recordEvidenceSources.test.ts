@@ -50,7 +50,8 @@ it.each([false, true])(
       undefined,
       withEvidenceSources(cancelled ? err(primary) : ok("complete"), [source]),
     );
-    if (result.ok) throw new Error("Provider sources lost their retention owner");
+    if (result.ok)
+      throw new Error("Provider sources lost their retention owner");
     if (cancelled) {
       expect(result.error).toBe(primary);
       expect(primary.secondaryFailures).toMatchObject([
