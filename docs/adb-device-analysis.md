@@ -147,7 +147,9 @@ and during shutdown.
   `numeric_issues`: the first ten issues with command, field, reason and original
   `raw_line`, plus the exact `total`. Reasons are `invalid_format` or
   `unsafe_integer`. Any issue makes package coverage partial; existing section
-  omissions can also make it partial. `version_code` remains exact source text.
+  omissions can also make it partial. `version_code` retains the first valid
+  signed decimal token exactly, including values beyond the safe-integer range;
+  malformed version declarations also appear in `numeric_issues`.
 - **Display nulls preserve uncertainty.** `inspect_adb_display` admits positive
   safe integers. Absent or malformed optional values are null; `numeric_issues`
   distinguishes malformed declarations from absence. It keeps the first ten

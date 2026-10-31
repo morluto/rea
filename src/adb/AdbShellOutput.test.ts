@@ -19,6 +19,43 @@ const packageDump = (installerLine: string | undefined): string =>
   ].join("\n");
 
 describe("parseDumpsysPackageOutput", () => {
+  it("retains malformed numeric tokens before and after valid declarations", () => {
+    const parsed = parseDumpsysPackageOutput(
+      "  userId=10123abc\n  appId=10456 valid\n  userId=9z\n" +
+        "  versionCode=45abc minSdk=24\n  versionCode=-9007199254740993 target\n  versionCode=7x\n",
+    );
+    expect(parsed.userId).toBe(10456);
+    expect(parsed.versionCode).toBe("-9007199254740993");
+    expect(parsed.numericIssues).toEqual({
+      sample: [
+        {
+          command: "dumpsys package",
+          field: "user_id",
+          reason: "invalid_format",
+          raw_line: "  userId=10123abc",
+        },
+        {
+          command: "dumpsys package",
+          field: "user_id",
+          reason: "invalid_format",
+          raw_line: "  userId=9z",
+        },
+        {
+          command: "dumpsys package",
+          field: "version_code",
+          reason: "invalid_format",
+          raw_line: "  versionCode=45abc minSdk=24",
+        },
+        {
+          command: "dumpsys package",
+          field: "version_code",
+          reason: "invalid_format",
+          raw_line: "  versionCode=7x",
+        },
+      ],
+      total: 4,
+    });
+  });
   it.each(["userId", "appId"])(
     "retains the printed %s package identifier",
     (key) => {
