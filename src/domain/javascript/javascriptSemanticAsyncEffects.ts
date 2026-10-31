@@ -7,7 +7,11 @@ import type {
   JavaScriptSemanticTimerOperation,
 } from "./javascriptSemanticIr.js";
 import { createSemanticCallableIdStack } from "./javascriptSemanticCallableStack.js";
-import { semanticStaticPropertyName } from "./javascriptAstValues.js";
+import {
+  readExactJavaScriptLiteral,
+  semanticStaticPropertyName,
+  unwrapJavaScriptExpression,
+} from "./javascriptAstValues.js";
 import {
   resolveSemanticBindingState,
   semanticResolutionBlocked,
@@ -127,6 +131,33 @@ export const collectJavaScriptSemanticAsyncEffects = (
   };
 };
 
+/**
+ * A listener must be a function, and Node throws `ERR_INVALID_ARG_TYPE` before
+ * anything is registered or removed when it is not. An exactly readable literal
+ * that cannot be a function is therefore not an event operation, while an
+ * identifier, a call result or a spread may still supply one and keeps its
+ * operation.
+ *
+ * A class expression passes Node's own `typeof` check, so it is kept.
+ */
+const rejectsEventListener = (listener: t.Node): boolean => {
+  if (t.isSpreadElement(listener)) return false;
+  const value = unwrapJavaScriptExpression(listener).node;
+  if (t.isFunctionExpression(value) || t.isArrowFunctionExpression(value))
+    return false;
+  if (t.isClassExpression(value)) return false;
+  // Every unary operator yields a primitive, and a primitive is never callable.
+  return (
+    t.isUnaryExpression(value) ||
+    readExactJavaScriptLiteral(value).found ||
+    t.isTemplateLiteral(value) ||
+    t.isBigIntLiteral(value) ||
+    t.isRegExpLiteral(value) ||
+    t.isArrayExpression(value) ||
+    t.isObjectExpression(value)
+  );
+};
+
 const collectEvent = (
   node: t.CallExpression | t.OptionalCallExpression,
   ownerCallableId: string | null,
@@ -146,6 +177,8 @@ const collectEvent = (
   const listenerArgument = EVENT_LISTENER_METHODS.includes(method)
     ? node.arguments[1]
     : undefined;
+  if (listenerArgument !== undefined && rejectsEventListener(listenerArgument))
+    return;
   const emitter = emitterIdentity(member.object, state);
   const eventName = dataEffectLiteralString(eventArgument);
   output.push({
