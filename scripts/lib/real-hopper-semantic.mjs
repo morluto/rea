@@ -324,9 +324,19 @@ export const analyzeFixtureProcedure = async (
     options,
   );
   const dossier = normalizedResult(reply, "analyze_function");
-  assert.deepEqual(reply.structuredContent.relationship_coverage, {
-    status: "complete",
-  });
+  assert.equal(
+    reply.structuredContent.relationship_coverage?.status,
+    "unknown",
+  );
+  assert.deepEqual(
+    reply.structuredContent.relationship_coverage?.limited_directions,
+    ["callers", "callees"],
+  );
+  assert(
+    typeof reply.structuredContent.relationship_coverage?.reason === "string" &&
+      reply.structuredContent.relationship_coverage.reason.length > 0,
+    "expected relationship coverage reason",
+  );
   for (const facet of [
     "pseudocode",
     "assembly",
