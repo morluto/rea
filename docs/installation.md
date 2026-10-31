@@ -754,7 +754,10 @@ an approved update while the feed exposes only its current release.
 REA runs the supported demo build on a private Xvfb display and selects Hopper's
 offered demo mode for each analysis session; it does not require the user's
 desktop display. Unattended package-manager access requires
-`--yes --install-hopper`. If the host exposes `/tmp/.X11-unix` as an immutable
+`--yes --install-hopper`. When `/tmp/.X11-unix` is a symlink, as on WSLg,
+REA uses Linux abstract Unix sockets with Xauthority authentication and disables
+Xvfb's filesystem socket listener. TCP remains disabled and the shared WSLg
+directory remains unchanged. If the host exposes `/tmp/.X11-unix` as an immutable
 mount, REA first verifies the conflict and then uses an unprivileged user and
 mount namespace with a private mode-1777 tmpfs over that directory only. The
 host mount and the rest of `/tmp` remain unchanged; this fallback never invokes
