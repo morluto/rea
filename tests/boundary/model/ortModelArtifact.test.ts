@@ -201,7 +201,13 @@ it.each([
     const result = await inspect(ortFixture(options).bytes);
     if (!result.ok) throw result.error;
     expect(result.value.tensors[0]).toMatchObject(expected);
-    expect(result.value.coverage.initializers).toBe("partial");
+    expect(result.value.coverage.initializers).toBe("complete");
+    expect(result.value.coverage.storage_sizes).toBe("partial");
+    expect(result.value.coverage.tensor_ranges).toBe(
+      "externalOffset" in options || "stringTensor" in options
+        ? "partial"
+        : "complete",
+    );
   },
 );
 
@@ -209,6 +215,7 @@ it("reports sparse initializer coverage explicitly", async () => {
   const result = await inspect(ortFixture({ sparseInitializer: true }).bytes);
   if (!result.ok) throw result.error;
   expect(result.value.tensors).toHaveLength(1);
+  expect(result.value.coverage.header).toBe("complete");
   expect(result.value.coverage.initializers).toBe("partial");
   expect(result.value.limitations.join(" ")).toContain("sparse initializers");
 });

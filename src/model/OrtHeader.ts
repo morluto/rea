@@ -121,6 +121,15 @@ class OrtDeclarations {
   #partial(facet: Facet | "header", reason: string): void {
     this.result.ort_coverage[facet] = "partial";
     this.result.ort_coverage.header = "partial";
+    this.#limitation(reason);
+  }
+
+  #facetPartial(facet: Facet, reason: string): void {
+    this.result.ort_coverage[facet] = "partial";
+    this.#limitation(reason);
+  }
+
+  #limitation(reason: string): void {
     if (!this.result.limitations.includes(reason)) {
       this.fb.budget.charge(6 * reason.length + 64);
       this.result.limitations.push(reason);
@@ -228,6 +237,11 @@ class OrtDeclarations {
     if (kind !== 1) {
       result.type_kind =
         kind === 2 ? "sequence" : kind === 3 ? "map" : "unknown";
+      this.#limitation(
+        kind === 2 || kind === 3
+          ? "ORT sequence and map graph value types retain their kind, but nested type declarations are not interpreted."
+          : "Unknown ORT graph value type unions remain unresolved rather than being treated as tensors.",
+      );
       return result;
     }
     const tensor = this.fb.child(type, 2);
@@ -235,6 +249,10 @@ class OrtDeclarations {
     result.type_kind = "tensor";
     result.type_id = this.#typeId(tensor, 0);
     result.type = TYPES[result.type_id]?.[0] ?? null;
+    if (result.type === null)
+      this.#limitation(
+        "Unknown ORT graph tensor element type IDs retain their numeric identity; no element type name or storage width is inferred.",
+      );
     result.shape = this.#shape(tensor);
     return result;
   }
@@ -308,23 +326,19 @@ class OrtDeclarations {
       width != null &&
       BigInt(raw.count) === parameters * BigInt(width);
     if (local && width != null && !consistent)
-      this.#partial(
-        "initializers",
+      this.#limitation(
         "ORT initializer byte lengths disagree with their element types and shapes; observed extents are retained without storage validation.",
       );
     if (external >= 0n)
-      this.#partial(
-        "initializers",
+      this.#limitation(
         "ORT external initializer offsets are retained as declarations; external files, byte lengths, and contents are not read.",
       );
     if (typeId === 8 || strings !== null)
-      this.#partial(
-        "initializers",
+      this.#limitation(
         "ORT string initializer payloads are not interpreted and have no single reported contiguous byte extent.",
       );
     if (type === undefined)
-      this.#partial(
-        "initializers",
+      this.#limitation(
         "Unknown ORT initializer element type IDs retain their numeric identity and declared local byte extents; storage sizes are unverified.",
       );
     this.#tensorNames.add(name);
@@ -417,7 +431,7 @@ class OrtDeclarations {
       () => this.fb.vector(graph, 7, 4),
     );
     if (sparse && sparse.count > 0)
-      this.#partial(
+      this.#facetPartial(
         "initializers",
         "ORT sparse initializers are present but are not included in the dense initializer inventory.",
       );
