@@ -40,6 +40,11 @@ export const NATIVE_CALL_OBSERVATION_LIMITATIONS = [
   "The observation window is checked about once a second, and recording pauses the process at every entry, which slows it.",
 ] as const;
 
+export const NATIVE_CALL_BREAKPOINT_LOCATION_LIST_INCOMPLETE_LIMITATION =
+  "The breakpoint location list is incomplete; location_count gives the full matching count.";
+export const NATIVE_CALL_BREAKPOINT_LOCATION_BUDGET_LIMITATION =
+  "Resolved breakpoint locations exceeded the aggregate 8388608-byte (8 MiB) metadata budget; omitted locations are counted in location_count. This metadata limit does not change the process outcome. This release has no runtime override.";
+
 /** Launch the active Mach-O under LLDB, record requested call entries, then stop it. */
 export const observeNativeCalls = async (
   target: BinaryTarget,
@@ -216,16 +221,13 @@ const nativeCallFacts = (
             `Breakpoints ${unresolved.join(", ")} matched no code in any image loaded while observing; their calls could not be observed.`,
           ]),
       ...(run.breakpoints.some(
-        ({ location_count: count, locations }) => locations.length < count,
+        ({ location_count: count, locations }) =>
+          locations.length < count && !breakpointLocationLimit,
       )
-        ? [
-            "Breakpoints with many matching locations list only the first 64; location_count gives the total.",
-          ]
+        ? [NATIVE_CALL_BREAKPOINT_LOCATION_LIST_INCOMPLETE_LIMITATION]
         : []),
       ...(breakpointLocationLimit
-        ? [
-            "Resolved breakpoint locations exceeded the aggregate 8388608-byte (8 MiB) metadata budget; omitted locations are counted in location_count. This metadata limit does not change the process outcome. This release has no runtime override.",
-          ]
+        ? [NATIVE_CALL_BREAKPOINT_LOCATION_BUDGET_LIMITATION]
         : []),
       ...(trace.stdout === null || trace.stderr === null
         ? ["One or more target output captures were unavailable."]

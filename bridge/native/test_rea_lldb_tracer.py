@@ -430,6 +430,34 @@ class NativeTraceBudgetTests(unittest.TestCase):
         self.assertEqual(report[0]["locations"], [])
         self.assertFalse(locations_truncated)
 
+    def test_breakpoint_report_keeps_all_locations_under_aggregate_budget(self):
+        class Location:
+            def __init__(self, index):
+                self.index = index
+
+            def GetAddress(self):
+                return self.index
+
+        class Breakpoint:
+            def GetNumLocations(self):
+                return 65
+
+            def GetLocationAtIndex(self, index):
+                return Location(index)
+
+        with patch.object(
+            tracer,
+            "_location",
+            side_effect=lambda address, _target: {"address": address, "symbol": None},
+        ), patch.object(tracer, "_wanted", return_value=True):
+            report, locations_truncated = tracer._breakpoint_report(
+                object(), [[Breakpoint()]], {"breakpoints": [{}]}
+            )
+
+        self.assertEqual(report[0]["location_count"], 65)
+        self.assertEqual(len(report[0]["locations"]), 65)
+        self.assertFalse(locations_truncated)
+
     def test_breakpoint_report_bounds_aggregate_location_json(self):
         tracer.lldb.LLDB_INVALID_ADDRESS = -1
         symbol_name = (
