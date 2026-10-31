@@ -298,6 +298,22 @@ const verifyKuna = async (
   const answers = [];
   let coldFailure;
   try {
+    const status = await cold.call("binary_session", { detail: "complete" });
+    if (status.value.format === "elf") {
+      const availability = status.value.tool_availability;
+      const dispatch = availability.find(
+        ({ name }) => name === "inspect_native_dispatch_metadata",
+      );
+      const trace = availability.find(
+        ({ name }) => name === "trace_native_ui_action",
+      );
+      assert.equal(dispatch?.available, false);
+      assert.equal(
+        trace?.modes?.find(({ name }) => name === "native_seed_call_trace")
+          ?.available,
+        false,
+      );
+    }
     answers.push({
       strings: await verifyKunaStrings({
         call: cold.call,

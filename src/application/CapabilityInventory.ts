@@ -782,6 +782,7 @@ const targetAvailability = ({
   const descriptor = descriptors.get(name);
   if (
     targetOpen &&
+    kind !== "enhanced" &&
     descriptor?.available === false &&
     (descriptor.availability_code === "target_kind_unsupported" ||
       descriptor.availability_code === "target_format_unsupported")
@@ -914,9 +915,12 @@ const composedAvailabilityFor = (
       missingOperations,
       availability: {
         reason:
-          unavailable.availability_code === "unsupported_host"
-            ? "unsupported_host"
-            : "provider_unavailable",
+          unavailable.availability_code === "target_kind_unsupported" ||
+          unavailable.availability_code === "target_format_unsupported"
+            ? "target_unsupported"
+            : unavailable.availability_code === "unsupported_host"
+              ? "unsupported_host"
+              : "provider_unavailable",
         remediation:
           unavailable.reason ?? "Choose another target or configured provider.",
       },
