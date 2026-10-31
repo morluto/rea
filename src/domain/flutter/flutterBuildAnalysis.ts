@@ -5,14 +5,6 @@ import { digestSchema } from "../digests.js";
 /** Full logical ZIP path budget, enforced by Flutter library inventory. */
 export const MAX_FLUTTER_LIBRARY_PATH_BYTES = 1024;
 
-/** Retained GNU build-ID descriptor budget, in bytes. */
-export const MAX_FLUTTER_BUILD_ID_BYTES = 64;
-const gnuBuildIdSchema = z
-  .string()
-  .min(2)
-  .max(MAX_FLUTTER_BUILD_ID_BYTES * 2)
-  .regex(/^(?:[0-9a-f]{2})+$/u);
-
 /**
  * A libapp label can occupy every remaining byte of an admitted path. Its
  * Unicode character count cannot exceed that byte count. The query permits
@@ -27,8 +19,7 @@ const ABI_SELECTOR_MAX_CHARACTERS =
  * the label; Zod max() counts UTF-16 units. Advertise the same code-point
  * budget as JSON Schema maxLength, including every trailing line terminator.
  */
-/** Shared refusal for an ABI label that is not a lib/ directory name. */
-export const ABI_SELECTOR_MESSAGE = `ABI must be the exact lib/ directory label: 1–${String(ABI_SELECTOR_MAX_CHARACTERS)} Unicode characters without '/'.`;
+const ABI_SELECTOR_MESSAGE = `ABI must be the exact lib/ directory label: 1–${String(ABI_SELECTOR_MAX_CHARACTERS)} Unicode characters without '/'.`;
 const abiSelectorSchema = z
   .string()
   .min(1, ABI_SELECTOR_MESSAGE)
@@ -41,7 +32,7 @@ const abiSelectorSchema = z
     },
     { message: ABI_SELECTOR_MESSAGE, abort: true },
   )
-  .regex(/^[^\x2f]*$/u, ABI_SELECTOR_MESSAGE)
+  .regex(/^[^/]*$/u, ABI_SELECTOR_MESSAGE)
   .meta({ maxLength: ABI_SELECTOR_MAX_CHARACTERS });
 
 /**
@@ -98,7 +89,7 @@ export const flutterResultSchemas = {
   identify_flutter_build: z.strictObject({
     target: z.strictObject({
       path: localPathStringSchema,
-      bytes: z.int().nonnegative(),
+      bytes: z.number().int().nonnegative(),
       sha256: digestSchema,
     }),
     flutter_detected: z.boolean(),
@@ -107,12 +98,12 @@ export const flutterResultSchemas = {
         abi: z.string().min(1),
         libapp: z.strictObject({
           present: z.boolean(),
-          bytes: z.int().nonnegative().nullable(),
+          bytes: z.number().int().nonnegative().nullable(),
           sha256: digestSchema.nullable(),
           /** Supported ELF header with table extents inside the library; table contents are not validated. */
           elf_header_valid: z.boolean().nullable(),
           /** Number of Dart snapshot sections found (vm + isolate). */
-          snapshot_hash_sources: z.int().nonnegative(),
+          snapshot_hash_sources: z.number().int().nonnegative(),
           /** Distinct hashes found; more than one means the sections disagree. */
           snapshot_hash_candidates: z.array(
             z.string().regex(/^[0-9a-f]{32}$/u),
@@ -125,15 +116,17 @@ export const flutterResultSchemas = {
         }),
         libflutter: z.strictObject({
           present: z.boolean(),
-          bytes: z.int().nonnegative().nullable(),
+          bytes: z.number().int().nonnegative().nullable(),
           sha256: digestSchema.nullable(),
-          build_id: gnuBuildIdSchema
+          build_id: z
+            .string()
+            .regex(/^[0-9a-f]{8,128}$/u)
             .nullable()
             .describe(
               "The single GNU build ID when ELF note coverage is complete and unambiguous",
             ),
           build_id_candidates: z
-            .array(gnuBuildIdSchema)
+            .array(z.string().regex(/^[0-9a-f]{8,128}$/u))
             .max(64)
             .describe(
               "Distinct GNU build IDs observed in ELF-owned note ranges; conflicting IDs remain explicit",
@@ -142,10 +135,10 @@ export const flutterResultSchemas = {
             .string()
             .nullable()
             .describe(
-              "Labeled 'Dart VM version' string, when a build carries one",
+              "Complete labeled Dart VM version or source-defined Dart Version::String when present",
             ),
           toolchain_lines: z.array(z.string().min(1)),
-          /** Dart labels omitted by grammar or single-version projection bounds. */
+          /** Labeled Dart runs rejected by grammar or distinct versions omitted by the single-version projection. */
           dart_version_capped: z.boolean(),
           /** Toolchain labels omitted by grammar or projection bounds. */
           toolchain_capped: z.boolean(),
@@ -157,7 +150,7 @@ export const flutterResultSchemas = {
   inspect_dart_aot: z.strictObject({
     target: z.strictObject({
       path: localPathStringSchema,
-      bytes: z.int().nonnegative(),
+      bytes: z.number().int().nonnegative(),
       sha256: digestSchema,
     }),
     abi: z.string().min(1),
@@ -167,7 +160,7 @@ export const flutterResultSchemas = {
         .describe(
           "Coverage of ELF symbols, independent data headers, AOT kind, extents and agreeing hashes",
         ),
-      bytes: z.int().nonnegative(),
+      bytes: z.number().int().nonnegative(),
       sha256: digestSchema,
       snapshot_hash: z
         .string()
@@ -176,17 +169,17 @@ export const flutterResultSchemas = {
       /** Distinct hashes found; more than one means the sections disagree. */
       snapshot_hash_candidates: z.array(z.string().regex(/^[0-9a-f]{32}$/u)),
       /** Distinct exported data headers with a valid hash at the header's fixed offset. */
-      snapshot_hash_sources: z.int().nonnegative(),
+      snapshot_hash_sources: z.number().int().nonnegative(),
       /** Snapshot symbols read from the dynamic symbol table. */
       sections: z.array(
         z.strictObject({
           name: z.string().min(1),
-          offset: z.int().nonnegative(),
-          size: z.int().nonnegative(),
+          offset: z.number().int().nonnegative(),
+          size: z.number().int().nonnegative(),
           magic_valid: z.boolean(),
-          kind: z.int().nonnegative().nullable(),
+          kind: z.number().int().nonnegative().nullable(),
           /** Raw declared snapshot length, excluding the four magic bytes. */
-          header_length: z.int().nonnegative().nullable(),
+          header_length: z.number().int().nonnegative().nullable(),
         }),
       ),
     }),
@@ -198,14 +191,14 @@ export const flutterResultSchemas = {
         ),
       /** Distinct package: source URIs, sorted, bounded. */
       package_uris: z.array(z.string().min(1)),
-      package_uri_count_at_least: z.int().nonnegative(),
+      package_uri_count_at_least: z.number().int().nonnegative(),
       /** Distinct dart: SDK URIs, sorted, bounded. */
       dart_uris: z.array(z.string().min(1)),
-      dart_uri_count_at_least: z.int().nonnegative(),
+      dart_uri_count_at_least: z.number().int().nonnegative(),
       /** Identifier-like tokens, bounded; includes incidental matches. */
       class_like_tokens: z.array(z.string().min(1)),
-      class_like_token_count_at_least: z.int().nonnegative(),
-      printable_run_count: z.int().nonnegative(),
+      class_like_token_count_at_least: z.number().int().nonnegative(),
+      printable_run_count: z.number().int().nonnegative(),
     }),
     coverage: z.enum(["complete", "partial"]),
   }),
