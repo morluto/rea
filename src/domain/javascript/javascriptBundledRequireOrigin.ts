@@ -1,5 +1,6 @@
 import * as t from "@babel/types";
 
+import { createBootstrapReferenceSourceFilter } from "./javascriptBootstrapReferenceSources.js";
 import { javascriptBootstrapAt } from "./javascriptBootstrap.js";
 import { javascriptBundlerFactoryRoles } from "./javascriptBundlerFactoryRoles.js";
 import { proveJavaScriptBootstrapIntegrity } from "./javascriptBootstrapIntegrity.js";
@@ -159,6 +160,7 @@ const canonicalWebpackInteropBindings = (
   // The shared identity-write owner covers assignment, delete, destructuring,
   // and Object/Reflect mutators; any write that may select `n` counts.
   const writes = new Set<t.Node>();
+  const referenceSourceActive = createBootstrapReferenceSourceFilter(state);
   const loaderMayOwnReference = (root: t.Node): boolean => {
     const pending = [root];
     const seen = new Set<t.Node>();
@@ -182,7 +184,7 @@ const canonicalWebpackInteropBindings = (
       ).binding;
       for (const source of [
         ...selected.initializers,
-        ...selected.referenceInitializers,
+        ...selected.referenceInitializers.filter(referenceSourceActive),
       ])
         if (source.projection.length === 0) pending.push(source.node);
     }

@@ -640,8 +640,14 @@ are still retained. Function declarations are available before their textual
 position; variable and class initializers must precede use.
 Direct and destructuring assignment, loop, update, and delete targets are checked
 through namespace aliases; unrelated member writes do not discard observed API
-identity. This static check does
-not evaluate arbitrary call side effects or runtime registration. Missing findings
+identity. The Webpack loader proof excludes an unused destructuring default
+only when its source is self-contained literal data. Nested selection distinguishes
+own-property absence from a property read that may inherit a value, including
+`constructor`, visible prototype writes, and sparse array slots. Explicit own
+data takes precedence over inherited possibilities; an explicitly `undefined`
+slot still permits the default. Mutable or unknown sources and custom array
+iteration remain conservative. This static check does not evaluate arbitrary
+call side effects or runtime registration. Missing findings
 do not establish that an application has no Electron boundary usage.
 
 IPC pairing is an inference, not an observation. A main handler registered on an
