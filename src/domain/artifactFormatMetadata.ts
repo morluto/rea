@@ -63,6 +63,24 @@ export const unityFsEntryMetadataSchema = z.strictObject({
   flags: uint32,
 });
 
+/** Parsed source fields owned by the wxapkg adapter, independent of member bytes. */
+export const wxapkgMetadataSchema = z.strictObject({
+  kind: z.literal("wxapkg"),
+  info: uint32,
+  index_length: uint32.nullable(),
+  data_length: uint32.nullable(),
+  file_count: uint32.nullable(),
+  directory_status: z.enum(["available", "encrypted"]),
+});
+export type WxapkgMetadata = z.infer<typeof wxapkgMetadataSchema>;
+
+export const wxapkgEntryMetadataSchema = z.strictObject({
+  kind: z.literal("wxapkg-entry"),
+  index: uint32,
+  source_path: z.string(),
+  declared_offset: offset,
+});
+
 /** Source cookie fields and derived directory counts without Python execution. */
 export const pyInstallerMetadataSchema = z.strictObject({
   kind: z.literal("pyinstaller"),
@@ -829,6 +847,8 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   godotPckEntryMetadataSchema,
   unityFsMetadataSchema,
   unityFsEntryMetadataSchema,
+  wxapkgMetadataSchema,
+  wxapkgEntryMetadataSchema,
   pyInstallerMetadataSchema,
   pyInstallerEntryMetadataSchema,
   dotnetBundleEntryMetadataSchema,

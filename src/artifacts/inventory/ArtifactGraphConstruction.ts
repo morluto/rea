@@ -2,6 +2,10 @@ import { artifactFormatDescriptor } from "../artifactFormats.js";
 import { hasGodotPckHeader } from "../../domain/godotPckFormat.js";
 import { hasUImageMagic } from "../../domain/uimageFormat.js";
 import { hasUnityFsHeader } from "../../domain/unityfsFormat.js";
+import {
+  hasWxapkgEncryptedMagic,
+  hasWxapkgHeader,
+} from "../../domain/wxapkgFormat.js";
 import { detectHexRecordEncoding } from "../../domain/firmware/hexRecords.js";
 import { recognizeEspImage } from "../../domain/firmware/espImage.js";
 import { hasUf2Block } from "../../domain/firmware/uf2.js";
@@ -296,7 +300,8 @@ export const rootOccurrenceFor = (
   executable: metadata.executable,
   encrypted:
     (metadata.formatMetadata?.kind === "godot-pck" ||
-      metadata.formatMetadata?.kind === "unityfs") &&
+      metadata.formatMetadata?.kind === "unityfs" ||
+      metadata.formatMetadata?.kind === "wxapkg") &&
     metadata.formatMetadata.directory_status === "encrypted",
   hash_status: "verified",
   source_location: null,
@@ -604,6 +609,8 @@ export const classifyArtifactBytes = (
   if (hasZipSignature(prefix)) return "zip";
   if (hasGodotPckHeader(prefix)) return "godot-pck";
   if (hasUnityFsHeader(prefix)) return "unityfs";
+  if (hasWxapkgEncryptedMagic(prefix) || hasWxapkgHeader(prefix))
+    return "wxapkg";
   if (hasUImageMagic(prefix)) return "uimage";
   const hexRecords = detectHexRecordEncoding(prefix);
   if (hexRecords !== undefined) return hexRecords;

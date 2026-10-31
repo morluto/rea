@@ -215,6 +215,15 @@ export const materializeArtifactInventoryInScope = async (
       input.selectedPath ?? input.inputPath,
       `UnityFS directory is ${containerMetadata.directory_status}; its complete contents cannot be extracted`,
     );
+  if (
+    containerMetadata?.kind === "wxapkg" &&
+    containerMetadata.directory_status !== "available"
+  )
+    throw new AnalysisUnsupportedTargetError(
+      "extract_artifact",
+      input.selectedPath ?? input.inputPath,
+      `wxapkg directory is ${containerMetadata.directory_status}; its complete contents cannot be extracted`,
+    );
   const selectedOccurrences = snapshot.occurrences.filter(
     (occurrence) =>
       (occurrence.entry_kind === "file" || occurrence.entry_kind === "slice") &&

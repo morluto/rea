@@ -270,6 +270,17 @@ Format versions 6 through 8 retain header, block and directory facts with
 none/LZ4/LZ4HC block decompression. See [UnityFS](unityfs.md) for encryption
 and LZMA coverage boundaries.
 
+Inspect a WeChat mini-program package without WeChat or an unpacker:
+
+```sh
+rea inspect-artifact app.wxapkg --detail summary --evidence_output evidence.json --json
+rea extract-artifact app.wxapkg --json
+```
+
+Plaintext packages retain header, table and member facts with verbatim member
+bytes. `V1MMWX` packages are detected as encrypted coverage and refused on
+extraction. See [wxapkg](wxapkg.md) for layout and coverage boundaries.
+
 Inspect an ESP32-family app or bootloader image without esptool:
 
 ```sh

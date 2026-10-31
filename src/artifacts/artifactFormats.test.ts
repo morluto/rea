@@ -30,6 +30,7 @@ type FormatsWithReaders =
   | "ines"
   | "godot-pck"
   | "unityfs"
+  | "wxapkg"
   | "uimage"
   | "mach-o-universal"
   | "directory"
