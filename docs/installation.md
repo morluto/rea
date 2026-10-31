@@ -356,6 +356,31 @@ metadata before restarting the project session. Removal and re-addition do not
 preserve these values automatically. Running setup for Claude Code instead
 would add a user-level entry for every project.
 
+**Inside a REA source checkout.** npm treats a project whose root
+`package.json` is `rea-agents` at the requested exact version as already
+providing that package, but it never links a project's own bins. A pinned
+`npx -y rea-agents@<version> mcp` registration therefore fails to start when the
+client's working directory is a checkout of that same version, reporting that
+`rea` is not found; other projects and checkouts of other versions are
+unaffected. To use the published release there, add a local-scope entry from
+the checkout root that installs the same version under an npm alias:
+
+<!-- x-release-please-start-version -->
+
+```bash
+claude mcp add --scope local rea -- npx -y --package=rea-agents-published@npm:rea-agents@6.7.0 rea-agents mcp
+```
+
+On native Windows:
+
+```powershell
+claude mcp add --scope local rea -- cmd.exe /d /c npx -y --package=rea-agents-published@npm:rea-agents@6.7.0 rea-agents mcp
+```
+
+<!-- x-release-please-end -->
+
+This entry follows the local-scope lifecycle above.
+
 Check the separate profile with the prefixed `claude mcp list` above and compare
 with the default profile with `CLAUDE_CONFIG_DIR` unset. For local scope, run
 `claude mcp list` from the selected project and again from another project.

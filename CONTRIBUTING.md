@@ -260,6 +260,11 @@ environment; a dependency update does not verify the revised environment.
 Repository invariants live in [AGENTS.md](AGENTS.md). Keep provider-specific
 protocols in adapters and shared CLI/MCP workflows in the application layer.
 
+A pinned `npx -y rea-agents@<version> mcp` registration cannot start inside a
+checkout of that same version. To use the published MCP server while working
+here, add the [local-scope override](docs/installation.md#limit-rea-to-one-project-or-agent-profile)
+for source checkouts.
+
 ### Windows source checkouts
 
 The published npm package includes the Windows x64 native addon and its
