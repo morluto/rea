@@ -783,8 +783,8 @@ Read the [6.1 to 6.2 migration guide](docs/migration-6.2.md) before upgrading. R
 
 ### ⚠ BREAKING CHANGES
 
-* **hopper:** Hopper regex mode uses ECMAScript Unicode syntax instead of Python re. Matching runs in a cancellable worker with a five-second deadline; literal mode keeps Unicode casefold matching.
-* **hopper:** remove set_current_document. Use open_binary to switch targets; document arguments are scoped to the active target.
+* **hopper:** Hopper regex mode uses ECMAScript Unicode syntax instead of Python re. Matching runs in a cancellable worker with a five-second deadline; literal mode keeps Unicode casefold matching. ([f201b04](https://github.com/morluto/rea/commit/f201b04fbbb29591b0d2bb3f3b24636526e4ec4e))
+* **hopper:** remove set_current_document. Use open_binary to switch targets; document arguments are scoped to the active target. ([2f71375](https://github.com/morluto/rea/commit/2f71375efc517bb9e6f9800f8e8a6849766bc893))
 
 ### Features
 
@@ -971,7 +971,6 @@ Read the [6.1 to 6.2 migration guide](docs/migration-6.2.md) before upgrading. R
 
 ### Tests
 
-* **acceptance:** add application workflow MCP parity harness and scenarios ([5ac3dc9](https://github.com/morluto/rea/commit/5ac3dc96f064e691b357aeddc11fa76b7b4d66d1))
 * **artifacts:** retire simulated mounts after detach failures ([f591e37](https://github.com/morluto/rea/commit/f591e37a1e45d9b7179ed788c4e7ee77a708c6b0))
 * **artifacts:** verify native directory identity on supported Windows runtimes ([#1069](https://github.com/morluto/rea/issues/1069)) ([e94be95](https://github.com/morluto/rea/commit/e94be95c66515fa6fba2a46e4b29850d34141fef))
 * **browser:** pin DOM and source-map URL policy classifications ([#1120](https://github.com/morluto/rea/issues/1120)) ([c1d0002](https://github.com/morluto/rea/commit/c1d0002470dc2b6bde73e4ffe438e734dbb24d8d))
