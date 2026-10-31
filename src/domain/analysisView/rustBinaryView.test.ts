@@ -5,6 +5,7 @@ import type { RustBinary } from "../rust/rustBinary.js";
 import {
   projectAnalysisView,
   type AnalysisViewParent,
+  type AnalysisViewRequest,
 } from "./analysisView.js";
 
 const report: RustBinary = {
@@ -204,4 +205,168 @@ it("pages matching original indices and omits dependency vectors unless selected
     exhausted: true,
     next_offset: null,
   });
+});
+
+it("filters packages by name, version, and indices, projecting requested dependencies", () => {
+  const value = structuredClone(report);
+  value.auditable_metadata!.packages.push(
+    {
+      name: "serde",
+      version: "1.0.100",
+      source: "crates.io",
+      kind: null,
+      root: false,
+      dependencies: [],
+      features: ["derive"],
+    },
+    {
+      name: "serde",
+      version: "2.0.0",
+      source: "crates.io",
+      kind: null,
+      root: false,
+      dependencies: [],
+      features: [],
+    },
+  );
+  const source = parent(value);
+  const filtered = projectAnalysisView(source, {
+    kind: "rust",
+    collection: "packages",
+    offset: 0,
+    limit: 10,
+    names: ["serde"],
+    versions: ["1.0.100"],
+    fields: ["name", "version", "dependencies"],
+  });
+  if (!filtered.ok || filtered.value.kind !== "rust")
+    throw new Error("Rust package filter failed");
+  expect(filtered.value.page.rows).toEqual([
+    {
+      index: 1,
+      name: "serde",
+      version: "1.0.100",
+      dependencies: [],
+    },
+  ]);
+  expect(filtered.value.coverage.total).toBe(1);
+});
+
+it("filters dependency edges by from_indices, to_indices, and indices", () => {
+  const value = structuredClone(report);
+  value.auditable_metadata!.packages = [
+    {
+      name: "root",
+      version: "1",
+      source: "local",
+      kind: null,
+      root: true,
+      dependencies: [1, 2],
+      features: [],
+    },
+    {
+      name: "a",
+      version: "1",
+      source: "local",
+      kind: null,
+      root: false,
+      dependencies: [2],
+      features: [],
+    },
+    {
+      name: "b",
+      version: "1",
+      source: "local",
+      kind: null,
+      root: false,
+      dependencies: [],
+      features: [],
+    },
+  ];
+  value.auditable_metadata!.dependency_edges = [
+    { from_index: 0, to_index: 1 },
+    { from_index: 0, to_index: 2 },
+    { from_index: 1, to_index: 2 },
+  ];
+  value.auditable_metadata!.cyclic_dependency_indices = [];
+  const source = parent(value);
+  const filtered = projectAnalysisView(source, {
+    kind: "rust",
+    collection: "edges",
+    offset: 0,
+    limit: 10,
+    from_indices: [0],
+    to_indices: [2],
+    fields: ["to_index"],
+  });
+  if (!filtered.ok || filtered.value.kind !== "rust")
+    throw new Error("Rust edge filter failed");
+  expect(filtered.value.page.rows).toEqual([
+    {
+      index: 1,
+      to_index: 2,
+    },
+  ]);
+  expect(filtered.value.coverage.total).toBe(1);
+});
+
+it("handles null auditable metadata and projects compiler commit hashes count", () => {
+  const value: RustBinary = {
+    ...report,
+    auditable_metadata: null,
+    rustc_commit: {
+      evidence_kind: "inferred",
+      hashes: [
+        { hash: "1".repeat(40), file_offset: 0 },
+        { hash: "2".repeat(40), file_offset: 48 },
+      ],
+    },
+  };
+  const source = parent(value);
+  const summary = projectAnalysisView(source, { kind: "summary" });
+  if (!summary.ok) throw summary.error;
+  expect(summary.value).toMatchObject({
+    summary: {
+      auditable_metadata: null,
+      rustc_commit: {
+        evidence_kind: "inferred",
+        hashes_count: 2,
+      },
+    },
+    source_coverage: {
+      auditable_metadata_available: false,
+      embedded_records: "unknown",
+      runtime_dependencies: "unknown",
+    },
+  });
+  expect(summary.value.unknowns).toEqual(
+    expect.arrayContaining([
+      expect.stringContaining("No cargo-auditable metadata was observed"),
+    ]),
+  );
+
+  const emptyPackages = projectAnalysisView(source, {
+    kind: "rust",
+    collection: "packages",
+    offset: 0,
+    limit: 10,
+  });
+  if (!emptyPackages.ok || emptyPackages.value.kind !== "rust")
+    throw new Error("Rust packages on null metadata failed");
+  expect(emptyPackages.value.page.rows).toEqual([]);
+  expect(emptyPackages.value.coverage.total).toBe(0);
+});
+
+it("rejects unsupported view kinds with an input error", () => {
+  const source = parent();
+  const invalid = projectAnalysisView(source, {
+    kind: "cve",
+  } as unknown as AnalysisViewRequest);
+  expect(invalid.ok).toBe(false);
+  if (!invalid.ok) {
+    expect(invalid.error).toMatchObject({
+      operation: "inspect_analysis_view",
+      issues: [{ path: ["view"], reason: "invalid_value" }],
+    });
+  }
 });
