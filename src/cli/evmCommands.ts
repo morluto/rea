@@ -8,11 +8,8 @@ import { withCommandCancellation } from "./commandCancellation.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
-import {
-  DEFAULT_EVM_TIMEOUT_MS,
-  MAX_EVM_TIMEOUT_MS,
-} from "../domain/evm/evmInterface.js";
-import { cliIntegerArgument } from "./options.js";
+import { inspectEvmInterfaceInputSchema } from "../domain/evm/evmInterface.js";
+import { cliOptionalDecimalField } from "./options.js";
 
 /** Resolve operator paths and preserve explicit encoding through the shared workflow. */
 export const registerEvmCommands = (
@@ -30,11 +27,9 @@ export const registerEvmCommands = (
         .describe("Selected carrier representation"),
     }),
     options: z.object({
-      timeoutMs: cliIntegerArgument(1, MAX_EVM_TIMEOUT_MS)
-        .optional()
-        .describe(
-          `Deadline in milliseconds for the owned EVMole worker command (default ${String(DEFAULT_EVM_TIMEOUT_MS)}), not carrier acquisition or final reply reads. An integer from 1 to ${String(MAX_EVM_TIMEOUT_MS)} applies on the next call. Fixed input, reply, diagnostic, address-space, and CPU allowances stay unchanged.`,
-        ),
+      timeoutMs: cliOptionalDecimalField(
+        inspectEvmInterfaceInputSchema.shape.timeout_ms,
+      ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>

@@ -4,7 +4,7 @@ import {
 } from "../domain/firmware/espFlashSelection.js";
 import type { ArtifactTargetSelection } from "../application/DirectAnalysis.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
-import { cliIntegerArgument } from "./options.js";
+import { cliDefaultedDecimalField, cliIntegerArgument } from "./options.js";
 import {
   analysisEvidenceDeliveryOptions,
   cliEvidenceDeliveryInputError,
@@ -53,12 +53,12 @@ export const registerArtifactCommands = (
       root: keyedArchiveInputSchema.shape.root.describe(
         "Named $top archive root",
       ),
-      offset: cliIntegerArgument(0)
-        .default(0)
-        .describe("First original object-table index"),
-      limit: cliIntegerArgument(1, 20_000)
-        .default(20_000)
-        .describe("Maximum object-table entries to return"),
+      offset: cliDefaultedDecimalField(
+        keyedArchiveInputSchema.shape.offset,
+      ).describe("First original object-table index"),
+      limit: cliDefaultedDecimalField(
+        keyedArchiveInputSchema.shape.limit,
+      ).describe("Maximum object-table entries to return"),
     }),
     run: ({ args, options }) =>
       logCliCommand(logger, CLI_COMMANDS.inspectKeyedArchive, () =>

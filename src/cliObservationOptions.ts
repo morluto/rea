@@ -1,12 +1,8 @@
 import { javascriptRouteDeliveryOptions } from "./cli/javascriptRouteDelivery.js";
 import { z } from "incur";
 import { webRuntimeCommandTimeoutSchema } from "./domain/browserDeadline.js";
-import {
-  JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM,
-  JAVASCRIPT_WORKER_HEAP_MIB_MAXIMUM,
-  JAVASCRIPT_WORKER_HEAP_MIB_MINIMUM,
-} from "./domain/javascript/javascriptAnalysisResourceControls.js";
-import { cliIntegerArgument } from "./cli/options.js";
+import { javaScriptAnalysisResourceControlsSchema } from "./domain/javascript/javascriptAnalysisResourceControls.js";
+import { cliOptionalDecimalField } from "./cli/options.js";
 import { javaScriptSourcePathsSchema } from "./domain/javascript/javascriptSourceSelection.js";
 
 /** Accept an agent-selected browser observation duration without an artificial ceiling. */
@@ -94,32 +90,19 @@ export const electronPageInspectionOptions = z.object({
 
 export const javascriptApplicationOptions = z.object({
   ...javascriptRouteDeliveryOptions,
-  maxSemanticNodes: cliIntegerArgument(1, JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM)
-    .optional()
-    .describe(
-      "Maximum retained semantic nodes across the application; defaults to 100000. Worker heap and parent result admission remain enforced.",
-    ),
-  maxSemanticNodesPerFile: cliIntegerArgument(
-    1,
-    JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM,
-  )
-    .optional()
-    .describe(
-      "Maximum retained semantic nodes per source file; defaults to 20000, additionally bounded by max_semantic_nodes and memory/transfer limits.",
-    ),
-  maxSemanticUnknowns: cliIntegerArgument(1, JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM)
-    .optional()
-    .describe(
-      "Maximum retained semantic unknown records across the application; defaults to 100000. Omitted emission occurrences are counted by family and reason.",
-    ),
-  maxSemanticUnknownsPerFile: cliIntegerArgument(
-    1,
-    JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM,
-  )
-    .optional()
-    .describe(
-      "Maximum retained semantic unknown records per source file; defaults to 20000, additionally bounded by max_semantic_unknowns and memory/transfer limits.",
-    ),
+  maxSemanticNodes: cliOptionalDecimalField(
+    javaScriptAnalysisResourceControlsSchema.shape.max_semantic_nodes,
+  ),
+  maxSemanticNodesPerFile: cliOptionalDecimalField(
+    javaScriptAnalysisResourceControlsSchema.shape.max_semantic_nodes_per_file,
+  ),
+  maxSemanticUnknowns: cliOptionalDecimalField(
+    javaScriptAnalysisResourceControlsSchema.shape.max_semantic_unknowns,
+  ),
+  maxSemanticUnknownsPerFile: cliOptionalDecimalField(
+    javaScriptAnalysisResourceControlsSchema.shape
+      .max_semantic_unknowns_per_file,
+  ),
   sourcePath: javaScriptSourcePathsSchema
     .optional()
     .describe(
@@ -132,19 +115,12 @@ export const javascriptApplicationOptions = z.object({
     .describe(
       "Inline JSON array or JSON file path of exact inventoried file paths relative to the application root, selected after any --source-path values. Use a file for selections that exceed the host command-line limit.",
     ),
-  maxHeapMb: cliIntegerArgument(
-    JAVASCRIPT_WORKER_HEAP_MIB_MINIMUM,
-    JAVASCRIPT_WORKER_HEAP_MIB_MAXIMUM,
-  )
-    .optional()
-    .describe(
-      "Maximum V8 old-space heap in MiB for the isolated JavaScript source analyzer; defaults to 1024. This does not change the CLI/MCP process heap. When REA runs on Bun, which ignores V8 heap flags, Windows instead limits the analyzer's committed memory to this budget plus a 512 MiB runtime reserve; other Bun hosts enforce no limit.",
-    ),
-  analysisTimeoutMs: cliIntegerArgument(1, 2_147_483_647)
-    .optional()
-    .describe(
-      "Maximum startup, analysis and transfer time per JavaScript source, in milliseconds; defaults to 300000. On timeout, return collected partial Evidence and stop the analysis.",
-    ),
+  maxHeapMb: cliOptionalDecimalField(
+    javaScriptAnalysisResourceControlsSchema.shape.max_heap_mb,
+  ),
+  analysisTimeoutMs: cliOptionalDecimalField(
+    javaScriptAnalysisResourceControlsSchema.shape.analysis_timeout_ms,
+  ),
   artifactFormat: z
     .enum(["auto", "asar", "directory"])
     .default("auto")

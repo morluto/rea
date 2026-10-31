@@ -35,8 +35,11 @@ const rejectLexicalSpellings = async (
   }
 };
 
-const reachPastValidation = async (argv: readonly string[]): Promise<void> => {
-  const result = await serveCli([...argv, "--json"]);
+const reachPastValidation = async (
+  argv: readonly string[],
+  environment: Readonly<Record<string, string>> = {},
+): Promise<void> => {
+  const result = await serveCli([...argv, "--json"], environment);
   const parsed = JSON.parse(result.stdout) as { code?: unknown };
   expect(parsed.code, argv.join(" ")).not.toBe("VALIDATION_ERROR");
 };
@@ -103,7 +106,10 @@ it("refuses non-decimal spellings for adb logcat bounds", async () => {
     "count",
   );
   await rejectLexicalSpellings(["read-adb-logcat", "serial", "--pid"], "pid");
-  await reachPastValidation(["read-adb-logcat", "serial", "--count", "5"]);
+  // A missing explicit client keeps this control from running an installed adb.
+  await reachPastValidation(["read-adb-logcat", "serial", "--count", "5"], {
+    REA_ADB_PATH: "/nonexistent/adb",
+  });
 });
 
 it("refuses non-decimal spellings for browser observation and frida durations", async () => {

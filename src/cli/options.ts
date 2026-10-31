@@ -23,6 +23,23 @@ export const cliIntegerArgument = (
     .regex(/^[0-9]+$/u, "Expected a decimal integer")
     .pipe(z.coerce.number<string>().safe().min(min).max(max));
 
+/**
+ * Admit decimal argv text into an optional domain integer. The owner's field
+ * keeps its bounds and help; optionality stays outside the pipe for Incur.
+ */
+export const cliOptionalDecimalField = (field: z.ZodOptional<z.ZodNumber>) => {
+  const parsed = cliIntegerArgument(0).pipe(field.unwrap()).optional();
+  return field.description === undefined
+    ? parsed
+    : parsed.describe(field.description);
+};
+
+/** Admit decimal argv text into a defaulted domain integer, keeping its bounds and default. */
+export const cliDefaultedDecimalField = (field: z.ZodDefault<z.ZodNumber>) =>
+  cliIntegerArgument(0)
+    .pipe(field.removeDefault())
+    .default(field.def.defaultValue);
+
 export const providerSelectionOption = analysisProviderSelectorSchema
   .optional()
   .describe(
