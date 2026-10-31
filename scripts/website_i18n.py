@@ -508,7 +508,7 @@ def replace_language_markup(source, root, relative, code, available):
 
 def render_page(root, source_path, language, messages, available, figures, page_languages):
     """Create one complete translation, preserving routes, code, IDs and reference data."""
-    from website import SITE_ORIGIN, PageMetadata, page_url
+    from website import PageMetadata, page_url
     site = root / "website/public"
     relative = source_path.relative_to(site).as_posix()
     code = language["code"]

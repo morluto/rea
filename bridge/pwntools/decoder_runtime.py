@@ -3,7 +3,6 @@ import json
 import os
 from pathlib import Path
 import resource
-import sys
 
 OUTPUT_BYTES = 64 * 1024 * 1024
 
