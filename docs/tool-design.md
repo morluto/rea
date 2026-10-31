@@ -228,6 +228,40 @@ artifact can execute successfully.
 
 ## Own the lifecycle
 
+The investigation owns authenticated Evidence and complete Unknown revision
+history independently of an engine. `close_binary` drains earlier admitted work,
+releases engine resources and clears replay/invalidation state; investigation
+references survive, including target-free closes and cleanup failures. A target
+switch does not make historical observations current for its new engine.
+
+`reset_investigation` is the explicit destructive boundary. It drains earlier
+analysis, imports, exports and Unknown operations, then clears investigation and
+replay/source bindings while retaining a healthy active engine. Metadata mutation
+invalidation remains in force until that engine is recreated. Later admitted work
+waits for the transition; earlier late results cannot repopulate cleared history.
+Runtime disposal seals new acquisitions and releases records after successful
+owned engine/file cleanup; failed cleanup keeps the owner available for retry.
+
+Records are retained in memory under a fixed per-owner representation allowance
+derived from one quarter of initial available V8 heap. Admission accounts for
+Evidence, Unknown history and indexes before atomic commit; metadata replacement
+uses its size delta and duplicates do not accumulate. There is no silent eviction.
+`binary_session.investigation` reports committed counts, estimated representation
+bytes and the allowance; these estimates are not process RSS measurements. Live
+authentication headroom is checked separately. On refusal, export a checkpoint,
+reset, and import only the required investigation, or start a process with a
+larger heap. Retention does not promise automatic persistence.
+
+`reset_investigation(save_path)` saves the complete cross-domain canonical bundle
+once before clearing. It awaits file sync, atomic publication and staging cleanup;
+failed save, incomplete cleanup or cancellation observed before reset commit
+preserves all records. Publication
+can precede cancellation or cleanup failure; the error retains its committed file
+receipt. Import that bundle to restore original Evidence IDs and all Unknown
+revisions in a new process. Engine replay snapshots remain a separate target and
+profile-bound mechanism. This checkpoint contract does not promise recovery from
+an uncheckpointed process exit or parent-directory loss after a host crash.
+
 `SafeOutputTree` publishes only after file readback, nested-directory fsync
 from children to parents, and root-parent fsync on hosts that support directory
 syncing. Windows skips directory fsync. Failed writes retain a separate pending

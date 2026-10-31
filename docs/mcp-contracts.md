@@ -678,13 +678,24 @@ advertises a file selector; a retained ID does not authorize a file read.
 References belong to the current connection's Evidence ledger. Opening another
 target or restarting the current target preserves retained records, including
 when provider cleanup fails; records remain available for export and retry.
-`close_binary` clears them, even when no binary is active. A fresh connection
-has its own ledger. A missing reference reports its exact ID and
+`close_binary` releases the engine and replay cache while preserving these records,
+even when no binary is active or cleanup fails. `reset_investigation` explicitly
+clears all records and Unknown revisions after draining earlier work; a healthy
+active engine remains open. Its optional absolute `save_path` saves a complete
+canonical bundle before clearing. Failed save, cancellation observed before clearing or incomplete cleanup
+preserves records, and a published file is reported even if later cleanup fails.
+A fresh connection has its own in-memory ledger; import the saved bundle to restore
+original Evidence IDs and complete Unknown history. A missing reference reports its exact ID and
 `details.reason: "missing"`; the server cannot infer
 whether it was never recorded, cleared, or retained by another connection.
 Supply complete inline Evidence, repeat its producer, or import an exported
-Evidence bundle before referencing that imported record. Export a bundle before
-closing if the investigation needs it later.
+Evidence bundle before referencing that imported record. Export a bundle or use
+`reset_investigation(save_path)` before ending the process if the investigation
+needs it later. Retention has no automatic persistence or silent eviction.
+`binary_session.investigation` reports record/revision/head counts, estimated
+retained representation bytes and the fixed allowance derived from initial V8
+heap headroom. A capacity refusal preserves the existing investigation; checkpoint
+and reset it, or start with a larger Node heap. These byte estimates are not RSS.
 
 CLI workflows that advertise `--evidence-bundle` can resolve the same reference
 JSON from one explicitly selected local bundle, including an MCP export. They
@@ -866,8 +877,8 @@ error's reported resources.
 
 ### Retained cleanup retry
 
-A `close_binary` that retires the target clears session records even when
-cleanup fails. When the session keeps every reported owner for the next
+A `close_binary` that retires the target clears engine replay state while
+retaining investigation Evidence and Unknown history, including when cleanup fails. When the session keeps every reported owner for the next
 `close_binary` on the same connection, its `cleanup_incomplete` error carries
 `recovery: {"kind": "retry_cleanup", "operation": "close_binary"}`.
 Keep the connection open, let the reported condition settle or resolve it, call
@@ -1269,11 +1280,11 @@ If the client timed out or cancelled during startup, the pending query may have
 been interrupted. Reissuing `open_binary` for the same active target can reuse
 the current client, so it is not a fresh-start recovery. On the same connection:
 
-1. Keep any useful inline Evidence, or export a bundle before closing if retained
-   records are needed. `binary_session` can show the selected binding and its
+1. Keep useful inline Evidence or use the retained investigation references;
+   export a bundle before ending the process to resume later. `binary_session` can show the selected binding and its
    recorded state; target selection alone does not prove engine readiness.
 2. Call `close_binary` and check its result. It drains owned work, closes the
-   provider, and clears retained session records. A `cleanup_incomplete` result
+   provider and engine replay state while preserving investigation Evidence and Unknown history. A `cleanup_incomplete` result
    must be addressed according to its reported owned resources before retrying.
 3. Call `open_binary` with the same caller-selected path and
    `provider_id: "ghidra"`, then retry the first query with an appropriate client

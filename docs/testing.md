@@ -570,6 +570,20 @@ and toolchain conditions when comparing timings.
 
 ## Lifecycle regressions
 
+Investigation lifetime changes exercise public MCP target A/B switches, target-free
+close and close cleanup failure/retry, with exact retained IDs and complete Unknown
+revision histories. Verify engine replay/cache removal separately from retained
+facts. An explicit reset must preserve a healthy engine and existing metadata
+invalidation, drain an admitted signal-ignoring late result, block later work,
+and prevent stale replay/source bindings from restoring old facts. Cover checkpoint
+overwrite refusal, publication followed by cancellation or staging cleanup failure,
+cleanup retry, then fresh-process bundle import with identical original references
+and Unknown history. Capacity admission tests preserve the complete pre-state on
+failed record/import/Unknown transactions, count duplicates once, account for
+metadata size deltas and release budget on reset. Controlled providers and cleanup
+seams establish ordering and failure semantics; real application/provider runs are
+reported separately.
+
 For changes to resource acquisition, readiness, cancellation, or cleanup, select
 the affected owners and applicable scenarios below. Include temporary snapshots
 and one-shot commands. Use public CLI/MCP workflows where practical and a

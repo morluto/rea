@@ -242,9 +242,13 @@ observation arrays and runtime reconciliation's `static_layers[].analysis` and
 `runtime_observations[]` also accept exact references where advertised. Each
 source can independently be inline or retained, preserving identity, coverage
 and unknowns. CLI workflows advertising `--evidence-bundle` resolve these inputs
-from the explicitly selected bundle. `close_binary` clears retained references;
-export a bundle before closing, or supply portable inline Evidence in another
-connection. A missing reference includes its ID and recovery guidance.
+from the explicitly selected bundle. `close_binary` releases the engine while
+retaining references and complete Unknown history on the same MCP connection.
+`reset_investigation` explicitly clears them; optional `save_path` checkpoints the
+complete bundle before clearing. Import that bundle in another connection to
+restore its original references. Retention is bounded, in-memory and never silently
+evicted; `binary_session.investigation` reports the budget. A missing reference
+includes its ID and recovery guidance.
 
 For exact file/native metadata or processing gaps, use
 `view: {kind: "javascript-facts", where: {paths: ["package.json"]}, property_keys: ["name", "operation", "analysis_status"], limit: 32}`.

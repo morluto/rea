@@ -58,12 +58,15 @@ it("uses the composed record owner and preserves best-effort post-commit notific
   });
   expect(observed).toEqual([1]);
   expect((await session.close()).ok).toBe(true);
-  expect(records.exportEvidenceBundle().records).toEqual([]);
+  expect(records.exportEvidenceBundle().records).toEqual([evidence]);
   expect(session.exportAnalysisSnapshot()).toMatchObject({
     ok: false,
     error: { _tag: "NoBinaryOpenError" },
   });
-  expect(observed).toEqual([1, 0]);
+  expect(observed).toEqual([1, 1]);
+  expect((await session.resetInvestigation()).ok).toBe(true);
+  expect(records.exportEvidenceBundle().records).toEqual([]);
+  expect(observed).toEqual([1, 1, 0]);
   unsubscribe();
   await new Promise<void>((resolve) => setImmediate(resolve));
 });
