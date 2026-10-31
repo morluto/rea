@@ -67,6 +67,7 @@ export const collectJavaScriptSemanticResources = (
   const acquisitions = collectAcquisitions(program, context).filter(
     (candidate) =>
       !socketPortInFirstArgument(candidate) ||
+      tlsOptionsReplaceFirstArgument(candidate) ||
       !rejectsSocketPortLiteral(candidate.node, context),
   );
   return [
@@ -290,3 +291,17 @@ const rejectsSocketPortLiteral = (
 const socketPortInFirstArgument = (
   candidate: Pick<AcquisitionReference, "specifier">,
 ): boolean => candidate.specifier === "net" || candidate.specifier === "tls";
+
+/**
+ * `tls.connect` merges a later options object over its first argument, so
+ * `tls.connect(-1, { port: 443 })` creates a socket even though `-1` is not a
+ * port. Node's `net.connect` keeps validating that argument, so the rescue
+ * applies to the `tls` specifier only.
+ */
+const tlsOptionsReplaceFirstArgument = (
+  candidate: ResourceCandidate,
+): boolean => {
+  if (candidate.specifier !== "tls") return false;
+  const options = candidate.node.arguments[1];
+  return options !== undefined && t.isObjectExpression(options);
+};

@@ -39,6 +39,20 @@ it.each([
   ["a tls NaN port", `tls.connect(NaN)`],
   ["a createConnection port above the range", `net.createConnection(65536)`],
   ["a createConnection empty path", `net.createConnection("")`],
+  // A unary operator is judged by its result. grpt: each of these reaches a
+  // different branch, so a direct case is required for every one.
+  ["a bitwise-not of zero", `net.connect(~0)`],
+  ["a bitwise-not of one", `net.connect(~1)`],
+  ["a logical-not port", `net.connect(!0)`],
+  ["a void port", `net.connect(void 1.5)`],
+  ["a unary-plus fractional port", `net.connect(+1.5)`],
+  // `net.connect` keeps validating the first argument even when an options
+  // object follows, which is what separates it from `tls.connect`.
+  ["a net negative port beside options", `net.connect(-1, { port: 443 })`],
+  [
+    "a net port above the range beside options",
+    `net.connect(65536, { port: 443 })`,
+  ],
 ] as const)("emits no socket acquisition for %s", (_name, call) => {
   expect(socketAcquisitionsFor(call)).toEqual([]);
 });
@@ -64,6 +78,23 @@ it.each([
     "a createConnection negative-zero port",
     `net.createConnection(-0)`,
     "createConnection",
+  ],
+  // `~4294967295` is `0`, which is the valid lowest port.
+  ["a bitwise-not of the max uint32", `net.connect(~4294967295)`, "connect"],
+  // `typeof` yields a non-empty type name, which Node reads as a Unix socket path.
+  ["a typeof port", `net.connect(typeof 1.5)`, "connect"],
+  // `tls.connect` merges a later options object over the first argument, so a
+  // rejected-looking first argument is rescued. `net.connect` does not.
+  ["a tls port beside options", `tls.connect(-1, { port: 443 })`, "connect"],
+  [
+    "a tls void port beside options",
+    `tls.connect(void 0, { port: 443 })`,
+    "connect",
+  ],
+  [
+    "a tls boolean port beside options",
+    `tls.connect(!0, { port: 443 })`,
+    "connect",
   ],
 ] as const)("keeps the socket acquisition for %s", (_name, call, method) => {
   expect(socketAcquisitionsFor(call)).toEqual([{ kind: "acquire", method }]);
