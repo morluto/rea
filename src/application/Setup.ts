@@ -35,7 +35,6 @@ import { setupCleanupError, setupCleanupReason } from "./SetupCleanupOwner.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import type { SetupSkillInstallError } from "./SetupSkill.js";
 import type { SetupHopperInstallFailure } from "./SetupInstallFailure.js";
-import type { SetupRegistrationPrewarm } from "./SetupRegistrationPrewarm.js";
 
 /** Discover, approve, and apply setup actions idempotently. */
 export const runSetup = async (
@@ -387,44 +386,6 @@ const runSetupWorkflow = async (
       return withHopperFailure(await failSkill(skillFailure));
     }
   }
-  // The prewarm only follows client registrations the user approved; an empty
-  // plan or a skill-only run must not install anything.
-  const prewarmEligible = appliedActions.some((id) =>
-    id.startsWith("configured_"),
-  );
-  let prewarm: SetupRegistrationPrewarm | undefined;
-  if (prewarmEligible && host.prewarmRegistrationRunner !== undefined) {
-    emitProgress(options, {
-      actionId: "prewarm_registration_runner",
-      label: "REA package-runner cache",
-      state: "started",
-      detail: "Preparing the pinned package entry",
-    });
-    prewarm = await host.prewarmRegistrationRunner();
-    if (prewarm.status === "failed" && prewarm.interruptedSignal !== undefined)
-      return {
-        status: "cancelled",
-        plannedActions,
-        appliedActions,
-        clients,
-        clientStates,
-        doctor: summarizeDoctor(discovery.initialDoctor),
-        prewarm,
-      };
-    if (prewarm.status === "failed")
-      emitProgress(options, {
-        actionId: "prewarm_registration_runner",
-        label: "REA package-runner cache",
-        state: "warning",
-        detail: prewarm.reason,
-      });
-    else if (prewarm.status === "warmed")
-      emitProgress(options, {
-        actionId: "prewarm_registration_runner",
-        label: "REA package-runner cache",
-        state: "completed",
-      });
-  }
   const doctor = summarizeDoctor(await host.doctor(readinessScope));
   const remediation = combineRemediation(
     hopperFailure?.remediation ??
@@ -447,7 +408,6 @@ const runSetupWorkflow = async (
     clientStates,
     ...(remediation === undefined ? {} : { remediation }),
     ...(hopperFailure === undefined ? {} : { code: hopperFailure.code }),
-    ...(prewarm === undefined ? {} : { prewarm }),
   };
 };
 

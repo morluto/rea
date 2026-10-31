@@ -101,7 +101,6 @@ const read = (parent: AnalysisViewParent): Result<Checked, AnalysisError> => {
   if (
     parent.subject != null &&
     !apkSignatureMatchesSubject(report.artifact, {
-      path: parent.subject.local_path,
       sha256: parent.subject.digest.sha256,
       format: parent.subject.format,
     })

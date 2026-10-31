@@ -2,6 +2,8 @@ import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { createHash } from "node:crypto";
 import {
   mkdtemp,
+  mkdir,
+  open,
   readFile,
   realpath,
   rm,
@@ -151,6 +153,70 @@ describe("Ghidra seed commitment", () => {
       throw new Error("Expected a commitment");
     expect(resolved.value.path).toBe(await realpath(path));
   });
+
+  it.skipIf(process.platform === "win32")(
+    "rejects an invalid file/.. traversal instead of reading a sibling seed file",
+    async () => {
+      const directory = await workspace();
+      await writeFile(join(directory, "file"), "not a directory");
+      await writeFile(join(directory, "seeds.tsv"), SEEDS);
+      const configured = `${directory}/file/../seeds.tsv`;
+      await expect(open(configured)).rejects.toMatchObject({ code: "ENOTDIR" });
+      const resolved = await resolveGhidraAnalysisSeeds(configured, resources);
+      expect(resolved.ok).toBe(false);
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "preserves symlink/.. lookup against a sibling decoy",
+    async () => {
+      const directory = await workspace();
+      const selected = join(directory, "selected");
+      await mkdir(join(selected, "child"), { recursive: true });
+      await writeFile(join(selected, "seeds.tsv"), SEEDS);
+      await writeFile(join(directory, "seeds.tsv"), "0x1234\tcode\n");
+      const link = join(directory, "link");
+      await symlink(join(selected, "child"), link);
+      const configured = `${link}/../seeds.tsv`;
+      const resolved = await resolveGhidraAnalysisSeeds(configured, resources);
+      if (!resolved.ok || resolved.value === undefined)
+        throw new Error("Expected a commitment");
+      expect(resolved.value.configured_path).toBe(configured);
+      expect(resolved.value.path).toBe(
+        await realpath(join(selected, "seeds.tsv")),
+      );
+      const snapshot = await snapshotGhidraAnalysisSeeds(
+        resolved.value,
+        await workspace(),
+        resources,
+      );
+      expect(await readFile(snapshot, "utf8")).toBe(CANONICAL);
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "rejects a configured traversal that becomes invalid before snapshotting",
+    async () => {
+      const directory = await workspace();
+      const child = join(directory, "child");
+      await mkdir(child);
+      await writeFile(join(directory, "seeds.tsv"), SEEDS);
+      const configured = `${child}/../seeds.tsv`;
+      const resolved = await resolveGhidraAnalysisSeeds(configured, resources);
+      if (!resolved.ok || resolved.value === undefined)
+        throw new Error("Expected a commitment");
+      await rm(child, { recursive: true });
+      await writeFile(child, "not a directory");
+      await expect(open(configured)).rejects.toMatchObject({ code: "ENOTDIR" });
+      await expect(
+        snapshotGhidraAnalysisSeeds(
+          resolved.value,
+          await workspace(),
+          resources,
+        ),
+      ).rejects.toMatchObject({ _tag: "ProviderAdapterError" });
+    },
+  );
 
   it("reports an unreadable seed file as a provider error", async () => {
     const resolved = await resolveGhidraAnalysisSeeds(

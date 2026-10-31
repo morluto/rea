@@ -1,3 +1,4 @@
+import { permitsCapabilityFallback } from "./CapabilityFallback.js";
 import type {
   AnalysisExecution,
   AnalysisOperationPort,
@@ -5,7 +6,6 @@ import type {
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import {
   AnalysisCancelledError,
-  AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -32,11 +32,7 @@ export const resolveAnalysisDocument = async (
     executionOptions(signal),
   );
   if (!current.ok) {
-    if (
-      !(current.error instanceof AnalysisCapabilityUnavailableError) ||
-      current.error.cleanupIncomplete
-    )
-      return current;
+    if (!permitsCapabilityFallback(current.error)) return current;
     if (signal?.aborted)
       return err(
         new AnalysisCancelledError("current_document", {

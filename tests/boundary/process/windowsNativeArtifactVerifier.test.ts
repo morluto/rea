@@ -1,12 +1,56 @@
-import { createHash } from "node:crypto";
-import { copyFile, mkdir, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { access, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parse } from "@babel/parser";
 import { expect } from "vitest";
 import { processTest } from "../../support/process/processFixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { windowsNativeArtifactFixture } from "../../fixtures/windowsNativeArtifact.js";
 
 const repository = fileURLToPath(new URL("../../..", import.meta.url));
+
+/** Copy the selected entry's relative ESM graph; package dependencies stay absent. */
+const copyModuleGraph = async (root: string, entry: string): Promise<void> => {
+  const pending = [join(repository, entry)];
+  const copied = new Set<string>();
+  while (pending.length > 0) {
+    const source = pending.pop();
+    if (source === undefined || copied.has(source)) continue;
+    copied.add(source);
+    const output = join(root, relative(repository, source));
+    const text = await readFile(source, "utf8");
+    await mkdir(dirname(output), { recursive: true });
+    await copyFile(source, output);
+    for (const node of parse(text, {
+      sourceType: "module",
+      plugins: ["typescript"],
+    }).program.body) {
+      if (
+        node.type !== "ImportDeclaration" &&
+        node.type !== "ExportNamedDeclaration" &&
+        node.type !== "ExportAllDeclaration"
+      )
+        continue;
+      const specifier = node.source?.value;
+      if (!specifier?.startsWith(".")) continue;
+      let dependency = resolve(dirname(source), specifier);
+      try {
+        await access(dependency);
+      } catch (cause) {
+        if (
+          cause instanceof Error &&
+          "code" in cause &&
+          cause.code === "ENOENT" &&
+          dependency.endsWith(".js") &&
+          source.endsWith(".ts")
+        )
+          dependency = dependency.slice(0, -3) + ".ts";
+        else throw cause;
+      }
+      pending.push(dependency);
+    }
+  }
+};
 
 for (const mode of ["preinstall source", "packed source-free"]) {
   processTest(
@@ -15,27 +59,29 @@ for (const mode of ["preinstall source", "packed source-free"]) {
       const root = await createTestTempDirectory(
         "rea-native-artifact-verifier-",
       );
-      const paths =
+      await mkdir(join(root, "scripts"), { recursive: true });
+      await copyFile(
+        join(repository, "scripts/verify-windows-native-artifact.mjs"),
+        join(root, "scripts/verify-windows-native-artifact.mjs"),
+      );
+      if (mode === "preinstall source")
+        await copyModuleGraph(root, "scripts/lib/verifier-source-loader.mjs");
+      await copyModuleGraph(
+        root,
         mode === "preinstall source"
-          ? [
-              "scripts/lib/verifier-source-loader.mjs",
-              "src/domain/windowsNativeArtifact.ts",
-              "src/domain/peCoffHeader.ts",
-              "src/domain/dosMz.ts",
-              "src/domain/result.ts",
-            ]
-          : [
-              "dist/domain/windowsNativeArtifact.js",
-              "dist/domain/peCoffHeader.js",
-              "dist/domain/dosMz.js",
-              "dist/domain/result.js",
-            ];
-      for (const path of [
-        "scripts/verify-windows-native-artifact.mjs",
-        ...paths,
-      ]) {
-        await mkdir(dirname(join(root, path)), { recursive: true });
-        await copyFile(join(repository, path), join(root, path));
+          ? "src/domain/windowsNativeArtifact.ts"
+          : "dist/domain/windowsNativeArtifact.js",
+      );
+      await expect(access(join(root, "node_modules"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      if (mode === "packed source-free") {
+        await expect(access(join(root, "src"))).rejects.toMatchObject({
+          code: "ENOENT",
+        });
+        await expect(
+          access(join(root, "scripts/lib/verifier-source-loader.mjs")),
+        ).rejects.toMatchObject({ code: "ENOENT" });
       }
       await writeFile(
         join(root, "package.json"),
@@ -43,22 +89,7 @@ for (const mode of ["preinstall source", "packed source-free"]) {
       );
       const artifactRoot = join(root, "native/windows/build");
       await mkdir(artifactRoot, { recursive: true });
-      // An inert PE header establishes artifact validation, never addon loading.
-      const bytes = Buffer.alloc(128);
-      bytes.write("MZ");
-      bytes.writeUInt32LE(64, 0x3c);
-      bytes.write("PE\0\0", 64, "ascii");
-      bytes.writeUInt16LE(0x8664, 68);
-      bytes.writeUInt16LE(0x20b, 88);
-      const manifest = {
-        packageVersion: "1.0.0",
-        platform: "win32",
-        architecture: "x64",
-        abiVersion: 1,
-        nodeApiVersion: 8,
-        artifact: "rea-windows-x64.node",
-        artifactSha256: createHash("sha256").update(bytes).digest("hex"),
-      };
+      const { bytes, manifest } = windowsNativeArtifactFixture();
       await writeFile(join(artifactRoot, manifest.artifact), bytes);
       const manifestPath = join(artifactRoot, "manifest.json");
       await writeFile(manifestPath, JSON.stringify(manifest));

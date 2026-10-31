@@ -28,6 +28,7 @@ import {
 } from "../../domain/apple/machoPlatform.js";
 import {
   classifyFatContainerIdentity,
+  findOverlappingFatSlices,
   hasMachoMagic,
   readFatContainerHeader,
   readFatHeaderPrefix,
@@ -164,6 +165,7 @@ export const readMachoImage = async (
       }
       if (identity.state === "needs-slice-header")
         return { status: "not-mach-o" };
+      assertDistinctFatSlices(header.slices);
       const hiddenSlice = await readAppleHiddenArm64Slice(readAt, size, header);
       return {
         status: "parsed",
@@ -185,6 +187,18 @@ export const readMachoImage = async (
       return { status: cause.status, reason: cause.message };
     throw cause;
   }
+};
+
+/** Reject aliasing at the declaration owner before parsing any slice payload. */
+const assertDistinctFatSlices = (
+  declarations: readonly FatSliceDeclaration[],
+): void => {
+  const overlap = findOverlappingFatSlices(declarations);
+  if (overlap !== null)
+    throw new MachoFormatIssue(
+      "malformed",
+      `Mach-O slices ${overlap[0].index} and ${overlap[1].index} overlap.`,
+    );
 };
 
 /**
@@ -221,6 +235,7 @@ const readAppleHiddenArm64Slice = async (
   if (declaration.cpuType !== CPU_TYPE_ARM64) return null;
   const rangeIssue = validateFatSlice(declaration, fileSize, end);
   if (rangeIssue !== null) throw new MachoFormatIssue("malformed", rangeIssue);
+  assertDistinctFatSlices([...header.slices, declaration]);
   const slice = await readSlice(readAt, declaration.offset, declaration.size, {
     fatCpuType: declaration.cpuType,
     fatCpuSubtype: declaration.cpuSubtype,

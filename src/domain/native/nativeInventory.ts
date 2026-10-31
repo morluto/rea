@@ -4,11 +4,7 @@ import { analysisStringSchema } from "./nativeString.js";
 import { ok, type Result } from "../result.js";
 import { AnalysisOutputError } from "../analysisErrorCore.js";
 import type { JsonValue } from "../jsonValue.js";
-import { jsonObjectSchema } from "../jsonValue.js";
-import {
-  unwrapNativeProperty,
-  invalidNativeOutput,
-} from "./nativeProviderOutput.js";
+import { invalidNativeOutput } from "./nativeProviderOutput.js";
 
 /** Canonical named native observations; same-address alternatives stay separate. */
 export const addressedValueSchema = z.object({
@@ -69,17 +65,17 @@ export const analysisBookmarkSchema = z.strictObject({
   address: z.string(),
   name: z.string().nullable(),
 });
-/** Parse a direct or wrapped list when only its cardinality is required. */
-export const parseListCount = (
+/** Count only complete canonical inventories, using the advertised row contracts. */
+export const parseNativeInventoryCount = (
   value: JsonValue,
-  property: string,
-  operation = property === "procedures" ? "list_procedures" : "list_strings",
+  operation: "list_procedures" | "list_strings",
 ): Result<number, AnalysisOutputError> => {
-  const unwrapped = unwrapNativeProperty(value, property);
-  const list = z.array(z.unknown()).safeParse(unwrapped);
-  if (list.success) return ok(list.data.length);
-  const map = jsonObjectSchema.safeParse(unwrapped);
-  return map.success
-    ? ok(Object.keys(map.data).length)
-    : invalidNativeOutput(operation, `${property} list`, map.error);
+  const schema =
+    operation === "list_procedures"
+      ? nativeInventoryRowsSchemas.names
+      : nativeInventoryRowsSchemas.strings;
+  const parsed = schema.safeParse(value);
+  return parsed.success
+    ? ok(parsed.data.length)
+    : invalidNativeOutput(operation, "inventory rows", parsed.error);
 };

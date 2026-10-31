@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "../../src/cli/projectCliAnalysisResult.js";
 import { getHeapStatistics } from "node:v8";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { createServer } from "../../src/server/createServer.js";
@@ -324,12 +325,17 @@ it("projects a rejected managed parent by reference without cloning under low he
       detail: "summary",
       evidenceBundlePath: join(root, "parent.json"),
     },
-  );
+  ).then(projectCliAnalysisResult);
   expect(result).toMatchObject({
     code: "resource_constraint",
     details: { operation: "inspect_managed_members" },
   });
-  if (typeof result !== "object" || result === null || Array.isArray(result))
+  if (
+    typeof result !== "object" ||
+    result === null ||
+    Array.isArray(result) ||
+    !("details" in result)
+  )
     throw new Error("Expected CLI error");
   const details = result.details;
   if (typeof details !== "object" || details === null || Array.isArray(details))

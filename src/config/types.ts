@@ -2,7 +2,7 @@ import type { GhidraProjectSelection } from "./ghidraExistingProject.js";
 import type { McpToolFamilies } from "./mcpToolFamilies.js";
 import type { LogLevel } from "./processStart.js";
 import type { ReferenceSourcePolicy } from "../domain/referenceSourcePolicy.js";
-import type { AnalysisProviderSelector } from "../contracts/providerSelection.js";
+import type { AnalysisProviderSelector } from "../domain/providerSelection.js";
 
 import type { GhidraLanguageOverride } from "./ghidraLanguageOverride.js";
 import type { McpInputSchemaProfile } from "./mcpInputSchemaProfile.js";
@@ -14,6 +14,7 @@ import type { RegexWorkerHeapRequest } from "./regexWorkerHeapRequest.js";
 export interface AppConfig {
   readonly mcpToolFamilies?: readonly McpToolFamilies[number][];
   readonly mcpMaxResponseBytes?: number;
+  readonly mcpMaxInputElements?: number;
   readonly mcpInputSchemaProfile?: McpInputSchemaProfile;
   readonly mcpOutputSchemaProfile?: McpOutputSchemaProfile;
   readonly analysisProvider: AnalysisProviderSelector;

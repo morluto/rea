@@ -138,7 +138,7 @@ export async function verifyNativeProvenance(app, executable) {
           ({ fields }) => fields.name === "@rpath/libdelay.dylib (offset 28)",
         );
         assert.equal(delayed?.kind, "LC_LOAD_DYLIB");
-        assert.equal(delayed.fields.options, "delay-init");
+        assert.equal(delayed.fields.options, 8); // DYLIB_USE_DELAYED_INIT
         assert.equal(delayed.fields["time stamp"], undefined);
         assert.ok(
           cli.normalized_result.dependencies.items.some(
@@ -247,7 +247,7 @@ async function verifyInstallNames() {
           ?.source,
         importSource,
       );
-      assert.ok(result.provenance.some(({ tool }) => tool === "otool"));
+      assert.ok(result.provenance.some(({ tool }) => tool === "dyld_info"));
       await withArtifactMcp(consumer, async (client) => {
         const response = await artifactMcpCall(client, {
           name: "inspect_macho",

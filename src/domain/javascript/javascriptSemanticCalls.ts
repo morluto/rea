@@ -12,12 +12,12 @@ import type {
 import { semanticIdentifierRole } from "./javascriptSemanticProjection.js";
 import { createSemanticCallableStack } from "./javascriptSemanticCallableStack.js";
 import {
+  readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
   resolveSemanticBindingState,
-  isUnshadowedGlobal,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
@@ -30,6 +30,7 @@ import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import { semanticCallableResultKind } from "./javascriptSemanticCallableResults.js";
 import { assignedSemanticResultBindings } from "./javascriptSemanticDataEffectHelpers.js";
+import { semanticPrimitiveSet } from "./javascriptSemanticPrimitives.js";
 
 /** Local call, flow, capture, and unsupported-frontier facts. */
 export interface JavaScriptSemanticCallAnalysis {
@@ -138,7 +139,7 @@ const collectCallSite = (
     bindingCache: context.bindingResolutionCache,
   });
   const callSiteId = semanticCallSiteId(node);
-  const argumentsValue = retainedArguments(node.arguments);
+  const argumentsValue = retainedArguments(node.arguments, state);
   const site: JavaScriptSemanticCallSite = {
     callSiteId,
     kind: t.isNewExpression(node) ? "construct" : "call",
@@ -209,6 +210,7 @@ const retainedArguments = (
     | t.ArgumentPlaceholder
     | null
   )[],
+  state: JavaScriptSemanticAnalysisState,
 ): JavaScriptSemanticCallSite["arguments"] => {
   const retained: JavaScriptSemanticCallSite["arguments"][number][] = [];
   for (const [index, node] of nodes.entries()) {
@@ -223,9 +225,32 @@ const retainedArguments = (
       location: range(node),
       valueExpressionLocation: valueNode === null ? null : range(valueNode),
       spread: t.isSpreadElement(node),
+      ...(valueNode === null ? {} : directLiteral(valueNode, state)),
     });
   }
   return retained;
+};
+
+/** Retain direct scalar syntax only; do not infer values through bindings. */
+const directLiteral = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): {
+  readonly literal?: string | number | boolean | null;
+  readonly literalResourceLimit?: "primitive-bytes";
+} => {
+  const literal = readExactJavaScriptLiteral(node);
+  if (!literal.found) return {};
+  const parsed = semanticPrimitiveSet([literal.value]);
+  if (parsed.status === "literal") return { literal: parsed.value };
+  if (
+    parsed.status === "unknown" &&
+    parsed.resourceLimit === "primitive-bytes"
+  ) {
+    state.valueResourceLimits.add(parsed.resourceLimit);
+    return { literalResourceLimit: parsed.resourceLimit };
+  }
+  return {};
 };
 
 const collectArgumentFlows = (

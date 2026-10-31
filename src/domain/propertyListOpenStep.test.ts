@@ -2,7 +2,10 @@ import { expect, it } from "vitest";
 import { parseOpenStep } from "plist";
 
 import { plistNestingLimitMessage } from "./apple/plistValue.js";
-import { decodeOpenStepPropertyList } from "./propertyListOpenStep.js";
+import {
+  decodeOpenStepPropertyList,
+  startsOpenStepPropertyList,
+} from "./propertyListOpenStep.js";
 
 it.each([
   "{ numeric = (42, -2.5, 0x10, YES); path = /a/b:c$; }",
@@ -94,3 +97,42 @@ it.each(["(x,", "{ key ="])(
     );
   },
 );
+
+it.each(["\n", "\r\n", "\r", "\u2028", "\u2029"])(
+  "ends OpenStep line comments at %j without dropping following values",
+  (newline) => {
+    const text =
+      "// leading" +
+      newline +
+      "{ kept = first; // inline" +
+      newline +
+      "hidden = second;\n items = (one, // array" +
+      newline +
+      "two,); }";
+    expect(
+      decodeOpenStepPropertyList(
+        "{ kept = first; // inline" + newline + "hidden = second;\n }",
+      ),
+    ).toEqual({ kept: "first", hidden: "second" });
+    expect(startsOpenStepPropertyList(text)).toBe(true);
+    expect(decodeOpenStepPropertyList(text)).toEqual({
+      kept: "first",
+      hidden: "second",
+      items: ["one", "two"],
+    });
+  },
+);
+
+it("does not treat nonterminating whitespace or quoted comment text as line ends", () => {
+  expect(
+    decodeOpenStepPropertyList(
+      '{ kept = first; // comment\vhidden = second;\n text = "// still literal\rtext"; }',
+    ),
+  ).toEqual({ kept: "first", text: "// still literal\rtext" });
+  expect(startsOpenStepPropertyList("// comment without a line end")).toBe(
+    false,
+  );
+  expect(() =>
+    decodeOpenStepPropertyList("// comment without a line end"),
+  ).toThrow("Unexpected end of input");
+});

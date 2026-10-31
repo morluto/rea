@@ -311,12 +311,6 @@ export interface JavaScriptStaticSourceUrlPath {
   readonly directory: boolean;
 }
 
-/** Convert an exact static file URL expression to a POSIX path. */
-export const staticFileUrlPath = (
-  node: t.CallExpression | t.NewExpression,
-  pathIntrinsics?: JavaScriptStaticPathIntrinsicQuery,
-): string | undefined => staticFileUrlPathFact(node, pathIntrinsics)?.path;
-
 const staticFileUrlPathFact = (
   node: t.CallExpression | t.NewExpression,
   pathIntrinsics?: JavaScriptStaticPathIntrinsicQuery,
@@ -657,7 +651,7 @@ const isKeyedCollectionReceiver = (callee: t.Node): boolean => {
   );
 };
 
-/** A literal endpoint shape or an ambiguous argument of an HTTP-method-named call. */
+/** A literal endpoint shape or an argument whose callee spelling is unproven. */
 export interface JavaScriptEndpointArgument {
   readonly kind: "endpoint" | "candidate";
   readonly value: string;
@@ -675,10 +669,10 @@ export const endpointArgument = (
   callee: t.Node,
   receiverFact?: JavaScriptOpenReceiverFact,
 ): JavaScriptEndpointArgument | undefined => {
-  const literal = (
+  const candidate = (
     value: string | undefined,
   ): JavaScriptEndpointArgument | undefined =>
-    value === undefined ? undefined : { kind: "endpoint", value };
+    value === undefined ? undefined : { kind: "candidate", value };
   if (receiverFact === "window") return undefined;
   if (
     name === "fetch" ||
@@ -687,17 +681,11 @@ export const endpointArgument = (
     name === "EventSource" ||
     name.endsWith(".EventSource")
   )
-    return literal(stringValue(args[0]));
+    return candidate(stringValue(args[0]));
   if (name.endsWith(".open")) {
     const value = xhrOpenUrl(name, args[0], args[1], receiverFact);
     if (value === undefined) return undefined;
-    return {
-      kind:
-        stringValue(args[0]) !== undefined || isRequestUrlReference(value)
-          ? "endpoint"
-          : "candidate",
-      value,
-    };
+    return { kind: "candidate", value };
   }
   const method = ["get", "post", "put", "patch", "delete", "request"].find(
     (candidate) => name === candidate || name.endsWith(`.${candidate}`),
@@ -717,19 +705,14 @@ export const endpointArgument = (
             receiverFact === "extension-state")))
     )
       return undefined;
-    return {
-      kind:
-        method !== "get" && method !== "delete" && isRequestUrlReference(value)
-          ? "endpoint"
-          : "candidate",
-      value,
-    };
+    return { kind: "candidate", value };
   }
-  // Beacon URLs are endpoint observations, retaining the upstream API support.
   if (name === "sendBeacon" || name.endsWith(".sendBeacon"))
-    return literal(stringValue(args[0]));
-  if (name === "loadURL" || name.endsWith(".loadURL"))
-    return literal(stringValue(args[0]));
+    return candidate(stringValue(args[0]));
+  if (name === "loadURL" || name.endsWith(".loadURL")) {
+    const value = stringValue(args[0]);
+    return value === undefined ? undefined : { kind: "candidate", value };
+  }
   return undefined;
 };
 

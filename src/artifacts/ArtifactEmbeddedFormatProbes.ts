@@ -13,14 +13,18 @@ import {
   locateNodeSea,
   type NodeSeaLocation,
 } from "./nodeSea/NodeSeaLocation.js";
-import { containsPyInstallerArchive } from "./pyinstaller/CArchiveLayout.js";
+import {
+  observePyInstallerCookie,
+  type PyInstallerCookie,
+  type PyInstallerCookieObservation,
+} from "./pyinstaller/CArchiveLayout.js";
 
-/** Completed observations only; null means examined absence, omission means unexamined. */
+/** Completed observations only; omission means unexamined, and null is examined absence. */
 export interface ArtifactEmbeddedFormatProbeFacts {
   readonly sourceState: RegularFileState;
   readonly godotPck?: GodotPckLocation | null;
   readonly nodeSea?: NodeSeaLocation | null;
-  readonly pyInstaller?: boolean;
+  readonly pyInstaller?: PyInstallerCookieObservation;
 }
 
 /** Share format observations only across admissions of the same unchanged regular file. */
@@ -72,17 +76,22 @@ export class ArtifactEmbeddedFormatProbes {
     return location;
   }
 
-  async pyInstaller(): Promise<boolean> {
+  async pyInstaller(): Promise<PyInstallerCookie | undefined> {
     abortIfNeeded(this.signal);
-    if (this.#facts.pyInstaller !== undefined) return this.#facts.pyInstaller;
-    const found = await containsPyInstallerArchive(
+    if (this.#facts.pyInstaller !== undefined)
+      return this.#facts.pyInstaller.state === "located"
+        ? this.#facts.pyInstaller.cookie
+        : undefined;
+    const found = await observePyInstallerCookie(
       this.source.handle,
       this.source.initial.size,
       this.signal,
     );
     abortIfNeeded(this.signal);
-    this.#facts = { ...this.#facts, pyInstaller: found };
-    return found;
+    if (!found.ok)
+      throw new ArtifactReaderFailure(found.error.reason, found.error.message);
+    this.#facts = { ...this.#facts, pyInstaller: found.value };
+    return found.value.state === "located" ? found.value.cookie : undefined;
   }
 
   completedFacts(): ArtifactEmbeddedFormatProbeFacts {

@@ -56,6 +56,24 @@ it("accepts ordinary custom environment strings and omitted values", () => {
 });
 
 describe("runtime configuration", () => {
+  it("preserves a selected MCP input allowance for deferred startup and refuses disabling values", () => {
+    expect(parseConfig({ REA_MCP_MAX_INPUT_ELEMENTS: "8192" })).toMatchObject({
+      ok: true,
+      value: { mcpMaxInputElements: 8192 },
+    });
+    const invalid = parseConfig({ REA_MCP_MAX_INPUT_ELEMENTS: "Infinity" });
+    expect(invalid.ok).toBe(false);
+    if (invalid.ok)
+      throw new Error(
+        "Infinite MCP input allowance must not be accepted from the environment",
+      );
+    expect(invalid.error.settings).toEqual([
+      {
+        setting: "REA_MCP_MAX_INPUT_ELEMENTS",
+        constraint: expect.stringContaining("positive decimal safe integer"),
+      },
+    ]);
+  });
   it("allows target-free startup and applies runtime defaults", () => {
     const empty = parseConfig({});
     expect(empty.ok).toBe(true);

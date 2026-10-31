@@ -10,8 +10,9 @@ import type { FieldRule, WriteCall } from "./environmentStateWriteRules.js";
 import {
   integerOf,
   readClock,
-  slugOf,
+  slugSpellings,
   sortedStrings,
+  type Ampersand,
 } from "./environmentStateWriteValues.js";
 import { freshUuid, renewedRule } from "./environmentStateWriteGenerated.js";
 import { composedChange } from "./environmentStateWriteComposed.js";
@@ -23,6 +24,20 @@ import {
   nestedClockRule,
   stampRule,
 } from "./environmentStateWriteStamps.js";
+
+/** The member a slug spells, and how it spells `&`. */
+export interface SlugSource {
+  readonly from: string;
+  readonly ampersand?: Ampersand;
+}
+
+/** The slug rule a field follows from its source. */
+export const slugRule = (field: string, source: SlugSource): FieldRule => ({
+  field,
+  rule: "slug",
+  from: source.from,
+  ...(source.ampersand === undefined ? {} : { ampersand: source.ampersand }),
+});
 
 /** What explaining an update reads: the entity before and after, the call and its method. */
 export interface UpdateEvidence {
@@ -51,7 +66,7 @@ export interface UpdateEvidence {
 export const changeRule = (
   evidence: UpdateEvidence,
   field: string,
-  slugs: ReadonlyMap<string, string>,
+  slugs: ReadonlyMap<string, SlugSource>,
 ): FieldRule | undefined => {
   const before = ownMember(evidence.before, field);
   const after = ownMember(evidence.after, field)!;
@@ -59,8 +74,8 @@ export const changeRule = (
     return { field, rule: "clock", format: readClock(after)!.format };
   if (freshUuid(evidence, field)) return { field, rule: "unique" };
   // A renamed slug is spelled like a token, so the slug comes first.
-  const member = typeof after === "string" ? slugs.get(after) : undefined;
-  if (member !== undefined) return { field, rule: "slug", from: member };
+  const source = typeof after === "string" ? slugs.get(after) : undefined;
+  if (source !== undefined) return slugRule(field, source);
   if (freshToken(evidence, field)) return { field, rule: "unique" };
   const nested = nestedClockRule(field, { before, after }, evidence);
   if (nested !== undefined) return nested;
@@ -145,16 +160,22 @@ export const sameSecondClocks = (evidence: UpdateEvidence): string[] =>
 const sentSlugSource = (
   evidence: UpdateEvidence,
   member: string,
-): string | undefined => {
+): SlugSource | undefined => {
   const stored = ownMember(evidence.after, member);
   if (typeof stored !== "string") return undefined;
-  return Object.entries(evidence.call.body).find(
-    ([other, value]) =>
+  for (const [other, value] of Object.entries(evidence.call.body))
+    if (
       other !== member &&
       typeof value === "string" &&
-      same(ownMember(evidence.after, other), value) &&
-      slugOf(value) === stored,
-  )?.[0];
+      same(ownMember(evidence.after, other), value)
+    )
+      for (const { slug, ampersand } of slugSpellings(value))
+        if (slug === stored)
+          return {
+            from: other,
+            ...(ampersand === undefined ? {} : { ampersand }),
+          };
+  return undefined;
 };
 
 /** Whether a call sent back the clock the entity held, as a whole-object write does, and the application stamped it anew near the call. */
@@ -192,8 +213,8 @@ export const sentRule = (
       rule: "clock",
       format: readClock(ownMember(evidence.after, member))!.format,
     };
-  const from = sentSlugSource(evidence, member);
-  if (from !== undefined) return { field: member, rule: "slug", from };
+  const source = sentSlugSource(evidence, member);
+  if (source !== undefined) return slugRule(member, source);
   return freshUuid(evidence, member)
     ? { field: member, rule: "unique" }
     : {

@@ -30,6 +30,7 @@ import {
   ProcessCaptureSnapshotFailure,
 } from "./FilesystemSnapshot.js";
 import { TerminalRenderer } from "./TerminalRenderer.js";
+import { createProcessSensitiveOutput } from "./ProcessSensitiveOutput.js";
 import type { ProcessTimer } from "./ProcessTimer.js";
 import {
   createBoundedProcessTextNormalizer,
@@ -285,6 +286,9 @@ const startCaptureRuntime = async (
     | undefined;
   let stopSampler: ReturnType<typeof startProcessSampler> | undefined;
   try {
+    const privacy = createProcessSensitiveOutput(scenario);
+    if (!privacy.ok) throw privacy.error;
+    const sensitiveOutput = privacy.value;
     const { spawn } = await import("@lydell/node-pty");
     const selectedExecutable = await observeSelectedExecutable(
       scenario.executable,
@@ -306,7 +310,20 @@ const startCaptureRuntime = async (
     );
     renderer = createTerminalRenderer(
       scenario,
-      normalizeText,
+      sensitiveOutput === undefined
+        ? normalizeText
+        : (value, maxBytes) => {
+            const normalized = normalizeText(value, maxBytes);
+            if (normalized.state === "over_budget") return normalized;
+            const safe = sensitiveOutput.project([normalized.value]);
+            if (!safe.ok) throw safe.error;
+            const text = safe.value[0] ?? "";
+            return {
+              ...normalized,
+              value: text,
+              utf8Bytes: Buffer.byteLength(text),
+            };
+          },
       options.recordEvent,
     );
     // Completed executable facts do not authorize launch after cancellation
@@ -336,6 +353,18 @@ const startCaptureRuntime = async (
       renderer,
       normalizeText,
       identifiers,
+      ...(sensitiveOutput === undefined
+        ? {}
+        : {
+            sensitiveOutput,
+            onSensitiveOutputFailure: () => {
+              options.observationBuffer.frames = {
+                state: "unavailable",
+                reason:
+                  "Sensitive terminal projection failed; terminal text was withheld.",
+              };
+            },
+          }),
     });
     terminalObservation = createProcessTerminalFinalizer(
       renderer,

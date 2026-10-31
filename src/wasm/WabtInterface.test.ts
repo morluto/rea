@@ -69,6 +69,44 @@ it("does not bind recursive-type index spaces by guessing their cardinality", ()
   ]);
 });
 
+it.each(["\t", "\n", " (; outer (; nested ;) ;) "])(
+  "uses parsed group heads for type uses and mutable globals with %j separators",
+  (separator) => {
+    const imported = `(import "env" "f" (func (${separator}type${separator}$signature)))`;
+    const global = `(global $g (${separator}mut${separator}i64) (i64.const 1))`;
+    const result = parseWabtWat(`(module
+      (type $signature (func (param i32) (result i64)))
+      ${imported}
+      (func (${separator}type${separator}99))
+      ${global}
+      (tag (${separator}type${separator}$signature))
+      (export "unknown" (func 1))
+      (export "global" (global $g))
+      (export "tag" (tag 0)))`);
+    expect(result.imports).toEqual([imported]);
+    expect(result.interface.state).toBe("complete");
+    expect(result.interface.entries).toMatchObject([
+      {
+        name: "f",
+        signature: { kind: "func", params: ["i32"], results: ["i64"] },
+        wat_form: imported,
+        issue: null,
+      },
+      { name: "unknown", index: 1, signature: null, issue: expect.any(String) },
+      {
+        name: "global",
+        signature: { kind: "global", value_type: "i64", mutable: true },
+        issue: null,
+      },
+      {
+        name: "tag",
+        signature: { kind: "tag", params: ["i32"], results: ["i64"] },
+        issue: null,
+      },
+    ]);
+  },
+);
+
 it("preserves custom memory page sizes and treats unadmitted nested declarations as unknown", () => {
   const custom = parseWabtWat(
     '(module (memory 1 2 (pagesize 1)) (export "m" (memory 0)))',
@@ -146,4 +184,44 @@ it("keeps collided labels unknown in each index space and preserves numeric and 
     expect.stringContaining("type index space"),
     expect.stringContaining("func index space"),
   ]);
+});
+
+it.each(["\n", "\r", "\r\n"])(
+  "shares comment framing across module and nested interface declarations with %j newlines",
+  (newline) => {
+    const source = `(module
+    (type (func
+      (param (; unmatched ) and quote " (; nested ;) ;) i32)
+      ;; unmatched ( and quote "
+      (result i64)))
+    (import "env" "f" (func (type 0)))
+    (export "f" (func 0))) ;; trailing comment without newline`;
+    const result = parseWabtWat(source.replaceAll("\n", newline));
+    expect(result.imports).toEqual(['(import "env" "f" (func (type 0)))']);
+    expect(result.exports).toEqual(['(export "f" (func 0))']);
+    expect(result.interface.entries).toMatchObject([
+      {
+        name: "f",
+        signature: { kind: "func", params: ["i32"], results: ["i64"] },
+      },
+      {
+        name: "f",
+        signature: { kind: "func", params: ["i32"], results: ["i64"] },
+      },
+    ]);
+  },
+);
+
+it("rejects unfinished nested comments rather than projecting a truncated interface", () => {
+  for (const source of [
+    "(module (type (func (param (; unfinished ) i32))))",
+    "(module) (; outer (; inner ;) still open",
+  ])
+    expect(() => parseWabtWat(source)).toThrow("Incomplete WABT WAT comment");
+});
+
+it("rejects a second module after a CR-terminated line comment", () => {
+  expect(() => parseWabtWat("(module) ;; comment\r(module)")).toThrow(
+    "Unexpected second WABT WAT module",
+  );
 });

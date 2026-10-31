@@ -14,6 +14,7 @@ import {
   bindArtifactFileCleanup,
   withArtifactFileHandle,
 } from "../artifacts/ArtifactFileOperation.js";
+import { asarNodeSchema } from "../artifacts/AsarNode.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import {
@@ -311,21 +312,32 @@ const asarFiles = async (
   return admitted.files;
 };
 
+// File authorization interprets structure and size, not optional integrity or
+// executable declarations that belong to artifact analysis.
+const asarFileScopeNodeSchema = asarNodeSchema
+  .pick({ files: true, link: true, size: true })
+  .strip();
+
 const isAsarRegularFile = (
   files: unknown,
   member: readonly string[],
 ): boolean => {
   let node: unknown = { files };
   for (const part of member) {
-    const children = isRecord(node) ? node.files : undefined;
+    // Electron follows a directory link before looking up its child. Its
+    // co-declared file tree cannot establish the requested member's identity;
+    // link resolution is outside this authorization boundary.
+    if (!isRecord(node) || Object.hasOwn(node, "link")) return false;
+    const children = node.files;
     if (!isRecord(children) || !Object.hasOwn(children, part)) return false;
     node = children[part];
   }
+  const parsed = asarFileScopeNodeSchema.safeParse(node);
   return (
-    isRecord(node) &&
-    typeof node.size === "number" &&
-    !("files" in node) &&
-    !("link" in node)
+    parsed.success &&
+    parsed.data.size !== undefined &&
+    parsed.data.files === undefined &&
+    parsed.data.link === undefined
   );
 };
 

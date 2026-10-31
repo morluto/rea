@@ -1,4 +1,5 @@
 import { AnalysisSettings } from "../application/AnalysisSettings.js";
+import { parseMcpInputBudget } from "../config/mcpInputBudget.js";
 import { registerAnalysisSettingsTools } from "./registerAnalysisSettingsTools.js";
 import type { DevicetreeService } from "../application/binaryDiagnostics/DevicetreeService.js";
 import { registerDevicetreeTool } from "./registerDevicetreeTool.js";
@@ -205,6 +206,7 @@ import { CutterBridgeClient } from "../cutter/CutterBridgeClient.js";
 import { CutterBridgeService } from "../cutter/CutterBridgeService.js";
 import { registerCutterTools } from "./registerCutterTools.js";
 import { GdbSessionManager } from "../gdb/GdbSessionManager.js";
+import { persistentDebuggerHostSupported } from "../process/PersistentDebuggerHost.js";
 import { registerGdbTools } from "./registerGdbTools.js";
 import { RizinDebugSessionManager } from "../rizin/RizinDebugSessionManager.js";
 import { registerRizinDebugTools } from "./registerRizinDebugTools.js";
@@ -299,6 +301,7 @@ const installSessionToolAvailability = (
   const basePolicy = sessionAvailabilityPolicy(options.availabilityPolicy, {
     optionalProviderLoadFailures: options.optionalProviderLoadFailures,
     hostUnsupported: {
+      persistentDebugger: !persistentDebuggerHostSupported(platform),
       pcapCapture: outsideVerifiedHost(
         options.pcapAnalysis,
         verifiedHost.pcapCapture,
@@ -407,14 +410,18 @@ const createMcpServer = (
   compactPresentation: CompactInputSchemaPresentation | undefined,
   outputSchemaProfile: McpOutputSchemaProfile,
   advertisedToolFamilies: ReadonlySet<string> | undefined,
-): EvidenceMcpServer =>
-  new EvidenceMcpServer(
+  inputElementBudget: string | undefined,
+): EvidenceMcpServer => {
+  const configured = parseMcpInputBudget(inputElementBudget);
+  if (!configured.ok) throw configured.error;
+  return new EvidenceMcpServer(
     {
       name: PRODUCT_IDENTITY.mcpServerKey,
       version: PRODUCT_IDENTITY.packageVersion,
     },
     {
       capabilities: {},
+      maxToolInputElements: configured.value,
       instructions: serverInstructions(
         session !== undefined,
         advertisedToolFamilies,
@@ -433,6 +440,7 @@ const createMcpServer = (
     ),
     advertisedToolFamilies,
   );
+};
 
 /**
  * Construct one MCP server without acquiring subprocess resources.
@@ -521,6 +529,7 @@ export const createServer = (
       compactInputPresentation,
       selectedOutputSchemaProfile,
       advertisedToolFamilies,
+      environment.REA_MCP_MAX_INPUT_ELEMENTS,
     );
   server.analysisSettings = analysisSettings;
   registerAnalysisSettingsTools(server, analysisSettings);
@@ -792,8 +801,12 @@ export const createServer = (
   const closeServer = server.close.bind(server);
   server.close = async () => {
     const results = await Promise.allSettled([closeServer(), closeProviders()]);
-    for (const result of results)
-      if (result.status === "rejected") throw result.reason;
+    const failures = results.flatMap((result) =>
+      result.status === "rejected" ? [result.reason as unknown] : [],
+    );
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1)
+      throw new AggregateError(failures, "REA server cleanup failed");
   };
   registerCaptureTools(
     server,

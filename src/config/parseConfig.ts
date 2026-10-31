@@ -40,15 +40,18 @@ export const defaultHopperLauncherPath = (
 };
 
 /**
- * Environment native analysis admits. JEB validates its own timeout during
+ * Environment native analysis admits. JEB validates its own settings during
  * optional provider composition; that setting must not block unrelated
  * CLI/MCP startup. Registration validation still checks it directly.
  */
 const nativeAnalysisEnvironment = (
   environment: Readonly<Record<string, string | undefined>>,
 ): Readonly<Record<string, string | undefined>> => {
-  const { REA_JEB_MCP_TIMEOUT_MS: _jebTimeout, ...appEnvironment } =
-    environment;
+  const {
+    REA_JEB_MCP_TIMEOUT_MS: _jebTimeout,
+    REA_JEB_MCP_URL: _jebUrl,
+    ...appEnvironment
+  } = environment;
   return appEnvironment;
 };
 
@@ -106,6 +109,9 @@ export const parseConfig = (
     ...(env.REA_MCP_MAX_RESPONSE_BYTES === undefined
       ? {}
       : { mcpMaxResponseBytes: env.REA_MCP_MAX_RESPONSE_BYTES }),
+    ...(env.REA_MCP_MAX_INPUT_ELEMENTS === undefined
+      ? {}
+      : { mcpMaxInputElements: env.REA_MCP_MAX_INPUT_ELEMENTS }),
     ...(env.REA_MCP_INPUT_SCHEMA_PROFILE === undefined
       ? {}
       : { mcpInputSchemaProfile: env.REA_MCP_INPUT_SCHEMA_PROFILE }),

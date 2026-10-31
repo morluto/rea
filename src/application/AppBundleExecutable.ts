@@ -1,5 +1,5 @@
 import { lstat, opendir, readFile, realpath, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 
 import { z } from "zod";
 
@@ -119,6 +119,9 @@ export const findAppBundleResourceRoot = async (
     options.cwd === undefined ? {} : { cwd: options.cwd },
   );
   try {
+    // Admit the selected spelling before Darwin realpath can collapse file/..
+    // into a different, otherwise valid bundle resource root.
+    await stat(callerPath);
     const canonicalInput = await realpath(callerPath);
     const directLayout = await presentLayout(canonicalInput);
     const wrapped =
@@ -354,9 +357,11 @@ const parseBinaryPlistExecutable = (plist: Buffer): string => {
   return executableName(decodeBinaryPlistValue(plist, plan));
 };
 
+/** Names are one local path component; backslash is literal on POSIX hosts. */
 const isSafeExecutableName = (name: string): boolean =>
   name.length > 0 &&
   name !== "." &&
   name !== ".." &&
   !name.includes("\0") &&
-  !/[/\\]/u.test(name);
+  !name.includes("/") &&
+  (sep !== "\\" || !name.includes("\\"));

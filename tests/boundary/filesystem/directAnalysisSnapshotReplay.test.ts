@@ -1,3 +1,7 @@
+import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
+import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisResult.js";
 import { parseConfig } from "../../../src/config/parseConfig.js";
 import { readFile, symlink, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
@@ -37,6 +41,7 @@ import {
   createTestBinarySession,
   createTestProviderRouter,
 } from "../../fixtures/binarySession.js";
+import { routeProviderIdentity } from "../../../src/application/binary/SessionProviderPolicy.js";
 import { BinarySession } from "../../../src/application/binary/BinarySession.js";
 import { isProfilelessNativeDispatchSnapshot } from "../../../src/application/binary/ProfilelessNativeWorkflowSnapshot.js";
 import { OwnedStagedOutput } from "../../../src/filesystem/OwnedStagedOutput.js";
@@ -213,8 +218,12 @@ const makeProvider = (
               },
             ],
             list_documents: ["fixture"],
-            list_procedures: ["0x1000"],
-            list_strings: { "0x1000": "fixture" },
+            list_procedures: [
+              { address: "0x1000", value: "fixture" },
+            ] satisfies z.infer<typeof nativeInventoryRowsSchemas.names>,
+            list_strings: [
+              { address: "0x1000", value: "fixture" },
+            ] satisfies z.infer<typeof nativeInventoryRowsSchemas.strings>,
             analyze_function: functionDossier,
             list_names: [
               { address: "0x1000", value: "fixture" },
@@ -379,6 +388,88 @@ const withEarlierHistoricalEvidence = (
 };
 
 describe("snapshot output cleanup lifecycle", () => {
+  it.each(["cleanup", "cancelled"] as const)(
+    "preserves the committed snapshot receipt after %s finalization and retry",
+    async (failureKind) => {
+      const fixture = await createSnapshotReplayFixture(
+        "rea-snapshot-close-failure-",
+      );
+      const provider = fixture.createProvider();
+      const failure =
+        failureKind === "cleanup"
+          ? new ProviderCleanupError(
+              IDENTITY.id,
+              ["fixture provider"],
+              {},
+              {
+                partialObservation: createEvidence(undefined, IDENTITY, {
+                  operation: "health",
+                  parameters: {},
+                  result: "cleanup facts",
+                }),
+              },
+            )
+          : new AnalysisCancelledError("close_binary");
+      const cleanupObservation = failure.partialObservation;
+      const close = vi
+        .fn()
+        .mockResolvedValueOnce(err(failure))
+        .mockResolvedValue(ok(null));
+      const session = createTestBinarySession({
+        ...provider,
+        createClient: (target, options) => ({
+          ...provider.createClient(target, options),
+          close,
+        }),
+      });
+      try {
+        const opened = await session.open(fixture.path);
+        if (!opened.ok) throw opened.error;
+        const analyzed = await session.execute("list_segments", {});
+        if (!analyzed.ok) throw analyzed.error;
+        const closed = await session.closeWithSnapshot(
+          fixture.snapshotPath,
+          false,
+        );
+        expect(closed.ok).toBe(false);
+        if (closed.ok) throw new Error("Expected close failure");
+        const committed = await readFile(fixture.snapshotPath);
+        const snapshot = await readAnalysisSnapshot(fixture.snapshotPath);
+        if (!snapshot.ok) throw snapshot.error;
+        const receipt = {
+          path: fixture.snapshotPath,
+          bytes: committed.byteLength,
+          primitive_entries: snapshot.value.entries.length,
+          workflow_entries: snapshot.value.workflow_entries.length,
+          evidence_records: snapshot.value.evidence_bundle.records.length,
+        };
+        expect(
+          projectAnalysisError(closed.error).details?.partial_observation,
+        ).toEqual({
+          saved_snapshot: receipt,
+          ...(cleanupObservation === undefined
+            ? {}
+            : { cleanup_observation: cleanupObservation }),
+        });
+        expect((await session.close()).ok).toBe(true);
+        expect(close).toHaveBeenCalledTimes(2);
+        expect((await readFile(fixture.snapshotPath)).equals(committed)).toBe(
+          true,
+        );
+        expect(
+          projectAnalysisError(closed.error).details?.partial_observation,
+        ).toEqual({
+          saved_snapshot: receipt,
+          ...(cleanupObservation === undefined
+            ? {}
+            : { cleanup_observation: cleanupObservation }),
+        });
+      } finally {
+        await session.close();
+      }
+    },
+  );
+
   it("returns completed analysis after retrying cleanup of a published snapshot", async () => {
     const fixture = await createSnapshotReplayFixture(
       "rea-snapshot-cleanup-retry-",
@@ -393,7 +484,7 @@ describe("snapshot output cleanup lifecycle", () => {
         "binary_overview",
         {},
         { snapshotPath: fixture.snapshotPath },
-      );
+      ).then(projectCliAnalysisResult);
       expect(parseEvidence(output).operation).toBe("binary_overview");
       const saved = await readAnalysisSnapshot(fixture.snapshotPath);
       if (!saved.ok) throw saved.error;
@@ -479,7 +570,7 @@ const verifyWindowsSnapshotAdmission = async (
     "search_strings",
     arguments_,
     options,
-  );
+  ).then(projectCliAnalysisResult);
   expect(first).toMatchObject({ operation: "search_strings" });
   expect(fixture.starts).toHaveLength(1);
   if (selectedPath === "junction")
@@ -491,7 +582,7 @@ const verifyWindowsSnapshotAdmission = async (
     "search_strings",
     arguments_,
     options,
-  );
+  ).then(projectCliAnalysisResult);
   expect(second).toMatchObject({ error: "Analysis failed" });
   expect(fixture.starts).toHaveLength(2);
   expect(
@@ -524,7 +615,7 @@ it.each([
         scenario.tool,
         scenario.arguments,
         options,
-      ),
+      ).then(projectCliAnalysisResult),
     );
     const saved = await readAnalysisSnapshot(fixture.snapshotPath);
     if (!saved.ok) throw saved.error;
@@ -551,7 +642,7 @@ it.each([
         scenario.tool,
         scenario.arguments,
         options,
-      ),
+      ).then(projectCliAnalysisResult),
     );
     expect(refreshed.limitations).toEqual(
       expect.arrayContaining(first.limitations),
@@ -566,7 +657,7 @@ it.each([
       scenario.tool,
       scenario.arguments,
       options,
-    );
+    ).then(projectCliAnalysisResult);
     expect(replayed).toEqual(refreshed);
     expect(fixture.starts).toEqual(starts);
     expect(fixture.calls).toEqual(calls);
@@ -608,7 +699,7 @@ describe("direct analysis composed snapshot replay", () => {
         "binary_overview",
         {},
         { snapshotPath: fixture.snapshotPath },
-      );
+      ).then(projectCliAnalysisResult);
       expect(fixture.resolutions).toHaveLength(1);
 
       const first = await runDirectAnalysis(
@@ -617,7 +708,7 @@ describe("direct analysis composed snapshot replay", () => {
         scenario.tool,
         scenario.arguments,
         { snapshotPath: fixture.snapshotPath },
-      );
+      ).then(projectCliAnalysisResult);
       expect(first).toMatchObject({ operation: scenario.tool });
       expect(fixture.resolutions).toHaveLength(2);
       expect(fixture.starts).toHaveLength(2);
@@ -629,7 +720,7 @@ describe("direct analysis composed snapshot replay", () => {
         scenario.tool,
         scenario.arguments,
         { snapshotPath: fixture.snapshotPath },
-      );
+      ).then(projectCliAnalysisResult);
       expect(replay).toEqual(first);
       expect(fixture.resolutions).toHaveLength(3);
       expect(fixture.starts).toHaveLength(2);
@@ -670,7 +761,7 @@ describe("direct analysis composed snapshot replay", () => {
         scenario.tool,
         scenario.arguments,
         { snapshotPath: fixture.snapshotPath },
-      );
+      ).then(projectCliAnalysisResult);
       expect(first).toMatchObject({ operation: scenario.tool });
       const callsAfterFirst = [...fixture.calls];
       const startsAfterFirst = [...fixture.starts];
@@ -688,7 +779,7 @@ describe("direct analysis composed snapshot replay", () => {
         scenario.tool,
         scenario.arguments,
         { snapshotPath: fixture.snapshotPath },
-      );
+      ).then(projectCliAnalysisResult);
 
       expect(second).toEqual(first);
       expect(fixture.calls).toEqual(callsAfterFirst);
@@ -724,7 +815,7 @@ describe("Ghidra composed workflow snapshot replay", () => {
         tool,
         parameters,
         { snapshotPath: fixture.snapshotPath },
-      );
+      ).then(projectCliAnalysisResult);
       expect(first).toMatchObject({ operation: tool });
       const snapshot = await readAnalysisSnapshot(fixture.snapshotPath);
       if (!snapshot.ok) throw snapshot.error;
@@ -739,7 +830,7 @@ describe("Ghidra composed workflow snapshot replay", () => {
         tool,
         parameters,
         { snapshotPath: fixture.snapshotPath },
-      );
+      ).then(projectCliAnalysisResult);
       expect(replay).toEqual(first);
       if (process.platform === "win32") {
         // The first provider call in a new CLI session admits its source.
@@ -765,7 +856,7 @@ describe("binary overview snapshot replay", () => {
       "binary_overview",
       {},
       { snapshotPath: fixture.snapshotPath },
-    );
+    ).then(projectCliAnalysisResult);
     expect(parseEvidence(first).caller_input_path).toBe(fixture.path);
     expect(fixture.calls.toSorted()).toEqual(operations.toSorted());
     expect(fixture.starts).toHaveLength(1);
@@ -794,7 +885,7 @@ describe("binary overview snapshot replay", () => {
       "binary_overview",
       {},
       { snapshotPath: fixture.snapshotPath },
-    );
+    ).then(projectCliAnalysisResult);
     expect(second).toEqual(first);
     expect(fixture.calls.toSorted()).toEqual(operations.toSorted());
     expect(fixture.starts).toHaveLength(1);
@@ -807,7 +898,7 @@ describe("binary overview snapshot replay", () => {
       "binary_overview",
       {},
       { snapshotPath: fixture.snapshotPath },
-    );
+    ).then(projectCliAnalysisResult);
     const firstEvidence = parseEvidence(first);
     const relocatedEvidence = parseEvidence(relocated);
     expect(relocatedEvidence).toMatchObject({
@@ -863,7 +954,7 @@ it.skipIf(process.platform === "win32")(
         "search_strings",
         parameters,
         options,
-      ),
+      ).then(projectCliAnalysisResult),
     );
     expect(first).toMatchObject({
       caller_input_path: alias,
@@ -906,7 +997,7 @@ it.skipIf(process.platform === "win32")(
         "search_strings",
         parameters,
         options,
-      ),
+      ).then(projectCliAnalysisResult),
     );
     expect(replay).toMatchObject({
       evidence_id: first.evidence_id,
@@ -948,7 +1039,7 @@ it.skipIf(process.platform === "win32")(
         "search_strings",
         parameters,
         options,
-      ),
+      ).then(projectCliAnalysisResult),
     );
     expect(historicalReplay).toMatchObject({
       evidence_id: first.evidence_id,
@@ -963,6 +1054,86 @@ it.skipIf(process.platform === "win32")(
     );
   },
 );
+
+describe("preview and active route policies", () => {
+  it.each([
+    {
+      tool: "search_strings",
+      arguments: { pattern: "fixture", document: "fixture" },
+      replayed: true,
+    },
+    { tool: "binary_overview", arguments: {}, replayed: false },
+  ] as const)(
+    "keeps $tool replay policy consistent across a composite route",
+    async ({ tool, arguments: arguments_, replayed }) => {
+      const fixture = await createSnapshotReplayFixture(
+        "rea-composite-replay-policy-",
+      );
+      const provider = fixture.createProvider({
+        supportedOperations: [...operations, "search_strings"],
+      });
+      const auxiliary = fixture.createProvider({
+        identity: { id: "auxiliary", name: "Auxiliary", version: "1" },
+        supportedOperations: ["read_bytes"],
+      });
+      const liveAuxiliary: AnalysisProvider = {
+        ...auxiliary,
+        capabilities: () =>
+          auxiliary
+            .capabilities()
+            .map((descriptor) => ({ ...descriptor, cachePolicy: "live" })),
+      };
+      const createSession = () =>
+        createTestBinarySession(provider, {
+          auxiliaryProviders: [liveAuxiliary],
+        });
+      const session = createSession();
+      try {
+        const target = await session.resolveTarget(fixture.path);
+        if (!target.ok) throw target.error;
+        const preview = await session.previewTarget(target.value);
+        if (!preview.ok) throw preview.error;
+        const opened = await session.openResolvedTarget(preview.value);
+        if (!opened.ok) throw opened.error;
+        // An enhanced operation has no exact descriptor here. Both stages must
+        // attribute it to the selected deep provider rather than the composite.
+        expect(
+          routeProviderIdentity(preview.value.route, "analyze_function"),
+        ).toEqual(IDENTITY);
+        expect(session.providerIdentity("analyze_function")).toEqual(IDENTITY);
+        expect(session.allowsSnapshotReplay(tool)).toBe(replayed);
+        expect(session.allowsSnapshotReplay("decompile_all")).toBe(false);
+      } finally {
+        const closed = await session.close();
+        if (!closed.ok) throw closed.error;
+      }
+      const dependencies = {
+        ...fixture.dependencies(provider),
+        createBinarySession: createSession,
+      };
+      const first = parseEvidence(
+        await runDirectAnalysis(dependencies, fixture.path, tool, arguments_, {
+          snapshotPath: fixture.snapshotPath,
+        }).then(projectCliAnalysisResult),
+      );
+      const starts = fixture.starts.length;
+      const queries = fixture.queries.length;
+      const second = parseEvidence(
+        await runDirectAnalysis(dependencies, fixture.path, tool, arguments_, {
+          snapshotPath: fixture.snapshotPath,
+        }).then(projectCliAnalysisResult),
+      );
+      if (replayed) expect(second).toEqual(first);
+      expect(second).toMatchObject({
+        operation: tool,
+        subject: first.subject,
+        analysis_profile: first.analysis_profile,
+      });
+      expect(fixture.starts.length).toBe(starts + (replayed ? 0 : 1));
+      expect(fixture.queries.length > queries).toBe(!replayed);
+    },
+  );
+});
 
 describe("snapshot replay provider identity", () => {
   it("uses the resolved provider version when capability metadata omits it", async () => {
@@ -984,7 +1155,7 @@ describe("snapshot replay provider identity", () => {
       "search_strings",
       { pattern: "fixture", document: "fixture" },
       { snapshotPath: fixture.snapshotPath },
-    );
+    ).then(projectCliAnalysisResult);
     const callsAfterFirst = [...fixture.calls];
     const startsAfterFirst = [...fixture.starts];
     const firstSnapshot = await readAnalysisSnapshot(fixture.snapshotPath);
@@ -999,7 +1170,7 @@ describe("snapshot replay provider identity", () => {
       "search_strings",
       { pattern: "fixture", document: "fixture" },
       { snapshotPath: fixture.snapshotPath },
-    );
+    ).then(projectCliAnalysisResult);
     expect(fixture.calls).toEqual(callsAfterFirst);
     expect(fixture.starts).toEqual(startsAfterFirst);
     expect(second).toEqual(first);
@@ -1018,7 +1189,7 @@ describe("snapshot replay provider identity", () => {
       "search_strings",
       { pattern: "fixture", document: "fixture" },
       { snapshotPath: fixture.snapshotPath },
-    );
+    ).then(projectCliAnalysisResult);
     expect(changedProfileResult).not.toEqual(first);
     expect(changedProfileResult).toMatchObject({
       code: "evidence_integrity_mismatch",
@@ -1045,7 +1216,7 @@ describe("snapshot replay provider identity", () => {
       "search_strings",
       { pattern: "fixture", document: "fixture" },
       { snapshotPath: fixture.snapshotPath },
-    );
+    ).then(projectCliAnalysisResult);
     expect(changedProviderResult).not.toEqual(first);
     expect(changedProviderResult).toMatchObject({
       code: "evidence_integrity_mismatch",
@@ -1069,7 +1240,7 @@ const assertEvidenceSurvivesSnapshotSaveFailure = async (): Promise<void> => {
     "binary_overview",
     {},
     { snapshotPath: fixture.snapshotPath },
-  );
+  ).then(projectCliAnalysisResult);
 
   expect(result).toMatchObject({
     code: "invalid_request",
@@ -1104,7 +1275,7 @@ describe("workflow snapshot profile and cancellation binding", () => {
       "binary_overview",
       {},
       { snapshotPath: fixture.snapshotPath },
-    );
+    ).then(projectCliAnalysisResult);
     const loaded = await readAnalysisSnapshot(fixture.snapshotPath);
     if (!loaded.ok) throw loaded.error;
     const current = loaded.value.evidence_bundle.records.find(
@@ -1128,7 +1299,7 @@ describe("workflow snapshot profile and cancellation binding", () => {
       "binary_overview",
       {},
       { snapshotPath: fixture.snapshotPath },
-    );
+    ).then(projectCliAnalysisResult);
     expect(refreshed).toMatchObject({
       normalized_result: { document: "fixture" },
     });
@@ -1148,7 +1319,7 @@ describe("workflow snapshot profile and cancellation binding", () => {
       "binary_overview",
       {},
       { snapshotPath: fixture.snapshotPath },
-    );
+    ).then(projectCliAnalysisResult);
 
     const controller = new AbortController();
     const router = createTestProviderRouter(provider);
@@ -1173,7 +1344,7 @@ describe("workflow snapshot profile and cancellation binding", () => {
       "binary_overview",
       {},
       { snapshotPath: fixture.snapshotPath, signal: controller.signal },
-    );
+    ).then(projectCliAnalysisResult);
 
     expect(result).toMatchObject({
       error: "Analysis failed",
@@ -1408,7 +1579,7 @@ it("retains a native dispatch workflow snapshot without a deep provider profile"
     "inspect_native_dispatch_metadata",
     { max_records: 100 },
     { snapshotPath: fixture.snapshotPath },
-  );
+  ).then(projectCliAnalysisResult);
 
   expect(result).toMatchObject({
     operation: "inspect_native_dispatch_metadata",
@@ -1429,7 +1600,7 @@ it("retains a native dispatch workflow snapshot without a deep provider profile"
     "inspect_native_dispatch_metadata",
     { max_records: 100 },
     { snapshotPath: fixture.snapshotPath },
-  );
+  ).then(projectCliAnalysisResult);
   expect(replay).toEqual(result);
   expect(dispatchCalls).toBe(1);
 

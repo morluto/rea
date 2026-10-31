@@ -82,7 +82,13 @@ const digest = (text: string) =>
 const warningOutput = (text: string): readonly string[] | null => {
   if (text === "") return [];
   const lines = text.trimEnd().split("\n");
-  return lines.every((line) => /^\S+: warning: /u.test(line)) ? lines : null;
+  return lines.every(
+    (line) =>
+      /^\S+: warning: /u.test(line) ||
+      /^[\da-f]+: error: invalid utf-8 encoding: section name$/u.test(line),
+  )
+    ? lines
+    : null;
 };
 /** Run caller-supplied WABT against private copies of exactly selected bytes. */
 export class WabtArtifactProvider implements WasmArtifactPort {
@@ -541,8 +547,42 @@ export class WabtArtifactProvider implements WasmArtifactPort {
       // WAT framing reads module names, not every inner name map. A producer
       // warning may concern a skipped body or another custom section; without
       // section attribution it cannot establish complete debug-name coverage.
+      capturedOutput = artifactCommandOutput(dump);
+      const { sections, headers, details, invalidNameEnds } = parseWabtOutput(
+        dump.stdout.text,
+        selected.bytes.length,
+        customSectionNames,
+        debugModuleNames,
+        selected.bytes,
+      );
+      for (const warning of customSectionWarnings) {
+        for (const line of warning.text.trimEnd().split("\n")) {
+          const error =
+            /^([\da-f]+): error: invalid utf-8 encoding: section name$/u.exec(
+              line,
+            );
+          if (
+            error !== null &&
+            !invalidNameEnds.includes(Number.parseInt(error[1] ?? "", 16))
+          )
+            throw new AnalysisOutputError(
+              OPERATION,
+              "Unexpected WABT diagnostic output.",
+              {
+                capturedOutput: artifactCommandOutput(
+                  warning.tool === "wasm-validate"
+                    ? validation
+                    : warning.tool === "wasm-objdump"
+                      ? dump
+                      : wat,
+                ),
+              },
+            );
+        }
+      }
       const debugNameMetadata =
-        decodedNameMetadata === "complete" && customSectionWarnings.length > 0
+        invalidNameEnds.length > 0 ||
+        (decodedNameMetadata === "complete" && customSectionWarnings.length > 0)
           ? "unknown"
           : decodedNameMetadata;
       if (debugNameMetadata === "uninterpretable")
@@ -557,13 +597,10 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         optionalLimitations.push(
           "WABT reported optional custom-section interpretation warnings; exact warning output is retained in custom_section_warnings.",
         );
-      capturedOutput = artifactCommandOutput(dump);
-      const { sections, headers, details } = parseWabtOutput(
-        dump.stdout.text,
-        selected.bytes.length,
-        customSectionNames,
-        debugModuleNames,
-      );
+      if (invalidNameEnds.length > 0)
+        optionalLimitations.push(
+          "An optional custom-section name is invalid UTF-8 and was omitted from decoded WAT. Its original bytes and objdump section range remain available; its identity and debug-name coverage are unknown.",
+        );
       const limitations = [
         "WAT is a decoded representation, not original source or proof of runtime behavior. Custom annotations may retain payloads, but WAT does not establish original binary layout or round-trip byte identity. Original bytes and objdump output remain authoritative.",
         "Imports and exports retain exact top-level WABT WAT forms. Names remain escaped producer text; unescaped objdump display names are not parsed as unambiguous identifiers.",

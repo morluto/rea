@@ -49,11 +49,7 @@ import {
   interfaceBuilderLimitsSchema,
   type InterfaceBuilderDocumentInput,
 } from "../../domain/apple/interfaceBuilderGraph.js";
-import {
-  mergeNibHierarchies,
-  projectNibViewHierarchy,
-  type NibHierarchyNode,
-} from "./NibViewHierarchy.js";
+import { projectNibViewHierarchy } from "./NibViewHierarchy.js";
 import { jsonValueSchema, type JsonValue } from "../../domain/jsonValue.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 
@@ -71,6 +67,7 @@ import {
 const MAX_AGGREGATE_INPUT_BYTES = 32 * 1024 * 1024;
 const MAX_AGGREGATE_DECODE_BYTES = 256 * 1024 * 1024;
 const MAX_REPORTED_OMITTED_ARCHIVES = 64;
+const MAX_REPORTED_INVALID_ARCHIVES = 16;
 
 interface OmittedArchive {
   readonly path: string;
@@ -104,7 +101,13 @@ const decodeInterfaceBuilderBundle = async (
   const reader = new DirectoryArtifactReader(input.bundlePath);
   const documents: InterfaceBuilderDocumentInput[] = [];
   const invalid: string[] = [];
+  let unreportedInvalidArchives = 0;
   const omittedArchives: OmittedArchive[] = [];
+  const omissionCounts = new Map<string, number>();
+  const recordOmission = (reason: string, count = 1): void => {
+    if (count > 0)
+      omissionCounts.set(reason, (omissionCounts.get(reason) ?? 0) + count);
+  };
   let unreportedOmittedArchives = 0;
   const incompleteHierarchies = new Map<string, number>();
   const unexaminedSources = new Map<string, readonly NibUnexaminedSource[]>();
@@ -124,7 +127,7 @@ const decodeInterfaceBuilderBundle = async (
   let outcome: { kind: "completed" } | { kind: "failed"; cause: unknown } = {
     kind: "completed",
   };
-  const recordOmittedArchive = (
+  const retainOmittedArchive = (
     path: string,
     reason: string,
     limitations: readonly string[] = [],
@@ -132,6 +135,11 @@ const decodeInterfaceBuilderBundle = async (
     if (omittedArchives.length < MAX_REPORTED_OMITTED_ARCHIVES)
       omittedArchives.push({ path, reason, limitations });
     else unreportedOmittedArchives += 1;
+  };
+  const recordOmittedArchive = (path: string, reason: string): void => {
+    omitted += 1;
+    recordOmission(reason);
+    retainOmittedArchive(path, reason);
   };
   try {
     const selection = await selectInterfaceBuilderCandidates(
@@ -141,10 +149,12 @@ const decodeInterfaceBuilderBundle = async (
       traversal,
     );
     omitted = selection.omitted;
+    recordOmission("max_documents", selection.documentLimitOmissions);
+    recordOmission("symlink_not_followed", selection.symlinkOmissions);
     for (const entry of selection.omittedSamples)
-      recordOmittedArchive(entry.path, "max_documents");
+      retainOmittedArchive(entry.path, "max_documents");
     for (const entry of selection.symlinkSamples)
-      recordOmittedArchive(
+      retainOmittedArchive(
         entry.path,
         "symlink_not_followed",
         entry.limitations,
@@ -160,7 +170,6 @@ const decodeInterfaceBuilderBundle = async (
           entry.declaredSize !== null &&
           entry.declaredSize > remainingInputBytes
         ) {
-          omitted += 1;
           recordOmittedArchive(entry.path, "aggregate_decode_budget_exhausted");
           continue;
         }
@@ -266,18 +275,18 @@ const decodeInterfaceBuilderBundle = async (
         if (cause instanceof InterfaceBuilderDecodeBudgetExceeded) {
           // A document rejected while decoding, e.g. beyond the shared depth
           // limit, retains no representation; later documents keep its share.
-          omitted += 1;
           recordOmittedArchive(entry.path, cause.reason);
           continue;
         }
         if (cause instanceof UnsupportedBinaryPlistUidError) {
-          omitted += 1;
           recordOmittedArchive(entry.path, "unsupported_uid_exact_range");
           continue;
         }
-        invalid.push(
-          `${entry.path}: ${cause instanceof Error ? cause.message : "archive decode failed"}`,
-        );
+        if (invalid.length < MAX_REPORTED_INVALID_ARCHIVES)
+          invalid.push(
+            `${entry.path}: ${cause instanceof Error ? cause.message : "archive decode failed"}`,
+          );
+        else unreportedInvalidArchives += 1;
       }
     }
   } catch (cause: unknown) {
@@ -310,8 +319,10 @@ const decodeInterfaceBuilderBundle = async (
     nonFiniteReals,
     negativeZeroReals,
     invalid,
+    unreportedInvalidArchives,
     omittedArchives,
     unreportedOmittedArchives,
+    omissionCounts,
     attempted,
     omitted,
     traversal: traversal.snapshot(),
@@ -329,6 +340,8 @@ const selectInterfaceBuilderCandidates = async (
   readonly omittedSamples: readonly ArtifactEntry[];
   readonly symlinkSamples: readonly ArtifactEntry[];
   readonly omitted: number;
+  readonly documentLimitOmissions: number;
+  readonly symlinkOmissions: number;
   readonly unreportedOmitted: number;
 }> => {
   const capacity = maximumDocuments + MAX_REPORTED_OMITTED_ARCHIVES;
@@ -370,6 +383,8 @@ const selectInterfaceBuilderCandidates = async (
     omittedSamples,
     symlinkSamples,
     omitted: Math.max(0, total - maximumDocuments) + symlinks,
+    documentLimitOmissions: Math.max(0, total - maximumDocuments),
+    symlinkOmissions: symlinks,
     unreportedOmitted:
       Math.max(0, total - maximumDocuments - omittedSamples.length) +
       symlinks -
@@ -411,8 +426,10 @@ const finalizeHierarchyCoverage = (
     nonFiniteReals: ReadonlyMap<string, number>;
     negativeZeroReals: ReadonlyMap<string, number>;
     invalid: readonly string[];
+    unreportedInvalidArchives: number;
     omittedArchives: readonly OmittedArchive[];
     unreportedOmittedArchives: number;
+    omissionCounts: ReadonlyMap<string, number>;
     attempted: number;
     omitted: number;
     traversal: ArtifactReaderTraversal;
@@ -428,14 +445,39 @@ const finalizeHierarchyCoverage = (
     nonFiniteReals,
     negativeZeroReals,
     invalid,
+    unreportedInvalidArchives,
     omittedArchives,
     unreportedOmittedArchives,
   } = counts;
-  const archiveDecodePartial =
-    invalid.length > 0 ||
-    unexaminedSources.size > 0 ||
-    counts.omitted > 0 ||
-    counts.traversal.status === "unknown";
+  const sourceReasons = new Set(
+    [...counts.omissionCounts.keys()].map((reason) =>
+      reason === "max_documents"
+        ? "document_limit_reached"
+        : reason === "symlink_not_followed"
+          ? "archive_symlink_not_followed"
+          : reason,
+    ),
+  );
+  if (invalid.length > 0) sourceReasons.add("one_or_more_archives_invalid");
+  if (counts.traversal.status === "unknown")
+    sourceReasons.add("source_traversal_unknown");
+  const sourceDecodeReason =
+    sourceReasons.size > 1
+      ? "multiple_archive_decode_causes"
+      : (sourceReasons.values().next().value ?? null);
+  const archiveDecodeReason =
+    sourceDecodeReason ??
+    (unexaminedSources.size > 0
+      ? "serialized_archive_content_unexamined"
+      : null);
+  const archiveObjectDecodeReason =
+    sourceDecodeReason ??
+    ([...unexaminedSources.values()].some((sources) =>
+      sources.some((source) => source.facets.includes("objects")),
+    )
+      ? "serialized_archive_content_unexamined"
+      : null);
+  const archiveDecodePartial = archiveDecodeReason !== null;
   return {
     ...result,
     documents: result.documents.map((document) => ({
@@ -483,28 +525,21 @@ const finalizeHierarchyCoverage = (
         }),
         {
           facet: "archive_decode",
-          status: archiveDecodePartial
-            ? ("partial" as const)
-            : ("complete" as const),
-          reason: omittedArchives.some(
-            ({ reason }) => reason === "aggregate_decode_budget_exhausted",
-          )
-            ? "aggregate_decode_budget_exhausted"
-            : omittedArchives.some(({ reason }) => reason === "max_documents")
-              ? "document_limit_reached"
-              : omittedArchives.some(
-                    ({ reason }) => reason === "symlink_not_followed",
-                  )
-                ? "archive_symlink_not_followed"
-                : omittedArchives.length > 0
-                  ? "archive_decode_budget_exhausted"
-                  : invalid.length > 0
-                    ? "one_or_more_archives_invalid"
-                    : unexaminedSources.size > 0
-                      ? "serialized_archive_content_unexamined"
-                      : counts.traversal.status === "unknown"
-                        ? "source_traversal_unknown"
-                        : null,
+          status:
+            archiveDecodeReason === null
+              ? ("complete" as const)
+              : ("partial" as const),
+          reason: archiveDecodeReason,
+          examined: counts.attempted,
+          omitted: counts.omitted,
+        },
+        {
+          facet: "archive_object_decode",
+          status:
+            archiveObjectDecodeReason === null
+              ? ("complete" as const)
+              : ("partial" as const),
+          reason: archiveObjectDecodeReason,
           examined: counts.attempted,
           omitted: counts.omitted,
         },
@@ -535,7 +570,12 @@ const finalizeHierarchyCoverage = (
       ...(invalid.length === 0
         ? []
         : [
-            `Some Interface Builder archives could not be decoded: ${invalid.slice(0, 16).join("; ")}`,
+            `Some Interface Builder archives could not be decoded: ${invalid.join("; ")}`,
+          ]),
+      ...(unreportedInvalidArchives === 0
+        ? []
+        : [
+            `${unreportedInvalidArchives} additional archive decode failure diagnostic(s) were not retained; reporting is bounded to ${MAX_REPORTED_INVALID_ARCHIVES} paths.`,
           ]),
       ...[...unknownDates].map(
         ([path, count]) => `${path}: ${unknownDateLimitation(count)}`,
@@ -552,6 +592,12 @@ const finalizeHierarchyCoverage = (
       ...[...negativeZeroReals].map(
         ([path, count]) => `${path}: ${negativeZeroRealLimitation(count)}`,
       ),
+      ...[...counts.omissionCounts]
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(
+          ([reason, count]) =>
+            `${count} Interface Builder archive(s) omitted because ${reason.replaceAll("_", " ")}.`,
+        ),
       ...omittedArchives.flatMap(({ path, reason, limitations }) => [
         `${path}: omitted because ${reason.replaceAll("_", " ")}.`,
         ...limitations.map((limitation) => `${path}: ${limitation}`),
@@ -806,7 +852,6 @@ const projectNibArchive = (
       .map(projectObject),
   );
   const connections: Record<string, JsonValue[]> = {};
-  const hierarchy: NibHierarchyNode[] = [];
   // A recognized connector whose owner reference cannot be resolved produces no
   // connection entry, so the omission has to be counted here: the projected
   // dictionary carries no trace of it for a downstream consumer to find.
@@ -904,80 +949,26 @@ const projectNibArchive = (
       facets: ["objects", "connections", "classes"],
       description: `NSString NS.bytes is not valid UTF-8 for ${unavailableStringIds.size} source objects; their bytes and object IDs are retained, while dependent class names, titles and selectors remain unknown.`,
     });
-  let hierarchyOmitted = 0;
-  let hierarchyNodeCount = 0;
-  const hierarchyFor = (
-    objectId: number,
-    seen: Set<number>,
-    depth: number,
-  ): NibHierarchyNode | null => {
-    if (depth > 32 || seen.has(objectId)) {
-      hierarchyOmitted += 1;
-      return null;
-    }
-    if (hierarchyNodeCount >= maxHierarchyNodes) {
-      hierarchyOmitted += 1;
-      return null;
-    }
-    if (!budget.tryReserve(128)) {
-      hierarchyOmitted += 1;
-      return null;
-    }
-    const object = byId.get(objectId);
-    if (object === undefined) {
-      hierarchyOmitted += 1;
-      return null;
-    }
-    hierarchyNodeCount += 1;
-    const nextSeen = new Set(seen).add(objectId);
-    const children: NibHierarchyNode[] = [];
-    for (const [key, value] of Object.entries(object.values)) {
-      if (!/(?:subviews|contentview|childviewcontrollers|view)$/iu.test(key))
-        continue;
-      const direct = reference(value);
-      if (direct === null) continue;
-      const target = byId.get(direct);
-      if (target === undefined) {
-        hierarchyOmitted += 1;
-        continue;
-      }
-      if (/array|set/iu.test(target.class_name)) {
-        for (const candidate of nibCollectionMembers(target) ?? []) {
-          const child = reference(candidate);
-          const nested =
-            child === null ? null : hierarchyFor(child, nextSeen, depth + 1);
-          if (nested !== null) children.push(nested);
-        }
-      } else {
-        const nested = hierarchyFor(direct, nextSeen, depth + 1);
-        if (nested !== null) children.push(nested);
-      }
-    }
-    return { objectID: String(objectId), children };
-  };
-  const ibData = archive.objects.find(
-    ({ class_name }) => normalizeClassName(class_name) === "NSIBObjectData",
-  );
-  const rootId = reference(ibData?.values.NSRoot);
-  const hierarchyRoots = rootId === null ? [] : [rootId];
-  for (const hierarchyRoot of hierarchyRoots) {
-    const root = hierarchyFor(hierarchyRoot, new Set(), 0);
-    if (root !== null) hierarchy.push(root);
-  }
   const viewHierarchy = projectNibViewHierarchy(
     archive.objects,
     new Set(Object.keys(objects).map(Number)),
     () => budget.tryReserve(128),
     maxHierarchyNodes,
-  );
-  const merged = mergeNibHierarchies(
-    hierarchy,
-    viewHierarchy.hierarchy ?? [],
-    () => budget.tryReserve(96),
-    maxHierarchyNodes,
+    (description) => {
+      budget.reserve(
+        256,
+        "NIB registry hierarchy diagnostics exceed the aggregate Interface Builder decode budget",
+      );
+      budget.reserveJsonStringOccurrence(description);
+      unexaminedSources.push({
+        reason: "nib_registry_parentage_unexamined",
+        facets: ["hierarchy"],
+        description,
+      });
+    },
   );
   return {
-    omitted: viewHierarchy.omitted + hierarchyOmitted + merged.omitted,
+    omitted: viewHierarchy.omitted,
     unexaminedSources,
     unresolvedConnections,
     nonFiniteRealCount,
@@ -985,7 +976,7 @@ const projectNibArchive = (
     raw: jsonValueSchema.parse({
       "com.apple.ibtool.document.objects": objects,
       "com.apple.ibtool.document.connections": connections,
-      "com.apple.ibtool.document.hierarchy": merged.hierarchy,
+      "com.apple.ibtool.document.hierarchy": viewHierarchy.hierarchy ?? [],
       "com.apple.ibtool.document.classes": Object.fromEntries(
         archive.classes.map((name) => {
           const className = normalizeClassName(name);

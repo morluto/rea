@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { observedSymlinkTarget } from "./symlinkTarget.js";
 import { utcDateTimeSchema } from "../offsetDateTime.js";
 import { jsonValueSchema } from "../jsonValue.js";
 
@@ -21,11 +22,11 @@ export interface TerminalFrame {
   readonly sequence: number;
   readonly at_ms: number;
   readonly data: string;
-  /** Original PTY text when normalization changed it; older captures may omit it. */
+  /** Pre-normalization PTY projection; sensitive captures redact it, older captures may omit it. */
   readonly raw_data?: string | undefined;
 }
 
-/** Serialized terminal state after interpreting control and resize sequences. */
+/** Terminal state after control/resize parsing; sensitive captures use redacted PTY input. */
 export interface RenderedTerminalFrame {
   readonly sequence: number;
   readonly at_ms: number;
@@ -38,15 +39,31 @@ export interface RenderedTerminalFrame {
   readonly serialized_state: string;
 }
 
-/** Scheduled terminal interaction with its observed dispatch outcome. */
-export interface InteractionEvent {
-  readonly sequence: number;
-  readonly scheduled_at_ms: number;
-  readonly dispatched_at_ms: number;
-  readonly type: "input" | "resize" | "signal";
-  readonly data: string;
-  readonly outcome: "dispatched" | "target_exited" | "failed";
-}
+/** Scheduled interaction; new private facts are paired, legacy records remain valid. */
+const interactionEventSchema = z
+  .object({
+    sequence: z.int().nonnegative(),
+    scheduled_at_ms: z.int().nonnegative(),
+    dispatched_at_ms: z.int().nonnegative(),
+    type: z.enum(["input", "resize", "signal"]),
+    data: z.string(),
+    sensitive: z.literal(true).optional(),
+    input_bytes: z.int().nonnegative().optional(),
+    outcome: z.enum(["dispatched", "target_exited", "failed"]),
+  })
+  .superRefine((event, context) => {
+    if (
+      (event.sensitive === true) !== (event.input_bytes !== undefined) ||
+      (event.sensitive === true &&
+        (event.type !== "input" || event.data !== ""))
+    )
+      context.addIssue({
+        code: "custom",
+        message:
+          "Private input facts require input type, empty data, sensitive: true and input_bytes together.",
+      });
+  });
+export type InteractionEvent = Readonly<z.infer<typeof interactionEventSchema>>;
 
 /** Observed finalization attempts after a deadline fired. */
 export interface ProcessCaptureFinalization {
@@ -80,7 +97,9 @@ export type FileState = FileStateIdentity &
     | {
         readonly type: "symlink";
         readonly sha256: null;
-        readonly symlink_target: string;
+        readonly symlink_target: string | null;
+        /** Exact stored target bytes; omitted by legacy captures. */
+        readonly symlink_target_hex?: string | undefined;
       }
     | {
         readonly type: "directory" | "other";
@@ -346,12 +365,35 @@ const fileStateSchema = z.discriminatedUnion("type", [
       .nullable(),
     symlink_target: z.null(),
   }),
-  z.object({
-    ...fileStateShape,
-    type: z.literal("symlink"),
-    sha256: z.null(),
-    symlink_target: z.string(),
-  }),
+  z
+    .object({
+      ...fileStateShape,
+      type: z.literal("symlink"),
+      sha256: z.null(),
+      symlink_target: z.string().nullable(),
+      symlink_target_hex: z
+        .string()
+        .regex(/^(?:[a-f0-9]{2})+$/u)
+        .optional(),
+    })
+    .superRefine((file, context) => {
+      if (file.symlink_target_hex === undefined) {
+        if (file.symlink_target === null)
+          context.addIssue({
+            code: "custom",
+            message: "An unknown symlink target requires its exact bytes",
+          });
+        return;
+      }
+      const { text } = observedSymlinkTarget(
+        Buffer.from(file.symlink_target_hex, "hex"),
+      );
+      if (file.symlink_target !== text)
+        context.addIssue({
+          code: "custom",
+          message: "Symlink target text contradicts its exact bytes",
+        });
+    }),
   z.object({
     ...fileStateShape,
     type: z.enum(["directory", "other"]),
@@ -498,16 +540,7 @@ const processCaptureShapeSchema = z.strictObject({
       serialized_state: z.string(),
     }),
   ),
-  interaction_events: z.array(
-    z.object({
-      sequence: z.int().nonnegative(),
-      scheduled_at_ms: z.int().nonnegative(),
-      dispatched_at_ms: z.int().nonnegative(),
-      type: z.enum(["input", "resize", "signal"]),
-      data: z.string(),
-      outcome: z.enum(["dispatched", "target_exited", "failed"]),
-    }),
-  ),
+  interaction_events: z.array(interactionEventSchema),
   exit: z.object({
     code: z.int().nullable(),
     signal: z.int().nullable(),

@@ -1,8 +1,10 @@
 import { afterEach, describe, expect } from "vitest";
+import { z } from "zod";
 
 import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
 import { DEFAULT_BROWSER_SCENARIO_CAPTURE_LIMITS } from "../../../src/domain/browserScenarioCaptureLimits.js";
 import { BROWSER_STORAGE_FINGERPRINT_VERSION } from "../../../src/domain/browserScenarioCaptureValues.js";
+import { browserScenarioDiffSchema } from "../../../src/domain/browserScenarioDiffValues.js";
 import {
   startFakeCdpBrowser,
   type FakeCdpBrowser,
@@ -395,6 +397,46 @@ describe("scenario comparison CLI diagnostics", () => {
 });
 
 describe("scenario comparison recovery guidance", () => {
+  cliTest(
+    "reports each distinct event coverage instruction once",
+    async ({ cli }) => {
+      const before = scenarioCaptureWithConsole("same", {
+        request_body: false,
+        response_body: false,
+        header_values: false,
+      });
+      const after = {
+        ...before,
+        scenario: {
+          ...before.scenario,
+          event_families: [...before.scenario.event_families, "network"],
+          network_content: {
+            ...before.scenario.network_content,
+            response_body: true,
+          },
+        },
+      };
+      const invocation = await compareCapturesCli(cli, before, after);
+      expect(invocation.exitCode, invocation.stderr).toBe(0);
+      const result = z
+        .object({ normalized_result: browserScenarioDiffSchema })
+        .parse(invocation.json).normalized_result;
+      expect(result.overall_status).toBe("unknown");
+      const diffs = result.steps.flatMap((step) =>
+        step.artifact_diffs.filter((diff) => diff.artifact === "events"),
+      );
+      expect(diffs.length).toBeGreaterThan(0);
+      for (const diff of diffs) {
+        expect(
+          diff.reason?.match(/Event family selections differ/gu),
+        ).toHaveLength(1);
+        expect(
+          diff.reason?.match(/Network content selections differ/gu),
+        ).toHaveLength(1);
+      }
+    },
+  );
+
   cliTest(
     "reports independent network recovery alongside console differences",
     async ({ cli }) => {

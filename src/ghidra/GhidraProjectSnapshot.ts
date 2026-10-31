@@ -24,6 +24,7 @@ import {
 } from "../filesystem/RegularFile.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
+import type { JsonValue } from "../domain/jsonValue.js";
 import type { GhidraProjectSelection } from "../config/ghidraExistingProject.js";
 import { ghidraProgramNameSchema } from "../config/ghidraExistingProject.js";
 
@@ -59,22 +60,30 @@ export type GhidraProjectCommitment = z.infer<
 const selectionFailure = (
   message: string,
   setting = "REA_GHIDRA_PROJECT_PATH",
+  diagnostics?: Readonly<Record<string, JsonValue>>,
 ): ConfigurationError =>
   new ConfigurationError(message, {
     settings: [{ setting, constraint: message }],
+    ...(diagnostics === undefined ? {} : { diagnostics }),
   });
-const entriesFor = (name: string) => [`${name}.gpr`, `${name}.rep`];
+const entriesFor = (name: string) => [`${name}.gpr`, `${name}.rep`] as const;
+
+const absentProjectEntry = (cause: unknown): undefined => {
+  if (cause instanceof Error && "code" in cause && cause.code === "ENOENT")
+    return undefined;
+  throw cause;
+};
 
 const validateProject = async (root: string, name: string): Promise<void> => {
-  if (!(await lstat(root)).isDirectory())
+  if (!(await lstat(root).catch(absentProjectEntry))?.isDirectory())
     throw selectionFailure(
       `Existing Ghidra project directory does not exist: ${root}`,
     );
-  const [marker, data] = await Promise.all(
-    entriesFor(name).map((entry) =>
-      lstat(join(root, entry)).catch(() => undefined),
-    ),
-  );
+  // Inspect both entries even when one is missing; a physical failure of the
+  // other entry must not be mistaken for an invalid project selection.
+  const [markerName, dataName] = entriesFor(name);
+  const marker = await lstat(join(root, markerName)).catch(absentProjectEntry);
+  const data = await lstat(join(root, dataName)).catch(absentProjectEntry);
   if (!marker?.isFile() || !data?.isDirectory())
     throw selectionFailure(
       `Existing Ghidra project requires a regular ${name}.gpr marker and ${name}.rep directory; restore saved .grez archives before selecting the project: ${root}`,
@@ -167,6 +176,20 @@ export const resolveGhidraProject = async (
     "resolve_analysis_profile",
     async () => {
       assertArtifactReadActive(signal);
+      // Admit the caller's exact marker before canonicalizing its parent.
+      // Darwin realpath(file/..) can succeed despite native lookup rejecting
+      // that traversal; hashing the canonical sibling would select a new input.
+      const marker = await lstat(selection.path).catch(absentProjectEntry);
+      if (marker === undefined)
+        throw selectionFailure(
+          `Existing Ghidra project marker does not exist: ${selection.path}`,
+          "REA_GHIDRA_PROJECT_PATH",
+          { system_code: "ENOENT", syscall: "lstat" },
+        );
+      if (!marker.isFile())
+        throw selectionFailure(
+          `Existing Ghidra project marker must be a regular file: ${selection.path}`,
+        );
       const projectName = basename(selection.path, ".gpr");
       const projectPath = await realpath(dirname(selection.path));
       const program = ghidraProgramNameSchema.safeParse(
@@ -226,10 +249,10 @@ export const copyExistingGhidraProject = async (
       resources,
     } = options;
     assertArtifactReadActive(signal);
-    const source = await realpath(sourcePath).catch(() => undefined);
-    const runtime = await realpath(dirname(destinationRoot)).catch(() =>
-      resolve(dirname(destinationRoot)),
-    );
+    const source = await realpath(sourcePath).catch(absentProjectEntry);
+    const runtime =
+      (await realpath(dirname(destinationRoot)).catch(absentProjectEntry)) ??
+      resolve(dirname(destinationRoot));
     if (
       source !== undefined &&
       entriesFor(projectName).some((entry) =>

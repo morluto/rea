@@ -1,12 +1,33 @@
 import { describe, expect, it } from "vitest";
 
-import { addressDistance } from "./addressCoordinate.js";
+import { addressCoordinate, addressDistance } from "./addressCoordinate.js";
 import { parseDocuments } from "./nativeDocument.js";
-import { parseListCount } from "./nativeInventory.js";
 import { parseRelatedAddresses } from "./nativeObservation.js";
 import { parseSegments } from "./nativeSegments.js";
 
 describe("native provider boundary values", () => {
+  it.each([
+    "ram space:0x1",
+    "ram:extra:0x1",
+    "ram%zz:0x1",
+    ":0x1",
+    "ram%2f:0x1",
+    "0X1",
+    "0xA",
+  ])("leaves malformed or non-observed coordinate %s unknown", (address) => {
+    expect(addressCoordinate(address)).toBeNull();
+    expect(addressDistance(address, address)).toBeNull();
+  });
+
+  it("preserves encoded space identity and padded observed offsets", () => {
+    expect(addressCoordinate("ram%2Fbank:0x000a")).toEqual({
+      space: "ram%2Fbank",
+      offset: 10n,
+    });
+    expect(addressDistance("ram%2Fbank:0x000a", "ram%2Fbank:0xb")).toBe(1);
+    expect(addressDistance("ram%2Fbank:0xa", "ram%252Fbank:0xb")).toBeNull();
+  });
+
   it("distinguishes measured zero, malformed, incomparable, reversed, and oversized extents", () => {
     expect(addressDistance("not-an-address", "0x2000")).toBeNull();
     expect(addressDistance("ram:0x1000", "rom:0x2000")).toBeNull();
@@ -32,14 +53,8 @@ describe("native provider boundary values", () => {
       parseSegments([{ name: "__TEXT", start: "0x1", end: "0x2" }]).ok,
     ).toBe(false);
   });
-  it("counts Hopper's address-keyed string maps", () => {
-    expect(
-      parseListCount({ "0x1000": "hello", "0x2000": "world" }, "strings"),
-    ).toEqual({ ok: true, value: 2 });
-  });
-
-  it("parses direct and wrapped protocol shapes", () => {
-    expect(parseRelatedAddresses({ callers: ["0x3"] }, "callers")).toEqual({
+  it("parses provider arrays", () => {
+    expect(parseRelatedAddresses(["0x3"], "callers")).toEqual({
       ok: true,
       value: ["0x3"],
     });
@@ -75,6 +90,12 @@ describe("native provider boundary values", () => {
 
   it.each([
     ["relations", () => parseRelatedAddresses([1], "callees")],
+    [
+      "wrapped relations",
+      () => parseRelatedAddresses({ callees: ["0x3"] }, "callees"),
+    ],
+    ["wrapped documents", () => parseDocuments({ documents: ["fixture"] })],
+    ["wrapped segments", () => parseSegments({ segments: [] })],
     ["segments", () => parseSegments([{ name: 1 }])],
     ["documents", () => parseDocuments([1])],
   ])(
@@ -98,32 +119,3 @@ describe("native provider boundary values", () => {
     }
   });
 });
-
-it.each(["procedures", "strings"])(
-  "counts every own entry of direct and wrapped %s maps",
-  (property) => {
-    for (const text of [
-      '{"__proto__":"observed"}',
-      '{"__proto__":"observed","0x1000":"one"}',
-    ]) {
-      const source = JSON.parse(text);
-      const count = Object.keys(source).length;
-      expect(parseListCount(source, property)).toEqual({
-        ok: true,
-        value: count,
-      });
-      expect(parseListCount({ [property]: source }, property)).toEqual({
-        ok: true,
-        value: count,
-      });
-      expect(JSON.stringify(source)).toBe(text);
-    }
-    expect(parseListCount({ [property]: [] }, property)).toEqual({
-      ok: true,
-      value: 0,
-    });
-    expect(parseListCount({}, property)).toEqual({ ok: true, value: 0 });
-    for (const value of [null, "not a list", 3, false])
-      expect(parseListCount(value, property).ok).toBe(false);
-  },
-);

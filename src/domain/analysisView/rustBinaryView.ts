@@ -126,7 +126,6 @@ export const projectRustBinaryView = (
   const subject = parent.subject;
   if (
     subject == null ||
-    subject.local_path !== report.artifact.path ||
     subject.digest.sha256 !== report.artifact.sha256 ||
     subject.format !== metadataReportSubjectFormat(report) ||
     subject.architecture !==

@@ -8,6 +8,7 @@ import type {
   WasmInterfaceValueType,
 } from "../domain/wasm/wasmInterface.js";
 import { watString, watStringEnd } from "./WabtString.js";
+import { watCommentEnd } from "./WabtComment.js";
 
 /** Split direct WAT children only; function instruction bodies are never materialized. */
 const parts = (form: string): string[] => {
@@ -19,23 +20,9 @@ const parts = (form: string): string[] => {
       i++;
       continue;
     }
-    if (form.startsWith("(;", i)) {
-      let depth = 1;
-      i += 2;
-      while (i < form.length && depth > 0) {
-        if (form.startsWith("(;", i)) {
-          depth++;
-          i += 2;
-        } else if (form.startsWith(";)", i)) {
-          depth--;
-          i += 2;
-        } else i++;
-      }
-      continue;
-    }
-    if (form.startsWith(";;", i)) {
-      const end = form.indexOf("\n", i);
-      i = end < 0 ? form.length : end + 1;
+    const commentEnd = watCommentEnd(form, i);
+    if (commentEnd !== undefined) {
+      i = commentEnd;
       continue;
     }
     const start = i;
@@ -45,7 +32,9 @@ const parts = (form: string): string[] => {
       let depth = 1;
       i++;
       while (i < form.length && depth > 0) {
-        if (form[i] === '"') i = watStringEnd(form, i + 1);
+        const commentEnd = watCommentEnd(form, i);
+        if (commentEnd !== undefined) i = commentEnd;
+        else if (form[i] === '"') i = watStringEnd(form, i + 1);
         else {
           if (form[i] === "(") depth++;
           else if (form[i] === ")") depth--;
@@ -154,7 +143,9 @@ const decodeWabtInterface = (
     const p = parts(form);
     const kind = p[0];
     if (kind === "func" || kind === "tag") {
-      const use = p.find((t) => t.startsWith("(type "));
+      // Interpret group heads through the same comment/whitespace framing as
+      // their values; raw prefixes can mistake an explicit type for no type.
+      const use = p.find((t) => t.startsWith("(") && head(t) === "type");
       if (use === undefined) return functionType(form, kind);
       const reference = parts(use)[1];
       const index =
@@ -220,11 +211,10 @@ const decodeWabtInterface = (
     }
     if (kind === "global") {
       const declaration = p[1]?.startsWith("$") === true ? p[2] : p[1];
-      const mutable = declaration?.startsWith("(mut ") === true;
-      const value_type =
-        mutable && declaration !== undefined
-          ? parts(declaration)[1]
-          : declaration;
+      const group =
+        declaration?.startsWith("(") === true ? parts(declaration) : undefined;
+      const mutable = group?.[0] === "mut";
+      const value_type = mutable ? group?.[1] : declaration;
       return value_type !== undefined && isValueType(value_type)
         ? { kind, value_type, mutable }
         : null;

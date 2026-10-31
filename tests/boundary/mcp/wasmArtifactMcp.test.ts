@@ -619,23 +619,27 @@ it("rejects inconsistent decoded-WAT digests in portable Evidence without a prov
   await harness.client.ping();
 });
 
-it("rejects absent or inconsistent WASM source identity before deriving portable views", async () => {
+it("checks WASM semantic identity while preserving rebound display paths", async () => {
   const value = wasmArtifactFixture();
   const harness = await createApplicationMcpHarness({
     serverOptions: { environment: {} },
   });
   onTestFinished(harness.close);
+  const views = [
+    { kind: "summary" },
+    { kind: "wasm", facet: "exports", offset: 0, limit: 1 },
+  ] as const;
   for (const target of [
     undefined,
-    {
-      path: `${value.artifact.path}.other`,
-      sha256: value.artifact.sha256,
-      format: "file" as const,
-    },
     {
       path: value.artifact.path,
       sha256: "f".repeat(64),
       format: "file" as const,
+    },
+    {
+      path: value.artifact.path,
+      sha256: value.artifact.sha256,
+      format: "elf" as const,
     },
   ]) {
     const source = createEvidence(
@@ -643,10 +647,7 @@ it("rejects absent or inconsistent WASM source identity before deriving portable
       { id: "historical-wabt", name: "Historical WABT", version: "1" },
       { operation: "inspect_wasm_artifact", parameters: {}, result: value },
     );
-    for (const view of [
-      { kind: "summary" },
-      { kind: "wasm", facet: "exports", offset: 0, limit: 1 },
-    ]) {
+    for (const view of views) {
       const reply = await harness.client.callTool({
         name: "inspect_analysis_view",
         arguments: { source: { kind: "inline", evidence: source }, view },
@@ -661,9 +662,32 @@ it("rejects absent or inconsistent WASM source identity before deriving portable
       });
     }
   }
+  const rebound = createEvidence(
+    {
+      path: `${value.artifact.path}.other`,
+      sha256: value.artifact.sha256,
+      format: "file",
+    },
+    { id: "historical-wabt", name: "Historical WABT", version: "1" },
+    { operation: "inspect_wasm_artifact", parameters: {}, result: value },
+  );
+  for (const view of views) {
+    const reply = await harness.client.callTool({
+      name: "inspect_analysis_view",
+      arguments: { source: { kind: "inline", evidence: rebound }, view },
+    });
+    expect(reply.isError, JSON.stringify(reply.structuredContent)).not.toBe(
+      true,
+    );
+    const projected = parseEvidence(reply.structuredContent);
+    expect(projected.subject).toEqual(rebound.subject);
+    expect(projected.evidence_links).toEqual([rebound.evidence_id]);
+    expect(projected.normalized_result).toMatchObject({
+      artifact: { path: value.artifact.path, sha256: value.artifact.sha256 },
+    });
+  }
   await harness.client.ping();
 });
-
 it("rejects malformed paths, refuses WASM summary delivery before provider work when retention is unavailable, and keeps fixed-server complete delivery", async () => {
   const value = wasmArtifactFixture();
   const inspect = vi.fn<WasmArtifactService["provider"]["inspect"]>(() =>

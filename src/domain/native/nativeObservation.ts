@@ -1,7 +1,4 @@
-import {
-  unwrapNativeProperty,
-  invalidNativeOutput,
-} from "./nativeProviderOutput.js";
+import { invalidNativeOutput } from "./nativeProviderOutput.js";
 import { z } from "zod";
 import { procedureIdentitySchema } from "./procedureInfo.js";
 import { AnalysisOutputError } from "../analysisErrorCore.js";
@@ -79,7 +76,7 @@ export const isNativeObservationOperation = (
 ): operation is NativeObservationOperation =>
   NATIVE_OBSERVATION_OPERATIONS.some((supported) => supported === operation);
 
-/** Parse callee/caller strings from direct or wrapped provider results. */
+/** Parse the provider callee/caller address array. */
 export const parseRelatedAddresses = (
   value: JsonValue,
   relation: "callees" | "callers",
@@ -87,9 +84,7 @@ export const parseRelatedAddresses = (
     ? "procedure_callees"
     : "procedure_callers",
 ): Result<readonly string[], AnalysisOutputError> => {
-  const parsed = z
-    .array(z.string())
-    .safeParse(unwrapNativeProperty(value, relation));
+  const parsed = z.array(z.string()).safeParse(value);
   return parsed.success
     ? ok(parsed.data)
     : invalidNativeOutput(operation, `${relation} list`, parsed.error);

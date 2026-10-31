@@ -106,6 +106,33 @@ const page = (source: AnalysisViewParent, view: unknown) => {
 };
 afterEach(() => vi.restoreAllMocks());
 
+it.each(["node_count", "occurrence_count", "edge_count"] as const)(
+  "rejects inventory views whose retained members exceed %s",
+  (count) => {
+    const inventory = freshInventory();
+    inventory.manifest[count] -= 1;
+    const result = projectArtifactInventoryView(
+      parent(inventory),
+      artifactInventoryViewRequestSchema.parse({
+        kind: "inventory",
+        collection: "nodes",
+      }),
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        issues: [
+          {
+            path: ["source"],
+            reason: "invalid_value",
+            message: "Artifact inventory members exceed their manifest counts",
+          },
+        ],
+      },
+    });
+  },
+);
+
 it("batches exact occurrence IDs in source order while retaining linkage with no selected fields", () => {
   const inventory = freshInventory();
   const selected = inventory.occurrences.slice(0, 2);

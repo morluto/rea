@@ -15,18 +15,29 @@ import { err, ok, type Result } from "../domain/result.js";
 import type { NativeCommandCapture } from "./CommandRunner.js";
 import {
   MACHO_ARCHITECTURE_POLICIES,
-  selectMachoArchitectureName,
+  machoToolArchitectureName,
+  selectMachoArchitecture,
 } from "./MachoArchitectureSelection.js";
-import { parseDyldExports, parseDyldImports } from "./parsers/dyldInfo.js";
+import {
+  parseDyldExportAddressRow,
+  parseDyldExports,
+  parseDyldImports,
+} from "./parsers/dyldInfo.js";
 import { parseLipoCapture, type LipoArchitecture } from "./parsers/lipo.js";
 import { withoutEchoedPathHeader } from "./parsers/echoedPath.js";
-import { parseOtoolLoadCommands } from "./parsers/otool.js";
+import {
+  projectMachoBinary,
+  type BinaryMachoProjection,
+} from "./MachoBinaryProjection.js";
+import type { MachoCommandNames } from "./MachoCommandNames.js";
+import type { ResolvedMachoSlice } from "./NativeMachoSelectedSlice.js";
 import { reconcileMachoUuid } from "./parsers/machoUuid.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import {
   conflictingUuidCommandEvidence,
   isMissingUuidDyldFailure,
   isUnbackedTextDyldFailure,
+  isVtoolContainerRefusal,
   nativeMachoCapturedOutput,
   missingUuidLimitation,
   parseDyldFileTypeRefusal,
@@ -51,6 +62,15 @@ interface NativeMachoInspectionContext {
   readonly invocation: (
     capture: NativeCommandCapture,
   ) => NativeCommandInvocation;
+  readonly resolveSlice?: (
+    selected: LipoArchitecture,
+  ) => Promise<ResolvedMachoSlice>;
+  /** Borrow binary framing from the same identity-bound target as the tools. */
+  readonly readCommandNames: (
+    offset: number,
+    size: number | null,
+    selected: ResolvedMachoSlice | undefined,
+  ) => Promise<MachoCommandNames>;
 }
 
 const DISCOVERY_COMMANDS = [["lipo", ["-detailed_info"]]] as const;
@@ -63,7 +83,6 @@ const SYMBOL_TABLE_IMPORTS = ["nm", ["-gju", "--no-dyldinfo"]] as const;
 const DYLD_INFO_EXPORTS = ["nm", ["-gjU"]] as const;
 
 const REQUIRED_SLICE_COMMANDS = [
-  ["otool", ["-h", "-l"]],
   SYMBOL_TABLE_EXPORTS,
   ["dyld_info", ["-imports"]],
   ["dyld_info", ["-exports"]],
@@ -72,7 +91,7 @@ const REQUIRED_SLICE_COMMANDS = [
 
 const OPTIONAL_VTOOL_COMMAND = ["vtool", ["-show-build"]] as const;
 const VTOOL_UNAVAILABLE_LIMITATION =
-  "vtool is unavailable; build metadata is normalized from otool only.";
+  "vtool is unavailable; build metadata is normalized from binary load commands.";
 /** Inspect one Mach-O with the required native commands and normalized output. */
 export const inspectNativeMacho = async (
   context: NativeMachoInspectionContext,
@@ -104,8 +123,15 @@ export const inspectNativeMacho = async (
         `lipo did not list ${selection.architecture}; refusing to read another slice`,
       ),
     );
+  if (selection.status === "ambiguous")
+    return err(
+      new AnalysisOutputError(
+        "inspect_macho",
+        `lipo listed multiple slices addressable as ${selection.architecture}; refusing to associate a slice offset with an ambiguous tool selection`,
+      ),
+    );
   const selectedArchitecture =
-    selection.status === "selected" ? selection.architecture : null;
+    selection.status === "selected" ? selection.toolName : null;
   const runSliceCommand = ([tool, prefix]: readonly [
     string,
     readonly string[],
@@ -123,7 +149,9 @@ export const inspectNativeMacho = async (
             isMissingUuidDyldFailure(capture) ||
             isUnbackedTextDyldFailure(capture) ||
             parseDyldFileTypeRefusal(capture) !== null
-        : undefined,
+        : tool === "vtool" && format === "fat"
+          ? (capture) => isVtoolContainerRefusal(capture, context.target.path)
+          : undefined,
     );
   // vtool knows no variant subtypes, so no spelling selects an arm64e.x1 slice.
   const vtoolSelectsSlice =
@@ -154,33 +182,61 @@ export const inspectNativeMacho = async (
   );
   if (optional === null)
     limitations.push(
-      `vtool cannot select the ${selectedArchitecture} slice; build metadata is normalized from otool only.`,
+      `vtool cannot select the ${selectedArchitecture} slice; build metadata is normalized from binary load commands.`,
     );
-  else if (optional.ok) captures.push(optional.value);
-  else if (optional.error._tag === "AnalysisCapabilityUnavailableError")
+  else if (optional.ok) {
+    captures.push(optional.value);
+    if (isVtoolContainerRefusal(optional.value, context.target.path))
+      limitations.push(
+        "vtool declined the universal container as not Mach-O; build metadata is normalized from binary load commands.",
+      );
+  } else if (optional.error._tag === "AnalysisCapabilityUnavailableError")
     limitations.push(VTOOL_UNAVAILABLE_LIMITATION);
   else return err(optional.error);
   const nmIndex = captures.findIndex(({ tool }) => tool === "nm");
   const dyldExports = captures.filter(({ tool }) => tool === "dyld_info")[1];
   if (nmIndex < 0 || dyldExports === undefined)
     throw new TypeError("Missing nm or dyld_info export capture");
-  const otool = captures.find(({ tool }) => tool === "otool");
-  if (otool === undefined) throw new TypeError("Missing otool capture");
-  let load: ReturnType<typeof parseOtoolLoadCommands>;
-  try {
-    load = parseOtoolLoadCommands(sliceOutput(otool));
-  } catch (cause: unknown) {
+  const selected =
+    selection.status === "selected"
+      ? selection.architecture
+      : architectures.length === 1
+        ? architectures[0]
+        : undefined;
+  if (format === "fat" && selected === undefined)
     return err(
       new AnalysisOutputError(
         "inspect_macho",
-        "Malformed otool load-command output",
-        {
-          cause,
-          capturedOutput: nativeMachoCapturedOutput(otool),
-        },
+        "The selected binary slice is unavailable",
       ),
     );
-  }
+  const range =
+    format === "thin"
+      ? { offset: 0, size: null }
+      : context.resolveSlice !== undefined
+        ? await context.resolveSlice(selected!)
+        : { offset: selected!.file_offset, size: selected!.size };
+  if (range.offset === null || (format === "fat" && range.size === null))
+    return err(
+      new AnalysisOutputError(
+        "inspect_macho",
+        "The selected binary slice range is unavailable",
+      ),
+    );
+  if (
+    format === "fat" &&
+    (selected!.file_offset === null || selected!.size === null)
+  )
+    limitations.push(
+      "Selected slice range was derived from the Mach-O FAT table because lipo did not provide an interpretable complete range.",
+    );
+  const { offset, size } = range;
+  const binary = await context.readCommandNames(
+    offset,
+    size,
+    "declaration" in range ? range : undefined,
+  );
+  const load = projectMachoBinary(binary);
   const unbackedTextFailure = captures.find(isUnbackedTextDyldFailure);
   if (unbackedTextFailure !== undefined) {
     if (!["10", "DSYM", "MH_DSYM"].includes(load.fileType ?? ""))
@@ -262,21 +318,17 @@ export const inspectNativeMacho = async (
     );
   }
   const selectedArchitectureName =
-    selectedArchitecture ??
+    (selection.status === "selected" ? selection.architecture.name : null) ??
     (architectures.length === 1 ? (architectures[0]?.name ?? null) : null);
   const containerOffset =
-    selectedArchitectureName === null
-      ? undefined
-      : format === "thin"
-        ? 0
-        : (architectures.find(({ name }) => name === selectedArchitectureName)
-            ?.file_offset ?? undefined);
-  const normalized = normalizeMacho(
+    selectedArchitectureName === null ? undefined : offset;
+  const observed = normalizeMacho(
     captures,
     format,
     context.invocation,
     limitations,
     load,
+    binary.sliceSize,
     parsedImports.items,
     captures[nmIndex]!,
     architectures,
@@ -286,6 +338,48 @@ export const inspectNativeMacho = async (
       container_file_offset: containerOffset ?? null,
     },
   );
+  const outsideEntrypoint = observed.entrypoints.items.some(
+    ({ file_offset }) => file_offset >= binary.sliceSize,
+  );
+  const normalized = outsideEntrypoint
+    ? inspectMachoSchema.parse({
+        ...observed,
+        entrypoints: {
+          ...observed.entrypoints,
+          exhaustive: false,
+          total: null,
+          limitations: [
+            ...observed.entrypoints.limitations,
+            "An entrypoint lies outside the selected Mach-O slice.",
+          ],
+        },
+      })
+    : observed;
+  const locationLimitations =
+    containerOffset === undefined
+      ? []
+      : [
+          ...(normalized.entrypoints.items.some(
+            ({ file_offset }) =>
+              file_offset >= binary.sliceSize ||
+              !Number.isSafeInteger(containerOffset + file_offset),
+          )
+            ? [
+                "Some entrypoint file locations are outside the selected slice or exceed the supported integer range.",
+              ]
+            : []),
+          ...(normalized.segments.items.some(
+            ({ file_offset, file_size }) =>
+              file_offset === null ||
+              file_size === null ||
+              file_offset + file_size > binary.sliceSize ||
+              !Number.isSafeInteger(containerOffset + file_offset + file_size),
+          )
+            ? [
+                "Some segment file locations are unavailable, outside the selected slice, or exceed the supported integer range.",
+              ]
+            : []),
+        ];
   const result =
     containerOffset === undefined
       ? inspectMachoSchema.parse({
@@ -297,11 +391,16 @@ export const inspectNativeMacho = async (
               : "The selected Mach-O slice's container file offset was not observed; slice-based evidence locations are unavailable.",
           ],
         })
-      : normalized;
+      : locationLimitations.length === 0
+        ? normalized
+        : inspectMachoSchema.parse({
+            ...normalized,
+            limitations: [...normalized.limitations, ...locationLimitations],
+          });
   return ok({
     result: jsonValueSchema.parse(result),
     limitations: result.limitations,
-    locations: fileOffsetLocations(result, containerOffset),
+    locations: fileOffsetLocations(result, containerOffset, binary.sliceSize),
   });
 };
 
@@ -310,7 +409,8 @@ const normalizeMacho = (
   containerFormat: "thin" | "fat",
   toInvocation: (capture: NativeCommandCapture) => NativeCommandInvocation,
   additionalLimitations: readonly string[],
-  load: ReturnType<typeof parseOtoolLoadCommands>,
+  load: BinaryMachoProjection,
+  sliceSize: number,
   parsedImports: ReturnType<typeof parseDyldImports>["items"],
   exportNames: NativeCommandCapture,
   architectures: readonly LipoArchitecture[],
@@ -328,7 +428,11 @@ const normalizeMacho = (
   const imports = missingImportsUuid ? [] : parsedImports.map(withRuntimeName);
   const imageBase =
     load.segments.find(
-      (segment) => segment.file_offset === 0 && (segment.file_size ?? 0) > 0,
+      (segment) =>
+        segment.file_offset === 0 &&
+        segment.file_size !== null &&
+        segment.file_size > 0 &&
+        segment.file_size <= sliceSize,
     )?.vm_address ?? null;
   const nmExports = parseNmExports(exportNames.stdout);
   const dyldExports = missingExportsUuid
@@ -357,28 +461,20 @@ const normalizeMacho = (
         },
   );
   const provenance = captures.map(toInvocation);
-  // A thread-state command carries the entrypoint in architecture-specific
-  // register state, so an absent decoded offset means unknown, not absent.
-  const threadEntrypoint =
-    load.entrypoints.length === 0 &&
-    load.commands.some(
-      (command) =>
-        command.kind === "LC_UNIXTHREAD" || command.kind === "LC_THREAD",
-    );
-  const threadEntrypointLimitation =
-    "Thread-state entrypoints (LC_UNIXTHREAD/LC_THREAD) are retained as raw load commands; file offsets are not derived.";
   const limitations = [
     "Imports and exports combine dyld_info and nm; stripped or toolchain-hidden symbols may be absent.",
-    ...(captures.some(({ tool }) => tool === "vtool")
+    ...(captures.some(
+      ({ tool, exitCode, signal }) =>
+        tool === "vtool" && exitCode === 0 && signal === null,
+    )
       ? [
-          "vtool output is retained as provenance but only otool build metadata is normalized.",
+          "vtool output is retained as provenance; build metadata is normalized from binary load commands.",
         ]
       : []),
     ...additionalLimitations,
     ...(missingImportsUuid ? [missingUuidLimitation("imports")] : []),
     ...(missingExportsUuid ? [missingUuidLimitation("exports")] : []),
     ...uuid.limitations,
-    ...(threadEntrypoint ? [threadEntrypointLimitation] : []),
     ...(imageBase === null &&
     /^\s*offset\s+symbol\s*$/mu.test(sliceOutput(byTool("dyld_info", 1)))
       ? [
@@ -396,16 +492,20 @@ const normalizeMacho = (
     uuid: uuid.value,
     entrypoints: covered(
       load.entrypoints,
-      !threadEntrypoint,
-      threadEntrypoint ? [threadEntrypointLimitation] : [],
+      load.entrypointLimitations.length === 0,
+      load.entrypointLimitations,
     ),
     architectures: covered(architectures, true),
-    build_metadata: covered(load.builds, true),
-    load_commands: covered(load.commands, true),
+    build_metadata: covered(
+      load.builds,
+      load.buildLimitations.length === 0,
+      load.buildLimitations,
+    ),
+    load_commands: covered(load.commands, true, load.commandLimitations),
     dependencies: covered(
       load.dependencies,
-      load.omittedDependencyCommands.length === 0,
-      dependencyPayloadLimitations(load.omittedDependencyCommands),
+      load.dependencyLimitations.length === 0,
+      load.dependencyLimitations,
     ),
     imports: covered(imports, false, [
       "dyld_info textual imports may omit chained or toolchain-unsupported metadata.",
@@ -431,9 +531,14 @@ const normalizeMacho = (
     segments: covered(
       load.segments.map((segment) => ({
         ...segment,
-        sections: covered(segment.sections, true),
+        sections: covered(
+          segment.sections,
+          load.segmentLimitations.length === 0,
+          load.segmentLimitations,
+        ),
       })),
-      true,
+      load.segmentLimitations.length === 0,
+      load.segmentLimitations,
     ),
     provenance,
     limitations,
@@ -476,7 +581,7 @@ const namesEveryExport = (
       const rows = parseDyldExports(line, null, names);
       // The parser withholds a row only when nm names both of its readings.
       if (rows.length === 0)
-        return names.has(/^0x[\da-f]+\s+(.+)$/isu.exec(line)?.[1] ?? "");
+        return names.has(parseDyldExportAddressRow(line)?.text ?? "");
       return rows.length === 1 && names.has(rows[0]!.name);
     });
 };
@@ -493,21 +598,6 @@ const parseNmExports = (output: string) =>
     reexport: null,
     source: "nm",
   }));
-
-const dependencyPayloadLimitations = (
-  commands: readonly string[],
-): string[] => {
-  if (commands.length === 0) return [];
-  const counts = new Map<string, number>();
-  for (const command of commands)
-    counts.set(command, (counts.get(command) ?? 0) + 1);
-  const described = [...counts].map(
-    ([command, count]) => `${count} ${command}`,
-  );
-  return [
-    `Dependency inventory omits ${described.join(", ")} because otool -l does not print that command's linkedit install name. trace_dylib_resolution reads the payload.`,
-  ];
-};
 
 const covered = <Value>(
   items: readonly Value[],
@@ -541,19 +631,28 @@ const uniqueSymbols = <Value extends { readonly name: string }>(
 const fileOffsetLocations = (
   macho: ReturnType<typeof inspectMachoSchema.parse>,
   containerOffset: number | undefined,
+  sliceSize: number,
 ): EvidenceLocation[] => {
   const locations = architectureLocations(macho.architectures.items);
   if (containerOffset === undefined) return locations;
   for (const entrypoint of macho.entrypoints.items)
-    locations.push({
-      kind: "file-offset",
-      offset: containerOffset + entrypoint.file_offset,
-    });
+    if (
+      entrypoint.file_offset < sliceSize &&
+      Number.isSafeInteger(containerOffset + entrypoint.file_offset)
+    )
+      locations.push({
+        kind: "file-offset",
+        offset: containerOffset + entrypoint.file_offset,
+      });
   for (const segment of macho.segments.items) {
     if (
       segment.file_offset === null ||
       segment.file_size === null ||
-      segment.file_size === 0
+      segment.file_size === 0 ||
+      segment.file_offset + segment.file_size > sliceSize ||
+      !Number.isSafeInteger(
+        containerOffset + segment.file_offset + segment.file_size,
+      )
     )
       continue;
     locations.push({
@@ -574,7 +673,11 @@ export const architectureLocations = (
 ): EvidenceLocation[] => {
   const locations: EvidenceLocation[] = [];
   for (const { file_offset: offset, size } of architectures) {
-    if (offset === null) continue;
+    if (
+      offset === null ||
+      (size !== null && !Number.isSafeInteger(offset + size))
+    )
+      continue;
     locations.push(
       size === null
         ? { kind: "file-offset", offset }
@@ -590,8 +693,11 @@ export const architectureLocations = (
  * its CPU-family name. Other variants are distinct subtypes (`arm64e.x1`)
  * that the tools address only by their exact name.
  */
+const architectureBaseName = (architecture: string): string =>
+  architecture.replace(/\.v\d+$/u, "");
+
 const toolArchitectureName = (tool: string, architecture: string): string =>
-  tool === "dyld_info" ? architecture : architecture.replace(/\.v\d+$/u, "");
+  tool === "dyld_info" ? architecture : architectureBaseName(architecture);
 
 const selectedArchitectureArguments = (
   tool: string,
@@ -606,7 +712,12 @@ const selectedArchitectureArguments = (
 
 type ArchitectureSelection =
   | { readonly status: "unfiltered" }
-  | { readonly status: "selected"; readonly architecture: string }
+  | {
+      readonly status: "selected";
+      readonly architecture: LipoArchitecture;
+      readonly toolName: string;
+    }
+  | { readonly status: "ambiguous"; readonly architecture: string }
   | { readonly status: "absent"; readonly architecture: string };
 
 const selectArchitecture = (
@@ -626,9 +737,26 @@ const selectArchitecture = (
   const policy = MACHO_ARCHITECTURE_POLICIES[target.architecture];
   const selected =
     policy === undefined
-      ? available.find(({ name }) => name === normalized)?.name
-      : selectMachoArchitectureName(policy, available);
-  if (selected !== undefined)
-    return { status: "selected", architecture: selected };
+      ? available.find(({ name }) => name === normalized)
+      : selectMachoArchitecture(policy, available);
+  if (selected !== undefined) {
+    const toolName =
+      policy === undefined
+        ? selected.name
+        : machoToolArchitectureName(policy, selected);
+    const selector = architectureBaseName(toolName);
+    if (
+      available.some((candidate) => {
+        if (candidate === selected) return false;
+        const candidateName =
+          policy === undefined
+            ? candidate.name
+            : machoToolArchitectureName(policy, candidate);
+        return architectureBaseName(candidateName) === selector;
+      })
+    )
+      return { status: "ambiguous", architecture: selector };
+    return { status: "selected", architecture: selected, toolName };
+  }
   return { status: "absent", architecture: normalized };
 };

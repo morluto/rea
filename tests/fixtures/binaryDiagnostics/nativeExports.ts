@@ -413,6 +413,62 @@ export const elfExportImage = (options: {
   return bytes;
 };
 
+/** Small source table whose headers replay one shared maximum-length auxiliary chain. */
+export const elfAliasedVersionImage = (
+  kind: "requirements" | "definitions",
+  nameLength = 1,
+): Buffer => {
+  const name = "V".repeat(nameLength);
+  const original = elfExportImage({
+    symbols: [{ name: "versioned_export", version: 2 }],
+    versionDefinitions: ["BASE", name],
+  });
+  const sectionAt = Number(original.readBigUInt64LE(40));
+  const namesAt = Number(original.readBigUInt64LE(sectionAt + 2 * 64 + 24));
+  const nameOffset =
+    original.indexOf(Buffer.from(name + "\0"), namesAt) - namesAt;
+  if (nameOffset < 0) throw new Error("Version fixture name not found");
+  const headers = 10_000,
+    auxiliaries = 65_535;
+  const headerBytes = kind === "requirements" ? 16 : 20;
+  const auxBytes = kind === "requirements" ? 16 : 8;
+  const start = Math.ceil(original.length / 16) * 16;
+  const tableBytes = headers * headerBytes + auxiliaries * auxBytes;
+  const bytes = Buffer.alloc(start + tableBytes);
+  original.copy(bytes);
+  const section = sectionAt + (kind === "requirements" ? 5 : 4) * 64;
+  bytes.writeBigUInt64LE(BigInt(start), section + 24);
+  bytes.writeBigUInt64LE(BigInt(tableBytes), section + 32);
+  bytes.writeUInt32LE(headers, section + 44);
+  // The other version table is absent, so a refusal cannot recover through it.
+  const other = sectionAt + (kind === "requirements" ? 4 : 5) * 64;
+  bytes.writeUInt32LE(0, other + 4);
+  for (let index = 0; index < headers; index++) {
+    const at = start + index * headerBytes;
+    bytes.writeUInt16LE(1, at);
+    bytes.writeUInt16LE(auxiliaries, at + (kind === "requirements" ? 2 : 6));
+    if (kind === "definitions") bytes.writeUInt16LE(2, at + 4);
+    bytes.writeUInt32LE(
+      headers * headerBytes - index * headerBytes,
+      at + (kind === "requirements" ? 8 : 12),
+    );
+    bytes.writeUInt32LE(
+      index + 1 < headers ? headerBytes : 0,
+      at + (kind === "requirements" ? 12 : 16),
+    );
+  }
+  for (let index = 0; index < auxiliaries; index++) {
+    const at = start + headers * headerBytes + index * auxBytes;
+    if (kind === "requirements") bytes.writeUInt16LE(2, at + 6);
+    bytes.writeUInt32LE(nameOffset, at + (kind === "requirements" ? 8 : 0));
+    bytes.writeUInt32LE(
+      index + 1 < auxiliaries ? auxBytes : 0,
+      at + (kind === "requirements" ? 12 : 4),
+    );
+  }
+  return bytes;
+};
+
 type ElfSectionRow = readonly [
   name: number,
   type: number,

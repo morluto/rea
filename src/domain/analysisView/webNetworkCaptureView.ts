@@ -87,15 +87,32 @@ const object = (
     ? value
     : null;
 
-const HEADLINE_FIELDS = [
-  "method",
-  "url",
-  "httpVersion",
-  "http_version",
-  "status",
-  "statusText",
-  "reason",
-];
+// Field names have different meanings across producers. In particular, HAR
+// entry extensions named `name` or `type` are not qlog or mitmproxy headlines.
+const RECORD_HEADLINES: Readonly<Record<string, readonly string[]>> = {
+  har: ["time", "startedDateTime"],
+  qlog: ["name", "time"],
+  saz: ["session_id", "time"],
+  mitmproxy: ["type"],
+};
+const HTTP_HEADLINES: Readonly<
+  Record<string, Readonly<Record<string, readonly string[]>>>
+> = {
+  har: {
+    request: ["method", "url", "httpVersion"],
+    response: ["httpVersion", "status", "statusText"],
+  },
+  saz: {
+    request: ["method", "url", "http_version"],
+    response: ["http_version", "status", "reason"],
+  },
+  mitmproxy: {
+    request: ["method", "http_version"],
+    response: ["http_version", "reason"],
+  },
+};
+const scalar = (value: JsonValue): boolean =>
+  value === null || typeof value !== "object";
 // Native mitmproxy flows report the request target in parts and the status
 // as status_code. They are previewed only for mitmproxy records and only when
 // each value has its field's well-formed shape, which also bounds the
@@ -334,12 +351,15 @@ const mitmproxyHeadline = (
 const selectHeadlines = (
   fields: Readonly<Record<string, JsonValue>>,
   key: string,
+  format: string,
   facets: FacetIndex | null,
   selectedPointers: Set<string>,
 ): Record<string, JsonValue> => {
   const selected: Record<string, JsonValue> = {};
   const candidates = [
-    ...HEADLINE_FIELDS.map((field) => [field, null] as const),
+    ...(HTTP_HEADLINES[format]?.[key] ?? []).map(
+      (field) => [field, null] as const,
+    ),
     ...(facets === null ? [] : (MITMPROXY_HEADLINE_FIELDS[key] ?? [])).map(
       (field) => [field, facets] as const,
     ),
@@ -349,6 +369,7 @@ const selectHeadlines = (
     if (
       !Object.hasOwn(fields, field) ||
       value === undefined ||
+      !scalar(value) ||
       (index !== null &&
         !mitmproxyHeadline(index, `/${key}/${field}`, field, value))
     )
@@ -371,12 +392,16 @@ const preview = (record: WebNetworkCaptureRecord, format: string) => {
         : null;
     const mitmproxyFacets =
       index !== null && textualFlowType(index) ? index : null;
-    for (const key of ["session_id", "name", "time", "startedDateTime", "type"])
-      if (Object.hasOwn(source, key) && source[key] !== undefined) {
+    for (const key of RECORD_HEADLINES[format] ?? [])
+      if (
+        Object.hasOwn(source, key) &&
+        source[key] !== undefined &&
+        scalar(source[key])
+      ) {
         reported[key] = source[key];
         selectedPointers.add(`/${key}`);
       }
-    for (const key of ["request", "response"]) {
+    for (const key of Object.keys(HTTP_HEADLINES[format] ?? {})) {
       const value = source[key];
       if (!Object.hasOwn(source, key) || value === undefined) continue;
       const fields = object(value);
@@ -388,6 +413,7 @@ const preview = (record: WebNetworkCaptureRecord, format: string) => {
       reported[key] = selectHeadlines(
         fields,
         key,
+        format,
         mitmproxyFacets,
         selectedPointers,
       );
@@ -422,19 +448,17 @@ const parseCaptureParent = (
   const parsed = parseAnalysisViewResult(captureParser, parent);
   if (!parsed.ok) return parsed;
   const report = parsed.value;
+  const subject = parent.subject;
   if (
     report.artifact.sha256 !== null &&
-    (parent.subject == null ||
-      parent.subject.local_path !== report.artifact.path ||
-      parent.subject.digest.sha256 !== report.artifact.sha256)
+    (subject == null || subject.digest.sha256 !== report.artifact.sha256)
   )
     return err(
       analysisViewInputError([
         {
           path: ["source", "subject"],
           reason: "invalid_value",
-          message:
-            "Capture parent subject must identify the report's exact path and SHA-256.",
+          message: "Capture parent subject must identify the report's SHA-256.",
         },
       ]),
     );

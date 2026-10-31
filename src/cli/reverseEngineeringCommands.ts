@@ -185,7 +185,10 @@ export const registerReverseEngineeringCommands = (
             ),
           );
           return result.ok
-            ? publishCliAnalysisEvidence(result.value, delivery)
+            ? publishCliAnalysisEvidence(
+                { ok: true, value: result.value },
+                delivery,
+              )
             : projectAnalysisError(result.error);
         }),
       ),
@@ -225,7 +228,10 @@ export const registerReverseEngineeringCommands = (
               ),
             );
             return result.ok
-              ? publishCliAnalysisEvidence(result.value, delivery)
+              ? publishCliAnalysisEvidence(
+                  { ok: true, value: result.value },
+                  delivery,
+                )
               : projectAnalysisError(result.error);
           },
         ),
@@ -309,7 +315,11 @@ export const registerReverseEngineeringCommands = (
               const started = await manager.start(signal, {
                 inferiorTty: options.inferiorTty,
               });
-              if (!started.ok) return projectAnalysisError(started.error);
+              if (!started.ok)
+                return {
+                  ok: false as const,
+                  error: projectAnalysisError(started.error),
+                };
               sessionId = started.value.session_id;
               const executed = await manager.execute(
                 sessionId,
@@ -317,8 +327,11 @@ export const registerReverseEngineeringCommands = (
                 signal,
               );
               return executed.ok
-                ? executed.value.evidence
-                : projectAnalysisError(executed.error);
+                ? { ok: true as const, value: executed.value.evidence }
+                : {
+                    ok: false as const,
+                    error: projectAnalysisError(executed.error),
+                  };
             } finally {
               let cleanupFailed = false;
               if (sessionId !== undefined) {

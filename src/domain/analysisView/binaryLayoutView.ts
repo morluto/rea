@@ -40,17 +40,20 @@ const layoutUnknowns = (layout: BinaryLayout): readonly string[] => {
   return unknowns;
 };
 
-const displayName = (name: LayoutName): string => name.display;
-
 const namedMatches = <Row extends { readonly name: LayoutName }>(
   rows: readonly Row[],
   name: string,
-): readonly { readonly index: number; readonly row: Row }[] =>
-  rows.flatMap((row, index) =>
-    row.name.unknown_reason === null && displayName(row.name) === name
+): readonly { readonly index: number; readonly row: Row }[] => {
+  const bytes = Buffer.from(name, "utf8");
+  // Display text may replace malformed source bytes or use provider formatting.
+  if (bytes.toString("utf8") !== name) return [];
+  const encoded = bytes.toString("base64");
+  return rows.flatMap((row, index) =>
+    row.name.unknown_reason === null && row.name.bytes_base64 === encoded
       ? [{ index, row }]
       : [],
   );
+};
 
 const selectNamed = <Row extends { readonly name: LayoutName }>(
   collection: "sections" | "symbols",

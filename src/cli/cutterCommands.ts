@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { z } from "incur";
 import type { Logger } from "pino";
 
@@ -33,7 +34,7 @@ export const registerCutterCommands = (
             "cutter",
             "list_cutter_sessions",
             signal,
-          );
+          ).then(projectCliAnalysisResult);
         }),
       ),
   });
@@ -80,7 +81,7 @@ export const registerCutterCommands = (
             "cutter",
             "cutter_command",
             signal,
-          );
+          ).then(projectCliAnalysisResult);
         }),
       ),
   });

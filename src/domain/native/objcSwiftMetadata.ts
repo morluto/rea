@@ -6,7 +6,7 @@ import {
   type BinaryTarget,
 } from "../binaryTargetTypes.js";
 import { providerSchema } from "../evidence.js";
-import { isSwiftMangledSymbolName } from "../swiftSymbolClassification.js";
+import { isSwiftSymbolName } from "../swiftSymbolClassification.js";
 import { nativeCallReferenceSchema } from "./nativeCallReference.js";
 import { machoTargetSelectionSchema } from "../apple/machoTargetSelection.js";
 import {
@@ -194,6 +194,60 @@ type ObjcDispatchImplementation = z.infer<
   typeof objcDispatchImplementationSchema
 >;
 
+/** Interpret category qualification only within the Objective-C method-symbol grammar. */
+const objcMethodSymbolOwner = (owner: string) => {
+  const categoryOwner = /^([^()]+)\(([^()]+)\)$/u.exec(owner);
+  return {
+    class_name: categoryOwner?.[1] ?? owner,
+    ...(categoryOwner?.[2] === undefined ? {} : { category: categoryOwner[2] }),
+  };
+};
+
+/** The accepted provider spelling, shared by new and retained symbol records. */
+const parseObjcMethodSymbol = (symbol: string) => {
+  const match = /^([+-])\[([^\s\]]+)\s+([^\]]+)\]$/u.exec(symbol);
+  if (match?.[1] === undefined || !match[2] || !match[3]) return undefined;
+  return {
+    ...objcMethodSymbolOwner(match[2]),
+    reported_owner: match[2],
+    selector: match[3],
+    method_type: match[1] === "+" ? ("class" as const) : ("instance" as const),
+  };
+};
+
+/** Retained symbol-only records predate separate category ownership. */
+export const objcImplementationClassName = (
+  implementation: ObjcDispatchImplementation,
+): string => {
+  if (
+    implementation.category !== undefined ||
+    implementation.decode.reason !== "symbol_name_only"
+  )
+    return implementation.class_name;
+  const symbols = implementation.evidence.filter(
+    ({ kind }) => kind === "symbol",
+  );
+  // Conflicting or absent source facts cannot establish category qualification.
+  if (
+    symbols.length === 0 ||
+    symbols.some((item) => {
+      const prefix = "Provider symbol ";
+      if (!item.description.startsWith(prefix)) return true;
+      const parsed = parseObjcMethodSymbol(
+        item.description.slice(prefix.length),
+      );
+      return (
+        parsed === undefined ||
+        parsed.reported_owner !== implementation.class_name ||
+        parsed.selector !== implementation.selector ||
+        parsed.method_type !== implementation.method_type
+      );
+    })
+  )
+    return implementation.class_name;
+  return objcMethodSymbolOwner(implementation.class_name).class_name;
+};
+
 /** Project class declarations without selecting an ambiguous or unrepresentable address. */
 export const projectObjcClassMethods = (
   implementations: readonly ObjcDispatchImplementation[],
@@ -316,15 +370,25 @@ export const nativeMetadataCoverageSchema = z.strictObject({
 export const objcClassImportIdentitySchema = machoImportBindingSchema.omit({
   requested_address: true,
 });
-export const objcClassImportBindingCoverageSchema = z.strictObject({
-  facet: z.literal("objc_class_import_bindings"),
-  status: z.enum(["complete", "partial", "unsupported", "not_requested"]),
-  reason: z.string().nullable(),
-  examined: z.number().int().nonnegative(),
-  decoded: z.number().int().nonnegative(),
-});
-export type ObjcClassImportBindingCoverage = z.infer<
-  typeof objcClassImportBindingCoverageSchema
+export const objcClassImportBindingCoverageSchema =
+  nativeMetadataCoverageSchema.extend({
+    facet: z.literal("objc_class_import_bindings"),
+    examined: z.number().int().nonnegative(),
+    decoded: z.number().int().nonnegative(),
+  });
+
+/** Discovery retains unknown or inapplicable import identity separately from scan coverage. */
+export const objcClassDiscoveryCoverageSchema = nativeMetadataCoverageSchema
+  .pick({ status: true, reason: true })
+  .extend({
+    status: z.enum([
+      ...nativeMetadataCoverageSchema.shape.status.options,
+      "unknown",
+      "not_applicable",
+    ]),
+  });
+export type ObjcClassDiscoveryCoverage = z.infer<
+  typeof objcClassDiscoveryCoverageSchema
 >;
 
 /** Nominal Swift type kinds recorded by `__swift5_types` descriptors. */
@@ -504,13 +568,21 @@ export const inspectNativeDispatchMetadata = (
     const classSymbol = objcClassSymbol(entry.name);
     if (classSymbol !== undefined) classNames.add(classSymbol.name);
 
-    const methodMatch = /^([+-])\[([^\s\]]+)\s+([^\]]+)\]$/u.exec(entry.name);
-    if (methodMatch?.[1] !== undefined && methodMatch[2] && methodMatch[3]) {
-      const methodType = methodMatch[1] === "+" ? "class" : "instance";
-      const selector = methodMatch[3];
+    const method = parseObjcMethodSymbol(entry.name);
+    if (method !== undefined) {
+      const {
+        method_type: methodType,
+        selector,
+        class_name: className,
+        category,
+      } = method;
+      // The provider's method-symbol grammar owns category qualification. Binary
+      // class names and historical records are identities, not display strings
+      // for downstream consumers to split. Keep the original symbol in Evidence.
       const key = parsedAddress.success
         ? compositeKey([
-            methodMatch[2],
+            className,
+            category ?? null,
             selector,
             methodType,
             parsedAddress.data,
@@ -521,7 +593,8 @@ export const inspectNativeDispatchMetadata = (
       if (previous !== undefined) previous.evidence.push(...evidence);
       else
         implementations.set(key, {
-          class_name: methodMatch[2],
+          class_name: className,
+          ...(category === undefined ? {} : { category }),
           selector,
           method_type: methodType,
           implementation_address: address,
@@ -529,10 +602,10 @@ export const inspectNativeDispatchMetadata = (
           decode: { status: "partial", reason: "symbol_name_only" },
           evidence,
         });
-      classNames.add(methodMatch[2]);
+      classNames.add(className);
     }
 
-    if (isSwiftMangledSymbolName(entry.name) || entry.name.startsWith("_Tt"))
+    if (isSwiftSymbolName(entry.name))
       swiftSymbols.push({
         mangled_name: entry.name,
         address,
@@ -570,12 +643,14 @@ export const inspectNativeDispatchMetadata = (
           left.selector,
           left.method_type,
           left.implementation_address ?? "",
+          left.category ?? null,
         ]),
         compositeKey([
           right.class_name,
           right.selector,
           right.method_type,
           right.implementation_address ?? "",
+          right.category ?? null,
         ]),
       ),
   );

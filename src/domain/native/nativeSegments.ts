@@ -2,10 +2,7 @@ import { z } from "zod";
 import { ok, type Result } from "../result.js";
 import { AnalysisOutputError } from "../analysisErrorCore.js";
 import type { JsonValue } from "../jsonValue.js";
-import {
-  unwrapNativeProperty,
-  invalidNativeOutput,
-} from "./nativeProviderOutput.js";
+import { invalidNativeOutput } from "./nativeProviderOutput.js";
 import { addressDistance } from "./addressCoordinate.js";
 
 export interface SegmentSummary {
@@ -29,14 +26,12 @@ const segmentSchema = z.object({
   image_base: z.string().min(1).exactOptional(),
   address_space: z.string().min(1).exactOptional(),
 });
-/** Preserve reported address context in direct or wrapped provider segments. */
+/** Preserve reported address context in the provider segment array. */
 export const parseSegments = (
   value: JsonValue,
   operation = "list_segments",
 ): Result<readonly SegmentSummary[], AnalysisOutputError> => {
-  const parsed = z
-    .array(segmentSchema)
-    .safeParse(unwrapNativeProperty(value, "segments"));
+  const parsed = z.array(segmentSchema).safeParse(value);
   return parsed.success
     ? ok(parsed.data)
     : invalidNativeOutput(operation, "segment list", parsed.error);

@@ -8,7 +8,7 @@ import { z } from "zod";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
-import { RECOVERY_INSTRUCTIONS } from "../../../src/server/recoveryInstructions.js";
+import { recoveryInstructions } from "../../../src/server/recoveryInstructions.js";
 import { UNTRUSTED_CONTENT_INSTRUCTIONS } from "../../../src/server/toolResultEncoding.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { retainedEvidenceReferenceSchema } from "../../../src/domain/evidenceReference.js";
@@ -21,7 +21,7 @@ it("delivers deadline recovery guidance at initialization before any tool call",
     // Recovery behavior is exercised below and in analysisSettingsMcp.test.ts;
     // these assertions do not claim that an agent follows the guidance.
     const instructions = client.getInstructions();
-    expect(instructions).toContain(RECOVERY_INSTRUCTIONS);
+    expect(instructions).toContain(recoveryInstructions(true));
     expect(instructions).toContain(UNTRUSTED_CONTENT_INSTRUCTIONS);
     const catalog = await client.listTools();
     const analysis = catalog.tools.find(

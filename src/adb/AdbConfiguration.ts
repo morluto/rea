@@ -3,7 +3,9 @@ import {
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
-import { isAbsolute } from "node:path";
+import { isAbsolute, win32 } from "node:path";
+import { findWindowsExecutable } from "../process/WindowsExecutable.js";
+import { ProviderStartupDeadline } from "../process/ProviderDeadline.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 
 import {
@@ -13,7 +15,7 @@ import {
   execFileOutputFailure,
 } from "../process/ExecFileOutput.js";
 import type { ProviderAvailability } from "../application/AnalysisProvider.js";
-import type { ProviderRejectionCode } from "../contracts/providerSelection.js";
+import type { ProviderRejectionCode } from "../domain/providerSelection.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 
@@ -32,21 +34,30 @@ export interface AdbBinarySelection {
 
 /**
  * Resolve the caller-supplied adb binary. `REA_ADB_PATH` must be absolute so
- * the selection stays explicit; without it, adb is resolved from `PATH` by
- * the platform exec at run time, like any bring-your-own tool.
+ * the selection stays explicit. Windows resolves the default from the selected
+ * PATH before launch; POSIX retains execFile PATH lookup.
  */
-export const resolveAdbBinary = (
+export const resolveAdbBinary = async (
   environment: Readonly<Record<string, string | undefined>>,
-): AdbBinarySelection => {
-  const selectedEnvironment = snapshotEnvironment(environment);
+  platform: NodeJS.Platform = process.platform,
+  signal?: AbortSignal,
+): Promise<AdbBinarySelection> => {
+  const selectedEnvironment = snapshotEnvironment(environment, platform);
   const configured = selectedEnvironment[ADB_BINARY_ENV];
   if (configured === undefined || configured.trim() === "")
     return {
-      binary: "adb",
+      binary:
+        platform === "win32"
+          ? await resolveWindowsAdb(selectedEnvironment, signal)
+          : "adb",
       pathSource: "path",
       environment: selectedEnvironment,
     };
-  if (!isAbsolute(configured))
+  if (
+    !(platform === "win32"
+      ? win32.isAbsolute(configured)
+      : isAbsolute(configured))
+  )
     throw new AdbConfigurationFailure(
       "not_absolute",
       `${ADB_BINARY_ENV} must be an absolute path to the adb binary`,
@@ -59,9 +70,56 @@ export const resolveAdbBinary = (
   };
 };
 
+const resolveWindowsAdb = async (
+  environment: Readonly<NodeJS.ProcessEnv>,
+  signal?: AbortSignal,
+): Promise<string> => {
+  const deadline = new ProviderStartupDeadline(VERSION_TIMEOUT_MS, signal);
+  try {
+    const found = await findWindowsExecutable("adb", environment, {
+      signal: deadline.signal,
+    });
+    if (found.ok) return found.value;
+    const failure = found.error;
+    if (failure.kind === "interrupted") {
+      if (deadline.interruption === "cancelled")
+        throw new AnalysisCancelledError("inspect_adb_client", {
+          cause: signal?.reason,
+        });
+      throw new AnalysisTimeoutError("inspect_adb_client", VERSION_TIMEOUT_MS, {
+        diagnostics: { phase: "windows_path_lookup" },
+      });
+    }
+    throw new AdbConfigurationFailure(
+      failure.kind === "missing" ? "binary_missing" : "binary_unresolved",
+      "The adb binary could not be selected from the Windows PATH/PATHEXT",
+      {
+        selected_binary: "adb",
+        path_source: "path",
+        remediation: `Set ${ADB_BINARY_ENV} to an absolute adb executable, or add it to PATH/PATHEXT`,
+        ...(failure.kind === "invalid_extension"
+          ? { invalid_extension: failure.extension }
+          : {}),
+        ...(failure.kind === "inspection"
+          ? {
+              candidate_path: failure.path,
+              ...(failure.code === null
+                ? {}
+                : { filesystem_error: failure.code }),
+            }
+          : {}),
+      },
+      failure.kind === "inspection" ? { cause: failure.cause } : undefined,
+    );
+  } finally {
+    deadline.dispose();
+  }
+};
+
 export type AdbConfigurationFailureCode =
   | "not_absolute"
   | "binary_missing"
+  | "binary_unresolved"
   | "binary_not_executable"
   | "version_unresolved";
 
@@ -221,7 +279,9 @@ const rejectionCodeOf = (
 ): ProviderRejectionCode =>
   code === "binary_missing"
     ? "executable_missing"
-    : code === "not_absolute" || code === "binary_not_executable"
+    : code === "not_absolute" ||
+        code === "binary_not_executable" ||
+        code === "binary_unresolved"
       ? "not_configured"
       : "version_unresolved";
 

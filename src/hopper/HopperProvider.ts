@@ -1,3 +1,4 @@
+import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { fileURLToPath } from "node:url";
@@ -25,15 +26,9 @@ import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
 import { err, ok } from "../domain/result.js";
-import {
-  AnalysisCleanupLease,
-  AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import {
-  ArtifactResourceRetryFailure,
-  ArtifactResourceScope,
-} from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -229,8 +224,7 @@ export class HopperProvider implements AnalysisProviderCandidate {
         { reason: cause instanceof Error ? cause.message : String(cause) },
         { cause, operation: "close_owned_resources" },
       );
-      if (cause instanceof ArtifactResourceRetryFailure)
-        new AnalysisCleanupLeaseGroup(failure, cause.cleanupLeases);
+      bindArtifactFileCleanup(cause, failure);
       return err(failure);
     }
   }
@@ -508,13 +502,7 @@ const hopperSourceCleanupError = (
   cause: ArtifactReaderFailure,
   operation: string,
 ): AnalysisError => {
-  const leases = [
-    ...new Set(
-      cause instanceof ArtifactResourceRetryFailure
-        ? cause.cleanupLeases
-        : (cause.cleanupLeases ?? []),
-    ),
-  ];
+  const leases = cause.cleanupLeases ?? [];
   const failure = new ProviderCleanupError(
     HOPPER_PROVIDER_IDENTITY.id,
     cause.cleanup?.resources ?? [
@@ -523,6 +511,6 @@ const hopperSourceCleanupError = (
     { reason: cause.cleanup?.reason ?? cause.message },
     { operation, cause },
   );
-  if (leases.length > 0) new AnalysisCleanupLeaseGroup(failure, leases);
+  bindArtifactFileCleanup(cause, failure);
   return failure;
 };

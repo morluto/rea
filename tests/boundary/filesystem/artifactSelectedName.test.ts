@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisResult.js";
 import { readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
@@ -48,7 +49,9 @@ it.skipIf(process.platform === "win32").each([
     expect(admitted.value.format).toBe(format);
     const { runProviderAnalysis } = createDirectAnalysis({});
     const observed = parseEvidence(
-      await runProviderAnalysis(selected, "inventory_artifact", {}),
+      await runProviderAnalysis(selected, "inventory_artifact", {}).then(
+        projectCliAnalysisResult,
+      ),
     );
     expect(observed.subject?.local_path).toBe(selected);
     expect(

@@ -1,4 +1,10 @@
+import {
+  observeBrowserUrl,
+  type BrowserUrlObservation,
+  type SanitizedBrowserUrl,
+} from "../domain/browserObservation.js";
 import { z } from "zod";
+import { err, ok, type Result } from "../domain/result.js";
 import {
   cdpStringValue,
   numberValue,
@@ -27,8 +33,11 @@ export const runtimeRequestSchema = z.object({
 /** A CDP Response occurs in both responseReceived and redirect continuation events. */
 export interface CdpResponseFacts {
   readonly source: UnknownRecord;
-  readonly url: string | undefined;
-  readonly status: number | undefined;
+  readonly url: BrowserUrlObservation | undefined;
+  readonly status: Result<
+    number | null,
+    { readonly _tag: "InvalidCdpResponseStatus" }
+  >;
   readonly mimeType: string | undefined;
   readonly encodedDataLength: number | undefined;
   readonly headers: unknown;
@@ -37,16 +46,63 @@ export const readCdpResponseFacts = (
   reported: unknown,
 ): CdpResponseFacts | undefined => {
   const source = recordValue(reported);
-  return source === undefined
-    ? undefined
-    : {
-        source,
-        url: cdpStringValue(source.url),
-        status: numberValue(source.status),
-        mimeType: cdpStringValue(source.mimeType),
-        encodedDataLength: numberValue(source.encodedDataLength),
-        headers: source.headers,
-      };
+  if (source === undefined) return undefined;
+  const url = cdpStringValue(source.url);
+  return {
+    source,
+    url: url === undefined ? undefined : observeBrowserUrl(url),
+    status: readResponseStatus(source.status),
+    mimeType: cdpStringValue(source.mimeType),
+    encodedDataLength: numberValue(source.encodedDataLength),
+    headers: source.headers,
+  };
+};
+
+/** Omission is unknown; a supplied non-number is a protocol failure. */
+const readResponseStatus = (value: unknown): CdpResponseFacts["status"] => {
+  if (value === undefined) return ok(null);
+  const status = numberValue(value);
+  return status === undefined
+    ? err({ _tag: "InvalidCdpResponseStatus" })
+    : ok(status);
+};
+
+type ScopedCdpResponse =
+  | {
+      readonly scope: "approved";
+      readonly url: SanitizedBrowserUrl;
+      readonly response: CdpResponseFacts;
+    }
+  | { readonly scope: "outside_policy"; readonly reason: "disallowed_origin" }
+  | { readonly scope: "unsupported"; readonly reason: "unsupported_url" }
+  | {
+      readonly scope: null;
+      readonly reason: "invalid_protocol_value" | "unattributed_origin";
+    };
+
+/** Apply caller origin policy to producer-owned URL syntax, without reparsing it. */
+export const scopeCdpResponse = (
+  response: CdpResponseFacts | undefined,
+  allowedOrigins: ReadonlySet<string>,
+  missingUrlReason:
+    | "invalid_protocol_value"
+    | "unattributed_origin" = "invalid_protocol_value",
+): ScopedCdpResponse => {
+  if (response === undefined)
+    return { scope: null, reason: "invalid_protocol_value" };
+  const url = response.url;
+  if (url === undefined || url.source === "")
+    return { scope: null, reason: missingUrlReason };
+  if (url.kind === "malformed")
+    return { scope: null, reason: "invalid_protocol_value" };
+  if (url.protocol !== "http:" && url.protocol !== "https:")
+    return { scope: "unsupported", reason: "unsupported_url" };
+  if (
+    url.sanitized.origin === null ||
+    !allowedOrigins.has(url.sanitized.origin)
+  )
+    return { scope: "outside_policy", reason: "disallowed_origin" };
+  return { scope: "approved", url: url.sanitized, response };
 };
 
 const requestIdentity = (source: UnknownRecord | undefined): string | null => {

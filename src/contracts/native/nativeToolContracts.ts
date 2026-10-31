@@ -48,6 +48,7 @@ const native = <
   name: Name,
   description: string,
   inputSchema: Schema,
+  retainedSummary?: ToolContract["retainedSummary"],
 ) => {
   const outputSchema = requireOutputSchema(nativeOutputSchemas, name);
   const strictInputSchema = inputSchema.strict();
@@ -57,6 +58,7 @@ const native = <
     description,
     kind: "native-provider",
     requiresActiveTarget: true,
+    ...(retainedSummary === undefined ? {} : { retainedSummary }),
     inputSchema: strictInputSchema,
     outputSchema,
     examples: [
@@ -108,6 +110,7 @@ export const NATIVE_TOOL_CONTRACTS = [
         ),
       native_command_timeout_ms: nativeCommandTimeoutField,
     }),
+    { evidenceParameters: "omit-detail" },
   ),
   native(
     "inspect_signature",

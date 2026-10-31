@@ -740,6 +740,33 @@ it("selects matching arm64e subtype slices when tracing a mixed FAT image", asyn
   ]);
 });
 
+it.each([false, true])(
+  "rejects overlapping FAT declarations before parsing payloads (hidden row: %s)",
+  async (hidden) => {
+    const bytes = Buffer.from(
+      fatImage([
+        { cpu: CPU.arm64, bytes: machoImage({ cpu: CPU.arm64 }) },
+        { cpu: CPU.arm64, bytes: machoImage({ cpu: CPU.arm64 }) },
+      ]),
+    );
+    bytes.writeUInt32BE(bytes.readUInt32BE(16), 36);
+    bytes.writeUInt32BE(bytes.readUInt32BE(20), 40);
+    if (hidden) bytes.writeUInt32BE(1, 4);
+    const readAt = vi.fn(readerOf(bytes));
+    expect(await readMachoImage(readAt, bytes.length)).toEqual({
+      status: "malformed",
+      reason: "Mach-O slices 0 and 1 overlap.",
+    });
+    // Header identity probes are allowed; load-command payloads are not.
+    const firstOffset = bytes.readUInt32BE(16);
+    expect(
+      readAt.mock.calls.some(
+        ([offset, length]) => offset === firstOffset && length > 4,
+      ),
+    ).toBe(false);
+  },
+);
+
 it("keeps Apple's hidden ARM64 FAT row outside the raw declared slice list", async () => {
   const armv7 = { type: 12, subtype: 9 };
   const bytes = Buffer.from(

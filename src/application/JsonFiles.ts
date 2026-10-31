@@ -368,13 +368,13 @@ const writeTextPartsOwned = async (
       throw cause;
     });
     if (existing !== undefined) {
-      if (!overwrite)
-        return err(
-          new EvidenceFileError("write", "exists", { path: requestedPath }),
-        );
       if (!existing.isFile() || existing.isSymbolicLink())
         return err(
           new EvidenceFileError("write", "not-file", { path: requestedPath }),
+        );
+      if (!overwrite)
+        return err(
+          new EvidenceFileError("write", "exists", { path: requestedPath }),
         );
     }
     assertWriteActive(cancellation);
@@ -460,9 +460,10 @@ const stagedCleanupFailure = <
 /** A missing path or parent is a selection error, not a permission failure. */
 const fileAccessFailureReason = (
   cause: unknown,
-): "missing" | "io" | "path-limit" => {
+): "missing" | "io" | "path-limit" | "symlink-traversal" => {
   const code = fileErrorCode(cause);
   if (code === "ENAMETOOLONG") return "path-limit";
+  if (code === "ELOOP") return "symlink-traversal";
   return code === "ENOENT" || code === "ENOTDIR" ? "missing" : "io";
 };
 

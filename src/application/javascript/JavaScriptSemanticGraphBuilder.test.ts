@@ -31,6 +31,99 @@ import { getterExpansionSource } from "../../../tests/fixtures/javascriptGetterE
 
 const SHA256 = "a".repeat(64);
 
+it("retains direct call literals and resolves literal queries to their call site", () => {
+  const source =
+    'api.rpc("proc_0", 7, false, null, dynamic, ...values, `fixed`, -3);';
+  const graph = graphFor(source);
+  const call = graph.nodes.find(({ kind }) => kind === "call-site");
+  const argumentsValue = call?.properties.arguments;
+  expect(argumentsValue).toEqual([
+    expect.objectContaining({
+      index: 0,
+      value: "proc_0",
+      source_range: expect.any(Object),
+    }),
+    expect.objectContaining({ index: 1, value: 7 }),
+    expect.objectContaining({ index: 2, value: false }),
+    expect.objectContaining({ index: 3, value: null }),
+    expect.objectContaining({ index: 6, value: "fixed" }),
+    expect.objectContaining({ index: 7, value: -3 }),
+  ]);
+  if (call === undefined) throw new Error("Expected call site");
+  const trace = queryJavaScriptSemanticGraph(
+    graph,
+    javaScriptSemanticQueryInputSchema.parse({
+      seed: { kind: "literal", value: "proc_0" },
+      direction: "forward-influence",
+    }),
+  );
+  expect(trace.seed_node_ids).toContain(call.node_id);
+});
+
+it("reports the primitive byte bound when a direct argument is too large", () => {
+  const source = `rpc(${JSON.stringify("x".repeat(175_000))});`;
+  const ir = analyzeJavaScriptSemantics(source);
+  expect(ir.coverage.resourceLimits).toContain("primitive-bytes");
+  const graph = graphFor(source, ir);
+  const call = graph.nodes.find(({ kind }) => kind === "call-site");
+  expect(call?.properties.arguments).toBeUndefined();
+  expect(graph.coverage.status).not.toBe("complete");
+  const unknown = graph.unknowns.find(
+    (entry) =>
+      entry.node_id === call?.node_id && entry.reason === "resource-limit",
+  );
+  expect(unknown?.detail).toMatch(/primitive string-byte budget exceeded/i);
+  expect(
+    graph.evidence_contexts.find(
+      (entry) => entry.context_id === unknown?.evidence.context_id,
+    ),
+  ).toMatchObject({
+    coverage: {
+      limits: expect.arrayContaining([
+        expect.objectContaining({
+          name: "javascript_semantic_primitive_bytes",
+        }),
+      ]),
+    },
+  });
+});
+
+it("keeps a large call's graph within the worker record limit and reports omitted arguments", () => {
+  const value = JSON.stringify("x".repeat(140_000));
+  const source = `rpc(${Array.from({ length: 64 }, () => value).join(",")});`;
+  const graph = graphFor(source);
+  const call = graph.nodes.find(({ kind }) => kind === "call-site");
+  if (call === undefined) throw new Error("Expected call site");
+  const values = call.properties.arguments;
+  expect(Array.isArray(values)).toBe(true);
+  if (!Array.isArray(values)) throw new Error("Expected retained arguments");
+  expect(values.length).toBeGreaterThan(0);
+  expect(values.length).toBeLessThan(64);
+  expect(
+    Buffer.byteLength(`${JSON.stringify({ kind: "node", value: call })}\n`),
+  ).toBeLessThanOrEqual(8 * 1024 * 1024);
+  const unknown = graph.unknowns.find(
+    (entry) =>
+      entry.node_id === call.node_id &&
+      entry.detail.includes("worker transfer record ceiling"),
+  );
+  expect(unknown).toMatchObject({ reason: "resource-limit" });
+  expect(
+    graph.evidence_contexts.find(
+      (entry) => entry.context_id === unknown?.evidence.context_id,
+    ),
+  ).toMatchObject({
+    coverage: {
+      limits: expect.arrayContaining([
+        expect.objectContaining({
+          name: "javascript_analysis_transfer_record_bytes",
+          value: 8 * 1024 * 1024,
+        }),
+      ]),
+    },
+  });
+});
+
 it("projects bounded alias selection as a resource-limit unknown", () => {
   const source = aliasSelectionBudgetSource();
   const ir = analyzeJavaScriptSemantics(source);
@@ -570,6 +663,108 @@ it("selects analyzer-produced boundaries by their method field", () => {
       }),
     ).summary.total_seed_matches,
   ).toBe(0);
+});
+
+it.each(["Number", "JSON.parse"])(
+  "connects a resolved %s boundary to its assigned result and later read",
+  (method) => {
+    const graph = graphFor(
+      `function parse(raw) { const n = ${method}(raw); return n; }`,
+    );
+    const boundary = graph.nodes.find(
+      (node) => node.kind === "boundary" && node.label === method,
+    );
+    const binding = graph.nodes.find(
+      (node) => node.kind === "binding" && node.label === "n",
+    );
+    const raw = graph.nodes.find(
+      (node) => node.kind === "parameter" && node.label === "raw",
+    );
+    const read = graph.nodes.find((node) =>
+      node.identity.role_key.endsWith("read:n"),
+    );
+    if (!boundary || !binding || !raw || !read)
+      throw new Error("Expected boundary, input, result binding, and read");
+    expect(graph.relations).toContainEqual(
+      expect.objectContaining({
+        source_node_id: boundary.node_id,
+        target_node_id: binding.node_id,
+        relation: "defines",
+        resolution: "resolved",
+      }),
+    );
+    const query = (
+      nodeId: string,
+      direction: "forward-influence" | "backward-provenance",
+    ) =>
+      queryJavaScriptSemanticGraph(
+        graph,
+        javaScriptSemanticQueryInputSchema.parse({
+          seed: { kind: "semantic-node", node_id: nodeId },
+          direction,
+        }),
+      );
+    expect(query(boundary.node_id, "forward-influence").nodes).toEqual(
+      expect.arrayContaining([binding, read]),
+    );
+    expect(query(read.node_id, "backward-provenance").nodes).toEqual(
+      expect.arrayContaining([boundary, raw]),
+    );
+  },
+);
+
+it.each([
+  "function parse(raw) { const n = Number(raw) + 1; return n; }",
+  "function parse(raw) { let n = 1; n += Number(raw); return n; }",
+  "function parse(raw) { let n = 1; n ||= Number(raw); return n; }",
+])(
+  "does not treat a transformed or conditional boundary as its assigned value: %s",
+  (source) => {
+    const graph = graphFor(source);
+    const boundary = graph.nodes.find((node) => node.kind === "boundary");
+    const binding = graph.nodes.find(
+      (node) => node.kind === "binding" && node.label === "n",
+    );
+    if (!boundary || !binding) throw new Error("Expected boundary and binding");
+    expect(graph.relations).not.toContainEqual(
+      expect.objectContaining({
+        source_node_id: boundary.node_id,
+        target_node_id: binding.node_id,
+        relation: "defines",
+      }),
+    );
+  },
+);
+
+it("keeps uncertain parser results as candidates and ignores shadowed coercions", () => {
+  const graph = graphFor(`
+    function run(raw, parser, Number) {
+      const parsed = parser.parse(raw);
+      const shadowed = Number(raw);
+      return parsed;
+    }
+  `);
+  const parser = graph.nodes.find(
+    (node) => node.kind === "boundary" && node.label === "parse",
+  );
+  const parsed = graph.nodes.find(
+    (node) => node.kind === "binding" && node.label === "parsed",
+  );
+  if (!parser || !parsed)
+    throw new Error("Expected parser boundary and binding");
+  expect(graph.relations).toContainEqual(
+    expect.objectContaining({
+      source_node_id: parser.node_id,
+      target_node_id: parsed.node_id,
+      relation: "defines",
+      resolution: "candidate",
+    }),
+  );
+  expect(
+    graph.nodes.some(
+      (node) => node.kind === "boundary" && node.label === "Number",
+    ),
+  ).toBe(false);
 });
 
 const semanticNodeFor = (roleKey: string) => {

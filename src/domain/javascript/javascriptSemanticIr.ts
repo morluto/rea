@@ -80,6 +80,8 @@ export interface JavaScriptSemanticBinding {
   readonly mutable: boolean;
   readonly definitions: readonly JavaScriptSemanticDefinition[];
   readonly value: JavaScriptSemanticValue;
+  /** Value at the single initializer, before later member effects. */
+  readonly initializerValue?: JavaScriptSemanticValue;
   readonly provenance: JavaScriptBindingProvenance;
 }
 
@@ -138,6 +140,10 @@ export interface JavaScriptSemanticCallArgument {
   /** Unwrapped value expression; null for a spread or non-expression slot. */
   readonly valueExpressionLocation: JavaScriptSourceRange | null;
   readonly spread: boolean;
+  /** Direct scalar syntax, before runtime evaluation; omitted for other expressions. */
+  readonly literal?: string | number | boolean | null;
+  /** A direct literal was omitted under a semantic resource bound. */
+  readonly literalResourceLimit?: "primitive-bytes";
 }
 
 /** One positional argument that may initialize one local parameter binding. */

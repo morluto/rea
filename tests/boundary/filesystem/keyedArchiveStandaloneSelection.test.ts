@@ -76,7 +76,19 @@ it.skipIf(process.platform === "win32")(
           await session.execute("inspect_keyed_archive", {
             path: "unrelated.plist",
           }),
-        ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });
+        ).toMatchObject({
+          ok: false,
+          error: {
+            _tag: "AnalysisInputError",
+            issues: [
+              {
+                path: ["path"],
+                reason: "invalid_value",
+                expected: [alias.split("/").at(-1), "stored.plist"],
+              },
+            ],
+          },
+        });
       }
       await unlink(aliases[1]!);
       await symlink(other, aliases[1]!);

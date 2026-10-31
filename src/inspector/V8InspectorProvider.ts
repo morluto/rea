@@ -1,3 +1,4 @@
+import { selectCdpDiscoveryTarget } from "../browser/CdpDiscoveryTargets.js";
 import {
   DEFAULT_ASAR_HEADER_ADMISSION,
   type AsarHeaderAdmission,
@@ -52,7 +53,7 @@ import {
 import {
   discoverV8Inspector,
   type AuthorizedV8InspectorTarget,
-  type V8InspectorTarget,
+  type V8InspectorDiscovery,
 } from "./V8InspectorEndpoint.js";
 
 import { V8_INSPECTOR_PROVIDER_IDENTITY } from "./providerIdentity.js";
@@ -364,9 +365,8 @@ export class V8InspectorProvider implements JavaScriptRuntimeObservationPort {
         options.signal,
       );
       target = await authorizedTarget(
-        discovery.targets,
+        discovery,
         input,
-        discovery.runtime.product,
         this.#asarHeaderAdmission,
         options.signal,
       );
@@ -506,14 +506,18 @@ const projectTarget = (target: AuthorizedV8InspectorTarget) => ({
 });
 
 const authorizedTarget = async (
-  targets: readonly V8InspectorTarget[],
+  discovery: V8InspectorDiscovery,
   input: ObserveJavaScriptRuntimeInput,
-  product: string,
   asarHeaderAdmission: AsarHeaderAdmission,
   signal?: AbortSignal,
 ): Promise<AuthorizedV8InspectorTarget> => {
   throwIfRuntimeObservationCancelled(signal);
-  const target = targets.find(({ id }) => id === input.target_id);
+  const target = selectCdpDiscoveryTarget(
+    discovery.targets,
+    input.target_id,
+    "observe_javascript_runtime",
+    discovery.ambiguousTargetIds,
+  );
   if (target === undefined)
     throw new BrowserObservationError(
       "observe_javascript_runtime",
@@ -521,7 +525,7 @@ const authorizedTarget = async (
     );
   const decision = await authorizeRuntimeTargetLocation(
     target.url,
-    { type: target.type, product },
+    { type: target.type, product: discovery.runtime.product },
     signal,
     "observe_javascript_runtime",
     asarHeaderAdmission,

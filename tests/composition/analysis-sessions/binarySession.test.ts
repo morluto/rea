@@ -606,10 +606,24 @@ describe("evidence metadata imports and snapshot cache", () => {
     );
     expect(
       session.importEvidenceBundle(createEvidenceBundle([addition])),
-    ).toEqual({ ok: true, value: 1 });
+    ).toEqual({
+      ok: true,
+      value: {
+        recordsAdded: 1,
+        unknownsAdded: 0,
+        totalRecords: before.value.evidence_bundle.records.length + 1,
+      },
+    });
     expect(
       session.importEvidenceBundle(createEvidenceBundle([addition])),
-    ).toEqual({ ok: true, value: 0 });
+    ).toEqual({
+      ok: true,
+      value: {
+        recordsAdded: 0,
+        unknownsAdded: 0,
+        totalRecords: before.value.evidence_bundle.records.length + 1,
+      },
+    });
     expect(session.exportAnalysisSnapshot()).toMatchObject({
       ok: true,
       value: {
@@ -630,7 +644,9 @@ describe("evidence metadata imports and snapshot cache", () => {
     expect(session.exportAnalysisSnapshot().ok).toBe(true);
     await session.close();
   });
+});
 
+describe("Evidence display metadata refresh", () => {
   it.each(["active", "unrelated"] as const)(
     "refreshes %s Evidence display metadata without invalidating provider observations",
     async (scope) => {
@@ -671,7 +687,14 @@ describe("evidence metadata imports and snapshot cache", () => {
         const unsubscribe = session.onAnalysisSnapshotChanged(changed);
         expect(
           session.importEvidenceBundle(createEvidenceBundle([relocated])),
-        ).toEqual({ ok: true, value: 0 });
+        ).toEqual({
+          ok: true,
+          value: {
+            recordsAdded: 0,
+            unknownsAdded: 0,
+            totalRecords: session.immutableEvidenceBundle().records.length,
+          },
+        });
         expect(changed).toHaveBeenCalledTimes(1);
         unsubscribe();
         expect(session.evidenceById(evidence.evidence_id)).toEqual(relocated);
@@ -968,6 +991,55 @@ describe("snapshot switch rollback", () => {
 });
 
 describe("snapshot cache eligibility", () => {
+  it.each([
+    "decode_interface_builder",
+    "inspect_asset_catalog",
+    "inspect_keyed_archive",
+    "trace_dylib_resolution",
+  ] as const)(
+    "reobserves resource-scoped %s without executable snapshot Evidence",
+    async (operation) => {
+      const [target] = await createBinarySessionTargets();
+      const provider = createCacheProvider([]);
+      const [baseCapability] = provider.capabilities();
+      if (baseCapability === undefined)
+        throw new Error("Expected fixture capability");
+      provider.capabilities = () => [
+        { ...baseCapability, operation, cachePolicy: "snapshot" },
+      ];
+      let observations = 0;
+      provider.createClient = () => ({
+        execute: async (name) =>
+          resultOk(
+            createAnalysisExecution(
+              name === "health" ? null : ++observations,
+              provider.identity(),
+            ),
+          ),
+        close: async () => resultOk(null),
+      });
+      const session = createTestBinarySession(provider);
+      try {
+        expect((await session.open(target)).ok).toBe(true);
+        for (const observation of [1, 2]) {
+          const result = await session.execute(operation, {});
+          expect(result).toMatchObject({
+            ok: true,
+            value: { result: observation },
+          });
+          if (result.ok) expect(result.value.evidenceId).toBeUndefined();
+        }
+        expect(session.exportEvidenceBundle().records).toEqual([]);
+        expect(session.exportAnalysisSnapshot()).toMatchObject({
+          ok: true,
+          value: { entries: [] },
+        });
+      } finally {
+        await session.close();
+      }
+    },
+  );
+
   it.each([false, true])(
     "retains source Evidence independently of snapshot eligibility (live=%s)",
     async (live) => {

@@ -6,6 +6,7 @@ import {
   readFile,
   rename,
   rm,
+  truncate,
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
@@ -268,7 +269,7 @@ it.each([
     const sea = vi.spyOn(seaLocation, "locateNodeSea");
     const pyInstaller = vi.spyOn(
       pyInstallerLocation,
-      "containsPyInstallerArchive",
+      "observePyInstallerCookie",
     );
     const hashRoot = rootHash.hashStableRootArtifactHandle;
     let probesBeforeHash: number[] | undefined;
@@ -310,6 +311,10 @@ it.each([
           expect(extracted.manifest.root_format).toBe(format);
           expect(extracted.artifacts.length).toBeGreaterThan(0);
           expect(probesBeforeHash).toEqual(probes);
+          // Preflight's cookie supplies inventory and the transferred extraction
+          // admission; descriptor/path and digest checks still validate freshness.
+          if (format === "pyinstaller")
+            expect(pyInstaller).toHaveBeenCalledTimes(1);
         },
       );
     } finally {
@@ -320,3 +325,104 @@ it.each([
     }
   },
 );
+
+it("refuses an incomplete PyInstaller detection tail without reporting unsupported format", async () => {
+  const root = await createTestTempDirectory(
+    "rea-extraction-pyinstaller-tail-",
+  );
+  const source = join(root, "app");
+  const output = join(root, "output");
+  const bytes = cArchiveExecutable({
+    layout: "2.1",
+    pythonVersion: 314,
+    members: [],
+  });
+  await writeFile(source, bytes);
+  const observe = pyInstallerLocation.observePyInstallerCookie;
+  const detect = vi
+    .spyOn(pyInstallerLocation, "observePyInstallerCookie")
+    .mockImplementation(async (...arguments_) => {
+      // The admitted size is now larger than the bytes the descriptor can read.
+      await truncate(source, 64);
+      return observe(...arguments_);
+    });
+  const close = vi.spyOn(OwnedFileHandle.prototype, "close");
+  const hash = vi.spyOn(rootHash, "hashStableRootArtifactHandle");
+  try {
+    await withArtifactClient(
+      {
+        path: source,
+        sourcePath: source,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+        kind: "executable",
+        format: "elf",
+        architecture: "x86_64",
+        availableArchitectures: ["x86_64"],
+      },
+      async (client) => {
+        expect(
+          await client.execute("extract_artifact", { output_root: output }),
+        ).toMatchObject({
+          ok: false,
+          error: {
+            _tag: "ArtifactOperationError",
+            reason: "format",
+            detail: "CArchive tail is truncated",
+          },
+        });
+        expect(detect).toHaveBeenCalledTimes(1);
+        expect(close).toHaveBeenCalled();
+        expect(hash).not.toHaveBeenCalled();
+        await expect(access(output)).rejects.toMatchObject({ code: "ENOENT" });
+      },
+    );
+  } finally {
+    detect.mockRestore();
+    close.mockRestore();
+    hash.mockRestore();
+  }
+});
+
+it("keeps incidental rejected cookie signatures unsupported during native extraction", async () => {
+  const root = await createTestTempDirectory(
+    "rea-extraction-pyinstaller-candidate-",
+  );
+  const source = join(root, "app");
+  const output = join(root, "output");
+  const bytes = Buffer.concat([
+    cArchiveExecutable({
+      layout: "2.1",
+      pythonVersion: 314,
+      members: [],
+    }).subarray(0, 64),
+    pyInstallerLocation.PYINSTALLER_COOKIE_MAGIC,
+    Buffer.alloc(88),
+  ]);
+  await writeFile(source, bytes);
+  const hash = vi.spyOn(rootHash, "hashStableRootArtifactHandle");
+  try {
+    await withArtifactClient(
+      {
+        path: source,
+        sourcePath: source,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+        kind: "executable",
+        format: "elf",
+        architecture: "x86_64",
+        availableArchitectures: ["x86_64"],
+      },
+      async (client) => {
+        expect(
+          await client.execute("extract_artifact", { output_root: output }),
+        ).toMatchObject({
+          ok: false,
+          error: { _tag: "AnalysisUnsupportedTargetError", path: source },
+        });
+        expect(hash).not.toHaveBeenCalled();
+        await expect(access(output)).rejects.toMatchObject({ code: "ENOENT" });
+      },
+    );
+  } finally {
+    hash.mockRestore();
+  }
+});

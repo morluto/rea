@@ -181,12 +181,12 @@ export const projectDesktopApplicationView = (
       validatedParents.add(key);
     }
   }
+  const subject = parent.subject;
   if (
-    parent.subject === undefined ||
-    parent.subject === null ||
-    parent.subject.format !== "directory" ||
-    parent.subject.local_path !== report.root.path ||
-    parent.subject.digest.sha256 !== report.root.snapshot_sha256
+    subject === undefined ||
+    subject === null ||
+    subject.format !== "directory" ||
+    subject.digest.sha256 !== report.root.snapshot_sha256
   )
     return err(
       analysisViewInputError([

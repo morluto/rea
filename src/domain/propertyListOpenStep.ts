@@ -14,8 +14,14 @@ const skipTrivia = (text: string, start: number, strict = true): number => {
   while (cursor < text.length) {
     if (/\s/u.test(text[cursor]!)) cursor += 1;
     else if (text.startsWith("//", cursor)) {
-      const end = text.indexOf("\n", cursor + 2);
-      cursor = end < 0 ? text.length : end + 1;
+      cursor += 2;
+      // CoreFoundation line comments end at LF, CR, LS or PS. Do not consume
+      // subsequent data merely because the producer used another line ending.
+      while (
+        cursor < text.length &&
+        !"\n\r\u2028\u2029".includes(text[cursor]!)
+      )
+        cursor += 1;
     } else if (text.startsWith("/*", cursor)) {
       const end = text.indexOf("*/", cursor + 2);
       if (end < 0) {

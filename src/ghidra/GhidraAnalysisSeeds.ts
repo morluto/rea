@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, realpath } from "node:fs/promises";
+import { mkdir, realpath, stat } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { z } from "zod";
 
@@ -13,6 +13,7 @@ import {
   writeGhidraProfileArtifact,
   ghidraFileFailure,
 } from "./GhidraFileArtifacts.js";
+import { NonRegularFileReadError } from "../filesystem/RegularFile.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 /** Seed file format admitted by this adapter. */
@@ -164,6 +165,15 @@ const readSeeds = (
     },
   );
 
+/** Preserve native lookup semantics while allowing configured symbolic links. */
+const resolveSeedPath = async (configured: string): Promise<string> => {
+  // Darwin realpath may collapse file/.. even though native lookup rejects it.
+  const selected = await stat(configured);
+  if (!selected.isFile())
+    throw new NonRegularFileReadError(configured, selected.isDirectory());
+  return realpath(configured);
+};
+
 /** Resolve the configured seed file into an immutable profile commitment. */
 export const resolveGhidraAnalysisSeeds = async (
   configured: string | undefined,
@@ -176,7 +186,7 @@ export const resolveGhidraAnalysisSeeds = async (
       let entries: readonly SeedEntry[];
       let path: string;
       try {
-        path = await realpath(configured);
+        path = await resolveSeedPath(configured);
         entries = await readSeeds(path, resources, signal);
       } catch (cause: unknown) {
         return err(
@@ -215,7 +225,9 @@ export const snapshotGhidraAnalysisSeeds = async (
   resources
     .run(async () => {
       ghidraSeedCommitmentSchema.parse(commitment);
-      if ((await realpath(commitment.configured_path)) !== commitment.path)
+      if (
+        (await resolveSeedPath(commitment.configured_path)) !== commitment.path
+      )
         throw new Error(
           "Ghidra seed file resolved path differs from explicit configuration",
         );

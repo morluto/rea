@@ -1,10 +1,74 @@
 import { join } from "node:path";
+import { Writable } from "node:stream";
+import { Cli } from "incur";
 import { expect, it } from "vitest";
 
-import { renderCliDocument } from "../../../src/cliOutput.js";
+import {
+  parseCliOutputArguments,
+  renderCliDocument,
+} from "../../../src/cliOutput.js";
+import {
+  createCliResultOutput,
+  streamCliCommandResults,
+} from "../../../src/cli/cliResultOutput.js";
 import { writeOrderedZip } from "../../fixtures/artifactEntryOrder.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
+
+it("keeps source keys literal in Markdown headings through CLI result output", async () => {
+  const value = Object.freeze({
+    "<schema>&amp;": 0,
+    "[link](target)": Object.freeze([Object.freeze({ retained: true })]),
+    "*bundle*": Object.freeze({ leaf: "seen" }),
+    _under_: Object.freeze({ leaf: "literal underscores" }),
+    plain_field: 0,
+    "parent\\": Object.freeze({
+      "`code`\r\n\r## fake": Object.freeze({ leaf: "retained" }),
+    }),
+    plain: Object.freeze({ nested: Object.freeze({ value: false }) }),
+  });
+  const original = JSON.stringify(value);
+  const cli = Cli.create("heading-facts-test", { sync: false });
+  cli.command("facts", { run: () => value });
+  const args = ["facts", "--format", "md"];
+  const chunks: Buffer[] = [];
+  const output = createCliResultOutput(
+    parseCliOutputArguments(args),
+    new Writable({
+      write(chunk: Buffer, _encoding, callback) {
+        chunks.push(chunk);
+        callback();
+      },
+    }),
+  );
+  if (output === undefined) throw new Error("Missing CLI result output owner");
+  streamCliCommandResults(cli, output);
+  let fallback = "";
+  await cli.serve(args, {
+    exit: (code) => expect(code).toBe(0),
+    stdout: (text) => {
+      if (!output.handled) fallback += text;
+    },
+  });
+  expect(fallback).toBe("");
+  expect(output.handled).toBe(true);
+  expect(output.failed).toBe(false);
+  const markdown = Buffer.concat(chunks).toString("utf8");
+  expect(markdown.match(/^## .+$/gmu)).toEqual([
+    "## &lt;schema&gt;&amp;amp;",
+    "## \\[link\\](target)",
+    "## \\*bundle\\*",
+    "## \\_under\\_",
+    "## plain_field",
+    "## parent\\\\.\\`code\\`<br><br>\\#\\# fake",
+    "## plain.nested",
+  ]);
+  expect(markdown).toContain("| retained |\n|----------|\n| true     |");
+  expect(markdown).toContain("| leaf | seen  |");
+  expect(markdown).toContain("| value | false |");
+  expect(JSON.parse(renderCliDocument(value, "json", false))).toEqual(value);
+  expect(JSON.stringify(value)).toBe(original);
+});
 
 it("retains nested facts in standalone Markdown table cells and mixed arrays", () => {
   const value = [

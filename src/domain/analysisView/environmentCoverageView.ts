@@ -29,7 +29,7 @@ export const environmentCoverageViewRequestSchema = z.strictObject({
 /** What to record next for each reason a write tool is withheld; advice only, it never changes what is served. */
 export const WITHHELD_WRITE_HINTS = {
   "no-state-target":
-    "The write's path names no collection or item the capture reads. Read the collection or item it changes.",
+    "The write could not be linked to a modelled state target. Check its path template and the recorded collection or item views; if the relevant reads are missing, record them. Some route forms may not be supported as mutation targets.",
   "no-call":
     "No recorded call of this tool was modelled, for example because every call failed. Record a successful call.",
   "body-unusable":

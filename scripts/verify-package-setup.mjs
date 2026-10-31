@@ -1,3 +1,4 @@
+import { deepStrictEqual } from "node:assert";
 import {
   lstat,
   mkdir,
@@ -11,6 +12,7 @@ import {
 import { dirname, isAbsolute, join } from "node:path";
 import { parse as parseToml } from "smol-toml";
 
+import { clientRegistrationCommandText } from "../dist/cli/clientRegistrationCommandText.js";
 import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
 import { PRODUCT_IDENTITY } from "../dist/identity.js";
 import { pathExists } from "./lib/verify-package-core.mjs";
@@ -50,12 +52,29 @@ const isDirectRegistration = async (command, cli) =>
   (await realpath(command[0])) === (await realpath(process.execPath)) &&
   (await realpath(command[1])) === (await realpath(cli));
 
-const verifyMcpAdd = async ({ commands, cli, environment, npxLog }) => {
+const verifyMcpAdd = async ({ commands, cli, environment, npxLog, home }) => {
   await commands.run(cli, ["mcp", "add"], environment);
-  const mcpRegistration = await readFile(npxLog, "utf8");
-  const expected = `add-mcp npx -y ${PRODUCT_IDENTITY.registrationPackageSpecifier} mcp --name rea`;
-  if (!mcpRegistration.includes(expected))
-    throw new Error("Incur mcp add did not register the pinned npx command");
+  const settings = JSON.parse(
+    await readFile(join(home, ".config", "amp", "settings.json"), "utf8"),
+  );
+  const registration = settings?.["amp.mcpServers"]?.rea;
+  if (!Array.isArray(registration?.args))
+    throw new Error("Incur mcp add did not write the native Amp registration");
+  const command = [registration.command, ...registration.args];
+  if (!(await isDirectRegistration(command, cli)))
+    throw new Error(
+      "Incur mcp add did not register the selected absolute runtime and REA script",
+    );
+  // Amp consumes the same command through Incur's parser. Check the delegated
+  // helper receives that command as one argument, without flattening its argv.
+  deepStrictEqual(JSON.parse(await readFile(npxLog, "utf8")), [
+    "add-mcp",
+    clientRegistrationCommandText(command),
+    "--name",
+    "rea",
+    "-y",
+    "-g",
+  ]);
 };
 
 const verifySetupPlan = async ({
@@ -588,7 +607,7 @@ export async function verifyPackageSetup({
   hopperSetupSupported,
   root,
 }) {
-  await verifyMcpAdd({ commands, cli, environment, npxLog });
+  await verifyMcpAdd({ commands, cli, environment, npxLog, home });
   const skillPath = join(
     home,
     ".agents/skills/reverse-engineer-anything/SKILL.md",

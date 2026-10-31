@@ -14,12 +14,17 @@ interpreter: the npm launcher's `#!/usr/bin/env node` still searches `PATH` for
 Node. Running that command successfully in a terminal does not establish that
 the client can launch it.
 
-For direct JavaScript installations, setup registers the selected runtime
+For JavaScript installations, setup registers the selected runtime
 executable and REA script by absolute path. On POSIX, it prefers executable
 `node` or `bun` and REA aliases on setup's `PATH` only when they resolve to the
 same selected files. This preserves manager-owned aliases across version updates;
-otherwise setup uses the selected paths directly. Package-runner registrations keep
-their selected runner. Setup does not copy your ambient environment into client
+otherwise setup uses the selected paths directly. This also applies when setup
+runs through a package runner: retain the selected cache entry and runtime while
+the registration uses them. Clearing either makes startup fail without resolving
+another package from the client's project. Restore the same installation before
+repairing it; an unidentified registration remains untouched. See
+[installation and recovery](installation.md#package-runners-and-global-installation).
+Setup does not copy your ambient environment into client
 settings. To refresh an older registration, preview
 `rea setup --client <client-id> --skill=false --dry-run`, then run the same command
 without `--dry-run` and approve the displayed changes. Setup preserves unrelated
@@ -268,7 +273,7 @@ This headroom is a practical default, not a guarantee for every analysis
 duration. Setup preserves positive timeout values already in the `rea` entry.
 
 Setup also forwards explicitly selected input/output schema profiles,
-`REA_MCP_MAX_RESPONSE_BYTES`, provider paths and supported Ghidra, JADX and Kuna
+`REA_MCP_MAX_RESPONSE_BYTES`, `REA_MCP_MAX_INPUT_ELEMENTS`, provider paths and supported Ghidra, JADX and Kuna
 settings. It also forwards explicit executable and resource selections for ADB,
 apktool, packet capture, GDB/Rizin/objdump, Cutter, WABT, Wakaru, firmware and
 signal tools, browser inspection, and pwntools/pwndbg. This includes their
@@ -497,17 +502,51 @@ comments and unrelated settings. It resolves that file from `HERMES_HOME`, else
 from the platform default Hermes itself uses — `%LOCALAPPDATA%\hermes` on
 Windows, `~/.hermes` elsewhere — including any `HERMES_DATA_DIR_SUFFIX`. Hermes
 connects an entry unless `enabled` is false, so setup states `enabled: true`.
+Aliases whose anchor is defined in the `rea` entry retain their original resolved
+values when setup refreshes or uninstall removes that entry. Setup does not
+redirect another server's alias to REA's new launcher or policy.
+This also covers an anchor on the removed registration key. References to
+definitions outside the entry keep sharing the original value, including when
+another definition later reuses the same anchor name.
 
 Hermes personal skills install under the active Hermes home's `skills` directory.
-Setup, doctor and uninstall follow the root's `active_profile` selection, as
-plain Hermes CLI commands do. An explicit `HERMES_HOME` pointing to
-`profiles/<name>` selects that named profile directly. An invalid, missing or
-deleted sticky profile is reported instead of writing into the default home;
-it also remains an unresolved skill selection, so setup cannot report a
-successful empty installation. Overrides nested beneath the native Hermes home
-use that native home's sticky selection and profile root together, matching
-[Hermes's root rules](https://github.com/NousResearch/hermes-agent/blob/748c79a1c6873124d84071cdabb4062a75913e1f/hermes_constants.py#L83).
-Repair the profile or run `hermes profile use default` before retrying.
+Setup, doctor and uninstall share REA's sticky-profile resolver.
+A custom `HERMES_HOME` outside the platform default home
+reads its own `active_profile`. An override physically inside the default home
+uses that default home's sticky selection and profile root together, including
+when the final override directory does not yet exist.
+
+For example, with `HERMES_HOME=~/.hermes/sub` and `~/.hermes/active_profile` set
+to `coder`, setup selects `~/.hermes/profiles/coder/config.yaml` and that
+profile's skills directory. It does not read `~/.hermes/sub/active_profile`.
+Without an outer named selection, this override uses `~/.hermes/sub/config.yaml`.
+Use a home outside the platform default tree for an independent sticky selection.
+
+This describes REA's current routing, not full Hermes CLI equivalence.
+At Hermes commit `748c79a1`, the
+[sticky lookup](https://github.com/NousResearch/hermes-agent/blob/748c79a1c6873124d84071cdabb4062a75913e1f/hermes_cli/main.py#L612-L632)
+also reads the outer selection, but
+[`resolve_profile_env`](https://github.com/NousResearch/hermes-agent/blob/748c79a1c6873124d84071cdabb4062a75913e1f/hermes_cli/profiles.py#L2431-L2461)
+resolves it beneath the configured `HERMES_HOME`. For nested overrides, confirm
+the profile Hermes actually uses and point `HERMES_HOME` directly at that
+`profiles/<name>` directory before setup. Compatibility is tracked in
+[#3939](https://github.com/morluto/rea/issues/3939).
+
+REA resolves existing ancestor directories before checking physical containment,
+including symlinks and junctions, even when the override directory does not exist.
+An override beneath a symlinked default home therefore uses the default home's
+sticky selection. If `~/.hermes/link` points outside the default home,
+`HERMES_HOME=~/.hermes/link/new` instead uses that override root, whether or not
+`new` exists. Previewed destinations retain the configured path spelling.
+An unreadable path or dangling alias leaves the home unresolved; repair that path
+before configuring Hermes. Inspect setup's previewed destinations before applying
+changes.
+
+An explicit `HERMES_HOME` pointing to `profiles/<name>` selects that named
+profile directly, bypassing sticky selection. An invalid, missing or deleted
+sticky profile is reported instead of writing into the default home; repair the
+profile or run `hermes profile use default` before retrying. It also remains an
+unresolved skill selection, so setup cannot report a successful empty installation.
 REA follows `HERMES_HOME` whitespace trimming, environment-variable expansion,
 and home expansion before resolving that profile. Setup previews the resolved
 configuration and skill destinations; doctor and uninstall use those same paths.
@@ -524,10 +563,12 @@ installs its skill copy there.
 ## Factory Droid
 
 For [Factory Droid](https://docs.factory.com/harness/mcp), setup writes
-`mcpServers.rea` into the user-level `~/.factory/mcp.json`. Entries carry
-`command`, `args`, and `env`. Droid discovers personal skills from
-`~/.factory/skills` ([skills](https://docs.factory.com/harness/skills)), so
-setup installs its skill copy there.
+`mcpServers.rea` into the user-level `~/.factory/mcp.json` (the
+`FACTORY_HOME_OVERRIDE` override replaces the home that contains `.factory`).
+Entries carry `command`, `args`, and `env`. Droid discovers personal skills
+from `~/.factory/skills` ([skills](https://docs.factory.com/harness/skills),
+following `FACTORY_HOME_OVERRIDE` when set), so setup installs its skill copy
+there.
 
 ## Trae
 
@@ -575,9 +616,10 @@ the fallback file untouched. Existing REA environment overrides are preserved
 when refreshing its command. A malformed or unreadable fallback file fails setup instead of
 being silently suppressed; repair or remove it and rerun. Uninstall removes an
 REA-owned `rea` entry from both the native table and the fallback, backing up
-each changed file, so an emptied native table cannot load a leftover fallback
-registration; other fallback servers, settings and a foreign `rea` entry are
-kept. ZCode disables a
+each changed file. If removing the last native server would activate a retained
+fallback server, uninstall refuses before changing either file; review the
+fallback configuration before retrying. Other fallback servers, settings and a
+foreign `rea` entry are kept. ZCode disables a
 server with `enable: false` on its entry; doctor reports such a registration
 as stale, and rerunning setup removes the flag to repair it. Native configuration
 uses strict JSON; setup refuses comments, trailing commas and a BOM rather than
@@ -600,6 +642,12 @@ boundaries. FreeBuff MCP loading and skill discovery have not been verified
 with an installed native FreeBuff client/version; filesystem tests cover REA's
 editing, discovery, and ownership behavior only. Automatic applicability
 requires the FreeBuff profile directory even when the shared MCP file exists.
+When uninstall cannot establish FreeBuff or another shared-storage reader from
+product discovery, a malformed or unreadable shared MCP file is retained
+unchanged and does not stop other REA removals, including `--purge-data`. When
+FreeBuff or ZCode product applicability is established or unresolved, the same
+malformed shared file stops uninstall before removals. See
+[Diagnose, update, and remove](installation.md#diagnose-update-and-remove).
 
 FreeBuff setup support requires `rea-agents@6.8.0` or later. Older versions
 reject `rea setup --client freebuff` as an unsupported client. See the
@@ -702,10 +750,6 @@ Legacy activation is normalized before layer merging, so an explicit enable
 can override an inherited disable. Lower files and other server entries remain
 unchanged; a legacy server named `servers` that conflicts with the native table
 requires manual repair before setup can write.
-
-When Hermes aliases refer to an anchored REA entry, refreshing or removing REA
-retains the aliases' original resolved values. Setup does not redirect another
-server's alias to REA's new launcher or policy.
 
 With no client selected, the interactive skill choice targets the shared
 `~/.agents/skills` copy. Selecting a client targets its personal destination

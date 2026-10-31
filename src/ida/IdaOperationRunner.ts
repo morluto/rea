@@ -54,6 +54,7 @@ import {
   modernPageSchema,
   modernXrefsSchema,
   nextOffset,
+  nextPageOffset,
   surveySegmentsSchema,
   type IdaDisassembly,
   type IdaFunction,
@@ -160,11 +161,7 @@ export class IdaOperationRunner {
       if (value === undefined)
         throw new AnalysisProtocolError("IDA MCP omitted its function page.");
       result.push(...value.data.map((fn) => idaFunctionSchema.parse(fn)));
-      offset = value.next_offset;
-      if (offset !== null && offset <= current)
-        throw new AnalysisProtocolError(
-          "IDA MCP function pagination did not advance.",
-        );
+      offset = nextPageOffset(value.next_offset, current);
     }
     return result;
   }
@@ -349,7 +346,7 @@ export class IdaOperationRunner {
           const s = legacyStringSchema.parse(item);
           result.push({ address: s.address, value: s.string });
         }
-        offset = page.next_offset;
+        offset = nextPageOffset(page.next_offset, current);
       } else {
         const page = idaStringsPageSchema.parse(
           await this.call("find_regex", {
@@ -370,10 +367,6 @@ export class IdaOperationRunner {
         );
         offset = nextOffset(page.cursor, current);
       }
-      if (offset !== null && offset <= current)
-        throw new AnalysisProtocolError(
-          "IDA MCP string pagination did not advance.",
-        );
     }
     return result;
   }

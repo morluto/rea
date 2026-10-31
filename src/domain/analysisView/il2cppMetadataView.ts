@@ -535,11 +535,11 @@ export const projectIl2cppMetadataView = (
   const parsed = parseMetadataReport(parent);
   if (!parsed.ok) return parsed;
   const { report, counts } = parsed.value;
+  const subject = parent.subject;
   if (
-    parent.subject != null &&
-    (parent.subject.format !== "file" ||
-      parent.subject.local_path !== report.artifact.path ||
-      parent.subject.digest.sha256 !== report.artifact.sha256)
+    subject != null &&
+    (subject.format !== "file" ||
+      subject.digest.sha256 !== report.artifact.sha256)
   )
     return err(
       analysisViewInputError([

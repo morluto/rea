@@ -174,7 +174,11 @@ const finishExitedDebuggerSession = async (
   return { status };
 };
 
-/** Stop only the directly owned debugger process, never its process group or target. */
+/**
+ * Stop only the directly owned debugger process, never its process group or target.
+ * The caller must permanently close command admission before the first attempt;
+ * retries retain completed detach facts while process termination is pending.
+ */
 export const stopOwnedDebuggerProcess = async (
   session: OwnedDebuggerProcess,
   debuggerName: string,
@@ -218,36 +222,42 @@ export const stopOwnedDebuggerProcess = async (
       status: "incomplete",
       reason: `Owned ${debuggerName} process cannot be stopped safely on Windows because job termination can also terminate its inferior processes.`,
     };
-  try {
-    if (session.detachInferior === undefined) {
-      detachOutcomes.set(session, "unconfirmed");
+  // Admission remains closed once cleanup starts. A verified detach is an
+  // owned completion fact, even when terminating the debugger later fails.
+  // Retrying the command transport can no longer improve that fact and may
+  // block termination if shutdown already made the transport unavailable.
+  if (detachOutcomes.get(session) !== "confirmed") {
+    try {
+      if (session.detachInferior === undefined) {
+        detachOutcomes.set(session, "unconfirmed");
+        return {
+          status: "incomplete",
+          reason: `Owned ${debuggerName} inferior detach cannot be verified because the provider has no detach capability.`,
+        };
+      }
+      const detached = await waitForInferiorDetach(
+        session,
+        session.detachInferior,
+      );
+      if (detached === undefined)
+        return {
+          status: "incomplete",
+          reason: `Owned ${debuggerName} inferior detach was not verified within ${String(DETACH_TIMEOUT_MS)} ms. This release has no runtime override.`,
+        };
+      if (!isVerifiedDetachResult(detached)) {
+        detachOutcomes.set(session, "unconfirmed");
+        return {
+          status: "incomplete",
+          reason: `Owned ${debuggerName} provider did not confirm no inferior or detachment with a durable output sink.`,
+        };
+      }
+      detachOutcomes.set(session, "confirmed");
+    } catch (cause: unknown) {
       return {
         status: "incomplete",
-        reason: `Owned ${debuggerName} inferior detach cannot be verified because the provider has no detach capability.`,
+        reason: `Owned ${debuggerName} inferior detach could not be verified: ${cause instanceof Error ? cause.message : String(cause)}`,
       };
     }
-    const detached = await waitForInferiorDetach(
-      session,
-      session.detachInferior,
-    );
-    if (detached === undefined)
-      return {
-        status: "incomplete",
-        reason: `Owned ${debuggerName} inferior detach was not verified within ${String(DETACH_TIMEOUT_MS)} ms. This release has no runtime override.`,
-      };
-    if (!isVerifiedDetachResult(detached)) {
-      detachOutcomes.set(session, "unconfirmed");
-      return {
-        status: "incomplete",
-        reason: `Owned ${debuggerName} provider did not confirm no inferior or detachment with a durable output sink.`,
-      };
-    }
-    detachOutcomes.set(session, "confirmed");
-  } catch (cause: unknown) {
-    return {
-      status: "incomplete",
-      reason: `Owned ${debuggerName} inferior detach could not be verified: ${cause instanceof Error ? cause.message : String(cause)}`,
-    };
   }
   session.launched.process.kill("SIGTERM");
   if (!(await session.supervisor.waitForExit(300))) {

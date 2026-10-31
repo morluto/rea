@@ -134,10 +134,14 @@ export const runCliJavaScriptApplicationAnalysis = async (
           ),
     );
   }
-  const value = result.ok ? result.value : cliError(result.error);
+  const finalized = result.ok
+    ? result
+    : { ok: false as const, error: cliError(result.error) };
   return delivery === undefined
-    ? value
-    : publishCliAnalysisEvidence(value, {
+    ? finalized.ok
+      ? finalized.value
+      : finalized.error
+    : publishCliAnalysisEvidence(finalized, {
         ...delivery,
         providerId: JAVASCRIPT_APPLICATION_PROVIDER.id,
         operation: "analyze_javascript_application",

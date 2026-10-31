@@ -1,7 +1,7 @@
 import { safeParseUtf8Json } from "../domain/safeJson.js";
 import { createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { chmod, lstat, opendir, readlink, realpath } from "node:fs/promises";
+import { chmod, lstat, opendir, readlink } from "node:fs/promises";
 import { isAbsolute, join, relative, sep } from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -113,17 +113,10 @@ export class FirmwareFileAccess {
 
   async #snapshot(request: FirmwareRequest, root: string, signal: AbortSignal) {
     const sourcePath = absoluteCallerPath(request.input.path);
-    const source = await realpath(sourcePath).catch((cause: unknown) => {
-      throw firmwareSourceAdmissionFailure(
-        request.operation,
-        sourcePath,
-        cause,
-      );
-    });
     let sourceAdmitted = false;
     const fullPath = join(root, "firmware.bin");
     const copied = await withArtifactRegularFile(
-      source,
+      sourcePath,
       this.#resources,
       signal,
       async ({ handle, initial: stat }) => {
@@ -150,6 +143,7 @@ export class FirmwareFileAccess {
         );
         return { size, sha256: hash.digest("hex") };
       },
+      "follow",
     ).catch((cause: unknown) => {
       // Destination writes and reads after admission retain their own failure.
       throw sourceAdmitted

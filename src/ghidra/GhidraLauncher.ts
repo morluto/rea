@@ -33,7 +33,6 @@ import { boundedUtf8Text } from "../process/boundedUtf8Text.js";
 import { redactCapturedTransportCredential } from "../process/ProviderDiagnosticRedaction.js";
 import {
   cleanupOwnedProcessGroup,
-  cleanupWindowsProcessTree,
   type ProcessCleanupResult,
   type ProcessCleanupFailure,
 } from "../process/ProcessOwnership.js";
@@ -745,7 +744,10 @@ const cleanupStartedProcess = (
   started.cleanup !== undefined
     ? started.cleanup()
     : platform === "win32"
-      ? cleanupWindowsProcessTree(started.ownership.leaderPid)
+      ? Promise.resolve({
+          cleaned: false,
+          reason: "Windows Ghidra process has no owned cleanup capability",
+        })
       : cleanupOwnedProcessGroup(started.ownership);
 
 /** Paths encoded into one bounded analyzeHeadless invocation. */

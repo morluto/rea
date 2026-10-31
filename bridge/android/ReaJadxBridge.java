@@ -1,5 +1,9 @@
 import com.atxx.jhmcp.*;
 import com.google.gson.*;
+import com.android.tools.smali.dexlib2.Opcodes;
+import com.android.tools.smali.dexlib2.dexbacked.DexBackedDexFile;
+import com.android.tools.smali.dexlib2.dexbacked.DexBackedClassDef;
+import com.android.tools.smali.dexlib2.dexbacked.DexBackedMethod;
 import io.modelcontextprotocol.kotlin.sdk.server.*;
 import io.modelcontextprotocol.kotlin.sdk.types.*;
 import jadx.api.*;
@@ -9,14 +13,22 @@ import jadx.api.plugins.input.data.ICodeReader;
 import jadx.api.plugins.input.data.IMethodRef;
 import jadx.api.plugins.input.insns.InsnIndexType;
 import jadx.api.plugins.input.insns.Opcode;
+import jadx.core.codegen.TypeGen;
 import jadx.core.dex.info.MethodInfo;
 import jadx.core.dex.nodes.*;
+import jadx.core.xmlgen.BinaryXMLParser;
 import java.io.PrintStream;
 import java.io.StringReader;
+import java.io.InputStream;
+import java.io.IOException;
+import java.nio.file.Path;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.CountDownLatch;
 import java.util.stream.Collectors;
+import java.util.zip.CRC32;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
 import kotlin.Unit;
 import kotlin.ResultKt;
 import kotlin.coroutines.Continuation;
@@ -178,6 +190,205 @@ class ReaJadxBridge {
     manifestSnapshot = null;
   }
 
+  // One bounded DEX at a time, beside the already admitted analysis JVM. The
+  // response allowance accounts for worst-case JSON escaping before retention.
+  private static final int NATIVE_DEX_BYTES = 64 * 1024 * 1024;
+  private static final long NATIVE_TOTAL_DEX_BYTES = 256L * 1024 * 1024;
+  // This JSON is escaped again inside an 8 MiB MCP frame.
+  private static final long NATIVE_JSON_BYTES = 4L * 1024 * 1024;
+
+  /** The bundled decoder allocates its declared UTF-16 length before validating bytes. */
+  private static final class NativeDex extends DexBackedDexFile {
+    private OptionalIndexedSection<String> boundedStrings;
+    NativeDex(byte[] bytes) { super(Opcodes.getDefault(), bytes); }
+
+    @Override public OptionalIndexedSection<String> getStringSection() {
+      if (boundedStrings == null) {
+        var source = super.getStringSection();
+        boundedStrings = new OptionalIndexedSection<>() {
+          @Override public int size() { return source.size(); }
+          @Override public int getOffset(int index) { return source.getOffset(index); }
+          @Override public String getOptional(int index) { return index == -1 ? null : get(index); }
+          @Override public String get(int index) {
+            int offset = getBuffer().readSmallUint(source.getOffset(index));
+            int units = getDataBuffer().readerAt(offset).readSmallUleb128();
+            if (units > NATIVE_JSON_BYTES / 6
+                || units > getDataBuffer().getBuf().length - offset)
+              throw new IllegalArgumentException("DEX string exceeds the native decoding allowance");
+            return source.get(index);
+          }
+        };
+      }
+      return boundedStrings;
+    }
+  }
+
+  private static void checkNativeInterrupted() {
+    if (Thread.currentThread().isInterrupted())
+      throw new java.util.concurrent.CancellationException("Native declaration inventory interrupted");
+  }
+
+  private static final class NativeInventory {
+    final List<Map<String, Object>> methods = new ArrayList<>();
+    final List<String> unknowns = new ArrayList<>();
+    long retainedBytes = 1024;
+    int dexEntries;
+    int examinedDexEntries;
+    int examinedClasses;
+    int examinedMethods;
+    boolean partial;
+    boolean diagnosticLimit;
+
+    void unknown(String reason) {
+      partial = true;
+      long bytes = 64L + reason.length() * 6L;
+      if (unknowns.size() < 16 && retainedBytes + bytes <= NATIVE_JSON_BYTES - 4096) {
+        unknowns.add(reason);
+        retainedBytes += bytes;
+      } else if (!diagnosticLimit) {
+        diagnosticLimit = true;
+        unknowns.add("Additional native-inventory limitations exceed the retained diagnostic allowance.");
+      }
+    }
+
+    boolean retain(Map<String, Object> method, long bytes) {
+      if (retainedBytes + bytes > NATIVE_JSON_BYTES - 4096) {
+        unknown("Native declarations exceed the 4 MiB retained JSON allowance; remaining declarations are unknown.");
+        return false;
+      }
+      retainedBytes += bytes;
+      methods.add(method);
+      return true;
+    }
+
+    Map<String, Object> result() {
+      return Map.of("scope", "apk-root-dex-declarations", "methods", List.copyOf(methods),
+          "coverage", Map.of("status", partial ? "partial" : "complete",
+              "dex_entries", dexEntries, "examined_dex_entries", examinedDexEntries,
+              "examined_classes", examinedClasses, "examined_methods", examinedMethods),
+          "unknowns", List.copyOf(unknowns));
+    }
+  }
+
+  /** Match Android's standard root multidex carriers, without a basename guess. */
+  private static boolean nativeDexEntry(String name) {
+    return name.equals("classes.dex") || name.matches("classes[0-9]+\\.dex");
+  }
+
+  private static byte[] readNativeDex(ZipFile archive, ZipEntry entry) throws IOException {
+    long size = entry.getSize();
+    if (size < 0 || size > NATIVE_DEX_BYTES)
+      throw new IllegalArgumentException("DEX exceeds the 64 MiB single-member read allowance");
+    byte[] bytes = new byte[(int) size];
+    CRC32 crc = new CRC32();
+    try (InputStream input = archive.getInputStream(entry)) {
+      int offset = 0;
+      while (offset < bytes.length) {
+        checkNativeInterrupted();
+        int read = input.read(bytes, offset, Math.min(65536, bytes.length - offset));
+        if (read < 0) throw new IOException("DEX is shorter than its ZIP declaration");
+        if (read == 0) continue;
+        crc.update(bytes, offset, read);
+        offset += read;
+      }
+      if (input.read() != -1) throw new IOException("DEX exceeds its ZIP declaration");
+    }
+    if (entry.getCrc() < 0 || entry.getCrc() != crc.getValue())
+      throw new IOException("DEX does not match its ZIP CRC32 declaration");
+    return bytes;
+  }
+
+  /** Raw DEX ownership precedes JADX's duplicate-class selection and aliases. */
+  static Map<String, Object> nativeDeclarations(Path apk) {
+    NativeInventory inventory = new NativeInventory();
+    try (ZipFile archive = new ZipFile(apk.toFile())) {
+      Map<String, Integer> names = new HashMap<>();
+      var directory = archive.entries();
+      while (directory.hasMoreElements()) {
+        checkNativeInterrupted();
+        ZipEntry entry = directory.nextElement();
+        if (!entry.isDirectory() && nativeDexEntry(entry.getName())) {
+          inventory.dexEntries++;
+          names.merge(entry.getName(), 1, Integer::sum);
+        }
+      }
+      long totalBytes = 0;
+      int entryIndex = -1;
+      directory = archive.entries();
+      while (directory.hasMoreElements()) {
+        checkNativeInterrupted();
+        ZipEntry entry = directory.nextElement();
+        entryIndex++;
+        String path = entry.getName();
+        if (entry.isDirectory() || !nativeDexEntry(path)) continue;
+        if (names.get(path) != 1) {
+          inventory.unknown("Duplicate root DEX entry name cannot be selected uniquely by the ZIP reader: " + path);
+          continue;
+        }
+        if (entry.getSize() < 0 || entry.getSize() > NATIVE_DEX_BYTES
+            || entry.getSize() > NATIVE_TOTAL_DEX_BYTES - totalBytes) {
+          inventory.unknown("Root DEX member exceeds the 64 MiB member or 256 MiB total read allowance: " + path);
+          continue;
+        }
+        totalBytes += entry.getSize();
+        try {
+          DexBackedDexFile dex = new NativeDex(readNativeDex(archive, entry));
+          var classes = dex.getClassSection();
+          for (int classIndex = 0; classIndex < classes.size(); classIndex++) {
+            checkNativeInterrupted();
+            DexBackedClassDef cls = classes.get(classIndex);
+            String type = cls.getType();
+            if (!type.startsWith("L") || !type.endsWith(";"))
+              throw new IllegalArgumentException("Class definition has no reference type");
+            String className = type.substring(1, type.length() - 1).replace('/', '.');
+            // Passing false retains duplicate encoded method references too.
+            for (Iterable<? extends DexBackedMethod> group : List.of(
+                cls.getDirectMethods(false), cls.getVirtualMethods(false))) {
+              for (DexBackedMethod method : group) {
+                checkNativeInterrupted();
+                inventory.examinedMethods++;
+                if ((method.getAccessFlags() & 0x100) == 0) continue;
+                String methodName = method.getName();
+                String returnType = method.getReturnType();
+                long characters = 2L + returnType.length();
+                for (CharSequence parameter : method.getParameterTypes()) {
+                  characters += parameter.length();
+                  if (characters * 6L > NATIVE_JSON_BYTES) break;
+                }
+                long bytes = 512L + 6L * (className.length() + methodName.length()
+                    + path.length() + characters);
+                if (inventory.retainedBytes + bytes > NATIVE_JSON_BYTES - 4096) {
+                  inventory.unknown("Native declarations exceed the 4 MiB retained JSON allowance; remaining declarations are unknown.");
+                  return inventory.result();
+                }
+                StringBuilder descriptor = new StringBuilder((int) characters).append('(');
+                for (CharSequence parameter : method.getParameterTypes()) descriptor.append(parameter);
+                descriptor.append(')').append(returnType);
+                Map<String, Object> row = Map.of("source_index", inventory.methods.size(),
+                    "class_name", className, "method_name", methodName, "descriptor", descriptor.toString(),
+                    "dex_entry", path, "dex_entry_index", entryIndex, "class_index", classIndex,
+                    "method_index", method.getMethodIndex());
+                if (!inventory.retain(row, bytes)) return inventory.result();
+              }
+            }
+            inventory.examinedClasses++;
+          }
+          inventory.examinedDexEntries++;
+        } catch (IOException | RuntimeException failure) {
+          if (failure instanceof java.util.concurrent.CancellationException) throw (RuntimeException) failure;
+          inventory.unknown("Root DEX native declarations could not be fully read from " + path + ": "
+              + failure.getClass().getSimpleName()
+              + (failure.getMessage() == null ? "" : " (" + failure.getMessage() + ")"));
+        }
+      }
+    } catch (IOException failure) {
+      // A failed archive close must fail the operation so the provider retires
+      // its owned JVM; do not cache a result with lost file-resource ownership.
+      throw new IllegalArgumentException("APK ZIP native declaration inventory could not finish its reader", failure);
+    }
+    return inventory.result();
+  }
+
   /** Original archive identity, never a deobfuscated basename or name suffix. */
   private ManifestSnapshot manifest(JadxSession current) {
     if (manifestSession != current || manifestSnapshot == null) {
@@ -190,15 +401,29 @@ class ReaJadxBridge {
         selected = resource;
       }
       if (selected == null) throw new IllegalArgumentException("Root AndroidManifest.xml not found");
-      var content = selected.loadContent();
-      if (content == null || content.getDataType() != jadx.core.xmlgen.ResContainer.DataType.TEXT)
-        throw new IllegalArgumentException("Root AndroidManifest.xml did not decode as text");
-      String xml = content.getText().getCodeStr();
+      String xml = manifestText(selected);
       ManifestSnapshot snapshot = new ManifestSnapshot(xml, manifestSummary(xml));
       manifestSnapshot = snapshot;
       manifestSession = current;
     }
     return manifestSnapshot;
+  }
+
+  /** Decode with resource names but without JADX's class alias substitution. */
+  static String manifestText(ResourceFile resource) {
+    var decompiler = resource.getDecompiler();
+    // BinaryXMLParser resolves android:name against its root's class identities
+    // and replaces raw '$' and relative names with Java-style aliases. A fresh
+    // root owns no classes, while its resource-name table preserves reference
+    // rendering from the loaded target.
+    RootNode root = new RootNode(decompiler.getArgs());
+    root.getConstValues().setResourcesNames(decompiler.getRoot().getConstValues().getResourcesNames());
+    try {
+      return ResourcesLoader.decodeStream(resource,
+          (size, input) -> new BinaryXMLParser(root).parse(input).getCodeStr());
+    } catch (jadx.core.utils.exceptions.JadxException failure) {
+      throw new IllegalArgumentException("Root AndroidManifest.xml did not decode as text", failure);
+    }
   }
 
   /** One parsed XML owner supplies namespace-aware values alongside the exact decoded text. */
@@ -270,7 +495,7 @@ class ReaJadxBridge {
                 .map(Object::toString).collect(Collectors.joining(", "))
                 + "): " + method.getReturnType().toString();
             return new MethodSnapshot(name, rawName, shortId, List.copyOf(bodyAbsenceMarkers), Map.of(
-                "name", name, "signature", signature,
+                "name", name, "raw_name", rawName, "signature", signature,
                 "dex_descriptor", descriptor,
                 "is_constructor", method.isConstructor(), "def_pos", 0));
           }).toList();
@@ -280,8 +505,11 @@ class ReaJadxBridge {
           List<Map<String, Object>> valuedFields = new ArrayList<>();
           boolean anyValue = false;
           for (FieldNode field : orderedFields) {
+            // Raw DEX identity for mapping lookups; the display type can carry generics.
             Map<String, Object> entry = Map.of("name", field.getAlias(),
-                "type", field.getType().toString(), "def_pos", 0);
+                "raw_name", field.getFieldInfo().getName(),
+                "type", field.getType().toString(),
+                "dex_type", TypeGen.signature(field.getFieldInfo().getType()), "def_pos", 0);
             fields.add(entry);
             Map<String, Object> value = dexStaticValue(field);
             if (value == null) valuedFields.add(entry);
@@ -293,10 +521,11 @@ class ReaJadxBridge {
             }
           }
           List<String> inner = node.getInnerClasses().stream().map(ClassNode::getFullName).toList();
+          List<String> innerRaw = node.getInnerClasses().stream().map(ClassNode::getRawName).toList();
           Map<String, Object> summary = Map.of(
               "full_name", cls.getFullName(), "raw_name", cls.getRawName(), "name", cls.getName(),
               "method_count", methods.size(), "field_count", fields.size(),
-              "inner_class_count", inner.size(), "inner_classes", inner,
+              "inner_class_count", inner.size(), "inner_classes", inner, "inner_class_raw_names", innerRaw,
               "methods", methods.stream().map(MethodSnapshot::summary).toList(), "fields", List.copyOf(fields));
           // DEX static values are opt-in, so method and reference lookups keep the member-only reply.
           Map<String, Object> summaryWithValues = summary;
@@ -470,6 +699,8 @@ class ReaJadxBridge {
         "available_processors", Runtime.getRuntime().availableProcessors(),
         "java_version", System.getProperty("java.version"),
         "metadata_scope", "parsed_members"));
+    if (name.equals("rea_native_declarations"))
+      return json(nativeDeclarations(Path.of(string(args, "path"))));
     JadxSession current = session();
     if (name.equals("get_app_info")) return json(manifest(current).summary());
     if (name.equals("get_android_manifest"))
@@ -581,7 +812,7 @@ class ReaJadxBridge {
     SessionHolder holder = new SessionHolder(defaults);
     ServerCapabilities capabilities = new ServerCapabilities(
         new ServerCapabilities.Tools(null), null, null, null, null, null, null, Map.of());
-    Server server = new Server(new Implementation("rea-jadx-bridge", "7", null, null, null),
+    Server server = new Server(new Implementation("rea-jadx-bridge", "9", null, null, null),
         new ServerOptions(capabilities), "", ignored -> Unit.INSTANCE);
     SessionToolsKt.registerSessionTools(server, holder);
     ClassToolsKt.registerClassTools(server, holder);
@@ -601,6 +832,11 @@ class ReaJadxBridge {
         new ToolSchema(null, new kotlinx.serialization.json.JsonObject(Map.of()), List.of(), null),
         "Observed worker JVM and metadata scope", null, null, null, null, null, null);
     server.addTool(diagnostics, (connection, request, continuation) -> bridge.handle("rea_jvm_status", request.getArguments()));
+    registerBridgeTool(server, bridge, "rea_native_declarations",
+        new ToolSchema(null, new kotlinx.serialization.json.JsonObject(Map.of("path",
+            new kotlinx.serialization.json.JsonObject(Map.of("type",
+                kotlinx.serialization.json.JsonElementKt.JsonPrimitive("string"))))), List.of("path"), null),
+        "Original ACC_NATIVE declarations from the admitted APK's standard root DEX members, without loading or decompiling the APK.");
     for (String name : List.of("get_app_info", "get_android_manifest")) {
       String description = name.equals("get_app_info")
           ? "Namespace-aware summary of the exact root AndroidManifest.xml resource."

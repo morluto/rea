@@ -232,6 +232,48 @@ cliTest(
 );
 
 cliTest(
+  "explains an unreadable v1 signer comparison through CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-apk-v1-unknown-");
+    const path = join(root, "unreadable-v1.apk");
+    await writeFile(
+      path,
+      withSigningBlock(
+        await zipWith([
+          { name: "META-INF/CERT.SF", data: "Signature-Version: 1.0" },
+          { name: "META-INF/CERT.RSA", data: "not pkcs7" },
+        ]),
+        [{ id: APK_SIGNATURE_V2_ID, value: v2SchemeValue(LEAF_CERTIFICATE) }],
+      ),
+    );
+    const run = await cli.run({
+      arguments: ["inspect-apk-signature", path, "--json"],
+    });
+    expect(run.exitCode, run.stderr).toBe(0);
+    const call = await cli.sharedMcpCall!();
+    const mcp = await call("inspect_apk_signature", {
+      path,
+      detail: "complete",
+    });
+    expect(mcp.isError).not.toBe(true);
+    for (const evidence of [
+      completeEvidence(run.json),
+      completeEvidence(mcp.structuredContent),
+    ]) {
+      expect(
+        evidence.normalized_result.posture.v1_signers_match_block_signers,
+      ).toBeNull();
+      expect(
+        evidence.normalized_result.schemes.v1.signers[0]?.decode_error,
+      ).toContain("malformed PKCS#7");
+      expect(evidence.limitations).toContain(
+        "v1_signers_match_block_signers is null: one or more v1 signer identities are unknown; inspect the v1 signer records for details.",
+      );
+    }
+  },
+);
+
+cliTest(
   "keeps a subjectKeyIdentifier v1 signer out of the posture match, as apksig cannot resolve it",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-apk-v1-ski-");

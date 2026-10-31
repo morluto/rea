@@ -72,14 +72,17 @@ code-point order. Dependency manifests remain package observations but do not
 declare Electron main or renderer entries. If only dependency manifests are
 present, the inventory artifact remains the graph root.
 
-Package observations keep the legacy `renderer` property as a derived entrypoint
-candidate: the first nonempty string from `renderer`, `browser`, then `module`.
-It does not assert that the source declares a literal `renderer` field.
-`renderer_declarations` records the actual present fields: strings, including
-empty strings, remain exact; non-string values use `{ "status": "non-string" }`
+Package observations use `renderer_declarations` to record the actual present
+fields: strings, including empty strings, remain exact; non-string values use `{ "status": "non-string" }`
 without copying nested browser mappings. An empty record means no such fields
 were present; `null` means package metadata was invalid or unavailable. Renderer
-role mechanisms and package load edges name the field that supplied the candidate.
+role mechanisms and package load edges name the field that supplied the candidate,
+selected as the first nonempty string from `renderer`, `browser`, then `module`.
+The package load edge retains `declared_path`, `source_field`, and resolution
+facts for that selection. New analyses no longer emit the derived package
+`renderer` alias; consumers must read declarations for source metadata and load
+edges for the selected candidate. Previously retained Evidence keeps its original
+properties and remains readable without migration.
 
 ## Select sources before analysis
 
@@ -361,6 +364,13 @@ Selected bounded text is then parsed as inert data to recover:
   relative to the calling module; string worker and service-worker paths use
   the document base URL or Node's working directory, which static analysis
   does not establish, so they keep their expression and stay unresolved);
+- Vite preload dependency tables (`__vite__mapDeps`): `./` entries resolve
+  relative to the importing chunk; base-relative entries such as
+  `assets/chunk.js` carry a `vite-output:` specifier and resolve under the one
+  ancestor directory of the importer that holds them, the build output
+  directory. A file found there but not analyzed, such as a stylesheet, stays
+  `unavailable` with its path. Selecting only the assets directory leaves them
+  `not-found`;
 - route, network endpoint, storage, and vendor-marker observations;
 - local source-map declarations and original
   source names and content digests;
@@ -550,6 +560,8 @@ alternative object. A traced invocation whose key, API object or world stays
 unresolved or guarded keeps the call's own unresolved observation.
 Unknown spreads, reassigned bindings, accessors,
 dynamic channels and unsupported syntax do not become exact implementations.
+Literal switch cases retain their selection conditions. Possible fallthrough
+remains partial; dynamic case expressions remain unknown.
 This pass neither executes the bundle nor proves that runtime guards pass.
 An ambiguous or unresolved handler retains its channel registration but does
 not acquire a path to one arbitrarily selected callback. Unknown factory

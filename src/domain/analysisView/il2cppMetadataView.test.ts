@@ -278,6 +278,10 @@ it.each([{ method_addresses: undefined }, { binary: undefined }])(
 );
 
 it.each([
+  { types: [{ ...report.types[0]!, declaring_type: 0 }, report.types[1]!] },
+  { types: [{ ...report.types[0]!, declaring_type: 1 }, report.types[1]!] },
+  { types: [report.types[0]!, { ...report.types[1]!, declaring_type: 999 }] },
+  { methods: [{ name: "Run", declaring_type: 999 }] },
   { fields: [{ name: "bad", declaring_type: 2 }] },
   { parameters: [{ name: "bad", method: 1 }] },
   { string_literals: [{ value: null, value_base64: null }] },

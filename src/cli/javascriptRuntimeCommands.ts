@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { Cli, z } from "incur";
 
 import {
@@ -75,7 +76,7 @@ export const registerJavaScriptRuntimeObservationCommands = (
               "list_javascript_runtime_targets",
               signal,
               "V8 Inspector resources",
-            );
+            ).then(projectCliAnalysisResult);
           },
         ),
       ),
@@ -123,7 +124,7 @@ export const registerJavaScriptRuntimeObservationCommands = (
               "observe_javascript_runtime",
               signal,
               "V8 Inspector resources",
-            );
+            ).then(projectCliAnalysisResult);
           },
         ),
       ),

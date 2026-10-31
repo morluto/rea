@@ -14,7 +14,10 @@ import {
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
-import { analysisTextPage } from "./analysisViewText.js";
+import {
+  analysisTextPage,
+  analysisTextPageItemSchema,
+} from "./analysisViewText.js";
 
 /** Retained inferred candidates or exact text; offsets for text count UTF-16 code units. */
 export const evmViewRequestSchema = z.strictObject({
@@ -26,7 +29,7 @@ export const evmViewRequestSchema = z.strictObject({
 
 export const evmViewItemSchema = z.union([
   evmInterfaceSchema.shape.functions,
-  z.strictObject({ text: z.string(), unit: z.literal("utf16-code-units") }),
+  analysisTextPageItemSchema,
 ]);
 
 /** Complete inferred interface facts without the unrequested hex or duplicated stdout. */
@@ -63,11 +66,11 @@ export const projectEvmInterfaceView = (
   const parsed = parseAnalysisViewResult(evmInterfaceSchema, parent);
   if (!parsed.ok) return parsed;
   const report = parsed.value;
+  const subject = parent.subject;
   if (
-    parent.subject == null ||
-    parent.subject.format !== "file" ||
-    parent.subject.local_path !== report.artifact.path ||
-    parent.subject.digest.sha256 !== report.artifact.sha256
+    subject == null ||
+    subject.format !== "file" ||
+    subject.digest.sha256 !== report.artifact.sha256
   )
     return err(
       analysisViewInputError([
@@ -75,7 +78,7 @@ export const projectEvmInterfaceView = (
           path: ["source", "subject"],
           reason: "invalid_value",
           message:
-            "EVM parent subject must identify the report's exact carrier path and SHA-256.",
+            "EVM parent subject must identify the report's carrier format and SHA-256.",
         },
       ]),
     );

@@ -385,6 +385,10 @@ const assertModeOutcome = (
     expect(result).toMatchObject({
       error: { capturedOutput: { stderr: "module.wasm: invalid bytes\n" } },
     });
+  if (mode === "malformed")
+    expect(result).toMatchObject({
+      error: { capturedOutput: { stdout: "unexpected producer output" } },
+    });
   if (mode === "malformed-wat" || mode === "wat-warning")
     expect(result).toMatchObject({
       error: {

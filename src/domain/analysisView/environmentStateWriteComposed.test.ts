@@ -300,3 +300,77 @@ it(
     expect(reads).toBe(n + 2);
   },
 );
+
+describe("slug spellings", () => {
+  it("spells & in a slug part as the word only when the part says so", () => {
+    const parts = (ampersand?: "and") => [
+      { text: "/dashboards/f/" },
+      { from: "uid", as: "value" as const },
+      { text: "/" },
+      {
+        from: "title",
+        as: "slug" as const,
+        ...(ampersand === undefined ? {} : { ampersand }),
+      },
+    ];
+    const folder = { uid: "u1", title: "Tide & Wind" };
+    expect(composedValue(parts("and"), folder)).toBe(
+      "/dashboards/f/u1/tide-and-wind",
+    );
+    expect(composedValue(parts(), folder)).toBe("/dashboards/f/u1/tide-wind");
+  });
+
+  it("reads an address whose uid is its title's slug as held entities spell it", () => {
+    const held = [
+      {
+        uid: "a1b2c3",
+        title: "Lighthouse Rota",
+        url: "/dashboards/f/a1b2c3/lighthouse-rota",
+      },
+    ];
+    const created = {
+      uid: "scratch-pier",
+      title: "Scratch Pier",
+      url: "/dashboards/f/scratch-pier/scratch-pier",
+    };
+    const rules: FieldRule[] = [
+      { field: "uid", rule: "echo" },
+      { field: "title", rule: "echo" },
+    ];
+    expect(createdComposer(created, rules, held)("url")).toEqual({
+      field: "url",
+      rule: "composed",
+      parts: [
+        { text: "/dashboards/f/" },
+        { from: "uid", as: "value" },
+        { text: "/" },
+        { from: "title", as: "slug" },
+      ],
+    });
+    expect(
+      createdComposer(created, rules, [
+        {
+          ...held[0]!,
+          uid: "lighthouse-rota",
+          url: "/dashboards/f/lighthouse-rota/lighthouse-rota",
+        },
+      ])("url"),
+    ).toBeUndefined();
+  });
+
+  it("reads no address that more sources spell than it can tell apart", () => {
+    const fields = Object.fromEntries(
+      Array.from({ length: 40 }, (_, index) => [
+        `alias${String(index)}`,
+        "harbour-notes",
+      ]),
+    );
+    const rules: FieldRule[] = Object.keys(fields).map((field) => ({
+      field,
+      rule: "echo",
+    }));
+    const created = { ...fields, url: "/notes/harbour-notes/harbour-notes" };
+    const held = [{ ...fields, url: "/notes/harbour-notes/harbour-notes" }];
+    expect(createdComposer(created, rules, held)("url")).toBeUndefined();
+  });
+});

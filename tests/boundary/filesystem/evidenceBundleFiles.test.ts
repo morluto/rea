@@ -1,4 +1,5 @@
 import {
+  lstat,
   mkdir,
   readdir,
   readFile,
@@ -61,6 +62,27 @@ const bundle = (result = true) =>
     ),
   ]);
 
+it("preserves tagged refusal JSON without interpreting Evidence-shaped fields", async () => {
+  const root = await createTestTempDirectory("rea-refused-delivery-");
+  const refusal = {
+    code: "unreadable_output",
+    evidence_id: "caller-selected diagnostic",
+    normalized_result: { partial: true },
+  };
+  const delivered = await publishCliAnalysisEvidence(
+    { ok: false, error: refusal },
+    {
+      providerId: "fixture",
+      operation: "inspect_artifact",
+      signal: new AbortController().signal,
+      detail: "summary",
+      evidenceOutput: join(root, "refused.json"),
+    },
+  );
+  expect(delivered).toBe(refusal);
+  expect(await readdir(root)).toEqual([]);
+});
+
 it("preserves direct duplicate rejection and CLI identity merging for repeated inspection sources", async () => {
   const root = await createTestTempDirectory("rea-repeated-delivery-");
   const input = join(root, "input.txt");
@@ -91,14 +113,17 @@ it("preserves direct duplicate rejection and CLI identity merging for repeated i
     deliverAnalysisEvidence(complete, join(root, "direct.json")),
   ).rejects.toBeInstanceOf(DuplicateEvidenceRecordError);
   const path = join(root, "cli.json");
-  const delivered = await publishCliAnalysisEvidence(complete, {
-    providerId: "fixture",
-    operation: "inspect_artifact",
-    signal: new AbortController().signal,
-    detail: "complete",
-    evidenceOutput: path,
-    sourceEvidence: [withEvidenceCallerInputPath(complete, "./old"), source],
-  });
+  const delivered = await publishCliAnalysisEvidence(
+    { ok: true, value: complete },
+    {
+      providerId: "fixture",
+      operation: "inspect_artifact",
+      signal: new AbortController().signal,
+      detail: "complete",
+      evidenceOutput: path,
+      sourceEvidence: [withEvidenceCallerInputPath(complete, "./old"), source],
+    },
+  );
   expect(delivered).toEqual(complete);
   const saved = await readEvidenceBundle(path);
   if (!saved.ok) throw saved.error;
@@ -126,13 +151,16 @@ it("retains a malformed artifact parent and refuses publication through both del
   );
   if (direct.ok) throw new Error("Expected invalid artifact closure");
   const projected = projectAnalysisError(direct.error);
-  const cli = await publishCliAnalysisEvidence(evidence, {
-    providerId: "fixture",
-    operation: "inspect_artifact",
-    signal: new AbortController().signal,
-    detail: "complete",
-    evidenceOutput: join(root, "cli.json"),
-  });
+  const cli = await publishCliAnalysisEvidence(
+    { ok: true, value: evidence },
+    {
+      providerId: "fixture",
+      operation: "inspect_artifact",
+      signal: new AbortController().signal,
+      detail: "complete",
+      evidenceOutput: join(root, "cli.json"),
+    },
+  );
   expect(cli).toEqual(projected);
   expect(JSON.stringify(projected)).toContain(evidence.evidence_id);
   expect(await readdir(root)).toEqual([]);
@@ -859,6 +887,41 @@ describe("evidence bundle process-capture payloads", () => {
   );
 });
 
+it.each([true, false])(
+  "refuses symlink exports in both overwrite modes (target exists: %s)",
+  async (targetExists) => {
+    const directory = await createTestTempDirectory("rea-evidence-link-");
+    const outside = join(directory, "outside");
+    await mkdir(outside);
+    const outsidePath = join(outside, "bundle.json");
+    const encoded = serializeEvidenceBundle(bundle());
+    if (targetExists) await writeFile(outsidePath, encoded);
+    const link = join(directory, "escaped.json");
+    await symlink(outsidePath, link);
+    if (targetExists)
+      expect(await readEvidenceBundle(link)).toMatchObject({
+        ok: true,
+        value: bundle(),
+      });
+    for (const overwrite of [false, true]) {
+      expect(await writeBundle(bundle(), link, overwrite)).toMatchObject({
+        ok: false,
+        error: { _tag: "EvidenceFileError", reason: "not-file", path: link },
+      });
+      expect((await lstat(link)).isSymbolicLink()).toBe(true);
+      expect((await readdir(directory)).sort()).toEqual([
+        "escaped.json",
+        "outside",
+      ]);
+      expect(await readdir(outside)).toEqual(
+        targetExists ? ["bundle.json"] : [],
+      );
+      if (targetExists)
+        expect(await readFile(outsidePath, "utf8")).toBe(encoded);
+    }
+  },
+);
+
 describe("evidence bundle filesystem adapter", () => {
   it.skipIf(process.platform === "win32").each(["/", "/."])(
     "preserves the directory requirement of a missing output ending in %s",
@@ -906,24 +969,6 @@ describe("evidence bundle filesystem adapter", () => {
     });
     expect(await writeBundle(evidenceBundle, path, true)).toMatchObject({
       ok: true,
-    });
-  });
-
-  it("reads the caller-selected symlink target and refuses to replace a symlink", async () => {
-    const directory = await createTestTempDirectory("rea-evidence-");
-    const outside = join(directory, "outside");
-    await mkdir(outside);
-    const outsidePath = join(outside, "bundle.json");
-    await writeFile(outsidePath, serializeEvidenceBundle(bundle()));
-    const link = join(directory, "escaped.json");
-    await symlink(outsidePath, link);
-    expect(await readEvidenceBundle(link)).toMatchObject({
-      ok: true,
-      value: bundle(),
-    });
-    expect(await writeBundle(bundle(), link, true)).toMatchObject({
-      ok: false,
-      error: { _tag: "EvidenceFileError", reason: "not-file" },
     });
   });
 

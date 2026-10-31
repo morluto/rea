@@ -26,7 +26,10 @@ import type {
   AnalysisViewRequest,
   UnsignedAnalysisView,
 } from "./analysisView.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  ANALYSIS_VIEW_PAGE_BUDGET_RECOVERY,
+  analysisViewInputError,
+} from "./analysisViewErrors.js";
 import {
   boundedViewMessages,
   completeWithinViewCoverage,
@@ -344,11 +347,8 @@ export const projectJavaScriptRoutesView = (
       path: identity.data.input_path,
       sha256: identity.data.root_artifact_sha256,
     };
-    if (
-      parent.subject != null &&
-      (parent.subject.local_path !== artifact.path ||
-        parent.subject.digest.sha256 !== artifact.sha256)
-    )
+    const subject = parent.subject;
+    if (subject != null && subject.digest.sha256 !== artifact.sha256)
       return err(
         inputError(
           "Parent subject does not match its application artifact identity.",
@@ -407,6 +407,7 @@ export const projectJavaScriptRoutesView = (
           limit_bytes: PAGE_BYTES,
           collection: view.collection,
         },
+        ANALYSIS_VIEW_PAGE_BUDGET_RECOVERY,
       ),
     );
   if (view.collection === "summary") {

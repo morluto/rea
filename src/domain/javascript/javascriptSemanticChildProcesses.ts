@@ -13,6 +13,7 @@ import {
   type JavaScriptExpressionShapeResolver,
 } from "./javascriptSemanticExpressionShapes.js";
 import {
+  readExactJavaScriptLiteral,
   semanticStaticPropertyName,
   staticJavaScriptTruthiness,
   staticObjectProperty,
@@ -68,8 +69,10 @@ export const collectJavaScriptSemanticChildProcesses = (
   state: JavaScriptSemanticAnalysisState,
   callables: readonly JavaScriptSemanticCallable[],
 ): ChildProcessAnalysis => {
-  const candidates = collectSpawns(program, state, callables);
   const context = createSemanticExpressionShapeResolver(state);
+  const candidates = collectSpawns(program, state, callables).filter(
+    (candidate) => !forkRejectsStdioArray(candidate, context),
+  );
   const childProcessSpawns = candidates.map((candidate) =>
     immutableSpawn(candidate, context),
   );
@@ -146,7 +149,7 @@ const immutableSpawn = (
     projectedResultBindings: candidate.projectedResultBindings,
     command,
     argvCount,
-    environmentSupplied: objectHasProperty(options, "env"),
+    environmentSupplied: environmentSupplied(options, context),
     stdioMode: stdioMode(options, candidate.method, context),
     resolution: command === null ? "partial" : "complete",
   };
@@ -403,13 +406,21 @@ const spawnArguments = (
   };
 };
 
-const objectHasProperty = (object: t.Node | undefined, name: string): boolean =>
-  t.isObjectExpression(object) &&
-  object.properties.some(
-    (property) =>
-      !t.isSpreadElement(property) &&
-      semanticStaticPropertyName(property.key, property.computed) === name,
-  );
+/**
+ * Node replaces a falsy `options.env` with a copy of the parent environment, so
+ * a nullish, empty-string, zero or `false` value passes the whole environment
+ * through instead of supplying one.
+ */
+const environmentSupplied = (
+  options: t.Node | undefined,
+  context: ChildSpawnContext,
+): boolean => {
+  const lookup = staticObjectProperty(options, "env", context.isNullish);
+  if (lookup.status !== "explicit") return false;
+  const value = unwrapJavaScriptExpression(lookup.value).node;
+  if (context.isNullish(value)) return false;
+  return staticJavaScriptTruthiness(value) !== false;
+};
 
 const stdioMode = (
   options: t.Node | undefined,
@@ -434,6 +445,40 @@ const stdioMode = (
   if (method === "fork" && staticJavaScriptTruthiness(value) !== undefined)
     return unsetStdioMode(expression, method, context);
   return "dynamic";
+};
+
+/**
+ * Node's `fork` requires an explicit `stdio` array to carry the IPC channel. An
+ * array that provably omits `"ipc"` throws ERR_CHILD_PROCESS_IPC_REQUIRED
+ * synchronously, before any child process exists, so it is not a spawn at all.
+ * A string `stdio` is normalised with `"ipc"` appended, so only the array form
+ * can omit it; a spread or unreadable element may still supply the channel and
+ * is therefore left alone.
+ */
+const forkRejectsStdioArray = (
+  candidate: SpawnCandidate,
+  context: ChildSpawnContext,
+): boolean => {
+  if (candidate.method !== "fork") return false;
+  const { options } = spawnArguments(candidate, context);
+  if (options === undefined) return false;
+  const expression = unwrapJavaScriptExpression(options).node;
+  if (context.isNullish(expression)) return false;
+  const lookup = staticObjectProperty(expression, "stdio", context.isNullish);
+  if (lookup.status !== "explicit") return false;
+  const value = unwrapJavaScriptExpression(lookup.value).node;
+  if (!t.isArrayExpression(value)) return false;
+  const literals = value.elements.map((element) =>
+    element === null || t.isSpreadElement(element)
+      ? undefined
+      : readExactJavaScriptLiteral(element),
+  );
+  if (literals.some((literal) => literal === undefined || !literal.found))
+    return false;
+  return !literals.some(
+    (literal) =>
+      literal !== undefined && literal.found && literal.value === "ipc",
+  );
 };
 
 /**

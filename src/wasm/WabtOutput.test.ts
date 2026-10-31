@@ -9,6 +9,42 @@ const golden = () =>
     new URL("../../tests/fixtures/wasm/objdump.txt", import.meta.url),
     "utf8",
   );
+it("corroborates a blank custom name with bounded invalid UTF-8 bytes", () => {
+  const bytes = Buffer.from("0061736d01000000000a02fffe7061796c6f6164", "hex");
+  const dump = [
+    "",
+    "module.wasm:\tfile format wasm 0x1",
+    "",
+    "Sections:",
+    "",
+    "   Custom start=0x0000000a end=0x00000014 (size=0x0000000a) ",
+    "Section Details:",
+    "",
+  ].join("\n");
+  const parsed = parseWabtOutput(dump, bytes.length, [], [], bytes);
+  expect(parsed.invalidNameEnds).toEqual([13]);
+  expect(parsed.sections).toMatchObject([{ kind: "Custom", description: "" }]);
+  const valid = Buffer.from(bytes);
+  valid[11] = 0x61;
+  valid[12] = 0x62;
+  expect(() => parseWabtOutput(dump, valid.length, [], [], valid)).toThrow(
+    /not corroborated/u,
+  );
+  expect(() => parseWabtOutput(dump, bytes.length, [])).toThrow(
+    /not corroborated/u,
+  );
+  const mixed = Buffer.concat([bytes, Buffer.from("00050174616263", "hex")]);
+  const mixedDump = dump.replace(
+    "\nSection Details:",
+    '   Custom start=0x00000016 end=0x0000001b (size=0x00000005) "t"\n\nSection Details:',
+  );
+  expect(
+    parseWabtOutput(mixedDump, mixed.length, ["t"], [], mixed).sections,
+  ).toMatchObject([
+    { kind: "Custom", description: "" },
+    { kind: "Custom", description: '"t"' },
+  ]);
+});
 it("retains real WABT section ranges, custom section identity and original header output", async () => {
   const text = await golden();
   const headers = text.slice(0, text.indexOf("Section Details:\n"));

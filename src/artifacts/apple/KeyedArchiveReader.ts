@@ -48,6 +48,7 @@ import { ArtifactResourceScope } from "../ArtifactResourceScope.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { translateArtifactFailure } from "../ArtifactOperationFailure.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 
 import { decodeXmlPlistText } from "../../domain/propertyListXmlText.js";
 import {
@@ -59,6 +60,19 @@ import { estimateBinaryPlistExpansion } from "./PropertyListDecodeBudget.js";
 const MAX_BYTES = 64 * 1024 * 1024;
 /** Decoded representation budget, the same 8:1 ratio Interface Builder uses. */
 const MAX_DECODE_BYTES = 8 * MAX_BYTES;
+
+/** Share typed selector validation across bundle and standalone reads. */
+const parseKeyedArchiveInput = (parameters: unknown) => {
+  const parsed = keyedArchiveInputSchema.safeParse(parameters);
+  if (!parsed.success)
+    throw analysisInputErrorFromIssues(
+      "inspect_keyed_archive",
+      parsed.error.issues,
+      parameters,
+      { cause: parsed.error },
+    );
+  return parsed.data;
+};
 
 /** Parse inert plist bytes, preserving data and dates with explicit typed values. */
 export const decodeKeyedArchiveBytes = (
@@ -237,21 +251,18 @@ export const inspectStandaloneKeyedArchive = (input: {
   readonly signal?: AbortSignal;
 }) =>
   input.resources.run(async () => {
-    const selected = keyedArchiveInputSchema.parse(input.parameters);
+    const selected = parseKeyedArchiveInput(input.parameters);
     const selectedBasename = basename(input.selectedPath);
     const physicalBasename = basename(input.path);
-    if (
-      selected.path !== "." &&
-      selected.path !== selectedBasename &&
-      selected.path !== physicalBasename
-    )
+    const basenames = [...new Set([selectedBasename, physicalBasename])];
+    if (selected.path !== "." && !basenames.includes(selected.path))
       throw new AnalysisInputError("inspect_keyed_archive", undefined, [
         {
           path: ["path"],
           reason: "invalid_value",
           message:
             "For an active plist, path must select that archive (omit path or use its basename).",
-          expected: [selectedBasename, physicalBasename],
+          expected: basenames.length === 1 ? selectedBasename : basenames,
         },
       ]);
     await assertStandaloneArchiveSelection(
@@ -347,7 +358,7 @@ const readSelectedKeyedArchive = async (
   input: BundleKeyedArchiveInput,
   reader: DirectoryArtifactReader,
 ) => {
-  const selected = keyedArchiveInputSchema.parse(input.parameters);
+  const selected = parseKeyedArchiveInput(input.parameters);
   if (
     selected.path.startsWith("/") ||
     selected.path

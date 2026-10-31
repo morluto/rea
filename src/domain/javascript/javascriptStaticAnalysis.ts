@@ -1,3 +1,4 @@
+import { createXhrOpenRequestQuery } from "./javascriptNetworkRequests.js";
 import { uniqueSortedBy } from "../canonicalOrdering.js";
 import * as t from "@babel/types";
 import { JavaScriptRouteScan } from "./javascriptRouteScan.js";
@@ -72,8 +73,7 @@ import {
 import { createJavaScriptRpcScan } from "./javascriptRpcEndpoints.js";
 import {
   hasUncertainTypeOnlyModuleSideEffect,
-  isTypeOnlyExportDeclaration,
-  isTypeOnlyImportDeclaration,
+  semanticStaticModuleSource,
   semanticImportEqualsSpecifier,
 } from "./javascriptModuleDeclaration.js";
 import {
@@ -115,6 +115,7 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
     bindings,
   );
   const findings: JavaScriptFindingContext = {
+    xhrOpenRequest: createXhrOpenRequestQuery(index),
     pathIntrinsics: createStaticPathIntrinsicQuery(index),
     browserWindowReceiver: (node, site, suffix) =>
       resolveElectronBrowserWindowReceiver(node, site, suffix, findings, index),
@@ -367,28 +368,16 @@ const inspectNode = (
     const specifier = semanticImportEqualsSpecifier(node);
     if (specifier !== null)
       addReference(findings, { node, kind: "require", specifier });
-  } else if (
-    (t.isImportDeclaration(node) || t.isExportAllDeclaration(node)) &&
-    node.source !== undefined &&
-    !(t.isImportDeclaration(node) && isTypeOnlyImportDeclaration(node)) &&
-    !(t.isExportAllDeclaration(node) && isTypeOnlyExportDeclaration(node))
-  )
-    addReference(findings, {
-      node,
-      kind: "static-import",
-      specifier: node.source.value,
-    });
-  else if (
-    t.isExportNamedDeclaration(node) &&
-    node.source != null &&
-    !isTypeOnlyExportDeclaration(node)
-  )
-    addReference(findings, {
-      node,
-      kind: "static-import",
-      specifier: node.source.value,
-    });
-  else if (t.isImportExpression(node))
+  } else {
+    const moduleSource = semanticStaticModuleSource(node);
+    if (moduleSource !== null)
+      addReference(findings, {
+        node,
+        kind: "static-import",
+        specifier: moduleSource.value,
+      });
+  }
+  if (t.isImportExpression(node))
     addReference(findings, {
       node,
       kind: "dynamic-import",

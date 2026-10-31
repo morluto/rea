@@ -59,6 +59,13 @@ const check = (label, selected, pattern, allow = []) => {
     );
 };
 
+// Prerequisite inspection lifetime is an application contract shared by adapters.
+check(
+  "provider-owned inspection lifetime (use src/application/ProviderInspectionScope)",
+  files,
+  /providers\/ProviderInspectionScope\.js/,
+);
+
 check(
   "src/domain uses localeCompare (use compareUnicodeCodePoints)",
   inDir("src/domain/"),

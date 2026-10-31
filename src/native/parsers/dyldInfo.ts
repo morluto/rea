@@ -103,6 +103,16 @@ export const parseDyldImports = (
   return { items, needsNameInventory };
 };
 
+/** Apple prints two spaces after the address; one-space captures remain readable. */
+export const parseDyldExportAddressRow = (
+  line: string,
+): { readonly address: string; readonly text: string } | null => {
+  const match = /^(0x[\da-f]+)(?: {2}|[ \t])(.+)$/isu.exec(line);
+  return match?.[1] === undefined || match[2] === undefined
+    ? null
+    : { address: match[1], text: match[2] };
+};
+
 /** Decode Apple dyld export rows, projecting export offsets to VM addresses. */
 export const parseDyldExports = (
   output: string,
@@ -133,29 +143,31 @@ export const parseDyldExports = (
             : { sourceSymbol: reexport.sourceSymbol }),
         },
       ];
-    const exported = /^(0x[\da-f]+)\s+(.+?)(?:\s+\[([^\]]+)\])?$/isu.exec(line);
-    if (exported?.[1] === undefined || exported[2] === undefined) return [];
-    const rawName = /^0x[\da-f]+\s+(.+)$/isu.exec(line)?.[1];
-    const literalName = rawName !== undefined && knownExportNames.has(rawName);
+    const row = parseDyldExportAddressRow(line);
+    if (row === null) return [];
+    const exported = /^(.+?)(?:\s+\[([^\]]+)\])?$/su.exec(row.text);
+    if (exported?.[1] === undefined) return [];
+    const rawName = row.text;
+    const literalName = knownExportNames.has(rawName);
     // If nm establishes both interpretations, the textual row cannot bind an address or flags.
     // Let the caller retain the exact nm names without guessing which one owns this row.
     if (
       literalName &&
-      exported[3] !== undefined &&
-      knownExportNames.has(exported[2])
+      exported[2] !== undefined &&
+      knownExportNames.has(exported[1])
     )
       return [];
-    const annotation = literalName ? undefined : exported[3];
+    const annotation = literalName ? undefined : exported[2];
     const absolute = /\babsolute\b/u.test(annotation ?? "");
     const address =
       offsets && !absolute
         ? imageBase === null
           ? null
-          : `0x${(BigInt(imageBase) + BigInt(exported[1])).toString(16)}`
-        : canonicalHex(exported[1]);
+          : `0x${(BigInt(imageBase) + BigInt(row.address)).toString(16)}`
+        : canonicalHex(row.address);
     return [
       {
-        name: literalName ? rawName : exported[2],
+        name: literalName ? rawName : exported[1],
         address,
         weak: /\bweak-def\b/u.test(annotation ?? "") ? true : null,
         reexport: false,
@@ -185,7 +197,7 @@ const parseReexportRow = (
   line: string,
   knownNames: ReadonlySet<string>,
 ): ReexportRow | null => {
-  const prefix = /^\[re-export\]\s+/u.exec(line);
+  const prefix = /^\[re-export\] /u.exec(line);
   if (prefix === null) return null;
   const rest = line.slice(prefix[0].length);
   if (rest.length === 0) return null;

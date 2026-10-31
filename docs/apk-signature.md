@@ -195,10 +195,11 @@ share the application workflow, projection, retention and publication owners.
     signature names a different key than the block signature. A key rotation
     keeps v1 (and v2) on the original key, so it reads `true` while
     `schemes_agree_on_signer` reads `false`, with or without v2. `null` when
-    v1 or a block scheme is absent, any signer's identity is unknown (a
+    v1 or a populated block scheme is absent, any signer's identity is unknown (a
     `decode_error`, a `null` certificate or a `subjectKeyIdentifier`
     `SignerInfo`), or the lineage's original certificate cannot be
-    identified; a limitation then says why.
+    identified. When identities or a lineage origin are unknown, limitations
+    explain why; absence is shown in the scheme records.
   - `strongest_scheme`, `rotation_present`, `source_stamp_present`,
     `self_consistent`.
 
@@ -238,6 +239,13 @@ bounded from above by those counts before anything is materialised, and the exac
 serialized size of the report together with its limitations (which repeat
 archive names) is then checked against an 8 MiB output budget (the exact check
 is authoritative); an over-budget report is refused, not truncated.
+
+Signing blocks admit at most 4096 ID/value pairs; at most 4096 signing-relevant
+META-INF entries are retained. These fixed counts, signer/lineage counts and the
+report byte budget return nonretryable `resource_constraint` errors naming the
+effective allowance. This release has no runtime override for them. Waiting for
+an active scan cannot raise a fixed count, and complete CLI JSON cannot raise the
+report budget. Occupied scan-queue capacity remains retryable after a scan finishes.
 
 The whole-file reader allocates the selected snapshot and bounded read scratch;
 total process memory exceeds the selected file's size. It also computes the complete

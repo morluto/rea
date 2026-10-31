@@ -1,5 +1,6 @@
 import { parseWabtInterface } from "./WabtInterface.js";
 import { watString, watStringEnd } from "./WabtString.js";
+import { watCommentEnd } from "./WabtComment.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 interface WabtNameMetadataFailure {
@@ -77,42 +78,20 @@ export const parseWabtWat = (text: string) => {
     "not-present";
   let depth = 0;
   let start = 0;
-  let commentDepth = 0;
-  let lineComment = false;
   let closed = false;
   const boundaries = /[()";]/gu;
   for (let index = 0; index < text.length; index++) {
     // Instructions and whitespace inside a form cannot change its framing.
-    if (depth > 0 && !lineComment && commentDepth === 0) {
+    if (depth > 0) {
       boundaries.lastIndex = index;
       const boundary = boundaries.exec(text);
       if (boundary === null) break;
       index = boundary.index;
     }
     const char = text[index];
-    const next = text[index + 1];
-    if (lineComment) {
-      if (char === "\n") lineComment = false;
-      continue;
-    }
-    if (commentDepth > 0) {
-      if (char === "(" && next === ";") {
-        commentDepth++;
-        index++;
-      } else if (char === ";" && next === ")") {
-        commentDepth--;
-        index++;
-      }
-      continue;
-    }
-    if (char === ";" && next === ";") {
-      lineComment = true;
-      index++;
-      continue;
-    }
-    if (char === "(" && next === ";") {
-      commentDepth++;
-      index++;
+    const commentEnd = watCommentEnd(text, index);
+    if (commentEnd !== undefined) {
+      index = commentEnd - 1;
       continue;
     }
     if (char === '"') {
@@ -174,8 +153,7 @@ export const parseWabtWat = (text: string) => {
     } else if (depth === 0 && char !== undefined && !/\s/u.test(char))
       throw new Error("Unexpected text outside WABT WAT module.");
   }
-  if (depth !== 0 || commentDepth !== 0)
-    throw new Error("Incomplete WABT WAT output.");
+  if (depth !== 0) throw new Error("Incomplete WABT WAT output.");
   return {
     imports,
     exports,

@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisResult.js";
 import { executeComposedWorkflow } from "../../../src/application/WorkflowEvidence.js";
 import { parseAnalysisSnapshot } from "../../../src/domain/analysisSnapshot.js";
 import { ok } from "../../../src/domain/result.js";
@@ -24,7 +25,7 @@ it.each([0, 1, 12])(
         "binary_overview",
         {},
         { snapshotPath },
-      ),
+      ).then(projectCliAnalysisResult),
     );
     expect(current.evidence_links).toHaveLength(1);
     const snapshot = parseAnalysisSnapshot(
@@ -42,7 +43,7 @@ it.each([0, 1, 12])(
         "binary_overview",
         {},
         { snapshotPath },
-      ),
+      ).then(projectCliAnalysisResult),
     );
     expect(unique.evidence_id).toBe(current.evidence_id);
     expect(unique.evidence_links).toEqual(current.evidence_links);
@@ -77,7 +78,7 @@ it.each([0, 1, 12])(
         "binary_overview",
         {},
         { snapshotPath },
-      ),
+      ).then(projectCliAnalysisResult),
     );
     expect(delivered.normalized_result).toEqual(current.normalized_result);
     expect([current.evidence_id, historical.evidence_id]).not.toContain(
@@ -98,7 +99,7 @@ it.each([0, 1, 12])(
         "binary_overview",
         {},
         { snapshotPath },
-      ),
+      ).then(projectCliAnalysisResult),
     );
     expect(refreshed.evidence_id).toBe(delivered.evidence_id);
     expect(refreshed.evidence_links).toEqual(delivered.evidence_links);
@@ -134,7 +135,9 @@ it.each([false, true])(
     };
     try {
       const evidence = parseEvidence(
-        await runDirectAnalysis(dependencies, path, "binary_overview", {}),
+        await runDirectAnalysis(dependencies, path, "binary_overview", {}).then(
+          projectCliAnalysisResult,
+        ),
       );
       expect(evidence.normalized_result).toEqual(summary);
       expect(evidence.confidence).toBe("derived");

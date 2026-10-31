@@ -15,6 +15,7 @@ export const ghidraFixturePath = fileURLToPath(
 );
 
 type FixtureMode =
+  | "unicode_search"
   | "reject_first_connection"
   | "reject_all_connections"
   | "success"

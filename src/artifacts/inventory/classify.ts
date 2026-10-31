@@ -1,3 +1,5 @@
+import type { GodotPckAdmission } from "../GodotPckLocation.js";
+import type { PyInstallerAdmission } from "../pyinstaller/PyInstallerAdmission.js";
 import { assertArtifactSelectedSource } from "../ArtifactSelectedSource.js";
 import { artifactNameForClassification } from "../../domain/artifactNameSelection.js";
 import type { NodeSeaAdmission } from "../nodeSea/NodeSeaAdmission.js";
@@ -51,6 +53,8 @@ type RootInventoryClassification = RootClassification & {
   readonly readerAdmission:
     | StableRegularFileDescriptor
     | NodeSeaAdmission
+    | PyInstallerAdmission
+    | GodotPckAdmission
     | undefined;
 };
 
@@ -161,8 +165,14 @@ export const classifyAndHashRootForInventory = async (
       isZipPackageFormat(format) ||
       format === "mach-o-universal" ||
       format === "godot-pck" ||
+      format === "unityfs" ||
+      format === "uimage" ||
       format === "pyinstaller" ||
-      format === "node-sea";
+      format === "node-sea" ||
+      format === "intel-hex" ||
+      format === "srec" ||
+      format === "esp-image" ||
+      format === "fit";
     outcome = {
       kind: "completed",
       value: {
@@ -202,7 +212,12 @@ const classifyRootFormat = async (
   signal?: AbortSignal,
   asarHeaderAdmission?: AsarHeaderAdmission,
   selectedPath?: string,
-): Promise<ArtifactOccurrence["artifact_format"] | NodeSeaAdmission> => {
+): Promise<
+  | ArtifactOccurrence["artifact_format"]
+  | NodeSeaAdmission
+  | PyInstallerAdmission
+  | GodotPckAdmission
+> => {
   const { handle } = source;
   const probe = createArtifactClassificationProbe(asarHeaderAdmission);
   const chunk = Buffer.alloc(64 * 1024);
@@ -255,7 +270,8 @@ const classifyRootFormat = async (
     (await hasDiskImageSignature(archiveBytes, read))
   )
     return "dmg";
-  if (await embeddedProbes.godotPck(evidence.prefix)) return "godot-pck";
+  const pck = await embeddedProbes.godotPck(evidence.prefix);
+  if (pck !== undefined) return { kind: "godot-pck", source, location: pck };
   const fatEvidence = await readRootFatSliceHeaders(handle, evidence, signal);
   const mzWindowsHeaderSignature = await readRootMzWindowsHeaderSignature(
     handle,
@@ -292,7 +308,15 @@ const classifyRootFormat = async (
     }
     const packaged = await embeddedProbes.pyInstaller();
     abortIfNeeded(signal);
-    if (packaged) return "pyinstaller";
+    // A valid cookie also proves enough bytes for a thin Mach-O identity;
+    // PE and universal Mach-O classification already require stronger proof.
+    if (packaged !== undefined)
+      return {
+        kind: "pyinstaller",
+        source,
+        cookie: packaged,
+        carrierPathDialect: format === "pe" ? "windows" : "posix",
+      };
   }
   return format;
 };

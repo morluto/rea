@@ -1,7 +1,7 @@
+import { permitsCapabilityFallback } from "./CapabilityFallback.js";
 import { addressedValueSchema } from "../domain/native/nativeInventory.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCapabilityUnavailableError,
   AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
@@ -48,9 +48,8 @@ export const resolveXrefsName = async (
   if (!inventory.ok) {
     if (
       operation === "xrefs" &&
-      inventory.error instanceof AnalysisCapabilityUnavailableError &&
-      inventory.error.operation === "list_names" &&
-      !inventory.error.cleanupIncomplete
+      permitsCapabilityFallback(inventory.error) &&
+      inventory.error.operation === "list_names"
     )
       return resolveProcedureAddress(
         async (operation, parameters, signal) => {

@@ -27,12 +27,106 @@ import {
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { sqliteDatabaseSchema } from "../../src/domain/sqlite/sqliteDatabase.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
+import { expectCliMcpEvidenceParity } from "../fixtures/cliMcpEvidenceParity.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest, runFileCli } from "../support/cli/cliFixture.js";
 
 const digest = (bytes: Buffer): string =>
   createHash("sha256").update(bytes).digest("hex");
+
+cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
+  "unions SQLite cell slices with numeric cell paths",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-sqlite-mixed-filter-");
+    const path = join(root, "selected.db");
+    const database = new DatabaseSync(path);
+    try {
+      database.exec(
+        "CREATE TABLE selected (first TEXT, second TEXT); INSERT INTO selected VALUES ('left', 'right')",
+      );
+    } finally {
+      database.close();
+    }
+    const base = "normalized_result.rows.values[0,1]";
+    for (const filter of [
+      `${base}[0,1].value,${base}.1.value`,
+      `${base}.1.value,${base}[0,1].value`,
+    ]) {
+      const result = await cli.run({
+        arguments: [
+          "inspect-sqlite-database",
+          path,
+          "--table",
+          "selected",
+          "--json",
+          "--filter-output",
+          filter,
+        ],
+        environment: { REA_LOG_LEVEL: "silent" },
+      });
+      expect(result.exitCode, result.stdout + result.stderr).toBe(0);
+      expect(result.json).toEqual({
+        normalized_result: {
+          rows: { values: [[{ value: "left" }, { value: "right" }]] },
+        },
+      });
+    }
+    const refused = await cli.run({
+      arguments: [
+        "inspect-sqlite-database",
+        path,
+        "--table",
+        "selected",
+        "--json",
+        "--filter-output",
+        `${base}[0,1].value,${base}.length`,
+      ],
+      environment: { REA_LOG_LEVEL: "silent" },
+    });
+    expect(refused.exitCode).toBe(1);
+    expect(refused.json).toMatchObject({
+      code: "invalid_request",
+      message: expect.stringContaining("non-index property"),
+    });
+  },
+);
+
+cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
+  "projects selected SQLite matrix cells through consecutive output slices",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-sqlite-matrix-filter-");
+    const path = join(root, "selected.db");
+    const database = new DatabaseSync(path);
+    try {
+      database.exec(
+        "CREATE TABLE selected (first TEXT, second TEXT); INSERT INTO selected VALUES ('left', 'right')",
+      );
+    } finally {
+      database.close();
+    }
+    const result = await cli.run({
+      arguments: [
+        "inspect-sqlite-database",
+        path,
+        "--table",
+        "selected",
+        "--column",
+        "second",
+        "--column",
+        "first",
+        "--json",
+        "--filter-output",
+        "normalized_result.rows.values[0,1][0,1].value",
+      ],
+      environment: { REA_LOG_LEVEL: "silent" },
+    });
+    expect(result.exitCode, result.stdout + result.stderr).toBe(0);
+    expect(result.json).toEqual({
+      normalized_result: { rows: { values: [[{ value: "right" }]] } },
+    });
+  },
+);
 
 for (const expectedErrno of ["ELOOP", "ENAMETOOLONG"] as const) {
   cliTest.skipIf(expectedErrno === "ELOOP" && process.platform === "win32")(
@@ -463,7 +557,7 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
         row_limit: limit,
       });
       expect(response.isError, JSON.stringify(response)).not.toBe(true);
-      expect(response.structuredContent).toEqual(result.json);
+      expectCliMcpEvidenceParity(result.json, response.structuredContent, path);
     }
   },
 );
@@ -633,7 +727,11 @@ cliTest
       row_limit: 1,
     });
     expect(response.isError, JSON.stringify(response)).not.toBe(true);
-    expect(response.structuredContent).toEqual(result.json);
+    expectCliMcpEvidenceParity(
+      result.json,
+      response.structuredContent,
+      "selected.db",
+    );
     expect(Buffer.compare(await readFile(path), original)).toBe(0);
   },
 );
@@ -693,7 +791,7 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
       table: "committed",
     });
     expect(response.isError, JSON.stringify(response)).not.toBe(true);
-    expect(response.structuredContent).toEqual(result.json);
+    expectCliMcpEvidenceParity(result.json, response.structuredContent, path);
     const after = await Promise.all(files.map(sourceState));
     expect(after).toEqual(before);
   },
@@ -826,7 +924,6 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
       producer.close();
     }
     const before = await sourceState(path);
-    const { call } = await connectLocalToolsMcp();
     const control = await cli.run({
       arguments: [
         "inspect-sqlite-database",
@@ -872,13 +969,21 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
       ],
       environment: { REA_LOG_LEVEL: "silent" },
     });
-    const response = await call("inspect_sqlite_database", {
+    const input = {
       path,
       schema_scope: "inventory",
       table: "records",
       columns,
       row_limit: 1,
+    };
+    // Admit this fixture's array elements and root members so the test still
+    // reaches SQLite's own capacity boundary rather than transport admission.
+    const { call } = await connectLocalToolsMcp({
+      REA_MCP_MAX_INPUT_ELEMENTS: String(
+        columns.length + Object.keys(input).length,
+      ),
     });
+    const response = await call("inspect_sqlite_database", input);
     const expectedError = {
       code: "resource_constraint",
       category: "resource_constraint",
@@ -1136,7 +1241,7 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
         schema_scope,
       });
       expect(response.isError, JSON.stringify(response)).not.toBe(true);
-      expect(response.structuredContent).toEqual(result.json);
+      expectCliMcpEvidenceParity(result.json, response.structuredContent, path);
     }
     expect(Buffer.compare(await readFile(path), original)).toBe(0);
   },
@@ -1339,7 +1444,7 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
       });
       const response = await call("inspect_sqlite_database", { path });
       expect(response.isError, JSON.stringify(response)).not.toBe(true);
-      expect(response.structuredContent).toEqual(result.json);
+      expectCliMcpEvidenceParity(result.json, response.structuredContent, path);
       expect(Buffer.compare(await readFile(path), original)).toBe(0);
     }
   },

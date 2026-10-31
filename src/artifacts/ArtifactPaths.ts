@@ -47,6 +47,21 @@ export class DestinationCaseCollisionFailure extends ArtifactReaderFailure {
   }
 }
 
+/** The destination rejected a name before a file or directory was acquired. */
+export class DestinationPathUnrepresentableFailure extends ArtifactReaderFailure {
+  constructor(
+    readonly requestedPath: string,
+    options: ErrorOptions,
+  ) {
+    super(
+      "path",
+      `Destination filesystem cannot represent ${pathDiagnostic(requestedPath)}.`,
+      options,
+    );
+    this.name = "DestinationPathUnrepresentableFailure";
+  }
+}
+
 /** Normalize slash-separated logical names; backslashes are literal components. */
 export const normalizeArtifactPath = (input: string): string => {
   if (

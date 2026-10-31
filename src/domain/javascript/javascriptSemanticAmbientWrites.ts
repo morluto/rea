@@ -30,6 +30,7 @@ import {
   semanticPropertyPathKeyMatches,
 } from "./javascriptSemanticPropertyPaths.js";
 import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
+import { semanticRequireLoaderAt } from "./javascriptSemanticRequireOrigin.js";
 import {
   semanticCopiedReferencePath,
   semanticReferenceIterationUnknown,
@@ -772,7 +773,45 @@ export function* indexJavaScriptAmbientWritesSteps(
       retainSemanticAmbientEffect(state, "write", resolved, node);
     }
   }
-  for (const { node, target, browserReceiver, projection } of escapes) {
+  // Settle other ambient effects first. A syntactic resolver call is safe only
+  // if no write or opaque escape can replace the native member anywhere in
+  // this analysis; otherwise retain its receiver escape conservatively.
+  const resolverReceivers: typeof escapes = [];
+  for (const effect of escapes) {
+    const { node, target } = effect;
+    const callee =
+      t.isCallExpression(node) || t.isOptionalCallExpression(node)
+        ? unwrapJavaScriptExpression(node.callee).node
+        : undefined;
+    if (
+      (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)) &&
+      callee.object === target &&
+      t.isIdentifier(target, { name: "require" }) &&
+      isUnshadowedGlobal(target, state, "require") &&
+      semanticStaticPropertyKey(callee.property, callee.computed) === "resolve"
+    ) {
+      resolverReceivers.push(effect);
+      continue;
+    }
+    retainEscapeEffect(effect);
+  }
+  for (const effect of resolverReceivers) {
+    const { node } = effect;
+    if (
+      (t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
+      !state.ambientWrites.covers(["global", "require", "resolve"]) &&
+      !state.ambientEscapes.covers(["global", "require", "resolve"]) &&
+      semanticRequireLoaderAt(node, state, new Set()) === "commonjs-loader"
+    )
+      continue;
+    retainEscapeEffect(effect);
+  }
+  function retainEscapeEffect({
+    node,
+    target,
+    browserReceiver,
+    projection,
+  }: (typeof escapes)[number]): void {
     const resolved = ambientWrites(target, node, true, projection);
     if (
       browserReceiver &&

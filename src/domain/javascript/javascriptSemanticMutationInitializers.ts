@@ -131,7 +131,12 @@ export const semanticTopLevelEffectFollowsCapture = (
     let declarator: t.VariableDeclarator | undefined;
     let child: t.Node | undefined;
     while (node !== undefined) {
-      if (t.isFunction(node) || t.isLoop(node)) return null;
+      if (
+        (t.isFunction(node) &&
+          (child === undefined || !semanticComputedMethodKey(node, child))) ||
+        t.isLoop(node)
+      )
+        return null;
       if (delayedInstanceFieldValue(node, child)) return null;
       if (t.isVariableDeclarator(node)) declarator = node;
       if (t.isStatement(node)) {

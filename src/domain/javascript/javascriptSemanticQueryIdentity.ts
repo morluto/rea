@@ -5,6 +5,7 @@ import type { JavaScriptSemanticGraphNode } from "./javascriptSemanticGraphSchem
 import { uniqueSorted } from "../canonicalOrdering.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import type { JavaScriptSemanticQueryInput } from "./javascriptSemanticQuerySchemas.js";
+import { semanticCallLiteralValues } from "./javascriptSemanticCallLiterals.js";
 
 /** Derive the stable identity for one graph-bound query. */
 export const javaScriptSemanticQueryIdentifier = (
@@ -74,8 +75,12 @@ const seedMatches = (
   if (seed.kind === "application-node")
     return node.application_node_ids.includes(seed.node_id);
   if (seed.kind === "function") return fingerprintFunctions.has(node.node_id);
-  if (seed.kind === "literal")
-    return node.kind === "literal" && node.properties.value === seed.value;
+  if (seed.kind === "literal") {
+    if (node.kind === "literal") return node.properties.value === seed.value;
+    return semanticCallLiteralValues(node).some(
+      (value) => value === seed.value,
+    );
+  }
   if (seed.kind === "property") {
     if (node.kind === "property-slot")
       return node.properties.name === seed.name;

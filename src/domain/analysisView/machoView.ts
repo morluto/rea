@@ -183,7 +183,7 @@ export const projectMachoView = (
       ...(incomplete.length === 0
         ? []
         : [
-            `Native tools did not report exhaustive ${incomplete.join(", ")}; page exhaustion does not establish absence of unreturned rows.`,
+            `Inspection did not establish exhaustive ${incomplete.join(", ")}; page exhaustion does not establish absence of unreturned rows.`,
           ]),
       ...(parent.subject == null
         ? [

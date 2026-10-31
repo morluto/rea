@@ -1,27 +1,104 @@
 import {
   resolveEvidenceInput,
+  resolvePairedEvidenceSources,
   type EvidenceLookup,
 } from "../EvidenceInputResolver.js";
-import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { inspectAnalysisViewValidated } from "../analysisView/AnalysisViewService.js";
+import type { EvidenceFileReadOptions } from "../analysisView/evidenceFileSource.js";
+import type { ArtifactComparisonInput } from "../../contracts/sessionToolSchemas.js";
+import { artifactInventorySummaryViewResultSchema } from "../../domain/analysisView/analysisView.js";
 import {
-  artifactInventorySummaryViewResultSchema,
-  sealAnalysisView,
-} from "../../domain/analysisView/analysisView.js";
+  compareArtifacts,
+  type ArtifactComparisonResult,
+} from "../../domain/artifactComparison.js";
+import { ARTIFACT_COMPARISON_PROVIDER } from "../../domain/comparisonEvidenceIdentity.js";
 import {
   EvidenceIntegrityError,
   EvidenceReferenceError,
 } from "../../domain/evidenceErrors.js";
 import {
-  evidenceSemanticContent,
+  createEvidence,
   rebindEvidenceToTargetPath,
   type Evidence,
 } from "../../domain/evidence.js";
 import { readEvidence } from "../../domain/evidenceValidation.js";
-import { digestCanonicalValue } from "../../domain/canonicalDigest.js";
-import { ARTIFACT_INVENTORY_VIEW_CAVEATS } from "../../domain/analysisView/artifactInventoryViewCaveats.js";
+import { artifactInventorySummaryProjectionIds } from "../../domain/analysisView/artifactInventorySummaryProjection.js";
 import { err, ok, type Result } from "../../domain/result.js";
+
+const OPERATION = "compare_artifacts";
+
+/** Both comparison sides, each resolved to its exact complete inventory owner. */
+export interface ArtifactComparisonSources {
+  readonly left: Evidence;
+  readonly right: Evidence;
+}
+
+/** A completed comparison and the derived Evidence citing both complete inputs. */
+export interface ArtifactComparisonOutcome {
+  readonly comparison: ArtifactComparisonResult;
+  readonly evidence: Evidence;
+}
+
+/**
+ * Select both sides through the shared paired-source owner, authenticate them,
+ * then resolve a summary to its exact retained parent inventory.
+ */
+export const resolveArtifactComparisonSources = async (
+  input: ArtifactComparisonInput,
+  evidenceById: EvidenceLookup | undefined,
+  options: EvidenceFileReadOptions = {},
+): Promise<Result<ArtifactComparisonSources, AnalysisError>> => {
+  return resolvePairedEvidenceSources(input, evidenceById, {
+    ...options,
+    operation: OPERATION,
+    resolveEvidence: (candidate, related, side) => {
+      const authenticated = readEvidence(candidate);
+      return authenticated.ok
+        ? resolveArtifactComparisonEvidence(authenticated.value, related, [
+            side,
+          ])
+        : authenticated;
+    },
+  });
+};
+
+/** Compare resolved inventories and derive Evidence citing both complete owners. */
+export const compareArtifactEvidence = ({
+  left,
+  right,
+}: ArtifactComparisonSources): Result<
+  ArtifactComparisonOutcome,
+  AnalysisError
+> => {
+  let comparison: ArtifactComparisonResult;
+  try {
+    comparison = compareArtifacts(left, right);
+  } catch (cause: unknown) {
+    // Typed causes already name the failed constraint; keep their issues.
+    if (cause instanceof AnalysisError) return err(cause);
+    throw cause;
+  }
+  const leftEvidenceIds = [left.evidence_id];
+  const rightEvidenceIds = [right.evidence_id];
+  return ok({
+    comparison,
+    evidence: createEvidence(undefined, ARTIFACT_COMPARISON_PROVIDER, {
+      predicateType: "rea.artifact-comparison",
+      operation: OPERATION,
+      parameters: {
+        left_evidence_ids: leftEvidenceIds,
+        right_evidence_ids: rightEvidenceIds,
+      },
+      result: comparison,
+      confidence: "derived",
+      authority: "analyst-inference",
+      limitations: comparison.limitations,
+      evidenceLinks: [...leftEvidenceIds, ...rightEvidenceIds],
+    }),
+  });
+};
 
 /**
  * Resolve an already-authenticated artifact summary's exact retained owner.
@@ -30,6 +107,7 @@ import { err, ok, type Result } from "../../domain/result.js";
 export const resolveArtifactComparisonEvidence = (
   evidence: Evidence,
   evidenceById: EvidenceLookup | undefined,
+  path: readonly (string | number)[] = [],
 ): Result<Evidence, AnalysisError> => {
   if (evidence.operation !== "inspect_analysis_view") return ok(evidence);
 
@@ -38,9 +116,9 @@ export const resolveArtifactComparisonEvidence = (
   );
   if (!summary.success)
     return err(
-      new AnalysisInputError("compare_artifacts", undefined, [
+      new AnalysisInputError(OPERATION, undefined, [
         {
-          path: ["evidence"],
+          path: [...path],
           reason: "invalid_value",
           message:
             "Artifact comparison accepts only an artifact inventory summary from inspect_analysis_view.",
@@ -94,7 +172,11 @@ export const resolveArtifactComparisonEvidence = (
     (evidenceId) => (evidenceId === parentId ? presentation : undefined),
   );
   if (!reprojected.ok) return reprojected;
-  if (!summaryProjectionIds(reprojected.value).includes(evidence.evidence_id))
+  if (
+    !artifactInventorySummaryProjectionIds(reprojected.value).includes(
+      evidence.evidence_id,
+    )
+  )
     return mismatch();
   return ok(owner);
 };
@@ -105,49 +187,3 @@ const mismatch = (): Result<never, EvidenceIntegrityError> =>
       "Artifact summary does not match its retained parent inventory.",
     ),
   );
-
-/** Exact shipped projections, rather than arbitrary omission or prose tolerance. */
-const summaryProjectionIds = (current: Evidence): readonly string[] => {
-  const result = artifactInventorySummaryViewResultSchema.parse(
-    current.normalized_result,
-  );
-  const format = result.summary.manifest.root_format;
-  if (
-    format === "godot-pck" ||
-    format === "pyinstaller" ||
-    format === "node-sea"
-  )
-    return [current.evidence_id];
-  const { view_digest: _digest, ...projection } = result;
-  // b395190e4 began disclosing unavailable hashes for ordinary root formats.
-  const beforeHashDisclosure = {
-    ...projection,
-    unknowns: projection.unknowns.filter(
-      (value) => value !== ARTIFACT_INVENTORY_VIEW_CAVEATS.unknownContentHashes,
-    ),
-  };
-  // ce1f4b1bb began carrying traversal coverage and its caveat for these roots.
-  const { source_coverage: _coverage, ...summary } = projection.summary;
-  const beforeTraversalDisclosure = {
-    ...beforeHashDisclosure,
-    summary,
-    unknowns: beforeHashDisclosure.unknowns.filter(
-      (value) => value !== ARTIFACT_INVENTORY_VIEW_CAVEATS.unknownTraversal,
-    ),
-  };
-  return [
-    current.evidence_id,
-    ...[beforeHashDisclosure, beforeTraversalDisclosure].map(
-      (variant) =>
-        `ev_${digestCanonicalValue(
-          evidenceSemanticContent({
-            ...current,
-            normalized_result: artifactInventorySummaryViewResultSchema.parse(
-              sealAnalysisView(variant),
-            ),
-          }),
-          "Evidence",
-        )}`,
-    ),
-  ];
-};

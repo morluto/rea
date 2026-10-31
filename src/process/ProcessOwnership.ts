@@ -340,10 +340,26 @@ const mergeUnverifiedObservations = (
 const OWNED_GROUP_REVALIDATION_LIMIT = 2;
 
 /** Token-validate every rooted POSIX process group before signaling any. */
+// Callers that do not request a full token sweep can omit a ledger. Keep one
+// scoped to their ownership object so a moved member cannot be forgotten on
+// a retry. A new ownership object does not inherit signal authority.
+const implicitEvidenceOwners = new WeakMap<
+  OwnedProcessGroup,
+  ProcessOwnershipEvidenceOwner
+>();
+
 export const cleanupOwnedProcessGroup = async (
   ownership: OwnedProcessGroup,
   host: ProcessOwnershipHost = systemHost,
 ): Promise<ProcessCleanupResult> => {
+  if (ownership.evidenceOwner === undefined) {
+    let evidenceOwner = implicitEvidenceOwners.get(ownership);
+    if (evidenceOwner === undefined) {
+      evidenceOwner = new ProcessOwnershipEvidenceOwner();
+      implicitEvidenceOwners.set(ownership, evidenceOwner);
+    }
+    ownership = { ...ownership, evidenceOwner };
+  }
   const exitSettlement: ProcessExitSettlementBudget = { deadline: undefined };
   const processTable = await readLiveProcessTable(host);
   if (!processTable.available)
@@ -917,17 +933,24 @@ const createOwnedCleanupPlan = async (
         Number.isSafeInteger(processGroupId) && processGroupId > 0,
     ),
   );
+  const retainedPids = new Set(
+    ownership.evidenceOwner?.candidates.map(({ pid }) => pid) ?? [],
+  );
   const tokenOwned =
-    ownership.sweepTokenOwnedProcesses === true
+    ownership.sweepTokenOwnedProcesses === true || retainedPids.size > 0
       ? await scanTokenOwnedProcesses(
-          processes,
+          ownership.sweepTokenOwnedProcesses === true
+            ? processes
+            : processes.filter(({ pid }) => retainedPids.has(pid)),
           ownership.runId,
           host,
           ownership.captureBaseline,
           {
             leaderPid: ownership.leaderPid,
             processGroupId: ownership.processGroupId,
-            evidenceOwner: ownership.evidenceOwner,
+            // A full sweep requires the owner; retained PIDs can only exist
+            // when that same persistent owner is present.
+            evidenceOwner: ownership.evidenceOwner!,
             ...(sampledProcessGroupIds.size === 0
               ? {}
               : { sampledProcessGroupIds: [...sampledProcessGroupIds] }),
@@ -1024,7 +1047,7 @@ const createOwnedCleanupPlan = async (
     if (members.length === 0) continue;
     const failures = await processOwnershipFailures(
       members,
-      ownership.runId,
+      ownership,
       host,
       tokenOwned.identities,
       exitSettlement,
@@ -1142,7 +1165,7 @@ const revalidateOwnedProcessGroup = async (
   }
   const failures = await processOwnershipFailures(
     members,
-    ownership.runId,
+    ownership,
     host,
     expectedIdentities,
     exitSettlement,
@@ -1255,11 +1278,12 @@ const sanitizedTokenReadFailure = (diagnostic: string | undefined): string => {
 
 const processOwnershipFailures = async (
   members: readonly ProcessTableEntry[],
-  runId: string,
+  ownership: OwnedProcessGroup,
   host: ProcessOwnershipHost,
   expectedIdentities: ReadonlyMap<number, string | null> = new Map(),
   exitSettlement: ProcessExitSettlementBudget = { deadline: undefined },
 ): Promise<readonly ProcessOwnershipValidationFailure[]> => {
+  const runId = ownership.runId;
   if (host.processIdentities !== undefined) {
     const facts = await readProcessOwnershipFacts(members, host, undefined, {
       exitSettlement,
@@ -1284,8 +1308,25 @@ const processOwnershipFailures = async (
       if (
         relation !== undefined &&
         relation.processGroupId !== fact.process.processGroupId
-      )
+      ) {
+        // Preserve the observed generation for a later cleanup attempt. The
+        // earlier table relation scoped it, while token and native identity
+        // continue to decide whether it can ever be signaled.
+        ownership.evidenceOwner?.reconcile([fact], {
+          runId,
+          listedRows: 1,
+          listedPids: new Set([fact.process.pid]),
+          leaderPid: ownership.leaderPid,
+          processGroupIds: new Set([fact.process.processGroupId]),
+          scopeFacts: [fact],
+        });
+        failures.push({
+          pid: fact.process.pid,
+          reason: "process-identity-unavailable",
+          diagnostic: "process group changed during ownership validation",
+        });
         continue;
+      }
       if (fact.state !== "same-generation") {
         failures.push({
           pid: fact.process.pid,
@@ -1683,7 +1724,12 @@ const scanWithOwnershipEvidence = async (
     )
       failures.push({
         pid: fact.process.pid,
-        reason: "run-token-mismatch",
+        // An earlier observation without an identity cannot bind that
+        // observation to this currently readable process generation.
+        reason:
+          retainedCandidate.applicability === "identity-unresolved"
+            ? "process-identity-unavailable"
+            : "run-token-mismatch",
       });
     if (fact.token.state !== "unavailable") continue;
     const relationBefore =

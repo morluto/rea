@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisResult.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { createDirectAnalysis } from "../../../src/composition/directAnalysis.js";
@@ -98,7 +99,7 @@ it.skipIf(process.platform === "win32")(
     expect(extractFile(selected, "native.node").equals(bytes)).toBe(true);
     const selectedInventory = await inventoryArtifact(selected);
     const canonicalInventory = await inventoryArtifact(canonical, {
-      integrity: { mode: "record-and-continue" },
+      integrity: "record-and-continue",
     });
     expect(selectedInventory.manifest.root_sha256).toBe(
       canonicalInventory.manifest.root_sha256,
@@ -179,7 +180,9 @@ it.skipIf(process.platform === "win32")(
     await symlink(stored, selected);
     const { runProviderAnalysis } = createDirectAnalysis({});
     const observed = parseEvidence(
-      await runProviderAnalysis(selected, "inventory_artifact", {}),
+      await runProviderAnalysis(selected, "inventory_artifact", {}).then(
+        projectCliAnalysisResult,
+      ),
     );
     expect(observed.subject?.local_path).toBe(selected);
     const inventory = artifactInventoryResultSchema.parse(

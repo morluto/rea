@@ -97,7 +97,6 @@ export class OwnedWorkerRuntime {
   #root: PrivateRuntimeRoot | undefined;
   #cleanupEpoch: OwnedWorkerRuntimeCleanupEpoch | undefined;
   #supervisor: ProviderProcessSupervisor | undefined;
-  #processId: number | null = null;
   #acquisition: Promise<void> | undefined;
   #cleanupRetryAttempt: Promise<void> | undefined;
   #stopAttempt: Promise<ProviderProcessStopResult> | undefined;
@@ -312,7 +311,6 @@ export class OwnedWorkerRuntime {
     });
     this.#inputFailure = undefined;
     this.#observeStdin(spawned.process.stdin);
-    this.#processId = spawned.process.pid ?? null;
     this.#cleanupEpoch.setRunId(spawned.ownership?.runId ?? spawnOptions.runId);
     this.#supervisor = new ProviderProcessSupervisor(
       {
@@ -357,7 +355,6 @@ export class OwnedWorkerRuntime {
     }
     supervisor.dispose();
     this.#supervisor = undefined;
-    this.#processId = null;
     this.#cleanupEpoch?.setRunId(undefined);
     return stopped;
   }

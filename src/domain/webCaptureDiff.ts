@@ -43,6 +43,11 @@ export const compareWebCaptures = (
     dimensions,
     limitations: [
       "A changed status proves an observed difference; an unknown status means necessary comparison facts or coverage were unavailable.",
+      ...(!domValueLengthsComparable(before.dom, after.dom)
+        ? [
+            "DOM value-length comparison is unknown because units are missing or different; independent structural differences can still establish a change.",
+          ]
+        : []),
       "Network comparison covers only activity observed after each CDP attachment. WebSocket connections with the same URL are compared as an unordered collection of ordered frame streams, retaining connection counts; their individual identities are not stable across captures.",
       "Accessibility structure is compared when the tree is complete; text additionally requires complete selected text capture. A missing role leaves that node's role comparison unknown; independently observed differences can still establish a change.",
       "Storage key inventories are compared only when selected and complete; usage and quota are compared only when reported. Redacted content is compared through complete SHA-256 fingerprints.",
@@ -827,7 +832,6 @@ const webMcpDimension = (
   before: WebMcpDiscovery | null,
   after: WebMcpDiscovery | null,
 ): Dimension => {
-  type Tool = WebMcpDiscovery["tools"]["items"][number];
   const groups = (discovery: WebMcpDiscovery | null) => {
     const result = new Map<string, Tool[]>();
     for (const tool of discovery?.tools.items ?? []) {
@@ -875,41 +879,21 @@ const webMcpDimension = (
       }
       continue;
     }
-    const beforeTool = beforeTools[0];
-    const afterTool = afterTools[0];
-    const consequentialKnown =
-      beforeTool?.annotations.consequential !== undefined &&
-      afterTool?.annotations.consequential !== undefined;
-    if (
-      beforeTool !== undefined &&
-      afterTool !== undefined &&
-      !consequentialKnown
-    )
-      valuesComplete = false;
-    const project = (tool: Tool) => {
-      const {
-        tool_key: _key,
-        frame_id: _frameId,
-        annotations,
-        ...content
-      } = tool;
-      const { consequential, ...otherAnnotations } = annotations;
-      return digestCanonicalValue({
-        ...content,
-        annotations: {
-          ...otherAnnotations,
-          ...(consequentialKnown ? { consequential } : {}),
-        },
-      });
-    };
-    if (beforeTool !== undefined) left.set(identity, project(beforeTool));
-    if (afterTool !== undefined) right.set(identity, project(afterTool));
+    const projection = projectWebMcpTools(
+      beforeTools[0],
+      afterTools[0],
+      beforeComplete,
+      afterComplete,
+    );
+    if (!projection.complete) valuesComplete = false;
+    if (projection.before !== undefined) left.set(identity, projection.before);
+    if (projection.after !== undefined) right.set(identity, projection.after);
   }
   return compareDimension(
     left,
     right,
     inventoryComplete && valuesComplete,
-    "WebMCP discovery, owner correspondence, or consequential annotation evidence was unavailable or incomplete in at least one capture.",
+    "WebMCP discovery, owner correspondence, or declaration evidence was unavailable or incomplete in at least one capture.",
     (identity) =>
       !previous.has(identity)
         ? beforeComplete
@@ -917,6 +901,118 @@ const webMcpDimension = (
           ? afterComplete
           : inventoryComplete,
   );
+};
+
+type Tool = WebMcpDiscovery["tools"]["items"][number];
+
+/** Compare only declaration facts retained by both captures. */
+const projectWebMcpTools = (
+  beforeTool: Tool | undefined,
+  afterTool: Tool | undefined,
+  beforeComplete: boolean,
+  afterComplete: boolean,
+): {
+  before: string | undefined;
+  after: string | undefined;
+  complete: boolean;
+} => {
+  let valuesComplete = true;
+  const inventoryComplete = beforeComplete && afterComplete;
+  const paired = beforeTool !== undefined && afterTool !== undefined;
+  const consequentialKnown =
+    beforeTool?.annotations.consequential !== undefined &&
+    afterTool?.annotations.consequential !== undefined;
+  if (
+    beforeTool !== undefined &&
+    afterTool !== undefined &&
+    !consequentialKnown
+  )
+    valuesComplete = false;
+  // A missing stack or malformed coordinate is not a different source.
+  // Compare only jointly observed components, but retain unknown coverage.
+  const beforeSource = beforeTool?.registration_source;
+  const afterSource = afterTool?.registration_source;
+  const sourcePresent = beforeSource != null && afterSource != null;
+  const bothAbsent =
+    beforeSource === null && afterSource === null && inventoryComplete;
+  const sourceKnown = sourcePresent || bothAbsent;
+  const lineKnown =
+    sourcePresent && beforeSource.line !== null && afterSource.line !== null;
+  const columnKnown =
+    sourcePresent &&
+    beforeSource.column !== null &&
+    afterSource.column !== null;
+  if (
+    paired &&
+    (!sourceKnown || (sourcePresent && (!lineKnown || !columnKnown)))
+  )
+    valuesComplete = false;
+  const schemaKnown =
+    !paired ||
+    ((beforeComplete || beforeTool.input_schema_sha256 !== null) &&
+      (afterComplete || afterTool.input_schema_sha256 !== null));
+  const annotationKeys = [
+    "read_only",
+    "untrusted_content",
+    "autosubmit",
+  ] as const;
+  const knownAnnotations = new Set(
+    annotationKeys.filter(
+      (key) =>
+        !paired ||
+        ((beforeComplete || beforeTool.annotations[key] !== null) &&
+          (afterComplete || afterTool.annotations[key] !== null)),
+    ),
+  );
+  if (
+    paired &&
+    (!schemaKnown || knownAnnotations.size !== annotationKeys.length)
+  )
+    valuesComplete = false;
+  const project = (tool: Tool) => {
+    const {
+      tool_key: _key,
+      frame_id: _frameId,
+      annotations,
+      registration_source: source,
+      input_schema: schema,
+      input_schema_sha256: schemaDigest,
+      ...content
+    } = tool;
+    return digestCanonicalValue({
+      ...content,
+      ...(schemaKnown
+        ? { input_schema: schema, input_schema_sha256: schemaDigest }
+        : {}),
+      ...(sourceKnown
+        ? {
+            registration_source:
+              source === null
+                ? null
+                : {
+                    url: source.url,
+                    ...(lineKnown ? { line: source.line } : {}),
+                    ...(columnKnown ? { column: source.column } : {}),
+                  },
+          }
+        : {}),
+      annotations: {
+        ...Object.fromEntries(
+          annotationKeys
+            .filter((key) => knownAnnotations.has(key))
+            .map((key) => [key, annotations[key]]),
+        ),
+        ...(consequentialKnown
+          ? { consequential: annotations.consequential }
+          : {}),
+      },
+    });
+  };
+  return {
+    before: beforeTool === undefined ? undefined : project(beforeTool),
+    after: afterTool === undefined ? undefined : project(afterTool),
+    complete: valuesComplete,
+  };
 };
 
 const webMcpComplete = (discovery: WebMcpDiscovery | null): boolean =>
@@ -961,6 +1057,37 @@ const compareAggregate = (
     reason,
   );
 
+const domValueLengthsComparable = (
+  before: WebPageInspection["dom"],
+  after: WebPageInspection["dom"],
+): boolean =>
+  (before.nodes.length === 0 && after.nodes.length === 0) ||
+  (before.node_value_length_unit !== undefined &&
+    before.node_value_length_unit === after.node_value_length_unit);
+
+/** Compare parsed node facts without serializing or copying the inventories. */
+const domNodesDiffer = (
+  before: WebPageInspection["dom"]["nodes"],
+  after: WebPageInspection["dom"]["nodes"],
+  compareLengths: boolean,
+): boolean =>
+  before.length !== after.length ||
+  before.some((node, index) => {
+    const next = after[index];
+    return (
+      next === undefined ||
+      node.index !== next.index ||
+      node.parent_index !== next.parent_index ||
+      node.node_type !== next.node_type ||
+      node.node_name !== next.node_name ||
+      (compareLengths && node.node_value_length !== next.node_value_length) ||
+      node.attribute_names.length !== next.attribute_names.length ||
+      node.attribute_names.some(
+        (name, position) => name !== next.attribute_names[position],
+      )
+    );
+  });
+
 const domDimension = (
   before: WebPageInspection,
   after: WebPageInspection,
@@ -979,10 +1106,10 @@ const domDimension = (
       sectionsComplete(inspection, ["frames"]),
     );
   const changes: Change[] = [];
+  const lengthsComparable = domValueLengthsComparable(before.dom, after.dom);
   if (
     nodesComplete &&
-    digestCanonicalValue(before.dom.nodes) !==
-      digestCanonicalValue(after.dom.nodes)
+    domNodesDiffer(before.dom.nodes, after.dom.nodes, lengthsComparable)
   )
     changes.push({ identity: "document", change: "modified" });
   if (framesComplete && beforeFrames !== afterFrames)
@@ -994,14 +1121,14 @@ const domDimension = (
       changes,
       reason: null,
     };
-  return nodesComplete && framesComplete
+  return nodesComplete && framesComplete && lengthsComparable
     ? { status: "unchanged", total_changes: 0, changes: [], reason: null }
     : {
         status: "unknown",
         total_changes: 0,
         changes: [],
         reason:
-          "DOM or frame capture was incomplete, or frame ancestry was unresolved in at least one observation.",
+          "DOM or frame capture was incomplete, frame ancestry was unresolved, or DOM value-length units were missing or different in at least one observation.",
       };
 };
 

@@ -970,7 +970,7 @@ it("inventories and extracts a Windows member name under its canonical path", as
   ).toBe(0);
 });
 
-it("preserves distinct POSIX backslash and slash paths in CArchive files and PYZ data", async () => {
+const posixPathFixture = async () => {
   const backslashName = String.raw`a\b.txt`;
   const slashName = "a/b.txt";
   const backslashPayload = Buffer.from("literal-backslash");
@@ -1010,6 +1010,18 @@ it("preserves distinct POSIX backslash and slash paths in CArchive files and PYZ
     }),
   );
   const snapshot = await scanCanonicalArtifactInventory(path);
+  return {
+    path,
+    snapshot,
+    backslashName,
+    slashName,
+    backslashPayload,
+    slashPayload,
+  };
+};
+
+it("preserves distinct POSIX backslash and slash paths in CArchive files and PYZ data", async () => {
+  const { snapshot, backslashName, slashName } = await posixPathFixture();
   const backslashEntry = snapshot.occurrences.find(
     (occurrence) => occurrence.logical_path === backslashName,
   );
@@ -1034,38 +1046,52 @@ it("preserves distinct POSIX backslash and slash paths in CArchive files and PYZ
       },
     });
   expect(snapshot.coverage.status).toBe("complete");
-  if (process.platform === "win32") return;
-
-  const directory = await createTestTempDirectory("rea-pyinstaller-posix-out-");
-  const output = join(directory, "extracted");
-  await materializeArtifactInventory(
-    {
-      inputPath: path,
-      inputFormat: "elf",
-      outputRoot: output,
-      environment: process.env,
-      integrityPolicy: "fail",
-    },
-    path,
-    snapshot,
-  );
-  expect(
-    Buffer.compare(
-      await readFile(join(output, backslashName)),
-      backslashPayload,
-    ),
-  ).toBe(0);
-  expect(
-    Buffer.compare(await readFile(join(output, "a", "b.txt")), slashPayload),
-  ).toBe(0);
-  for (const [name, body] of [
-    [backslashName, backslashPayload],
-    [slashName, slashPayload],
-  ] as const)
-    expect((await readFile(join(output, "PYZ.pyz", name))).equals(body)).toBe(
-      true,
-    );
 });
+
+it.skipIf(process.platform === "win32")(
+  "extracts distinct POSIX backslash and slash paths in CArchive files and PYZ data",
+  async () => {
+    const {
+      path,
+      snapshot,
+      backslashName,
+      slashName,
+      backslashPayload,
+      slashPayload,
+    } = await posixPathFixture();
+    const directory = await createTestTempDirectory(
+      "rea-pyinstaller-posix-out-",
+    );
+    const output = join(directory, "extracted");
+    await materializeArtifactInventory(
+      {
+        inputPath: path,
+        inputFormat: "elf",
+        outputRoot: output,
+        environment: process.env,
+        integrityPolicy: "fail",
+      },
+      path,
+      snapshot,
+    );
+    expect(
+      Buffer.compare(
+        await readFile(join(output, backslashName)),
+        backslashPayload,
+      ),
+    ).toBe(0);
+    expect(
+      Buffer.compare(await readFile(join(output, "a", "b.txt")), slashPayload),
+    ).toBe(0);
+    for (const [name, body] of [
+      [backslashName, backslashPayload],
+      [slashName, slashPayload],
+    ] as const)
+      expect((await readFile(join(output, "PYZ.pyz", name))).equals(body)).toBe(
+        true,
+      );
+  },
+);
 
 it("reads a PE signature beyond the carrier prefix before projecting paths", async () => {
   const path = await writeArchive(

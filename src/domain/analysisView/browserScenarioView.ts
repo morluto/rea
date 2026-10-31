@@ -11,10 +11,10 @@ import { analysisViewInputError } from "./analysisViewErrors.js";
 import {
   completeWithinViewCoverage,
   pageViewCoverage,
+  type AnalysisViewCoverage,
 } from "./analysisViewCoverage.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import type {
-  AnalysisViewCoverage,
   AnalysisViewParent,
   AnalysisViewRequest,
   UnsignedAnalysisView,

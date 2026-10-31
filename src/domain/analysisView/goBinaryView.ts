@@ -122,11 +122,12 @@ export const projectGoBinaryView = (
   const parsed = parseReport(parent);
   if (!parsed.ok) return parsed;
   const report = parsed.value;
+  const subject = parent.subject;
   if (
-    parent.subject?.local_path !== report.artifact.path ||
-    parent.subject.digest.sha256 !== report.artifact.sha256 ||
-    parent.subject.format !== metadataReportSubjectFormat(report) ||
-    parent.subject.architecture !==
+    subject == null ||
+    subject.digest.sha256 !== report.artifact.sha256 ||
+    subject.format !== metadataReportSubjectFormat(report) ||
+    subject.architecture !==
       (binaryMetadataArchitecture(report.architecture) ?? null)
   )
     return err(
