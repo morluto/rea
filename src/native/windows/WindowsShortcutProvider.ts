@@ -46,6 +46,19 @@ import { parseWindowsShortcut } from "./WindowsShortcutParser.js";
 
 const OPERATION = "inspect_windows_shortcut";
 
+/** A path that starts with two separators: UNC, extended UNC, or another device path. */
+const HOST_PREFIXED_PATH = /^[\\/]{2}/u;
+/** An extended or device form of a drive path, such as `\\?\C:\x`, which stays on this host. */
+const LOCAL_DRIVE_DEVICE_PATH = /^[\\/]{2}[?.][\\/][A-Za-z]:(?:[\\/]|$)/u;
+
+/**
+ * A path Windows could open through a remote host. Even `lstat` on such a path
+ * can reach an SMB server and offer the caller's credentials, so this is decided
+ * from the text alone. A mapped network drive looks like a local drive here.
+ */
+const namesNetworkShare = (path: string): boolean =>
+  HOST_PREFIXED_PATH.test(path) && !LOCAL_DRIVE_DEVICE_PATH.test(path);
+
 /** Portable Shell Link reader over one bounded, identity-checked regular file. */
 export class WindowsShortcutProvider implements WindowsShortcutPort {
   readonly identity = WINDOWS_SHORTCUT_PROVIDER;
@@ -67,6 +80,16 @@ export class WindowsShortcutProvider implements WindowsShortcutPort {
     input: InspectWindowsShortcutInput,
     options?: ExecutionOptions,
   ) {
+    if (namesNetworkShare(input.path))
+      return err(
+        new AnalysisInputError(OPERATION, {}, [
+          {
+            path: ["path"],
+            reason: "invalid_value",
+            message: `Selected shortcut is on a network share, which this offline operation does not open: ${input.path}. Copy it to a local path first.`,
+          },
+        ]),
+      );
     let completed: StableArtifactSnapshot | undefined;
     try {
       return await this.#resources.run(async () => {

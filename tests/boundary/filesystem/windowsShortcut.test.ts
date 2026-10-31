@@ -2,8 +2,19 @@ import { symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createWindowsShortcutService } from "../../../src/composition/binaryDiagnostics.js";
+import { WindowsShortcutProvider } from "../../../src/native/windows/WindowsShortcutProvider.js";
 import { powershellHiddenIconSpoofShortcut } from "../../fixtures/binaryDiagnostics/windowsShortcut.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+
+// The input schema admits Windows path forms only on a Windows host, so these
+// reach the provider directly to run on every host.
+const providerInput = (path: string) => ({
+  path,
+  max_file_bytes: 1048576,
+  max_id_list_items: 256,
+  max_extra_data_blocks: 64,
+  max_string_bytes: 1048576,
+});
 
 describe("Windows shortcut stable filesystem boundary", () => {
   it("reports non-file and malformed Shell Link selections as caller input errors", async () => {
@@ -32,6 +43,51 @@ describe("Windows shortcut stable filesystem boundary", () => {
             path: ["path"],
             reason,
             message: expect.any(String),
+          },
+        ],
+      });
+    }
+  });
+
+  it("rejects network share paths without opening them", async () => {
+    const provider = new WindowsShortcutProvider();
+    for (const path of [
+      "\\\\server\\share\\shortcut.lnk",
+      "//server/share/shortcut.lnk",
+      "\\\\?\\UNC\\server\\share\\shortcut.lnk",
+      "//./UNC/server/share/shortcut.lnk",
+      "\\\\?\\GLOBALROOT\\Device\\Mup\\server\\share\\shortcut.lnk",
+    ]) {
+      const result = await provider.inspect(providerInput(path));
+      if (result.ok) throw new Error("Expected network share rejection");
+      expect(result.error).toMatchObject({
+        _tag: "AnalysisInputError",
+        operation: "inspect_windows_shortcut",
+        issues: [
+          {
+            path: ["path"],
+            reason: "invalid_value",
+            message: expect.stringContaining("network share"),
+          },
+        ],
+      });
+    }
+  });
+
+  it("does not treat an extended drive path as a network share", async () => {
+    const provider = new WindowsShortcutProvider();
+    for (const path of [
+      "\\\\?\\C:\\shortcuts\\missing.lnk",
+      "\\\\.\\C:\\shortcuts\\missing.lnk",
+    ]) {
+      const result = await provider.inspect(providerInput(path));
+      if (result.ok) throw new Error("Expected a missing file");
+      expect(result.error).toMatchObject({
+        _tag: "AnalysisInputError",
+        issues: [
+          {
+            path: ["path"],
+            message: expect.not.stringContaining("network share"),
           },
         ],
       });
