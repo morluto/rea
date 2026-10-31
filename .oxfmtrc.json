@@ -14,6 +14,8 @@
     ".codex-plugin/plugin.json",
     "_reference/**",
     "third_party/**",
-    ".codex-plugin/mcp.json"
+    ".codex-plugin/mcp.json",
+    ".cursor-plugin/plugin.json",
+    ".cursor-plugin/mcp.json"
   ]
 }

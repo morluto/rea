@@ -7,6 +7,7 @@ const manifestSchema = z.object({ ".": z.string() });
 const PLUGIN_MANIFEST_PATHS = [
   ".claude-plugin/plugin.json",
   ".codex-plugin/plugin.json",
+  ".cursor-plugin/plugin.json",
 ];
 const inlinePluginManifestSchema = versionSchema.extend({
   mcpServers: z.object({
@@ -21,6 +22,20 @@ const inlinePluginManifestSchema = versionSchema.extend({
 });
 const codexPluginManifestSchema = versionSchema.extend({
   mcpServers: z.literal("./.codex-plugin/mcp.json"),
+});
+const cursorPluginManifestSchema = versionSchema.extend({
+  mcpServers: z.literal("./.cursor-plugin/mcp.json"),
+});
+const cursorServerConfigSchema = z.object({
+  mcpServers: z.object({
+    rea: z.object({
+      command: z.literal("node"),
+      args: z.tuple([
+        z.literal("${CURSOR_PLUGIN_ROOT}/scripts/plugin-mcp-launcher.mjs"),
+        z.string(),
+      ]),
+    }),
+  }),
 });
 const codexServerConfigSchema = z.object({
   mcpServers: z.object({
@@ -227,7 +242,9 @@ async function validateCandidate(git, sha, version, commits) {
     const manifest =
       path === ".codex-plugin/plugin.json"
         ? await readJson(git, sha, path, codexPluginManifestSchema)
-        : await readJson(git, sha, path, inlinePluginManifestSchema);
+        : path === ".cursor-plugin/plugin.json"
+          ? await readJson(git, sha, path, cursorPluginManifestSchema)
+          : await readJson(git, sha, path, inlinePluginManifestSchema);
     versions.push([path, manifest.version]);
     const server =
       path === ".codex-plugin/plugin.json"
@@ -237,7 +254,14 @@ async function validateCandidate(git, sha, version, commits) {
             ".codex-plugin/mcp.json",
             codexServerConfigSchema,
           )
-        : manifest;
+        : path === ".cursor-plugin/plugin.json"
+          ? await readJson(
+              git,
+              sha,
+              ".cursor-plugin/mcp.json",
+              cursorServerConfigSchema,
+            )
+          : manifest;
     launches.push([path, server.mcpServers.rea.args[1]]);
   }
   // Catalogs are generated and checked from this candidate by the release job;

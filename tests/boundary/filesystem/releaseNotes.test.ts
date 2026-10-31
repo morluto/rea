@@ -46,8 +46,10 @@ let seedWorkspaceRoot: string | undefined;
 const pluginManifests = [
   ".claude-plugin/plugin.json",
   ".codex-plugin/plugin.json",
+  ".cursor-plugin/plugin.json",
 ] as const;
 const pluginServerConfig = ".codex-plugin/mcp.json";
+const cursorServerConfig = ".cursor-plugin/mcp.json";
 
 const pluginMarketplaces = [
   ".claude-plugin/marketplace.json",
@@ -59,15 +61,26 @@ const pluginMarketplace = (version: string, packageName = "rea-agents") => ({
   ],
 });
 
-const pluginServer = (version: string, command = "node") => ({
+const pluginServer = (
+  version: string,
+  command = "node",
+  launcher = "./scripts/plugin-mcp-launcher.mjs",
+) => ({
   mcpServers: {
     rea: {
       command,
-      args: ["./scripts/plugin-mcp-launcher.mjs", version],
+      args: [launcher, version],
       startup_timeout_sec: 30,
     },
   },
 });
+
+const cursorPluginServer = (version: string, command = "node") =>
+  pluginServer(
+    version,
+    command,
+    "${CURSOR_PLUGIN_ROOT}/scripts/plugin-mcp-launcher.mjs",
+  );
 
 const pluginManifest = (
   version: string,
@@ -94,7 +107,13 @@ const pluginManifestFor = (
         skills: options.skills ?? ["./skill"],
         mcpServers: "./.codex-plugin/mcp.json",
       }
-    : pluginManifest(version, options);
+    : path === ".cursor-plugin/plugin.json"
+      ? {
+          version,
+          skills: options.skills ?? ["./skill"],
+          mcpServers: "./.cursor-plugin/mcp.json",
+        }
+      : pluginManifest(version, options);
 
 beforeAll(async () => {
   const workspace = await createTestWorkspace("rea-release-notes-seed-");
@@ -121,6 +140,10 @@ beforeAll(async () => {
   await writeFile(
     join(directory, pluginServerConfig),
     JSON.stringify(pluginServer("6.3.0")),
+  );
+  await writeFile(
+    join(directory, cursorServerConfig),
+    JSON.stringify(cursorPluginServer("6.3.0")),
   );
   for (const path of pluginMarketplaces) {
     await mkdir(join(directory, dirname(path)), { recursive: true });
@@ -470,11 +493,16 @@ it("binds publication to complete recorded history and the reviewed base", async
       join(f.directory, path),
       JSON.stringify(pluginMarketplace("6.4.0")),
     );
+  await writeFile(
+    join(f.directory, cursorServerConfig),
+    JSON.stringify(cursorPluginServer("6.4.0")),
+  );
   await git(f.directory, [
     "add",
     "CHANGELOG.md",
     ...pluginManifests,
     pluginServerConfig,
+    cursorServerConfig,
     ...pluginMarketplaces,
   ]);
   await git(f.directory, ["commit", "-m", "chore: release notes"]);
@@ -550,6 +578,14 @@ it.each([
   {
     path: pluginServerConfig,
     content: pluginServer("6.4.0", "other-launcher"),
+  },
+  {
+    path: cursorServerConfig,
+    content: pluginServer(
+      "6.4.0",
+      "other-launcher",
+      "${CURSOR_PLUGIN_ROOT}/scripts/plugin-mcp-launcher.mjs",
+    ),
   },
 ])(
   "keeps launcher behavior in $path outside version-only metadata",
