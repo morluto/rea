@@ -8,6 +8,7 @@ import type {
 } from "./javascriptSemanticIr.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import {
+  javaScriptExpressionWrapperTarget,
   readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
   semanticStaticPropertyName,
@@ -299,6 +300,28 @@ const soleWriteReachesRead = (
   );
 };
 
+/**
+ * Only `fetch` resolves to a `Response`, and only once its promise settles.
+ * `http.request`/`http.get` return a `ClientRequest` and `new WebSocket` a
+ * socket, neither of which has `json`/`text`/`arrayBuffer`; an un-awaited
+ * `fetch` returns a `Promise`. In all of those the call throws at the call site
+ * instead of reading a body, so it is not a response consumer at all.
+ */
+const settlesToResponse = (
+  request: RequestCandidate,
+  context: TraversalContext,
+): boolean => {
+  if (request.operation.method !== "fetch") return false;
+  let node: t.Node = request.node;
+  for (;;) {
+    const parent = context.state.parentsByNode.get(node);
+    if (parent === undefined) return false;
+    if (t.isAwaitExpression(parent)) return true;
+    if (javaScriptExpressionWrapperTarget(parent) !== node) return false;
+    node = parent;
+  }
+};
+
 const collectResponseConsumers = (
   program: t.Program,
   context: TraversalContext,
@@ -333,11 +356,20 @@ const collectResponseConsumers = (
       member.object,
       member.object.name,
     );
-    const linked =
+    const candidates =
       binding === undefined
         ? []
         : (requestsByBinding.get(binding.bindingId) ?? []);
+    // A body reader only exists on a settled fetch Response. Requests of any
+    // other kind throw at this call site instead, so they link nothing; if no
+    // candidate survives, the call is not a response consumer at all.
+    const linked = candidates.filter((request) =>
+      settlesToResponse(request, context),
+    );
     if (linked.length === 0) return;
+    // A binding that also receives a request kind without a body reader leaves
+    // this reader a candidate, not a proven consumer of the fetch response.
+    const otherKinds = candidates.length !== linked.length;
     // A consumer of exactly one request through its own result binding
     // reads that request's response, so it keeps the request's endpoint.
     const uniqueRequest =
@@ -372,7 +404,8 @@ const collectResponseConsumers = (
         .sort(compareUnicodeCodePoints),
       endpoint: soleWrite ? (uniqueRequest?.operation.endpoint ?? null) : null,
       fields: [],
-      resolution: uniqueRequest === undefined ? "partial" : "complete",
+      resolution:
+        uniqueRequest === undefined || otherKinds ? "partial" : "complete",
     });
   });
   return output;
