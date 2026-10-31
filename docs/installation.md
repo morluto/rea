@@ -93,8 +93,9 @@ approve replacing it. A different existing installation path is foreign to the
 current entrypoint; a path that cannot be resolved remains unknown. Cordis uses
 its stable REA entry ID instead of launcher identity.
 Setup also retains valid environment overrides in REA's existing server entry,
-such as `REA_MCP_INPUT_SCHEMA_PROFILE`, `REA_MCP_OUTPUT_SCHEMA_PROFILE`, and
-`REA_MCP_MAX_RESPONSE_BYTES`, and `REA_MCP_TOOL_FAMILIES`.
+such as `REA_MCP_INPUT_SCHEMA_PROFILE`, `REA_MCP_OUTPUT_SCHEMA_PROFILE`,
+`REA_MCP_MAX_RESPONSE_BYTES`, `REA_MCP_TOOL_FAMILIES`, and the project Evidence
+store settings `REA_EVIDENCE_STORE` and `REA_EVIDENCE_STORE_DIR`.
 Detected provider settings replace only matching environment keys.
 Setup manages REA's launcher, selected provider settings, and recommended timeout
 defaults. Codex approval policies, tool selections, and other caller-owned server

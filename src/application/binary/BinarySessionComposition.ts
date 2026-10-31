@@ -4,6 +4,7 @@ import { AnalysisProviderRegistry } from "./AnalysisProviderRegistry.js";
 import { BinarySession } from "./BinarySession.js";
 import { SessionProviderRouter } from "./SessionProviderRouter.js";
 import type { BundleResourceClientFactory } from "./BundleResourceSession.js";
+import type { ProjectEvidenceStore } from "../investigation/ProjectEvidenceStore.js";
 
 /**
  * Compose one provider-neutral session from deep-provider selection and
@@ -13,9 +14,11 @@ export const composeBinarySession = (
   registry: AnalysisProviderRegistry,
   auxiliaryProviders: readonly AnalysisProvider[] = [],
   bundleResourceFactory?: BundleResourceClientFactory,
+  evidenceStore?: ProjectEvidenceStore,
 ): BinarySession =>
   new BinarySession(
     SessionProviderRouter.selectable(registry, auxiliaryProviders),
     new InvestigationRecords(),
     bundleResourceFactory,
+    evidenceStore,
   );

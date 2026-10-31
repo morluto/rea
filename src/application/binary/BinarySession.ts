@@ -43,6 +43,7 @@ import {
 import { InvestigationRecords } from "../investigation/InvestigationRecords.js";
 import { recordEvidenceSources } from "../investigation/recordEvidenceSources.js";
 import { BinarySessionRecords } from "./BinarySessionRecords.js";
+import type { ProjectEvidenceStore } from "../investigation/ProjectEvidenceStore.js";
 import { binarySessionStatus } from "./BinarySessionStatus.js";
 import { isSourceEvidenceRetainable } from "./AnalysisSnapshotCache.js";
 import type { BinarySessionDetail } from "../../contracts/sessionStatusContract.js";
@@ -202,8 +203,9 @@ export class BinarySession
     providerRouter: SessionProviderRouter,
     records: InvestigationRecords = new InvestigationRecords(),
     bundleResourceFactory?: BundleResourceClientFactory,
+    evidenceStore?: ProjectEvidenceStore,
   ) {
-    super(records);
+    super(records, evidenceStore);
     this.#providerRouter = providerRouter;
     this.#bundleResourceFactory = bundleResourceFactory;
   }
@@ -873,8 +875,18 @@ export class BinarySession
   ): Promise<Result<null, AnalysisError>> {
     return this.#serialize(async (admittedThrough) => {
       await this.#drainCalls(admittedThrough);
+      const retired = await this.#closeActive(options);
+      const flushed = await this.flushEvidenceStore();
+      // The retry belongs to the final failure, so it is offered after the
+      // durable write is folded in; a composed cleanup failure still owns it.
       return this.#offerCleanupRetry(
-        await this.#closeActive(options),
+        flushed.ok
+          ? retired
+          : retired.ok
+            ? flushed
+            : err(
+                analysisErrorWithCleanupFailure(retired.error, flushed.error),
+              ),
         options.cleanupRetry,
       );
     });
@@ -904,10 +916,20 @@ export class BinarySession
         workflow_entries: snapshot.value.workflow_entries.length,
         evidence_records: snapshot.value.evidence_bundle.records.length,
       };
+      const retired = await this.#closeActive(options);
+      const flushed = await this.flushEvidenceStore();
       // A failed export or save returned above with the target still open, so
-      // only a failed retirement can offer the caller's cleanup retry.
+      // only a failed retirement can offer the caller's cleanup retry. The
+      // retry is offered on the final failure so a composed durable-write
+      // failure keeps the same retry handle.
       const closed = this.#offerCleanupRetry(
-        await this.#closeActive(options),
+        flushed.ok
+          ? retired
+          : retired.ok
+            ? flushed
+            : err(
+                analysisErrorWithCleanupFailure(retired.error, flushed.error),
+              ),
         options.cleanupRetry,
       );
       return closed.ok

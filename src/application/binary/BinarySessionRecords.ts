@@ -35,6 +35,7 @@ import type {
 } from "../AnalysisProvider.js";
 import { AnalysisSnapshotCache } from "./AnalysisSnapshotCache.js";
 import { InvestigationRecords } from "../investigation/InvestigationRecords.js";
+import type { ProjectEvidenceStore } from "../investigation/ProjectEvidenceStore.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { bindRegularFileCleanup } from "../RegularFileRead.js";
@@ -104,8 +105,14 @@ export abstract class BinarySessionRecords {
   #snapshotInvalidated = false;
   readonly #snapshotListeners = new Set<() => void | Promise<void>>();
 
-  constructor(records: InvestigationRecords = new InvestigationRecords()) {
+  readonly #evidenceStore: ProjectEvidenceStore | undefined;
+
+  constructor(
+    records: InvestigationRecords = new InvestigationRecords(),
+    evidenceStore?: ProjectEvidenceStore,
+  ) {
     this.#records = records;
+    this.#evidenceStore = evidenceStore;
   }
 
   /** Observe changes to the mutable current analysis snapshot resource. */
@@ -118,21 +125,48 @@ export abstract class BinarySessionRecords {
     evidence: Evidence,
   ): Result<"added" | "duplicate", EvidenceIntegrityError> {
     const recorded = this.#records.recordEvidence(evidence);
-    if (recorded.ok && recorded.value === "added") this.#emitSnapshotChanged();
+    if (recorded.ok && recorded.value === "added") {
+      this.#emitSnapshotChanged();
+      // Queue the ledger's own immutable record; the caller's object stays mutable.
+      const owned = this.#records.evidenceForAnalysis(evidence.evidence_id);
+      if (owned !== undefined) this.#persistCommitted([owned]);
+    }
     return recorded;
   }
 
   hasEvidence(evidenceId: string): boolean {
-    return this.#records.hasEvidence(evidenceId);
+    return (
+      this.#records.hasEvidence(evidenceId) ||
+      this.#evidenceStore?.has(evidenceId) === true
+    );
   }
 
   evidenceById(evidenceId: string): Evidence | undefined {
-    return this.#records.evidenceById(evidenceId);
+    return (
+      this.#records.evidenceById(evidenceId) ??
+      (this.#adoptStoredEvidence(evidenceId) === undefined
+        ? undefined
+        : this.#records.evidenceById(evidenceId))
+    );
   }
 
   /** Borrow immutable investigation Evidence without copying a complete graph. */
   evidenceForAnalysis(evidenceId: string): Evidence | undefined {
-    return this.#records.evidenceForAnalysis(evidenceId);
+    return (
+      this.#records.evidenceForAnalysis(evidenceId) ??
+      (this.#adoptStoredEvidence(evidenceId) === undefined
+        ? undefined
+        : this.#records.evidenceForAnalysis(evidenceId))
+    );
+  }
+
+  #adoptStoredEvidence(evidenceId: string): Evidence | undefined {
+    const stored = this.#evidenceStore?.read(evidenceId);
+    if (stored === undefined) return undefined;
+    const adopted = this.#records.recordEvidence(stored);
+    if (!adopted.ok) return undefined;
+    if (adopted.value === "added") this.#emitSnapshotChanged();
+    return stored;
   }
 
   exportEvidenceBundle(): EvidenceBundle {
@@ -181,6 +215,20 @@ export abstract class BinarySessionRecords {
     }
   }
 
+  /** Flush durable Evidence writes at final session close, not target switches. */
+  async flushEvidenceStore(): Promise<Result<null, AnalysisError>> {
+    if (this.#evidenceStore === undefined) return ok(null);
+    const flushed = await this.#evidenceStore.flush();
+    // A closed investigation keeps no second copy of the dossiers it read.
+    this.#evidenceStore.releaseCachedReads();
+    return flushed;
+  }
+
+  /** Queue every record this mutation committed, newest metadata wins. */
+  #persistCommitted(records: readonly Evidence[]): void {
+    for (const evidence of records) this.#evidenceStore?.persist(evidence);
+  }
+
   importEvidenceBundle(
     bundle: unknown,
   ): Result<
@@ -190,7 +238,10 @@ export abstract class BinarySessionRecords {
     const imported = this.#records.mergeEvidenceBundle(bundle);
     if (!imported.ok) return imported;
     this.#snapshot.refreshEvidenceMetadata(imported.value.replacements);
-    if (imported.value.changed) this.#emitSnapshotChanged();
+    if (imported.value.changed) {
+      this.#emitSnapshotChanged();
+      this.#persistCommitted(imported.value.committed);
+    }
     return ok({
       recordsAdded: imported.value.recordsAdded,
       unknownsAdded: imported.value.unknownsAdded,
@@ -283,6 +334,9 @@ export abstract class BinarySessionRecords {
         const imported = this.#records.mergeEvidenceBundle(bundle);
         if (!imported.ok) return imported;
         this.#snapshot.refreshEvidenceMetadata(imported.value.replacements);
+        // Imported records reach the ledger through this merge, so their durable
+        // write is scheduled here rather than by the later wrapper.
+        this.#persistCommitted(imported.value.committed);
         return ok(imported.value.recordsAdded);
       },
     );
@@ -429,7 +483,11 @@ export abstract class BinarySessionRecords {
     input: RecordUnknownInput,
   ): Result<ResidualUnknown | null, AnalysisError> {
     const recorded = this.#records.recordEvidenceWithUnknown(evidence, input);
-    if (recorded.ok) this.#emitSnapshotChanged();
+    if (recorded.ok) {
+      this.#emitSnapshotChanged();
+      const owned = this.#records.evidenceForAnalysis(evidence.evidence_id);
+      if (owned !== undefined) this.#persistCommitted([owned]);
+    }
     return recorded;
   }
 

@@ -159,6 +159,7 @@ describe("investigation record ownership", () => {
         unknownsAdded: 1,
         changed: true,
         replacements: [],
+        committed: [],
       },
     });
     expect(records.mergeEvidenceBundle(bundle)).toEqual({
@@ -168,6 +169,7 @@ describe("investigation record ownership", () => {
         unknownsAdded: 0,
         changed: false,
         replacements: [],
+        committed: [],
       },
     });
     records.clear();
