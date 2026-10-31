@@ -1305,7 +1305,10 @@ it("allocates no generic container column, reading method containers on demand",
 const linkGeneric = (
   options: GenericMethodFixtureOptions = {},
   version: 24 | 27 | 31 | 39 = 31,
-  bytes = createIl2cppBinaryFixture({ genericMethods: options }),
+  bytes = createIl2cppBinaryFixture({
+    genericMethods: options,
+    legacyGenericClass: version === 24,
+  }),
 ) => {
   const decoded = genericFacts(version);
   return linkIl2cppBinary(bytes, decoded.metadata, decoded.link, undefined, {
@@ -1476,6 +1479,32 @@ it("selects the 27.0 layout by its 12-byte rows and agreeing counts", () => {
   );
 });
 
+it.each([
+  [96, 12],
+  [112, 12],
+  [120, 16],
+] as const)(
+  "links version 24 with module offset %d and row stride %d",
+  (modulesOffset, stride) => {
+    const bytes = createIl2cppBinaryFixture({
+      legacyGenericClass: true,
+      genericMethods: { modulesOffset, stride },
+    });
+    const linked = linkGeneric({}, 24, bytes);
+    expect(linked.generic_methods).toMatchObject({
+      generic_method_pointers_field:
+        FIXTURE_BINARY_BASE + 0x600n - BigInt(modulesOffset) + 16n,
+      generic_method_table_stride: stride,
+      instances: FIXTURE_GENERIC_INSTANCES,
+      issues: [],
+    });
+    expect(linked.method_addresses).toEqual(expectedAddresses);
+    expect(linked.return_types.map((row) => row.name)).toEqual(
+      Array.from({ length: 5 }, () => FIXTURE_RETURN_TYPE_NAME),
+    );
+  },
+);
+
 it.each<
   [string, GenericMethodFixtureOptions, 24 | 27 | 31 | 39, string, string]
 >([
@@ -1494,13 +1523,11 @@ it.each<
     "malformed",
   ],
   [
-    // Its type-definition container offset and generic class layout are
-    // unchecked, although a 24.2 CodeRegistration layout would agree here.
-    "metadata version 24",
-    { stride: 12 },
+    "a version 27.1 registration paired with version 24 metadata",
+    { stride: 16, modulesOffset: 104 },
     24,
-    "generic-methods-unsupported",
-    "unsupported",
+    "generic-method-registration-not-found",
+    "malformed",
   ],
   ["metadata version 39", {}, 39, "generic-methods-unsupported", "unsupported"],
 ])("refuses generic linking for %s", (_, options, version, reason, kind) => {
@@ -1708,20 +1735,23 @@ it("names generic instances whose argument array spans two segments", () => {
   expect(generic.issues).toEqual([]);
 });
 
-it("returns no instances for an empty genericMethodTable without picking a layout", () => {
-  // With no rows every readable layout bounds the table, so none is chosen.
-  expect(linkGeneric({ emptyTable: true }).generic_methods).toEqual({
-    generic_method_pointers_field: null,
-    generic_method_pointers_count: null,
-    generic_method_table: FIXTURE_BINARY_BASE + 0xbc0n,
-    generic_method_table_count: 0,
-    generic_method_table_stride: null,
-    method_specs_count: 3,
-    generic_insts_count: 2,
-    instances: [],
-    issues: [],
-  });
-});
+it.each([24, 31] as const)(
+  "returns no version %d instances for an empty genericMethodTable without picking a layout",
+  (version) => {
+    // With no rows every readable layout bounds the table, so none is chosen.
+    expect(linkGeneric({ emptyTable: true }, version).generic_methods).toEqual({
+      generic_method_pointers_field: null,
+      generic_method_pointers_count: null,
+      generic_method_table: FIXTURE_BINARY_BASE + 0xbc0n,
+      generic_method_table_count: 0,
+      generic_method_table_stride: null,
+      method_specs_count: 3,
+      generic_insts_count: 2,
+      instances: [],
+      issues: [],
+    });
+  },
+);
 
 // Link a low-base image of generic tables only, recording yields and rows.
 const linkLowBase = (
@@ -1766,6 +1796,26 @@ it("refuses generic rows that two CodeRegistration layouts both bound", () => {
   expect(lowBaseFailure({ ambiguous: true })).toBe(
     "ambiguous-generic-method-registration",
   );
+});
+
+it("refuses version 24 when both 12-byte and 16-byte row layouts agree", () => {
+  const fixture = createGenericRegistrationImage();
+  // A fourth spec makes both interpretations of the same three rows valid.
+  // The low pointer value can also bound the 24.3/24.4 candidate's counts.
+  fixture.bytes.writeBigUInt64LE(4n, 0x800 + 64);
+  const decoded = genericFacts(24);
+  expect(() =>
+    drain(
+      linkGenericMethodsSteps(
+        drain(openImageSteps(fixture.bytes, undefined)),
+        decoded.metadata,
+        decoded.link,
+        fixture.modulesField,
+        fixture.metadataRegistration,
+        {},
+      ),
+    ),
+  ).toThrow("ambiguous-generic-method-registration");
 });
 
 it("treats a zero-filled method spec as unobserved, not as method 0", () => {

@@ -367,8 +367,13 @@ joined with `.`, the backtick arity cut, `IntPtr`/`UIntPtr`/`TypedReference`
 and no byref mark. These names do not depend on the byref bit, so version 27 is
 covered.
 
-Header versions do not separate the CodeRegistration layouts (27.0, 27.1 to
-29 and 29.1/31 differ in the fields before `codeGenModulesCount`). Every layout for the header version is tried, and
+Header versions do not separate the CodeRegistration layouts (24.2, 24.3/24.4,
+24.5, 27.0, 27.1 to 29 and 29.1/31 differ in the fields before
+`codeGenModulesCount`). Version 24 retains custom-attribute fields; 24.3/24.4
+adds Windows Runtime factories and 24.5 adds generic adjustor thunks. Their
+module-count offsets are 96, 112 and 120 bytes, respectively. Version-24 generic
+classes hold a type-definition index rather than the type pointer used from 27.
+Every layout for the header version is tried, and
 exactly one must have a `genericMethodPointers` count and an invoker count that
 bound every table row; the layout also fixes the row size (12 bytes, or 16 with
 an adjustor thunk index). No layout agreeing fails as
@@ -377,12 +382,12 @@ an adjustor thunk index). No layout agreeing fails as
 the result has no rows, and `generic_method_pointers_field`,
 `generic_method_pointers_count` and `generic_method_table_stride` are `null`.
 A table of a few rows can still leave two layouts agreeing, which fails as
-ambiguous rather than picking one. Metadata versions 24 and 39 and builds
+ambiguous rather than picking one. Metadata version 39 and builds
 without a static CodeRegistration (`code_gen_modules_field` `null`) or
 MetadataRegistration (`types_field` `null`) fail as
-`generic-methods-unsupported`: for version 24 the type-definition generic
-container offset and the generic class layout have not been checked against a
-real build, so it is refused rather than guessed.
+`generic-methods-unsupported`. Version-24 admission still requires the metadata
+reader's 264-byte header and record layouts described above; this does not add
+earlier 24.x metadata formats or pre-module CodeRegistration layouts.
 
 After the layout is fixed, rows that contradict another table do not fail the
 whole link: a method spec naming a method or generic instance out of range,
@@ -420,9 +425,17 @@ from 2022.3.62f3; and the Windows x64 build from 2023.2.13f1 named above
 build each linked instance matches an Il2CppDumper entry by address and name,
 and Il2CppDumper lists no address-name pair that REA leaves out (Windows: 63,750
 linked rows, 142 without code; Android: 5,152 and 44). This does not establish
-names for versions 24 or 39, for type arguments that are open generic type
+names for version 39, for type arguments that are open generic type
 definitions, or anything about instances created at runtime. The Linux build
 from 2023.2.13f1 keeps no static CodeRegistration and is refused.
+
+Version-24 verification uses Cpp2IL's public Windows x64 Unity 2019.4.34f1
+test build (Il2CppDumper 6.7.46 identifies its binary layout as 24.5). All
+13,852 linked generic rows match Il2CppDumper by RVA and name; 50 rows have
+observed zero pointer slots and no rows have issues. The other version-24
+registration layouts have authored fixture coverage, not real-build verification.
+See the [version-24 verification report](verification/il2cpp-v24-generics-2026-10-26.md)
+for pinned inputs, hashes and reproduction steps.
 
 For metadata version 27, type names are `null` and only type indices are
 reported: versions 27.0 to 27.2 share that header number but place the
