@@ -3029,7 +3029,7 @@
     ],
     "fixed_server_fixture_scope": "17 checks cover six JavaScript and three mobile consumers, direct inline inspect_analysis_view, missing references, role errors, summary retention and unchanged 1024-element admission; authored fixtures do not establish real providers.",
     "CLI_regression": "Shared JSON parsing preserves public hyphenated command names in malformed-inline/file diagnostics; canonical application operation still owns dispatch.",
-    "canonical_source_errors": "Native function workflows diagnose malformed complete source schemas/identities with EvidenceIntegrityError after resource admission in both full and compact profiles; other workflows preserve their format-owner projections. Request-envelope/reference-grammar failures remain invalid_request. The native direction regression retains all malformed permutations and checks the relationship_coverage diagnostic."
+    "canonical_source_errors": "Native function and process workflows diagnose malformed complete source schemas/identities with EvidenceIntegrityError after resource admission; other workflows preserve their format-owner projections. Request-envelope/reference-grammar failures remain invalid_request. Native directions cover both schema profiles. The process-depth regression preserves the selected side, parameters path and depth ceiling in public diagnostics, verifies a subsequent normal comparison and forbids provider startup."
   },
   "reconciliation_review_probe": {
     "source_head": "70db1e8164f31b3e3125e1f688f11187233517dd",
@@ -3227,5 +3227,34 @@
     "probe_source_sha256": "c62ad57d5f1634dd322dbda4926f239c18c57c177777ca653fdbe8df9f69e14d",
     "log_sha256": "83faa53d876db6f5ec9e83462c2d021645304b5051f0008d147dd3093ba0d1fe",
     "review_disposition": "Reported null dereference not reachable on recorded source head. Public borrowed request has no identity refinement; owner authentication precedes identity-only validation. Complete schemas reject invalid children before root refinement."
+  },
+  "source_diagnostic_followup": {
+    "source_head": "63cf473051ebad83ce36bd7000abd1b88ac8450a",
+    "changes": "Boundary regression/documentation only; runtime unchanged. Existing process-depth assertion had expected SDK envelope diagnostics instead of the canonical Evidence owner.",
+    "files": 6,
+    "tests": 104,
+    "elapsed_seconds": 64.384,
+    "CPU_usec": 64066692,
+    "peak_process_family_bytes": 1476808704,
+    "cleanup_verified": true,
+    "kernel_payload_exit_observation_verified": true,
+    "memory_events": {
+      "low": 0,
+      "high": 0,
+      "max": 0,
+      "oom": 0,
+      "oom_kill": 0,
+      "oom_group_kill": 0
+    },
+    "log_sha256": "ece39c677ea57af842b8cb8f5b86dad9263b5ea675617cc714d5fbc640d6ea4d",
+    "CI_failure_receipt_sha256": "18d0cfd236b7b50be74f5adb48cfb2ac01a8f125ad80340e122b59b14f960821",
+    "covered_boundaries": [
+      "session lifecycle and depth rejection",
+      "process comparison diagnostics",
+      "native comparison diagnostics",
+      "source/provider identity",
+      "investigation composition",
+      "full/compact native directions"
+    ]
   }
 }

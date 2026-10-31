@@ -171,8 +171,8 @@ they do not substitute for the real-artifact matrix. The run included a runtime
 build and cost 154.106 s / 153.592029 CPU s / 1,884,516,352 peak bytes. Subsequent
 type, touched-file lint and module checks passed, with no OOM or cleanup gap.
 
-Native function workflows send malformed complete source records to the canonical
-Evidence owner after resource admission. Schema or identity failures return
+Native function and process workflows send malformed complete source records to
+the canonical Evidence owner after resource admission. Schema or identity failures return
 `evidence_integrity_mismatch` in both MCP schema profiles, including the original
 `relationship_coverage` diagnostics. Other workflows preserve their format-owner
 error projections. The directional-coverage regression still
@@ -190,6 +190,16 @@ verified: 3.334 s elapsed, 3.155635 CPU s and 287,404,032 peak bytes, with no OO
 This authored-fixture probe disproves the reported path on that revision;
 it does not establish real passive-runtime behavior. No production change was
 needed for that finding. The accompanying JSON records its observations.
+
+CI later exposed the corresponding process-depth assertion against the old SDK
+error envelope. Its regression now checks the canonical integrity error while
+preserving the public left-source, `parameters` and exact nesting-limit diagnostic.
+A normal comparison must still succeed afterward and provider startup is forbidden.
+The iterative JSON depth guard still rejects before recursive cloning or hashing;
+no second source parser was added. Runtime code was unchanged. Six related MCP
+files passed 104 checks, including source identity, native/process diagnostics,
+investigation composition and session lifecycle: 64.384 s elapsed, 64.066692 CPU s
+and 1,476,808,704 peak bytes. Cleanup was verified with no OOM.
 
 ## Regression and coverage limits
 
