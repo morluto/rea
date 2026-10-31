@@ -92,6 +92,7 @@ export interface ElfDependencyFixtureOptions {
   readonly omitDynamic?: boolean;
   readonly omitHash?: boolean;
   readonly gnuHash?: boolean;
+  readonly gnuBucketBelowFirstSymbol?: boolean;
   readonly cyclicVerneed?: boolean;
   readonly cyclicVernaux?: boolean;
   readonly truncateDynstr?: boolean;
@@ -249,8 +250,11 @@ const gnuHashTable = (
   symbolCount: number,
   bits: 32 | 64,
   little: boolean,
+  bucketBelowFirstSymbol: boolean,
 ): Buffer => {
-  const firstSymbol = Math.min(1, symbolCount);
+  const firstSymbol = bucketBelowFirstSymbol
+    ? Math.min(2, symbolCount)
+    : Math.min(1, symbolCount);
   const hashed = Math.max(0, symbolCount - firstSymbol);
   const header = Buffer.alloc(16);
   write32(header, 0, 1, little);
@@ -259,7 +263,12 @@ const gnuHashTable = (
   write32(header, 12, 0, little);
   const bloom = Buffer.alloc(bits === 64 ? 8 : 4);
   const buckets = Buffer.alloc(4);
-  write32(buckets, 0, hashed === 0 ? 0 : firstSymbol, little);
+  write32(
+    buckets,
+    0,
+    bucketBelowFirstSymbol ? 1 : hashed === 0 ? 0 : firstSymbol,
+    little,
+  );
   const chains = Buffer.alloc(hashed * 4);
   if (hashed > 0) write32(chains, (hashed - 1) * 4, 1, little);
   return concat(header, bloom, buckets, chains);
@@ -343,6 +352,7 @@ interface FixtureConfig {
   readonly flags1: number | null;
   readonly omitHash: boolean;
   readonly gnuHash: boolean;
+  readonly gnuBucketBelowFirstSymbol: boolean;
   readonly cyclicVerneed: boolean;
   readonly cyclicVernaux: boolean;
   readonly truncateDynstr: boolean;
@@ -427,6 +437,7 @@ const fixtureConfig = (options: ElfDependencyFixtureOptions): FixtureConfig => {
     flags1: options.flags1 === undefined ? 0x08000881 : options.flags1,
     omitHash: options.omitHash === true,
     gnuHash: options.gnuHash === true,
+    gnuBucketBelowFirstSymbol: options.gnuBucketBelowFirstSymbol === true,
     cyclicVerneed: options.cyclicVerneed === true,
     cyclicVernaux: options.cyclicVernaux === true,
     truncateDynstr: options.truncateDynstr === true,
@@ -492,7 +503,12 @@ const buildDependencyTables = (config: FixtureConfig): DependencyTables => {
     versym,
     hash: config.omitHash ? Buffer.alloc(0) : sysvHash(symbols.length, little),
     gnuHashBytes: config.gnuHash
-      ? gnuHashTable(symbols.length, bits, little)
+      ? gnuHashTable(
+          symbols.length,
+          bits,
+          little,
+          config.gnuBucketBelowFirstSymbol,
+        )
       : Buffer.alloc(0),
     verneedBytes,
     verdefBytes: concat(

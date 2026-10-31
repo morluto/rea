@@ -428,8 +428,11 @@ const gnuSymbolCountAt = (
   if (header + prefixBytes > end) return null;
   let last = 0;
   const bucketsAt = header + 16 + bloomWords * (bits === 64 ? 8 : 4);
-  for (let index = 0; index < buckets; index += 1)
-    last = Math.max(last, reader.u32(bucketsAt + index * 4));
+  for (let index = 0; index < buckets; index += 1) {
+    const value = reader.u32(bucketsAt + index * 4);
+    if (value !== 0 && value < firstSymbol) return null;
+    last = Math.max(last, value);
+  }
   let count = firstSymbol;
   if (last !== 0) {
     let index = last;

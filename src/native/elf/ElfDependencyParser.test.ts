@@ -252,6 +252,22 @@ it("counts stripped dynsym rows from DT_GNU_HASH when DT_HASH is absent", () => 
   ]);
 });
 
+it("reports the symbol count as unavailable when a DT_GNU_HASH bucket precedes its first symbol", () => {
+  const report = parse(
+    elfDependencyFixture({
+      stripped: true,
+      omitHash: true,
+      gnuHash: true,
+      gnuBucketBelowFirstSymbol: true,
+    }),
+  );
+  expect(report.coverage.status).toBe("partial");
+  expect(report.imports).toEqual([]);
+  expect(
+    report.issues.some((issue) => issue.code === "table_unavailable"),
+  ).toBe(true);
+});
+
 it("keeps a complete empty import list when a stripped image has no hash table", () => {
   const report = parse(
     elfDependencyFixture({ stripped: true, omitHash: true }),
