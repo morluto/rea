@@ -125,12 +125,10 @@ const fail = (message: string): never => {
 
 const hex = (value: number): string => `0x${value.toString(16)}`;
 
-const asTag = (tag: bigint, bits: 32 | 64): number => {
+/** Class-width tag value, or null when it is wider than every known DT_* tag. */
+const asTag = (tag: bigint, bits: 32 | 64): number | null => {
   const word = BigInt.asUintN(bits, tag);
-  const identity = BigInt.asUintN(32, word);
-  if (identity > BigInt(Number.MAX_SAFE_INTEGER))
-    fail("Dynamic entry tag is not representable");
-  return Number(identity);
+  return word > 0xffffffffn ? null : Number(word);
 };
 
 const asNumber = (value: bigint, label: string): number => {
@@ -631,6 +629,7 @@ export const parseElfDependencies = (
     );
     if (!parsedEntry.ok) return fail(parsedEntry.error.message);
     const tag = asTag(parsedEntry.value.tag, bits);
+    if (tag === null) continue;
     if (tag === DT_NULL) {
       terminated = true;
       break;
@@ -980,7 +979,8 @@ const parseInterpreter = (
         location: hex(interp.offset),
         message: cause.message,
       });
-      return { status: "unreadable", path: null, location: interp };
+      // The declared range is outside the file, so it is not a report location.
+      return { status: "unreadable", path: null, location: null };
     }
     throw cause;
   }

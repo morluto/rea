@@ -408,6 +408,50 @@ it("fails when undefined symbols exceed the caller-selected import budget", () =
   }
 });
 
+const elf64ProgramHeader = (bytes: Buffer, type: number): number => {
+  const phoff = Number(bytes.readBigUInt64LE(32));
+  const phentsize = bytes.readUInt16LE(54);
+  for (let index = 0; index < bytes.readUInt16LE(56); index += 1) {
+    const base = phoff + index * phentsize;
+    if (bytes.readUInt32LE(base) === type) return base;
+  }
+  throw new Error(`Fixture has no program header of type ${type}`);
+};
+
+it.each([0x1_0000_0000n, 0x1_0000_0001n])(
+  "does not match ELF64 tag %s against a known 32-bit tag",
+  (tag) => {
+    const bytes = elfDependencyFixture({ bits: 64, little: true });
+    const program = elf64ProgramHeader(bytes, 2);
+    const dynamic = Number(bytes.readBigUInt64LE(program + 8));
+    expect(bytes.readBigUInt64LE(dynamic)).toBe(1n);
+    bytes.writeBigUInt64LE(tag, dynamic);
+    expect(parse(bytes).needed.map((entry) => entry.name)).toEqual(
+      defaultNeeded.slice(1),
+    );
+  },
+);
+
+it("keeps the inventory when PT_INTERP points outside the file", () => {
+  const bytes = elfDependencyFixture({ bits: 64, little: true });
+  const program = elf64ProgramHeader(bytes, 3);
+  bytes.writeBigUInt64LE(BigInt(bytes.length + 16), program + 8);
+  const report = parse(bytes);
+  expect(report.interpreter).toEqual({
+    status: "unreadable",
+    path: null,
+    location: null,
+  });
+  expect(report.coverage.status).toBe("partial");
+  expect(report.issues).toContainEqual(
+    expect.objectContaining({
+      code: "table_unavailable",
+      location: `0x${(bytes.length + 16).toString(16)}`,
+    }),
+  );
+  expect(report.needed.map((entry) => entry.name)).toEqual(defaultNeeded);
+});
+
 it("marks an empty PT_INTERP path unreadable with partial coverage", () => {
   const report = parse(elfDependencyFixture({ interpreter: "" }));
   expect(report.interpreter.status).toBe("unreadable");
