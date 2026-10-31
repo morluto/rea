@@ -237,7 +237,7 @@ For a client whose stdio reader rejects the complete catalog frame, set
 schema, or `"off"` to omit them, in REA's `env` object, then restart the client.
 Both keep canonical result validation and complete structured results; `compact`
 keeps a widened root shape and `off` advertises nothing. On catalogs large
-enough that full input schemas alone approach the frame limit, also keep the
+enough that full input schemas alone approach or exceed the frame limit, also keep the
 input profile at its `compact` default. See [MCP output schema
 profiles](mcp-contracts.md#output-schemas).
 

@@ -35,7 +35,9 @@ export const createAnalysisExecutionEvidence = (
   input: unknown,
   execution: AnalysisObservation,
   confidence: "observed" | "derived",
-  options?: EvidenceCreationOptions,
+  options?: EvidenceCreationOptions & {
+    readonly authority?: Evidence["authority"];
+  },
 ): Evidence =>
   createEvidence(
     execution.subject === undefined
@@ -58,6 +60,9 @@ export const createAnalysisExecutionEvidence = (
       evidenceLinks:
         execution.sourceEvidence?.map(({ evidence_id }) => evidence_id) ?? [],
       confidence,
+      ...(options?.authority === undefined
+        ? {}
+        : { authority: options.authority }),
     },
     options,
   );

@@ -15,6 +15,7 @@ import {
 } from "../domain/immutableJson.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { analysisOperationInputErrorFromIssues } from "../domain/inputIssueProjection.js";
+import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type {
   AnalysisExecution,
@@ -52,6 +53,13 @@ export const executeProviderOperation = async <
   schema: z.ZodType<TRequest>,
   provider: ProviderOperationPort<TRequest>,
   confidence: "observed" | "derived",
+  projection?: {
+    readonly parameters?: (
+      request: TRequest,
+      execution: AnalysisExecution,
+    ) => Readonly<Record<string, JsonValue>>;
+    readonly authority?: (request: TRequest) => Evidence["authority"];
+  },
 ): Promise<Result<Evidence, AnalysisError>> => {
   if (options?.signal?.aborted)
     return err(
@@ -69,11 +77,15 @@ export const executeProviderOperation = async <
     );
   const executed = await provider.execute(request.data, options);
   if (!executed.ok) return executed;
+  const execution = executed.value;
   const evidence = createAnalysisExecutionEvidence(
     operation,
-    request.data.input,
-    executed.value,
+    projection?.parameters?.(request.data, execution) ?? request.data.input,
+    execution,
     confidence,
+    projection?.authority === undefined
+      ? undefined
+      : { authority: projection.authority(request.data) },
   );
   return completeProviderEvidence(evidence, options?.signal);
 };

@@ -198,7 +198,7 @@ cleanup boundary. Exhaustiveness is an error when a union member has neither a
 case nor a default. Intentional defaults count as handling the remaining union;
 new members covered by those defaults therefore require behavioral review.
 
-Two HTTP/3 source-test files allow the runner-owned `node:test` registration API;
+The listed Node source-test files allow the runner-owned `node:test` registration API;
 ordinary unowned promises in those files still fail. The authored code-split
 recovery input is exempt from floating-promise policy because it is analysis
 input, rather than application orchestration. Preserve framework-owned callbacks

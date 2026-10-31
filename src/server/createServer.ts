@@ -571,7 +571,16 @@ export const createServer = (
     createApktoolResourceAnalysisProvider(environment);
   const jeb = options.jebAnalysis ?? createJebAnalysisProvider(environment);
   const adbDevice =
-    options.adbDeviceAnalysis ?? createAdbDeviceAnalysisProvider(environment);
+    options.adbDeviceAnalysis ??
+    createAdbDeviceAnalysisProvider(
+      environment,
+      session === undefined
+        ? undefined
+        : (evidence) => {
+            const recorded = session.recordEvidence(evidence);
+            if (!recorded.ok) throw recorded.error;
+          },
+    );
   const cutter = new CutterBridgeService(
     new CutterBridgeClient(providerEnvironment),
   );

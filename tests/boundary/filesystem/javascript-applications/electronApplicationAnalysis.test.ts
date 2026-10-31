@@ -431,6 +431,7 @@ const expectElectronSummary = (result: Reconstruction): void => {
       literal_channels: 5,
       dynamic_channel_operations: 2,
       // Retained module gaps leave preload/renderer application ownership unknown.
+      renderer_transmissions: 7,
       paired_renderer_transmissions: 0,
       ambiguous_renderer_transmissions: 7,
       unpaired_literal_renderer_transmissions: 0,
@@ -592,8 +593,10 @@ const expectElectronBoundaries = (graph: ApplicationGraph): void => {
     ({ properties }) =>
       properties.pairing_basis === "unique-exact-literal-channel",
   );
-  expect(pairingEdges).toHaveLength(0);
-  expect(graph.limitations.join(" ")).toMatch(/dynamic IPC|ambiguous/iu);
+  expect(pairingEdges).toEqual([]);
+  expect(graph.limitations).toContainEqual(
+    expect.stringContaining("unresolved application ownership"),
+  );
 };
 
 const fixtureDirectory = async (): Promise<string> => {

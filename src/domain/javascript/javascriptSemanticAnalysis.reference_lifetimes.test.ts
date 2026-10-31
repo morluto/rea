@@ -89,21 +89,28 @@ describe("bounded paths through dynamic selectors and class origins", () => {
 });
 
 describe("bounded member path propagation", () => {
-  it("bounds cyclic member paths with no observed container origin", () => {
-    const branches = Array.from(
-      { length: 16 },
-      (_, index) => `if (flag === ${index}) node = node.m${index};`,
-    ).join(" else ");
-    const start = performance.now();
-    const callable = onlyCallable(
-      analyzeJavaScriptSemantics(
-        `export function result(seed) { let node=seed; while(node) { ${branches} use(node.state); } return seed.keep; }`,
-      ),
-      "result",
-    );
-    expect(callable.returnSites[0]?.value.status).toBe("unknown");
-    expect(performance.now() - start).toBeLessThan(2000);
-  }, 30000);
+  it.each(["parameter", "catch"] as const)(
+    "bounds cyclic member paths through an unobserved %s",
+    (kind) => {
+      const branches = Array.from(
+        { length: 16 },
+        (_, index) => `if (flag === ${index}) node = node.m${index};`,
+      ).join(" else ");
+      const start = performance.now();
+      const body = `let node=seed; while(node) { ${branches} use(node.state); } return seed.keep;`;
+      const source =
+        kind === "parameter"
+          ? `export function result(seed) { ${body} }`
+          : `export function result() { try { run(); } catch (seed) { ${body} } }`;
+      const callable = onlyCallable(
+        analyzeJavaScriptSemantics(source),
+        "result",
+      );
+      expect(callable.returnSites[0]?.value.status).toBe("unknown");
+      expect(performance.now() - start).toBeLessThan(2000);
+    },
+    30000,
+  );
 
   it("preserves Array prototype effects through an otherwise unknown alias", () => {
     expect(

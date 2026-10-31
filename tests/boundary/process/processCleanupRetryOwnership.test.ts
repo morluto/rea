@@ -55,7 +55,7 @@ it("resolves the origin and finalization copy after the exact root retry", async
     reason: "cleanup_incomplete",
     cleanup: {
       reason: "temporary root removal failed",
-      resources: ["temporary_root"],
+      resources: [root],
     },
   });
   let denyRemoval = true;
@@ -144,6 +144,8 @@ it("keeps mixed root errors and retry aggregates bound to only unresolved roots"
     );
     expect(first.cleanupIncomplete).toBe(true);
     expect(second.cleanupIncomplete).toBe(true);
+    expect(first.cleanupResources).toEqual([roots[0]]);
+    expect(second.cleanupResources).toEqual([roots[1]]);
 
     const bothUnresolved: unknown = await scope
       .retryCleanup()
@@ -156,6 +158,7 @@ it("keeps mixed root errors and retry aggregates bound to only unresolved roots"
     if (!(bothUnresolved.cause instanceof AggregateError))
       throw new Error("Expected retained child retry failures");
     expect(bothUnresolved.cause.errors).toHaveLength(2);
+    expect(new Set(bothUnresolved.cleanupResources)).toEqual(new Set(roots));
 
     denied.delete(roots[0]);
     const retryFailure: unknown = await scope
@@ -169,6 +172,7 @@ it("keeps mixed root errors and retry aggregates bound to only unresolved roots"
     expect(bothUnresolved.cleanupIncomplete).toBe(true);
     expect(retryFailure.cleanupIncomplete).toBe(true);
     expect(retryFailure.cleanupResources).toEqual([roots[1]]);
+    expect(bothUnresolved.cleanupResources).toEqual([roots[1]]);
 
     denied.clear();
     await scope.retryCleanup();
@@ -176,6 +180,7 @@ it("keeps mixed root errors and retry aggregates bound to only unresolved roots"
     expect(second.cleanupIncomplete).toBe(false);
     expect(retryFailure.cleanupIncomplete).toBe(false);
     expect(bothUnresolved.cleanupIncomplete).toBe(false);
+    expect(bothUnresolved.cleanupResources).toEqual([]);
     expect(first.cleanupReport?.temporary_root.state).toBe("failed");
     expect(second.cleanupReport?.temporary_root.state).toBe("failed");
     for (const root of roots)

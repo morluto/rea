@@ -13,7 +13,11 @@ import {
 } from "../domain/adb/adbDeviceAnalysis.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
-import { withCommandCancellation } from "./commandCancellation.js";
+import {
+  withCommandCancellation,
+  type CommandCancellationHost,
+} from "./commandCancellation.js";
+import { parseCliJsonInput } from "../cliJsonInput.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 
 /** Expose the same explicit ADB requests through one-shot CLI commands. */
@@ -24,25 +28,71 @@ export const registerAdbCommands = (
   provider: AdbDeviceAnalysisPort = createAdbDeviceAnalysisProvider(
     environment,
   ),
+  cancellationHost: CommandCancellationHost = process,
 ): void => {
   const service = new AdbDeviceAnalysisService(provider);
-  const execute = (name: string, operation: AdbOperation, input: unknown) =>
-    withCommandCancellation((signal) =>
-      logCliCommand(logger, name, () =>
-        finishAnalysisCommand(
-          () => service.execute(operation, input, { signal }),
-          { close: () => provider.close() },
-          "adb",
-          operation,
-          signal,
-        ).then(projectCliAnalysisResult),
-      ),
+  const executeResolved = (
+    name: string,
+    operation: AdbOperation,
+    resolveInput: (
+      signal: AbortSignal,
+    ) => Promise<Awaited<ReturnType<typeof parseCliJsonInput>>>,
+  ) =>
+    withCommandCancellation(
+      (signal) =>
+        logCliCommand(logger, name, async () => {
+          const input = await resolveInput(signal);
+          if (!input.ok) return input.error;
+          return finishAnalysisCommand(
+            () => service.execute(operation, input.value, { signal }),
+            provider,
+            "adb",
+            operation,
+            signal,
+          ).then(projectCliAnalysisResult);
+        }),
+      cancellationHost,
     );
+  const execute = (name: string, operation: AdbOperation, input: unknown) =>
+    executeResolved(name, operation, async () => ({ ok: true, value: input }));
 
   const serial = adbInputSchemas.inspect_adb_device.shape.serial.describe(
     "Device serial exactly as `adb devices` reports it",
   );
   const packageName = adbInputSchemas.pull_adb_package.shape.package;
+
+  for (const [name, operation, description] of [
+    [
+      CLI_COMMANDS.inspectAdbUi,
+      "inspect_adb_ui",
+      "Inspect one package's UI Automator hierarchy",
+    ],
+    [
+      CLI_COMMANDS.findAdbUiElements,
+      "find_adb_ui_elements",
+      "Find text, buttons and other Android accessibility controls",
+    ],
+    [
+      CLI_COMMANDS.waitForAdbUi,
+      "wait_for_adb_ui",
+      "Wait for an Android UI condition within a deadline",
+    ],
+  ] as const) {
+    cli.command(name, {
+      description,
+      args: z.object({
+        inputJson: z
+          .string()
+          .describe(
+            "MCP input object as inline JSON or a local JSON file path",
+          ),
+      }),
+      run: ({ args }) =>
+        executeResolved(name, operation, (signal) =>
+          parseCliJsonInput(args.inputJson, operation, signal),
+        ),
+    });
+  }
 
   cli.command(CLI_COMMANDS.inspectAdbClient, {
     description:

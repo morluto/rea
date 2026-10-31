@@ -5,9 +5,11 @@ import {
 import type { ToolContract } from "../toolContractTypes.js";
 import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
 import { toolContractMetadata } from "../toolEffects.js";
+import { ADB_UI_TOOL_CONTRACTS } from "./adbUiToolContracts.js";
 
 /** ADB device inspection and acquisition over a caller-supplied binary. */
 export const ADB_TOOL_CONTRACTS = [
+  ...ADB_UI_TOOL_CONTRACTS,
   {
     name: "inspect_adb_client",
     ...toolContractMetadata("inspect_adb_client"),

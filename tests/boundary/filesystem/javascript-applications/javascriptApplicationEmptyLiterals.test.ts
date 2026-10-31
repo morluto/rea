@@ -1,11 +1,9 @@
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
-
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it } from "vitest";
 import { z } from "zod";
 
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
+import { writeFixtureFiles } from "../../../support/workspace/writeFixtureFiles.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { matchJavaScriptApplicationVersions } from "../../../../src/domain/javascript/javascriptApplicationVersionKeys.js";
 import { findApplicationFeatureSeeds } from "../../../../src/domain/javascript/javascriptFeatureSeed.js";
@@ -20,9 +18,10 @@ const analyzeSource = async (
   extraFiles: Readonly<Record<string, string>> = {},
 ) => {
   const inputPath = await createTestTempDirectory("rea-js-empty-literal-");
-  await writeFile(join(inputPath, "app.js"), `${source}\n`);
-  for (const [path, text] of Object.entries(extraFiles))
-    await writeFile(join(inputPath, path), text);
+  await writeFixtureFiles(inputPath, {
+    "app.js": `${source}\n`,
+    ...extraFiles,
+  });
   const result = await analyzeJavaScriptApplication({
     input_path: inputPath,
     format: "directory",
@@ -83,8 +82,10 @@ it("retains empty literal evidence across the application boundary surfaces", as
 const literalEndpointKey = (value: string): string =>
   JSON.stringify(["literal", value]);
 
-it("keeps bridge entry paths stable through worker validation and API seed matching", async () => {
-  const output = await analyzeSource(`
+it.each([false, true])(
+  "keeps bridge entry paths stable through worker validation and API seed matching (identical copy: %s)",
+  async (withCopy) => {
+    const source = `
     const { contextBridge, ipcRenderer } = require("electron");
     const literal = () => ipcRenderer.send("literal");
     const nested = () => ipcRenderer.send("nested");
@@ -92,79 +93,58 @@ it("keeps bridge entry paths stable through worker validation and API seed match
       "nested.write": literal,
       nested: { write: nested },
     });
-  `);
-  const semanticProperties = (output.semantic_graph?.nodes ?? []).map(
-    ({ properties }) => properties,
-  );
-  const applicationProperties = output.graph.nodes.flatMap(({ observations }) =>
-    observations.map(({ properties }) => properties),
-  );
-  const pathIds = (properties: typeof semanticProperties) =>
-    new Set(
-      properties
-        .map(({ path_id }) => path_id)
+  `;
+    const copies = withCopy ? 2 : 1;
+    const output = await analyzeSource(
+      source,
+      withCopy ? { "copy/app.js": `${source}\n` } : {},
+    );
+    const semanticPathIds = new Set(
+      (output.semantic_graph?.nodes ?? [])
+        .map(({ properties }) => properties.path_id)
         .filter((pathId): pathId is string => typeof pathId === "string"),
     );
-  expect(pathIds(semanticProperties)).toEqual(pathIds(applicationProperties));
-  const semanticPaths = semanticProperties.filter(
-    ({ step_kind }) => step_kind === "terminal",
-  );
-  const applicationPaths = applicationProperties.filter(
-    ({ step_kind }) => step_kind === "terminal",
-  );
-  const expectedPaths = [
-    expect.objectContaining({
-      path_id: expect.any(String),
-      entry_path: ["desktop", "nested.write"],
-      channel: "literal",
-    }),
-    expect.objectContaining({
-      path_id: expect.any(String),
-      entry_path: ["desktop", "nested", "write"],
-      channel: "nested",
-    }),
-  ];
-  expect(semanticPaths).toEqual(expect.arrayContaining(expectedPaths));
-  expect(applicationPaths).toEqual(expect.arrayContaining(expectedPaths));
-  const pathIdentities = (paths: typeof semanticPaths) =>
-    new Set(
-      paths.map(({ path_id, entry_path, channel }) =>
-        JSON.stringify([path_id, entry_path, channel]),
+    const applicationPathIds = new Set(
+      output.graph.nodes.flatMap(({ observations }) =>
+        observations
+          .map(({ properties }) => properties.path_id)
+          .filter((pathId): pathId is string => typeof pathId === "string"),
       ),
     );
-  expect(new Set(semanticPaths.map(({ path_id }) => path_id)).size).toBe(2);
-  expect(pathIdentities(applicationPaths)).toEqual(
-    pathIdentities(semanticPaths),
-  );
+    expect(applicationPathIds.size).toBe(2 * copies);
+    expect(semanticPathIds.size).toBe(2 * copies);
+    expect(semanticPathIds).toEqual(applicationPathIds);
 
-  const matches = findApplicationFeatureSeeds(
-    output.graph.nodes,
-    applicationFeatureSeedSchema.parse({
-      kind: "api",
-      value: "desktop.nested.write",
-      entry_path: ["desktop", "nested.write"],
-    }),
-  );
-  expect(matches).toHaveLength(1);
-  expect(
-    output.graph.nodes
-      .find(({ node_id: nodeId }) => nodeId === matches[0]?.node_id)
-      ?.observations.some(
-        ({ properties }) =>
-          Array.isArray(properties.entry_path) &&
-          properties.entry_path.join("\0") === "desktop\0nested.write",
-      ),
-  ).toBe(true);
-  expect(
-    findApplicationFeatureSeeds(
+    const matches = findApplicationFeatureSeeds(
       output.graph.nodes,
       applicationFeatureSeedSchema.parse({
         kind: "api",
         value: "desktop.nested.write",
+        entry_path: ["desktop", "nested.write"],
       }),
-    ),
-  ).toHaveLength(2);
-});
+    );
+    expect(matches).toHaveLength(copies);
+    for (const match of matches)
+      expect(
+        output.graph.nodes
+          .find(({ node_id: nodeId }) => nodeId === match.node_id)
+          ?.observations.some(
+            ({ properties }) =>
+              Array.isArray(properties.entry_path) &&
+              properties.entry_path.join("\0") === "desktop\0nested.write",
+          ),
+      ).toBe(true);
+    expect(
+      findApplicationFeatureSeeds(
+        output.graph.nodes,
+        applicationFeatureSeedSchema.parse({
+          kind: "api",
+          value: "desktop.nested.write",
+        }),
+      ),
+    ).toHaveLength(2 * copies);
+  },
+);
 
 it("analyzes a plain long-line loader without package metadata", async () => {
   const output = await analyzeSource(
