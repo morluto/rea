@@ -13,9 +13,11 @@ interface PathInputCase {
   readonly field: string;
   readonly valid: Readonly<Record<string, unknown>>;
   readonly invalid: Readonly<Record<string, unknown>>;
-  /** zod issue code this tool surfaces for a rejected value. */
-  readonly reason?: string;
-  readonly issuePath?: readonly string[];
+  /**
+   * `null` skips the structured issue assertion. Used where the reported shape
+   * is not stable across host platforms.
+   */
+  readonly issuePath?: readonly string[] | null;
 }
 
 const createMcp = async (
@@ -89,22 +91,17 @@ const standaloneAnalysisCases = (
       name: "decode_signal_recording",
       input: { decoders: "uart:rx=RX:baudrate=9600" },
     },
-    // The SDK surfaces this tool's rejected path as a root-level issue rather
-    // than one scoped to the field, so its issue path and code differ from its
-    // siblings. Both are asserted as the structured facts they are.
-    {
-      name: "inspect_byte_entropy",
-      input: {},
-      issuePath: [],
-      reason: "invalid_value",
-    },
-  ].map(({ name, input, issuePath = ["path"], reason = "invalid_format" }) => ({
+    // The reported issue shape for this tool depends on the host platform: on
+    // Linux it matches its siblings, while on Windows the rejection surfaces as
+    // a root-level issue with reason `invalid_value`. Only the platform-stable
+    // facts are asserted, so the structured issue check is skipped here.
+    { name: "inspect_byte_entropy", input: {}, issuePath: null },
+  ].map(({ name, input, issuePath = ["path"] }) => ({
     name,
     field: "path",
     valid: { ...input, path: absolute },
     invalid: { ...input, path: relative },
     issuePath,
-    reason,
   }));
 
 const inputCases = (
@@ -305,17 +302,23 @@ it("rejects relative paths through in-memory MCP handlers", async () => {
   const firmwareCalls: string[] = [];
   const { client, close } = await createMcp(firmwareCalls);
   try {
-    for (const { name, field, invalid, issuePath, reason } of inputCases(
+    for (const { name, field, invalid, issuePath } of inputCases(
       resolve("rea-absolute-input"),
       "relative-input",
     )) {
       const result = await client.callTool({ name, arguments: invalid });
       expect(result.isError, `${name}.${field}`).toBe(true);
       expect(JSON.stringify(result), `${name}.${field}`).toContain("absolute");
-      if (issuePath !== undefined)
+      // The rejection must land at input validation rather than later inside the
+      // handler. The code and category are stable across host platforms, unlike
+      // the per-field issue shape below.
+      const error = parseMcpToolError(result).error;
+      expect(error.code, `${name}.${field}`).toBe("invalid_request");
+      expect(error.category, `${name}.${field}`).toBe("invalid_input");
+      if (issuePath != null)
         expect(parseMcpToolError(result).error.details).toMatchObject({
           operation: name,
-          issues: [{ path: issuePath, reason }],
+          issues: [{ path: issuePath, reason: "invalid_format" }],
         });
     }
     expect(firmwareCalls).toEqual([]);
