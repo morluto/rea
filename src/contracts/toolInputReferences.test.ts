@@ -3,6 +3,7 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
+import { applicationFeatureSeedSchema } from "../domain/javascript/javascriptFeatureTraceSchemas.js";
 import { presentInputJsonSchema } from "./inputSchemaPresentation.js";
 import { toolContract } from "./toolContracts.js";
 import {
@@ -831,3 +832,42 @@ it.each(["$ref", "$dynamicRef"])(
       expect(advertised(value)).toBe(canonical(value));
   },
 );
+
+describe("advertised empty-string literal edge cases", () => {
+  it("widens empty-string literals under contentSchema", () => {
+    const canonical = {
+      type: "object",
+      properties: {
+        value: { type: "string", contentSchema: { const: "" } },
+      },
+    };
+    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    expect(advertised.properties).toEqual({
+      value: {
+        type: "string",
+        contentSchema: { type: "string" },
+      },
+    });
+  });
+
+  it("removes the recorded trace seed's empty-string literals from the advertisement", () => {
+    const canonical = z.toJSONSchema(
+      z.strictObject({ seed: applicationFeatureSeedSchema }),
+      { io: "input", target: "draft-2020-12" },
+    );
+    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    expect(JSON.stringify(advertised)).not.toContain('"const":""');
+    const canonicalValidate = new Ajv2020({ strict: false }).compile(canonical);
+    const advertisedValidate = new Ajv2020({ strict: false }).compile(
+      advertised,
+    );
+    const emptyRoute = { kind: "route", value: "", match: "exact" };
+    expect(canonicalValidate({ seed: emptyRoute })).toBe(true);
+    expect(advertisedValidate({ seed: emptyRoute })).toBe(true);
+    expect(
+      canonicalValidate({
+        seed: { kind: "route", value: "", match: "contains" },
+      }),
+    ).toBe(false);
+  });
+});
