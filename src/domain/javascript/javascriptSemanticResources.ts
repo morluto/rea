@@ -67,6 +67,7 @@ export const collectJavaScriptSemanticResources = (
   const acquisitions = collectAcquisitions(program, context).filter(
     (candidate) =>
       !socketPortInFirstArgument(candidate) ||
+      tlsOptionsReplaceFirstArgument(candidate, context) ||
       !rejectsSocketPortLiteral(candidate.node, context),
   );
   return [
@@ -225,16 +226,123 @@ const acquisitionMethod = (
 const resourceCandidateId = (candidate: ResourceCandidate): string =>
   `resource:acquire:${String(candidate.node.start ?? -1)}:${String(candidate.node.end ?? -1)}`;
 
+/** Whether a number Node accepts as a TCP port. */
+const usablePort = (bits: number): boolean =>
+  Number.isInteger(bits) && bits >= 0 && bits <= 65535;
+
+/**
+ * Whether an exactly readable value is not a usable port. Omission and an empty
+ * object throw `ERR_MISSING_ARGS`, which is a missing option rather than a bad
+ * one, so they stay undecided here.
+ *
+ * A positional string is a Unix socket path, so only the empty string is
+ * rejected there. The `port` member of an options object is a port instead, and
+ * Node coerces it with `Number`, so `"0x50"` and `"8e1"` are valid while
+ * `"65536"` and `"abc"` are not.
+ */
+const rejectsPortValue = (
+  value: t.Node,
+  context: DataEffectTraversalContext,
+  stringIsPath: boolean,
+): boolean => {
+  if (t.isStringLiteral(value))
+    return stringIsPath
+      ? value.value.length === 0
+      : value.value === "" || !usablePort(Number(value.value));
+  if (
+    t.isNullLiteral(value) ||
+    t.isBigIntLiteral(value) ||
+    t.isBooleanLiteral(value) ||
+    t.isObjectExpression(value) ||
+    t.isArrayExpression(value)
+  )
+    return true;
+  if (t.isNumericLiteral(value)) return !usablePort(value.value);
+  // `NaN` and `Infinity` are unshadowed globals, and neither is a port.
+  if (
+    t.isIdentifier(value) &&
+    (value.name === "NaN" || value.name === "Infinity") &&
+    isUnmodifiedGlobalReference(value, context.state, value.name)
+  )
+    return true;
+  // A unary operator is judged by its result, not by its operand.
+  if (t.isUnaryExpression(value)) {
+    // `typeof` yields a non-empty type name, which Node reads as a Unix socket
+    // path rather than a port.
+    if (value.operator === "typeof") return false;
+    // `void` yields `undefined` and `!` yields a boolean; both throw before a
+    // socket exists.
+    if (value.operator === "void" || value.operator === "!") return true;
+    const operand = unwrapJavaScriptExpression(value.argument).node;
+    if (!t.isNumericLiteral(operand)) return false;
+    const bits =
+      value.operator === "-"
+        ? -operand.value
+        : value.operator === "+"
+          ? operand.value
+          : value.operator === "~"
+            ? ~operand.value
+            : undefined;
+    // `-0` and `~-1` are both zero, which is the valid lowest port.
+    return bits === undefined ? false : !usablePort(bits);
+  }
+  return false;
+};
+
+/**
+ * The value of the last readable member named `name`. `undefined` means the
+ * object has no such member and `null` means one is present but not exactly
+ * readable, because JavaScript uses the last matching member and a later spread
+ * or computed key can add or override one.
+ */
+const lastMemberValue = (
+  object: t.ObjectExpression,
+  name: string,
+): t.Node | null | undefined => {
+  for (let index = object.properties.length - 1; index >= 0; index -= 1) {
+    const property = object.properties[index];
+    if (property === undefined) continue;
+    if (!t.isObjectProperty(property) || property.computed) return null;
+    if (semanticStaticPropertyName(property.key, false) !== name) continue;
+    return unwrapJavaScriptExpression(property.value).node;
+  }
+  return undefined;
+};
+
+/**
+ * Whether an options object proves it selects a Unix socket, in which case Node
+ * never validates `port`. `true` is a non-empty literal `path`; `null` means the
+ * `path` member is present but not readable, so a socket may still be selected.
+ */
+const optionsSelectUnixSocket = (
+  object: t.ObjectExpression,
+): boolean | null => {
+  const path = lastMemberValue(object, "path");
+  if (path === null) return null;
+  if (path === undefined) return false;
+  if (!t.isStringLiteral(path)) return null;
+  return path.value !== "";
+};
+
+/**
+ * Whether an options object supplies a usable port of its own, which is what
+ * makes `tls.connect(-1, { port: 443 })` succeed. `null` means the member is not
+ * readable, so the answer stays open.
+ */
+const optionsSupplyPort = (
+  object: t.ObjectExpression,
+  context: DataEffectTraversalContext,
+): boolean | null => {
+  const port = lastMemberValue(object, "port");
+  if (port === undefined) return false;
+  if (port === null) return null;
+  return !rejectsPortValue(port, context, false);
+};
+
 /**
  * `net` and `tls` validate a numeric port before creating a socket, so a
- * literal port outside `[0, 65535]`, a fractional, non-finite, BigInt, boolean
- * or `null` first argument throws synchronously and no socket exists. A string
- * is a Unix socket path and an object may carry a path, so only an exactly
- * readable non-port literal is decided. `""` is a path with no length, which
- * Node also rejects.
- *
- * `undefined` and an empty object throw `ERR_MISSING_ARGS`, but those are a
- * missing option rather than a bad port, so they stay undecided here.
+ * literal port Node rejects throws synchronously and no socket exists. Only an
+ * exactly readable value is decided.
  */
 const rejectsSocketPortLiteral = (
   node: t.CallExpression | t.OptionalCallExpression,
@@ -243,37 +351,41 @@ const rejectsSocketPortLiteral = (
   const port = node.arguments[0];
   if (port === undefined || t.isSpreadElement(port)) return false;
   const value = unwrapJavaScriptExpression(port).node;
-  if (t.isStringLiteral(value)) return value.value.length === 0;
-  if (
-    t.isNullLiteral(value) ||
-    t.isBigIntLiteral(value) ||
-    t.isBooleanLiteral(value)
-  )
-    return true;
-  if (t.isNumericLiteral(value))
-    return (
-      !Number.isInteger(value.value) || value.value < 0 || value.value > 65535
-    );
-  // `NaN` and `Infinity` are unshadowed globals, and neither is a port.
-  if (
-    t.isIdentifier(value) &&
-    (value.name === "NaN" || value.name === "Infinity") &&
-    isUnmodifiedGlobalReference(value, context.state, value.name)
-  )
-    return true;
-  // `-1` and `-1.5` are unary expressions over numeric literals: always out of
-  // range because a port is never negative.
-  if (t.isUnaryExpression(value)) {
-    const operand = unwrapJavaScriptExpression(value.argument).node;
-    return (
-      t.isNumericLiteral(operand) &&
-      (value.operator === "-" || !Number.isInteger(operand.value))
-    );
+  // `net.connect({ port })` validates the member the same way the positional
+  // form validates the argument, but a Unix socket path member wins over it.
+  if (t.isObjectExpression(value)) {
+    const socket = optionsSelectUnixSocket(value);
+    if (socket !== false) return false;
+    const member = lastMemberValue(value, "port");
+    return member === undefined || member === null
+      ? false
+      : rejectsPortValue(member, context, false);
   }
-  return false;
+  return rejectsPortValue(value, context, true);
 };
 
 /** Only `net`/`tls` sockets take a port in argument 0. */
 const socketPortInFirstArgument = (
   candidate: Pick<AcquisitionReference, "specifier">,
 ): boolean => candidate.specifier === "net" || candidate.specifier === "tls";
+
+/**
+ * `tls.connect` merges a later options object over its first argument, so
+ * `tls.connect(-1, { port: 443 })` creates a socket even though `-1` is not a
+ * port. Only an object that actually supplies its own port or Unix socket path
+ * rescues the argument: `tls.connect(-1, {})` and
+ * `tls.connect(65536, { servername: "x" })` still throw. Node's `net.connect`
+ * keeps validating the argument, so the rescue applies to `tls` only.
+ */
+const tlsOptionsReplaceFirstArgument = (
+  candidate: ResourceCandidate,
+  context: DataEffectTraversalContext,
+): boolean => {
+  if (candidate.specifier !== "tls") return false;
+  const options = candidate.node.arguments[1];
+  if (options === undefined || !t.isObjectExpression(options)) return false;
+  const socket = optionsSelectUnixSocket(options);
+  if (socket !== false) return true;
+  const port = optionsSupplyPort(options, context);
+  return port !== false;
+};
