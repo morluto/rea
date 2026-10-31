@@ -13,6 +13,7 @@ import { withCommandCancellation } from "./commandCancellation.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { ARTIFACT_GRAPH_PROVIDER } from "../domain/investigationProviders.js";
 import { keyedArchiveInputSchema } from "../domain/apple/keyedArchive.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 import { z } from "incur";
 
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
@@ -43,7 +44,9 @@ export const registerArtifactCommands = (
     description:
       "Inspect a Foundation keyed archive as an object-reference graph",
     args: z.object({
-      path: z.string().describe("Foundation plist archive or Apple app bundle"),
+      path: localPathStringSchema.describe(
+        "Foundation plist archive or Apple app bundle",
+      ),
       archive: keyedArchiveInputSchema.shape.path.describe(
         "Relative archive path when the target is a bundle",
       ),
@@ -87,7 +90,9 @@ const registerDylibResolutionCommand = (
     description:
       "Trace dyld load-path resolution for a Mach-O or every executable in an app bundle",
     args: z.object({
-      path: z.string().describe("Mach-O file or Apple .app bundle path"),
+      path: localPathStringSchema.describe(
+        "Mach-O file or Apple .app bundle path",
+      ),
     }),
     options: z.object({
       root: z
@@ -125,7 +130,9 @@ const registerAssetCatalogCommand = (
 ): void => {
   cli.command(CLI_COMMANDS.inspectAssetCatalog, {
     description: "Inspect compiled Apple asset catalog metadata",
-    args: z.object({ path: z.string().describe("Apple .app bundle path") }),
+    args: z.object({
+      path: localPathStringSchema.describe("Apple .app bundle path"),
+    }),
     options: z.object({
       offset: z
         .number()
@@ -162,7 +169,7 @@ const registerInterfaceBuilderCommand = (
     description:
       "Decode compiled storyboard and nib archives from an app bundle",
     args: z.object({
-      path: z.string().describe("Apple .app bundle path"),
+      path: localPathStringSchema.describe("Apple .app bundle path"),
     }),
     options: z.object({
       maxDocuments: z
@@ -257,7 +264,7 @@ const registerExtractionCommand = (
     description:
       "Extract regular contents of supported artifacts; DMG extraction is unavailable",
     args: z.object({
-      path: z.string().describe("Application or package path"),
+      path: localPathStringSchema.describe("Application or package path"),
     }),
     options: z.object({
       integrityPolicy: z
