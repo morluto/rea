@@ -378,7 +378,10 @@ const decodeIdListItem = (
     };
   }
   if ((typeByte & 0x70) === 0x30 && data.length >= 14) {
-    const name = latin1Z(data.subarray(12));
+    // Bit 0x04 marks a UTF-16LE name, which a Latin-1 read stops at the first zero byte.
+    const nameBytes = data.subarray(12);
+    const name =
+      (typeByte & 0x04) !== 0 ? utf16Z(nameBytes) : latin1Z(nameBytes);
     if (name.length === 0 || /[\u0001-\u001f]/u.test(name)) return raw();
     return {
       kind: "file_entry",

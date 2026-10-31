@@ -211,6 +211,34 @@ it("keeps unknown IDList items as raw hashed blobs", async () => {
   ]);
 });
 
+it("decodes UTF-16LE names on Unicode file-entry items", async () => {
+  const header = Buffer.alloc(12);
+  header[0] = 0x36;
+  const name = Buffer.from("report.exe\0", "utf16le");
+  const report = await parse(
+    windowsShortcutBytes({
+      idList: [{ kind: "raw", data: Buffer.concat([header, name]) }],
+      extraData: [],
+    }),
+  );
+  expect(report.id_list?.items).toEqual([
+    expect.objectContaining({
+      kind: "file_entry",
+      type_byte: 0x36,
+      entry_class: "file",
+      short_name: "report.exe",
+    }),
+  ]);
+  expect(report.observations).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "target_extension",
+        extension: ".exe",
+      }),
+    ]),
+  );
+});
+
 it("keeps counted StringData bytes after an embedded NUL", async () => {
   const report = await parse(windowsShortcutBytes({ arguments: "a\0-hidden" }));
   expect(report.string_data.arguments?.value).toBe("a\0-hidden");
