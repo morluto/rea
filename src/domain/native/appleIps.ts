@@ -180,6 +180,7 @@ const frameSchema = z.strictObject({
     .describe(
       "Recorded byte offset of the address from the start of recorded_symbol.",
     ),
+  unlisted_keys: z.array(z.string()).optional(),
 });
 
 const threadSchema = z.strictObject({
@@ -191,6 +192,7 @@ const threadSchema = z.strictObject({
   frames: z.array(frameSchema),
   state_flavor: z.string().nullable(),
   registers: z.array(registerSchema),
+  unlisted_keys: z.array(z.string()).optional(),
 });
 
 const imageSchema = z.strictObject({
@@ -204,6 +206,7 @@ const imageSchema = z.strictObject({
   uuid_unknown: z.boolean(),
   name: z.string().nullable(),
   path: z.string().nullable(),
+  unlisted_keys: z.array(z.string()).optional(),
 });
 
 const classificationMatchSchema = z.strictObject({
