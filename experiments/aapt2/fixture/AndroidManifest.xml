@@ -1,0 +1,4 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.rea.aapt2.probe" android:versionCode="7" android:versionName="1.2.3">
+  <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
+  <application android:label="@string/app_name" />
+</manifest>
