@@ -49,6 +49,7 @@ const catalog: RecordedMcpCatalog = {
         io: "input",
       }) as Tool["inputSchema"],
       outputSchema: z.toJSONSchema(output),
+      _meta: { "io.github.morluto/rea": { family: "session" } },
     },
   ],
   prompts: [
@@ -193,6 +194,9 @@ it("discovers without initialization, then shares one canonical runtime and pres
   const f = await fixture({ hold });
   const before = await f.client.listTools();
   expect(before.tools).toEqual(catalog.tools);
+  expect(before.tools[0]?._meta).toEqual({
+    "io.github.morluto/rea": { family: "session" },
+  });
   expect((await f.client.listPrompts()).prompts).toEqual(
     catalog.prompts.map(({ parameters: _parameters, ...prompt }) => prompt),
   );

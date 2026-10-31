@@ -697,6 +697,16 @@ in `~/.agents/skills` (`$DSH_AGENTS_HOME/skills` when configured); Harness
 discovers that directory, and its native `skill` tool can load
 `reverse-engineer-anything`.
 
+Harness does not lazy-load MCP tools: `dsh-mcp-client` registers every REA
+tool and sends every input schema with every request. One user reported about
+250k input tokens on the first request of a headless task with REA 6.7.0 on
+Harness 0.2.0-rc.2 ([#6870](https://github.com/morluto/rea/issues/6870)); REA
+has not measured a live Harness session itself. `REA_MCP_INPUT_SCHEMA_PROFILE=compact`
+in the entry's `config.env` shrinks each schema. A Harness plugin or gateway
+that indexes tools lazily can group REA's catalog by the family each `tools/list`
+entry advertises in `_meta` (see [Identity and discovery](mcp-contracts.md#identity-and-discovery));
+the same ids select families through `REA_MCP_TOOL_FAMILIES`.
+
 REA's optional [native client verification](testing.md#end-to-end-integration-and-golden-evidence)
 checks headless chat, skill loading, all tool input schemas and actual analysis
 using the installed Harness and a local model fixture. This establishes the

@@ -1,4 +1,9 @@
-import type { ToolContract } from "../contracts/toolContractTypes.js";
+import {
+  REA_MCP_META_KEY,
+  type ToolContract,
+  type ToolFamilyMeta,
+} from "../contracts/toolContractTypes.js";
+import { toolFamilyId } from "../contracts/toolFamilies.js";
 import type { StandardSchemaWithJSON } from "@modelcontextprotocol/server";
 import {
   toolInputSchemaWithMetadata,
@@ -14,13 +19,22 @@ export const toolRegistrationOptions = <Contract extends ToolContract>(
   readonly inputSchema: Contract["inputSchema"];
   readonly outputSchema: Contract["outputSchema"];
   readonly annotations: Contract["annotations"];
-} => ({
-  title: contract.title,
-  description: contract.description,
-  inputSchema: toolInputSchemaWithMetadata(contract),
-  outputSchema: toolOutputSchemaWithMetadata(contract),
-  annotations: contract.annotations,
-});
+  readonly _meta?: ToolFamilyMeta;
+} => {
+  // Every catalog contract has a family (toolFamilies.test.ts). A renamed test
+  // fixture has none, and advertises no family rather than a guessed one.
+  const family = toolFamilyId(contract.name);
+  return {
+    title: contract.title,
+    description: contract.description,
+    inputSchema: toolInputSchemaWithMetadata(contract),
+    outputSchema: toolOutputSchemaWithMetadata(contract),
+    annotations: contract.annotations,
+    ...(family === undefined
+      ? {}
+      : { _meta: { [REA_MCP_META_KEY]: { family } } }),
+  };
+};
 
 /** Register a workflow that validates raw input before effects and projects its own errors. */
 export const applicationToolRegistrationOptions = <
