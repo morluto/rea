@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { toolContract } from "../../src/contracts/toolContracts.js";
+import { RUST_RESOURCE_GUARD_LIMITATION } from "../../src/rust/RustBinaryProvider.js";
 import { machoImageWithUnknownCommand } from "../../src/artifacts/apple/MachoImage.fixture.js";
 import {
   compressRustElfSectionNames,
@@ -100,6 +101,38 @@ cliTest(
         { name: "sample", version: "0.1.0", root: true },
       ],
     });
+  },
+);
+
+cliTest(
+  "delivers inflate guidance for the consumed stream when PE padding follows it",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-rust-pe-padding-");
+    const path = join(root, "padded.exe");
+    const bytes = createRustImage({ format: "pe", includeRustc: false });
+    const entry = 264;
+    // VirtualSize 0 selects SizeOfRawData, which file alignment pads to 512.
+    bytes.writeUInt32LE(0, entry + 8);
+    bytes.writeUInt32LE(512, entry + 16);
+    bytes.writeUInt32LE(512, 188);
+    await writeFile(path, bytes);
+
+    const result = await cli.run({
+      arguments: ["inspect-rust-binary", path, "--json"],
+    });
+
+    expect(result.exitCode, result.stderr).toBe(0);
+    const report = rustBinarySchema.parse(
+      toolContract("inspect_rust_binary").outputSchema.parse(result.json)
+        .normalized_result,
+    );
+    expect(report.auditable_metadata).toMatchObject({
+      section_bytes: 512,
+      compressed_bytes: rustDependencyPayload().length,
+    });
+    // The stream-based budget itself is enforced by "limits PE inflate ratio
+    // by consumed zlib bytes"; this checks the guidance reaches the report.
+    expect(report.limitations).toContain(RUST_RESOURCE_GUARD_LIMITATION);
   },
 );
 
