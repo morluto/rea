@@ -129,10 +129,12 @@ the equivalent MCP input is `{"path":"/artifacts/module.wasm",
 "command_timeout_ms":60000,"detail":"summary"}`. Summary delivery retains the
 complete Evidence but does not reduce WABT analysis work.
 
-The 8 MiB input allowance and 32 MiB combined command-output budget remain fixed;
+The 8 MiB input allowance and 128 MiB combined command-output budget remain fixed;
 increasing `command_timeout_ms`, host memory or the client deadline does not raise
 them. Do not truncate required module bytes to fit. Select another suitable
 complete artifact only if it answers the question, otherwise report the limit.
+The output budget was chosen from measured public modules (canvaskit-wasm's
+7.0 MiB module decodes to 79 MiB of WAT).
 Inspection output past the budget fails with `resource_constraint`; an oversized
 `--version` probe still reports `unreadable_output`. Both streams share the
 budget, so a stream that starts after the other has filled it retains nothing.

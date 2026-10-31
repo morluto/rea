@@ -37,7 +37,7 @@ export const wasmArtifactFixture = (
       }),
     ),
     timeout_ms: 30_000,
-    output_budget_bytes: 32 * 1024 * 1024,
+    output_budget_bytes: 128 * 1024 * 1024,
   },
   candidates: [{ path, sha256: "a".repeat(64), bytes: 8 }],
   glue: [],

@@ -54,13 +54,42 @@ const environment = Object.fromEntries(
 );
 const toolPath = (tool) =>
   join(directory, `${tool}${process.platform === "win32" ? ".exe" : ""}`);
-const tool = (name, args, cwd) =>
+const tool = (name, args, cwd, maxBuffer = 32 * 1024 * 1024) =>
   execute(toolPath(name), args, {
     cwd,
     env: environment,
     timeout: 30_000,
-    maxBuffer: 32 * 1024 * 1024,
+    maxBuffer,
   });
+// Deterministic compiler-like code whose WAT expands about 10x its bytes.
+const codeHeavySource = (functions) => {
+  let seed = 1234;
+  const next = (bound) =>
+    (seed = (Math.imul(seed, 1103515245) + 12345) >>> 0) % bound;
+  const lines = ["(module", "  (type $t (func (param i32 i32) (result i32)))"];
+  for (let index = 0; index < functions; index += 1)
+    lines.push(
+      `  (func $f${index} (export "f${index}") (type $t) (param $a i32) (param $b i32) (result i32)`,
+      "    (local $i i32) (local $acc i32) (local $x i64)",
+      "    block $exit",
+      "      loop $top",
+      "        local.get $i local.get $b i32.ge_u br_if $exit",
+      `        local.get $a local.get $i i32.const 2 i32.shl i32.add i32.const ${next(1 << 14)} i32.add`,
+      `        local.get $acc i32.add i32.const ${next(1 << 30)} i32.xor local.set $acc`,
+      "        block $c1 block $c0",
+      "          local.get $acc i32.const 1 i32.and br_table $c0 $c1 $c0",
+      "        end",
+      `          local.get $acc i64.extend_i32_u local.get $x i64.add i64.const ${next(1 << 30)} i64.mul local.set $x br $c1`,
+      "        end",
+      `        local.get $acc local.get $i call $f${next(index + 1)} local.set $acc`,
+      "        local.get $i i32.const 1 i32.add local.set $i br $top",
+      "      end",
+      "    end",
+      "    local.get $acc local.get $x i32.wrap_i64 i32.add)",
+    );
+  lines.push(")");
+  return `${lines.join("\n")}\n`;
+};
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
 const assertEvidenceParity = (cli, mcp, path) => {
   const { caller_input_path: callerInputPath, ...cliShared } = cli;
@@ -87,13 +116,20 @@ try {
   throw cause;
 }
 const client = new Client({ name: "wabt-artifact-verifier", version: "1" });
+// Drop every spelling of the budget override so the server default matches
+// the client's receive buffer.
+const mcpEnvironment = Object.fromEntries(
+  Object.entries(environment).filter(
+    ([name]) => name.toUpperCase() !== "REA_MCP_MAX_RESPONSE_BYTES",
+  ),
+);
 const callTool = (request) =>
   client.callTool(request, { timeout: WABT_OPERATION_TIMEOUT_MS });
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
   env: {
-    ...environment,
+    ...mcpEnvironment,
     TMPDIR: childTempRoot,
     TMP: childTempRoot,
     TEMP: childTempRoot,
@@ -443,7 +479,7 @@ try {
       );
       assert.equal(
         failed.normalized_result.tool_profile.output_budget_bytes,
-        32 * 1024 * 1024,
+        128 * 1024 * 1024,
       );
       assert.equal(
         failed.normalized_result.validation,
@@ -619,6 +655,76 @@ try {
     assert.deepEqual(await readFile(path), original);
     cases += 2;
   }
+  const largeRoot = join(root.path, "fixture-code-heavy");
+  await mkdir(largeRoot);
+  await writeFile(join(largeRoot, "source.wat"), codeHeavySource(36_000));
+  await tool(
+    "wat2wasm",
+    ["--enable-all", "source.wat", "-o", "module.wasm"],
+    largeRoot,
+  );
+  const largePath = join(largeRoot, "module.wasm");
+  const largeBytes = await readFile(largePath);
+  const largeWat = (
+    await tool(
+      "wasm2wat",
+      ["--enable-all", "module.wasm"],
+      largeRoot,
+      64 * 1024 * 1024,
+    )
+  ).stdout;
+  assert.ok(largeBytes.length < 8 * 1024 * 1024);
+  assert.ok(Buffer.byteLength(largeWat) > 32 * 1024 * 1024);
+  const largeInput = { path: largePath, glue_paths: [], candidate_paths: [] };
+  const largeCli = await inspectCli(largeInput);
+  assert.equal(largeCli.category, undefined, largeCli.message);
+  const largeReport = parseEvidence(largeCli).normalized_result;
+  assert.equal(largeReport.artifact.sha256, sha256(largeBytes));
+  assert.equal(largeReport.wat.sha256, sha256(largeWat));
+  assert.equal(largeReport.wat.text.length, largeWat.length);
+  assert.equal(largeReport.tool_profile.output_budget_bytes, 128 * 1024 * 1024);
+  assert.equal(largeReport.tool_profile.timeout_ms, 30_000);
+  assert.ok(
+    largeReport.limitations.some((text) =>
+      text.includes("fixed 128 MiB combined output budget"),
+    ),
+  );
+  const largeError = requireMcpToolError(
+    await callTool({
+      name: "inspect_wasm_artifact",
+      arguments: largeInput,
+    }),
+  );
+  assert.equal(largeError.category, "resource_constraint");
+  assert.equal(largeError.details.resource, "transport");
+  const largeReference = largeError.details.reported_limits.evidence_reference;
+  assert.deepEqual(largeReference, {
+    kind: "retained-evidence",
+    evidence_id: largeCli.evidence_id,
+  });
+  const largeSummary = await callTool({
+    name: "inspect_wasm_artifact",
+    arguments: { ...largeInput, detail: "summary" },
+  });
+  assert.notEqual(largeSummary.isError, true, mcpTextValue(largeSummary));
+  const summary = parseEvidence(
+    largeSummary.structuredContent,
+  ).normalized_result;
+  assert.equal(summary.parent_evidence_id, largeCli.evidence_id);
+  assert.equal(summary.summary.wat.sha256, sha256(largeWat));
+  const largePage = await callTool({
+    name: "inspect_analysis_view",
+    arguments: {
+      source: largeReference,
+      view: { kind: "wasm", facet: "wat", offset: 0, limit: 16 },
+    },
+  });
+  assert.notEqual(largePage.isError, true, mcpTextValue(largePage));
+  assert.equal(
+    parseEvidence(largePage.structuredContent).normalized_result.item.text,
+    largeWat.slice(0, 16),
+  );
+  cases += 3;
   cases += await verifyWabtCleanup(entrypoint, environment, childTempRoot);
 } catch (cause) {
   failures.push(cause);
