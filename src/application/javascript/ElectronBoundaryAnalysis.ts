@@ -125,23 +125,82 @@ export const createElectronIpcContext = (
  * unrelated `electron-helper` package does not. Type-only links are ignored: a
  * source that imports Electron types does not promise any boundary fact.
  */
+/**
+ * Whether any analyzed source names an Electron module. The same
+ * `ELECTRON_MODULE` entry points the static analysis admits are used here, so
+ * `electron`, `electron/main` and the other supported subpaths count while an
+ * unrelated `electron-helper` package does not.
+ *
+ * Module links are the richer fact and are preferred: they distinguish a
+ * type-only import, which promises no boundary fact, from a runtime reference.
+ * They are absent when semantic analysis was skipped for a budget, and a
+ * rejected application projection drops them, so the retained static reference
+ * answers the same question in that case. A dynamic specifier is never counted
+ * by either owner, so this establishes an observed reference rather than
+ * absence.
+ */
 export const electronModuleReferenced = (
   analysis: JavaScriptArtifactAnalysis,
 ): boolean =>
-  analysis.files.some(({ semantic }) =>
-    (semantic?.ir.moduleLinks ?? []).some(
-      ({ specifier, kind }) =>
-        kind !== "type-import" &&
-        specifier !== null &&
-        ELECTRON_MODULE.test(specifier),
-    ),
+  analysis.files.some(({ javascript, semantic }) => {
+    const links = semantic?.ir.moduleLinks;
+    if (links !== undefined)
+      return links.some(
+        ({ specifier, kind }) =>
+          kind !== "type-import" &&
+          specifier !== null &&
+          ELECTRON_MODULE.test(specifier),
+      );
+    return (javascript?.references ?? []).some(
+      ({ specifier }) => specifier !== null && ELECTRON_MODULE.test(specifier),
+    );
+  });
+
+/** Every Electron boundary fact family the graph reports. */
+export const electronBoundaryFactCount = (
+  analysis: JavaScriptArtifactAnalysis,
+): number =>
+  analysis.files.reduce(
+    (count, { javascript }) =>
+      count +
+      (javascript === null
+        ? 0
+        : javascript.electron.browser_windows.length +
+          javascript.electron.context_bridge_apis.length +
+          javascript.electron.ipc.length +
+          javascript.electron.sender_validations.length +
+          javascript.electron.utility_processes.length +
+          javascript.electron.native_addon_bindings.length +
+          javascript.electron.protocols.length),
+    0,
   );
+
+/**
+ * Whether the Electron boundary summary came back empty. `undefined` means no
+ * analyzed source names Electron, which is unknown rather than absent: unread
+ * sources and dynamic module names can hide its use.
+ */
+export const electronSemanticsState = (
+  analysis: JavaScriptArtifactAnalysis,
+): "recovered" | "empty" | undefined =>
+  electronModuleReferenced(analysis) === false
+    ? undefined
+    : electronBoundaryFactCount(analysis) === 0
+      ? "empty"
+      : "recovered";
 
 /** Summarize static Electron findings without treating gaps as absence. */
 export const summarizeElectronBoundaries = (
   analysis: JavaScriptArtifactAnalysis,
   ipcContext: ElectronIpcContext,
   directoryPaths?: ReadonlySet<string>,
+  /**
+   * Analysis view used only to describe coverage. A rejected application
+   * projection replaces a file with a placeholder in `analysis`, which would
+   * hide a retained Electron reference, so the caller passes the raw analysis
+   * and both outputs then share one coverage result.
+   */
+  coverageAnalysis: JavaScriptArtifactAnalysis = analysis,
 ): ElectronBoundarySummary => {
   const files = new Map(analysis.files.map(({ file }) => [file.path, file]));
   const javascript = analysis.files.flatMap(({ javascript: value }) =>
@@ -179,26 +238,11 @@ export const summarizeElectronBoundaries = (
     (count, { electron }) => count + electron.protocols.length,
     0,
   );
-  // Every Electron boundary fact family the graph counts, so `empty` here means
-  // the same thing it means in the graph limitation list.
-  const electronFactCount =
-    windows.length +
-    bridges.length +
-    validations.length +
-    utilities.length +
-    nativeBindings.length +
-    ipc.length +
-    protocolCount;
-  const electronReferenced = electronModuleReferenced(analysis);
+  // The coverage state is read from the retained analysis so that a rejected
+  // projection cannot hide an Electron reference the graph still reports.
+  const semantics = electronSemanticsState(coverageAnalysis);
   return {
-    ...(electronReferenced
-      ? {
-          electron_semantics:
-            electronFactCount === 0
-              ? ("empty" as const)
-              : ("recovered" as const),
-        }
-      : {}),
+    ...(semantics === undefined ? {} : { electron_semantics: semantics }),
     browser_windows: windows.length,
     explicit_web_preferences: windows.reduce(
       (count, window) => count + window.web_preferences.length,
