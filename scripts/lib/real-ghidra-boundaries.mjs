@@ -21,6 +21,7 @@ import { verifyGhidraEntryAliases } from "./real-ghidra-entry-aliases.mjs";
 import { verifyGhidraNamespaceAnnotations } from "./real-ghidra-namespace-annotations.mjs";
 import { verifyGhidraBatchIdentity } from "./real-ghidra-batch-identity.mjs";
 import { verifyGhidraInstructionFlow } from "./real-ghidra-instruction-flow.mjs";
+import { verifyGhidraSearchFacts } from "./real-ghidra-search-facts.mjs";
 
 /** Probe real Ghidra location, annotation and error contracts through public adapters. */
 export async function verifyGhidraBoundaries(
@@ -400,6 +401,11 @@ export async function verifyGhidraBoundaries(
     (item) => item.value === "REA_GHIDRA_INVENTORY_ENTRY",
   );
   assert.ok(marker);
+  await verifyGhidraSearchFacts(call, {
+    strings,
+    procedures,
+    entryAddress: address,
+  });
   assert.ok(
     (
       await call("search_strings", { pattern: marker.value.toLowerCase() })
@@ -577,9 +583,7 @@ export async function verifyGhidraBoundaries(
   const longString = strings.find((item) => item.value === longLiteral);
   assert.ok(longString, "The provider must retain the full regression literal");
   const literalMatches = await call("search_strings", { pattern: longLiteral });
-  assert.deepEqual(literalMatches, [
-    { address: longString.address, value: longLiteral },
-  ]);
+  assert.deepEqual(literalMatches, [longString]);
   assert.deepEqual(await cli("search", longLiteral), literalMatches);
   await assert.rejects(
     cli("search", regexPattern, ["--mode", "regex"]),

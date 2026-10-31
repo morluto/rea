@@ -2295,7 +2295,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             if (!matcher.matches(item.value)) {
                 continue;
             }
-            items.add(resultItem(item, null));
+            items.add(resultItem(item, procedureSearch ? "procedure" : "string"));
         }
         return items;
     }

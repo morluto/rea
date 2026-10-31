@@ -308,6 +308,11 @@ describe("Ghidra relationship coverage replay", () => {
 describe("Ghidra snapshot profile admission", () => {
   it.each([
     {
+      parameter: "inventory_search_projection",
+      current: "provider-inventory-facts-v1",
+      legacy: undefined,
+    },
+    {
       parameter: "instruction_status",
       current: "unlisted-address-without-decode-v1",
       legacy: undefined,

@@ -80,6 +80,13 @@ does not prove text is absent. Both list and search Evidence carry this
 limitation. When an address is known, use `read_bytes` and `xrefs` to inspect
 bytes and references.
 
+String searches and `trace_feature` retain each matched row's Ghidra-reported
+encoding, termination and byte length. These describe the database's defined
+data, not independent proof of the original source encoding. Procedure searches
+and trace matches likewise retain Ghidra's external and thunk classification.
+The Ghidra analysis profile identifies this search projection, so older
+snapshots with unqualified search rows cannot replay under the new profile.
+
 ## PE debug-symbol coverage
 
 The post-analysis handshake reports Ghidra's PDB Program Information attributes:
