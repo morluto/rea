@@ -115,7 +115,9 @@ __attribute__((noinline)) int rea_classify(int c) {
 }
 int main(int argc, char **argv) {
   if (argc < 2) return 2;
-  printf("%u %d\n", rea_checksum((const unsigned char *)argv[1], strlen(argv[1])),
+  size_t length = strlen(argv[1]);
+  printf("%u %u %d\n", rea_checksum((const unsigned char *)argv[1], length),
+         rea_checksum((const unsigned char *)argv[1], length ? length - 1 : 0),
          rea_classify(argv[1][0]));
   return 0;
 }
@@ -282,7 +284,12 @@ const quality = (text) => ({
 const verifyKuna = async (
   path,
   functions,
-  { expectedCaller, expectedStrings = [], verifyNamedTrace = false } = {},
+  {
+    expectedCaller,
+    expectedStrings = [],
+    verifyNamedTrace = false,
+    minimumTraceReferences = {},
+  } = {},
 ) => {
   const sha256 = createHash("sha256")
     .update(await readFile(path))
@@ -320,6 +327,7 @@ const verifyKuna = async (
         address,
         expectedCaller,
         verifyNamedTrace,
+        minimumTraceReferences: minimumTraceReferences[name],
         nativeIncoming: (targetAddress) =>
           nativeKunaIncomingSites({
             executable: kuna,
@@ -553,6 +561,7 @@ try {
         expectedCaller: fixtureMain,
         expectedStrings: ["＿φ( °-°)/ REA unicode marker", "REA wide marker"],
         verifyNamedTrace: binary === built,
+        minimumTraceReferences: { rea_checksum: 2 },
       }),
     });
 

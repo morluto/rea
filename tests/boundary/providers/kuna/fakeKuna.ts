@@ -71,6 +71,8 @@ export interface FakeKunaBehavior {
   /** Bytes of an extra root member in the graph JSON. */
   readonly graphPadding?: number;
   readonly xrefs?: "ok" | "hang" | "not-json";
+  /** Additional exact-target incoming call-site addresses. */
+  readonly extraXrefSources?: readonly number[];
   readonly referenceDelayMs?: number;
   readonly referencePadding?: number;
   /** `invalid-then-hang` writes a contradictory first row, then never finishes. */
@@ -155,7 +157,7 @@ if (args[0] === "--version") {
     const identity = (name, value) => ({ name, address: value, address_hex: "0x" + value.toString(16) });
     const aliases = target === "0x2000" ? [identity("puts.slot", 12288)] : [];
     const row = (from, to, kind) => ({ address: from, address_hex: "0x" + from.toString(16), from_address: from, from_address_hex: "0x" + from.toString(16), to_address: to, to_address_hex: "0x" + to.toString(16), kind, from_function: identity("main", 4096), to_function: null, instruction: "fixture reference" + "x".repeat(behavior.referencePadding ?? 0) });
-    const rows = [row(4100, parseInt(target, 16), "call")];
+    const rows = [4100, ...(behavior.extraXrefSources ?? [])].map((source) => row(source, parseInt(target, 16), "call"));
     if (aliases.length) rows.push(row(4164, 12288, "call"));
     setTimeout(() => process.stdout.write(JSON.stringify({ binary: args[1], direction: "to", count: rows.length, target: { ...identity(null, parseInt(target, 16)), aliases }, xrefs: rows })), behavior.referenceDelayMs ?? 0);
   }

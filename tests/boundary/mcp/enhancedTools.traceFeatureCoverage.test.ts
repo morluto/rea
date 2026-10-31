@@ -182,6 +182,65 @@ it("preserves references and explicitly unknown owners without claiming truncati
   });
 });
 
+it("keeps distinct targets when a capped reference source has an unavailable owner", async () => {
+  const calls: string[] = [];
+  const baseline = provider({ duplicateProcedure: true, calls });
+  const output = await trace({
+    execute: (operation, input, options) => {
+      if (operation === "xrefs") {
+        calls.push(`xrefs:${String(input.address)}`);
+        return Promise.resolve(
+          ok(
+            createAnalysisExecution(["0x20"], PROVIDER, {
+              referencesTruncated: input.address === "0x10",
+            }),
+          ),
+        );
+      }
+      if (operation === "resolve_containing_procedure") {
+        calls.push(`resolve_containing_procedure:${String(input.address)}`);
+        return Promise.resolve(
+          err(
+            new AnalysisCapabilityUnavailableError(
+              "fixture",
+              operation,
+              "not supported",
+            ),
+          ),
+        );
+      }
+      return baseline.execute(operation, input, options);
+    },
+  });
+
+  expect(calls.filter((call) => call.startsWith("xrefs:"))).toEqual([
+    "xrefs:0x10",
+    "xrefs:0x11",
+  ]);
+  expect(
+    calls.filter((call) => call.startsWith("resolve_containing_procedure:")),
+  ).toEqual(["resolve_containing_procedure:0x20"]);
+  expect(output.normalized_result).toMatchObject({
+    truncated: true,
+    residual_unknowns: [
+      expect.stringContaining("0x10"),
+      expect.stringContaining("0x20"),
+    ],
+    references: [
+      {
+        target_address: "0x10",
+        source_address: "0x20",
+        containing_procedure: { status: "unavailable", reason: "not supported" },
+      },
+      {
+        target_address: "0x11",
+        source_address: "0x20",
+        containing_procedure: { status: "unavailable", reason: "not supported" },
+      },
+    ],
+  });
+});
+
 it("does not swallow an unavailable owner with incomplete cleanup", async () => {
   const baseline = provider();
   const result = await new EnhancedTools({
