@@ -14,6 +14,8 @@ import { createEvidence, type Evidence } from "./evidence.js";
 import { functionComparisonResultSchema } from "./functionComparisonSchemas.js";
 import { jsonValueSchema, type JsonValue } from "./jsonValue.js";
 import { FUNCTION_COMPARISON_EXAMPLE } from "../contracts/functionComparisonExample.js";
+import { artifactInventoryResultSchema } from "./artifactGraph.js";
+import { artifactGraphDigest, artifactManifestId } from "./artifactIdentity.js";
 import { functionDossierSchema } from "./native/functionDossier.js";
 import { compareFunctions } from "./functionComparison.js";
 import { functionSnapshotFixture } from "./functionDossierEvidence.fixture.js";
@@ -71,7 +73,7 @@ const leftCapture = capture("1");
 const rightCapture = capture("2");
 
 const processComparison = (
-  terminal: "unchanged" | "changed" | "unknown" | "truncated",
+  terminal: "unchanged" | "changed" | "unknown" | "truncated" | "contradiction",
 ): Evidence => {
   const result = {
     status: terminal,
@@ -212,6 +214,227 @@ it("keeps text, assembly and unavailable CFG caveats on their selected correlati
   expect(caveats.get("cfg")).toMatch(/CFG addresses/u);
   expect(caveats.get("cfg")).not.toMatch(
     /generated-name normalization|Assembly is opaque/u,
+  );
+});
+
+it("keeps truncation ahead of an artifact integrity contradiction", () => {
+  const verified = ARTIFACT_COMPARISON_EXAMPLE.left;
+  const inventory = artifactInventoryResultSchema.parse(
+    verified.normalized_result,
+  );
+  const occurrences = inventory.occurrences.map((item) => ({
+    ...item,
+    hash_status: "mismatched" as const,
+  }));
+  const graphSha256 = artifactGraphDigest({
+    nodes: inventory.nodes,
+    occurrences,
+    edges: inventory.edges,
+    contradictions: inventory.integrity_contradictions,
+  });
+  const untrusted = createEvidence(
+    {
+      path: "untrusted-fixture",
+      sha256: inventory.manifest.root_sha256,
+      format: "file",
+    },
+    verified.provider,
+    {
+      operation: "inventory_artifact",
+      parameters: {},
+      result: {
+        ...inventory,
+        occurrences,
+        manifest: {
+          ...inventory.manifest,
+          graph_sha256: graphSha256,
+          manifest_id: artifactManifestId(
+            inventory.manifest.root_artifact_id,
+            graphSha256,
+          ),
+        },
+      },
+      confidence: "observed",
+      authority: "shipped-artifact",
+    },
+  );
+  const compared = compareArtifacts(untrusted, verified);
+  expect(compared.changes).toContainEqual(
+    expect.objectContaining({
+      classification: "contradiction",
+      logical_path: ".",
+      dimensions: ["integrity"],
+      left_artifact_id: inventory.manifest.root_artifact_id,
+      right_artifact_id: inventory.manifest.root_artifact_id,
+    }),
+  );
+  const comparison = createEvidence(
+    undefined,
+    {
+      id: "rea-artifact-comparison",
+      name: "REA artifact comparison",
+      version: "1",
+    },
+    {
+      predicateType: "rea.artifact-comparison",
+      operation: "compare_artifacts",
+      parameters: {
+        left_evidence_id: untrusted.evidence_id,
+        right_evidence_id: verified.evidence_id,
+      },
+      result: compared,
+      confidence: "derived",
+      authority: "analyst-inference",
+      evidenceLinks: [untrusted.evidence_id, verified.evidence_id],
+    },
+  );
+  const correlate = (runtime: Evidence) => {
+    const input = mapping(runtime, "cochanged");
+    return correlateStaticAndRuntime({
+      ...input,
+      static_comparisons: [comparison],
+      mappings: input.mappings.map((item) => ({
+        ...item,
+        static: {
+          comparison_evidence_id: comparison.evidence_id,
+          selector: { kind: "artifact", logical_path: "." },
+        },
+      })),
+    });
+  };
+  expect(correlate(processComparison("truncated"))).toMatchObject({
+    status: "truncated",
+    correlations: {
+      items: [
+        {
+          observed_pattern: "truncated",
+          classification: "unresolved_branch",
+        },
+      ],
+    },
+  });
+});
+
+it("keeps a contradictory runtime dimension unresolved beside a static change", () => {
+  const runtime = processComparison("contradiction");
+  const result = correlateStaticAndRuntime(mapping(runtime, "cochanged"));
+  expect(result).toMatchObject({
+    status: "unknown",
+    summary: { hypotheses: 0, contradictions: 0, unresolved: 1 },
+    correlations: {
+      items: [
+        {
+          static: {
+            status: "changed",
+            conclusion_kind: "derived_relationship",
+          },
+          runtime: { status: "contradiction" },
+          observed_pattern: "unknown",
+          classification: "unresolved_branch",
+        },
+      ],
+    },
+  });
+  expect(result.correlations.items[0]?.evidence_links).toEqual(
+    expect.arrayContaining([
+      staticComparison.evidence_id,
+      ...staticComparison.evidence_links,
+      runtime.evidence_id,
+      leftCapture.evidence_id,
+      rightCapture.evidence_id,
+    ]),
+  );
+});
+
+it("keeps provider-dependent function contradictions out of cochange hypotheses", () => {
+  const left = FUNCTION_COMPARISON_EXAMPLE.left;
+  const source = FUNCTION_COMPARISON_EXAMPLE.right;
+  const dossier = functionDossierSchema.parse(source.normalized_result);
+  const relationshipCoverage = source.relationship_coverage;
+  if (relationshipCoverage === null)
+    throw new Error("Missing function fixture relationship coverage");
+  const right = createEvidence(
+    {
+      path: "/tmp/other-function-provider",
+      sha256: "1".repeat(64),
+      format: "mach-o",
+    },
+    { ...source.provider, id: "other-provider" },
+    {
+      operation: source.operation,
+      parameters: source.parameters,
+      result: {
+        ...dossier,
+        procedure: { ...dossier.procedure, signature: "long main(void)" },
+      },
+      confidence: source.confidence,
+      authority: source.authority,
+      relationshipCoverage,
+    },
+  );
+  const computed = compareFunctions(
+    functionSnapshotFixture(left),
+    functionSnapshotFixture(right),
+  );
+  expect(computed.dimensions).toContainEqual(
+    expect.objectContaining({
+      dimension: "identity",
+      status: "changed",
+      conclusion_kind: "contradiction",
+    }),
+  );
+  const comparison = createEvidence(undefined, staticComparison.provider, {
+    predicateType: "rea.function-comparison",
+    operation: "compare_functions",
+    parameters: {
+      left_evidence_id: left.evidence_id,
+      right_evidence_id: right.evidence_id,
+    },
+    result: computed,
+    confidence: "derived",
+    authority: "analyst-inference",
+    limitations: computed.limitations,
+    evidenceLinks: [left.evidence_id, right.evidence_id],
+  });
+  const runtime = processComparison("changed");
+  const input = mapping(runtime, "cochanged");
+  const result = correlateStaticAndRuntime({
+    ...input,
+    static_comparisons: [comparison],
+    mappings: input.mappings.map((item) => ({
+      ...item,
+      static: {
+        comparison_evidence_id: comparison.evidence_id,
+        selector: { kind: "function", dimension: "identity" },
+      },
+    })),
+  });
+  expect(result).toMatchObject({
+    status: "unknown",
+    summary: { hypotheses: 0, contradictions: 0, unresolved: 1 },
+    correlations: {
+      items: [
+        {
+          static: { status: "changed", conclusion_kind: "contradiction" },
+          runtime: { status: "changed" },
+          observed_pattern: "unknown",
+          classification: "unresolved_branch",
+        },
+      ],
+    },
+  });
+  expect(result.correlations.items[0]?.evidence_links).toEqual(
+    expect.arrayContaining([
+      comparison.evidence_id,
+      left.evidence_id,
+      right.evidence_id,
+      runtime.evidence_id,
+      leftCapture.evidence_id,
+      rightCapture.evidence_id,
+    ]),
+  );
+  expect(result.correlations.items[0]?.limitations.join(" ")).toMatch(
+    /Provider-specific/u,
   );
 });
 
