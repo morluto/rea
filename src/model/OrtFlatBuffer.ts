@@ -94,8 +94,12 @@ export class OrtFlatBuffer {
         this.#textCache.set(start, null);
         rejectModel("ORT string is not valid UTF-8");
       }
+      // Reserve the expanded retained representation before decoding or
+      // caching it. A capacity refusal must not allocate the string first.
+      this.budget.charge(6 * length + 32);
       value = bytes.toString("utf8");
       this.#textCache.set(start, value);
+      return value;
     }
     if (value === null || value === undefined)
       rejectModel("ORT string is not valid UTF-8");

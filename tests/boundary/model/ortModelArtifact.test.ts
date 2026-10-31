@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { open, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, it, onTestFinished } from "vitest";
+import { expect, it, onTestFinished, vi } from "vitest";
 import { ModelArtifactProvider } from "../../../src/model/ModelArtifactProvider.js";
 import { ModelHeaderReader } from "../../../src/model/ModelHeaderReader.js";
 import { OrtFlatBuffer } from "../../../src/model/OrtFlatBuffer.js";
@@ -198,6 +198,27 @@ it("does not charge invalid shared strings to the retained report budget", () =>
       expect(cause).toBeInstanceOf(ModelFormatFailure);
       expect(cause).toMatchObject({ kind: "format" });
     }
+  }
+});
+
+it("reserves valid string representation before decoding it", () => {
+  const length = 6 * 1024 * 1024;
+  const bytes = Buffer.alloc(length + 9, 0x61);
+  bytes.writeUInt32LE(4, 0);
+  bytes.writeUInt32LE(length, 4);
+  bytes[length + 8] = 0;
+  const flatBuffer = new OrtFlatBuffer(bytes, new ModelReportBudget());
+  const decode = vi.spyOn(Buffer.prototype, "toString");
+  try {
+    expect(() => flatBuffer.textAt(0)).toThrow(
+      expect.objectContaining({
+        kind: "capacity",
+        limit: "representation-bytes",
+      }),
+    );
+    expect(decode).not.toHaveBeenCalled();
+  } finally {
+    decode.mockRestore();
   }
 });
 
