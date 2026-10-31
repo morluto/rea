@@ -153,9 +153,27 @@ const observeWithHelper = async (
   const input = parsed.data;
   if (!input.screenshot && !input.accessibility)
     return err(
-      new AnalysisInputError(operation, {
-        cause: new Error("Enable screenshot or accessibility capture"),
-      }),
+      new AnalysisInputError(
+        operation,
+        {
+          userMessage:
+            "Enable screenshot or accessibility capture; both cannot be disabled.",
+          remediationAction:
+            "Set screenshot or accessibility to true, then retry.",
+        },
+        [
+          {
+            path: ["screenshot"],
+            reason: "invalid_value",
+            message: "Enable screenshot or accessibility capture",
+          },
+          {
+            path: ["accessibility"],
+            reason: "invalid_value",
+            message: "Enable screenshot or accessibility capture",
+          },
+        ],
+      ),
     );
   const steps = input.steps;
   const interruption = options.interruption;

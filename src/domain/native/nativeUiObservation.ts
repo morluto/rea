@@ -13,8 +13,18 @@ import { readPngHeaderDimensions } from "../pngHeader.js";
 const scope = {
   pid: z.int().positive(),
   window_id: z.int().positive(),
-  screenshot: z.boolean().default(true),
-  accessibility: z.boolean().default(true),
+  screenshot: z
+    .boolean()
+    .default(true)
+    .describe(
+      "Capture the selected window; screenshot or accessibility must be enabled.",
+    ),
+  accessibility: z
+    .boolean()
+    .default(true)
+    .describe(
+      "Read the selected window accessibility tree; screenshot or accessibility must be enabled.",
+    ),
   max_nodes: z
     .int()
     .positive()
