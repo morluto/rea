@@ -663,7 +663,9 @@ architecture and the Darwin release. Before running an entry, REA requires the
 cache directory, the entry and its files to be owned by the current user and
 not writable by group or others, every real parent directory to be owned by
 the current user or root and not writable by others (sticky root-owned
-directories excepted), the helper and manifest to be regular files rather than
+directories excepted), no ACL on any of them to allow another principal a
+write-class right (the default `deny delete` entries are fine), the helper and
+manifest to be regular files rather than
 links or FIFOs, and the helper's SHA-256 to match the manifest. Anything else is
 never executed and never removed, because another REA process may still be
 verifying or running that path; REA then compiles a per-process helper as

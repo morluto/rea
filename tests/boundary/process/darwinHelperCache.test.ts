@@ -19,6 +19,7 @@ import { expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { writeFakeXcrun } from "../../fixtures/darwinHelperToolchain.js";
 import {
+  aclListingGrantsWrite,
   createDarwinHelperCache,
   darwinHelperCacheDirectory,
   defaultDarwinHelperCacheDirectory,
@@ -287,6 +288,83 @@ it.skipIf(!posix)(
   },
 );
 
+it("rejects only ACL entries that allow another principal to write", () => {
+  const entry = (line: string) =>
+    `drwx------+ 3 analyst  staff  96 31 Oct 09:00 /Users/analyst/x\n${line}\n`;
+  // macOS homes ship with this entry; it must not disable the cache.
+  expect(aclListingGrantsWrite(entry(" 0: group:everyone deny delete"))).toBe(
+    false,
+  );
+  expect(
+    aclListingGrantsWrite(entry(" 0: group:everyone inherited deny delete")),
+  ).toBe(false);
+  expect(
+    aclListingGrantsWrite(entry(" 0: user:nobody allow read,search")),
+  ).toBe(false);
+  expect(
+    aclListingGrantsWrite(
+      entry(" 0: FFFFEEEE-DDDD-CCCC-BBBB-AAAAFFFFFFFE allow write,append"),
+    ),
+  ).toBe(true);
+  expect(
+    aclListingGrantsWrite(
+      entry(" 1: user:nobody inherited allow add_file,file_inherit"),
+    ),
+  ).toBe(true);
+  expect(aclListingGrantsWrite("-rw------- 1 analyst staff 0 x\n")).toBe(false);
+});
+
+it.skipIf(!onDarwin)(
+  "never trusts an entry or ancestor whose ACL lets another user write",
+  async () => {
+    const grants: Record<
+      string,
+      (fixture: {
+        root: string;
+        key: string;
+        directory: string;
+      }) => Promise<void>
+    > = {
+      "helper write": ({ root, key }) =>
+        execFileAsync("/bin/chmod", [
+          "+a",
+          "user:nobody allow write",
+          join(root, key, "reader"),
+        ]).then(() => undefined),
+      "entry add_file": ({ root, key }) =>
+        execFileAsync("/bin/chmod", [
+          "+a",
+          "user:nobody allow add_file,delete_child",
+          join(root, key),
+        ]).then(() => undefined),
+      "ancestor delete_child": ({ directory }) =>
+        execFileAsync("/bin/chmod", [
+          "+a",
+          "user:nobody allow delete_child",
+          join(directory, "cache"),
+        ]).then(() => undefined),
+    };
+    for (const [name, grant] of Object.entries(grants)) {
+      const fixture = await fixtureCache(`rea-helper-cache-acl-`);
+      const cache = fixture.create();
+      const key = await missKey(cache);
+      expect(await cache.publish(key, fixture.compiled), name).toBeDefined();
+      // The default home ACL keeps sharing.
+      await execFileAsync("/bin/chmod", [
+        "+a",
+        "group:everyone deny delete",
+        fixture.root,
+      ]);
+      expect((await fixture.create().lookup()).kind, name).toBe("hit");
+      await grant({ root: fixture.root, key, directory: fixture.directory });
+      expect(await fixture.create().lookup(), name).toEqual({
+        kind: "unavailable",
+      });
+      await execFileAsync("/bin/chmod", ["-RN", fixture.directory]);
+    }
+  },
+);
+
 const fixtureProcess = {
   pid: 123,
   parentPid: 1,
@@ -357,26 +435,11 @@ it.skipIf(!posix)(
     } finally {
       await first.close();
     }
-    // A consistent entry the kernel refuses to run, as on a noexec volume.
-    const unrunnable = Buffer.from("not a program\n");
-    await writeFile(shared, unrunnable);
-    const manifestPath = join(shared, "..", "manifest.json");
-    const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as {
-      sha256: string;
-      size: number;
-    };
-    const { createHash } = await import("node:crypto");
-    await writeFile(
-      manifestPath,
-      JSON.stringify({
-        ...manifest,
-        sha256: createHash("sha256").update(unrunnable).digest("hex"),
-        size: unrunnable.byteLength,
-      }),
-    );
     const second = create();
     try {
       expect(await second.prepare()).toBe(shared);
+      // The verified copy is refused at launch, as on a noexec volume.
+      await chmod(shared, 0o600);
       // Concurrent reads that both launched the shared copy both fall back.
       const reads = await Promise.all([
         second.read([fixtureProcess]),
@@ -388,7 +451,7 @@ it.skipIf(!posix)(
       await second.close();
     }
     expect(await xcrun.compilations()).toBe(2);
-    expect((await readFile(shared)).equals(unrunnable)).toBe(true);
+    expect((await stat(shared)).mode & 0o777).toBe(0o600);
   },
 );
 

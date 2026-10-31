@@ -94,6 +94,46 @@ const ancestorsTrusted = async (
   }
 };
 
+/** Every real directory from the cache root up to the filesystem root. */
+const realAncestors = (path: string): string[] => {
+  const paths = [path];
+  for (let current = path; dirname(current) !== current;) {
+    current = dirname(current);
+    paths.push(current);
+  }
+  return paths;
+};
+
+// Rights an ACL can grant beyond the POSIX mode bits that permit replacing an
+// entry or its contents.
+const ACL_WRITE_RIGHTS: ReadonlySet<string> = new Set([
+  "write",
+  "append",
+  "writeattr",
+  "writeextattr",
+  "writesecurity",
+  "chown",
+  "delete",
+  "add_file",
+  "add_subdirectory",
+  "delete_child",
+]);
+
+/**
+ * `ls -le` lists each ACL entry as `N: principal [inherited] allow|deny
+ * rights`. macOS homes carry `deny delete` entries by default; only an
+ * `allow` of a write-class right lets someone the mode bits exclude write.
+ */
+export const aclListingGrantsWrite = (listing: string): boolean =>
+  listing.split("\n").some((line) => {
+    const entry =
+      /^\s*\d+:\s+\S+\s+(?:inherited\s+)?(allow|deny)\s+(\S+)/u.exec(line);
+    return (
+      entry?.[1] === "allow" &&
+      (entry[2] ?? "").split(",").some((right) => ACL_WRITE_RIGHTS.has(right))
+    );
+  });
+
 const isMissing = (cause: unknown): boolean =>
   cause instanceof Error && "code" in cause && cause.code === "ENOENT";
 
@@ -201,6 +241,26 @@ export const createDarwinHelperCache = (options: {
     return pending;
   };
 
+  /** On macOS, no ACL may grant a write that the mode bits withhold. */
+  const withoutAclWriteGrants = async (
+    paths: readonly string[],
+    signal: AbortSignal | undefined,
+  ): Promise<boolean> => {
+    if (process.platform !== "darwin") return true;
+    const { stdout } = await execFileOutput(
+      "/bin/ls",
+      ["-lde", "--", ...paths],
+      {
+        env: options.environment,
+        timeout: TOOLCHAIN_LOOKUP_TIMEOUT_MS,
+        maxBuffer: 1024 * 1024,
+        stopSignal: "SIGTERM",
+        ...(signal === undefined ? {} : { signal }),
+      },
+    );
+    return !aclListingGrantsWrite(stdout);
+  };
+
   /** The real cache root, created privately, with only trusted ancestors. */
   const trustedRoot = async (owner: number): Promise<string | undefined> => {
     await mkdir(options.directory, { recursive: true, mode: 0o700 });
@@ -289,9 +349,20 @@ export const createDarwinHelperCache = (options: {
       if (!entryStats.isDirectory() || !privatelyOwned(entryStats, uid))
         return { kind: "unavailable" };
       const executable = await verifiedHelper(entry, entryKey, uid);
-      return executable === undefined
-        ? { kind: "unavailable" }
-        : { kind: "hit", executable };
+      if (
+        executable === undefined ||
+        !(await withoutAclWriteGrants(
+          [
+            ...realAncestors(root),
+            entry,
+            executable,
+            join(entry, MANIFEST_NAME),
+          ],
+          signal,
+        ))
+      )
+        return { kind: "unavailable" };
+      return { kind: "hit", executable };
     } catch {
       return { kind: "unavailable" };
     }
@@ -318,7 +389,11 @@ export const createDarwinHelperCache = (options: {
     let staging: string | undefined;
     try {
       const root = await trustedRoot(uid);
-      if (root === undefined) return undefined;
+      if (
+        root === undefined ||
+        !(await withoutAclWriteGrants(realAncestors(root), signal))
+      )
+        return undefined;
       staging = await mkdtemp(join(root, ".publish-"));
       const copied = join(staging, HELPER_NAME);
       await copyFile(compiled, copied, constants.COPYFILE_EXCL);
