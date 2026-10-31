@@ -138,7 +138,24 @@ export const readyProcessLedgerRequest =
         },
       ],
     });
-    return request([capture, proof], {
+    const controlProof = boundProofEvidence("packaged", {
+      bindings: [
+        {
+          obligation_id: obligation.obligation_id,
+          obligation_version: obligation.obligation_version,
+          owner_sha256: "3".repeat(64),
+          fixtures: [],
+          verifiers: [
+            {
+              verifier_id: "verifier.packaged",
+              claim_id: "claim.process",
+              passed: false,
+            },
+          ],
+        },
+      ],
+    });
+    return request([capture, proof, controlProof], {
       manifest: {
         bindings: [
           {
@@ -169,6 +186,16 @@ export const readyProcessLedgerRequest =
                 specification:
                   "Startup precedes teardown; worker completion is unordered.",
               },
+              controls: [
+                {
+                  control_id: "control.process.defective-teardown",
+                  candidate_id: "candidate.process.defective",
+                  candidate_sha256: "3".repeat(64),
+                  defect: "Omits child process teardown signal handling.",
+                  status: "fail",
+                  result_evidence_id: controlProof.evidence_id,
+                },
+              ],
             },
           },
         ],
@@ -318,7 +345,24 @@ export const readyReviewedLedgerRequest =
         },
       ],
     });
-    return request([original, proof], {
+    const controlProof = boundProofEvidence("reviewed", {
+      bindings: [
+        {
+          obligation_id: obligation.obligation_id,
+          obligation_version: obligation.obligation_version,
+          owner_sha256: "2".repeat(64),
+          fixtures: [],
+          verifiers: [
+            {
+              verifier_id: "verifier.reviewed",
+              claim_id: "claim.reviewed",
+              passed: false,
+            },
+          ],
+        },
+      ],
+    });
+    return request([original, proof, controlProof], {
       reviewed_obligations: [obligation],
       manifest: {
         bindings: [
@@ -357,6 +401,16 @@ export const readyReviewedLedgerRequest =
                 mode: "total-order",
                 specification: "Single result",
               },
+              controls: [
+                {
+                  control_id: "control.reviewed.defective",
+                  candidate_id: "candidate.reviewed.defective",
+                  candidate_sha256: "2".repeat(64),
+                  defect: "Deliberately returns inverted identity outcome.",
+                  status: "fail",
+                  result_evidence_id: controlProof.evidence_id,
+                },
+              ],
             },
           },
         ],

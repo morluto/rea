@@ -75,6 +75,10 @@ export const reconstructionObligationLedgerStatus = (
       ({ status, diagnostics }) =>
         status === "contradicted" ||
         hasReconstructionObligationDiagnostic(diagnostics, "verifier-failed") ||
+        hasReconstructionObligationDiagnostic(
+          diagnostics,
+          "vacuous-verifier",
+        ) ||
         hasReconstructionObligationDiagnostic(diagnostics, "fixture-failed"),
     )
   )
@@ -153,7 +157,12 @@ export const reconstructionObligationEvidenceIds = (
               ),
               ...(obligation.binding.verifier === null
                 ? []
-                : [obligation.binding.verifier.result_evidence_id]),
+                : [
+                    obligation.binding.verifier.result_evidence_id,
+                    ...(obligation.binding.verifier.controls?.map(
+                      ({ result_evidence_id: id }) => id,
+                    ) ?? []),
+                  ]),
             ]),
       ]),
     ),

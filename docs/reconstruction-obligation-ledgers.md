@@ -11,11 +11,14 @@ The ledger is conservative by design. Static Application Graph facts create
 candidate obligations; they do not prove runtime or process behavior. A required
 obligation closes only when one manifest binding supplies a unique owner, any
 required parser/schema/domain type, every required case fixture, and a passing
-verifier whose authority is comparable to the original observation. The
-verifier must enumerate the obligation ID and its result must be present in the
-input Evidence bundle. Contradictions, duplicate definitions or owners,
-residual unknowns, missing dependencies, and unavailable authority keep closure
-open or failed.
+verifier whose authority is comparable to the original observation and that also
+fails on at least one known-bad negative control (`controls`). The verifier must
+enumerate the obligation ID, and both its positive result and its failing
+negative-control result must be present in the input Evidence bundle.
+Contradictions, duplicate definitions or owners, vacuous verifiers (where a
+negative control passes), missing or inapplicable negative controls, residual
+unknowns, missing dependencies, and unavailable authority keep closure open or
+failed.
 
 Original process authority requires observed `controlled-replay` Evidence with
 a supported process-capture provider and a valid capture payload. A matching
@@ -326,7 +329,17 @@ does not define it.
     "nondeterminism": {
       "mode": "partial-order",
       "specification": "cancel precedes the single terminal response"
-    }
+    },
+    "controls": [
+      {
+        "control_id": "rpc.cancel.control.missing-terminal-response",
+        "candidate_id": "candidate.cancel.missing-terminal",
+        "candidate_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "defect": "Drops the terminal cancellation response frame.",
+        "status": "fail",
+        "result_evidence_id": "ev_5555555555555555555555555555555555555555555555555555555555555555"
+      }
+    ]
   }
 }
 ```
@@ -374,6 +387,19 @@ operation label does not expose a proof executor or run the manifest command.
           "passed": true
         }
       ]
+    },
+    {
+      "obligation_id": "protocol.rpc.cancel",
+      "obligation_version": 1,
+      "owner_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "fixtures": [],
+      "verifiers": [
+        {
+          "verifier_id": "verifier.cancel",
+          "claim_id": "claim.cancel",
+          "passed": false
+        }
+      ]
     }
   ]
 }
@@ -388,11 +414,33 @@ obligations. Increase that version when revising a reviewed requirement.
 
 Within one matching obligation/owner/revision binding, fixture proof must name
 the exact `(fixture_id, case_kind)` pair, and verifier proof the exact
-`(verifier_id, claim_id)` pair. Every selected claim must report `passed: true`;
-a matching failed claim cannot be hidden by a duplicate passing claim.
+`(verifier_id, claim_id)` pair. Every selected candidate claim must report
+`passed: true`; a matching failed claim cannot be hidden by a duplicate passing
+claim. Each verifier binding must also declare at least one negative control in
+`verifier.controls` with `status: "fail"` and a retained proof record whose
+matching `(verifier_id, claim_id)` entry reports `passed: false` against the
+control's `candidate_sha256`. That digest is required and must differ from the
+positive `owner.owner_sha256`. `candidate_id`, when set, must not repeat a
+positive fixture id. Omitting the digest, reusing the positive owner digest, or
+reusing a positive fixture id is `inapplicable-control-proof` and cannot close
+the obligation.
 Claims may share a record, but identities or outcomes from different bindings
-are never joined. Fixture and verifier Evidence authority must also satisfy the
-existing authority requirements.
+are never joined. Fixture, verifier, and negative-control Evidence authority
+must also satisfy the existing authority requirements.
+
+When a verifier is bound, each evaluated obligation publishes
+`verifier_control_status` to summarize negative-control qualification:
+`challenged` (all declared controls failed with qualified proof),
+`unchallenged` (`controls` omitted or empty, emitting `missing-verifier-control`),
+`vacuous` (a control declared `status: "pass"` or its proof reported `passed: true`,
+emitting `vacuous-verifier` and failing a required ledger),
+`missing-control-result` (control Evidence is absent from the bundle, emitting
+`missing-verifier-control-result`), `inapplicable-control-proof` (control proof
+is malformed, mismatched, omits `candidate_sha256`, reuses the positive owner
+digest or a positive fixture id, or lacks required authority), or `control-unavailable` (control status is
+`unknown`, `unsupported`, or `skipped`).
+
+Manifest bindings that previously closed an obligation with a passing `verifier` and omitted or empty `verifier.controls` now remain open (`status: "implemented"`, `verifier_control_status: "unchallenged"`, and diagnostic `missing-verifier-control`), because an unchallenged verifier cannot rule out vacuous acceptance. Existing serialized ledgers without `verifier.controls` or `verifier_control_status` continue to parse cleanly; to close an obligation during evaluation, add at least one failing negative control in `verifier.controls` backed by retained `rea.reconstruction-proof` Evidence reporting `passed: false` for the challenged candidate.
 
 Changing the owner digest or obligation version makes retained proof
 inapplicable. Missing identity, including legacy ID-array proof records, keeps

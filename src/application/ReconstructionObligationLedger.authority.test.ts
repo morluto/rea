@@ -131,6 +131,48 @@ const registerOriginalProcessAuthorityCases = (): void => {
   );
 };
 
+const chainProofEvidence = (ids: readonly string[]) =>
+  boundProofEvidence(
+    "fixture-chain",
+    {
+      bindings: ids.flatMap((id) => [
+        {
+          obligation_id: id,
+          obligation_version: 1,
+          owner_sha256: "6".repeat(64),
+          fixtures: [
+            {
+              fixture_id: `fixture.${id}`,
+              case_kind: "positive" as const,
+              passed: true,
+            },
+          ],
+          verifiers: [
+            {
+              verifier_id: `verifier.${id}`,
+              claim_id: `claim.${id}`,
+              passed: true,
+            },
+          ],
+        },
+        {
+          obligation_id: id,
+          obligation_version: 1,
+          owner_sha256: "7".repeat(64),
+          fixtures: [],
+          verifiers: [
+            {
+              verifier_id: `verifier.${id}`,
+              claim_id: `claim.${id}`,
+              passed: false,
+            },
+          ],
+        },
+      ]),
+    },
+    "shipped-artifact",
+  );
+
 describe("reconstruction obligation ledger", () => {
   registerOriginalProcessAuthorityCases();
 
@@ -190,31 +232,7 @@ describe("reconstruction obligation ledger", () => {
 
   it("propagates an open dependency through the full obligation chain", () => {
     const ids = ["obl.chain.a", "obl.chain.b", "obl.chain.c"] as const;
-    const evidence = boundProofEvidence(
-      "fixture-chain",
-      {
-        bindings: ids.map((id) => ({
-          obligation_id: id,
-          obligation_version: 1,
-          owner_sha256: "6".repeat(64),
-          fixtures: [
-            {
-              fixture_id: `fixture.${id}`,
-              case_kind: "positive" as const,
-              passed: true,
-            },
-          ],
-          verifiers: [
-            {
-              verifier_id: `verifier.${id}`,
-              claim_id: `claim.${id}`,
-              passed: true,
-            },
-          ],
-        })),
-      },
-      "shipped-artifact",
-    );
+    const evidence = chainProofEvidence(ids);
     const reviewed = ids.map((id, index) => ({
       ...reviewedObligation(id, evidence.evidence_id),
       dependency_obligation_ids:
@@ -255,6 +273,16 @@ describe("reconstruction obligation ledger", () => {
           mode: "total-order" as const,
           specification: "Fixture execution is ordered.",
         },
+        controls: [
+          {
+            control_id: `control.${obligation.obligation_id}`,
+            candidate_id: `candidate.${obligation.obligation_id}.defective`,
+            candidate_sha256: "7".repeat(64),
+            defect: "Deliberately defective dependency candidate.",
+            status: "fail" as const,
+            result_evidence_id: evidence.evidence_id,
+          },
+        ],
       },
     }));
     const result = build(
