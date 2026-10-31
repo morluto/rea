@@ -40,6 +40,11 @@ it.each([
   ["a false flag", `openSync(p, false)`],
   ["an object flag", `openSync(p, {})`],
   ["an array flag", `openSync(p, [])`],
+  // A unary operator is judged by its result, not by its operand: `!` yields a
+  // boolean and `~0` yields `-1`.
+  ["a logical-not flag", `openSync(p, !0)`],
+  ["a bitwise-not flag", `openSync(p, ~0)`],
+  ["a negative bitwise-not flag", `openSync(p, ~1)`],
 ] as const)("emits no acquisition for %s", (_name, call) => {
   expect(acquisitionsFor(call)).toEqual([]);
 });
@@ -58,6 +63,20 @@ it.each([
   ["a unary-plus bitmask", `openSync(p, +5)`],
   ["an explicit undefined flag", `openSync(p, undefined)`],
   ["an explicit null flag", `openSync(p, null)`],
+  // `void <expr>` is `undefined`, which Node accepts as the default read flag,
+  // so the operand must never decide the outcome.
+  ["a void flag over a fraction", `openSync(p, void 1.5)`],
+  ["a void flag over a string", `openSync(p, void "r")`],
+  // `-0` is the valid zero bitmask, and `~-1` is `0`.
+  ["a negative-zero flag", `openSync(p, -0)`],
+  ["a negative-zero expression flag", `openSync(p, -0.0)`],
+  ["a unary-plus zero flag", `openSync(p, +0)`],
+  ["a bitwise-not of negative one", `openSync(p, ~-1)`],
+  // A spread before the flag slot shifts the runtime position, so argument 1 is
+  // not provably the flag: `openSync(...args, "0600")` opens with a mode.
+  ["a spread before the flag", `openSync(...args, "0600")`],
+  ["a spread supplying every argument", `openSync(...args)`],
+  ["a spread in the flag slot", `openSync(p, ...flags)`],
 ] as const)("keeps the acquisition for %s", (_name, call) => {
   expect(acquisitionsFor(call)).toEqual([
     { kind: "acquire", method: "openSync" },

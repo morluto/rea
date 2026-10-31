@@ -86,20 +86,18 @@ const rejectsOpenFlagLiteral = (
   node: t.CallExpression | t.OptionalCallExpression,
   context: DataEffectTraversalContext,
 ): boolean => {
+  // A spread before the flag slot shifts the runtime position, so argument 1 is
+  // not provably the flag. `openSync(...args, "0600")` with
+  // `args = [path, "w"]` opens with mode `"0600"`, not with an invalid flag.
+  if (t.isSpreadElement(node.arguments[0])) return false;
   const flag = node.arguments[1];
   if (flag === undefined || t.isSpreadElement(flag)) return false;
   const value = unwrapJavaScriptExpression(flag).node;
   if (t.isStringLiteral(value)) return !FS_OPEN_FLAGS.has(value.value);
-  // A non-integer, non-finite or negative number is not a usable bitmask.
-  if (t.isNumericLiteral(value))
-    return !Number.isInteger(value.value) || value.value < 0;
-  // `-1` is a unary expression over a numeric literal: always negative, and
-  // Node rejects a negative bitmask at the call site.
-  if (t.isUnaryExpression(value)) {
-    const operand = unwrapJavaScriptExpression(value.argument).node;
-    if (!t.isNumericLiteral(operand)) return false;
-    return value.operator === "-" || !Number.isInteger(operand.value);
-  }
+  // A non-integer or negative number is not a usable bitmask; `-0` is zero.
+  const bits = staticFlagBits(value);
+  if (bits !== undefined)
+    return bits !== null && (!Number.isInteger(bits) || bits < 0);
   // `NaN` and `Infinity` are unshadowed globals, and neither is a bitmask.
   if (
     t.isIdentifier(value) &&
@@ -114,6 +112,32 @@ const rejectsOpenFlagLiteral = (
     t.isObjectExpression(value) ||
     t.isArrayExpression(value)
   );
+};
+
+/**
+ * The number a literal flag argument evaluates to, or `null` when it evaluates to
+ * `undefined`. Returns `undefined` when the value is not exactly readable.
+ *
+ * `void <expr>` is `undefined`, which Node accepts as the default read flag, so
+ * it must never be judged by its operand. `!`, `typeof` and `delete` yield a
+ * boolean or a string rather than a bitmask.
+ */
+const staticFlagBits = (value: t.Node): number | null | undefined => {
+  if (t.isNumericLiteral(value)) return value.value;
+  if (!t.isUnaryExpression(value)) return undefined;
+  if (value.operator === "void") return null;
+  if (
+    value.operator === "!" ||
+    value.operator === "typeof" ||
+    value.operator === "delete"
+  )
+    return Number.NaN;
+  const operand = unwrapJavaScriptExpression(value.argument).node;
+  if (!t.isNumericLiteral(operand)) return undefined;
+  if (value.operator === "-") return -operand.value;
+  if (value.operator === "+") return operand.value;
+  if (value.operator === "~") return ~operand.value;
+  return undefined;
 };
 
 /** `fs.open`, `fs.openSync` and `fs/promises.open` take the flag in slot 1. */
