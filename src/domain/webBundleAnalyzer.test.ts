@@ -1611,12 +1611,30 @@ it("keeps bare module locations unresolved without inventing URL-relative paths"
     importScripts("worker.js");
   `),
   );
-  for (const specifier of ["package-name", "@scope/package"])
-    expect(
-      result.observations.chunks.edges
-        .filter((edge) => edge.specifier === specifier)
-        .every((edge) => edge.resolved_url === null),
-    ).toBe(true);
+  const bareEdges = result.observations.chunks.edges.filter(
+    ({ specifier }) =>
+      specifier === "package-name" || specifier === "@scope/package",
+  );
+  expect(bareEdges).toHaveLength(3);
+  expect(bareEdges).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "static_import",
+        specifier: "package-name",
+        resolved_url: null,
+      }),
+      expect.objectContaining({
+        kind: "dynamic_import",
+        specifier: "@scope/package",
+        resolved_url: null,
+      }),
+      expect.objectContaining({
+        kind: "require",
+        specifier: "package-name",
+        resolved_url: null,
+      }),
+    ]),
+  );
   expect(
     result.observations.chunks.edges.find(
       (edge) => edge.specifier === "./actual.js",

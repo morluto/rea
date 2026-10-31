@@ -12,6 +12,7 @@ import { z } from "incur";
 
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import { createArtifactExtractionDestination } from "../application/artifacts/ArtifactExtractionDestination.js";
+import { registerArtifactComparisonCommand } from "./artifactComparisonCommand.js";
 import { logCliCommand } from "../cliLogging.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import type { Logger } from "pino";
@@ -29,6 +30,7 @@ export const registerArtifactCommands = (
 ): void => {
   registerInspectionCommand(cli, logger, runProviderAnalysis);
   registerExtractionCommand(cli, logger, runProviderAnalysis);
+  registerArtifactComparisonCommand(cli, logger);
   registerInterfaceBuilderCommand(cli, logger, runProviderAnalysis);
   registerAssetCatalogCommand(cli, logger, runProviderAnalysis);
   registerDylibResolutionCommand(cli, logger, runProviderAnalysis);

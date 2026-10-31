@@ -631,6 +631,7 @@ it("propagates branch guards through object properties and function calls", () =
     inspect(direct.action);
     inspect(called.action);
   `);
+  expect(inspected).toHaveLength(2);
   for (const value of inspected) {
     const functions = symbolicVariants(value).filter(
       (candidate) => candidate.kind === "function",

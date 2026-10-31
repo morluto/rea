@@ -92,6 +92,7 @@ export const registerRustCommands = (
             );
           const service = createRustBinaryService();
           return deliverCliAnalysisEvidence({
+            callerInputPath: args.path,
             run: () =>
               service.inspect(
                 {

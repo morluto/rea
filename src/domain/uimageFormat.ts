@@ -17,6 +17,14 @@ export const UIMAGE_MAX_SUB_IMAGES = 4096;
 /** Bytes of payload prefix that can hold a maximal multi-image size table. */
 export const UIMAGE_MULTI_TABLE_WINDOW = (UIMAGE_MAX_SUB_IMAGES + 1) * 4;
 
+/**
+ * Multi (4) and script (6) payloads begin with the size table: mkimage writes
+ * it for both, and U-Boot's `source` skips it because "scripts are just
+ * multi-image files with one component".
+ */
+export const hasUImageSizeTable = (type: number): boolean =>
+  type === 4 || type === 6;
+
 export interface UImageSubImage {
   readonly index: number;
   /** Byte offset of the sub-image payload relative to the carrier start. */
@@ -119,6 +127,46 @@ const TYPE_NAMES: Readonly<Record<number, string>> = {
   6: "script",
   7: "filesystem",
   8: "flat_dt",
+  9: "kwbimage",
+  10: "imximage",
+  11: "ublimage",
+  12: "omapimage",
+  13: "aisimage",
+  14: "kernel_noload",
+  15: "pblimage",
+  16: "mxsimage",
+  17: "gpimage",
+  18: "atmelimage",
+  19: "socfpgaimage",
+  20: "x86_setup",
+  21: "lpc32xximage",
+  // boot/image.c has no short name for IH_TYPE_LOADABLE.
+  22: "loadable",
+  23: "rkimage",
+  24: "rksd",
+  25: "rkspi",
+  26: "zynqimage",
+  27: "zynqmpimage",
+  28: "zynqmpbif",
+  29: "fpga",
+  30: "vybridimage",
+  31: "tee",
+  32: "firmware_ivt",
+  33: "pmmc",
+  34: "stm32image",
+  35: "socfpgaimage_v1",
+  36: "mtk_image",
+  37: "imx8mimage",
+  38: "imx8image",
+  39: "copro",
+  40: "sunxi_egon",
+  41: "sunxi_toc0",
+  42: "fdt_legacy",
+  43: "spkgimage",
+  44: "sfspl",
+  45: "tfa-bl31",
+  46: "stm32imagev2",
+  47: "amlimage",
 };
 
 const COMPRESSION_NAMES: Readonly<Record<number, string>> = {

@@ -24,6 +24,8 @@ import {
   esp8266Image,
   espImage,
 } from "../../../tests/fixtures/espImage.js";
+import { devicetreeFixture } from "../../firmware/devicetree/Devicetree.fixture.js";
+import { fitFixture } from "../fit/FitImage.fixture.js";
 
 it("joins only observed PE signature bytes across stream chunks", () => {
   const bytes = pe(0x8664, 8190);
@@ -489,6 +491,36 @@ it("classifies nested ESP images as containers by bytes", () => {
     kind: "resource",
     format: "file",
   });
+});
+
+it("classifies a FIT by a /images node within the first 4 KiB", () => {
+  const images = [{ name: "kernel", data: Buffer.from("kernel") }];
+  const late = devicetreeFixture({
+    name: "",
+    properties: { padding: Buffer.alloc(4096) },
+    children: [{ name: "images" }],
+  });
+  const configurationsFirst = devicetreeFixture({
+    name: "",
+    children: [{ name: "configurations" }, { name: "images" }],
+  });
+  for (const [path, bytes] of [
+    ["firmware/boot.itb", fitFixture({ images })],
+    ["firmware/boot", configurationsFirst],
+  ] as const)
+    expect(classifyArtifactBytesAtPath(path, bytes)).toEqual({
+      kind: "container",
+      format: "fit",
+    });
+  for (const bytes of [
+    devicetreeFixture(),
+    fitFixture({ images, version: 15 }),
+    late,
+  ])
+    expect(classifyArtifactBytesAtPath("firmware/board.dtb", bytes)).toEqual({
+      kind: "resource",
+      format: "file",
+    });
 });
 
 describe("FAT prefix observation coverage", () => {

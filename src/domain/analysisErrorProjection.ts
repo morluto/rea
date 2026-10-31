@@ -236,7 +236,8 @@ const evidenceFileCode = (
   reason: EvidenceFileError["reason"],
 ): AnalysisErrorProjection["code"] => {
   if (reason === "invalid-json") return "evidence_integrity_mismatch";
-  if (reason === "path-limit") return "resource_constraint";
+  if (reason === "path-limit" || reason === "storage-limit")
+    return "resource_constraint";
   // A missing, non-file or already-existing path is the caller's selection.
   if (reason === "io") return "execution_failure";
   return "invalid_request";
@@ -418,6 +419,9 @@ const artifactStateErrorDetails = (
       operation: error.operation,
       reason: error.reason,
       ...(error.reason === "path-limit" ? { boundary: "filesystem-path" } : {}),
+      ...(error.systemCode === undefined
+        ? {}
+        : { system_code: error.systemCode }),
       ...(error.path === undefined ? {} : { path: error.path }),
       ...(error.contentIssues === undefined
         ? {}
@@ -635,6 +639,10 @@ const lifecycleErrorDetails = (
       ...(error.constraint === undefined
         ? {}
         : { constraint: error.constraint }),
+      ...(error.infoPlist === undefined ? {} : { info_plist: error.infoPlist }),
+      ...(error.probedPaths === undefined
+        ? {}
+        : { probed_paths: [...error.probedPaths] }),
       ...(error.systemCode === undefined
         ? {}
         : { system_code: error.systemCode, boundary: "filesystem-read" }),

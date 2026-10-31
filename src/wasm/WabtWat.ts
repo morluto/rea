@@ -1,3 +1,4 @@
+import { WabtAdmissionError } from "./WabtAdmissionError.js";
 import { parseWabtInterface } from "./WabtInterface.js";
 import { watString, watStringEnd } from "./WabtString.js";
 import { watCommentEnd } from "./WabtComment.js";
@@ -25,24 +26,24 @@ const moduleNames = (
       value += (byte & 127) * 2 ** shift;
       if (byte < 128) return value;
     }
-    throw new Error("Incomplete WABT name-section metadata.");
+    throw new WabtAdmissionError("incomplete_name_metadata");
   };
   try {
     let previousType = -1;
     while (offset < bytes.length) {
       const type = uint32(bytes.length);
       if (type <= previousType)
-        throw new Error("Duplicate or out-of-order WABT name subsection.");
+        throw new WabtAdmissionError("name_subsection_order");
       previousType = type;
       const size = uint32(bytes.length);
       const end = offset + size;
       if (end > bytes.length)
-        throw new Error("Incomplete WABT name-section metadata.");
+        throw new WabtAdmissionError("incomplete_name_metadata");
       if (type === 0 && size !== 0) {
         const length = uint32(end);
         const nameEnd = offset + length;
         if (nameEnd > end)
-          throw new Error("Incomplete WABT module-name metadata.");
+          throw new WabtAdmissionError("incomplete_module_name");
         names.push(
           new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
             bytes.subarray(offset, nameEnd),
@@ -50,7 +51,7 @@ const moduleNames = (
         );
         // WABT calls OnModuleName before rejecting trailing subsection bytes.
         if (nameEnd !== end)
-          throw new Error("Unfinished WABT module-name subsection.");
+          throw new WabtAdmissionError("unfinished_module_name");
       }
       offset = end;
     }
@@ -68,7 +69,7 @@ const moduleNames = (
 /** Extract exact top-level WABT WAT forms; no raw WASM decoding or import/export name unescaping. */
 export const parseWabtWat = (text: string) => {
   if (!/^\(module(?:\s|\))/u.test(text))
-    throw new Error("Unsupported WABT WAT module prefix.");
+    throw new WabtAdmissionError("unsupported_module_prefix");
   const forms: string[] = [];
   const imports: string[] = [];
   const exports: string[] = [];
@@ -95,13 +96,12 @@ export const parseWabtWat = (text: string) => {
       continue;
     }
     if (char === '"') {
-      if (depth === 0)
-        throw new Error("Unexpected string outside WABT WAT module.");
+      if (depth === 0) throw new WabtAdmissionError("unexpected_string");
       index = watStringEnd(text, index + 1) - 1;
       continue;
     }
     if (char === "(") {
-      if (closed) throw new Error("Unexpected second WABT WAT module.");
+      if (closed) throw new WabtAdmissionError("unexpected_second_module");
       depth++;
       if (depth === 2) start = index;
     } else if (char === ")") {
@@ -118,7 +118,7 @@ export const parseWabtWat = (text: string) => {
         else if (/^\(@custom\s/u.test(form)) {
           const prefix = /^\(@custom\s+"/u.exec(form);
           if (prefix === null)
-            throw new Error("Unsupported WABT custom-section name.");
+            throw new WabtAdmissionError("unsupported_custom_name");
           const nameString = watString(form, prefix[0].length);
           // A WASM name is length-delimited UTF-8; leading U+FEFF is name data.
           const name = new TextDecoder("utf-8", {
@@ -129,7 +129,7 @@ export const parseWabtWat = (text: string) => {
           if (name === "name") {
             const payloadPrefix = /^\s+"/u.exec(form.slice(nameString.end));
             if (payloadPrefix === null)
-              throw new Error("Unsupported WABT name-section payload.");
+              throw new WabtAdmissionError("unsupported_name_payload");
             const payload = watString(
               form,
               nameString.end + payloadPrefix[0].length,
@@ -148,12 +148,12 @@ export const parseWabtWat = (text: string) => {
           }
         }
       }
-      if (--depth < 0) throw new Error("Unbalanced WABT WAT output.");
+      if (--depth < 0) throw new WabtAdmissionError("unbalanced_output");
       if (depth === 0) closed = true;
     } else if (depth === 0 && char !== undefined && !/\s/u.test(char))
-      throw new Error("Unexpected text outside WABT WAT module.");
+      throw new WabtAdmissionError("unexpected_text");
   }
-  if (depth !== 0) throw new Error("Incomplete WABT WAT output.");
+  if (depth !== 0) throw new WabtAdmissionError("incomplete_output");
   return {
     imports,
     exports,

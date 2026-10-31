@@ -78,6 +78,68 @@ const capture = () => {
   };
 };
 
+it("uses qlog event headlines without promoting HTTP-shaped extensions", () => {
+  const { report } = capture();
+  const first = report.records[0];
+  if (first === undefined) throw new Error("Expected a capture record");
+  const qlog = webNetworkCaptureSchema.parse({
+    ...report,
+    format: "qlog",
+    qlog: {
+      profile: "aioquic-1.5.0-json-0.3",
+      scope: "all-recorded-events-before-selection",
+      body_bytes: "not-reported",
+      clock: {
+        unit: "milliseconds",
+        domain: "unix-epoch",
+        basis: "selected-aioquic-profile-not-producer-authentication",
+      },
+      traces: [],
+    },
+    total_records: 1,
+    records: [
+      {
+        ...first,
+        ordinal: 0,
+        reported: {
+          name: "transport:packet_sent",
+          time: 1.25,
+          request: { url: { payload: "event-extension" } },
+          type: { payload: "event-extension" },
+        },
+        numeric_literals: [],
+        binary_fields: [],
+      },
+    ],
+  });
+  if (qlog.artifact.sha256 === null) throw new Error("Expected fixture digest");
+  const evidence = createEvidence(
+    { ...qlog.artifact, sha256: qlog.artifact.sha256, format: "file" },
+    qlog.decoder,
+    {
+      operation: "inspect_web_network_capture",
+      parameters: {},
+      result: qlog,
+      confidence: "observed",
+      authority: "historical-reference",
+    },
+  );
+  const preview = projectAnalysisView(
+    {
+      evidenceId: evidence.evidence_id,
+      operation: evidence.operation,
+      normalizedResult: qlog,
+      subject: evidence.subject,
+      limitations: evidence.limitations,
+    },
+    { kind: "capture", detail: "preview", offset: 0, limit: 1 },
+  );
+  expect(preview.ok && preview.value).toMatchObject({
+    items: [{ reported: { name: "transport:packet_sent", time: 1.25 } }],
+  });
+  expect(JSON.stringify(preview)).not.toContain("event-extension");
+});
+
 it("checks each parent's subject even after its immutable capture has been validated", () => {
   const { parent } = capture();
   const source = {

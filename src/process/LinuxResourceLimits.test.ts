@@ -176,7 +176,9 @@ it.each([
       expect(physical.outcome.value).toEqual(configured);
     else
       expect(physical.outcome.cause).toMatchObject({
-        message: "Cannot establish inherited Linux limit: Max address space",
+        _tag: "ProcessAdmissionError",
+        code: "limit_unreadable",
+        detail: { limit: "address_space_bytes" },
       });
     expect(physical.owner.handle.fd).toBeGreaterThanOrEqual(0);
     if (scoped)
@@ -267,9 +269,11 @@ it.each([16 * 1024, 16 * 1024 + 1])(
     const prefix = report("unlimited unlimited");
     await kernelReportFixture(prefix.padEnd(bytes, " "));
     kernel.maximumRead = Buffer.byteLength(prefix);
-    await expect(readLinuxResourceLimits(configured)).rejects.toThrow(
-      "Inherited Linux limits exceed the report budget.",
-    );
+    await expect(readLinuxResourceLimits(configured)).rejects.toMatchObject({
+      _tag: "ProcessAdmissionError",
+      code: "report_exceeds_budget",
+      detail: { budget_bytes: 16 * 1024 },
+    });
     expect(kernel.reads.length).toBeGreaterThan(1);
     expect(
       kernel.reads.every(

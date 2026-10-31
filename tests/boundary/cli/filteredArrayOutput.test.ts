@@ -242,7 +242,7 @@ it("formats arrays of empty objects without columns as JSON in Markdown", async 
   const json = await runFilteredCli(value, "json");
   expect(JSON.parse(json)).toEqual(value);
   const markdown = await runFilteredCli(value, "md");
-  expect(markdown).toBe("\\[{},{}\\]\n");
+  expect(markdown).toBe("\\[\\{\\},\\{\\}\\]\n");
 });
 
 it.each(

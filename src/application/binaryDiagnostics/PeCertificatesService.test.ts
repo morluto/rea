@@ -128,6 +128,14 @@ it.each([
       value.entries[0]!.pkcs7!.certificates[0]!.location.offset = 0;
     },
   ],
+  [
+    "complete coverage with undecoded unsigned attributes",
+    (value: PeCertificates) => {
+      value.entries[0]!.pkcs7!.signers[0]!.unsigned_attribute_oids = [
+        "1.3.6.1.4.1.311.3.3.1",
+      ];
+    },
+  ],
 ] as const)(
   "rejects %s before creating observed Evidence",
   async (_label, mutate) => {

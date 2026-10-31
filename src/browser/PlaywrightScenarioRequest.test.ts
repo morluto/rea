@@ -1,5 +1,5 @@
 import type { Page, Route } from "playwright-core";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { browserScenarioSchema } from "../domain/browserScenario.js";
 import type { BrowserScenarioAction } from "../domain/browserScenarioValues.js";
@@ -512,9 +512,17 @@ describe("request step confinement", () => {
       };
     });
     const parsed = scenario([requestStep({})]);
+    const onOpaqueRedirect = vi.fn();
     await expect(
-      perform(fakePage({}), parsed.actions[0]!, resolved(parsed)),
+      performPlaywrightScenarioAction({
+        page: fakePage({}),
+        action: parsed.actions[0]!,
+        secrets: resolved(parsed),
+        startOrigin: ORIGIN,
+        onOpaqueRedirect,
+      }),
     ).rejects.toThrow("request steps do not follow");
+    expect(onOpaqueRedirect).toHaveBeenCalledOnce();
     expect(calls[0]!.init.redirect).toBe("manual");
     await expect(
       perform(
@@ -1927,6 +1935,9 @@ describe("saved response limits and deadlines", () => {
 it.each(["array", "embedded", "headers"])(
   "refuses repeated large saved JSON values in %s before expansion or browser dispatch",
   async (kind) => {
+    onTestFinished(() => {
+      vi.unstubAllGlobals();
+    });
     const parsed = scenario([
       requestStep({ save: [{ name: "large", json_pointer: "/value" }] }),
       requestStep({

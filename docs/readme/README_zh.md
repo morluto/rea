@@ -60,7 +60,7 @@
 
 REA 将智能体连接到分析工具，用于检查原生二进制文件、JavaScript 和 Electron 应用、.NET 程序集以及网站。你也可以在终端中使用同样的工具。分析在本机运行，结果包含支撑各项结论的证据和相关限制。
 
-设置流程会向智能体注册 REA，并安装匹配的工作流指引。原生分析可以使用已有的 Hopper、Ghidra 或 IDA；设置流程也可以在你批准后安装 Hopper。静态 JavaScript 分析不需要原生分析引擎。
+设置流程会向智能体注册 REA，并安装匹配的工作流指引。原生分析可以使用已有的 Hopper、Ghidra、IDA 或 Kuna；设置流程也可以在你批准后安装 Hopper。静态 JavaScript 分析不需要原生分析引擎。
 
 > **[访问 REA 网站](https://rea.tools/zh-CN/)**，查看设置说明、图解指南和真实案例。
 
@@ -149,7 +149,7 @@ REA 需要 Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）或 26+ (>=26.12.1)�
 
 | 目标                  | REA 返回的内容                                                               | 要求与指南                                                                                                         |
 | --------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| 原生二进制文件        | 伪代码、汇编、字符串、符号、调用和引用                                       | Hopper、Ghidra 或 IDA；[原生分析](../native-investigation.md)                                                      |
+| 原生二进制文件        | 伪代码、汇编、字符串、符号、调用和引用                                       | Hopper、Ghidra、IDA 或 Kuna；[原生分析](../native-investigation.md)                                                |
 | 离线 ELF 布局         | 节、段、原始符号/重定位信息及静态防护机制候选项                              | Linux x64 上由调用方提供的 pwntools；[二进制诊断](../binary-diagnostics.md)                                        |
 | Go 二进制文件         | 内嵌编译器版本、模块、替换项和构建设置                                       | 内置静态 ELF/PE/thin Mach-O 检查；无需安装 Go                                                                      |
 | WASM 工件             | 验证、节、精确的导入/导出 WAT 形式及解码后的 WAT                             | 调用方提供的 WABT 1.0.42；`inspect_wasm_artifact`                                                                  |
@@ -278,9 +278,9 @@ REA 导出可直接运行的环境，并附带基本测试，检查环境能否�
 </details>
 
 <details>
-<summary><strong>需要 Hopper、Ghidra 或 IDA 吗？</strong></summary>
+<summary><strong>需要 Hopper、Ghidra、IDA 或 Kuna 吗？</strong></summary>
 
-深入的原生分析需要其中一个引擎。静态 JavaScript 和 .NET 检查不需要原生分析引擎。设置流程可以在你批准后安装 Hopper；Ghidra 和 IDA 则使用已有安装。见[提供方设置](../installation.md#hopper)。
+深入的原生分析需要其中一个引擎。静态 JavaScript 和 .NET 检查不需要原生分析引擎。设置流程可以在你批准后安装 Hopper；Ghidra、IDA 和 Kuna 则使用已有安装。见[提供方设置](../installation.md#hopper)。
 
 </details>
 

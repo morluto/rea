@@ -15,7 +15,9 @@ import jadx.api.plugins.input.insns.InsnIndexType;
 import jadx.api.plugins.input.insns.Opcode;
 import jadx.core.codegen.TypeGen;
 import jadx.core.dex.info.MethodInfo;
+import jadx.core.dex.instructions.args.ArgType;
 import jadx.core.dex.nodes.*;
+import jadx.core.xmlgen.BinaryXMLParser;
 import java.io.PrintStream;
 import java.io.StringReader;
 import java.io.InputStream;
@@ -50,16 +52,24 @@ class ReaJadxBridge {
   private Map<String, List<ClassSnapshot>> classes = Map.of();
   private JadxSession manifestSession;
   private ManifestSnapshot manifestSnapshot;
+  private ExternalInventory externalInventory;
 
   private record MethodSnapshot(String name, String rawName, String shortId, List<String> bodyAbsenceMarkers,
       Map<String, Object> summary) {}
   private record ClassSnapshot(JavaClass node, List<MethodSnapshot> methods, Map<String, Object> summary,
       Map<String, Object> summaryWithValues) {}
   private record ManifestSnapshot(String text, Map<String, Object> summary) {}
+  private record ExternalMethod(MethodInfo info, Map<String, Object> summary) {}
+  private record ExternalInventory(JadxSession session, String className, String methodName,
+      List<ExternalMethod> methods) {}
 
   private static final class InputFailure extends IllegalArgumentException {
     final String field;
     InputFailure(String field, String message) { super(message); this.field = field; }
+  }
+  private static final class ReferenceLimit extends IllegalArgumentException {
+    final String stage;
+    ReferenceLimit(String stage) { super("External reference representation limit"); this.stage = stage; }
   }
 
   private ReaJadxBridge(SessionHolder holder) { this.holder = holder; }
@@ -187,6 +197,7 @@ class ReaJadxBridge {
   private void clearManifest() {
     manifestSession = null;
     manifestSnapshot = null;
+    externalInventory = null;
   }
 
   // One bounded DEX at a time, beside the already admitted analysis JVM. The
@@ -400,15 +411,29 @@ class ReaJadxBridge {
         selected = resource;
       }
       if (selected == null) throw new IllegalArgumentException("Root AndroidManifest.xml not found");
-      var content = selected.loadContent();
-      if (content == null || content.getDataType() != jadx.core.xmlgen.ResContainer.DataType.TEXT)
-        throw new IllegalArgumentException("Root AndroidManifest.xml did not decode as text");
-      String xml = content.getText().getCodeStr();
+      String xml = manifestText(selected);
       ManifestSnapshot snapshot = new ManifestSnapshot(xml, manifestSummary(xml));
       manifestSnapshot = snapshot;
       manifestSession = current;
     }
     return manifestSnapshot;
+  }
+
+  /** Decode with resource names but without JADX's class alias substitution. */
+  static String manifestText(ResourceFile resource) {
+    var decompiler = resource.getDecompiler();
+    // BinaryXMLParser resolves android:name against its root's class identities
+    // and replaces raw '$' and relative names with Java-style aliases. A fresh
+    // root owns no classes, while its resource-name table preserves reference
+    // rendering from the loaded target.
+    RootNode root = new RootNode(decompiler.getArgs());
+    root.getConstValues().setResourcesNames(decompiler.getRoot().getConstValues().getResourcesNames());
+    try {
+      return ResourcesLoader.decodeStream(resource,
+          (size, input) -> new BinaryXMLParser(root).parse(input).getCodeStr());
+    } catch (jadx.core.utils.exceptions.JadxException failure) {
+      throw new IllegalArgumentException("Root AndroidManifest.xml did not decode as text", failure);
+    }
   }
 
   /** One parsed XML owner supplies namespace-aware values alongside the exact decoded text. */
@@ -454,7 +479,7 @@ class ReaJadxBridge {
     return Collections.unmodifiableMap(summary);
   }
 
-  private ClassSnapshot selected(JsonObject args) {
+  private void indexClasses() {
     JadxSession current = session();
     if (indexedSession != current) {
       Map<String, List<ClassSnapshot>> index = new LinkedHashMap<>();
@@ -530,6 +555,10 @@ class ReaJadxBridge {
       classes = Collections.unmodifiableMap(index);
       indexedSession = current;
     }
+  }
+
+  private ClassSnapshot selected(JsonObject args) {
+    indexClasses();
     String name = string(args, "class_name");
     List<ClassSnapshot> candidates = classes.get(name);
     if (candidates == null) throw new InputFailure("class_name", "Exact class not found: " + name
@@ -629,12 +658,18 @@ class ReaJadxBridge {
   // JSON-RPC/CallToolResult envelope and generated numeric request id, and
   // account for JSON text being escaped again inside TextContent.
   private static final int MAX_XREF_TEXT_BYTES = 8 * 1024 * 1024 - 1024;
+  // Leave room for the prototype reply, reference reply, retained raw calls,
+  // normalized Evidence and their text/structured MCP copies, not just one frame.
+  private static final int MAX_EXTERNAL_XREF_BYTES = MAX_XREF_TEXT_BYTES / 8;
   private static int escapedJsonBytes(Object value) {
     return JSON.toJson(JSON.toJson(value)).getBytes(StandardCharsets.UTF_8).length;
   }
   private static final class InvokeBudget {
     long remaining;
     InvokeBudget(long remaining) { this.remaining = Math.max(0, remaining); }
+    boolean fitsText(long characters) {
+      return remaining >= 256 && characters <= (remaining - 256) / 12;
+    }
     boolean admit(Map<String, Object> site) {
       // Check a conservative two-layer escape bound before serialization.
       long bound = 256;
@@ -649,31 +684,197 @@ class ReaJadxBridge {
   }
   private record DirectInvokes(List<Map<String, Object>> sites, boolean exhaustive) {}
 
-  /** Raw DEX invokes within one JADX using method; offsets are code units from its code start. */
-  private static DirectInvokes directInvokes(JavaMethod source, MethodInfo target, InvokeBudget budget) {
-    MethodNode node = source.getMethodNode();
+  @FunctionalInterface private interface InvokeVisitor {
+    void accept(MethodInfo target, int offset, int index, Opcode opcode);
+  }
+
+  /** Decode raw invoke identity once at the shared bridge boundary, without generating source. */
+  private static void visitInvokes(MethodNode node, InvokeVisitor visitor) {
+    checkNativeInterrupted();
     ICodeReader code = node.getCodeReader();
-    if (code == null) return null;
-    List<Map<String, Object>> sites = new ArrayList<>();
-    boolean[] exhaustive = {true};
+    if (code == null) return;
     code.visitInstructions(insn -> {
+      checkNativeInterrupted();
       insn.decode();
       if (insn.getIndexType() != InsnIndexType.METHOD_REF) return;
       Opcode opcode = insn.getOpcode();
       if (!opcode.name().startsWith("INVOKE_")) return;
       IMethodRef ref = insn.getIndexAsMethod();
       ref.load();
-      if (!MethodInfo.fromRef(node.root(), ref).getRawFullId().equals(target.getRawFullId())) return;
+      visitor.accept(MethodInfo.fromRef(node.root(), ref), insn.getOffset(), insn.getIndex(), opcode);
+    });
+  }
+
+  /** Raw DEX invokes within one JADX using method; offsets are code units from its code start. */
+  private static DirectInvokes directInvokes(JavaMethod source, MethodInfo target, InvokeBudget budget) {
+    return directInvokes(source.getMethodNode(), target, budget);
+  }
+
+  private static void visitDirectInvokes(MethodNode node, MethodInfo target, InvokeVisitor visitor) {
+    visitInvokes(node, (referenced, offset, index, opcode) -> {
+      if (referenced.getRawFullId().equals(target.getRawFullId()))
+        visitor.accept(referenced, offset, index, opcode);
+    });
+  }
+
+  private static boolean referencesMethod(MethodNode node, MethodInfo target) {
+    boolean[] found = {false};
+    visitDirectInvokes(node, target, (referenced, offset, index, opcode) -> found[0] = true);
+    return found[0];
+  }
+
+  private static DirectInvokes directInvokes(MethodNode node, MethodInfo target, InvokeBudget budget) {
+    if (node.getCodeReader() == null) return null;
+    List<Map<String, Object>> sites = new ArrayList<>();
+    boolean[] exhaustive = {true};
+    visitDirectInvokes(node, target, (referenced, offset, index, opcode) -> {
       Map<String, Object> site = Map.of(
           "dex_entry", node.getInputFileName(),
           "source_raw_method_id", node.getMethodInfo().getRawFullId(),
-          "dex_code_unit_offset", insn.getOffset(),
-          "dex_method_index", insn.getIndex(),
+          "dex_code_unit_offset", offset,
+          "dex_method_index", index,
           "opcode", opcode.name());
       if (budget.admit(site)) sites.add(site);
       else exhaustive[0] = false;
     });
     return new DirectInvokes(sites, exhaustive[0]);
+  }
+
+  private List<ClassSnapshot> sourceClasses() {
+    indexClasses();
+    Set<ClassSnapshot> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+    List<ClassSnapshot> result = new ArrayList<>();
+    for (List<ClassSnapshot> group : classes.values())
+      for (ClassSnapshot source : group) if (seen.add(source)) result.add(source);
+    result.sort(Comparator.comparing(source -> source.node().getRawName()));
+    return result;
+  }
+
+  private static long displayTypeCharacters(ArgType type) {
+    if (type.isArray())
+      return 2L * type.getArrayDimension() + displayTypeCharacters(type.getArrayRootElement());
+    if (type.isPrimitive()) return type.getPrimitiveType().getLongName().length();
+    if (type.isObject() && !type.isGeneric() && !type.isGenericType()) return type.getObject().length();
+    throw new IllegalArgumentException("External prototype contains a non-DEX type");
+  }
+
+  private static Map<String, Object> externalMethodSummary(MethodInfo info, InvokeBudget budget) {
+    String name = info.getName();
+    long signatureCharacters = name.length() + 4L + displayTypeCharacters(info.getReturnType())
+        + 2L * Math.max(0, info.getArgsCount() - 1);
+    for (ArgType type : info.getArgumentsTypes()) signatureCharacters += displayTypeCharacters(type);
+    long descriptorCharacters = info.getShortId().length() - (long) name.length();
+    // Use parsed type facts and the existing short-id length before copying/joining strings.
+    if (!budget.fitsText(2L * name.length() + descriptorCharacters + signatureCharacters))
+      throw new ReferenceLimit("method_inventory");
+    String descriptor = info.getShortId().substring(name.length());
+    String signature = name + "(" + info.getArgumentsTypes().stream()
+        .map(Object::toString).collect(Collectors.joining(", "))
+        + "): " + info.getReturnType();
+    Map<String, Object> summary = Map.of("name", name, "raw_name", name, "signature", signature,
+        "dex_descriptor", descriptor, "is_constructor", info.isConstructor(), "def_pos", 0);
+    if (!budget.admit(summary)) throw new ReferenceLimit("method_inventory");
+    return summary;
+  }
+
+  /** Only directly referenced prototypes, not invented definitions or an external classpath. */
+  private List<ExternalMethod> externalMethods(JsonObject args) {
+    String className = string(args, "class_name");
+    String methodName = string(args, "method_name");
+    JadxSession current = session();
+    if (externalInventory != null && externalInventory.session() == current
+        && externalInventory.className().equals(className) && externalInventory.methodName().equals(methodName))
+      return externalInventory.methods();
+    // Retain only the latest bounded selection, never results from a replaced APK/session.
+    externalInventory = null;
+    SortedMap<String, ExternalMethod> methods = new TreeMap<>();
+    boolean[] observedClass = {false};
+    InvokeBudget budget = new InvokeBudget(MAX_EXTERNAL_XREF_BYTES
+        - 4096L - 12L * (className.length() + (long) methodName.length()));
+    for (ClassSnapshot source : sourceClasses()) {
+      for (MethodSnapshot selected : source.methods()) {
+        visitInvokes(method(source, selected).getMethodNode(), (info, offset, index, opcode) -> {
+          if (!info.getDeclClass().getRawName().equals(className)) return;
+          observedClass[0] = true;
+          if (!info.getName().equals(methodName) || methods.containsKey(info.getShortId())) return;
+          methods.put(info.getShortId(), new ExternalMethod(info, externalMethodSummary(info, budget)));
+        });
+      }
+    }
+    if (!observedClass[0]) throw new InputFailure("class_name",
+        "No APK definition or direct DEX invoke references the exact class: " + className);
+    if (methods.isEmpty()) throw new InputFailure("method_name",
+        "No direct DEX invoke references " + className + "." + methodName);
+    List<ExternalMethod> result = List.copyOf(methods.values());
+    externalInventory = new ExternalInventory(current, className, methodName, result);
+    return result;
+  }
+
+  private Map<String, Object> externalSummary(JsonObject args) {
+    List<ExternalMethod> methods = externalMethods(args);
+    return Map.of("class_name", string(args, "class_name"), "reference_target", "external",
+        "observed_method_count", methods.size(),
+        "prototypes", methods.stream().map(ExternalMethod::summary).toList());
+  }
+
+  private record ExternalCaller(MethodNode node, Map<String, Object> row) {}
+
+  /** Reserve the complete using-node inventory before optional instruction positions. */
+  private List<ExternalCaller> externalCallers(MethodInfo target, InvokeBudget budget) {
+    List<ExternalCaller> callers = new ArrayList<>();
+    for (ClassSnapshot source : sourceClasses()) {
+      String className = String.valueOf(source.summary().get("full_name"));
+      Map<String, Integer> overloads = new HashMap<>();
+      for (MethodSnapshot candidate : source.methods()) {
+        int overload = overloads.merge(candidate.name(), 1, Integer::sum) - 1;
+        MethodNode node = method(source, candidate).getMethodNode();
+        if (!referencesMethod(node, target)) continue;
+        if (classes.get(className).size() != 1)
+          throw new IllegalArgumentException("External caller has an ambiguous APK class identity: " + className);
+        Map<String, Object> row = new LinkedHashMap<>(Map.of(
+            "kind", "method", "name", candidate.name(), "full_name", className + "." + candidate.name(),
+            "containing_class", className, "top_class", source.node().getTopParentClass().getFullName(),
+            "def_pos", 0, "source_selector", Map.of("class_name", className,
+                "method_name", candidate.name(), "overload_index", overload),
+            "direct_invokes", List.of(), "direct_invokes_exhaustive", false));
+        if (!budget.admit(row)) throw new ReferenceLimit("caller_inventory");
+        callers.add(new ExternalCaller(node, row));
+      }
+    }
+    return List.copyOf(callers);
+  }
+
+  private Map<String, Object> externalReferences(JsonObject args) {
+    List<ExternalMethod> methods = externalMethods(args);
+    if (methods.size() != 1 && !args.has("overload_index"))
+      throw new InputFailure("overload_index", "Select one of " + methods.size() + " observed external prototypes");
+    int index = integer(args, "overload_index", 0);
+    if (index >= methods.size()) throw new InputFailure("overload_index", "External prototype index out of range: " + index);
+    ExternalMethod method = methods.get(index);
+    MethodInfo target = method.info();
+    Map<String, Object> selected = method.summary();
+    InvokeBudget budget = new InvokeBudget(MAX_EXTERNAL_XREF_BYTES
+        - 4096L - escapedJsonBytes(selected));
+    List<ExternalCaller> callers = externalCallers(target, budget);
+    List<Map<String, Object>> items = new ArrayList<>();
+    for (ExternalCaller caller : callers) {
+      DirectInvokes invokes = directInvokes(caller.node(), target, budget);
+      caller.row().put("direct_invokes", invokes.sites());
+      caller.row().put("direct_invokes_exhaustive", invokes.exhaustive());
+      items.add(caller.row());
+    }
+    Map<String, Object> result = new LinkedHashMap<>();
+    result.put("target", string(args, "class_name") + "." + target.getName());
+    result.put("reference_target", "external");
+    result.put("reference_scope", "direct_dex_invokes");
+    result.put("dex_descriptor", selected.get("dex_descriptor"));
+    result.put("reported_signature", selected.get("signature"));
+    result.put("overload_index", index);
+    result.put("total", items.size());
+    result.put("count", items.size());
+    result.put("resolve_line", false);
+    result.put("items", items);
+    return result;
   }
 
   private CallToolResult handle(String name, kotlinx.serialization.json.JsonObject input) {
@@ -711,6 +912,12 @@ class ReaJadxBridge {
       return json(Map.of("total_classes", names.size(), "next_offset", end,
           "scope", "top_level", "offset", offset, "limit", limit,
           "items", items));
+    }
+    indexClasses();
+    if (flag(args, "reference_target") && !classes.containsKey(string(args, "class_name"))) {
+      if (name.equals("get_class_summary")) return json(externalSummary(args));
+      if (name.equals("get_xrefs_to_method")) return json(externalReferences(args));
+      throw new InputFailure("class_name", "External prototypes are only available to method reference queries");
     }
     ClassSnapshot cls = selected(args);
     if (name.equals("get_class_summary"))
@@ -785,6 +992,9 @@ class ReaJadxBridge {
       try { return bridge.handle(name, request.getArguments()); }
       catch (InputFailure error) { return text(JSON.toJson(Map.of(
           "kind", "invalid-input", "field", error.field, "message", error.getMessage())), true); }
+      catch (ReferenceLimit error) { return text(JSON.toJson(Map.of(
+          "kind", "reference-output-limit", "stage", error.stage,
+          "limit_bytes", MAX_EXTERNAL_XREF_BYTES)), true); }
       catch (IllegalArgumentException error) { return text(error.getMessage(), true); }
     });
   }
@@ -797,7 +1007,7 @@ class ReaJadxBridge {
     SessionHolder holder = new SessionHolder(defaults);
     ServerCapabilities capabilities = new ServerCapabilities(
         new ServerCapabilities.Tools(null), null, null, null, null, null, null, Map.of());
-    Server server = new Server(new Implementation("rea-jadx-bridge", "9", null, null, null),
+    Server server = new Server(new Implementation("rea-jadx-bridge", "10", null, null, null),
         new ServerOptions(capabilities), "", ignored -> Unit.INSTANCE);
     SessionToolsKt.registerSessionTools(server, holder);
     ClassToolsKt.registerClassTools(server, holder);
@@ -847,6 +1057,12 @@ class ReaJadxBridge {
       if (name.equals("get_class_summary")) properties.put("dex_static_values",
           new kotlinx.serialization.json.JsonObject(Map.of(
               "type", kotlinx.serialization.json.JsonElementKt.JsonPrimitive("boolean"))));
+      if (name.equals("get_class_summary") || name.equals("get_xrefs_to_method"))
+        properties.put("reference_target", new kotlinx.serialization.json.JsonObject(Map.of(
+            "type", kotlinx.serialization.json.JsonElementKt.JsonPrimitive("boolean"))));
+      if (name.equals("get_class_summary")) properties.put("method_name",
+          new kotlinx.serialization.json.JsonObject(Map.of(
+              "type", kotlinx.serialization.json.JsonElementKt.JsonPrimitive("string"))));
       String description = switch (name) {
         case "list_classes" -> "Pages of case-sensitive matching top-level class names; offset and next_offset are inventory positions, limit bounds matching rows. Omitted or empty query inventories all names.";
         case "get_class_summary" -> "Parsed member metadata for one exact class name; no source generation. Set dex_static_values to include encoded static final field values.";

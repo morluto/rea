@@ -62,7 +62,7 @@ See a feature in an app that you want in your own product? Ask your agent to inv
 
 REA connects your agent to tools for inspecting native binaries, JavaScript and Electron apps, .NET assemblies, and websites. You can also use the same tools from your terminal. Analysis runs locally, and results include the evidence and limitations behind each conclusion.
 
-Setup registers REA with your agent and installs matching workflow instructions. Native analysis can use an existing Hopper, Ghidra, or IDA installation; setup can optionally install Hopper with approval. Static JavaScript analysis needs no native analysis engine.
+Setup registers REA with your agent and installs matching workflow instructions. Native analysis can use an existing Hopper, Ghidra, IDA or Kuna installation; setup can optionally install Hopper with approval. Static JavaScript analysis needs no native analysis engine.
 
 > **[Visit the REA website](https://rea.tools/)** for setup instructions, illustrated guides, and real case studies.
 
@@ -192,7 +192,7 @@ Additional tools and host support depend on the target:
 | Target                  | What REA returns                                                                                  | Requirements and guide                                                                                                                |
 | ----------------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
 | Desktop installations   | Runtime candidates, supporting files, component markers and next probes                           | Built-in bounded directory/header inspection; [desktop applications](docs/desktop-applications.md)                                    |
-| Native binaries         | Pseudocode, assembly, strings, symbols, calls and references                                      | Hopper, Ghidra or IDA; [native analysis](docs/native-investigation.md)                                                                |
+| Native binaries         | Pseudocode, assembly, strings, symbols, calls and references                                      | Hopper, Ghidra, IDA or Kuna; [native analysis](docs/native-investigation.md)                                                          |
 | Offline ELF layout      | Sections, segments, original symbols/relocations and static mitigation candidates                 | Caller-supplied pwntools on Linux x64; [binary diagnostics](docs/binary-diagnostics.md)                                               |
 | Go binaries             | Embedded compiler version, modules, replacements and build settings                               | Built-in static ELF/PE/thin Mach-O inspection; no Go installation required                                                            |
 | GPU code objects        | CUDA/HIP targets, selected kernel parameters and resources, retained PTX text                     | Built-in static ELF/PE/fatbin/CUBIN/PTX inspection; [GPU code objects](docs/gpu-code-objects.md)                                      |
@@ -344,11 +344,13 @@ Any agent that supports local MCP servers. Setup configures the
 </details>
 
 <details>
-<summary><strong>Do I need Hopper, Ghidra or IDA?</strong></summary>
+<summary><strong>Do I need a native analysis engine?</strong></summary>
 
-Deep native analysis uses one of them. Static JavaScript and .NET inspection
-work without a native analysis engine. Setup can install Hopper after approval;
-Ghidra and IDA use your existing installations. See [provider setup](docs/installation.md#hopper).
+Deep native analysis uses Hopper, Ghidra, IDA or Kuna, depending on the target
+and operation. Static JavaScript and .NET inspection work without a native
+analysis engine. Setup can install Hopper after approval; Ghidra, IDA and Kuna
+use your existing installations. See [provider setup](docs/installation.md#hopper)
+for the options and their supported targets.
 
 </details>
 

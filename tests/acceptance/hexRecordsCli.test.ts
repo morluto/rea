@@ -5,6 +5,7 @@ import { cliTest } from "../support/cli/cliFixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import {
   INTEL_HEX_I32_GAP,
+  intelHexRecord,
   SREC_S19,
 } from "../../src/domain/firmware/hexRecords.fixture.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
@@ -101,3 +102,27 @@ cliTest("rejects a malformed record through the CLI", async ({ cli }) => {
     "Intel HEX is malformed: line 4: record type 00 checksum 0xc4 does not match computed 0xc3",
   );
 });
+
+cliTest.for([3, 5])(
+  "rejects reserved offsets in Intel HEX start record %i through the CLI",
+  async (type, { cli }) => {
+    const directory = await createTestTempDirectory("rea-hex-start-cli-");
+    const source = join(directory, "firmware.hex");
+    await writeFile(
+      source,
+      [
+        intelHexRecord(0, 0x20, [0xa5]),
+        intelHexRecord(type, 0x1234, [0, 0, 0, 1]),
+        intelHexRecord(1, 0),
+      ].join("\n"),
+    );
+    const result = await cli.run({
+      arguments: ["inspect-artifact", source, "--json"],
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      code: "artifact_operation_failed",
+      details: { operation: "inspect_artifact", reason: "format" },
+    });
+  },
+);

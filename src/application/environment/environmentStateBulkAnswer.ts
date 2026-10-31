@@ -37,6 +37,7 @@ import {
   observedEntity,
   pathValues,
   sortedOrder,
+  storedUpdate,
   unloadable,
   heldEntity,
   updateTarget,
@@ -210,12 +211,16 @@ export const answerBulk = (
   );
   if (!answer.ok) return answer;
   if (update) {
+    const stored = written.value.map((entity) => ({
+      ...entity,
+      fields: storedUpdate(serving, plan, entity.fields),
+    }));
     const updated = serving.store.updateAll(
-      written.value,
+      stored,
       sortedOrder(
         serving,
         plan,
-        written.value.map((after, index) => ({
+        stored.map((after, index) => ({
           before: targets.value[index]!.entity,
           after,
         })),

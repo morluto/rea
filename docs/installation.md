@@ -381,7 +381,7 @@ Select the part you want to check:
 | Task                                | Readiness check                                                          |
 | ----------------------------------- | ------------------------------------------------------------------------ |
 | Static JavaScript/Electron analysis | Run `rea analyze-javascript-application PATH --json` directly.           |
-| One analysis engine                 | `rea doctor --provider ghidra --json` (or `hopper`, `ida`)               |
+| One analysis engine                 | `rea doctor --provider ghidra --json` (or `hopper`, `ida`, `kuna`)       |
 | One agent registration              | `rea doctor --client codex --json` (see [client IDs](#supported-agents)) |
 | Installed workflow instructions     | `rea doctor --skill --json`                                              |
 
@@ -928,7 +928,12 @@ selected only when it is the arm64 family's only candidate. REA checks the
 entire source's SHA-256 while copying the slice; source identity and reported
 offsets still refer to the original container. Any other ambiguous architecture
 subtype requires an explicitly extracted thin image; REA does not guess.
-Configured loader arguments remain explicit overrides.
+Set `HOPPER_LOADER_ARGS_JSON` in REA's launch environment to a JSON array of
+strings to override the derived Hopper loader arguments, for example
+`["-l","Mach-O"]`. Empty string elements are preserved; NUL bytes are not
+accepted. An omitted setting or empty array uses the derived arguments. `rea
+setup` forwards an explicitly selected setting to supported registrations;
+restart the MCP server to apply a change. These arguments are Hopper-specific.
 FAT64 is distinct from the CPU architecture: FAT32 containers can contain 64-bit
 executable images. This preparation avoids the Raw Binary loader dialog observed
 with native FAT64 loading on Hopper 6.1.0-demo.
@@ -988,6 +993,14 @@ When Hopper cannot start in CI, run
 `rea doctor --provider hopper --json` in the failing runner.
 Structured failures distinguish private-display dependencies, an unsupported
 demo dialog or build, process-ownership conflicts, and an early lifecycle exit.
+Once launcher authentication succeeds, an absent first-run dialog is reported as
+`demo_dialog_absent` rather than a build or publisher rejection. The watcher
+waits 10 seconds by default. Set `REA_HOPPER_DEMO_DIALOG_TIMEOUT_MS` in the
+environment that starts REA to a positive decimal integer of milliseconds from
+1 to 2147483647 when a slower host needs a longer window. An invalid value is
+`invalid_dialog_timeout`: the error names that setting, shows the rejected
+value and its source, lists the allowed range, and asks you to correct the
+setting and restart REA.
 If a private-display probe times out or is cancelled and its process cleanup
 fails, REA retains that exact probe owner and reports `cleanup_incomplete`.
 Session close retries the probe before releasing its cleanup marker; doctor
@@ -1020,7 +1033,7 @@ reported as incompatible instead of being admitted from its directory name, and
 a header that cannot be read or recognized is reported as unknown. REA does not
 build or install native tools, or change Gatekeeper quarantine settings.
 
-The adapter exposes 26 read-only operations: fourteen inventory/name/search
+The adapter exposes 27 read-only operations: fifteen inventory/name/search
 operations and twelve function-analysis operations. These cover metadata,
 decompilation, assembly, resolved calls, typed references, xrefs, function
 dossiers, instructions, recovered data types, measured load mappings, loaded
@@ -1212,8 +1225,10 @@ bridge, and health readiness. Large binaries can need more: set
 milliseconds in the server environment. An absent setting uses the default;
 empty, invalid or out-of-range supplied values fail configuration validation.
 When the deadline elapses, the `provider_timeout` error names
-`REA_GHIDRA_STARTUP_TIMEOUT_MS` with the deadline that was applied and suggests
-`REA_GHIDRA_DISABLED_ANALYZERS` for analyzers that dominate the time.
+`REA_GHIDRA_STARTUP_TIMEOUT_MS` with the deadline that was applied. In
+fresh-import mode it also suggests `REA_GHIDRA_DISABLED_ANALYZERS` for analyzers
+that dominate the time and `REA_GHIDRA_PROJECT_PATH` for reusing a completed
+analysis; in existing-project mode it omits that import and analyzer advice.
 REA parses the supplied configuration environment and
 passes the deadline to each provider client; a startup failure is returned by the query that triggered it,
 without exposing partial analysis. This deadline is separate from MCP transport
@@ -1404,6 +1419,33 @@ REA passes `-processor`/`-cspec`, checks both against the installation's `.ldefs
 
 Language definitions must be well-formed XML encoded as UTF-8 or BOM-marked UTF-16, with any encoding declaration matching the bytes. Literal Unicode replacement characters (U+FFFD) are accepted; malformed source bytes are rejected.
 
+Ghidra imports little-endian ARM ELF files, including Cortex-M
+(`arm-none-eabi`) firmware, as `ARM:LE:32:v8`. That language defaults to ARM
+state, and its ELF loader marks code as Thumb only where `$t` mapping symbols
+or odd function-symbol addresses say so. Cortex-M cores run only Thumb code, so
+the gap matters mainly for code without those markers, such as stripped images
+and handlers reached only through the vector table. REA has no M-profile ARM
+lane. As an unverified interim, select an M-profile language, which decodes in
+Thumb state by default. For ARMv6-M, ARMv7-M and ARMv7E-M cores:
+
+```bash
+export REA_GHIDRA_LANGUAGE_ID="ARM:LE:32:Cortex"
+```
+
+For ARMv8-M cores, use `ARM:LE:32:v8-m` instead. REA has not verified either
+language for Cortex-M analysis. While the variable is set, it applies to every
+Ghidra import in the REA server:
+
+- raw-binary, DOS, GameCube DOL and PSP opens are refused, as are opens in
+  lanes that reject a different language, such as RISC-V;
+- REA asks Ghidra to import everything else in the selected ARM language,
+  including x86, x86-64, arm64, PowerPC and Hexagon ELF files and PE and
+  Mach-O files, because it does not check that the override's processor
+  matches the target.
+
+Restart REA without the variable before you analyze other targets. A future
+M-profile lane may refuse it; remove the setting then.
+
 To seed code that auto-analysis cannot reach (computed jumps, pointers in data):
 
 ```bash
@@ -1555,7 +1597,7 @@ On a controlled Windows x64 runner, use
 `npm run verify:ghidra:windows`. The verifier generates a deterministic native
 PE fixture from source bytes and requires the Windows native authority before
 opening the provider. The controls are implemented on main; see the
-[release boundary](#released-package-and-main). The lane verifies all 26 admitted
+[release boundary](#released-package-and-main). The lane verifies all 27 admitted
 read-only operations, digest identity, and runtime cleanup. The separate
 `verify:ghidra:windows:package` lane checks the packed CLI/MCP boundary with an
 ordinary user. It requires the built Windows native bundle and an existing

@@ -146,7 +146,16 @@ export class EvidenceLedger {
         existing !== undefined &&
         existing.revision_digest !== unknown.revision_digest
       )
-        return err(new EvidenceIntegrityError("Conflicting unknown revision"));
+        return err(
+          new EvidenceIntegrityError("Conflicting unknown revision", {
+            userMessage:
+              "The incoming residual-unknown history conflicts with a revision retained in this session. Inspect each history in a separate session; importing the unchanged bundle into this session cannot reconcile them.",
+            diagnostics: {
+              unknown_id: unknown.unknown_id,
+              revision: unknown.revision,
+            },
+          }),
+        );
       pendingUnknowns.set(key, unknown);
       if (existing === undefined) unknownsAdded += 1;
     }

@@ -713,9 +713,12 @@ export class PlaywrightScenarioNetwork {
       const retainedBody = includeBody
         ? observedBody
         : { state: "not_requested" as const };
+      // A recorded request failure is a terminal observation, not a missed
+      // body read. Keep the unavailable body without invalidating event coverage.
       if (
         retainedHeaders.state === "unavailable" ||
-        retainedBody.state === "unavailable" ||
+        (retainedBody.state === "unavailable" &&
+          retainedBody.reason !== "request-failed") ||
         retainedBody.state === "not_exposed"
       )
         this.gaps.add(

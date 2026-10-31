@@ -51,23 +51,6 @@ describe("CLI integer arguments", () => {
     },
   );
 
-  cliTest.for(NON_INTEGER_OPTION_TEXT)(
-    "rejects %j as an Android reference overload index",
-    async (value, { cli }) => {
-      const result = await cli.run({
-        arguments: [
-          "trace-android-references",
-          "/nonexistent/missing.apk",
-          "com.example.Main",
-          `--overload-index=${value}`,
-          "--json",
-        ],
-      });
-
-      expectCliValidationError(result, "overloadIndex");
-    },
-  );
-
   cliTest(
     "keeps an explicit decimal zero as an Android method overload index",
     async ({ cli }) => {
@@ -126,6 +109,23 @@ describe("CLI integer arguments", () => {
       });
 
       expectCliValidationError(result, "line");
+    },
+  );
+
+  cliTest.for(NON_INTEGER_OPTION_TEXT)(
+    "rejects %j as an Android reference overload index",
+    async (value, { cli }) => {
+      const result = await runFileCli(cli, {
+        arguments: [
+          "trace-android-references",
+          "/nonexistent/missing.apk",
+          "com.example.Main",
+          `--overload-index=${value}`,
+          "--json",
+        ],
+      });
+
+      expectCliValidationError(result, "overloadIndex");
     },
   );
 

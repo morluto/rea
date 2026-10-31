@@ -6,7 +6,10 @@ import { describe, expect, it } from "vitest";
 
 import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
 
-import { normalizeCliArguments } from "../../../src/cliBuiltinArguments.js";
+import {
+  normalizeCliArguments,
+  adaptCliOutputArgumentsForIncur,
+} from "../../../src/cliBuiltinArguments.js";
 import {
   renderCliOutputArgumentError,
   renderCliDocument,
@@ -14,7 +17,6 @@ import {
   renderVersionReport,
   parseCliOutputArguments,
 } from "../../../src/cliOutput.js";
-import { adaptCliOutputArgumentsForIncur } from "../../../src/cliBuiltinArguments.js";
 
 const CLI_INTEGRATION_TIMEOUT_MS = 60_000;
 
@@ -113,14 +115,6 @@ describe("CLI output argument boundary", () => {
     expect(JSON.parse(renderCliDocument(value, "json", false))).toEqual(value);
   });
 
-  it("formats arrays of empty objects without column keys as JSON in Markdown", () => {
-    expect(renderCliDocument([{}], "md", false)).toBe("\\[{}\\]\n");
-    expect(renderCliDocument([{}, {}], "md", false)).toBe("\\[{},{}\\]\n");
-    expect(renderCliDocument({ empty: [{}] }, "md", false)).toBe(
-      "## empty\n\n\\[{}\\]\n",
-    );
-  });
-
   it("rejects token windows that would corrupt structured output", () => {
     for (const format of ["json", "jsonl", "yaml"] as const) {
       const validation = parseCliOutputArguments([
@@ -172,6 +166,16 @@ describe("CLI output argument boundary", () => {
         .validation,
     ).toEqual({ ok: true });
   });
+});
+
+it("formats arrays of empty objects without column keys as JSON in Markdown", () => {
+  expect(renderCliDocument([{}], "md", false)).toBe("\\[\\{\\}\\]\n");
+  expect(renderCliDocument([{}, {}], "md", false)).toBe(
+    "\\[\\{\\},\\{\\}\\]\n",
+  );
+  expect(renderCliDocument({ empty: [{}] }, "md", false)).toBe(
+    "## empty\n\n\\[\\{\\}\\]\n",
+  );
 });
 
 it("preserves flag-shaped values consumed by valued output options", () => {
