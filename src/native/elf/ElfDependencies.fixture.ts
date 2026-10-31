@@ -99,6 +99,8 @@ export interface ElfDependencyFixtureOptions {
   readonly danglingVersionLink?: "verneed" | "vernaux" | "verdef";
   readonly truncateDynstr?: boolean;
   readonly duplicateSoname?: boolean;
+  /** Declares this section's size past the end of the file. */
+  readonly oversizedSection?: string;
 }
 
 const defaultNeeded = (): string[] => [
@@ -362,6 +364,7 @@ interface FixtureConfig {
   readonly danglingVersionLink: ElfDependencyFixtureOptions["danglingVersionLink"];
   readonly truncateDynstr: boolean;
   readonly duplicateSoname: boolean;
+  readonly oversizedSection: string | undefined;
 }
 
 interface DependencyTables {
@@ -448,6 +451,7 @@ const fixtureConfig = (options: ElfDependencyFixtureOptions): FixtureConfig => {
     danglingVersionLink: options.danglingVersionLink,
     truncateDynstr: options.truncateDynstr === true,
     duplicateSoname: options.duplicateSoname === true,
+    oversizedSection: options.oversizedSection,
   };
 };
 
@@ -874,7 +878,8 @@ const writeDependencySections = (
       row[2],
       row[3],
       row[4],
-      row[5],
+      // A multiple of both symbol entry sizes, so the size stays a plausible count.
+      row[0] === config.oversizedSection ? layout.fileSize * 48 : row[5],
       row[6],
       row[7],
       row[8],

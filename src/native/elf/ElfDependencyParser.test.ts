@@ -426,6 +426,51 @@ it("reports a GNU version chain that continues past its declared count", () => {
   );
 });
 
+it.each([
+  [".gnu.version_r", "GNU version requirements"],
+  [".gnu.version_d", "GNU version definitions"],
+] as const)(
+  "clamps a %s section that declares bytes past the file end",
+  (oversizedSection, label) => {
+    const bytes = elfDependencyFixture({ oversizedSection });
+    const intact = parse(elfDependencyFixture());
+    const report = parse(bytes);
+    expect(report.coverage.status).toBe("partial");
+    expect(report.issues).toContainEqual(
+      expect.objectContaining({
+        code: "malformed_entry",
+        message: expect.stringContaining(label),
+      }),
+    );
+    expect(report.needed).toEqual(intact.needed);
+    expect(report.imports).toEqual(intact.imports);
+    expect(report.version_requirements.files).toEqual(
+      intact.version_requirements.files,
+    );
+    expect(report.version_definitions.names).toEqual(
+      intact.version_definitions.names,
+    );
+    for (const { location } of [
+      report.version_requirements,
+      report.version_definitions,
+    ]) {
+      if (location === null) throw new Error("Expected a version table range");
+      expect(location.offset + location.bytes).toBeLessThanOrEqual(
+        bytes.length,
+      );
+    }
+  },
+);
+
+it.each([".dynsym", ".gnu.version"])(
+  "keeps imports when %s declares bytes past the file end",
+  (oversizedSection) => {
+    const report = parse(elfDependencyFixture({ oversizedSection }));
+    expect(report.coverage.status).toBe("partial");
+    expect(report.imports).toEqual(parse(elfDependencyFixture()).imports);
+  },
+);
+
 it("keeps readable names and marks truncated dynstr coverage partial", () => {
   const report = parse(elfDependencyFixture({ truncateDynstr: true }));
   expect(report.coverage.status).toBe("partial");

@@ -42,6 +42,29 @@ describe("ELF dependency stable filesystem boundary", () => {
     }
   });
 
+  it.each([".gnu.version_r", ".gnu.version_d"])(
+    "keeps the inventory when %s declares a range past the file end",
+    async (oversizedSection) => {
+      const root = await createTestTempDirectory("rea-elf-dependencies-range-");
+      const path = join(root, "program");
+      await writeFile(path, elfDependencyFixture({ oversizedSection }));
+      const service = createElfDependenciesService();
+      try {
+        const result = await service.inspect({ path });
+        if (!result.ok) throw new Error(result.error.message);
+        expect(result.value.normalized_result).toMatchObject({
+          artifact: { path },
+          coverage: { status: "partial" },
+          needed: expect.arrayContaining([
+            expect.objectContaining({ name: "libc.so.6" }),
+          ]),
+        });
+      } finally {
+        await service.close();
+      }
+    },
+  );
+
   it("returns typed resource and cancellation failures", async () => {
     const root = await createTestTempDirectory("rea-elf-dependencies-budget-");
     const path = join(root, "program");

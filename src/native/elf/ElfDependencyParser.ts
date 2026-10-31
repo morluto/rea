@@ -397,15 +397,29 @@ const agreedSection = (
   return undefined;
 };
 
+/**
+ * Section headers are optional and can declare bytes the file does not hold.
+ * Only the part inside the file is a table or a report location. A table that
+ * starts past the end has no usable part, so its dynamic declaration is used.
+ */
 const tableFromSection = (
   section: SectionFacts | undefined,
+  fileBytes: number,
+  label: string,
+  issues: ElfDependencyIssue[],
 ): LocatedTable | null => {
   if (section === undefined) return null;
-  return {
-    offset: section.offset,
-    size: section.size,
-    location: { offset: section.offset, bytes: section.size },
-  };
+  const { offset, size } = section;
+  const available = fileBytes - offset;
+  if (size <= available)
+    return { offset, size, location: { offset, bytes: size } };
+  issues.push({
+    code: "malformed_entry",
+    location: hex(offset),
+    message: `${label} section header declares bytes past the end of the file`,
+  });
+  if (available <= 0) return null;
+  return { offset, size: available, location: { offset, bytes: available } };
 };
 
 const tableFromVirtual = (
@@ -497,8 +511,10 @@ const locateVersionTable = (
   fileBytes: number,
   section: SectionFacts | undefined,
   address: number | undefined,
+  label: string,
+  issues: ElfDependencyIssue[],
 ): LocatedTable | null => {
-  const fromSection = tableFromSection(section);
+  const fromSection = tableFromSection(section, fileBytes, label, issues);
   if (fromSection !== null) return fromSection;
   if (address === undefined) return null;
   const offset = mapAddress(mappings, BigInt(address), 16);
@@ -737,7 +753,7 @@ export const parseElfDependencies = (
   const hashSection = sectionOf(5, DT_HASH, ".hash");
   const gnuHashSection = sectionOf(SHT_GNU_HASH, DT_GNU_HASH, ".gnu.hash");
   const dynstrTable =
-    tableFromSection(dynstrSection) ??
+    tableFromSection(dynstrSection, bytes.length, "Dynamic string", issues) ??
     tableFromVirtual(mappings, unique.get(DT_STRTAB), strsz ?? 0);
   if (
     dynstrTable === null &&
@@ -866,12 +882,12 @@ export const parseElfDependencies = (
   );
   const symbolBytes = symbolCount === null ? 0 : symbolCount * symbolEntrySize;
   const dynsymTable =
-    tableFromSection(dynsymSection) ??
+    tableFromSection(dynsymSection, bytes.length, "Dynamic symbol", issues) ??
     (symbolCount === null
       ? null
       : tableFromVirtual(mappings, unique.get(DT_SYMTAB), symbolBytes));
   const versymTable =
-    tableFromSection(versymSection) ??
+    tableFromSection(versymSection, bytes.length, "GNU versym", issues) ??
     (symbolCount === null
       ? null
       : tableFromVirtual(mappings, unique.get(DT_VERSYM), symbolCount * 2));
@@ -1075,7 +1091,13 @@ const locateSymbolCount = (
   entrySize: number,
   issues: ElfDependencyIssue[],
 ): number | null => {
-  if (dynsym !== undefined && entrySize > 0 && dynsym.size % entrySize === 0)
+  // A section running past the file end says nothing about its symbol count.
+  if (
+    dynsym !== undefined &&
+    entrySize > 0 &&
+    dynsym.size % entrySize === 0 &&
+    dynsym.size <= reader.bytes.length - dynsym.offset
+  )
     return dynsym.size / entrySize;
   const sysv =
     hash !== undefined && hash.size >= 8
@@ -1138,7 +1160,14 @@ const parseVerneed = (
   versionNames: Map<number, { name: string | null; file: string | null }>,
   chargeVersion: () => void,
 ): ElfDependencies["version_requirements"] => {
-  const table = locateVersionTable(mappings, bytes.length, section, address);
+  const table = locateVersionTable(
+    mappings,
+    bytes.length,
+    section,
+    address,
+    "GNU version requirements",
+    issues,
+  );
   if (table === null) {
     if (address !== undefined)
       issues.push({
@@ -1278,7 +1307,14 @@ const parseVerdef = (
   issues: ElfDependencyIssue[],
   chargeVersion: () => void,
 ): ElfDependencies["version_definitions"] => {
-  const table = locateVersionTable(mappings, bytes.length, section, address);
+  const table = locateVersionTable(
+    mappings,
+    bytes.length,
+    section,
+    address,
+    "GNU version definitions",
+    issues,
+  );
   if (table === null) {
     if (address !== undefined)
       issues.push({
