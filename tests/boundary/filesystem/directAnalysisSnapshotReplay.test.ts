@@ -591,6 +591,8 @@ const verifyWindowsSnapshotAdmission = async (
 };
 
 it.each([
+  { tool: "binary_overview", arguments: {}, priorRevision: 5 },
+  // Revision 4 overviews predate inventory_coverage and must not replay.
   { tool: "binary_overview", arguments: {}, priorRevision: 4 },
   {
     tool: "inspect_native_api",
