@@ -373,16 +373,50 @@ const networkIdentityCoverage = (
   return { complete, ambiguousIdentities };
 };
 
-const networkResponseFields = [
+const requiredNetworkResponseFields = [
   "status",
   "mime_type",
   "encoded_data_length",
 ] as const;
+const networkResponseFields = [
+  ...requiredNetworkResponseFields,
+  "service_worker",
+  "disk_cache",
+  "service_worker_response_source",
+] as const;
 const redirectMetadataFields = [
+  ...requiredNetworkResponseFields,
+  "resource_type",
+] as const;
+const redirectComparableFields = [
   ...networkResponseFields,
   "resource_type",
 ] as const;
-type NetworkMetadataField = (typeof redirectMetadataFields)[number];
+type NetworkMetadataField =
+  | (typeof networkResponseFields)[number]
+  | (typeof redirectMetadataFields)[number];
+type NetworkMetadataValue = string | number | boolean | null;
+type NetworkMetadataCounts = Map<
+  string,
+  Map<NetworkMetadataField, Map<NetworkMetadataValue, number>>
+>;
+
+const networkResponseValue = (
+  request: Pick<
+    WebPageInspection["network"]["requests"][number],
+    | "status"
+    | "mime_type"
+    | "encoded_data_length"
+    | "resource_type"
+    | "response_source"
+  >,
+  field: NetworkMetadataField,
+): string | number | boolean | null =>
+  field === "service_worker" ||
+  field === "disk_cache" ||
+  field === "service_worker_response_source"
+    ? (request.response_source?.[field] ?? null)
+    : request[field];
 
 /** Own both comparable fields and completeness instead of deriving it from set sizes. */
 const sharedNetworkMetadata = (
@@ -391,37 +425,80 @@ const sharedNetworkMetadata = (
 ): {
   readonly fields: ReadonlyMap<string, ReadonlySet<NetworkMetadataField>>;
   readonly complete: boolean;
+  readonly differences: ReadonlySet<string>;
 } => {
   const shared = new Map<string, Set<NetworkMetadataField>>();
+  const counts: readonly [NetworkMetadataCounts, NetworkMetadataCounts] = [
+    new Map(),
+    new Map(),
+  ];
+  const owners = new Map<string, string>();
   let complete = true;
-  const retainKnownFields = (
+  const retainKnownFields = <Field extends NetworkMetadataField>(
+    observations: NetworkMetadataCounts,
     identity: string,
-    metadata: Pick<
-      WebPageInspection["network"]["requests"][number],
-      NetworkMetadataField
-    >,
-    required: readonly NetworkMetadataField[],
+    value: (field: Field) => string | number | boolean | null,
+    required: readonly Field[],
+    comparable: readonly Field[] = required,
   ): void => {
-    const fields = shared.get(identity) ?? new Set(required);
-    for (const field of required)
-      if (metadata[field] === null) {
+    const fields = shared.get(identity) ?? new Set(comparable);
+    const observed = observations.get(identity) ?? new Map();
+    for (const field of comparable) {
+      const fact = value(field);
+      const values = observed.get(field) ?? new Map();
+      values.set(fact, (values.get(fact) ?? 0) + 1);
+      observed.set(field, values);
+      if (fact === null) {
         fields.delete(field);
-        complete = false;
+        if (required.includes(field)) complete = false;
       }
+    }
+    observations.set(identity, observed);
     shared.set(identity, fields);
   };
-  for (const inspection of [before, after])
+  for (const [inspection, observations] of [
+    [before, counts[0]],
+    [after, counts[1]],
+  ] as const)
     for (const request of inspection.network.requests) {
       const identity = networkIdentity(request);
-      retainKnownFields(identity, request, networkResponseFields);
-      for (const [index, redirect] of (request.redirects ?? []).entries())
+      owners.set(identity, identity);
+      retainKnownFields(
+        observations,
+        identity,
+        (field) => networkResponseValue(request, field),
+        requiredNetworkResponseFields,
+        networkResponseFields,
+      );
+      for (const [index, redirect] of (request.redirects ?? []).entries()) {
+        const redirectIdentity = redirectNetworkIdentity(identity, index);
+        owners.set(redirectIdentity, identity);
         retainKnownFields(
-          redirectNetworkIdentity(identity, index),
-          redirect,
+          observations,
+          redirectIdentity,
+          (field) => networkResponseValue(redirect, field),
           redirectMetadataFields,
+          redirectComparableFields,
         );
+      }
     }
-  return { fields: shared, complete };
+  const differences = new Set<string>();
+  // Unknown values can match any known value, but cannot erase its observed
+  // multiplicity. Compare lower bounds in both directions without pairing
+  // repeated requests by their unstable IDs or order.
+  for (const [left, right] of [counts, [counts[1], counts[0]]] as const)
+    for (const [identity, fields] of left)
+      for (const [field, values] of fields) {
+        const peer = right.get(identity)?.get(field);
+        if (peer === undefined) continue;
+        for (const [value, count] of values)
+          if (
+            value !== null &&
+            count > (peer.get(value) ?? 0) + (peer.get(null) ?? 0)
+          )
+            differences.add(owners.get(identity)!);
+      }
+  return { fields: shared, complete, differences };
 };
 
 const redirectNetworkIdentity = (identity: string, index: number): string =>
@@ -551,8 +628,8 @@ const networkDimension = (
     webSocketFramesComplete,
   );
   const [beforeRequests, afterRequests] = networkComparisonMaps(
-    networkMap(before, sources, projection),
-    networkMap(after, sources, projection),
+    networkSamples(before, sources, projection),
+    networkSamples(after, sources, projection),
     networkInventoryComplete(before, ["network_requests"]),
     networkInventoryComplete(after, ["network_requests"]),
   );
@@ -588,6 +665,26 @@ const networkDimension = (
         ? true
         : identity.startsWith("ws_") && webSocketInventoryComplete,
   );
+  if (requestsComplete) {
+    const changes = new Map(
+      compared.changes.map((change) => [change.identity, change]),
+    );
+    for (const identity of metadata.differences)
+      if (
+        !requestIdentities.ambiguousIdentities.has(identity) &&
+        !changes.has(identity)
+      )
+        changes.set(identity, { identity, change: "modified" });
+    if (changes.size > 0)
+      return {
+        status: "changed",
+        total_changes: changes.size,
+        changes: [...changes.values()].sort((a, b) =>
+          compareUnicodeCodePoints(a.identity, b.identity),
+        ),
+        reason: null,
+      };
+  }
   if (metadata.complete) return compared;
   const responseEvidenceReason =
     "HTTP response or redirect status, MIME type, byte count, or resource-type evidence is incomplete.";
@@ -603,7 +700,7 @@ const networkDimension = (
   };
 };
 
-const networkMap = (
+const networkSamples = (
   inspection: WebPageInspection,
   sources: ReadonlyMap<string, BodyShapeSources>,
   projection: {
@@ -625,7 +722,7 @@ const networkMap = (
     const values = grouped.get(identity) ?? [];
     const response: Record<string, unknown> = {};
     for (const field of projection.metadataFields.get(identity) ?? [])
-      response[field] = request[field];
+      response[field] = networkResponseValue(request, field);
     values.push(
       digestCanonicalValue({
         ...response,
@@ -638,13 +735,12 @@ const networkMap = (
             },
             index,
           ) => {
-            const response: Partial<
-              Record<NetworkMetadataField, number | string>
-            > = {};
-            for (const field of projection.metadataFields.get(
+            const response: Record<string, unknown> = {};
+            const fields = projection.metadataFields.get(
               redirectNetworkIdentity(identity, index),
-            ) ?? [])
-              if (redirect[field] !== null) response[field] = redirect[field];
+            );
+            for (const field of fields ?? [])
+              response[field] = networkResponseValue(redirect, field);
             return {
               url: redirect.url,
               response_url: redirect.response_url,
@@ -1306,7 +1402,7 @@ const scriptMapFactsExceed = <Metadata>(
   );
 };
 
-const scriptsDimension = (
+const pageScriptsDimension = (
   before: WebPageInspection,
   after: WebPageInspection,
 ): Dimension => {
@@ -1507,6 +1603,103 @@ const scriptsDimension = (
     "Script inventory, source-map declarations, or corresponding source/metadata evidence was incomplete in at least one observation.",
     true, // Selected map entries already carry their directional absence proof.
   );
+};
+
+/** Worker target/script IDs compare one observed instance, never URL peers. */
+const workerScriptsDimension = (
+  before: WebPageInspection,
+  after: WebPageInspection,
+): Dimension => {
+  const selectedWorkers = (inspection: WebPageInspection) =>
+    inspection.workers.filter(
+      (worker) =>
+        worker.observation !== undefined &&
+        (worker.observation.ownership !== "unknown" ||
+          worker.observation.selected_explicitly),
+    );
+  const workerComplete = [before, after].every(
+    (inspection) =>
+      sectionsComplete(inspection, ["workers"]) &&
+      selectedWorkers(inspection).every((worker) => {
+        const coverage = worker.observation?.completeness;
+        return (
+          coverage !== undefined &&
+          !incompleteSections(coverage).has("scripts") &&
+          !incompleteSections(coverage).has("workers") &&
+          coverage.dropped_events.scripts === 0
+        );
+      }),
+  );
+  const workerScriptIdentity = (targetId: string, scriptId: string) =>
+    `worker:${compositeKey([targetId, scriptId])}`;
+  const workerScripts = (inspection: WebPageInspection) =>
+    new Map(
+      selectedWorkers(inspection).flatMap((worker) =>
+        (worker.observation?.scripts ?? []).map(
+          (script) =>
+            [
+              workerScriptIdentity(worker.target_id, script.script_id),
+              script,
+            ] as const,
+        ),
+      ),
+    );
+  const beforeScripts = workerScripts(before),
+    afterScripts = workerScripts(after);
+  const fingerprints = (
+    ownScripts: ReturnType<typeof workerScripts>,
+    peerScripts: ReturnType<typeof workerScripts>,
+  ) => {
+    const result = new Map<string, string>();
+    for (const [identity, script] of ownScripts) {
+      const peer = peerScripts.get(identity);
+      result.set(
+        identity,
+        digestCanonicalValue({
+          url: script.url,
+          ...Object.fromEntries(
+            (["cdp_hash", "length", "is_module", "language"] as const)
+              .filter((key) => script[key] != null && peer?.[key] != null)
+              .map((key) => [key, script[key]]),
+          ),
+          source_map_url: script.source_map_url,
+          ...(script.source.included && peer?.source.included
+            ? { source_sha256: script.source.artifact.sha256 }
+            : {}),
+        }),
+      );
+    }
+    return result;
+  };
+  return compareDimension(
+    fingerprints(beforeScripts, afterScripts),
+    fingerprints(afterScripts, beforeScripts),
+    workerComplete,
+    "Worker script inventory was incomplete in at least one observation.",
+  );
+};
+
+const scriptsDimension = (
+  before: WebPageInspection,
+  after: WebPageInspection,
+): Dimension => {
+  const page = pageScriptsDimension(before, after);
+  const worker = workerScriptsDimension(before, after);
+  const changes = [...page.changes, ...worker.changes].sort(
+    (left, right) =>
+      compareUnicodeCodePoints(left.identity, right.identity) ||
+      compareUnicodeCodePoints(left.change, right.change),
+  );
+  if (changes.length > 0)
+    return {
+      status: "changed",
+      total_changes: changes.length,
+      changes,
+      reason: null,
+    };
+  if (page.status === "unknown") return page;
+  if (worker.status === "unknown") return worker;
+  return { status: "unchanged", total_changes: 0, changes: [], reason: null };
 };
 
 const metadataProjection = (inspection: WebPageInspection) => ({

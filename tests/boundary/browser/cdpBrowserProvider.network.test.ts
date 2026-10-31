@@ -6,12 +6,12 @@ import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
 import { trackBrowser } from "./cdpBrowserProvider.support.js";
 
 it.each([
-  ["related", { openerId: "allowed-page" }, 1, null],
-  ["foreign", { openerId: "other-page" }, 0, "out_of_target_scope"],
-  ["unknown", {}, 0, "unattributed_target"],
+  ["related", { openerId: "allowed-page" }],
+  ["foreign", { openerId: "other-page" }],
+  ["unknown", {}],
 ] as const)(
   "keeps %s worker ownership separate from attachment state",
-  async (_relation, ownership, count, exclusion) => {
+  async (_relation, ownership) => {
     const browser = await startFakeCdpBrowser({
       commandResult: (command, origin) =>
         command.method === "Target.getTargets"
@@ -38,27 +38,32 @@ it.each([
       }),
     );
     if (!result.ok) throw result.error;
-    expect(result.value.workers).toHaveLength(count);
+    expect(result.value.workers).toHaveLength(1);
+    expect(result.value.workers[0]).toMatchObject({
+      attached: true,
+      observation: {
+        ownership: "unknown",
+        selected_explicitly: false,
+        scripts: [],
+        network_requests: [],
+      },
+    });
+    expect(
+      browser.commands.some(
+        (command) =>
+          command.method === "Target.attachToTarget" &&
+          command.params.targetId === "worker",
+      ),
+    ).toBe(false);
     expect(result.value.completeness.attach_limited_sections).toContain(
       "workers",
     );
     expect(result.value.limitations.join(" ")).toContain(
-      "not worker-session observation",
+      "require proven page ownership or explicit selection",
     );
-    if (exclusion !== null)
-      expect(result.value.completeness.excluded).toContainEqual({
-        section: "workers",
-        reason: exclusion,
-        count: 1,
-      });
-    if (_relation === "unknown") {
-      expect(result.value.completeness.unavailable_sections).toContain(
-        "workers",
-      );
-      expect(result.value.completeness.policy_filtered_sections).not.toContain(
-        "workers",
-      );
-    }
+    expect(
+      result.value.workers[0]!.observation!.completeness.unavailable_sections,
+    ).toContain("scripts");
   },
 );
 

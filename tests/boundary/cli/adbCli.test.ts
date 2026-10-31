@@ -516,6 +516,7 @@ if [ "$1" = -s ] && [ "$3" = install ]; then
   if [ "$4" = -r ]; then selected="$5"; else selected="$4"; fi
   cmp "$selected" "$root/app with spaces.apk" || exit 1
   printf '%s\\n' "$selected" >> "$root/snapshots"
+  cat "$selected" >> "$root/payloads" || exit 1
   if [ -f "$root/installed" ]; then
     if [ "$4" != -r ]; then
       printf 'Failure [INSTALL_FAILED_ALREADY_EXISTS]\\n'
@@ -609,6 +610,9 @@ exit 1
         sha256: createHash("sha256").update("apk").digest("hex"),
       });
     const calls = await readFile(workspace.path("calls"), "utf8");
+    expect(await readFile(workspace.path("payloads"), "utf8")).toBe(
+      "apkapkapk",
+    );
     expect(calls.split("\n").filter((line) => line !== "")).toEqual([
       "version",
       `-s emulator-5554 install -r ${snapshots[0]}`,

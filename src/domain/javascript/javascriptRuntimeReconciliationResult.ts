@@ -89,7 +89,8 @@ const captureSummaries = (
             ? capture.inspection.target.url
             : capture.inspection.target.file_path,
       frames: capture.inspection.frames.length,
-      scripts: capture.inspection.scripts.items.length,
+      scripts:
+        runtime.scriptCountsByEvidenceId.get(capture.evidence.evidence_id) ?? 0,
       workers: capture.inspection.workers.length,
       scripts_complete_within_scope: capture.scriptsCompleteWithinScope,
     };
@@ -125,16 +126,12 @@ const sourceMapAuthority = (
 ): JavaScriptRuntimeReconciliationResult["source_map_authority"] => ({
   used_for_primary_matching: false,
   static_layer_count: input.layers.length,
-  runtime_script_declarations: input.captures.reduce(
-    (total, capture) =>
-      total +
-      (capture.kind === "browser"
-        ? capture.inspection.scripts.items.filter(
-            ({ source_map_url: url }) => url !== null,
-          ).length
-        : 0),
-    0,
-  ),
+  runtime_script_declarations: input.runtime.entities.filter(
+    (entity) =>
+      entity.kind === "script" &&
+      entity.capture.kind === "browser" &&
+      entity.sourceMapUrl !== null,
+  ).length,
   limitation:
     "Source-map declarations and original-source content retain separate static authority and are not used as primary runtime byte matches.",
 });

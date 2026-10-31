@@ -116,6 +116,7 @@ const registerPageInspection = (
             cdp_endpoint: args.endpoint,
             allowed_origins: options.allowedOrigins,
             target_id: args.targetId,
+            worker_target_ids: options.workerTargetIds,
             observation_ms: options.observationMs,
             include_accessibility_text: options.includeAccessibilityText,
             include_console_text: options.includeConsoleText,

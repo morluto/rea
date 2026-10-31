@@ -1,4 +1,11 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { parseEvidence } from "../../../src/domain/evidence.js";
+import { cliTest } from "../../support/cli/cliFixture.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
+import { passiveNetworkCapture } from "../../fixtures/passiveNetworkCapture.js";
 
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
@@ -200,6 +207,141 @@ const expectInvalidDiff = (input: unknown): void => {
 
 afterEach(async () => {
   await Promise.all(browsers.splice(0).map(async (browser) => browser.close()));
+});
+
+describe("HTTP response source comparison", () => {
+  cliTest(
+    "compares mutually known response sources without inventing changes for historical or partial captures",
+    async ({ cli }) => {
+      const browser = await startFakeCdpBrowser();
+      browsers.push(browser);
+      const captured = await new CdpBrowserProvider().inspectPage(
+        inspectWebPageInputSchema.parse({
+          cdp_endpoint: browser.endpoint,
+          allowed_origins: [browser.allowedOrigin],
+          target_id: "allowed-page",
+          observation_ms: 0,
+        }),
+      );
+      if (!captured.ok) throw captured.error;
+      const before = captured.value;
+      markSectionsComplete(before, ["network_requests"]);
+      before.network.requests[0]!.response_source = {
+        service_worker: false,
+        disk_cache: false,
+        service_worker_response_source: "network",
+      };
+      for (const field of [
+        "service_worker",
+        "disk_cache",
+        "service_worker_response_source",
+      ] as const) {
+        const after = structuredClone(before);
+        const source = after.network.requests[0]!.response_source!;
+        if (field === "service_worker_response_source")
+          source[field] = "cache-storage";
+        else source[field] = true;
+        expect(compareNetwork(before, after)).toMatchObject({
+          status: "changed",
+          changes: [expect.objectContaining({ change: "modified" })],
+        });
+        source[field] = null;
+        expect(compareNetwork(before, after).total_changes).toBe(0);
+        expect(compareNetwork(after, before).total_changes).toBe(0);
+      }
+      const legacy = structuredClone(before);
+      delete legacy.network.requests[0]!.response_source;
+      expect(compareNetwork(before, legacy).total_changes).toBe(0);
+      expect(compareNetwork(legacy, before).total_changes).toBe(0);
+      const mixed = structuredClone(before);
+      mixed.network.requests[0]!.response_source = {
+        service_worker: true,
+        disk_cache: null,
+        service_worker_response_source: null,
+      };
+      expect(compareNetwork(before, mixed).status).toBe("changed");
+      const root = await createTestTempDirectory("rea-response-source-diff-");
+      const beforePath = join(root, "before.json");
+      const afterPath = join(root, "after.json");
+      await writeFile(beforePath, JSON.stringify({ inspection: before }));
+      await writeFile(afterPath, JSON.stringify({ inspection: mixed }));
+      const evidence = parseEvidence(
+        (
+          await cli.run({
+            arguments: [
+              "compare-web-captures",
+              beforePath,
+              afterPath,
+              "--json",
+            ],
+          })
+        ).json,
+      );
+      expect(evidence.normalized_result).toMatchObject({
+        dimensions: {
+          network: {
+            status: "changed",
+            changes: [expect.objectContaining({ change: "modified" })],
+          },
+        },
+      });
+      const { client, call } = await connectLocalToolsMcp();
+      const response = await call("compare_web_captures", {
+        before: { inspection: before },
+        after: { inspection: mixed },
+      });
+      expect(response.isError, JSON.stringify(response)).not.toBe(true);
+      expect(response.structuredContent).toEqual(evidence);
+      await client.ping();
+      const repeated = passiveNetworkCapture(["/a", "/a"]);
+      const first = repeated.network.requests[0]!;
+      first.response_source = {
+        service_worker: false,
+        disk_cache: false,
+        service_worker_response_source: "network",
+      };
+      const surviving = structuredClone(first);
+      surviving.request_id = "surviving-sample";
+      surviving.response_source!.service_worker = true;
+      repeated.network.requests = [first, surviving];
+      const reduced = structuredClone(repeated);
+      reduced.network.requests = [surviving];
+      for (const limited of ["neither", "before", "after"]) {
+        repeated.completeness.dropped_events.network_requests =
+          limited === "before" ? 1 : 0;
+        reduced.completeness.dropped_events.network_requests =
+          limited === "after" ? 1 : 0;
+        await writeFile(beforePath, JSON.stringify({ inspection: repeated }));
+        await writeFile(afterPath, JSON.stringify({ inspection: reduced }));
+        const compared = parseEvidence(
+          (
+            await cli.run({
+              arguments: [
+                "compare-web-captures",
+                beforePath,
+                afterPath,
+                "--json",
+              ],
+            })
+          ).json,
+        );
+        expect(compared.normalized_result).toMatchObject({
+          dimensions: {
+            network: {
+              status: limited === "after" ? "unknown" : "changed",
+              total_changes: limited === "after" ? 0 : 1,
+            },
+          },
+        });
+        const result = await call("compare_web_captures", {
+          before: { inspection: repeated },
+          after: { inspection: reduced },
+        });
+        expect(result.isError, JSON.stringify(result)).not.toBe(true);
+        expect(result.structuredContent).toEqual(compared);
+      }
+    },
+  );
 });
 
 describe("web capture diff", () => {
@@ -789,8 +931,10 @@ describe("web capture diff", () => {
     const script = after.scripts.items[0];
     if (script !== undefined && !script.source.included)
       script.source.reason = "different approval explanation";
-    markSectionsComplete(captured.value, ["scripts", "metadata"]);
-    markSectionsComplete(after, ["scripts", "metadata"]);
+    // This control proves equal complete inventories; incomplete worker
+    // discovery is covered separately and cannot establish script equality.
+    markSectionsComplete(captured.value, ["scripts", "workers", "metadata"]);
+    markSectionsComplete(after, ["scripts", "workers", "metadata"]);
 
     const result = compareWebCaptures(
       compareWebCapturesInputSchema.parse({
@@ -969,7 +1113,8 @@ describe("web capture diff incomplete inventories", () => {
     );
     if (!captured.ok) throw captured.error;
     const known = structuredClone(captured.value);
-    markSectionsComplete(known, ["scripts", "source_maps"]);
+    known.workers = [];
+    markSectionsComplete(known, ["scripts", "source_maps", "workers"]);
     known.completeness.excluded = known.completeness.excluded.filter(
       (item) => item.section !== "source_maps",
     );

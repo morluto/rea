@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { analyzeWebBundleInputSchema } from "./webBundleAnalysis.js";
 
 import {
   browserEndpointSchema,
@@ -8,9 +9,31 @@ import {
   recordedBrowserObservationEndpointSchema,
   sanitizeEndpointCandidate,
   sanitizeBrowserUrl,
+  inspectWebPageInputSchema,
 } from "./browserObservation.js";
 
 describe("browser observation contracts", () => {
+  it("preserves opaque page and worker target identities", () => {
+    const input = inspectWebPageInputSchema.parse({
+      cdp_endpoint: "http://127.0.0.1:9222",
+      target_id: " page ",
+      worker_target_ids: [" worker ", "worker"],
+    });
+    expect(input.target_id).toBe(" page ");
+    expect(input.worker_target_ids).toEqual([" worker ", "worker"]);
+  });
+  it("rejects worker selection on page-only bundle analysis while accepting it for inspection", () => {
+    const input = {
+      cdp_endpoint: "http://127.0.0.1:9222",
+      target_id: "page",
+      worker_target_ids: ["shared"],
+      include_script_sources: true,
+    };
+    expect(inspectWebPageInputSchema.safeParse(input).success).toBe(true);
+    expect(analyzeWebBundleInputSchema.safeParse(input).success).toBe(false);
+    const { worker_target_ids: _workers, ...pageOnly } = input;
+    expect(analyzeWebBundleInputSchema.safeParse(pageOnly).success).toBe(true);
+  });
   it.each(["127.0.0.1", "[::1]"])(
     "preserves explicitly supplied default endpoint ports on %s",
     (host) => {

@@ -47,6 +47,10 @@ export const selectedCommandTimeout = (
 
 export const browserPageInspectionOptions = z.object({
   ...browserScopeOptions,
+  workerTargetIds: z
+    .array(z.string().min(1))
+    .optional()
+    .describe("Explicit worker target IDs to observe within allowed origins"),
   observationMs: observationDuration(500),
   includeAccessibilityText: z
     .boolean()

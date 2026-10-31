@@ -3,6 +3,7 @@ import { z } from "zod";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { sanitizeBrowserUrl } from "../../domain/browserObservation.js";
+import { supportsJavaScriptSource } from "../../domain/browserScriptLanguage.js";
 import { jsonObjectSchema } from "../../domain/jsonValue.js";
 import type {
   WebRuntimeSource,
@@ -189,13 +190,12 @@ export class CdpRuntimeSources {
             : "Selected main-document default-world ownership was not established.",
         },
       };
-      if (owned && script?.scriptLanguage !== "WebAssembly")
+      if (owned && supportsJavaScriptSource(script?.scriptLanguage))
         item.source = await this.capture(scriptId);
       else if (owned)
         item.source = {
           state: "excluded",
-          reason:
-            "WebAssembly bytecode is outside this JavaScript source operation.",
+          reason: `Debugger reported language ${script?.scriptLanguage}; it is outside this JavaScript source operation.`,
         };
       this.revalidate(item);
       this.#sources.set(scriptId, item);

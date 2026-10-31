@@ -32,7 +32,7 @@ import {
   captureScripts,
   finalizeScriptInventory,
 } from "./CdpPageCaptureScripts.js";
-import { captureWorkers } from "./CdpPageCaptureWorkers.js";
+import { CdpWorkerCapture } from "./CdpWorkerCapture.js";
 import type { WebSourceMapRequest } from "./WebSourceMapFetcher.js";
 
 export interface CaptureContext {
@@ -50,6 +50,7 @@ export interface CaptureContext {
 }
 
 interface CaptureState {
+  readonly workers: CdpWorkerCapture | undefined;
   readonly context: CaptureContext;
   readonly events: CdpCaptureEvents;
   readonly allowedOrigins: ReadonlySet<string>;
@@ -84,13 +85,17 @@ export const capturePage = async (
     events.ingest(event);
   });
   const state: CaptureState = {
+    workers:
+      context.operation === "inspect_web_page"
+        ? new CdpWorkerCapture(context, allowedOrigins, [], events)
+        : undefined,
     context,
     events,
     allowedOrigins,
     limitations: [
       ...(context.discovery.limitations ?? []),
       "Observation starts when REA attaches; prior network and console activity is unavailable.",
-      "Worker targets are a final inventory snapshot, not worker-session observation. Their attached flag describes any debugging client; this page-session collector does not observe worker network, console, or script events, and short-lived workers may be absent from the snapshot.",
+      "Worker attachment flags describe any debugging client. Worker observations require proven page ownership or explicit selection and cover only events after attachment; short-lived workers may be absent from the inventory.",
       "Raw network headers, bodies, cookies, storage values, console objects, and WebSocket payloads are never retained; explicitly requested primitive console text is retained verbatim, while payload captures retain value-free shapes.",
       "Source maps are reported only as declarative URLs and are not fetched.",
       "URL-less scripts and console events without an allowed source URL are excluded because their origin cannot be proven.",
@@ -114,8 +119,10 @@ export const capturePage = async (
       !(cause instanceof AnalysisError && cause.userCategory === "cancelled")
     )
       assertObservedCaptureValid(state, cause);
+    state.workers?.check();
     throw cause;
   } finally {
+    await state.workers?.close();
     removeListener();
   }
 };
@@ -185,10 +192,6 @@ const captureAuthorizedPage = async (
     resources,
     frameIds: new Set(frames.map((frame) => frame.frame_id)),
   });
-  const workers = await captureWorkers(
-    { context, allowedOrigins, limitations, events: state.events },
-    new Set(frames.map((frame) => frame.frame_id)),
-  );
   const storageCapture = await captureStorage(
     context,
     attachedUrl,
@@ -211,6 +214,8 @@ const captureAuthorizedPage = async (
     operation: context.operation,
   });
   const completedUrl = mainFrameUrl(completedFrameResult) ?? "";
+  const workers = (await state.workers?.finish()) ?? [];
+  limitations.push(...(state.workers?.limitations ?? []));
   assertObservedCaptureValid(state);
   if (completedUrl !== attachedUrl)
     throw new BrowserObservationError("inspect_web_page", "target_changed");
@@ -285,7 +290,6 @@ const authorizeObservationWindow = async (
 ): Promise<void> => {
   const { context, allowedOrigins, events } = state;
   const { connection, sessionId, signal } = context;
-  await report(context.progress, 1, "Enabling passive CDP domains");
   await connection.send("Page.enable", {}, sessionId, signal);
   const initialFrameResult = await authorizedMainFrame({
     connection: context.connection,
@@ -299,11 +303,12 @@ const authorizeObservationWindow = async (
     throw new BrowserObservationError("inspect_web_page", "protocol_error");
   events.beginAuthorizedFrame(mainFrame.frame_id);
   await enableObservationDomains(state);
+  await state.workers?.start();
   await report(context.progress, 2, "Observing page events");
   await delayWithCancellation(
     context.input.observation_ms,
     context.operation,
-    signal,
+    state.workers?.signal ?? signal,
   );
   if (events.unknownRootIdentity)
     throw new BrowserObservationError("inspect_web_page", "protocol_error");

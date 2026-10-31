@@ -19,10 +19,9 @@ import { comparePngScreenshots } from "../../dist/browser/PngVisualDiff.js";
 /** Verify a real, large PNG through production CLI and stdio MCP boundaries. */
 export async function verifyLargeScreenshotE2e(endpoint, origin) {
   const browser = await chromium.connectOverCDP(endpoint);
-  const context = await browser.newContext({
-    viewport: { width: 2048, height: 1536 },
-    deviceScaleFactor: 1,
-  });
+  // Independent CLI/MCP sessions must see the same native surface, without
+  // Playwright's session-scoped device-metrics override changing during capture.
+  const context = await browser.newContext({ viewport: null });
   const entrypoint = fileURLToPath(new URL("../rea.mjs", import.meta.url));
   const env = {
     PATH: process.env.PATH ?? "/usr/bin:/bin",
@@ -41,6 +40,31 @@ export async function verifyLargeScreenshotE2e(endpoint, origin) {
       target,
       "Owned screenshot page is absent from actual CDP discovery",
     );
+    // Emulation geometry can differ from the native compositor surface.
+    // The direct browser result is the pixel oracle for the public adapters.
+    const session = await context.newCDPSession(page);
+    let expectedPng;
+    try {
+      const { windowId } = await session.send("Browser.getWindowForTarget", {
+        targetId: target.id,
+      });
+      await session.send("Browser.setContentsSize", {
+        windowId,
+        width: 2048,
+        height: 1536,
+      });
+      await page.waitForFunction(
+        () => innerWidth === 2048 && innerHeight === 1536,
+      );
+      const result = await session.send("Page.captureScreenshot", {
+        format: "png",
+        fromSurface: true,
+        captureBeyondViewport: false,
+      });
+      expectedPng = Buffer.from(result.data, "base64");
+    } finally {
+      await session.detach();
+    }
     const { stdout } = await promisify(execFile)(
       process.execPath,
       [
@@ -67,8 +91,11 @@ export async function verifyLargeScreenshotE2e(endpoint, origin) {
       bytes.subarray(0, 8),
       Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
     );
-    assert.equal(bytes.readUInt32BE(16), 2048);
-    assert.equal(bytes.readUInt32BE(20), 1536);
+    assert.deepEqual(bytes, expectedPng);
+    assert.deepEqual(screenshot.viewport, {
+      width: expectedPng.readUInt32BE(16),
+      height: expectedPng.readUInt32BE(20),
+    });
     await verifyDefaultScreenshotDelivery({
       entrypoint,
       environment: env,

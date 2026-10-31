@@ -1,3 +1,46 @@
+import assert from "node:assert/strict";
+
+/** Equal observed page scripts cannot establish complete worker discovery. */
+export function assertStableCaptureScripts(before, after, difference) {
+  const pageSignatures = (inspection) =>
+    inspection.scripts.items
+      .map(
+        ({
+          script_key,
+          url,
+          cdp_hash,
+          length,
+          is_module,
+          language,
+          source_map_url,
+        }) =>
+          JSON.stringify([
+            script_key,
+            url,
+            cdp_hash,
+            length,
+            is_module,
+            language,
+            source_map_url,
+          ]),
+      )
+      .sort();
+  assert.deepEqual(
+    pageSignatures(before),
+    pageSignatures(after),
+    "Real Chrome changed observed page script identities or metadata",
+  );
+  for (const inspection of [before, after])
+    assert.ok(
+      inspection.completeness.attach_limited_sections.includes("workers"),
+      "Passive capture must retain its worker-discovery boundary",
+    );
+  assert.equal(difference.status, "unknown");
+  assert.equal(difference.total_changes, 0);
+  assert.deepEqual(difference.changes, []);
+  assert.match(difference.reason, /Worker script inventory was incomplete/u);
+}
+
 export function sourceMapSummary(sourceMaps) {
   return {
     status: sourceMaps.status,

@@ -3,6 +3,64 @@ import { expect, it } from "vitest";
 import { CdpCaptureEvents } from "./CdpCaptureEvents.js";
 import { inspectWebPageInputSchema } from "../domain/browserObservation.js";
 
+it("retains response source on redirect hops independently of the final response", () => {
+  const origin = "https://app.example.test";
+  const events = new CdpCaptureEvents(
+    inspectWebPageInputSchema.parse({
+      cdp_endpoint: "http://127.0.0.1:9222",
+      target_id: "page",
+      allowed_origins: [origin],
+    }),
+    new Set([origin]),
+  );
+  const request = {
+    requestId: "r",
+    initiator: { type: "other" },
+    request: { url: origin + "/start", method: "GET" },
+  };
+  events.ingest({ method: "Network.requestWillBeSent", params: request });
+  events.ingest({
+    method: "Network.requestWillBeSent",
+    params: {
+      ...request,
+      request: { url: origin + "/end", method: "GET" },
+      redirectResponse: {
+        url: origin + "/start",
+        status: 302,
+        mimeType: "text/html",
+        encodedDataLength: 0,
+        fromServiceWorker: true,
+        fromDiskCache: false,
+        serviceWorkerResponseSource: "cache-storage",
+      },
+    },
+  });
+  events.ingest({
+    method: "Network.responseReceived",
+    params: {
+      requestId: "r",
+      response: {
+        url: origin + "/end",
+        status: 200,
+        fromServiceWorker: false,
+        fromDiskCache: true,
+      },
+    },
+  });
+  expect(events.network.get("r")).toMatchObject({
+    redirects: [
+      {
+        response_source: {
+          service_worker: true,
+          disk_cache: false,
+          service_worker_response_source: "cache-storage",
+        },
+      },
+    ],
+    response_source: { service_worker: false, disk_cache: true },
+  });
+});
+
 it("preserves an already captured response shape without marking it unavailable", () => {
   const origin = "http://127.0.0.1:43127";
   const events = new CdpCaptureEvents(

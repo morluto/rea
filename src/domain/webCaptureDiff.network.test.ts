@@ -50,6 +50,112 @@ const redirectCapture = (resourceType: string | null): WebPageInspection => {
   return capture;
 };
 
+it.each([
+  "service_worker",
+  "disk_cache",
+  "service_worker_response_source",
+] as const)(
+  "compares known redirect response source %s without inventing missing facts",
+  (field) => {
+    const before = redirectCapture("Document");
+    Object.assign(before.network.requests[0]!.redirects![0]!, {
+      response_source: {
+        service_worker: false,
+        disk_cache: false,
+        service_worker_response_source: "network",
+      },
+    });
+    const after = structuredClone(before);
+    Object.assign(after.network.requests[0]!.redirects![0]!, {
+      response_source: {
+        service_worker: false,
+        disk_cache: false,
+        service_worker_response_source: "network",
+        [field]:
+          field === "service_worker_response_source" ? "cache-storage" : true,
+      },
+    });
+    expect(compare(before, after)).toMatchObject({
+      status: "changed",
+      total_changes: 1,
+    });
+    Object.assign(after.network.requests[0]!.redirects![0]!, {
+      response_source: undefined,
+    });
+    expect(compare(before, after)).toMatchObject({
+      status: "unchanged",
+      total_changes: 0,
+    });
+  },
+);
+
+describe("partial response metadata in repeated requests", () => {
+  it.each(["response", "redirect"] as const)(
+    "retains known %s values and counts across unknown peers",
+    (location) => {
+      for (const field of [
+        "service_worker",
+        "disk_cache",
+        "service_worker_response_source",
+      ] as const) {
+        const known =
+          field === "service_worker_response_source" ? "network" : false;
+        const other =
+          field === "service_worker_response_source" ? "cache-storage" : true;
+        const capture = (values: readonly (string | boolean | null)[]) => {
+          const result = redirectCapture("Document");
+          const template = result.network.requests[0]!;
+          result.network.requests = values.map((value, index) => {
+            const request = structuredClone(template);
+            request.request_id = `request-${String(index)}`;
+            const response =
+              location === "response" ? request : request.redirects![0]!;
+            response.response_source = {
+              service_worker: null,
+              disk_cache: null,
+              service_worker_response_source: null,
+              [field]: value,
+            };
+            return request;
+          });
+          return result;
+        };
+        for (const [left, right, changed] of [
+          [[null, known], [other, other], true],
+          [[null, known], [other, known], false],
+          [[known, known, null], [known, other, other], true],
+          [[known, known, null], [known, other, null], false],
+          [[null, known], [known, null], false],
+        ] as const) {
+          const before = capture(left);
+          const after = capture(right);
+          for (const [a, b] of [
+            [before, after],
+            [after, before],
+          ]) {
+            expect(compare(a!, b!)).toMatchObject({
+              status: changed ? "changed" : "unchanged",
+              total_changes: changed ? 1 : 0,
+            });
+          }
+          // Missing rows can contain the otherwise unmatched known value.
+          if (changed) {
+            before.completeness.unavailable_sections.push("network_requests");
+            expect(compare(before, after)).toMatchObject({
+              status: "unknown",
+              total_changes: 0,
+            });
+            expect(compare(after, before)).toMatchObject({
+              status: "unknown",
+              total_changes: 0,
+            });
+          }
+        }
+      }
+    },
+  );
+});
+
 describe("nullable redirect resource types", () => {
   it.each([true, false])(
     "retains uncertainty when a redirect type is omitted (reversed=%s)",
@@ -88,6 +194,50 @@ describe("nullable redirect resource types", () => {
       status: "changed",
       total_changes: 1,
       changes: [{ change: "added" }],
+    });
+  });
+});
+
+describe("response sources with incomplete network metadata", () => {
+  it("retains a known source change without declaring incomplete redirects equal", () => {
+    const before = redirectCapture(null);
+    before.network.requests[0]!.response_source = {
+      service_worker: false,
+      disk_cache: false,
+      service_worker_response_source: "network",
+    };
+    const after = structuredClone(before);
+    after.network.requests[0]!.response_source!.service_worker = true;
+    expect(compare(before, after)).toMatchObject({
+      status: "changed",
+      total_changes: 1,
+    });
+    delete after.network.requests[0]!.response_source;
+    expect(compare(before, after)).toMatchObject({
+      status: "unknown",
+      total_changes: 0,
+    });
+    before.network.requests[0]!.redirects![0]!.resource_type = "Document";
+    after.network.requests[0]!.redirects![0]!.resource_type = "Document";
+    expect(compare(before, after)).toMatchObject({
+      status: "unchanged",
+      total_changes: 0,
+    });
+  });
+
+  it("does not use response sources to establish an unknown request identity", () => {
+    const before = redirectCapture("Document");
+    before.network.requests[0]!.response_source = {
+      service_worker: false,
+      disk_cache: false,
+      service_worker_response_source: "network",
+    };
+    const after = structuredClone(before);
+    before.network.requests[0]!.resource_type = null;
+    after.network.requests[0]!.response_source!.service_worker = true;
+    expect(compare(before, after)).toMatchObject({
+      status: "unknown",
+      total_changes: 0,
     });
   });
 });
@@ -754,3 +904,83 @@ describe("passive dropped-event inventory coverage", () => {
     },
   );
 });
+
+it.each(["response", "redirect"] as const)(
+  "does not turn omitted %s samples into a response-source change",
+  (location) => {
+    for (const field of [
+      "service_worker",
+      "disk_cache",
+      "service_worker_response_source",
+    ] as const) {
+      const known =
+        field === "service_worker_response_source" ? "network" : false;
+      const other =
+        field === "service_worker_response_source" ? "cache-storage" : true;
+      const make = (values: readonly (boolean | string)[]) => {
+        const capture = redirectCapture("Document");
+        const template = capture.network.requests[0]!;
+        capture.network.requests = values.map((value, index) => {
+          const request = structuredClone(template);
+          request.request_id = `sample-${index}`;
+          (location === "response"
+            ? request
+            : request.redirects![0]!
+          ).response_source = {
+            service_worker: null,
+            disk_cache: null,
+            service_worker_response_source: null,
+            [field]: value,
+          };
+          return request;
+        });
+        return capture;
+      };
+      for (const [left, right] of [
+        [[known, other], [other]],
+
+        [
+          [known, other],
+          [other, other],
+        ],
+      ] as const) {
+        const before = make(left);
+        const after = make(right);
+        expect(compare(before, after)).toMatchObject({
+          status: "changed",
+          total_changes: 1,
+        });
+        for (const limit of ["dropped", "truncated", "unavailable"] as const)
+          for (const side of ["before", "after", "both"] as const) {
+            const a = structuredClone(before);
+            const b = structuredClone(after);
+            for (const capture of side === "both"
+              ? [a, b]
+              : [side === "before" ? a : b]) {
+              if (limit === "dropped")
+                capture.completeness.dropped_events.network_requests = 1;
+              else if (limit === "truncated")
+                capture.completeness.truncated_sections.push(
+                  "network_requests",
+                );
+              else
+                capture.completeness.unavailable_sections.push(
+                  "network_requests",
+                );
+            }
+            for (const [first, second] of [
+              [a, b],
+              [b, a],
+            ] as const) {
+              const proven =
+                side === "before" || (side === "after" && right.length > 1);
+              expect(compare(first, second)).toMatchObject({
+                status: proven ? "changed" : "unknown",
+                total_changes: proven ? 1 : 0,
+              });
+            }
+          }
+      }
+    }
+  },
+);

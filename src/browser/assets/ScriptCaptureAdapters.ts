@@ -1,6 +1,7 @@
 import { webPageInspectionSchema } from "../../domain/browserObservationSchemas.js";
 import { retainedBrowserScenarioCaptureSchema } from "../../domain/browserScenarioCapture.js";
 import { parseEvidence } from "../../domain/evidence.js";
+import { browserWorkerEvidenceScopeSchema } from "../../domain/browserWorkerEvidenceScope.js";
 import type {
   CapturedWebScript,
   WebScriptExportResult,
@@ -18,6 +19,7 @@ export interface ScriptCaptureAdapter {
 export interface SelectedScriptCapture {
   readonly kind: WebScriptExportResult["capture_kind"];
   readonly completeness: WebScriptExportResult["capture_completeness"];
+  readonly workerCoverage?: WebScriptExportResult["worker_coverage"];
   readonly scripts: readonly CapturedWebScript[];
   readonly limitations: readonly string[];
 }
@@ -28,14 +30,43 @@ export const SCRIPT_CAPTURE_ADAPTERS: readonly ScriptCaptureAdapter[] = [
     operation: "inspect_web_page",
     parse: (input) => {
       const parsed = webPageInspectionSchema.safeParse(input);
-      return parsed.success
-        ? {
-            kind: "page-inspection",
-            completeness: parsed.data.completeness,
-            scripts: pageScripts(parsed.data),
-            limitations: parsed.data.limitations,
-          }
-        : undefined;
+      if (!parsed.success) return undefined;
+      const workerCoverage: NonNullable<
+        WebScriptExportResult["worker_coverage"]
+      > = [];
+      const identifiedWorkers: typeof parsed.data.workers = [];
+      let unknownWorkers = 0;
+      let unidentifiedSources = 0;
+      for (const worker of parsed.data.workers) {
+        if (worker.target_id.length === 0) {
+          unknownWorkers += 1;
+          unidentifiedSources += worker.observation?.scripts.length ?? 0;
+          continue;
+        }
+        identifiedWorkers.push(worker);
+        workerCoverage.push({
+          target_id: worker.target_id,
+          completeness: worker.observation?.completeness ?? null,
+          limitations: worker.observation?.limitations ?? [],
+        });
+      }
+      return {
+        kind: "page-inspection",
+        completeness: parsed.data.completeness,
+        workerCoverage,
+        scripts: pageScripts({
+          scripts: parsed.data.scripts,
+          workers: identifiedWorkers,
+        }),
+        limitations: [
+          ...parsed.data.limitations,
+          ...(unknownWorkers === 0
+            ? []
+            : [
+                `Worker identity was unavailable for ${String(unknownWorkers)} observations; their per-worker coverage and ${String(unidentifiedSources)} sources were omitted from export. The original capture retains those partial facts.`,
+              ]),
+        ],
+      };
     },
   },
   {
@@ -65,6 +96,8 @@ export const selectScriptCapture = (
     ("normalized_result" in raw || "evidence_id" in raw)
   ) {
     const evidence = parseEvidence(raw);
+    if (evidence.operation === "inspect_web_page")
+      browserWorkerEvidenceScopeSchema.parse(evidence);
     const selected = adapters
       .find(({ operation }) => operation === evidence.operation)
       ?.parse(evidence.normalized_result);

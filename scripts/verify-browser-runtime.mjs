@@ -2,6 +2,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { verifyBrowserRuntime } from "./lib/browser-runtime-e2e.mjs";
+import { verifyBrowserWorkers } from "./lib/browser-worker-e2e.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 
 const executable = process.env.REA_BROWSER_EXECUTABLE;
@@ -23,9 +24,15 @@ if (process.platform !== "win32") {
 }
 const run = createVerifierRun();
 const result = await verifyBrowserRuntime(executable, process.argv[2]);
+const workers = await verifyBrowserWorkers(executable, process.argv[2]);
 console.log(
   JSON.stringify(
-    { status: "passed", ...result, verifier: await completeVerifierRun(run) },
+    {
+      status: "passed",
+      ...result,
+      workers,
+      verifier: await completeVerifierRun(run),
+    },
     null,
     2,
   ),

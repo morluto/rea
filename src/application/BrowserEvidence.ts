@@ -172,6 +172,9 @@ const browserParameters = (
   return {
     ...scope,
     target_id: input.target_id,
+    ...("worker_target_ids" in input && input.worker_target_ids !== undefined
+      ? { worker_target_ids: input.worker_target_ids }
+      : {}),
     ...("observation_ms" in input
       ? { observation_ms: input.observation_ms }
       : {}),

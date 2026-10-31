@@ -98,3 +98,9 @@ browser, CLI, and stdio MCP. Set `REA_BROWSER_EXECUTABLE` to an installed
 Chrome-family browser. The verifier accepts an optional installed REA entrypoint
 argument for package verification. `npm run verify:browser` additionally covers
 passive `inspect_web_page` export through both public adapters.
+
+Worker sources retained by `inspect_web_page` are also exported. Their manifest
+records use `kind: "worker-script"` and preserve worker target, script/context
+identity, observed page relationship and module/source-map declarations. A
+shared worker selected explicitly keeps unknown page ownership in the manifest.
+The export does not fetch script URLs or infer ownership from equal URLs.

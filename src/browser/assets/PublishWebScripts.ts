@@ -92,6 +92,9 @@ export const publishWebScripts = async (
         capture_kind: capture.kind,
         source_evidence_id: capture.sourceEvidenceId,
         capture_completeness: capture.completeness,
+        ...(capture.workerCoverage === undefined
+          ? {}
+          : { worker_coverage: capture.workerCoverage }),
         output_directory: tree.outputRoot,
         analysis_input: records.some(
           ({ content }) => content.state === "exported",

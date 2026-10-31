@@ -41,6 +41,11 @@ export interface CdpResponseFacts {
   readonly mimeType: string | undefined;
   readonly encodedDataLength: number | undefined;
   readonly headers: unknown;
+  readonly sourceKind: {
+    readonly service_worker: boolean | null;
+    readonly disk_cache: boolean | null;
+    readonly service_worker_response_source: string | null;
+  };
 }
 export const readCdpResponseFacts = (
   reported: unknown,
@@ -55,6 +60,16 @@ export const readCdpResponseFacts = (
     mimeType: cdpStringValue(source.mimeType),
     encodedDataLength: numberValue(source.encodedDataLength),
     headers: source.headers,
+    sourceKind: {
+      service_worker:
+        typeof source.fromServiceWorker === "boolean"
+          ? source.fromServiceWorker
+          : null,
+      disk_cache:
+        typeof source.fromDiskCache === "boolean" ? source.fromDiskCache : null,
+      service_worker_response_source:
+        cdpStringValue(source.serviceWorkerResponseSource) ?? null,
+    },
   };
 };
 

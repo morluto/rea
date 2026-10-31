@@ -205,9 +205,17 @@ export const listBrowserTargetsInputSchema = z.strictObject({
   ...browserInput,
 });
 
+export const browserWorkerTargetIdsSchema = z
+  .array(z.string().min(1))
+  .optional()
+  .describe(
+    "Explicit worker targets to observe within allowed origins, including shared workers whose page ownership is unknown",
+  );
+
 const inspectWebPageInputFacts = {
   ...browserInput,
   target_id: z.string().min(1),
+  worker_target_ids: browserWorkerTargetIdsSchema,
   command_timeout_ms: webRuntimeCommandTimeoutSchema,
   observation_ms: z.int().min(0).default(500),
   include_accessibility_text: z.boolean().default(false),
@@ -244,9 +252,11 @@ const refineInspectWebPageInput = (
     });
 };
 
-/** Caller schema for source-capturing inspection and bundle analysis. */
+/** Page-only source capture for static bundle analysis. */
 export const inspectWebPageWithSourceInputSchema =
-  inspectWebPageWithSourceShapeSchema.superRefine(refineInspectWebPageInput);
+  inspectWebPageWithSourceShapeSchema
+    .omit({ worker_target_ids: true })
+    .superRefine(refineInspectWebPageInput);
 
 /** Caller-visible schema for one passive inspection. */
 export const inspectWebPageInputSchema = z.discriminatedUnion(

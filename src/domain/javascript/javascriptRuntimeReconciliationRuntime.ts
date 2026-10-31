@@ -1,3 +1,6 @@
+import { digestCanonicalValue } from "../canonicalDigest.js";
+import type { WebPageInspection } from "../browserObservationSchemas.js";
+import { supportsJavaScriptSource } from "../browserScriptLanguage.js";
 import type { JsonValue } from "../jsonValue.js";
 import {
   createJavaScriptApplicationEdge,
@@ -8,7 +11,10 @@ import type {
   ApplicationNode,
 } from "./javascriptApplicationGraphSchemas.js";
 import type { ApplicationGraphEvidence } from "./javascriptApplicationEvidenceSchemas.js";
-import type { ParsedRuntimeCapture } from "./javascriptRuntimeReconciliationCaptureParsing.js";
+import {
+  scriptsComplete,
+  type ParsedRuntimeCapture,
+} from "./javascriptRuntimeReconciliationCaptureParsing.js";
 
 export interface RuntimeReconciliationEntity {
   readonly kind: "target" | "frame" | "script" | "worker";
@@ -22,6 +28,10 @@ export interface RuntimeReconciliationEntity {
   };
   readonly frameKey: string | null;
   readonly sourceSha256: string | null;
+  readonly owningPageTargetId: string | null;
+  readonly parentWorkerKey: string | null;
+  readonly sourceMapUrl: string | null;
+  readonly coverage: ApplicationGraphEvidence["coverage"];
   readonly staticKind: "renderer" | "javascript" | "worker" | "service-worker";
 }
 
@@ -31,6 +41,7 @@ export interface RuntimeProjection {
   readonly edges: readonly ApplicationEdge[];
   readonly targetNodeByEvidenceId: ReadonlyMap<string, ApplicationNode>;
   readonly omittedEntities: number;
+  readonly scriptCountsByEvidenceId: ReadonlyMap<string, number>;
 }
 
 /** Project authorized passive capture metadata into capture-scoped JAG nodes. */
@@ -52,7 +63,17 @@ export const projectRuntimeCaptures = (
       .filter(({ kind }) => kind === "target")
       .map(({ capture, node }) => [capture.evidence.evidence_id, node]),
   );
+  const scriptCountsByEvidenceId = new Map<string, number>();
+  for (const entity of retained)
+    if (entity.kind === "script") {
+      const id = entity.capture.evidence.evidence_id;
+      scriptCountsByEvidenceId.set(
+        id,
+        (scriptCountsByEvidenceId.get(id) ?? 0) + 1,
+      );
+    }
   return {
+    scriptCountsByEvidenceId,
     entities: retained,
     nodes,
     edges,
@@ -162,6 +183,7 @@ const scriptEntities = (
           ? null
           : script.frame_id,
       scriptKey: script.script_key,
+      sourceMapUrl: "source_map_url" in script ? script.source_map_url : null,
       location,
       staticKind: "javascript",
       sourceSha256: script.source.included
@@ -212,13 +234,21 @@ const scriptEntities = (
 const workerEntities = (
   capture: ParsedRuntimeCapture,
 ): RuntimeReconciliationEntity[] =>
-  capture.inspection.workers.map((worker) => {
+  capture.inspection.workers.flatMap((worker) => {
+    // The inventory remains in the capture; unrelated inventory rows do not
+    // establish runtime matches to the selected application, even at one URL.
+    if (
+      "observation" in worker &&
+      worker.observation?.ownership === "unknown" &&
+      !worker.observation.selected_explicitly
+    )
+      return [];
     const location =
       "url" in worker
         ? ({ kind: "url", value: worker.url } as const)
         : ({ kind: "file", value: worker.file_path } as const);
     const serviceWorker = worker.type.includes("service");
-    return runtimeEntity(capture, {
+    const entity = runtimeEntity(capture, {
       kind: "worker",
       nodeKind: serviceWorker ? "service-worker" : "worker",
       runtimeKey: worker.target_id,
@@ -228,6 +258,17 @@ const workerEntities = (
       location,
       staticKind: serviceWorker ? "service-worker" : "worker",
       sourceSha256: null,
+      owningPageTargetId:
+        "observation" in worker && worker.observation !== undefined
+          ? worker.observation.ownership === "unknown"
+            ? null
+            : worker.observation.page_target_id
+          : worker.opener_target_id === capture.inspection.target.target_id ||
+              capture.inspection.frames.some(
+                ({ frame_id }) => frame_id === worker.parent_frame_id,
+              )
+            ? capture.inspection.target.target_id
+            : null,
       label: location.value,
       properties: {
         runtime_type: worker.type,
@@ -235,10 +276,77 @@ const workerEntities = (
         attached: worker.attached,
         opener_target_id: worker.opener_target_id,
         parent_frame_id: worker.parent_frame_id,
+        ...("observation" in worker && worker.observation !== undefined
+          ? {
+              ownership: worker.observation.ownership,
+              page_target_id: worker.observation.page_target_id,
+            }
+          : {}),
       },
       section: "workers",
     });
+    const observation =
+      "observation" in worker ? worker.observation : undefined;
+    if (observation === undefined) return [entity];
+    const coverage = workerScriptCoverage(observation);
+    return [
+      entity,
+      ...observation.scripts
+        .filter((script) => supportsJavaScriptSource(script.language))
+        .map((script) => {
+          const key = `worker_script_${digestCanonicalValue([worker.target_id, script.script_id], "Worker script identity")}`;
+          return runtimeEntity(capture, {
+            kind: "script",
+            nodeKind: "runtime-script-instance",
+            runtimeKey: key,
+            targetKey: worker.target_id,
+            frameKey: null,
+            scriptKey: key,
+            sourceMapUrl: script.source_map_url,
+            parentWorkerKey: worker.target_id,
+            owningPageTargetId: entity.owningPageTargetId,
+            location: { kind: "url", value: script.url },
+            staticKind: "javascript",
+            sourceSha256: script.source.included
+              ? script.source.artifact.sha256
+              : null,
+            label: script.url,
+            properties: {
+              location: script.url,
+              script_id: script.script_id,
+              worker_target_id: worker.target_id,
+              execution_context_id: script.execution_context_id,
+              cdp_hash: script.cdp_hash,
+              is_module: script.is_module,
+              language: script.language,
+              length: script.length ?? null,
+              source_map_url: script.source_map_url,
+              source_sha256: script.source.included
+                ? script.source.artifact.sha256
+                : null,
+            },
+            section: "scripts",
+            coverage,
+            ...(script.source.included
+              ? { artifactSha256: script.source.artifact.sha256 }
+              : {}),
+          });
+        }),
+    ];
   });
+
+const workerScriptCoverage = (
+  observation: NonNullable<WebPageInspection["workers"][number]["observation"]>,
+): ApplicationGraphEvidence["coverage"] =>
+  scriptsComplete(observation.completeness)
+    ? { status: "complete", truncated: false, omitted_count: 0, limits: [] }
+    : {
+        status: "partial",
+        truncated:
+          observation.completeness.truncated_sections.includes("scripts"),
+        omitted_count: null,
+        limits: [],
+      };
 
 interface RuntimeEntityInput {
   readonly kind: RuntimeReconciliationEntity["kind"];
@@ -250,6 +358,10 @@ interface RuntimeEntityInput {
   readonly location: RuntimeReconciliationEntity["location"];
   readonly staticKind: RuntimeReconciliationEntity["staticKind"];
   readonly sourceSha256: string | null;
+  readonly owningPageTargetId?: string | null;
+  readonly parentWorkerKey?: string;
+  readonly sourceMapUrl?: string | null;
+  readonly coverage?: ApplicationGraphEvidence["coverage"];
   readonly label: string;
   readonly properties: Readonly<Record<string, JsonValue>>;
   readonly section: "target" | "frames" | "scripts" | "workers";
@@ -259,36 +371,48 @@ interface RuntimeEntityInput {
 const runtimeEntity = (
   capture: ParsedRuntimeCapture,
   input: RuntimeEntityInput,
-): RuntimeReconciliationEntity => ({
-  kind: input.kind,
-  section: input.section,
-  capture,
-  runtimeKey: input.runtimeKey,
-  location: input.location,
-  frameKey: input.frameKey,
-  sourceSha256: input.sourceSha256,
-  staticKind: input.staticKind,
-  node: createJavaScriptApplicationNode({
-    kind: input.nodeKind,
-    identity: {
-      strategy: "runtime-instance",
-      stability: "capture-only",
-      capture_sha256: capture.captureSha256,
-      runtime_key: input.runtimeKey,
-    },
-    observations: [
-      {
-        label: input.label || null,
-        properties: input.properties,
-        evidence: runtimeEvidence(capture, input),
+): RuntimeReconciliationEntity => {
+  const coverage =
+    input.coverage ?? runtimeSectionCoverage(capture, input.section);
+  return {
+    kind: input.kind,
+    section: input.section,
+    capture,
+    runtimeKey: input.runtimeKey,
+    location: input.location,
+    frameKey: input.frameKey,
+    sourceSha256: input.sourceSha256,
+    owningPageTargetId:
+      input.owningPageTargetId === undefined
+        ? capture.inspection.target.target_id
+        : input.owningPageTargetId,
+    staticKind: input.staticKind,
+    parentWorkerKey: input.parentWorkerKey ?? null,
+    sourceMapUrl: input.sourceMapUrl ?? null,
+    coverage,
+    node: createJavaScriptApplicationNode({
+      kind: input.nodeKind,
+      identity: {
+        strategy: "runtime-instance",
+        stability: "capture-only",
+        capture_sha256: capture.captureSha256,
+        runtime_key: input.runtimeKey,
       },
-    ],
-  }),
-});
+      observations: [
+        {
+          label: input.label || null,
+          properties: input.properties,
+          evidence: runtimeEvidence(capture, input, coverage),
+        },
+      ],
+    }),
+  };
+};
 
 const runtimeEvidence = (
   capture: ParsedRuntimeCapture,
   input: RuntimeEntityInput,
+  coverage: ApplicationGraphEvidence["coverage"],
 ): ApplicationGraphEvidence => ({
   authority: "passive-cdp-runtime",
   state: "observed",
@@ -327,10 +451,10 @@ const runtimeEvidence = (
     operation: capture.evidence.operation,
     executable_sha256: null,
   },
-  coverage: runtimeSectionCoverage(capture, input.section),
+  coverage,
   limitations: [
     "The entity was observed only within one bounded passive CDP capture.",
-    ...(runtimeSectionComplete(capture, input.section)
+    ...(coverage.status === "complete"
       ? []
       : [
           `The runtime ${input.section} inventory was incomplete within this capture.`,
@@ -354,13 +478,26 @@ const runtimeEdges = (
       .filter(({ kind }) => kind === "frame")
       .map((entity) => [entity.runtimeKey, entity]),
   );
+  const workers = new Map(
+    local
+      .filter(({ kind }) => kind === "worker")
+      .map((entity) => [entity.runtimeKey, entity]),
+  );
   return local.flatMap((entity) => {
     if (entity === target) return [];
+    if (
+      entity.parentWorkerKey === null &&
+      entity.owningPageTargetId !== capture.inspection.target.target_id
+    )
+      return [];
     const parent =
-      (entity.kind === "script" || entity.kind === "worker") &&
-      entity.frameKey !== null
-        ? (frames.get(entity.frameKey) ?? target)
-        : target;
+      entity.parentWorkerKey !== null
+        ? workers.get(entity.parentWorkerKey)
+        : (entity.kind === "script" || entity.kind === "worker") &&
+            entity.frameKey !== null
+          ? (frames.get(entity.frameKey) ?? target)
+          : target;
+    if (parent === undefined) return [];
     return [
       createJavaScriptApplicationEdge({
         source_node_id: parent.node.node_id,
@@ -390,7 +527,7 @@ const runtimeRelationshipEvidence = (
     value: {
       kind: "runtime",
       capture_sha256: capture.captureSha256,
-      target_key: capture.inspection.target.target_id,
+      target_key: entity.parentWorkerKey ?? capture.inspection.target.target_id,
       frame_key: entity.frameKey,
       script_key: entity.kind === "script" ? entity.runtimeKey : null,
     },
@@ -403,7 +540,7 @@ const runtimeRelationshipEvidence = (
     operation: capture.evidence.operation,
     executable_sha256: null,
   },
-  coverage: runtimeSectionCoverage(capture, entity.section),
+  coverage: entity.coverage,
   limitations: [
     "The relationship was observed only within one bounded passive CDP capture.",
   ],
@@ -418,6 +555,9 @@ const runtimeSectionComplete = (
   if (section === "scripts") return capture.scriptsCompleteWithinScope;
   return (
     !capture.inspection.completeness.truncated_sections.includes(section) &&
+    !capture.inspection.completeness.attach_limited_sections.includes(
+      section,
+    ) &&
     !capture.inspection.completeness.unavailable_sections.includes(section)
   );
 };

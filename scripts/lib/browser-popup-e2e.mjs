@@ -130,6 +130,7 @@ const verifyTransports = async (executable, origin) => {
   const scenario = scenarioFor(executable, origin, ["network"]);
   const entrypoint = fileURLToPath(new URL("../rea.mjs", import.meta.url));
   const env = {
+    ...process.env,
     PATH: process.env.PATH ?? "/usr/bin:/bin",
     REA_LOG_LEVEL: "silent",
     HOPPER_LAUNCHER_PATH: "/rea-unconfigured-deep-provider/hopper",
