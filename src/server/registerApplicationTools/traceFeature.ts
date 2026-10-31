@@ -31,7 +31,9 @@ export const registerTraceFeatureTool = (
             traceContract.name,
             () =>
               Promise.resolve(
-                traceApplicationFeatureEvidence(input, options.evidenceById),
+                traceApplicationFeatureEvidence(input, options.evidenceById, {
+                  signal: context.mcpReq.signal,
+                }),
               ),
           );
           if (!result.ok)

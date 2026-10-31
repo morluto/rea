@@ -11,6 +11,7 @@ import { createServer } from "../../src/server/createServer.js";
 import {
   createTestMcp,
   type McpClientIdentity,
+  type TestMcp,
 } from "../support/mcp/mcpFixture.js";
 
 /** Owned MCP SDK session shared by application workflow scenarios. */
@@ -26,6 +27,7 @@ export async function createApplicationMcpHarness(
     readonly session?: BinarySession;
     readonly serverOptions?: Parameters<typeof createServer>[1];
     readonly clientIdentity?: McpClientIdentity;
+    readonly schemaValidator?: Parameters<TestMcp["connect"]>[2];
     readonly registerCleanup?: (close: ApplicationMcpHarness["close"]) => void;
   } = {},
 ): Promise<ApplicationMcpHarness> {
@@ -75,6 +77,7 @@ export async function createApplicationMcpHarness(
         name: "application-workflow-test",
         version: "1",
       },
+      options.schemaValidator,
     );
     return { client, session, close };
   } catch (cause) {

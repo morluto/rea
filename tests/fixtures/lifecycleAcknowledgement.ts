@@ -3,6 +3,7 @@ export const awaitAcknowledgement = async (
   acknowledgement: Promise<void>,
   operation: Promise<unknown>,
   boundary: string,
+  timeoutMs = 2_000,
 ): Promise<void> => {
   let deadline: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -14,7 +15,7 @@ export const awaitAcknowledgement = async (
           ({ kind: "settled", status: "rejected", cause }) as const,
       ),
       new Promise<{ readonly kind: "deadline" }>((resolve) => {
-        deadline = setTimeout(() => resolve({ kind: "deadline" }), 2_000);
+        deadline = setTimeout(() => resolve({ kind: "deadline" }), timeoutMs);
       }),
     ]);
     if (observed.kind !== "acknowledged")

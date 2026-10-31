@@ -216,7 +216,12 @@ describe("optional Hopper installation failures", () => {
       host,
     );
     expect(result.code).toBe("download_failed");
-    expect(result.remediation).toMatch(/^Download failed\. ./);
+    expect(result.remediation).toContain("Download failed.");
+    expect(result.remediation).toContain("could not be updated");
+    expect(result.clients.cursor).toMatchObject({
+      status: "failed",
+      reason: "write",
+    });
     expect(host.configurations).toBe(1);
   });
 
@@ -234,7 +239,8 @@ describe("optional Hopper installation failures", () => {
       host,
     );
     expect(result.code).toBe("skill_install_failed");
-    expect(result.remediation).toMatch(/^Download failed\. ./);
+    expect(result.remediation).toContain("Download failed.");
+    expect(result.remediation).toContain("injected skill write failure");
     expect(host.skillInstalls).toBe(1);
   });
 });

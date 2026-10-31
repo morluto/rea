@@ -9,6 +9,7 @@ import {
 import {
   admitScenarioCaptureParent,
   scenarioCaptureRecords,
+  scenarioContentMediaType,
 } from "./scenarioCaptureRecords.js";
 import { EnvironmentManifestAccumulator } from "./EnvironmentManifestAccumulator.js";
 
@@ -27,6 +28,90 @@ const manifestLimitations = (
   if (!result.ok) throw result.error;
   return result.value.limitations;
 };
+
+describe("scenario Content-Type evidence", () => {
+  it.each(
+    [
+      ["application/json", "application/octet-stream"],
+      ["application/octet-stream", "application/json"],
+      ["application/json", null],
+      [null, "application/json"],
+      ["application/json", "application/octet-stream", "application/json"],
+    ].map((values) => ({ values })),
+  )(
+    "keeps conflicting or excluded Content-Type declarations unknown: $values",
+    ({ values }) => {
+      const capture = scenarioCaptureFixture([
+        {
+          method: "GET",
+          url: "/download",
+          status: 200,
+          responseHeaders: values.map((value, index) => ({
+            name: index % 2 === 0 ? "Content-Type" : "content-type",
+            value,
+          })),
+        },
+      ]);
+      const original = JSON.stringify(capture);
+      const content = capture.events.items.find(
+        (event) =>
+          event.kind === "network-content" && event.phase === "response",
+      );
+      if (content?.kind !== "network-content")
+        throw new Error("Missing content");
+      expect(scenarioContentMediaType(content)).toBeUndefined();
+      for (const purpose of ["manifest", "replay"] as const) {
+        const projected = scenarioCaptureRecords(capture, purpose);
+        expect(projected.records[0]?.reported).toMatchObject({
+          response: { status: 200, content: { mimeType: "" } },
+        });
+        const accumulator = new EnvironmentManifestAccumulator();
+        for (const record of projected.records) {
+          const added = accumulator.add(
+            record,
+            projected.responseBodies.get(record.ordinal),
+          );
+          if (!added.ok) throw added.error;
+        }
+        const manifest = accumulator.finish();
+        if (!manifest.ok) throw manifest.error;
+        expect(manifest.value.tools).toEqual([]);
+      }
+      expect(JSON.stringify(capture)).toBe(original);
+    },
+  );
+
+  it("retains agreeing repeated Content-Type values and independently captured body metadata", () => {
+    const capture = scenarioCaptureFixture([
+      {
+        method: "GET",
+        url: "/headers",
+        status: 200,
+        responseHeaders: [
+          { name: "Content-Type", value: "application/json" },
+          { name: "content-type", value: "application/json" },
+        ],
+      },
+      {
+        method: "GET",
+        url: "/body",
+        status: 200,
+        body: "{}",
+        mediaType: "application/json",
+        responseHeaders: [
+          { name: "Content-Type", value: "application/json" },
+          { name: "content-type", value: null },
+        ],
+      },
+    ]);
+    const projected = scenarioCaptureRecords(capture, "manifest");
+    expect(projected.records).toHaveLength(2);
+    for (const record of projected.records)
+      expect(record.reported).toMatchObject({
+        response: { content: { mimeType: "application/json" } },
+      });
+  });
+});
 
 describe("scenarioCaptureRecords", () => {
   it("projects each transaction, in request order, as a HAR-shaped record with its retained bytes", () => {
