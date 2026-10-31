@@ -393,13 +393,16 @@ const publishSelected = async (
       continue;
     input.state.attempted += 1;
     input.state.lastFailureCode = undefined;
+    const externalBefore = input.state.external;
     const outcome = await attemptOne(input, procedure, existing, bodySupport);
     bodySupport = outcome.bodySupport;
     if (!outcome.result.ok) return outcome.result;
-    input.state.outputIoStreak =
-      input.state.lastFailureCode === "output_io"
-        ? input.state.outputIoStreak + 1
-        : 0;
+    // An external function writes no file, so it says nothing about the directory.
+    if (input.state.external === externalBefore)
+      input.state.outputIoStreak =
+        input.state.lastFailureCode === "output_io"
+          ? input.state.outputIoStreak + 1
+          : 0;
     // Repeated write failures mean the directory has stopped accepting files,
     // for example a full disk. Stop instead of decompiling every remaining
     // function only to fail its write. Committed files and records are kept.

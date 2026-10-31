@@ -1698,6 +1698,38 @@ describe("decompile_all repeated output failures", () => {
     ).toBe("written");
   });
 
+  it("keeps counting output_io failures across external functions", async () => {
+    const mixed = Array.from({ length: 11 }, (_, index) => ({
+      address: `0x${(0x1000 + index * 0x10).toString(16)}`,
+      name: `f${index.toString()}`,
+    }));
+    const at = (parity: number) =>
+      mixed.filter((_, index) => index % 2 === parity);
+    expect(
+      (await run(harness({ procedures: mixed }).tools, directory())).ok,
+    ).toBe(true);
+    // Locals cannot be read back; externals have no file to resume from.
+    await blockFiles(at(0).map(({ address }) => address));
+    for (const { address } of at(1))
+      await rm(join(directory(), `functions/${address}.c`));
+    const stopped = await run(
+      harness({
+        procedures: mixed,
+        external: at(1).map(({ address }) => address),
+      }).tools,
+      directory(),
+      { resume: true },
+    );
+    expect(stopped.ok).toBe(false);
+    if (stopped.ok) return;
+    expect(stopped.error).toBeInstanceOf(AnalysisOutputError);
+    expect(stopped.error.diagnostics).toMatchObject({
+      failed: 5,
+      external: 4,
+      consecutive_output_io: 5,
+    });
+  });
+
   it("does not stop when a verified file interrupts the failures", async () => {
     expect((await run(harness({ procedures }).tools, directory())).ok).toBe(
       true,
