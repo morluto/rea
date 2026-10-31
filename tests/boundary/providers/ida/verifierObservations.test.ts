@@ -199,6 +199,13 @@ const fixture = async (empty: readonly string[], omitMore: boolean) => {
 };
 
 it.each([
+  {
+    empty: [],
+    omitMore: false,
+    oracles: true,
+    passed: false,
+    expectedCaller: "0x1000",
+  },
   { empty: [], omitMore: false, oracles: true, passed: true },
   { empty: ["list_funcs"], omitMore: false, oracles: true, passed: false },
   { empty: ["find_regex"], omitMore: false, oracles: true, passed: false },
@@ -212,7 +219,16 @@ it.each([
   },
 ])(
   "checks real-verifier values for $empty / omitted more=$omitMore / oracles=$oracles",
-  async ({ empty, omitMore, oracles, passed }) => {
+  async (scenario: {
+    empty: string[];
+    omitMore: boolean;
+    oracles: boolean;
+    passed: boolean;
+    expectedCaller?: string;
+  }) => {
+    const { empty, omitMore, oracles, passed } = scenario;
+    const expectedCaller =
+      "expectedCaller" in scenario ? scenario.expectedCaller : undefined;
     const upstream = await fixture(empty, omitMore);
     let cleanupConfirmed = false;
     try {
@@ -232,6 +248,9 @@ it.each([
             "55",
             "--report",
             reportPath,
+            ...(expectedCaller === undefined
+              ? []
+              : ["--expected-caller", expectedCaller]),
             ...(oracles
               ? ["--expected-string", "a.b", "--expected-xref", "0x1004"]
               : []),
@@ -260,7 +279,12 @@ it.each([
         passed,
       );
       expect(result.exitCode).toBe(passed ? 0 : 1);
-      if (empty.includes("list_funcs"))
+      if (expectedCaller !== undefined) {
+        expect(report.failure?.phase).toBe("production CLI function analysis");
+        expect(report.failure?.message).toContain(
+          "independently expected caller",
+        );
+      } else if (empty.includes("list_funcs"))
         expect(report.failure).toEqual({
           phase: "production MCP list_procedures",
           message: "list_procedures omitted the resolved procedure.",

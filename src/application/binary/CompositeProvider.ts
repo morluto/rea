@@ -206,6 +206,10 @@ export class CompositeProvider implements AnalysisProvider {
       return closeClients(options);
     };
     return {
+      capabilityAvailabilitySnapshot: () =>
+        [...clients.values()].flatMap(
+          (client) => client.capabilityAvailabilitySnapshot?.() ?? [],
+        ),
       executeIfReady: (operation, parameters, options) => {
         const provider = this.#providerByOperation.get(operation);
         const client =

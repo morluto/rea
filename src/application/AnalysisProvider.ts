@@ -165,6 +165,8 @@ export interface ProviderRequestActivitySnapshot {
 
 /** Provider session bound to exactly one parsed artifact. */
 export interface AnalysisClient extends AnalysisOperationPort {
+  /** Session-owned availability learned from the connected provider, without probing. */
+  capabilityAvailabilitySnapshot?(): readonly ProviderCapabilityAvailability[];
   /** Execute only if this operation can run without loading or starting a provider. */
   executeIfReady?(
     operation: AnalysisOperation,
@@ -273,6 +275,12 @@ export type CapabilityDescriptor = CapabilityAvailability & {
   readonly operation: Exclude<AnalysisOperation, "health">;
   readonly effects: CapabilityEffects;
   readonly limitations: readonly string[];
+};
+
+/** Runtime availability refines declared operations without changing their authority. */
+export type ProviderCapabilityAvailability = CapabilityAvailability & {
+  readonly provider: ProviderIdentity;
+  readonly operation: Exclude<AnalysisOperation, "health">;
 };
 
 /** Factory and capability declaration for an analysis implementation. */

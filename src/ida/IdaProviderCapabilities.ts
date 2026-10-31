@@ -50,10 +50,8 @@ export const idaOperationUnavailableReason = (
 ): string | undefined => {
   if (!idaProfileAdmits(operation, profile))
     return "This operation is available for the modern headless profile only.";
-  if (operation === "procedure_callers" && profile.protocol !== "legacy")
-    return profile.protocol === "native"
-      ? "The native upstream profile reports code references without proving direct call edges."
-      : "The modern upstream profile reports code references without proving direct call edges.";
+  if (operation === "procedure_callers" && profile.protocol === "native")
+    return "The native upstream profile reports code references without proving direct call edges.";
   return undefined;
 };
 

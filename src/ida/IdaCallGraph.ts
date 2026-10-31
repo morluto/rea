@@ -6,10 +6,11 @@ import {
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { RelationshipCoverage } from "../domain/relationshipCoverage.js";
-import { ZodError } from "zod";
+import { ZodError, type z } from "zod";
 import {
   idaAddressSchema,
   modernCallGraphSchema,
+  modernCallGraphRowsSchema,
   modernLookupBatchSchema,
 } from "./IdaProtocolValues.js";
 
@@ -52,6 +53,13 @@ export interface CallGraphCallees {
   readonly coverage: RelationshipCoverage;
 }
 
+/** Root-only call destinations, before optional display-name resolution. */
+export interface CallGraphTargets {
+  readonly addresses: readonly string[];
+  readonly limitations: readonly string[];
+  readonly coverage: RelationshipCoverage;
+}
+
 /** No function edges can be observed when the server lacks the graph tool. */
 export const unavailableCallGraph = (reason: string): CallGraphCallees => ({
   callees: [],
@@ -75,18 +83,26 @@ export const unavailableCallGraph = (reason: string): CallGraphCallees => ({
  * root all fail the read. Cancellation still propagates. Truncation the upstream
  * declares inside a valid reply stays a limitation.
  */
-export const readCallGraphCallees = async (
+export const readCallGraphTargets = async (
   call: (
     tool: string,
     args: Readonly<Record<string, JsonValue>>,
   ) => Promise<JsonValue>,
   address: string,
-): Promise<CallGraphCallees> => {
+): Promise<CallGraphTargets> => {
   const raw = await call("callgraph", { roots: [address], max_depth: 0 });
   const parsed = modernCallGraphSchema.safeParse(raw);
   const row = parsed.success ? parsed.data[0] : undefined;
   if (row === undefined)
     throw new AnalysisProtocolError("IDA callgraph reply was unreadable.");
+  return parseCallGraphTargets(row, address);
+};
+
+/** Interpret one validated root row for both individual and batched reads. */
+const parseCallGraphTargets = (
+  row: z.infer<typeof modernCallGraphSchema>[number],
+  address: string,
+): CallGraphTargets => {
   if (row.error !== undefined)
     throw new AnalysisProtocolError(`IDA callgraph failed: ${row.error}`);
   const rootAddress = idaAddressSchema.safeParse(row.root);
@@ -121,10 +137,64 @@ export const readCallGraphCallees = async (
     coverageLimitations.push(POSSIBLY_TRUNCATED_LIMITATION);
   }
 
+  return {
+    addresses: targets,
+    limitations,
+    coverage: {
+      ...(coverageLimitations.length === 0
+        ? { status: "complete" as const }
+        : {
+            status: "partial" as const,
+            limitations: coverageLimitations,
+          }),
+      diagnostics,
+    },
+  };
+};
+
+/** Read one bounded group and bind every returned row to exactly one requested root. */
+export const readCallGraphTargetBatch = async (
+  call: (
+    tool: string,
+    args: Readonly<Record<string, JsonValue>>,
+  ) => Promise<JsonValue>,
+  addresses: readonly string[],
+): Promise<ReadonlyMap<string, CallGraphTargets>> => {
+  const raw = await call("callgraph", { roots: [...addresses], max_depth: 0 });
+  const parsed = modernCallGraphRowsSchema.safeParse(raw);
+  if (!parsed.success || parsed.data.length !== addresses.length)
+    throw new AnalysisProtocolError(
+      "IDA callgraph batch omitted or added root rows.",
+    );
+  const expected = new Set(addresses);
+  const result = new Map<string, CallGraphTargets>();
+  for (const row of parsed.data) {
+    const root = idaAddressSchema.safeParse(row.root);
+    if (!root.success || !expected.has(root.data) || result.has(root.data))
+      throw new AnalysisProtocolError(
+        "IDA callgraph batch returned unexpected or duplicate roots.",
+      );
+    result.set(root.data, parseCallGraphTargets(row, root.data));
+  }
+  return result;
+};
+
+/** Resolve display names after the call-edge producer has established destinations. */
+export const readCallGraphCallees = async (
+  call: (
+    tool: string,
+    args: Readonly<Record<string, JsonValue>>,
+  ) => Promise<JsonValue>,
+  address: string,
+): Promise<CallGraphCallees> => {
+  const graph = await readCallGraphTargets(call, address);
+  const targets = graph.addresses;
+  const limitations = [...graph.limitations];
+  const diagnostics = [...(graph.coverage.diagnostics ?? [])];
   const names = new Map<string, string>();
   if (targets.length > 0) {
     try {
-      const raw = await call("lookup_funcs", { queries: targets });
+      const raw = await call("lookup_funcs", { queries: [...targets] });
       const parsed = modernLookupBatchSchema.safeParse(raw);
       if (!parsed.success) {
         const limitation =
@@ -165,14 +235,6 @@ export const readCallGraphCallees = async (
       };
     }),
     limitations,
-    coverage: {
-      ...(coverageLimitations.length === 0
-        ? { status: "complete" as const }
-        : {
-            status: "partial" as const,
-            limitations: coverageLimitations,
-          }),
-      diagnostics,
-    },
+    coverage: { ...graph.coverage, diagnostics },
   };
 };

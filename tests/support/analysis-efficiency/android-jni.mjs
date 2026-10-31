@@ -13,10 +13,9 @@ import { constants } from "node:fs";
 import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { parseArgs } from "node:util";
+import { parseArgs, promisify } from "node:util";
 import { performance } from "node:perf_hooks";
 import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 
 const { values } = parseArgs({
   options: {

@@ -220,6 +220,26 @@ For guided registration, set `REA_IDA_MCP_CONFIG` before `rea setup --client <cl
 
 ## Coverage and evidence
 
+The modern headless profile supports direct callers when upstream advertises
+`callgraph`. Once the session connects, `binary_session` reflects the observed
+tool catalog: a server without `callgraph` reports callers as unavailable before
+the first caller query. Registration-only discovery does not probe the server.
+Reopening a session observes its own catalog rather than reusing the prior
+session's availability. REA reads incoming entry-point `xrefs_to` as candidates, deduplicates
+their owning functions, and confirms each candidate with a depth-zero call graph.
+Code references alone never establish a call: jump-only and data references are
+excluded unless a function also has a confirmed call edge. No target execution
+or arbitrary Python evaluation is used. Discovery covers references to the
+selected function entry, so caller coverage remains partial: interior-only
+references and unresolved indirect calls remain unknown. Truncated or unassigned
+candidates add explicit limitations. A truncated candidate graph still proves an edge it contains, but
+cannot exclude a candidate whose edge was omitted. Candidate roots are verified
+in batches of up to 32 per depth-zero graph request, without resolving unrelated
+callee display names. Batch replies must contain exactly one row per requested
+root; missing, duplicate, unexpected, and failed rows fail the read. A missing
+graph tool leaves direct callers unavailable; an erroneous or inconsistent graph
+fails the read. The native attached profile retains its existing caller limitation.
+
 REA admits x86, x86_64, arm and arm64 executables through IDA. Every other CPU
 family, including families that REA recognizes later, is refused until REA
 admits it explicitly. Raw-binary and GameCube DOL targets are refused; open
@@ -230,7 +250,7 @@ All profiles support procedure/string inventory and literal or regex search, pro
 
 All profiles expose `list_documents` as the single target admitted for the session. Attached mode verifies its digest against IDA metadata before returning it; headless mode binds the digest-checked private input. `inspect_address_context`, `trace_feature`, and `binary_overview` can therefore resolve that identity without upstream document-listing tools. Segment enumeration is optional: when the selected profile cannot provide it, `binary_overview` still returns document and procedure/string counts and omits `segments` and `segment_count`; omission means unobserved, not empty. The modern headless profile also supports `resolve_containing_procedure`. An address resolves through upstream `lookup_funcs` to the canonical entry of the function that contains it; the body stays unavailable like other IDA identities. When no function contains it, REA reads the database-scoped minimal `survey_binary` and reports `not_in_procedure` for an address inside one of its segments (ends are exclusive) and `outside_segments` otherwise. A missing, truncated or inconsistent survey fails the read instead of guessing a reason. `trace_feature` marks a trace truncated, with a residual unknown for that address, when upstream caps the references it returned. Attached profiles do not declare address containment resolution.
 
-The legacy profile additionally supports direct callers. Its producer may report call-site or interior addresses; REA resolves the reported function symbol to its canonical entry. The modern and native profiles do not prove direct callers from its code/data xref labels, so that capability is unavailable and the dossier marks it unknown.
+The legacy profile supports direct callers through `get_callers`. Its producer may report call-site or interior addresses; REA resolves the reported function symbol to its canonical entry. The modern headless profile confirms callers through `callgraph` as described above and marks the dossier's caller facet available with partial relationship coverage. Modern servers without `callgraph` and the native attached profile cannot prove direct callers from code/data xref labels alone: the direct query is unavailable and the dossier marks its caller facet unavailable with unknown coverage.
 
 Complete body ranges, typed reference edges, CFG, referenced data, source locals, comment kinds, and database revision are unavailable. Empty unsupported dossier facets mean **unknown**, not observed absence. Whole-symbol inventory, mutation, debugging, arbitrary Python forwarding, and requested GUI navigation are outside this adapter's coverage. Check session availability before composing a workflow that needs those facets.
 
@@ -242,7 +262,7 @@ Run `npm run verify:ida -- --target /absolute/path/to/program --procedure main` 
 
 Native verification requires `--second-procedure other_function --second-marker unique_second_body_text`; these options remain optional for the other profiles. The marker must occur in the second function's pseudocode and be absent from the first; the verifier also checks that returning to the first restores its text.
 
-The verifier requires the resolved procedure in both inventory and procedure search, then compares address, assembly, pseudocode, instruction windows and relationship results with the CLI/MCP dossier. Supply `--expected-string known_literal` to check a known positive string inventory/search result and `--expected-xref 0xSOURCE` to check a known reference source address. Choose those oracles independently from the operation under test. Without them, string and xref correctness are listed in `unverified`; valid output shapes alone do not establish those behaviors. Callee parity does not independently establish semantic completeness. Native callee successes must report an explicit truncation marker; missing markers remain protocol failures.
+The verifier requires the resolved procedure in both inventory and procedure search, then compares address, assembly, pseudocode, instruction windows and relationship results with the CLI/MCP dossier. Supply `--expected-string known_literal` to check a known positive string inventory/search result, `--expected-xref 0xSOURCE` to check a known reference source address, and `--expected-caller 0xFUNCTION` to check a known caller function entry in both CLI/MCP dossiers and the direct MCP caller query. Choose those oracles independently from the operation under test. Without them, string, xref, and available caller correctness are listed in `unverified`; valid output shapes or agreement between outputs from the same adapter do not establish those behaviors. Callee parity does not independently establish semantic completeness. Native callee successes must report an explicit truncation marker; missing markers remain protocol failures.
 
 The initial real workflows use stdio registrations for the legacy Windows GUI profile and a Windows x64 headless supervisor with IDA 9.3. The headless workflow has also passed on macOS arm64 with IDA Professional 9.1 (build 9.1.250226) against the same upstream commit `c133c3853faa111a9b00ee615c013b720d0c4acd`, using a source-built arm64 Mach-O fixture; Mach-O C symbols carry a leading underscore, so the procedure name is `_rea_fixture_add`. Streamable HTTP is tested against a loopback MCP fixture with the pinned client SDK; a real IDA HTTP-supervisor workflow remains unverified. Linux headless engine operation, other IDA releases, architectures, and modern attached GUI tools require their corresponding real workflows before support is claimed.
 
