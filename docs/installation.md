@@ -94,7 +94,8 @@ current entrypoint; a path that cannot be resolved remains unknown. Cordis uses
 its stable REA entry ID instead of launcher identity.
 Setup also retains valid environment overrides in REA's existing server entry,
 such as `REA_MCP_INPUT_SCHEMA_PROFILE`, `REA_MCP_OUTPUT_SCHEMA_PROFILE`, and
-`REA_MCP_MAX_RESPONSE_BYTES`, and `REA_MCP_TOOL_FAMILIES`.
+`REA_MCP_MAX_RESPONSE_BYTES`, and `REA_MCP_TOOL_FAMILIES` (main only; see the
+[release boundary](#released-package-and-main)).
 Detected provider settings replace only matching environment keys.
 Setup manages REA's launcher, selected provider settings, and recommended timeout
 defaults. Codex approval policies, tool selections, and other caller-owned server
@@ -569,6 +570,13 @@ used an isolated home on macOS with Node 24; they verify planning and argument
 admission, without writing client configuration or establishing live integration
 with every client. This resolves the npm 6.3.0 setup gaps tracked in
 [#1650](https://github.com/morluto/rea/issues/1650).
+
+Tool family scoping (`REA_MCP_TOOL_FAMILIES` and `rea setup --tool-families`)
+is implemented on main but is not in the published 6.8.0 package. With 6.8.0
+the variable is ignored: the server advertises the full catalog and does not
+reject unknown family ids. Confirm the setting took effect in the connected
+server's tool list, and use a release newer than 6.8.0 or a source build to
+get it.
 
 Main's catalog describes the current code. A source build or a subsequent
 release containing changes after this checkpoint is required for newer
