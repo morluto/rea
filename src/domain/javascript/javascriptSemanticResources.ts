@@ -261,14 +261,27 @@ const rejectsSocketPortLiteral = (
     isUnmodifiedGlobalReference(value, context.state, value.name)
   )
     return true;
-  // `-1` and `-1.5` are unary expressions over numeric literals: always out of
-  // range because a port is never negative.
+  // A unary operator is judged by its result, not by its operand.
   if (t.isUnaryExpression(value)) {
+    // `typeof` yields a non-empty type name, which Node reads as a Unix socket
+    // path rather than a port.
+    if (value.operator === "typeof") return false;
+    // `void` yields `undefined` and `!` yields a boolean; both throw before a
+    // socket exists.
+    if (value.operator === "void" || value.operator === "!") return true;
     const operand = unwrapJavaScriptExpression(value.argument).node;
-    return (
-      t.isNumericLiteral(operand) &&
-      (value.operator === "-" || !Number.isInteger(operand.value))
-    );
+    if (!t.isNumericLiteral(operand)) return false;
+    const bits =
+      value.operator === "-"
+        ? -operand.value
+        : value.operator === "+"
+          ? operand.value
+          : value.operator === "~"
+            ? ~operand.value
+            : undefined;
+    if (bits === undefined) return false;
+    // `-0` and `~-1` are both zero, which is the valid lowest port.
+    return !Number.isInteger(bits) || bits < 0 || bits > 65535;
   }
   return false;
 };
