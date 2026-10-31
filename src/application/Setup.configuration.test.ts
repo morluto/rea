@@ -661,3 +661,36 @@ describe("setup tool family scope", () => {
     );
   });
 });
+it.each(["configured", "failed"] as const)(
+  "executes a shared registration once and reports %s for both surfaces",
+  async (status) => {
+    const host = new FakeSetupHost();
+    host.hopper = "/Applications/Hopper";
+    host.clients = ["antigravity", "antigravity_cli"].map((name) => ({
+      name,
+      format: "json" as const,
+      registrationGroup: "antigravity",
+      configPath: "/fixture/shared/mcp_config.json",
+    }));
+    const expected =
+      status === "failed"
+        ? { status: "failed" as const, reason: "backup" as const }
+        : { status: "configured" as const };
+    host.clientResults.set("antigravity", expected);
+    const result = await runSetup(
+      {
+        ...options(true),
+        clientIds: ["antigravity", "antigravity_cli"],
+        installSkill: false,
+      },
+      host,
+    );
+    expect(
+      result.plannedActions.filter(({ kind }) => kind === "configure_client"),
+    ).toHaveLength(1);
+    expect(host.configurations).toBe(1);
+    expect(result.clients.antigravity).toEqual(expected);
+    expect(result.clients.antigravity_cli).toEqual(expected);
+    if (status === "failed") expect(result.status).toBe("needs_human");
+  },
+);

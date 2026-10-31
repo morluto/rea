@@ -44,6 +44,9 @@ describe("client configuration filesystem lifecycle", () => {
     for (const client of supportedClients(home))
       if (client.markerPath !== undefined)
         await mkdir(client.markerPath, { recursive: true });
+    // Gemini CLI's applicability follows its own settings or runtime state,
+    // not the shared .gemini root the marker loop creates.
+    await mkdir(join(home, ".gemini", "tmp"), { recursive: true });
     const detected = await detectClients(home);
     expect(detected.map(({ name }) => name)).toEqual([
       "claude_code",
@@ -55,6 +58,7 @@ describe("client configuration filesystem lifecycle", () => {
       "devin",
       "opencode",
       "antigravity",
+      "antigravity_cli",
       "copilot_cli",
       "commandcode",
       "qwen_code",

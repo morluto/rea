@@ -357,11 +357,36 @@ parent environment does not establish that Qwen removed Homebrew from it.
 Antigravity 2.0 discovers personal skills in `~/.gemini/config/skills`.
 Setup installs its selected skill copy there.
 
+## Antigravity CLI
+
+The Antigravity CLI reads the same global `~/.gemini/config/mcp_config.json`
+registration file as the IDE, so the shared `mcpServers.rea` entry serves both
+surfaces. Global skills, however, load from the CLI's own
+`~/.gemini/antigravity-cli/skills` root, so setup installs a separate skill
+copy there (`antigravity_cli`). Uninstall removes the shared registration once
+and each surface's skill copy. When both are selected, setup discloses and
+executes a single shared-registration transaction, while retaining separate
+skill destinations and reporting the registration result for both clients.
+
+The shared MCP file alone does not identify an installed surface. Automatic
+selection uses `~/.gemini/antigravity-cli` for the CLI and the separate
+`~/.gemini/config/skills` root for the app/IDE. If only the shared configuration
+exists, select `--client antigravity` explicitly to install the app/IDE skill;
+REA does not infer an app/IDE installation from a CLI-created configuration. Update
+maintenance separately scans existing REA-owned registrations, including
+config-only profiles created with `--skill=false`. This does not make either
+surface automatically detected, enable disabled registrations, or install skills
+that were not already present.
+
 ## Gemini CLI
 
 Gemini CLI uses `$GEMINI_CLI_HOME/.gemini/settings.json` when that home override
 is nonempty, including its shared personal skills at
-`$GEMINI_CLI_HOME/.agents/skills`. Setup and doctor check MCP allow/exclude
+`$GEMINI_CLI_HOME/.agents/skills`. Automatic detection uses Gemini settings,
+runtime state or trusted-folder records; the shared `.gemini` directory alone
+does not identify Gemini CLI, because Antigravity also creates it. Explicit
+`--client gemini_cli` remains available before these markers exist. Setup and
+doctor check MCP allow/exclude
 policies from system defaults, user settings, trusted workspace settings, and
 system overrides. Workspace trust follows `GEMINI_CLI_TRUST_WORKSPACE`,
 `GEMINI_RESTRICTED_MODE`, the effective `security.folderTrust.enabled` setting,

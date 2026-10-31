@@ -17,6 +17,7 @@ import type {
 } from "./SetupTypes.js";
 import {
   appDataRedirection,
+  clientRegistrationGroups,
   registrationPersistenceDetail,
   type SetupClient,
 } from "./SupportedClients.js";
@@ -191,15 +192,18 @@ export const planSetupActions = async (input: {
       clientsToConfigure: [],
       blocker: input.host.registrationCommandBlocker,
     };
+  const registrationGroups = clientRegistrationGroups(selectedClients);
   const inspections = await Promise.all(
-    selectedClients.map(async (client) => ({
-      client,
-      inspection: await input.host.inspectClientConfiguration(
+    registrationGroups
+      .flatMap(([owner]) => (owner === undefined ? [] : [owner]))
+      .map(async (client) => ({
         client,
-        input.providerEnvironment,
-        input.command,
-      ),
-    })),
+        inspection: await input.host.inspectClientConfiguration(
+          client,
+          input.providerEnvironment,
+          input.command,
+        ),
+      })),
   );
   const invalid = inspections.find(
     ({ inspection }) => inspection.status === "invalid",
@@ -260,8 +264,12 @@ export const planSetupActions = async (input: {
   return {
     plannedActions,
     selectedClients,
-    clientsToConfigure: selectedClients.filter((client) =>
-      clientPlans.some(({ client: planned }) => planned.name === client.name),
+    clientsToConfigure: registrationGroups.flatMap((group) =>
+      group.some((client) =>
+        clientPlans.some(({ client: planned }) => planned.name === client.name),
+      )
+        ? group
+        : [],
     ),
     ...(blocker === undefined ? {} : { blocker }),
   };
