@@ -167,14 +167,34 @@ export const PROMPT_CONTRACTS = [
     },
     steps: [
       {
-        tools: ["open_binary", "analyze_javascript_application"],
+        tools: ["analyze_javascript_application"],
         instruction:
-          "For a JavaScript/Electron application directory, call analyze_javascript_application with input_path=target_path directly; no open_binary call is needed. For a file or Apple bundle directory, open target_path only when the required target is not active.",
+          "Choose a route by the analyst question and observed artifact format; a filename suffix alone does not establish format. Check the connected server's advertised tools and host/provider limitations. For a JavaScript/Electron application directory, call analyze_javascript_application with input_path=target_path directly; no open_binary call is needed.",
+      },
+      {
+        tools: ["inspect_android_package"],
+        instruction:
+          "For APK code, classes, methods, or incoming references, call inspect_android_package with path=target_path directly, then use focused Android tools when advertised. This requires a caller-supplied JADX MCP JAR and JDK; it does not execute the APK. Archive-member inventory uses the archive route below.",
+      },
+      {
+        tools: ["inspect_managed_artifact"],
+        instruction:
+          "For managed PE/CLI metadata, call inspect_managed_artifact with path=target_path directly, then use focused managed tools as needed. No open_binary call is required, and inspection does not load or execute the assembly. Native code questions use the native route below.",
+      },
+      {
+        tools: ["open_bundle_resources"],
+        instruction:
+          "For Apple app plist, Interface Builder, asset catalog, or keyed archive resources, open_bundle_resources with path=target_path establishes a resource-only session for the selected resource tools. It needs neither CFBundleExecutable nor a deep provider. Use open_binary when the question requires executable analysis.",
+      },
+      {
+        tools: ["open_binary", "inspect_artifact"],
+        instruction:
+          "For native code, open_binary with path=target_path only when the required target is not active, using a configured provider with the needed capabilities. For archive/package member inventory, open_binary with the supplied path, then inspect_artifact against that active target; inspect_artifact takes no path.",
       },
       {
         tools: ["current_document"],
         instruction:
-          "Analysis stays bound to the active target's provider document. Use open_binary to switch targets; document names never select another artifact.",
+          "Native analysis stays bound to the active target's provider document. Use open_binary to switch targets; document names never select another artifact. Target-free inspection receives its explicit path directly, and resource tools use the bundle-resource session.",
       },
       {
         tools: ["search_strings", "search_procedures", "procedure_address"],

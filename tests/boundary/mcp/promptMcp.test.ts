@@ -184,6 +184,17 @@ function registerPromptRenderingContracts(): void {
     expect(content.text).toContain(
       "input_path=target_path directly; no open_binary call is needed",
     );
+    for (const route of [
+      "inspect_android_package with path=target_path directly",
+      "caller-supplied JADX MCP JAR and JDK",
+      "inspect_managed_artifact with path=target_path directly",
+      "inspection does not load or execute the assembly",
+      "open_bundle_resources with path=target_path establishes a resource-only session",
+      "inspect_artifact takes no path",
+      "a filename suffix alone does not establish format",
+      "advertised tools and host/provider limitations",
+    ])
+      expect(content.text).toContain(route);
   });
 
   it("renders every workflow without executing analysis or accepting extra context", async () => {
