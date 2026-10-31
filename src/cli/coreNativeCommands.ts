@@ -464,7 +464,8 @@ const registerAnnotationCommand = (
   runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
 ): void => {
   cli.command(CLI_COMMANDS.annotateNativeFunction, {
-    description: "Edit function annotations and return refreshed analysis",
+    description:
+      "Edit function annotations and return refreshed analysis. Ghidra discards CLI edits when the command exits, so the returned dossier is the edited observation; use one MCP session for dependent edits and reads, where edits last until close.",
     args: z.object({
       path: localPathStringSchema.describe("Local executable path"),
       procedure: z
