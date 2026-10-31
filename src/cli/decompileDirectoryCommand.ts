@@ -6,6 +6,7 @@ import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import type { Logger } from "pino";
 import {
+  cliIntegerArgument,
   directAnalysisOptionsFromCli,
   nativeOpenOptionFields,
 } from "./options.js";
@@ -64,10 +65,7 @@ export const registerDecompileDirectoryCommand = (
         .min(1)
         .optional()
         .describe("Inclusive upper bound, 0xoffset or space:0xoffset"),
-      limit: z
-        .number()
-        .int()
-        .min(1)
+      limit: cliIntegerArgument(1)
         .optional()
         .describe(
           "Maximum functions to attempt after skipping verified files and recorded external functions",

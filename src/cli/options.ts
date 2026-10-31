@@ -14,11 +14,13 @@ import type { AnalysisProviderSelector } from "../domain/providerSelection.js";
 import type { Logger } from "pino";
 
 /** Parse decimal integer tokens before Number coercion can erase their syntax. */
-export const cliIntegerArgument = (min: number) =>
-  z
+export const cliIntegerArgument = (min: number, max?: number) => {
+  const parsed = z.coerce.number<string>().safe().min(min);
+  return z
     .string()
     .regex(/^[0-9]+$/u, "Expected a decimal integer")
-    .pipe(z.coerce.number<string>().safe().min(min));
+    .pipe(max === undefined ? parsed : parsed.max(max));
+};
 
 export const providerSelectionOption = analysisProviderSelectorSchema
   .optional()

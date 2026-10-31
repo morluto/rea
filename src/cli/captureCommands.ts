@@ -1,4 +1,5 @@
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
+import { cliIntegerArgument } from "./options.js";
 import { inspectPacketFieldsInputSchema } from "../domain/captures/packetFields.js";
 import { z } from "incur";
 import type { PacketCaptureService } from "../application/captures/PacketCaptureService.js";
@@ -31,11 +32,7 @@ export const registerCaptureCommands = (
     options: z
       .object({
         ...inspectPacketFieldsInputSchema.shape,
-        limit: z
-          .number()
-          .int()
-          .positive()
-          .max(Number.MAX_SAFE_INTEGER)
+        limit: cliIntegerArgument(1)
           .optional()
           .describe("Maximum matching records to return; defaults to 50"),
         all: z

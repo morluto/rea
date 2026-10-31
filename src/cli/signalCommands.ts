@@ -1,4 +1,5 @@
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
+import { cliIntegerArgument } from "./options.js";
 import { inspectSignalDecodersInputSchema } from "../domain/signals/signalDecoders.js";
 import { z } from "incur";
 import type { SignalRecordingService } from "../application/signals/SignalRecordingService.js";
@@ -31,11 +32,7 @@ export const registerSignalCommands = (
     options: z
       .object({
         ...inspectSignalDecodersInputSchema.shape,
-        limit: z
-          .number()
-          .int()
-          .positive()
-          .max(Number.MAX_SAFE_INTEGER)
+        limit: cliIntegerArgument(1)
           .optional()
           .describe(
             "Maximum matching decoders or help lines to return; defaults to 50",

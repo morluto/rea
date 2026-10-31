@@ -1,4 +1,5 @@
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
+import { cliIntegerArgument } from "./options.js";
 import { z } from "incur";
 
 import { FridaInstrumentationService } from "../application/frida/FridaInstrumentationService.js";
@@ -173,11 +174,7 @@ export const registerFridaCommands = (
           .array(z.string())
           .optional()
           .describe("Arguments passed to a spawned target"),
-        durationMs: z
-          .number()
-          .int()
-          .min(0)
-          .max(60_000)
+        durationMs: cliIntegerArgument(0, 60_000)
           .default(1_000)
           .describe("Instrumentation duration in milliseconds"),
       })

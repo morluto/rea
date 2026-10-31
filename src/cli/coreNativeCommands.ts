@@ -21,6 +21,7 @@ import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import type { Logger } from "pino";
 import {
+  cliIntegerArgument,
   directAnalysisOptionsFromCli,
   nativeOpenOptionFields,
   snapshotSelectionOption,
@@ -59,11 +60,7 @@ export const registerCoreNativeCommands = (
         .string()
         .optional()
         .describe("Continuation from the same query's next_cursor"),
-      limit: z
-        .number()
-        .int()
-        .min(1)
-        .max(MAX_BYTE_SEARCH_MATCHES)
+      limit: cliIntegerArgument(1, MAX_BYTE_SEARCH_MATCHES)
         .default(100)
         .describe("Maximum matches on this page"),
       ...nativeOpenOptionFields,
@@ -140,10 +137,7 @@ export const registerCoreNativeCommands = (
       address: z.string().describe("Exact provider memory address"),
     }),
     options: z.object({
-      length: z
-        .number()
-        .int()
-        .min(1)
+      length: cliIntegerArgument(1)
         .default(256)
         .describe("Requested byte count"),
       ...nativeOpenOptionFields,

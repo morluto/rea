@@ -9,7 +9,11 @@ import { withCommandCancellation } from "./commandCancellation.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
-import { inspectSqliteDatabaseInputSchema } from "../domain/sqlite/sqliteDatabase.js";
+import {
+  DEFAULT_SQLITE_WORKER_TIMEOUT_MS,
+  MAX_SQLITE_WORKER_TIMEOUT_MS,
+} from "../domain/sqlite/sqliteDatabase.js";
+import { cliIntegerArgument } from "./options.js";
 
 /** Resolve an operator-selected SQLite snapshot through the shared inspection workflow. */
 export const registerSqliteCommands = (
@@ -25,7 +29,11 @@ export const registerSqliteCommands = (
       path: localPathStringSchema.describe("Local SQLite database snapshot"),
     }),
     options: z.object({
-      workerTimeoutMs: inspectSqliteDatabaseInputSchema.shape.worker_timeout_ms,
+      workerTimeoutMs: cliIntegerArgument(1, MAX_SQLITE_WORKER_TIMEOUT_MS)
+        .optional()
+        .describe(
+          `Deadline in milliseconds for worker startup, queries and reply writing (default ${String(DEFAULT_SQLITE_WORKER_TIMEOUT_MS)}), not snapshot acquisition or the whole call. Allow client headroom for acquisition, reply reads, cleanup and delivery. Fixed byte/heap limits do not change.`,
+        ),
       table: z
         .string()
         .optional()
@@ -42,10 +50,7 @@ export const registerSqliteCommands = (
         .describe(
           "Compact inventory by default, or selected-table details when table is supplied; database requests full schema",
         ),
-      rowLimit: z
-        .number()
-        .int()
-        .min(1)
+      rowLimit: cliIntegerArgument(1)
         .optional()
         .describe(
           "Positive safe integer row count; default 20; requires table",
