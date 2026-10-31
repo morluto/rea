@@ -36,6 +36,8 @@ The MCP tool `project_harmony_application_graph` takes the same
 
 - exact component paths, artifact IDs, and hashes (manifests, Ark bytecode,
   resources, native libraries, JavaScript, signing)
+- `unclassified_components` with the same paths and content identities for
+  authenticated files outside those categories and the App Pack child list
 - a packaging-model hint: Stage is claimed only from an exactly cased `module.json` entry
   outside a classified resource path, FA only from `config.json` outside a
   classified resource path, otherwise `unknown`
@@ -54,6 +56,24 @@ trees and symlinks retain their identities in the source inventory without
 being classified as code files. Ark and JavaScript runtime hints summarize the
 classified bytecode and JavaScript lists; supported source extensions share the
 same classification rule as their component rows.
+
+`unclassified_components` preserves files such as `pkgContextInfo.json`,
+`.pages.info`, a HarmonyOS `.har` shared library, and a non-certificate
+`META-INF` entry without interpreting their contents. The `.har` suffix also
+names HTTP Archive JSON, so identifying one needs verified ZIP bytes rather than
+a path rule. Different paths sharing the same bytes remain separate entries. App
+Pack children of an App Pack root are already reported in `app_pack_children`,
+so they are not repeated as unclassified files. A nested `.hap` or `.hsp` member
+of a HAP or HSP root is disclosed in `unclassified_components` instead, because
+child-package inventory is not recursive. Unreadable or encrypted content remains
+in `unavailable_components` with unknown identity instead.
+
+`coverage.status: "complete-within-inventory"` describes the authenticated
+source inventory and bounded bridge projection, not semantic understanding of
+every file. Unclassified files do not make a complete inventory partial; missing
+inventory pages, source coverage limits, unavailable content and bridge limits
+still qualify coverage independently. An empty unclassified list on a partial
+inventory does not establish that the whole package has no unclassified files.
 
 Every claim is path-presence only. Manifest semantics (module identity,
 abilities, entry points, permissions, dependencies), Ark bytecode contents and

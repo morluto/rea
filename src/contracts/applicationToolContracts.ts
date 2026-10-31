@@ -364,7 +364,7 @@ export const APPLICATION_TOOL_CONTRACTS = [
     name: "project_harmony_application_graph",
     ...toolContractMetadata("project_harmony_application_graph"),
     description:
-      "Project authenticated HarmonyOS HAP, HSP, or App Pack inventory Evidence into an execution-free application inventory. Reports packaging-model hints (Stage module.json versus FA config.json), exact component paths and hashes (manifests, Ark bytecode, resources, native libraries, JavaScript, signing), App Pack child packages, runtime-family hints, and path-based N-API bridge hypotheses without decoding Ark bytecode, parsing manifest semantics, or claiming observed runtime calls.",
+      "Project authenticated HarmonyOS HAP, HSP, or App Pack inventory Evidence into an execution-free application inventory. Reports packaging-model hints (Stage module.json versus FA config.json), exact component paths and hashes (manifests, Ark bytecode, resources, native libraries, JavaScript, signing), authenticated files outside those categories in unclassified_components, App Pack child packages, runtime-family hints, and path-based N-API bridge hypotheses without decoding Ark bytecode, parsing manifest semantics, or claiming observed runtime calls.",
     kind: "application",
     inputSchema: applicationInventoryProjectionInputSchema,
     outputSchema: evidenceResultOf(harmonyApplicationProjectionResultSchema),

@@ -6,6 +6,7 @@ import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
+import { fragmentInventoryEvidence } from "../../../fixtures/artifactEvidence.js";
 import {
   createNonApplicationZipInventory,
   inventoryApplicationPackage,
@@ -18,6 +19,7 @@ import { projectHarmonyApplicationEvidence } from "../../../../src/application/h
 import { createDirectAnalysis } from "../../../../src/composition/directAnalysis.js";
 import { harmonyApplicationProjectionResultSchema } from "../../../../src/domain/harmony/harmonyApplication.js";
 import { artifactInventoryResultSchema } from "../../../../src/domain/artifactGraph.js";
+import { createEvidence } from "../../../../src/domain/evidence.js";
 import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
 import {
   ZIP_PACKAGE_FORMATS,
@@ -36,6 +38,62 @@ const stageHapEntries = [
   { path: "assets/web/index.js", content: "bridge();" },
   { path: "META-INF/FIXTURE.p7b", content: "opaque signing" },
 ] as const;
+
+describe("HarmonyOS unclassified inventory", () => {
+  it("retains distinct unclassified paths sharing content with a classified file", async () => {
+    const path = await writeApplicationZip(
+      "rea-harmony-unclassified-",
+      "Fixture.hap",
+      [
+        { path: "module.json", content: "{}" },
+        { path: "pkgContextInfo.json", content: "{}" },
+        { path: ".pages.info", content: "{}" },
+        { path: "metadata-copy.json", content: "{}" },
+        { path: "resources/base/bridge.js", content: "bridge();" },
+      ],
+    );
+    const inventory = await inventoryApplicationPackage(path);
+    const original = JSON.stringify(inventory);
+    const projection = requireDeterministicProjection(
+      projectHarmonyApplicationEvidence,
+      inventory,
+      harmonyApplicationProjectionResultSchema,
+    );
+    expect(projection.unclassified_components).toEqual([
+      expect.objectContaining({
+        path: ".pages.info",
+        sha256:
+          "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      }),
+      expect.objectContaining({ path: "metadata-copy.json" }),
+      expect.objectContaining({ path: "pkgContextInfo.json" }),
+    ]);
+    expect(projection.components.resources.map(({ path }) => path)).toEqual([
+      "resources/base/bridge.js",
+    ]);
+    expect(projection.components.javascript.map(({ path }) => path)).toEqual([
+      "resources/base/bridge.js",
+    ]);
+    expect(projection.coverage).toEqual({
+      status: "complete-within-inventory",
+      inventory_complete: true,
+    });
+    const pages = fragmentInventoryEvidence(inventory, 3);
+    const assembled = requireSuccessfulProjection(
+      projectHarmonyApplicationEvidence({
+        inventory_evidence: [...pages].reverse(),
+      }),
+    );
+    const fromPages = harmonyApplicationProjectionResultSchema.parse(
+      assembled.normalized_result,
+    );
+    expect(fromPages.unclassified_components).toEqual(
+      projection.unclassified_components,
+    );
+    expect(fromPages.coverage).toEqual(projection.coverage);
+    expect(JSON.stringify(inventory)).toBe(original);
+  });
+});
 
 it("retains inventoried certificate-block suffixes without claiming verified signatures", async () => {
   const names = ["CERT.RSA", "CERT.DSA", "CERT.EC", "FIXTURE.p7b"];
@@ -147,6 +205,7 @@ describe("HarmonyOS application projection", () => {
       }),
     ]);
     expect(left.app_pack_children).toEqual([]);
+    expect(left.unclassified_components).toEqual([]);
     expect(JSON.stringify(left)).not.toContain("opaque signing");
     expect(left.limitations).toContain(
       "Manifest, module, resource, and signing semantics require a dedicated HarmonyOS provider; this projection reports exact inventory paths and hashes only.",
@@ -189,6 +248,7 @@ describe("HarmonyOS application projection", () => {
     expect(projection.app_pack_children.map(({ path }) => path).sort()).toEqual(
       ["entry.hap", "feature.hsp"],
     );
+    expect(projection.unclassified_components).toEqual([]);
     expect(projection.packaging_model).toBe("unknown");
     expect(projection.limitations).toContain(
       "App Pack child packages are listed by inventory path only; their contents are not recursively inventoried by this projection.",
@@ -312,6 +372,76 @@ describe("HarmonyOS packaging boundaries", () => {
   });
 });
 
+describe("HarmonyOS partial inventory classification", () => {
+  it("does not claim complete classification from a missing inventory occurrence", async () => {
+    const path = await writeApplicationZip(
+      "rea-harmony-partial-",
+      "Fixture.hap",
+      [
+        { path: "module.json", content: "{}" },
+        { path: ".pages.info", content: "page metadata" },
+      ],
+    );
+    const inventory = await inventoryApplicationPackage(path);
+    if (inventory.subject === null) throw new Error("Missing fixture subject");
+    const result = artifactInventoryResultSchema.parse(
+      inventory.normalized_result,
+    );
+    const partial = createEvidence(
+      {
+        path: inventory.subject.local_path,
+        sha256: inventory.subject.digest.sha256,
+        format: inventory.subject.format,
+      },
+      inventory.provider,
+      {
+        operation: inventory.operation,
+        parameters: inventory.parameters,
+        result: {
+          ...result,
+          occurrences: result.occurrences.filter(
+            ({ logical_path }) => logical_path !== ".pages.info",
+          ),
+        },
+        confidence: "derived",
+        authority: inventory.authority,
+      },
+    );
+    const projection = requireDeterministicProjection(
+      projectHarmonyApplicationEvidence,
+      partial,
+      harmonyApplicationProjectionResultSchema,
+    );
+    expect(projection.unclassified_components).toEqual([]);
+    // Coverage is the structured fact a partial inventory reports, and the two
+    // independent causes of a partial projection stay empty, so `partial` is
+    // attributable to the missing occurrence alone. The prose limitation that
+    // accompanies it is explanatory wording, so it stays in review rather than
+    // in a substring assertion.
+    expect(projection.coverage).toEqual({
+      status: "partial",
+      inventory_complete: false,
+    });
+    expect(projection.unavailable_components).toEqual([]);
+    expect(projection.bridge_candidate_coverage).toEqual({
+      status: "complete",
+      total_candidates: 0,
+      emitted_candidates: 0,
+      omitted_candidates: 0,
+    });
+    const tampered = {
+      ...partial,
+      normalized_result: inventory.normalized_result,
+    };
+    expect(
+      projectHarmonyApplicationEvidence({ inventory_evidence: [tampered] }),
+    ).toMatchObject({
+      ok: false,
+      error: { _tag: "EvidenceIntegrityError" },
+    });
+  });
+});
+
 describe("HarmonyOS inventory coverage", () => {
   it("retains complete traversal and case-collision limits in the application projection", async () => {
     const path = await writeApplicationZip(
@@ -375,6 +505,9 @@ describe("HarmonyOS inventory coverage", () => {
     await writer.add("ets/modules.abc", new TextReader("opaque bytecode"), {
       password: "fixture-only",
     });
+    await writer.add("pkgContextInfo.json", new TextReader("{}"), {
+      password: "fixture-only",
+    });
     await writeFile(path, await writer.close());
     const evidence = await inventoryApplicationPackage(path);
     const projection = requireDeterministicProjection(
@@ -383,9 +516,16 @@ describe("HarmonyOS inventory coverage", () => {
       harmonyApplicationProjectionResultSchema,
     );
     expect(projection.components.bytecode).toEqual([]);
+    expect(projection.unclassified_components).toEqual([]);
     expect(projection.unavailable_components).toEqual([
       expect.objectContaining({
         path: "ets/modules.abc",
+        artifact_id: null,
+        sha256: null,
+        encrypted: true,
+      }),
+      expect.objectContaining({
+        path: "pkgContextInfo.json",
         artifact_id: null,
         sha256: null,
         encrypted: true,
@@ -421,6 +561,11 @@ describe("HarmonyOS manifest path rules", () => {
     );
     expect(projection.packaging_model).toBe("unknown");
     expect(projection.components.manifests).toEqual([]);
+    // Exact-case manifest names only, so these members belong to no manifest
+    // category and are disclosed as unclassified rather than silently dropped.
+    expect(
+      projection.unclassified_components.map(({ path }) => path).sort(),
+    ).toEqual(["CONFIG.JSON", "MODULE.JSON", "PACK.INFO"]);
   });
 
   it.each([
