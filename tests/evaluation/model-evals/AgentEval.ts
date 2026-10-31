@@ -1,33 +1,37 @@
 import {
+  deliveredEvidence,
   evaluateKnownAnswers,
-  parseCodexToolCall,
   type FixtureClaimExpectation,
   type KnownAnswerAssessment,
-  type ParsedCodexToolCall,
 } from "./KnownAnswerEvaluation.js";
+import type { AgentToolCall, AgentTranscript } from "./AgentTranscript.js";
 import { canonicalJson } from "../../../src/domain/comparisonSemantics.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
 
-/** One REA MCP invocation observed in a Codex JSONL transcript. */
-interface CodexMcpCall {
+/** One REA MCP invocation measured in an agent transcript. */
+interface AgentMcpCall {
   readonly id: string | null;
   readonly server: string | null;
   readonly tool: string;
   readonly arguments: unknown;
   readonly evidenceIds: readonly string[];
+  /** The client reported a completed result; an unreported result is unknown, not success. */
+  readonly delivered: boolean;
   readonly error: boolean;
   readonly errorCode: string | null;
 }
 
 /** Transcript measurements, text heuristics, and optional closed fixture-claim assessment. */
-export interface CodexAgentMetrics {
+export interface AgentMetrics {
   readonly naturalUse: boolean;
   readonly correctFirstTool: boolean;
   readonly firstTool: string | null;
-  readonly reaCalls: readonly CodexMcpCall[];
+  readonly reaCalls: readonly AgentMcpCall[];
   readonly repeatedCallCount: number;
   readonly inputValidationFailureCount: number;
   readonly requiredToolSubsequenceMet: boolean;
+  /** Terminal failures the client reported for the run itself; any one fails the gate. */
+  readonly clientFailures: readonly string[];
   readonly inputTokens: number;
   readonly cachedInputTokens: number;
   readonly outputTokens: number;
@@ -46,96 +50,44 @@ export interface CodexAgentMetrics {
   readonly factualAssessment: KnownAnswerAssessment;
 }
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
+const measuredCall = (call: AgentToolCall): AgentMcpCall => ({
+  id: call.id,
+  server: call.server,
+  tool: call.tool,
+  arguments: call.arguments,
+  evidenceIds: deliveredEvidence(call).map(({ evidence_id }) => evidence_id),
+  delivered: call.delivered,
+  error: call.error,
+  errorCode: call.errorCode,
+});
 
-const record = (value: unknown): Record<string, unknown> | undefined =>
-  isRecord(value) ? value : undefined;
-
-const textValue = (value: unknown): string | undefined =>
-  typeof value === "string" && value.length > 0 ? value : undefined;
-
-const numberValue = (value: unknown): number =>
-  typeof value === "number" && Number.isFinite(value) ? value : 0;
-
-const callFromParsed = (
-  parsed: ParsedCodexToolCall | undefined,
-): CodexMcpCall | undefined => {
-  if (parsed === undefined) return undefined;
-  return {
-    id: parsed.id,
-    server: parsed.server,
-    tool: parsed.tool,
-    arguments: parsed.arguments,
-    evidenceIds: parsed.evidence.map(({ evidence_id }) => evidence_id),
-    error: parsed.error,
-    errorCode: parsed.errorCode,
-  };
-};
-
-const agentTextFromItem = (value: unknown): string | undefined => {
-  const item = record(value);
-  if (item?.type !== "agent_message") return undefined;
-  const direct = textValue(item.text) ?? textValue(item.message);
-  if (direct !== undefined) return direct;
-  if (!Array.isArray(item.content)) return undefined;
-  const parts = item.content.flatMap((part) => {
-    const object = record(part);
-    const text = object === undefined ? undefined : textValue(object.text);
-    return text === undefined ? [] : [text];
-  });
-  return parts.length === 0 ? undefined : parts.join("\n");
-};
-
-interface EvaluationState {
-  readonly calls: CodexMcpCall[];
-  readonly seenCallIds: Set<string>;
-  readonly finalMessages: string[];
-  inputTokens: number;
-  cachedInputTokens: number;
-  outputTokens: number;
-}
-
-const consumeEvent = (
-  state: EvaluationState,
-  value: unknown,
-  parsedCall: ParsedCodexToolCall | undefined,
-): void => {
-  const event = record(value);
-  if (event === undefined) return;
-  const completedItem =
-    event.type === "item.completed" ? event.item : undefined;
-  const call = callFromParsed(parsedCall);
-  if (call !== undefined) {
-    const identity =
-      call.id ??
-      `${call.server ?? ""}:${call.tool}:${canonicalJson(call.arguments)}`;
-    if (!state.seenCallIds.has(identity)) {
-      state.seenCallIds.add(identity);
-      state.calls.push(call);
-    }
+/** Identical calls beyond the first, with status reads keyed by target lifecycle. */
+const countRepeatedCalls = (calls: readonly AgentMcpCall[]): number => {
+  const signatures = new Map<string, number>();
+  let targetRevision = 0;
+  for (const call of calls) {
+    // A status read before and after a successful target lifecycle change is
+    // useful verification, not a duplicate analysis or unchanged failed retry.
+    const context =
+      call.tool === "binary_session" ? `${String(targetRevision)}:` : "";
+    const signature = `${context}${call.tool}:${canonicalJson(call.arguments)}`;
+    signatures.set(signature, (signatures.get(signature) ?? 0) + 1);
+    if (
+      call.delivered &&
+      !call.error &&
+      (call.tool === "open_binary" || call.tool === "close_binary")
+    )
+      targetRevision += 1;
   }
-  const message = agentTextFromItem(completedItem);
-  if (message !== undefined) state.finalMessages.push(message);
-  if (event.type !== "turn.completed") return;
-  const usage = record(event.usage);
-  state.inputTokens = Math.max(
-    state.inputTokens,
-    numberValue(usage?.input_tokens),
-  );
-  state.cachedInputTokens = Math.max(
-    state.cachedInputTokens,
-    numberValue(usage?.cached_input_tokens),
-  );
-  state.outputTokens = Math.max(
-    state.outputTokens,
-    numberValue(usage?.output_tokens),
+  return [...signatures.values()].reduce(
+    (total, count) => total + Math.max(0, count - 1),
+    0,
   );
 };
 
 /** Measure agent routing, repetition, model usage, and explicitly limited answer heuristics. */
-export const evaluateCodexEvents = (
-  events: readonly unknown[],
+export const evaluateAgentTranscript = (
+  transcript: AgentTranscript,
   expectedFirstTool: string | null,
   options: {
     readonly requireEvidence?: boolean;
@@ -144,42 +96,11 @@ export const evaluateCodexEvents = (
     readonly forbidInputValidationFailures?: boolean;
     readonly fixtureClaims?: readonly FixtureClaimExpectation[];
   } = {},
-): CodexAgentMetrics => {
-  const state: EvaluationState = {
-    calls: [],
-    seenCallIds: new Set(),
-    finalMessages: [],
-    inputTokens: 0,
-    cachedInputTokens: 0,
-    outputTokens: 0,
-  };
-  const parsedCalls = events.map(parseCodexToolCall);
-  events.forEach((event, index) =>
-    consumeEvent(state, event, parsedCalls[index]),
-  );
-
-  const reaCalls = state.calls.filter(
-    ({ server }) => server?.toLowerCase() === "rea",
-  );
-  const signatures = new Map<string, number>();
-  let targetRevision = 0;
-  for (const call of reaCalls) {
-    // A status read before and after a successful target lifecycle change is
-    // useful verification, not a duplicate analysis or unchanged failed retry.
-    const context =
-      call.tool === "binary_session" ? `${String(targetRevision)}:` : "";
-    const signature = `${context}${call.tool}:${canonicalJson(call.arguments)}`;
-    signatures.set(signature, (signatures.get(signature) ?? 0) + 1);
-    if (
-      !call.error &&
-      (call.tool === "open_binary" || call.tool === "close_binary")
-    )
-      targetRevision += 1;
-  }
-  const repeatedCallCount = [...signatures.values()].reduce(
-    (total, count) => total + Math.max(0, count - 1),
-    0,
-  );
+): AgentMetrics => {
+  const reaCalls = transcript.calls
+    .filter(({ server }) => server?.toLowerCase() === "rea")
+    .map(measuredCall);
+  const repeatedCallCount = countRepeatedCalls(reaCalls);
   const inputValidationFailureCount = reaCalls.filter(
     (call) =>
       call.errorCode === "invalid_request" ||
@@ -189,10 +110,10 @@ export const evaluateCodexEvents = (
         )?.inputSchema.safeParse(call.arguments).success === false),
   ).length;
   const requiredToolSubsequenceMet = containsOrderedSubsequence(
-    reaCalls.filter(({ error }) => !error).map(({ tool }) => tool),
+    completedTools(reaCalls),
     options.requiredToolSubsequence ?? [],
   );
-  const finalMessage = state.finalMessages.at(-1) ?? "";
+  const { finalMessage, clientFailures } = transcript;
   const evidenceIds = [
     ...new Set(reaCalls.flatMap(({ evidenceIds: ids }) => ids)),
   ];
@@ -211,7 +132,7 @@ export const evaluateCodexEvents = (
       finalMessage,
     );
   const factualAssessment = evaluateKnownAnswers(
-    parsedCalls,
+    transcript.calls,
     finalMessage,
     options.fixtureClaims,
   );
@@ -223,9 +144,8 @@ export const evaluateCodexEvents = (
     repeatedCallCount,
     inputValidationFailureCount,
     requiredToolSubsequenceMet,
-    inputTokens: state.inputTokens,
-    cachedInputTokens: state.cachedInputTokens,
-    outputTokens: state.outputTokens,
+    clientFailures,
+    ...transcript.usage,
     finalMessage,
     evidenceIds,
     finalCitesEvidence,
@@ -235,6 +155,7 @@ export const evaluateCodexEvents = (
       epistemicCuePresent &&
       answerTermCoverageMet &&
       requiredToolSubsequenceMet &&
+      clientFailures.length === 0 &&
       (options.forbidInputValidationFailures !== true ||
         inputValidationFailureCount === 0) &&
       (options.requireEvidence !== true || finalCitesEvidence),
@@ -243,6 +164,12 @@ export const evaluateCodexEvents = (
     factualAssessment,
   };
 };
+
+/** Tools whose results were delivered without error, in call order. */
+const completedTools = (calls: readonly AgentMcpCall[]): string[] =>
+  calls
+    .filter(({ delivered, error }) => delivered && !error)
+    .map(({ tool }) => tool);
 
 const containsOrderedSubsequence = (
   values: readonly string[],

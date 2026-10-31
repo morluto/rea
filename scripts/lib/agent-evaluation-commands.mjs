@@ -11,12 +11,14 @@ import { ArtifactResourceScope } from "../../dist/artifacts/ArtifactResourceScop
 import { AnalysisCleanupLease } from "../../dist/artifacts/AnalysisCleanupLease.js";
 import { retainOwnedCommandCleanup } from "../../dist/providers/OwnedCommandCleanup.js";
 
-/** Keep command ownership through failure and join cleanup before removing a run. */
+/**
+ * Keep command ownership through failure and join cleanup before removing a run.
+ * `launch` turns client arguments into the owned spawn; the selected client's
+ * arguments and environment are decided by the caller per invocation.
+ */
 export function createAgentEvaluationCommands({
-  codex,
+  launch,
   evaluationRoot,
-  evaluationEnvironment,
-  optionalModel,
   timeoutMs,
   repositoryRoot,
 }) {
@@ -74,28 +76,9 @@ export function createAgentEvaluationCommands({
   }
 
   return {
-    async runCodex(prompt, approvedTools) {
-      const arguments_ = [
-        "--no-daemon",
-        "exec",
-        "--ephemeral",
-        "--skip-git-repo-check",
-        "--sandbox",
-        "read-only",
-        "--json",
-        "--color",
-        "never",
-        "-C",
-        evaluationRoot,
-        "-c",
-        'approval_policy="never"',
-        ...approvedTools.flatMap((name) => [
-          "-c",
-          `mcp_servers.rea.tools.${name}.approval_mode="approve"`,
-        ]),
-        ...(optionalModel === undefined ? [] : ["--model", optionalModel]),
-        prompt,
-      ];
+    /** Run one client scenario; its JSON event lines stream to the evaluator. */
+    async runClient(clientArguments, environment) {
+      const { command, arguments: arguments_ } = launch(clientArguments);
       const events = [];
       const nonJson = [];
       let nonJsonBytes = 0;
@@ -126,12 +109,12 @@ export function createAgentEvaluationCommands({
       });
       try {
         const result = await execute(
-          codex,
+          command,
           arguments_,
           evaluationRoot,
-          evaluationEnvironment,
+          environment,
           { timeoutMs, stdout },
-          `Codex evaluation timed out after ${String(timeoutMs)}ms`,
+          `${command} evaluation timed out after ${String(timeoutMs)}ms`,
         );
         await linesClosed;
         if (lineError !== undefined) throw lineError;
@@ -167,12 +150,13 @@ export function createAgentEvaluationCommands({
         );
     },
 
-    async readCommandVersion(command) {
+    async readCommandVersion(environment = process.env) {
+      const { command, arguments: arguments_ } = launch(["--version"]);
       const result = await execute(
         command,
-        ["--version"],
+        arguments_,
         repositoryRoot,
-        process.env,
+        environment,
         { timeoutMs: 10_000, diagnosticBytes: 8192 },
         `${command} --version timed out`,
       );

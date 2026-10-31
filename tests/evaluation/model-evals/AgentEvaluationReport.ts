@@ -14,6 +14,8 @@ export interface AgentEvaluationGateResult {
   readonly repeatedCallCount: number;
   readonly inputValidationFailureCount: number;
   readonly requiredToolSubsequenceMet: boolean;
+  /** Terminal failures the client reported, such as refused permission requests. */
+  readonly clientFailures: readonly string[];
   readonly inputTokens: number;
   readonly answerHeuristicsMet: boolean;
   readonly epistemicCuePresent: boolean;
@@ -32,6 +34,7 @@ export const agentEvaluationPassed = (
   result.repeatedCallCount === 0 &&
   result.inputValidationFailureCount === 0 &&
   result.requiredToolSubsequenceMet &&
+  result.clientFailures.length === 0 &&
   result.scenarioOutcomePassed !== false &&
   result.inputTokens > 0 &&
   (result.expectedFirstTool === null

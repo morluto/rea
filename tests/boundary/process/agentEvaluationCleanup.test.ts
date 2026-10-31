@@ -50,7 +50,7 @@ const entries = readdirSync(parent);
 if (entries.length !== 1) throw new Error("Expected exactly one owned run");
 const root = join(parent, entries[0]);
 const codex = join(root, "codex");
-for (const child of ["codex", "account", "targets"]) mkdirSync(join(root, child));
+for (const child of ["codex", "account", "targets"]) mkdirSync(join(root, child), { recursive: true });
 writeFileSync(join(codex, "auth.json"), "inert synthetic fixture");
 writeFileSync(${JSON.stringify(receipt)}, JSON.stringify({ root, codex }));
 if (${String(denied)}) chmodSync(codex, 0o500);

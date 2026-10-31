@@ -74,12 +74,13 @@ const { withVerifierCleanup } = await import(${JSON.stringify(
       )});
 await prepareOwnedCommand();
 const root = ${JSON.stringify(root)}, fixture = ${JSON.stringify(fixture)};
-const commands = createAgentEvaluationCommands({ codex: fixture, evaluationRoot: root,
-  evaluationEnvironment: process.env, timeoutMs: 1000, repositoryRoot: root });
+const commands = createAgentEvaluationCommands({
+  launch: (arguments_) => ({ command: fixture, arguments: [...arguments_] }),
+  evaluationRoot: root, timeoutMs: 1000, repositoryRoot: root });
 await withVerifierCleanup(async () => {
-for (const name of ["runCodex", "runProcess", "readCommandVersion"]) {
-  await assert.rejects(() => name === "runCodex" ? commands.runCodex("fixture", []) :
-    name === "runProcess" ? commands.runProcess(fixture, [], root, 1000) : commands.readCommandVersion(fixture), error => {
+for (const name of ["runClient", "runProcess", "readCommandVersion"]) {
+  await assert.rejects(() => name === "runClient" ? commands.runClient(["--no-daemon", "fixture"], process.env) :
+    name === "runProcess" ? commands.runProcess(fixture, [], root, 1000) : commands.readCommandVersion(), error => {
       assert.match(error.message, /timed out/);
       assert.ok(error.cause instanceof OwnedCommandFailure);
       assert.equal(error.cause.reason, "timeout");
@@ -93,14 +94,14 @@ for (const name of ["runCodex", "runProcess", "readCommandVersion"]) {
   assert.equal(child.stderr.destroyed, true);
 }
 process.env.FIXTURE_MODE = "success";
-const result = await commands.runCodex("fixture", ["open_binary"]);
+const result = await commands.runClient(["--no-daemon", "fixture"], process.env);
 assert.deepEqual(result, { events: [{ type: "fixture", text: "你好" }], exitCode: 0, stderr: "" });
 await commands.runProcess(fixture, [], root, 2000);
-assert.equal(await commands.readCommandVersion(fixture), "fixture 1.2");
+assert.equal(await commands.readCommandVersion(), "fixture 1.2");
 process.env.FIXTURE_MODE = "failure";
-assert.equal((await commands.runCodex("fixture", [])).exitCode, 7);
+assert.equal((await commands.runClient(["--no-daemon", "fixture"], process.env)).exitCode, 7);
 await assert.rejects(() => commands.runProcess(fixture, [], root, 2000), /failed with 7: synthetic command failure/);
-await assert.rejects(() => commands.readCommandVersion(fixture), /--version failed with 7: synthetic command failure/);
+await assert.rejects(() => commands.readCommandVersion(), /--version failed with 7: synthetic command failure/);
 process.env.FIXTURE_MODE = "overflow";
 await assert.rejects(() => commands.runProcess(fixture, [], root, 2000), error => {
   assert.ok(error instanceof OwnedCommandFailure);

@@ -1,6 +1,6 @@
-import { visit } from "jsonc-parser";
 import { z } from "zod";
 
+import { parseTranscriptJson, type AgentToolCall } from "./AgentTranscript.js";
 import {
   parseEvidence,
   evidenceAuthoritySchema,
@@ -123,153 +123,10 @@ const sameJson = (left: unknown, right: unknown): boolean => {
   );
 };
 
-interface TranscriptJson {
-  readonly value: unknown;
-  readonly hasDuplicateMembers: boolean;
-}
-
-const parseTranscriptJson = (text: string): TranscriptJson | undefined => {
-  const objects: Set<string>[] = [];
-  let invalid = false;
-  let hasDuplicateMembers = false;
-  try {
-    visit(
-      text,
-      {
-        onObjectBegin: () => {
-          objects.push(new Set());
-        },
-        onObjectProperty: (key) => {
-          const keys = objects.at(-1);
-          if (keys === undefined) invalid = true;
-          else if (keys.has(key)) hasDuplicateMembers = true;
-          keys?.add(key);
-        },
-        onObjectEnd: () => {
-          objects.pop();
-        },
-        onError: () => {
-          invalid = true;
-        },
-      },
-      {
-        disallowComments: true,
-        allowTrailingComma: false,
-        allowEmptyContent: false,
-      },
-    );
-    if (invalid) return undefined;
-    // Keep ambiguity separate from syntax: a failure can be observed without
-    // choosing one contradictory code or authenticating ambiguous Evidence.
-    return { value: JSON.parse(text) as unknown, hasDuplicateMembers };
-  } catch (error) {
-    // Syntax and nesting failures are malformed transcript input, not an evaluation crash.
-    if (error instanceof SyntaxError || error instanceof RangeError)
-      return undefined;
-    throw error;
-  }
-};
-
 interface DeliveredEvidence {
   readonly records: Map<string, Evidence>;
   readonly conflicts: Set<string>;
 }
-
-/** One completed tool call, with aliases normalized and successful Evidence authenticated. */
-export interface ParsedCodexToolCall {
-  readonly error: boolean;
-  readonly errorCode: string | null;
-  readonly id: string | null;
-  readonly server: string | null;
-  readonly tool: string;
-  readonly arguments: JsonValue;
-  readonly evidence: readonly Evidence[];
-}
-
-const consistentAliases = (
-  value: Record<string, unknown>,
-  left: string,
-  right: string,
-): boolean =>
-  value[left] === undefined ||
-  value[right] === undefined ||
-  value[left] === value[right];
-
-const consistentJsonFields = (
-  value: Record<string, unknown>,
-  left: string,
-  right: string,
-): boolean =>
-  value[left] === undefined ||
-  value[right] === undefined ||
-  sameJson(value[left], value[right]);
-
-const consistentJsonAliases = (
-  value: Record<string, unknown>,
-  left: string,
-  right: string,
-): boolean =>
-  value[left] === undefined ||
-  value[left] === null ||
-  value[right] === undefined ||
-  value[right] === null ||
-  sameJson(value[left], value[right]);
-
-/** Parse result representations once; authentication and diagnostic certainty stay distinct. */
-const parseToolResult = (
-  item: Record<string, unknown>,
-  server: string | null,
-): {
-  readonly failed: boolean;
-  readonly errorCode: string | null;
-  readonly evidenceValue: unknown;
-} => {
-  const result = record(item.result ?? item.output);
-  const structured = record(
-    result?.structured_content ?? result?.structuredContent,
-  );
-  const direct = record(structured?.error ?? result?.error ?? item.error);
-  let text: TranscriptJson | undefined;
-  if (direct === undefined && structured === undefined) {
-    // Only a complete single JSON block can supply a missing structured result.
-    const content = result?.content;
-    const block =
-      Array.isArray(content) && content.length === 1
-        ? record(content[0])
-        : undefined;
-    if (block?.type === "text" && typeof block.text === "string")
-      text = parseTranscriptJson(block.text);
-  }
-  const error = direct ?? record(record(text?.value)?.error);
-  const failed =
-    item.status === "failed" ||
-    (item.error !== undefined && item.error !== null) ||
-    result?.isError === true ||
-    structured?.error !== undefined ||
-    error !== undefined;
-  const errorCode =
-    (direct !== undefined || text?.hasDuplicateMembers === false) &&
-    typeof error?.code === "string" &&
-    error.code.length > 0
-      ? error.code
-      : null;
-  const evidenceValue =
-    server?.toLowerCase() === "rea" &&
-    item.status !== "failed" &&
-    (item.error === undefined || item.error === null) &&
-    consistentJsonAliases(item, "result", "output") &&
-    result !== undefined &&
-    result.isError !== true &&
-    (result.error === undefined || result.error === null) &&
-    (result.structuredContent === undefined ||
-      result.structured_content === undefined ||
-      sameJson(result.structuredContent, result.structured_content))
-      ? (result.structuredContent ??
-        result.structured_content ??
-        (text?.hasDuplicateMembers === false ? text.value : undefined))
-      : undefined;
-  return { failed, errorCode, evidenceValue };
-};
 
 const evidenceFromCall = (
   value: unknown,
@@ -290,31 +147,6 @@ const evidenceFromCall = (
   }
   if (tool !== evidence.operation) return undefined;
   return evidence;
-};
-
-const completedToolItem = (
-  event: unknown,
-): Record<string, unknown> | undefined => {
-  const value = record(event);
-  const wrapped = value?.type === "item.completed";
-  const item = wrapped
-    ? record(value.item)
-    : value?.type === "mcp_tool_call"
-      ? value
-      : undefined;
-  if (item?.type !== "mcp_tool_call") return undefined;
-  const terminalStatus =
-    item.status === "completed" || item.status === "failed";
-  if (
-    (wrapped
-      ? item.status !== undefined && !terminalStatus
-      : !terminalStatus) ||
-    !consistentAliases(item, "server", "server_name") ||
-    !consistentAliases(item, "tool", "name") ||
-    !consistentJsonFields(item, "arguments", "input")
-  )
-    return undefined;
-  return item;
 };
 
 const artifactDelivery = (evidence: Evidence): readonly Evidence[] => {
@@ -347,52 +179,21 @@ const artifactDelivery = (evidence: Evidence): readonly Evidence[] => {
   return records;
 };
 
-/** Parse one completed transcript call and authenticate any successful REA Evidence. */
-export const parseCodexToolCall = (
-  event: unknown,
-): ParsedCodexToolCall | undefined => {
-  const item = completedToolItem(event);
-  if (item === undefined) return undefined;
-  const server = item.server ?? item.server_name;
-  const tool = item.tool ?? item.name;
-  if (
-    ((item.server !== undefined || item.server_name !== undefined) &&
-      typeof server !== "string") ||
-    typeof tool !== "string" ||
-    tool.length === 0
-  )
-    return undefined;
-  const argumentsValue =
-    item.arguments !== undefined
-      ? item.arguments
-      : item.input !== undefined
-        ? item.input
-        : {};
-  const parsedArguments = jsonValueSchema.safeParse(argumentsValue);
-  if (!parsedArguments.success) return undefined;
-  const serverName = typeof server === "string" ? server : null;
-  const result = parseToolResult(item, serverName);
-  const parsed: ParsedCodexToolCall = {
-    error: result.failed,
-    errorCode: result.errorCode,
-    id: typeof item.id === "string" && item.id.length > 0 ? item.id : null,
-    server: serverName,
-    tool,
-    arguments: parsedArguments.data,
-    evidence: [],
-  };
-  const evidence = evidenceFromCall(result.evidenceValue, tool);
-  if (evidence === undefined) return parsed;
-  return { ...parsed, evidence: artifactDelivery(evidence) };
+/** Authenticate the Evidence one delivered REA call carries, for citations and fixture grading. */
+export const deliveredEvidence = (call: AgentToolCall): readonly Evidence[] => {
+  if (!call.delivered || call.error || call.server?.toLowerCase() !== "rea")
+    return [];
+  const evidence = evidenceFromCall(call.resultContent, call.tool);
+  return evidence === undefined ? [] : artifactDelivery(evidence);
 };
 
 const collectDeliveredEvidence = (
-  calls: readonly (ParsedCodexToolCall | undefined)[],
+  calls: readonly AgentToolCall[],
 ): DeliveredEvidence => {
   const records = new Map<string, Evidence>();
   const conflicts = new Set<string>();
   for (const call of calls) {
-    for (const evidence of call?.evidence ?? []) {
+    for (const evidence of deliveredEvidence(call)) {
       const previous = records.get(evidence.evidence_id);
       if (previous !== undefined && !sameJson(previous, evidence))
         conflicts.add(evidence.evidence_id);
@@ -499,7 +300,7 @@ const assessClaim = (
 
 /** Grade closed answers only against configured fixture truth and delivered authenticated Evidence. */
 export const evaluateKnownAnswers = (
-  calls: readonly (ParsedCodexToolCall | undefined)[],
+  calls: readonly AgentToolCall[],
   finalMessage: string,
   expectations: readonly FixtureClaimExpectation[] | undefined,
 ): KnownAnswerAssessment => {
