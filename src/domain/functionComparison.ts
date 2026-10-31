@@ -8,11 +8,18 @@ import {
 } from "./functionComparisonSchemas.js";
 import { overallStatus, summarize } from "./functionComparisonResults.js";
 import { compareDimensions } from "./functionComparisonDimensions.js";
+import { normalizedViews } from "./functionComparisonNormalizedViews.js";
+
+/** Caller-selected projection options for one explicit comparison. */
+export interface FunctionComparisonRequest {
+  readonly includeNormalizedViews?: boolean;
+}
 
 /** Compare two authenticated function snapshots without fuzzy matching. */
 export const compareFunctions = (
   left: FunctionSnapshot,
   right: FunctionSnapshot,
+  request: FunctionComparisonRequest = {},
 ): FunctionComparisonResult => {
   const links = [left.evidence.evidence_id, right.evidence.evidence_id];
   const providersDiffer =
@@ -29,6 +36,17 @@ export const compareFunctions = (
     summary: summarize(dimensions),
     dimensions,
     changes,
+    ...(request.includeNormalizedViews === true
+      ? {
+          normalized_views: normalizedViews(left, right, {
+            links,
+            providersDiffer,
+            callsStatus:
+              dimensions.find(({ dimension }) => dimension === "calls")
+                ?.status ?? "unknown",
+          }),
+        }
+      : {}),
     limitations: [
       ...new Set([
         ...left.limitations.map((item) => `Left: ${item}`),

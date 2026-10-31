@@ -56,7 +56,9 @@ export const registerFunctionComparisonTool = (
               return {
                 left: left.value,
                 right: right.value,
-                comparison: compareFunctions(left.value, right.value),
+                comparison: compareFunctions(left.value, right.value, {
+                  includeNormalizedViews: input.include_normalized_views,
+                }),
               };
             },
           );
@@ -82,11 +84,17 @@ export const registerFunctionComparisonTool = (
               parameters: {
                 left_evidence_id: leftEvidence.evidence_id,
                 right_evidence_id: rightEvidence.evidence_id,
+                ...(comparison.normalized_views === undefined
+                  ? {}
+                  : { include_normalized_views: true }),
               },
               result: comparison,
               confidence: "derived",
               authority: "analyst-inference",
-              limitations: comparison.limitations,
+              limitations: [
+                ...comparison.limitations,
+                ...(comparison.normalized_views?.limitations ?? []),
+              ],
               evidenceLinks: [...leftIds, ...rightIds],
             },
           );

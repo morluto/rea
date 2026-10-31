@@ -258,7 +258,10 @@ const functionFindings = (
   >,
 ): Finding[] => {
   const { evidence, result } = comparison;
-  return result.dimensions.flatMap((dimension) =>
+  return [
+    ...result.dimensions,
+    ...(result.normalized_views?.views ?? []),
+  ].flatMap((dimension) =>
     dimension.status === "unchanged"
       ? []
       : [

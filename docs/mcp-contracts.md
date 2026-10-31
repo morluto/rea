@@ -1639,6 +1639,24 @@ includes all dimension limitations. Equal CFGs establish only equal observed
 block sizes and successor relationships. Text from different provider
 identities remains unknown.
 
+`compare_functions` keeps its eight exact dimensions and summary statuses
+unchanged. Set `include_normalized_views: true` to add separate normalized
+pseudocode and assembly views. These views preserve literals and comments,
+replace recognized address-derived identifiers and evidence-supported address
+operands, and retain exact function-relative offsets. Constants, ambiguous
+operands, and names that the dossier reports with a named symbol origin stay
+visible. An `unchanged` result means the masked text matches; it
+does not establish callee identity or call order. A view is `unknown` when the
+exact calls dimension is unknown and its text masks a listed callee, when its
+text masks a call, tail-jump or thunk target that the calls dimension does not
+compare, or when the bounded line diff gives up; it then keeps both digests and
+its masking record, without a text delta.
+Each view returns its applied masking rules, counts, limitations, and both
+source Evidence links. Reconstruction claims and static/runtime function
+selectors can name `pseudocode_normalized` or `assembly_normalized` only when
+the selected comparison was created with these views; otherwise the request is
+`invalid_request`.
+
 The `calls` and `references` dimensions share endpoint identity and name
 ambiguity rules. Calls retain procedure entry coordinates and direction;
 references retain each edge's raw source and target coordinates, direction and

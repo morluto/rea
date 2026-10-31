@@ -115,7 +115,7 @@ export const SESSION_TOOL_CONTRACTS = [
   ),
   session(
     "compare_functions",
-    "Compare two explicit analyze_function Evidence records or exact retained session references across identity, exact provider text, calls, references, strings, and address-normalized CFG topology. Missing or provider-incompatible facets remain truncated or unknown; every conclusion cites both Evidence sets.",
+    "Compare two explicit analyze_function Evidence records or exact retained session references across identity, exact provider text, calls, references, strings, and address-normalized CFG topology. Missing or provider-incompatible facets remain truncated or unknown; every conclusion cites both Evidence sets. Set include_normalized_views to also return separate address-normalized pseudocode and assembly views that mask recognized address-derived identifiers and dossier-corroborated addresses, declare the masking rules they applied, and cite both Evidence sets. The eight exact dimensions, changes, summary counts, and overall status keep their current meaning when normalized views are requested; equal normalized views still do not prove both sides reference the same procedure, data, or label.",
     functionComparisonInputSchema,
   ),
   session(

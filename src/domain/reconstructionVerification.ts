@@ -6,6 +6,7 @@ import { uniqueSorted } from "./canonicalOrdering.js";
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 import { comparisonSourceEvidenceSides } from "./comparisonSourceEvidence.js";
 import { readComparisonResult } from "./comparisonEvidenceResult.js";
+import { isNormalizedViewDimension } from "./functionComparisonSchemas.js";
 import type { Evidence } from "./evidence.js";
 import { hasComparisonEvidenceIdentity } from "./comparisonEvidenceIdentity.js";
 import { readEvidenceBundle } from "./evidenceBundle.js";
@@ -145,7 +146,7 @@ const evaluateClaim = (
     return source;
   });
   const functionSourceFacts = readValidatedSourceFacts(claim, sources);
-  const observation = comparisonObservation(claim, comparison);
+  const observation = comparisonObservation(claim, comparison, claimIndex);
   const observed = observation.status;
   const callCoverage = sourceCallCoverage(
     claim,
@@ -276,6 +277,7 @@ const validateComparisonIdentity = (
 const comparisonObservation = (
   claim: Claim,
   evidence: Evidence,
+  claimIndex: number,
 ): {
   readonly status: ObservedStatus;
   readonly limitations: readonly string[];
@@ -327,6 +329,17 @@ const comparisonObservation = (
                 dimension.status === "changed",
             )),
       };
+    if (isNormalizedViewDimension(claim.dimension)) {
+      const view = result.normalized_views?.views.find(
+        (item) => item.dimension === claim.dimension,
+      );
+      if (view === undefined)
+        throw claimDimensionInputError(
+          claimIndex,
+          "Function comparison normalized view was not requested; rerun compare_functions with include_normalized_views",
+        );
+      return { status: view.status, limitations: view.limitations };
+    }
     const dimension = result.dimensions.find(
       (item) => item.dimension === claim.dimension,
     );
@@ -346,6 +359,15 @@ const missingSourceInputError = (claimIndex: number, message: string) =>
   new AnalysisInputError("verify_reconstruction", { userMessage: message }, [
     {
       path: ["claims", claimIndex, "comparison_evidence_id"],
+      reason: "invalid_value",
+      message,
+    },
+  ]);
+
+const claimDimensionInputError = (claimIndex: number, message: string) =>
+  new AnalysisInputError("verify_reconstruction", { userMessage: message }, [
+    {
+      path: ["claims", claimIndex, "dimension"],
       reason: "invalid_value",
       message,
     },
