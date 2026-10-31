@@ -1,8 +1,10 @@
 import { writeFile, unlink } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { afterAll, expect, it } from "vitest";
+import type { Client } from "@modelcontextprotocol/client";
+import { afterAll, expect, onTestFinished } from "vitest";
+import { mcpTest as it } from "../../support/mcp/mcpFixture.js";
+import { ownArtifactSession } from "../../support/mcp/artifactSession.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
@@ -128,30 +130,29 @@ const inventoryCases = profiles.flatMap((profile) => [
   { profile, version: 1 as const },
   { profile, version: 4 as const },
 ]);
-it.each(inventoryCases)("retains PCK ($profile/v$version)", async (input) => {
-  const { profile, version } = input;
-  const root = await createTestTempDirectory("rea-pck-mcp-");
-  const path = join(root, "game.pck");
-  await writeFile(
-    path,
-    version === 1 ? buildGodotPck1(members) : buildGodotPck(4, members),
-  );
-  const session = createTestBinarySession(new ArtifactProvider({}));
-  const server = createServer(
-    { kind: "session", session },
-    {
-      environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: profile },
-    },
-  );
-  const client = new Client(
-    { name: "pck-contract-test", version: "1" },
-    { jsonSchemaValidator: schemaValidation },
-  );
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  try {
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
+it.for(inventoryCases)(
+  "retains PCK ($profile/v$version)",
+  async (input, { mcp }) => {
+    const { profile, version } = input;
+    const root = await createTestTempDirectory("rea-pck-mcp-");
+    const path = join(root, "game.pck");
+    await writeFile(
+      path,
+      version === 1 ? buildGodotPck1(members) : buildGodotPck(4, members),
+    );
+    const session = createTestBinarySession(new ArtifactProvider({}));
+    ownArtifactSession(session, onTestFinished);
+    const server = createServer(
+      { kind: "session", session },
+      {
+        environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: profile },
+      },
+    );
+    const client = await mcp.connect(
+      server,
+      { name: "pck-contract-test", version: "1" },
+      schemaValidation,
+    );
     const validators = await viewValidators(client);
     expect(
       (await client.callTool({ name: "open_binary", arguments: { path } }))
@@ -270,14 +271,12 @@ it.each(inventoryCases)("retains PCK ($profile/v$version)", async (input) => {
         parent_occurrence_id: row.parent_occurrence_id,
       })),
     );
-  } finally {
-    await client.close();
-    await server.close();
-    await session.close();
-  }
-});
+  },
+);
 
-it("carries unknown encrypted-directory coverage through compact MCP delivery", async () => {
+it("carries unknown encrypted-directory coverage through compact MCP delivery", async ({
+  mcp,
+}) => {
   const root = await createTestTempDirectory("rea-pck-encrypted-mcp-");
   const path = join(root, "game.pck");
   await writeFile(
@@ -287,39 +286,40 @@ it("carries unknown encrypted-directory coverage through compact MCP delivery", 
     }),
   );
   const session = createTestBinarySession(new ArtifactProvider({}));
-  const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "pck-unknown-test", version: "1" });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  try {
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
-    await client.callTool({ name: "open_binary", arguments: { path } });
-    const reply = await client.callTool({
-      name: "inspect_artifact",
-      arguments: { detail: "summary" },
-    });
-    expect(reply.isError, JSON.stringify(reply.structuredContent)).not.toBe(
-      true,
-    );
-    const summary = artifactInventorySummaryViewResultSchema.parse(
-      parseEvidence(reply.structuredContent).normalized_result,
-    );
-    expect(summary.summary.source_coverage).toEqual({
-      scope: "container-entries",
-      status: "unknown",
-    });
-    expect(summary.summary.root_format_metadata).toMatchObject({
-      directory_status: "encrypted",
-      declared_file_count: 1,
-    });
-    expect(summary.summary.available_counts.occurrences).toBe(1);
-    expect(summary.unknowns.join(" ")).toContain(
-      "missing matches do not prove source absence",
-    );
-  } finally {
-    await client.close();
-    await server.close();
-    await session.close();
-  }
+  ownArtifactSession(session, onTestFinished);
+  const server = createServer(
+    { kind: "session", session },
+    {
+      environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: "compact" },
+    },
+  );
+  const client = await mcp.connect(server, {
+    name: "pck-unknown-test",
+    version: "1",
+  });
+  const opened = await client.callTool({
+    name: "open_binary",
+    arguments: { path },
+  });
+  expect(opened.isError, JSON.stringify(opened.content)).not.toBe(true);
+  const reply = await client.callTool({
+    name: "inspect_artifact",
+    arguments: { detail: "summary" },
+  });
+  expect(reply.isError, JSON.stringify(reply.structuredContent)).not.toBe(true);
+  const summary = artifactInventorySummaryViewResultSchema.parse(
+    parseEvidence(reply.structuredContent).normalized_result,
+  );
+  expect(summary.summary.source_coverage).toEqual({
+    scope: "container-entries",
+    status: "unknown",
+  });
+  expect(summary.summary.root_format_metadata).toMatchObject({
+    directory_status: "encrypted",
+    declared_file_count: 1,
+  });
+  expect(summary.summary.available_counts.occurrences).toBe(1);
+  expect(summary.unknowns.join(" ")).toContain(
+    "missing matches do not prove source absence",
+  );
 });
