@@ -9,6 +9,7 @@ import { DESKTOP_APPLICATION_TOOL_CONTRACTS } from "./desktopApplicationToolCont
 import { GO_TOOL_CONTRACTS } from "./go/goToolContracts.js";
 import { MODEL_TOOL_CONTRACTS } from "./model/modelToolContracts.js";
 import { IL2CPP_TOOL_CONTRACTS } from "./il2cpp/il2cppToolContracts.js";
+import { UNITY_ADDRESSABLES_TOOL_CONTRACTS } from "./unity/unityAddressablesToolContracts.js";
 import { RUST_TOOL_CONTRACTS } from "./rust/rustToolContracts.js";
 import { PYTHON_PYC_TOOL_CONTRACTS } from "./python/pythonPycToolContracts.js";
 import { ERLANG_BEAM_TOOL_CONTRACTS } from "./erlang/beamToolContracts.js";
@@ -57,6 +58,7 @@ export const TOOL_CONTRACTS = [
   ...EVM_TOOL_CONTRACTS,
   ...GO_TOOL_CONTRACTS,
   ...IL2CPP_TOOL_CONTRACTS,
+  ...UNITY_ADDRESSABLES_TOOL_CONTRACTS,
   ...MODEL_TOOL_CONTRACTS,
   ...GPU_TOOL_CONTRACTS,
   ...RUST_TOOL_CONTRACTS,

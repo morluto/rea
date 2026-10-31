@@ -473,6 +473,7 @@ const workflowAvailabilityFor = ({
     name === "inspect_desktop_application" ||
     name === "inspect_go_binary" ||
     name === "inspect_il2cpp_metadata" ||
+    name === "inspect_unity_addressables" ||
     name === "inspect_model_artifact" ||
     name === "inspect_gpu_code_objects" ||
     name === "inspect_rust_binary" ||

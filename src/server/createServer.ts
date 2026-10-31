@@ -73,6 +73,9 @@ import { createElectronFuseService } from "../composition/electronFuses.js";
 import type { ElectronFuseService } from "../application/electron/ElectronFuseService.js";
 import { registerGoTools } from "./registerGoTools.js";
 import { registerIl2cppTools } from "./registerIl2cppTools.js";
+import { registerUnityAddressablesTools } from "./registerUnityAddressablesTools.js";
+import { createUnityAddressablesService } from "../composition/unityAddressables.js";
+import type { UnityAddressablesService } from "../application/unity/UnityAddressablesService.js";
 import { createRustBinaryService } from "../composition/rust.js";
 import type { RustBinaryService } from "../application/rust/RustBinaryService.js";
 import { registerRustTools } from "./registerRustTools.js";
@@ -221,6 +224,7 @@ export interface CreateServerOptions {
   readonly binaryLayout?: BinaryLayoutService;
   readonly goBinary?: GoBinaryService;
   readonly il2cppMetadata?: Il2cppMetadataService;
+  readonly unityAddressables?: UnityAddressablesService;
   readonly rustBinary?: RustBinaryService;
   readonly pythonPyc?: PythonPycService;
   readonly erlangBeam?: BeamService;
@@ -476,6 +480,8 @@ export const createServer = (
   const gpuCodeObjects = createGpuCodeObjectsService();
   const il2cppMetadata =
     options.il2cppMetadata ?? createIl2cppMetadataService();
+  const unityAddressables =
+    options.unityAddressables ?? createUnityAddressablesService();
   const peResources = createPeResourcesService();
   const nativeExports = createNativeExportsService();
   const devicetree = createDevicetreeService();
@@ -601,6 +607,7 @@ export const createServer = (
       rustBinary.close(),
       erlangBeam.close(),
       il2cppMetadata.close(),
+      unityAddressables.close(),
       modelArtifact.close(),
       gpuCodeObjects.close(),
       peResources.close(),
@@ -907,6 +914,14 @@ export const createServer = (
       registerIl2cppTools(
         server,
         il2cppMetadata,
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+        evidenceById,
+      );
+      registerUnityAddressablesTools(
+        server,
+        unityAddressables,
         toolLogger,
         recordEvidence,
         analysisAdmission,

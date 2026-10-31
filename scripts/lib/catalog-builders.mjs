@@ -221,6 +221,12 @@ export const providerCatalog = (sources) => {
       contracts: sources.il2cppContracts.IL2CPP_TOOL_CONTRACTS,
     },
     {
+      identity:
+        sources.unityAddressablesProvider.UNITY_ADDRESSABLES_PROVIDER_IDENTITY,
+      contracts:
+        sources.unityAddressablesContracts.UNITY_ADDRESSABLES_TOOL_CONTRACTS,
+    },
+    {
       identity: sources.modelProvider.MODEL_ARTIFACT_PROVIDER_IDENTITY,
       contracts: sources.modelContracts.MODEL_TOOL_CONTRACTS,
     },

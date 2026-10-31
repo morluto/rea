@@ -183,6 +183,7 @@ REA 需要 Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）或 26+ (>=26.12.1)�
 | GPU 代码对象          | CUDA/HIP 目标、选定内核参数和资源、保留的 PTX 文本                           | 内置静态检查 ELF/PE/fatbin/CUBIN/PTX; [GPU](../gpu-code-objects.md)                                                |
 | 模型文件              | GGUF / safetensors 元数据、张量声明和派生总量                                | 头部检查；可选完整文件哈希; [GGUF / safetensors](../model-artifacts.md)                                            |
 | IL2CPP 元数据         | Unity global-metadata.dat 程序集映像、类型和方法名、索引范围                 | 静态解码版本 24、27、29、31 和 39；无需 Unity                                                                      |
+| Unity Addressables    | Catalog keys, locations, dependencies, bundle hash/CRC                       | Static inspection; [Unity Addressables](../unity-addressables.md)                                                  |
 | Godot PCK             | 归档目录与提取、原始头部和目录信息、选定内容身份                             | 静态格式 2、3 和 4；无需 Godot                                                                                     |
 | APK 签名              | v1/v2/v3/v3.1 签名者、证书指纹、密钥轮换和摘要自洽性                         | 内置静态检查; `inspect_apk_signature`                                                                              |
 

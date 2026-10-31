@@ -99,6 +99,17 @@ is unsupported, not decrypted. Linking names to `GameAssembly` or
 `UnityFramework` code addresses remains a separate native-analysis question.
 See [IL2CPP metadata](https://github.com/morluto/rea/blob/main/docs/il2cpp-metadata.md).
 
+## Unity Addressables
+
+Use `inspect_unity_addressables` (`inspect-unity-addressables PATH`) for a
+local Addressables `catalog.json` or binary `catalog.bin` (header versions 2
+and 3) when the question concerns which keys load which bundles or assets,
+bundle paths, providers, dependencies or recorded bundle hash and CRC. Page
+`keys`, `locations` or `providers` through `inspect_analysis_view` kind
+`unity-addressables`. JSON dependencies are derived through the dependency key.
+No bundle is opened and internal id placeholders stay unresolved.
+See [Unity Addressables](https://github.com/morluto/rea/blob/main/docs/unity-addressables.md).
+
 ## Rust dependency metadata
 
 Use `inspect_rust_binary` for an explicit local ELF, PE, or Mach-O (universal
