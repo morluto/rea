@@ -84,6 +84,7 @@ const fetchHopperResponse = async (
     return undefined;
   }
   let requested = url;
+  const expectedOrigin = selected.origin;
   for (let redirects = 0; ; redirects++) {
     if (selected.protocol !== "https:") return undefined;
     const response = await fetch(requested, {
@@ -102,6 +103,9 @@ const fetchHopperResponse = async (
     } catch {
       return undefined;
     }
+    // Redirects may leave the validated origin; only the initial URL was
+    // checked by callers, so refuse a hop another origin would produce.
+    if (next.origin !== expectedOrigin) return undefined;
     // Fetch inherits the previous fragment when Location has none.
     if (!location.includes("#")) next.hash = selected.hash;
     selected = next;

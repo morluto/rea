@@ -28,7 +28,7 @@ it("refuses an HTTPS downgrade before sending the redirected request and release
   expect(cancelled).toBe(1);
 });
 
-it("preserves HTTPS relative and cross-origin redirects under one request deadline", async () => {
+it("preserves HTTPS same-origin redirects under one request deadline", async () => {
   let cancelled = 0;
   const fetch = vi
     .fn<typeof globalThis.fetch>()
@@ -38,7 +38,7 @@ it("preserves HTTPS relative and cross-origin redirects under one request deadli
       }),
     )
     .mockResolvedValueOnce(
-      redirect("https://downloads.hopperapp.com/final", () => {
+      redirect("https://www.hopperapp.com/final", () => {
         cancelled++;
       }),
     )
@@ -51,7 +51,7 @@ it("preserves HTTPS relative and cross-origin redirects under one request deadli
   expect(fetch.mock.calls.map(([input]) => input)).toEqual([
     selected,
     "https://www.hopperapp.com/next#selected",
-    "https://downloads.hopperapp.com/final#selected",
+    "https://www.hopperapp.com/final#selected",
   ]);
   const signal = fetch.mock.calls[0]?.[1]?.signal;
   expect(signal).toBeInstanceOf(AbortSignal);
@@ -59,6 +59,21 @@ it("preserves HTTPS relative and cross-origin redirects under one request deadli
     fetch.mock.calls.every(([, options]) => options?.signal === signal),
   ).toBe(true);
   expect(cancelled).toBe(2);
+});
+
+it("refuses a cross-origin redirect before sending the redirected request and releases its body", async () => {
+  let cancelled = 0;
+  const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(
+    redirect("https://downloads.hopperapp.com/final", () => {
+      cancelled++;
+    }),
+  );
+  vi.stubGlobal("fetch", fetch);
+  expect(
+    await downloadHopperPackage("https://www.hopperapp.com/package"),
+  ).toEqual({ ok: false, bytes: new Uint8Array() });
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(cancelled).toBe(1);
 });
 
 it("retains Fetch's twenty-redirect bound and releases every redirect response", async () => {
