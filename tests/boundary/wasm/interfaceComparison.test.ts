@@ -34,7 +34,7 @@ it("does not call colliding rendered debug identifiers unchanged after a second 
   });
   if (!result.ok) throw result.error;
   const report = wasmInterfaceComparisonSchema.parse(
-    result.value.normalized_result,
+    result.value.evidence.normalized_result,
   );
   expect(report.changes.map(({ state }) => state)).toEqual([
     "unknown",

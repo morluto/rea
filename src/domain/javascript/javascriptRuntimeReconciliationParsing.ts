@@ -1,12 +1,11 @@
 import { digestCanonicalValue } from "../canonicalDigest.js";
-import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import type { Evidence } from "../evidence.js";
 import {
   javascriptApplicationAnalysisResultSchema,
   type JavaScriptApplicationAnalysisResult,
 } from "./javascriptApplicationAnalysis.js";
 import type { JavaScriptApplicationGraph } from "./javascriptApplicationGraph.js";
-import type { ReconcileJavaScriptRuntimeInput } from "./javascriptRuntimeReconciliationSchemas.js";
+import type { ReconcileJavaScriptRuntimeFrame } from "./javascriptRuntimeReconciliationSchemas.js";
 import {
   assertEvidenceIdentity,
   authenticateRuntimeEvidence,
@@ -15,7 +14,7 @@ import {
 } from "./javascriptRuntimeReconciliationInputValidation.js";
 
 type StaticLayerInput =
-  ReconcileJavaScriptRuntimeInput["static_layers"][number];
+  ReconcileJavaScriptRuntimeFrame["static_layers"][number];
 type RuntimeMapping = StaticLayerInput["runtime_mappings"][number];
 
 export interface ParsedStaticLayer {
@@ -27,20 +26,8 @@ export interface ParsedStaticLayer {
   readonly runtimeMappings: readonly RuntimeMapping[];
 }
 
-/** Parse and semantically bind every static analysis Evidence layer. */
-export const parseStaticLayers = (
-  layers: readonly StaticLayerInput[],
-  path: readonly (string | number)[] = ["static_layers"],
-): ParsedStaticLayer[] =>
-  layers
-    .map((layer, index) =>
-      parseStaticLayer(layer, [...path, index, "analysis"]),
-    )
-    .sort((left, right) =>
-      compareUnicodeCodePoints(left.layerId, right.layerId),
-    );
-
-const parseStaticLayer = (
+/** Authenticate and semantically bind one admitted static analysis layer. */
+export const parseStaticLayer = (
   layer: StaticLayerInput,
   evidencePath: readonly (string | number)[],
 ): ParsedStaticLayer => {

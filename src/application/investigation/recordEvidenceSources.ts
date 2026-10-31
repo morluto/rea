@@ -18,15 +18,18 @@ export const withEvidenceSources = <
 ): Outcome & { readonly sourceEvidence?: readonly Evidence[] } =>
   sources.length === 0 ? result : { ...result, sourceEvidence: sources };
 
-/** Never deliver links to records a plain-port adapter cannot retain. */
+/** Retain producer sources; caller-owned records remain available without a writer. */
 export const retainAnalysisResultSources = <Value>(
   operation: string,
   recordEvidence: EvidenceWriter["recordEvidence"] | undefined,
   result: AnalysisResultWithSources<Value>,
+  options: { readonly sourceOwner?: "caller" } = {},
 ): Result<Value, AnalysisError> => {
   const sources = result.sourceEvidence ?? [];
   const retained =
-    sources.length > 0 && recordEvidence === undefined
+    sources.length > 0 &&
+    recordEvidence === undefined &&
+    options.sourceOwner !== "caller"
       ? err(
           new AnalysisCapabilityUnavailableError(
             "rea",

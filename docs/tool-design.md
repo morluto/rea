@@ -134,6 +134,51 @@ before proposing another issue, and avoid treating lack of API parity as a bug.
   ceiling and its recovery as described in
   [admission limits and recovery](design/limits-and-recovery.md).
 
+### Compose declared Evidence inputs
+
+Declare each logical Evidence source with the shared `evidenceInputSchema`:
+complete inline Evidence or an exact
+`{kind: "retained-evidence", evidence_id}` reference. Use that declaration in
+single, optional, array and nested source fields across domains. Keep complete
+record schemas for stored Evidence, bundle records and pure semantic inputs;
+request alternatives do not change those representations. Ordinary IDs in
+parameters or result data are not implicitly source selectors.
+
+Derive borrowing request validation and source resolution from the canonical
+request schema with `getEvidenceInputContract` and `resolveEvidenceRequest`.
+The shared application entrypoint selects references for CLI and MCP before the
+format owner admits, authenticates and interprets their records. Preserve
+admission before copying large source payloads. Do not maintain a second list
+of source paths or resolve references only in an adapter. A resolved reference
+has the same identity, caller-selected observations, provenance, coverage and
+partial or unknown facts as its complete inline record; it never reruns a
+producer or upgrades incomplete evidence.
+Keep Evidence-bearing request unions outside skipping `default` wrappers;
+use `prefault` when a default must pass through branch selection. Catalog
+conformance rejects unsupported source containers rather than silently losing
+their references.
+
+Return authenticated source records alongside derived workflow Evidence when
+the adapter must retain them. Keep links to those exact sources and require the
+source closure when the workflow follows their links. Missing references and
+incompatible workflow roles are explicit failures; do not infer a substitute
+from ledger order, display names or the active target. A summary or inspection
+page has its own identity: consumers needing complete source facts use its
+`normalized_result.parent_evidence_id`, unless their contract explicitly accepts
+that view.
+
+New provider-owned source observations require a retention owner. Existing
+caller-owned inputs can also compose on a fixed port without a recorder;
+when a recorder is available, preserve its acceptance or rejection and retain
+completed sources through cancellation.
+
+MCP supplies the current ledger lookup. CLI commands that advertise
+`--evidence-bundle` use one explicitly selected, authenticated bundle for the
+command's lifetime. Keep cleanup with that owner. A retained reference does not
+grant filesystem access: file selectors remain separate, explicit contracts
+where supported. See [retained Evidence inputs](mcp-contracts.md#retained-application-evidence-inputs)
+and [CLI reuse](cli.md#import-export-and-compare-evidence).
+
 ### Interpret boundary facts once
 
 The format or protocol reader owns interpretation. Pass its parsed facts and

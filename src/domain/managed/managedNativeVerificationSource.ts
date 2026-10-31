@@ -1,4 +1,5 @@
-import { z } from "zod";
+import { getEvidenceInputContract } from "../evidenceInputContract.js";
+import { managedNativeVerificationRequestSchema } from "./managedNativeVerificationSchemas.js";
 
 import type { Evidence } from "../evidence.js";
 import { AnalysisInputError } from "../analysisErrorCore.js";
@@ -19,10 +20,9 @@ import type { NativeSymbol } from "./managedNativeVerificationSchemas.js";
 const OPERATION = "verify_managed_native_boundaries" as const;
 const MANAGED_OPERATION = "inspect_managed_native_boundaries" as const;
 
-const requestFrameSchema = z.strictObject({
-  managed_boundaries: z.unknown(),
-  native_observations: z.array(z.unknown()).min(1),
-});
+const requestFrameSchema = getEvidenceInputContract(
+  managedNativeVerificationRequestSchema,
+).frameSchema;
 
 export interface ManagedNativeVerificationSource {
   readonly managedEvidence: Evidence;

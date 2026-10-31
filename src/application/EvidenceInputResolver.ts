@@ -3,9 +3,20 @@ import type {
   EvidenceSourceInput,
 } from "../domain/evidenceReference.js";
 import type { Evidence } from "../domain/evidence.js";
+import type { z } from "zod";
+import {
+  getEvidenceInputContract,
+  type EvidenceInputPath,
+  type EvidenceRequestFrameInput,
+  type ResolvedEvidenceRequestInput,
+} from "../domain/evidenceInputContract.js";
+import { retainedEvidenceReferenceSchema } from "../domain/evidenceReference.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { EvidenceReferenceError } from "../domain/evidenceErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
+import { parseAnalysisInput } from "./AnalysisInput.js";
 import {
   readEvidenceFileSource,
   type EvidenceFileReadOptions,
@@ -13,6 +24,139 @@ import {
 
 /** Read-only lookup supplied by the current investigation's Evidence ledger. */
 export type EvidenceLookup = (evidenceId: string) => Evidence | undefined;
+
+export interface EvidenceRequestResolutionOptions {
+  readonly signal?: AbortSignal;
+  readonly referenceScope?: "retained-closure";
+  /** Optional format-owner admission, after lookup and before source use. */
+  readonly readEvidence?: (
+    input: unknown,
+    path: EvidenceInputPath,
+  ) => Result<Evidence, AnalysisError>;
+}
+
+interface EvidenceRequestResolution<Input> {
+  readonly input: Input;
+  readonly sources: readonly unknown[];
+}
+
+/** An admitting owner may rely on complete Evidence at each declared source. */
+export function resolveEvidenceRequest<Schema extends z.ZodType>(
+  operation: string,
+  rawInput: unknown,
+  schema: Schema,
+  lookup: EvidenceLookup | undefined,
+  options: EvidenceRequestResolutionOptions & {
+    readonly readEvidence: NonNullable<
+      EvidenceRequestResolutionOptions["readEvidence"]
+    >;
+  },
+): Result<
+  EvidenceRequestResolution<ResolvedEvidenceRequestInput<z.output<Schema>>>,
+  AnalysisError
+>;
+/** Source carriers remain unknown until their format owner admits them. */
+export function resolveEvidenceRequest<Schema extends z.ZodType>(
+  operation: string,
+  rawInput: unknown,
+  schema: Schema,
+  lookup?: EvidenceLookup,
+  options?: EvidenceRequestResolutionOptions,
+): Result<
+  EvidenceRequestResolution<EvidenceRequestFrameInput<z.output<Schema>>>,
+  AnalysisError
+>;
+/** Resolve only schema-declared Evidence fields, sharing one lookup per exact ID. */
+export function resolveEvidenceRequest(
+  operation: string,
+  rawInput: unknown,
+  schema: z.ZodType,
+  lookup?: EvidenceLookup,
+  options: EvidenceRequestResolutionOptions = {},
+): Result<EvidenceRequestResolution<unknown>, AnalysisError> {
+  const contract = getEvidenceInputContract(schema);
+  const parsed = parseAnalysisInput(
+    operation,
+    rawInput,
+    contract.frameSchema,
+    options.signal,
+  );
+  if (!parsed.ok) return parsed;
+  const records = new Map<string, Evidence | undefined>();
+  const read: EvidenceLookup = (id) => {
+    if (!records.has(id)) records.set(id, lookup?.(id));
+    return records.get(id);
+  };
+  const sources = new Set<unknown>();
+  const result = contract.resolve<AnalysisError>(
+    parsed.value,
+    (input, path) => {
+      if (options.signal?.aborted)
+        return err(
+          new AnalysisCancelledError(operation, {
+            cause: options.signal.reason,
+          }),
+        );
+      let selected = input;
+      if (typeof input === "object" && input !== null && "kind" in input) {
+        const reference = retainedEvidenceReferenceSchema.safeParse(input);
+        if (!reference.success)
+          return err(
+            analysisInputErrorFromIssues(
+              operation,
+              reference.error.issues.map((issue) => ({
+                ...issue,
+                path: [...path, ...issue.path],
+              })),
+              rawInput,
+              { cause: reference.error },
+            ),
+          );
+        const found = resolveEvidenceInput(
+          reference.data,
+          read,
+          options.referenceScope,
+        );
+        if (!found.ok)
+          return err(
+            new EvidenceReferenceError(
+              found.error.evidenceId,
+              found.error.reason,
+              {
+                cause: found.error,
+                expected: found.error.expected,
+                actual: found.error.actual,
+                referenceScope: found.error.referenceScope,
+                diagnostics: { input_path: [...path] },
+              },
+            ),
+          );
+        selected = found.value;
+      }
+      if (options.readEvidence !== undefined) {
+        const admitted = options.readEvidence(selected, path);
+        if (!admitted.ok) {
+          if (admitted.error.diagnostics?.input_path === undefined)
+            admitted.error.retainDiagnostics({ input_path: [...path] });
+          return admitted;
+        }
+        selected = admitted.value;
+      }
+      sources.add(selected);
+      return ok(selected);
+    },
+  );
+  if (result.ok && options.signal?.aborted)
+    return err(
+      new AnalysisCancelledError(operation, { cause: options.signal.reason }),
+    );
+  return result.ok
+    ? ok({
+        input: result.value,
+        sources: [...sources],
+      })
+    : result;
+}
 
 /** Normalize each selected record using its file context and the current ledger. */
 export interface EvidenceSourceResolutionOptions extends EvidenceFileReadOptions {
@@ -50,42 +194,7 @@ export const resolveEvidenceInput = (
   return ok(record);
 };
 
-/** Resolve an application's Evidence before its existing semantic validation. */
-export const resolveApplicationEvidenceRequest = <
-  T extends { readonly application: EvidenceInput },
->(
-  input: T,
-  lookup: EvidenceLookup | undefined,
-): Result<
-  Omit<T, "application"> & { readonly application: Evidence },
-  EvidenceReferenceError
-> => {
-  const application = resolveEvidenceInput(input.application, lookup);
-  if (!application.ok) return application;
-  return ok({ ...input, application: application.value });
-};
-
-/** Resolve explicitly paired Evidence without guessing another session's record. */
-export const resolvePairedEvidenceRequest = <
-  T extends { readonly left: EvidenceInput; readonly right: EvidenceInput },
->(
-  input: T,
-  lookup: EvidenceLookup | undefined,
-): Result<
-  Omit<T, "left" | "right"> & {
-    readonly left: Evidence;
-    readonly right: Evidence;
-  },
-  EvidenceReferenceError
-> => {
-  const left = resolveEvidenceInput(input.left, lookup);
-  if (!left.ok) return left;
-  const right = resolveEvidenceInput(input.right, lookup);
-  if (!right.ok) return right;
-  return ok({ ...input, left: left.value, right: right.value });
-};
-
-/** Resolve paired sources like resolvePairedEvidenceRequest; Evidence files use the shared file reader. */
+/** Resolve explicit paired sources; Evidence files use the shared file reader. */
 export const resolvePairedEvidenceSources = async <
   T extends {
     readonly left: EvidenceSourceInput;

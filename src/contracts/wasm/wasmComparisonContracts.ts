@@ -56,7 +56,7 @@ export const COMPARE_WASM_INTERFACES_CONTRACT = {
   ...toolContractMetadata("compare_wasm_interfaces"),
   kind: "application",
   description:
-    "Compare typed core WASM import/export names, kinds and exact signatures from two authenticated inspect_wasm_artifact Evidence records. Select imports, exports or both explicitly. Retained references resolve only in the current session; CLI accepts portable inline Evidence. Duplicate names, unsupported types and missing historical interface facets remain unknown. Preserve original module digests and every occurrence; no source acquisition, module execution or runtime-compatibility inference.",
+    "Compare typed core WASM import/export names, kinds and exact signatures from two authenticated inspect_wasm_artifact Evidence records. Select imports, exports or both explicitly. MCP references resolve in the current session; CLI references use an explicitly selected --evidence-bundle. Duplicate names, unsupported types and missing historical interface facets remain unknown. Preserve original module digests and every occurrence; no source acquisition, module execution or runtime-compatibility inference.",
   inputSchema: compareWasmInterfacesInputSchema,
   outputSchema: evidenceResultOf(wasmInterfaceComparisonSchema),
   examples: [],

@@ -671,7 +671,9 @@ For exact core-module import/export differences, use `compare_wasm_interfaces`
 with two complete inspection Evidence records (or current-session retained
 references) and explicit scope. Preserve unknown types/duplicate names; static
 interface equality is not runtime compatibility. CLI accepts complete inline
-Evidence in `rea compare-wasm-interfaces input.json --json`.
+Evidence in `rea compare-wasm-interfaces input.json --json`, or exact references
+with `--evidence-bundle /absolute/path/evidence.json`. Use the complete parent
+ID when the inspection returned a summary.
 
 ## Godot PCK
 

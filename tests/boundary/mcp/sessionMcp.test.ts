@@ -713,11 +713,14 @@ describe("session filesystem path boundaries over MCP", () => {
 });
 
 describe("json depth bounds over MCP", () => {
-  it("classifies deeply nested evidence parameters as an input validation error", async () => {
+  it("preserves source integrity and nesting-limit diagnostics for borrowed parameters", async () => {
     directory = await createTestTempDirectory("rea-mcp-depth-bound-");
+    const createClient = vi.fn<AnalysisProvider["createClient"]>(() => {
+      throw new Error("Offline comparison must not open a provider");
+    });
     const { mcp } = await createSessionMcpHarness(
       directory,
-      provider,
+      (closed) => ({ ...provider(closed), createClient }),
       resources,
       4_096,
     );
@@ -743,23 +746,23 @@ describe("json depth bounds over MCP", () => {
     expect(result.isError, JSON.stringify(result.content)).toBe(true);
     expect(parseMcpToolError(result)).toMatchObject({
       error: {
-        code: "invalid_request",
-        recovery: {
-          kind: "inspect_input_contract",
-          operation: "compare_process_captures",
-        },
-        details: {
-          operation: "compare_process_captures",
-          issues: [
-            {
-              path: ["left", "parameters"],
-              reason: "invalid_value",
-              message: expect.stringContaining(String(MAX_JSON_DEPTH)),
-            },
-          ],
-        },
+        // The Evidence owner authenticates borrowed source records after
+        // envelope admission and preserves the JSON bound before cloning.
+        code: "evidence_integrity_mismatch",
+        category: "integrity_mismatch",
+        message: expect.stringContaining(
+          `The left Evidence failed validation (at parameters: JSON value exceeds maximum nesting depth of ${MAX_JSON_DEPTH}. This release has no runtime override.)`,
+        ),
+        details: { reason: "left Evidence failed validation" },
       },
     });
+    const recovered = await mcp.callTool({
+      name: "compare_process_captures",
+      arguments: input,
+    });
+    expect(recovered.isError, JSON.stringify(recovered.content)).not.toBe(true);
+    expect(recovered.structuredContent).toEqual(baseline.structuredContent);
+    expect(createClient).not.toHaveBeenCalled();
   }, 10_000);
 });
 

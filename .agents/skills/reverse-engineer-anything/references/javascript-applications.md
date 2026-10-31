@@ -236,8 +236,13 @@ This notation is
 a template: replace it with the actual returned ID. Versions before 4.1.0 accept only full
 inline Evidence. Use the exact ID
 returned by the producer on the same MCP connection. Resolution does not run
-analysis or select a provider; findings remain inline. Native observation
-arrays still take full Evidence. `close_binary` clears retained references;
+analysis or select a provider; findings remain inline. For summary or inspection
+replies, select the complete `normalized_result.parent_evidence_id`. Native
+observation arrays and runtime reconciliation's `static_layers[].analysis` and
+`runtime_observations[]` also accept exact references where advertised. Each
+source can independently be inline or retained, preserving identity, coverage
+and unknowns. CLI workflows advertising `--evidence-bundle` resolve these inputs
+from the explicitly selected bundle. `close_binary` clears retained references;
 export a bundle before closing, or supply portable inline Evidence in another
 connection. A missing reference includes its ID and recovery guidance.
 
