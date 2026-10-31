@@ -268,6 +268,82 @@ buffer because envelope copies add overhead. Requests honor cancellation during
 snapshot reading, directory traversal and payload hashing. The operation reads
 regular files only and rejects symbolic links.
 
+## Portable PRI resource indexes
+
+`inspect_pri_resources` / `inspect-pri-resources` reads an explicit Windows
+Package Resource Index (`.pri`), the MRM index that MSIX, UWP and WinUI apps use
+for UI strings and qualified assets. It needs no active target, engine, Windows
+SDK or network access, and it never executes the package:
+
+```sh
+rea inspect-pri-resources ./resources.pri --json
+rea inspect-pri-resources ./resources.pri --collection candidates \
+  --query Resources/ --qualifier Language=en-US --json
+```
+
+```json
+{
+  "name": "inspect_pri_resources",
+  "arguments": {
+    "path": "/artifacts/resources.pri",
+    "collection": "candidates",
+    "names": ["Resources/AppDisplayName"]
+  }
+}
+```
+
+Every response identifies the stable snapshot by path, byte count and SHA-256
+and summarizes the header, footer, section kinds, resource maps (schema name,
+version and checksum, top-level scopes), the stored qualifier values and the
+candidate count per stored value type. It then returns one page of a selected
+collection:
+
+- `items` (default): named resources with full names such as
+  `Resources/AppDisplayName` or `Files/Assets/Logo.png`, their decision and
+  candidate counts. An item with no candidates in this file has a `null`
+  decision; resource packs and other PRI files may supply its values.
+- `candidates`: each candidate's qualifier set and qualifiers, stored value type
+  and source (data item, inline map data or referenced file) with its original
+  file range. `String`, `Path` and their ASCII and UTF-8 variants are decoded;
+  invalid encodings or a missing terminator set `well_formed: false` and keep
+  the decoded text with U+FFFD replacements. `EmbeddedData` and unknown value
+  types report a SHA-256 instead of inline bytes.
+- `sections`: the complete section table with identifiers, qualifiers, flags,
+  file ranges and whether REA interpreted each section.
+- `qualifiers`: the stored qualifier table with priorities and fallback scores
+  (stored in thousandths; makepri prints them divided by 1000).
+
+`names` match full names exactly; `query` is a case-insensitive substring.
+`qualifiers` keeps candidates whose qualifier set carries one of the listed
+values (ASCII case-insensitive) for every listed qualifier name; candidates
+without that qualifier do not match. `value_types` selects stored types, so
+select `String`, `AsciiString` and `Utf8String` for all text. Selectors apply
+to items and candidates only. Rows keep item and candidate-table order;
+`page.total` counts every match and `page.next_offset` continues a page that
+ended at `limit` (default 100, maximum 1000) or at its 1 MiB serialized-row
+budget. MRT runtime qualifier resolution and fallback are not simulated.
+
+Qualifier type names follow the format generation: `mrm_pri0` and `mrm_pri1`
+store Configuration as code 6, while `mrm_pri2` stores Theme there and adds
+Configuration, DeviceFamily and Custom as codes 9-11. The `mrm_prif` table is
+not established, so its qualifiers are named `Unknown` with their `type_code`.
+
+The container, descriptor, hierarchical schemas (`[def_hnames]` and
+`[def_hnamesx]` names tables), decision tables, resource maps (including large
+item tables and inline values) and data item tables are cross-checked; bad
+magic, truncation, out-of-range or partially overlapping ranges, inconsistent
+counts and invalid structural names fail without a partial result.
+`[mrm_rev_map]`, `[def_file_list]` and unrecognized sections are reported but
+not interpreted. Values stored in referenced files, environment references and
+hierarchical schema references stay explicit unknowns.
+
+`max_file_bytes` defaults to 64 MiB (maximum 512 MiB). Structural names and
+qualifier values are bounded to 16 Mi decoded code units, decision tables to
+1,048,576 expanded entries and the result to 8 MiB; exceeding a budget fails
+without a partial result. Text values longer than 65,536 code units return a
+`truncated` prefix with `well_formed: null`. Requests honor cancellation while
+decoding and hashing.
+
 ## Byte entropy triage
 
 `inspect_byte_entropy` / `inspect-byte-entropy` profiles any local regular file

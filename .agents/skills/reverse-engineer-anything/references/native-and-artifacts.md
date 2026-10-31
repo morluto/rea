@@ -657,6 +657,24 @@ Other payloads are opaque, and this operation does not decode images or simulate
 Windows resource loading. Consult the budgets and supported tree profile in
 [offline binary diagnostics](https://github.com/morluto/rea/blob/main/docs/binary-diagnostics.md).
 
+## Offline PRI resource index
+
+Use `inspect_pri_resources` with an absolute `path`, or
+`rea inspect-pri-resources ./resources.pri --json`, to read a Windows Package
+Resource Index (MSIX/UWP/WinUI) without makepri, the Windows SDK or a target.
+Every page repeats the header, section, resource-map, qualifier-value and
+value-type summary. The default `items` collection lists full names such as
+`Resources/AppDisplayName` with candidate counts. Select `candidates` with
+exact `names`, a case-insensitive `query`, `qualifiers` such as
+`{"name": "Language", "value": "en-US"}` and `value_types` (text is `String`,
+`AsciiString` or `Utf8String`) to read decoded values; embedded data keeps file
+ranges and SHA-256. Follow `page.next_offset` instead of raising `limit`.
+Preserve `well_formed: false`, items without candidates (values in resource
+packs) and unread referenced-file values as stated; runtime qualifier fallback is
+not simulated. `sections` and `qualifiers` collections expose the complete
+section table and stored priorities. See
+[offline binary diagnostics](https://github.com/morluto/rea/blob/main/docs/binary-diagnostics.md#portable-pri-resource-indexes).
+
 ## Offline PE and ELF export tables
 
 Use `inspect_native_exports` with an absolute `path`, or

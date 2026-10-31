@@ -325,6 +325,12 @@ explicit path or endpoint and do not need it.
 - PE resource type/name/language trees and static icon group references:
   `inspect_pe_resources` with an explicit path. This portable operation requires
   no active target or engine; opaque payloads retain file ranges and SHA-256.
+- Windows PRI resource index (`resources.pri` of MSIX/UWP/WinUI apps) for UI
+  strings and qualified assets: `inspect_pri_resources` with an explicit path,
+  without the Windows SDK or makepri. Read the default items page, then select
+  `collection: "candidates"` by exact `names`, `query`, `qualifiers` (for
+  example Language en-US) or `value_types`; follow `page.next_offset`. Values
+  held by resource packs or referenced files remain explicit unknowns.
 - PE export directories and ELF dynamic-symbol exports: `inspect_native_exports`
   with an explicit path; portable, no active target or engine.
 - Native executable, library, or analysis database: `open_binary`, then

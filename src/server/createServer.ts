@@ -37,6 +37,7 @@ import {
   createPeImportsService,
   createNativeExportsService,
   createPeResourcesService,
+  createPriResourcesService,
   createRecordedCrashService,
   createByteEntropyService,
   createBinaryLayoutService,
@@ -49,6 +50,7 @@ import { registerPeLoadConfigTool } from "./registerPeLoadConfigTool.js";
 import { registerPeCertificatesTool } from "./registerPeCertificatesTool.js";
 import { registerPeImportsTool } from "./registerPeImportsTool.js";
 import { registerPeResourcesTool } from "./registerPeResourcesTool.js";
+import { registerPriResourcesTool } from "./registerPriResourcesTool.js";
 import { registerNativeExportsTool } from "./registerNativeExportsTool.js";
 import type { EvmInterfaceService } from "../application/evm/EvmInterfaceService.js";
 import {
@@ -477,6 +479,7 @@ export const createServer = (
   const il2cppMetadata =
     options.il2cppMetadata ?? createIl2cppMetadataService();
   const peResources = createPeResourcesService();
+  const priResources = createPriResourcesService();
   const nativeExports = createNativeExportsService();
   const devicetree = createDevicetreeService();
   const elfNotes = createElfNotesService();
@@ -604,6 +607,7 @@ export const createServer = (
       modelArtifact.close(),
       gpuCodeObjects.close(),
       peResources.close(),
+      priResources.close(),
       nativeExports.close(),
       devicetree.close(),
       elfNotes.close(),
@@ -791,6 +795,13 @@ export const createServer = (
       registerPeResourcesTool(
         server,
         peResources,
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+      );
+      registerPriResourcesTool(
+        server,
+        priResources,
         toolLogger,
         recordEvidence,
         analysisAdmission,

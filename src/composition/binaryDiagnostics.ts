@@ -8,6 +8,8 @@ import { PwntoolsLayoutProvider } from "../native/pwntools/PwntoolsLayoutProvide
 import { pwntoolsHostSupported } from "../native/pwntools/PwntoolsDecoder.js";
 import { PeResourcesService } from "../application/binaryDiagnostics/PeResourcesService.js";
 import { PeResourcesProvider } from "../native/pe/PeResourcesProvider.js";
+import { PriResourcesService } from "../application/binaryDiagnostics/PriResourcesService.js";
+import { PriResourcesProvider } from "../native/pri/PriResourcesProvider.js";
 import { PeCertificatesService } from "../application/binaryDiagnostics/PeCertificatesService.js";
 import { PeCertificatesProvider } from "../native/pe/PeCertificatesProvider.js";
 import { PeImportsService } from "../application/binaryDiagnostics/PeImportsService.js";
@@ -32,6 +34,10 @@ export { pwntoolsHostSupported };
 /** Portable PE inspection with no engine, installation or target acquisition. */
 export const createPeResourcesService = (): PeResourcesService =>
   new PeResourcesService(new PeResourcesProvider());
+
+/** Portable PRI resource index inspection with no engine, SDK or target acquisition. */
+export const createPriResourcesService = (): PriResourcesService =>
+  new PriResourcesService(new PriResourcesProvider());
 
 /** Portable Authenticode table inspection with no engine or catalog verification. */
 export const createPeCertificatesService = (): PeCertificatesService =>

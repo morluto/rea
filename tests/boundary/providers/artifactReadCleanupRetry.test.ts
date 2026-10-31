@@ -54,27 +54,48 @@ import { GoBinaryProvider } from "../../../src/go/GoBinaryProvider.js";
 import { PeResourcesProvider } from "../../../src/native/pe/PeResourcesProvider.js";
 import { createGoBinaryFixture } from "../../fixtures/go/image.js";
 import { peResourceFixture } from "../../../src/native/pe/PeResources.fixture.js";
+import { PriResourcesProvider } from "../../../src/native/pri/PriResourcesProvider.js";
+import { priFixture } from "../../../src/native/pri/PriResources.fixture.js";
 
-it.each(["go", "pe"] as const)(
+const subjects = {
+  go: {
+    file: "program.elf",
+    bytes: () => createGoBinaryFixture().bytes,
+    provider: () => new GoBinaryProvider(),
+  },
+  pe: {
+    file: "program.exe",
+    bytes: () => peResourceFixture().bytes,
+    provider: () => new PeResourcesProvider(),
+  },
+  pri: {
+    file: "resources.pri",
+    bytes: () => priFixture().bytes,
+    provider: () => new PriResourcesProvider(),
+  },
+} as const;
+
+it.each(["go", "pe", "pri"] as const)(
   "%s provider retains a failed descriptor close and retries that owner before the next read",
   async (kind) => {
     const root = await mkdtemp(join(tmpdir(), "rea-read-cleanup-"));
-    const path = join(root, kind === "go" ? "program.elf" : "program.exe");
-    const bytes =
-      kind === "go" ? createGoBinaryFixture().bytes : peResourceFixture().bytes;
-    await writeFile(path, bytes);
-    const provider =
-      kind === "go" ? new GoBinaryProvider() : new PeResourcesProvider();
+    const path = join(root, subjects[kind].file);
+    await writeFile(path, subjects[kind].bytes());
+    const provider = subjects[kind].provider();
     cleanupState.failFirstClose = true;
     const controller = new AbortController();
     cleanupState.abortController = controller;
     cleanupState.firstHandle = undefined;
     cleanupState.firstHandleCloseAttempts = 0;
     try {
+      // One parsed input satisfies every provider's selection fields.
       const input = {
         path,
         max_file_bytes: 8 * 1024 * 1024,
         max_entries: 4096,
+        collection: "items" as const,
+        offset: 0,
+        limit: 100,
       };
       const first = await provider.inspect(input, {
         signal: controller.signal,

@@ -17,8 +17,8 @@ import {
 import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
-import type { AndroidJniSelection } from "../../../src/domain/android/androidJniBindings.js";
 import {
+  type AndroidJniSelection,
   androidJniLibraryCheckpointSchema,
   type AndroidJniLibraryCheckpoint,
 } from "../../../src/domain/android/androidJniBindings.js";

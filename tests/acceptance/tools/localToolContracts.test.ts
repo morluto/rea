@@ -234,6 +234,7 @@ const pathRequests: readonly [string, Record<string, unknown>][] = [
     { capture_path: nul, output_directory: "/tmp/exported-scripts" },
   ],
   ["inspect_pe_resources", { path: nul }],
+  ["inspect_pri_resources", { path: nul }],
   ["inspect_pe_certificates", { path: nul }],
   ["inspect_pe_imports", { path: nul }],
   ["inspect_native_exports", { path: nul }],

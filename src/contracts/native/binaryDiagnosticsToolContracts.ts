@@ -37,6 +37,10 @@ import {
   peResourcesSchema,
 } from "../../domain/native/peResources.js";
 import {
+  inspectPriResourcesInputSchema,
+  priResourcesSchema,
+} from "../../domain/native/priResources.js";
+import {
   inspectPeCertificatesInputSchema,
   peCertificatesSchema,
 } from "../../domain/native/peCertificates.js";
@@ -219,6 +223,31 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
       {
         title: "Inspect PE resource identities and icon relationships",
         input: { path: "/artifacts/application.exe" },
+      },
+    ],
+  },
+  {
+    name: "inspect_pri_resources",
+    ...toolContractMetadata("inspect_pri_resources"),
+    kind: "native-provider",
+    description:
+      "Inspect one explicit local Windows Package Resource Index (.pri: the MRM resource index of MSIX/UWP/WinUI apps, mrm_pri0/1/2/prif) from its bytes alone; it executes nothing, opens no engine and needs no Windows SDK. Returns artifact SHA-256, header and section summary, resource maps with schema identity, stored qualifier values and value-type counts, plus one page of the selected collection: items (full names such as Resources/AppDisplayName or Files/Assets/Logo.png with candidate counts; default), candidates (qualifiers, stored value type, decoded String/Path text, or EmbeddedData file range and SHA-256), sections (complete section table and whether REA interpreted each) or qualifiers (stored priorities and fallback scores). Narrow items and candidates with exact names, a case-insensitive name query, qualifier values (for example Language en-US) and value_types; follow page.next_offset. Strings are stored as String, AsciiString or Utf8String. Runtime qualifier resolution is not simulated; values held by other PRI files or referenced files and uninterpreted sections stay explicit unknowns. Malformed or inconsistent structures and exhausted budgets return no partial result.",
+    inputSchema: inspectPriResourcesInputSchema,
+    outputSchema: evidenceResultOf(priResourcesSchema),
+    examples: [
+      {
+        title: "List named resources in a PRI file",
+        input: { path: "/artifacts/resources.pri" },
+      },
+      {
+        title: "Read en-US UI strings",
+        input: {
+          path: "/artifacts/resources.pri",
+          collection: "candidates",
+          query: "Resources/",
+          qualifiers: [{ name: "Language", value: "en-US" }],
+          value_types: ["String", "AsciiString", "Utf8String"],
+        },
       },
     ],
   },

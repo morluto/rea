@@ -26,6 +26,13 @@ export const PE_RESOURCES_PROVIDER = Object.freeze({
   version: "1",
 } as const);
 
+/** Provider identity for portable, execution-free Windows PRI resource index decoding. */
+export const PRI_RESOURCES_PROVIDER = Object.freeze({
+  id: "rea-pri-resources",
+  name: "REA PRI resource index parser",
+  version: "1",
+} as const);
+
 /** Provider identity for portable, execution-free PE Authenticode table decoding. */
 export const PE_CERTIFICATES_PROVIDER = Object.freeze({
   id: "rea-pe-certificates",

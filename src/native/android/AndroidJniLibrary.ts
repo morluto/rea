@@ -70,7 +70,7 @@ export const decodeJniModifiedUtf8 = (
 };
 
 const methodName = (name: string): boolean =>
-  name !== "" && !/[.;\[/<>\0]/u.test(name);
+  name !== "" && !/[.;[/<>\0]/u.test(name);
 const methodDescriptor = (descriptor: string): boolean => {
   if (
     !dexDescriptorSchema.safeParse(descriptor).success ||
