@@ -277,6 +277,7 @@ for (const name of ["get_xrefs_to_class", "get_xrefs_to_method"])
     }),
   );
 await server.connect(new StdioServerTransport());
-// A refused cleanup must leave a live process for verified fixture teardown.
-// Otherwise stdin EOF races the ownership scan with the server's natural exit.
-if (mode === "cleanup-failure") setInterval(() => {}, 1000);
+// Keep process lifetime with the fixture's verified cleanup owner in every mode.
+// stdin EOF must not race its ownership scan; explicit RPC-disconnect faults
+// still exit through process.exit above.
+setInterval(() => {}, 1000);
