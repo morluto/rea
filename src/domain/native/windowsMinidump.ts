@@ -62,6 +62,9 @@ export const WINDOWS_MINIDUMP_AMD64_CONTEXT = [
 /** Bytes through `Rip`; complete AMD64 CONTEXT records are 1232 bytes. */
 export const WINDOWS_MINIDUMP_AMD64_CONTEXT_MIN_BYTES = 0x100;
 
+export const MAX_INSPECT_MINIDUMP_FILE_BYTES = 1073741824;
+export const MAX_INSPECT_MINIDUMP_ENTRIES = 1048576;
+
 /** Explicit recorded dump selection with independent read and inventory budgets. */
 export const inspectWindowsMinidumpInputSchema = z.strictObject({
   path: absoluteLocalPathStringSchema.describe(
@@ -71,14 +74,14 @@ export const inspectWindowsMinidumpInputSchema = z.strictObject({
     .number()
     .int()
     .min(32)
-    .max(1073741824)
+    .max(MAX_INSPECT_MINIDUMP_FILE_BYTES)
     .default(268435456)
     .describe("Maximum stable artifact bytes to read (default 256 MiB)"),
   max_entries: z
     .number()
     .int()
     .min(1)
-    .max(1048576)
+    .max(MAX_INSPECT_MINIDUMP_ENTRIES)
     .default(65536)
     .describe(
       "Maximum directory, thread, module and memory descriptors to examine; exceeding it fails without partial success",

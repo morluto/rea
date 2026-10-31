@@ -23,7 +23,7 @@ const MAX_NAME_BYTES = 65536;
 const YIELD_EVERY = 1024;
 // Cumulative recorded-name bytes; each byte expands into a decoded string and
 // two hex characters, so repeated descriptors must not multiply allocations.
-const MAX_TOTAL_NAME_BYTES = 16 * 1024 * 1024;
+export const MAX_TOTAL_NAME_BYTES = 16 * 1024 * 1024;
 const EXCEPTION_PARAMETER_SLOTS = 15;
 
 const failure = (message: string): never => {
@@ -45,6 +45,7 @@ export const parseWindowsMinidump = async (
       throw new ArtifactReaderFailure(
         "limit",
         `Minidump descriptors exceed the ${String(input.max_entries)} entry budget.`,
+        { boundary: "capacity" },
       );
     const before = examined;
     examined += entries;
@@ -216,6 +217,7 @@ export const parseWindowsMinidump = async (
       throw new ArtifactReaderFailure(
         "limit",
         `Recorded module names exceed the ${String(MAX_TOTAL_NAME_BYTES)}-byte decoding budget.`,
+        { boundary: "memory" },
       );
     const name = require(nameRva +
       4, nameBytes, `Module ${String(index)} name`);
@@ -263,6 +265,7 @@ export const parseWindowsMinidump = async (
       throw new ArtifactReaderFailure(
         "limit",
         `Minidump descriptors exceed the ${String(input.max_entries)} entry budget.`,
+        { boundary: "capacity" },
       );
     await examine(Number(entries));
     if (BigInt(memory64.bytes) !== 16n + entries * 16n)

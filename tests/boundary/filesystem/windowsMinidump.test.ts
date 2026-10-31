@@ -52,13 +52,17 @@ describe("Windows minidump stable filesystem boundary", () => {
     const path = join(root, "crash.dmp");
     await writeFile(path, windowsMinidumpFixture().bytes);
     const service = createWindowsMinidumpService();
-    for (const input of [
-      { path, max_file_bytes: 64 },
-      { path, max_entries: 2 },
-    ]) {
+    for (const [input, resource, setting] of [
+      [{ path, max_file_bytes: 64 }, "file-size", /max_file_bytes above 64/],
+      [{ path, max_entries: 2 }, "capacity", /max_entries above 2/],
+    ] as const) {
       const result = await service.inspect(input);
       if (result.ok) throw new Error("Expected budget failure");
-      expect(result.error._tag).toBe("AnalysisResourceConstraintError");
+      expect(result.error).toMatchObject({
+        _tag: "AnalysisResourceConstraintError",
+        resource,
+        remediationAction: expect.stringMatching(setting),
+      });
     }
     const result = await service.inspect(
       { path },
