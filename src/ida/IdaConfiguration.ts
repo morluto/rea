@@ -1,23 +1,12 @@
+import { readProviderRegistration } from "../providers/ReadProviderRegistration.js";
 import { isAbsolute } from "node:path";
 import { z } from "zod";
 import { jsonRecordSchema } from "../domain/jsonRecord.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import type { AnalysisInputIssue } from "../domain/analysisErrorCore.js";
 import { projectInputIssues } from "../domain/inputIssueProjection.js";
 import { err, ok, type Result } from "../domain/result.js";
-import {
-  withOwnedRegularFile,
-  regularFileCancellation,
-  RegularFileCleanupFailure,
-} from "../filesystem/OwnedRegularFile.js";
-import {
-  RegularFileOperationCancelled,
-  NonRegularFileReadError,
-} from "../filesystem/RegularFile.js";
-import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 
 /** Omitted registration `timeoutMs` for each upstream IDA MCP request. */
 export const DEFAULT_IDA_REQUEST_TIMEOUT_MS = 300_000;
@@ -135,43 +124,11 @@ export const readIdaConfiguration = (
     readonly resourceScope: RetainedResourceScope;
   },
 ): Promise<Result<IdaConfiguration, ConfigurationError>> =>
-  options.resourceScope.run(async () => {
-    let closeLease: AnalysisCleanupLease | undefined;
-    try {
-      const text = await withOwnedRegularFile<string>(
-        path,
-        {
-          ...(options.signal === undefined ? {} : { signal: options.signal }),
-          retainFailedClose: (owner) => {
-            closeLease = AnalysisCleanupLease.forCloseOwner(owner, path);
-            options.resourceScope.retain(
-              {
-                close: () => closeLease!.release(),
-                get cleanupResources() {
-                  return closeLease!.cleanupResources;
-                },
-              },
-              path,
-            );
-          },
-        },
-        async ({ handle, initial: metadata }) => {
-          if (metadata.size > MAXIMUM_REGISTRATION_BYTES)
-            throw registrationTooLarge();
-          const bytes = await readBoundedFileBytes(
-            handle,
-            MAXIMUM_REGISTRATION_BYTES,
-            {
-              signal: options.signal,
-              cancellationFailure: (reason) =>
-                new RegularFileOperationCancelled(reason),
-            },
-          );
-          if (bytes === undefined) throw registrationTooLarge();
-          return bytes.toString("utf8");
-        },
-      );
-      const input: unknown = JSON.parse(text);
+  readProviderRegistration(path, options, {
+    setting: "REA_IDA_MCP_CONFIG",
+    label: "IDA MCP",
+    operation: "ida:registration",
+    parse: (input) => {
       const envelope = z
         .object({ mcpServers: z.object({ "ida-pro-mcp": z.unknown() }) })
         .safeParse(input);
@@ -208,88 +165,8 @@ export const readIdaConfiguration = (
           },
         ),
       );
-    } catch (cause: unknown) {
-      if (cause instanceof ConfigurationError) return err(cause);
-      if (cause instanceof NonRegularFileReadError)
-        return err(
-          idaConfigurationError(
-            `REA_IDA_MCP_CONFIG must select a regular JSON file: ${path}`,
-            cause,
-          ),
-        );
-      if (cause instanceof AnalysisCancelledError) throw cause;
-      const cancellation = regularFileCancellation(cause);
-      if (cancellation !== undefined) {
-        if (cause instanceof RegularFileCleanupFailure) {
-          const error = new AnalysisCancelledError("ida:registration", {
-            cause: cancellation.reason,
-            cleanup: {
-              reason:
-                cause.cleanupCause instanceof Error
-                  ? cause.cleanupCause.message
-                  : String(cause.cleanupCause),
-              resources: [path],
-            },
-          });
-          closeLease?.bindCleanupError(error);
-          throw error;
-        }
-        throw new AnalysisCancelledError("ida:registration", {
-          cause: cancellation.reason,
-        });
-      }
-      if (cause instanceof RegularFileCleanupFailure) {
-        const primary =
-          cause.outcome.kind === "failed"
-            ? cause.outcome.cause
-            : cause.cleanupCause;
-        const primaryMessage =
-          cause.outcome.kind === "failed"
-            ? primary instanceof ConfigurationError
-              ? primary.message
-              : primary instanceof NonRegularFileReadError
-                ? `REA_IDA_MCP_CONFIG must select a regular JSON file: ${path}`
-                : `Cannot read IDA MCP registration ${path}: ${primary instanceof Error ? primary.message : String(primary)}`
-            : `Cannot close IDA MCP registration ${path}; provide a readable JSON configuration.`;
-        const error = new ConfigurationError(primaryMessage, {
-          cause,
-          cleanup: {
-            reason:
-              cause.cleanupCause instanceof Error
-                ? cause.cleanupCause.message
-                : String(cause.cleanupCause),
-            resources: [path],
-          },
-          settings: [
-            {
-              setting: "REA_IDA_MCP_CONFIG",
-              constraint: `Close remains incomplete for ${path}`,
-            },
-          ],
-        });
-        closeLease?.bindCleanupError(error);
-        return err(error);
-      }
-      return err(
-        idaConfigurationError(
-          `Cannot read IDA MCP registration ${path}; provide a readable JSON configuration.`,
-          cause,
-        ),
-      );
-    }
+    },
   });
-
-const MAXIMUM_REGISTRATION_BYTES = 65_536;
-
-/**
- * Read at most the registration limit from one regular file. Opening without
- * blocking and checking the descriptor's type keeps a FIFO, socket or device
- * from stalling diagnostics while it waits for a producer.
- */
-const registrationTooLarge = (): ConfigurationError =>
-  idaConfigurationError(
-    "REA_IDA_MCP_CONFIG exceeds the 64 KiB registration size.",
-  );
 
 /**
  * Name the registration key that sets an IDA request or readiness deadline.

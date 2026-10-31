@@ -211,6 +211,7 @@
     "verify:ghidra:mips-shared": "npm run build:cached && node scripts/verify-real-ghidra-mips-shared.mjs",
     "verify:ghidra:mips-relocatable": "npm run build:cached && node scripts/verify-real-ghidra-mips-relocatable.mjs",
     "verify:ghidra:swift": "npm run build:cached && node scripts/verify-real-ghidra-swift.mjs",
+    "verify:binary-ninja": "npm run build:cached && node scripts/verify-real-binary-ninja.mjs",
     "verify:ida": "npm run build:cached && node scripts/verify-real-ida.mjs",
     "verify:ghidra:switch": "npm run build:cached && node scripts/verify-real-ghidra-switch.mjs",
     "verify:kuna": "npm run build:cached && node scripts/verify-real-kuna.mjs",

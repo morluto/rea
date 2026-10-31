@@ -1406,6 +1406,28 @@ Native IDA MCP verification uses `"protocol": "native"` with an already-running 
 
 The initial Linux x64 IDA Free 9.4 run used native MCP 1.1.2 with a local navigation correction. Windows x64 verification uses **IDA Pro 9.3**, the two-function public fixture, and the shipped Windows `whoami.exe` application. The native plugin was built from upstream `c9d15d98e8a143fc74f6e14037c48f63889b6d6c`, including the merged navigation fix, with a local loopback-listener change. Production CLI/MCP parity, switching, identity and cleanup passed. Correctness and performance measurements are recorded in the [Windows native verification notes](https://github.com/morluto/rea/blob/a2e2c29b59e8775b0e6aedb09a9eb16adf32646b/experiments/analysis-efficiency/ida-native-windows.md). Stock 1.1.2 switching, native macOS, and Windows IDA Free remain unverified. See the [native bridge prerequisites](ida-provider.md#optional-native-ida-mcp-bridge).
 
+## Binary Ninja lane
+
+`npm run verify:binary-ninja -- --target /absolute/path/to/program --procedure NAME`
+uses the existing `REA_BINARY_NINJA_MCP_CONFIG` registration and a running
+Binary Ninja 6.0+ GUI MCP server with the target already open. It installs and
+launches nothing. It runs the production CLI dispatcher and connects the pinned
+MCP client SDK to the production REA server, then checks function Evidence and
+CLI/MCP parity for inventories, search, Pseudo C, assembly, instructions,
+callers, callees and xrefs, invalid input, close, restoration of a previously
+selected shared view, and input preservation. `--second-procedure` with
+`--second-marker`, `--expected-string`, and `--expected-xref` add switching and
+independent oracles; without them those behaviors are listed in `unverified`.
+
+Adapter tests replay the observed Binary Ninja 6.0 protocol through a recording
+fixture and a loopback HTTP server. They do not establish real engine behavior.
+The initial real workflow used Binary Ninja Personal 6.0.10601 on Windows 10 x64
+with the shipped `notepad.exe`. The upstream port was additionally verified on
+macOS ARM64 with Personal 6.0.10905 using the repository's C fixture in debug,
+optimized, and stripped builds, including an independently checked tail-call
+reference and selection restoration across open files. See the
+[provider guide](binary-ninja.md) for exact oracles and remaining coverage gaps.
+
 ## Kuna lane
 
 `npm run verify:kuna` requires a caller-supplied `kuna` in `REA_KUNA_COMMAND`

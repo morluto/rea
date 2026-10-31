@@ -497,6 +497,67 @@ it("carries a validated REA_KUNA_COMMAND into the provider registration environm
   });
 });
 
+it.each([
+  { idaTimeout: undefined, binaryNinjaTimeout: 600_000, expected: 600_000 },
+  { idaTimeout: 900_000, binaryNinjaTimeout: 600_000, expected: 900_000 },
+  { idaTimeout: 300_000, binaryNinjaTimeout: 600_000, expected: 600_000 },
+  { idaTimeout: 300_000, binaryNinjaTimeout: 0, expected: 300_000 },
+  { idaTimeout: 0, binaryNinjaTimeout: 600_000, expected: 600_000 },
+  { idaTimeout: 0, binaryNinjaTimeout: 0, expected: undefined },
+])(
+  "uses the largest valid auto provider request budget: %j",
+  async ({ idaTimeout, binaryNinjaTimeout, expected }) => {
+    const root = await createTestTempDirectory("rea-auto-provider-budget-");
+    const binaryNinja = join(root, "binary-ninja.json");
+    const ida = join(root, "ida.json");
+    await writeFile(
+      binaryNinja,
+      JSON.stringify({
+        url: "http://127.0.0.1:9/mcp",
+        timeoutMs: binaryNinjaTimeout,
+      }),
+    );
+    await writeFile(
+      ida,
+      JSON.stringify({ command: "fixture", timeoutMs: idaTimeout }),
+    );
+    const environment = {
+      REA_BINARY_NINJA_MCP_CONFIG: binaryNinja,
+      ...(idaTimeout === undefined ? {} : { REA_IDA_MCP_CONFIG: ida }),
+    };
+    const host = createSystemDoctorHost(environment);
+    try {
+      expect(
+        await host.resolveProviderRequestBudget?.("auto", environment),
+      ).toEqual(ok(expected));
+    } finally {
+      await host.close?.();
+    }
+  },
+);
+
+it("carries a validated REA_BINARY_NINJA_MCP_CONFIG into the provider registration environment without connecting", async () => {
+  expect(DOCTOR_PROVIDER_IDS).toContain("binary-ninja");
+  const root = await createTestTempDirectory("rea-binary-ninja-registration-");
+  const registration = join(root, "binary-ninja-mcp.json");
+  await writeFile(
+    registration,
+    JSON.stringify({ url: "http://127.0.0.1:9/mcp" }),
+  );
+
+  const inspections = await createSystemDoctorHost({
+    REA_BINARY_NINJA_MCP_CONFIG: registration,
+  }).providerInspections?.();
+
+  expect(inspections?.find(({ id }) => id === "binary-ninja")).toMatchObject({
+    configured: true,
+    available: true,
+  });
+  expect(providerRegistrationEnvironment(inspections ?? [])).toMatchObject({
+    REA_BINARY_NINJA_MCP_CONFIG: registration,
+  });
+});
+
 const createFakeJdk = async (root: string): Promise<string> => {
   const javaHome = join(root, "fake-jdk");
   const bin = join(javaHome, "bin");

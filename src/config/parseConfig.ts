@@ -123,6 +123,9 @@ export const parseConfig = (
     ...(env.REA_IDA_MCP_CONFIG === undefined
       ? {}
       : { idaMcpConfigPath: env.REA_IDA_MCP_CONFIG }),
+    ...(env.REA_BINARY_NINJA_MCP_CONFIG === undefined
+      ? {}
+      : { binaryNinjaMcpConfigPath: env.REA_BINARY_NINJA_MCP_CONFIG }),
     ...(env.REA_GHIDRA_PROJECT_PATH === undefined
       ? {}
       : {
