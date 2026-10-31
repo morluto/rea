@@ -150,3 +150,29 @@ does not establish containment of every possible kernel interaction.
 The syscall trace also rejects access to the still-present
 source executable. The CI workflow defines Ubuntu 24.04 and Debian 13 (GDB 16)
 container lanes. Original inputs and host configuration remain unchanged.
+
+## Windows minidumps
+
+`inspect_windows_minidump` / `rea inspect-windows-minidump` inspect a supplied
+Windows minidump (`MDMP`) as a separate profile. It is pure TypeScript and needs
+no debugger, Windows SDK, Python, symbols or live target:
+
+```sh
+rea inspect-windows-minidump ./crash.dmp --json
+```
+
+MCP uses `{ "path": "/artifacts/crash.dmp" }`. The result retains the header,
+every stream-directory entry with its validated RVA/size range, SystemInfo,
+recorded threads (historical thread ID, TEB, stack range, context range),
+exception code/flags/address/parameters, module descriptors with recorded
+UTF-16 names and CV/misc record ranges, and present MemoryList/Memory64List
+regions. AMD64 contexts expose integer, flags and segment registers bound to
+their source bytes; other architectures keep located, uninterpreted contexts.
+
+Historical thread IDs and module paths are recorded metadata. They never select
+a process, authorize attach, or establish current file or symbol identity.
+Undescribed memory and uninterpreted streams remain unknown. Truncated,
+overlapping, duplicate or incomplete streams fail without partial success;
+`max_file_bytes` (default 256 MiB) and `max_entries` (default 65536) bound the
+read and descriptor inventory. See
+[the specification](specs/2355-windows-minidump-inspection/spec.md).

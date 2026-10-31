@@ -26,6 +26,13 @@ export const PE_RESOURCES_PROVIDER = Object.freeze({
   version: "1",
 } as const);
 
+/** Provider identity for portable, execution-free recorded minidump decoding. */
+export const WINDOWS_MINIDUMP_PROVIDER = Object.freeze({
+  id: "rea-windows-minidump",
+  name: "REA Windows minidump parser",
+  version: "1",
+} as const);
+
 /** Provider identity for portable, execution-free PE Authenticode table decoding. */
 export const PE_CERTIFICATES_PROVIDER = Object.freeze({
   id: "rea-pe-certificates",

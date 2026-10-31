@@ -8,6 +8,8 @@ import { PwntoolsLayoutProvider } from "../native/pwntools/PwntoolsLayoutProvide
 import { pwntoolsHostSupported } from "../native/pwntools/PwntoolsDecoder.js";
 import { PeResourcesService } from "../application/binaryDiagnostics/PeResourcesService.js";
 import { PeResourcesProvider } from "../native/pe/PeResourcesProvider.js";
+import { WindowsMinidumpService } from "../application/binaryDiagnostics/WindowsMinidumpService.js";
+import { WindowsMinidumpProvider } from "../native/minidump/WindowsMinidumpProvider.js";
 import { PeCertificatesService } from "../application/binaryDiagnostics/PeCertificatesService.js";
 import { PeCertificatesProvider } from "../native/pe/PeCertificatesProvider.js";
 import { PeImportsService } from "../application/binaryDiagnostics/PeImportsService.js";
@@ -32,6 +34,10 @@ export { pwntoolsHostSupported };
 /** Portable PE inspection with no engine, installation or target acquisition. */
 export const createPeResourcesService = (): PeResourcesService =>
   new PeResourcesService(new PeResourcesProvider());
+
+/** Portable recorded minidump inspection; no debugger, symbols or live target. */
+export const createWindowsMinidumpService = (): WindowsMinidumpService =>
+  new WindowsMinidumpService(new WindowsMinidumpProvider());
 
 /** Portable Authenticode table inspection with no engine or catalog verification. */
 export const createPeCertificatesService = (): PeCertificatesService =>

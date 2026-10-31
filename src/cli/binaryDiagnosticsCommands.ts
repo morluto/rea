@@ -13,6 +13,7 @@ import {
   createKernelModuleService,
   createPeLoadConfigService,
   createPeResourcesService,
+  createWindowsMinidumpService,
   createPeCertificatesService,
   createPeImportsService,
   createNativeExportsService,
@@ -25,6 +26,7 @@ import { withCommandCancellation } from "./commandCancellation.js";
 import { inspectBinaryLayoutInputSchema } from "../domain/native/binaryLayout.js";
 import { inspectRecordedCrashInputSchema } from "../domain/native/recordedCrash.js";
 import { inspectPeResourcesInputSchema } from "../domain/native/peResources.js";
+import { inspectWindowsMinidumpInputSchema } from "../domain/native/windowsMinidump.js";
 import { inspectPeCertificatesInputSchema } from "../domain/native/peCertificates.js";
 import { inspectPeImportsInputSchema } from "../domain/native/peImports.js";
 import { inspectNativeExportsInputSchema } from "../domain/native/nativeExports.js";
@@ -346,6 +348,42 @@ export const registerBinaryDiagnosticsCommands = (
               pe,
               "rea-pe-resources",
               "inspect_pe_resources",
+              signal,
+            ).then(projectCliAnalysisResult),
+        );
+      }),
+  });
+  cli.command(CLI_COMMANDS.inspectWindowsMinidump, {
+    description:
+      "Inspect recorded Windows minidump streams, threads, exception, modules and memory ranges without attaching",
+    args: z.object({
+      path: localPathStringSchema.describe("Local Windows minidump"),
+    }),
+    options: z.object({
+      maxFileBytes: inspectWindowsMinidumpInputSchema.shape.max_file_bytes,
+      maxEntries: inspectWindowsMinidumpInputSchema.shape.max_entries,
+    }),
+    run: ({ args, options }) =>
+      withCommandCancellation(async (signal) => {
+        const minidump = createWindowsMinidumpService();
+        return await logCliCommand(
+          logger,
+          CLI_COMMANDS.inspectWindowsMinidump,
+          async () =>
+            finishCliEvidenceCommand(
+              args.path,
+              () =>
+                minidump.inspect(
+                  {
+                    path: absoluteCallerPath(args.path),
+                    max_file_bytes: options.maxFileBytes,
+                    max_entries: options.maxEntries,
+                  },
+                  { signal },
+                ),
+              minidump,
+              "rea-windows-minidump",
+              "inspect_windows_minidump",
               signal,
             ).then(projectCliAnalysisResult),
         );

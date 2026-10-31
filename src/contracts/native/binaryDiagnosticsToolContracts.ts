@@ -37,6 +37,10 @@ import {
   peResourcesSchema,
 } from "../../domain/native/peResources.js";
 import {
+  inspectWindowsMinidumpInputSchema,
+  windowsMinidumpSchema,
+} from "../../domain/native/windowsMinidump.js";
+import {
   inspectPeCertificatesInputSchema,
   peCertificatesSchema,
 } from "../../domain/native/peCertificates.js";
@@ -219,6 +223,21 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
       {
         title: "Inspect PE resource identities and icon relationships",
         input: { path: "/artifacts/application.exe" },
+      },
+    ],
+  },
+  {
+    name: "inspect_windows_minidump",
+    ...toolContractMetadata("inspect_windows_minidump"),
+    kind: "native-provider",
+    description:
+      "Inspect one supplied Windows minidump (MDMP) file without launching, attaching to or controlling any process and without symbol or module download. Returns original header and stream-directory identity with validated RVA/size ranges, SystemInfo, recorded threads with AMD64 integer register contexts, exception code/address/parameters, recorded module descriptors/names and present MemoryList/Memory64List ranges inline with SHA-256 Evidence. Historical thread IDs and module paths are recorded metadata, not current process or file identity; undescribed memory and uninterpreted streams remain unknown. Truncated, overlapping, duplicate or incomplete streams and exhausted budgets return no partial success. Portable on supported Node hosts; no debugger or Windows SDK required.",
+    inputSchema: inspectWindowsMinidumpInputSchema,
+    outputSchema: evidenceResultOf(windowsMinidumpSchema),
+    examples: [
+      {
+        title: "Inspect recorded minidump threads, exception and modules",
+        input: { path: "/artifacts/crash.dmp" },
       },
     ],
   },

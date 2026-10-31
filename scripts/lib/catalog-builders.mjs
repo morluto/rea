@@ -124,6 +124,13 @@ export const providerCatalog = (sources) => {
         ),
     },
     {
+      identity: sources.artifactProviders.WINDOWS_MINIDUMP_PROVIDER,
+      contracts:
+        sources.binaryDiagnosticsContracts.BINARY_DIAGNOSTICS_TOOL_CONTRACTS.filter(
+          ({ name }) => name === "inspect_windows_minidump",
+        ),
+    },
+    {
       identity: sources.artifactProviders.PE_CERTIFICATES_PROVIDER,
       contracts:
         sources.binaryDiagnosticsContracts.BINARY_DIAGNOSTICS_TOOL_CONTRACTS.filter(

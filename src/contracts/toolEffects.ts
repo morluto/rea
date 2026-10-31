@@ -258,6 +258,7 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
   }),
   inspect_byte_entropy: evidence,
   inspect_pe_resources: evidence,
+  inspect_windows_minidump: evidence,
   inspect_pe_certificates: evidence,
   inspect_pe_imports: evidence,
   inspect_native_exports: evidence,
