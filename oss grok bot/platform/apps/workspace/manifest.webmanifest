@@ -1,0 +1,14 @@
+{
+  "id": "/",
+  "name": "Orbit",
+  "short_name": "Workshop",
+  "description": "Your local persistent Bot workspace",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#111215",
+  "theme_color": "#18191d",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

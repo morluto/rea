@@ -1,0 +1,17 @@
+{
+  "name": "@bot-workshop/mobile",
+  "version": "0.6.3",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@capacitor/core": "8.5.3",
+    "@capacitor/ios": "8.5.3"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.5.3"
+  },
+  "scripts": {
+    "sync": "node ../../scripts/mobile-build.mjs && cap sync ios",
+    "ios": "cap open ios"
+  }
+}

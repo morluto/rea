@@ -1,0 +1,11 @@
+{
+  "name": "@bot-workshop/workspace",
+  "version": "0.6.3",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@novnc/novnc": "https://codeload.github.com/novnc/noVNC/tar.gz/a8dfd6a3ea3c74244f5ebdaa5a7f1023007a7820",
+    "dompurify": "3.4.17",
+    "marked": "18.1.1"
+  }
+}

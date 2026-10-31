@@ -1,0 +1,6 @@
+{
+  "name": "@bot-workshop/website",
+  "version": "0.6.3",
+  "private": true,
+  "type": "module"
+}

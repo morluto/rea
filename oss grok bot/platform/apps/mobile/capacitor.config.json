@@ -1,0 +1,13 @@
+{
+  "appId": "local.botworkshop.mobile",
+  "appName": "Orbit",
+  "webDir": "www",
+  "ios": {
+    "contentInset": "automatic",
+    "backgroundColor": "#f4f6f3"
+  },
+  "server": {
+    "hostname": "localhost",
+    "iosScheme": "capacitor"
+  }
+}

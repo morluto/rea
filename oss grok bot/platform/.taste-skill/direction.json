@@ -1,0 +1,200 @@
+{
+ "version": 1,
+ "kind": "app",
+ "at": "2026-10-28T17:06:00.334Z",
+ "seed": 187680953,
+ "input": {
+  "kind": "workspace",
+  "brief": "Orbit: a personal Bot workspace. One person runs persistent assistant Bots with live work states, conversations, memory, automations and their own Linux computers, in long daily sessions, dark UI.",
+  "theme": "dark",
+  "screens": [
+   "home",
+   "detail",
+   "settings",
+   "inbox"
+  ],
+  "keep": [
+   "palette",
+   "type"
+  ],
+  "style": "data-terminal"
+ },
+ "style": {
+  "id": "data-terminal",
+  "name": "Data terminal",
+  "theme": "dark",
+  "basis": "1 screen: a stock research view. Keep it narrow.",
+  "suits": [
+   "markets",
+   "devtools"
+  ],
+  "idea": "A research or monitoring screen read in long sessions: cards darker than the ground, tabular digits that stack, signs instead of colour, and every selection marked by the same 1px accent line.",
+  "colourBudget": "under 3%; the accent is never more than a 1px line",
+  "tokens": {
+   "ground": "#171719",
+   "surface": "#131217",
+   "raised": "#212023",
+   "border": "#222224",
+   "rule": "#1b1a1f",
+   "control": "#3a3a3e",
+   "text": "#ffffff",
+   "muted": "#8a8c92",
+   "accent": "#4a8ad6",
+   "positive": "#44a282",
+   "negative": "#e5566f",
+   "warning": "#d9a441",
+   "chart": [
+    "#f2f2f3",
+    "#e5566f",
+    "#4a8ad6"
+   ],
+   "pills": {
+    "positive": [
+     "#1b2828",
+     "#5fc39c"
+    ],
+    "negative": [
+     "#2c1a20",
+     "#e5566f"
+    ],
+    "warning": [
+     "#2a2416",
+     "#d9a441"
+    ],
+    "neutral": [
+     "#212023",
+     "#bdbdc0"
+    ]
+   },
+   "shadow": "0 12px 28px rgba(0,0,0,.2)",
+   "radius": {
+    "card": 6,
+    "control": 999
+   },
+   "font": {
+    "family": "Public Sans",
+    "second": null,
+    "fallback": "Inter, system-ui, sans-serif",
+    "sizes": {
+     "title": 26,
+     "section": 20,
+     "kpi": 20,
+     "body": 13,
+     "small": 12
+    },
+    "weights": [
+     400,
+     500,
+     600,
+     700
+    ],
+    "note": "Section titles 20/400 in the muted grey; card titles 16/600; tabular figures everywhere."
+   },
+   "density": "dense",
+   "rowHeight": 42,
+   "sidebarWidth": 50,
+   "gap": 24,
+   "pad": 32,
+   "controlHeight": 34
+  },
+  "shell": "icon-rail",
+  "shellAlternatives": [],
+  "signature": "Every selection (tab, toggle, range, nav item) is a 1px accent line exactly as wide as its label, placed on the nearest existing edge; numbers stay white or grey and carry their sign in the text ('+$24,000,000').",
+  "identity": [
+   "Every figure in a monospace as the style's decision (IBM Plex Mono or JetBrains Mono for each price, count and time, digits that stack), with the text in Public Sans. Lint and the inspector flag mono; give the reason in the report.",
+   "The one accent line from the product's world in place of the dealt blue (the exchange's or the team's hue): still the only selection mark, never violet or indigo.",
+   "A signature of the market or the system as the lead: an order book's depth as two mirrored bar lists, an incident as a minute-by-minute strip, a region map with the list beside it."
+  ],
+  "avoid": [
+   "filled pill tabs or a coloured segmented control",
+   "a chart with no scale and no dates (the studied screen had none and was flagged)",
+   "tertiary text under 4.5:1 (#4c4c4f read at about 2:1 in the study)",
+   "lighter cards with borders and a glow",
+   "green and red on every number; the one column whose job is \"what moved today\" and a negative headline figure may carry the polarity colours"
+  ],
+  "notes": "The studied screen's muted grey #82848a and red #d4405d were lifted to #8a8c92 and #e5566f so text passes 4.5:1 on the card. Its card list rows sit on a 28px pitch and its table rows on 42px."
+ },
+ "shell": {
+  "id": "icon-rail",
+  "name": "Icon rail",
+  "basis": "3 of 23 screens",
+  "suits": [
+   "markets",
+   "devtools",
+   "finance",
+   "wallet"
+  ],
+  "numbers": {
+   "railWidth": "50-60, median 55",
+   "icon": "15-18px outline",
+   "pitch": "34-49",
+   "active": "icon colour alone, or a full-bleed 50px band at a 2% tint, or a 1px accent bar on the rail's border",
+   "groups": "short 20px hairlines, no labels",
+   "utilities": "pushed to the bottom after a gap of about 200px"
+  },
+  "blueprint": "An unlabelled rail of 50-60px carries the brand mark at the top and 15-18px outline icons on a 34-49px pitch; groups are split by 20px hairlines, utilities sit at the bottom. The rail sits on the page ground with a 1px edge, or is white with a faint 4px shadow on a grey ground. It saves about 180px of width against a labelled sidebar, so it suits products with few destinations and screens that need the width. Icons need tooltips and an accessible name.",
+  "phone": "The rail becomes a bottom bar with the same four or five icons, each with a short label under it."
+ },
+ "screens": [
+  {
+   "name": "home",
+   "pattern": {
+    "id": "workspace-home-greeting",
+    "name": "Workspace home with a greeting",
+    "screen": "home",
+    "kinds": [
+     "workspace",
+     "creator"
+    ],
+    "basis": "a team workspace home; a personal insights home",
+    "blueprint": "A centred column on a real 12-column grid (77px columns, 16px gutters, 1100px), about 72px from the top. The greeting is the h1 (48/700 in a serif, or 24/400 in the sans), with the date after it or in a grey line under it, never as a tracked eyebrow, and no emoji. 50px below, 4 count tiles spanning 3 columns each (128px tall, 16px padding): label, value at regular weight in tabular or mono figures, a plain caption ('Ready when you are'), no deltas. Then spans that change by row but share column lines (9 + 3, then 6 + 6, so each internal edge meets one above it) for the main objects: panels with 20px padding, a 14/600 title, a count chip and a 'View all' link, holding row cards 63px tall with 8px gaps, one step lighter than the panel with a border one step darker. Pale tints may code the panels, each in the hue of the tile that counts it. Only a floating composer, if there is one, carries a shadow, and it must not cover the last rows.",
+    "phone": "Greeting at 24-28px; tiles in a 2 x 2 grid; panels stack in reading order."
+   }
+  },
+  {
+   "name": "detail",
+   "pattern": null
+  },
+  {
+   "name": "settings",
+   "pattern": {
+    "id": "settings-two-column",
+    "name": "Settings in two columns",
+    "screen": "settings",
+    "kinds": [
+     "devtools",
+     "smb-admin",
+     "support",
+     "workspace",
+     "commerce",
+     "analytics",
+     "finance",
+     "wallet",
+     "creator",
+     "community",
+     "builder",
+     "markets",
+     "report"
+    ],
+    "basis": "one settings page; stacking from a narrow rail card. The basis is thin.",
+    "blueprint": "A centred column of about 1152px. Each section is one row: a label column of about 450px (16/500 title, 14px grey description; the title's cap top 6-8px below the panel top, level with the panel's first line) beside a panel of about 700px with a #fafafa fill, 16px radius, 16px padding, no border and no shadow. Sections are split by a full-width 1px rule with 32px above and below. Inside a panel: field labels 14/500 above 40px white inputs (1px #e8e8e8, radius 10), 8px from label to field, 16px between fields, 24px from the description to the first label, 16px to the Save button; switch rows with a 14/500 title, a 20px status badge 8px after it, a 14px grey description and a 28x16 toggle 16px from the right edge, centred on the title line. A plan-gated feature shows a 48px tinted strip with a 32px button directly above its panel, and the panel stays readable. When a panel runs much taller than its label, put the section's help or a summary of the current values in the label column rather than 250px of nothing.",
+    "phone": "Each section stacks: title and description, then the panel at full width. Inside, label, 8-10px, field, 16-26px to the next pair; toggles stay on the right of their title."
+   }
+  },
+  {
+   "name": "inbox",
+   "pattern": {
+    "id": "inbox-triage",
+    "name": "Inbox triage",
+    "screen": "inbox",
+    "kinds": [
+     "support",
+     "workspace"
+    ],
+    "basis": "assembled from the study's list, feed and rail measurements; no inbox screen was in the study",
+    "blueprint": "Three regions on one ground: the navigation (a 230px sidebar or a 55px rail), the list, and the open item with its details. The list column has a fixed width (the study's fixed columns are 306 and 384px) and its own toolbar: saved views as underline tabs or a select, a 32px search, the count. Rows are two-line, 64-80px: line 1 is who (14/600) with the time in words right-aligned in grey ('9 min', 'Yesterday'); line 2 is the subject or last message in 13-14px grey, truncated to one line with an ellipsis. Unread rows set the name at 600 and add a 6px dot or a 16px count circle; read rows keep the name and subject in ink at 400 (grey is for meta only, never for a row's identity: faded urgent rows were the top complaint in testing). One status mark per row (priority or SLA, as a pale pill or words, not both). The selected row takes the --active fill of the nav pill (optionally a 2px accent bar inside its left edge), so it is never confused with a hover or a focus ring; never a saturated fill. The row's meta sits in fixed right-aligned slots (assignee 20px, channel 14px, priority 14px) so it lines up as columns; priority is printed only above normal. The open item fills the remaining width; its details (customer, plan, history) sit in a fixed column of 306-384px as key-value rows on a 28-32px pitch.",
+    "phone": "One region at a time: the list fills the screen; choosing a row pushes the conversation; the details open from a button in its header; back returns to the list at the same scroll position."
+   }
+  }
+ ]
+}

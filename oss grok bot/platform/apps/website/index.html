@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta
+      name="description"
+      content="Your own Bots, with sessions, routines, memory, files and persistent Linux computers. One primary host, all your devices."
+    />
+    <title>Orbit · A place for your Bots</title>
+    <link rel="icon" href="/shared/icon.svg" />
+    <link rel="stylesheet" href="/shared/local-font.css" />
+    <link rel="stylesheet" href="/shared/mascots.css" />
+    <link rel="stylesheet" href="/site.css" />
+  </head>
+  <body>
+    <header>
+      <a class="brand" href="/">Orbit</a>
+      <nav>
+        <a href="#how">How it works</a
+        ><a href="#get">Get the app <span aria-hidden="true">↗</span></a>
+      </nav>
+    </header>
+    <main>
+      <section class="opening">
+        <div class="opening-copy">
+          <p class="edition">A personal workspace for persistent Bots</p>
+          <h1>Give your Bots<br />a place to work.</h1>
+          <p class="lead">
+            Conversations that continue. Routines that run. Files you can find. And a Linux computer
+            for each Bot, whenever the job needs one.
+          </p>
+          <a class="button" href="#get">Make yourself at home <span aria-hidden="true">↗</span></a>
+          <p class="small">Your model. Your computer. Your workspace.</p>
+        </div>
+        <div class="mascot-scene">
+          <div class="scene-desk">
+            <span class="desk-label">A little character. A real working state.</span>
+            <div id="orb"></div>
+            <div class="floor"></div>
+            <div class="state-choice" role="group" aria-label="Mascot animation preview">
+              <button data-state="idle" aria-pressed="true">Idle</button
+              ><button data-state="working" aria-pressed="false">Working</button
+              ><button data-state="waiting" aria-pressed="false">Waiting for you</button>
+            </div>
+            <p class="preview-note">Animation preview</p>
+          </div>
+        </div>
+      </section>
+      <section class="host-story" id="how">
+        <div>
+          <h2>One home base.<br />Pick up anywhere.</h2>
+          <p>
+            Choose your Windows computer as the primary host. Your Mac and iPhone connect to it, so
+            prompts, sessions and computer work all stay in the same place.
+          </p>
+        </div>
+        <div class="host-map">
+          <span class="client">Mac app</span><span class="client">iPhone app</span>
+          <div class="host-line" aria-hidden="true"></div>
+          <div class="primary-host">
+            <span class="connection-dot"></span>
+            <div>
+              <strong>Your Windows host</strong
+              ><span>Bots · sessions · files · Docker computers</span>
+            </div>
+          </div>
+          <p>Other devices need your primary host to be on and reachable.</p>
+        </div>
+      </section>
+      <section class="features">
+        <article>
+          <span class="feature-mark">↳</span>
+          <h3>Start with a conversation.</h3>
+          <p>
+            Define a Bot’s role, connect your model and send a prompt. Follow real progress, answer
+            a question, or stop a task.
+          </p>
+        </article>
+        <article>
+          <span class="feature-mark">◷</span>
+          <h3>Keep the useful work going.</h3>
+          <p>
+            Make a routine, review scoped memory, and keep exact versions of files. Your host
+            retains accepted work across restarts.
+          </p>
+        </article>
+        <article>
+          <span class="feature-mark">⌘</span>
+          <h3>A computer of their own.</h3>
+          <p>
+            Each Bot gets a persistent Linux Docker desktop. Watch it work, take the controls, then
+            hand them back.
+          </p>
+        </article>
+      </section>
+      <section class="get-app" id="get">
+        <div>
+          <p class="edition">The personal prototype</p>
+          <h2>A workshop that’s yours.</h2>
+          <p>
+            Install the desktop app on your primary Windows computer. Add your own model in its
+            private settings, then create your first Bot.
+          </p>
+          <p class="small">
+            Docker Desktop must be running for Bot computers. The app is currently an unsigned local
+            prototype.
+          </p>
+        </div>
+        <div class="download-panel">
+          <a id="download" class="button" aria-disabled="true">Checking Windows build…</a>
+          <p id="downloadinfo" class="small" role="status"></p>
+          <div class="platform-note">
+            <strong>macOS & iOS</strong
+            ><span
+              >Client source is included in the same repository. Apple builds and signing require
+              macOS; no signed downloads are available yet.</span
+            >
+          </div>
+        </div>
+      </section>
+    </main>
+    <footer>
+      <span>Orbit</span>
+      <p>Built for your own workspace. No default Bots. No model subscription included.</p>
+    </footer>
+    <script type="module" src="/site.js"></script>
+  </body>
+</html>

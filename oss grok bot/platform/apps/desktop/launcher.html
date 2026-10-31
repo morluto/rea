@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <title>Orbit · Choose your host</title>
+    <link rel="stylesheet" href="launcher.css" />
+  </head>
+  <body>
+    <main>
+      <img src="icon.png" width="88" height="88" alt="Orbit mascot" />
+      <p class="brand">Orbit</p>
+      <h1>A home for<br />your Bots.</h1>
+      <p class="intro">
+        Choose where your Bots work. Every app connects to the same sessions, files and Linux
+        computers on your primary host.
+      </p>
+      <section>
+        <button id="primary">
+          <strong>Use this computer as the primary host</strong
+          ><span>Run your Bots and Docker computers here.</span>
+        </button>
+        <div class="divider">Or connect to your Windows host</div>
+        <form id="connect">
+          <label for="host">Primary host address</label
+          ><input
+            id="host"
+            type="url"
+            placeholder="https://your-windows-host.example"
+            required
+            autocomplete="url"
+          /><button class="connect" type="submit">
+            Connect to primary host <span aria-hidden="true">↗</span>
+          </button>
+        </form>
+        <p class="note">
+          Use the HTTPS address from your primary host’s Remote access settings. You’ll pair this
+          app, then sign in.
+        </p>
+        <p role="alert" id="error"></p>
+      </section>
+      <footer>
+        Closing the window keeps a local host running. Quit from the app menu to stop it.
+      </footer>
+    </main>
+    <script src="launcher.js"></script>
+  </body>
+</html>

@@ -1,0 +1,15 @@
+/* Self-hosted Google Fonts. The OFL notices are in /fonts/. No remote font requests. */
+@font-face {
+  font-family: 'Instrument Sans';
+  src: url('/fonts/InstrumentSans.ttf') format('truetype');
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Instrument Serif';
+  src: url('/fonts/InstrumentSerif.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}

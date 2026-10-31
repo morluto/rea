@@ -1,0 +1,149 @@
+@font-face {
+  font-family: Instrument;
+  src: url('../workspace/fonts/InstrumentSans.ttf');
+}
+@font-face {
+  font-family: Editorial;
+  src: url('../workspace/fonts/InstrumentSerif.ttf');
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  background: #f4f6f3;
+  color: #26332c;
+  font:
+    15px/1.55 Instrument,
+    system-ui;
+}
+main {
+  max-width: 660px;
+  margin: 58px auto;
+  padding: 0 44px 28px;
+  text-align: center;
+}
+.brand {
+  margin: 8px 0 22px;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.4px;
+}
+h1 {
+  font:
+    68px/0.96 Editorial,
+    Georgia;
+  margin: 0 0 24px;
+  letter-spacing: -2px;
+}
+.intro {
+  color: #68736b;
+  max-width: 480px;
+  margin: 0 auto 30px;
+}
+section {
+  text-align: left;
+  max-width: 430px;
+  margin: auto;
+}
+button {
+  font: inherit;
+  cursor: pointer;
+}
+#primary {
+  width: 100%;
+  background: #e6ede5;
+  border: 1px solid #c5d1c3;
+  border-radius: 13px;
+  padding: 19px 20px;
+  text-align: left;
+  color: #263c2c;
+  transition: background 0.18s;
+}
+#primary:hover {
+  background: #dce6da;
+}
+#primary strong,
+#primary span {
+  display: block;
+}
+#primary strong {
+  font-size: 15px;
+}
+#primary span {
+  font-size: 13px;
+  color: #65715f;
+  margin-top: 4px;
+}
+.divider {
+  text-align: center;
+  font-size: 12px;
+  color: #798378;
+  margin: 21px 0;
+}
+label {
+  display: block;
+  font-size: 13px;
+  font-weight: 550;
+  margin-bottom: 7px;
+}
+input {
+  width: 100%;
+  border: 1px solid #d0d8cc;
+  border-radius: 8px;
+  padding: 12px;
+  font: 14px Instrument;
+  background: #fff;
+  color: inherit;
+  outline: none;
+}
+input:focus {
+  border-color: #799174;
+  box-shadow: 0 0 0 3px #79917422;
+}
+.connect {
+  margin-top: 10px;
+  width: 100%;
+  border: 0;
+  border-radius: 8px;
+  background: #354b38;
+  color: white;
+  padding: 12px;
+  display: flex;
+  justify-content: space-between;
+}
+.note,
+footer {
+  font-size: 12px;
+  color: #798378;
+}
+.note {
+  margin: 12px 0;
+}
+footer {
+  margin: 30px auto 0;
+  max-width: 420px;
+}
+#error {
+  color: #a34132;
+  font-size: 13px;
+}
+button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+@media (max-height: 800px) {
+  main {
+    margin: 25px auto;
+  }
+  h1 {
+    font-size: 56px;
+  }
+  main > img {
+    width: 65px;
+    height: 65px;
+  }
+  .brand {
+    margin-bottom: 16px;
+  }
+}

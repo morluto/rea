@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Bot computer</title>
+    <style>
+      html,
+      body,
+      #screen {
+        height: 100%;
+        margin: 0;
+        background: #111;
+        color: #ccc;
+        font: 13px system-ui;
+      }
+      #status {
+        position: absolute;
+        top: 4px;
+        left: 8px;
+        background: #111a;
+        padding: 4px;
+        z-index: 1;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="status">Connecting to the real desktop…</div>
+    <div id="screen"></div>
+    <script type="module" src="/viewer.js"></script>
+  </body>
+</html>

@@ -1,0 +1,15 @@
+node_modules/
+.local/
+.local-demo/
+*.log
+__pycache__/
+
+apps/desktop/release/
+apps/mobile/ios/App/App/public/
+apps/mobile/ios/App/Pods/
+apps/mobile/ios/DerivedData/
+
+apps/mobile/www/
+.DS_Store
+*.xcuserstate
+xcuserdata/

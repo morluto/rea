@@ -1,0 +1,92 @@
+@font-face {
+  font-family: Instrument;
+  src: url('InstrumentSans.ttf');
+}
+@font-face {
+  font-family: Editorial;
+  src: url('InstrumentSerif.ttf');
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  background: #f4f6f3;
+  color: #293b2e;
+  font:
+    15px/1.6 Instrument,
+    system-ui;
+}
+main {
+  max-width: 480px;
+  margin: auto;
+  padding: max(32px, env(safe-area-inset-top)) 28px max(28px, env(safe-area-inset-bottom));
+}
+.brand {
+  font-weight: 600;
+  letter-spacing: -0.4px;
+  margin: 8px 0 30px;
+}
+h1 {
+  font:
+    66px/0.96 Editorial,
+    Georgia;
+  letter-spacing: -2px;
+  margin: 0 0 22px;
+}
+.intro {
+  color: #68776a;
+  margin-bottom: 30px;
+}
+form {
+  margin: 25px 0 12px;
+}
+label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  margin: 12px 0 7px;
+}
+input,
+button {
+  font: inherit;
+  width: 100%;
+  border: 1px solid #cbd7c7;
+  border-radius: 10px;
+  padding: 13px;
+  background: #fff;
+  color: inherit;
+}
+input:focus {
+  outline: 2px solid #a9bea1;
+  outline-offset: 2px;
+}
+button {
+  margin-top: 12px;
+  background: #344f39;
+  color: #fff;
+  border: 0;
+  display: flex;
+  justify-content: space-between;
+  cursor: pointer;
+}
+button:disabled {
+  opacity: 0.6;
+}
+.note,
+footer {
+  font-size: 13px;
+  color: #718173;
+}
+.note {
+  margin-top: 20px;
+}
+footer {
+  border-top: 1px solid #dce4d8;
+  margin-top: 36px;
+  padding-top: 20px;
+}
+#error {
+  font-size: 13px;
+  color: #9c3c2b;
+}

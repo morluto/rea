@@ -1,0 +1,53 @@
+{
+  "name": "bot-workshop",
+  "version": "0.6.3",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "start": "node --experimental-sqlite packages/host/src/server.mjs",
+    "test": "node --experimental-sqlite --test test/*.test.mjs",
+    "check": "node --check packages/host/src/server.mjs",
+    "desktop": "node scripts/desktop.mjs",
+    "desktop:package": "electron-builder --config apps/desktop/builder.cjs --win nsis",
+    "website": "node apps/website/server.mjs",
+    "mobile:sync": "npm run sync --workspace @bot-workshop/mobile",
+    "desktop:check": "node scripts/desktop-check.mjs",
+    "desktop:package:mac": "electron-builder --config apps/desktop/builder.cjs --mac",
+    "mobile:build": "node scripts/mobile-build.mjs",
+    "format": "prettier --write apps/desktop apps/workspace apps/website apps/mobile/src packages/host/src scripts test package.json --ignore-unknown",
+    "format:check": "prettier --check apps/desktop apps/workspace apps/website apps/mobile/src packages/host/src scripts test package.json --ignore-unknown",
+    "showcase:preview": "node --experimental-sqlite scripts/showcase.mjs --synthetic-preview"
+  },
+  "overrides": {
+    "undici": "8.12.2"
+  },
+  "devDependencies": {
+    "@electron/asar": "3.4.1",
+    "electron": "45.0.0",
+    "electron-builder": "26.18.0",
+    "ffmpeg-static": "5.3.0",
+    "node": "24.22.1",
+    "npm": "11.16.0",
+    "playwright": "1.64.1",
+    "prettier": "3.9.10",
+    "selfsigned": "5.5.0"
+  },
+  "workspaces": [
+    "apps/desktop",
+    "apps/workspace",
+    "apps/mobile",
+    "apps/website",
+    "packages/host"
+  ],
+  "packageManager": "npm@11.16.0",
+  "dependencies": {
+    "@bot-workshop/host": "0.6.3",
+    "@bot-workshop/workspace": "0.6.3",
+    "web-push": "^3.6.7"
+  },
+  "description": "A personal Bot workspace with one primary host and connected desktop and mobile apps",
+  "author": "Orbit contributors"
+}

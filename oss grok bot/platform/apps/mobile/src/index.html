@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; object-src 'none'; base-uri 'none'"
+    />
+    <title>Orbit</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main>
+      <img src="icon.png" width="94" height="94" alt="Orbit" />
+      <p class="brand">Orbit</p>
+      <h1>Your Bots.<br />With you.</h1>
+      <p class="intro">
+        Send a prompt, follow a session, or check your Bot’s work. Everything keeps running on your
+        primary Windows host.
+      </p>
+      <form>
+        <label for="host">Primary host address</label
+        ><input
+          id="host"
+          type="url"
+          required
+          placeholder="https://your-windows-host.example"
+          autocomplete="url"
+          autocapitalize="none"
+          spellcheck="false"
+        /><button>Connect to my workspace <span aria-hidden="true">↗</span></button>
+        <p id="error" role="alert"></p>
+      </form>
+      <p class="note">
+        On your Windows app, open Primary host and pair a device. Your first visit will ask for that
+        one-use code, then your account sign-in.
+      </p>
+      <footer>
+        Your sessions and files stay on the primary host.<br />It must stay on and reachable.
+      </footer>
+    </main>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

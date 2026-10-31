@@ -1,0 +1,18 @@
+import { chromium } from 'playwright';
+const SHELL = 'C:/Users/nisar/AppData/Local/Temp/pw-browsers/chromium_headless_shell-1248/chrome-headless-shell-win64/chrome-headless-shell.exe';
+const BASE = 'http://127.0.0.1:14371';
+const browser = await chromium.launch({ executablePath: SHELL });
+const page = await (await browser.newContext({ viewport: { width: 1440, height: 900 } })).newPage();
+await page.goto(BASE, { waitUntil: 'networkidle' });
+await page.fill('input[name="name"]', 'Taste');
+await page.fill('input[name="password"]', 'taste-test-pass-1');
+await page.click('.auth-submit');
+await page.waitForSelector('.layout', { timeout: 15000 });
+await page.click('#settings');
+await page.waitForTimeout(1500);
+console.log('dialog count:', await page.locator('#dialog').count());
+console.log('dialog open:', await page.locator('#dialog[open]').count());
+console.log('dialog html len:', (await page.locator('#dialog').innerHTML()).length);
+console.log('dialog text:', JSON.stringify((await page.locator('#dialog').innerText()).slice(0, 400)));
+console.log('workspace text:', JSON.stringify((await page.locator('#workspace').innerText()).slice(0, 400)));
+await browser.close();

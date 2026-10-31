@@ -1,0 +1,42 @@
+// Packaging starts from the standalone monorepo root. No parent REA/research or local state is included.
+module.exports = {
+  appId: 'local.botworkshop.desktop',
+  productName: 'Orbit',
+  electronVersion: '45.0.0',
+  asar: true,
+  npmRebuild: false,
+  directories: { output: '.local/releases' },
+  extraMetadata: { main: 'apps/desktop/main.mjs' },
+  files: [
+    'package.json',
+    'apps/desktop/**/*',
+    'apps/workspace/**/*',
+    'packages/host/**/*',
+    'computer/**/*',
+    'device/**/*',
+    '!**/node_modules/node/**',
+    '!**/.local/**',
+    '!**/__pycache__/**',
+  ],
+  win: {
+    target: ['nsis'],
+    signExecutable: false,
+    icon: 'apps/desktop/icon.ico',
+    executableName: 'Bot Workshop',
+    artifactName: '${productName} Setup ${version}.${ext}',
+  },
+  nsis: {
+    oneClick: true,
+    perMachine: false,
+    allowElevation: false,
+    deleteAppDataOnUninstall: false,
+    createDesktopShortcut: true,
+    createStartMenuShortcut: true,
+  },
+  mac: {
+    target: ['dmg', 'zip'],
+    category: 'public.app-category.productivity',
+    hardenedRuntime: true,
+  },
+  linux: { target: ['AppImage'], category: 'Utility' },
+};

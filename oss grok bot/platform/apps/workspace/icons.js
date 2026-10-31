@@ -1,0 +1,43 @@
+const paths = {
+  home: 'M3 10 12 3l9 7v10a1 1 0 0 1-1 1h-6v-7h-4v7H4a1 1 0 0 1-1-1Z',
+  plus: 'M12 5v14M5 12h14',
+  search: 'M21 21l-5-5M18 10.5a7.5 7.5 0 1 1-15 0 7.5 7.5 0 0 1 15 0',
+  menu: 'M4 6h16M4 12h16M4 18h16',
+  close: 'm6 6 12 12M18 6 6 18',
+  settings:
+    'm9 3-1 3-3 1-2 5 2 5 3 1 1 3h6l1-3 3-1 2-5-2-5-3-1-1-3ZM15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0',
+  spark: 'm12 3 2.2 6.8L21 12l-6.8 2.2L12 21l-2.2-6.8L3 12l6.8-2.2Z',
+  arrow: 'M5 12h14m-5-5 5 5-5 5',
+  chevron: 'm9 5 7 7-7 7',
+  clock: 'M12 7v5l3 2M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0',
+  memory: 'M8 3v3m8-3v3M8 18v3m8-3v3M3 8h3m-3 8h3m12-8h3m-3 8h3M6 6h12v12H6ZM10 10h4v4h-4Z',
+  library: 'M4 4h5v16H4Zm7 0h4v16h-4Zm7 1 3 14',
+  computer: 'M3 4h18v12H3Zm5 17h8m-4-5v5',
+  connection: 'm9 15 6-6M8 13l-2 2a3.5 3.5 0 0 0 5 5l3-3m2-6 2-2a3.5 3.5 0 0 0-5-5l-3 3',
+  bell: 'M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9m-11 9v1a3 3 0 0 0 6 0v-1',
+  people:
+    'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2m20 0v-2a4 4 0 0 0-3-3.9M13 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0m4-3a4 4 0 0 1 0 8',
+  mail: 'M3 5h18v14H3Zm0 0 9 8 9-8',
+  device: 'M7 2h10v20H7Zm4 17h2',
+  mic: 'M9 5a3 3 0 0 1 6 0v7a3 3 0 0 1-6 0Zm-3 6v1a6 6 0 0 0 12 0v-1m-6 7v4m-4 0h8',
+  waveform: 'M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4',
+  chart: 'M4 3v17h17M8 16v-5m5 5V7m5 9V4',
+  archive: 'M3 4h18v5H3Zm2 5v12h14V9m-10 4h6',
+  bolt: 'm13 2-9 12h7l-1 8 10-13h-7Z',
+  check: 'm5 12 4 4L19 6',
+  shield: 'm12 3-8 3v6c0 5 8 9 8 9s8-4 8-9V6Z',
+  vault: 'M4 4h16v16H4ZM7 7h10v10H7ZM2 8h4m-4 8h4m7-5v2m-2-1h4',
+  cloudDownload: 'M7 17H6a4 4 0 0 1-1-7 7 7 0 0 1 13-2 4.5 4.5 0 0 1 0 9h-1m-5-5v10m-4-4 4 4 4-4',
+  grid: 'M3 3h7v7H3Zm11 0h7v7h-7ZM3 14h7v7H3Zm11 0h7v7h-7Z',
+  send: 'm12 19 0-14m-6 6 6-6 6 6',
+  share: 'M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7M12 16V3m-4 4 4-4 4 4',
+  paperclip: 'm8 12 6-6a3 3 0 0 1 4 4l-8 8a5 5 0 0 1-7-7l8-8',
+  pin: 'M9 4h6l-1 6h4l-6 8H8l1-8H5l1-6h3Zm2 14v4',
+  pinOff: 'M9 4h6l-1 6h4l-2 2.6M8 10H5l1-6h2M9 18v4M4 4l16 16',
+  copy: 'M8 8h12v13H8ZM4 16H3V3h12v1',
+  moon: 'M20.5 14a9 9 0 0 1-10-10A9 9 0 1 0 20.5 14',
+  sun: 'M12 1v2m0 18v2M1 12h2m18 0h2M4 4l2 2m12 12 2 2M4 20l2-2M18 6l2-2M17 12a5 5 0 1 1-10 0 5 5 0 0 1 10 0',
+};
+export function icon(name, size = 18) {
+  return `<svg class="icon" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${paths[name] ?? paths.grid}"/></svg>`;
+}

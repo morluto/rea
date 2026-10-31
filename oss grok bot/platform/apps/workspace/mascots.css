@@ -1,0 +1,542 @@
+/* Original sphere illustrations. Gradients are confined to the requested mascots. */
+.mascot {
+  --size: 38px;
+  --work-cycle: 4.8s;
+  position: relative;
+  display: inline-block;
+  width: var(--size);
+  height: calc(var(--size) * 1.16);
+  flex: none;
+  isolation: isolate;
+  vertical-align: middle;
+}
+.mascot-mini {
+  --size: 24px;
+}
+.mascot-medium {
+  --size: 52px;
+}
+.mascot-large {
+  --size: 78px;
+}
+.mascot-hero {
+  --size: 155px;
+}
+.orb-shadow {
+  position: absolute;
+  width: 72%;
+  height: 12%;
+  border-radius: 50%;
+  background: #00000016;
+  top: calc(var(--size) * 0.93);
+  left: 14%;
+  filter: blur(1px);
+}
+body:not(.light) .orb-shadow {
+  background: #0006;
+}
+.orb-travel {
+  position: absolute;
+  width: 100%;
+  aspect-ratio: 1;
+  left: 0;
+  top: 0;
+  transform-origin: 50% 95%;
+}
+.orb-body {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  overflow: hidden;
+  background: /* taste-skill-ignore: mascot artwork */ radial-gradient(
+    ellipse at 31% 23%,
+    color-mix(in srgb, var(--orb-color) 26%, white) 0%,
+    var(--orb-color) 45%,
+    color-mix(in srgb, var(--orb-color) 75%, #324034) 82%,
+    color-mix(in srgb, var(--orb-color) 50%, #19271c) 100%
+  );
+  box-shadow: /* taste-skill-ignore: mascot artwork */
+    inset -2px -3px 5px #00000014,
+    inset 1px 1px 1px #fff8;
+}
+.orb-roll {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  overflow: hidden;
+  transform-origin: center;
+}
+.orb-body:before {
+  content: '';
+  position: absolute;
+  left: 15%;
+  top: 8%;
+  width: 43%;
+  height: 27%;
+  border-radius: 50%;
+  background: /* taste-skill-ignore: mascot artwork */ radial-gradient(
+    ellipse at center,
+    #fff5,
+    transparent 75%
+  );
+  transform: rotate(-28deg);
+}
+.orb-seam {
+  position: absolute;
+  inset: 4% 22%;
+  border-radius: 50%;
+  border: 1px solid #fff3;
+  transform: rotate(-27deg);
+}
+.orb-mark {
+  position: absolute;
+  left: 2%;
+  right: 2%;
+  height: 30%;
+  top: 32%;
+  border: 1px solid #3e4b3220;
+  border-radius: 50%;
+  transform: rotate(-22deg);
+}
+.mascot-variant-1 .orb-seam {
+  inset: 18% 1%;
+  transform: rotate(30deg);
+}
+.mascot-variant-2 .orb-seam {
+  inset: 0 33%;
+  transform: rotate(17deg);
+}
+.orb-face {
+  position: absolute;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 16%;
+  width: 44%;
+  height: 29%;
+  left: 29%;
+  top: 39%;
+  transform: rotate(-4deg);
+}
+.orb-eye {
+  display: block;
+  width: 13%;
+  height: 32%;
+  background: #26362b;
+  border-radius: 999px;
+  animation: orb-blink 7s infinite;
+  animation-delay: var(--blink-delay);
+  transform-origin: 50% 50%;
+}
+.orb-mouth {
+  position: absolute;
+  left: 42%;
+  top: 45%;
+  width: 17%;
+  height: 12%;
+  border-bottom: 1.4px solid #314137b3;
+  border-radius: 0 0 50% 50%;
+}
+.orb-cheek {
+  position: absolute;
+  right: 20%;
+  top: 56%;
+  height: 7%;
+  width: 10%;
+  border-radius: 50%;
+  background: #b8765d28;
+}
+.mascot-working .orb-travel {
+  animation: orb-travel var(--work-cycle) ease-in-out infinite;
+}
+.mascot-working .orb-roll {
+  animation: orb-roll var(--work-cycle) ease-in-out infinite;
+}
+.mascot-working .orb-shadow {
+  animation: orb-shadow var(--work-cycle) ease-in-out infinite;
+}
+.mascot-waiting .orb-travel {
+  transform: rotate(-11deg) translateY(-2%);
+}
+.mascot-waiting .orb-eye {
+  height: 38%;
+}
+.mascot-waiting .orb-mouth {
+  border: 0;
+  border-radius: 50%;
+  width: 11%;
+  height: 18%;
+  background: #314137b3;
+  top: 56%;
+  left: 46%;
+}
+.mascot-queued .orb-travel {
+  animation: orb-queued 2.6s ease-in-out infinite;
+}
+.mascot-queued .orb-eye {
+  height: 14%;
+  margin-top: 6%;
+}
+.mascot-mini .orb-seam,
+.mascot-small .orb-seam {
+  border-width: 0.5px;
+}
+.mascot-mini .orb-mark {
+  display: none;
+}
+.mascot-mini .orb-mouth {
+  border-bottom-width: 1px;
+}
+.mascot-idle {
+  perspective: 320px;
+}
+.mascot-idle .orb-travel {
+  transform-style: preserve-3d;
+  transform-origin: 50% 55%;
+  animation: orb-idle-pose 32s ease-in-out infinite;
+  animation-delay: var(--idle-delay, 0s);
+}
+.mascot-idle .orb-face {
+  animation: orb-idle-eyes 32s ease-in-out infinite;
+  animation-delay: var(--idle-delay, 0s);
+}
+.mascot-working .orb-face {
+  animation: orb-focus 2.8s ease-in-out infinite;
+}
+.mascot-working::after {
+  content: '';
+  position: absolute;
+  inset: -12%;
+  border: 1px solid color-mix(in srgb, var(--orb-color) 50%, transparent);
+  border-radius: 50%;
+  animation: orb-breathe 2.2s ease-in-out infinite;
+  pointer-events: none;
+}
+.orb-pencil,
+.orb-notes,
+.orb-sparkles {
+  position: absolute;
+  pointer-events: none;
+  display: none;
+}
+.motion-writing .orb-pencil,
+.motion-coding .orb-pencil {
+  display: block;
+  z-index: 4;
+  width: 8%;
+  height: 42%;
+  background: /* taste-skill-ignore: mascot artwork */ linear-gradient(
+    90deg,
+    #efd17e 65%,
+    #d8a64c 65%
+  );
+  border-radius: 2px;
+  right: -5%;
+  bottom: 12%;
+  transform-origin: 50% 80%;
+  animation: orb-scribble 0.65s ease-in-out infinite;
+}
+.motion-writing .orb-notes,
+.motion-reading .orb-notes,
+.motion-coding .orb-notes {
+  display: block;
+  z-index: 3;
+  width: 38%;
+  height: 28%;
+  bottom: 2%;
+  right: -14%;
+  border: 1px solid #b6c5b2;
+  border-radius: 3px;
+  background: /* taste-skill-ignore: mascot artwork */ repeating-linear-gradient(
+    #f8f4e6 0 5px,
+    #c7d3c0 5px 6px
+  );
+  transform: rotate(-9deg);
+}
+.motion-reading .orb-face {
+  animation: orb-read 1.8s ease-in-out infinite;
+}
+.motion-celebrating .orb-travel {
+  animation: orb-happy 1.3s ease-in-out 2;
+}
+.motion-celebrating .orb-sparkles {
+  display: block;
+  inset: 2%;
+  border: 2px dotted #e4c568;
+  border-radius: 50%;
+  animation: orb-sparkle 1.3s ease-out 2;
+}
+.mascot-waiting .orb-face {
+  animation: orb-curious 3s ease-in-out infinite;
+}
+.motion-attention .orb-travel {
+  transform: rotate(-8deg);
+}
+@keyframes orb-idle-eyes {
+  0%,
+  6.25%,
+  13.125%,
+  33.125%,
+  46.875%,
+  60.625%,
+  68.125%,
+  100% {
+    translate: 0 0;
+  }
+  9%,
+  11% {
+    translate: 22% 0;
+  }
+  36% {
+    translate: 0 -20%;
+  }
+  38.2% {
+    translate: 0 16%;
+  }
+  63.4% {
+    translate: -18% 10%;
+  }
+  66% {
+    translate: 16% -12%;
+  }
+}
+@keyframes orb-idle-pose {
+  0%,
+  19.375%,
+  26.875%,
+  46.875%,
+  54.375%,
+  74.375%,
+  81.875%,
+  100% {
+    transform: rotateX(0deg) rotateY(0deg) rotateZ(0deg);
+  }
+  22.2%,
+  24.4% {
+    transform: rotateX(16deg) rotateY(0deg) rotateZ(-14deg);
+  }
+  49.6% {
+    transform: rotateX(0deg) rotateY(-22deg) rotateZ(8deg);
+  }
+  52% {
+    transform: rotateX(4deg) rotateY(18deg) rotateZ(-6deg);
+  }
+  77%,
+  79.6% {
+    transform: rotateX(-14deg) rotateY(12deg) rotateZ(16deg);
+  }
+}
+@keyframes orb-look {
+  0%,
+  24%,
+  50%,
+  100% {
+    translate: 0 0;
+  }
+  30%,
+  40% {
+    translate: 6% 0;
+  }
+  65%,
+  78% {
+    translate: -6% 2%;
+  }
+}
+@keyframes orb-focus {
+  0%,
+  100% {
+    translate: -3% 0;
+  }
+  50% {
+    translate: 4% -3%;
+  }
+}
+@keyframes orb-read {
+  0%,
+  100% {
+    translate: -5% 8%;
+  }
+  55% {
+    translate: 5% 8%;
+  }
+}
+@keyframes orb-breathe {
+  0%,
+  100% {
+    opacity: 0.2;
+    scale: 0.94;
+  }
+  50% {
+    opacity: 0.7;
+    scale: 1.04;
+  }
+}
+@keyframes orb-scribble {
+  0%,
+  100% {
+    transform: rotate(22deg) translateX(-2px);
+  }
+  50% {
+    transform: rotate(34deg) translateX(2px);
+  }
+}
+@keyframes orb-happy {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-3deg);
+  }
+  35% {
+    transform: translateY(-12%) rotate(4deg);
+  }
+  65% {
+    transform: translateY(0) rotate(-2deg);
+  }
+}
+@keyframes orb-sparkle {
+  0% {
+    scale: 0.8;
+    opacity: 0;
+  }
+  40% {
+    opacity: 0.8;
+  }
+  100% {
+    scale: 1.4;
+    opacity: 0;
+  }
+}
+@keyframes orb-curious {
+  0%,
+  100% {
+    rotate: -4deg;
+    translate: 0 -2%;
+  }
+  50% {
+    rotate: 5deg;
+    translate: 2% 0;
+  }
+}
+@keyframes orb-blink {
+  0%,
+  43%,
+  47%,
+  100% {
+    transform: scaleY(1);
+  }
+  45% {
+    transform: scaleY(0.12);
+  }
+}
+/* One ground-level cycle. Translation and angular displacement obey x = r*theta.
+   The face/surface roll together; lighting stays fixed. End position and velocity match. */
+@keyframes orb-travel {
+  0%,
+  100% {
+    transform: translateX(-18%);
+  }
+  50% {
+    transform: translateX(18%);
+  }
+}
+@keyframes orb-roll {
+  0%,
+  100% {
+    transform: rotate(-20.6265deg);
+  }
+  50% {
+    transform: rotate(20.6265deg);
+  }
+}
+@keyframes orb-shadow {
+  0%,
+  100% {
+    transform: translateX(calc(var(--size) * -0.18));
+  }
+  50% {
+    transform: translateX(calc(var(--size) * 0.18));
+  }
+}
+@keyframes orb-queued {
+  0%,
+  100% {
+    transform: rotate(-5deg);
+  }
+  50% {
+    transform: rotate(5deg);
+  }
+}
+.mascot-shape-squircle .orb-body,
+.mascot-shape-squircle .orb-roll {
+  border-radius: 32%;
+}
+.mascot-shape-square .orb-body,
+.mascot-shape-square .orb-roll {
+  border-radius: 18%;
+}
+.mascot-shape-blob .orb-body,
+.mascot-shape-blob .orb-roll {
+  border-radius: 62% 38% 48% 52% / 42% 56% 44% 58%;
+}
+.mascot-shape-drop .orb-body,
+.mascot-shape-drop .orb-roll {
+  border-radius: 50% 50% 42% 58% / 32% 32% 68% 68%;
+}
+.mascot-shape-star .orb-body,
+.mascot-shape-star .orb-roll,
+.mascot-shape-hex .orb-body,
+.mascot-shape-hex .orb-roll,
+.mascot-shape-diamond .orb-body,
+.mascot-shape-diamond .orb-roll {
+  border-radius: 0;
+}
+.mascot-shape-star .orb-body,
+.mascot-shape-star .orb-roll {
+  clip-path: polygon(
+    50% 0%,
+    64% 30%,
+    100% 32%,
+    72% 52%,
+    84% 90%,
+    50% 70%,
+    16% 90%,
+    28% 52%,
+    0% 32%,
+    36% 30%
+  );
+}
+.mascot-shape-hex .orb-body,
+.mascot-shape-hex .orb-roll {
+  clip-path: polygon(25% 4%, 75% 4%, 98% 50%, 75% 96%, 25% 96%, 2% 50%);
+}
+.mascot-shape-diamond .orb-body,
+.mascot-shape-diamond .orb-roll {
+  clip-path: polygon(50% 2%, 98% 50%, 50% 98%, 2% 50%);
+}
+.mascot:not(.mascot-shape-circle) .orb-seam,
+.mascot:not(.mascot-shape-circle) .orb-mark,
+.mascot:not(.mascot-shape-circle) .orb-mouth,
+.mascot:not(.mascot-shape-circle) .orb-cheek,
+.mascot:not(.mascot-shape-circle) .orb-body:before {
+  display: none;
+}
+.mascot:not(.mascot-shape-circle) .orb-body {
+  background: var(--orb-color);
+  box-shadow: inset 0 -8px 0 #00000022;
+}
+.mascot:not(.mascot-shape-circle) .orb-eye {
+  width: 22%;
+  height: 46%;
+  border-radius: 35%;
+  background: #1c1917;
+}
+@media (prefers-reduced-motion: reduce) {
+  .mascot,
+  .mascot * {
+    animation: none !important;
+    transition: none !important;
+  }
+  .mascot::after {
+    animation: none !important;
+    opacity: 0.5;
+  }
+}
