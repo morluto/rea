@@ -18,6 +18,7 @@ import {
 } from "../../../src/il2cpp/Il2cppBinaryGenerics.js";
 import {
   createElfFixture,
+  createLargeElfRelativeFixture,
   createIl2cppBinaryFixture,
   createIl2cppDyldBindFixture,
   createIl2cppRegistrationTailFixture,
@@ -905,6 +906,19 @@ it("links an ELF shared object after applying its RELATIVE relocations", () => {
   const fromMacho = link(createIl2cppBinaryFixture());
   expect(link(elf)).toEqual({ ...fromMacho, format: "elf" });
 });
+
+it.each([183, 62])(
+  "streams more than 65536 file-backed relative writes without shrinking IL2CPP capacity (machine %s)",
+  (machine) => {
+    const source = createIl2cppBinaryFixture();
+    const bytes = createLargeElfRelativeFixture(source, 65_537, machine);
+    const snapshot = Buffer.from(bytes);
+    expect(link(bytes).method_addresses).toEqual(
+      link(createElfFixture(source, { machine })).method_addresses,
+    );
+    expect(bytes.equals(snapshot)).toBe(true);
+  },
+);
 
 it.each([183, 62])(
   "links ELF relocations using the resolved PN_XNUM program count (machine %s)",

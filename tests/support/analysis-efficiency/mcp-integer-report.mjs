@@ -10,10 +10,14 @@ const { values } = parseArgs({
     check: { type: "boolean", default: false },
   },
 });
+const reportDirectory = new URL(
+  "../../../docs/verification/analysis-efficiency/",
+  import.meta.url,
+);
 const dataPath =
-  values.data ?? new URL("mcp-integer-allocation.json", import.meta.url);
+  values.data ?? new URL("mcp-integer-allocation.json", reportDirectory);
 const markdownPath =
-  values.markdown ?? new URL("mcp-integer-allocation.md", import.meta.url);
+  values.markdown ?? new URL("mcp-integer-allocation.md", reportDirectory);
 const data = JSON.parse(await readFile(dataPath, "utf8"));
 assert.equal(data.status, "passed");
 const original = await readFile(markdownPath, "utf8");

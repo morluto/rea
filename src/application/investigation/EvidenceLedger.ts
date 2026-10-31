@@ -1,3 +1,4 @@
+import { InvalidResidualUnknownGraphError } from "../../domain/residualUnknownGraphError.js";
 import canonicalize from "canonicalize";
 import { z } from "zod";
 
@@ -5,7 +6,6 @@ import {
   createEvidenceBundle,
   createImmutableEvidenceBundle,
   safeParseImmutableEvidenceBundle,
-  InvalidResidualUnknownGraphError,
   validateResidualUnknownAddition,
   type EvidenceBundle,
 } from "../../domain/evidenceBundle.js";
@@ -146,7 +146,16 @@ export class EvidenceLedger {
         existing !== undefined &&
         existing.revision_digest !== unknown.revision_digest
       )
-        return err(new EvidenceIntegrityError("Conflicting unknown revision"));
+        return err(
+          new EvidenceIntegrityError("Conflicting unknown revision", {
+            userMessage:
+              "The incoming residual-unknown history conflicts with a revision retained in this session. Inspect each history in a separate session; importing the unchanged bundle into this session cannot reconcile them.",
+            diagnostics: {
+              unknown_id: unknown.unknown_id,
+              revision: unknown.revision,
+            },
+          }),
+        );
       pendingUnknowns.set(key, unknown);
       if (existing === undefined) unknownsAdded += 1;
     }
@@ -440,7 +449,7 @@ export class EvidenceLedger {
         );
       } catch (cause: unknown) {
         if (!(cause instanceof InvalidResidualUnknownGraphError)) throw cause;
-        return err(new UnknownRegistryError("integrity", { cause }));
+        return err(new UnknownRegistryError(cause.constraint, { cause }));
       }
     for (const [id, evidence] of additions) this.#records.set(id, evidence);
     if (unknown !== undefined && unknownKey !== undefined) {
@@ -468,7 +477,14 @@ export class EvidenceLedger {
         !(cause instanceof InvalidResidualUnknownGraphError)
       )
         throw cause;
-      return err(new UnknownRegistryError("integrity", { cause }));
+      return err(
+        new UnknownRegistryError(
+          cause instanceof InvalidResidualUnknownGraphError
+            ? cause.constraint
+            : "integrity",
+          { cause },
+        ),
+      );
     }
   }
 

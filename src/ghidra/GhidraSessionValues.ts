@@ -1,3 +1,4 @@
+import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { ghidraSeedReportSchema } from "./GhidraAnalysisSeeds.js";
 import { ghidraDisabledAnalyzerReportSchema } from "./GhidraDisabledAnalyzers.js";
 import { z } from "zod";
@@ -11,6 +12,7 @@ import {
 import { GHIDRA_FUNCTION_OPERATIONS } from "./GhidraFunctionValues.js";
 import { ghidraExtensionResultSchema } from "./extensions/GhidraExtensions.js";
 import { GHIDRA_MIPS_SOFT_FLOAT_STORAGE } from "./GhidraMipsProfile.js";
+import { GHIDRA_RISCV_CALLING_CONVENTION_IDS } from "./GhidraRiscvProfile.js";
 
 /** Exact methods proved by the selected Program bridge handshake. */
 export const GHIDRA_SESSION_CAPABILITIES = [
@@ -89,6 +91,14 @@ const sessionInfoSchema = z
     mips_soft_float_storage: z
       .object({
         policy: z.literal(GHIDRA_MIPS_SOFT_FLOAT_STORAGE),
+        functions: z.int().nonnegative(),
+        definitions: z.int().nonnegative(),
+      })
+      .strict()
+      .optional(),
+    riscv_calling_convention: z
+      .object({
+        policy: z.enum(GHIDRA_RISCV_CALLING_CONVENTION_IDS),
         functions: z.int().nonnegative(),
         definitions: z.int().nonnegative(),
       })
@@ -191,7 +201,7 @@ export const parseGhidraSessionInfo = (
         parsed.data.analysis_complete === null ||
         parsed.data.analysis_complete === parsed.data.analysis_timed_out)
   )
-    return err(new Error("Ghidra bridge handshake identity is invalid"));
+    return err(new GhidraAdmissionError("handshake_identity"));
   return ok(parsed.data);
 };
 

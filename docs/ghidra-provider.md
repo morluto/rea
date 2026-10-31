@@ -31,7 +31,8 @@ operation-scoped JVM `OutOfMemoryError` observations retain their separate resou
 classification. Automatic kernel or cgroup OOM attribution is not implemented.
 
 After the authenticated startup handshake, rejected inputs (`invalid_request`,
-`not_found`, `ambiguous`, or an invalid function name) use
+`not_found`, `ambiguous`, an invalid function name, or an address without one
+exact file offset) use
 `diagnostics.diagnostic_scope: "request"` when their active output checkpoint is
 available. They preserve the active request's
 `failure_output`, target/profile identity and runtime/log coordinates, while
@@ -299,7 +300,7 @@ host/provider acceptance run with only the host compiler.
 `--dll`. These static fixtures contain source-owned encoded instructions; they
 are not compiler-produced programs. See the [Windows verification scope](windows-ghidra-p0.md#native-authority-and-target-identity)
 for real-provider coverage and exclusions.
-These lanes check all 26 read-only operations, target/snapshot/import SHA-256 linkage,
+These lanes check all 27 read-only operations, target/snapshot/import SHA-256 linkage,
 and project, endpoint, process, and runtime cleanup. The independent native
 lane checks DACLs, handle admission, cancellation, and Job Object lifecycle.
 `npm run verify:ghidra:windows:package` packs and installs REA into an isolated

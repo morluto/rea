@@ -1,11 +1,14 @@
 import { execFileSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
 import { matchesGlob } from "node:path";
-import { CI_FLAGS as flags, MANUAL_VERIFIERS, SCOPES } from "./scopes.mjs";
+import {
+  CI_FLAGS as flags,
+  MANUAL_VERIFIERS,
+  CI_LANES,
+  WINDOWS_EXECUTABLE_SELECTION_INPUTS,
+} from "./scopes.mjs";
 import { planTestSelection } from "./test-selection.mjs";
 
-// Test files select the host/runtime lanes that execute their focused suites.
-const HOST_TEST_OWNERS = ["apple", "package", "sqlite"];
 // Actionlint validates workflow syntax only. The semantic suite asserts these
 // workflows' release, publication and self-hosted runner safeguards.
 const GUARDED_WORKFLOWS = new Set([
@@ -106,6 +109,10 @@ function classifyPackage(base, head) {
       selected.reverse_tools = true;
       continue;
     }
+    if (script === "test:python") {
+      selected.python = true;
+      continue;
+    }
     if (script === "test:sqlite" || script === "test:sqlite:run") {
       selected.sqlite = true;
       continue;
@@ -140,11 +147,11 @@ function classifyPackage(base, head) {
     const scriptOwners =
       simple &&
       entries.every((entry) =>
-        Object.values(SCOPES).some((patterns) => matchesAny(entry, patterns)),
+        Object.values(CI_LANES).some(({ paths }) => matchesAny(entry, paths)),
       )
-        ? Object.entries(SCOPES)
-            .filter(([, patterns]) =>
-              entries.some((entry) => matchesAny(entry, patterns)),
+        ? Object.entries(CI_LANES)
+            .filter(([, { paths }]) =>
+              entries.some((entry) => matchesAny(entry, paths)),
             )
             .map(([owner]) => owner)
         : [];
@@ -206,7 +213,16 @@ if (tier === "reused") {
       .split("\0")
       .filter(Boolean);
     for (const file of files) {
-      if (matchesAny(file, SCOPES.reverse_tools)) selected.reverse_tools = true;
+      selected.package ||= matchesAny(
+        file,
+        WINDOWS_EXECUTABLE_SELECTION_INPUTS,
+      );
+      for (const [
+        owner,
+        { paths, earlyAll, earlyInputs = [] },
+      ] of Object.entries(CI_LANES))
+        if (matchesAny(file, earlyAll ? paths : earlyInputs))
+          selected[owner] = true;
       if (
         /^(README(?:_[^/]+)?\.md|AGENTS\.md|CONTRIBUTING\.md|CHANGELOG\.md|SECURITY\.md|native\/windows\/README\.md|\.github\/pull_request_template\.md)$/.test(
           file,
@@ -220,13 +236,13 @@ if (tier === "reused") {
           file.startsWith("docs/") &&
           (/\.(?:[cm]?[jt]s|[jt]sx)$/u.test(file) ||
             file.endsWith("/package.json"));
-        selected.website ||= matchesAny(file, SCOPES.website);
+        selected.website ||= matchesAny(file, CI_LANES.website.paths);
         continue;
       }
       if (/^(src|tests)\/.*\.(?:test|spec)\.[cm]?[jt]sx?$/.test(file)) {
         selected.code = true;
-        for (const owner of HOST_TEST_OWNERS)
-          selected[owner] ||= matchesAny(file, SCOPES[owner]);
+        for (const [owner, { paths, testInputs }] of Object.entries(CI_LANES))
+          if (testInputs && matchesAny(file, paths)) selected[owner] = true;
         continue;
       }
       if (matchesAny(file, MANUAL_VERIFIERS)) {
@@ -246,19 +262,15 @@ if (tier === "reused") {
       if (tier !== "full" && SHARED_BOUNDARY.test(file)) {
         selected.code = true;
         selected.runtime = true;
-        const owners = Object.entries(SCOPES)
-          .filter(([, patterns]) =>
-            patterns.some((pattern) => matchesGlob(file, pattern)),
-          )
+        const owners = Object.entries(CI_LANES)
+          .filter(([, { paths }]) => matchesAny(file, paths))
           .map(([owner]) => owner);
         if (owners.length === 1) selected[owners[0]] = true;
         reasons.push(`Shared boundary on fast tier: ${file}`);
         continue;
       }
-      const owners = Object.entries(SCOPES)
-        .filter(([, patterns]) =>
-          patterns.some((pattern) => matchesGlob(file, pattern)),
-        )
+      const owners = Object.entries(CI_LANES)
+        .filter(([, { paths }]) => matchesAny(file, paths))
         .map(([owner]) => owner);
       for (const owner of owners) selected[owner] = true;
       if (

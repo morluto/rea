@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { Cli } from "incur";
 import { afterEach, expect, it, vi } from "vitest";
 
+import * as analysisViewService from "../../src/application/analysisView/AnalysisViewService.js";
 import * as evidenceInputResolver from "../../src/application/EvidenceInputResolver.js";
 import { WasmArtifactService } from "../../src/application/wasm/WasmArtifactService.js";
 import { registerAnalysisViewCommands } from "../../src/cli/analysisViewCommands.js";
@@ -331,6 +332,43 @@ it.each([
   },
 );
 
+const referenceViewEvidence = async (
+  request: Parameters<typeof analysisViewService.inspectAnalysisView>[0],
+  evidenceBundlePath: string,
+  phase: string,
+) => {
+  if (phase !== "projection") return undefined;
+  const result = await analysisViewService.inspectAnalysisView(
+    request,
+    undefined,
+    { evidenceBundlePath },
+  );
+  if (!result.ok) throw new Error("Expected completed reference Evidence");
+  return result.value;
+};
+
+type PreparedView = ReturnType<
+  typeof analysisView.prepareAnalysisViewProjection
+>;
+
+const expectRetainedProjection = (
+  observation: unknown,
+  reference: Awaited<ReturnType<typeof referenceViewEvidence>>,
+  projected: ReturnType<PreparedView["project"]> | undefined,
+  parent: ReturnType<typeof analysisViewLayoutEvidence>,
+) => {
+  if (!projected?.ok || reference === undefined)
+    throw new Error("Expected a completed page and reference Evidence");
+  const partial = parseEvidence(observation);
+  expect(partial).toEqual(reference);
+  expect(partial.normalized_result).toEqual(projected.value);
+  expect(partial).toMatchObject({
+    operation: "inspect_analysis_view",
+    evidence_links: [parent.evidence_id],
+    subject: parent.subject,
+  });
+};
+
 it.each([
   ["bundle", "control", "close"],
   ["bundle", "SIGINT", "close"],
@@ -399,13 +437,17 @@ it.each([
         });
       });
     };
+    const expectedProjection = await referenceViewEvidence(
+      request,
+      path,
+      phase,
+    );
     // Intercept the prepared owner, whose project method keeps its admission
     // budget and calls the domain projector lexically rather than by export.
     const originalPrepare = analysisView.prepareAnalysisViewProjection;
-    type Projection = ReturnType<typeof originalPrepare>;
-    let projected: ReturnType<Projection["project"]> | undefined;
+    let projected: ReturnType<PreparedView["project"]> | undefined;
     const project = vi
-      .fn<(parent: Parameters<Projection["project"]>[0]) => void>()
+      .fn<(parent: Parameters<PreparedView["project"]>[0]) => void>()
       .mockName("preparedProjection.project");
     vi.spyOn(analysisView, "prepareAnalysisViewProjection").mockImplementation(
       (...args) => {
@@ -421,13 +463,13 @@ it.each([
       },
     );
     const originalResolve = evidenceInputResolver.resolveEvidenceInput;
-    vi.spyOn(evidenceInputResolver, "resolveEvidenceInput").mockImplementation(
-      (...args) => {
+    const resolve = vi
+      .spyOn(evidenceInputResolver, "resolveEvidenceInput")
+      .mockImplementation((...args) => {
         const resolved = originalResolve(...args);
         if (phase === "source-resolution-failure") queueInterrupt();
         return resolved;
-      },
-    );
+      });
     const originalClose = OwnedFileHandle.prototype.close;
     const close = vi
       .spyOn(OwnedFileHandle.prototype, "close")
@@ -477,15 +519,17 @@ it.each([
       expect(project).toHaveBeenCalledTimes(
         Number(signal === "control" || phase === "projection"),
       );
+      if (phase.startsWith("authentication"))
+        expect(resolve).not.toHaveBeenCalled();
+      if (phase === "projection" || phase === "source-resolution-failure")
+        expect(resolve).toHaveBeenCalledOnce();
       if (phase === "projection") {
-        if (!projected?.ok) throw new Error("Expected a completed page");
-        const partial = parseEvidence(result.details.partial_observation);
-        expect(partial.normalized_result).toEqual(projected.value);
-        expect(partial).toMatchObject({
-          operation: "inspect_analysis_view",
-          evidence_links: [parent.evidence_id],
-          subject: parent.subject,
-        });
+        expectRetainedProjection(
+          result.details.partial_observation,
+          expectedProjection,
+          projected,
+          parent,
+        );
       }
     } finally {
       await pendingInterrupt;

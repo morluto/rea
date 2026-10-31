@@ -1,3 +1,4 @@
+import { ProcessAdmissionError } from "./ProcessAdmissionError.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import type { EventEmitter } from "node:events";
 import type { Readable, Writable } from "node:stream";
@@ -269,7 +270,7 @@ export const spawnOwnedProviderProcess = async (
   if (sweepTokenOwnedProcesses) {
     const capture = systemProcessOwnershipHost.captureBaseline;
     if (capture === undefined)
-      throw new Error("Process ownership baseline is unavailable on this host");
+      throw new ProcessAdmissionError("baseline_unavailable");
     captureBaseline = await capture(options.signal);
     options.signal?.throwIfAborted();
   }
@@ -315,9 +316,7 @@ export const spawnOwnedProviderProcess = async (
     };
   }
   if (options.memoryLimitBytes !== undefined)
-    throw new Error(
-      "Owned process memory limits require the Windows Job Object launcher; no limit can be enforced on this host.",
-    );
+    throw new ProcessAdmissionError("memory_limit_unsupported");
   let child: ChildProcess;
   options.onLaunchState?.("attempting");
   try {
@@ -338,7 +337,8 @@ export const spawnOwnedProviderProcess = async (
     throw cause;
   }
   const pid = child.pid;
-  if (pid === undefined) throw new Error("Provider launcher has no process ID");
+  if (pid === undefined)
+    throw new ProcessAdmissionError("launcher_pid_missing");
   const ownership: OwnedProcessGroup = {
     runId: options.runId,
     leaderPid: pid,

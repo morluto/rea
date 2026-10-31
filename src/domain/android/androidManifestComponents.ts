@@ -84,6 +84,7 @@ export const androidManifestComponentsSchema = z.strictObject({
   items: z.array(androidManifestComponentSchema),
   limitations: z.array(z.string()),
 });
+
 /** Current producers observe every declaration facet; historical readers accept omissions. */
 export const observedAndroidManifestComponentSchema =
   androidManifestComponentSchema.required();

@@ -145,9 +145,13 @@ it.each([
   { label: "omitted", property: "", shown: "bitness unknown" },
   {
     label: "empty",
-    // The canonical separator keeps its space even when the value is empty.
     property: "sun.arch.data.model = \n",
     shown: 'bitness unknown (sun.arch.data.model = "")',
+  },
+  {
+    label: "nonstandard framing",
+    property: "sun.arch.data.model =\n",
+    shown: "bitness unknown",
   },
   {
     label: "malformed",

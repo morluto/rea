@@ -65,6 +65,7 @@ const sharedAnalysisSemantics = {
   procedure_file_offset_resolution:
     "address-first-unique-target-source-mapping-v2",
   instruction_flow_evidence: "decoded-return-pcode-v1",
+  instruction_status: "unlisted-address-without-decode-v1",
   instruction_references: "exact-address-incoming-without-synthetic-entry-v2",
   function_boundary_observations: "ghidra-function-boundary-limitations-v4",
 } as const;
@@ -404,6 +405,14 @@ export const ghidraProfileLanguageOverride = (
     ? { languageId }
     : { languageId, compilerSpecId };
 };
+
+/** Read back the language a provider-pinned profile imports with, for any pinned lane. */
+export const ghidraProfilePinnedLanguage = (
+  parameters: Readonly<Record<string, unknown>>,
+): GhidraLanguageOverride | undefined =>
+  parameters.language_selection === "provider-pinned-v1"
+    ? ghidraProfileLanguageOverride(parameters)
+    : undefined;
 
 /** Whether a committed profile and the active configuration select the same language. */
 export const sameGhidraLanguageOverride = (

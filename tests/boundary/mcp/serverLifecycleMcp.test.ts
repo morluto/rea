@@ -1,4 +1,5 @@
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { parseMcpEvidenceBundle } from "../../fixtures/mcpEvidenceBundle.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { afterEach, expect, it } from "vitest";
@@ -208,9 +209,7 @@ it.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
         arguments: {},
       });
       expect(bundle.isError).not.toBe(true);
-      expect(JSON.stringify(bundle.structuredContent)).toContain(
-        error.details.partial_observation.evidence_id,
-      );
+      expect(parseMcpEvidenceBundle(bundle).records).toContainEqual(retained);
     } finally {
       removalAllowed = true;
       await client.close();

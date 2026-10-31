@@ -14,6 +14,9 @@ cannot. This increment adds the view kind only; serving from the state, loading
 another state through the AgentEnv data plane and modelling write effects are
 later increments.
 
+Safe `HEAD`, `OPTIONS` and `TRACE` tools have recorded views with reason
+`method-replay`; state rendering currently applies only to `GET` reads.
+
 ## Requirements
 
 - Accept `inspect_web_network_capture` HAR parents and

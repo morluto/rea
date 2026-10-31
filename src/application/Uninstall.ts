@@ -18,12 +18,21 @@ import { err, ok, type Result } from "../domain/result.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { copyFile, lstat, realpath, rm, rmdir } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
+import { isDeepStrictEqual } from "node:util";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 import { basename, dirname } from "node:path";
-import { defaultKunaCacheDirectory } from "../config/kunaCacheDirectory.js";
+import {
+  defaultKunaCacheDirectory,
+  sameLexicalDirectory,
+} from "../config/kunaCacheDirectory.js";
+import { defaultDarwinHelperCacheDirectory } from "../process/DarwinHelperCache.js";
 import { linuxHopperReleaseCacheDirectory } from "./LinuxHopperCacheDirectory.js";
 
 import { ClientConfigurationPublication } from "./ClientConfigurationPublication.js";
+import {
+  effectiveClientConfiguration,
+  type ClientConfigurationSource,
+} from "./ClientConfigurationFiles.js";
 import { clientRegistrationOwnership } from "./ClientRegistration.js";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
@@ -538,6 +547,110 @@ export const systemUninstallHost = (
         );
         if (!removal.ok)
           return item(client.name, "failed", removal.error.detail);
+        // ZCode switches the entire server table to its shared fallback once
+        // the last native server disappears. Inspect the table it would load,
+        // not just the REA row: unrelated servers may otherwise become active.
+        if (
+          client.format === "zcode" &&
+          removal.value.removeNative &&
+          Object.keys(read.parsed.servers).length === 1 &&
+          client.zcodeFallbackPath !== undefined
+        ) {
+          const fallbackClient: UninstallClient = {
+            ...client,
+            configPath: client.zcodeFallbackPath,
+            configPaths: [client.zcodeFallbackPath],
+            format: "zcode_fallback",
+          };
+          const fallback = await readClientConfiguration(
+            fallbackClient,
+            fileSystem,
+            resources,
+            true,
+          );
+          if (fallback.kind === "item") {
+            if (fallback.item.status !== "skipped") return fallback.item;
+          } else {
+            const fallbackRemoval = clientRegistrationRemoval(
+              fallback.parsed,
+              fallback.original,
+              fallbackClient,
+            );
+            if (!fallbackRemoval.ok)
+              return item(client.name, "failed", fallbackRemoval.error.detail);
+            const remaining = Object.keys(fallback.parsed.servers).filter(
+              (name) =>
+                name !== PRODUCT_IDENTITY.mcpServerKey ||
+                !fallbackRemoval.value.removeNative,
+            );
+            if (remaining.length > 0)
+              return item(
+                client.name,
+                "failed",
+                "Removing REA's last native ZCode server would activate retained fallback servers; no change was made. Review the fallback configuration, then rerun uninstall.",
+              );
+          }
+        }
+        if (
+          client.format === "opencode" &&
+          (removal.value.removeNative || removal.value.legacyPath !== undefined)
+        ) {
+          const originalLayers: ClientConfigurationSource[] = [];
+          const remainingLayers: ClientConfigurationSource[] = [];
+          for (const configPath of client.configPaths ?? [client.configPath]) {
+            const layer =
+              configPath === client.configPath
+                ? read
+                : await readClientConfiguration(
+                    { ...client, configPath },
+                    fileSystem,
+                    resources,
+                    ownershipEstablished,
+                  );
+            if (layer.kind === "item") {
+              if (layer.item.status !== "skipped") return layer.item;
+              continue;
+            }
+            const layerRemoval = clientRegistrationRemoval(
+              layer.parsed,
+              layer.original,
+              client,
+            );
+            if (!layerRemoval.ok)
+              return item(client.name, "failed", layerRemoval.error.detail);
+            originalLayers.push({ ...layer.parsed, sourcePath: configPath });
+            const servers = { ...layer.parsed.servers };
+            const legacyServers = { ...layer.parsed.legacyServers };
+            const name = PRODUCT_IDENTITY.mcpServerKey;
+            if (layerRemoval.value.removeNative) delete servers[name];
+            if (layerRemoval.value.legacyPath !== undefined)
+              delete legacyServers[name];
+            remainingLayers.push({
+              ...layer.parsed,
+              servers,
+              legacyServers,
+              sourcePath: configPath,
+            });
+          }
+          const selected =
+            effectiveClientConfiguration(originalLayers)?.servers[
+              PRODUCT_IDENTITY.mcpServerKey
+            ];
+          const remaining =
+            effectiveClientConfiguration(remainingLayers)?.servers[
+              PRODUCT_IDENTITY.mcpServerKey
+            ];
+          const altersEffectiveRegistration =
+            clientRegistrationOwnership(selected, client) === "owned"
+              ? remaining !== undefined
+              : !isDeepStrictEqual(selected, remaining);
+          if (altersEffectiveRegistration)
+            return item(
+              client.name,
+              "failed",
+              "Removing REA's registration would activate or change an unowned OpenCode registration in another configuration layer, including a possible V1 fallback; no change was made. Remove or replace that registration manually, then rerun uninstall.",
+            );
+        }
         if (
           !removal.value.removeNative &&
           removal.value.legacyPath === undefined
@@ -1029,17 +1142,20 @@ const purgeSelectedData = async (
   platform: NodeJS.Platform,
   fileSystem: UninstallFileSystem,
 ): Promise<readonly UninstallItem[]> => {
-  const items = [
-    ...(await purgeManagedData(appendCallerPath(home, ".rea"), fileSystem, [
-      "cache",
-      "state",
-    ])),
-  ];
+  const items: UninstallItem[] = [];
   const directories: string[] = [];
   if (platform === "darwin" || platform === "linux") {
-    directories.push(defaultKunaCacheDirectory(home, environment, platform));
+    const defaultCache = defaultKunaCacheDirectory(home, environment, platform);
+    directories.push(defaultCache);
     const custom = environment.REA_KUNA_CACHE_DIR;
-    if (custom !== undefined && custom !== directories[0])
+    // Lexical spellings identify the default namespace for reporting.
+    // Removal still uses the owned-path checks below. Other selections
+    // remain separately reported without resolving symbolic links.
+    if (
+      custom !== undefined &&
+      custom !== defaultCache &&
+      !sameLexicalDirectory(custom, defaultCache, platform)
+    )
       items.push(
         item(
           "kuna-custom-cache",
@@ -1048,11 +1164,22 @@ const purgeSelectedData = async (
         ),
       );
   }
+  // The ownership helper cache has no caller-selected location to retain.
+  if (platform === "darwin")
+    directories.push(defaultDarwinHelperCacheDirectory(home));
   if (platform === "linux") {
     const hopper = linuxHopperReleaseCacheDirectory(environment, home);
     if (hopper.ok) directories.push(hopper.value);
     else items.push(item("hopper-releases", "failed", hopper.error.message));
   }
+  // Resolve selections before a managed namespace removal can delete cwd.
+  // Keep the existing result and removal order after planning those facts.
+  items.unshift(
+    ...(await purgeManagedData(appendCallerPath(home, ".rea"), fileSystem, [
+      "cache",
+      "state",
+    ])),
+  );
   for (const directory of directories)
     items.push(
       ...(await purgeManagedData(dirname(directory), fileSystem, [

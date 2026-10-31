@@ -14,10 +14,10 @@ export const workflowAnalysisProfile = (
     upstream_analysis_profile: upstream,
     source_limitations: "provider-operation-caveats-v1",
     ...(operation === "binary_overview"
-      ? { workflow_revision: 4 }
-      : operation === "batch_decompile" ||
-          operation === "get_call_graph" ||
-          operation === "trace_feature"
-        ? { workflow_revision: 3 }
-        : { workflow_revision: 1 }),
+      ? { workflow_revision: 5 }
+      : operation === "batch_decompile"
+        ? { workflow_revision: 4 }
+        : operation === "get_call_graph" || operation === "trace_feature"
+          ? { workflow_revision: 3 }
+          : { workflow_revision: 1 }),
   });

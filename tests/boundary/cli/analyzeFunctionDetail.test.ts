@@ -7,13 +7,12 @@ import { z } from "zod";
 
 import { inspectAnalysisView } from "../../../src/application/analysisView/AnalysisViewService.js";
 import { registerCoreBinaryCommands } from "../../../src/cli/coreBinaryCommands.js";
-import type { DirectAnalysis } from "../../../src/composition/directAnalysis.js";
 import { CLI_COMMANDS } from "../../../src/cliCommandNames.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
-import { ok } from "../../../src/domain/result.js";
 import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
 import { functionDossierSchema } from "../../../src/domain/native/functionDossier.js";
 import { ghidraFunctionDossier } from "../../../src/domain/ghidraValues.fixture.js";
+import { ok } from "../../../src/domain/result.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 // A complete analyze_function Evidence as runDirectAnalysis would return it:
@@ -31,9 +30,9 @@ const cannedCompleteEvidence = () =>
   );
 
 const harness = () => {
-  const runDirectAnalysis = vi.fn<DirectAnalysis["runDirectAnalysis"]>(
-    async () => ok(cannedCompleteEvidence()),
-  );
+  const runDirectAnalysis = vi.fn<
+    Parameters<typeof registerCoreBinaryCommands>[2]
+  >(async () => ok(cannedCompleteEvidence()));
   const cli = Cli.create("rea-fn-detail-test", { version: "1", sync: false });
   registerCoreBinaryCommands(
     cli,

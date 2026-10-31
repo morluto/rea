@@ -3,6 +3,7 @@ import {
   nativeObservationSourceSchemas,
   containingProcedureResolutionSchema,
 } from "../domain/native/nativeObservation.js";
+import { overviewInventoryCoverageSchema } from "../domain/native/inventoryCoverage.js";
 import {
   nativeObservationSummaryViewResultSchemas,
   byteEntropySummaryViewResultSchema,
@@ -346,6 +347,12 @@ export const enhancedOutputSchemas = {
             procedure: batchProcedureIdentity,
             status: z.literal("error"),
             error: analysisErrorProjectionSchema,
+            limitations: z
+              .array(z.string())
+              .optional()
+              .describe(
+                "Caveats of this item's own provider observation when it supplied no pseudocode, including any reason the provider reported.",
+              ),
           }),
         ]),
       ),
@@ -416,6 +423,7 @@ export const enhancedOutputSchemas = {
       segment_count: z.int().min(0).optional(),
       procedure_count: z.int().min(0),
       string_count: z.int().min(0),
+      inventory_coverage: overviewInventoryCoverageSchema,
     }),
   ),
   analyze_function: analysisDetailOutputSchemaOf(

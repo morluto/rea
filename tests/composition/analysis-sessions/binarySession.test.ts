@@ -218,6 +218,7 @@ it("drains session calls and retires analysis after an admitted external mutatio
   expect((await session.open(target)).ok).toBe(true);
   expect(session.activeTarget()?.path).toBe(target);
   const originalDigest = session.activeTarget()?.sha256;
+  expect(originalDigest).toEqual(expect.any(String));
   const started = createDeferred<void>();
   const release = createDeferred<void>();
 
@@ -248,6 +249,7 @@ it("drains session calls and retires analysis after an admitted external mutatio
   expect(clients).toHaveLength(0);
   expect((await session.open(target)).ok).toBe(true);
   expect((await session.execute("address_name", {})).ok).toBe(true);
+  expect(session.activeTarget()?.sha256).toEqual(expect.any(String));
   expect(session.activeTarget()?.sha256).not.toBe(originalDigest);
   expect(clients.at(-1)?.targetSha256).toBe(session.activeTarget()?.sha256);
   expect(calls).toEqual(["address_name"]);
@@ -259,6 +261,7 @@ it("leaves analysis unbound when a command returns before its writer finishes", 
   const session = createTestBinarySession(createCacheProvider([]));
   expect((await session.open(target)).ok).toBe(true);
   const originalDigest = session.activeTarget()?.sha256;
+  expect(originalDigest).toEqual(expect.any(String));
   const releaseWriter = createDeferred<void>();
   let writer: Promise<void> | undefined;
   const result = await session.withAdmittedExternalMutation(
@@ -278,6 +281,7 @@ it("leaves analysis unbound when a command returns before its writer finishes", 
   await writer;
   expect((await session.execute("address_name", {})).ok).toBe(false);
   expect((await session.open(target)).ok).toBe(true);
+  expect(session.activeTarget()?.sha256).toEqual(expect.any(String));
   expect(session.activeTarget()?.sha256).not.toBe(originalDigest);
   await session.close();
 });
@@ -324,6 +328,7 @@ it("retires analysis when an external mutation uses a hard link", async () => {
   const session = createTestBinarySession(createCacheProvider([]));
   expect((await session.open(target)).ok).toBe(true);
   const before = session.activeTarget()?.sha256;
+  expect(before).toEqual(expect.any(String));
 
   const result = await session.withAdmittedExternalMutation(
     alias,
@@ -341,6 +346,7 @@ it("retires analysis when an external mutation uses a hard link", async () => {
   });
   expect(session.activeTarget()).toBeUndefined();
   expect((await session.open(target)).ok).toBe(true);
+  expect(session.activeTarget()?.sha256).toEqual(expect.any(String));
   expect(session.activeTarget()?.sha256).not.toBe(before);
   await session.close();
 });
@@ -1076,12 +1082,22 @@ describe("snapshot cache eligibility", () => {
         const parameters: Readonly<Record<string, JsonValue>> = live
           ? { address: "0x1000", document: "main" }
           : {};
+        const evidenceIds: Array<string | undefined> = [];
         for (let attempt = 0; attempt < 2; attempt += 1) {
           const result = await session.execute("address_name", parameters);
-          expect(result).toMatchObject({ ok: true });
-          if (result.ok) expect(result.value.evidenceId).toBeUndefined();
+          if (!result.ok) throw result.error;
+          evidenceIds.push(result.value.evidenceId);
         }
-        expect(session.exportEvidenceBundle().records).toEqual([source]);
+        const records = session.exportEvidenceBundle().records;
+        if (live) {
+          expect(evidenceIds).toEqual([expect.any(String), evidenceIds[0]]);
+          expect(records.map((record) => record.evidence_id)).toEqual(
+            expect.arrayContaining([source.evidence_id, evidenceIds[0]]),
+          );
+        } else {
+          expect(evidenceIds).toEqual([undefined, undefined]);
+          expect(records).toEqual([source]);
+        }
         expect(session.exportAnalysisSnapshot()).toMatchObject({
           ok: true,
           value: { entries: [] },
@@ -1122,20 +1138,20 @@ describe("snapshot cache eligibility", () => {
       await session.close();
     }
   });
+});
 
-  it("does not snapshot reads that depend on the provider cursor", async () => {
-    const [first] = await createBinarySessionTargets();
-    const calls: string[] = [];
-    const session = createTestBinarySession(createCacheProvider(calls));
-    await openAndExecuteAddressName(session, first, {});
-    expect((await session.execute("address_name", {})).ok).toBe(true);
-    expect(calls).toEqual(["address_name", "address_name"]);
-    expect(session.exportAnalysisSnapshot()).toMatchObject({
-      ok: true,
-      value: { entries: [] },
-    });
-    await session.close();
+it("does not snapshot reads that depend on the provider cursor", async () => {
+  const [first] = await createBinarySessionTargets();
+  const calls: string[] = [];
+  const session = createTestBinarySession(createCacheProvider(calls));
+  await openAndExecuteAddressName(session, first, {});
+  expect((await session.execute("address_name", {})).ok).toBe(true);
+  expect(calls).toEqual(["address_name", "address_name"]);
+  expect(session.exportAnalysisSnapshot()).toMatchObject({
+    ok: true,
+    value: { entries: [] },
   });
+  await session.close();
 });
 
 describe("provider health and availability", () => {

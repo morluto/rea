@@ -6,12 +6,12 @@ import { silentLogger } from "../logger.js";
 import { ghidraProfileInstallationHost as host } from "./GhidraInstallation.fixture.js";
 import { GhidraProvider } from "./GhidraProvider.js";
 
-// Digests were computed by the unmodified upstream resolver (3ae7daa10,
-// raw branch inline) and must not change when the binary-loader policy is shared.
+// Digests commit to the current shared policy, including the instruction status
+// revision that prevents reuse of snapshots with the previous ambiguous result.
 const RAW_DIGESTS = {
-  "6502": "adbec31711f31471f9cdbdbb2fc743a0ce6b46c9be5568bf90a3f51ef46e376d",
+  "6502": "8e33776d1cc5c5d77d32923d5978c05ec2d989d00920dd458cc2dafb4c9c0cad",
   "x86-disabled-analyzer":
-    "493a02888eca575be286b5a96041af8007444586854edb974d6a0c12fd2768c4",
+    "d17bddc8ac110c891d30fb989fc7906df421bd9bea5df4aac05a950f50c7bdaf",
 } as const;
 
 const configFor = (environment: NodeJS.ProcessEnv) => {
@@ -33,7 +33,7 @@ const raw = (architecture: "6502" | "x86", entryPoint: string): BinaryTarget =>
   }) as unknown as BinaryTarget;
 
 describe("raw-binary analysis profile digest", () => {
-  it("keeps the 6502 raw profile digest from before the shared policy refactor", async () => {
+  it("commits the 6502 raw profile to the current shared policy", async () => {
     const ghidra = new GhidraProvider(configFor({}), silentLogger, {}, host);
     const resolved = await ghidra.resolveAnalysisProfile(raw("6502", "0x8001"));
     if (!resolved.ok) throw resolved.error;
@@ -44,6 +44,7 @@ describe("raw-binary analysis profile digest", () => {
       language_id: "6502:LE:16:default",
       language_selection: "caller-supplied-v1",
       load_image_evidence: "independent-raw-mapping-context-v4",
+      instruction_status: "unlisted-address-without-decode-v1",
       analyzer_preset: "ghidra-default",
     });
   });

@@ -1,4 +1,5 @@
 import { request, type ClientRequest, type IncomingMessage } from "node:http";
+import { isUtf8 } from "node:buffer";
 
 import { z } from "zod";
 
@@ -515,9 +516,17 @@ export const readCdpJson = async (
         });
         received.on("end", () => {
           if (settled) return;
-          const parsed = safeParseJson(
-            Buffer.concat(chunks, bytes).toString("utf8"),
-          );
+          const body = Buffer.concat(chunks, bytes);
+          if (!isUtf8(body)) {
+            finish(
+              new BrowserObservationError(
+                operation,
+                "invalid_endpoint_response",
+              ),
+            );
+            return;
+          }
+          const parsed = safeParseJson(body.toString("utf8"));
           if (!parsed.ok) {
             finish(
               new BrowserObservationError(

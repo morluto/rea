@@ -48,6 +48,11 @@ describe.each(["attached", "headless"] as const)(
     const operations = IDA_OPERATIONS.filter(
       (operation) => mode === "headless" || !HEADLESS_ONLY.has(operation),
     );
+    it("includes the baseline operations needed by this contract matrix", () => {
+      expect(operations).toContain("list_procedures");
+      if (mode === "headless")
+        expect(operations).toContain("resolve_containing_procedure");
+    });
     it.each(operations)(
       "declares %s UI effects matching the upstream tools it reaches",
       async (operation) => {
@@ -67,9 +72,18 @@ describe.each(["attached", "headless"] as const)(
           producer,
         );
         try {
-          await client.execute(operation, parametersFor(operation));
+          const execution = await client.execute(
+            operation,
+            parametersFor(operation),
+          );
+          if (mode === "headless" && operation === "procedure_callers")
+            expect(execution).toMatchObject({
+              ok: false,
+              error: { _tag: "AnalysisCapabilityUnavailableError" },
+            });
+          else if (!execution.ok) throw execution.error;
         } finally {
-          await client.close();
+          expect((await client.close()).ok).toBe(true);
         }
         const descriptor = idaCapabilities(
           IDA_COMPATIBILITY_PROFILES[mode === "attached" ? "legacy" : "modern"],
@@ -133,7 +147,7 @@ describe.each(["attached", "headless"] as const)(
             text: JSON.stringify(serialized.structuredContent),
           });
         } finally {
-          await client.close();
+          expect((await client.close()).ok).toBe(true);
         }
       },
     );

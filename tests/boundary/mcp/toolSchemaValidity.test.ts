@@ -582,34 +582,16 @@ describe("MCP JSON Schema validity", () => {
       expectKnownAuthorityHints(tools);
       const byName = new Map(tools.map((tool) => [tool.name, tool]));
       expectManagedLocalSignatureSchema(byName.get("inspect_managed_members"));
+      const comparison = byName.get("compare_web_captures")?.inputSchema;
       for (const side of ["before", "after"])
-        expect(byName.get("compare_web_captures")?.inputSchema).toHaveProperty(
-          [
-            "properties",
-            side,
-            "properties",
-            "inspection",
-            "properties",
-            "scripts",
-            "properties",
-            "items",
-            "items",
-            "properties",
-            "source",
-            "anyOf",
-          ],
-          expect.arrayContaining([
-            expect.objectContaining({
-              properties: expect.objectContaining({
-                reason: { type: "string" },
-              }),
-            }),
-            expect.objectContaining({
-              properties: expect.objectContaining({
-                artifact: expect.objectContaining({ type: "object" }),
-              }),
-            }),
-          ]),
+        expect(comparison).toHaveProperty(
+          ["properties", side, "properties", "inspection"],
+          {
+            type: "object",
+            description: expect.stringContaining(
+              "complete canonical observation",
+            ),
+          },
         );
       const catalogProjection = tools.map((tool) => ({
         name: tool.name,

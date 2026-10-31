@@ -3,7 +3,10 @@ import { createEvidence } from "../evidence.js";
 import { freezeOwnedJsonTreeSnapshot } from "../immutableJson.js";
 import { gpuCodeObjectsSchema } from "../gpu/gpuCodeObjects.js";
 import type { AnalysisViewParent } from "./analysisView.js";
-import { projectGpuCodeObjectsView } from "./gpuCodeObjectsView.js";
+import {
+  gpuCodeObjectsItemsSchema,
+  projectGpuCodeObjectsView,
+} from "./gpuCodeObjectsView.js";
 
 const report = () =>
   gpuCodeObjectsSchema.parse({
@@ -73,4 +76,32 @@ it("revalidates mutable GPU facts and preserves incomplete source coverage", () 
     ok: false,
     error: { _tag: "AnalysisInputError" },
   });
+});
+
+it("preserves omitted AMD metadata columns instead of inventing null metadata", () => {
+  const items = [
+    {
+      id: "object",
+      kind: "amdgpu",
+      target: "gfx900",
+      payload_target: "gfx900",
+      target_consistency: "single-source",
+      inspection: "complete",
+      location: {
+        container_id: null,
+        offset: 0,
+        size: 64,
+        section_index: null,
+        section_name: null,
+      },
+      metadata_location: {
+        container_id: null,
+        offset: 0,
+        size: 64,
+        section_index: null,
+        section_name: null,
+      },
+    },
+  ];
+  expect(gpuCodeObjectsItemsSchema.parse(items)).toEqual(items);
 });

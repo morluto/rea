@@ -5,6 +5,7 @@ import {
   semanticBindingCanBeRebound,
   semanticOpaqueBindingReadMayHaveChanged,
 } from "./javascriptSemanticOpaqueEffects.js";
+import type { JavaScriptOpenReceiverFact } from "./javascriptSemanticReceiverFacts.js";
 import * as t from "@babel/types";
 
 import {
@@ -204,7 +205,10 @@ function* indexSemanticAmbientWritesSteps(
   yield* indexJavaScriptAmbientWritesSteps(
     state.program,
     state,
-    createSemanticOpaqueGlobalObserver(state),
+    createSemanticOpaqueGlobalObserver(state, {
+      createAmbientPathResolver,
+      createSemanticModuleInterop,
+    }),
     (node) => observePossibleCommonJsDelegateWrite(node, state),
   );
   if (state.opaqueEffects.globalSites.length > 0)
@@ -420,6 +424,7 @@ export const analyzeParsedJavaScriptSemantics = (
 export function* analyzeParsedJavaScriptSemanticsSteps(
   file: ParsedJavaScriptSource,
   staticImportResolutionMode: JavaScriptModuleResolutionMode = "import",
+  expressionNodeBudget?: number,
 ): Generator<void, JavaScriptSemanticIr> {
   const state = createState(file.program, staticImportResolutionMode);
   yield* collectDefinitionsSteps(file.program, state);
@@ -447,6 +452,14 @@ export function* analyzeParsedJavaScriptSemanticsSteps(
     callables,
     references,
     parserPartial,
+    expressionNodeBudget,
+  );
+  const coverage = semanticCoverage(
+    parserPartial,
+    [
+      ...new Set([...state.valueResourceLimits, ...state.getterResourceLimits]),
+    ].sort(),
+    [...state.returnedReferenceWidenings].map(range),
   );
   return {
     schema: "JavaScriptSemanticIR",
@@ -456,17 +469,15 @@ export function* analyzeParsedJavaScriptSemanticsSteps(
     references,
     moduleLinks,
     ...derived,
-    coverage: semanticCoverage(
-      parserPartial,
-      [
-        ...new Set([
-          ...state.valueResourceLimits,
-          ...state.getterResourceLimits,
-        ]),
-      ].sort(),
-      [...state.returnedReferenceWidenings].map(range),
-    ),
+    coverage: derived.expressionFlowsTruncated
+      ? { ...coverage, status: "partial", omittedCount: null }
+      : coverage,
     limitations: [
+      ...(derived.expressionFlowsTruncated
+        ? [
+            "The offered semantic node capacity bounded expression dependencies; omitted influence remains unknown.",
+          ]
+        : []),
       ...(state.valueResourceLimits.has("alias-selections")
         ? [semanticResourceLimitReason("alias-selections")]
         : []),
@@ -499,15 +510,7 @@ export function* analyzeParsedJavaScriptSemanticsSteps(
  * Receiver identity facts for the overloaded `.open` syntax, plus
  * `configuration` for `.get` reads of a `getConfiguration(...)` result.
  */
-export type JavaScriptOpenReceiverFact =
-  | "window"
-  | "indexed-db"
-  | "cache-storage"
-  | "local"
-  | "local-indexed-db"
-  | "local-cache-storage"
-  | "configuration"
-  | "extension-state";
+export type { JavaScriptOpenReceiverFact } from "./javascriptSemanticReceiverFacts.js";
 
 /** Lexical receiver identities that select static endpoint interpretations. */
 export interface JavaScriptReceiverFacts {

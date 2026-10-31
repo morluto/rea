@@ -411,8 +411,10 @@ data you may change. This scenario creates one item:
 - Request steps follow no redirects: a redirect answer fails the step, and
   nothing is sent to the location it names, though a write the redirect
   answered may already have been applied. `expected_status` cannot name a 3xx
-  status. Give the path the redirect names; with header values selected, the
-  capture records its `Location`.
+  status. Manual redirects can be opaque to the page and may not produce a
+  response event; their status and `Location` can therefore be unavailable even
+  when network events and header values were selected. Such captures report
+  incomplete event coverage.
 - Header values are literals, declared secrets, a cookie the browser holds for
   the request URL (`{"source": "cookie", "name"}`, HttpOnly cookies included,
   whose value the page's scripts can then see while the request runs), or a
@@ -530,10 +532,11 @@ id the application assigns:
   that names no string or number fails the step, so later steps never send a
   missing value, as does a response over 4,000,000 characters: a request step
   stops reading and aborts its fetch there. A UI step reads a body only when
-  its positive received size is known, at most 12,000,000 bytes, and its
-  Content-Encoding is absent or identity. Compressed responses and unknown or
-  zero cache sizes are refused before materializing the body; decoded text
-  over the character limit also fails. The UI action may already have applied.
+  its decoded size is bounded at 12,000,000 bytes or less: its received size,
+  or the declared Content-Length of one served from cache, times 1032 for each
+  gzip or deflate coding, the most DEFLATE expands. Other codings and unknown
+  or zero sizes are refused before materializing the body; decoded text over
+  the character limit also fails. The UI action may already have applied.
 - `{saved:name}` sends a saved value in a request step's `path`, including its
   query, and in a `goto` destination's `url`, percent-encoded; a destination's
   structured `query` values are sent as declared. A saved value that makes a

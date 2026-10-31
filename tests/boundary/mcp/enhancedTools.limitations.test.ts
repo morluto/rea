@@ -6,6 +6,7 @@ import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysis
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import type { nativeInventoryRowsSchemas } from "../../../src/domain/native/nativeInventory.js";
 import { connect, closeEnhancedToolResources } from "./enhancedToolsHarness.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 
 afterEach(closeEnhancedToolResources);
 
@@ -102,3 +103,41 @@ it("counts every canonical inventory row without losing same-address alternative
   });
   expect([JSON.stringify(procedures), JSON.stringify(strings)]).toEqual(before);
 });
+
+it.each(["list_procedures", "list_strings"])(
+  "refuses legacy %s dictionaries instead of declaring a complete overview",
+  async (invalidOperation) => {
+    const client = await connect({
+      execute: async (operation) => {
+        if (operation === "read_binary_inventory_summary")
+          return err(
+            new AnalysisCapabilityUnavailableError(
+              "fixture",
+              operation,
+              "No native overview",
+            ),
+          );
+        return ok(
+          createAnalysisExecution(
+            operation === "current_document"
+              ? "fixture"
+              : operation === invalidOperation
+                ? { "0x1000": "legacy" }
+                : [],
+            { id: "fixture", name: "Fixture", version: "1" },
+          ),
+        );
+      },
+    });
+    const response = await client.callTool({
+      name: "binary_overview",
+      arguments: {},
+    });
+    expect(parseMcpToolError(response).error).toMatchObject({
+      code: "unreadable_output",
+      details: {
+        operation: invalidOperation,
+      },
+    });
+  },
+);

@@ -3,20 +3,19 @@ import {
   localPathStringSchema,
 } from "../../domain/localPath.js";
 import { sourceToBundleViewRequestSchema } from "../../domain/analysisView/sourceToBundleView.js";
-import { evidenceSchema } from "../../domain/evidence.js";
 import { z } from "zod";
 
 import { evidenceInputSchema } from "../../domain/evidenceReference.js";
-import { compareApplicationVersionsInputSchema } from "../../domain/javascript/javascriptApplicationVersionComparisonSchemas.js";
 import { compareJavaScriptExportShapesInputSchema } from "../../domain/javascript/javascriptExportShapeComparisonSchemas.js";
 import { traceApplicationFeatureInputSchema } from "../../domain/javascript/javascriptFeatureTraceSchemas.js";
-import { javaScriptSemanticQueryInputSchema } from "../../domain/javascript/javascriptSemanticQuerySchemas.js";
+import { traceJavaScriptSemanticsInputSchema } from "../../domain/javascript/javascriptSemanticTraceSchemas.js";
 import { compareSourceToBundleInputSchema } from "../../domain/javascript/sourceToBundleComparisonSchemas.js";
+import { reconcileJavaScriptRuntimeInputSchema } from "../../domain/javascript/javascriptRuntimeReconciliationSchemas.js";
 
 const traceApplicationFeatureFacts = {
-  native_observations:
-    traceApplicationFeatureInputSchema.shape.native_observations,
+  native_observations: z.array(evidenceInputSchema).default([]),
   seed: traceApplicationFeatureInputSchema.shape.seed,
+  semantic_page: traceApplicationFeatureInputSchema.shape.semantic_page,
   direction: traceApplicationFeatureInputSchema.shape.direction,
 } as const;
 
@@ -27,16 +26,14 @@ export const traceApplicationFeatureRequestSchema = z.strictObject({
 });
 
 /** Semantic trace request accepting inline or same-session application Evidence. */
-export const traceJavaScriptSemanticsRequestSchema = z.strictObject({
-  application: evidenceInputSchema,
-  query: javaScriptSemanticQueryInputSchema,
-});
+export const traceJavaScriptSemanticsRequestSchema =
+  traceJavaScriptSemanticsInputSchema.extend({
+    application: evidenceInputSchema,
+  });
 
 const compareApplicationVersionsFacts = {
-  left_native_observations:
-    compareApplicationVersionsInputSchema.shape.left_native_observations,
-  right_native_observations:
-    compareApplicationVersionsInputSchema.shape.right_native_observations,
+  left_native_observations: z.array(evidenceInputSchema).default([]),
+  right_native_observations: z.array(evidenceInputSchema).default([]),
 } as const;
 
 /** Application comparison request accepting inline or same-session application Evidence. */
@@ -64,7 +61,7 @@ export const compareSourceToBundleCliInputSchema = z.strictObject({
     compareSourceToBundleInputSchema.shape.reference,
     referenceFile,
   ]),
-  application: evidenceSchema,
+  application: evidenceInputSchema,
 });
 /** The MCP host accepts absolute local paths; omitted view preserves the full report. */
 export const compareSourceToBundleRequestSchema = z.strictObject({
@@ -92,4 +89,16 @@ export const compareJavaScriptExportShapesRequestSchema = z.strictObject({
   ...compareJavaScriptExportShapesFacts,
   left: evidenceInputSchema,
   right: evidenceInputSchema,
+});
+
+/** Static layers and passive observations share the same logical Evidence inputs. */
+export const reconcileJavaScriptRuntimeRequestSchema = z.strictObject({
+  static_layers: z
+    .array(
+      reconcileJavaScriptRuntimeInputSchema.shape.static_layers.element.extend({
+        analysis: evidenceInputSchema,
+      }),
+    )
+    .min(1),
+  runtime_observations: z.array(evidenceInputSchema).min(1),
 });

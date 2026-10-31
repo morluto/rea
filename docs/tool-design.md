@@ -48,6 +48,57 @@ fixture servers. Custom orchestration languages, replay engines, or separate
 prepare/execute plans need an observed requirement those primitives cannot
 satisfy. A plan without execution does not establish runtime behavior.
 
+## Exercise the analyst workflow
+
+Before defining a new provider-backed tool, state the analyst's question, what
+they already have, the intended result and authority, and what must remain
+unknown. Try the nearest existing REA workflow and the relevant native provider
+or ordinary script path when available. Identify the specific gap and what a
+new or extended contract would add; upstream capability alone does not require
+a new tool or equal support from every provider.
+
+Exercise the task through REA as a whole and compare relevant provider behavior
+with an independent artifact or format observation where possible. Use the
+caller's selected target and authority. Record the provider version, target and
+observed coverage, and distinguish an unsupported operation from an empty
+result or an untested path.
+
+Include the boundary cases that could change the answer: provider labels versus
+source facts, addresses versus file locations, partial results, and a useful
+recovery after failure or session close when those apply to the task. Check that
+composed results keep each observation's identity, limitations and source
+association. Existing real-provider lanes and focused tests establish their
+selected scenarios; they do not by themselves establish a different workflow or
+provider equivalence. If a provider cannot be exercised, report that limitation
+and continue with the available evidence. Measure agent tool selection only with
+an actual agent evaluation; a scripted tool sequence does not establish it. Use
+[testing guidance](testing.md#provider-backed-workflow-verification) to select
+the cases that establish the proposed contract.
+
+## Audit existing tools
+
+Scope an audit by analyst tasks and the caller's target, providers and authority.
+Record the source revision and, when used, the running server, catalog and
+provider versions; a connected server can differ from the current checkout.
+Inspect the live CLI help or MCP descriptions and schemas alongside the owning
+contracts and documentation. Choose representative tasks and their nearest REA
+and native alternatives rather than counting upstream commands.
+
+Exercise the selected public workflows, including the steps before and after a
+tool call. Check task selection, input choices, returned facts and their source,
+partial or unsupported outcomes, and applicable session and recovery behavior.
+Compare native provider output and an independent artifact observation where
+available. Inspect existing tests and real-provider lanes for the scenario they
+actually cover; a passing test does not establish a different task or host.
+Use [workflow verification](testing.md#provider-backed-workflow-verification)
+for counterexamples and lifecycle controls relevant to the audit.
+
+Report working routes as well as findings. Separate a reproduced contract bug,
+an intentional limitation, a design opportunity and an unverified hypothesis;
+include the smallest useful reproduction, impact and coverage limits. Do not
+claim autonomous-agent selection from a scripted trace. Check related reports
+before proposing another issue, and avoid treating lack of API parity as a bug.
+
 ## Define the contract
 
 - Use strict inputs with explicit target identity and required fields. Preserve
@@ -82,6 +133,51 @@ satisfy. A plan without execution does not establish runtime behavior.
   An assumed agent budget is insufficient justification for a limit. Name the
   ceiling and its recovery as described in
   [admission limits and recovery](design/limits-and-recovery.md).
+
+### Compose declared Evidence inputs
+
+Declare each logical Evidence source with the shared `evidenceInputSchema`:
+complete inline Evidence or an exact
+`{kind: "retained-evidence", evidence_id}` reference. Use that declaration in
+single, optional, array and nested source fields across domains. Keep complete
+record schemas for stored Evidence, bundle records and pure semantic inputs;
+request alternatives do not change those representations. Ordinary IDs in
+parameters or result data are not implicitly source selectors.
+
+Derive borrowing request validation and source resolution from the canonical
+request schema with `getEvidenceInputContract` and `resolveEvidenceRequest`.
+The shared application entrypoint selects references for CLI and MCP before the
+format owner admits, authenticates and interprets their records. Preserve
+admission before copying large source payloads. Do not maintain a second list
+of source paths or resolve references only in an adapter. A resolved reference
+has the same identity, caller-selected observations, provenance, coverage and
+partial or unknown facts as its complete inline record; it never reruns a
+producer or upgrades incomplete evidence.
+Keep Evidence-bearing request unions outside skipping `default` wrappers;
+use `prefault` when a default must pass through branch selection. Catalog
+conformance rejects unsupported source containers rather than silently losing
+their references.
+
+Return authenticated source records alongside derived workflow Evidence when
+the adapter must retain them. Keep links to those exact sources and require the
+source closure when the workflow follows their links. Missing references and
+incompatible workflow roles are explicit failures; do not infer a substitute
+from ledger order, display names or the active target. A summary or inspection
+page has its own identity: consumers needing complete source facts use its
+`normalized_result.parent_evidence_id`, unless their contract explicitly accepts
+that view.
+
+New provider-owned source observations require a retention owner. Existing
+caller-owned inputs can also compose on a fixed port without a recorder;
+when a recorder is available, preserve its acceptance or rejection and retain
+completed sources through cancellation.
+
+MCP supplies the current ledger lookup. CLI commands that advertise
+`--evidence-bundle` use one explicitly selected, authenticated bundle for the
+command's lifetime. Keep cleanup with that owner. A retained reference does not
+grant filesystem access: file selectors remain separate, explicit contracts
+where supported. See [retained Evidence inputs](mcp-contracts.md#retained-application-evidence-inputs)
+and [CLI reuse](cli.md#import-export-and-compare-evidence).
 
 ### Interpret boundary facts once
 

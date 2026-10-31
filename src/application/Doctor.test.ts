@@ -761,6 +761,36 @@ describe("doctor installation identity", () => {
       remediation: "Run rea setup to update the installed REA skill.",
     });
   });
+  it("classifies an unreadable installed skill as unknown, not drift", async () => {
+    const result = await runDoctor(
+      undefined,
+      host({
+        installedSkillIdentity: () =>
+          Promise.resolve({
+            version: null,
+            toolCount: null,
+            canonical: false,
+            issues: [
+              {
+                client: "shared",
+                path: "/home/.agents/skills/rea",
+                kind: "unreadable",
+                detail: "Selected skill copy could not be read",
+              },
+            ],
+          }),
+      }),
+    );
+
+    expect(result.identity?.skill).toMatchObject({ state: "unknown" });
+    expect(result.checks).toContainEqual(
+      expect.objectContaining({
+        name: "skill:identity",
+        ok: false,
+        classification: "unknown",
+      }),
+    );
+  });
   it("reports stale client registration paths without claiming live state", async () => {
     const result = await runDoctor(
       undefined,

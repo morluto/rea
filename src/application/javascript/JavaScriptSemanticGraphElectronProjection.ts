@@ -1,6 +1,6 @@
 import type { ElectronCallPath } from "../../domain/javascript/electronStaticAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
-import { electronCallPathId } from "../../domain/javascript/electronCallPathIdentity.js";
+import { electronCallPathId } from "./ElectronCallPathIdentity.js";
 import {
   addSemanticGraphRelation,
   retainSemanticGraphNode,

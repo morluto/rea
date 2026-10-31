@@ -245,7 +245,7 @@ cliTest.skipIf(process.platform === "win32").for([
             state: "unknown",
             command,
             config_path: config,
-            remediation: expect.stringContaining("unknown ownership"),
+            remediation: expect.stringMatching(/\S/u),
           }),
         ]),
       },

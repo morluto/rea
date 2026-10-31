@@ -92,10 +92,14 @@ export async function withFixture(
       [FIXTURE_PACKAGE, MIRROR_FIXTURE_PACKAGE].includes(expectedPackage),
       "Unknown UI verification fixture package",
     );
-    const selection = resolveAdbBinary(environment);
+    const selection = await resolveAdbBinary(
+      environment,
+      process.platform,
+      signal,
+    );
     const adb = (args) =>
       run(selection.binary, ["-s", serial, ...args], {
-        environment,
+        environment: selection.environment,
       });
     await client.connect(transport, { timeout: REQUEST_MS, signal });
     // Inspect a private snapshot, then install those same bytes. Replacement of

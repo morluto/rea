@@ -76,6 +76,9 @@ export const quoteWindowsProcessArgument = (value: string): string => {
   return `"${value.replace(/(\\*)"/gu, '$1$1\\"').replace(/(\\+)$/u, "$1$1")}"`;
 };
 
+// Back off after a failed native poll instead of retrying at the idle cadence.
+const POLL_RETRY_MS = 250;
+
 /** Process events and streams backed by a retained native Job Object. */
 export class WindowsOwnedProcess extends EventEmitter {
   readonly stdout = new PassThrough();
@@ -415,16 +418,19 @@ export class WindowsOwnedProcess extends EventEmitter {
       } else this.#schedule(idle ? 25 : 0);
     } catch (cause: unknown) {
       this.#reportLifecycleFailure(cause);
+      this.#schedule(POLL_RETRY_MS);
     }
   }
 
   /** Report a native lifecycle failure on the error and cleanup channels. */
   #reportLifecycleFailure(cause: unknown): void {
     const failure = cause instanceof Error ? cause : new Error(String(cause));
+    const repeated = this.#failure !== undefined;
     this.#failure = failure.message;
     // Native lifecycle failures belong to the error/cleanup channels, never
     // the captured stderr observation produced by the child itself.
-    if (this.listenerCount("error") > 0) this.emit("error", failure);
+    if (!repeated && this.listenerCount("error") > 0)
+      this.emit("error", failure);
     // Poll failures retain the job for observation. Once stream teardown has
     // finished, a failed native close retains only that close for retry.
   }

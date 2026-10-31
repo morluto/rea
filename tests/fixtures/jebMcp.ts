@@ -6,7 +6,13 @@ import { JEB_ENGINE_TOOLS } from "../../src/jeb/JebMcpConnection.js";
 const messageSchema = z.object({
   id: z.union([z.string(), z.number()]).optional(),
   method: z.string(),
-  params: z.object({ name: z.string().optional() }).passthrough().optional(),
+  params: z
+    .object({
+      name: z.string().optional(),
+      arguments: z.unknown().optional(),
+    })
+    .passthrough()
+    .optional(),
 });
 
 /** Real HTTP MCP transport; close drains admitted catalog/tool callbacks, preserving handled 500 replies. */
@@ -14,7 +20,7 @@ export const startJebMcpFixture = async (
   respond: (tool: string) => JsonValue | Promise<JsonValue>,
   catalogReply?: JsonValue | (() => JsonValue | Promise<JsonValue>),
 ) => {
-  const calls: string[] = [];
+  const requests: { name: string; arguments: unknown }[] = [];
   const { server, close } = createVerifierHttpServer(
     async (request, response) => {
       if (request.method !== "POST") {
@@ -50,7 +56,10 @@ export const startJebMcpFixture = async (
           message.method === "tools/call" &&
           message.params?.name !== undefined
         ) {
-          calls.push(message.params.name);
+          requests.push({
+            name: message.params.name,
+            arguments: message.params.arguments,
+          });
           const payload = await respond(message.params.name);
           result = {
             structuredContent: payload,
@@ -72,7 +81,10 @@ export const startJebMcpFixture = async (
     throw new Error("Expected TCP fixture listener");
   return {
     endpoint: `http://127.0.0.1:${address.port}/mcp`,
-    calls,
+    requests,
+    get calls() {
+      return requests.map(({ name }) => name);
+    },
     close,
   };
 };

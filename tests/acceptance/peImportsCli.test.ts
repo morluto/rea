@@ -1,4 +1,5 @@
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { toolContract } from "../../src/contracts/toolContracts.js";
@@ -12,7 +13,112 @@ import {
   peWithoutImportTableFixture,
 } from "../fixtures/binaryDiagnostics/peImports.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { cliTest } from "../support/cli/cliFixture.js";
+import { parseMcpToolError } from "../fixtures/mcpToolError.js";
+import { cliTest, runFileCli } from "../support/cli/cliFixture.js";
+
+for (const bits of [32, 64] as const) {
+  cliTest(
+    `rejects non-MZ PE${String(bits)} imports across CLI and MCP`,
+    async ({ cli }) => {
+      const root = await createTestTempDirectory("rea-pe-imports-signature-");
+      const call = await cli.sharedMcpCall!();
+      for (const [name, prefix] of [
+        ["zz", Buffer.from("ZZ")],
+        ["high-bit", Buffer.from([0xcd, 0xda])],
+      ] as const) {
+        const bytes = peImportImage({ bits });
+        prefix.copy(bytes);
+        const path = join(root, `${name}.exe`);
+        await writeFile(path, bytes);
+        const result = await cli.run({
+          arguments: ["inspect-pe-imports", path, "--json"],
+        });
+        expect(result.exitCode).toBe(1);
+        expect(result.json).toMatchObject({
+          code: "invalid_request",
+          details: {
+            operation: "inspect_pe_imports",
+            issues: expect.arrayContaining([
+              expect.objectContaining({
+                path: ["path"],
+                reason: "invalid_format",
+              }),
+            ]),
+          },
+        });
+        const response = await call("inspect_pe_imports", { path });
+        expect(response.isError).toBe(true);
+        expect(parseMcpToolError(response)).toEqual({ error: result.json });
+        expect((await readFile(path)).equals(bytes)).toBe(true);
+      }
+      const path = join(root, "valid.exe");
+      const bytes = peImportImage({ bits });
+      await writeFile(path, bytes);
+      const result = await cli.run({
+        arguments: ["inspect-pe-imports", path, "--json"],
+      });
+      expect(result.exitCode, result.stderr).toBe(0);
+      const response = await call("inspect_pe_imports", { path });
+      expect(response.isError).not.toBe(true);
+      for (const value of [result.json, response.structuredContent]) {
+        const report =
+          toolContract("inspect_pe_imports").outputSchema.parse(
+            value,
+          ).normalized_result;
+        expect(report.bits).toBe(bits);
+        expect(report.imports[0]?.functions.map((row) => row.name)).toEqual([
+          "GetProcAddress",
+          "ExitProcess",
+        ]);
+        expect(report.coverage.status).toBe("complete");
+      }
+      expect((await readFile(path)).equals(bytes)).toBe(true);
+    },
+  );
+}
+
+cliTest(
+  "distinguishes pefile's bounded name read from an invalid import name",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-pe-import-name-");
+    const call = await cli.sharedMcpCall!();
+    for (const [label, name, reason] of [
+      ["long", "A".repeat(513), /512-byte read limit/u],
+      [
+        "invalid",
+        "Has Space",
+        /characters pefile treats as invalid and omits/u,
+      ],
+    ] as const) {
+      const path = join(root, `${label}.exe`);
+      await writeFile(
+        path,
+        peImportImage({
+          sectionBytes: 0x1000,
+          dlls: [{ name: "k.dll", functions: [{ name }] }],
+        }),
+      );
+      const cliResult = await cli.run({
+        arguments: ["inspect-pe-imports", path, "--json"],
+      });
+      expect(cliResult.exitCode, cliResult.stderr).toBe(0);
+      const mcpResult = await call("inspect_pe_imports", { path });
+      expect(mcpResult.isError).not.toBe(true);
+      for (const value of [cliResult.json, mcpResult.structuredContent]) {
+        const report =
+          toolContract("inspect_pe_imports").outputSchema.parse(
+            value,
+          ).normalized_result;
+        expect(report.coverage.status).toBe("complete");
+        expect(report.imports[0]?.functions[0]?.name).toBe(name);
+        expect(report.imphash).toMatchObject({
+          md5: null,
+          reason: expect.stringMatching(reason),
+        });
+      }
+    }
+  },
+);
 
 cliTest(
   "reports native and managed Linux AMD64 PE imports through CLI and stdio MCP",
@@ -71,7 +177,9 @@ cliTest(
   "resolves a relative PE path against the working directory",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-pe-imports-cli-rel-");
-    await writeFile(join(root, "unsigned.exe"), peWithoutImportTableFixture());
+    const path = join(root, "unsigned.exe");
+    const bytes = peWithoutImportTableFixture();
+    await writeFile(path, bytes);
     const result = await cli.run({
       arguments: ["inspect-pe-imports", "unsigned.exe", "--json"],
       cwd: root,
@@ -80,8 +188,33 @@ cliTest(
     const evidence = toolContract("inspect_pe_imports").outputSchema.parse(
       result.json,
     );
-    expect(evidence.normalized_result.import_directory).toBeNull();
-    expect(evidence.subject?.local_path).toBe(join(root, "unsigned.exe"));
+    expect(evidence).toMatchObject({
+      confidence: "observed",
+      subject: {
+        local_path: path,
+        format: "pe",
+        architecture: "x86_64",
+        digest: { sha256: createHash("sha256").update(bytes).digest("hex") },
+      },
+      normalized_result: {
+        artifact: { path, bytes: bytes.length },
+        format: "pe32-plus",
+        machine: 0x8664,
+        bits: 64,
+        architecture: "amd64",
+        import_directory: null,
+        delay_import_directory: null,
+        imports: [],
+        delay_imports: [],
+        imphash: { algorithm: "pefile", md5: null },
+        coverage: {
+          status: "complete",
+          examined_dlls: 0,
+          imports: 0,
+          delay_imports: 0,
+        },
+      },
+    });
   },
 );
 
@@ -95,7 +228,12 @@ cliTest("reports a truncated PE as invalid input", async ({ cli }) => {
   expect(result.exitCode).toBe(1);
   expect(result.json).toMatchObject({
     code: "invalid_request",
-    details: { operation: "inspect_pe_imports" },
+    details: {
+      operation: "inspect_pe_imports",
+      issues: expect.arrayContaining([
+        expect.objectContaining({ path: ["path"], reason: "invalid_format" }),
+      ]),
+    },
   });
 });
 
@@ -122,9 +260,12 @@ cliTest(
           ? peImportDirectoryMappingStops(kind, retained)
           : peImportDirectoryAtRva(kind, rva),
       );
-      const result = await cli.run({
+      const invocation = {
         arguments: ["inspect-pe-imports", path, "--json"],
-      });
+      };
+      const result = await (rva === 0xffffffec
+        ? cli.run(invocation)
+        : runFileCli(cli, invocation));
       expect(result.exitCode, result.stderr).toBe(0);
       const report = toolContract("inspect_pe_imports").outputSchema.parse(
         result.json,

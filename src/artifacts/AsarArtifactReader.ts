@@ -18,6 +18,7 @@ import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
 import {
+  ArtifactEntryContentUnavailable,
   ArtifactReaderFailure,
   copyArtifactEntry,
   sameArtifactEntry,
@@ -641,9 +642,9 @@ const asarUnpackedEntryFailure = (
 ): ArtifactReaderFailure => {
   if (cause instanceof ArtifactReaderFailure) return cause;
   if (entry.unpacked && isMissingFile(cause))
-    return new ArtifactReaderFailure(
-      "unavailable",
+    return new ArtifactEntryContentUnavailable(
       `ASAR unpacked entry bytes are unavailable: ${entry.path}`,
+      "ASAR unpacked companion bytes were unavailable; no content hash or child artifact was produced.",
       { cause },
       artifactIntegrityDetails(entry.path, entry.declaredIntegrity, null, true),
     );

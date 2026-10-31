@@ -114,18 +114,20 @@ const isoText = (
   return `${pad(year, 4)}-${pad(at.getUTCMonth() + 1, 2)}-${pad(at.getUTCDate(), 2)}${separator}${pad(at.getUTCHours(), 2)}:${pad(at.getUTCMinutes(), 2)}:${pad(at.getUTCSeconds(), 2)}${digits === "" ? "" : `.${digits}`}${zone}`;
 };
 
-/** An instant in a recorded format; undefined outside its four-digit ISO year range. Fraction digits past milliseconds are zeros. */
+/** An instant in a recorded format; undefined outside its four-digit ISO year range. Fraction digits past milliseconds are `subMillisecond`'s, else zeros. */
 export const formatClock = (
   ms: number,
   format: ClockFormat,
+  subMillisecond = 0,
 ): JsonValue | undefined => {
   if (format.kind === "epoch")
     return format.unit === "s" ? Math.floor(ms / 1000) : ms;
   const at = new Date(ms + zoneMinutesForFormat(format.zone) * MINUTE_MS);
-  const digits = `${pad(at.getUTCMilliseconds(), 3)}${"0".repeat(9)}`.slice(
-    0,
-    format.fraction,
-  );
+  const digits =
+    `${pad(at.getUTCMilliseconds(), 3)}${pad(subMillisecond, 6)}`.slice(
+      0,
+      format.fraction,
+    );
   return isoText(
     at,
     format.separator,
@@ -248,6 +250,13 @@ export const nextSequence = (
   taken: number | undefined,
 ): number =>
   taken === undefined ? (held ?? 1) : Math.max(held ?? taken + 1, taken + 1);
+
+/** The next held integer of a sequence that never goes below its `start`. */
+export const startedSequence = (
+  held: number | undefined,
+  start: number | undefined,
+): number | undefined =>
+  start === undefined ? held : Math.max(held ?? start, start);
 
 /** An integer spelled as the recorded value spells integers: a number, or a string of digits. */
 export const spelledLike = (exemplar: JsonValue, value: number): JsonValue =>

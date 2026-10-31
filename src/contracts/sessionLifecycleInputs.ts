@@ -6,6 +6,11 @@ import {
   rawBinarySelectionError,
 } from "../domain/rawBinary.js";
 import { z } from "zod";
+import {
+  espFlashAddressSchema,
+  espFlashSelectionError,
+  parseEspFlashAddress,
+} from "../domain/firmware/espFlashSelection.js";
 import { analysisProviderSelectorSchema } from "../domain/providerSelection.js";
 
 /** Caller-supplied analysis snapshot path; must name its destination absolutely. */
@@ -25,7 +30,7 @@ export const openBinaryInputSchema = z
     format: executableFormatHintSchema
       .optional()
       .describe(
-        "Explicit interpretation: dos-com or raw-binary (headerless), or gamecube-dol (GameCube/Wii DOL, never auto-detected). Omission preserves header-based detection.",
+        "Explicit interpretation: dos-com or raw-binary (headerless), gamecube-dol (GameCube/Wii DOL, never auto-detected), or esp-flash-image (an ESP flash dump read with flash_offset and partition_table_offset). Omission preserves header-based detection.",
       ),
     architecture: binaryArchitectureSchema
       .optional()
@@ -37,10 +42,41 @@ export const openBinaryInputSchema = z
       .describe(
         "Caller-supplied load and entry address (0xhex). File offset 0 is mapped here. Required with format=raw-binary; rejected otherwise. Optional with format=gamecube-dol; must equal the DOL header entry.",
       ),
+    flash_offset: espFlashAddressSchema
+      .optional()
+      .describe(
+        "Flash address (0xhex) of the dump's first byte, when it does not start at flash address 0. Only with format=esp-flash-image.",
+      ),
+    partition_table_offset: espFlashAddressSchema
+      .optional()
+      .describe(
+        "Flash address (0xhex, a multiple of 0x1000) of the partition table, which disables the table scan. Only with format=esp-flash-image.",
+      ),
     provider_id: analysisProviderSelectorSchema.optional(),
     snapshot_path: snapshotPathSchema.optional(),
   })
   .superRefine((value, context) => {
+    const flash = espFlashSelectionError({
+      format: value.format,
+      flashOffset:
+        value.flash_offset === undefined
+          ? undefined
+          : parseEspFlashAddress(value.flash_offset),
+      partitionTableOffset:
+        value.partition_table_offset === undefined
+          ? undefined
+          : parseEspFlashAddress(value.partition_table_offset),
+    });
+    if (flash !== undefined)
+      context.addIssue({
+        code: "custom",
+        path: [
+          value.partition_table_offset === undefined
+            ? "flash_offset"
+            : "partition_table_offset",
+        ],
+        message: flash,
+      });
     const pairing = rawBinarySelectionError({
       ...(value.format === undefined ? {} : { format: value.format }),
       ...(value.architecture === undefined

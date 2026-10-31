@@ -17,6 +17,7 @@ import { advertisedMcpToolSchemas } from "../../fixtures/advertisedMcpTool.js";
 import {
   analysisViewCaptureEvidence,
   environmentManifestCaptureFixture,
+  timedCaptureEvidence,
 } from "../../fixtures/analysisView.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
@@ -67,6 +68,42 @@ const loopbackCapture = (): Evidence =>
       ),
     ) as ReturnType<typeof environmentManifestCaptureFixture>,
   );
+
+it("reports an unmodelled literal delete without claiming recorded reads are absent", async () => {
+  const { client, session } = await connect();
+  const capture = timedCaptureEvidence([
+    ["GET", "/api/folders", [{ uid: "f1", title: "General" }]],
+    ["GET", "/api/folders/f1", { uid: "f1", title: "General" }],
+    ["DELETE", "/api/folders/f1", null, 204],
+    ["GET", "/api/folders/f1", { message: "not found" }, 404],
+    ["GET", "/api/folders", []],
+  ]);
+  expect(session.recordEvidence(capture).ok).toBe(true);
+  const root = await createTestTempDirectory("rea-bundle-mcp-target-");
+  const response = await client.callTool({
+    name: TOOL,
+    arguments: {
+      source: { kind: "retained-evidence", evidence_id: capture.evidence_id },
+      output_directory: join(root, "bundle"),
+      dry_run: true,
+    },
+  });
+  expect(response.isError, JSON.stringify(response)).not.toBe(true);
+  const report = toolContract(TOOL).outputSchema.parse(
+    response.structuredContent,
+  );
+  if (report.coverage === null) throw new Error("Expected coverage");
+  expect(report.coverage.writes.withheld).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        reason: "no-state-target",
+        hint: expect.stringContaining(
+          "could not be linked to a modelled state target",
+        ),
+      }),
+    ]),
+  );
+});
 
 it("writes the bundle environment-build writes from retained capture Evidence", async () => {
   const { client, session } = await connect();
@@ -165,6 +202,40 @@ it("copies a capture Evidence file byte for byte and plans without writing on a 
   ).toBe(0);
 });
 
+it("attributes source file admission and JSON failures to source.path", async () => {
+  const { client } = await connect();
+  const root = await createTestTempDirectory("rea-bundle-source-errors-");
+  await mkdir(join(root, "directory"));
+  await writeFile(join(root, "invalid-utf8"), Buffer.from([0xff]));
+  await writeFile(join(root, "invalid-json"), "{");
+  for (const [name, reason] of [
+    ["missing", "invalid_value"],
+    ["directory", "invalid_value"],
+    ["invalid-utf8", "invalid_format"],
+    ["invalid-json", "invalid_format"],
+  ] as const) {
+    const output = join(root, `out-${name}`);
+    const result = await client.callTool({
+      name: TOOL,
+      arguments: {
+        source: { kind: "evidence-file", path: join(root, name) },
+        output_directory: output,
+        dry_run: true,
+      },
+    });
+    const { error } = parseMcpToolError(result);
+    expect(error).toMatchObject({
+      code: "invalid_request",
+      recovery: { kind: "inspect_input_contract", operation: TOOL },
+      details: { issues: [{ path: ["source", "path"], reason }] },
+    });
+    expect(JSON.stringify(error)).not.toContain(
+      "inline JSON cannot be exported",
+    );
+    await expect(access(output)).rejects.toMatchObject({ code: "ENOENT" });
+  }
+});
+
 it("refuses an existing or parentless output directory and leaves it as it was", async () => {
   const { client, session } = await connect();
   const capture = analysisViewCaptureEvidence(
@@ -178,32 +249,55 @@ it("refuses an existing or parentless output directory and leaves it as it was",
   };
   const empty = join(root, "empty");
   const busy = join(root, "busy");
+  const regular = join(root, "regular");
   await mkdir(empty);
   await mkdir(busy);
   await writeFile(join(busy, "notes.md"), "keep");
-  for (const output_directory of [empty, busy]) {
+  await writeFile(regular, "keep");
+  for (const [output_directory, dry_run] of [
+    [empty, false],
+    [busy, true],
+    [regular, true],
+  ] as const) {
     const refused = await client.callTool({
       name: TOOL,
-      arguments: { source, output_directory },
+      arguments: { source, output_directory, dry_run },
     });
     expect(refused.isError).toBe(true);
     expect(parseMcpToolError(refused).error).toMatchObject({
       code: "invalid_request",
+      message: "Output root already exists",
       details: {
         operation: TOOL,
-        issues: [{ path: ["output_directory"], reason: "invalid_value" }],
+        issues: [
+          {
+            path: ["output_directory"],
+            reason: "invalid_value",
+            message: "Output root already exists",
+          },
+        ],
       },
     });
   }
   expect(await readdir(empty)).toEqual([]);
   expect(await readdir(busy)).toEqual(["notes.md"]);
+  expect(await readFile(regular, "utf8")).toBe("keep");
   const parentless = await client.callTool({
     name: TOOL,
-    arguments: { source, output_directory: join(root, "missing", "env") },
+    arguments: {
+      source,
+      output_directory: join(root, "missing", "env"),
+      dry_run: true,
+    },
   });
   expect(parentless.isError).toBe(true);
   expect(parseMcpToolError(parentless).error).toMatchObject({
-    details: { issues: [{ path: ["output_directory"] }] },
+    message: "Output parent is unavailable",
+    details: {
+      issues: [
+        { path: ["output_directory"], message: "Output parent is unavailable" },
+      ],
+    },
   });
   await expect(access(join(root, "missing"))).rejects.toMatchObject({
     code: "ENOENT",

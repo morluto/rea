@@ -36,6 +36,7 @@ const classes = [
 const methods = [
   {
     name: "onCreate",
+    raw_name: "onCreate",
     signature: "onCreate(Bundle): void",
     dex_descriptor: "(Landroid/os/Bundle;)V",
     is_constructor: false,
@@ -43,6 +44,7 @@ const methods = [
   },
   {
     name: "choose",
+    raw_name: "choose",
     signature: "choose(String): void",
     dex_descriptor: "(Ljava/lang/String;)V",
     is_constructor: false,
@@ -50,6 +52,7 @@ const methods = [
   },
   {
     name: "choose",
+    raw_name: "choose",
     signature: "choose(int): void",
     dex_descriptor: "(I)V",
     is_constructor: false,
@@ -97,6 +100,44 @@ register("load_apk", async ({ path }) => {
     resource_count: 1,
     threads: 1,
     resources: "full",
+  });
+});
+register("rea_native_declarations", ({ path }) => {
+  if (typeof path !== "string")
+    return { ...text("path must be a string"), isError: true };
+  const methods = [
+    {
+      source_index: 0,
+      class_name: "fixture.Target",
+      method_name: "readNative",
+      descriptor: "(I)I",
+      dex_entry: "classes.dex",
+      dex_entry_index: 0,
+      class_index: 0,
+      method_index: 1,
+    },
+  ];
+  if (mode === "duplicate-native-declaration")
+    methods.push({
+      ...methods[0],
+      source_index: 1,
+      dex_entry: "classes2.dex",
+      dex_entry_index: 1,
+    });
+  return json({
+    scope: "apk-root-dex-declarations",
+    methods,
+    coverage: {
+      status: mode === "partial-native-inventory" ? "partial" : "complete",
+      dex_entries: mode === "partial-native-inventory" ? 2 : methods.length,
+      examined_dex_entries: methods.length,
+      examined_classes: methods.length,
+      examined_methods: methods.length,
+    },
+    unknowns:
+      mode === "partial-native-inventory"
+        ? ["Controlled unreadable second DEX member"]
+        : [],
   });
 });
 register("get_app_info", () => {
@@ -166,6 +207,7 @@ register("get_class_summary", () =>
     methods: mode === "summary-error" ? [] : methods,
     fields: [],
     inner_classes: [],
+    inner_class_raw_names: [],
     ...(mode === "summary-error" ? { error: "summary timed out" } : {}),
   }),
 );

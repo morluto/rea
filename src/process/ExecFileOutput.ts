@@ -20,6 +20,8 @@ type ExecFileOutputOptions = Omit<
    * execFile sends SIGTERM on abort and rejects before the process exits.
    */
   readonly stopSignal?: NodeJS.Signals;
+  /** Wait for inherited copies of an extra drained descriptor to close. Requires stopSignal. */
+  readonly lifetimePipe?: boolean;
 };
 
 /** How long a stopped process may take to exit before it is killed. */
@@ -149,7 +151,12 @@ export const execFileBytes = (
   options: ExecFileOutputOptions = {},
 ): Promise<{ readonly stdout: Buffer; readonly stderr: Buffer }> =>
   new Promise((resolve, reject) => {
-    const { stopSignal, signal, timeout, ...execOptions } = options;
+    const { stopSignal, signal, timeout, lifetimePipe, ...execOptions } =
+      options;
+    if (lifetimePipe === true && stopSignal === undefined) {
+      reject(new TypeError("lifetimePipe requires stopSignal"));
+      return;
+    }
     const invalid = timeout === undefined ? undefined : invalidTimeout(timeout);
     if (invalid !== undefined) {
       reject(invalid);
@@ -213,7 +220,7 @@ const startStoppableCommand = (
   options: ExecFileOutputOptions & { readonly stopSignal: NodeJS.Signals },
   complete: (error: Error | null, stdout: Buffer, stderr: Buffer) => void,
 ): void => {
-  const { stopSignal, signal, timeout, ...execOptions } = options;
+  const { stopSignal, signal, timeout, lifetimePipe, ...execOptions } = options;
   const maxBuffer = options.maxBuffer ?? Number.POSITIVE_INFINITY;
   if (typeof maxBuffer !== "number" || !(maxBuffer >= 0)) {
     const error = new RangeError("maxBuffer must be a nonnegative number");
@@ -231,9 +238,16 @@ const startStoppableCommand = (
   // pipe lifetime of descendants still using caller-owned temporary files.
   const child = spawn(command, [...arguments_], {
     ...execOptions,
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio:
+      lifetimePipe === true
+        ? ["ignore", "pipe", "pipe", "pipe"]
+        : ["ignore", "pipe", "pipe"],
     killSignal: stopSignal,
   });
+  if (lifetimePipe === true) {
+    const pipe = child.stdio[3];
+    if (pipe != null && "resume" in pipe) pipe.resume();
+  }
   // The first stop request names the failure; a later one is not resent.
   const stop = (reason: "abort" | "timeout" | "output-limit"): void => {
     if (stopped !== undefined || rootFailed || processError !== null) return;
@@ -244,7 +258,10 @@ const startStoppableCommand = (
   const onAbort = (): void => {
     stop("abort");
   };
-  const capture = (stream: typeof child.stdout, name: "stdout" | "stderr") => {
+  const capture = (
+    stream: NonNullable<typeof child.stdout>,
+    name: "stdout" | "stderr",
+  ) => {
     const chunks: Buffer[] = [];
     let retained = 0;
     stream.on("data", (chunk: Buffer) => {
@@ -266,8 +283,8 @@ const startStoppableCommand = (
     });
     return () => Buffer.concat(chunks, retained);
   };
-  const stdout = capture(child.stdout, "stdout");
-  const stderr = capture(child.stderr, "stderr");
+  const stdout = capture(child.stdout!, "stdout");
+  const stderr = capture(child.stderr!, "stderr");
   child.on("error", (error: Error) => {
     processError ??= error;
   });

@@ -409,7 +409,6 @@ it("public CLI uses only GET and produces a report from fixture GitHub responses
   await writeFile(
     ghResponse,
     JSON.stringify([
-      // The CLI owns the wall clock; keep its fixture inside the recent window.
       [rawPull(51, { mergeable: true, created_at: new Date().toISOString() })],
       { total_count: 0, workflow_runs: [] },
     ]),

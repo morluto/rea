@@ -7,6 +7,8 @@ import type { JsonValue } from "../domain/jsonValue.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
 import { boundedUtf8Text } from "../process/boundedUtf8Text.js";
 import type { GhidraDiagnosticsScope } from "./GhidraDiagnostics.js";
+import { ghidraFileOffsetOutcome } from "./GhidraFileOffsetFailure.js";
+import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { GhidraLaunchSupportError } from "./GhidraJavaLaunch.js";
 import {
   GhidraLaunchError,
@@ -213,7 +215,8 @@ export const bindGhidraSessionFailure =
         ...diagnostics(
           kind === "remote" &&
             (isGhidraInputFailureCode(options.remoteCode) ||
-              options.remoteCode === "invalid_function_name")
+              options.remoteCode === "invalid_function_name" ||
+              ghidraFileOffsetOutcome(options.remoteCode) !== undefined)
             ? "request"
             : "session",
         ),
@@ -281,6 +284,7 @@ const describeErrorCause = (
     message: message.text,
     ...(message.truncated ? { message_truncated: true } : {}),
     ...causeCode(cause, redact),
+    ...causeAdmissionDetail(cause, redact),
     ...causeSignal(cause, redact),
     ...causeCommandOutcome(cause, redact),
     ...causeCompilerOutcome(cause, redact),
@@ -317,6 +321,24 @@ const causeCommandOutcome = (
       killed: outcome.killed,
     },
   };
+};
+
+const causeAdmissionDetail = (
+  cause: Error,
+  redact: (value: string, incomplete?: boolean) => string,
+): Record<string, JsonValue> => {
+  if (!(cause instanceof GhidraAdmissionError) || cause.detail === undefined)
+    return {};
+  const detail: Record<string, JsonValue> = {};
+  for (const [key, value] of Object.entries(cause.detail)) {
+    if (typeof value === "number") {
+      detail[key] = value;
+      continue;
+    }
+    const bounded = boundedUtf8Text(redact(value), MAX_CAUSE_FIELD_BYTES);
+    detail[key] = bounded.text;
+  }
+  return { detail };
 };
 
 const causeCode = (

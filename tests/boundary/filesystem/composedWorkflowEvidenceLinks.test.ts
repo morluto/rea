@@ -139,7 +139,14 @@ it.each([false, true])(
           projectCliAnalysisResult,
         ),
       );
-      expect(evidence.normalized_result).toEqual(summary);
+      // The composed overview labels the counts; the atomic record stays raw.
+      expect(evidence.normalized_result).toEqual({
+        ...summary,
+        inventory_coverage: {
+          scope: "provider_inventory",
+          discovery_coverage: "unknown",
+        },
+      });
       expect(evidence.confidence).toBe("derived");
       const records = fixture.closedRecords();
       const atomic = records.filter(
@@ -292,13 +299,29 @@ it.each(["profileless", "uncacheable"] as const)(
           {},
         );
         if (!execution.ok) return execution;
-        expect(execution.value.evidenceId).toBeUndefined();
+        if (mode === "profileless")
+          expect(execution.value.evidenceId).toBeUndefined();
+        else {
+          expect(execution.value.evidenceId).toEqual(expect.any(String));
+          expect(execution.value.evidenceId).not.toBe(spoofedEvidenceId);
+        }
         return ok(execution.value.result);
       },
     );
     if (!composed.ok) throw composed.error;
-    expect(composed.value.evidenceLinks).toBeUndefined();
-    expect(fixture.session.exportEvidenceBundle().records).toEqual([]);
+    if (mode === "profileless") {
+      expect(composed.value.evidenceLinks).toBeUndefined();
+      expect(fixture.session.exportEvidenceBundle().records).toEqual([]);
+    } else {
+      const evidenceId = composed.value.evidenceLinks?.[0];
+      expect(evidenceId).toEqual(expect.any(String));
+      expect(evidenceId).not.toBe(spoofedEvidenceId);
+      expect(
+        fixture.session
+          .exportEvidenceBundle()
+          .records.map((record) => record.evidence_id),
+      ).toEqual([evidenceId]);
+    }
   },
 );
 
