@@ -91,7 +91,7 @@ import { ghidraPspExtensionSchema } from "./GhidraPspExtension.js";
 import { ghidraRiscvLimitations } from "./GhidraRiscvProfile.js";
 import { ghidraPePdbLimitations } from "./GhidraPeProfile.js";
 import { unverifiedGhidraBuildLimitation } from "./GhidraReleasePolicy.js";
-import { GhidraHeadlessLauncher } from "./GhidraLauncher.js";
+import { GhidraHeadlessLauncher, GhidraLaunchError } from "./GhidraLauncher.js";
 import { attestGhidraNativeLoadImage } from "./GhidraLoadImageAttest.js";
 import type { NativeAotPeResult } from "../domain/native/nativeAotPe.js";
 import { GhidraNativeAotSnapshotOwner } from "./GhidraNativeAotSnapshotOwner.js";
@@ -1029,8 +1029,16 @@ const projectPrimarySessionError = (
       ? {}
       : { partialObservation: failure.partialObservation }),
   };
+  // Launch-time copies, such as the verified existing-project copy, report a
+  // changed source as the launcher's primary failure; read it through the
+  // launch wrapper so the refusal keeps its typed projection.
+  const launchChange =
+    failure.cause instanceof GhidraLaunchError &&
+    failure.cause.primaryFailure instanceof AnalysisArtifactChangedError
+      ? failure.cause.primaryFailure
+      : undefined;
   const { cause: physicalCause, origin } = artifactFilePrimaryFacts(
-    failure.cause,
+    launchChange ?? failure.cause,
   );
   // A client-side ceiling refusal travels as the cause; re-attribute it to this
   // operation so callers see a typed resource constraint rather than a generic
