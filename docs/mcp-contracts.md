@@ -1522,6 +1522,9 @@ the selected advertisement retains.
 
 ### Tool family advertising scope
 
+This scope is implemented on main and is not in the published 6.8.0 package;
+see the [release boundary](installation.md#released-package-and-main).
+
 Agents pay context for every advertised tool schema, and clients that send
 catalog payloads with each request (see the Claude Code measurements above)
 can spend more context on tool definitions than on the investigation. Setting
