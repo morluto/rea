@@ -1,4 +1,6 @@
 import { expect, it } from "vitest";
+import { metadataReportSubjectFormat } from "../apple/machoTargetSelection.js";
+import { binaryMetadataArchitecture } from "../binaryMetadataArchitecture.js";
 import { createEvidence } from "../evidence.js";
 import { freezeJsonSnapshot } from "../immutableJson.js";
 import type { RustBinary } from "../rust/rustBinary.js";
@@ -39,12 +41,13 @@ const report: RustBinary = {
   limitations: [],
 };
 const parent = (value = structuredClone(report)): AnalysisViewParent => {
+  const architecture = binaryMetadataArchitecture(value.architecture);
   const evidence = createEvidence(
     {
       path: value.artifact.path,
       sha256: value.artifact.sha256,
-      format: "elf",
-      architecture: "x86_64",
+      format: metadataReportSubjectFormat(value),
+      ...(architecture === undefined ? {} : { architecture }),
     },
     { id: "rust-auditable", name: "Rust reader", version: "1" },
     {
@@ -129,6 +132,26 @@ it("checks exact artifact identity and subject architecture for every Rust view"
       }).ok,
     ).toBe(false);
   }
+});
+
+it("refuses imported reports whose container facts contradict WebAssembly", () => {
+  const wasm: RustBinary = {
+    ...structuredClone(report),
+    format: "wasm",
+    architecture: "wasm",
+    bits: null,
+    byte_order: "little",
+  };
+  expect(projectAnalysisView(parent(wasm), { kind: "summary" }).ok).toBe(true);
+  for (const value of [
+    { ...wasm, architecture: "x86_64" },
+    { ...wasm, byte_order: "big" as const },
+    { ...wasm, bits: 32 as const },
+    { ...structuredClone(report), architecture: "wasm" },
+  ])
+    expect(projectAnalysisView(parent(value), { kind: "summary" }).ok).toBe(
+      false,
+    );
 });
 
 it("bounds inherited warnings and retains cycle counts without walking a cyclic graph", () => {

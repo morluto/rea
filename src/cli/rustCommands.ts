@@ -28,7 +28,7 @@ export const registerRustCommands = (
       "Inspect an embedded cargo-auditable Rust dependency list without target execution",
     args: z.object({
       path: localPathStringSchema.describe(
-        "Local ELF, PE, thin Mach-O or universal Mach-O image",
+        "Local ELF, PE, thin or universal Mach-O, or WebAssembly core-module image",
       ),
     }),
     options: z.object({

@@ -101,16 +101,18 @@ See [IL2CPP metadata](https://github.com/morluto/rea/blob/main/docs/il2cpp-metad
 
 ## Rust dependency metadata
 
-Use `inspect_rust_binary` for an explicit local ELF, PE, or Mach-O (universal
-files need `architecture`) when
-the question concerns the cargo-auditable crate list embedded in `.dep-v0`
-(Mach-O: `__DATA,.dep-v0`). No `open_binary`, Rust installation, or target
-execution is required. The CLI equivalent is `inspect-rust-binary PATH`.
-Preserve artifact SHA-256, package order, dependency indices, and the section
-file range. A missing section is null metadata, not proof the binary has no
-dependencies. An omitted package kind stays null. A rustc commit hash is
-inferred from a read-only `/rustc/<40-hex>/` path and does not by itself
-identify the compiler. See [Rust binaries](https://github.com/morluto/rea/blob/main/docs/rust-binaries.md).
+Use `inspect_rust_binary` for an explicit local ELF, PE, Mach-O (universal
+files need `architecture`), or WebAssembly core module when the question
+concerns the cargo-auditable crate list embedded in `.dep-v0` (Mach-O:
+`__DATA,.dep-v0`; WebAssembly: a custom section). No `open_binary`, Rust
+installation, or target execution is required. The CLI equivalent is
+`inspect-rust-binary PATH`. Preserve artifact SHA-256, package order,
+dependency indices, and the section file range. A missing section is null
+metadata, not proof the binary has no dependencies. An omitted package kind
+stays null. WebAssembly reports a null word size, and components such as
+`wasm32-wasip2` output are unsupported. A rustc commit hash is inferred from a
+`/rustc/<40-hex>/` path in read-only data or a WebAssembly data section and
+does not by itself identify the compiler. See [Rust binaries](https://github.com/morluto/rea/blob/main/docs/rust-binaries.md).
 
 ## PE Authenticode certificate tables
 

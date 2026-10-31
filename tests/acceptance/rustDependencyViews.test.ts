@@ -2,6 +2,7 @@ import { readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { parseEvidence, createEvidence } from "../../src/domain/evidence.js";
+import { metadataReportSubjectFormat } from "../../src/domain/apple/machoTargetSelection.js";
 import { createEvidenceBundle } from "../../src/domain/evidenceBundle.js";
 import { rustBinarySchema } from "../../src/domain/rust/rustBinary.js";
 import { analysisViewResultSchema } from "../../src/domain/analysisView/analysisView.js";
@@ -10,10 +11,20 @@ import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import {
   createRustImage,
+  createRustWasmModule,
   rustDependencyPayload,
 } from "../fixtures/rust/image.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+
+/** One synthetic cargo-auditable artifact for each supported container. */
+const rustArtifact = (
+  format: "elf" | "pe" | "macho" | "wasm",
+  payload: Buffer,
+): Buffer =>
+  format === "wasm"
+    ? createRustWasmModule({ payload })
+    : createRustImage({ format, payload });
 
 /** Both authenticated retention and portable imports query the same captured facts. */
 const assertRetainedPages = async (
@@ -114,7 +125,7 @@ cliTest(
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-rust-views-");
     const { call } = await connectLocalToolsMcp();
-    for (const format of ["elf", "pe", "macho"] as const) {
+    for (const format of ["elf", "pe", "macho", "wasm"] as const) {
       const path = join(root, `source.${format}`);
       const output = join(root, `${format}-source.json`);
       const payload = rustDependencyPayload({
@@ -142,7 +153,7 @@ cliTest(
           },
         ],
       });
-      await writeFile(path, createRustImage({ format, payload }));
+      await writeFile(path, rustArtifact(format, payload));
       const fullReply = await call("inspect_rust_binary", { path });
       expect(fullReply.isError).not.toBe(true);
       const full = parseEvidence(fullReply.structuredContent);
@@ -237,7 +248,7 @@ cliTest(
         {
           path,
           sha256: report.artifact.sha256,
-          format: format === "macho" ? "mach-o" : format,
+          format: metadataReportSubjectFormat({ format }),
           ...(full.subject.architecture === null
             ? {}
             : { architecture: full.subject.architecture }),
