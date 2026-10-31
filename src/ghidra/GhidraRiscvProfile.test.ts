@@ -11,6 +11,7 @@ import { silentLogger } from "../logger.js";
 import { HopperProvider } from "../hopper/HopperProvider.js";
 import { hopperLoaderArgsForTarget } from "../hopper/HopperAnalysisProfile.js";
 import { IdaProvider } from "../ida/IdaProvider.js";
+import { parseBinaryTarget } from "../application/BinaryTargetResolver.js";
 import { GhidraProvider } from "./GhidraProvider.js";
 import {
   ghidraRiscvLimitations,
@@ -197,11 +198,106 @@ const registerRiscvLanguageCommitmentCases = () => {
   });
 };
 
+const registerRiscvPieAdmissionCases = () => {
+  it("admits little-endian position-independent executables (ET_DYN with PT_INTERP)", async () => {
+    const provider = ghidra();
+    const pie64 = target({ type: 3, hasInterpreter: true });
+    const pie32 = target({
+      elfClass: 32,
+      flags: 0x4,
+      type: 3,
+      hasInterpreter: true,
+    });
+    expect(provider.inspectTargetSupport(pie64).status).toBe("supported");
+    expect(provider.inspectTargetSupport(pie32).status).toBe("supported");
+    expect(ghidraPinnedLanguage(pie64)).toEqual({
+      languageId: "RISCV:LE:64:default",
+      compilerSpecId: "gcc",
+    });
+    expect(ghidraPinnedLanguage(pie32)).toEqual({
+      languageId: "RISCV:LE:32:default",
+      compilerSpecId: "gcc",
+    });
+    const wide = await provider.resolveAnalysisProfile(pie64);
+    const narrow = await provider.resolveAnalysisProfile(pie32);
+    if (!wide.ok || !narrow.ok)
+      throw new Error("expected admitted RISC-V PIE profiles");
+    expect(wide.value.profile?.parameters.riscv_elf).toEqual({
+      elf_class: 64,
+      byte_order: "little",
+      type: 3,
+      flags: 5,
+      float_abi_double: true,
+      rvc_declared: true,
+      rve_declared: false,
+      tso_declared: false,
+      has_interpreter: true,
+      load_model: "pie",
+      expected_default_image_base: "0x100000",
+    });
+    expect(wide.value.profile?.parameters.riscv_support_lane).toBe(
+      "elf64-pie-le-double-float-generic-v1",
+    );
+    expect(narrow.value.profile?.parameters.riscv_support_lane).toBe(
+      "elf32-pie-le-double-float-generic-v1",
+    );
+    expect(narrow.value.profile?.parameters.riscv_elf).toEqual({
+      elf_class: 32,
+      byte_order: "little",
+      type: 3,
+      flags: 4,
+      float_abi_double: true,
+      rvc_declared: false,
+      rve_declared: false,
+      tso_declared: false,
+      has_interpreter: true,
+      load_model: "pie",
+      expected_default_image_base: "0x10000",
+    });
+  });
+
+  it("admits a valid RISC-V PIE whose program headers start beyond 4096 and end past 65536", async () => {
+    const testFile = join(installDir, "pie-high-phoff.elf");
+    const fileSize = 75000;
+    const phoff = 70000;
+    const phentsize = 56;
+    const phnum = 2;
+    const buffer = Buffer.alloc(fileSize);
+    buffer.set([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1]); // ELF64, little-endian, version 1
+    buffer.writeUInt16LE(3, 16); // ET_DYN
+    buffer.writeUInt16LE(243, 18); // EM_RISCV
+    buffer.writeUInt32LE(1, 20); // EV_CURRENT
+    buffer.writeBigUInt64LE(BigInt(phoff), 32); // e_phoff
+    buffer.writeUInt32LE(0x5, 48); // e_flags: double-float ABI | RVC
+    buffer.writeUInt16LE(64, 52); // e_ehsize
+    buffer.writeUInt16LE(phentsize, 54); // e_phentsize
+    buffer.writeUInt16LE(phnum, 56); // e_phnum
+
+    // Program headers at phoff:
+    // Entry 0: PT_LOAD (1)
+    buffer.writeUInt32LE(1, phoff);
+    // Entry 1: PT_INTERP (3)
+    buffer.writeUInt32LE(3, phoff + phentsize);
+
+    await writeFile(testFile, buffer);
+    const resolved = await parseBinaryTarget(testFile);
+    if (!resolved.ok) throw new Error(resolved.error.message);
+    expect(resolved.value.kind).toBe("executable");
+    expect(resolved.value.architecture).toBe("riscv");
+    if (resolved.value.architecture === "riscv") {
+      expect(resolved.value.riscv.hasInterpreter).toBe(true);
+    }
+    const support = ghidra().inspectTargetSupport(resolved.value);
+    expect(support.status).toBe("supported");
+  });
+};
+
 const registerRiscvAdmissionAndCapabilityCases = () => {
   it.each([
     [{ byteOrder: "big" }, "little-endian"],
-    [{ type: 3 }, "fixed-address ET_EXEC only"],
-    [{ type: 1 }, "fixed-address ET_EXEC only"],
+    [{ type: 3 }, "shared libraries without PT_INTERP"],
+    [{ type: 3, hasInterpreter: false }, "shared libraries without PT_INTERP"],
+    [{ type: 1 }, "relocatable"],
     [{ type: 0xffa0 }, "e_type 65440"],
     [{ flags: 0xc }, "EF_RISCV_RVE"],
     [{ flags: 0x14 }, "EF_RISCV_TSO"],
@@ -275,6 +371,15 @@ const registerRiscvAdmissionAndCapabilityCases = () => {
     expect(notes).toHaveLength(3);
     expect(notes.join(" ")).toContain("does not establish static linkage");
     expect(notes[0]).toContain("RISCV:LE:64:default");
+
+    const pieNotes = ghidraRiscvLimitations(
+      target({ type: 3, hasInterpreter: true }),
+    );
+    expect(pieNotes).toHaveLength(3);
+    expect(pieNotes.join(" ")).toContain(
+      "Position-independent executable (PIE): Ghidra assigns analysis coordinates from its default image base (0x100000)",
+    );
+
     expect(
       ghidraRiscvLimitations({
         path: "/other.elf",
@@ -311,5 +416,6 @@ const registerRiscvAdmissionAndCapabilityCases = () => {
 
 describe("bounded Ghidra RISC-V admission", () => {
   registerRiscvLanguageCommitmentCases();
+  registerRiscvPieAdmissionCases();
   registerRiscvAdmissionAndCapabilityCases();
 });

@@ -37,6 +37,7 @@ export interface ElfFamilyMetadata {
   readonly byteOrder: "little" | "big";
   readonly type: number;
   readonly flags: number;
+  readonly hasInterpreter?: boolean;
 }
 
 /** Referenced CodeView debug symbols from a PE debug directory. */

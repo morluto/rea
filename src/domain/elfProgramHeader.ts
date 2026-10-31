@@ -1,5 +1,7 @@
 import { err, ok } from "./result.js";
 
+export const PT_INTERP = 3;
+
 export type ElfProgramHeader = Extract<
   ReturnType<typeof readElfProgramHeader>,
   { readonly ok: true }

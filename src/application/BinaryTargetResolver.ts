@@ -45,7 +45,10 @@ import type {
 } from "../domain/binaryTargetTypes.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { readMipsElfMetadata } from "./MipsElfMetadata.js";
-import { validateElfDeclaredRanges } from "../domain/elfDeclaredRanges.js";
+import {
+  validateElfDeclaredRanges,
+  type ElfDeclaredRangeFacts,
+} from "../domain/elfDeclaredRanges.js";
 import {
   resolveAppleBundleExecutable,
   type ResolvedAppBundle,
@@ -1031,18 +1034,26 @@ const readElfMetadata = async (
   if (!parsed.ok || parsed.value.format !== "elf") return parsed;
   const ranges = await readElfDeclaredRanges(handle, bytes, fileSize, signal);
   if (!ranges.ok) return ranges;
-  if (parsed.value.architecture !== "mips" || parsed.value.mips.elfClass !== 32)
-    return parsed;
-  const declarations = await readMipsElfMetadata(
-    handle,
-    parsed.value.mips,
-    () => throwIfTargetResolutionCancelled(signal),
+  const target: ExecutableMetadata =
+    ranges.value.hasInterpreter && parsed.value.architecture === "riscv"
+      ? {
+          ...parsed.value,
+          riscv: {
+            ...parsed.value.riscv,
+            hasInterpreter: true,
+          },
+        }
+      : parsed.value;
+  if (target.architecture !== "mips" || target.mips.elfClass !== 32)
+    return ok(target);
+  const declarations = await readMipsElfMetadata(handle, target.mips, () =>
+    throwIfTargetResolutionCancelled(signal),
   );
   if (!declarations.ok) return declarations;
   return ok({
-    ...parsed.value,
+    ...target,
     mips: {
-      ...parsed.value.mips,
+      ...target.mips,
       abiFlags: declarations.value.abiFlags,
       gnuAttributes: declarations.value.gnuAttributes,
       ...(declarations.value.sharedLoad === undefined
@@ -1061,7 +1072,7 @@ const readElfDeclaredRanges = async (
   prefix: Buffer,
   fileSize: number,
   signal?: AbortSignal,
-): Promise<Result<null, string>> => {
+): Promise<Result<ElfDeclaredRangeFacts, string>> => {
   const ranges = validateElfDeclaredRanges(prefix, fileSize);
   let next = ranges.next();
   let window: Buffer | undefined;

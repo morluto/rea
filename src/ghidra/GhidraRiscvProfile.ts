@@ -57,14 +57,12 @@ export const ghidraRiscvUnsupportedReason = (
     return "EF_RISCV_RVE declares the embedded 16-register ABI (x0-x15), which needs its own processor specification and compiler verification.";
   if ((metadata.flags & EF_RISCV_TSO) !== 0)
     return "EF_RISCV_TSO declares the total-store-order memory model; this lane verifies the baseline model only.";
-  if (metadata.type !== ET_EXEC)
-    return `This Ghidra RISC-V lane supports fixed-address ET_EXEC only; ${
-      metadata.type === ET_REL
-        ? "relocatable"
-        : metadata.type === ET_DYN
-          ? "shared and position-independent"
-          : `e_type ${metadata.type}`
-    } images need separate load verification. ET_EXEC alone does not establish static linkage, which this lane does not inspect.`;
+  if (metadata.type === ET_DYN && !metadata.hasInterpreter)
+    return "This Ghidra RISC-V lane supports fixed-address ET_EXEC and position-independent executables (PIE) only; shared libraries without PT_INTERP need separate load verification.";
+  if (metadata.type !== ET_EXEC && metadata.type !== ET_DYN)
+    return `This Ghidra RISC-V lane supports fixed-address ET_EXEC and position-independent executables (PIE) only; ${
+      metadata.type === ET_REL ? "relocatable" : `e_type ${metadata.type}`
+    } images need separate load verification.`;
   const abi = metadata.flags & EF_RISCV_FLOAT_ABI;
   if (abi !== EF_RISCV_FLOAT_ABI_DOUBLE)
     return `This Ghidra RISC-V lane requires the EF_RISCV_FLOAT_ABI_DOUBLE declaration (${riscvUnsupportedFloatAbi(
@@ -92,29 +90,44 @@ export const ghidraRiscvLanguageOverride = (
 /** Commit source ELF interpretation without confusing target ISA with host CPU. */
 export const ghidraRiscvProfileParameters = (
   target: BinaryTarget,
-): Readonly<Record<string, JsonValue>> =>
-  target.kind === "executable" &&
-  target.architecture === "riscv" &&
-  target.riscv !== undefined
-    ? {
-        riscv_elf: {
-          elf_class: target.riscv.elfClass,
-          byte_order: target.riscv.byteOrder,
-          type: target.riscv.type,
-          flags: target.riscv.flags,
-          float_abi_double:
-            (target.riscv.flags & EF_RISCV_FLOAT_ABI) ===
-            EF_RISCV_FLOAT_ABI_DOUBLE,
-          rvc_declared: (target.riscv.flags & EF_RISCV_RVC) !== 0,
-          rve_declared: (target.riscv.flags & EF_RISCV_RVE) !== 0,
-          tso_declared: (target.riscv.flags & EF_RISCV_TSO) !== 0,
-        },
-        riscv_support_lane:
-          target.riscv.elfClass === 32
-            ? "elf32-exec-le-double-float-generic-v1"
-            : "elf64-exec-le-double-float-generic-v1",
-      }
-    : {};
+): Readonly<Record<string, JsonValue>> => {
+  if (
+    target.kind !== "executable" ||
+    target.architecture !== "riscv" ||
+    target.riscv === undefined
+  )
+    return {};
+  const isPie = target.riscv.type === ET_DYN;
+  return {
+    riscv_elf: {
+      elf_class: target.riscv.elfClass,
+      byte_order: target.riscv.byteOrder,
+      type: target.riscv.type,
+      flags: target.riscv.flags,
+      float_abi_double:
+        (target.riscv.flags & EF_RISCV_FLOAT_ABI) === EF_RISCV_FLOAT_ABI_DOUBLE,
+      rvc_declared: (target.riscv.flags & EF_RISCV_RVC) !== 0,
+      rve_declared: (target.riscv.flags & EF_RISCV_RVE) !== 0,
+      tso_declared: (target.riscv.flags & EF_RISCV_TSO) !== 0,
+      ...(isPie
+        ? {
+            has_interpreter: true,
+            load_model: "pie",
+            expected_default_image_base:
+              target.riscv.elfClass === 32 ? "0x10000" : "0x100000",
+          }
+        : {}),
+    },
+    riscv_support_lane:
+      target.riscv.elfClass === 32
+        ? isPie
+          ? "elf32-pie-le-double-float-generic-v1"
+          : "elf32-exec-le-double-float-generic-v1"
+        : isPie
+          ? "elf64-pie-le-double-float-generic-v1"
+          : "elf64-exec-le-double-float-generic-v1",
+  };
+};
 
 /** The pinned language is an analysis convention, not proof of the producer. */
 export const ghidraRiscvLimitations = (
@@ -124,6 +137,8 @@ export const ghidraRiscvLimitations = (
     ? [
         `RISC-V ELF: REA pins Ghidra's generic \`RISCV:LE:${target.riscv.elfClass}:default\` language with the \`gcc\` compiler specification instead of accepting the loader's header-based choice, which selects \`RISCV:LE:32:AndeStar_v5\` for ordinary RV32 images on Ghidra 12.1.4.`,
         "The pinned generic language models the double-float ABI declared by `e_flags`; the declaration is recorded as an ELF fact and is not evidence of the original compiler or of verified instruction semantics.",
-        "Admission reads `e_type` only: a fixed-address ET_EXEC declaration does not establish static linkage, and program headers (`PT_INTERP`, dynamic dependencies) are not inspected by this lane.",
+        target.riscv.type === ET_DYN
+          ? `Position-independent executable (PIE): Ghidra assigns analysis coordinates from its default image base (${target.riscv.elfClass === 32 ? "0x10000" : "0x100000"}). Runtime load addresses and dynamic linker relocation are not executed or verified by this lane.`
+          : "Admission reads `e_type` only: a fixed-address ET_EXEC declaration does not establish static linkage, and program headers (`PT_INTERP`, dynamic dependencies) are not inspected by this lane.",
       ]
     : [];

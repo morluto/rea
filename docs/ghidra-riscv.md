@@ -14,29 +14,34 @@ RISC-V variant is supported. Existing PE, managed and Mach-O architecture sets
 are unchanged. Headerless inputs use the separate [raw-binary admission
 boundary](raw-binary.md); raw RISC-V images are not supported.
 
-The Ghidra lane admits little-endian ELF32 and ELF64 `ET_EXEC` images that
-declare `EF_RISCV_FLOAT_ABI_DOUBLE` in `e_flags`, with no `EF_RISCV_RVE`,
-`EF_RISCV_TSO`, or any bit outside `EF_RISCV_RVC | EF_RISCV_FLOAT_ABI`. These are
-header declarations, not proof that every instruction conforms to that ISA.
+The Ghidra lane admits little-endian ELF32 and ELF64 `ET_EXEC` images and
+position-independent executables (`ET_DYN` with `PT_INTERP`) that declare
+`EF_RISCV_FLOAT_ABI_DOUBLE` in `e_flags`, with no `EF_RISCV_RVE`, `EF_RISCV_TSO`,
+or any bit outside `EF_RISCV_RVC | EF_RISCV_FLOAT_ABI`. These are header
+declarations, not proof that every instruction conforms to that ISA.
 
 Provider selection returns the specific unsupported constraint rather than
 guessing a compatible profile:
 
-| Declaration                                     | Outcome                                                                                  |
-| ----------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| Little-endian ELF64 `ET_EXEC`, double-float ABI | admitted, `RISCV:LE:64:default` + `gcc`                                                  |
-| Little-endian ELF32 `ET_EXEC`, double-float ABI | admitted, `RISCV:LE:32:default` + `gcc`                                                  |
-| Big-endian                                      | refused; Ghidra 12.1.4 ships no big-endian RISC-V language                               |
-| `ET_REL`, `ET_DYN`, other `e_type`              | refused with the declared value                                                          |
-| `EF_RISCV_RVE`                                  | refused; the embedded 16-register profile (x0–x15) needs its own processor specification |
-| `EF_RISCV_TSO`                                  | refused; the total-store-order memory model is unverified here                           |
-| Soft, single, or quad float ABI                 | refused; the pinned generic compiler specification models double-float                   |
-| Reserved or newer `e_flags` bits                | refused with the offending bits named                                                    |
+| Declaration                                                       | Outcome                                                                                  |
+| ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Little-endian ELF64 `ET_EXEC` or PIE (`ET_DYN`), double-float ABI | admitted, `RISCV:LE:64:default` + `gcc`                                                  |
+| Little-endian ELF32 `ET_EXEC` or PIE (`ET_DYN`), double-float ABI | admitted, `RISCV:LE:32:default` + `gcc`                                                  |
+| Big-endian                                                        | refused; Ghidra 12.1.4 ships no big-endian RISC-V language                               |
+| `ET_DYN` without `PT_INTERP` (shared library)                     | refused; shared libraries without PT_INTERP need separate load verification              |
+| `ET_REL`, other `e_type`                                          | refused with the declared value                                                          |
+| `EF_RISCV_RVE`                                                    | refused; the embedded 16-register profile (x0–x15) needs its own processor specification |
+| `EF_RISCV_TSO`                                                    | refused; the total-store-order memory model is unverified here                           |
+| Soft, single, or quad float ABI                                   | refused; the pinned generic compiler specification models double-float                   |
+| Reserved or newer `e_flags` bits                                  | refused with the offending bits named                                                    |
 
-`e_type` is the only load-shape declaration this lane reads. A fixed-address
-`ET_EXEC` declaration does **not** establish static linkage: `PT_INTERP` and
-dynamic dependencies are not inspected, and the session records that boundary as
-a limitation rather than inferring a load model.
+`e_type` and program headers decide the load model this lane reads. A
+fixed-address `ET_EXEC` declaration does **not** establish static linkage:
+dynamic dependencies are not inspected, and the session records that boundary
+as a limitation rather than inferring a load model. Position-independent
+executables (`ET_DYN` with `PT_INTERP`) are admitted using Ghidra's default
+analysis base (`0x10000` for RV32, `0x100000` for RV64); runtime load addresses
+and dynamic linker relocations are not executed or verified.
 
 ## Why the language is pinned
 
@@ -61,12 +66,17 @@ accepted and recorded as `configured-v1`.
 ## Evidence
 
 The lane identity is `elf32-exec-le-double-float-generic-v1` or
-`elf64-exec-le-double-float-generic-v1`, and `riscv_elf` retains `elf_class`,
-`byte_order`, `type`, and the raw `flags` alongside the read-only booleans
-`float_abi_double`, `rvc_declared`, `rve_declared`, and `tso_declared`. Those
-fields report declarations the header makes; none of them is evidence of the
-original compiler, of instruction conformance, or of a floating-point calling
-convention beyond the ABI the pinned language models.
+`elf64-exec-le-double-float-generic-v1` for `ET_EXEC`, and
+`elf32-pie-le-double-float-generic-v1` or
+`elf64-pie-le-double-float-generic-v1` for position-independent executables
+(PIE). `riscv_elf` retains `elf_class`, `byte_order`, `type`, and the raw `flags`
+alongside the read-only booleans `float_abi_double`, `rvc_declared`,
+`rve_declared`, and `tso_declared`. For PIE images, `riscv_elf` also records
+`has_interpreter: true`, `load_model: "pie"`, and the expected default image
+base (`expected_default_image_base: "0x10000"` for RV32, `"0x100000"` for RV64).
+Those fields report declarations the header makes; none of them is evidence of the original
+compiler, of instruction conformance, or of a floating-point calling convention
+beyond the ABI the pinned language models.
 
 ## Verification and limits
 

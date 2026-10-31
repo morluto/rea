@@ -161,3 +161,25 @@ it.each(["sections", "programs", "section names"] as const)(
     );
   },
 );
+
+it("detects PT_INTERP in program headers and records hasInterpreter for RISC-V", async () => {
+  const fixture = image(64, true);
+  fixture.u16(18, 243); // EM_RISCV
+  fixture.u16(16, 3); // ET_DYN
+  const withoutInterp = await admit(fixture.bytes);
+  expect(withoutInterp.ok).toBe(true);
+  if (!withoutInterp.ok) throw new Error(withoutInterp.error.message);
+  expect(withoutInterp.value.architecture).toBe("riscv");
+  if (withoutInterp.value.architecture === "riscv") {
+    expect(withoutInterp.value.riscv.hasInterpreter).toBeUndefined();
+  }
+
+  fixture.u32(fixture.program, 3); // PT_INTERP
+  const withInterp = await admit(fixture.bytes);
+  expect(withInterp.ok).toBe(true);
+  if (!withInterp.ok) throw new Error(withInterp.error.message);
+  expect(withInterp.value.architecture).toBe("riscv");
+  if (withInterp.value.architecture === "riscv") {
+    expect(withInterp.value.riscv.hasInterpreter).toBe(true);
+  }
+});
