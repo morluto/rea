@@ -530,7 +530,7 @@ const WINDOW_OPEN_CALL =
   /(?:^|\.)(?:window|self|globalThis|top|parent|opener|frames|document)\.open$/u;
 
 /** Node `fs.open` flag strings, which are never request URLs. */
-const FS_OPEN_FLAGS = new Set([
+export const FS_OPEN_FLAGS: ReadonlySet<string> = new Set([
   "a",
   "a+",
   "as",
