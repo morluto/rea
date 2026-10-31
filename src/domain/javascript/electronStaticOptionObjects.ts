@@ -1,7 +1,9 @@
 import * as t from "@babel/types";
 import { unwrapJavaScriptExpression } from "./javascriptAstValues.js";
-import { semanticComputedMethodKey } from "./javascriptSemanticEvaluationOrder.js";
-import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
+import {
+  semanticBindingAtRead,
+  semanticProgramConstInitializerPrecedesFunctionRead,
+} from "./javascriptSemanticMutationInitializers.js";
 import {
   semanticStableInitializer,
   type JavaScriptBindingIndex,
@@ -13,34 +15,45 @@ import {
  * member write or escape effect, so check it explicitly; this also closes
  * the same leak for top-level reads, which previously resolved exported
  * constants as object literals.
+ *
+ * Export identity is the binding itself, never its name, and never an
+ * export that merely encloses it: a local binding inside an exported
+ * function is not exported, and a local binding that shadows an exported
+ * name is not the exported binding. Export specifiers and export-default
+ * identifiers are therefore resolved through the binding owner and
+ * compared by binding id, and the declaration walk stops at a function
+ * boundary instead of reaching the function's own export.
  */
 const isExportedBinding = (
-  binding: { readonly name: string },
+  binding: { readonly bindingId: string },
   initializerNode: t.Node | undefined,
   index: JavaScriptBindingIndex,
 ): boolean => {
   if (initializerNode !== undefined) {
-    for (
-      let node: t.Node | undefined = initializerNode;
-      node !== undefined;
-      node = index.bindings.parentsByNode.get(node)
-    ) {
-      if (t.isExportNamedDeclaration(node) || t.isExportDefaultDeclaration(node))
+    let node: t.Node | undefined = initializerNode;
+    while (node !== undefined) {
+      const parent = index.bindings.parentsByNode.get(node);
+      if (parent === undefined) break;
+      if (t.isExportNamedDeclaration(parent) || t.isExportDefaultDeclaration(parent))
         return true;
+      if (t.isFunction(parent) || t.isProgram(parent)) break;
+      node = parent;
     }
   }
   return index.bindings.program.body.some((statement) => {
     if (t.isExportDefaultDeclaration(statement))
       return (
         t.isIdentifier(statement.declaration) &&
-        statement.declaration.name === binding.name
+        index.bindingForReferenceAt(statement.declaration)?.bindingId ===
+          binding.bindingId
       );
     if (!t.isExportNamedDeclaration(statement) || statement.source !== null)
       return false;
     return statement.specifiers.some(
       (specifier) =>
         t.isExportSpecifier(specifier) &&
-        specifier.local.name === binding.name,
+        index.bindingForReferenceAt(specifier.local)?.bindingId ===
+          binding.bindingId,
     );
   });
 };
@@ -65,34 +78,19 @@ const optionObjectCandidate = (
     const binding = index.bindingForReferenceAt(node);
     if (binding === undefined) return undefined;
     const initializer = semanticStableInitializer(binding, index.bindings);
-    // A read inside a function has no statement position in the declaring
-    // body, so semanticBindingAtRead cannot prove its initializer ran there.
-    // A program-level const read across a function boundary is different:
-    // a read that completes inside a function can only do so after the
-    // declaration executed (an earlier read would throw for the temporal
-    // dead zone, not yield a stale value). This allowance is deliberately
-    // narrow: a read in the program body itself keeps the original order
-    // check, so a window before the declaration, or an alias declared after
-    // its use, still stays dynamic. Mutation and escape safety is not
-    // decided here; resolveElectronOptionObject still rejects the candidate
-    // when referenceMayHaveChangedAt reports a write or escape that may
-    // affect the call site.
-    const programConst =
-      index.bindings.scopesById.get(binding.scopeId)?.kind === "program";
-    const crossesFunctionBoundary = (() => {
-      let current: t.Node | undefined = node;
-      while (current !== undefined) {
-        const parent = index.bindings.parentsByNode.get(current);
-        if (parent === undefined || t.isProgram(parent)) return false;
-        if (
-          t.isFunction(parent) &&
-          !semanticComputedMethodKey(parent, current)
-        )
-          return true;
-        current = parent;
-      }
-      return false;
-    })();
+    // Timing for a program const read inside a function is owned by the
+    // semantic module (see
+    // semanticProgramConstInitializerPrecedesFunctionRead): a read that
+    // completes inside a function can only do so after the declaration
+    // executed, since an earlier read would throw for the temporal dead
+    // zone, not yield a stale value. This consumer keeps only the
+    // Electron-specific policy on top of that fact: a read in the program
+    // body itself keeps the original order check, so a window before the
+    // declaration, or an alias declared after its use, still stays
+    // dynamic. Mutation and escape safety is not decided here;
+    // resolveElectronOptionObject still rejects the candidate when
+    // referenceMayHaveChangedAt reports a write or escape that may affect
+    // the call site.
     if (
       binding.mutable ||
       binding.declarationKinds.size !== 1 ||
@@ -100,8 +98,10 @@ const optionObjectCandidate = (
       initializer === undefined ||
       initializer.projection.length !== 0 ||
       isExportedBinding(binding, initializer.node, index) ||
-      (!(
-        programConst && crossesFunctionBoundary
+      (!semanticProgramConstInitializerPrecedesFunctionRead(
+        binding,
+        node,
+        index.bindings,
       ) &&
         !semanticBindingAtRead(binding, node, index.bindings.parentsByNode)
           .hasDefiniteInitializer)

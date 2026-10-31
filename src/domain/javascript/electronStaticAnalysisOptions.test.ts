@@ -217,6 +217,46 @@ describe("Electron module-level constant options in functions", () => {
       ),
     ).toEqual(["dynamic", "dynamic"]);
   });
+
+  it("resolves a local options const inside an exported function", () => {
+    const analysis = analyzeJavaScriptStaticSource(`
+      import { BrowserWindow } from "electron";
+      export function createWindow() {
+        const options = { webPreferences: { sandbox: true } };
+        return new BrowserWindow(options);
+      }
+    `);
+    expect(analysis.electron.browser_windows).toMatchObject([
+      {
+        options_status: "object-literal",
+        web_preferences_status: "object-literal",
+        web_preferences: [
+          { name: "sandbox", value: { status: "literal", value: true } },
+        ],
+      },
+    ]);
+  });
+
+  it("resolves a local options const that shadows an exported name", () => {
+    const analysis = analyzeJavaScriptStaticSource(`
+      import { BrowserWindow } from "electron";
+      const options = { webPreferences: { sandbox: false } };
+      export { options };
+      function createWindow() {
+        const options = { webPreferences: { sandbox: true } };
+        return new BrowserWindow(options);
+      }
+    `);
+    expect(analysis.electron.browser_windows).toMatchObject([
+      {
+        options_status: "object-literal",
+        web_preferences_status: "object-literal",
+        web_preferences: [
+          { name: "sandbox", value: { status: "literal", value: true } },
+        ],
+      },
+    ]);
+  });
 });
 
 describe("Electron option captures and initialization", () => {

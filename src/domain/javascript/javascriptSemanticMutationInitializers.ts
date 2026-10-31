@@ -789,6 +789,53 @@ export const semanticCaptureOrderingIdentity = (
   return loop;
 };
 
+/**
+ * A program-scope const has exactly one execution point: module evaluation.
+ * A read of that binding inside a function can only complete after module
+ * evaluation finished, because an earlier invocation would throw for the
+ * temporal dead zone rather than yield a stale value. So when the read
+ * crosses a function boundary, the sole const initializer is definite even
+ * though bindingReadPosition stops at that boundary and cannot order the
+ * read against the declaration in the program body. This is a timing fact
+ * only: it says nothing about later writes or escapes, which consumers
+ * must still check separately. Reads in the program body itself, reads of
+ * non-program bindings, and reads of mutable or multi-initializer bindings
+ * are not covered.
+ */
+export const semanticProgramConstInitializerPrecedesFunctionRead = (
+  binding: JavaScriptSemanticBindingState,
+  read: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (binding.mutable) return false;
+  if (
+    binding.declarationKinds.size !== 1 ||
+    !binding.declarationKinds.has("const")
+  )
+    return false;
+  if (state.scopesById.get(binding.scopeId)?.kind !== "program") return false;
+  const [initializer] = binding.initializers;
+  if (
+    binding.initializers.length !== 1 ||
+    binding.referenceInitializers.length !== 0 ||
+    initializer === undefined ||
+    initializer.projection.length !== 0 ||
+    state.conditionallySkippedExpressions.has(initializer.node)
+  )
+    return false;
+  let current = read;
+  while (true) {
+    const parent = state.parentsByNode.get(current);
+    if (parent === undefined || t.isProgram(parent)) return false;
+    if (
+      t.isFunction(parent) &&
+      !semanticComputedMethodKey(parent, current)
+    )
+      return true;
+    current = parent;
+  }
+};
+
 /** Select a local alias at its read, before any later straight-line reassignment. */
 type SemanticBindingRead = {
   readonly status: "ordered" | "unresolved";
