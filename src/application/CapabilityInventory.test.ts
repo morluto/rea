@@ -621,6 +621,31 @@ describe("partial navigation availability", () => {
   });
 });
 
+describe("address context target availability", () => {
+  it("requires a target before inspecting address context", () => {
+    expect(entry("inspect_address_context", status())).toMatchObject({
+      available: false,
+      reason: "target_required",
+      remediation: "Call open_binary with a supported local target.",
+    });
+    expect(
+      TOOL_CONTRACTS.find((tool) => tool.name === "inspect_address_context"),
+    ).toMatchObject({
+      requiresActiveTarget: true,
+    });
+    expect(
+      entry(
+        "inspect_address_context",
+        status({ open: true, kind: "executable" }),
+      ),
+    ).toMatchObject({
+      available: true,
+      reason: "available",
+      remediation: null,
+    });
+  });
+});
+
 it("reports host denial before target mismatch but keeps composed workflow prerequisites", () => {
   const capability = {
     operation: "inspect_macho",

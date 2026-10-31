@@ -155,6 +155,7 @@ it("advertises the complete currently available inventory with a session", async
   );
   expect(available).not.toContain("binary_overview");
   expect(available).not.toContain("batch_decompile");
+  expect(available).not.toContain("inspect_address_context");
 
   const contracts = new Map<string, (typeof TOOL_CONTRACTS)[number]>(
     TOOL_CONTRACTS.map((contract) => [contract.name, contract]),
