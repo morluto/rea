@@ -794,7 +794,12 @@ it("bounds a stalled metadata fetch and preserves caller cancellation", async ()
     downloadHopperPackage("https://www.hopperapp.com/fixture", {
       timeoutMs: 10,
     }),
-  ).rejects.toMatchObject({ name: "TimeoutError" });
+  ).rejects.toMatchObject({
+    _tag: "HopperDownloadTimeoutError",
+    limit: "deadline",
+    limitMs: 10,
+    receivedBytes: 0,
+  });
   const controller = new AbortController();
   const reason = new Error("Caller cancelled metadata inspection");
   const pending = downloadHopperPackage("https://www.hopperapp.com/fixture", {
@@ -802,6 +807,38 @@ it("bounds a stalled metadata fetch and preserves caller cancellation", async ()
   });
   controller.abort(reason);
   await expect(pending).rejects.toBe(reason);
+});
+it("names the release feed and its limit when the metadata fetch times out", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_url, options: RequestInit) =>
+          new Promise((_resolve, reject) => {
+            options.signal?.addEventListener(
+              "abort",
+              () => reject(options.signal?.reason),
+              { once: true },
+            );
+          }),
+      ),
+    );
+    const publisher = new LinuxHopperPublisher({}, async () => "deb");
+    const pending = publisher.currentRelease("deb");
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(await pending).toMatchObject({
+      ok: false,
+      error: {
+        reason: "release_metadata",
+        message: expect.stringMatching(
+          /^The download from https:\/\/www\.hopperapp\.com\/.+ did not finish within 10 s; 0 bytes were received\.$/u,
+        ),
+      },
+    });
+  } finally {
+    vi.useRealTimers();
+  }
 });
 it("cancels an oversized chunked metadata response before retaining it", async () => {
   const cancelled = vi.fn();

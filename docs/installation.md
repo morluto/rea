@@ -681,6 +681,10 @@ establish the underlying cause or guarantee that retrying will succeed.
 
 Hopper metadata and package downloads require HTTPS throughout the redirect
 chain; a redirect to HTTP is refused before that destination is requested.
+A package download fails when no bytes arrive for 30 seconds or when it has not
+finished within 15 minutes, so a slow connection that keeps delivering bytes can
+complete. Release metadata and the publisher key keep a 10-second limit. A
+timed-out download reports its URL, the limit it reached and the bytes received.
 
 On macOS, approved setup downloads the official DMG, checks its published size
 and digest, validates the application bundle, and atomically installs it to

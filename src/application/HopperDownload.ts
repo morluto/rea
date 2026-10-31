@@ -8,19 +8,54 @@ export interface HopperDownload {
 /** Maximum admitted vendor response bytes, shared by Hopper setup adapters. */
 export const HOPPER_DOWNLOAD_BYTES = 100_000_000;
 
+/** Longest wait for the response or its next bytes before a download stalls. */
+export const HOPPER_DOWNLOAD_STALL_MS = 30_000;
+
+/**
+ * Overall bound for one download. A slow connection that keeps delivering
+ * bytes is bounded here rather than by a deadline sized for fast networks.
+ */
+export const HOPPER_DOWNLOAD_TIMEOUT_MS = 15 * 60_000;
+
+/** Small release feed and key requests must not use the package bounds. */
+export const HOPPER_METADATA_TIMEOUT_MS = 10_000;
+
+/** A Hopper download that stalled or outlived its overall bound. */
+export class HopperDownloadTimeoutError extends Error {
+  readonly _tag = "HopperDownloadTimeoutError";
+  constructor(
+    readonly limit: "stalled" | "deadline",
+    readonly url: string,
+    readonly limitMs: number,
+    readonly receivedBytes: number,
+  ) {
+    const seconds = String(limitMs / 1000);
+    super(
+      limit === "stalled"
+        ? `No response bytes arrived for ${seconds} s from ${url}; ${String(receivedBytes)} bytes were received before the download stalled.`
+        : `The download from ${url} did not finish within ${seconds} s; ${String(receivedBytes)} bytes were received.`,
+    );
+    this.name = "HopperDownloadTimeoutError";
+  }
+}
+
 /** Bound observed response bytes before retaining them, including chunked bodies. */
 export const downloadHopperPackage = async (
   url: string,
   options: {
     readonly signal?: AbortSignal;
     readonly maxBytes?: number;
+    /** Overall bound; a stall bound applies only when it is shorter. */
     readonly timeoutMs?: number;
   } = {},
 ): Promise<HopperDownload> => {
-  const timeoutMs = options.timeoutMs ?? 120_000;
-  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 120_000)
+  const timeoutMs = options.timeoutMs ?? HOPPER_DOWNLOAD_TIMEOUT_MS;
+  if (
+    !Number.isSafeInteger(timeoutMs) ||
+    timeoutMs < 1 ||
+    timeoutMs > HOPPER_DOWNLOAD_TIMEOUT_MS
+  )
     throw new RangeError("Invalid Hopper response time budget");
-  const deadline = AbortSignal.timeout(timeoutMs);
   const maxBytes = options.maxBytes ?? HOPPER_DOWNLOAD_BYTES;
   if (
     !Number.isSafeInteger(maxBytes) ||
@@ -28,43 +63,67 @@ export const downloadHopperPackage = async (
     maxBytes > HOPPER_DOWNLOAD_BYTES
   )
     throw new RangeError("Invalid Hopper response byte budget");
-  const response = await fetchHopperResponse(
-    url,
-    options.signal === undefined
-      ? deadline
-      : AbortSignal.any([options.signal, deadline]),
-  );
-  const refused = { ok: false, bytes: new Uint8Array() };
-  if (response === undefined) return refused;
-  if (!response.ok) {
-    await response.body?.cancel();
-    return Number.isInteger(response.status) &&
-      response.status >= 300 &&
-      response.status <= 599
-      ? { ...refused, httpStatus: response.status }
-      : refused;
-  }
-  if (Number(response.headers.get("content-length")) > maxBytes) {
-    await response.body?.cancel();
-    return refused;
-  }
-  if (response.body === null) return { ok: true, bytes: new Uint8Array() };
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
   let bytes = 0;
+  const deadline = new AbortController();
+  const expire = (limit: "stalled" | "deadline", limitMs: number) => {
+    deadline.abort(new HopperDownloadTimeoutError(limit, url, limitMs, bytes));
+  };
+  const overall = setTimeout(() => {
+    expire("deadline", timeoutMs);
+  }, timeoutMs);
+  let stall: NodeJS.Timeout | undefined;
+  const progressed = () => {
+    if (HOPPER_DOWNLOAD_STALL_MS >= timeoutMs) return;
+    clearTimeout(stall);
+    stall = setTimeout(() => {
+      expire("stalled", HOPPER_DOWNLOAD_STALL_MS);
+    }, HOPPER_DOWNLOAD_STALL_MS);
+  };
   try {
-    while (true) {
-      const chunk = await reader.read();
-      if (chunk.done) return { ok: true, bytes: Buffer.concat(chunks, bytes) };
-      if (chunk.value.byteLength > maxBytes - bytes) {
-        await reader.cancel();
-        return refused;
+    progressed();
+    const response = await fetchHopperResponse(
+      url,
+      options.signal === undefined
+        ? deadline.signal
+        : AbortSignal.any([options.signal, deadline.signal]),
+    );
+    const refused = { ok: false, bytes: new Uint8Array() };
+    if (response === undefined) return refused;
+    if (!response.ok) {
+      await response.body?.cancel();
+      return Number.isInteger(response.status) &&
+        response.status >= 300 &&
+        response.status <= 599
+        ? { ...refused, httpStatus: response.status }
+        : refused;
+    }
+    if (Number(response.headers.get("content-length")) > maxBytes) {
+      await response.body?.cancel();
+      return refused;
+    }
+    if (response.body === null) return { ok: true, bytes: new Uint8Array() };
+    progressed();
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    try {
+      while (true) {
+        const chunk = await reader.read();
+        if (chunk.done)
+          return { ok: true, bytes: Buffer.concat(chunks, bytes) };
+        if (chunk.value.byteLength > maxBytes - bytes) {
+          await reader.cancel();
+          return refused;
+        }
+        chunks.push(chunk.value);
+        bytes += chunk.value.byteLength;
+        if (chunk.value.byteLength > 0) progressed();
       }
-      chunks.push(chunk.value);
-      bytes += chunk.value.byteLength;
+    } finally {
+      reader.releaseLock();
     }
   } finally {
-    reader.releaseLock();
+    clearTimeout(overall);
+    clearTimeout(stall);
   }
 };
 

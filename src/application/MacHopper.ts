@@ -18,7 +18,10 @@ import type { AnalysisCleanupObservation } from "../domain/analysisErrorBase.js"
 import { HOPPER_PUBLISHER } from "../domain/hopperPublisher.js";
 import { macDeveloperIdRequirement } from "../process/MacCodeSignature.js";
 import { macHopperUserApplicationPath } from "./MacHopperPaths.js";
-import { downloadHopperPackage } from "./HopperDownload.js";
+import {
+  downloadHopperPackage,
+  HOPPER_METADATA_TIMEOUT_MS,
+} from "./HopperDownload.js";
 import {
   HOPPER_RELEASES_URL,
   HOPPER_DOWNLOAD_PREFIX,
@@ -104,6 +107,7 @@ export type MacHopperInstallResult =
 export interface MacHopperInstallHost {
   download(
     url: string,
+    options?: { readonly timeoutMs?: number },
   ): Promise<{ readonly ok: boolean; readonly bytes: Uint8Array }>;
   createTemporaryDirectory(): Promise<string>;
   createMountDirectory(path: string): Promise<void>;
@@ -143,7 +147,9 @@ export const installMacHopper = async (
   let result: MacHopperInstallResult;
   try {
     result = await (async (): Promise<MacHopperInstallResult> => {
-      const metadata = await host.download(HOPPER_RELEASES_URL);
+      const metadata = await host.download(HOPPER_RELEASES_URL, {
+        timeoutMs: HOPPER_METADATA_TIMEOUT_MS,
+      });
       if (!metadata.ok) return { status: "failed", reason: "release_metadata" };
       const decoded = parseHopperReleaseJson(metadata.bytes);
       if (!decoded.ok) throw decoded.cause;

@@ -20,6 +20,7 @@ import {
 } from "./LinuxHopper.js";
 import type { HopperDownload } from "./HopperDownload.js";
 import { err, ok } from "../domain/result.js";
+import { HopperDownloadTimeoutError } from "./HopperDownload.js";
 import {
   type LinuxPackageFamily,
   HopperReleaseError,
@@ -583,6 +584,23 @@ it("retains archive staging failure after download and cleans the owned temporar
   expect(host.downloads).toHaveLength(1);
   expect(host.installed).toEqual([]);
   expect(host.cleaned).toEqual(["/tmp/rea test"]);
+});
+
+it("reports a timed-out package download as a download failure with its reason", async () => {
+  const host = new RecordingLinuxHost();
+  const stalled = new HopperDownloadTimeoutError(
+    "stalled",
+    "https://www.hopperapp.com/fixture.deb",
+    30_000,
+    1024,
+  );
+  host.download = () => Promise.reject(stalled);
+  expect(await installLinuxHopper(host)).toMatchObject({
+    status: "failed",
+    reason: "download",
+    operationFailure: { operation: "download", detail: stalled.message },
+  });
+  expect(host.installed).toEqual([]);
 });
 
 it("keeps an installed launcher inspection failure distinct from confirmed absence", async () => {
