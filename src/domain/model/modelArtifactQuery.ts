@@ -4,6 +4,8 @@ import {
   modelArtifactObjectSchema,
   modelMetadataSchema,
   modelTensorSchema,
+  modelGraphValueSchema,
+  modelOperatorSchema,
 } from "./modelArtifact.js";
 
 export const modelTypeRowSchema =
@@ -38,11 +40,34 @@ const metadataSelectionSchema = z.strictObject({
   keys: z.array(z.string()).optional(),
   fields: z.array(modelMetadataSchema.keyof()).optional(),
 });
+const graphValueSelection = {
+  ...page,
+  names: z.array(z.string()).optional(),
+  fields: z.array(modelGraphValueSchema.keyof()).optional(),
+};
+const inputSelectionSchema = z.strictObject({
+  ...graphValueSelection,
+  collection: z.literal("inputs"),
+});
+const outputSelectionSchema = z.strictObject({
+  ...graphValueSelection,
+  collection: z.literal("outputs"),
+});
+const operatorSelectionSchema = z.strictObject({
+  ...page,
+  collection: z.literal("operators"),
+  op_types: z.array(z.string()).optional(),
+  domains: z.array(z.string()).optional(),
+  fields: z.array(modelOperatorSchema.keyof()).optional(),
+});
 
 export const modelArtifactSelectionSchema = z.discriminatedUnion("collection", [
   tensorSelectionSchema,
   typeSelectionSchema,
   metadataSelectionSchema,
+  inputSelectionSchema,
+  outputSelectionSchema,
+  operatorSelectionSchema,
 ]);
 
 export const modelArtifactViewRequestSchema = z.discriminatedUnion(
@@ -51,6 +76,9 @@ export const modelArtifactViewRequestSchema = z.discriminatedUnion(
     tensorSelectionSchema.extend({ kind: z.literal("model-artifact") }),
     typeSelectionSchema.extend({ kind: z.literal("model-artifact") }),
     metadataSelectionSchema.extend({ kind: z.literal("model-artifact") }),
+    inputSelectionSchema.extend({ kind: z.literal("model-artifact") }),
+    outputSelectionSchema.extend({ kind: z.literal("model-artifact") }),
+    operatorSelectionSchema.extend({ kind: z.literal("model-artifact") }),
   ],
 );
 
@@ -62,7 +90,7 @@ export const inspectModelArtifactInputSchema = z
       .enum(["header", "full"])
       .default("header")
       .describe(
-        "header reads declarations only; full streams all bytes for SHA-256",
+        "header reads declarations (the whole container for ORT); full requests full-file SHA-256",
       ),
     detail: z.enum(["summary", "complete"]).default("summary"),
     view: modelArtifactSelectionSchema
