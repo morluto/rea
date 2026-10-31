@@ -13,6 +13,7 @@ import { expect, onTestFinished, test, vi } from "vitest";
 
 const adbTestHooks = vi.hoisted(() => ({
   afterScreencap: undefined as (() => void) | undefined,
+  versionProbeFailure: undefined as Error | undefined,
 }));
 
 vi.mock("../process/ExecFileOutput.js", async (importOriginal) => {
@@ -26,6 +27,14 @@ vi.mock("../process/ExecFileOutput.js", async (importOriginal) => {
       const result = await actual.execFileBytes(...arguments_);
       if (arguments_[1].includes("exec-out")) adbTestHooks.afterScreencap?.();
       return result;
+    },
+    execFileOutput: async (
+      ...arguments_: Parameters<typeof actual.execFileOutput>
+    ) => {
+      const failure = adbTestHooks.versionProbeFailure;
+      if (failure !== undefined && arguments_[1].includes("version"))
+        throw failure;
+      return actual.execFileOutput(...arguments_);
     },
   };
 });
@@ -608,6 +617,47 @@ it("reports a missing selected binary as a capability gap with recovery", async 
     provider_id: "adb",
     reason: expect.stringContaining("not found") as unknown,
   });
+});
+
+it("reports exhausted host capacity at the version probe as a retryable constraint", async () => {
+  const { binary } = await writeAdbStub(() => VERSION_BLOCK);
+  adbTestHooks.versionProbeFailure = Object.assign(new Error("spawn EMFILE"), {
+    code: "EMFILE",
+    syscall: `spawn ${binary}`,
+    spawnFailed: true,
+    stdout: "",
+    stderr: "",
+    signal: null,
+    killed: false,
+  });
+  onTestFinished(() => {
+    adbTestHooks.versionProbeFailure = undefined;
+  });
+  // The readiness operation runs the same probe as the device operations.
+  for (const operation of ["inspect_adb_client", "list_adb_devices"] as const) {
+    const projected = await refusedBy(providerOver(binary), {
+      operation,
+      input: {},
+    });
+    expect(projected).toMatchObject({
+      code: "resource_constraint",
+      retryable: true,
+      remediation: {
+        action: expect.stringContaining("does not need to change") as unknown,
+      },
+      details: {
+        diagnostics: {
+          selected_binary: binary,
+          path_source: "environment",
+          filesystem_error: "EMFILE",
+        },
+      },
+    });
+    // One remediation text, owned by the configuration classifier.
+    expect(projected.details?.diagnostics).toMatchObject({
+      remediation: projected.remediation?.action,
+    });
+  }
 });
 
 it("reports relative adb configuration as an actionable refusal", async () => {
