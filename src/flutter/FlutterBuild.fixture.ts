@@ -38,6 +38,43 @@ export const aotFixtureImage = (hash: string = REFERENCE_HASH): Buffer => {
   ]);
 };
 
+/**
+ * A synthetic AOT image in the renamed layout (Dart SDK d36adbacaf): one data
+ * snapshot whose FullAOT kind is 2, its instructions, and the build-id symbol.
+ */
+export const renamedAotFixtureImage = (
+  hash: string = REFERENCE_HASH,
+  options: { readonly dataKind?: number; readonly exportText?: boolean } = {},
+): Buffer => {
+  const elf = buildElf64Image([
+    { name: "_kDartSnapshotBuildId", value: 0x1000, size: 32 },
+    { name: "_kDartSnapshotData", value: 0x2000, size: 0x600 },
+    ...(options.exportText === false
+      ? []
+      : [{ name: "_kDartSnapshotText", value: 0x2600, size: 16 }]),
+  ]);
+  const pool = Buffer.concat([
+    Buffer.from("package:saber/data/prefs.dart\x00"),
+    Buffer.from("package:nextcloud/core.dart\x00"),
+    Buffer.from("dart:_http\x00dart:_http/crypto.dart\x00"),
+    Buffer.from("LoginFlow\x00SentryFilter\x00"),
+  ]);
+  const dataSection = Buffer.concat([
+    snapshotSection(hash, options.dataKind ?? 2),
+    Buffer.from([0]),
+    pool,
+  ]);
+  return Buffer.concat([
+    elf,
+    Buffer.alloc(0x1000 - elf.length),
+    Buffer.alloc(32),
+    Buffer.alloc(0x2000 - 0x1000 - 32),
+    dataSection,
+    Buffer.alloc(0x600 - dataSection.length),
+    Buffer.alloc(16),
+  ]);
+};
+
 export const buildElf64Image = (
   symbols: ReadonlyArray<{ name: string; value: number; size: number }>,
 ): Buffer => {
@@ -294,10 +331,29 @@ export const strippedAotFixtureImage = (
 };
 
 /** A minimal Dart snapshot data section carrying a 32-hex hash. */
-export const snapshotSection = (hash: string): Buffer =>
+export const snapshotSection = (hash: string, kind = 3): Buffer =>
   Buffer.concat([
     Buffer.from([
-      0xf5, 0xf5, 0xdc, 0xdc, 48, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0,
+      0xf5,
+      0xf5,
+      0xdc,
+      0xdc,
+      48,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      kind,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
     ]),
     Buffer.from(hash, "latin1"),
   ]);

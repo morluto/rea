@@ -87,8 +87,36 @@ const flutterBudget = (allowance: string, kind: "parser" | "input") =>
   fixedAllowanceOptions(allowance, kind);
 const MAX_POOL_URIS = 500;
 const MAX_POOL_TOKENS = 2_000;
-/** A complete AOT image carries exactly one VM and one isolate section. */
-const SYMBOL_PAIR_COUNT = 2;
+/**
+ * Exported AOT snapshot symbol layouts, newest first. Dart SDK d36adbacaf
+ * ("[vm] Remove the VM isolate") replaced the VM and isolate snapshots with
+ * one `_kDartSnapshotData`/`_kDartSnapshotText` pair and removed `kFullCore`
+ * from `Snapshot::Kind`, so FullAOT is kind 2 there. The VM/isolate layout's
+ * supported Dart 2.14 FullAOT kind is 3.
+ */
+const SNAPSHOT_LAYOUTS = [
+  {
+    symbols: ["_kDartSnapshotData", "_kDartSnapshotText"],
+    poolSymbol: "_kDartSnapshotData",
+    fullAotKind: 2,
+    hashSources: "the _kDartSnapshotData symbol",
+    kindLabel: "kind 2 (FullAOT in the renamed single-snapshot layout)",
+    poolLabel: "the _kDartSnapshotData section",
+  },
+  {
+    symbols: [
+      "_kDartVmSnapshotData",
+      "_kDartVmSnapshotInstructions",
+      "_kDartIsolateSnapshotData",
+      "_kDartIsolateSnapshotInstructions",
+    ],
+    poolSymbol: "_kDartIsolateSnapshotData",
+    fullAotKind: 3,
+    hashSources: "the VM and isolate data symbols",
+    kindLabel: "kind 3 (the Dart 2.14 FullAOT layout)",
+    poolLabel: "the isolate data section",
+  },
+] as const;
 const IDENTIFIER_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$]*$/u;
 
 /**
@@ -1194,12 +1222,20 @@ export class FlutterBuildProvider {
     }
     signal?.throwIfAborted();
     const bounded = image.subarray(0, imageLength);
-    const symbolNames = [
-      "_kDartVmSnapshotData",
-      "_kDartVmSnapshotInstructions",
-      "_kDartIsolateSnapshotData",
-      "_kDartIsolateSnapshotInstructions",
-    ];
+    const lookups: {
+      layout: (typeof SNAPSHOT_LAYOUTS)[number];
+      inventory: Awaited<ReturnType<typeof readElfSymbols>>;
+    }[] = [];
+    for (const layout of SNAPSHOT_LAYOUTS) {
+      const inventory = await readElfSymbols(bounded, layout.symbols, signal);
+      lookups.push({ layout, inventory });
+      if (inventory.symbols.length > 0) break;
+    }
+    const { layout, inventory } = lookups.at(-1)!;
+    const symbolNames = layout.symbols;
+    const dataSymbolCount = symbolNames.filter((name) =>
+      name.endsWith("Data"),
+    ).length;
     const sections: {
       name: string;
       offset: number;
@@ -1215,13 +1251,13 @@ export class FlutterBuildProvider {
       header: ReturnType<typeof readSnapshotHeader>;
     }[] = [];
     let isolateData: Buffer | null = null;
-    const inventory = await readElfSymbols(bounded, symbolNames, signal);
     for (const symbol of inventory.symbols) {
       const name = symbol.name;
       const header = name.endsWith("Data")
         ? readSnapshotHeader(
             bounded.subarray(symbol.offset, symbol.offset + symbol.size),
             0,
+            layout.fullAotKind,
           )
         : null;
       sections.push({
@@ -1233,7 +1269,7 @@ export class FlutterBuildProvider {
         header_length: header?.headerLength ?? null,
       });
       if (header !== null) dataHeaders.push({ ...symbol, header });
-      if (name === "_kDartIsolateSnapshotData")
+      if (name === layout.poolSymbol)
         isolateData = image.subarray(
           symbol.offset,
           symbol.offset + symbol.size,
@@ -1267,38 +1303,11 @@ export class FlutterBuildProvider {
         ),
     );
     if (sections.length === 0) {
-      // This is a profile diagnostic, not aliases for the split data sources.
-      // Probe only after the legacy selection fails, leaving its normal path
-      // and two-source completeness rule unchanged.
-      const unified = await readElfSymbols(
-        bounded,
-        ["_kDartSnapshotData", "_kDartSnapshotText"],
-        signal,
-      );
-      if (unified.symbols.length > 0)
-        return err(
-          new AnalysisUnsupportedTargetError(
-            "inspect_dart_aot",
-            path,
-            "Observed unified Dart snapshot exports; this reader supports the legacy split VM/isolate profile (Dart 2.14 FullAOT kind 3). The unified profile is unsupported, not missing legacy data",
-            {
-              diagnostics: {
-                supported_profile: "dart-2.14-split-full-aot",
-                observed_exports: unified.symbols.map(
-                  ({ name, offset, size }) => ({ name, offset, size }),
-                ),
-                abi: selected.abi,
-                libapp_sha256: imageSha256,
-                libapp_bytes: imageLength,
-              },
-            },
-          ),
-        );
       return err(
         new AnalysisUnsupportedTargetError(
           "inspect_dart_aot",
           path,
-          `No recognizable legacy split Dart snapshot symbols were found: ${inventory.failures.map((failure) => failure.reason).join("; ")}`,
+          `No recognizable Dart snapshot symbols were found: ${lookups.flatMap(({ inventory: { failures } }) => failures.map((failure) => failure.reason)).join("; ")}`,
         ),
       );
     }
@@ -1308,10 +1317,10 @@ export class FlutterBuildProvider {
       aliasedDataSymbols ||
       overlappingDataSymbols ||
       sections.length < symbolNames.length ||
-      dataHeaders.length !== SYMBOL_PAIR_COUNT ||
+      dataHeaders.length !== dataSymbolCount ||
       dataHeaders.some((section) => !section.header.complete) ||
       hashScan.candidates.length !== 1 ||
-      hashScan.sources !== SYMBOL_PAIR_COUNT;
+      hashScan.sources !== dataSymbolCount;
     const poolPartial =
       isolateData === null ||
       pool.collectionCapped ||
@@ -1352,14 +1361,14 @@ export class FlutterBuildProvider {
           limitations: [
             "The APK is read through an owned read-only snapshot; concurrent changes to the original cannot mix into this observation",
             "Snapshot sections are located through the ELF dynamic symbol table; a payload without exported snapshot symbols is refused rather than guessed",
-            "Snapshot hash sources are the headers at the start of the VM and isolate data symbols; complete decoding supports kind 3 (the Dart 2.14 FullAOT layout), a valid hash and a declared length that fits its symbol, including the four magic bytes; other kind values remain observed with partial coverage",
-            "String-pool entries are byte-pattern observations from the isolate data section, not deserialized cluster semantics; typed class and function recovery needs an SDK-specific parser",
+            `Snapshot hash sources are the headers at the start of ${layout.hashSources}; complete decoding supports ${layout.kindLabel}, a valid hash and a declared length that fits its symbol, including the four magic bytes; other kind values remain observed with partial coverage`,
+            `String-pool entries are byte-pattern observations from ${layout.poolLabel}, not deserialized cluster semantics; typed class and function recovery needs an SDK-specific parser`,
             "class_like_tokens are identifier-shaped runs and include incidental matches",
             "string-pool counts are lower bounds: collection stops at twice each projection bound, and any value beyond that is counted only through the capped flag",
             ...inventory.failures.map((failure) => failure.reason),
             ...(sections.length < symbolNames.length
               ? [
-                  `Only ${String(sections.length)} of 4 snapshot symbols were present`,
+                  `Only ${String(sections.length)} of ${String(symbolNames.length)} snapshot symbols were present`,
                 ]
               : []),
             ...(aliasedDataSymbols
@@ -1376,7 +1385,7 @@ export class FlutterBuildProvider {
               .filter((section) => !section.header.complete)
               .map(
                 (section) =>
-                  `${section.name} has an incomplete or invalid snapshot header: kind ${String(section.header.kind)} (AOT app requires 3), declared length ${String(section.header.headerLength)} excludes the four magic bytes, symbol size ${String(section.size)}, valid hash ${String(section.header.hash !== null)}`,
+                  `${section.name} has an incomplete or invalid snapshot header: kind ${String(section.header.kind)} (AOT app requires ${String(layout.fullAotKind)}), declared length ${String(section.header.headerLength)} excludes the four magic bytes, symbol size ${String(section.size)}, valid hash ${String(section.header.hash !== null)}`,
               ),
             ...(pool.collectionCapped
               ? [
