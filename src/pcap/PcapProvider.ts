@@ -778,6 +778,7 @@ export class PcapProvider {
         : cause instanceof PcapConfigurationFailure
           ? pcapToolUnavailable(operation, cause.message, {
               cause,
+              diagnostics: cause.diagnostics,
             })
           : new AnalysisProtocolError(
               `Packet-capture analysis failed: ${cause instanceof Error ? cause.message : String(cause)}`,
