@@ -59,6 +59,8 @@ export type FixtureLinkInfo = {
   readonly driveType?: number;
   readonly serial?: number;
   readonly label?: string;
+  /** Bytes between the 16-byte header and an ANSI label. */
+  readonly volumeLabelGap?: Buffer;
   readonly localBasePath?: string;
   readonly commonPathSuffix?: string;
   readonly netName?: string;
@@ -214,17 +216,19 @@ const idListBytes = (items: readonly FixtureIdListItem[]): Buffer => {
 };
 
 const volumeIdBytes = (info: FixtureLinkInfo, unicode: boolean): Buffer => {
-  const ansi = ansiZ(info.label ?? "VOL");
-  const wide = unicode ? utf16z(info.label ?? "VOL") : Buffer.alloc(0);
-  const header = unicode ? 20 : 16;
-  const bytes = Buffer.alloc(header + ansi.length + wide.length);
+  const label = unicode
+    ? utf16z(info.label ?? "VOL")
+    : ansiZ(info.label ?? "VOL");
+  const gap = info.volumeLabelGap ?? Buffer.alloc(0);
+  const header = unicode ? 20 : 16 + gap.length;
+  const bytes = Buffer.alloc(header + label.length);
   writeU32(bytes, 0, bytes.length);
   writeU32(bytes, 4, info.driveType ?? 3);
   writeU32(bytes, 8, info.serial ?? 0x1234abcd);
-  writeU32(bytes, 12, unicode ? 0x14 : 0x10);
-  if (unicode) writeU32(bytes, 16, header + ansi.length);
-  ansi.copy(bytes, header);
-  wide.copy(bytes, header + ansi.length);
+  writeU32(bytes, 12, unicode ? 0x14 : header);
+  if (unicode) writeU32(bytes, 16, header);
+  else gap.copy(bytes, 16);
+  label.copy(bytes, header);
   return bytes;
 };
 

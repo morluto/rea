@@ -284,6 +284,53 @@ it("derives the target extension from the joined base path and suffix", async ()
   });
 });
 
+it("reads a Unicode volume label without inventing an ANSI label", async () => {
+  const report = await parse(
+    windowsShortcutBytes({ linkInfo: { label: "OS" } }),
+  );
+  expect(report.link_info?.volume).toMatchObject({
+    label: null,
+    label_unicode: "OS",
+  });
+  expect(report.issues).toEqual([]);
+});
+
+it("does not read a Unicode label offset past an ANSI label offset", async () => {
+  const report = await parse(
+    windowsShortcutBytes({
+      unicode: false,
+      linkInfo: {
+        label: "DATA",
+        // At the position of VolumeLabelOffsetUnicode, which is absent here.
+        volumeLabelGap: Buffer.from([0x18, 0, 0, 0, 0, 0, 0, 0]),
+      },
+    }),
+  );
+  expect(report.link_info?.volume).toMatchObject({
+    label: "DATA",
+    label_unicode: null,
+  });
+  expect(report.issues).toEqual([]);
+});
+
+it("reports a VolumeID that selects a Unicode label it cannot hold", async () => {
+  const bytes = windowsShortcutBytes({
+    idList: null,
+    linkInfo: { label: "OS" },
+  });
+  const linkInfo = 76;
+  const volume = linkInfo + bytes.readUInt32LE(linkInfo + 12);
+  bytes.writeUInt32LE(16, volume);
+  const report = await parse(bytes);
+  expect(report.link_info?.volume).toMatchObject({
+    label: null,
+    label_unicode: null,
+  });
+  expect(report.issues).toContainEqual(
+    expect.objectContaining({ code: "truncated", offset: volume + 16 }),
+  );
+});
+
 it("keeps readable dates for FILETIME values before 1970", async () => {
   // 1950-01-01T00:00:00Z in 100 ns intervals since 1601.
   const report = await parse(

@@ -23,6 +23,7 @@ const HEADER_BYTES = 76;
 const FILETIME_UNIX_EPOCH = 116444736000000000n;
 const UUID_UNIX_EPOCH = 0x01b21dd213814000n;
 const ENTRIES_PER_YIELD = 32;
+const VOLUME_UNICODE_LABEL_SELECTOR = 0x14;
 /** ECMAScript Date range: 8.64e15 ms either side of the Unix epoch. */
 const MAX_DATE_MS = 8_640_000_000_000_000n;
 
@@ -518,15 +519,25 @@ const parseVolume = (
   }
   const volume = view.subarray(offset, offset + size);
   const labelOffset = volume.readUInt32LE(12);
-  const unicodeOffset =
-    labelOffset >= 0x14 && size >= 20 ? volume.readUInt32LE(16) : 0;
+  // MS-SHLLINK 2.3.1: exactly 0x14 selects VolumeLabelOffsetUnicode, and that
+  // field exists for no other value. The two label encodings never coexist.
+  const hasUnicodeLabel = labelOffset === VOLUME_UNICODE_LABEL_SELECTOR;
+  if (hasUnicodeLabel && size < 20)
+    note(
+      walk,
+      "truncated",
+      base + offset + 16,
+      "VolumeID ends before VolumeLabelOffsetUnicode",
+    );
   return {
     drive_type: driveType(volume.readUInt32LE(4)),
     serial: volume.readUInt32LE(8).toString(16).toUpperCase().padStart(8, "0"),
-    label: readAnsiAt(volume, base + offset, labelOffset, walk),
+    label: hasUnicodeLabel
+      ? null
+      : readAnsiAt(volume, base + offset, labelOffset, walk),
     label_unicode:
-      unicodeOffset > 0
-        ? readUtf16At(volume, base + offset, unicodeOffset, walk)
+      hasUnicodeLabel && size >= 20
+        ? readUtf16At(volume, base + offset, volume.readUInt32LE(16), walk)
         : null,
   };
 };
