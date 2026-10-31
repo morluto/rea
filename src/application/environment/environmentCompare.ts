@@ -81,6 +81,10 @@ export interface CompareStep {
   readonly equal_ignoring_order: boolean;
   readonly categories: DifferenceCategory[];
   readonly differences: Difference[];
+  /** All differences computed for this step, before the returned list is capped. */
+  readonly differences_total: number;
+  readonly differences_omitted: number;
+  readonly differences_truncated: boolean;
   readonly ignored_query: string[];
 }
 
@@ -287,6 +291,8 @@ const stepOf = (
   outcome: { env_status: number | null; differences: Difference[] },
 ): CompareStep => {
   const categories = [...new Set(outcome.differences.map((d) => d.category))];
+  const differences = outcome.differences.slice(0, STEP_DIFFERENCE_LIMIT);
+  const omitted = outcome.differences.length - differences.length;
   return {
     ...base,
     tool: call?.tool.name ?? null,
@@ -296,7 +302,10 @@ const stepOf = (
       (difference) => difference.category === "order",
     ),
     categories,
-    differences: outcome.differences.slice(0, STEP_DIFFERENCE_LIMIT),
+    differences,
+    differences_total: outcome.differences.length,
+    differences_omitted: omitted,
+    differences_truncated: omitted > 0,
     ignored_query: [...(call?.ignoredQuery ?? [])],
   };
 };
