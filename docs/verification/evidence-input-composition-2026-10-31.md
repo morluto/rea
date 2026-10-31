@@ -201,6 +201,16 @@ files passed 104 checks, including source identity, native/process diagnostics,
 investigation composition and session lifecycle: 64.384 s elapsed, 64.066692 CPU s
 and 1,476,808,704 peak bytes. Cleanup was verified with no OOM.
 
+A retained-closure acceptance assertion also assumed that a complete inline
+comparison must already exist in the ledger. The shared workflow intentionally
+uses that supplied record: a missing dependency is reported for inline input,
+while an unresolved selector reports the comparison itself. Both still require
+the full referenced closure. Importing the originating bundle restores both
+forms to complete, equal Evidence. Five relevant acceptance files passed 17
+checks, covering default-budget aggregation, artifact coverage, replay and public
+local contracts: 123.152 s elapsed, 121.276327 CPU s and 1,466,314,752 peak bytes.
+Cleanup was verified with no OOM; runtime code was unchanged.
+
 ## Regression and coverage limits
 
 The focused regression run passed 508 checks covering source integrity, exact

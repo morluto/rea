@@ -3256,5 +3256,34 @@
       "investigation composition",
       "full/compact native directions"
     ]
+  },
+  "closure_acceptance_followup": {
+    "source_head": "a92c947305cf172a415a00ab902e6b0c58885e86",
+    "changes": "Acceptance regression/documentation only; runtime unchanged. Inline comparisons are supplied source records, so missing closure identifies a linked dependency; retained comparison selectors must resolve the comparison itself first.",
+    "files": 5,
+    "tests": 17,
+    "elapsed_seconds": 123.152,
+    "CPU_usec": 121276327,
+    "peak_process_family_bytes": 1466314752,
+    "cleanup_verified": true,
+    "kernel_payload_exit_observation_verified": true,
+    "memory_events": {
+      "low": 0,
+      "high": 0,
+      "max": 0,
+      "oom": 0,
+      "oom_kill": 0,
+      "oom_group_kill": 0
+    },
+    "log_sha256": "f18ff526800c02d0dac778ed9e820f055e9a3eac7f5efd79642e469434bf47cb",
+    "CI_failure_receipt_sha256": "c0512165f3455cb76a7a351361c6d8678867f8a6cf26063225c1e7eeb4cb410f",
+    "coverage": [
+      "inline and retained missing-closure identities",
+      "full originating-bundle recovery and complete output equality",
+      "default1024 retained aggregate capacity",
+      "artifact traversal/comparison coverage",
+      "derived replay preserves analyst revisions",
+      "advertised local tool contracts and malformed process choices"
+    ]
   }
 }
