@@ -174,7 +174,7 @@ image attests that the seeded entry is the only one.
 
 `npm run verify:ghidra:cortex-m` checks this lane against real Ghidra 12.1.4
 with source-owned fixtures and LLVM as the decoding oracle; see
-[testing](testing.md).
+[testing lanes](testing-lanes.md).
 
 ### Identity and Evidence
 

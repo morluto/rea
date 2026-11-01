@@ -698,6 +698,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             }
             row.addProperty("status", relocation.getStatus().toString());
             row.addProperty("type", relocation.getType());
+            row.add("symbol", GSON.toJsonTree(relocation.getSymbolName()));
             row.add("values", GSON.toJsonTree(relocation.getValues() == null ? new long[0] : relocation.getValues()));
             byte[] original = relocation.getBytes();
             row.add("original_bytes_hex", original == null ? JsonNull.INSTANCE : GSON.toJsonTree(bytesHex(original)));
@@ -2281,9 +2282,6 @@ public final class ReaGhidraBridge extends HeadlessScript {
             throw new RequestFailure("invalid_request", "mode must be literal or regex");
         }
         boolean caseSensitive = requireBoolean(params, "case_sensitive");
-        List<InventoryItem> inventory = procedureSearch
-            ? procedures().stream().map(FunctionEntry::item).toList()
-            : strings();
         ValueMatcher matcher;
         if (mode.equals("literal") && !caseSensitive) {
             if (!params.has("literal_ascii_candidate"))
@@ -2297,7 +2295,26 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 : regexMatcher(expression, caseSensitive);
         }
         JsonArray items = new JsonArray();
-        for (InventoryItem item : inventory) {
+        if (procedureSearch) {
+            // Search the names exact lookup accepts, keeping one row per
+            // procedure under its primary name.
+            for (FunctionEntry entry : procedures()) {
+                monitor.checkCancelled();
+                ProcedureNameMatch match = matchProcedureNames(entry, matcher);
+                if (!match.matched()) {
+                    continue;
+                }
+                JsonObject item = resultItem(entry.item, null);
+                if (!match.aliases().isEmpty()) {
+                    JsonArray aliases = new JsonArray();
+                    for (String alias : match.aliases()) aliases.add(alias);
+                    item.add("matched_aliases", aliases);
+                }
+                items.add(item);
+            }
+            return items;
+        }
+        for (InventoryItem item : strings()) {
             monitor.checkCancelled();
             if (!matcher.matches(item.value)) {
                 continue;
@@ -2305,6 +2322,36 @@ public final class ReaGhidraBridge extends HeadlessScript {
             items.add(resultItem(item, null));
         }
         return items;
+    }
+
+    /**
+     * The one definition of the names that select a procedure, shared by exact
+     * lookup and search: its primary name and every other symbol at its exact
+     * entry, each in leaf or namespace-qualified spelling. A label inside the
+     * body never names the procedure. Matching secondary symbols are reported
+     * by their qualified names, sorted.
+     */
+    private ProcedureNameMatch matchProcedureNames(FunctionEntry entry, ValueMatcher matcher) throws Exception {
+        Function function = entry.function;
+        boolean primary = spellingMatches(function.getName(), entry.item.value, matcher);
+        Set<String> aliases = null;
+        for (Symbol symbol : currentProgram.getSymbolTable().getSymbols(function.getEntryPoint())) {
+            monitor.checkCancelled();
+            String qualified = symbol.getName(true);
+            if (!spellingMatches(symbol.getName(), qualified, matcher)) continue;
+            if (qualified.equals(entry.item.value)) {
+                primary = true;
+                continue;
+            }
+            if (aliases == null) aliases = new TreeSet<>();
+            aliases.add(qualified);
+        }
+        return new ProcedureNameMatch(primary, aliases == null ? List.of() : List.copyOf(aliases));
+    }
+
+    /** A leaf is the suffix of its qualified spelling, so a literal found in it is found in both. */
+    private static boolean spellingMatches(String leaf, String qualified, ValueMatcher matcher) {
+        return matcher.matches(qualified) || (!leaf.equals(qualified) && matcher.matches(leaf));
     }
 
     private List<InventoryItem> names() throws Exception {
@@ -2409,26 +2456,13 @@ public final class ReaGhidraBridge extends HeadlessScript {
         // exact symbol name, even when every character is a hexadecimal digit.
         boolean explicitAddress = isExplicitReaAddress(value);
         if (!explicitAddress) {
+            // Imported labels (for example Mach-O _main) can share a function
+            // entry without becoming its primary symbol; search accepts the same.
+            ValueMatcher selector = value::equals;
             List<Function> matches = new ArrayList<>();
             for (FunctionEntry entry : procedures()) {
                 monitor.checkCancelled();
-                Function function = entry.function;
-                Symbol symbol = function.getSymbol();
-                String qualified = symbol == null ? function.getName() : symbol.getName(true);
-                boolean matchesName = function.getName().equals(value) || qualified.equals(value);
-                if (!matchesName) {
-                    // Imported labels (for example Mach-O _main) can share a
-                    // function entry without becoming its primary symbol. Only
-                    // exact entries qualify; an interior label is not a selector.
-                    for (Symbol entrySymbol : currentProgram.getSymbolTable().getSymbols(function.getEntryPoint())) {
-                        monitor.checkCancelled();
-                        if (entrySymbol.getName().equals(value) || entrySymbol.getName(true).equals(value)) {
-                            matchesName = true;
-                            break;
-                        }
-                    }
-                }
-                if (matchesName) matches.add(function);
+                if (matchProcedureNames(entry, selector).matched()) matches.add(entry.function);
             }
             if (matches.size() > 1)
                 throw new RequestFailure("ambiguous", "Ghidra procedure name is ambiguous: " + value +
@@ -5155,6 +5189,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private record AddressNameConflict(Namespace namespace, String leaf, List<Address> requesters, List<Address> holders) {}
     private record AddressNameFailure(String reason, AddressNameConflict conflict) {}
     private record FunctionEntry(Function function, InventoryItem item) {}
+    private record ProcedureNameMatch(boolean primary, List<String> aliases) {
+        boolean matched() {
+            return primary || !aliases.isEmpty();
+        }
+    }
     private record FunctionAnalysisObservation(JsonObject dossier, List<String> limitations, JsonObject relationshipCoverage, boolean decompilerFailed) {}
     private record CallBoundaryObservation(List<String> limitations, Integer unrepresentedCalleeCalls, JsonArray unresolvedCalls) {}
     private record SwiftStringLiteralDecode(JsonArray literals, JsonArray omissions) {}

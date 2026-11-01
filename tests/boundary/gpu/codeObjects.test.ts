@@ -499,14 +499,17 @@ it.each([
   const inventory = await inspect(bytes, { analysis: "inventory" });
   if (!inventory.ok) throw inventory.error;
   const row = inventory.value.objects.find((value) => value.kind === "amdgpu")!;
-  expect(row.target).not.toBeNull();
-  const selected = await inspect(bytes, { targets: [row.target!] });
+  const expectedTarget = targetId.endsWith("opaque")
+    ? "amdgcn-amd-amdhsa--gfx900"
+    : "gfx900";
+  expect(row.target).toBe(expectedTarget);
+  const selected = await inspect(bytes, { targets: [expectedTarget] });
   if (!selected.ok) throw selected.error;
   expect(selected.value.kernels).toHaveLength(1);
   expect(
     selected.value.objects.find((value) => value.kind === "amdgpu"),
   ).toMatchObject({
-    target: row.target,
+    target: expectedTarget,
     payload_target: "amdgcn-amd-amdhsa--gfx900",
     target_consistency: targetId.endsWith("opaque")
       ? "single-source"

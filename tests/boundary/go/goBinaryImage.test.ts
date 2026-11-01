@@ -119,6 +119,7 @@ it.each([
 it("continues past an empty file-backed ELF data load", () => {
   const fixture = createGoSplitElfFixture({ sectionless: true });
   const expected = readGoBinaryImage(fixture.bytes).build_info;
+  expect(expected).not.toBeNull();
   fixture.bytes.writeBigUInt64LE(0n, 128 + 32);
   expect(readGoBinaryImage(fixture.bytes).build_info).toEqual(expected);
 });
@@ -135,6 +136,7 @@ it.each([4, 5, 7])(
 it("prefers the named ELF section to an earlier writable-load marker", () => {
   const fixture = createGoSplitElfFixture();
   const expected = readGoBinaryImage(fixture.bytes).build_info;
+  expect(expected).not.toBeNull();
   fixture.bytes.copy(
     fixture.bytes,
     512,

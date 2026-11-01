@@ -68,7 +68,10 @@ function renamed to `dead` remains selectable by name. Use the names returned
 by the inventory, including their namespaces and any platform symbol prefix.
 Ghidra also accepts secondary symbols at a function entry, such as an imported
 `_main` label. A label inside a function is not a procedure-name selector; use
-its address when selecting the containing function.
+its address when selecting the containing function. `search_procedures` matches
+the same names, in leaf or qualified spelling: the function appears once with
+its primary name as `value`, and `matched_aliases` lists the qualified names of
+the secondary symbols that matched.
 Overloads can share a fully qualified name; ambiguity errors return every
 matching entry address so the caller can select the intended function directly.
 

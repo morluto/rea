@@ -13,6 +13,7 @@ import {
   flutterResultSchemas,
 } from "../../../src/domain/flutter/flutterBuildAnalysis.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { parseMcpEvidenceBundle } from "../../fixtures/mcpEvidenceBundle.js";
 import { aotFixtureImage } from "../../../src/flutter/FlutterBuild.fixture.js";
 import { createFlutterApk } from "../../fixtures/flutterApk.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
@@ -318,6 +319,14 @@ it("advertises an exact valid Flutter schema and records inline evidence through
     .map((part) => part.text ?? "")
     .join("");
   const inspectedEvidence = parseEvidence(JSON.parse(inspectedText));
+  const bundle = await client.callTool({
+    name: "get_evidence_bundle",
+    arguments: {},
+  });
+  expect(bundle.isError).not.toBe(true);
+  const records = parseMcpEvidenceBundle(bundle).records;
+  expect(records).toContainEqual(evidence);
+  expect(records).toContainEqual(inspectedEvidence);
   expect(inspectedEvidence.normalized_result).toMatchObject({
     abi: "arm64-v8a",
     libapp: {

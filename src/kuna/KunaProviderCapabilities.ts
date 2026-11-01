@@ -5,8 +5,8 @@ import {
 import type {
   AnalysisOperation,
   CapabilityDescriptor,
+  ProviderAvailability,
 } from "../application/AnalysisProvider.js";
-import type { ProviderRejectionCode } from "../domain/providerSelection.js";
 
 import {
   DEFAULT_REGEX_MATCHING_DEADLINE,
@@ -97,25 +97,20 @@ export const KUNA_SINGLE_FUNCTION_LIMITATION =
 
 /** Advertise Kuna's static, process-launching operations truthfully. */
 export const kunaCapabilities = (
-  availability:
-    | { readonly available: true }
-    | {
-        readonly available: false;
-        readonly reason: string;
-        readonly code: ProviderRejectionCode;
-      },
+  availability: ProviderAvailability,
   deadline: RegexMatchingDeadline = DEFAULT_REGEX_MATCHING_DEADLINE,
   heapRequest: RegexWorkerHeapRequest = DEFAULT_REGEX_WORKER_HEAP_REQUEST,
 ): readonly CapabilityDescriptor[] =>
   KUNA_OPERATIONS.map((operation) => ({
     provider: KUNA_PROVIDER_IDENTITY,
     operation,
-    ...(availability.available
+    ...(availability.status === "available"
       ? ({ available: true, reason: null } as const)
       : ({
           available: false,
           reason: availability.reason,
           availabilityCode: availability.code,
+          remediation: availability.remediation,
         } as const)),
     // Text can change when the export finishes. References own bounded session
     // reuse; generic snapshot replay must not bypass that lifecycle.

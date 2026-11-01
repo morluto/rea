@@ -6,6 +6,7 @@ import { isAbsolute, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv2020 from "ajv/dist/2020.js";
 import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
+import { isPathWithinRoot } from "../dist/domain/localPath.js";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
@@ -54,6 +55,7 @@ const expectedNames = TOOL_CONTRACTS.map(
 ).sort();
 let clientVersion = null;
 let expectedSkill;
+let skillCallId;
 let inventoryChecked = false;
 let catalogSize = null;
 let skillLoaded = false;
@@ -180,10 +182,24 @@ await withVerifierCleanup(async () => {
           finalSeen = true;
           return { role: "assistant", content: "REA_CLIENT_COMPATIBILITY_OK" };
         }
-        if (stage === 0)
-          return call("activate_skill", { name: "reverse-engineer-anything" });
+        if (stage === 0) {
+          const request = call("activate_skill", {
+            name: "reverse-engineer-anything",
+          });
+          skillCallId = request.tool_calls[0].id;
+          return request;
+        }
         assert(
-          strings.some((text) => text.includes(expectedSkill)),
+          skillCallId !== undefined &&
+            expectedSkill !== undefined &&
+            body.messages.some(
+              (message) =>
+                message.role === "tool" &&
+                message.tool_call_id === skillCallId &&
+                textValues(message.content).some((text) =>
+                  text.includes(expectedSkill),
+                ),
+            ),
           "The model must receive the complete activated skill body",
         );
         skillLoaded = true;
@@ -322,8 +338,8 @@ await withVerifierCleanup(async () => {
           result.plannedActions.every(
             (action) =>
               action.target === configPath ||
-              action.target === skillDirectory ||
-              action.target.startsWith(skillDirectory + "/"),
+              (isAbsolute(action.target) &&
+                isPathWithinRoot(skillDirectory, action.target)),
           ),
           "Refuse setup writes outside the disposable account's configuration and skill",
         );
@@ -342,9 +358,16 @@ await withVerifierCleanup(async () => {
     assert.deepEqual(repeated.appliedActions, []);
     assert.equal(await readFile(configPath, "utf8"), configured);
     assert.equal(await readFile(`${configPath}.rea.backup`, "utf8"), original);
-    expectedSkill = (await readFile(join(skillDirectory, "SKILL.md"), "utf8"))
-      .replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, "")
-      .trim();
+    const installedSkill = await readFile(
+      join(skillDirectory, "SKILL.md"),
+      "utf8",
+    );
+    const frontmatter = /^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/u.exec(
+      installedSkill,
+    );
+    assert(frontmatter, "Installed skill must have authored frontmatter");
+    expectedSkill = installedSkill.slice(frontmatter[0].length).trim();
+    assert(expectedSkill.length > 0, "Installed skill body must not be empty");
     const response = await saveVerifierCommandOutput(
       () =>
         commands.exec(

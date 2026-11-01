@@ -56,6 +56,8 @@ export const nativeLoadImageObservationSchema = z.strictObject({
       offset: integer.max(0xffff).nullable(),
       status: z.string().min(1),
       type: z.int(),
+      // Missing on retained observations made before the provider recorded it.
+      symbol: z.string().nullable().exactOptional(),
       values: z.array(
         z.int().min(Number.MIN_SAFE_INTEGER).max(Number.MAX_SAFE_INTEGER),
       ),

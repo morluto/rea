@@ -1,19 +1,18 @@
 import { ProviderAdapterError } from "./providerAdapterError.js";
-import {
-  projectAnalysisError,
-  projectAnalysisErrorWithoutCapturedOutput,
-} from "./analysisErrorProjection.js";
+import { childFailureDiagnostics } from "./analysisErrorProjection.js";
 import type { AnalysisError } from "./analysisErrorBase.js";
-import { analysisErrorRemediationAction } from "./analysisErrorPresentation.js";
+import {
+  analysisErrorUserMessage,
+  composedCallerGuidance,
+} from "./analysisErrorPresentation.js";
 
 /** Preserve the original lifecycle failure alongside incomplete cleanup. */
 export const analysisErrorWithCleanupFailure = (
   primary: AnalysisError,
   cleanup: AnalysisError,
   operation = "close_binary",
-): AnalysisError => {
-  const projected = projectAnalysisError(cleanup);
-  return new ProviderAdapterError(
+): AnalysisError =>
+  new ProviderAdapterError(
     cleanup instanceof ProviderAdapterError ? cleanup.providerId : "rea",
     operation,
     {
@@ -23,9 +22,8 @@ export const analysisErrorWithCleanupFailure = (
         "Analysis failed and cleanup remains incomplete.",
         { cause: primary },
       ),
-      userMessage: projectAnalysisError(primary).message,
       // A retry offer belongs to the owner of the composed resources, if any.
-      remediationAction: analysisErrorRemediationAction(cleanup),
+      ...composedCallerGuidance({ message: primary, remediation: cleanup }),
       ...(primary.capturedOutput === undefined
         ? {}
         : { capturedOutput: primary.capturedOutput }),
@@ -33,7 +31,9 @@ export const analysisErrorWithCleanupFailure = (
         ? {}
         : { partialObservation: primary.partialObservation }),
       cleanup: {
-        reason: cleanup.cleanup?.reason ?? projected.message,
+        reason:
+          cleanup.cleanup?.reason ??
+          analysisErrorUserMessage(cleanup, "invocation"),
         resources: [
           ...new Set([
             ...(primary.cleanupIncomplete ? primary.cleanupResources : []),
@@ -41,13 +41,14 @@ export const analysisErrorWithCleanupFailure = (
           ]),
         ],
       },
-      diagnostics: {
-        primary_error:
-          primary.capturedOutput === undefined
-            ? projectAnalysisError(primary)
-            : projectAnalysisErrorWithoutCapturedOutput(primary),
-        cleanup_error: projected,
-      },
+      ...childFailureDiagnostics({
+        primary_error: {
+          error: primary,
+          ...(primary.capturedOutput === undefined
+            ? {}
+            : { capturedOutput: "omit" as const }),
+        },
+        cleanup_error: { error: cleanup },
+      }),
     },
   );
-};
