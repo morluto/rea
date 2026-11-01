@@ -1069,6 +1069,12 @@ not fit the MCP response, the original retention error carries
 `details.partial_observation_omitted` with the response constraint if the
 remaining error fits; the observation remains unretained. Otherwise the usual
 oversized-error recovery applies.
+When an atomic derived-Evidence and Unknown write exceeds the allowance after
+authentication, the completed Evidence is returned the same way if absent from
+the investigation. If that exact Evidence was already present, the error
+instead carries `{kind: "retained-evidence", evidence_id: ...}` for the current
+session. The refused write adds neither a record nor an Unknown revision; a
+previously retained record or Unknown remains available.
 The broader retention decision is tracked in
 [#4276](https://github.com/morluto/rea/issues/4276).
 

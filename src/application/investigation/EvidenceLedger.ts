@@ -9,7 +9,10 @@ import {
   validateResidualUnknownAddition,
   type EvidenceBundle,
 } from "../../domain/evidenceBundle.js";
-import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisInputError,
+  AnalysisResourceConstraintError,
+} from "../../domain/analysisErrorCore.js";
 import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import { UnknownRegistryError } from "../../domain/unknownRegistryError.js";
 import { isImmutableEvidence, type Evidence } from "../../domain/evidence.js";
@@ -108,17 +111,8 @@ export class EvidenceLedger {
       "record_evidence",
       new Map([[evidence.evidence_id, evidence]]),
     );
-    // Authentication already produced an immutable record; admission did not
-    // commit it, so expose it without claiming a retained-session reference.
     if (!admitted.ok)
-      return err(
-        admitted.error.retainPartialObservation(
-          freezeJsonSnapshot({
-            kind: "unretained-evidence" as const,
-            evidence,
-          }),
-        ),
-      );
+      return err(this.#exposeRefusedEvidence(admitted.error, evidence));
     this.#records.set(evidence.evidence_id, evidence);
     this.#commitAccounting(admitted.value);
     return ok("added");
@@ -373,12 +367,36 @@ export class EvidenceLedger {
       if (creationUnknown.revision_digest !== unknown.revision_digest)
         return err(new UnknownRegistryError("already-exists"));
       const checked = this.#appendIncremental([evidence]);
-      if (!checked.ok) return checked;
+      if (!checked.ok)
+        return err(this.#exposeRefusedEvidence(checked.error, evidence));
       return ok(null);
     }
     const checked = this.#appendIncremental([evidence, mutation], unknown);
-    if (!checked.ok) return checked;
+    if (!checked.ok)
+      return err(this.#exposeRefusedEvidence(checked.error, evidence));
     return ok(structuredClone(unknown));
+  }
+
+  /** Report authenticated completed Evidence without inferring membership from this attempt. */
+  #exposeRefusedEvidence(
+    error: AnalysisError,
+    evidence: Evidence,
+  ): AnalysisError {
+    if (
+      !(error instanceof AnalysisResourceConstraintError) ||
+      error.resource !== "capacity"
+    )
+      return error;
+    return error.retainPartialObservation(
+      freezeJsonSnapshot(
+        this.#records.has(evidence.evidence_id)
+          ? {
+              kind: "retained-evidence" as const,
+              evidence_id: evidence.evidence_id,
+            }
+          : { kind: "unretained-evidence" as const, evidence },
+      ),
+    );
   }
 
   /** Apply one approved full-state update using optimistic revision matching. */
