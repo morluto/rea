@@ -6,6 +6,17 @@
 /** Header/index bytes admitted when the setting is unset. */
 export const DEFAULT_ASAR_MAX_HEADER_BYTES = 16 * 1024 * 1024;
 
+/** Aggregate compiler-version and module bytes admitted by the Go reader. */
+export const DEFAULT_GO_MAX_BUILD_INFO_BYTES = 1024 * 1024;
+
+/**
+ * Opt-in REA policy ceiling, not a Go format or host-memory limit. Decoding
+ * retains text, base64 and parsed module records alongside the source bytes.
+ * Bound that input to 16 MiB; the independent 8 MiB complete-report allowance
+ * still applies and may refuse a report below this admission ceiling.
+ */
+export const MAXIMUM_GO_MAX_BUILD_INFO_BYTES = 16 * 1024 * 1024;
+
 /**
  * Largest configurable admission. The header JSON is decoded into one string
  * and parsed in memory; 256 MiB keeps that text and its parse copy well below

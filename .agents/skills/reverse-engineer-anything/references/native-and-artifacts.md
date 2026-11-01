@@ -64,6 +64,12 @@ See [desktop installations](https://github.com/morluto/rea/blob/main/docs/deskto
 
 ## Go build metadata
 
+For a Go embedded-string admission failure, use `details.limit` and raise
+`go.max_build_info_bytes` with `update_analysis_settings` before retrying the
+same request. Default: 1 MiB; policy ceiling: 16 MiB. CLI launch seed:
+`REA_GO_MAX_BUILD_INFO_BYTES`. The complete-report allowance remains 8 MiB,
+so raising string admission does not guarantee delivery of a larger report.
+
 Use `inspect_go_binary` for an explicit local ELF, PE or Mach-O (universal
 files need `architecture`) when the
 question concerns the embedded compiler version, module/dependency versions,
