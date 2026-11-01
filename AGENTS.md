@@ -83,6 +83,12 @@ Coordinate expensive checks across agents. If a test unexpectedly consumes heavy
 
 For tool design, follow [docs/tool-design.md](docs/tool-design.md): start from the analyst question, reuse existing contracts, preserve caller choices, and return useful evidence inline. Limits must follow real format, protocol, authority, or resource constraints. Account for representation expansion before allocation; derive completeness from examined coverage.
 
+For user- or agent-facing tool problems, prioritize fixing the owning behavior,
+contract, and actionable result or recovery at the point of use. Document the
+result in product docs when explanation is needed. Add skill guidance only for
+workflow judgment or context that the tool cannot reasonably convey; do not use
+a skill as the primary repair for a discoverability or contract defect.
+
 For test changes or provider claims, use [docs/testing.md](docs/testing.md). Select applicable [boundary regressions](docs/testing.md#boundary-regressions) for parser, inventory, snapshot, and projection fixes. Prefer real public CLI/MCP workflows, then production-boundary integration, then producer goldens. Keep module tests for distinct semantics stronger workflows cannot reliably reproduce. Preserve malformed-input, cancellation, cleanup, permission, capacity, and target-identity coverage when pruning. Report unverified coverage explicitly; simulated providers do not establish real-provider behavior.
 
 Use Conventional Commit subjects and PR titles. Mark breaking changes with `!` or a `BREAKING CHANGE:` footer. Describe behavior changes, relevant validation, and real-provider verification scope.
