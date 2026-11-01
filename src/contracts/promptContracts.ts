@@ -436,7 +436,7 @@ export const PROMPT_CONTRACTS = [
       {
         tools: ["capture_process_scenario"],
         instruction:
-          "Prepare the scenario without running it. Specify the selected command, inputs, effective working directory, expected observations, timeout, and cleanup. Explain command lookup, inherited environment, optional filesystem observations, and that a later capture runs with the current user's permissions. A selected executable and working directory do not authorize execution.",
+          "Prepare the scenario without running it. Specify the selected command, inputs, effective working directory, expected observations, timeout, and cleanup. Explain command lookup, inherited environment, optional filesystem observations, and that a later capture runs with the current user's permissions. A selected executable and working directory do not authorize execution. Call capture_process_scenario with dry_run: true to validate and return the resolved plan without launching it.",
       },
       {
         tools: ["compare_process_captures"],

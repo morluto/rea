@@ -122,9 +122,12 @@ export const processScenarioCommitment = (
   scenario: ProcessScenario,
   executableSha256?: string,
 ): Readonly<Record<string, unknown>> => {
-  // A zero interval is today's immediate kill; leaving it out keeps the
-  // committed identity of every scenario that predates the field unchanged.
-  const { finalization_ms: finalizationMs, ...committed } = scenario;
+  // dry_run selects a preparation operation, not a different scenario.
+  const {
+    dry_run: _dryRun,
+    finalization_ms: finalizationMs,
+    ...committed
+  } = scenario;
   return {
     ...committed,
     ...(finalizationMs > 0 ? { finalization_ms: finalizationMs } : {}),
@@ -181,6 +184,12 @@ export const processScenarioSchema = z
   .strictObject({
     executable: childProcessString.min(1),
     arguments: z.array(childProcessString).default([]),
+    dry_run: z
+      .boolean()
+      .default(false)
+      .describe(
+        "Validate and return the resolved scenario without launching it. A planned result is not capture Evidence and records no process observation.",
+      ),
     working_directory: childProcessString.default("."),
     environment: processEnvironmentSchema.default({}),
     filesystem_observation_paths: z
@@ -345,3 +354,17 @@ const eventsOutOfOrder = (
 
 /** Parsed instructions and resource bounds for one process experiment. */
 export type ProcessScenario = z.infer<typeof processScenarioSchema>;
+
+// The source scenario is already refined by processScenarioSchema. The plan
+// schema validates the resolved projection without repeating those checks.
+const { dry_run: _dryRun, ...processScenarioPlanShape } =
+  processScenarioSchema.shape;
+
+/** Resolved, non-executing scenario returned by a dry run. */
+export const processScenarioPlanSchema = z.strictObject({
+  status: z.literal("planned"),
+  scenario: z.strictObject(processScenarioPlanShape),
+  ambient_environment: z.literal("inherited-at-run"),
+});
+
+export type ProcessScenarioPlan = z.infer<typeof processScenarioPlanSchema>;

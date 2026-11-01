@@ -15,13 +15,21 @@ import {
   type ProcessCapture,
 } from "../../domain/process/processCaptureParsing.js";
 import { safeParseEvidence } from "../../domain/evidenceValidation.js";
-import type { ProcessScenario } from "../../domain/process/processScenario.js";
+import {
+  processScenarioPlanSchema,
+  type ProcessScenario,
+} from "../../domain/process/processScenario.js";
 import type { ParsedProcessCaptureEvidence } from "../../domain/process/processComparisonEvidence.js";
 import { err, ok, type Result } from "../../domain/result.js";
 
 const PROCESS_CAPTURE_EVIDENCE = {
   operation: "capture_process_scenario",
   predicate: "rea.process-capture",
+} as const;
+
+const PROCESS_SCENARIO_PLAN_EVIDENCE = {
+  operation: "capture_process_scenario",
+  predicate: "rea.process-scenario-plan",
 } as const;
 
 /** Semantic rejection facts; CLI and MCP retain their own error projections. */
@@ -68,7 +76,7 @@ export const parseProcessCaptureEvidence = (
 
 /** Project one process scenario into secret-free Evidence parameters. */
 const processEvidenceParameters = (
-  scenario: ProcessScenario,
+  scenario: Omit<ProcessScenario, "dry_run">,
   platform: ProcessCapture["manifest"]["platform"],
 ): Readonly<Record<string, JsonValue>> => ({
   executable_name: (platform === "win32" ? win32 : posix).basename(
@@ -100,5 +108,29 @@ export const createProcessCaptureEvidence = (
       isolation: "process",
     },
     limitations: capture.limitations,
+  });
+};
+
+/** Create one canonical planned-scenario Evidence record without observing a process. */
+export const createProcessScenarioPlanEvidence = (
+  scenario: Omit<ProcessScenario, "dry_run">,
+  platform: ProcessCapture["manifest"]["platform"] = process.platform,
+) => {
+  const plan = processScenarioPlanSchema.parse({
+    status: "planned",
+    scenario,
+    ambient_environment: "inherited-at-run",
+  });
+  return createEvidence(undefined, PROCESS_PROVIDER, {
+    predicateType: PROCESS_SCENARIO_PLAN_EVIDENCE.predicate,
+    operation: PROCESS_SCENARIO_PLAN_EVIDENCE.operation,
+    parameters: processEvidenceParameters(scenario, platform),
+    result: plan,
+    confidence: "derived",
+    authority: "controlled-replay",
+    environment: null,
+    limitations: [
+      "Planned only; no process was launched. Runtime behavior, exit, cleanup and the inherited ambient environment remain unobserved.",
+    ],
   });
 };

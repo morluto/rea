@@ -110,6 +110,7 @@ import {
 } from "./toolOutputSchemaPrimitives.js";
 
 import { processCaptureSchema } from "../domain/process/processCapture.js";
+import { processScenarioPlanSchema } from "../domain/process/processScenario.js";
 import { electronFuseReportSchema } from "../domain/electron/electronFuses.js";
 const contextFacetSchema = z.discriminatedUnion("state", [
   z.object({ state: z.literal("available"), value: jsonValueSchema }),
@@ -596,7 +597,9 @@ export const sessionOutputSchemas = {
       total: z.int().min(0),
     }),
   ),
-  capture_process_scenario: evidenceResultOf(processCaptureSchema),
+  capture_process_scenario: evidenceResultOf(
+    z.union([processCaptureSchema, processScenarioPlanSchema]),
+  ),
   compare_process_captures: evidenceResultOf(processCaptureComparisonSchema),
   compare_artifacts: evidenceResultOf(artifactComparisonResultSchema),
   compare_functions: evidenceResultOf(functionComparisonResultSchema),

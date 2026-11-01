@@ -48,6 +48,26 @@ it("defaults the finalization interval to zero without changing committed identi
   ).toBe(false);
 });
 
+it("keeps the dry-run operation out of capture identity", () => {
+  const capture = processScenarioSchema.parse(baseScenario);
+  const planned = processScenarioSchema.parse({
+    ...baseScenario,
+    dry_run: true,
+  });
+
+  expect(capture.dry_run).toBe(false);
+  expect(planned.dry_run).toBe(true);
+  expect(Object.hasOwn(processScenarioCommitment(planned), "dry_run")).toBe(
+    false,
+  );
+  expect(processScenarioCommitment(planned)).toEqual(
+    processScenarioCommitment(capture),
+  );
+  expect(processComparisonContract(planned)).toEqual(
+    processComparisonContract(capture),
+  );
+});
+
 it("accepts an explicit zero finalization interval", () => {
   expect(
     processScenarioSchema.parse({ ...baseScenario, finalization_ms: 0 }),

@@ -8,6 +8,7 @@ import { expect, it } from "vitest";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../../src/domain/process/processCaptureExample.js";
+import type { ProcessCapture } from "../../../src/domain/process/processCaptureParsing.js";
 import { PROCESS_PROVIDER } from "../../../src/domain/process/processEvidenceProvider.js";
 import { itWithCaptureCapability as captureTest } from "../../boundary/process/processCaptureCapability.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
@@ -21,6 +22,15 @@ const nul = "/tmp/selected\0filename";
 const electron = {
   executable_path: "/tmp/Electron",
   application_path: "/tmp/main.js",
+};
+
+const captureResult = (value: unknown): ProcessCapture => {
+  const normalized = toolContract(
+    "capture_process_scenario",
+  ).outputSchema.parse(value).normalized_result;
+  if ("status" in normalized && normalized.status === "planned")
+    throw new Error("expected process capture output");
+  return normalized as ProcessCapture;
 };
 
 it("keeps overall replay verification unknown when capture divergence is unknown", async () => {
@@ -530,15 +540,15 @@ captureTest.each(["untruncated", "truncated"] as const)(
       limits: captureState === "truncated" ? { output_bytes: 128 } : {},
     });
     expect(captured.isError, JSON.stringify(captured)).not.toBe(true);
-    const capture = toolContract("capture_process_scenario").outputSchema.parse(
+    const source = toolContract("capture_process_scenario").outputSchema.parse(
       captured.structuredContent,
     );
-    const source = capture;
+    const capture = captureResult(source);
     if (captureState === "untruncated")
-      expect(
-        capture.normalized_result.frames.map((frame) => frame.data).join(""),
-      ).toContain("value ordinary-evidence caller-value");
-    else expect(capture.normalized_result.truncated).toBe(true);
+      expect(capture.frames.map((frame) => frame.data).join("")).toContain(
+        "value ordinary-evidence caller-value",
+      );
+    else expect(capture.truncated).toBe(true);
     const environment = await call("capture_process_scenario", {
       executable: "/usr/bin/printenv",
       arguments: ["1"],
@@ -547,15 +557,15 @@ captureTest.each(["untruncated", "truncated"] as const)(
     const environmentEnvelope = toolContract(
       "capture_process_scenario",
     ).outputSchema.parse(environment.structuredContent);
-    const received = environmentEnvelope.normalized_result.frames
-      .map((frame) => frame.data)
+    const received = captureResult(environmentEnvelope)
+      .frames.map((frame) => frame.data)
       .join("");
     expect(received).toBe("numbered\r\n");
     expect(await readFile(join(root, "state"), "utf8")).toBe("selected");
-    expect(capture.normalized_result.filesystem_effects).toEqual(
+    expect(capture.filesystem_effects).toEqual(
       expect.arrayContaining([expect.objectContaining({ status: "created" })]),
     );
-    expect(capture.normalized_result.cleanup).toMatchObject({
+    expect(capture.cleanup).toMatchObject({
       owned_process_group: "verified",
       temporary_root: "removed",
     });
@@ -661,18 +671,16 @@ captureTest(
       events: [{ type: "input", at_ms: 1000, data: "\0" }],
     });
     expect(response.isError, JSON.stringify(response)).not.toBe(true);
-    const capture = toolContract("capture_process_scenario").outputSchema.parse(
-      response.structuredContent,
+    const capture = captureResult(response.structuredContent);
+    expect(capture.frames.map((frame) => frame.data).join("")).toContain(
+      "stdin-byte:0",
     );
-    expect(
-      capture.normalized_result.frames.map((frame) => frame.data).join(""),
-    ).toContain("stdin-byte:0");
-    expect(capture.normalized_result.manifest.scenario).toMatchObject({
+    expect(capture.manifest.scenario).toMatchObject({
       environment: {},
       filesystem_observation_paths: [],
       terminal: { columns: 80, rows: 24, scrollback: 1000 },
     });
-    expect(capture.normalized_result.interaction_events).toEqual(
+    expect(capture.interaction_events).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           type: "input",

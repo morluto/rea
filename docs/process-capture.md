@@ -74,6 +74,16 @@ Read the result's terminal observations, exit/settlement status, and cleanup
 outcome. [Scenario and result details](#scenario-and-result-details) describe
 limits, normalization, filesystem coverage, and incomplete observations.
 
+## Prepare without launching
+
+Add `"dry_run": true` to the scenario, or pass `dry_run: true` to the MCP tool,
+to resolve the executable, working directory, observation paths and admission
+checks without starting a process. The result is planned Evidence with the
+`rea.process-scenario-plan` predicate, not capture Evidence; comparison tools
+refuse it as a capture. Use it to review a scenario before separately requesting
+execution. A planned result does not establish runtime behavior, exit status,
+cleanup or the inherited ambient environment.
+
 ## Compare two captures
 
 Compare saved capture Evidence with:
