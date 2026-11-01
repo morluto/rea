@@ -31,3 +31,14 @@ it("keeps the public entropy input closed after detail is added", () => {
     entropy.inputSchema.safeParse({ path: "/file", block_size: 257 }).success,
   ).toBe(false);
 });
+
+it("requires an absolute local path for the public entropy input", () => {
+  // The canonical parser refuses a relative path, and the full-profile
+  // advertisement states the requirement. The compact profile reduces this
+  // property to its declared type, so it carries the requirement in the
+  // property description instead; see the compact boundary test.
+  for (const path of ["sample.bin", "./sample.bin", "../sample.bin"]) {
+    expect(entropy.inputSchema.safeParse({ path }).success, path).toBe(false);
+  }
+  expect(entropy.inputSchema.safeParse({ path: "/file" }).success).toBe(true);
+});

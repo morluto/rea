@@ -13,7 +13,11 @@ interface PathInputCase {
   readonly field: string;
   readonly valid: Readonly<Record<string, unknown>>;
   readonly invalid: Readonly<Record<string, unknown>>;
-  readonly issuePath?: readonly string[];
+  /**
+   * `null` skips the structured issue assertion. Used where the reported shape
+   * is not stable across host platforms.
+   */
+  readonly issuePath?: readonly string[] | null;
 }
 
 const createMcp = async (
@@ -87,12 +91,17 @@ const standaloneAnalysisCases = (
       name: "decode_signal_recording",
       input: { decoders: "uart:rx=RX:baudrate=9600" },
     },
-  ].map(({ name, input }) => ({
+    // The reported issue shape for this tool depends on the host platform: on
+    // Linux it matches its siblings, while on Windows the rejection surfaces as
+    // a root-level issue with reason `invalid_value`. Only the platform-stable
+    // facts are asserted, so the structured issue check is skipped here.
+    { name: "inspect_byte_entropy", input: {}, issuePath: null },
+  ].map(({ name, input, issuePath = ["path"] }) => ({
     name,
     field: "path",
     valid: { ...input, path: absolute },
     invalid: { ...input, path: relative },
-    issuePath: ["path"],
+    issuePath,
   }));
 
 const inputCases = (
@@ -300,7 +309,13 @@ it("rejects relative paths through in-memory MCP handlers", async () => {
       const result = await client.callTool({ name, arguments: invalid });
       expect(result.isError, `${name}.${field}`).toBe(true);
       expect(JSON.stringify(result), `${name}.${field}`).toContain("absolute");
-      if (issuePath !== undefined)
+      // The rejection must land at input validation rather than later inside the
+      // handler. The code and category are stable across host platforms, unlike
+      // the per-field issue shape below.
+      const error = parseMcpToolError(result).error;
+      expect(error.code, `${name}.${field}`).toBe("invalid_request");
+      expect(error.category, `${name}.${field}`).toBe("invalid_input");
+      if (issuePath != null)
         expect(parseMcpToolError(result).error.details).toMatchObject({
           operation: name,
           issues: [{ path: issuePath, reason: "invalid_format" }],

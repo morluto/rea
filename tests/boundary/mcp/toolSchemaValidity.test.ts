@@ -749,6 +749,60 @@ describe("MCP root input schemas", () => {
   });
 });
 
+const byteEntropyContract = () => {
+  const contract = TOOL_CONTRACTS.find(
+    ({ name }) => name === "inspect_byte_entropy",
+  );
+  if (contract === undefined)
+    throw new Error("inspect_byte_entropy was not registered");
+  return contract;
+};
+
+/**
+ * Advertise the byte-entropy contract on a real MCP server. This file asserts the
+ * advertised schema itself; canonical rejection over the wire for both
+ * input-schema profiles lives in
+ * tests/boundary/mcp/absoluteLocalPathSchema.test.ts.
+ */
+const byteEntropyAdvertisedSchema = async (): Promise<
+  Record<string, unknown>
+> => {
+  const server = new McpServer({ name: "schema-entropy-path", version: "0" });
+  const client = new Client({ name: "schema-entropy-path", version: "0" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  const contract = byteEntropyContract();
+  server.registerTool(
+    contract.name,
+    toolRegistrationOptions(contract),
+    async () => ({ content: [] }),
+  );
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const { tools } = await client.listTools();
+    const advertised = tools.find((tool) => tool.name === contract.name);
+    if (advertised === undefined)
+      throw new Error("inspect_byte_entropy was not advertised");
+    return advertised.inputSchema;
+  } finally {
+    await Promise.allSettled([client.close(), server.close()]);
+  }
+};
+
+it("advertises and enforces the byte-entropy absolute-path requirement", async () => {
+  const contract = byteEntropyContract();
+  const ajv = new Ajv2020({ strict: false, validateFormats: false });
+  const validate = ajv.compile(await byteEntropyAdvertisedSchema());
+  // The runtime refuses a relative path, so the advertised contract has to
+  // refuse it too rather than invite a request that cannot succeed.
+  expect(contract.inputSchema.safeParse({ path: "sample.bin" }).success).toBe(
+    false,
+  );
+  expect(validate({ path: "sample.bin" })).toBe(false);
+  expect(validate({ path: "/file" })).toBe(true);
+});
+
 it(
   "advertises and enforces the process-owned environment key constraint",
   advertiseAndEnforceProcessEnvironmentKeyConstraint,
