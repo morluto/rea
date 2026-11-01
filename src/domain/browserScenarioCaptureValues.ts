@@ -210,7 +210,7 @@ export const browserScenarioEventSchema = z
     z.strictObject({
       ...networkEventShape,
       kind: z.literal("response"),
-      status: z.int().min(100).max(599),
+      status: z.int().min(100).max(999),
       failure: z.null(),
     }),
     z.strictObject({
