@@ -260,6 +260,34 @@ it("treats any TerminalSize below 4 as the ExtraData terminal", async () => {
   }
 });
 
+it("derives target facts from a stored environment target alone", async () => {
+  const report = await parse(
+    windowsShortcutBytes({
+      flags: LINK_FLAG.IsUnicode | LINK_FLAG.HasIconLocation,
+      iconLocation: "C:\\Tools\\app.exe",
+      extraData: [
+        {
+          kind: "environment",
+          ansi: "C:\\Tools\\app.exe",
+          unicode: "C:\\Tools\\app.exe",
+        },
+      ],
+    }),
+  );
+  expect(report.observations).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "target_extension",
+        extension: ".exe",
+      }),
+      expect.objectContaining({
+        kind: "icon_location_differs_from_target",
+        value: false,
+      }),
+    ]),
+  );
+});
+
 it("reports partial coverage when an expected block has no ExtraData to read", async () => {
   const report = await parse(
     withLinkFlags(

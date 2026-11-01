@@ -274,6 +274,7 @@ const targetPaths = (report: {
   readonly link_info: WindowsShortcut["link_info"];
   readonly string_data: WindowsShortcut["string_data"];
   readonly id_list: WindowsShortcut["id_list"];
+  readonly extra_data: WindowsShortcut["extra_data"];
 }): string[] => {
   const values: string[] = [];
   const info = report.link_info;
@@ -303,13 +304,22 @@ const targetPaths = (report: {
       .find((item) => item.kind === "file_entry");
     if (lastFile?.kind === "file_entry") values.push(lastFile.short_name);
   }
+  // A stored literal target, never expanded: `%VAR%` text stays as written.
+  for (const block of report.extra_data.blocks) {
+    if (block.decoded.kind !== "environment_variable") continue;
+    const stored =
+      block.decoded.target_unicode.length > 0
+        ? block.decoded.target_unicode
+        : block.decoded.target_ansi;
+    if (stored.length > 0) values.push(stored);
+  }
   return values;
 };
 
 const observationsOf = (
   report: Pick<
     WindowsShortcut,
-    "header" | "link_info" | "string_data" | "id_list"
+    "header" | "link_info" | "string_data" | "id_list" | "extra_data"
   >,
 ): WindowsShortcut["observations"] => {
   const argumentsDeclared = (report.header.link_flags.raw & 0x00000020) !== 0;
