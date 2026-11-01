@@ -1,13 +1,19 @@
 import { afterAll, expect, it } from "vitest";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchema } from "ajv";
+import type { Client } from "@modelcontextprotocol/client";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { FUNCTION_COMPARISON_EXAMPLE } from "../../../src/contracts/functionComparisonExample.js";
-import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
+import {
+  createEvidence,
+  parseEvidence,
+  type Evidence,
+} from "../../../src/domain/evidence.js";
 import { functionDossierSchema } from "../../../src/domain/native/functionDossier.js";
+import { functionComparisonResultSchema } from "../../../src/domain/functionComparisonSchemas.js";
 
 const example = FUNCTION_COMPARISON_EXAMPLE.left;
 const dossier = functionDossierSchema.parse(example.normalized_result);
@@ -41,6 +47,45 @@ const ref = (evidence_id: string) => ({
   kind: "retained-evidence",
   evidence_id,
 });
+
+const expectRejectedDimensionCitation = async (
+  client: Client,
+  comparison: Evidence,
+) => {
+  const original = functionComparisonResultSchema.parse(
+    comparison.normalized_result,
+  );
+  const altered = (dimension: (typeof original.dimensions)[number]) =>
+    dimension.dimension === "comments"
+      ? {
+          ...dimension,
+          evidence_links: [main.evidence_id, another.evidence_id],
+        }
+      : dimension;
+  const result = functionComparisonResultSchema.parse({
+    ...original,
+    dimensions: original.dimensions.map(altered),
+    changes: original.changes.map(altered),
+  });
+  const invalid = createEvidence(undefined, comparison.provider, {
+    predicateType: comparison.predicate_type,
+    operation: comparison.operation,
+    parameters: comparison.parameters,
+    result,
+    confidence: comparison.confidence,
+    authority: comparison.authority,
+    limitations: comparison.limitations,
+    evidenceLinks: [main.evidence_id, another.evidence_id],
+  });
+  const response = await client.callTool({
+    name: "find_changed_behavior",
+    arguments: { comparisons: [invalid] },
+  });
+  expect(response.isError).toBe(true);
+  expect(parseMcpToolError(response).error.code).toBe(
+    "evidence_integrity_mismatch",
+  );
+};
 
 it.each(["full", "compact"] as const)(
   "compares the same authenticated observation while preserving incomplete facets (%s)",
@@ -126,6 +171,7 @@ it.each(["full", "compact"] as const)(
     expect(parseMcpToolError(contradictoryBehavior).error.code).toBe(
       "evidence_integrity_mismatch",
     );
+    await expectRejectedDimensionCitation(client, comparison);
     const distinct = await client.callTool({
       name: "compare_functions",
       arguments: {
