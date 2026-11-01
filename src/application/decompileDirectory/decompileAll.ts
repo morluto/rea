@@ -369,6 +369,13 @@ const publishSelected = async (
       const written = input.session.lastWritten(procedure.address);
       if (
         written !== undefined &&
+        !written.body.available &&
+        written.body.reason === BODY_UNAVAILABLE
+      ) {
+        input.state.bodyUnavailable = true;
+      }
+      if (
+        written !== undefined &&
         input.session.record(procedure.address) !== written
       ) {
         const appended = await input.session.append(written);

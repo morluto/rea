@@ -550,6 +550,28 @@ describe("decompile_all resume", () => {
     });
     expect(of(resumed.calls, "procedure_pseudo_code")).toHaveLength(0);
   });
+  it("retains the procedure_info limitation when resuming verified files", async () => {
+    const first = harness({ info: "unavailable" });
+    const created = await run(first.tools, directory());
+
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+
+    const resumed = harness();
+    const result = await run(resumed.tools, directory(), { resume: true });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    expect(result.value).toMatchObject({
+      counts: { skipped: 3, written: 0 },
+      resume: true,
+    });
+    expect(
+      (result.value as { limitations: string[] }).limitations.join("\n"),
+    ).toContain("procedure_info");
+    expect(of(resumed.calls, "procedure_info")).toHaveLength(0);
+  });
 
   it("does not rewrite a conflicting file and retries a missing one", async () => {
     const { tools } = harness();
