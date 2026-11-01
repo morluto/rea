@@ -62,6 +62,7 @@ const sharedAnalysisSemantics = {
   function_dossier_coverage: "observed-facets-and-call-relationships-v1",
   string_inventory_evidence: "defined-data-coverage-v1",
   location_resolution: "explicit-address-exact-entry-symbol-first-v3",
+  procedure_search: "primary-and-exact-entry-symbol-names-v1",
   procedure_file_offset_resolution:
     "address-first-unique-target-source-mapping-v2",
   instruction_flow_evidence: "decoded-return-pcode-v1",
