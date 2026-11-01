@@ -1,13 +1,11 @@
-import type {
-  CapabilityDescriptor,
-  ProviderIdentity,
-} from "../application/AnalysisProvider.js";
+import { GHIDRA_PROVIDER_IDENTITY } from "./GhidraProviderMetadata.js";
+import type { CapabilityDescriptor } from "../application/AnalysisProvider.js";
 import {
   inspectWindowsNativeReadiness,
   type WindowsNativeReadiness,
 } from "../process/WindowsAuthority.js";
-import { GHIDRA_FUNCTION_OPERATIONS } from "./GhidraFunctionValues.js";
-import { GHIDRA_INVENTORY_OPERATIONS } from "./GhidraInventoryValues.js";
+import { GHIDRA_FUNCTION_OPERATIONS } from "./GhidraFunctionOperations.js";
+import { GHIDRA_INVENTORY_OPERATIONS } from "./GhidraInventoryOperations.js";
 import { GHIDRA_MUTATING_OPERATIONS } from "./GhidraSessionValues.js";
 import { ghidraLoadImageVerificationNote } from "./GhidraVerifiedLoadImageFormats.js";
 
@@ -15,27 +13,11 @@ import { ghidraLoadImageVerificationNote } from "./GhidraVerifiedLoadImageFormat
 export const WINDOWS_P0_NATIVE_PE_ARCHITECTURES: readonly string[] =
   Object.freeze(["x86", "x86_64", "arm", "arm64"]);
 
-/** Public identity committed by every Ghidra-backed observation. */
-export const GHIDRA_PROVIDER_IDENTITY: ProviderIdentity = Object.freeze({
-  id: "ghidra",
-  name: "Ghidra",
-  version: null,
-});
-
 /** Provider observations, including internal aggregates consumed by workflows. */
 const providerOperations = Object.freeze([
   ...GHIDRA_INVENTORY_OPERATIONS,
   ...GHIDRA_FUNCTION_OPERATIONS,
 ]);
-
-/** Public analyst tools backed by these observations; aggregates stay internal. */
-export const GHIDRA_OPERATIONS = Object.freeze(
-  providerOperations.map((operation) =>
-    operation === "read_binary_inventory_summary"
-      ? "binary_overview"
-      : operation,
-  ),
-);
 
 /** Health limitations shared by every Ghidra-backed capability. */
 export const healthLimitations = Object.freeze([

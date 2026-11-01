@@ -101,11 +101,11 @@ import { attestGhidraNativeLoadImage } from "./GhidraLoadImageAttest.js";
 import type { NativeAotPeResult } from "../domain/native/nativeAotPe.js";
 import { GhidraNativeAotSnapshotOwner } from "./GhidraNativeAotSnapshotOwner.js";
 import {
-  GHIDRA_PROVIDER_IDENTITY,
   ghidraHealthLimitations,
   windowsP0Limitations,
   limitationsFor,
 } from "./GhidraProviderCapabilities.js";
+import { GHIDRA_PROVIDER_IDENTITY } from "./GhidraProviderMetadata.js";
 import {
   GHIDRA_STARTUP_DEADLINE_ELAPSED,
   isGhidraInputFailureCode,

@@ -4,12 +4,7 @@ import type {
 } from "../application/reverse/ReverseEngineeringCommandPort.js";
 import type { RizinInput } from "../domain/reverseEngineering.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
-
-export const RIZIN_PROVIDER_IDENTITY = {
-  id: "rizin",
-  name: "Rizin",
-  version: null,
-} as const;
+import { RIZIN_PROVIDER_IDENTITY } from "./RizinProviderIdentity.js";
 
 /**
  * The first `-v` line Rizin and radare2 print: a plain tool token, a version,
