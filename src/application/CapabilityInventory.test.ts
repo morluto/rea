@@ -55,6 +55,7 @@ const enabledPolicy: Parameters<typeof buildCapabilityInventory>[1] = {
 const status = (
   options: {
     readonly open?: boolean;
+    readonly close_cleanup_pending?: boolean;
     readonly kind?: "executable" | "database" | "archive" | "artifact";
     readonly format?: string;
     readonly capabilities?: readonly {
@@ -66,6 +67,9 @@ const status = (
   } = {},
 ) => ({
   open: options.open ?? false,
+  ...(options.close_cleanup_pending === undefined
+    ? {}
+    : { close_cleanup_pending: options.close_cleanup_pending }),
   ...(options.kind === undefined ? {} : { kind: options.kind }),
   ...(options.format === undefined ? {} : { format: options.format }),
   capabilities:
@@ -267,6 +271,13 @@ describe("capability failure reasons", () => {
       remediation: "open_binary",
     },
     {
+      label: "guides retained cleanup before opening another target",
+      name: "current_address",
+      sessionStatus: status({ close_cleanup_pending: true }),
+      reason: "target_required",
+      remediation: "close_binary",
+    },
+    {
       label: "rejects an incompatible target family",
       name: "current_address",
       sessionStatus: status({ open: true, kind: "archive" }),
@@ -340,6 +351,29 @@ describe("capability failure reasons", () => {
     });
     if (remediation === null) expect(availability.remediation).toBeNull();
     else expect(availability.remediation).toContain(remediation);
+  });
+
+  it("guides retained cleanup retry instead of opening a target when cleanup is pending", () => {
+    const uncleaned = entry(
+      "current_address",
+      status({ close_cleanup_pending: true }),
+    );
+    expect(uncleaned).toMatchObject({
+      available: false,
+      reason: "target_required",
+      remediation:
+        "This connection retains unconfirmed cleanup that blocks opening a new target. Call close_binary without snapshot_path to retry cleanup before opening another target.",
+    });
+
+    const ready = entry(
+      "current_address",
+      status({ close_cleanup_pending: false }),
+    );
+    expect(ready).toMatchObject({
+      available: false,
+      reason: "target_required",
+      remediation: "Call open_binary with a supported local target.",
+    });
   });
 });
 

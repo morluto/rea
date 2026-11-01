@@ -53,6 +53,7 @@ const statusSchema = z.object({
   session_kind: z.literal("bundle_resources").optional(),
   kind: z.enum(["executable", "database", "archive", "artifact"]).optional(),
   format: z.string().optional(),
+  close_cleanup_pending: z.boolean().optional(),
   capabilities: z
     .array(providerCapabilitySet)
     .transform(expandProviderCapabilities),
@@ -137,6 +138,7 @@ type AvailabilityContext = {
   readonly targetOpen: boolean;
   readonly resourceSession: boolean;
   readonly requiresActiveTarget: boolean;
+  readonly closeCleanupPending: boolean;
   readonly targetKind:
     | "executable"
     | "database"
@@ -267,6 +269,7 @@ export const buildCapabilityInventory = (
       requiresActiveTarget:
         "requiresActiveTarget" in contract &&
         contract.requiresActiveTarget === true,
+      closeCleanupPending: status.close_cleanup_pending === true,
       targetKind: status.kind,
       targetFormat: status.format,
       descriptors,
@@ -780,12 +783,15 @@ const targetAvailability = ({
   targetFormat,
   targetOpen,
   requiresActiveTarget,
+  closeCleanupPending,
   descriptors,
 }: AvailabilityContext): Availability | null => {
   if (!targetOpen && requiresActiveTarget)
     return {
       reason: "target_required",
-      remediation: "Call open_binary with a supported local target.",
+      remediation: closeCleanupPending
+        ? "This connection retains unconfirmed cleanup that blocks opening a new target. Call close_binary without snapshot_path to retry cleanup before opening another target."
+        : "Call open_binary with a supported local target.",
     };
   const descriptor = descriptors.get(name);
   if (

@@ -43,6 +43,7 @@ interface BinarySessionStatusInput {
   readonly requestActivitySnapshots: readonly ProviderRequestActivitySnapshot[];
   readonly providerOperationHealth?: ProviderOperationHealth | null;
   readonly cleanupPending?: boolean;
+  readonly closeCleanupPending?: boolean;
   readonly detail?: BinarySessionDetail;
   readonly signal?: AbortSignal;
 }
@@ -61,6 +62,7 @@ export const binarySessionStatus = async ({
   requestActivitySnapshots,
   providerOperationHealth,
   cleanupPending = false,
+  closeCleanupPending = false,
   detail = "complete",
   signal,
 }: BinarySessionStatusInput): Promise<JsonValue> => {
@@ -137,6 +139,7 @@ export const binarySessionStatus = async ({
   const common = {
     investigation,
     cleanup_pending: cleanupPending,
+    ...(closeCleanupPending ? { close_cleanup_pending: true } : {}),
     capabilities,
     analysis_provider_binding: analysisProviderBinding,
     analysis_provider_candidates: analysisProviderCandidates,

@@ -544,6 +544,7 @@ export const sessionProviderFacts = z
   .object({
     investigation: investigationStatisticsSchema,
     cleanup_pending: z.boolean(),
+    close_cleanup_pending: z.boolean().optional(),
     capabilities: z.array(providerCapabilitySet),
     analysis_run: analysisRun,
     analysis_activity: analysisActivity,

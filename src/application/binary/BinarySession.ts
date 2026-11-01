@@ -1258,6 +1258,7 @@ export class BinarySession
       cleanupPending:
         this.#externalMutationCleanupFailure?.cleanupIncomplete === true ||
         this.#retainsCloseCleanup(),
+      closeCleanupPending: this.#retainsCloseCleanup(),
     });
   }
 
