@@ -48,16 +48,39 @@ await assert.rejects(() => verifyKunaStrings({ ...options, expectedStrings: ["re
 });
 
 it.each([
-  { populated: false, names: "main", reason: "No caller-built targets" },
-  { populated: true, names: "typo", reason: "No caller-built targets" },
+  {
+    populated: false,
+    names: "main",
+    reason: "No caller-built targets",
+    examined: [],
+  },
+  {
+    populated: true,
+    names: "typo",
+    reason: "No caller-built targets",
+    examined: [
+      {
+        binary: "linux/program",
+        status: "no_matching_text_symbols",
+        matched_functions: [],
+      },
+    ],
+  },
   {
     populated: true,
     names: "main,typo",
     reason: "Requested functions were not found",
+    examined: [
+      {
+        binary: "linux/program",
+        status: "selected",
+        matched_functions: ["main"],
+      },
+    ],
   },
 ])(
   "rejects an unverified caller matrix: $names, populated=$populated",
-  async ({ populated, names, reason }) => {
+  async ({ populated, names, reason, examined }) => {
     const root = await createTestTempDirectory("rea-kuna-verifier-selection-");
     const kuna = await writeFakeKuna(root);
     const targets = join(root, "targets");
@@ -104,11 +127,90 @@ it.each([
     expect(result.status).toBe(1);
     expect(result.stderr).toContain(reason);
     expect(result.stderr).not.toContain("compiler-must-not-run");
+    const report = JSON.parse(result.stdout);
+    expect(report.caller_target_selection).toEqual({
+      directory: targets,
+      functions_argument: names,
+      requested_functions: names.split(","),
+      symbol_scan_complete: true,
+      examined,
+    });
+    expect(report.cleanup).toBe("complete");
     expect((await fakeKunaCalls(kuna)).map(({ argv }) => argv)).toEqual([
       ["--version"],
     ]);
   },
 );
+
+it("retains examined caller targets when a later symbol inspection fails", async () => {
+  const root = await createTestTempDirectory("rea-kuna-verifier-inspection-");
+  const kuna = await writeFakeKuna(root);
+  const targets = join(root, "targets");
+  await mkdir(join(targets, "first"), { recursive: true });
+  await mkdir(join(targets, "second"), { recursive: true });
+  await writeFile(join(targets, "first", "program"), "not analyzed");
+  await writeFile(join(targets, "second", "broken"), "not analyzed");
+  const nm = join(root, "nm");
+  await writeFile(
+    nm,
+    `#!${process.execPath}\nif (process.argv.at(-1).endsWith("broken")) { process.stderr.write("inspection failed"); process.exit(9); }\nprocess.stdout.write("00001000 T main\\n");\n`,
+    { mode: 0o755 },
+  );
+  const reportPath = join(root, "report.json");
+  const result = spawnSync(
+    process.execPath,
+    [
+      "scripts/verify-real-kuna.mjs",
+      "--targets",
+      targets,
+      "--functions",
+      "main",
+      "--report",
+      reportPath,
+    ],
+    {
+      encoding: "utf8",
+      timeout: 10_000,
+      env: {
+        PATH: process.env.PATH,
+        HOME: root,
+        REA_KUNA_COMMAND: kuna,
+        REA_NM: nm,
+        REA_CC: join(root, "compiler-must-not-run"),
+      },
+    },
+  );
+  expect(result.error).toBeUndefined();
+  expect(result.status).toBe(1);
+  const report = JSON.parse(await readFile(reportPath, "utf8"));
+  expect(JSON.parse(result.stdout)).toEqual(report);
+  expect(report).toMatchObject({
+    status: "failed",
+    cleanup: "complete",
+    caller_target_selection: {
+      directory: targets,
+      functions_argument: "main",
+      requested_functions: ["main"],
+      symbol_scan_complete: false,
+      examined: [
+        {
+          binary: "first/program",
+          status: "selected",
+          matched_functions: ["main"],
+        },
+        {
+          binary: "second/broken",
+          status: "inspection_failed",
+          error: { message: expect.stringContaining("inspection failed") },
+        },
+      ],
+    },
+  });
+  expect(result.stderr).not.toContain("compiler-must-not-run");
+  expect((await fakeKunaCalls(kuna)).map(({ argv }) => argv)).toEqual([
+    ["--version"],
+  ]);
+});
 
 it.each([
   {

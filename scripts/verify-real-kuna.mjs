@@ -477,15 +477,37 @@ const measureGhidra = async (path, functions) => {
   return answers;
 };
 
-/** Symbol-bearing caller binaries with the requested functions, beside their stripped copies. */
-const targetPairs = async (root, names) => {
+const describeFailure = (cause) => ({
+  message: cause instanceof Error ? cause.message : String(cause),
+  ...(cause instanceof AggregateError
+    ? { causes: cause.errors.map(describeFailure) }
+    : {}),
+});
+
+/** Inspect symbol-bearing caller binaries, retaining both selected and unmatched inputs. */
+const targetPairs = async (root, names, selection) => {
   const pairs = [];
   for (const flavor of (await readdir(root)).sort()) {
     const directory = join(root, flavor);
     if (!(await stat(directory)).isDirectory()) continue;
     for (const file of (await readdir(directory)).sort()) {
       if (file.endsWith(".stripped")) continue;
-      const symbols = await symbolAddresses(join(directory, file), names);
+      let symbols;
+      try {
+        symbols = await symbolAddresses(join(directory, file), names);
+      } catch (cause) {
+        selection.examined.push({
+          binary: `${flavor}/${file}`,
+          status: "inspection_failed",
+          error: describeFailure(cause),
+        });
+        throw cause;
+      }
+      selection.examined.push({
+        binary: `${flavor}/${file}`,
+        status: symbols.size > 0 ? "selected" : "no_matching_text_symbols",
+        matched_functions: [...symbols.keys()],
+      });
       if (symbols.size > 0) pairs.push({ flavor, directory, file, symbols });
     }
   }
@@ -505,6 +527,18 @@ const verifyVariant = async ({ flavor, directory, symbols }, variant) => {
 
 const results = [];
 const failures = [];
+const callerTargetSelection =
+  values.targets === undefined
+    ? undefined
+    : {
+        directory: values.targets,
+        functions_argument: values.functions ?? null,
+        requested_functions: (values.functions ?? "")
+          .split(",")
+          .filter(Boolean),
+        symbol_scan_complete: false,
+        examined: [],
+      };
 let inspectionResourcesClean = true;
 try {
   const installation = await inspectKunaInstallation(
@@ -517,13 +551,18 @@ try {
   );
   kunaVersion = `kuna ${installation.value.version}`;
   let callerPairs = [];
-  if (values.targets !== undefined) {
-    const names = (values.functions ?? "").split(",").filter(Boolean);
+  if (callerTargetSelection !== undefined) {
+    const names = callerTargetSelection.requested_functions;
     assert.ok(names.length > 0, "--targets requires --functions");
-    callerPairs = await targetPairs(values.targets, names);
+    callerPairs = await targetPairs(
+      callerTargetSelection.directory,
+      names,
+      callerTargetSelection,
+    );
+    callerTargetSelection.symbol_scan_complete = true;
     assert.ok(
       callerPairs.length > 0,
-      `No caller-built targets contain the requested functions in ${values.targets}`,
+      `No caller-built targets contain the requested functions in ${callerTargetSelection.directory}`,
     );
     const found = new Set(
       callerPairs.flatMap(({ symbols }) => [...symbols.keys()]),
@@ -606,18 +645,15 @@ if (cleanupComplete)
     cleanupComplete = false;
     failures.push(cause);
   }
-const describeFailure = (cause) => ({
-  message: cause instanceof Error ? cause.message : String(cause),
-  ...(cause instanceof AggregateError
-    ? { causes: cause.errors.map(describeFailure) }
-    : {}),
-});
 const report = {
   lane: "kuna",
   status: failures.length === 0 ? "passed" : "failed",
   kuna_version: kunaVersion,
   platform: `${process.platform}/${process.arch}`,
   verifier_run: lifecycle,
+  ...(callerTargetSelection === undefined
+    ? {}
+    : { caller_target_selection: callerTargetSelection }),
   results,
   limitations: [
     "Targets are analyzed statically; they are never executed.",

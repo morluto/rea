@@ -1480,7 +1480,16 @@ caller-built functions through Ghidra (it refuses to run without `--targets` and
 reports latency, sampled process-tree CPU and peak memory, UTF-8 response size,
 and goto and warning-marker counts. Those counts are not a correctness judgement,
 and model tokens are not measured. Reference timings and response sizes are
-reported separately; reference caches expire when the server closes. `--report PATH` writes the JSON report.
+reported separately; reference caches expire when the server closes. The report's
+`caller_target_selection` retains the selected directory, the original functions
+argument, and each examined binary's requested names matched against `nm` text
+symbols. `symbol_scan_complete` means the scan of non-`.stripped` entries in
+the immediate flavor directories finished; it does not cover other directory
+entries. An `inspection_failed` entry and `symbol_scan_complete: false` retain
+partial discovery when symbol inspection fails. A missing symbol is not proof
+that code is absent, and selection does not establish that a stripped counterpart
+was verified; consult `results` for completed variants. `--report PATH` writes
+the JSON report.
 
 The first matrix run used Kuna 1.833 and Ghidra 12.1.4 with JDK 21 on macOS
 arm64. It covered zlib 1.3.2 `minigzip`, coreutils 9.9 `sort` and the sqlite
