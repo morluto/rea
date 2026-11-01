@@ -15,7 +15,10 @@ import { SafeOutputTreeCreationFailure } from "../../../src/artifacts/SafeOutput
 import { javascriptRecoveryResultSchema } from "../../../src/domain/javascript/javascriptRecovery.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
-import { RECOVERY_LIMITS } from "../../../src/javascript/recovery/WakaruRelease.js";
+import {
+  RECOVERY_LIMITATIONS,
+  RECOVERY_LIMITS,
+} from "../../../src/javascript/recovery/WakaruRelease.js";
 import {
   assertRecoveryCleanup,
   recoveryFixture,
@@ -56,6 +59,38 @@ const registerRecoveryProvenanceCases = () => {
       "module.exports = 42;",
     );
     expect(result.value.confidence).toBe("derived");
+    await assertRecoveryCleanup(fixture.launches);
+  });
+
+  it("reports javascript-obfuscator-family signatures from the selected input", async () => {
+    const source = await readFile(
+      join(
+        import.meta.dirname,
+        "../../fixtures/javascript-recovery/obfuscator-signature-fixture.js",
+      ),
+      "utf8",
+    );
+    const fixture = await recoveryFixture("normal", source);
+    const result = await fixture.service.recover({
+      path: fixture.path,
+      output_directory: fixture.output,
+    });
+    if (!result.ok) throw result.error;
+    const value = javascriptRecoveryResultSchema.parse(
+      result.value.normalized_result,
+    );
+    expect(value.limitations).toEqual([
+      ...RECOVERY_LIMITATIONS,
+      expect.stringContaining(
+        "bundle.js matches javascript-obfuscator-family signatures (92 _0x-hex identifier and 26 string-array decoder-call occurrences)",
+      ),
+    ]);
+    expect(
+      value.limitations.some((limitation) =>
+        limitation.includes("Structural splitting is limited"),
+      ),
+    ).toBe(true);
+    expect(value.status).toBe("complete");
     await assertRecoveryCleanup(fixture.launches);
   });
 

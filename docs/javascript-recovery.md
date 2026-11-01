@@ -126,6 +126,37 @@ actual outcomes. A valid report with failed transformations returns `partial`
 with original warnings and files. An unusable report, inconsistent provenance,
 escaping path, symlink or missing module is an error, with owned cleanup.
 
+## Obfuscated inputs
+
+Before publication, every selected input is fingerprinted for
+`javascript-obfuscator`-family signatures: `_0x`-hex mangled identifiers and
+string-array decoder calls such as `_0x1a2b3c(0x1f)`. Detection is
+signature-based, not complete: obfuscator configurations that change the
+identifier generator (for example `mangled`) are not detected. Ordinary
+minified bundles observed during verification contained neither pattern.
+
+Structural splitting is limited for this family. With Wakaru 1.14.0 and
+`--unpack=strict`, the same esbuild bundle yields two modules plain and one
+module obfuscated with javascript-obfuscator 4.2.2 defaults. A detected input is
+reported with one limitation naming the observed occurrence counts.
+
+When the limitation appears, a typical remediation pipeline is to deobfuscate
+the published input copy under `inputs/` with external static deobfuscators and
+re-ingest their output with `recover_javascript_sources`. REA does not install
+or run these tools:
+
+```sh
+npx webcrack@2 inputs/bundle.js -o /tmp/deobfuscated
+npx obfuscator-io-deobfuscator@1 inputs/bundle.js -o /tmp/deobfuscated/bundle.js
+# Optional identifier renaming afterwards: npx humanify
+```
+
+`webcrack` recovers strings, property names and bundle structure;
+`obfuscator-io-deobfuscator` targets this family's string-array machinery and
+may leave decoder references on some configurations; `humanify` renames
+remaining mangled identifiers and is not verified by this adapter. The
+operation never executes the selected or recovered code.
+
 Evidence confidence is `derived`. Extraction ranges are half-open **UTF-8 byte
 offsets in the original snapshot**, rather than rewritten line positions or a
 coverage assertion. Source maps are preserved without claiming independently

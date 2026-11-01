@@ -18,6 +18,10 @@ import {
   validateRecoverySourceMap,
   type parseWakaruReports,
 } from "./WakaruReport.js";
+import {
+  detectRecoveryObfuscatorFacts,
+  recoveryObfuscatorLimitation,
+} from "./RecoveryObfuscatorDetection.js";
 import { RECOVERY_LIMITATIONS, RECOVERY_LIMITS } from "./WakaruRelease.js";
 import { WAKARU_RELEASE } from "./WakaruProviderIdentity.js";
 import type {
@@ -41,11 +45,52 @@ type PublicationContext = {
 type PublishedFile = JavaScriptRecoveryResult["manifest"];
 type RecoveryWriter = (path: string, bytes: Buffer) => Promise<PublishedFile>;
 
+/**
+ * Publish exact input copies and fingerprint each one for
+ * javascript-obfuscator-family signatures before writing.
+ */
+const publishRecoverySources = async (
+  sources: PublicationContext["sources"],
+  write: RecoveryWriter,
+  signal: AbortSignal | undefined,
+  resources: ArtifactResourceScope | undefined,
+): Promise<{
+  publishedSources: JavaScriptRecoveryResult["source"][];
+  obfuscatorLimitations: string[];
+}> => {
+  const publishedSources: JavaScriptRecoveryResult["source"][] = [];
+  const obfuscatorLimitations: string[] = [];
+  for (const selected of sources) {
+    const { relative_path, ...source } = selected;
+    const snapshot = await readRecoveryFile(
+      source.snapshot_path,
+      source.bytes,
+      signal,
+      resources,
+    );
+    if (recoveryDigest(snapshot) !== source.sha256)
+      throw new AnalysisOutputError(
+        "recover_javascript_sources",
+        `The input snapshot changed during recovery: ${source.path}`,
+      );
+    const facts = detectRecoveryObfuscatorFacts(snapshot);
+    if (facts !== undefined)
+      obfuscatorLimitations.push(
+        recoveryObfuscatorLimitation(relative_path, facts),
+      );
+    publishedSources.push({
+      ...source,
+      published_copy: await write(`inputs/${relative_path}`, snapshot),
+    });
+  }
+  return { publishedSources, obfuscatorLimitations };
+};
+
 /** Write validated artifacts to one exclusively owned, rollback-capable tree. */
 export const publishWakaruArtifacts = async (
   context: PublicationContext,
 ): Promise<JavaScriptRecoveryResult> => {
-  const { tree, sources, parsed, staging, signal, resources } = context;
+  const { tree, parsed, staging, signal, resources } = context;
   const write = async (path: string, bytes: Buffer) => {
     const sha256 = recoveryDigest(bytes);
     const file = await tree.write(
@@ -60,25 +105,8 @@ export const publishWakaruArtifacts = async (
       bytes: file.bytesWritten,
     };
   };
-  const publishedSources: JavaScriptRecoveryResult["source"][] = [];
-  for (const selected of sources) {
-    const { relative_path, ...source } = selected;
-    const snapshot = await readRecoveryFile(
-      source.snapshot_path,
-      source.bytes,
-      signal,
-      resources,
-    );
-    if (recoveryDigest(snapshot) !== source.sha256)
-      throw new AnalysisOutputError(
-        "recover_javascript_sources",
-        `The input snapshot changed during recovery: ${source.path}`,
-      );
-    publishedSources.push({
-      ...source,
-      published_copy: await write(`inputs/${relative_path}`, snapshot),
-    });
-  }
+  const { publishedSources, obfuscatorLimitations } =
+    await publishRecoverySources(context.sources, write, signal, resources);
   const [source, ...additionalSources] = publishedSources;
   const modules: JavaScriptRecoveryResult["modules"] = [];
   for (const module of parsed.report.modules) {
@@ -148,6 +176,7 @@ export const publishWakaruArtifacts = async (
       ...(context.admitted.status === "compatible"
         ? [context.admitted.limitation]
         : []),
+      ...obfuscatorLimitations,
     ],
   };
   const manifest = await write(
