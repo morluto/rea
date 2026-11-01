@@ -103,6 +103,13 @@ export const binarySessionStatus = async ({
             provider: providerSummary(route.binding.identity),
             selection_source: route.binding.selectionSource,
             analysis_profile: structuredClone(route.binding.profile),
+            ...(route.binding.releaseVerification === undefined
+              ? {}
+              : {
+                  release_verification: structuredClone(
+                    route.binding.releaseVerification,
+                  ),
+                }),
           };
   const analysisProviderCandidates =
     bundleResourceRoot !== undefined

@@ -1,5 +1,6 @@
 import { procedureInfoSchema } from "../domain/native/procedureInfo.js";
 import { z } from "zod";
+import { providerReleaseVerificationSchema } from "../domain/providerReleaseVerification.js";
 import { investigationStatisticsSchema } from "../domain/investigationLifecycle.js";
 import { utcDateTimeSchema } from "../domain/offsetDateTime.js";
 
@@ -548,6 +549,7 @@ export const sessionProviderFacts = z
           "auto-single-candidate",
         ]),
         analysis_profile: analysisProfileSchema,
+        release_verification: providerReleaseVerificationSchema.optional(),
       })
       .nullable(),
     client_features: z.object({

@@ -1,6 +1,9 @@
 /** Kuna release whose CLI and project layout REA verified; others report as unverified. */
 export const KUNA_VERIFIED_VERSION = "1.986";
 
+/** Optional selection guidance; the current unverified release remains usable. */
+export const KUNA_UNVERIFIED_VERSION_REMEDIATION = `To use the verified release, select Kuna ${KUNA_VERIFIED_VERSION} by setting REA_KUNA_COMMAND to its absolute executable path in the environment that starts REA, then restart REA. You may continue with the selected unverified release.`;
+
 /** Stable provider ID shared by readiness, doctor and Evidence. */
 export const KUNA_PROVIDER_ID = "kuna";
 

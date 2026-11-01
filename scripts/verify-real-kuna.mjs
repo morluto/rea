@@ -265,6 +265,26 @@ const openServer = async (provider) => {
       path: provider.path,
       provider_id: provider.id,
     });
+    if (provider.id === "kuna") {
+      const status = (await call("binary_session")).value;
+      const binding = status.analysis_provider_binding;
+      const verification = binding.release_verification;
+      assert.equal(verification.basis, "reported_version");
+      assert.equal(
+        verification.reported_version,
+        binding.analysis_profile.parameters.kuna_version,
+      );
+      assert.equal(
+        verification.status,
+        binding.analysis_profile.parameters.verified_release
+          ? "verified"
+          : "unverified",
+      );
+      assert.match(verification.explanation, /does not authenticate/u);
+      if (verification.status === "unverified")
+        assert.match(verification.remediation, /may continue/u);
+      else assert.equal(verification.remediation, null);
+    }
   } catch (cause) {
     // A rejected connection/target still owns its transport and workspace.
     await close(cause);

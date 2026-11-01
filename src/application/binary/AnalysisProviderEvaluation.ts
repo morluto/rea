@@ -17,6 +17,10 @@ import type {
 } from "../AnalysisProvider.js";
 import type { AnalysisProviderCandidateStatus } from "./AnalysisProviderRegistry.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
+import {
+  providerReleaseVerificationSchema,
+  type ProviderReleaseVerification,
+} from "../../domain/providerReleaseVerification.js";
 
 /** Profile-resolution truth for one discovered provider candidate. */
 export interface AnalysisProviderCandidateEvaluation {
@@ -24,6 +28,7 @@ export interface AnalysisProviderCandidateEvaluation {
   readonly status: AnalysisProviderCandidateStatus;
   readonly profile?: AnalysisProfileCommitment;
   readonly createClient?: AnalysisProviderBoundClientFactory;
+  readonly releaseVerification?: ProviderReleaseVerification;
   readonly profileError?: AnalysisError;
 }
 
@@ -109,10 +114,29 @@ export const evaluateAnalysisProviderCandidate = async (
           "Resolved analysis profile has mismatched provider identity",
         ),
       );
+    const verification =
+      resolved.value.releaseVerification === undefined
+        ? undefined
+        : providerReleaseVerificationSchema.safeParse(
+            resolved.value.releaseVerification,
+          );
+    if (verification?.success === false)
+      return ok(
+        rejectedProfile(
+          candidate,
+          status,
+          "Provider returned invalid release verification",
+        ),
+      );
     return ok({
       candidate,
       status,
       profile,
+      ...(verification === undefined
+        ? {}
+        : {
+            releaseVerification: verification.data,
+          }),
       ...(resolved.value.createClient === undefined
         ? {}
         : { createClient: resolved.value.createClient }),
