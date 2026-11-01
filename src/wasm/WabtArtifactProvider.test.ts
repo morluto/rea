@@ -366,6 +366,13 @@ const assertModeOutcome = (
           artifact: { path, bytes: 76 },
           validation: "valid",
           runtime_execution: "not-performed",
+          tool_profile: {
+            timeout_ms: 30_000,
+            output_budget_bytes: 128 * 1024 * 1024,
+          },
+          limitations: expect.arrayContaining([
+            "Each WABT command has a 30000 ms deadline and a fixed 128 MiB combined output budget. The deadline is not a whole-inspection budget. Oversized output fails instead of producing truncated success.",
+          ]),
         },
       },
     });
