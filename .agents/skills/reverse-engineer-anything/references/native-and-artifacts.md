@@ -419,6 +419,19 @@ does not record the external configuration in the analysis profile. See the
 [Kuna provider guide](https://github.com/morluto/rea/blob/main/docs/kuna-provider.md)
 for cache identity and cold-export behavior.
 
+## Check an unverified Kuna release
+
+An unverified Kuna release is not automatically unsupported. REA's
+`verified_release` reports whether the selected executable's reported version
+matches the version REA verified; it does not authenticate the executable's
+bytes or guarantee results. Run `rea doctor --provider kuna --format json` in
+the environment that starts REA to see the current verified baseline and optional
+selection guidance. The caller may continue with the selected release. To use
+another caller-supplied executable, set `REA_KUNA_COMMAND` to its absolute path
+and restart REA; do not install or switch versions implicitly. Host and release
+coverage are described in the
+[Kuna provider guide](https://github.com/morluto/rea/blob/main/docs/kuna-provider.md).
+
 ## Bridge request ceiling
 
 Hopper and Cutter share `REA_BRIDGE_MAX_REQUEST_BYTES`. Unset, both sides use
