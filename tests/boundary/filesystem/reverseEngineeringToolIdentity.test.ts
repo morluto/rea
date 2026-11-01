@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { stat, writeFile } from "node:fs/promises";
-import { delimiter, dirname, relative } from "node:path";
+import { chmod, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { delimiter, dirname, join, relative } from "node:path";
 
 import { expect, expectTypeOf, it, vi } from "vitest";
 
@@ -395,6 +395,33 @@ posix(
         `${reachable}${delimiter}${directory}`,
       ),
     ).resolves.toMatchObject({ status: "no-working-directory" });
+  },
+);
+
+posix(
+  "ends the PATH search where a spawned search ends, at a symlink loop, but not at a non-executable file",
+  async () => {
+    const { executable } = await rizinExecutableFixture();
+    const directory = dirname(executable);
+    const looped = dirname((await rizinExecutableFixture()).executable);
+    await rm(join(looped, "rizin"));
+    await symlink("rizin", join(looped, "rizin"));
+    const unexecutable = dirname((await rizinExecutableFixture()).executable);
+    await chmod(join(unexecutable, "rizin"), 0o644);
+    const cwd = () => process.cwd();
+    // A launch by name fails with ELOOP here, so the later match must not run.
+    const stopped = await lookupExecutable(
+      "rizin",
+      cwd,
+      `${looped}${delimiter}${directory}`,
+    );
+    expect(stopped).toEqual({
+      status: "missing",
+      checked: [`${join(looped, "rizin")} (ELOOP)`],
+    });
+    await expect(
+      lookupExecutable("rizin", cwd, `${unexecutable}${delimiter}${directory}`),
+    ).resolves.toEqual({ status: "found", path: executable });
   },
 );
 

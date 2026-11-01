@@ -40,8 +40,10 @@ export interface ExecutableLookupBounds {
 /**
  * Resolve a command the way process spawning searches for it. A command that
  * contains a path separator is the selected path; PATH search continues past
- * denied directories, and an existing file without execute permission is not
- * a match. The working directory is read only when the search reaches a
+ * a missing file, a non-directory and a denied directory, and an existing file
+ * without execute permission is not a match. Any other error, such as a
+ * symlink loop, ends the search, as it ends a spawned search. The working
+ * directory is read only when the search reaches a
  * relative command or PATH entry, since it may have been removed. When that
  * read fails, a relative PATH entry is checked as written, against the
  * process's working directory, which the kernel still resolves (even `..`
@@ -109,7 +111,11 @@ export const lookupExecutable = async (
             cause: metadata.cause,
           };
         checked.push(`${candidate}${systemErrorSuffix(code)}`);
-        continue;
+        // A spawned search moves past these and stops at any other error, so a
+        // later candidate would not run.
+        if (code === "ENOENT" || code === "ENOTDIR" || code === "EACCES")
+          continue;
+        return { status: "missing", checked };
       }
       if (!metadata.value.isFile()) {
         checked.push(`${candidate} (not a regular file)`);
