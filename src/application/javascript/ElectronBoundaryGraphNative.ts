@@ -52,9 +52,7 @@ const addNativeBinding = (input: NativeBindingInput): void => {
     files: context.filesByPath,
     jsonDocuments: context.analysis.jsonDocuments,
     directoryPaths: context.directoryPaths,
-    ...(value.module_kind === undefined
-      ? {}
-      : { moduleKind: value.module_kind }),
+    moduleKind: value.module_kind,
   }).resolved_path;
   // Extension probing can resolve `./addon.node` to `addon.node.js`; only a
   // native-addon artifact can expose the requested binding.

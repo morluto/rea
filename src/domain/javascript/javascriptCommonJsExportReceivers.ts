@@ -7,7 +7,6 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
-  isUnshadowedGlobal,
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
@@ -18,7 +17,10 @@ import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
 import { evaluateSemanticExpression } from "./javascriptSemanticValues.js";
 import type { JavaScriptSemanticPropertyPath } from "./javascriptSemanticPropertyPaths.js";
 import { semanticProjectedSourcesAtRead } from "./javascriptSemanticProjectedSources.js";
-import { semanticEffectTiming } from "./javascriptSemanticMutationInitializers.js";
+import {
+  isUnshadowedGlobal,
+  semanticEffectTiming,
+} from "./javascriptSemanticMutationInitializers.js";
 import { SEMANTIC_ALIAS_SELECTION_LIMIT } from "./javascriptSemanticResourceLimits.js";
 
 const exportInvocations = new WeakMap<

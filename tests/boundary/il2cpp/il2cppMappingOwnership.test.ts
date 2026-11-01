@@ -1,5 +1,4 @@
 import { expect, it, vi } from "vitest";
-import { linkIl2cppBinary } from "../../../src/il2cpp/Il2cppBinaryFile.js";
 import {
   isMapped,
   openImageSteps,
@@ -7,7 +6,11 @@ import {
   readSlot,
   readUInt32,
 } from "../../../src/il2cpp/Il2cppBinaryImage.js";
-import { readIl2cppMetadataForLinking } from "../../../src/il2cpp/Il2cppMetadataFile.js";
+import {
+  drain,
+  linkIl2cppBinary,
+  readIl2cppMetadataForLinking,
+} from "../../fixtures/il2cpp/readers.js";
 import {
   createElfFixture,
   createIl2cppBinaryFixture,
@@ -20,12 +23,7 @@ const { metadata, link: facts } = readIl2cppMetadataForLinking(
   createLinkedIl2cppMetadataFixture().bytes,
 );
 const link = (bytes: Buffer) => linkIl2cppBinary(bytes, metadata, facts);
-const open = (bytes: Buffer) => {
-  const steps = openImageSteps(bytes, undefined);
-  let step = steps.next();
-  while (!step.done) step = steps.next();
-  return step.value;
-};
+const open = (bytes: Buffer) => drain(openImageSteps(bytes, undefined));
 
 /** Replace PT_LOAD declarations, keeping the original PT_DYNAMIC and payload. */
 const withLoadRanges = (
@@ -95,8 +93,10 @@ it("links one code-loaded type table among short runs across many mappings", () 
   });
   expect(result.types_field).toBeNull();
   expect(result.types_count).toBe(4);
-  expect(result.return_types.every((row) => row.name === "int")).toBe(true);
-  expect(bytes).toEqual(snapshot);
+  expect(result.return_types.map((row) => row.name)).toEqual(
+    Array.from({ length: 5 }, () => "int"),
+  );
+  expect(Buffer.compare(bytes, snapshot)).toBe(0);
 });
 
 it.each([183, 62])(
@@ -110,7 +110,7 @@ it.each([183, 62])(
     ]);
     const snapshot = Buffer.from(split);
     expect(link(split)).toEqual(link(original));
-    expect(split).toEqual(snapshot);
+    expect(Buffer.compare(split, snapshot)).toBe(0);
   },
 );
 
@@ -136,7 +136,7 @@ it.each([false, true])(
         ),
       }),
     );
-    expect(bytes).toEqual(snapshot);
+    expect(Buffer.compare(bytes, snapshot)).toBe(0);
   },
 );
 
@@ -169,7 +169,7 @@ it("refuses an unresolved count relocation with conflicting file/zero-fill owner
       message: expect.stringContaining("ambiguous file and zero-fill mappings"),
     }),
   );
-  expect(bytes).toEqual(snapshot);
+  expect(Buffer.compare(bytes, snapshot)).toBe(0);
 });
 
 it("clears a file-backed unresolved count before scanning registration candidates", () => {
@@ -184,7 +184,7 @@ it("clears a file-backed unresolved count before scanning registration candidate
   expect(() => link(bytes)).toThrow(
     expect.objectContaining({ reason: "code-registration-not-found" }),
   );
-  expect(bytes).toEqual(snapshot);
+  expect(Buffer.compare(bytes, snapshot)).toBe(0);
 });
 
 it.each([false, true])(

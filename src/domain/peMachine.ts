@@ -1,4 +1,8 @@
 import type { HeaderArchitecture } from "./binaryTargetTypes.js";
+import {
+  readPeOptionalHeaderStructure,
+  type PeOptionalHeaderStructure,
+} from "./peOptionalHeader.js";
 import { err, ok, type Result } from "./result.js";
 
 export type PeArchitecture = Exclude<HeaderArchitecture, "hexagon">;
@@ -74,14 +78,9 @@ export const peSubjectArchitecture = (
 };
 
 /** Optional-header facts shared by admission and native metadata readers. */
-export interface PeOptionalHeaderFacts {
-  readonly bits: 32 | 64;
+export interface PeOptionalHeaderFacts extends PeOptionalHeaderStructure {
   readonly machine: PeMachine | null;
   readonly managed: boolean;
-  readonly dataDirectories: readonly {
-    readonly virtual_address: number;
-    readonly size: number;
-  }[];
 }
 
 export interface PeHeaderFailure {
@@ -94,43 +93,24 @@ export const readPeOptionalHeader = (
   optionalHeader: Buffer,
   machineType: number,
 ): Result<PeOptionalHeaderFacts, PeHeaderFailure> => {
-  if (optionalHeader.length < 2)
-    return err({ kind: "malformed", message: "truncated PE optional header" });
-  const magic = optionalHeader.readUInt16LE(0);
-  if (magic !== 0x10b && magic !== 0x20b)
-    return err({
-      kind: "unsupported",
-      message: "Only PE32 and PE32+ image optional headers are supported",
-    });
-  const bits = magic === 0x20b ? 64 : 32;
-  const directoryOffset = bits === 64 ? 112 : 96;
-  if (optionalHeader.length < directoryOffset)
-    return err({ kind: "malformed", message: "truncated PE optional header" });
-  const directoryCount = optionalHeader.readUInt32LE(directoryOffset - 4);
-  if (directoryCount * 8 > optionalHeader.length - directoryOffset)
-    return err({
-      kind: "malformed",
-      message: "truncated PE data-directory table",
-    });
-  const dataDirectories = Array.from({ length: directoryCount }, (_, index) => {
-    const offset = directoryOffset + index * 8;
-    return {
-      virtual_address: optionalHeader.readUInt32LE(offset),
-      size: optionalHeader.readUInt32LE(offset + 4),
-    };
-  });
-  const cli = dataDirectories[14];
-  const managed =
-    cli !== undefined && (cli.virtual_address !== 0 || cli.size !== 0);
+  const parsed = readPeOptionalHeaderStructure(optionalHeader);
+  if (!parsed.ok)
+    return err({ kind: parsed.error.kind, message: parsed.error.message });
+  const facts = parsed.value;
+  const cli = facts.dataDirectories[14];
+  const managed = cli !== undefined && (cli.address !== 0 || cli.size !== 0);
   const decoded = decodePeMachine(machineType);
   // An encoded machine without a CLI declaration remains an unknown CPU to
   // metadata readers; admission separately rejects unsupported identities.
   const machine =
     decoded?.nativeOsOverride && !managed ? null : (decoded ?? null);
-  if (machine !== null && magic !== peOptionalHeaderMagic(machine.architecture))
+  if (
+    machine !== null &&
+    facts.magic !== peOptionalHeaderMagic(machine.architecture)
+  )
     return err({
       kind: "malformed",
       message: "PE optional-header magic does not match its architecture",
     });
-  return ok({ bits, machine, managed, dataDirectories });
+  return ok({ ...facts, machine, managed });
 };

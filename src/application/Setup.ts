@@ -35,7 +35,6 @@ import { setupCleanupError, setupCleanupReason } from "./SetupCleanupOwner.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import type { SetupSkillInstallError } from "./SetupSkill.js";
 import type { SetupHopperInstallFailure } from "./SetupInstallFailure.js";
-import type { SetupRegistrationPrewarm } from "./SetupRegistrationPrewarm.js";
 
 /** Discover, approve, and apply setup actions idempotently. */
 export const runSetup = async (
@@ -132,6 +131,14 @@ const runSetupWorkflow = async (
       options.proposeHopper ?? (confirm !== undefined && !options.structured),
     initialDoctor: initialState.doctor,
   });
+  // The advertised family scope is a registration setting, not a detected
+  // provider fact; merge it after discovery so it cannot suppress the
+  // Hopper installation offer on an otherwise unconfigured machine.
+  if (options.toolFamilies !== undefined)
+    providerEnvironment = {
+      ...providerEnvironment,
+      REA_MCP_TOOL_FAMILIES: options.toolFamilies,
+    };
   clientStates = discovery.clientStates;
   const clientSelectionAllowed =
     options.clientIds === undefined &&
@@ -365,6 +372,7 @@ const runSetupWorkflow = async (
           remediation:
             combineRemediation(hopperFailure.remediation, result.remediation) ??
             hopperFailure.remediation,
+          ...hopperDownload(hopperFailure),
         };
   if (clientFailure !== undefined)
     return withHopperFailure(await fail(clientFailure));
@@ -378,34 +386,6 @@ const runSetupWorkflow = async (
     if (skillFailure !== undefined) {
       return withHopperFailure(await failSkill(skillFailure));
     }
-  }
-  // The prewarm only follows client registrations the user approved; an empty
-  // plan or a skill-only run must not install anything.
-  const prewarmEligible = appliedActions.some((id) =>
-    id.startsWith("configured_"),
-  );
-  let prewarm: SetupRegistrationPrewarm | undefined;
-  if (prewarmEligible && host.prewarmRegistrationRunner !== undefined) {
-    emitProgress(options, {
-      actionId: "prewarm_registration_runner",
-      label: "REA package-runner cache",
-      state: "started",
-      detail: "Preparing the pinned package entry",
-    });
-    prewarm = await host.prewarmRegistrationRunner();
-    if (prewarm.status === "failed")
-      emitProgress(options, {
-        actionId: "prewarm_registration_runner",
-        label: "REA package-runner cache",
-        state: "warning",
-        detail: prewarm.reason,
-      });
-    else if (prewarm.status === "warmed")
-      emitProgress(options, {
-        actionId: "prewarm_registration_runner",
-        label: "REA package-runner cache",
-        state: "completed",
-      });
   }
   const doctor = summarizeDoctor(await host.doctor(readinessScope));
   const remediation = combineRemediation(
@@ -428,10 +408,16 @@ const runSetupWorkflow = async (
     doctor,
     clientStates,
     ...(remediation === undefined ? {} : { remediation }),
-    ...(hopperFailure === undefined ? {} : { code: hopperFailure.code }),
-    ...(prewarm === undefined ? {} : { prewarm }),
+    ...(hopperFailure === undefined
+      ? {}
+      : { code: hopperFailure.code, ...hopperDownload(hopperFailure) }),
   };
 };
+
+const hopperDownload = (
+  failure: SetupHopperInstallFailure,
+): Pick<SetupResult, "download"> =>
+  failure.download === undefined ? {} : { download: failure.download };
 
 const installHopperAction = async (input: {
   readonly host: SetupHost;

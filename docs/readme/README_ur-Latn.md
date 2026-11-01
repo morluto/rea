@@ -20,7 +20,7 @@
 
 **[Website](https://rea.tools/) · [Guides](https://rea.tools/guides/) · [Showcases](https://rea.tools/showcase/)**
 
-[Jaldi shuru karein](#jaldi-shuru-karein) · [REA kaise kaam karta hai](#rea-kaise-kaam-karta-hai) · [Kya kuch analyze kar sakte hain](#kya-kuch-analyze-kar-sakte-hain) · [Amli misaalein](#amli-misaalein) · [FAQ](#faq) · [Documentation](#documentation)
+[Jaldi shuru karein](#jaldi-shuru-karein) · [REA kaise kaam karta hai](#rea-kaise-kaam-karta-hai) · [Kya kuch analyze kar sakte hain](#kya-kuch-analyze-kar-sakte-hain) · [Amli misaalein](#amli-misaalein) · [RL environments banayein](#build-rl-environments) · [FAQ](#faq) · [Documentation](#documentation)
 
 <code>npx rea-agents setup</code>
 
@@ -62,7 +62,7 @@ Kisi app mein aisa feature dekha jo aap apne product mein chahte hain? Apne agen
 
 REA aapke agent ko native binaries, JavaScript aur Electron apps, .NET assemblies aur websites inspect karne wale tools se jorta hai. Yehi tools terminal se bhi use kar sakte hain. Analysis local machine par hota hai, aur har natije ke saath uske saboot aur limitations bhi milti hain.
 
-Setup REA ko aapke agent ke saath register karta hai aur uske mutabiq workflow instructions install karta hai. Native analysis ke liye pehle se installed Hopper, Ghidra ya IDA use ho sakta hai; aapki approval par setup Hopper bhi install kar sakta hai. Static JavaScript analysis ke liye native analysis engine ki zaroorat nahi.
+Setup REA ko aapke agent ke saath register karta hai aur uske mutabiq workflow instructions install karta hai. Native analysis ke liye pehle se installed Hopper, Ghidra, IDA ya Kuna use ho sakta hai; aapki approval par setup Hopper bhi install kar sakta hai. Static JavaScript analysis ke liye native analysis engine ki zaroorat nahi.
 
 > Setup instructions, tasveeron ke saath guides aur asli case studies ke liye **[REA ki website dekhein](https://rea.tools/)**.
 
@@ -187,7 +187,7 @@ Mazeed tools aur host support target par depend karte hain:
 | Target                  | REA kya wapas deta hai                                                                            | Zarooriyat aur guide                                                                                                              |
 | ----------------------- | ------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | Desktop installations   | Runtime candidates, supporting files, component markers aur agle probes                           | Built-in bounded directory/header inspection; [desktop applications](../desktop-applications.md)                                  |
-| Native binaries         | Pseudocode, assembly, strings, symbols, calls aur references                                      | Hopper, Ghidra ya IDA; [native analysis](../native-investigation.md)                                                              |
+| Native binaries         | Pseudocode, assembly, strings, symbols, calls aur references                                      | Hopper, Ghidra, IDA ya Kuna; [native analysis](../native-investigation.md)                                                        |
 | Offline ELF layout      | Sections, segments, original symbols/relocations aur static mitigation candidates                 | Linux x64 par aapka diya hua pwntools; [binary diagnostics](../binary-diagnostics.md)                                             |
 | Go binaries             | Embedded compiler version, modules, replacements aur build settings                               | Built-in static ELF/PE/thin Mach-O inspection; Go install karna zaroori nahi                                                      |
 | GPU code objects        | CUDA/HIP targets, selected kernel parameters aur resources, retained PTX text                     | Built-in static ELF/PE/fatbin/CUBIN/PTX inspection; [GPU code objects](../gpu-code-objects.md)                                    |
@@ -281,10 +281,53 @@ output se compare karein.
 [Case study parhein](https://rea.tools/showcase/th04/) ·
 [Reconstruction repository](https://github.com/N0zoM1z0/th04)
 
+### REA se RL environments banayein
+
+Web app session record karein, us ki API ko tools mein badlein aur AI agent ke liye environment export karein. AgentEnv ke saath chalayein, phir RL training ya evaluation ke liye tasks aur reward checks shamil karein.
+
+[Environment banane ki rehnumai](https://rea.tools/guides/rl-environments/) ·
+[X par demo dekhein](https://x.com/reatools/status/2112574822584918075?s=20)
+
 Agar aapne REA se koi dilchasp kaam kiya hai to hum dekhna chahenge. Apna case
 [issue](https://github.com/morluto/rea/issues) ya
 [pull request](https://github.com/morluto/rea/pulls) mein share karein. Target,
 apna sawal, REA ne kaise madad ki aur kya mila, yeh sab batayein.
+
+<a id="build-rl-environments"></a>
+
+## RL environments banayein
+
+AI agent ke liye local environment banayein jahan woh asal app chalaye baghair issue dhoondhne ya folder banane jaise kaam ki mashq kar sake. Ise reinforcement learning (RL) ya agent ke kaam poore karne ki salahiyat jaanchne ke liye istemal karein.
+
+REA record kiye hue API requests aur responses ko aise tools mein badalta hai jinhein agent call kar sakta hai. Environment recorded data istemal karta hai aur sirf woh tabdeeliyan support karta hai jin ke asraat recording tasdeeq karti hai.
+
+Agent mein REA setup karne ke baad neeche example URL aur folder tasks ko apne app ke mutabiq badlein:
+
+```text
+Meri test web app se REA ke zariye RL environment banao:
+http://127.0.0.1:3000
+Folders ki list, creation, rename aur deletion cover karo. Test folders bana
+aur hata sakte ho, lekin mojooda data tabdeel na karo.
+my-env naam ke folder mein save karo, kaam karne wale operations check karo aur chalane ka tareeqa batao.
+```
+
+<details>
+<summary>Command line istemal karein</summary>
+
+Yeh commands tab istemal karein jab app ke browser requests aur responses ki recording pehle se file mein ho. Result chalane ke liye AgentEnv aur Docker bhi chahiye.
+
+```sh
+rea environment-build ./session.har ./my-env --name my-env --json
+agent-env run ./my-env
+```
+
+</details>
+
+REA chalne ke liye tayyar environment aur aik bunyadi test export karta hai jo us ka shuru hona aur jawab dena check karta hai. Apne RL framework ke saath task goals aur reward checks tay karein aur training chalayein.
+
+[Environment banane ki rehnumai](https://rea.tools/guides/rl-environments/) ·
+[Environment reference](../agent-environments.md) ·
+[X par demo dekhein](https://x.com/reatools/status/2112574822584918075?s=20)
 
 ## FAQ
 
@@ -299,11 +342,11 @@ use kar sakte hain.
 </details>
 
 <details>
-<summary><strong>Kya mujhe Hopper, Ghidra ya IDA chahiye?</strong></summary>
+<summary><strong>Kya mujhe Hopper, Ghidra, IDA ya Kuna chahiye?</strong></summary>
 
 Deep native analysis in mein se ek use karta hai. Static JavaScript aur .NET
 inspection native analysis engine ke baghair kaam karti hai. Approval ke baad
-setup Hopper install kar sakta hai; Ghidra aur IDA ke liye aapki existing
+setup Hopper install kar sakta hai; Ghidra, IDA aur Kuna ke liye aapki existing
 installations use hoti hain. [Provider setup](../installation.md#hopper) dekhein.
 
 </details>
@@ -389,7 +432,7 @@ Security vulnerabilities [SECURITY.md](../../SECURITY.md) ke zariye report karei
 
 ## Stars ki history
 
-🎉 **300,000 GitHub stars — shukriya!**
+🎉 **400,000 GitHub stars — shukriya!**
 
 REA use karne, bugs report karne, features suggest karne, builds test karne aur
 fixes contribute karne wale sab logon ka shukriya.

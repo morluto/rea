@@ -12,10 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 import { createDoctorHostFixture } from "../../../src/application/Doctor.fixture.js";
-import {
-  runDoctorOwned,
-  type DoctorHost,
-} from "../../../src/application/Doctor.js";
+import { runDoctorOwned } from "../../../src/application/Doctor.js";
 import {
   readSkillFile,
   skillDestinations,
@@ -31,6 +28,8 @@ import {
   systemUninstallHost,
 } from "../../../src/application/Uninstall.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
@@ -96,7 +95,7 @@ describe("setup skill backup cleanup ownership", () => {
       if (stage !== "verification") await writeFile(backup, original);
       const close = failFirstCloses(backup);
       const host = systemSetupHost(
-        { platform: "linux", homeDirectory: home } as DoctorHost,
+        createDoctorHostFixture({ platform: "linux", homeDirectory: home }),
         { HOME: home },
       );
 
@@ -127,6 +126,7 @@ describe("setup skill backup cleanup ownership", () => {
           { approved: true, installHopper: false, structured: true },
           {
             ...host,
+            nodeVersion: "24.22.1",
             initialSetupState: async () => {
               throw primary;
             },
@@ -188,7 +188,7 @@ describe("skill regular-file cleanup ownership", () => {
     await writeFile(manifest, "stale managed skill\n");
     const close = failFirstCloses(manifest);
     const host = systemSetupHost(
-      { platform: "linux", homeDirectory: home } as DoctorHost,
+      createDoctorHostFixture({ platform: "linux", homeDirectory: home }),
       { HOME: home },
     );
 
@@ -249,11 +249,12 @@ describe("skill regular-file cleanup ownership", () => {
       return handle;
     });
 
-    try {
-      const reading = readSkillFile(manifest, resources);
-      await readStarted;
+    const reading = readSkillFile(manifest, resources);
+    let closing: Promise<void> | undefined;
+    await withVerifierCleanup(async () => {
+      await awaitAcknowledgement(readStarted, reading, "skill read");
       let closed = false;
-      const closing = resources.close().then(() => {
+      closing = resources.close().then(() => {
         closed = true;
       });
       await Promise.resolve();
@@ -262,10 +263,16 @@ describe("skill regular-file cleanup ownership", () => {
       expect(await reading).toBe("stale managed skill\n");
       await closing;
       expect(closed).toBe(true);
-    } finally {
-      unblockRead();
-      await resources.close();
-    }
+    }, [
+      unblockRead,
+      async () => {
+        await reading;
+      },
+      async () => {
+        await closing;
+      },
+      () => resources.close(),
+    ]);
   });
 });
 

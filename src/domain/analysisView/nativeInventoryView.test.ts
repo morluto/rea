@@ -19,6 +19,7 @@ const rows = () => [
   { address: "0x20", value: "last" },
 ];
 const parent = (normalizedResult: unknown): AnalysisViewParent => ({
+  predicateType: "rea.analysis",
   evidenceId: `ev_${"a".repeat(64)}`,
   operation: "search_procedures",
   normalizedResult,
@@ -94,6 +95,21 @@ it("reuses only authenticated immutable validation while rebinding provenance to
     artifact: null,
     limitations: source.limitations,
   });
+});
+
+it("retains caller metadata in Evidence while reusing owner-normalized inventory rows", () => {
+  const original = [{ ...rows()[0]!, caller_metadata: { label: "keep me" } }];
+  const source = parent(freezeJsonSnapshot(original));
+  const parse = vi.spyOn(nativeInventoryRowsSchemas.names, "safeParse");
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const page = project(source, { kind: "native-inventory", limit: 1 });
+    expect(page).toMatchObject({
+      rows: [{ source_index: 0, record: rows()[0] }],
+    });
+  }
+  expect(parse).toHaveBeenCalledOnce();
+  expect(source.normalizedResult).toEqual(original);
+  expect(original[0]?.caller_metadata).toEqual({ label: "keep me" });
 });
 
 it("revalidates mutable and shallow-frozen arrays despite a forged sealing flag", () => {

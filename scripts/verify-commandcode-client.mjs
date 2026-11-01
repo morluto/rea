@@ -5,14 +5,15 @@ import { homedir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv2020 from "ajv/dist/2020.js";
-import {
-  TOOL_CONTRACTS,
-  toolContract,
-} from "../dist/contracts/toolContracts.js";
+import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
+import { isPathWithinRoot } from "../dist/domain/localPath.js";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
-import { assertJavaScriptApplicationInputPaths } from "./lib/javascript-application-paths.mjs";
+import {
+  CLIENT_JAVASCRIPT_FIXTURE_SOURCE,
+  assertClientJavaScriptFixtureEvidence,
+} from "./verify/clients/javascript-fixture.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { createOpenAiModelFixture } from "./verify/clients/model-fixture.mjs";
 
@@ -54,6 +55,7 @@ const expectedNames = TOOL_CONTRACTS.map(
 ).sort();
 let clientVersion = null;
 let expectedSkill;
+let skillCallId;
 let inventoryChecked = false;
 let catalogSize = null;
 let skillLoaded = false;
@@ -80,10 +82,7 @@ await withVerifierCleanup(async () => {
       timeout: 30_000,
       stdin: "pipe",
     });
-    await writeFile(
-      join(target, "app.js"),
-      'export function result() { return { clientCompatibility: "REA_CLIENT_FIXTURE", count: 7 }; }\n',
-    );
+    await writeFile(join(target, "app.js"), CLIENT_JAVASCRIPT_FIXTURE_SOURCE);
     const environment = {
       PATH: process.env.PATH,
       NODE_OPTIONS: process.env.NODE_OPTIONS,
@@ -183,10 +182,24 @@ await withVerifierCleanup(async () => {
           finalSeen = true;
           return { role: "assistant", content: "REA_CLIENT_COMPATIBILITY_OK" };
         }
-        if (stage === 0)
-          return call("activate_skill", { name: "reverse-engineer-anything" });
+        if (stage === 0) {
+          const request = call("activate_skill", {
+            name: "reverse-engineer-anything",
+          });
+          skillCallId = request.tool_calls[0].id;
+          return request;
+        }
         assert(
-          strings.some((text) => text.includes(expectedSkill)),
+          skillCallId !== undefined &&
+            expectedSkill !== undefined &&
+            body.messages.some(
+              (message) =>
+                message.role === "tool" &&
+                message.tool_call_id === skillCallId &&
+                textValues(message.content).some((text) =>
+                  text.includes(expectedSkill),
+                ),
+            ),
           "The model must receive the complete activated skill body",
         );
         skillLoaded = true;
@@ -246,43 +259,7 @@ await withVerifierCleanup(async () => {
             format: "directory",
           });
         }
-        const evidence = toolContract(
-          "analyze_javascript_application",
-        ).outputSchema.parse(JSON.parse(last));
-        await assertJavaScriptApplicationInputPaths(evidence, target);
-        const shapes = evidence.normalized_result.graph.nodes
-          .flatMap((node) => node.observations)
-          .map((observation) => observation.properties)
-          .filter(
-            (properties) =>
-              properties.semantic_role === "export-return-shapes" &&
-              properties.exported_name === "result",
-          );
-        assert(
-          shapes.length > 0 &&
-            shapes.every(
-              (shape) => shape.return_shape_coverage?.projection_complete,
-            ),
-        );
-        const fields = shapes.flatMap((shape) =>
-          shape.static_return_shapes.flatMap((item) => item.fields),
-        );
-        assert(
-          fields.some(
-            (field) =>
-              field.path === "/clientCompatibility" &&
-              field.state === "literal" &&
-              field.value === "REA_CLIENT_FIXTURE",
-          ),
-        );
-        assert(
-          fields.some(
-            (field) =>
-              field.path === "/count" &&
-              field.state === "literal" &&
-              field.value === 7,
-          ),
-        );
+        await assertClientJavaScriptFixtureEvidence(JSON.parse(last), target);
         evidenceBytes = Buffer.byteLength(last);
         await writeFile(join(lab, "native-evidence.json"), last);
         evidenceSeen = true;
@@ -361,8 +338,8 @@ await withVerifierCleanup(async () => {
           result.plannedActions.every(
             (action) =>
               action.target === configPath ||
-              action.target === skillDirectory ||
-              action.target.startsWith(skillDirectory + "/"),
+              (isAbsolute(action.target) &&
+                isPathWithinRoot(skillDirectory, action.target)),
           ),
           "Refuse setup writes outside the disposable account's configuration and skill",
         );
@@ -381,9 +358,16 @@ await withVerifierCleanup(async () => {
     assert.deepEqual(repeated.appliedActions, []);
     assert.equal(await readFile(configPath, "utf8"), configured);
     assert.equal(await readFile(`${configPath}.rea.backup`, "utf8"), original);
-    expectedSkill = (await readFile(join(skillDirectory, "SKILL.md"), "utf8"))
-      .replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, "")
-      .trim();
+    const installedSkill = await readFile(
+      join(skillDirectory, "SKILL.md"),
+      "utf8",
+    );
+    const frontmatter = /^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/u.exec(
+      installedSkill,
+    );
+    assert(frontmatter, "Installed skill must have authored frontmatter");
+    expectedSkill = installedSkill.slice(frontmatter[0].length).trim();
+    assert(expectedSkill.length > 0, "Installed skill body must not be empty");
     const response = await saveVerifierCommandOutput(
       () =>
         commands.exec(

@@ -1,3 +1,5 @@
+import { RIZIN_DEBUGGER_PROVIDER_IDENTITY } from "./RizinDebuggerProviderIdentity.js";
+import { persistentDebuggerHostSupported } from "../process/PersistentDebuggerHost.js";
 import { randomUUID } from "node:crypto";
 import { isUtf8 } from "node:buffer";
 import { open, readlink, realpath, stat } from "node:fs/promises";
@@ -8,7 +10,6 @@ import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
-  AnalysisResourceConstraintError,
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
 import type {
@@ -24,7 +25,17 @@ import {
   type SpawnedOwnedProviderProcess,
 } from "../process/ProviderProcess.js";
 import {
+  applyDebuggerAdmissionOverride,
+  debuggerControlReplyOutput,
+  resolveDebuggerSessionLimits,
+  type DebuggerAdmissionLimit,
+} from "../config/debuggerSessionLimits.js";
+import {
   closeOwnedDebuggerSessions,
+  configurableDeadlineGuidance,
+  debuggerAdmissionRecovery,
+  debuggerResourceConstraintError,
+  fixedDeadlineGuidance,
   stopOwnedDebuggerProcess,
   readLinuxProcessStartTime,
   verifyOwnedInferiorsEnded,
@@ -32,35 +43,17 @@ import {
   type OwnedDebuggerDetachResult,
 } from "../process/ownedDebuggerSession.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
+import { ABORTED, waitForAbortable } from "../process/AbortablePromise.js";
 
-const MAX_SESSIONS = 8;
-const MAX_PENDING_COMMANDS = 16;
-const FRAME_TIMEOUT_MS = 120_000;
 const CLEANUP_COMMAND_TIMEOUT_MS = 1_000;
 const STARTUP_TIMEOUT_MS = 30_000;
-
-/** Fixed debugger deadline. Callers cannot raise it in this release. */
-const fixedDeadlineGuidance = (
-  what: string,
-  timeoutMs: number,
-): { readonly userMessage: string; readonly remediationAction: string } => ({
-  userMessage: `${what} reached its ${String(timeoutMs)} ms deadline (deadlineExpired). This release has no runtime override.`,
-  remediationAction: `This ${String(timeoutMs)} ms deadline has no runtime override. Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
-});
 const MAX_FRAME_BYTES = 16 * 1024 * 1024;
-const MAX_COMMAND_OUTPUT_BYTES = 16 * 1024 * 1024;
 const MAX_QUEUED_FRAME_BYTES = 4 * 1024 * 1024;
 const MAX_QUEUED_FRAMES = 4096;
 const MIN_QUEUED_FRAME_CHARGE_BYTES = 64;
 const MAX_COMMAND_FRAMES = 4096;
 const MAX_RECENT_FRAME_BYTES = 16 * 1024;
 const MAX_DIAGNOSTIC_BYTES = 64 * 1024;
-
-export const RIZIN_DEBUGGER_PROVIDER_IDENTITY = {
-  id: "rizin.debugger",
-  name: "Rizin debugger",
-  version: null,
-} as const;
 
 interface RizinLaunchProvenance {
   readonly caller_selected_path: string;
@@ -146,8 +139,13 @@ interface RizinCommandTimeoutEvidenceInput {
   readonly inferiorTty: string;
   readonly cleanupFailure: string | undefined;
   readonly launchProvenance: RizinLaunchProvenance;
-  readonly timeoutMs?: number;
+  readonly deadline?: DebuggerAdmissionLimit;
 }
+
+export const rizinCommandTimeoutLimitation = (
+  deadline: DebuggerAdmissionLimit,
+): string =>
+  `The command timed out before its completion marker at ${String(deadline.value)} ms (deadlineExpired). ${debuggerAdmissionRecovery(deadline)} Retained output is partial and completion is unknown.`;
 
 export const createRizinCommandTimeoutEvidence = ({
   sessionId,
@@ -156,7 +154,7 @@ export const createRizinCommandTimeoutEvidence = ({
   inferiorTty,
   cleanupFailure,
   launchProvenance,
-  timeoutMs = FRAME_TIMEOUT_MS,
+  deadline = resolveDebuggerSessionLimits({}).commandDeadline,
 }: RizinCommandTimeoutEvidenceInput): Evidence =>
   createRizinCommandEvidence({
     sessionId,
@@ -165,7 +163,7 @@ export const createRizinCommandTimeoutEvidence = ({
     inferiorTty,
     launchProvenance,
     limitations: [
-      `The command timed out before its completion marker at ${String(timeoutMs)} ms (deadlineExpired). This release has no runtime override. Retained output is partial and completion is unknown.`,
+      rizinCommandTimeoutLimitation(deadline),
       ...(result.output_invalid_utf8
         ? [
             "Collected command frame bytes did not form valid UTF-8; displayed output contains replacement characters.",
@@ -258,8 +256,12 @@ export class RizinDebugSessionManager {
   #closingAll = false;
   readonly #startDrainWaiters: Array<() => void> = [];
   readonly #command: string;
+  readonly #commandDeadline: DebuggerAdmissionLimit;
   readonly #frameTimeoutMs: number;
   readonly #startupTimeoutMs: number;
+  readonly #maxSessions: DebuggerAdmissionLimit;
+  readonly #maxPendingCommands: DebuggerAdmissionLimit;
+  readonly #commandOutput: DebuggerAdmissionLimit;
   readonly #maxCommandOutputBytes: number;
   readonly #platform: NodeJS.Platform;
   readonly #stopProcess: typeof stopOwnedDebuggerProcess;
@@ -268,10 +270,15 @@ export class RizinDebugSessionManager {
   constructor(
     environment: Readonly<NodeJS.ProcessEnv> = process.env,
     options: {
+      /** @internal Test seam. Production uses REA_DEBUGGER_COMMAND_DEADLINE_MS. */
       readonly frameTimeoutMs?: number;
       /** @internal Test seam; production callers should use the 30 s default. */
       readonly startupTimeoutMs?: number;
-      /** @internal Test seam; production callers should use the 16 MiB default. */
+      /** @internal Test seam. Production uses REA_DEBUGGER_MAX_SESSIONS. */
+      readonly maxSessions?: number;
+      /** @internal Test seam. Production uses REA_DEBUGGER_MAX_PENDING_COMMANDS. */
+      readonly maxPendingCommands?: number;
+      /** @internal Test seam. Production uses REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES. */
       readonly maxCommandOutputBytes?: number;
       readonly platform?: NodeJS.Platform;
       readonly stopProcess?: typeof stopOwnedDebuggerProcess;
@@ -280,10 +287,26 @@ export class RizinDebugSessionManager {
   ) {
     this.#environment = { ...environment };
     this.#command = environment.REA_RIZIN_COMMAND ?? "rizin";
-    this.#frameTimeoutMs = options.frameTimeoutMs ?? FRAME_TIMEOUT_MS;
+    const limits = resolveDebuggerSessionLimits(this.#environment);
+    this.#commandDeadline = applyDebuggerAdmissionOverride(
+      limits.commandDeadline,
+      options.frameTimeoutMs,
+    );
+    this.#frameTimeoutMs = this.#commandDeadline.value;
     this.#startupTimeoutMs = options.startupTimeoutMs ?? STARTUP_TIMEOUT_MS;
-    this.#maxCommandOutputBytes =
-      options.maxCommandOutputBytes ?? MAX_COMMAND_OUTPUT_BYTES;
+    this.#maxSessions = applyDebuggerAdmissionOverride(
+      limits.maxSessions,
+      options.maxSessions,
+    );
+    this.#maxPendingCommands = applyDebuggerAdmissionOverride(
+      limits.maxPendingCommands,
+      options.maxPendingCommands,
+    );
+    this.#commandOutput = applyDebuggerAdmissionOverride(
+      limits.maxCommandOutputBytes,
+      options.maxCommandOutputBytes,
+    );
+    this.#maxCommandOutputBytes = this.#commandOutput.value;
     this.#platform = options.platform ?? process.platform;
     this.#stopProcess = options.stopProcess ?? stopOwnedDebuggerProcess;
     this.#spawnProcess = options.spawnProcess ?? spawnOwnedProviderProcess;
@@ -314,15 +337,17 @@ export class RizinDebugSessionManager {
         ]),
       );
     const occupied = this.#sessions.size + this.#sessionReservations;
-    if (occupied >= MAX_SESSIONS)
+    if (occupied >= this.#maxSessions.value)
       return err(
-        new AnalysisResourceConstraintError(
+        debuggerResourceConstraintError(
           "start_rizin_debug_session",
           "memory",
-          `Rizin session capacity reached (${String(MAX_SESSIONS)} sessions). This release has no runtime override.`,
-          { max_sessions: MAX_SESSIONS, active_or_reserved_sessions: occupied },
+          `Rizin session capacity reached (${String(this.#maxSessions.value)} sessions).`,
+          "Close a Rizin debug session before starting another.",
+          this.#maxSessions,
           {
-            remediationAction: `Close a Rizin debug session before starting another. This capacity of ${String(MAX_SESSIONS)} sessions has no runtime override.`,
+            max_sessions: this.#maxSessions.value,
+            active_or_reserved_sessions: occupied,
           },
         ),
       );
@@ -360,7 +385,7 @@ export class RizinDebugSessionManager {
   > {
     if (signal?.aborted)
       return err(rizinCancellation("start_rizin_debug_session", signal));
-    if (this.#platform !== "linux")
+    if (!persistentDebuggerHostSupported(this.#platform))
       return err(
         new AnalysisCapabilityUnavailableError(
           "rizin",
@@ -619,18 +644,17 @@ export class RizinDebugSessionManager {
       return err(new AnalysisInputError("rizin_debug_command"));
     if (signal?.aborted)
       return err(rizinCancellation("rizin_debug_command", signal));
-    if (session.pendingCommandCount >= MAX_PENDING_COMMANDS)
+    if (session.pendingCommandCount >= this.#maxPendingCommands.value)
       return err(
-        new AnalysisResourceConstraintError(
+        debuggerResourceConstraintError(
           "rizin_debug_command",
           "transport",
-          `Rizin command queue capacity reached (${String(MAX_PENDING_COMMANDS)} pending commands). This release has no runtime override.`,
+          `Rizin command queue capacity reached (${String(this.#maxPendingCommands.value)} pending commands).`,
+          "Wait for a Rizin debug command on this session to finish, then retry.",
+          this.#maxPendingCommands,
           {
-            max_pending_commands: MAX_PENDING_COMMANDS,
+            max_pending_commands: this.#maxPendingCommands.value,
             active_or_queued_commands: session.pendingCommandCount,
-          },
-          {
-            remediationAction: `Wait for a Rizin debug command on this session to finish, then retry. This queue of ${String(MAX_PENDING_COMMANDS)} commands has no runtime override.`,
           },
         ),
       );
@@ -722,8 +746,8 @@ export class RizinDebugSessionManager {
         session,
         marker,
         this.#frameTimeoutMs,
+        this.#commandOutput,
         signal,
-        this.#maxCommandOutputBytes,
       );
       commandCapture = received.ok ? received.value : received.error.capture;
       if (!received.ok) {
@@ -758,7 +782,7 @@ export class RizinDebugSessionManager {
             ? [
                 rizinCaptureStoppedSentence(
                   captured.outputLimit,
-                  this.#maxCommandOutputBytes,
+                  this.#commandOutput,
                   cleanupFailure,
                 ),
               ]
@@ -852,7 +876,7 @@ export class RizinDebugSessionManager {
         );
       }
       if (interruption?.kind === "timeout") {
-        session.protocolError = `Rizin command timed out before its completion marker at ${String(this.#frameTimeoutMs)} ms (deadlineExpired). This release has no runtime override. Output correlation is no longer safe.`;
+        session.protocolError = `Rizin command timed out before its completion marker at ${String(this.#commandDeadline.value)} ms (deadlineExpired). ${debuggerAdmissionRecovery(this.#commandDeadline)} Output correlation is no longer safe.`;
         const stopped = await this.#stopDebuggerOnly(session, true);
         const result = {
           ...commandResult(interruption.capture, "unknown"),
@@ -863,10 +887,10 @@ export class RizinDebugSessionManager {
           command,
           result,
           inferiorTty: session.inferiorTty,
+          deadline: this.#commandDeadline,
           cleanupFailure:
             stopped.status === "incomplete" ? stopped.reason : undefined,
           launchProvenance: session.launchProvenance,
-          timeoutMs: this.#frameTimeoutMs,
         });
         return this.#finalizeCommandObservation(
           session,
@@ -912,9 +936,9 @@ export class RizinDebugSessionManager {
         this.#frameTimeoutMs,
         {
           ...errorOptions,
-          ...fixedDeadlineGuidance(
+          ...configurableDeadlineGuidance(
             "The Rizin debug command",
-            this.#frameTimeoutMs,
+            this.#commandDeadline,
           ),
         },
       );
@@ -1185,6 +1209,10 @@ export class RizinDebugSessionManager {
           platform: this.#platform,
         }),
       )
+      .catch((cause: unknown) => ({
+        status: "incomplete" as const,
+        reason: `Owned Rizin debugger shutdown failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+      }))
       .then((stopped) => {
         if (stopped.status !== "incomplete") {
           for (const failure of session.cleanupFailures)
@@ -1395,8 +1423,7 @@ export class RizinDebugSessionManager {
       session,
       marker,
       CLEANUP_COMMAND_TIMEOUT_MS,
-      undefined,
-      this.#maxCommandOutputBytes,
+      debuggerControlReplyOutput,
     );
     if (!captured.ok) throw captured.error.cause;
     if (captured.value.outputTruncated)
@@ -1617,7 +1644,7 @@ const bufferedRizinFrame = (session: RizinDebugSession, truncated: boolean) => {
 
 const rizinCaptureStoppedSentence = (
   limit: RizinOutputLimit | undefined,
-  maxCommandOutputBytes: number,
+  output: DebuggerAdmissionLimit,
   cleanupFailure: string | undefined,
 ): string => {
   const cap =
@@ -1628,22 +1655,27 @@ const rizinCaptureStoppedSentence = (
         : limit === "queued_frames"
           ? `the queued frame limit of ${String(MAX_QUEUED_FRAMES)} frames or ${String(MAX_QUEUED_FRAME_BYTES)} bytes`
           : limit === "command_output_bytes"
-            ? `the ${String(maxCommandOutputBytes)} byte output limit`
+            ? `the ${String(output.value)} byte output limit`
             : "a capture limit";
   const cleanup =
     cleanupFailure === undefined
       ? " The owned debugger session was stopped."
       : ` The owned debugger session remains retained because cleanup could not be verified: ${cleanupFailure}`;
-  return `The Rizin command exceeded ${cap}. This release has no runtime override. Retained output is partial and command completion is unknown.${cleanup}`;
+  const recovery =
+    limit === "command_output_bytes"
+      ? ` ${debuggerAdmissionRecovery(output)}`
+      : " This release has no runtime override.";
+  return `The Rizin command exceeded ${cap}.${recovery} Retained output is partial and command completion is unknown.${cleanup}`;
 };
 
 const waitForCommandFrames = async (
   session: RizinDebugSession,
   marker: string,
   timeoutMs: number,
+  commandOutput: DebuggerAdmissionLimit,
   signal?: AbortSignal,
-  maxCommandOutputBytes = MAX_COMMAND_OUTPUT_BYTES,
 ): Promise<Result<RizinCommandCapture, RizinCommandInterruption>> => {
+  const maxCommandOutputBytes = commandOutput.value;
   const deadline = Date.now() + timeoutMs;
   const output: string[] = [];
   let outputBytes = 0;
@@ -1771,7 +1803,10 @@ const waitForCommandFrames = async (
     const markerSeen = append(received);
     if (outputTruncated) {
       if (outputLimit === "command_output_bytes")
-        session.protocolError ??= `Rizin command output exceeded the ${String(maxCommandOutputBytes)} byte (16 MiB) command limit. This release has no runtime override.`;
+        session.protocolError ??=
+          commandOutput === debuggerControlReplyOutput
+            ? `Rizin control readback exceeded the ${String(maxCommandOutputBytes)} byte control-reply budget. That budget is separate from REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES and has no runtime override.`
+            : `Rizin command output exceeded the ${String(maxCommandOutputBytes)} byte command limit. ${debuggerAdmissionRecovery(commandOutput)}`;
       else if (outputLimit === "frame_bytes")
         session.protocolError ??= `Rizin emitted a NUL frame exceeding the ${String(MAX_FRAME_BYTES)} byte (16 MiB) protocol limit. This release has no runtime override.`;
       return ok(snapshot());
@@ -1839,19 +1874,11 @@ const waitForTurn = (
   signal?: AbortSignal,
 ): Promise<void> => {
   if (signal === undefined) return previous;
-  if (signal.aborted)
-    return Promise.reject(rizinCancellation("rizin_debug_command", signal));
-  return new Promise<void>((resolve, reject) => {
-    const onAbort = (): void =>
-      reject(rizinCancellation("rizin_debug_command", signal));
-    signal.addEventListener("abort", onAbort, { once: true });
-    previous.then(() => {
-      signal.removeEventListener("abort", onAbort);
-      resolve();
-    });
+  return waitForAbortable(previous, signal).then((outcome) => {
+    if (outcome === ABORTED)
+      throw rizinCancellation("rizin_debug_command", signal);
   });
 };
-
 /** Translate only this transport's typed cancellation, preserving opaque/null caller reasons. */
 const rizinCancellation = (
   operation: string,

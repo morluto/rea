@@ -82,7 +82,7 @@
     <!-- prettier-ignore -->
     <meta
       property="og:image:alt"
-      content="REA — Find out how software works. Reverse engineering with your coding agent."
+      content="REA: Find out how software works. Reverse engineering with your coding agent."
     />
     <!-- prettier-ignore -->
     <meta name="twitter:card" content="summary_large_image" />
@@ -95,7 +95,7 @@
     <!-- prettier-ignore -->
     <meta
       name="twitter:image:alt"
-      content="REA — Find out how software works. Reverse engineering with your coding agent."
+      content="REA: Find out how software works. Reverse engineering with your coding agent."
     />
     <!-- website:sharing:end -->
     <!-- website:theme:start -->
@@ -122,8 +122,6 @@
           <a href="../../showcase/">Showcases</a>
           <a href="../../blog/">Blog</a>
           <a href="../../guides/" aria-current="page">Guides</a>
-          <a href="../../faq/">FAQ</a>
-          <a href="../../contributors/">Contributors</a>
         </nav>
         <div class="header-social">
           <details class="language-picker" data-i18n-skip><summary><span aria-hidden="true">文 / A</span> <span>English</span></summary><nav aria-label="English"><a href="../../guides/javascript/" lang="en" dir="ltr" data-language="en" aria-current="true">English</a><a href="../../zh-CN/guides/javascript/" lang="zh-CN" dir="ltr" data-language="zh-CN">简体中文</a><a href="../../zh-TW/guides/javascript/" lang="zh-TW" dir="ltr" data-language="zh-TW">繁體中文</a><a href="../../ja/guides/javascript/" lang="ja" dir="ltr" data-language="ja">日本語</a><a href="../../ko/guides/javascript/" lang="ko" dir="ltr" data-language="ko">한국어</a><a href="../../tr/guides/javascript/" lang="tr" dir="ltr" data-language="tr">Türkçe</a><a href="../../ru/guides/javascript/" lang="ru" dir="ltr" data-language="ru">Русский</a><a href="../../vi/guides/javascript/" lang="vi" dir="ltr" data-language="vi">Tiếng Việt</a><a href="../../th/guides/javascript/" lang="th" dir="ltr" data-language="th">ไทย</a><a href="../../de/guides/javascript/" lang="de" dir="ltr" data-language="de">Deutsch</a><a href="../../es/guides/javascript/" lang="es" dir="ltr" data-language="es">Español</a><a href="../../fr/guides/javascript/" lang="fr" dir="ltr" data-language="fr">Français</a><a href="../../uk/guides/javascript/" lang="uk" dir="ltr" data-language="uk">Українська</a><a href="../../pl/guides/javascript/" lang="pl" dir="ltr" data-language="pl">Polski</a><a href="../../pt-BR/guides/javascript/" lang="pt-BR" dir="ltr" data-language="pt-BR">Português (Brasil)</a><a href="../../ar/guides/javascript/" lang="ar" dir="rtl" data-language="ar">العربية</a><a href="../../fa/guides/javascript/" lang="fa" dir="rtl" data-language="fa">فارسی</a><a href="../../id/guides/javascript/" lang="id" dir="ltr" data-language="id">Bahasa Indonesia</a><a href="../../it/guides/javascript/" lang="it" dir="ltr" data-language="it">Italiano</a><a href="../../el/guides/javascript/" lang="el" dir="ltr" data-language="el">Ελληνικά</a><a href="../../ml/guides/javascript/" lang="ml" dir="ltr" data-language="ml">മലയാളം</a><a href="../../ur-Latn/guides/javascript/" lang="ur-Latn" dir="ltr" data-language="ur-Latn">Roman Urdu</a><a href="../../ro/guides/javascript/" lang="ro" dir="ltr" data-language="ro">Română</a></nav></details>
@@ -320,9 +318,16 @@
                   source</span
                 >
               </div>
-              <pre><code>document.querySelector(&quot;#export&quot;).addEventListener(&quot;click&quot;, async () =&gt; {
+              <pre><code id="notes-renderer-source">async function exportNotes() {
   const destination = await window.notes.exportCsv();
   document.querySelector(&quot;#status&quot;).textContent = `Saved to ${destination}`;
+}
+
+document.querySelector(&quot;#export&quot;).addEventListener(&quot;click&quot;, () =&gt; {
+  exportNotes().catch((cause) =&gt; {
+    document.querySelector(&quot;#status&quot;).textContent = &quot;Export failed&quot;;
+    console.error(&quot;Notes export failed&quot;, cause);
+  });
 });</code></pre>
             </div>
             <p>
@@ -374,8 +379,9 @@
 }</code></pre>
             </div>
             <p class="caption">
-              Recorded by REA 4.1.0 on the downloadable example below. Source
-              locations accompany the API, channel and handler findings.
+              Recorded by REA 4.1.0 on an earlier version of the example below.
+              The renderer has since changed; the recorded source locations
+              accompany the API, channel and handler findings.
             </p>
           </section>
           <section class="article-section" id="try">
@@ -501,7 +507,8 @@
       <div class="container footer-inner">
         <p>REA · Reverse Engineer Anything</p>
         <div class="footer-links">
-          <a href="../../contributors/">Contributors</a
+          <a href="../../faq/">FAQ</a
+          ><a href="../../contributors/">Contributors</a
           ><a href="https://github.com/morluto/rea">Source</a
           ><a href="https://github.com/morluto/rea/blob/main/LICENSE">MIT license</a
           ><a href="https://discord.gg/GkcryMnJDM">Join the community</a

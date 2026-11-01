@@ -156,7 +156,10 @@ const providerCandidates = async (
   if (session === undefined) return [];
   const signal = currentMcpRequestSignal();
   const parsed = providerStatusSchema.safeParse(
-    await session.status(signal === undefined ? {} : { signal }),
+    await session.status({
+      detail: "summary",
+      ...(signal === undefined ? {} : { signal }),
+    }),
   );
   if (!parsed.success) return [];
   const candidates = parsed.data.analysis_provider_candidates.map(

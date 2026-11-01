@@ -204,12 +204,19 @@ cliTest(
       ),
     ).toEqual(ibResult);
 
-    expect(await readFile(archivePath)).toEqual(bytes);
-    expect(await readFile(malformedArchivePath)).toEqual(malformedBytes);
+    expect(Buffer.compare(await readFile(archivePath), bytes)).toBe(0);
     expect(
-      await readFile(join(malformedApp, "Contents/Resources/Main.nib")),
-    ).toEqual(bytes);
-    expect(await readFile(malformedNib)).toEqual(malformedBytes);
+      Buffer.compare(await readFile(malformedArchivePath), malformedBytes),
+    ).toBe(0);
+    expect(
+      Buffer.compare(
+        await readFile(join(malformedApp, "Contents/Resources/Main.nib")),
+        bytes,
+      ),
+    ).toBe(0);
+    expect(Buffer.compare(await readFile(malformedNib), malformedBytes)).toBe(
+      0,
+    );
     expect(createHash("sha256").update(bytes).digest("hex")).toBe(
       ibResult.documents[0]?.archive_sha256,
     );
@@ -265,7 +272,7 @@ cliTest(
       parseEvidence(validated).normalized_result,
     );
     expect(mcpResult).toEqual(cliResult);
-    expect(await readFile(archivePath)).toEqual(bytes);
+    expect(Buffer.compare(await readFile(archivePath), bytes)).toBe(0);
   },
   60_000,
 );

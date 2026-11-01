@@ -1,3 +1,4 @@
+import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { ArtifactOperationError } from "../domain/artifactOperationError.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
@@ -18,6 +19,9 @@ export const translateArtifactFailure = (
       cause.details,
       cause.message,
       {
+        ...(cause.userMessage === undefined
+          ? {}
+          : { userMessage: cause.userMessage }),
         cause:
           cause.reason === "cancelled"
             ? artifactFileCancellationCause(cause)
@@ -32,6 +36,17 @@ export const translateArtifactFailure = (
         ...(cause.boundary === undefined ? {} : { boundary: cause.boundary }),
       },
     );
+    if (cause.admission !== undefined)
+      error.bindLimit({
+        ...analysisSettingLimit(
+          "asar.max_header_bytes",
+          cause.admission.maximumBytes,
+          cause.admission.source,
+        ),
+        ...(cause.admission.requiredBytes === undefined
+          ? {}
+          : { required_value: cause.admission.requiredBytes }),
+      });
     bindArtifactFileCleanup(cause, error);
     return error;
   }

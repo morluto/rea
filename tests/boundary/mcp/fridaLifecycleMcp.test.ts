@@ -21,7 +21,10 @@ import type {
 } from "../../../src/application/frida/FridaInstrumentationPort.js";
 import type { EvidenceWriter } from "../../../src/application/investigation/InvestigationRecordPort.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
-import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
+import {
+  expandToolAvailability,
+  toolAvailabilityInventory,
+} from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import type { AnalysisPartialObservation } from "../../../src/domain/analysisErrorBase.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { EvidenceIntegrityError } from "../../../src/domain/evidenceErrors.js";
@@ -303,12 +306,14 @@ it("retains detached state and resume evidence when remote cleanup needs retry",
   ).toBe(true);
   const inventory = await fixture.client.callTool({
     name: "binary_session",
-    arguments: {},
+    arguments: { detail: "complete" },
   });
   const availability = expandToolAvailability(
-    toolContract("binary_session").outputSchema.parse(
-      inventory.structuredContent,
-    ).result.tool_availability,
+    toolAvailabilityInventory.parse(
+      toolContract("binary_session").outputSchema.parse(
+        inventory.structuredContent,
+      ).result.tool_availability,
+    ),
   );
   expect(
     availability.find((tool) => tool.name === "close_frida_session"),
@@ -617,13 +622,15 @@ it("declares non-destructive session mutation when status retains Evidence", asy
   ).toMatchObject({ readOnlyHint: false, destructiveHint: false });
   const inventory = await client.callTool({
     name: "binary_session",
-    arguments: {},
+    arguments: { detail: "complete" },
   });
   expect(inventory.isError).not.toBe(true);
   const available = expandToolAvailability(
-    toolContract("binary_session").outputSchema.parse(
-      inventory.structuredContent,
-    ).result.tool_availability,
+    toolAvailabilityInventory.parse(
+      toolContract("binary_session").outputSchema.parse(
+        inventory.structuredContent,
+      ).result.tool_availability,
+    ),
   );
   expect(
     available.find((tool) => tool.name === "frida_session_status"),

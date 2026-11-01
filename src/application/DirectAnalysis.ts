@@ -1,20 +1,27 @@
+import type { EspFlashSelection } from "../domain/firmware/espFlashLocation.js";
 import type { ExecutableFormatHint } from "../domain/dosCom.js";
 import { dispatchQueuedInterrupts } from "../process/queuedInterrupts.js";
-import type { BinaryArchitecture } from "../domain/binaryTargetTypes.js";
+import type {
+  BinaryArchitecture,
+  BinaryTarget,
+} from "../domain/binaryTargetTypes.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { DirectAnalysisDependencies } from "./DirectAnalysisDependencies.js";
 import type { BinarySession } from "./binary/BinarySession.js";
 import type { SessionProviderRoute } from "./binary/SessionProviderRouter.js";
+import {
+  routeAllowsSnapshotReplay,
+  routeProviderIdentity,
+} from "./binary/SessionProviderPolicy.js";
 import type { ResolvedSessionOpen } from "./binary/BinarySessionOpen.js";
 import { silentLogger } from "../logger.js";
 import type { Logger } from "pino";
-import {
-  createEvidence,
-  withEvidenceCallerInputPath,
-} from "../domain/evidence.js";
+import { withEvidenceCallerInputPath } from "../domain/evidence.js";
 import { createImmutableEvidenceBundle } from "../domain/evidenceBundle.js";
+import { retainAnalysisResultSources } from "./investigation/recordEvidenceSources.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { NativeToolName } from "../contracts/native/nativeToolContracts.js";
+import type { EnhancedToolName } from "../contracts/enhancedInputs.js";
 import {
   ARTIFACT_ANALYSIS_OPERATIONS,
   type ArtifactAnalysisOperation,
@@ -28,16 +35,14 @@ import {
   AnalysisSnapshotMismatchError,
   type PublishedEvidenceFile,
 } from "../domain/evidenceErrors.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { access, stat } from "node:fs/promises";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { requiresNativeSourceAdmissionBeforeReplay } from "./binary/AnalysisSnapshotCache.js";
 import { classifyBinaryTargetFilesystemFailure } from "./BinaryTargetResolver.js";
-import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import {
+  snapshotBindingMismatch,
   snapshotEvidenceForQuery,
-  snapshotMatchesTarget,
 } from "../domain/analysisSnapshot.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import { profilelessNativeDispatchProfile } from "./binary/ProfilelessNativeWorkflowSnapshot.js";
@@ -57,8 +62,7 @@ import {
   workflowSnapshotRecord,
   recordWorkflowUnknowns,
 } from "./WorkflowEvidence.js";
-import type { AnalysisProviderSelector } from "../contracts/providerSelection.js";
-import { artifactInspectionResultSchema } from "../domain/artifactInspection.js";
+import type { AnalysisProviderSelector } from "../domain/providerSelection.js";
 import { resolveXrefsAddress } from "./XrefsAddressResolution.js";
 import {
   AnalysisCancelledError,
@@ -68,6 +72,8 @@ import { deliverAnalysisEvidence } from "./EvidenceBundleCommands.js";
 import type { BinaryTargetError } from "../domain/configurationErrors.js";
 import {
   directAnalysisCleanupFailure,
+  projectDirectAnalysisFailure,
+  projectInvocationFailure,
   managedAnalysisCleanupFailure,
   withSessionCleanup,
 } from "./DirectAnalysisCleanup.js";
@@ -113,7 +119,10 @@ const ARTIFACT_ANALYSIS_OPERATION_SET: ReadonlySet<string> = new Set(
 /**
  * Open one binary, execute one tool, and always release provider resources.
  * Unlike MCP mode, every CLI invocation is intentionally isolated and does not
- * retain a target or provider client for a subsequent command.
+ * retain a target, provider session or runtime setting for a subsequent
+ * command. Failures are projected for that invocation lifetime, so they never
+ * offer same-session reuse or runtime updates; a new invocation's launch
+ * environment or arguments carry any changed limit.
  */
 export const runDirectAnalysis = async (
   dependencies: DirectAnalysisDependencies,
@@ -128,32 +137,58 @@ export const runDirectAnalysis = async (
     readonly formatHint?: ExecutableFormatHint;
     readonly architecture?: BinaryArchitecture;
     readonly entryPoint?: string;
+    readonly espFlash?: EspFlashSelection;
   } = {},
-): Promise<JsonValue> =>
+): Promise<Result<Evidence, JsonValue>> =>
   withProcessCancellation(options.signal, (signal) =>
     runAnalysis(dependencies, path, tool, arguments_, {
       logger: options.logger ?? silentLogger,
       snapshotPath: options.snapshotPath,
       signal,
-      ...(options.formatHint === undefined
-        ? {}
-        : { formatHint: options.formatHint }),
-      ...(options.architecture === undefined
-        ? {}
-        : { architecture: options.architecture }),
-      ...(options.entryPoint === undefined
-        ? {}
-        : { entryPoint: options.entryPoint }),
+      ...targetSelection(options),
       ...(options.providerId === undefined
         ? {}
         : { providerId: options.providerId }),
     }),
   );
 
+/** How the caller asks an artifact target to be read. */
+export interface ArtifactTargetSelection {
+  readonly formatHint?: ExecutableFormatHint;
+  readonly espFlash?: EspFlashSelection;
+}
+
+/** The caller's target interpretation, forwarded unchanged to every open. */
+const targetSelection = (options: {
+  readonly formatHint?: ExecutableFormatHint;
+  readonly architecture?: BinaryArchitecture;
+  readonly entryPoint?: string;
+  readonly espFlash?: EspFlashSelection;
+}) => ({
+  ...(options.formatHint === undefined
+    ? {}
+    : { formatHint: options.formatHint }),
+  ...(options.architecture === undefined
+    ? {}
+    : { architecture: options.architecture }),
+  ...(options.entryPoint === undefined
+    ? {}
+    : { entryPoint: options.entryPoint }),
+  ...(options.espFlash === undefined ? {} : { espFlash: options.espFlash }),
+});
+
 /** Execute one provider-native semantic operation with atomic provenance. */
 export const runProviderAnalysis = async (
   dependencies: DirectAnalysisDependencies,
-  ...[path, tool, arguments_, logger = silentLogger, signal, delivery]:
+  ...[
+    path,
+    tool,
+    arguments_,
+    logger = silentLogger,
+    signal,
+    delivery,
+    selection,
+  ]:
     | readonly [
         path: string,
         tool: NativeToolName | ArtifactAnalysisOperation | ManagedToolName,
@@ -172,31 +207,44 @@ export const runProviderAnalysis = async (
           readonly evidenceBundlePath?: string;
         },
       ]
-): Promise<JsonValue> => {
+    | readonly [
+        path: string,
+        tool: ArtifactAnalysisOperation,
+        arguments_: Readonly<Record<string, JsonValue>>,
+        logger: Logger | undefined,
+        signal: AbortSignal | undefined,
+        delivery: undefined,
+        selection: ArtifactTargetSelection,
+      ]
+): Promise<Result<Evidence, JsonValue>> => {
   if (delivery !== undefined && tool !== "inspect_managed_members")
-    return cliError(
-      new AnalysisInputError(tool, undefined, [
-        {
-          path: ["delivery"],
-          reason: "invalid_value",
-          message:
-            "Evidence delivery options are only supported by inspect_managed_members",
-        },
-      ]),
+    return err(
+      cliError(
+        new AnalysisInputError(tool, undefined, [
+          {
+            path: ["delivery"],
+            reason: "invalid_value",
+            message:
+              "Evidence delivery options are only supported by inspect_managed_members",
+          },
+        ]),
+      ),
     );
   if (
     delivery?.detail === "summary" &&
     delivery.evidenceBundlePath === undefined
   )
-    return cliError(
-      new AnalysisInputError(tool, undefined, [
-        {
-          path: ["evidence_bundle"],
-          reason: "missing_argument",
-          message:
-            "summary detail requires --evidence-bundle so complete Evidence remains available to later CLI commands",
-        },
-      ]),
+    return err(
+      cliError(
+        new AnalysisInputError(tool, undefined, [
+          {
+            path: ["evidence_bundle"],
+            reason: "missing_argument",
+            message:
+              "summary detail requires --evidence-bundle so complete Evidence remains available to later CLI commands",
+          },
+        ]),
+      ),
     );
   return withProcessCancellation(signal, async (operationSignal) => {
     // The selected CLI path is a request fact. Keep it out of provider inputs
@@ -212,14 +260,16 @@ export const runProviderAnalysis = async (
         operationSignal,
       );
       await dispatchQueuedInterrupts();
-      if (!original.ok) return cliError(original.error);
+      if (!original.ok) return err(cliError(original.error, path));
       const evidence = withEvidenceCallerInputPath(original.value, path);
       if (operationSignal.aborted)
-        return cliError(
-          new AnalysisCancelledError(tool, {
-            cause: operationSignal.reason,
-            partialObservation: evidence,
-          }),
+        return err(
+          cliError(
+            new AnalysisCancelledError(tool, {
+              cause: operationSignal.reason,
+              partialObservation: evidence,
+            }),
+          ),
         );
       const result =
         delivery?.evidenceBundlePath === undefined
@@ -230,13 +280,14 @@ export const runProviderAnalysis = async (
               delivery.detail,
               operationSignal,
             );
-      return result.ok ? result.value : cliError(result.error);
+      return result.ok ? ok(result.value) : err(cliError(result.error, path));
     }
     return runAnalysis(dependencies, path, tool, arguments_, {
       logger,
       snapshotPath: undefined,
       signal: operationSignal,
       evidenceParameters,
+      ...targetSelection(selection ?? {}),
       ...(ARTIFACT_ANALYSIS_OPERATION_SET.has(tool)
         ? { createSession: dependencies.createArtifactBinarySession }
         : NATIVE_INSPECTION_OPERATIONS.has(tool)
@@ -317,8 +368,9 @@ const runAnalysis = async (
     readonly formatHint?: ExecutableFormatHint;
     readonly architecture?: BinaryArchitecture;
     readonly entryPoint?: string;
+    readonly espFlash?: EspFlashSelection;
   },
-): Promise<JsonValue> => {
+): Promise<Result<Evidence, JsonValue>> => {
   const { logger, signal, snapshotPath } = options;
   const evidenceParameters = options.evidenceParameters ?? arguments_;
   let session: BinarySession;
@@ -326,7 +378,7 @@ const runAnalysis = async (
     session = await options.createSession();
   } else {
     const config = dependencies.readConfiguration();
-    if (!config.ok) return cliError(config.error);
+    if (!config.ok) return err(cliError(config.error));
     session = await (
       tool === "inspect_native_dispatch_metadata" && snapshotPath === undefined
         ? dependencies.createNativeDispatchBinarySession
@@ -363,15 +415,7 @@ const runAnalysis = async (
       path,
       snapshotPath,
       signal,
-      ...(options.formatHint === undefined
-        ? {}
-        : { formatHint: options.formatHint }),
-      ...(options.architecture === undefined
-        ? {}
-        : { architecture: options.architecture }),
-      ...(options.entryPoint === undefined
-        ? {}
-        : { entryPoint: options.entryPoint }),
+      ...targetSelection(options),
     });
     if (!prepared.ok) return err(prepared.error);
     const { snapshot } = prepared.value;
@@ -380,15 +424,7 @@ const runAnalysis = async (
       const preview = await session.previewTarget(prepared.value.target, {
         signal,
         snapshot,
-        ...(options.formatHint === undefined
-          ? {}
-          : { formatHint: options.formatHint }),
-        ...(options.architecture === undefined
-          ? {}
-          : { architecture: options.architecture }),
-        ...(options.entryPoint === undefined
-          ? {}
-          : { entryPoint: options.entryPoint }),
+        ...targetSelection(options),
         ...(options.providerId === undefined
           ? {}
           : { providerId: options.providerId }),
@@ -407,7 +443,9 @@ const runAnalysis = async (
         !requiresNativeSourceAdmissionBeforeReplay(
           route.binding?.identity.id,
         ) &&
-        allowsSnapshotReplay(route, tool)
+        tool !== "trace_native_ui_action" &&
+        tool !== "decompile_all" &&
+        routeAllowsSnapshotReplay(route, tool)
       ) {
         const cached = snapshotEvidenceForQuery(snapshot, {
           target: preview.value.target,
@@ -416,7 +454,7 @@ const runAnalysis = async (
           parameters: arguments_,
           provider: isWorkflowEvidenceTool(tool)
             ? REA_WORKFLOW_PROVIDER
-            : providerIdentityForRoute(route, tool),
+            : routeProviderIdentity(route, tool),
           evidenceProfile,
         });
         if (cached !== undefined)
@@ -425,15 +463,7 @@ const runAnalysis = async (
     }
     const openOptions = {
       signal,
-      ...(options.formatHint === undefined
-        ? {}
-        : { formatHint: options.formatHint }),
-      ...(options.architecture === undefined
-        ? {}
-        : { architecture: options.architecture }),
-      ...(options.entryPoint === undefined
-        ? {}
-        : { entryPoint: options.entryPoint }),
+      ...targetSelection(options),
       ...(snapshot === undefined ? {} : { snapshot }),
       ...(options.providerId === undefined
         ? {}
@@ -508,13 +538,15 @@ const runAnalysis = async (
       );
       if (written.ok) publishedSnapshot = written.value;
       else {
-        if (written.error instanceof EvidenceFileError)
-          publishedSnapshot = written.error.published;
-        const recovered =
-          written.error instanceof EvidenceFileError &&
-          written.error.published !== undefined &&
-          (await session.closeFileResources()).ok;
-        if (!recovered)
+        const published =
+          written.error instanceof EvidenceFileError
+            ? written.error.published
+            : undefined;
+        if (published?.path !== undefined)
+          publishedSnapshot = { path: published.path, bytes: published.bytes };
+        const released =
+          published !== undefined && (await session.closeFileResources()).ok;
+        if (!released || published?.path === undefined)
           return err(written.error.retainPartialObservation(evidence));
       }
     }
@@ -542,9 +574,11 @@ const runAnalysis = async (
       outcome.cleanupError.retainDiagnostics({
         analysis_snapshot: { ...publishedSnapshot },
       });
-    return directAnalysisCleanupFailure(result, outcome.cleanupError);
+    return err(
+      directAnalysisCleanupFailure(result, outcome.cleanupError, path),
+    );
   }
-  return result.ok ? result.value : cliError(result.error);
+  return result.ok ? ok(result.value) : err(cliError(result.error, path));
 };
 
 const executeAnalysisTool = async (input: {
@@ -572,29 +606,31 @@ const executeAnalysisTool = async (input: {
   if (tool === "analyze_function") {
     const { executeFunctionAnalysisEvidence } =
       await import("./FunctionAnalysisEvidence.js");
-    const result = await executeFunctionAnalysisEvidence(
+    let result = await executeFunctionAnalysisEvidence(
       session,
       input.arguments,
       input.openedTarget,
       { signal },
     );
+    result = retainAnalysisResultSources(
+      tool,
+      (source) => session.recordEvidence(source),
+      result,
+    );
     return result.ok ? ok({ evidence: result.value }) : result;
   }
-  if (
-    tool === "binary_overview" ||
-    tool === "inspect_native_api" ||
-    tool === "inspect_native_dispatch_metadata" ||
-    tool === "trace_feature" ||
-    tool === "trace_native_values" ||
-    tool === "trace_native_ui_action" ||
-    tool === "decompile_all"
-  ) {
+  if (isWorkflowEvidenceTool(tool)) {
     const { EnhancedTools } = await import("./EnhancedTools.js");
-    const result = await executeComposedWorkflow(
+    let result = await executeComposedWorkflow(
       session,
       (observed) =>
         new EnhancedTools(observed).execute(tool, input.arguments, signal),
       composedLimitationBudget(tool),
+    );
+    result = retainAnalysisResultSources(
+      tool,
+      (source) => session.recordEvidence(source),
+      result,
     );
     if (!result.ok) return result;
     const evidence = createWorkflowEvidence({
@@ -644,30 +680,17 @@ const executeAnalysisTool = async (input: {
       );
   }
   if (!result.ok) return result;
-  const evidence = createEvidence(
-    result.value.subject === undefined
-      ? input.openedTarget
-      : (result.value.subject ?? undefined),
-    result.value.provider,
+  const evidence = createAnalysisExecutionEvidence(
+    tool,
+    input.evidenceParameters,
     {
-      operation: tool,
-      parameters: input.evidenceParameters,
-      result: result.value.result,
-      ...(result.value.analysisProfile === undefined
-        ? {}
-        : { analysisProfile: result.value.analysisProfile }),
-      rawResult: result.value.rawResult,
-      limitations: result.value.limitations,
-      ...(result.value.relationshipCoverage === undefined
-        ? {}
-        : { relationshipCoverage: result.value.relationshipCoverage }),
-      locations: result.value.locations,
-      evidenceLinks:
-        tool === "inspect_artifact"
-          ? artifactInspectionResultSchema.parse(result.value.result)
-              .evidence_links
-          : [],
+      ...result.value,
+      subject:
+        result.value.subject === undefined
+          ? input.openedTarget
+          : result.value.subject,
     },
+    "observed",
   );
   return ok({ evidence });
 };
@@ -700,6 +723,7 @@ const prepareSnapshot = async (options: {
   readonly formatHint?: ExecutableFormatHint;
   readonly architecture?: BinaryArchitecture;
   readonly entryPoint?: string;
+  readonly espFlash?: EspFlashSelection;
   readonly snapshotPath: string | undefined;
   readonly signal: AbortSignal;
 }): Promise<
@@ -718,21 +742,19 @@ const prepareSnapshot = async (options: {
   if (!loaded.ok) return loaded;
   const target = await session.resolveTarget(path, {
     signal: options.signal,
-    ...(options.formatHint === undefined
-      ? {}
-      : { formatHint: options.formatHint }),
-    ...(options.architecture === undefined
-      ? {}
-      : { architecture: options.architecture }),
-    ...(options.entryPoint === undefined
-      ? {}
-      : { entryPoint: options.entryPoint }),
+    ...targetSelection(options),
   });
   if (!target.ok) return target;
-  if (!snapshotMatchesTarget(loaded.value.target, target.value))
+  const mismatch = snapshotBindingMismatch(
+    loaded.value,
+    target.value,
+    undefined,
+  );
+  if (mismatch?.target !== undefined)
     return err(
       new AnalysisSnapshotMismatchError(
         "Analysis snapshot target does not match the requested binary",
+        mismatch,
       ),
     );
   return ok({ snapshot: loaded.value, target: target.value });
@@ -749,24 +771,6 @@ const inspectBundleResourceInput = async (
     if (failure !== undefined) return err(failure);
     throw cause;
   }
-};
-
-const allowsSnapshotReplay = (
-  route: SessionProviderRoute,
-  tool:
-    | NativeToolName
-    | ArtifactAnalysisOperation
-    | ManagedToolName
-    | DirectAnalysisTool,
-): boolean => {
-  if (tool === "trace_native_ui_action" || tool === "decompile_all")
-    return false;
-  const descriptor = route.capabilities?.get(tool);
-  return descriptor === undefined
-    ? ![...(route.capabilities?.values() ?? [])].some(
-        ({ cachePolicy }) => cachePolicy === "live",
-      )
-    : descriptor.cachePolicy !== "live";
 };
 
 const analysisProfileForRoute = (
@@ -790,7 +794,7 @@ const analysisProfileForRoute = (
   }
   if (isWorkflowEvidenceTool(tool))
     return workflowAnalysisProfile(profile, tool);
-  const provider = providerIdentityForRoute(route, tool);
+  const provider = routeProviderIdentity(route, tool);
   return provider.id === profile.provider.id ? profile : undefined;
 };
 
@@ -801,13 +805,6 @@ const nativeDispatchBindingProfile = (
   if (operation !== "inspect_native_dispatch_metadata") return undefined;
   return profilelessNativeDispatchProfile(route);
 };
-
-/** Mirror BinarySession.providerIdentity for a route not opened yet. */
-const providerIdentityForRoute = (
-  route: SessionProviderRoute,
-  operation: string,
-): ProviderIdentity =>
-  route.capabilities?.get(operation)?.provider ?? route.identity;
 
 const analysisProfileForEvidence = (
   session: BinarySession,
@@ -827,7 +824,10 @@ const isWorkflowEvidenceTool = (
     | ArtifactAnalysisOperation
     | ManagedToolName
     | DirectAnalysisTool,
-): boolean =>
+): tool is Exclude<
+  Extract<DirectAnalysisTool, EnhancedToolName>,
+  "analyze_function"
+> =>
   tool === "binary_overview" ||
   tool === "inspect_native_api" ||
   tool === "inspect_native_dispatch_metadata" ||
@@ -852,7 +852,12 @@ const fileExists = async (path: string): Promise<boolean> => {
   }
 };
 
-const cliError = (error: AnalysisError): JsonValue => ({
+const cliError = (
+  error: AnalysisError,
+  callerInputPath?: string,
+): JsonValue => ({
   error: "Analysis failed",
-  ...projectAnalysisError(error),
+  ...(callerInputPath === undefined
+    ? projectInvocationFailure(error)
+    : projectDirectAnalysisFailure(error, callerInputPath)),
 });

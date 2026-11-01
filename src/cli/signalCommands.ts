@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { inspectSignalDecodersInputSchema } from "../domain/signals/signalDecoders.js";
 import { z } from "incur";
 import type { SignalRecordingService } from "../application/signals/SignalRecordingService.js";
@@ -13,6 +14,7 @@ import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 export const registerSignalCommands = (
@@ -64,7 +66,7 @@ export const registerSignalCommands = (
             "sigrok-recording",
             "inspect_signal_decoders",
             signal,
-          ),
+          ).then(projectCliAnalysisResult),
         ),
       ),
   });
@@ -105,7 +107,8 @@ export const registerSignalCommands = (
     run: ({ args, options: { all_lines, ...options } }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, CLI_COMMANDS.decodeSignalRecording, async () => {
-          return finishAnalysisCommand(
+          return finishCliEvidenceCommand(
+            args.path,
             () =>
               service.decode(
                 {
@@ -119,7 +122,7 @@ export const registerSignalCommands = (
             "sigrok-recording",
             "decode_signal_recording",
             signal,
-          );
+          ).then(projectCliAnalysisResult);
         }),
       ),
   });

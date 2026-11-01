@@ -164,7 +164,7 @@ export const parsePeLoadConfig = async (
   const dataDirectory = (index: number): DirectorySpan | null => {
     const entry = image.pe_data_directories[index];
     if (entry === undefined) return null;
-    const { virtual_address: rva, size } = entry;
+    const { address: rva, size } = entry;
     if (rva === 0 && size === 0) return null;
     if (rva === 0 || size === 0)
       throw new BinaryFormatFailure(

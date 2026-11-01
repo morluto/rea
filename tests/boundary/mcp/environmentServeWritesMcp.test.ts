@@ -23,15 +23,205 @@ import {
   SECOND_BOOK,
   renamedBook,
 } from "../../fixtures/environmentStateWrites.js";
+import { referencedCreateRows } from "../../fixtures/environmentStateDerivedValues.js";
+import {
+  READ_BACK_TAG_ROWS,
+  slugOnlySaveRows,
+} from "../../fixtures/environmentStateWriteViews.js";
 import { unsupportedInputLiteralSchemaError } from "../../fixtures/mcpClientSchemaConstraints.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { startListeningProcess } from "../../support/mcp/streamableHttpProcess.js";
 import { processTest } from "../../support/process/processFixture.js";
+import {
+  jsonObjectSchema,
+  type JsonValue,
+} from "../../../src/domain/jsonValue.js";
 
 const HTTP_BOUNDARY_TIMEOUT_MS = 90_000;
 
 /** The book the first served create of "Boundary Book" makes: one second past the served clock's start. */
 const BOUNDARY_BOOK = book(3, "Boundary Book", bookClock(13));
+
+processTest(
+  "preserves own JSON keys through capture, state reload and computed writes",
+  async ({ processes }) => {
+    const nested = JSON.parse(
+      '{"__proto__":{"recorded":true},"constructor":null,"values":[false,0,""]}',
+    ) as JsonValue;
+    const captured = (id: number, name: string, updated = bookClock(id)) => {
+      const { slug, ...fields } = book(id, name, bookClock(id), updated);
+      if (typeof slug !== "string") throw new Error("Fixture book has no slug");
+      return { ...fields, ["__proto__"]: slug, nested };
+    };
+    const first = captured(1, "First Book");
+    const second = captured(2, "Second Book");
+    const third = captured(3, "Third Book", bookClock(3));
+    const renamed = captured(1, "Renamed Book", bookClock(5));
+    const rows: readonly TimedCaptureRow[] = [
+      ["GET", "/api/books", [first, second]],
+      ["GET", "/api/books/1", first],
+      ["GET", "/api/books/2", second],
+      ["POST", "/api/books", third, 201, { name: "Third Book" }],
+      ["GET", "/api/books/3", third],
+      ["PATCH", "/api/books/1", renamed, 200, { name: "Renamed Book" }],
+      ["GET", "/api/books/1", renamed],
+    ];
+    const fixture = environmentStateServeFixture(timedCaptureEvidence(rows));
+    expect(fixture.state.normalized_result).toMatchObject({
+      entities: expect.arrayContaining([
+        expect.objectContaining({ id: "1", fields: { ...first } }),
+      ]),
+    });
+    const root = await createTestTempDirectory("rea-own-keys-state-mcp-");
+    const files = await writeEnvironmentServeFiles(root, fixture);
+    const started = await startListeningProcess(processes, [
+      "environment-serve",
+      files.manifestPath,
+      "--evidence",
+      files.capturePath,
+      "--port",
+      "0",
+    ]);
+    type StateDocument = {
+      rea_state: {
+        entities: Array<{ id: string; fields: Record<string, JsonValue> }>;
+        [key: string]: unknown;
+      };
+    };
+    const rpc = async (method: string, params?: unknown) =>
+      (
+        await fetch(new URL("/agentenv", started.url.origin), {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+        })
+      ).json() as Promise<{
+        result?: { parts?: Array<{ data: StateDocument }> };
+        error?: { code: number };
+      }>;
+    const document = (await rpc("data/get")).result?.parts?.[0]?.data;
+    if (document === undefined)
+      throw new Error("Missing served state document");
+    const held = document.rea_state.entities.find(({ id }) => id === "1");
+    if (held === undefined) throw new Error("Missing initial book");
+    expect(Object.hasOwn(held.fields, "__proto__")).toBe(true);
+    expect(held.fields.nested).toEqual(nested);
+    expect(Object.hasOwn(held.fields, "constructor")).toBe(false);
+    await expect(
+      rpc("data/add", { parts: [{ kind: "data", data: document }] }),
+    ).resolves.toMatchObject({ result: {} });
+    const reloaded = (await rpc("data/get")).result?.parts?.[0]?.data;
+    expect(reloaded).toEqual(document);
+    const invalid = {
+      rea_state: {
+        ...document.rea_state,
+        ["__proto__"]: "unexpected structural field",
+      },
+    };
+    await expect(
+      rpc("data/add", { parts: [{ kind: "data", data: invalid }] }),
+    ).resolves.toMatchObject({ error: { code: -32602 } });
+    delete held.fields["__proto__"];
+    await expect(
+      rpc("data/add", { parts: [{ kind: "data", data: document }] }),
+    ).resolves.toMatchObject({ result: {} });
+    const client = new Client({ name: "own-keys-writes", version: "1" });
+    await client.connect(new StreamableHTTPClientTransport(started.url));
+    try {
+      for (const [tool, args, name, id] of [
+        [
+          "patch_books_by_id",
+          { id: "1", body: { name: "Updated Book" } },
+          "Updated Book",
+          "1",
+        ],
+        ["post_books", { body: { name: "Created Book" } }, "Created Book", "3"],
+      ] as const) {
+        const written = await client.callTool({ name: tool, arguments: args });
+        expect(written.isError).toBeFalsy();
+        const expected = {
+          name,
+          ["__proto__"]: name.toLowerCase().replaceAll(" ", "-"),
+          nested,
+        };
+        expect(written.structuredContent).toMatchObject({ body: expected });
+        const read = await client.callTool({
+          name: "get_books_by_id",
+          arguments: { id },
+        });
+        expect(read.structuredContent).toMatchObject({ body: expected });
+        const body = jsonObjectSchema.parse(
+          jsonObjectSchema.parse(read.structuredContent).body,
+        );
+        expect(Object.hasOwn(body, "__proto__")).toBe(true);
+        expect(Object.hasOwn(body, "constructor")).toBe(false);
+      }
+    } finally {
+      await client.close();
+    }
+  },
+  HTTP_BOUNDARY_TIMEOUT_MS,
+);
+
+processTest(
+  "keeps create response clocks separate from enriched item reads through the SDK",
+  async ({ processes }) => {
+    const rows = READ_BACK_TAG_ROWS;
+    const root = await createTestTempDirectory("rea-write-views-sdk-");
+    const files = await writeEnvironmentServeFiles(
+      root,
+      environmentStateServeFixture(timedCaptureEvidence(rows)),
+    );
+    const started = await startListeningProcess(processes, [
+      "environment-serve",
+      files.manifestPath,
+      "--evidence",
+      files.capturePath,
+      "--port",
+      "0",
+    ]);
+    const client = new Client({ name: "write-views", version: "1" });
+    await client.connect(new StreamableHTTPClientTransport(started.url));
+    try {
+      const { tools } = await client.listTools();
+      expect(tools.map(({ name }) => name)).toEqual(
+        expect.arrayContaining(["post_tags", "get_tags_by_id"]),
+      );
+      const created = await client.callTool({
+        name: "post_tags",
+        arguments: { body: { name: "Boundary Tag" } },
+      });
+      expect(created.isError).toBeFalsy();
+      const clock = bookClock(rows.length + 1);
+      expect(created.structuredContent).toMatchObject({
+        body: {
+          id: 3,
+          name: "Boundary Tag",
+          created: clock.replace("Z", ".000000000Z"),
+        },
+        state: { source: "state" },
+      });
+      expect(created.structuredContent).not.toHaveProperty(
+        "body.document_count",
+      );
+      const read = await client.callTool({
+        name: "get_tags_by_id",
+        arguments: { id: "3" },
+      });
+      expect(read.structuredContent).toMatchObject({
+        body: {
+          id: 3,
+          name: "Boundary Tag",
+          created: clock,
+          document_count: 0,
+        },
+      });
+    } finally {
+      await client.close();
+    }
+  },
+  HTTP_BOUNDARY_TIMEOUT_MS,
+);
 
 processTest(
   "discovers empty fixed values and applies omitted recorded queries through the SDK before enforcing writes",
@@ -408,4 +598,53 @@ processTest(
     }
   },
   HTTP_BOUNDARY_TIMEOUT_MS,
+);
+
+processTest.for([
+  {
+    label: "a create whose sent reference contradicts its response",
+    rows: referencedCreateRows({
+      id: 1,
+      name: "Different Hall",
+      floor: "ground",
+    }),
+    read: "get_books",
+    write: "post_books",
+  },
+  ...[true, false].map((derivedFirst) => ({
+    label: `a slug-only edit incompatible with a derived save (derived first: ${String(derivedFirst)})`,
+    rows: slugOnlySaveRows(derivedFirst, true),
+    read: "get_tags",
+    write: "patch_tags_by_id",
+  })),
+])(
+  "withholds $label from public tools",
+  { timeout: HTTP_BOUNDARY_TIMEOUT_MS },
+  async ({ rows, read, write }, { processes }) => {
+    const root = await createTestTempDirectory("rea-create-reference-mcp-");
+    const files = await writeEnvironmentServeFiles(
+      root,
+      environmentStateServeFixture(timedCaptureEvidence(rows)),
+    );
+    const started = await startListeningProcess(processes, [
+      "environment-serve",
+      files.manifestPath,
+      "--evidence",
+      files.capturePath,
+      "--port",
+      "0",
+    ]);
+    const client = new Client({
+      name: "contradictory-reference",
+      version: "1",
+    });
+    await client.connect(new StreamableHTTPClientTransport(started.url));
+    try {
+      const { tools } = await client.listTools();
+      expect(tools.map(({ name }) => name)).toContain(read);
+      expect(tools.map(({ name }) => name)).not.toContain(write);
+    } finally {
+      await client.close();
+    }
+  },
 );

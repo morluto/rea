@@ -1,19 +1,65 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   elfExportImage,
+  elfAliasedVersionImage,
   peExportImage,
 } from "../../../tests/fixtures/binaryDiagnostics/nativeExports.js";
-import { nativeExportsSchema } from "../../domain/native/nativeExports.js";
+import * as nativeExportContracts from "../../domain/native/nativeExports.js";
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
 } from "../metadata/BinaryContainer.js";
-import { parseNativeExports } from "./NativeExportParser.js";
+import {
+  parseNativeExports,
+  parseNativeExportsSteps,
+} from "./NativeExportParser.js";
 
 const artifact = { path: "/fixture/lib", sha256: "a".repeat(64), bytes: 1 };
 const parse = (bytes: Buffer) =>
-  nativeExportsSchema.parse(parseNativeExports(bytes, artifact));
+  nativeExportContracts.nativeExportsSchema.parse(
+    parseNativeExports(bytes, artifact),
+  );
+
+it.each(["requirements", "definitions"] as const)(
+  "bounds aliased GNU version %s work and keeps exports with unknown versions",
+  (kind) => {
+    const bytes = elfAliasedVersionImage(kind, 65_535);
+    const decoded = vi.spyOn(nativeExportContracts, "decodeElfExportName");
+    try {
+      const steps = parseNativeExportsSteps(bytes, artifact);
+      let checkpoint = steps.next(),
+        yields = 0;
+      while (!checkpoint.done) {
+        yields++;
+        checkpoint = steps.next();
+      }
+      const result = nativeExportContracts.nativeExportsSchema.parse(
+        checkpoint.value,
+      );
+      expect(yields).toBeGreaterThan(2);
+      expect(result.coverage.status).toBe("partial");
+      expect(result.exports).toMatchObject([
+        { name: "versioned_export", version: { index: 2, name: null } },
+      ]);
+      expect(result.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            code: "version_unresolved",
+            message: expect.stringContaining("traversal work allowance"),
+          }),
+        ]),
+      );
+      // The cost oracle observes the shared decoding boundary: a long aliased
+      // name must not be decoded for every visit despite tiny retained output.
+      expect(
+        decoded.mock.calls.filter(([name]) => name.length === 65_535),
+      ).toHaveLength(1);
+    } finally {
+      decoded.mockRestore();
+    }
+  },
+);
 
 const peExportNameAcrossSections = (overlapAtRva?: number): Buffer => {
   const bytes = Buffer.concat([
@@ -50,7 +96,7 @@ const peExportNameAcrossSections = (overlapAtRva?: number): Buffer => {
   return bytes;
 };
 
-describe("PE export name mapping coverage", () => {
+describe("PE export name coverage", () => {
   it("reads a bounded export name across adjacent section mappings", () => {
     const result = parse(peExportNameAcrossSections());
     expect(result).toMatchObject({
@@ -82,6 +128,71 @@ describe("PE export name mapping coverage", () => {
     expect(result.issues).toMatchObject([{ code: "name_unreadable" }]);
     expect(result.coverage.status).toBe("partial");
   });
+
+  it("validates unreadable names on unused slots without retaining exports", () => {
+    const result = parse(
+      peExportImage({
+        functions: [null, { rva: 0x3000 }],
+        names: [
+          { name: "Unreadable", index: 0 },
+          { name: "Unused", index: 0 },
+          { name: "Kept", index: 1 },
+        ],
+        nameRvaOverride: { position: 0, rva: 0x9000 },
+      }),
+    );
+
+    expect(result.exports.map(({ name }) => name)).toEqual(["Kept"]);
+    expect(result.issues).toMatchObject([
+      { code: "name_unreadable", location: "0x9000" },
+    ]);
+    expect(result.coverage).toMatchObject({
+      status: "partial",
+      examined_entries: 2,
+      exports: 1,
+    });
+  });
+});
+
+describe("PE forwarder directory bounds", () => {
+  it.each([32, 64] as const)(
+    "requires the complete PE%d forwarder string to remain inside the export directory",
+    (bits) => {
+      const bytes = peExportImage({
+        bits,
+        functions: [{ rva: 0x11fc }, { rva: 0x2000 }],
+        names: [{ name: "Kept", index: 1 }],
+      });
+      // The string starts in .edata's declared export range but its NUL is
+      // outside it. The adjacent section bytes remain mapped and readable.
+      bytes.write("DLL.Target\0", 0x5fc, "latin1");
+      const result = parse(bytes);
+
+      expect(result.exports).toMatchObject([{ name: "Kept", ordinal: 2 }]);
+      expect(result.issues).toMatchObject([
+        { code: "malformed_entry", location: "0x11fc" },
+      ]);
+      expect(result.coverage).toMatchObject({
+        status: "partial",
+        examined_entries: 2,
+        exports: 1,
+      });
+    },
+  );
+
+  it.each([32, 64] as const)(
+    "accepts a PE%d forwarder whose NUL is the final export-directory byte",
+    (bits) => {
+      const bytes = peExportImage({ bits, functions: [{ rva: 0x11f5 }] });
+      bytes.write("DLL.Target\0", 0x5f5, "latin1");
+
+      expect(parse(bytes)).toMatchObject({
+        exports: [{ name: null, ordinal: 1, forwarder: "DLL.Target" }],
+        coverage: { status: "complete", exports: 1 },
+        issues: [],
+      });
+    },
+  );
 });
 
 describe("PE export directories", () => {
@@ -653,6 +764,26 @@ describe("export inventory review regressions", () => {
 });
 
 describe("ELF symbol-name text", () => {
+  it.each([65535, 65536])(
+    "keeps the ELF export name scan bounded when its NUL follows %i bytes",
+    (length) => {
+      const name = "n".repeat(length);
+      const result = parse(elfExportImage({ symbols: [{ name }] }));
+      if (result.format !== "elf") throw new TypeError("expected ELF result");
+      expect(result.exports.map((entry) => entry.name)).toEqual(
+        length === 65535 ? [name] : [],
+      );
+      if (length === 65536)
+        expect(result.issues).toContainEqual(
+          expect.objectContaining({
+            message: expect.stringContaining(
+              "unterminated or exceeds the string budget",
+            ),
+          }),
+        );
+    },
+  );
+
   it("decodes UTF-8 names and retains exact bytes", () => {
     const result = parse(elfExportImage({ symbols: [{ name: "cafÃ©" }] }));
     expect(result.format).toBe("elf");

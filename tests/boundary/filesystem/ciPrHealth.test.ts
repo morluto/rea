@@ -11,7 +11,6 @@ import {
   matchRunToPullRequest,
   writePrCiHealthReport,
 } from "../../../scripts/ci/pr-ci-health.mjs";
-import { createGhApiRequest } from "../../../scripts/ci/github-api.mjs";
 import type {
   PrCiPullRequest,
   PrCiWorkflowRun,
@@ -409,7 +408,7 @@ it("public CLI uses only GET and produces a report from fixture GitHub responses
   await writeFile(
     ghResponse,
     JSON.stringify([
-      [rawPull(51, { mergeable: true })],
+      [rawPull(51, { mergeable: true, created_at: new Date().toISOString() })],
       { total_count: 0, workflow_runs: [] },
     ]),
   );
@@ -453,23 +452,44 @@ it("public CLI uses only GET and produces a report from fixture GitHub responses
 
 it("rejects non-GET methods before launching the GitHub client", async () => {
   const fixture = await createFixture();
-  const request = createGhApiRequest({
-    env: {
-      ...process.env,
-      PATH: `${fixture.fakeBin}${delimiter}${process.env.PATH ?? ""}`,
-      CI_GH_CALLS: join(fixture.directory, "should-not-exist"),
-    },
-  });
-  await expect(
-    request("POST", "repos/owner/rea/pulls", {
-      requests: 0,
-      startedAt: observedAt,
-      limitMs: 1_000,
-    }),
-  ).rejects.toThrow("read-only GET");
-  await expect(
-    readFile(join(fixture.directory, "should-not-exist")),
-  ).rejects.toMatchObject({ code: "ENOENT" });
+  const marker = join(fixture.directory, "gh-invoked");
+  const preload = join(fixture.directory, "watch-gh.cjs");
+  await writeFile(
+    preload,
+    `const fs = require("node:fs");
+const util = require("node:util");
+const child = require("node:child_process");
+child.execFile = () => { throw new Error("Unexpected callback invocation"); };
+child.execFile[util.promisify.custom] = async () => {
+  fs.appendFileSync(process.env.CI_GH_CALLS, "called\\n");
+  return { stdout: "{}", stderr: "" };
+};
+require("node:module").syncBuiltinESMExports();
+`,
+  );
+  const transport = new URL(
+    "../../../scripts/ci/github-api.mjs",
+    import.meta.url,
+  ).href;
+  await executeWorkflowFixture(
+    process.execPath,
+    [
+      "--require",
+      preload,
+      "--input-type=module",
+      "-e",
+      `
+      import assert from "node:assert/strict";
+      import { createGhApiRequest } from ${JSON.stringify(transport)};
+      const request = createGhApiRequest();
+      const budget = { requests: 0, startedAt: Date.now(), limitMs: 10_000 };
+      await assert.rejects(request("POST", "repos/owner/rea/pulls", budget), /read-only GET/);
+      await request("GET", "repos/owner/rea/pulls", budget);
+    `,
+    ],
+    { cwd: fixture.directory, env: { ...process.env, CI_GH_CALLS: marker } },
+  );
+  expect(await readFile(marker, "utf8")).toBe("called\n");
 });
 
 function validPull(overrides: Partial<PrCiPullRequest> = {}): PrCiPullRequest {

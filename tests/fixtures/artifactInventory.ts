@@ -1,7 +1,10 @@
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+import {
+  ArtifactResourceScope,
+  type ArtifactResourceOwner,
+} from "../../src/artifacts/ArtifactResourceScope.js";
 import { onTestFinished } from "vitest";
 import { ArtifactReaderFailure } from "../../src/artifacts/ArtifactReader.js";
-import { classifyAndHashRoot as classifyAndHashRootOwned } from "../../src/artifacts/inventory/classify.js";
+import { classifyAndHashRootForInventory } from "../../src/artifacts/inventory/classify.js";
 import {
   inventoryArtifact as inventoryArtifactOwned,
   scanArtifactInventoryInScope,
@@ -32,9 +35,27 @@ export const classifyAndHashRoot = (
   signal?: AbortSignal,
 ) =>
   withArtifactResourceScope((resourceScope) =>
-    classifyAndHashRootOwned(path, directory, expectedMetadata, {
-      resourceScope,
-      ...(signal === undefined ? {} : { signal }),
+    resourceScope.run(async () => {
+      const result = await classifyAndHashRootForInventory(
+        path,
+        directory,
+        expectedMetadata,
+        { resourceScope, ...(signal === undefined ? {} : { signal }) },
+      );
+      const rootSource = result.rootSource;
+      if (rootSource !== undefined) {
+        const owner: ArtifactResourceOwner = {
+          kind: "file-handle",
+          handle: rootSource.owner,
+          resource: `root artifact descriptor for ${path}`,
+        };
+        const cleanupAttempt = await resourceScope.release(owner);
+        if (cleanupAttempt.kind === "failed")
+          throw resourceScope.cleanupFailure({ kind: "completed" }, [
+            cleanupAttempt,
+          ]);
+      }
+      return { format: result.format, digest: result.digest };
     }),
   );
 

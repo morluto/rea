@@ -1,7 +1,14 @@
 import { execFile } from "node:child_process";
-import { readFile, writeFile } from "node:fs/promises";
+import {
+  copyFile,
+  mkdir,
+  readFile,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import { z } from "zod";
@@ -27,7 +34,6 @@ const silent = {
 };
 
 beforeAll(async () => {
-  await applyReleasePleasePatch();
   upstream = await import("release-please");
   githubRuntime = require("release-please/build/src/github.js");
 });
@@ -118,21 +124,24 @@ function historyPage(
   };
 }
 
-function releasePage() {
+function releaseRecord(version: string, sha = baseline) {
+  const tagName = `rea-agents-${version}`;
+  return {
+    name: version,
+    tag: { name: tagName },
+    tagCommit: { oid: sha },
+    description: "",
+    isDraft: false,
+    url: `https://github.com/fixture/rea/releases/tag/${tagName}`,
+  };
+}
+
+function releasePage(releases: ReturnType<typeof releaseRecord>[]) {
   return {
     data: {
       repository: {
         releases: {
-          nodes: [
-            {
-              name: "6.7.0",
-              tag: { name: "rea-agents-6.7.0" },
-              tagCommit: { oid: baseline },
-              description: "",
-              isDraft: false,
-              url: "https://github.com/fixture/rea/releases/tag/rea-agents-6.7.0",
-            },
-          ],
+          nodes: releases,
           pageInfo: { hasNextPage: false },
         },
       },
@@ -152,6 +161,29 @@ const defaultConfiguration = {
   },
 };
 
+function releaseFileEntries(
+  configuration: Record<string, unknown>,
+  releasedVersions: Record<string, string>,
+) {
+  const files: Record<string, unknown> = {
+    "release-please-config.json": configuration,
+    ".release-please-manifest.json": releasedVersions,
+    "package.json": {
+      name: "rea-agents",
+      version: releasedVersions["."] ?? "0.0.0",
+    },
+    "pkg/package.json": {
+      name: "rea-agents",
+      version: releasedVersions.pkg ?? "0.0.0",
+    },
+  };
+  return Object.entries(files).map(([path, value], index) => ({
+    path,
+    sha: (index + 1).toString(16).padStart(40, "0"),
+    text: JSON.stringify(value),
+  }));
+}
+
 async function releaseFixture({
   config = {},
   commits = [
@@ -162,6 +194,9 @@ async function releaseFixture({
   pullRequest = false,
   historyFailures = [],
   releaseFailures = [],
+  releasedVersions = { ".": "6.7.0", pkg: "6.7.0" },
+  releases = [releaseRecord("6.7.0")],
+  tags = [],
 }: {
   config?: Record<string, unknown>;
   commits?: CommitRecord[];
@@ -169,6 +204,9 @@ async function releaseFixture({
   pullRequest?: boolean;
   historyFailures?: HistoryFailure[];
   releaseFailures?: HistoryFailure["errors"][];
+  releasedVersions?: Record<string, string>;
+  releases?: ReturnType<typeof releaseRecord>[];
+  tags?: { name: string; commit: { sha: string } }[];
 } = {}) {
   const requests: { method: string; pathname: string }[] = [];
   const pages: HistoryVariables[] = [];
@@ -176,6 +214,7 @@ async function releaseFixture({
   const failures = [...historyFailures];
   const releaseErrors = [...releaseFailures];
   const configuration = { ...defaultConfiguration, ...config };
+  const entries = releaseFileEntries(configuration, releasedVersions);
   const github = await upstream.GitHub.create({
     owner: "fixture",
     repo: "rea",
@@ -190,7 +229,7 @@ async function releaseFixture({
         method: options.method ?? "GET",
         pathname: url.pathname,
       });
-      if (url.pathname === "/repos/fixture/rea/tags") return respond([]);
+      if (url.pathname === "/repos/fixture/rea/tags") return respond(tags);
       if (url.pathname === "/repos/fixture/rea/releases/generate-notes") {
         return respond({ body: "Generated release notes" });
       }
@@ -208,7 +247,7 @@ async function releaseFixture({
         if (query.query.includes("query releases(")) {
           const errors = releaseErrors.shift();
           if (errors) return respond({ errors });
-          return respond(releasePage());
+          return respond(releasePage(releases));
         }
         if (!query.query.includes("query pullRequestsSince(")) {
           throw new Error(`Unexpected GraphQL operation: ${query.query}`);
@@ -228,17 +267,6 @@ async function releaseFixture({
         }
         return respond(historyPage(commits, query.variables, pullRequest));
       }
-      const files: Record<string, unknown> = {
-        "release-please-config.json": configuration,
-        ".release-please-manifest.json": { ".": "6.7.0", pkg: "6.7.0" },
-        "package.json": { name: "rea-agents", version: "6.7.0" },
-        "pkg/package.json": { name: "rea-agents", version: "6.7.0" },
-      };
-      const entries = Object.entries(files).map(([path, value], index) => ({
-        path,
-        sha: (index + 1).toString(16).padStart(40, "0"),
-        text: JSON.stringify(value),
-      }));
       if (url.pathname === "/repos/fixture/rea/git/trees/main") {
         return respond({
           truncated: false,
@@ -497,6 +525,100 @@ it("collects beyond 500 commits and rejects an unobserved known release boundary
   ).toBe(true);
 });
 
+it("rejects a missing manifest release before replaying a historical version override", async () => {
+  const fixture = await releaseFixture({
+    releasedVersions: { ".": "6.8.0" },
+    releases: [releaseRecord("6.7.0", "d".repeat(40))],
+    commits: [
+      { sha: latest, message: "fix: current change", files: ["src/change.ts"] },
+      {
+        sha: baseline,
+        message: "chore: release 6.8.0",
+        files: ["package.json"],
+      },
+      {
+        sha: "c".repeat(40),
+        message: "fix: historical version override\n\nRelease-As: 0.4.0",
+        files: ["src/historical.ts"],
+      },
+    ],
+  });
+  await expect(fixture.manifest.createPullRequests()).rejects.toThrow(
+    "Missing expected release",
+  );
+  expect(fixture.pages).toEqual([]);
+  expect(
+    fixture.requests.every(
+      (request) => request.method === "GET" || request.pathname === "/graphql",
+    ),
+  ).toBe(true);
+});
+
+it("uses a tag-only manifest release and excludes older version overrides", async () => {
+  const fixture = await releaseFixture({
+    releasedVersions: { ".": "6.8.0" },
+    releases: [],
+    tags: [{ name: "rea-agents-6.8.0", commit: { sha: baseline } }],
+    commits: [
+      { sha: latest, message: "fix: current change", files: ["src/change.ts"] },
+      {
+        sha: baseline,
+        message: "chore: release 6.8.0",
+        files: ["package.json"],
+      },
+      {
+        sha: "c".repeat(40),
+        message: "fix: historical version override\n\nRelease-As: 0.4.0",
+        files: ["src/historical.ts"],
+      },
+    ],
+  });
+  const candidates = await fixture.manifest.buildPullRequests();
+  expect(candidates).toHaveLength(1);
+  expect(candidates[0]?.body.toString()).toContain("current change");
+  expect(candidates[0]?.body.toString()).not.toContain(
+    "historical version override",
+  );
+  const version = candidates[0]?.updates.find(
+    (update) => update.path === "version.txt",
+  );
+  expect(
+    version?.updater.updateContent("6.8.0 // x-release-please-version"),
+  ).toContain("6.9.0");
+  expect(
+    fixture.requests.some(
+      (request) => request.pathname === "/repos/fixture/rea/tags",
+    ),
+  ).toBe(true);
+});
+
+it.each(["omitted", "0.0.0"])(
+  "preserves initial bootstrap with an %s manifest version",
+  async (version) => {
+    const releasedVersions: Record<string, string> =
+      version === "omitted" ? {} : { ".": version };
+    const fixture = await releaseFixture({
+      releasedVersions,
+      releases: [],
+      commits: [
+        {
+          sha: latest,
+          message: "feat: initial change",
+          files: ["src/change.ts"],
+        },
+      ],
+    });
+    const candidates = await fixture.manifest.buildPullRequests();
+    expect(candidates).toHaveLength(1);
+    const versionUpdate = candidates[0]?.updates.find(
+      (update) => update.path === "version.txt",
+    );
+    expect(
+      versionUpdate?.updater.updateContent("0.0.0 // x-release-please-version"),
+    ).toContain("1.0.0");
+  },
+);
+
 it.each([
   {
     name: "timestamped GraphQL internal error",
@@ -631,6 +753,7 @@ it("preserves a reached explicit last-release override", async () => {
 
 it("preserves complete mixed bootstrap history with all known release boundaries", async () => {
   const fixture = await releaseFixture({
+    releasedVersions: { ".": "6.7.0", pkg: "0.0.0" },
     config: {
       packages: {
         ".": { "package-name": "rea-agents" },
@@ -667,11 +790,93 @@ it("requires complete local history when sizing the upstream search", async () =
   );
 });
 
-it("applies the exact dependency patch idempotently and rejects another version", async () => {
-  await expect(applyReleasePleasePatch()).resolves.toBeUndefined();
-  const directory = dirname(require.resolve("release-please/package.json"));
-  const metadata = await readFile(join(directory, "package.json"), "utf8");
-  expect(JSON.parse(metadata).version).toBe("17.3.0");
+const releasePatchFixture = async () => {
+  const root = await createTestTempDirectory("rea-release-git-patch-");
+  const project = join(root, "project space Ω");
+  const dependencyPath = "node_modules/release dependency space Ω";
+  const directory = join(project, dependencyPath);
+  const upstreamDirectory = dirname(
+    require.resolve("release-please/package.json"),
+  );
+  const source = fileURLToPath(new URL("../../../", import.meta.url));
+  const patchPath = join(project, "patches/release-please+17.3.0.patch");
+  const patch = await readFile(
+    join(source, "patches/release-please+17.3.0.patch"),
+    "utf8",
+  );
+  const members = [...patch.matchAll(/^\+\+\+ b\/(.+)$/gmu)].map((match) => {
+    const member = match[1];
+    if (member === undefined) throw new Error("Patch header omitted its path");
+    return member;
+  });
+  await mkdir(join(project, "scripts/lib"), { recursive: true });
+  await mkdir(dirname(patchPath), { recursive: true });
+  await mkdir(directory, { recursive: true });
+  await writeFile(join(project, "package.json"), '{"type":"module"}');
+  await writeFile(patchPath, patch);
+  for (const script of ["release-proposal.mjs", "release-notes.mjs"])
+    await copyFile(
+      join(source, "scripts/lib", script),
+      join(project, "scripts/lib", script),
+    );
+  for (const dependency of ["semver", "zod"])
+    await symlink(
+      dirname(require.resolve(`${dependency}/package.json`)),
+      join(project, "node_modules", dependency),
+      "junction",
+    );
+  for (const member of ["package.json", ...members]) {
+    await mkdir(dirname(join(directory, member)), { recursive: true });
+    await copyFile(join(upstreamDirectory, member), join(directory, member));
+  }
+  const environment = {
+    ...process.env,
+    GIT_CONFIG_COUNT: "1",
+    GIT_CONFIG_KEY_0: "core.protectNTFS",
+    GIT_CONFIG_VALUE_0: "true",
+  };
+  const git = (...args: string[]) =>
+    execute("git", args, { cwd: project, env: environment });
+  // Installation owns the patched dependency. Reverse only the private copy
+  // to obtain the exact upstream input for the fresh-application control.
+  await git("apply", "--reverse", "--directory", dependencyPath, patchPath);
+  const apply = () =>
+    execute(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `import { applyReleasePleasePatch } from ${JSON.stringify(pathToFileURL(join(project, "scripts/lib/release-proposal.mjs")).href)}; await applyReleasePleasePatch(${JSON.stringify(directory)});`,
+      ],
+      { cwd: project, env: environment, timeout: 10_000 },
+    );
+  const contents = () =>
+    Promise.all(
+      members.map((member) => readFile(join(directory, member), "utf8")),
+    );
+  return { directory, apply, contents, git, dependencyPath, patchPath };
+};
+
+it("applies the private dependency patch with protected Git paths and is idempotent", async () => {
+  const fixture = await releasePatchFixture();
+  const original = await fixture.contents();
+  await fixture.apply();
+  const patched = await fixture.contents();
+  expect(patched).not.toEqual(original);
+  expect(patched.join("\n")).toContain("const rootOnlyNode =");
+  await fixture.git(
+    "apply",
+    "--check",
+    "--reverse",
+    "--directory",
+    fixture.dependencyPath,
+    fixture.patchPath,
+  );
+  await fixture.apply();
+  expect(await fixture.contents()).toEqual(patched);
+});
+
+it("rejects a different dependency version before patching", async () => {
   const fixture = await createTestTempDirectory("rea-release-patch-");
   await writeFile(
     join(fixture, "package.json"),
@@ -682,22 +887,27 @@ it("applies the exact dependency patch idempotently and rejects another version"
   );
 });
 
-it("rejects a partial or mismatched dependency patch", async () => {
-  const directory = dirname(require.resolve("release-please/package.json"));
-  const manifest = join(directory, "build/src/manifest.js");
-  const original = await readFile(manifest, "utf8");
-  try {
+it.each(["partial", "mismatched"])(
+  "rejects a %s private dependency patch without changing its files",
+  async (state) => {
+    const fixture = await releasePatchFixture();
+    const manifest = join(fixture.directory, "build/src/manifest.js");
+    const original = await readFile(manifest, "utf8");
+    await fixture.apply();
+    const patched = await readFile(manifest, "utf8");
     await writeFile(
       manifest,
-      original.replace(
-        "const rootOnlyNode =",
-        "const mismatchedRootOnlyNode =",
-      ),
+      state === "partial"
+        ? original
+        : patched.replace(
+            "const rootOnlyNode =",
+            "const mismatchedRootOnlyNode =",
+          ),
     );
-    await expect(applyReleasePleasePatch()).rejects.toThrow(
+    const before = await fixture.contents();
+    await expect(fixture.apply()).rejects.toThrow(
       "does not match the installed source",
     );
-  } finally {
-    await writeFile(manifest, original);
-  }
-});
+    expect(await fixture.contents()).toEqual(before);
+  },
+);

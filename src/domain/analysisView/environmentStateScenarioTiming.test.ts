@@ -143,17 +143,184 @@ it("falls back to the observed time with no duration when a request never ended 
   );
   expect(records.records[0]?.reported).toMatchObject({
     startedDateTime: "2026-10-17T18:00:00.015Z",
-    time: 0,
   });
   expect(records.records[1]?.reported).toMatchObject({
     startedDateTime: "2026-10-17T18:00:01.015Z",
-    time: 0,
   });
+  expect(records.records[0]?.reported).not.toHaveProperty("time");
+  expect(records.records[1]?.reported).not.toHaveProperty("time");
+  expect(records.limitations).toContain(
+    "2 scenario request(s) had no unique reported duration; their duration is omitted and does not establish zero-length execution.",
+  );
   expect(records.records[2]?.reported).toMatchObject({
     startedDateTime: "2026-10-17T18:00:02.000Z",
     time: 5,
   });
+  const state = environmentStateViewOf(
+    scenarioCaptureEvidence({
+      ...capture,
+      events: { ...capture.events, items },
+    }),
+  );
+  expect(state.timeline).toBe("recorded-start-time");
+  expect(state.write_clock).toBeNull();
+  const clockPlans = state.writes.filter((plan) =>
+    plan.rules.some((rule) => rule.rule === "clock"),
+  );
+  expect(clockPlans.length).toBeGreaterThan(0);
+  expect(clockPlans.every((plan) => !plan.served && plan.reason !== null)).toBe(
+    true,
+  );
+  expect(clockPlans.some((plan) => plan.reason === "unknown-clock")).toBe(true);
 });
+
+it.each(["manifest", "replay"] as const)(
+  "preserves independent duration and explicit zero in %s projection",
+  (purpose) => {
+    const capture = timed(scenarioCaptureFixture(EXCHANGES));
+    const first = capture.events.items.find(
+      (event) => event.kind === "request",
+    );
+    if (first === undefined) throw new Error("Expected first request");
+    const items = capture.events.items.map((event) => {
+      if (
+        !("transaction_id" in event) ||
+        event.transaction_id !== first.transaction_id
+      )
+        return event;
+      if (event.kind === "request") {
+        const { observed_at: _omitted, ...withoutStart } = event;
+        return withoutStart;
+      }
+      if (event.kind === "request-finished") {
+        const { started_at: _omitted, ...withoutStart } = event;
+        return { ...withoutStart, elapsed_ms: 0 };
+      }
+      return event;
+    });
+    const source = { ...capture, events: { ...capture.events, items } };
+    const before = structuredClone(source);
+    const records = scenarioCaptureRecords(source, purpose);
+    expect(records.records[0]?.reported).toHaveProperty("time", 0);
+    expect(records.records[0]?.reported).not.toHaveProperty("startedDateTime");
+    expect(records.records[0]?.location).toEqual({
+      kind: "json-pointer",
+      pointer: `/events/items/${capture.events.items.indexOf(first)}`,
+    });
+    expect(records.limitations.join(" ")).not.toContain(
+      "had no unique reported duration",
+    );
+    expect(source).toEqual(before);
+  },
+);
+
+it.each([
+  "known zero",
+  "missing terminal",
+  "duplicate terminal",
+  "terminal without duration",
+] as const)(
+  "requires a completed scenario action before resync and write proof: %s",
+  (mode) => {
+    const exchanges: ScenarioExchange[] = [
+      {
+        method: "GET",
+        url: "/api/books",
+        body: JSON.stringify([
+          { id: 1, name: "A" },
+          { id: 2, name: "B" },
+        ]),
+      },
+      {
+        method: "GET",
+        url: "/api/books/1",
+        body: JSON.stringify({ id: 1, name: "A" }),
+      },
+      {
+        method: "GET",
+        url: "/api/books/2",
+        body: JSON.stringify({ id: 2, name: "B" }),
+      },
+      {
+        method: "POST",
+        url: "/api/books/1/archive",
+        status: 204,
+        body: "",
+        requestBody: "{}",
+        requestMediaType: "application/json",
+      },
+      {
+        method: "GET",
+        url: "/api/books/1",
+        body: JSON.stringify({ id: 1, name: "A" }),
+      },
+      {
+        method: "PATCH",
+        url: "/api/books/1",
+        body: JSON.stringify({ id: 1, name: "Z" }),
+        requestBody: JSON.stringify({ name: "Z" }),
+        requestMediaType: "application/json",
+      },
+      {
+        method: "GET",
+        url: "/api/books/1",
+        body: JSON.stringify({ id: 1, name: "Z" }),
+      },
+    ].map((exchange) => ({
+      ...exchange,
+      status: exchange.status ?? 200,
+      mediaType: "application/json",
+    }));
+    const capture = timed(scenarioCaptureFixture(exchanges));
+    const action = capture.events.items.find(
+      (event) => event.kind === "request" && event.method === "POST",
+    );
+    if (action?.kind !== "request") throw new Error("Expected action request");
+    const terminal = capture.events.items.find(
+      (event) =>
+        event.kind === "request-finished" &&
+        event.transaction_id === action?.transaction_id,
+    );
+    if (terminal?.kind !== "request-finished")
+      throw new Error("Expected action terminal");
+    const items = capture.events.items.flatMap<
+      BrowserScenarioCapture["events"]["items"][number]
+    >((event) => {
+      if (event !== terminal) return [event];
+      if (mode === "missing terminal") return [];
+      if (mode === "terminal without duration") {
+        const { elapsed_ms: _omitted, ...withoutDuration } = event;
+        return [withoutDuration];
+      }
+      return [{ ...event, elapsed_ms: 0 }];
+    });
+    if (mode === "duplicate terminal")
+      items.push({
+        ...terminal,
+        sequence: Math.max(...items.map((event) => event.sequence)) + 1,
+      });
+    const source = {
+      ...capture,
+      events: { ...capture.events, items, retained: items.length },
+    };
+    const projected = scenarioCaptureRecords(source, "manifest");
+    if (mode === "known zero")
+      expect(projected.records[3]?.reported).toHaveProperty("time", 0);
+    else expect(projected.records[3]?.reported).not.toHaveProperty("time");
+    const state = environmentStateViewOf(scenarioCaptureEvidence(source));
+    expect(state.timeline).toBe("recorded-start-time");
+    const plan = state.writes.find(
+      (write) => write.tool === "patch_books_by_id",
+    );
+    expect(plan).toMatchObject({
+      served: mode === "known zero",
+      checked_record_ordinals: mode === "known zero" ? [6] : [],
+      contradicted_by: null,
+    });
+    if (mode === "known zero") expect(state.write_clock).not.toBeNull();
+    else expect(state.write_clock).toBeNull();
+  },
+);
 
 it("keeps record order and learns no clock when any request is untimed", () => {
   const capture = timed(scenarioCaptureFixture(EXCHANGES));

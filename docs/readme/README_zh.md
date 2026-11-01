@@ -20,7 +20,7 @@
 
 **[网站](https://rea.tools/zh-CN/) · [指南](https://rea.tools/zh-CN/guides/) · [案例](https://rea.tools/zh-CN/showcase/)**
 
-[快速开始](#快速开始) · [REA 的工作原理](#rea-的工作原理) · [可以分析什么](#可以分析什么) · [案例](#案例) · [常见问题](#常见问题) · [GNU objdump 和 Rizin 工具](../reverse-engineering-tools.md) · [文档](#文档)
+[快速开始](#快速开始) · [REA 的工作原理](#rea-的工作原理) · [可以分析什么](#可以分析什么) · [案例](#案例) · [构建 RL 环境](#build-rl-environments) · [常见问题](#常见问题) · [GNU objdump 和 Rizin 工具](../reverse-engineering-tools.md) · [文档](#文档)
 
 <code>npx rea-agents setup</code>
 
@@ -60,7 +60,7 @@
 
 REA 将智能体连接到分析工具，用于检查原生二进制文件、JavaScript 和 Electron 应用、.NET 程序集以及网站。你也可以在终端中使用同样的工具。分析在本机运行，结果包含支撑各项结论的证据和相关限制。
 
-设置流程会向智能体注册 REA，并安装匹配的工作流指引。原生分析可以使用已有的 Hopper、Ghidra 或 IDA；设置流程也可以在你批准后安装 Hopper。静态 JavaScript 分析不需要原生分析引擎。
+设置流程会向智能体注册 REA，并安装匹配的工作流指引。原生分析可以使用已有的 Hopper、Ghidra、IDA 或 Kuna；设置流程也可以在你批准后安装 Hopper。静态 JavaScript 分析不需要原生分析引擎。
 
 > **[访问 REA 网站](https://rea.tools/zh-CN/)**，查看设置说明、图解指南和真实案例。
 
@@ -149,7 +149,7 @@ REA 需要 Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）或 26+ (>=26.12.1)�
 
 | 目标                  | REA 返回的内容                                                               | 要求与指南                                                                                                         |
 | --------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| 原生二进制文件        | 伪代码、汇编、字符串、符号、调用和引用                                       | Hopper、Ghidra 或 IDA；[原生分析](../native-investigation.md)                                                      |
+| 原生二进制文件        | 伪代码、汇编、字符串、符号、调用和引用                                       | Hopper、Ghidra、IDA 或 Kuna；[原生分析](../native-investigation.md)                                                |
 | 离线 ELF 布局         | 节、段、原始符号/重定位信息及静态防护机制候选项                              | Linux x64 上由调用方提供的 pwntools；[二进制诊断](../binary-diagnostics.md)                                        |
 | Go 二进制文件         | 内嵌编译器版本、模块、替换项和构建设置                                       | 内置静态 ELF/PE/thin Mach-O 检查；无需安装 Go                                                                      |
 | WASM 工件             | 验证、节、精确的导入/导出 WAT 形式及解码后的 WAT                             | 调用方提供的 WABT 1.0.42；`inspect_wasm_artifact`                                                                  |
@@ -223,7 +223,50 @@ REA 需要 Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）或 26+ (>=26.12.1)�
 [阅读案例](https://rea.tools/zh-CN/showcase/th04/) ·
 [重建项目仓库](https://github.com/N0zoM1z0/th04)
 
+### 用 REA 构建 RL 环境
+
+录制 Web 应用会话，将 API 转为工具，并导出 AI 智能体可使用的环境。用 AgentEnv 运行，再添加任务和奖励检查，用于 RL 训练或评测。
+
+[构建环境指南](https://rea.tools/guides/rl-environments/) ·
+[在 X 上观看演示](https://x.com/reatools/status/2112574822584918075?s=20)
+
 如果你用 REA 分析了有趣的目标，我们很想了解。欢迎通过 [issue](https://github.com/morluto/rea/issues) 或 [pull request](https://github.com/morluto/rea/pulls) 分享案例，说明目标、你的问题、REA 如何提供帮助，以及你的发现。
+
+<a id="build-rl-environments"></a>
+
+## 构建 RL 环境
+
+为 AI 智能体构建本地练习环境，让它练习查找 issue、创建文件夹等任务，无需运行原应用。这个环境可用于强化学习（RL），也可用于测试智能体完成任务的能力。
+
+REA 将录制的 API 请求和响应转为智能体可调用的工具。环境使用录制的数据，只有录制证据确认了某项修改的效果，才会支持该修改。
+
+在智能体中设置好 REA 后，将下面示例中的网址和文件夹任务替换为你自己的：
+
+```text
+使用 REA 为我的测试 Web 应用构建 RL 环境，网址是
+http://127.0.0.1:3000。
+覆盖列出、创建、重命名和删除文件夹。可以创建和删除测试文件夹，
+但不要修改已有数据。
+将环境保存到名为 my-env 的文件夹。检查哪些操作可用，并告诉我如何运行。
+```
+
+<details>
+<summary>改用命令行</summary>
+
+如果你已经将应用在浏览器中的请求和响应录制成文件，可以使用这些命令。运行生成的环境还需要 AgentEnv 和 Docker。
+
+```sh
+rea environment-build ./session.har ./my-env --name my-env --json
+agent-env run ./my-env
+```
+
+</details>
+
+REA 导出可直接运行的环境，并附带基本测试，检查环境能否启动和响应。将它接入 RL 框架，即可设置任务目标、添加奖励检查并运行训练。
+
+[构建环境指南](https://rea.tools/guides/rl-environments/) ·
+[环境参考文档](../agent-environments.md) ·
+[在 X 上观看演示](https://x.com/reatools/status/2112574822584918075?s=20)
 
 ## 常见问题
 
@@ -235,9 +278,9 @@ REA 需要 Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）或 26+ (>=26.12.1)�
 </details>
 
 <details>
-<summary><strong>需要 Hopper、Ghidra 或 IDA 吗？</strong></summary>
+<summary><strong>需要 Hopper、Ghidra、IDA 或 Kuna 吗？</strong></summary>
 
-深入的原生分析需要其中一个引擎。静态 JavaScript 和 .NET 检查不需要原生分析引擎。设置流程可以在你批准后安装 Hopper；Ghidra 和 IDA 则使用已有安装。见[提供方设置](../installation.md#hopper)。
+深入的原生分析需要其中一个引擎。静态 JavaScript 和 .NET 检查不需要原生分析引擎。设置流程可以在你批准后安装 Hopper；Ghidra、IDA 和 Kuna 则使用已有安装。见[提供方设置](../installation.md#hopper)。
 
 </details>
 
@@ -305,7 +348,7 @@ npx rea-agents@latest setup
 
 ## Star 历史
 
-🎉 **GitHub Star 达到 300,000 个，感谢大家！**
+🎉 **GitHub Star 达到 400,000 个，感谢大家！**
 
 感谢每一位使用 REA、报告错误、提出功能需求、测试构建和贡献修复的朋友。
 

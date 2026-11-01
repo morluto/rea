@@ -1,6 +1,16 @@
 import type { WebPageInspection } from "./browserObservationSchemas.js";
 import { digestCanonicalValue } from "./canonicalDigest.js";
 
+/** Frame-forest invariant. The code is the stable identity. */
+class WebCaptureFrameError extends Error {
+  readonly _tag = "WebCaptureFrameError";
+
+  constructor(readonly code: "missing_ready_frame" | "missing_parent_frame") {
+    super(code);
+    this.name = "WebCaptureFrameError";
+  }
+}
+
 /** Compare complete frame forests without treating capture-local IDs as identity. */
 export const fingerprintWebCaptureFrames = (
   frames: WebPageInspection["frames"],
@@ -20,7 +30,8 @@ export const fingerprintWebCaptureFrames = (
   let examined = 0;
   for (let index = 0; index < ready.length; index += 1) {
     const frame = ready[index];
-    if (frame === undefined) throw new Error("Missing ready frame");
+    if (frame === undefined)
+      throw new WebCaptureFrameError("missing_ready_frame");
     const fingerprint = digestCanonicalValue({
       url: frame.url,
       origin: frame.origin,
@@ -40,7 +51,7 @@ export const fingerprintWebCaptureFrames = (
     if (count === 0) {
       const parent = byId.get(parentId);
       if (parent === undefined)
-        throw new Error("Missing admitted parent frame");
+        throw new WebCaptureFrameError("missing_parent_frame");
       ready.push(parent);
     }
   }

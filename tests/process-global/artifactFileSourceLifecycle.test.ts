@@ -264,7 +264,7 @@ it.each(carriers)(
       await reader.close();
       expect(close).not.toHaveBeenCalled();
       expect(handle.fd).toBeGreaterThanOrEqual(0);
-      expect(await readFile(path)).toEqual(replacementBytes);
+      expect(Buffer.compare(await readFile(path), replacementBytes)).toBe(0);
       expect(control.handles.size).toBe(1);
       await handle.close();
       expect(close).toHaveBeenCalledOnce();

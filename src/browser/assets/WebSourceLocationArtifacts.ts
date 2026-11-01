@@ -2,7 +2,6 @@ import type { WebSourceLocationArtifactPort } from "../../application/WebSourceL
 import type { WebScriptArtifactPort } from "../../application/WebScriptArtifactPort.js";
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
 import {
   WEB_SOURCE_MAP_LIMITS,
   type WebSourceLocationInput,
@@ -10,7 +9,11 @@ import {
 import { err, ok } from "../../domain/result.js";
 import { WebArtifactCleanup } from "../WebArtifactCleanup.js";
 import { LocalWebScriptArtifacts } from "./LocalWebScriptArtifacts.js";
-import { decodeWebArtifact, webArtifactReadError } from "./WebArtifactReads.js";
+import {
+  decodeWebArtifact,
+  WebArtifactAcquisition,
+  webArtifactReadError,
+} from "./WebArtifactReads.js";
 
 /** Read one verified capture source and the caller-selected map, without fetching. */
 export class LocalWebSourceLocationArtifacts implements WebSourceLocationArtifactPort {
@@ -41,32 +44,47 @@ export class LocalWebSourceLocationArtifacts implements WebSourceLocationArtifac
 
   /** Preserve actual map identity separately from the selected deployment URL. */
   async load(input: WebSourceLocationInput, options?: ExecutionOptions) {
+    const acquisition = new WebArtifactAcquisition();
     try {
-      return await this.#resources.run(() => this.#load(input, options));
+      return await this.#resources.run(() =>
+        this.#load(input, acquisition, options),
+      );
     } catch (cause: unknown) {
       return err(
-        webArtifactReadError(
-          cause,
-          {
-            operation: "trace_web_source_location",
-            field: ["source_map", "path"],
-            targetPath: input.source_map.path,
-            callerSelected: true,
-          },
-          options?.signal,
+        acquisition.retain(
+          webArtifactReadError(
+            cause,
+            {
+              operation: "trace_web_source_location",
+              field: ["source_map", "path"],
+              targetPath: input.source_map.path,
+              callerSelected: true,
+            },
+            options?.signal,
+          ),
         ),
       );
     }
   }
 
-  async #load(input: WebSourceLocationInput, options?: ExecutionOptions) {
+  async #load(
+    input: WebSourceLocationInput,
+    acquisition: WebArtifactAcquisition,
+    options?: ExecutionOptions,
+  ) {
     const loaded = await this.scripts.load(input, options);
     if (!loaded.ok) return loaded;
-    const data = await readStableArtifact(
+    acquisition.record(
+      "manifest",
+      loaded.value.manifestFile,
+      "manifest-validated",
+    );
+    acquisition.record("source", loaded.value.sourceFile, "source-verified");
+    const data = await acquisition.read(
+      "source-map",
       input.source_map.path,
       WEB_SOURCE_MAP_LIMITS.mapBytes,
       options?.signal,
-      undefined,
       this.#resources,
     );
     return ok({

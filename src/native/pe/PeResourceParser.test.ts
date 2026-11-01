@@ -4,6 +4,7 @@ import {
   inspectPeResourcesInputSchema,
   peResourcesSchema,
 } from "../../domain/native/peResources.js";
+import { hasPeResourceName } from "./PeResourceLayout.js";
 import { parsePeResources } from "./PeResourceParser.js";
 import { peResourceFixture } from "./PeResources.fixture.js";
 
@@ -558,5 +559,105 @@ describe("PE resource ownership boundaries", () => {
       location: { offset: 0x100, bytes: 0 },
       sha256: createHash("sha256").digest("hex"),
     });
+  });
+});
+
+const probeSeaName = (bytes: Buffer) =>
+  hasPeResourceName(
+    bytes,
+    bytes.length,
+    async (offset, length) =>
+      offset < 0 || length > bytes.length - offset
+        ? undefined
+        : bytes.subarray(offset, offset + length),
+    10,
+    "NODE_SEA_BLOB",
+    4096,
+  );
+
+it("matches resource names by their exact UTF-16 bytes without losing source identity", async () => {
+  const fixture = peResourceFixture(false, [
+    {
+      type: 10,
+      name: "NODE_SEA_BLOB",
+      language: 1033,
+      payload: Buffer.from("data"),
+    },
+  ]);
+  expect(await probeSeaName(fixture.bytes)).toBe(true);
+  const entry = fixture.entryOffsets.find(
+    (at) => (fixture.bytes.readUInt32LE(at) & 0x80000000) !== 0,
+  );
+  if (entry === undefined) throw new Error("Expected named resource fixture");
+  const nameAt = 0x400 + (fixture.bytes.readUInt32LE(entry) & 0x7fffffff);
+  fixture.bytes[nameAt + 3] = 1;
+  expect(await probeSeaName(fixture.bytes)).toBe(false);
+  const report = await parse(fixture.bytes);
+  expect(report.resources[0]?.name).toMatchObject({
+    kind: "name",
+    name: "\u014eODE_SEA_BLOB",
+    utf16le_hex: fixture.bytes
+      .subarray(nameAt + 2, nameAt + 2 + 26)
+      .toString("hex"),
+  });
+  fixture.bytes.writeUInt16LE(0xffff, nameAt);
+  expect(await probeSeaName(fixture.bytes)).toBe(false);
+  await expect(parse(fixture.bytes)).rejects.toMatchObject({
+    reason: "format",
+  });
+});
+
+it("keeps name probing independent of full resource name/ID partition admission", async () => {
+  const fixture = peResourceFixture(false, [
+    {
+      type: 10,
+      name: "NODE_SEA_BLOB",
+      language: 1033,
+      payload: Buffer.from("data"),
+    },
+  ]);
+  const names = fixture.directoryOffsets[1];
+  if (names === undefined) throw new Error("Expected resource names directory");
+  fixture.bytes.writeUInt16LE(0, names + 12);
+  fixture.bytes.writeUInt16LE(1, names + 14);
+  expect(await probeSeaName(fixture.bytes)).toBe(true);
+  await expect(parse(fixture.bytes)).rejects.toMatchObject({
+    reason: "format",
+    message: "Resource name/ID entry counts disagree with encoded identities.",
+  });
+});
+
+it("keeps raw name probing separate from full resource-name alignment admission", async () => {
+  const fixture = peResourceFixture(false, [
+    {
+      type: 10,
+      name: "NODE_SEA_BLOB",
+      language: 1033,
+      payload: Buffer.from("data"),
+    },
+  ]);
+  const entry = fixture.entryOffsets.find(
+    (at) => (fixture.bytes.readUInt32LE(at) & 0x80000000) !== 0,
+  );
+  if (entry === undefined) throw new Error("Expected named resource fixture");
+  const original = 0x400 + (fixture.bytes.readUInt32LE(entry) & 0x7fffffff);
+  const nameBytes = 2 + fixture.bytes.readUInt16LE(original) * 2;
+  const previousEnd = fixture.bytes.readUInt32LE(fixture.directoryAt + 4);
+  const unaligned = previousEnd % 2 === 0 ? previousEnd + 1 : previousEnd;
+  const extendedEnd = unaligned + nameBytes;
+  expect(0x400 + extendedEnd).toBeLessThanOrEqual(fixture.bytes.length);
+  fixture.bytes.copy(
+    fixture.bytes,
+    0x400 + unaligned,
+    original,
+    original + nameBytes,
+  );
+  fixture.bytes.writeUInt32LE(0x80000000 + unaligned, entry);
+  fixture.bytes.writeUInt32LE(extendedEnd, fixture.directoryAt + 4);
+  fixture.bytes.writeUInt32LE(extendedEnd, fixture.sectionAt + 8);
+  expect(await probeSeaName(fixture.bytes)).toBe(true);
+  await expect(parse(fixture.bytes)).rejects.toMatchObject({
+    reason: "format",
+    message: "Unaligned PE resource name.",
   });
 });

@@ -1,3 +1,5 @@
+import { AnalysisSettings } from "../dist/application/AnalysisSettings.js";
+import { runtimeAnalysisConfig } from "../dist/config/runtimeAnalysisSettings.js";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -67,6 +69,7 @@ const environment = {
   ...process.env,
   REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS: String(LIMIT_SECONDS),
 };
+const settings = new AnalysisSettings(environment);
 const config = parseConfig(environment);
 if (!config.ok) throw config.error;
 assert.equal(config.value.ghidraDecompileTimeoutSeconds, LIMIT_SECONDS);
@@ -134,7 +137,7 @@ try {
   // One real provider session over the read-only authenticated TCP bridge.
   let bridgeClient;
   const provider = new GhidraProvider(
-    config.value,
+    runtimeAnalysisConfig(config.value, settings.read),
     silentLogger,
     environment,
     undefined,
@@ -177,7 +180,7 @@ try {
     if (!initialSession.ok) throw initialSession.error;
     assert.equal(initialSession.value.target.sha256, targetDigest);
     observed.initial_session_run_id = initialSession.value.run_id;
-    const limitText = `exceeded the ${String(LIMIT_SECONDS)}-second limit set by REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS`;
+    const limitText = `exceeded the ${String(LIMIT_SECONDS)}-second configured decompilation limit (ghidra.decompile_timeout_seconds; launch seed REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS)`;
     let started = performance.now();
     const slow = await client.execute("analyze_function", {
       procedure: slowEntry,
@@ -225,6 +228,26 @@ try {
       message: projected.message,
     };
 
+    const changed = settings.update({
+      changes: [
+        {
+          setting: "ghidra.decompile_timeout_seconds",
+          action: "set",
+          value: 60,
+        },
+      ],
+    });
+    assert.equal(changed.ok, true);
+    const recovered = await settings.run(() =>
+      client.execute("procedure_pseudo_code", { procedure: slowEntry }),
+    );
+    if (!recovered.ok) throw recovered.error;
+    assert.ok(String(recovered.value.result).includes("rea_state"));
+    observed.runtime_recovery = {
+      timeout_seconds: 60,
+      pseudocode_bytes: Buffer.byteLength(String(recovered.value.result)),
+    };
+
     // The same session decompiles the next function with a fresh decompiler.
     const small = await client.execute("procedure_pseudo_code", {
       procedure: smallEntry,
@@ -267,7 +290,7 @@ try {
     ...observed,
     verifier_run: verifierRun,
     scope:
-      "Real Ghidra ELF or Mach-O analysis of a generated slow function through the read-only TCP provider: the decompile limit stops it, analyze_function degrades, procedure_pseudo_code names the setting, and the same session decompiles the next function. No target execution; Windows is unverified.",
+      "Real Ghidra ELF or Mach-O analysis of a generated slow function through the read-only TCP provider: the decompile limit stops it, analyze_function degrades, procedure_pseudo_code names the setting, a runtime update recovers the same slow function on the same Program, and the same session decompiles the next function. No target execution; Windows is unverified.",
   };
 } finally {
   if (cleaned) await rm(workspace, { recursive: true, force: true });

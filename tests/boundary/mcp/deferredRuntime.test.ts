@@ -9,11 +9,13 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { resolve, join } from "node:path";
+import { resolve, join, dirname } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
+import { closeVerifierResources } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { GENERATED_MCP_TOOL_CATALOG } from "../../fixtures/mcpToolCatalog.js";
 import { PROMPT_CONTRACTS } from "../../../src/contracts/promptContracts.js";
+import { TOOL_FAMILY_DEFINITIONS } from "../../../src/contracts/toolFamilies.js";
 import { evidenceSchema } from "../../../src/domain/evidence.js";
 import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
 import { SERVER_START_FAILED } from "../../../src/main/messages.js";
@@ -44,8 +46,10 @@ const connect = async (
     { versionNegotiation: { mode } },
   );
   onTestFinished(async () => {
-    await client.close();
-    await transport.close();
+    await closeVerifierResources([
+      () => client.close(),
+      () => transport.close(),
+    ]);
   });
   await client.connect(transport);
   return { client, stderr: () => stderr };
@@ -196,9 +200,10 @@ it.each([
       client.callTool({ name: "list_unknowns", arguments: { limit: 1 } }),
     ]);
     expect(results.every((result) => result.isError !== true)).toBe(true);
-    expect(results[0]?.structuredContent).toEqual({
-      result: { items: [], total: 0, offset: 0, next_offset: null },
-    });
+    expect(results.map((result) => result.structuredContent)).toEqual([
+      { result: { items: [], total: 0, offset: 0, next_offset: null } },
+      { result: { items: [], total: 0, offset: 0, next_offset: null } },
+    ]);
     expect(await client.listTools()).toEqual(before);
     const invalid = await client.callTool({
       name: "list_unknowns",
@@ -217,6 +222,29 @@ it.each([
     expect(stderr()).toBe("");
   },
 );
+
+it("composes a scoped registration instead of serving the recorded catalog", async () => {
+  const { client, stderr } = await connect("legacy", {
+    REA_MCP_TOOL_FAMILIES: "session",
+  });
+  const advertised = (await client.listTools()).tools
+    .map(({ name }) => name)
+    .sort();
+  expect(advertised).toEqual(
+    TOOL_FAMILY_DEFINITIONS.filter(({ id }) => id === "session")
+      .flatMap(({ contracts }) => contracts.map(({ name }) => name))
+      .sort(),
+  );
+  expect(advertised).not.toContain("inspect_macho");
+  // The recorded catalog cannot verify a scoped identity, so the scope must
+  // serve real calls instead of failing every one after materialization.
+  const status = await client.callTool({
+    name: "binary_session",
+    arguments: {},
+  });
+  expect(status.isError).not.toBe(true);
+  expect(stderr()).toBe("");
+});
 
 it("preserves connection creation time across deferred materialization", async () => {
   const directory = await createTestTempDirectory("rea-mcp-started-at-");
@@ -553,37 +581,29 @@ console.log("LATE_PUBLICATION_REFUSED");
   expect(child.stderr).toBe("");
 });
 
-it.each([
-  {},
-  { REA_MCP_INPUT_SCHEMA_PROFILE: "compact" },
-  { REA_MCP_INPUT_SCHEMA_PROFILE: "full" },
-  { REA_MCP_OUTPUT_SCHEMA_PROFILE: "off" },
-])("preserves the configured catalog profile %j", async (environment) => {
-  const { client } = await connect("legacy", environment);
-  const before = await client.listTools();
-  const catalog = JSON.parse(
-    await readFile(
-      environment.REA_MCP_INPUT_SCHEMA_PROFILE === "full"
-        ? "dist/mcp-catalog-full.json"
-        : "dist/mcp-catalog.json",
-      "utf8",
-    ),
-  );
-  expect(before.tools).toHaveLength(catalog.tools.length);
-  const expected =
-    environment.REA_MCP_OUTPUT_SCHEMA_PROFILE === "off"
-      ? catalog.tools.map(
-          ({ outputSchema: _output, ...tool }: Record<string, unknown>) => tool,
-        )
-      : catalog.tools;
-  expect(before.tools).toEqual(expected);
-  const result = await client.callTool({
-    name: "list_unknowns",
-    arguments: {},
-  });
-  expect(result.isError).not.toBe(true);
-  expect(await client.listTools()).toEqual(before);
-});
+it.each([{}, { REA_MCP_OUTPUT_SCHEMA_PROFILE: "off" }])(
+  "preserves the configured catalog profile %j",
+  async (environment) => {
+    const { client } = await connect("legacy", environment);
+    const before = await client.listTools();
+    const catalog = JSON.parse(await readFile("dist/mcp-catalog.json", "utf8"));
+    expect(before.tools).toHaveLength(catalog.tools.length);
+    const expected =
+      environment.REA_MCP_OUTPUT_SCHEMA_PROFILE === "off"
+        ? catalog.tools.map(
+            ({ outputSchema: _output, ...tool }: Record<string, unknown>) =>
+              tool,
+          )
+        : catalog.tools;
+    expect(before.tools).toEqual(expected);
+    const result = await client.callTool({
+      name: "list_unknowns",
+      arguments: {},
+    });
+    expect(result.isError).not.toBe(true);
+    expect(await client.listTools()).toEqual(before);
+  },
+);
 
 it("runs the real static artifact workflow after deferred initialization", async () => {
   const { client } = await connect("legacy");
@@ -632,6 +652,33 @@ const copyCompiledPackage = async (prefix: string): Promise<string> => {
     join(directory, "node_modules"),
     process.platform === "win32" ? "junction" : "dir",
   );
+  return directory;
+};
+
+// Recorder cleanup tests replace every runtime import through their loader
+// hook. Keep only resolvable sentinels so an unmodeled import fails closed.
+const createRecorderCleanupFixture = async (): Promise<string> => {
+  const directory = await createTestTempDirectory("rea-catalog-cleanup-");
+  await mkdir(join(directory, "scripts"), { recursive: true });
+  await cp(
+    resolve("scripts/record-mcp-catalog.mjs"),
+    join(directory, "scripts/record-mcp-catalog.mjs"),
+  );
+  await cp(resolve("package.json"), join(directory, "package.json"));
+  for (const path of [
+    "server/createServer.js",
+    "composition/binary.js",
+    "config/parseConfig.js",
+    "logger.js",
+    "contracts/promptContracts.js",
+  ]) {
+    const file = join(directory, "dist", path);
+    await mkdir(dirname(file), { recursive: true });
+    await writeFile(
+      file,
+      `throw new Error(${JSON.stringify(`Fixture import not replaced: ${path}`)});\n`,
+    );
+  }
   return directory;
 };
 
@@ -689,11 +736,7 @@ it.each([
 ])(
   "preserves producer failure=$producerFails and settles every recorder owner with cleanup failures=$failures",
   async ({ failures, producerFails }) => {
-    const directory = await copyCompiledPackage("rea-catalog-cleanup-");
-    await cp(
-      resolve("scripts/record-mcp-catalog.mjs"),
-      join(directory, "scripts/record-mcp-catalog.mjs"),
-    );
+    const directory = await createRecorderCleanupFixture();
     const log = join(directory, "cleanup.jsonl");
     const temporary = join(directory, "temporary");
     await mkdir(temporary);

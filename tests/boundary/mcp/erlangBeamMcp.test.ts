@@ -4,7 +4,10 @@ import { registerErlangTools } from "../../../src/server/registerErlangTools.js"
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { BeamService } from "../../../src/application/erlang/BeamService.js";
 import { BeamProvider } from "../../../src/erlang/BeamProvider.js";
-import { erlangBeamSchema } from "../../../src/domain/erlang/beam.js";
+import {
+  erlangBeamSchema,
+  MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS,
+} from "../../../src/domain/erlang/beam.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
@@ -18,8 +21,6 @@ import {
 } from "../../../src/erlang/Beam.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { mcpTest, type TestMcp } from "../../support/mcp/mcpFixture.js";
-
-import { MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS } from "../../../src/domain/erlang/beam.js";
 
 const completeBeamEvidenceSchema = toolContract(
   "inspect_erlang_beam",

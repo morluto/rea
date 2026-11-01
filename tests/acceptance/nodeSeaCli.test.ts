@@ -228,7 +228,9 @@ cliTest(
         expected.map((item) => item.path).sort(),
       );
       for (const { path, body } of expected)
-        expect(await readFile(join(result.output_root, path))).toEqual(body);
+        expect(
+          Buffer.compare(await readFile(join(result.output_root, path)), body),
+        ).toBe(0);
     };
 
     const inspected = await cli.run({

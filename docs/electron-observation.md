@@ -75,6 +75,13 @@ DOM node indices retain their snapshot positions. Invalid rows are omitted with
 completeness diagnostics, so `total_nodes` can exceed the retained node count
 and a parent index can refer to an omitted source node.
 
+`dom.node_value_length_unit` is `utf8-bytes`: each node's `node_value_length`
+counts the bytes needed to encode its value as UTF-8, not characters. Web
+observations instead declare `utf16-code-units`. These existing measurements
+are preserved; the unit is reported once for the whole DOM, without retaining
+text values. Historical captures without the unit leave it unknown; reading
+them does not infer a unit or convert their stored lengths.
+
 Script metadata retains its execution-context frame ID when CDP supplies one and
 records admission separately in `frame_scope`. An `authorized` scope refers to
 the observed document generation; `unknown` retains the known frame ID without
@@ -140,6 +147,14 @@ window-targeted renderer reload/crash actions, and synthetic `open-url` or
 WebContents identities, process metrics, and IPC channel and value-shape metadata.
 Payload values are not retained.
 
+For the exact Playwright launch sequence, the active hook removes only REA's
+bootstrap arguments from the application-visible `process.argv`. The vector keeps
+the selected entry point and every caller argument, in order, including repeated
+hook paths, `.asar` filenames, and debug-like options. The private launch handoff
+is consumed before application code runs. If the observed sequence cannot be
+matched exactly, argv stays unchanged and capture coverage reports `hook_conflict`;
+REA does not guess an entry point or remove arguments by filename patterns.
+
 `window_index` selects from Playwright's current Page list at the start of each action. REA resolves that Page to its corresponding BrowserWindow once; the action's `target` uses the BrowserWindow's capture-scoped `window_id`, matching the window inventory. Reordering either enumeration after selection does not retarget the action. Handle cleanup failures retain the completed action records and remain owned for provider cleanup retry.
 
 Run the real fixture verifier with an operator-provided Electron runtime:
@@ -186,6 +201,9 @@ neither result means the requested host operation occurred. The existing
 `openExternal`, `openPath`, and `trashItem` blocks reject their promises.
 The `trashItem` block prevents that call from reaching the OS trash operation;
 it does not intercept other ways the application can remove files.
+Process rejection and uncaught-exception events are observed at dispatch without
+adding exception handlers. The runtime and application retain their warning,
+handler, and fatal-exit policies, including for rejected shell-block promises.
 CLI SIGINT/SIGTERM requests cancellation and awaits owned-process cleanup.
 Window IDs, URLs, and cached titles come from one main-process Electron snapshot,
 so a crashed renderer does not require a successful renderer-side title query.
@@ -305,8 +323,13 @@ capture provides them.
 
 ASAR observation reads the header through one open file handle and validates its
 declared lengths against the archive size. Header/index admission is the same
-budget used by static ASAR reads: 16 MiB / 16777216 bytes by default, or
-`REA_ASAR_MAX_HEADER_BYTES` (at most 256 MiB) when set. An oversized header is
+budget used by static ASAR reads: 16 MiB / 16777216 bytes by default, seeded by
+`REA_ASAR_MAX_HEADER_BYTES` (at most 256 MiB). In MCP,
+`update_analysis_settings` can override `asar.max_header_bytes` for new
+operations without restarting REA. Cached headers are checked against each
+operation's admission, including after a decrease. See the
+[settings design](design/limits-and-recovery.md#failure-and-retry).
+An oversized header is
 not parsed; selecting a member path does not bypass admission, and the page
 stays unauthorized. The header cache separately retains at most that many bytes
 of already-admitted encoded headers across eight archives. Evicting that cache does not raise admission.

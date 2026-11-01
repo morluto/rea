@@ -13,6 +13,7 @@ import {
   resolveSemanticBindingState,
   semanticResolutionBlocked,
   type JavaScriptSemanticAnalysisState,
+  type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 import { semanticIdentifierRole } from "./javascriptSemanticProjection.js";
 import type { JavaScriptElectronIdentity } from "./javascriptSemanticAnalysis.js";
@@ -33,18 +34,24 @@ import {
   boundedExpression,
   contextBridgeMemberPathDepth,
 } from "./electronStaticAnalysisValues.js";
-import { argumentNode } from "./javascriptStaticAnalysisHelpers.js";
+import {
+  argumentNode,
+  range,
+  calleeName,
+} from "./javascriptStaticAnalysisHelpers.js";
 import {
   childNodes,
   traverseJavaScriptValueAst,
+  traverseJavaScriptValueAstSteps,
 } from "./javascriptSemanticTraversal.js";
-import { range, calleeName } from "./javascriptStaticAnalysisHelpers.js";
 import { ipcDescriptor } from "./electronStaticAnalysisIpc.js";
+import { symbolicLogicalRight } from "./javascriptSymbolicControlFlow.js";
 import {
-  symbolicDefiniteExit,
-  symbolicLogicalRight,
-} from "./javascriptSymbolicControlFlow.js";
+  ElectronCallPathBlockPrefixes,
+  type ElectronStatementFallthrough,
+} from "./electronCallPathBlockPrefixes.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
+import { javascriptSourceRangeKey } from "./javascriptSourceCoordinates.js";
 
 const callLabel = (node: t.Node): string =>
   t.isSequenceExpression(node)
@@ -52,7 +59,12 @@ const callLabel = (node: t.Node): string =>
     : calleeName(node) || "local call";
 
 const ipcEndpointKey = (value: ElectronIpcFinding): string =>
-  JSON.stringify([value.side, value.operation, value.channel, value.location]);
+  JSON.stringify([
+    value.side,
+    value.operation,
+    value.channel,
+    javascriptSourceRangeKey(value.location),
+  ]);
 
 /** Duplicate evidence already recorded for one endpoint and call site. */
 interface IpcEndpointFacts {
@@ -73,8 +85,10 @@ interface ReachedChain {
   readonly slot: number;
 }
 
-const ipcInvocationKey = (location: unknown): string =>
-  String(JSON.stringify(location));
+const ipcInvocationKey = (
+  location: ElectronIpcFinding["invocation_location"],
+): string =>
+  location === undefined ? "undefined" : javascriptSourceRangeKey(location);
 
 /** A finding's facts apart from which entry invoked it. */
 const ipcValueKey = (value: ElectronIpcFinding): string =>
@@ -125,8 +139,14 @@ const priorPath = (
 };
 
 /** One physical IPC operation, independent of how its channel was resolved. */
-const ipcSiteKey = (value: ElectronIpcFinding): string =>
-  JSON.stringify([value.side, value.operation, value.location]);
+const ipcSiteKey = (
+  value: Pick<ElectronIpcFinding, "side" | "operation" | "location">,
+): string =>
+  JSON.stringify([
+    value.side,
+    value.operation,
+    javascriptSourceRangeKey(value.location),
+  ]);
 
 const indexIpcFinding = (
   index: Map<string, IpcEndpointFacts>,
@@ -227,16 +247,20 @@ interface PathContext {
 }
 
 /** Substitutes inert wrapper syntax; every emitted path remains a candidate. */
-export const collectElectronWrappedCallPaths = (
+export function* collectElectronWrappedCallPathsSteps(
   program: t.Program,
   state: JavaScriptSemanticAnalysisState,
   source: string,
   accumulator: JavaScriptAnalysisAccumulator,
   identity: JavaScriptElectronIdentity,
-): readonly ElectronCallPath[] => {
+): Generator<void, readonly ElectronCallPath[]> {
   // Bounds repeated interprocedural expansion independently of bundle bytes.
   // Exhaustion is reported as unknown coverage, never as a negative finding.
   let remainingVisits = 1_000_000;
+  const prefixes = new ElectronCallPathBlockPrefixes(
+    () => --remainingVisits >= 0,
+    state.parentsByNode,
+  );
   const resolver = new JavaScriptSymbolicBindings(state, program, identity);
   const paths: ElectronCallPath[] = [];
   const seen = new Set<string>();
@@ -281,29 +305,113 @@ export const collectElectronWrappedCallPaths = (
       ],
     };
   };
+  /** A case can be reached by its own selection or by fallthrough from an earlier case. */
+  const switchCaseContext = (
+    node: t.SwitchStatement,
+    index: number,
+    context: PathContext,
+  ): PathContext => {
+    const text = (part: t.Node): string | undefined =>
+      part.start == null || part.end == null || part.end - part.start > 512
+        ? undefined
+        : source.slice(part.start, part.end);
+    const discriminant = text(node.discriminant);
+    if (discriminant === undefined) {
+      accumulator.unknownFindings += 1;
+      return context;
+    }
+    const choices: string[] = [];
+    let expressionBytes = 0;
+    let defaultBefore = false;
+    const compare = (test: t.Expression, operator: "===" | "!==") => {
+      // Dynamic case expressions can mutate the evaluated discriminant; do
+      // not turn a second source evaluation into an invented predicate.
+      if (
+        !t.isStringLiteral(test) &&
+        !t.isNumericLiteral(test) &&
+        !t.isBooleanLiteral(test) &&
+        !t.isNullLiteral(test) &&
+        !t.isBigIntLiteral(test)
+      )
+        return undefined;
+      const label = text(test);
+      return label === undefined
+        ? undefined
+        : `(${discriminant}) ${operator} (${label})`;
+    };
+    const append = (output: string[], item: string): boolean => {
+      expressionBytes += item.length + 6;
+      if (expressionBytes > 512) return false;
+      output.push(item);
+      return true;
+    };
+    let fallthrough = false;
+    for (let i = 0; i <= index; i += 1) {
+      if (--remainingVisits < 0) return context;
+      const branch = node.cases[i];
+      if (!branch) continue;
+      if (i < index && branch.consequent.length > 0) fallthrough = true;
+      if (branch.test == null) {
+        defaultBefore = true;
+        continue;
+      }
+      const match = compare(branch.test, "===");
+      if (match === undefined || !append(choices, match)) {
+        accumulator.unknownFindings += 1;
+        return context;
+      }
+    }
+    if (defaultBefore) {
+      const unmatched: string[] = [];
+      for (const branch of node.cases) {
+        if (--remainingVisits < 0) return context;
+        if (branch.test == null) continue;
+        const mismatch = compare(branch.test, "!==");
+        if (mismatch === undefined || !append(unmatched, mismatch)) {
+          accumulator.unknownFindings += 1;
+          return context;
+        }
+      }
+      choices.push(unmatched.length === 0 ? "true" : unmatched.join(" && "));
+    }
+    // Earlier case bodies may terminate or change state before reaching this
+    // case. The selection disjunction is necessary but not a complete path.
+    if (fallthrough) accumulator.unknownFindings += 1;
+    const expression = choices.map((choice) => `(${choice})`).join(" || ");
+    if (expression.length > 512) {
+      accumulator.unknownFindings += 1;
+      return context;
+    }
+    if (expression === "") return context;
+    return {
+      ...context,
+      conditions: [
+        ...context.conditions,
+        { expression, location: range(node) },
+      ],
+    };
+  };
   const sequentialFallthrough = (
-    statement: t.Statement,
+    fact: ElectronStatementFallthrough | null,
     env: SymbolicEnvironment,
     context: PathContext,
   ): { readonly continues: boolean; readonly context: PathContext } => {
-    if (symbolicDefiniteExit(statement)) return { continues: false, context };
-    if (!t.isIfStatement(statement)) return { continues: true, context };
-    const truth = symbolicTruth(resolver.evaluate(statement.test, env));
+    if (fact === null) return { continues: true, context };
+    if (fact.kind === "exit") return { continues: false, context };
+    const truth = symbolicTruth(resolver.evaluate(fact.test, env));
     if (truth !== undefined)
-      return symbolicDefiniteExit(
-        truth ? statement.consequent : statement.alternate,
-      )
+      return (truth ? fact.consequentExits : fact.alternateExits)
         ? { continues: false, context }
         : { continues: true, context };
-    if (symbolicDefiniteExit(statement.consequent))
+    if (fact.consequentExits)
       return {
         continues: true,
-        context: condition(context, statement.test, false),
+        context: condition(context, fact.test, false),
       };
-    if (symbolicDefiniteExit(statement.alternate))
+    if (fact.alternateExits)
       return {
         continues: true,
-        context: condition(context, statement.test),
+        context: condition(context, fact.test),
       };
     return { continues: true, context };
   };
@@ -327,6 +435,110 @@ export const collectElectronWrappedCallPaths = (
   let ipcByEndpoint: Map<string, IpcEndpointFacts> | undefined;
   // Direct operations whose channel the syntax pass left unresolved, by site.
   let unresolvedIpcSites: Map<string, number> | undefined;
+  // Traced invocation outcomes at IPC sites: the call sites of invocations
+  // that supplied a literal channel, or any other outcome.
+  const literalInvocationSites = new Map<
+    string,
+    {
+      readonly node: t.Node;
+      readonly calls: Set<string>;
+      // Literals whose guarded registration has no IPC finding of its own.
+      readonly guardedChannels: Set<string>;
+    }
+  >();
+  const openInvocationSites = new Set<string>();
+  // Runtime references to each binding: direct call sites, or null when any
+  // other reference can invoke it from sites the trace never seeds.
+  let directCalls:
+    | Map<JavaScriptSemanticBindingState, t.CallExpression[] | null>
+    | undefined;
+  const directCallsTo = (
+    binding: JavaScriptSemanticBindingState,
+  ): readonly t.CallExpression[] | null => {
+    if (directCalls === undefined) {
+      const references = new Map<
+        JavaScriptSemanticBindingState,
+        t.CallExpression[] | null
+      >();
+      traverseJavaScriptValueAst(program, state.erasedSyntaxNodes, {
+        enter: (node, parent, readAncestors) => {
+          if (
+            !t.isIdentifier(node) ||
+            parent === null ||
+            semanticIdentifierRole(node, parent, readAncestors) === null
+          )
+            return;
+          const referenced = resolveSemanticBindingState(
+            state,
+            node,
+            node.name,
+          );
+          if (referenced === undefined) return;
+          const calls = references.get(referenced);
+          if (calls === null) return;
+          if (!t.isCallExpression(parent) || parent.callee !== node)
+            references.set(referenced, null);
+          else if (calls === undefined) references.set(referenced, [parent]);
+          else calls.push(parent);
+        },
+      });
+      directCalls = references;
+    }
+    return directCalls.get(binding) ?? [];
+  };
+  /**
+   * Whether every invocation of the function enclosing a node is a direct call
+   * whose own invocation chain the trace followed. Seeds start only at literal
+   * arguments, so an untraced call site may supply any channel.
+   */
+  const tracedInvocationsOnly = (
+    node: t.Node,
+    traced: ReadonlySet<string>,
+    active: ReadonlySet<t.Node> = new Set(),
+  ): boolean => {
+    let fn = state.parentsByNode.get(node);
+    while (fn !== undefined && !t.isFunction(fn))
+      fn = state.parentsByNode.get(fn);
+    // Top-level code runs once with the values the trace evaluated.
+    if (fn === undefined) return true;
+    if (active.has(fn)) return false;
+    const declarator = state.parentsByNode.get(fn);
+    const declaration = t.isFunctionDeclaration(fn)
+      ? fn
+      : t.isVariableDeclarator(declarator) && declarator.init === fn
+        ? state.parentsByNode.get(declarator)
+        : undefined;
+    const owner =
+      declaration === undefined
+        ? undefined
+        : state.parentsByNode.get(declaration);
+    // An exported declaration is invoked by importers this file never sees.
+    if (
+      declaration === undefined ||
+      t.isExportNamedDeclaration(owner) ||
+      t.isExportDefaultDeclaration(owner)
+    )
+      return false;
+    const id = t.isFunctionDeclaration(fn)
+      ? fn.id
+      : t.isVariableDeclarator(declarator) && t.isIdentifier(declarator.id)
+        ? declarator.id
+        : undefined;
+    const binding =
+      id === undefined || id === null
+        ? undefined
+        : resolveSemanticBindingState(state, id, id.name);
+    const calls = binding === undefined ? null : directCallsTo(binding);
+    return (
+      calls !== null &&
+      calls.length > 0 &&
+      calls.every(
+        (call) =>
+          traced.has(ipcInvocationKey(range(call))) &&
+          tracedInvocationsOnly(call, traced, new Set([...active, fn])),
+      )
+    );
+  };
   const ipcAtEndpoint = (): Map<string, IpcEndpointFacts> => {
     if (ipcByEndpoint !== undefined) return ipcByEndpoint;
     ipcByEndpoint = new Map();
@@ -528,7 +740,7 @@ export const collectElectronWrappedCallPaths = (
         value.api_key !== null &&
         value.api_status === "object-literal" &&
         value.unknown_members === 0
-          ? [JSON.stringify(value.location)]
+          ? [javascriptSourceRangeKey(value.location)]
           : [],
       ),
     );
@@ -720,20 +932,29 @@ export const collectElectronWrappedCallPaths = (
     endpoint: string,
     guardedDispatch: boolean,
   ): void => {
+    const location = range(node);
+    // The site evaluated in its own scope is not an invocation of it.
+    const invocationSite =
+      context.calls.length > 0
+        ? ipcSiteKey({ ...descriptor, location })
+        : undefined;
+    const open = (): void => {
+      if (invocationSite !== undefined) openInvocationSites.add(invocationSite);
+    };
     const first = args[0];
     if (first?.kind !== "literal" || typeof first.value !== "string") {
       accumulator.unknownFindings += 1;
-      return;
+      return open();
     }
     const channelContext = metadataContext(context, first);
-    if (!channelContext) return;
+    if (!channelContext) return open();
     const handlerValue = args[1] ?? symbolicUnknown("missing handler");
     const handlerContext = metadataContext(channelContext, handlerValue);
-    if (!handlerContext) return;
+    if (!handlerContext) return open();
     const channel = first.value;
-    const location = range(node);
     const invocationLocation =
-      JSON.stringify(range(context.entryNode)) === JSON.stringify(location)
+      javascriptSourceRangeKey(range(context.entryNode)) ===
+      javascriptSourceRangeKey(location)
         ? undefined
         : range(context.entryNode);
     const findingContext = {
@@ -830,6 +1051,21 @@ export const collectElectronWrappedCallPaths = (
         : undefined;
     if (!findingGuarded && registrationKey !== undefined)
       unconditionalRegistrations.add(registrationKey);
+    // A guarded registration keeps its predicate on the call path instead of
+    // becoming an IPC finding, so the site carries its channel to pairing.
+    const guardedOnly =
+      findingGuarded &&
+      (registrationKey === undefined ||
+        !unconditionalRegistrations.has(registrationKey));
+    if (invocationSite !== undefined) {
+      let traced = literalInvocationSites.get(invocationSite);
+      if (traced === undefined) {
+        traced = { node, calls: new Set(), guardedChannels: new Set() };
+        literalInvocationSites.set(invocationSite, traced);
+      }
+      for (const call of context.calls) traced.calls.add(call);
+      if (guardedOnly) traced.guardedChannels.add(channel);
+    }
     if (!duplicate && !findingGuarded) {
       const value: ElectronIpcFinding = {
         ...finding,
@@ -880,11 +1116,7 @@ export const collectElectronWrappedCallPaths = (
         if (descriptor.mode !== "send" && descriptor.mode !== "invoke" && !fn)
           accumulator.unknownFindings += 1;
       }
-    } else if (
-      findingGuarded &&
-      (registrationKey === undefined ||
-        !unconditionalRegistrations.has(registrationKey))
-    ) {
+    } else if (guardedOnly) {
       accumulator.unknownFindings += 1;
       // A guarded registration is a path candidate even when its callback has
       // no observable body. Keep its predicate instead of promoting it to an
@@ -940,7 +1172,11 @@ export const collectElectronWrappedCallPaths = (
         ? undefined
         : argumentNode(node.arguments[exposure.worldIdIndex]);
     // Absent when complete direct syntax leaves substitution nothing to add.
-    const site = bridgeSiteAt(node, JSON.stringify(location), worldNode);
+    const site = bridgeSiteAt(
+      node,
+      javascriptSourceRangeKey(location),
+      worldNode,
+    );
     // The site evaluated in its own scope is not an invocation; a traced call
     // that leaves this exposure unresolved keeps the syntax observation.
     const unresolved = (): void => {
@@ -1116,7 +1352,7 @@ export const collectElectronWrappedCallPaths = (
         value,
       }));
     const findings = accumulator.contextBridgeApis.flatMap((entry) => {
-      const siteKey = JSON.stringify(entry.value.location);
+      const siteKey = javascriptSourceRangeKey(entry.value.location);
       const site = sites.get(siteKey);
       if (site === undefined) return [entry];
       sites.delete(siteKey);
@@ -1148,7 +1384,12 @@ export const collectElectronWrappedCallPaths = (
       let next = context;
       for (const statement of node.body) {
         walk(statement, env, next);
-        const fallthrough = sequentialFallthrough(statement, env, next);
+        if (remainingVisits < 0) return;
+        const fallthrough = sequentialFallthrough(
+          prefixes.statement(statement, node) ?? null,
+          env,
+          next,
+        );
         if (!fallthrough.continues) break;
         next = fallthrough.context;
       }
@@ -1190,79 +1431,164 @@ export const collectElectronWrappedCallPaths = (
       );
       return;
     }
+    if (t.isSwitchStatement(node)) {
+      walk(node.discriminant, env, context);
+      for (let index = 0; index < node.cases.length; index += 1) {
+        if (remainingVisits < 0) return;
+        const branch = node.cases[index]!;
+        if (branch.test) walk(branch.test, env, context);
+        if (remainingVisits < 0) return;
+        const branchContext = switchCaseContext(node, index, context);
+        for (const statement of branch.consequent) {
+          if (remainingVisits < 0) return;
+          walk(statement, env, branchContext);
+        }
+      }
+      return;
+    }
     if (t.isCallExpression(node) || t.isOptionalCallExpression(node))
       call(node, env, context);
-    for (const child of childNodes(node)) walk(child, env, context);
+    for (const child of childNodes(node)) {
+      if (remainingVisits < 0) return;
+      walk(child, env, context);
+    }
   }
-  traverseJavaScriptValueAst(program, state.erasedSyntaxNodes, {
-    enter: (node) => {
-      if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
-        return;
-      const isolatedSeed = t.isStringLiteral(node.arguments[0])
-        ? undefined
-        : isolatedBridgeCall(node);
-      if (!t.isStringLiteral(node.arguments[0]) && isolatedSeed === undefined)
-        return;
-      const env = isolatedSeed?.env ?? resolver.environmentAt(node);
-      let context: PathContext = {
-        entryNode: node,
-        calls: [],
-        entry: "",
-        entryKind: null,
-        channel: null,
-        steps: [],
-        conditions: [],
-        active: new Set(),
-      };
-      for (
-        let child: t.Node = node, parent = state.parentsByNode.get(child);
-        parent && !t.isFunction(parent);
-        child = parent, parent = state.parentsByNode.get(child)
-      ) {
-        if (t.isIfStatement(parent) || t.isConditionalExpression(parent)) {
-          if (child === parent.test) continue;
-          const truth = symbolicTruth(resolver.evaluate(parent.test, env));
-          const positive = child === parent.consequent;
-          if (truth !== undefined && truth !== positive) return;
-          if (truth === undefined)
-            context = condition(context, parent.test, positive);
-        } else if (t.isLogicalExpression(parent) && child === parent.right) {
-          const right = symbolicLogicalRight(
-            parent.operator,
-            resolver.evaluate(parent.left, env),
+  let prefixVisits = 0;
+  function* seed(
+    node: t.CallExpression | t.OptionalCallExpression,
+  ): Generator<void, void> {
+    if (remainingVisits < 0) return;
+    const isolatedSeed = t.isStringLiteral(node.arguments[0])
+      ? undefined
+      : isolatedBridgeCall(node);
+    if (!t.isStringLiteral(node.arguments[0]) && isolatedSeed === undefined)
+      return;
+    const env = isolatedSeed?.env ?? resolver.environmentAt(node);
+    let context: PathContext = {
+      entryNode: node,
+      calls: [],
+      entry: "",
+      entryKind: null,
+      channel: null,
+      steps: [],
+      conditions: [],
+      active: new Set(),
+    };
+    for (
+      let child: t.Node = node, parent = state.parentsByNode.get(child);
+      parent && !t.isFunction(parent);
+      child = parent, parent = state.parentsByNode.get(child)
+    ) {
+      if (--remainingVisits < 0) return;
+      if (++prefixVisits % 1024 === 0) yield;
+      if (t.isIfStatement(parent) || t.isConditionalExpression(parent)) {
+        if (child === parent.test) continue;
+        const truth = symbolicTruth(resolver.evaluate(parent.test, env));
+        const positive = child === parent.consequent;
+        if (truth !== undefined && truth !== positive) return;
+        if (truth === undefined)
+          context = condition(context, parent.test, positive);
+      } else if (t.isSwitchCase(parent) && child !== parent.test) {
+        const owner = state.parentsByNode.get(parent);
+        if (owner && t.isSwitchStatement(owner)) {
+          let index = 0;
+          while (index < owner.cases.length && owner.cases[index] !== parent) {
+            if (--remainingVisits < 0) return;
+            index += 1;
+          }
+          if (index < owner.cases.length)
+            context = switchCaseContext(owner, index, context);
+          else accumulator.unknownFindings += 1;
+        } else accumulator.unknownFindings += 1;
+      } else if (t.isLogicalExpression(parent) && child === parent.right) {
+        const right = symbolicLogicalRight(
+          parent.operator,
+          resolver.evaluate(parent.left, env),
+        );
+        if (right === false) return;
+        if (right === undefined)
+          context = condition(
+            context,
+            parent.left,
+            parent.operator === "??" ? "nullish" : parent.operator === "&&",
           );
-          if (right === false) return;
-          if (right === undefined)
-            context = condition(
-              context,
-              parent.left,
-              parent.operator === "??" ? "nullish" : parent.operator === "&&",
-            );
-        } else if (t.isBlockStatement(parent)) {
-          const index = parent.body.findIndex(
-            (statement) => statement === child,
-          );
-          if (index >= 0) {
-            for (const statement of parent.body.slice(0, index)) {
-              const fallthrough = sequentialFallthrough(
-                statement,
-                env,
-                context,
-              );
-              if (!fallthrough.continues) return;
-              context = fallthrough.context;
-            }
+      } else if (t.isBlockStatement(parent)) {
+        const prefix = yield* prefixes.before(parent, child);
+        if (remainingVisits < 0) return;
+        if (prefix !== undefined) {
+          for (const entry of prefix.entries) {
+            if (entry.position >= prefix.before) break;
+            if (--remainingVisits < 0) return;
+            if (++prefixVisits % 1024 === 0) yield;
+            const fallthrough = sequentialFallthrough(entry.fact, env, context);
+            if (!fallthrough.continues) return;
+            context = fallthrough.context;
           }
         }
       }
-      call(node, env, context, isolatedSeed?.callee);
+    }
+    call(node, env, context, isolatedSeed?.callee);
+  }
+  // The shared walker supplies one bounded batch at a time. Prefix work must
+  // run outside its synchronous callback so cancellation can interrupt a large
+  // block index or a genuinely long sequence of contextual branch facts.
+  const seeds: (t.CallExpression | t.OptionalCallExpression)[] = [];
+  const traversal = traverseJavaScriptValueAstSteps(
+    program,
+    state.erasedSyntaxNodes,
+    {
+      enter: (node) => {
+        if (t.isCallExpression(node) || t.isOptionalCallExpression(node))
+          seeds.push(node);
+      },
     },
-  });
+  );
+  try {
+    for (;;) {
+      const batch = traversal.next();
+      for (const node of seeds) {
+        yield* seed(node);
+        if (remainingVisits < 0) break;
+      }
+      seeds.length = 0;
+      if (batch.done || remainingVisits < 0) break;
+      yield;
+    }
+  } finally {
+    traversal.return();
+  }
   recordBridgeExposures();
   if (remainingVisits < 0 || resolver.truncated) {
     accumulator.unknownFindings += 1;
     accumulator.electronCallPathLimitReached = true;
-  }
+  } else
+    // A dynamic site's channels are enumerated only when the complete trace
+    // reached it with literal channels, no other invocation outcome, and no
+    // way to invoke its wrapper from sites the trace does not seed.
+    for (const [site, index] of unresolvedIpcSites ?? []) {
+      const entry = accumulator.ipc[index];
+      const traced = literalInvocationSites.get(site);
+      if (
+        entry?.value.channel === null &&
+        traced !== undefined &&
+        !openInvocationSites.has(site) &&
+        tracedInvocationsOnly(traced.node, traced.calls)
+      )
+        accumulator.ipc[index] = {
+          ...entry,
+          value: {
+            ...entry.value,
+            invocation_channels: "literal",
+            ...(traced.guardedChannels.size === 0
+              ? {}
+              : {
+                  guarded_invocation_channels: [...traced.guardedChannels].sort(
+                    compareUnicodeCodePoints,
+                  ),
+                }),
+          },
+        };
+    }
   if (resolver.unresolved) accumulator.unknownFindings += 1;
   return paths;
-};
+}

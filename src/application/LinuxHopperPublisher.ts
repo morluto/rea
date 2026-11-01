@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { copyFile, lstat, mkdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { appendCallerPath } from "../filesystem/callerPath.js";
 
 import { z } from "zod";
 import {
@@ -40,6 +41,8 @@ import {
   HOPPER_PUBLIC_KEY_URL,
   HOPPER_RELEASES_URL,
   HopperReleaseError,
+  hopperArchiveIntegrityMatches,
+  parseHopperReleaseJson,
   parseLinuxHopperRelease,
   parseLinuxHopperReleases,
   type LinuxHopperRelease,
@@ -122,13 +125,13 @@ export class LinuxHopperPublisher {
           timeoutMs: RELEASE_METADATA_TIMEOUT_MS,
         });
         if (!response.ok)
-          throw new HopperReleaseError(
-            "release_metadata",
-            "The official Hopper release feed is unavailable.",
-          );
-        this.#feed = parseLinuxHopperReleases(
-          JSON.parse(decodeUtf8(response.bytes)),
-        );
+          throw HopperReleaseError.fromDownload("release_metadata", {
+            request: "release_feed",
+            ...response.error,
+          });
+        const decoded = parseHopperReleaseJson(response.value);
+        if (!decoded.ok) throw decoded.cause;
+        this.#feed = parseLinuxHopperReleases(decoded.value);
       }
       if (!this.#feed.ok) return this.#feed;
       return this.#feed.value[family];
@@ -171,10 +174,7 @@ export class LinuxHopperPublisher {
         signal,
         resources,
       );
-      if (
-        bytes.length !== Number(release.file_length) ||
-        createHash("sha1").update(bytes).digest("hex") !== release.file_hash
-      )
+      if (!hopperArchiveIntegrityMatches(bytes, release))
         return err(
           new HopperReleaseError(
             "integrity",
@@ -189,11 +189,11 @@ export class LinuxHopperPublisher {
           timeoutMs: RELEASE_METADATA_TIMEOUT_MS,
         });
         if (!response.ok)
-          throw new HopperReleaseError(
-            "verification_unavailable",
-            "The official Hopper public key is unavailable.",
-          );
-        publicKey = decodeUtf8(response.bytes);
+          throw HopperReleaseError.fromDownload("verification_unavailable", {
+            request: "public_key",
+            ...response.error,
+          });
+        publicKey = decodeUtf8(response.value);
       }
       const packageSha256 = createHash("sha256").update(bytes).digest("hex");
       // Every read still validates file identity, byte bounds and selected metadata.
@@ -300,9 +300,13 @@ export class LinuxHopperPublisher {
           "verification_unavailable",
           "The Hopper release cache is not a caller-owned directory.",
         );
-      const target = join(this.cacheRoot, verified.release.main_exe_hash);
+      const target = appendCallerPath(
+        this.cacheRoot,
+        verified.release.main_exe_hash,
+      );
       const lease = await this.#acquireCacheLease(
         verified.release.main_exe_hash,
+        resources,
         signal,
       );
       await this.#withOwnedResource(
@@ -409,6 +413,7 @@ export class LinuxHopperPublisher {
 
   async #acquireCacheLease(
     digest: string,
+    resources: ArtifactResourceScope,
     signal?: AbortSignal,
   ): Promise<OwnedLease> {
     const deadline = performance.now() + 120_000;
@@ -420,6 +425,7 @@ export class LinuxHopperPublisher {
         cacheDirectory: this.cacheRoot,
         launcherSha256: digest,
         runId,
+        resources,
       });
       if (acquired.acquired) return acquired.lease;
       const remaining = deadline - performance.now();
@@ -527,12 +533,12 @@ export class LinuxHopperPublisher {
             signal === undefined ? {} : { signal },
           );
           if (!response.ok)
-            throw new HopperReleaseError(
-              "download",
-              "The official Hopper package is unavailable for publisher verification.",
-            );
+            throw HopperReleaseError.fromDownload("download", {
+              request: "package",
+              ...response.error,
+            });
           const archive = join(root, "archive");
-          await writeFile(archive, response.bytes, { flag: "wx", mode: 0o600 });
+          await writeFile(archive, response.value, { flag: "wx", mode: 0o600 });
           const verified = await this.#verifyArchive(
             family,
             selected.value,
@@ -700,7 +706,7 @@ export class LinuxHopperPublisher {
     resources: ArtifactResourceScope,
   ): Promise<Result<VerifiedLinuxHopperPackage, HopperReleaseError>> {
     try {
-      const root = join(this.cacheRoot, digest);
+      const root = appendCallerPath(this.cacheRoot, digest);
       try {
         const directory = await lstat(root);
         if (!directory.isDirectory() || directory.isSymbolicLink())
@@ -723,24 +729,21 @@ export class LinuxHopperPublisher {
       // Distinguish proven malformed/missing evidence from unavailable reads or
       // inspection tools. Only the former authorize approved cache replacement.
       for (const name of ["release.json", "public-key.asc", "archive"])
-        await this.#assertCacheFile(join(root, name));
+        await this.#assertCacheFile(appendCallerPath(root, name));
       const metadata = await this.#read(
-        join(root, "release.json"),
+        appendCallerPath(root, "release.json"),
         RELEASE_METADATA_BYTES,
         signal,
         resources,
       );
-      let value: unknown;
-      try {
-        value = JSON.parse(decodeUtf8(metadata));
-      } catch (cause: unknown) {
+      const decoded = parseHopperReleaseJson(metadata);
+      if (!decoded.ok)
         throw new HopperReleaseError(
           "release_metadata",
           "The retained Hopper package metadata is malformed.",
-          { cause },
+          { cause: decoded.cause },
         );
-      }
-      const parsed = cacheRecordSchema.safeParse(value);
+      const parsed = cacheRecordSchema.safeParse(decoded.value);
       if (!parsed.success)
         throw new HopperReleaseError(
           "release_metadata",
@@ -757,7 +760,7 @@ export class LinuxHopperPublisher {
           "The retained Hopper metadata does not identify this launcher.",
         );
       const keyBytes = await this.#read(
-        join(root, "public-key.asc"),
+        appendCallerPath(root, "public-key.asc"),
         RELEASE_METADATA_BYTES,
         signal,
         resources,
@@ -772,10 +775,10 @@ export class LinuxHopperPublisher {
           { cause },
         );
       }
-      return this.#verifyArchive(
+      return await this.#verifyArchive(
         parsed.data.family,
         release.value,
-        join(root, "archive"),
+        appendCallerPath(root, "archive"),
         signal,
         key,
         resources,

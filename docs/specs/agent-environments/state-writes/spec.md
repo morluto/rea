@@ -150,7 +150,7 @@ the exemplar.
 
 - **Request body.** The exemplar's request body must be a JSON object that
   could enter the state: a JSON-like media type, complete UTF-8 text within
-  256 KiB, exact numbers, no `__proto__` member. Otherwise the reason is
+  256 KiB and exact numbers. All own JSON member names are retained. Otherwise the reason is
   `body-unusable`. A `DELETE` takes no body. A create's or update's body
   whose only member wraps one object in a one-element array (Ghost's
   `{"posts":[{...}]}`) is that object, and the plan records the member as
@@ -543,7 +543,11 @@ contradicts it. Otherwise the reason, in this precedence, is:
    never showed), so it could answer only for entities the environment itself
    created. An update's answer renders the entity it wrote, so a field one of
    its rules writes counts as held, except an increment's, which adds only to
-   a held value.
+   a held value;
+6. `unknown-clock`: an otherwise servable plan needs `clock`, `held-clock`, or
+   `nested-clock`, but the capture establishes no global served clock start.
+   Its learned rules and confirming reads remain retained, and plans without
+   this clock dependency remain eligible for serving.
 
 `checked_record_ordinals` lists the confirming reads.
 
@@ -587,7 +591,7 @@ changes it atomically, so every MCP session and `data/get` see one state.
 - a create in another collection when the plan is tied to its own;
 - a document write at a path other than the one the state holds it at;
 - a body member or a resulting value `data/add` would refuse (a number not
-  exact as `data/get` writes it, a `__proto__` member, nesting past the
+  exact as `data/get` writes it or nesting past the
   limit), increments included, so `data/get` always loads back;
 - a create, update or document write that would take what `data/get` reports
   past the 32 MiB `data/add` intake limit, as a `resource_constraint` error;

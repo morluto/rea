@@ -24,7 +24,10 @@ import {
   publishAttempt,
   finishProducerGroups,
 } from "./lib/http3-verifier-lifecycle.mjs";
-import { mcpTextValue } from "./lib/mcp-verifier-results.mjs";
+import {
+  requireMcpEvidenceBundle,
+  requireMcpOutput,
+} from "./lib/mcp-verifier-results.mjs";
 
 const root = process.argv[2];
 const inspectExisting = process.argv[3] === "--inspect-existing";
@@ -134,14 +137,11 @@ async function mcp(input, name) {
     join(directory, `${name}.mcp.reply.json`),
     JSON.stringify(reply, null, 2),
   );
-  const value = JSON.parse(mcpTextValue(reply));
-  assert.notEqual(reply.isError, true, mcpTextValue(reply));
+  const evidence = requireMcpOutput(reply, contract.name, contract);
   assert.ok(
     validateOutput(reply.structuredContent),
     JSON.stringify(validateOutput.errors),
   );
-  const evidence = contract.outputSchema.parse(value);
-  assert.deepEqual(reply.structuredContent, value);
   retainedEvidence.push(evidence);
   return evidence;
 }
@@ -288,10 +288,8 @@ try {
     name: "get_evidence_bundle",
     arguments: {},
   });
-  assert.notEqual(bundleReply.isError, true, mcpTextValue(bundleReply));
-  const bundle = JSON.parse(mcpTextValue(bundleReply)).result;
+  const bundle = requireMcpEvidenceBundle(bundleReply);
   const records = bundle.records;
-  assert.ok(Array.isArray(records), "Evidence bundle omitted its records");
   for (const evidence of retainedEvidence) {
     const retained = records.find(
       (record) => record.evidence_id === evidence.evidence_id,
@@ -375,6 +373,7 @@ try {
 }
 const report = {
   run_id: run.run_id,
+  input_mode: inspectExisting ? "existing-captures" : "producer-attempt",
   status: primaryError || cleanupFailures.length ? "failed" : "passed",
   finished_at: new Date().toISOString(),
   ...(primaryError
@@ -388,8 +387,11 @@ const report = {
   verifier,
   producer_audit: producerAudit,
   scope:
-    "Real Linux reverse HTTP/3, mitmproxy 12.2.3, aioquic 1.2.0 and guest cURL",
+    "Linux reverse HTTP/3 capture verification for mitmproxy 12.2.3, aioquic 1.2.0 and guest cURL",
   limitations: [
+    ...(inspectExisting
+      ? ["Existing capture producer provenance was not authenticated by this attempt."]
+      : []),
     "No local/WireGuard, browser, QUIC v2, migration, 0-RTT, mTLS or replay claim.",
     "No HAR, interruption, certificate-failure or body-completeness coverage in this profile.",
   ],

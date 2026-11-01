@@ -127,7 +127,7 @@ cliTest(
           parseEvidence(response.structuredContent).normalized_result,
         ).toEqual(evidence.normalized_result);
       }
-      expect(await readFile(path)).toEqual(bytes);
+      expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
       await rm(path);
     }
     const compared = await call("compare_managed_members", {

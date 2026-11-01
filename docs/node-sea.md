@@ -53,6 +53,14 @@ An unset fuse with a present blob is reported as a limitation. These are static
 sentinel observations, not proof of runtime activation: sentinel-like text in
 script or asset bytes also participates in the scan.
 
+Artifact comparison uses each member's runtime role and exact source key as
+semantic metadata. Unicode-normalized graph paths do not erase differences in
+runtime asset keys. For members paired at the same logical path, a directory
+index change alone does not change the member. Ordinal-based fallback paths can
+change when entries are reordered. When only one observation records member
+metadata, the complete runtime member declaration remains unavailable. Original
+source fields remain available in the retained Evidence.
+
 ## Supported layout and limits
 
 The decoder follows the 64-bit little-endian layout in Node

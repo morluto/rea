@@ -1,4 +1,4 @@
-import { EventEmitter } from "node:events";
+import { EventEmitter, once } from "node:events";
 import { PassThrough } from "node:stream";
 import { truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -13,6 +13,45 @@ import { openRegularFile } from "../filesystem/RegularFile.js";
 import { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
 import type { NativeCommandRunner } from "../native/CommandRunner.js";
 import { NativeCommandFailure } from "../native/CommandRunner.js";
+import { createDeferred } from "../../tests/fixtures/binarySession.js";
+import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
+import type { ArtifactEntry } from "./ArtifactReader.js";
+
+const sliceOwnershipFixture = async () => {
+  const root = await createTestTempDirectory("rea-slice-ownership-");
+  const path = join(root, "fat");
+  const bytes = Buffer.concat([
+    Buffer.from(machoImage({ cpu: CPU.x86_64 })),
+    Buffer.alloc(256 * 1024),
+  ]);
+  await writeFile(path, fatImage([{ cpu: CPU.x86_64, bytes }]));
+  const runner: NativeCommandRunner = {
+    run: async () =>
+      ok({
+        tool: "lipo",
+        executable: "/usr/bin/lipo",
+        executableSha256: "1".repeat(64),
+        toolVersion: null,
+        versionReason: "fixture",
+        arguments: ["-detailed_info", path],
+        stdout: `architecture x86_64\n cputype 16777223\n cpusubtype 3\n offset 4096\n size ${String(bytes.length)}\n align 2^12 (4096)\n`,
+        stderr: "",
+        stdoutBytes: 1,
+        stderrBytes: 0,
+        exitCode: 0,
+        signal: null,
+      }),
+  };
+  return { path, runner };
+};
+
+const sliceEntries = async (
+  reader: MachOSliceArtifactReader,
+): Promise<ArtifactEntry[]> => {
+  const entries: ArtifactEntry[] = [];
+  for await (const entry of reader.entries()) entries.push(entry);
+  return entries;
+};
 
 const cleanupOwner = (runId: string): ProviderProcessSupervisor => {
   const child = Object.assign(new EventEmitter(), {
@@ -371,7 +410,7 @@ describe("MachOSliceArtifactReader", () => {
     const verifiedRead = await reader.open(verifiedArmEntry);
     for await (const chunk of verifiedRead)
       verifiedChunks.push(Buffer.from(chunk));
-    expect(Buffer.concat(verifiedChunks)).toEqual(arm);
+    expect(Buffer.compare(Buffer.concat(verifiedChunks), arm)).toBe(0);
 
     const truncatedController = new AbortController();
     const truncated = await reader.open(
@@ -524,4 +563,167 @@ describe("universal slices outside the structural index", () => {
       ).rejects.toMatchObject({ reason: "integrity" });
     },
   );
+});
+
+describe("Mach-O slice stream ownership", () => {
+  it.each(["unread", "abandoned", "cancelled"] as const)(
+    "retires an %s opened slice before closing its carrier",
+    async (mode) => {
+      const fixture = await sliceOwnershipFixture();
+      const reader = new MachOSliceArtifactReader(
+        fixture.path,
+        {},
+        fixture.runner,
+      );
+      try {
+        const [entry] = await sliceEntries(reader);
+        const caller = new AbortController();
+        const stream = await reader.open(entry!, caller.signal);
+        await once(stream, "readable");
+        if (mode === "abandoned") {
+          for await (const _chunk of stream) break;
+        } else if (mode === "cancelled") {
+          const failure = once(stream, "error");
+          const reason = { caller: "slice owner cancellation" };
+          caller.abort(reason);
+          await expect(failure).resolves.toMatchObject([
+            { reason: "cancelled", cause: reason },
+          ]);
+        }
+        await Promise.all([reader.close(), reader.close()]);
+        expect(stream.destroyed).toBe(true);
+        expect(stream.closed).toBe(true);
+        await reader.close();
+      } finally {
+        await reader.close();
+      }
+    },
+  );
+
+  it("joins an admitted descriptor read before reader close completes", async () => {
+    const fixture = await sliceOwnershipFixture();
+    const source = await openRegularFile(fixture.path, { symlinks: "reject" });
+    const reader = new MachOSliceArtifactReader(
+      fixture.path,
+      {},
+      fixture.runner,
+      source,
+    );
+    const reached = createDeferred<void>();
+    const release = createDeferred<void>();
+    const nativeRead = source.handle.read.bind(source.handle);
+    let reads: { mockRestore(): void } | undefined;
+    try {
+      const [entry] = await sliceEntries(reader);
+      reads = vi.spyOn(source.handle, "read").mockImplementation((async (
+        ...args: unknown[]
+      ) => {
+        reached.resolve();
+        await release.promise;
+        return Reflect.apply(nativeRead, source.handle, args);
+      }) as typeof source.handle.read);
+      const stream = await reader.open(entry!);
+      stream.read(0);
+      await reached.promise;
+      let closed = false;
+      const closing = reader.close().then(() => {
+        closed = true;
+      });
+      await Promise.resolve();
+      expect(closed).toBe(false);
+      release.resolve();
+      await closing;
+      expect(stream.closed).toBe(true);
+    } finally {
+      release.resolve();
+      await reader.close();
+      reads?.mockRestore();
+      await source.handle.close();
+    }
+  });
+
+  it("keeps descriptor closure retryable after retiring its slice", async () => {
+    const fixture = await sliceOwnershipFixture();
+    const reader = new MachOSliceArtifactReader(
+      fixture.path,
+      {},
+      fixture.runner,
+    );
+    const [entry] = await sliceEntries(reader);
+    const stream = await reader.open(entry!);
+    const failure = new Error("Mach-O descriptor close denied");
+    const close = vi
+      .spyOn(OwnedFileHandle.prototype, "close")
+      .mockRejectedValueOnce(failure);
+    try {
+      await expect(reader.close()).rejects.toBe(failure);
+      expect(stream.closed).toBe(true);
+      await reader.close();
+      expect(close).toHaveBeenCalledTimes(2);
+    } finally {
+      close.mockRestore();
+      await reader.close();
+    }
+  });
+
+  it.runIf(process.platform === "darwin")(
+    "retires a slice discovered by the installed lipo",
+    async () => {
+      const fixture = await sliceOwnershipFixture();
+      const reader = new MachOSliceArtifactReader(fixture.path, process.env);
+      try {
+        const [entry] = await sliceEntries(reader);
+        const stream = await reader.open(entry!);
+        await once(stream, "readable");
+        await reader.close();
+        expect(stream.closed).toBe(true);
+        expect(reader.provenance()).toMatchObject([
+          { tool: "lipo", exit_code: 0 },
+        ]);
+      } finally {
+        await reader.close();
+      }
+    },
+  );
+});
+
+it("joins Mach-O structural enumeration reads admitted before close", async () => {
+  const fixture = await sliceOwnershipFixture();
+  const source = await openRegularFile(fixture.path, { symlinks: "reject" });
+  const reader = new MachOSliceArtifactReader(
+    fixture.path,
+    {},
+    fixture.runner,
+    source,
+  );
+  const reached = createDeferred<void>();
+  const release = createDeferred<void>();
+  const nativeRead = source.handle.read.bind(source.handle);
+  const reads = vi.spyOn(source.handle, "read").mockImplementation((async (
+    ...args: unknown[]
+  ) => {
+    reached.resolve();
+    await release.promise;
+    return Reflect.apply(nativeRead, source.handle, args);
+  }) as typeof source.handle.read);
+  const traversal = reader.entries()[Symbol.asyncIterator]();
+  const next = traversal.next();
+  try {
+    await reached.promise;
+    let closed = false;
+    const closing = reader.close().then(() => {
+      closed = true;
+    });
+    await Promise.resolve();
+    expect(closed).toBe(false);
+    release.resolve();
+    await expect(next).rejects.toMatchObject({ reason: "unavailable" });
+    await closing;
+  } finally {
+    release.resolve();
+    await next.catch(() => undefined);
+    await reader.close();
+    reads.mockRestore();
+    await source.handle.close();
+  }
 });

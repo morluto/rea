@@ -81,7 +81,7 @@ it.each(["browser", "module", "renderer", "main"] as const)(
             kind === "electron-renderer" &&
             observations.some(
               ({ properties }) =>
-                properties.mechanism === "package.json:renderer" &&
+                properties.mechanism === `package.json:${field}` &&
                 properties.resolved_path === "lib/window.cjs",
             ),
         ),

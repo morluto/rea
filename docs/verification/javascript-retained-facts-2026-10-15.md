@@ -36,6 +36,13 @@ not a claim of globally complete analysis. Full Evidence remains exportable.
 The domain projector and shared application service own both CLI/MCP behavior;
 no new provider, executor, persistent cache or live-state freshness claim exists.
 
+The dated measurements below requested the then-emitted derived package
+`renderer` property. New analyses use `renderer_declarations` for source fields
+and package `loads` edges for the selected candidate; use
+`"renderer_declarations"` in place of `"renderer"` when repeating the fact query
+against a new analysis. Historical retained Evidence and measurements remain
+unchanged.
+
 ## Real input and reproduction
 
 Use the official [Joplin v3.7.21 Linux AppImage](https://github.com/laurent22/joplin/releases/download/v3.7.21/Joplin-3.7.21.AppImage).

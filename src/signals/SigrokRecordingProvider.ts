@@ -1,3 +1,5 @@
+import { SIGROK_PROVIDER_IDENTITY } from "./SigrokProviderIdentity.js";
+import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { artifactFileCancellationCause } from "../artifacts/ArtifactFileOperation.js";
 import {
   type InspectSignalDecodersInput,
@@ -19,7 +21,7 @@ import {
 } from "../process/LinuxResourceLimits.js";
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { access, realpath, writeFile } from "node:fs/promises";
+import { access, writeFile } from "node:fs/promises";
 import { basename, isAbsolute, join } from "node:path";
 import {
   createAnalysisExecution,
@@ -34,6 +36,10 @@ import {
   type ArtifactAnalysisRuntime,
 } from "../process/ArtifactAnalysisResources.js";
 import { readStableArtifact } from "../artifacts/readStableArtifact.js";
+import {
+  assertArtifactCommandPath,
+  selectArtifactCommandPath,
+} from "../process/ArtifactCommandPath.js";
 import {
   AnalysisError,
   type AnalysisCapturedOutput,
@@ -63,11 +69,7 @@ import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { privateWorkspaceFailure } from "../process/privateWorkspaceFailure.js";
 
 const OPERATION = "decode_signal_recording";
-export const SIGROK_PROVIDER_IDENTITY = {
-  id: "sigrok-recording",
-  name: "REA sigrok recording adapter",
-  version: "sigrok-cli@0.7.2",
-} as const;
+
 type Launcher = NonNullable<Parameters<typeof runOwnedCommand>[2]>["launcher"];
 
 /** Signal decoding runs only on Linux; discovery and execution share this check. */
@@ -124,6 +126,7 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
     input: DecodeSignalRecordingInput | InspectSignalDecodersInput,
     options?: ExecutionOptions,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
+    const environment = snapshotEnvironment(this.environment, this.platform);
     const operation = "path" in input ? OPERATION : "inspect_signal_decoders";
     let phase: "configuration" | "workspace" | "producer" | "integrity" =
       "configuration";
@@ -142,12 +145,16 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
         throw new Error(
           "Signal decoding requires Linux with util-linux prlimit and REA_SIGROK_COMMAND so expanded recordings are processed under an enforced address-space limit.",
         );
-      const configured = this.environment.REA_SIGROK_COMMAND ?? "";
+      const configured = environment.REA_SIGROK_COMMAND ?? "";
       if (!isAbsolute(configured))
         throw new Error(
           "Supply absolute REA_SIGROK_COMMAND for sigrok-cli 0.7.2 with libsigrokdecode.",
         );
-      const command = await realpath(configured);
+      const selectedCommand = await selectArtifactCommandPath(
+        configured,
+        options?.signal,
+      );
+      const command = selectedCommand.resolvedPath;
       await access(command, constants.X_OK);
       const tool = await this.#resources.read(
         command,
@@ -155,10 +162,14 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
         options?.signal,
       );
       const configuredLimiter =
-        this.environment.REA_SIGROK_PRLIMIT_COMMAND ?? "/usr/bin/prlimit";
+        environment.REA_SIGROK_PRLIMIT_COMMAND ?? "/usr/bin/prlimit";
       if (!isAbsolute(configuredLimiter))
         throw new Error("REA_SIGROK_PRLIMIT_COMMAND must be absolute.");
-      const limiter = await realpath(configuredLimiter);
+      const selectedLimiter = await selectArtifactCommandPath(
+        configuredLimiter,
+        options?.signal,
+      );
+      const limiter = selectedLimiter.resolvedPath;
       await access(limiter, constants.X_OK);
       const limiterIdentity = await this.#resources.read(
         limiter,
@@ -166,7 +177,10 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
         options?.signal,
       );
       effectiveLimits = await this.#resources.readLimits(LIMITS);
-      const limitArguments = prlimitArgumentVector(effectiveLimits, command);
+      const limitArguments = prlimitArgumentVector(
+        effectiveLimits,
+        selectedCommand.invocationPath,
+      );
       phase = "workspace";
       root = await this.createRuntime();
       this.#resources.retain(root, undefined);
@@ -180,14 +194,20 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
         selection?: SigrokSelection,
       ) => {
         capturedOutput = undefined;
+        await assertArtifactCommandPath(selectedCommand, operation, {
+          signal: options?.signal,
+        });
+        await assertArtifactCommandPath(selectedLimiter, operation, {
+          signal: options?.signal,
+        });
         const output = await runOwnedCommand(
           {
-            command: limiter,
+            command: selectedLimiter.invocationPath,
             arguments: [...limitArguments, ...args],
             ...(root === undefined ? {} : { cwd: root.path }),
             expectedCommand: null,
             runId: `rea-sigrok-${randomUUID()}`,
-            hostEnvironment: this.environment,
+            hostEnvironment: environment,
           },
           {
             timeoutMs: LIMITS.command_timeout_ms,
@@ -202,6 +222,12 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
           },
         );
         capturedOutput = artifactCommandOutput(output);
+        await assertArtifactCommandPath(selectedCommand, operation, {
+          capturedOutput,
+        });
+        await assertArtifactCommandPath(selectedLimiter, operation, {
+          capturedOutput,
+        });
         const current = await this.#resources.readCommandAfterRun(
           command,
           { path: limiter, sha256: limiterIdentity.sha256 },

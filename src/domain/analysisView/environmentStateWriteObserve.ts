@@ -1,6 +1,7 @@
 import type { JsonValue } from "../jsonValue.js";
-import { overlapsWrite } from "./environmentStateWriteAttribution.js";
+import type { StateRecordChronology } from "./StateRecordChronology.js";
 import {
+  ownMember,
   at,
   collectionPathOf,
   isObject,
@@ -8,6 +9,7 @@ import {
   listItems,
   pointerTo,
   projectsFields,
+  same,
   scalarText,
   type JsonObject,
   type StateEntity,
@@ -15,6 +17,92 @@ import {
   type StateView,
 } from "./environmentStateRules.js";
 import { queryValues, replayReason } from "./environmentStateVariants.js";
+import { readClock } from "./environmentStateWriteValues.js";
+
+/** A read a create's observation takes fields from: an item read's respell the response's clocks and add fields, a list read's only add fields. */
+export interface ObservedRead {
+  readonly ordinal: number;
+  readonly pointer: string;
+  readonly shape: "item" | "list";
+  /** Pointers into the entity to values the response had not loaded and the item read shows loaded, or members the read adds inside an object the response showed. */
+  readonly unloaded?: string[];
+}
+
+/** Whether two clocks agree at the coarser recorded fraction precision, retaining all digits through nanoseconds. */
+export const respelledInstant = (
+  left: JsonValue | undefined,
+  right: JsonValue | undefined,
+): boolean => {
+  const [a, b] = [readClock(left), readClock(right)];
+  if (a?.format.kind !== "iso" || b?.format.kind !== "iso") return false;
+  const [fine, coarse] =
+    a.format.fraction >= b.format.fraction ? [a, b] : [b, a];
+  if (coarse.format.kind !== "iso") return false;
+  const unit = 10 ** (9 - coarse.format.fraction);
+  const fraction = (clock: typeof fine) =>
+    (((clock.ms % 1000) + 1000) % 1000) * 1_000_000 + clock.subMillisecond;
+  return (
+    Math.floor(fine.ms / 1000) === Math.floor(coarse.ms / 1000) &&
+    Math.floor(fraction(fine) / unit) * unit === fraction(coarse)
+  );
+};
+
+/** Go's zero `time.Time`, which a response shows for a time it has not loaded. */
+const ZERO_TIME = /^0001-01-01T00:00:00(?:\.0+)?(?:Z|[+-]00:?00)$/u;
+
+/** A value a create's response holds where it has not loaded the stored one: empty, zero, false or Go's zero time. */
+const unloaded = (value: JsonValue | undefined): boolean =>
+  value === null ||
+  value === "" ||
+  value === 0 ||
+  value === false ||
+  (typeof value === "string" && ZERO_TIME.test(value)) ||
+  (Array.isArray(value)
+    ? value.length === 0
+    : isObject(value) && Object.keys(value).length === 0);
+
+/** Whether a later item read shows what a create's response showed, respelled or loaded: the same value, the same instant, a value for an unloaded one, or an object whose members each are. */
+export const loadedLater = (
+  response: JsonValue | undefined,
+  read: JsonValue | undefined,
+): boolean =>
+  same(response, read) ||
+  respelledInstant(response, read) ||
+  (read !== undefined && unloaded(response)) ||
+  (isObject(response) &&
+    isObject(read) &&
+    Object.keys(response).every((key) =>
+      loadedLater(response[key], ownMember(read, key)),
+    ));
+
+/** Pointers to the values a create's response had not loaded where a later read shows others, and to members a read adds inside an object the response showed, within nested objects too. */
+export const unloadedPointers = (
+  response: JsonObject,
+  read: JsonObject,
+  prefix = "",
+): string[] => [
+  ...Object.entries(response).flatMap(([key, value]) => {
+    const loaded = ownMember(read, key);
+    const pointer = `${prefix}${pointerTo(key)}`;
+    if (loaded === undefined || same(value, loaded)) return [];
+    if (isObject(value) && isObject(loaded) && Object.keys(value).length > 0)
+      return unloadedPointers(value, loaded, pointer);
+    return unloaded(value) ? [pointer] : [];
+  }),
+  ...(prefix === ""
+    ? []
+    : Object.keys(read)
+        .filter((key) => !Object.hasOwn(response, key))
+        .map((key) => `${prefix}${pointerTo(key)}`)),
+];
+
+/** A create's response object with a read's fields: an item read's values win, a list read only adds fields the response lacks. */
+export const withRead = (
+  response: JsonObject,
+  read: JsonObject,
+  shape: ObservedRead["shape"],
+): JsonObject =>
+  shape === "item" ? { ...response, ...read } : { ...read, ...response };
 
 /** Where an observed entity object was found: the record and a JSON pointer into its response. */
 export interface Observed {
@@ -22,6 +110,8 @@ export interface Observed {
   readonly pointer: string;
   readonly object: JsonObject;
   readonly id: string;
+  /** A create's later read whose fields the object adds to the response's, and whose clock spellings an item read lends it. */
+  readonly read?: ObservedRead;
 }
 
 /** Objects a response carries where an entity may be, in precedence tiers: the root, one member, then the element of a one-element array at the root or in one member. */
@@ -49,7 +139,9 @@ export const newEntityIn = (
   if (body === undefined) return undefined;
   for (const tier of entitySlots(body)) {
     const found = tier.flatMap(([pointer, object]) => {
-      const id = isObject(object) ? scalarText(object[idField]) : undefined;
+      const id = isObject(object)
+        ? scalarText(ownMember(object, idField))
+        : undefined;
       // An object holding only the identity names the entity without showing it.
       return isObject(object) &&
         id !== undefined &&
@@ -86,8 +178,8 @@ export const shownBefore = (
 export interface ObservationSearch {
   readonly records: readonly StateRecordFacts[];
   readonly from: number;
-  /** A timed write's completion. A read begun while it still ran may show the prior state. */
-  readonly after?: number;
+  /** Completion must be established before a read may supply a write observation. */
+  readonly chronology: StateRecordChronology;
   readonly viewOf: (ordinal: number) => StateView | undefined;
   readonly withBody: <T>(
     ordinal: number,
@@ -152,7 +244,9 @@ export const laterObservation = (
   for (const record of search.records.slice(search.from + 1)) {
     if (target.isWrite(record)) return undefined;
     // The same overlap the check path ignores: the write was still running when this read began.
-    if (search.after !== undefined && overlapsWrite(search.after, record.start))
+    if (
+      !search.chronology.completedBefore(search.records[search.from]!, record)
+    )
       continue;
     const view = search.viewOf(record.ordinal);
     if (
@@ -192,7 +286,8 @@ const itemObservation = (
         : entitySlots(body)
             .flat()
             .find(([at]) => at === pointer)?.[1];
-    return isObject(object) && scalarText(object[target.idField]) === id
+    return isObject(object) &&
+      scalarText(ownMember(object, target.idField)) === id
       ? { ordinal: record.ordinal, pointer, object, id }
       : undefined;
   });
@@ -211,7 +306,7 @@ const listObservation = (
       .map((object, index) => ({
         object,
         index,
-        id: scalarText(object[target.idField]),
+        id: scalarText(ownMember(object, target.idField)),
       }))
       .filter(
         (entry): entry is { object: JsonObject; index: number; id: string } =>

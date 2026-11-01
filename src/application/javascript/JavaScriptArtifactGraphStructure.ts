@@ -7,16 +7,19 @@ import {
   partialApplicationCoverage,
 } from "../../domain/javascript/javascriptApplicationEvidenceSchemas.js";
 import type { JavaScriptArtifactAnalysis } from "./JavaScriptArtifactAnalysisTypes.js";
-import { javascriptArtifactAnalysisScopes } from "./JavaScriptArtifactAnalysisTypes.js";
+import {
+  javascriptArtifactAnalysisScopes,
+  isSkippedJavaScriptAnalysis,
+} from "./JavaScriptArtifactAnalysisTypes.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
 import { freezeJsonSnapshot } from "../../domain/immutableJson.js";
 import type { JavaScriptSourceRange } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
+import { unexaminedJavaScriptStaticCoverage } from "../../domain/javascript/javascriptStaticCoverage.js";
 import type {
   JavaScriptArtifactContainer,
   JavaScriptArtifactFile,
 } from "../../domain/javascript/javascriptArtifactFiles.js";
 import type { JavaScriptArtifactGraphAccumulator } from "./JavaScriptArtifactGraphAccumulator.js";
-import { isSkippedJavaScriptAnalysis } from "./JavaScriptArtifactAnalysisTypes.js";
 import {
   addArtifactContainsEdge,
   applicationManifestPath,
@@ -50,6 +53,7 @@ interface PackageRoleInput {
   readonly packageFile: JavaScriptArtifactFile;
   readonly kind: "electron-main" | "electron-renderer";
   readonly declaredPath: string | null;
+  readonly field: "main" | "renderer" | "browser" | "module";
 }
 
 /** Create the exact root artifact node from the inventory manifest. */
@@ -152,6 +156,7 @@ export const addJavaScriptArtifactFiles = (
       file,
       analyzed.javascript,
       jsonValue,
+      packagesByPath.get(file.path),
       isSkippedJavaScriptAnalysis(analyzed),
     );
     if (
@@ -549,7 +554,7 @@ export const addJavaScriptPackageNodes = (
             version: packageValue.version,
             main: packageValue.main,
             main_status: packageValue.main_status,
-            renderer: packageValue.renderer,
+            renderer_declarations: packageValue.renderer_declarations,
             parse_status: packageValue.status,
           },
           evidence: artifactObservationEvidence({
@@ -609,13 +614,16 @@ export const addJavaScriptPackageNodes = (
       packageFile: file,
       kind: "electron-main",
       declaredPath: packageValue.main,
+      field: "main",
     });
-    addPackageRole(context, {
-      packageNode: node,
-      packageFile: file,
-      kind: "electron-renderer",
-      declaredPath: packageValue.renderer,
-    });
+    if (packageValue.renderer_entrypoint !== null)
+      addPackageRole(context, {
+        packageNode: node,
+        packageFile: file,
+        kind: "electron-renderer",
+        declaredPath: packageValue.renderer_entrypoint.path,
+        field: packageValue.renderer_entrypoint.field,
+      });
   }
   return roots;
 };
@@ -625,6 +633,7 @@ const createFileTarget = (
   file: JavaScriptArtifactFile,
   javascript: JavaScriptArtifactAnalysis["files"][number]["javascript"],
   json: JavaScriptArtifactAnalysis["json_modules"][number] | undefined,
+  packageValue: JavaScriptArtifactAnalysis["packages"][number] | undefined,
   skipped: boolean,
 ): ApplicationNode => {
   const kind = artifactFileNodeKind(file.kind);
@@ -648,7 +657,25 @@ const createFileTarget = (
           text_status: file.text.included ? "included" : file.text.reason,
           parse_status:
             javascript?.parse_status ?? (skipped ? "skipped" : null),
+          ...(javascript?.analysis_coverage !== undefined
+            ? { analysis_coverage: javascript.analysis_coverage }
+            : javascript === null && file.kind === "javascript"
+              ? {
+                  analysis_coverage: unexaminedJavaScriptStaticCoverage(
+                    !file.text.included
+                      ? file.text.reason === "outside-analysis-scope"
+                        ? "Source is outside the caller-selected source_paths."
+                        : `JavaScript text was unavailable: ${file.text.reason}.`
+                      : skipped
+                        ? "JavaScript analysis did not complete."
+                        : "JavaScript source analysis was not performed.",
+                  ),
+                }
+              : {}),
           json_parse_status: json?.status ?? null,
+          ...(file.kind === "package-json"
+            ? { package_parse_status: packageValue?.status ?? null }
+            : {}),
           json_top_level_keys: json?.top_level_keys ?? [],
           omitted_json_top_level_keys:
             json === undefined
@@ -737,16 +764,14 @@ const addPackageRole = (
     kind: input.kind,
     anchor: input.packageFile,
     resolution,
-    mechanism:
-      input.kind === "electron-main"
-        ? "package.json:main"
-        : "package.json:renderer",
+    mechanism: `package.json:${input.field}`,
   });
   context.accumulator.addEdge({
     source_node_id: input.packageNode.node_id,
     target_node_id: role.node_id,
     relation: "loads",
     properties: {
+      source_field: input.field,
       declared_path: input.declaredPath,
       resolution_context: resolution.resolution_context,
       resolved_path: resolution.resolved_path,

@@ -1,13 +1,24 @@
 import type { JsonValue } from "../jsonValue.js";
 import {
+  ownMember,
   decodedSegment,
   isParam,
   normalizedPath,
   pathSegmentMatches,
+  same,
   segmentsOf,
   type JsonObject,
 } from "./environmentStateRules.js";
-import type { ClockFormat } from "./environmentStateWriteValues.js";
+import {
+  sortedStrings,
+  type Ampersand,
+  type ClockFormat,
+} from "./environmentStateWriteValues.js";
+import {
+  showsFixedWidth,
+  trimmedLike,
+  type ClockPattern,
+} from "./environmentStateWriteClockFormats.js";
 
 /** What a write tool does to the state, by method and the target its path names. */
 export type WriteEffect = "create" | "update" | "delete" | "document" | "none";
@@ -22,7 +33,18 @@ export type WriteReason =
   | "contradicted"
   | "side-effect"
   | "unconfirmed"
-  | "incomplete-entities";
+  | "incomplete-entities"
+  | "unknown-clock";
+
+/** Whether serving a plan generates a value from the environment's global clock. */
+export const usesWriteClock = (plan: Pick<StateWritePlan, "rules">): boolean =>
+  plan.rules.some(
+    (rule) =>
+      rule.rule === "clock" ||
+      rule.rule === "held-clock" ||
+      rule.rule === "nested-clock" ||
+      rule.rule === "made-object",
+  );
 
 /** Rules that generate a value when served; the gate takes the recorded value instead. */
 export type GeneratedRule =
@@ -31,10 +53,13 @@ export type GeneratedRule =
       readonly rule: "identity";
       readonly generator: "sequence" | "uuid" | "token";
     }
+  /** One past the largest value its scope holds, and never below `start`, a value the first create took above them; with `sent`, the value a call sends instead. */
   | {
       readonly field: string;
       readonly rule: "sequence";
       readonly scope: "collection" | "type";
+      readonly start?: number;
+      readonly sent?: true;
     }
   | { readonly field: string; readonly rule: "unique" }
   /** The value kept with each UUID at the pointers (`*` for any array index) replaced by a fresh one, as rewritten child rows are. */
@@ -60,16 +85,48 @@ export type GeneratedRule =
       readonly field: string;
       readonly rule: "held-clock";
       readonly format: ClockFormat;
+    }
+  /** An object made with the entity, which no initial entity holds: `clocks` take the write's clock, `own` the entity's identity, each of `counts` one past the largest value held objects show and never below its start; other members as the exemplar showed them. */
+  | {
+      readonly field: string;
+      readonly rule: "made-object";
+      readonly clocks: string[];
+      readonly format: ClockFormat;
+      readonly own: string[];
+      readonly counts: { readonly member: string; readonly start: number }[];
     };
 
 /** How one field of a written entity gets its value; fields no rule names keep the observed value. */
 export type FieldRule =
   | GeneratedRule
-  | { readonly field: string; readonly rule: "echo" }
+  /** The sent member stored as sent, or with its strings in code-point order when `sorted`. */
+  | { readonly field: string; readonly rule: "echo"; readonly sorted?: true }
   | { readonly field: string; readonly rule: "copy"; readonly from: string }
   | { readonly field: string; readonly rule: "path"; readonly from: string }
-  | { readonly field: string; readonly rule: "slug"; readonly from: string }
+  /** A slug of the sent member, spelling `&` as the word when `ampersand` says so. */
+  | {
+      readonly field: string;
+      readonly rule: "slug";
+      readonly from: string;
+      readonly ampersand?: Ampersand;
+    }
   | { readonly field: string; readonly rule: "template"; readonly from: string }
+  /** A string rebuilt from literal text and other written fields, in order. */
+  | {
+      readonly field: string;
+      readonly rule: "composed";
+      readonly parts: ComposedPart[];
+    }
+  /** An object holding `fields` of the entity of `type` the sent `member` names, as the state holds it; absent when the call does not send it. */
+  | {
+      readonly field: string;
+      readonly rule: "reference";
+      readonly member: string;
+      readonly type: string;
+      readonly fields: string[];
+      /** The member sends a list of ids, and the field holds each named entity in that order. */
+      readonly many?: true;
+    }
   | { readonly field: string; readonly rule: "increment" }
   /** An update stores `value` whenever the call sends the member, as the call that showed it did. */
   | {
@@ -96,6 +153,85 @@ export type FieldRule =
       readonly field: string;
       readonly rule: "set";
       readonly value: JsonValue;
+    }
+  /** An item action flips a boolean on every call. */
+  | {
+      readonly field: string;
+      readonly rule: "toggle";
+    };
+
+/** Clock rules spelled as a trimmed sibling is, since an application spells its clocks alike: fields whose `values`, and every `later` call's, show no fixed width. */
+export const siblingTrimmedClocks = (
+  rules: readonly FieldRule[],
+  values: Readonly<Record<string, JsonValue>> | undefined,
+  ...later: readonly Readonly<Record<string, JsonValue>>[]
+): FieldRule[] => {
+  const trimmed = new Map<string, Extract<ClockFormat, { kind: "iso" }>>();
+  for (const rule of rules) {
+    if (
+      rule.rule !== "clock" ||
+      rule.format.kind !== "iso" ||
+      rule.format.trimmed !== true
+    )
+      continue;
+    const format = rule.format;
+    const group = `${format.separator}${format.zone}`;
+    const widest = trimmed.get(group);
+    if (widest === undefined || format.fraction > widest.fraction)
+      trimmed.set(group, format);
+  }
+  if (trimmed.size === 0) return [...rules];
+  return rules.map((rule) => {
+    if (rule.rule !== "clock" || rule.format.kind !== "iso") return rule;
+    const peer = trimmed.get(`${rule.format.separator}${rule.format.zone}`);
+    if (peer === undefined) return rule;
+    const format = later.some((fields) =>
+      showsFixedWidth(rule.format, ownMember(fields, rule.field)),
+    )
+      ? rule.format
+      : trimmedLike(rule.format, peer, ownMember(values, rule.field));
+    return format === rule.format ? rule : { ...rule, format };
+  });
+};
+
+/**
+ * Two calls' rules for a field as one plan holds them: equal, or echoes one of which sorted its strings (a call whose
+ * array was already in order cannot show it), kept sorted unless a call kept strings out of order. Undefined when they
+ * differ otherwise.
+ */
+export const alikeRules = (
+  held: FieldRule,
+  later: FieldRule,
+  kept: ReadonlySet<string> = new Set(),
+): FieldRule | undefined => {
+  if (held.rule !== "echo" || later.rule !== "echo")
+    return same(held, later) ? held : undefined;
+  if ((held.sorted === true) === (later.sorted === true)) return held;
+  if (kept.has(held.field)) return undefined;
+  return held.sorted === true ? held : later;
+};
+
+/** Members a call sent as strings out of code-point order and stored as sent, which shows the application keeps their order. */
+export const keptOrders = (body: JsonObject, stored: JsonObject): string[] =>
+  Object.keys(body).filter(
+    (member) =>
+      sortedStrings(body[member]) !== undefined &&
+      same(ownMember(stored, member), body[member]),
+  );
+
+/** One part of a composed string: literal text, or another written field as written, slugged, or as a clock's calendar digits. */
+export type ComposedPart =
+  | { readonly text: string }
+  | { readonly from: string; readonly as: "value" }
+  | {
+      readonly from: string;
+      readonly as: "slug";
+      readonly ampersand?: Ampersand;
+    }
+  | {
+      readonly from: string;
+      readonly as: "clock";
+      readonly pattern: ClockPattern;
     };
 
 /** Where a create places its entity in its collection's order. */
@@ -121,7 +257,37 @@ export interface WriteBody {
   readonly kinds: { readonly member: string; readonly kind: JsonKind }[];
   /** The member a call wraps its object in, as a one-element array. */
   readonly envelope?: string | undefined;
+  /** The value a create stores for an accepted member a call leaves out, as a recorded call that left it out showed. */
+  readonly defaults?:
+    | { readonly member: string; readonly value: JsonValue }[]
+    | undefined;
+  /** Members a recorded create sent empty, which a call may leave out: one left out is applied as sent that value. */
+  readonly blank?:
+    | { readonly member: string; readonly sent: JsonValue }[]
+    | undefined;
 }
+
+/** Whether two values both say a container is empty, as `null`, `[]` or `{}`, which encoders spell differently from one answer to another. */
+export const emptySpellings = (
+  left: JsonValue | undefined,
+  right: JsonValue | undefined,
+): boolean =>
+  [left, right].every(
+    (value) =>
+      value === null ||
+      (Array.isArray(value)
+        ? value.length === 0
+        : typeof value === "object" && Object.keys(value).length === 0),
+  );
+
+/** A value a form sends for a field left empty: `""`, `null`, `false`, `[]` or `{}`. */
+export const isBlankValue = (value: JsonValue | undefined): boolean =>
+  value === "" ||
+  value === null ||
+  value === false ||
+  (Array.isArray(value)
+    ? value.length === 0
+    : typeof value === "object" && Object.keys(value).length === 0);
 
 /**
  * How a write names its entities when its path does not end in one: an action segment after the
@@ -156,10 +322,17 @@ export interface StateWritePlan {
   readonly served: boolean;
   readonly reason: WriteReason | null;
   readonly exemplar_ordinal: number | null;
-  /** The record whose response showed the written entity or document, and where. */
+  /** The record whose response showed the written entity or document, and where; a create's later read whose fields the entity adds to the response's. */
   readonly observation: {
     readonly ordinal: number;
     readonly pointer: string;
+    readonly read?: {
+      readonly ordinal: number;
+      readonly pointer: string;
+      readonly shape: "item" | "list";
+      /** Pointers into the entity to values the response had not loaded, which answers keep as it showed them. */
+      readonly unloaded?: string[];
+    };
   } | null;
   readonly response: WriteResponse | null;
   readonly body: WriteBody | null;

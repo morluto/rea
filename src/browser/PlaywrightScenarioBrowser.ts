@@ -13,6 +13,7 @@ import type {
   Browser,
   BrowserContext,
   CDPSession,
+  ConnectOverCDPOptions,
   Page,
   chromium,
 } from "playwright-core";
@@ -435,6 +436,7 @@ const findConnectedPage = async (
 
 /** Owns the target state changed while one scenario uses an attached page. */
 class AttachedScenarioEnvironmentOwner {
+  #focusOverride = false;
   #mediaOverride = false;
   #deviceMetricsOverride = false;
   #localeOverride = false;
@@ -475,6 +477,7 @@ class AttachedScenarioEnvironmentOwner {
 
   get restored(): boolean {
     return (
+      !this.#focusOverride &&
       !this.#mediaOverride &&
       !this.#deviceMetricsOverride &&
       !this.#localeOverride &&
@@ -563,6 +566,18 @@ class AttachedScenarioEnvironmentOwner {
       "Emulation.setTimezoneOverride",
     );
     throwIfScenarioCancelled(signal);
+
+    // Keep scenario actions usable in the selected background page without
+    // Playwright's connection-wide focus override on unrelated pages.
+    await this.#command(
+      this.session
+        .send("Emulation.setFocusEmulationEnabled", { enabled: true })
+        .then(() => {
+          this.#focusOverride = true;
+        }),
+      "Emulation.setFocusEmulationEnabled",
+    );
+    throwIfScenarioCancelled(signal);
   }
 
   async close(): Promise<void> {
@@ -577,6 +592,16 @@ class AttachedScenarioEnvironmentOwner {
       await settleScenarioCommand(cause);
     }
     const failures: unknown[] = [];
+    if (this.#focusOverride) {
+      try {
+        await this.session.send("Emulation.setFocusEmulationEnabled", {
+          enabled: false,
+        });
+        this.#focusOverride = false;
+      } catch (cause: unknown) {
+        failures.push(cause);
+      }
+    }
     if (this.#timezoneOverride) {
       try {
         await this.session.send("Emulation.setTimezoneOverride", {
@@ -669,7 +694,7 @@ type ScenarioBrowserLauncher = Pick<
 > & {
   readonly connectOverCDP: (
     endpoint: string,
-    options?: { readonly timeout?: number },
+    options?: Pick<ConnectOverCDPOptions, "timeout" | "noDefaults">,
   ) => Promise<Pick<Browser, "contexts" | "close" | "isConnected" | "version">>;
 };
 
@@ -698,6 +723,10 @@ const openAttachedScenarioBrowser = async (
       () =>
         launcher.connectOverCDP(browserRequest.cdp_endpoint, {
           timeout: commandTimeoutMs,
+          // Only the selected target's environment owner may apply overrides.
+          // Playwright defaults also mutate unrelated external pages and can
+          // require context management on an otherwise usable CDP endpoint.
+          noDefaults: true,
         }),
       commandTimeoutMs,
       "handshake",
@@ -840,8 +869,10 @@ export const openPlaywrightScenarioBrowser = async (
   let context: BrowserContext;
   const executablePath = scenario.browser.executable_path;
   const headless = scenario.browser.headless;
+  let launchStarted = false;
   try {
     await chmod(profilePath, 0o700);
+    launchStarted = true;
     context = await withScenarioCommandDeadline(
       () =>
         launcher.launchPersistentContext(profilePath, {
@@ -873,16 +904,39 @@ export const openPlaywrightScenarioBrowser = async (
         }),
       commandTimeoutMs,
       "launch",
+      undefined,
+      executablePath,
     );
   } catch (cause: unknown) {
     const cleanup = new AnalysisCleanupLease(async () => {
       await releaseLateScenarioCommand(cause);
       await rm(profilePath, { recursive: true, force: true, maxRetries: 3 });
     }, ["browser_profile"]);
+    // Preserve Playwright's launch diagnostics before the generic provider
+    // boundary discards an untyped error. Keep the original cause for late
+    // command cleanup and leave typed timeout/cancellation failures intact.
+    const primary =
+      launchStarted && !(cause instanceof AnalysisError)
+        ? new ProviderAdapterError(
+            PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY.id,
+            OPERATION,
+            {
+              cause,
+              userMessage: "The selected browser could not start.",
+              remediationAction:
+                "Review the selected executable and startup diagnostics, then correct the launch configuration before retrying.",
+              diagnostics: {
+                executable_path: executablePath,
+                startup_error:
+                  cause instanceof Error ? cause.message : String(cause),
+              },
+            },
+          )
+        : cause;
     try {
-      return await failBrowserScenarioOperation(cleanup, cause);
+      return await failBrowserScenarioOperation(cleanup, primary);
     } catch (failure: unknown) {
-      if (failure !== cause) options.retainCleanup?.(cleanup);
+      if (failure !== primary) options.retainCleanup?.(cleanup);
       throw failure;
     }
   }

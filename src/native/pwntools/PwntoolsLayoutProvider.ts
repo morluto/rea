@@ -6,7 +6,7 @@ import {
 } from "../../domain/native/binaryLayout.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { PwntoolsDecoder, type PwntoolsLauncher } from "./PwntoolsDecoder.js";
-import { PWNTOOLS_PROVIDER_IDENTITY } from "./PwntoolsRelease.js";
+import { PWNTOOLS_PROVIDER_IDENTITY } from "./PwntoolsProviderIdentity.js";
 import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
 import type { BinaryLayoutPort } from "../../application/binaryDiagnostics/BinaryLayoutPort.js";
 import type { z } from "zod";

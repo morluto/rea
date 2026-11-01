@@ -122,6 +122,8 @@ const metadataSchema = z.strictObject({
   bundle_id: z.string().nullable(),
   incident_id: z.string().nullable(),
   name: z.string().nullable(),
+  build_version: z.string().nullable(),
+  platform: recordedIntegerSchema.nullable(),
   unlisted_keys: z.array(z.string()),
 });
 
@@ -141,6 +143,9 @@ const terminationSchema = z
     namespace: z.string().nullable(),
     code: recordedIntegerSchema.nullable(),
     indicator: z.string().nullable(),
+    flags: recordedIntegerSchema.nullable(),
+    by_pid: recordedIntegerSchema.nullable(),
+    by_proc: z.string().nullable(),
     reasons: z.array(z.string()).nullable(),
     unlisted_keys: z.array(z.string()),
   })
@@ -170,6 +175,11 @@ const frameSchema = z.strictObject({
   ]),
   inline: z.boolean().nullable(),
   recorded_symbol: z.string().nullable(),
+  symbol_location: recordedIntegerSchema
+    .nullable()
+    .describe(
+      "Recorded byte offset of the address from the start of recorded_symbol.",
+    ),
 });
 
 const threadSchema = z.strictObject({
@@ -192,6 +202,7 @@ const imageSchema = z.strictObject({
   size: recordedIntegerSchema.nullable(),
   uuid: uuidSchema.nullable(),
   uuid_unknown: z.boolean(),
+  name: z.string().nullable(),
   path: z.string().nullable(),
 });
 
@@ -269,6 +280,7 @@ export const appleIpsSchema = z.strictObject({
     path: z.string().nullable(),
     pid: recordedIntegerSchema.nullable(),
     parent: z.string().nullable(),
+    parent_pid: recordedIntegerSchema.nullable(),
     cpu_type: z.string().nullable(),
     translated: z.boolean().nullable(),
     os_version: osVersionSchema,
@@ -308,8 +320,12 @@ export const appleIpsIntegerTextBytes = (
 /** The named report fields own which observed and derived integers are retained. */
 export const appleIpsReportIntegerTextBytes = (report: AppleIps): number => {
   let bytes =
+    appleIpsIntegerTextBytes(report.metadata.platform) +
     appleIpsIntegerTextBytes(report.process.pid) +
-    appleIpsIntegerTextBytes(report.termination?.code ?? null);
+    appleIpsIntegerTextBytes(report.process.parent_pid) +
+    appleIpsIntegerTextBytes(report.termination?.code ?? null) +
+    appleIpsIntegerTextBytes(report.termination?.flags ?? null) +
+    appleIpsIntegerTextBytes(report.termination?.by_pid ?? null);
   for (const image of report.images)
     bytes +=
       appleIpsIntegerTextBytes(image.base) +
@@ -321,7 +337,8 @@ export const appleIpsReportIntegerTextBytes = (report: AppleIps): number => {
     for (const frame of thread.frames)
       bytes +=
         appleIpsIntegerTextBytes(frame.image_offset) +
-        appleIpsIntegerTextBytes(frame.runtime_address);
+        appleIpsIntegerTextBytes(frame.runtime_address) +
+        appleIpsIntegerTextBytes(frame.symbol_location);
   }
   for (const mismatch of report.coverage.type_mismatches)
     bytes += 2 * (mismatch.recorded_integer?.length ?? 0);

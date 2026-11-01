@@ -13,10 +13,8 @@ import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { z } from "zod";
 
 import { InvestigationRecords } from "../application/investigation/InvestigationRecords.js";
-import {
-  EvidenceMcpServer,
-  forgetPendingMcpRequest,
-} from "./EvidenceMcpServer.js";
+import { EvidenceMcpServer } from "./EvidenceMcpServer.js";
+import { forgetPendingMcpRequest } from "./EvidenceMcpServerCore.js";
 import { createToolResultDelivery } from "./toolResult.js";
 
 const firstText = (result: {
@@ -48,13 +46,17 @@ const expectFittingSdkValidationRecovery = (result: {
       },
       details: {
         operation: "procedure_pseudo_code",
-        issues: [
-          {
-            path: [],
-            reason: "invalid_value",
-            message: expect.stringContaining("required"),
-          },
-        ],
+        issues: expect.arrayContaining([
+          expect.objectContaining({
+            path: ["required"],
+            reason: "missing_argument",
+            expected: "string",
+          }),
+          expect.objectContaining({
+            path: ["unexpected"],
+            reason: "unknown_argument",
+          }),
+        ]),
       },
     },
   });

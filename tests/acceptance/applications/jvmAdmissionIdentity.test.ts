@@ -28,12 +28,12 @@ cliTest(
       });
       expect(analyzed.exitCode, analyzed.stderr).toBe(1);
       expect(analyzed.json).toMatchObject(refusal);
-      expect(await readFile(path)).toEqual(bytes);
+      expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
 
       const opened = await call("open_binary", { path });
       expect(opened.isError, JSON.stringify(opened)).toBe(true);
       expect(parseMcpToolError(opened).error).toMatchObject(refusal);
-      expect(await readFile(path)).toEqual(bytes);
+      expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
     }
   },
 );

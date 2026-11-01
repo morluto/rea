@@ -51,7 +51,7 @@ cliTest(
       expect(evidence.normalized_result.entries[0]?.gnu?.build_id_hex).toBe(
         "0123456789abcdef0123456789abcdef01234567",
       );
-      expect(await readFile(path)).toEqual(bytes);
+      expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
     }
   },
 );
@@ -82,7 +82,7 @@ cliTest(
       examined_tables: 1,
       examined_entries: 1,
     });
-    expect(await readFile(path)).toEqual(bytes);
+    expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
   },
 );
 
@@ -138,7 +138,7 @@ cliTest(
         "Compressed ELF note sections are unsupported",
       ),
     });
-    expect(await readFile(path)).toEqual(bytes);
+    expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
   },
 );
 
@@ -158,5 +158,50 @@ cliTest(
       message: expect.stringContaining("ELF extended numbering is unsupported"),
     });
     expect((await readFile(path)).equals(before)).toBe(true);
+  },
+);
+
+cliTest(
+  "rejects dangling section-name references and preserves sectionless notes",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-elf-notes-presence-cli-");
+    const path = join(root, "program");
+    for (const ownership of ["program", "none"] as const) {
+      const bytes = elfNoteFixture({ ownership });
+      bytes.writeUInt16LE(5, 62);
+      await writeFile(path, bytes);
+      const result = await cli.run({
+        arguments: ["inspect-elf-notes", path, "--json"],
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.json).toMatchObject({
+        code: "invalid_request",
+        category: "invalid_input",
+        details: {
+          operation: "inspect_elf_notes",
+          issues: [
+            expect.objectContaining({
+              path: ["path"],
+              reason: "invalid_format",
+              message: "ELF section table is missing",
+            }),
+          ],
+        },
+      });
+      expect((await readFile(path)).equals(bytes)).toBe(true);
+      bytes.writeUInt16LE(0, 62);
+      await writeFile(path, bytes);
+      const accepted = await cli.run({
+        arguments: ["inspect-elf-notes", path, "--json"],
+      });
+      expect(accepted.exitCode, accepted.stderr).toBe(0);
+      const evidence = toolContract("inspect_elf_notes").outputSchema.parse(
+        accepted.json,
+      );
+      expect(evidence.normalized_result.coverage.status).toBe("complete");
+      expect(evidence.normalized_result.tables).toHaveLength(
+        ownership === "none" ? 0 : 1,
+      );
+    }
   },
 );

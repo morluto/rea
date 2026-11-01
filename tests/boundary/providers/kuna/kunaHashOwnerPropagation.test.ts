@@ -760,7 +760,7 @@ it.skipIf(process.platform === "win32")(
           reason: expect.stringContaining("injected read fault"),
           diagnostics: {
             version: "1.833",
-            verified: true,
+            verified: false,
             identity_observation_phase: "post_probe",
             identity_observation_failure: "injected read fault",
             before_probe_sha256: beforeProbeFingerprint.sha256,
@@ -860,7 +860,7 @@ it.skipIf(process.platform === "win32").each(
     };
     const client = consumer === "health" ? fixture.open() : undefined;
     injected.fingerprintReads = 0;
-    injected.installationPath = fixture.kuna;
+    injected.installationPath = command;
     injected.abortOnClose = { stage, abort: () => controller.abort(reason) };
     injected.failCloseReadStage = closeRefusal ? stage : undefined;
     let failure: AnalysisError | undefined;

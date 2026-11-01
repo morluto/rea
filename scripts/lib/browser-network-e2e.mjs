@@ -1,3 +1,4 @@
+import { requireMcpOutput } from "./mcp-verifier-results.mjs";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -116,9 +117,12 @@ export async function verifyBrowserNetworkEvidence(
       { timeout: 60_000 },
     );
     assert.notEqual(result.isError, true, JSON.stringify(result));
-    const evidence = parseEvidence(result.structuredContent);
+    assert.notEqual(result.structuredContent, undefined);
+    const evidence = parseEvidence(
+      requireMcpOutput(result, "capture_browser_scenario"),
+    );
     mcpProof = assertBrowserNetworkEvidence(
-      browserScenarioCaptureSchema.parse(evidence.normalized_result),
+      evidence.normalized_result,
       site.origin,
     );
     if (attachment !== undefined) {
@@ -131,12 +135,13 @@ export async function verifyBrowserNetworkEvidence(
         { timeout: 60_000 },
       );
       assert.notEqual(connected.isError, true, JSON.stringify(connected));
-      const connectedEvidence = parseEvidence(connected.structuredContent);
+      assert.notEqual(connected.structuredContent, undefined);
+      const connectedEvidence = parseEvidence(
+        requireMcpOutput(connected, "capture_browser_scenario"),
+      );
       assert.deepEqual(
         assertBrowserNetworkEvidence(
-          browserScenarioCaptureSchema.parse(
-            connectedEvidence.normalized_result,
-          ),
+          connectedEvidence.normalized_result,
           site.origin,
           "disconnected-external",
         ),

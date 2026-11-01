@@ -149,9 +149,12 @@ test.each(digestCases)(
     await f.provider.close();
     expect(returnedError.cleanupIncomplete).toBe(false);
     expect(returnedError.cause).toBe(originalCause);
-    await expect(readFile(retainedPath(f.root))).resolves.toEqual(
-      Buffer.from("pulled bytes"),
-    );
+    expect(
+      Buffer.compare(
+        await readFile(retainedPath(f.root)),
+        Buffer.from("pulled bytes"),
+      ),
+    ).toBe(0);
   },
 );
 

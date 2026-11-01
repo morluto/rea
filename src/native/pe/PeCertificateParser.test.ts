@@ -21,7 +21,10 @@ import {
   PeCertificateAsn1Failure,
   readAsn1,
 } from "./PeCertificateAsn1.js";
-import { parsePeCertificates } from "./PeCertificateParser.js";
+import {
+  parsePeCertificates,
+  UNSIGNED_ATTRIBUTES_LIMITATION,
+} from "./PeCertificateParser.js";
 
 const defaults = inspectPeCertificatesInputSchema.parse({
   path: "/artifacts/app.exe",
@@ -69,6 +72,36 @@ it("reads PE32 and PE32+ PKCS#7 certificate tables", () => {
       examined_entries: 1,
       certificates: 1,
     });
+  }
+});
+
+it("reports unsigned attribute OIDs and incomplete nested coverage", () => {
+  const types = [
+    [1, 3, 6, 1, 4, 1, 311, 3, 3, 1],
+    [1, 3, 6, 1, 4, 1, 311, 2, 4, 1],
+  ];
+  for (const plus of [false, true]) {
+    const report = peCertificatesSchema.parse(
+      parse(
+        peCertificateFixture(
+          plus,
+          pkcs7SignedDataFixture(undefined, undefined, undefined, types),
+        ),
+      ),
+    );
+    expect(
+      report.entries[0]?.pkcs7?.signers[0]?.unsigned_attribute_oids,
+    ).toEqual(["1.3.6.1.4.1.311.3.3.1", "1.3.6.1.4.1.311.2.4.1"]);
+    expect(report.coverage).toMatchObject({
+      status: "partial",
+      certificates: 1,
+    });
+    expect(report.limitations).toContain(UNSIGNED_ATTRIBUTES_LIMITATION);
+    const control = parse(peCertificateFixture(plus));
+    expect(
+      control.entries[0]?.pkcs7?.signers[0]?.unsigned_attribute_oids,
+    ).toBeNull();
+    expect(control.coverage.status).toBe("complete");
   }
 });
 
@@ -530,6 +563,7 @@ it("rejects an oversized OBJECT IDENTIFIER before growing an arc", () => {
     /OBJECT IDENTIFIER exceeds/u,
   );
   const arc = Buffer.alloc(MAX_OID_ARC_BYTES + 1, 0x80);
+  arc[0] = 0x81;
   arc[arc.length - 1] = 0x00;
   expect(() => decodeOid(Buffer.concat([Buffer.from([0x2a]), arc]))).toThrow(
     /arc exceeds/u,
@@ -549,6 +583,42 @@ const namedCertificate = (issuer: Buffer, subject: Buffer) =>
     SHA256_ALG,
     der(0x03, Buffer.from([0])),
   );
+
+it.each(["signature", "public-key", "issuer-id", "subject-id"] as const)(
+  "validates BIT STRING padding for %s at the shared certificate boundary",
+  (field) => {
+    const name = directoryName(der(0x0c, Buffer.from("Fixture")));
+    const certificate = (content: number[]) =>
+      readAsn1(
+        derSeq(
+          derSeq(
+            derInt(1),
+            SHA256_ALG,
+            name,
+            validity,
+            name,
+            field === "public-key"
+              ? derSeq(SHA256_ALG, der(0x03, Buffer.from(content)))
+              : spki,
+            ...(field === "issuer-id" ? [der(0x81, Buffer.from(content))] : []),
+            ...(field === "subject-id"
+              ? [der(0x82, Buffer.from(content))]
+              : []),
+          ),
+          SHA256_ALG,
+          der(0x03, Buffer.from(field === "signature" ? content : [0])),
+        ),
+      );
+    for (const invalid of [[1], [7], [1, 1], [7, 0x81]])
+      expect(() => parseCertificate(certificate(invalid))).toThrow(
+        PeCertificateAsn1Failure,
+      );
+    for (const valid of [[0], [0, 0xff], [1, 0xfe], [7, 0x80]])
+      expect(parseCertificate(certificate(valid)).subject.text).toBe(
+        "commonName=Fixture",
+      );
+  },
+);
 
 it("rejects a certificate missing subjectPublicKeyInfo or signatureValue", () => {
   const issuer = directoryName(der(0x0c, Buffer.from("A")));
@@ -733,3 +803,111 @@ it("decodes UniversalString names as UTF-32BE", () => {
     /UniversalString length is not a multiple of 4/u,
   );
 });
+
+it.each([0xd800, 0xdfff])(
+  "rejects BMPString surrogate code unit %i in certificate names",
+  (codeUnit) => {
+    const content = Buffer.alloc(2);
+    content.writeUInt16BE(codeUnit);
+    const certificate = readAsn1(
+      namedCertificate(
+        directoryName(der(0x1e, content)),
+        directoryName(der(0x0c, Buffer.from("Subject"))),
+      ),
+    );
+    expect(() => parseCertificate(certificate)).toThrow(
+      PeCertificateAsn1Failure,
+    );
+  },
+);
+
+it("preserves valid BMPString code units on both sides of the surrogate range", () => {
+  const name = directoryName(
+    der(0x1e, Buffer.from([0xd7, 0xff, 0xe0, 0, 0xfe, 0xff])),
+  );
+  expect(
+    parseCertificate(readAsn1(namedCertificate(name, name))).subject.text,
+  ).toBe("commonName=\ud7ff\ue000\ufeff");
+});
+
+it.each([
+  [
+    "PrintableString",
+    0x13,
+    [
+      "name@host",
+      "under_score",
+      "A\u0000B",
+      "A\tB",
+      "A\n",
+      "A\r",
+      "A\u007f",
+      "é",
+      "中",
+    ],
+  ],
+  ["IA5String", 0x16, ["é", "中"]],
+] as const)(
+  "rejects characters outside the %s alphabet in certificate names",
+  (_label, tag, values) => {
+    for (const value of values) {
+      const invalid = directoryName(der(tag, Buffer.from(value, "utf8")));
+      const valid = directoryName(der(0x0c, Buffer.from(value, "utf8")));
+      for (const [issuer, subject] of [
+        [invalid, valid],
+        [valid, invalid],
+      ] as const) {
+        expect(() =>
+          parseCertificate(readAsn1(namedCertificate(issuer, subject))),
+        ).toThrow(PeCertificateAsn1Failure);
+      }
+      const certificate = parseCertificate(
+        readAsn1(namedCertificate(valid, valid)),
+      );
+      expect(certificate.issuer.attributes[0]?.value).toBe(value);
+      expect(certificate.subject.attributes[0]?.value).toBe(value);
+    }
+  },
+);
+
+it("bounds IA5String inspection before alphabet validation and charges text once", () => {
+  const ascii = Buffer.alloc(Math.floor(MAX_DECODED_NAME_BYTES / 3), 0x41);
+  const within = directoryName(der(0x16, ascii));
+  const certificate = parseCertificate(
+    readAsn1(namedCertificate(within, within)),
+  );
+  expect(certificate.issuer.attributes[0]?.value).toBe(ascii.toString("ascii"));
+  expect(certificate.subject.attributes[0]?.value).toBe(
+    ascii.toString("ascii"),
+  );
+  for (const ending of [Buffer.from("A"), Buffer.from("é")]) {
+    const oversized = Buffer.concat([
+      Buffer.alloc(MAX_DECODED_NAME_BYTES, 0x41),
+      ending,
+    ]);
+    const parseOversized = () =>
+      parseCertificate(
+        readAsn1(namedCertificate(directoryName(der(0x16, oversized)), within)),
+      );
+    expect(parseOversized).toThrow(
+      expect.objectContaining({
+        exhausted: { allowance: "decoded-text", limit: MAX_DECODED_NAME_BYTES },
+      }),
+    );
+  }
+});
+
+it.each([
+  [0x13, "AZaz09 '()+,-./:=?"],
+  [0x16, "mail_box@example.test\u0000\t\u007f"],
+] as const)(
+  "preserves valid character boundaries for name tag %i",
+  (tag, value) => {
+    const name = directoryName(der(tag, Buffer.from(value, "ascii")));
+    const certificate = parseCertificate(
+      readAsn1(namedCertificate(name, name)),
+    );
+    expect(certificate.issuer.attributes[0]?.value).toBe(value);
+    expect(certificate.subject.attributes[0]?.value).toBe(value);
+  },
+);

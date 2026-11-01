@@ -132,7 +132,7 @@ const expectPeWordAlignedRecordsAcrossAdapters = async (input: {
         contract.outputSchema.parse(response.structuredContent)
           .normalized_result,
       ).toEqual(evidence.normalized_result);
-      expect(await readFile(path)).toEqual(fixture.bytes);
+      expect(Buffer.compare(await readFile(path), fixture.bytes)).toBe(0);
     }
   }
 };
@@ -227,7 +227,7 @@ const expectPeMappingOwnershipAcrossAdapters = async (
         },
       ],
     });
-    expect(await readFile(path)).toEqual(bytes);
+    expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
   }
 };
 
@@ -308,7 +308,7 @@ const expectPeInventoriesAcrossAdapters = async (
     expect(contract.outputSchema.parse(JSON.parse(text.text)).evidence_id).toBe(
       evidence.evidence_id,
     );
-    expect(await readFile(path)).toEqual(fixture.bytes);
+    expect(Buffer.compare(await readFile(path), fixture.bytes)).toBe(0);
   }
 };
 
@@ -406,7 +406,7 @@ const expectPeEmptyBranchesAcrossAdapters = async (
     expect(evidence.subject?.digest?.sha256).toBe(
       createHash("sha256").update(fixture.bytes).digest("hex"),
     );
-    expect(await readFile(path)).toEqual(fixture.bytes);
+    expect(Buffer.compare(await readFile(path), fixture.bytes)).toBe(0);
   }
 };
 
@@ -453,9 +453,15 @@ cliTest(
         { name: sessionDefinition.name, arguments: {} },
         { toolDefinition: sessionDefinition },
       );
-      expect(JSON.stringify(session.structuredContent)).toContain(
-        "inspect_pe_resources",
-      );
+      expect(session.isError, JSON.stringify(session)).not.toBe(true);
+      const status = toolContract("binary_session").outputSchema.parse(
+        session.structuredContent,
+      ).result;
+      expect(
+        status.tool_availability.groups.find((group) =>
+          group.names.includes("inspect_pe_resources"),
+        ),
+      ).toMatchObject({ available: true });
       await expectPeInventoriesAcrossAdapters(cli, call, root);
       await expectPeEmptyBranchesAcrossAdapters(cli, call, root);
       await expectPeWordAlignedRecordsAcrossAdapters({

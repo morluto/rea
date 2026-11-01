@@ -52,6 +52,40 @@ const ISO_SECONDS = {
 const stateOf = (rows: readonly TimedCaptureRow[]): StateView =>
   environmentStateViewOf(timedCaptureEvidence(rows));
 
+it("retains learned clock rules but withholds their serving when the global clock is unknown", () => {
+  const baseline = stateOf(BOOK_ROWS);
+  const unknown = stateOf([
+    ...BOOK_ROWS,
+    ["GET", "/api/health", { ready: true }, 200, undefined, -1],
+  ]);
+  expect(baseline.write_clock).not.toBeNull();
+  expect(unknown.write_clock).toBeNull();
+  const generatesClock = (plan: StateView["writes"][number]) =>
+    plan.rules.some((rule) =>
+      ["clock", "held-clock", "nested-clock"].includes(rule.rule),
+    );
+  const clockPlans = baseline.writes.filter(
+    (plan) => plan.served && generatesClock(plan),
+  );
+  expect(clockPlans.length).toBeGreaterThan(0);
+  for (const plan of clockPlans)
+    expect(
+      unknown.writes.find((candidate) => candidate.tool === plan.tool),
+    ).toEqual({
+      ...plan,
+      served: false,
+      reason: "unknown-clock",
+    });
+  const independent = baseline.writes.filter(
+    (plan) => plan.served && !generatesClock(plan),
+  );
+  expect(independent.length).toBeGreaterThan(0);
+  for (const plan of independent)
+    expect(
+      unknown.writes.find((candidate) => candidate.tool === plan.tool),
+    ).toEqual(plan);
+});
+
 it.each(["delete", "mismatched-query"])(
   "does not parse unused request content for %s under a bounded state allowance",
   (kind) => {
@@ -729,7 +763,6 @@ describe("unserved write plans", () => {
       stateOf(sending()),
       stateOf(sending([{ name: "Third Book" }])),
       recorded("application/x-www-form-urlencoded", "name=Third+Book"),
-      recorded("application/json", '{"__proto__":{},"name":"Third Book"}'),
       recorded(
         "application/json",
         '{"name":"Third Book","copies":12345678901234567890}',
@@ -2602,3 +2635,26 @@ describe("recorded calls serving would refuse", () => {
     }
   });
 });
+
+it.each(["__proto__", "constructor"])(
+  "learns a confirmed update of an own %s field",
+  (field) => {
+    const initial = {
+      id: 1,
+      name: "One",
+      ...Object.fromEntries([[field, { label: "old" }]]),
+    };
+    const body = Object.fromEntries([[field, { label: "stored" }]]);
+    const updated = { ...initial, ...body };
+    const state = stateOf([
+      ["GET", "/api/items", [initial, { id: 2, name: "Two" }]],
+      ["GET", "/api/items/1", initial],
+      ["PATCH", "/api/items/1", updated, 200, body],
+      ["GET", "/api/items/1", updated],
+    ]);
+    expect(planOf(state, "patch_items_by_id")).toMatchObject({
+      served: true,
+      rules: expect.arrayContaining([{ rule: "echo", field }]),
+    });
+  },
+);

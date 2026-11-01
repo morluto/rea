@@ -1,4 +1,8 @@
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import {
+  Client,
+  InMemoryTransport,
+  type ClientOptions,
+} from "@modelcontextprotocol/client";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { test as base } from "vitest";
 
@@ -11,7 +15,11 @@ export interface McpClientIdentity {
 /** Registry for production MCP servers and SDK clients owned by one test. */
 export interface TestMcp {
   /** Transfer server ownership on admission; a closed registry leaves it with the caller. */
-  connect(server: McpServer, identity?: McpClientIdentity): Promise<Client>;
+  connect(
+    server: McpServer,
+    identity?: McpClientIdentity,
+    jsonSchemaValidator?: NonNullable<ClientOptions["jsonSchemaValidator"]>,
+  ): Promise<Client>;
   close(): Promise<void>;
 }
 
@@ -67,9 +75,16 @@ export const createTestMcp = (): TestMcp => {
   };
 
   return {
-    connect: (server, identity = DEFAULT_CLIENT_IDENTITY) => {
+    connect: (
+      server,
+      identity = DEFAULT_CLIENT_IDENTITY,
+      jsonSchemaValidator,
+    ) => {
       if (closed) return Promise.reject(registryClosed());
-      const client = new Client(identity);
+      const client = new Client(
+        identity,
+        jsonSchemaValidator === undefined ? undefined : { jsonSchemaValidator },
+      );
       const [clientTransport, serverTransport] =
         InMemoryTransport.createLinkedPair();
       const connection: McpConnectionOwner = {

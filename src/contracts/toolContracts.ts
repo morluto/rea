@@ -1,3 +1,4 @@
+import { ANALYSIS_SETTINGS_TOOL_CONTRACTS } from "./analysisSettingsContracts.js";
 import { GPU_TOOL_CONTRACTS } from "./gpu/gpuToolContracts.js";
 import { CAPTURE_TOOL_CONTRACTS } from "./captures/captureToolContracts.js";
 import { SIGNAL_TOOL_CONTRACTS } from "./signals/signalToolContracts.js";
@@ -45,6 +46,7 @@ import { ENVIRONMENT_TOOL_CONTRACTS } from "./environmentToolContracts.js";
 
 /** Complete ordered public inventory used by registration and verification. */
 export const TOOL_CONTRACTS = [
+  ...ANALYSIS_SETTINGS_TOOL_CONTRACTS,
   ...OFFICIAL_TOOL_CONTRACTS,
   ...ENHANCED_TOOL_CONTRACTS,
   ...NATIVE_TOOL_CONTRACTS,

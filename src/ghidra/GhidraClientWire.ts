@@ -63,7 +63,15 @@ export class GhidraWire {
         ),
       );
     const timeoutMs = options.timeoutMs;
-    const payloadValue = { id, token, method, params };
+    const payloadValue = {
+      id,
+      token,
+      method,
+      params,
+      ...(options.decompileTimeoutSeconds === undefined
+        ? {}
+        : { decompile_timeout_seconds: options.decompileTimeoutSeconds }),
+    };
     const payloadBytes = jsonValueByteLength(payloadValue);
     // Refuse before registering the operation and before any socket write, so
     // an oversized request never reaches the bridge or occupies a pending key.

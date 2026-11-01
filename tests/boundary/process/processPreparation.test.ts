@@ -3,12 +3,14 @@ import { expect, it, vi } from "vitest";
 import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { AnalysisAccessDeniedError } from "../../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
-import { ProcessCaptureResourceScope } from "../../../src/process/capture/ProcessCaptureLifecycle.js";
+import {
+  ProcessCaptureResourceScope,
+  prepareProcessCapture,
+} from "../../../src/process/capture/ProcessCaptureLifecycle.js";
 import {
   ProcessCaptureSnapshotFailure,
   snapshotRoots,
 } from "../../../src/process/capture/FilesystemSnapshot.js";
-import { prepareProcessCapture } from "../../../src/process/capture/ProcessCaptureLifecycle.js";
 import { processScenarioSchema } from "../../../src/domain/process/processScenario.js";
 import { emptyProcessCapture } from "../../../src/domain/process/processCapture.fixture.js";
 

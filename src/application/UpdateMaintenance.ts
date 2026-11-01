@@ -1,7 +1,6 @@
 import { z } from "zod";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 
-import { classifyClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import {
   readClientRegistrationInspections,
   type ClientRegistrationStatus,
@@ -70,12 +69,20 @@ export const existingMaintenanceScope = async (
     entryPoint,
     {
       environment,
+      // A registration REA wrote must be refreshed even when the product
+      // profile is absent, so maintenance reads ownership evidence instead of
+      // product applicability. Owned rows stay the only ones selected below.
+      evidence: "ownership",
       ...(resources === undefined ? {} : { resources }),
     },
   );
   const clients: string[] = [];
   const unresolved: ClientRegistrationStatus[] = [];
-  for (const { status: registration, activation } of registrations) {
+  for (const {
+    status: registration,
+    activation,
+    commandIdentity,
+  } of registrations) {
     if (registration.state === "unknown" || registration.state === "invalid") {
       unresolved.push(registration);
       continue;
@@ -83,12 +90,19 @@ export const existingMaintenanceScope = async (
     if (
       activation !== "enabled" ||
       (registration.state !== "aligned" && registration.state !== "stale") ||
-      classifyClientRegistrationCommand(registration.command, entryPoint) !==
-        "owned"
+      commandIdentity !== "owned"
     )
       continue;
     clients.push(registration.client);
   }
+  // Each setup action rewrites only that client's own configuration path, so
+  // maintenance keeps every selected client instead of deferring one view of
+  // a registration to another client's inspection: ZCode writes
+  // ~/.zcode/cli/config.json and deliberately leaves the ~/.agents/mcp.json
+  // fallback untouched (docs/client-configuration.md), while FreeBuff writes
+  // the shared file itself. Dropping FreeBuff because ZCode reads that
+  // fallback would leave the row both products load pinned to the old
+  // version.
   const skills = await existingSkillDestinations(
     home,
     environment,

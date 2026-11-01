@@ -1,3 +1,5 @@
+import type { RegexMatchingDeadline } from "../config/regexMatchingDeadline.js";
+import type { RegexWorkerHeapRequest } from "../config/regexWorkerHeapRequest.js";
 import { z } from "zod";
 import {
   nativeDecompileSchema,
@@ -13,7 +15,7 @@ import {
 } from "../domain/analysisSearch.js";
 import {
   matchRegexValues,
-  REGEX_MATCHING_LIMITATION,
+  launchRegexMatchingLimitation,
 } from "../process/RegexMatcher.js";
 import {
   AnalysisInputError,
@@ -23,7 +25,7 @@ import {
 import {
   functionDossierSchema,
   functionInstructionWindowSchema,
-} from "../domain/hopperValues.js";
+} from "../domain/native/functionDossier.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { RelationshipCoverage } from "../domain/relationshipCoverage.js";
 import { combineFunctionRelationshipCoverage } from "../domain/functionCallCoverage.js";
@@ -52,6 +54,7 @@ import {
   modernPageSchema,
   modernXrefsSchema,
   nextOffset,
+  nextPageOffset,
   surveySegmentsSchema,
   type IdaDisassembly,
   type IdaFunction,
@@ -105,6 +108,8 @@ export class IdaOperationRunner {
     private readonly database?: string,
     private readonly options: {
       readonly signal?: AbortSignal | undefined;
+      readonly regexMatchingDeadline?: RegexMatchingDeadline | undefined;
+      readonly regexWorkerHeapRequest?: RegexWorkerHeapRequest | undefined;
       readonly selectorOrigin?: "provider" | undefined;
       /** False when the loaded processor may not be x86, so `callees` cannot be trusted alone. */
       readonly x86Only?: boolean;
@@ -156,11 +161,7 @@ export class IdaOperationRunner {
       if (value === undefined)
         throw new AnalysisProtocolError("IDA MCP omitted its function page.");
       result.push(...value.data.map((fn) => idaFunctionSchema.parse(fn)));
-      offset = value.next_offset;
-      if (offset !== null && offset <= current)
-        throw new AnalysisProtocolError(
-          "IDA MCP function pagination did not advance.",
-        );
+      offset = nextPageOffset(value.next_offset, current);
     }
     return result;
   }
@@ -324,7 +325,7 @@ export class IdaOperationRunner {
     this.limitations.push(...graph.limitations);
     for (const callee of graph.callees)
       if (!result.has(callee.address))
-        result.set(callee.address, identity({ ...callee, size: "unknown" }));
+        result.set(callee.address, identity(callee));
     return graph.coverage;
   }
 
@@ -345,7 +346,7 @@ export class IdaOperationRunner {
           const s = legacyStringSchema.parse(item);
           result.push({ address: s.address, value: s.string });
         }
-        offset = page.next_offset;
+        offset = nextPageOffset(page.next_offset, current);
       } else {
         const page = idaStringsPageSchema.parse(
           await this.call("find_regex", {
@@ -366,10 +367,6 @@ export class IdaOperationRunner {
         );
         offset = nextOffset(page.cursor, current);
       }
-      if (offset !== null && offset <= current)
-        throw new AnalysisProtocolError(
-          "IDA MCP string pagination did not advance.",
-        );
     }
     return result;
   }
@@ -520,7 +517,7 @@ export class IdaOperationRunner {
           : legacyCalleesSchema.parse(value);
       for (const item of items) {
         if ("type" in item && item.type === "external")
-          result.set(item.address, identity({ ...item, size: "unknown" }));
+          result.set(item.address, identity(item));
         else queries.push(item.name);
       }
     } else if (direction === "callers") {
@@ -573,7 +570,7 @@ export class IdaOperationRunner {
         if ("type" in item && item.type === "external")
           result.set(
             item.addr,
-            identity({ address: item.addr, name: item.name, size: "unknown" }),
+            identity({ address: item.addr, name: item.name }),
           );
         else queries.push(item.addr);
       }
@@ -621,12 +618,19 @@ export class IdaOperationRunner {
       const matches = analysisSearchPredicate(query);
       return items.filter(({ value }) => matches(value));
     }
-    this.limitations.push(REGEX_MATCHING_LIMITATION);
+    this.limitations.push(
+      launchRegexMatchingLimitation(
+        this.options.regexMatchingDeadline,
+        this.options.regexWorkerHeapRequest,
+      ),
+    );
     const matched = await matchRegexValues({
       operation,
       pattern: query.pattern,
       caseSensitive: query.case_sensitive,
       values: items.map(({ value }) => value),
+      deadline: this.options.regexMatchingDeadline,
+      heapRequest: this.options.regexWorkerHeapRequest,
       signal: this.options.signal,
     });
     if (!matched.ok) throw matched.error;
@@ -650,6 +654,10 @@ export class IdaOperationRunner {
       return this.searchItems(operation, items, query);
     }
     if (operation === "list_strings" || operation === "search_strings") {
+      const selectedAddress =
+        query === undefined && parameters.address !== undefined
+          ? idaAddressSchema.parse(parameters.address)
+          : undefined;
       const nativePattern =
         this.protocol === "native" && query?.mode === "literal"
           ? nativeLiteralSearchPattern(query.pattern, query.case_sensitive)
@@ -657,12 +665,9 @@ export class IdaOperationRunner {
       const items = await this.strings(nativePattern);
       return query !== undefined
         ? this.searchItems(operation, items, query)
-        : parameters.address === undefined
+        : selectedAddress === undefined
           ? items
-          : items.filter(
-              ({ address }) =>
-                address === idaAddressSchema.parse(parameters.address),
-            );
+          : items.filter(({ address }) => address === selectedAddress);
     }
     if (operation === "list_documents") {
       if (this.options.admittedDocument === undefined)

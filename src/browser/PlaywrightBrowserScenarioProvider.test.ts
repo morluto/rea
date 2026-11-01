@@ -1,4 +1,11 @@
-import { failBrowserScenarioOperation } from "./PlaywrightScenarioBrowser.js";
+import { EventEmitter } from "node:events";
+import type { BrowserContext, Page, Request, Response } from "playwright-core";
+import { capturePlaywrightStepArtifacts } from "./PlaywrightScenarioArtifacts.js";
+import { resolveScenarioSecrets } from "../../tests/fixtures/browserScenarioSecrets.js";
+import {
+  failBrowserScenarioOperation,
+  PlaywrightScenarioBrowserCleanupOwner,
+} from "./PlaywrightScenarioBrowser.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 // Fake-backed composition coverage; real browser verification lives in
 // `npm run verify:browser`.
@@ -6,8 +13,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { BrowserScenarioSessionPort } from "./BrowserScenarioSessionPort.js";
 import { PlaywrightBrowserScenarioProvider } from "./PlaywrightBrowserScenarioProvider.js";
+import { PlaywrightScenarioEvents } from "./PlaywrightScenarioEvents.js";
 import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
-import { PlaywrightScenarioBrowserCleanupOwner } from "./PlaywrightScenarioBrowser.js";
 import {
   browserScenarioSchema,
   type BrowserScenario,
@@ -273,6 +280,102 @@ const capturedResponseBodyEvents = (): readonly BrowserScenarioEvent[] => [
     },
   },
 ];
+
+it("compares retained network observations despite a failed subresource", async () => {
+  const selected = scenario({ events: ["network"] });
+  const input = browserScenarioSchema.parse({
+    ...selected,
+    capture: {
+      ...selected.capture,
+      network: { response_body: true },
+    },
+  });
+  const capture = async (reply: string) => {
+    const context = new EventEmitter();
+    const page = new EventEmitter() as unknown as Page;
+    const events = new PlaywrightScenarioEvents({
+      page,
+      context: context as unknown as BrowserContext,
+      ownsContext: true,
+      enabled: new Set(["network"]),
+      network: input.capture.network,
+      secrets: resolveScenarioSecrets(input, {}),
+    });
+    const failedBody = vi.fn(async () => Buffer.from("unread"));
+    for (const failed of [true, false]) {
+      const request = {
+        method: () => "GET",
+        url: () =>
+          `https://app.example.test/${failed ? "extra.js" : "api/data"}`,
+        resourceType: () => (failed ? "script" : "fetch"),
+        headers: () => ({}),
+        redirectedFrom: () => null,
+        failure: () => ({ errorText: "net::ERR_ABORTED" }),
+      } as unknown as Request;
+      const response = {
+        request: () => request,
+        url: () => request.url(),
+        status: () => (failed ? 404 : 200),
+        headers: () => ({}),
+        body: failed ? failedBody : async () => Buffer.from(reply),
+      } as unknown as Response;
+      context.emit("request", request);
+      context.emit("response", response);
+      context.emit(failed ? "requestfailed" : "requestfinished", request);
+    }
+    const session = new FakeSession("launch");
+    vi.spyOn(session, "events").mockImplementation(() => events.result());
+    vi.spyOn(session, "eventLimitations").mockImplementation(() =>
+      events.limitations(),
+    );
+    vi.spyOn(session, "nextEventSequence").mockImplementation(() =>
+      events.nextSequence(),
+    );
+    vi.spyOn(session, "lastEventSequence").mockImplementation(() =>
+      events.lastSequence(),
+    );
+    vi.spyOn(session, "close").mockImplementation(async () => {
+      await events.finish();
+      return "terminated-owned-process";
+    });
+    const provider = new PlaywrightBrowserScenarioProvider(async () => session);
+    const result = await provider.captureScenario(input);
+    if (!result.ok) throw result.error;
+    expect(failedBody).not.toHaveBeenCalled();
+    expect(result.value.completeness).toMatchObject({
+      status: "complete",
+      equality_eligible: true,
+      missing_sections: [],
+    });
+    expect(result.value.events.dropped).toBe(0);
+    expect(result.value.events.items).toContainEqual(
+      expect.objectContaining({
+        kind: "network-content",
+        body: {
+          state: "unavailable",
+          reason: "request-failed",
+          message: "net::ERR_ABORTED",
+        },
+      }),
+    );
+    return result.value;
+  };
+  const before = await capture('{"value":1}');
+  for (const [reply, expected] of [
+    ['{"value":1}', "unchanged"],
+    ['{"value":2}', "changed"],
+  ] as const) {
+    const after = await capture(reply);
+    const comparison = compareBrowserScenarios(
+      compareBrowserScenariosInputSchema.parse({
+        before_scenario: before,
+        after_scenario: after,
+      }),
+    );
+    expect(comparison.overall_status).toBe(expected);
+    expect(comparison.steps[0]?.status).toBe(expected);
+  }
+});
 
 describe("PlaywrightBrowserScenarioProvider", () => {
   it("reports response-body provenance uncertainty without marking event coverage missing", async () => {
@@ -1271,3 +1374,58 @@ it("keeps an earlier physical failure primary when final cleanup also observes c
     await provider.close();
   }
 });
+
+it.each([false, true])(
+  "keeps planned secret screenshots unavailable through success and cleanup failure (failure: %s)",
+  async (cleanupFailure) => {
+    const input = browserScenarioSchema.parse({
+      ...scenario({ captures: ["screenshot"] }),
+      actions: [
+        {
+          step_id: "request",
+          action: "request",
+          method: "POST",
+          path: "/api/items",
+          save: [{ name: "token", json_pointer: "/token", secret: true }],
+        },
+      ],
+    });
+    const secrets = resolveScenarioSecrets(input, {});
+    const screenshot = vi.fn(async () =>
+      Buffer.from("private screenshot pixels"),
+    );
+    const session = new FakeSession(
+      "launch",
+      cleanupFailure ? { close: new Error("cleanup failed") } : {},
+    );
+    session.capture = async (requested) =>
+      capturePlaywrightStepArtifacts({
+        context: {} as BrowserContext,
+        page: { screenshot } as unknown as Page,
+        secrets,
+        requested,
+      });
+    session.onPerform = () =>
+      secrets.save("request.token", "token", "late-pixel-token", true);
+    const provider = new PlaywrightBrowserScenarioProvider(async () => session);
+    const result = await provider.captureScenario(input);
+    const step = {
+      artifacts: { screenshot: { state: "missing" } },
+      completeness: {
+        equality_eligible: false,
+        missing_sections: ["screenshot"],
+      },
+    };
+    if (cleanupFailure)
+      expect(result).toMatchObject({
+        ok: false,
+        error: { partialObservation: { capture: { steps: [step, step] } } },
+      });
+    else {
+      if (!result.ok) throw result.error;
+      expect(result.value.steps).toMatchObject([step, step]);
+      expect(result.value.completeness.equality_eligible).toBe(false);
+    }
+    expect(screenshot).not.toHaveBeenCalled();
+  },
+);

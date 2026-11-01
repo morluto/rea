@@ -630,3 +630,20 @@ it("does not explain nested opaque-token references as independent generation", 
     expect(update.unexplained).toContain("version");
   }
 });
+
+it.each(["__proto__", "constructor", "toString"])(
+  "treats an absent %s stamp field as missing JSON data",
+  (field) => {
+    const rule: FieldRule = {
+      rule: "derived",
+      field,
+      member: "change",
+      from: null,
+      value: 1,
+    };
+    expect(stampProblem([rule], {}, { change: true })).toBeUndefined();
+    expect(
+      stampProblem([rule], Object.fromEntries([[field, 7]]), { change: true }),
+    ).toContain("accepted only");
+  },
+);

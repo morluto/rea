@@ -434,7 +434,7 @@ it.each(
       expect(admitted?.fd).toBe(-1);
       expect(resources?.hasPending ?? false).toBe(false);
       await resources?.retryCleanup();
-      expect(await readFile(path)).toEqual(bytes);
+      expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
     } finally {
       vi.restoreAllMocks();
       await resources?.close();

@@ -13,7 +13,9 @@ import type { CdpRuntimeSession } from "./CdpRuntimeSession.js";
 import {
   runtimeContextSchema,
   runtimeScriptParsedSchema,
-} from "./CdpRuntimeProtocol.js";
+  cdpContextFrameClaim,
+  selectCdpScriptFrame,
+} from "../CdpScriptContextFacts.js";
 import { assertRuntimeRetention } from "./CdpRuntimeRetention.js";
 
 const scriptIdentitySchema = runtimeScriptParsedSchema.pick({ scriptId: true });
@@ -136,13 +138,14 @@ export class CdpRuntimeSources {
       )
     )
       return false;
-    const reported = scriptContext?.frameId;
-    const contextFrame = context?.frameId;
+    const frame = selectCdpScriptFrame(
+      cdpContextFrameClaim(scriptContext),
+      cdpContextFrameClaim(context),
+    );
     return (
-      (reported === undefined ||
-        contextFrame === undefined ||
-        reported === contextFrame) &&
-      (reported ?? contextFrame) === this.session.target.frame_id
+      !frame.invalid &&
+      !frame.conflicting &&
+      frame.frameId === this.session.target.frame_id
     );
   }
 

@@ -212,5 +212,5 @@ it.for<TextSourceCase>([
       (item) => item.format === "json" && item.exitCode === 1,
     ),
   );
-  expect(await readFile(path)).toEqual(fixture.bytes);
+  expect(Buffer.compare(await readFile(path), fixture.bytes)).toBe(0);
 });

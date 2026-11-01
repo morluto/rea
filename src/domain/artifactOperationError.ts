@@ -13,8 +13,9 @@ export type ArtifactLimitBoundary = "file-size" | "capacity" | "memory";
 /** Admission named by the producing reader, with its effective byte ceiling and its source. */
 export interface ArtifactAdmissionLimit {
   readonly kind: "asar-header";
+  readonly requiredBytes?: number;
   readonly maximumBytes: number;
-  readonly source: "default" | "setting";
+  readonly source: "default" | "setting" | "runtime";
 }
 
 /** Artifact inventory or extraction failed a typed safety boundary. */

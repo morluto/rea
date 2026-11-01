@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { PRODUCT_IDENTITY } from "../identity.js";
+import { jsonRecordSchema } from "../domain/jsonRecord.js";
 
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -14,7 +16,12 @@ import {
   type ClientRegistrationDialect,
 } from "./ClientConfigurationDocument.js";
 import type { SetupClient } from "./SupportedClients.js";
-import { equivalentClientRegistrationCommands } from "./ClientRegistrationIdentity.js";
+import {
+  classifyClientRegistrationCommand,
+  equivalentClientRegistrationCommands,
+  type ClientRegistrationCommandIdentity,
+} from "./ClientRegistrationIdentity.js";
+import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
 
 const tomlTimeoutSchema = z.union([
   z.number().positive(),
@@ -106,6 +113,27 @@ export const parseClientRegistrationLauncher = (
     : err(registrationError(parsed.error));
 };
 
+/** Launcher ownership is independent of readiness and caller-owned policy. */
+export const clientRegistrationOwnership = (
+  value: unknown,
+  client: SetupClient,
+): ClientRegistrationCommandIdentity => {
+  const parsed = parseClientRegistrationLauncher(value, client);
+  return parsed.ok
+    ? classifyClientRegistrationCommand(
+        [parsed.value.command, ...parsed.value.args],
+        CURRENT_ENTRYPOINT_PATH,
+      )
+    : "unknown";
+};
+
+/** Explain the same ownership admission decision in setup and doctor. */
+export const clientRegistrationOwnershipRemediation = (
+  ownership: Exclude<ClientRegistrationCommandIdentity, "owned">,
+  paths: readonly string[],
+): string =>
+  `The existing "${PRODUCT_IDENTITY.mcpServerKey}" registration read from ${paths.join(", ")} has ${ownership} ownership and was not changed. Review its launcher and manually rename or remove that registration before rerunning setup. A different installation path does not prove REA ownership.`;
+
 /** Policy belongs to the client dialect, and is validated before refresh writes. */
 const validateClientPolicy = (
   value: unknown,
@@ -141,7 +169,7 @@ export const parseClientRegistration = (
   if (client.format === "opencode") {
     const entry = opencodeLauncherSchema
       .extend({
-        environment: z.record(z.string(), z.string()).optional(),
+        environment: jsonRecordSchema(z.string()).optional(),
       })
       .transform(normalizeOpencodeLauncher)
       .safeParse(value);
@@ -196,6 +224,18 @@ const managedConnectionKeys = new Set([
   "httpUrl",
 ]);
 
+/** Whether a rea setup repair for this target preserves the row's
+ * `enable: false` instead of dropping it. Shared registration doubles as
+ * ZCode's fallback, so the activation fact belongs to every reader; a repair
+ * preserves it instead of silently re-enabling a row it does not own. A
+ * client's own native storage has a single reader, so an explicitly selected
+ * setup may still repair it. Doctor's remediation reads this same rule so a
+ * preserved disable never points at an ineffective setup run. */
+export const setupPreservesDisabledActivation = (
+  client: Pick<SetupClient, "sharedRegistration">,
+  format: string | undefined,
+): boolean => client.sharedRegistration === true || format === "zcode_fallback";
+
 /** Patch a source fragment, retaining client-owned settings rather than rebuilding it. */
 export const refreshClientRegistration = (
   client: SetupClient,
@@ -226,11 +266,15 @@ export const refreshClientRegistration = (
       ),
     ),
   };
+  if (
+    setupPreservesDisabledActivation(client, dialect) &&
+    existing.enable === false
+  )
+    registration.enable = false;
   if (client.name === "codex" || client.name === "grok_build")
     registration.startup_timeout_sec =
-      (client.name === "codex"
-        ? positiveTimeout(existing.startup_timeout_sec)
-        : undefined) ?? MCP_STARTUP_POLICY.codexStartupTimeoutSeconds;
+      positiveTimeout(existing.startup_timeout_sec) ??
+      MCP_STARTUP_POLICY.codexStartupTimeoutSeconds;
   if (client.name === "codex")
     registration.tool_timeout_sec =
       positiveTimeout(existing.tool_timeout_sec) ??

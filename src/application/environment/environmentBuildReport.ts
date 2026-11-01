@@ -1,14 +1,17 @@
+import { z } from "zod";
 import { basename } from "node:path";
 import { isIP } from "node:net";
 
-import { isJsonLike } from "../../domain/analysisView/EnvironmentManifestAccumulator.js";
+import {
+  isJsonLike,
+  mediaTypeEssence,
+} from "../../domain/analysisView/recordedMediaType.js";
 import {
   decodeRetainedBase64,
   readRecordedResponseBody,
   type RecordedResponseBody,
 } from "../../domain/analysisView/recordedResponseBody.js";
 import { scenarioContentMediaType } from "../../domain/analysisView/scenarioCaptureRecords.js";
-import { mediaTypeEssence } from "../../domain/analysisView/webNetworkRouteTemplates.js";
 import type { BrowserScenarioEvent } from "../../domain/browserScenarioCaptureValues.js";
 import type { EnvironmentBuildReport } from "../../domain/environmentBundleExport.js";
 import {
@@ -328,6 +331,57 @@ export const credentialScanWarnings = (capture: {
       pointers: scanned.skipped.pointers,
     });
   return warnings;
+};
+
+const savedEntries = z.array(
+  z.object({ name: z.string(), secret: z.boolean().optional() }),
+);
+const scenarioSaves = z.object({
+  actions: z.array(
+    z
+      .object({
+        save: savedEntries.optional(),
+        save_response: z.object({ save: savedEntries }).optional(),
+      })
+      .loose(),
+  ),
+});
+
+/** A browser scenario's saved values named like credentials but not marked secret, which the capture records unredacted. */
+export const savedCredentialWarnings = (
+  parameters: unknown,
+): EnvironmentBuildWarning[] => {
+  const parsed = scenarioSaves.safeParse(parameters);
+  if (!parsed.success) return [];
+  const pointers: string[] = [];
+  parsed.data.actions.forEach((action, index) => {
+    const unmarked = (
+      entries:
+        | readonly {
+            readonly name: string;
+            readonly secret?: boolean | undefined;
+          }[]
+        | undefined,
+      at: string,
+    ) =>
+      entries?.forEach((entry, position) => {
+        if (entry.secret !== true && credentialNamed(entry.name))
+          pointers.push(
+            `/parameters/actions/${String(index)}/${at}/${String(position)}`,
+          );
+      });
+    unmarked(action.save, "save");
+    unmarked(action.save_response?.save, "save_response/save");
+  });
+  return pointers.length === 0
+    ? []
+    : [
+        {
+          code: "credential-named-saved-values",
+          message: `${String(pointers.length)} saved values have credential-like names but are not marked secret, so the capture records them unredacted; mark them \`secret: true\` and record again before sharing.`,
+          pointers: pointers.slice(0, REPORTED_POINTERS),
+        },
+      ];
 };
 
 /** Whether an origin's host is a loopback name or an IP literal, which says nothing about the application. */

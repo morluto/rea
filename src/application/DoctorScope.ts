@@ -213,7 +213,12 @@ const selectedSkillCheck = (
   checks.find(({ name }) => name === "skill:identity") ?? {
     name: "skill:identity",
     ok: state === "aligned",
-    classification: state === "aligned" ? "healthy" : "config_drift",
+    classification:
+      state === "aligned"
+        ? "healthy"
+        : state === "unknown"
+          ? "unknown"
+          : "config_drift",
     ...(state === "aligned"
       ? { detail: "Installed REA skill identity is aligned." }
       : {

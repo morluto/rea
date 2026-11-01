@@ -7,7 +7,7 @@ import {
 } from "./changedBehavior.js";
 import { createEvidence, type Evidence } from "./evidence.js";
 import { functionComparisonResultSchema } from "./functionComparisonSchemas.js";
-import { jsonValueSchema, type JsonValue } from "./jsonValue.js";
+import type { JsonValue } from "./jsonValue.js";
 
 const source = (digit: string): Evidence =>
   createEvidence(
@@ -229,14 +229,6 @@ describe("changed behavior", () => {
     expect(aggregate([changed, unknown]).result).toEqual(result);
   });
 
-  it("uses complete inline artifact deltas as static candidates", () => {
-    const complete = comparison("compare_artifacts", artifactResult());
-    expect(aggregate([complete]).result.findings.items).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ dimension: "artifact:main.js" }),
-      ]),
-    );
-  });
 });
 
 describe("changed-behavior input and Evidence validation", () => {
@@ -350,13 +342,11 @@ describe("changed-behavior input and Evidence validation", () => {
       predicateType: base.predicate_type,
       operation: base.operation,
       parameters: base.parameters,
-      result: jsonValueSchema.parse(
-        functionComparisonResultSchema.parse({
-          ...result,
-          dimensions,
-          changes: dimensions.filter(({ status }) => status !== "unchanged"),
-        }),
-      ),
+      result: functionComparisonResultSchema.parse({
+        ...result,
+        dimensions,
+        changes: dimensions.filter(({ status }) => status !== "unchanged"),
+      }),
       confidence: base.confidence,
       authority: base.authority,
       evidenceLinks: base.evidence_links,

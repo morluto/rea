@@ -1,3 +1,4 @@
+import { javaClassFile } from "../../fixtures/javaClassFile.js";
 import { Il2cppBinaryFormatFailure } from "../../../src/il2cpp/Il2cppBinaryFormat.js";
 import { readBinaryContainer } from "../../../src/native/metadata/readBinaryContainer.js";
 import {
@@ -5,17 +6,19 @@ import {
   readUInt32,
 } from "../../../src/il2cpp/Il2cppBinaryImage.js";
 import { expect, it } from "vitest";
+import { linkIl2cppBinarySteps } from "../../../src/il2cpp/Il2cppBinaryFile.js";
 import {
+  drain,
   linkIl2cppBinary,
-  linkIl2cppBinarySteps,
-} from "../../../src/il2cpp/Il2cppBinaryFile.js";
-import { readIl2cppMetadataForLinking } from "../../../src/il2cpp/Il2cppMetadataFile.js";
+  readIl2cppMetadataForLinking,
+} from "../../fixtures/il2cpp/readers.js";
 import {
   GENERIC_TABLE_LIMIT,
   linkGenericMethodsSteps,
 } from "../../../src/il2cpp/Il2cppBinaryGenerics.js";
 import {
   createElfFixture,
+  createLargeElfRelativeFixture,
   createIl2cppBinaryFixture,
   createIl2cppDyldBindFixture,
   createIl2cppRegistrationTailFixture,
@@ -190,10 +193,33 @@ it("rejects reused MethodDef tokens within an image but preserves cross-image re
   );
 });
 
+it.each([0, 4000, 9000])(
+  "reports a valid JVM class with %i unused constant bytes as unsupported",
+  (constantBytes) => {
+    expect(failure(javaClassFile(constantBytes, true))).toEqual({
+      reason: "unsupported-container",
+      kind: "unsupported",
+    });
+  },
+);
+
+it("does not infer universal Mach-O identity from a FAT-shaped non-Mach-O table", () => {
+  // CAFEBABE also identifies JVM classes. A plausible FAT table and known CPU
+  // do not prove Mach-O unless the declared slice contains a Mach-O header.
+  const bytes = createUniversalFixture([
+    { cpu: 0x0100000c, bytes: Buffer.alloc(0x100) },
+  ]);
+  expect(failure(bytes)).toEqual({
+    reason: "unsupported-container",
+    kind: "unsupported",
+  });
+  expect(failure(bytes, "arm64").reason).toBe("slice-not-found");
+});
+
 it("requires an explicit slice of a universal Mach-O and reads only that slice", () => {
   const thin = createIl2cppBinaryFixture();
   const universal = createUniversalFixture([
-    { cpu: 0x01000007, bytes: Buffer.alloc(0x100) },
+    { cpu: 0x01000007, bytes: createIl2cppBinaryFixture() },
     { cpu: 0x0100000c, bytes: thin },
   ]);
   expect(failure(universal)).toEqual({
@@ -232,7 +258,7 @@ it.each(["thin", "universal"] as const)(
     expect(linked.return_types).toEqual(
       link(createIl2cppBinaryFixture()).return_types,
     );
-    expect(bytes).toEqual(original);
+    expect(Buffer.compare(bytes, original)).toBe(0);
   },
 );
 
@@ -387,7 +413,7 @@ it("reads a PE pointer array across file bytes and the declared zero-fill tail",
   const bytes = createSplitPointerPeFixture();
   const original = Buffer.from(bytes);
   expect(link(bytes).method_addresses).toEqual(expectedAddresses);
-  expect(bytes).toEqual(original);
+  expect(Buffer.compare(bytes, original)).toBe(0);
   expect(failure(createSplitPointerPeFixture(false)).reason).toBe(
     "code-gen-modules-not-found",
   );
@@ -882,6 +908,19 @@ it("links an ELF shared object after applying its RELATIVE relocations", () => {
 });
 
 it.each([183, 62])(
+  "streams more than 65536 file-backed relative writes without shrinking IL2CPP capacity (machine %s)",
+  (machine) => {
+    const source = createIl2cppBinaryFixture();
+    const bytes = createLargeElfRelativeFixture(source, 65_537, machine);
+    const snapshot = Buffer.from(bytes);
+    expect(link(bytes).method_addresses).toEqual(
+      link(createElfFixture(source, { machine })).method_addresses,
+    );
+    expect(bytes.equals(snapshot)).toBe(true);
+  },
+);
+
+it.each([183, 62])(
   "links ELF relocations using the resolved PN_XNUM program count (machine %s)",
   (machine) => {
     const original = createElfFixture(createIl2cppBinaryFixture(), { machine });
@@ -1134,7 +1173,9 @@ it.each([1, 0xff])(
   (padding) => {
     const bytes = createIl2cppBinaryFixture();
     bytes.fill(padding, 0x604, 0x608);
-    expect(link(bytes)).toEqual(link(createIl2cppBinaryFixture()));
+    const linked = link(bytes);
+    expect(linked.method_addresses).toEqual(expectedAddresses);
+    expect(linked).toEqual(link(createIl2cppBinaryFixture()));
     bytes.writeUInt32LE(3, 0x600);
     expect(failure(bytes).reason).toBe("code-registration-not-found");
   },
@@ -1201,6 +1242,17 @@ it("checks the observed slice header against the caller-selected FAT architectur
   ]);
   expect(failure(bytes, "amd64").reason).toBe("malformed-container");
 });
+it.each([1, 0x80000000])(
+  "checks the complete FAT CPU subtype including capability bits (%i)",
+  (subtype) => {
+    const thin = createIl2cppBinaryFixture();
+    thin.writeUInt32LE(subtype, 8);
+    const bytes = createUniversalFixture([{ cpu: 0x0100000c, bytes: thin }]);
+    expect(failure(bytes, "arm64").reason).toBe("malformed-container");
+    bytes.writeUInt32BE(subtype, 12);
+    expect(link(bytes, "arm64").method_addresses).toEqual(expectedAddresses);
+  },
+);
 it("still validates version 27 type indices when rendered names are unavailable", () => {
   const decoded = readIl2cppMetadataForLinking(
     createIl2cppMetadataFixture({ version: 27 }).bytes,
@@ -1673,13 +1725,6 @@ it("returns no instances for an empty genericMethodTable without picking a layou
   });
 });
 
-const drain = <T>(steps: Generator<void, T>, onYield = () => {}): T => {
-  for (;;) {
-    const step = steps.next();
-    if (step.done === true) return step.value;
-    onYield();
-  }
-};
 // Link a low-base image of generic tables only, recording yields and rows.
 const linkLowBase = (
   options: GenericRegistrationImageOptions = {},
@@ -1791,12 +1836,6 @@ it("keeps a capacity refusal while naming a generic row a refusal", () => {
   expect((failure as Il2cppBinaryFormatFailure).kind).toBe("capacity");
 });
 
-it("ignores CodeRegistration count alignment padding", () => {
-  const bytes = createIl2cppBinaryFixture();
-  bytes.fill(0xff, 0x604, 0x608);
-  expect(link(bytes).method_addresses).toEqual(expectedAddresses);
-});
-
 it.each([0, 8, 16])(
   "finds registration with %s file-backed trailing zero bytes",
   (tail) => {
@@ -1844,5 +1883,22 @@ it.each([0n, FIXTURE_BINARY_BASE + 0x980n, FIXTURE_BINARY_BASE + 0x9b0n])(
       );
     expect(linked.method_addresses).toEqual(control.method_addresses);
     expect(bytes.readBigUInt64LE(0x900)).toBe(raw);
+  },
+);
+
+it.each([183, 62])(
+  "ignores R_NONE target and addend before relocation application (machine %s)",
+  (machine) => {
+    const image = createIl2cppBinaryFixture();
+    const bytes = createElfFixture(image, {
+      machine,
+      unresolvedRelocations: [{ offset: 0x7fffffff, kind: 0 }],
+    });
+    const dynamic = Number(bytes.readBigUInt64LE(128));
+    const relocationBytes = Number(bytes.readBigUInt64LE(dynamic + 24));
+    const last = 0x1000 + relocationBytes - 24;
+    bytes.writeBigUInt64LE(0xffffffffffffffffn, last);
+    bytes.writeBigInt64LE(-0x8000000000000000n, last + 16);
+    expect(link(bytes)).toEqual(link(createElfFixture(image, { machine })));
   },
 );

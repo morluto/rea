@@ -1,4 +1,5 @@
 import { readFile, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 
 import {
@@ -37,7 +38,22 @@ const harmony = {
   nestedCode: "ets/modules.abc/actual.abc",
   runtimeFamilies: ["ark", "flutter", "javascript", "native"],
   nestedRuntime: "ark",
-  bridgeCount: 1,
+  nestedCategory: "bytecode",
+  fileComponents: {
+    manifests: ["module.json"],
+    bytecode: ["ets/modules.abc"],
+    resources: ["resources.index", "resources/base"],
+    native_libraries: ["libs/arm64-v8a/libflutter.so"],
+    javascript: ["assets/main.js"],
+    signing: ["META-INF/TEST.p7b"],
+  },
+  fileBridges: [
+    {
+      managed_path: "ets/modules.abc",
+      native_path: "libs/arm64-v8a/libflutter.so",
+      basis: "napi-library-convention",
+    },
+  ],
 };
 
 const fixtures = [
@@ -57,7 +73,28 @@ const fixtures = [
     nestedCode: "classes.dex/actual.dex",
     runtimeFamilies: ["dalvik-art", "flutter", "java-kotlin", "native"],
     nestedRuntime: "dalvik-art",
-    bridgeCount: 2,
+    nestedCategory: "dex",
+    fileComponents: {
+      manifests: ["AndroidManifest.xml"],
+      resources: ["resources.arsc"],
+      dex: ["classes.dex"],
+      jvm_classes: ["Main.class"],
+      native_libraries: ["lib/arm64-v8a/libflutter.so"],
+      javascript: [],
+      signing: ["META-INF/TEST.RSA"],
+    },
+    fileBridges: [
+      {
+        managed_path: "classes.dex",
+        native_path: "lib/arm64-v8a/libflutter.so",
+        basis: "flutter-convention",
+      },
+      {
+        managed_path: "Main.class",
+        native_path: "lib/arm64-v8a/libflutter.so",
+        basis: "flutter-convention",
+      },
+    ],
   },
   {
     family: "Apple",
@@ -72,7 +109,25 @@ const fixtures = [
     nestedCode: "Payload/Fixture.app/main.js/actual.js",
     runtimeFamilies: ["javascript", "native"],
     nestedRuntime: "javascript",
-    bridgeCount: 1,
+    nestedCategory: "javascript",
+    fileComponents: {
+      bundle_metadata: ["Payload/Fixture.app/Info.plist"],
+      executables: ["Payload/Fixture.app/libentry.dylib"],
+      frameworks: [],
+      native_libraries: ["Payload/Fixture.app/libentry.dylib"],
+      javascript: ["Payload/Fixture.app/main.js"],
+      signing: [],
+      privileged_helpers: [],
+      launchd_plists: [],
+      helpers: [],
+    },
+    fileBridges: [
+      {
+        source_path: "Payload/Fixture.app/main.js",
+        native_path: "Payload/Fixture.app/libentry.dylib",
+        basis: "javascript-and-native-content",
+      },
+    ],
   },
   harmony,
   {
@@ -165,22 +220,27 @@ cliTest.for(fixtures)(
       const childPackages = fixture.paths.filter((member) =>
         /\.(?:hap|hsp)$/u.test(member),
       );
-      const categories = Object.values(projection.components);
-      for (const category of categories)
-        expect(new Set(category.map(({ path }) => path)).size).toBe(
-          category.length,
-        );
-      const componentPaths = [
-        ...new Set(categories.flat().map((component) => component.path)),
-      ].sort();
-      expect(componentPaths, mode).toEqual(
+      expect(
+        Object.fromEntries(
+          Object.entries(projection.components).map(
+            ([category, components]) => [
+              category,
+              components.map(({ path }) => path),
+            ],
+          ),
+        ),
+        mode,
+      ).toEqual(
         mode === "files"
-          ? fixture.paths
-              .filter((member) => !childPackages.includes(member))
-              .sort()
-          : mode === "nested"
-            ? [fixture.nestedCode]
-            : [],
+          ? fixture.fileComponents
+          : Object.fromEntries(
+              Object.keys(fixture.fileComponents).map((category) => [
+                category,
+                mode === "nested" && category === fixture.nestedCategory
+                  ? [fixture.nestedCode]
+                  : [],
+              ]),
+            ),
       );
       expect(projection.runtime_families, mode).toEqual(
         mode === "files"
@@ -189,8 +249,8 @@ cliTest.for(fixtures)(
             ? [fixture.nestedRuntime]
             : [],
       );
-      expect(projection.bridge_candidates, mode).toHaveLength(
-        mode === "files" ? fixture.bridgeCount : 0,
+      expect(projection.bridge_candidates, mode).toEqual(
+        mode === "files" ? fixture.fileBridges : [],
       );
       expect(projection.source_evidence_ids).toEqual([
         inventoryEvidence.evidence_id,
@@ -207,7 +267,7 @@ cliTest.for(fixtures)(
           mode === "files" ? childPackages : [],
         );
       }
-      expect(await readFile(path)).toEqual(Buffer.from(bytes));
+      expect(Buffer.compare(await readFile(path), Buffer.from(bytes))).toBe(0);
     }
   },
 );
@@ -347,11 +407,15 @@ cliTest.for([
             expect(child).toMatchObject({ artifact_id: null, sha256: null });
           else {
             expect(child.artifact_id).toMatch(/^art_/u);
-            expect(child.sha256).toMatch(/^[a-f0-9]{64}$/u);
+            expect(child.sha256).toBe(
+              createHash("sha256")
+                .update("opaque fixture content")
+                .digest("hex"),
+            );
           }
       }
       if (encrypted) expect(Object.values(graph.components).flat()).toEqual([]);
-      expect(await readFile(path)).toEqual(Buffer.from(bytes));
+      expect(Buffer.compare(await readFile(path), Buffer.from(bytes))).toBe(0);
     }
   },
 );

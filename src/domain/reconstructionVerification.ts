@@ -13,7 +13,7 @@ import { AnalysisInputError } from "./analysisErrorCore.js";
 import { EvidenceIntegrityError } from "./evidenceErrors.js";
 import { analysisInputErrorFromIssues } from "./inputIssueProjection.js";
 import { readEvidencePayload } from "./evidenceValidation.js";
-import { functionDossierSchema } from "./hopperValues.js";
+import { functionDossierSchema } from "./native/functionDossier.js";
 import { assessFunctionCallCoverage } from "./functionCallCoverage.js";
 import { processCaptureSchema } from "./process/processCapture.js";
 import { digestCanonicalValue } from "./canonicalDigest.js";
@@ -60,7 +60,10 @@ export const verifyReconstruction = (
       { cause: parsedSpecification.error },
     );
   const specification = parsedSpecification.data;
-  const bundleResult = readEvidenceBundle(bundleInput);
+  const bundleResult = readEvidenceBundle(bundleInput, {
+    operation: "verify_reconstruction",
+    path: ["evidence_bundle"],
+  });
   if (!bundleResult.ok) throw bundleResult.error;
   const bundle = bundleResult.value;
   const records = new Map(

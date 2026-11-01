@@ -1,6 +1,7 @@
+import { safeParseUtf8Json } from "../domain/safeJson.js";
 import { createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { chmod, lstat, opendir, readlink, realpath } from "node:fs/promises";
+import { chmod, lstat, opendir, readlink } from "node:fs/promises";
 import { isAbsolute, join, relative, sep } from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -34,6 +35,7 @@ import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { readArtifactFileChunks } from "../artifacts/readArtifactFileChunks.js";
 import { decodeDirectoryEntryName } from "../filesystem/decodeDirectoryEntryName.js";
 import { NonRegularFileReadError } from "../filesystem/RegularFile.js";
+import { observedSymlinkTarget } from "../domain/symlinkTarget.js";
 
 /** One regular file or unpublished filesystem entry in a private extraction. */
 export interface FirmwareEntry {
@@ -42,6 +44,7 @@ export interface FirmwareEntry {
   readonly size: number;
   readonly kind: "file" | "symlink" | "special";
   readonly linkTarget: string | null;
+  readonly linkTargetHex?: string;
 }
 
 const throwIfFirmwareInventoryCancelled = (
@@ -112,17 +115,10 @@ export class FirmwareFileAccess {
 
   async #snapshot(request: FirmwareRequest, root: string, signal: AbortSignal) {
     const sourcePath = absoluteCallerPath(request.input.path);
-    const source = await realpath(sourcePath).catch((cause: unknown) => {
-      throw firmwareSourceAdmissionFailure(
-        request.operation,
-        sourcePath,
-        cause,
-      );
-    });
     let sourceAdmitted = false;
     const fullPath = join(root, "firmware.bin");
     const copied = await withArtifactRegularFile(
-      source,
+      sourcePath,
       this.#resources,
       signal,
       async ({ handle, initial: stat }) => {
@@ -149,6 +145,7 @@ export class FirmwareFileAccess {
         );
         return { size, sha256: hash.digest("hex") };
       },
+      "follow",
     ).catch((cause: unknown) => {
       // Destination writes and reads after admission retain their own failure.
       throw sourceAdmitted
@@ -264,12 +261,9 @@ export class FirmwareFileAccess {
           if (bytes.length === 0)
             throw firmwareReportFailure(operation, "empty", "Report is empty");
           try {
-            const value: unknown = JSON.parse(
-              new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-                bytes,
-              ),
-            );
-            return value;
+            const decoded = safeParseUtf8Json(bytes);
+            if (!decoded.ok) throw decoded.cause;
+            return decoded.value;
           } catch (cause: unknown) {
             throw firmwareReportFailure(
               operation,
@@ -436,6 +430,9 @@ export const inventoryFirmwareOutput = async (
       if (stat.isFile()) bytes += stat.size;
       if (bytes > maxBytes)
         throw firmwareStagingLimit(operation, "max_output_bytes", maxBytes);
+      const linkTarget = stat.isSymbolicLink()
+        ? observedSymlinkTarget(await readlink(path, { encoding: "buffer" }))
+        : undefined;
       entries.push({
         path,
         relativePath: relative(root, path).split(sep).join("/"),
@@ -445,7 +442,8 @@ export const inventoryFirmwareOutput = async (
           : stat.isFile()
             ? "file"
             : "special",
-        linkTarget: stat.isSymbolicLink() ? await readlink(path) : null,
+        linkTarget: linkTarget?.text ?? null,
+        ...(linkTarget === undefined ? {} : { linkTargetHex: linkTarget.hex }),
       });
     }
   }

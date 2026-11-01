@@ -29,7 +29,12 @@ body is parsed only when that string is `"309"`. Other types, including `"288"`
 stackshots, return no crash result.
 
 `process`, `exception`, `termination`, `faulting_thread`, `threads`, and
-`images` reproduce documented body fields when present. Integers keep their
+`images` reproduce documented body fields when present, including each image's
+`name` and each frame's `symbolLocation` (as `symbol_location`, the byte offset
+from the start of `recorded_symbol`). `termination` keeps the terminating
+process as `by_proc` and `by_pid` and its `flags`; `process.parent_pid` keeps
+`parentPid` next to `parent`; and `metadata` keeps `build_version` and
+`platform`. Integers keep their
 decimal literals and a hexadecimal form, including arm64e registers above
 2^53. Frame roles follow the recorded frame index: row zero of the resolved
 faulting thread is `faulting_instruction`, row zero of other threads is
@@ -38,6 +43,12 @@ address uses that row's own image base and offset. The recorded `inline` flag
 does not supply a missing offset or authorize borrowing another row's address.
 When `faultingThread` is missing or does not resolve to a recorded thread
 object, row-zero roles are `unknown`; the recorded lookup remains available.
+A translated process records Rosetta's registers in a nested
+`threadState.rosetta` object; each one is reported as `rosetta.<name>` and
+counts toward the register budget. A [public ReportCrash `.ips` log](https://github.com/Mortennn/Dozer/issues/189)
+shows `rosetta.tmp2`, `tmp1`, and `tmp0` beside ordinary x86 registers. The
+test fixture quotes that register excerpt inside an authored report body; it
+does not generate a new Rosetta crash during the test.
 Observed JSON strings retain `""`; `null` means the field was missing or JSON
 `null`. This includes image paths, frame symbols, process text, and the older
 string `osVersion` form. Unlisted JSON keys and generic register names also

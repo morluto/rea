@@ -268,24 +268,3 @@ function* referencedTypeCount(
 
 /** Rows between cooperative yields while linking. */
 const LINK_BATCH = 256;
-
-/** Synchronous linking for byte-level callers. */
-export const linkIl2cppBinary = (
-  bytes: Buffer,
-  metadata: Il2cppMetadataDecoded,
-  facts: Il2cppMetadataLinkFacts,
-  architecture?: string,
-  options: Il2cppBinaryReadOptions = {},
-): Il2cppBinaryLink => {
-  const steps = linkIl2cppBinarySteps(
-    bytes,
-    metadata,
-    facts,
-    architecture,
-    options,
-  );
-  for (;;) {
-    const step = steps.next();
-    if (step.done) return step.value;
-  }
-};

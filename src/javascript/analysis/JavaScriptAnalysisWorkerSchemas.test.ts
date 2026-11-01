@@ -10,6 +10,28 @@ import { analyzeJavaScriptSemantics } from "../../domain/javascript/javascriptSe
 import { getterExpansionSource } from "../../../tests/fixtures/javascriptGetterExpansion.js";
 import { aliasSelectionBudgetSource } from "../../../tests/fixtures/javascriptAliasSelectionBudget.js";
 
+it("preserves independent static coverage and historical unmeasured facts", () => {
+  const facts = analyzeJavaScriptStaticSource("require(moduleName);");
+  expect(
+    javaScriptWorkerStaticAnalysisSchema.parse(
+      JSON.parse(JSON.stringify(facts)),
+    ),
+  ).toEqual(facts);
+  const { analysis_coverage: _coverage, ...historical } = facts;
+  expect(javaScriptWorkerStaticAnalysisSchema.parse(historical)).toEqual(
+    historical,
+  );
+  expect(
+    javaScriptWorkerStaticAnalysisSchema.safeParse({
+      ...facts,
+      analysis_coverage: {
+        ...facts.analysis_coverage,
+        syntax: { status: "complete", error_count: -1 },
+      },
+    }).success,
+  ).toBe(false);
+});
+
 it("transfers bounded alias selection coverage across the worker boundary", () => {
   const source = aliasSelectionBudgetSource();
   const facts = analyzeJavaScriptStaticSource(source);

@@ -1,3 +1,8 @@
+import { RUST_BINARY_PROVIDER_IDENTITY } from "./RustBinaryProviderIdentity.js";
+import {
+  projectStableArtifactFailure,
+  projectArtifactCloseFailure,
+} from "../artifacts/StableArtifactFailure.js";
 import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
 import { readStableArtifact } from "../artifacts/readStableArtifact.js";
 import {
@@ -5,11 +10,8 @@ import {
   type ArtifactFilePrimaryFacts,
   artifactFileCancellationCause,
   assertArtifactReadActive,
-  bindArtifactFileCleanup,
 } from "../artifacts/ArtifactFileOperation.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import type { ExecutionOptions } from "../application/AnalysisProvider.js";
 import type { RustBinaryPort } from "../application/rust/RustBinaryPort.js";
@@ -44,12 +46,6 @@ import {
   RustAuditableResourceFailure,
 } from "./RustAuditableReader.js";
 
-/** Bundled reader identity. Embedded package versions are separate observed facts. */
-export const RUST_BINARY_PROVIDER_IDENTITY = {
-  id: "rust-auditable",
-  name: "REA Rust dependency reader",
-  version: "1",
-} as const;
 const OPERATION = "inspect_rust_binary";
 
 /** Stable in-process dependency inspection without subprocesses, temporary files, or a Rust toolchain. */
@@ -61,19 +57,11 @@ export class RustBinaryProvider implements RustBinaryPort {
     try {
       await this.#resources.close();
     } catch (cause: unknown) {
-      if (
-        !(cause instanceof ArtifactReaderFailure) ||
-        cause.cleanup === undefined
-      )
-        throw cause;
-      const error = new ProviderCleanupError(
+      throw projectArtifactCloseFailure(
+        cause,
         RUST_BINARY_PROVIDER_IDENTITY.id,
-        cause.cleanup.resources,
-        { reason: cause.cleanup.reason },
-        { cause, operation: OPERATION },
+        OPERATION,
       );
-      bindArtifactFileCleanup(cause, error);
-      throw error;
     }
   }
 
@@ -285,17 +273,13 @@ const failureForPrimary = (
 
 const failureFor = (cause: unknown, path: string): AnalysisError => {
   const primary = failureForPrimary(artifactFilePrimaryFacts(cause), path);
-  if (!(cause instanceof ArtifactReaderFailure) || cause.cleanup === undefined)
-    return primary;
-  const cleanup = new ProviderCleanupError(
+  return projectStableArtifactFailure(
+    cause,
+    primary,
+    path,
     RUST_BINARY_PROVIDER_IDENTITY.id,
-    cause.cleanup.resources,
-    { reason: cause.cleanup.reason },
-    { cause, operation: OPERATION },
+    OPERATION,
   );
-  const error = analysisErrorWithCleanupFailure(primary, cleanup, OPERATION);
-  bindArtifactFileCleanup(cause, error);
-  return error;
 };
 
 const artifactFailure = (

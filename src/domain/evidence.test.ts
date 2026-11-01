@@ -66,6 +66,42 @@ it.each(RAW_ONLY_ARCHITECTURES)(
   },
 );
 
+it("keeps 6502 confined to explicit raw Evidence subjects alongside iNES", () => {
+  const selected = {
+    path: TARGET.path,
+    sha256: TARGET.sha256,
+    format: "raw-binary" as const,
+    architecture: "6502" as const,
+  };
+  expect(
+    createEvidence(selected, PROVIDER, {
+      operation: "inspect",
+      parameters: {},
+      result: null,
+    }).subject,
+  ).toMatchObject({ format: "raw-binary", architecture: "6502" });
+  expect(
+    createEvidence(
+      {
+        path: selected.path,
+        sha256: selected.sha256,
+        format: "ines",
+      },
+      PROVIDER,
+      { operation: "inspect", parameters: {}, result: null },
+    ).subject,
+  ).toMatchObject({ format: "ines", architecture: null });
+  for (const format of ["pe", "ines"] as const) {
+    expect(() =>
+      createEvidence({ ...selected, format }, PROVIDER, {
+        operation: "inspect",
+        parameters: {},
+        result: null,
+      }),
+    ).toThrow();
+  }
+});
+
 it("preserves omitted relationship diagnostics and authenticates reported diagnostics", () => {
   const observation = {
     operation: "procedure_callees",
@@ -137,6 +173,102 @@ it("projects known provider fields and preserves open JSON payloads", () => {
   });
   expect(parseEvidence(evidence)).toEqual(evidence);
 });
+
+it("admits typed semantic payloads with omitted optional facts without changing inputs or identity", () => {
+  interface Selection {
+    readonly procedure: string;
+    readonly address?: string;
+  }
+  interface SymbolRow {
+    readonly name: string;
+    readonly size?: number;
+  }
+  interface NativeRecord {
+    readonly producer: string;
+    readonly diagnostic?: string;
+  }
+  const parameters: Selection = { procedure: "main" };
+  const row: SymbolRow = { name: "main" };
+  const result = { symbols: [row] };
+  const rawResult: NativeRecord = { producer: "authored fixture" };
+  const evidence = createEvidence(TARGET, PROVIDER, {
+    operation: "inspect",
+    parameters,
+    result,
+    rawResult,
+  });
+  const equivalent = createEvidence(TARGET, PROVIDER, {
+    operation: "inspect",
+    parameters: { procedure: "main" },
+    result: { symbols: [{ name: "main" }] },
+    rawResult: { producer: "authored fixture" },
+  });
+
+  expect(evidence).toEqual(equivalent);
+  expect(evidence.evidence_id).toBe(equivalent.evidence_id);
+  expect(parameters).toEqual({ procedure: "main" });
+  expect(result).toEqual({ symbols: [{ name: "main" }] });
+  expect(result.symbols[0]).toBe(row);
+  expect(rawResult).toEqual({ producer: "authored fixture" });
+  expect(Object.hasOwn(parameters, "address")).toBe(false);
+  expect(Object.hasOwn(row, "size")).toBe(false);
+  expect(Object.hasOwn(rawResult, "diagnostic")).toBe(false);
+  expect(Object.isFrozen(parameters)).toBe(false);
+  expect(Object.isFrozen(result)).toBe(false);
+  expect(Object.isFrozen(row)).toBe(false);
+  expect(Object.isFrozen(rawResult)).toBe(false);
+});
+
+it("keeps an omitted, undefined, or null raw payload equivalent", () => {
+  const observation = { operation: "inspect", parameters: {}, result: true };
+  const omitted = createEvidence(TARGET, PROVIDER, observation);
+  const explicitUndefined = createEvidence(TARGET, PROVIDER, {
+    ...observation,
+    rawResult: undefined,
+  });
+  const explicitNull = createEvidence(TARGET, PROVIDER, {
+    ...observation,
+    rawResult: null,
+  });
+
+  expect(omitted.raw_result).toBeNull();
+  expect(explicitUndefined).toEqual(omitted);
+  expect(explicitNull).toEqual(omitted);
+});
+
+it.each([
+  { field: "parameters", prefix: "parameters" },
+  { field: "result", prefix: "normalized_result" },
+  { field: "rawResult", prefix: "raw_result" },
+])(
+  "rejects explicit nested undefined in $field at its Evidence prefix",
+  ({ field, prefix }) => {
+    const invalid = { nested: { value: undefined } };
+    let failure: unknown;
+    try {
+      createEvidence(TARGET, PROVIDER, {
+        operation: "inspect",
+        parameters: {},
+        result: true,
+        [field]: invalid,
+      });
+    } catch (cause: unknown) {
+      failure = cause;
+    }
+
+    expect(failure).toMatchObject({
+      name: "ZodError",
+      issues: [
+        {
+          path: [prefix],
+          message: expect.stringContaining("JSON"),
+        },
+      ],
+    });
+    expect(Object.hasOwn(invalid.nested, "value")).toBe(true);
+    expect(invalid.nested.value).toBeUndefined();
+  },
+);
 
 it("preserves identity and bytes when reusing an owned immutable result", () => {
   const value = { nested: { values: ["observed", 1] } };

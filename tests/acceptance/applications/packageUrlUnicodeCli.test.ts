@@ -277,6 +277,6 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
             }),
           );
         }
-    expect(await readFile(archive)).toEqual(bytes);
+    expect(Buffer.compare(await readFile(archive), bytes)).toBe(0);
   },
 );

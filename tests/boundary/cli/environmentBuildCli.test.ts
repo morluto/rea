@@ -26,6 +26,25 @@ const listFiles = async (root: string): Promise<string[]> =>
     .sort();
 
 cliTest(
+  "attributes invalid capture JSON to the capture argument",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory(
+      "rea-environment-invalid-capture-",
+    );
+    const capture = join(root, "invalid.json");
+    await writeFile(capture, "{");
+    const result = await cli.run({
+      arguments: ["environment-build", capture, join(root, "output"), "--json"],
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      code: "invalid_request",
+      details: { issues: [{ path: ["capture"], reason: "invalid_format" }] },
+    });
+  },
+);
+
+cliTest(
   "builds the bundle the three CLI steps build, byte for byte",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-environment-build-cli-");
@@ -88,9 +107,13 @@ cliTest(
     expect(files).toEqual(await listFiles(join(root, "three-step")));
     expect(files).toHaveLength(7);
     for (const file of files)
-      expect(await readFile(join(root, "built", file)), file).toEqual(
-        await readFile(join(root, "three-step", file)),
-      );
+      expect(
+        Buffer.compare(
+          await readFile(join(root, "built", file)),
+          await readFile(join(root, "three-step", file)),
+        ),
+        file,
+      ).toBe(0);
     expect(built.json).toMatchObject({
       tool_count: (exported.json as { tool_count: number }).tool_count,
       files: (exported.json as { files: unknown[] }).files,

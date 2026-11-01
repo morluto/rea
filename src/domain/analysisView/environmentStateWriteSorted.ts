@@ -1,6 +1,8 @@
 import type { JsonValue } from "../jsonValue.js";
 import { compareUnicodeCodePoints as compare } from "../unicodeCodePointOrder.js";
 import {
+  ownMember,
+  setOwnMember,
   at,
   isObject,
   isStringArray,
@@ -35,7 +37,7 @@ const ordered = (value: JsonValue | undefined): value is string[] =>
 /** Whether no object a read shows lists the field as a string array out of order. */
 const listedSorted = (shown: readonly JsonObject[], field: string): boolean =>
   shown.every((object) => {
-    const value = object[field];
+    const value = ownMember(object, field);
     return !ordered(value) || inOrder(value);
   });
 
@@ -50,7 +52,7 @@ const shownBy = (
   )?.fields;
   return own !== undefined && Object.hasOwn(own, field)
     ? own[field]
-    : entity.fields[field];
+    : ownMember(entity.fields, field);
 };
 
 /** Fields every initial entity shows, as the view renders it, as a sorted string array or null, one with two distinct strings. */
@@ -231,9 +233,9 @@ export class SortedArrays {
       if (!isObject(value)) return value;
       const object = { ...value };
       for (const field of fields) {
-        const array = object[field];
+        const array = ownMember(object, field);
         if (array !== undefined && isStringArray(array))
-          object[field] = array.toSorted(compare);
+          setOwnMember(object, field, array.toSorted(compare));
       }
       return object;
     };
@@ -290,11 +292,11 @@ export class SortedArrays {
     const idField = this.facts.idField(view.type) ?? "";
     const existing = this.#existing.get(`${view.type}\u0000${field}`)!;
     return shown.some((object) => {
-      const value = object[field];
-      const id = scalarText(object[idField]);
+      const value = ownMember(object, field);
+      const id = scalarText(ownMember(object, idField));
       if (!ordered(value) || id === undefined) return false;
       return this.facts.state.named(id).some((entity) => {
-        const written = entity.fields[field];
+        const written = ownMember(entity.fields, field);
         return (
           targets.has(
             entityTarget(entity.type, entity.collection, entity.id),
@@ -332,8 +334,8 @@ export class SortedArrays {
     if (values === undefined) this.#existing.set(key, (values = new Set()));
     const held = entities.flatMap((entity) =>
       [
-        entity.fields[field],
-        ...entity.view_fields.map((view) => view.fields[field]),
+        ownMember(entity.fields, field),
+        ...entity.view_fields.map((view) => ownMember(view.fields, field)),
       ].flatMap((value) =>
         value !== undefined && value !== null && isStringArray(value)
           ? value

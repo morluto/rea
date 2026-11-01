@@ -20,7 +20,7 @@
 
 **[웹사이트](https://rea.tools/ko/) · [가이드](https://rea.tools/ko/guides/) · [사례](https://rea.tools/ko/showcase/)**
 
-[빠른 시작](#빠른-시작) · [REA의 작동 방식](#rea의-작동-방식) · [분석할 수 있는 대상](#분석할-수-있는-대상) · [사례](#사례) · [자주 묻는 질문](#자주-묻는-질문) · [문서](#문서)
+[빠른 시작](#빠른-시작) · [REA의 작동 방식](#rea의-작동-방식) · [분석할 수 있는 대상](#분석할-수-있는-대상) · [사례](#사례) · [RL 환경 만들기](#build-rl-environments) · [자주 묻는 질문](#자주-묻는-질문) · [문서](#문서)
 
 <code>npx rea-agents setup</code>
 
@@ -60,7 +60,7 @@
 
 REA는 에이전트를 분석 도구에 연결해 네이티브 바이너리, JavaScript와 Electron 앱, .NET 어셈블리, 웹사이트를 검사할 수 있게 합니다. 터미널에서도 같은 도구를 사용할 수 있습니다. 분석은 로컬에서 실행되며, 결과에는 각 결론의 근거와 한계가 포함됩니다.
 
-설정 과정은 에이전트에 REA를 등록하고 해당 버전에 맞는 워크플로 지침을 설치합니다. 네이티브 분석에는 기존 Hopper, Ghidra 또는 IDA 설치를 사용할 수 있습니다. 승인하면 설정 과정에서 Hopper를 설치할 수도 있습니다. 정적 JavaScript 분석에는 네이티브 분석 엔진이 필요하지 않습니다.
+설정 과정은 에이전트에 REA를 등록하고 해당 버전에 맞는 워크플로 지침을 설치합니다. 네이티브 분석에는 기존 Hopper, Ghidra, IDA 또는 Kuna 설치를 사용할 수 있습니다. 승인하면 설정 과정에서 Hopper를 설치할 수도 있습니다. 정적 JavaScript 분석에는 네이티브 분석 엔진이 필요하지 않습니다.
 
 > <strong>[REA 웹사이트](https://rea.tools/ko/)</strong>에서 설정 방법, 그림으로 설명한 가이드, 실제 사례를 확인하세요.
 
@@ -151,7 +151,7 @@ REA에는 Node.js 22.x(>=22.23.4), 24.x(>=24.22.1) 또는 26+ (>=26.12.1)와 npm
 
 | 대상                   | REA가 반환하는 내용                                                           | 요구 사항 및 가이드                                                                                                               |
 | ---------------------- | ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| 네이티브 바이너리      | 의사 코드, 어셈블리, 문자열, 심볼, 호출, 참조                                 | Hopper, Ghidra 또는 IDA; [네이티브 분석](../native-investigation.md)                                                              |
+| 네이티브 바이너리      | 의사 코드, 어셈블리, 문자열, 심볼, 호출, 참조                                 | Hopper, Ghidra, IDA 또는 Kuna; [네이티브 분석](../native-investigation.md)                                                        |
 | 오프라인 ELF 레이아웃  | 섹션, 세그먼트, 원본 심볼/재배치 정보, 정적 분석으로 얻은 보안 완화 기법 후보 | Linux x64에서 호출자가 제공하는 pwntools; [바이너리 진단](../binary-diagnostics.md)                                               |
 | Go 바이너리            | 내장된 컴파일러 버전, 모듈, `replace` 지시어, 빌드 설정                       | REA 내장 ELF/PE/thin Mach-O 정적 검사; Go 설치 불필요                                                                             |
 | Rust 바이너리          | cargo-auditable이 내장한 크레이트 이름, 버전, 소스, 의존성 관계               | REA 내장 ELF/PE/thin Mach-O 정적 검사; [Rust 바이너리](../rust-binaries.md)                                                       |
@@ -225,7 +225,50 @@ REA에는 Node.js 22.x(>=22.23.4), 24.x(>=24.22.1) 또는 26+ (>=26.12.1)와 npm
 [사례 읽기](https://rea.tools/ko/showcase/th04/) ·
 [재구현 저장소](https://github.com/N0zoM1z0/th04)
 
+### REA로 RL 환경 만들기
+
+웹 앱 세션을 기록하고 API를 도구로 바꿔 AI 에이전트가 사용할 수 있는 환경을 내보냅니다. AgentEnv로 실행한 뒤 작업과 보상 검사를 추가해 RL 학습이나 평가에 사용하세요.
+
+[환경 만들기 가이드](https://rea.tools/guides/rl-environments/) ·
+[X에서 데모 보기](https://x.com/reatools/status/2112574822584918075?s=20)
+
 REA로 흥미로운 대상을 분석했다면 알려 주세요. [issue](https://github.com/morluto/rea/issues) 또는 [pull request](https://github.com/morluto/rea/pulls)에 대상, 조사하려던 질문, REA가 어떻게 도움이 되었는지, 무엇을 알아냈는지를 담아 공유하세요.
+
+<a id="build-rl-environments"></a>
+
+## RL 환경 만들기
+
+원래 앱을 실행하지 않고도 AI 에이전트가 이슈 찾기나 폴더 만들기 같은 작업을 연습할 수 있는 로컬 환경을 만듭니다. 강화 학습(RL)이나 에이전트의 작업 수행 능력 평가에 사용할 수 있습니다.
+
+REA는 기록한 API 요청과 응답을 에이전트가 호출할 수 있는 도구로 바꿉니다. 환경은 기록된 데이터를 사용하며, 기록에서 효과가 확인된 변경만 지원합니다.
+
+에이전트에 REA를 설정한 뒤 아래 예시 URL과 폴더 작업을 자신의 환경에 맞게 바꾸세요.
+
+```text
+REA를 사용해 다음 테스트 웹 앱에서 RL 환경을 만들어 주세요.
+http://127.0.0.1:3000
+폴더 목록 조회, 생성, 이름 변경, 삭제를 포함해 주세요.
+테스트 폴더를 만들고 삭제해도 됩니다. 기존 데이터는 변경하지 마세요.
+my-env라는 폴더에 저장하고, 사용 가능한 작업을 확인한 뒤 실행 방법을 알려 주세요.
+```
+
+<details>
+<summary>명령줄을 사용하는 경우</summary>
+
+앱의 브라우저 요청과 응답을 기록한 파일이 이미 있으면 이 명령을 사용할 수 있습니다. 생성된 환경을 실행하려면 AgentEnv와 Docker도 필요합니다.
+
+```sh
+rea environment-build ./session.har ./my-env --name my-env --json
+agent-env run ./my-env
+```
+
+</details>
+
+REA는 실행 가능한 환경과 시작 및 응답 여부를 확인하는 기본 테스트를 내보냅니다. RL 프레임워크에 연결해 작업 목표와 보상 검사를 정의하고 학습을 실행할 수 있습니다.
+
+[환경 만들기 가이드](https://rea.tools/guides/rl-environments/) ·
+[환경 참조 문서](../agent-environments.md) ·
+[X에서 데모 보기](https://x.com/reatools/status/2112574822584918075?s=20)
 
 ## 자주 묻는 질문
 
@@ -237,9 +280,9 @@ REA로 흥미로운 대상을 분석했다면 알려 주세요. [issue](https://
 </details>
 
 <details>
-<summary><strong>Hopper, Ghidra 또는 IDA가 필요한가요?</strong></summary>
+<summary><strong>Hopper, Ghidra, IDA 또는 Kuna가 필요한가요?</strong></summary>
 
-심층 네이티브 분석에는 이 중 하나를 사용합니다. 정적 JavaScript 및 .NET 검사에는 네이티브 분석 엔진이 필요하지 않습니다. 설정 과정에서 승인 후 Hopper를 설치할 수 있으며, Ghidra와 IDA는 기존 설치를 사용합니다. [제공자 설정](../installation.md#hopper)을 참고하세요.
+심층 네이티브 분석에는 이 중 하나를 사용합니다. 정적 JavaScript 및 .NET 검사에는 네이티브 분석 엔진이 필요하지 않습니다. 설정 과정에서 승인 후 Hopper를 설치할 수 있으며, Ghidra, IDA, Kuna는 기존 설치를 사용합니다. [제공자 설정](../installation.md#hopper)을 참고하세요.
 
 </details>
 
@@ -307,7 +350,7 @@ npx rea-agents@latest setup
 
 ## 스타 기록
 
-🎉 **GitHub 스타 300,000개, 감사합니다!**
+🎉 **GitHub 스타 400,000개, 감사합니다!**
 
 REA를 사용하고, 버그를 보고하고, 기능을 요청하고, 빌드를 테스트하고, 수정에 기여해 주신 모든 분께 감사드립니다.
 

@@ -57,7 +57,7 @@ mcpTest(
         dynamic_value_reloc_table_section:
           PE_LOAD_CONFIG_FIXTURE.dynamicRelocSection,
       });
-      expect(await readFile(path)).toEqual(bytes);
+      expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
       const bad = await client.callTool(
         {
           name: "inspect_pe_load_config",

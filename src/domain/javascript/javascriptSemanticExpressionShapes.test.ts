@@ -13,9 +13,7 @@ import {
 } from "./javascriptSemanticTraversal.js";
 
 it.each([
-  ["function f(){read(cb);function cb(){}}", ["callback"]],
-  ["function f(){const cb=()=>{};const alias=cb;read(alias)}", ["callback"]],
-  ["function f(cb){cb=()=>{};arguments[0]={};read(cb)}", ["unknown"]],
+  ["function f(a){a=[];arguments[0]={};read(a)}", ["unknown"]],
   ["declare let erased:any;function f(){const a=[];read(a)}", ["unknown"]],
   ["namespace X{};function f(){const a=[];read(a)}", ["unknown"]],
   ["var a=[];(()=>{}).constructor('a={}')();read(a);", ["unknown"]],
@@ -60,11 +58,9 @@ it.each([
         shapes.push(
           resolver.isArray(arg)
             ? "array"
-            : resolver.isCallback(arg)
-              ? "callback"
-              : resolver.isNullish(arg)
-                ? "nullish"
-                : "unknown",
+            : resolver.isNullish(arg)
+              ? "nullish"
+              : "unknown",
         );
       },
     });
@@ -72,10 +68,10 @@ it.each([
   },
 );
 
-it("bounds long callback aliases without invoking the shared callable resolver", () => {
-  const source = `export function run(){const cb=()=>{};
-    ${Array.from({ length: 4096 }, (_, i) => `const a${i}=${i === 0 ? "cb" : `a${i - 1}`};`).join("\n")}
-    read(a4095);read(a10);read(cb);}`;
+it("bounds long array aliases without invoking the shared callable resolver", () => {
+  const source = `export function run(){const argv=[];
+    ${Array.from({ length: 4096 }, (_, i) => `const a${i}=${i === 0 ? "argv" : `a${i - 1}`};`).join("\n")}
+    read(a4095);read(a10);read(argv);}`;
   const file = parseJavaScriptSource(source, "deep.mjs");
   if (file === null) throw new Error("Expected valid deep source");
   const state = completeSemanticSteps(
@@ -89,7 +85,7 @@ it("bounds long callback aliases without invoking the shared callable resolver",
         t.isCallExpression(node) &&
         t.isIdentifier(node.callee, { name: "read" })
       )
-        results.push(resolver.isCallback(node.arguments[0]!));
+        results.push(resolver.isArray(node.arguments[0]!));
     },
   });
   expect(results).toEqual([false, true, true]);
@@ -97,55 +93,30 @@ it("bounds long callback aliases without invoking the shared callable resolver",
 });
 
 it.each([
-  ["fixture.cjs", "const argv=[];const done=()=>{};", ["inherit", "default"]],
-  ["fixture.cts", "const argv=[];const done=()=>{};", ["inherit", "default"]],
+  ["fixture.cjs", "const argv=[];", ["inherit"]],
+  ["fixture.cts", "const argv=[];", ["inherit"]],
+  ["fixture.cjs", "var argv=[];{function argv(){}}", ["dynamic"]],
+  ["fixture.mjs", "var argv=[];{function argv(){}}", ["inherit"]],
+  ["fixture.js", "const argv=[];", ["dynamic"]],
+  ["fixture.cjs", "let argv=[];argv=input;", ["dynamic"]],
+  ["fixture.cts", "const argv=[];eval(input);", ["inherit"]],
+  ["fixture.cts", "namespace N{};const argv=[];", ["dynamic"]],
   [
     "fixture.cjs",
-    "var argv=[];{function argv(){}}const done=()=>{};",
-    ["dynamic", "default"],
-  ],
-  [
-    "fixture.mjs",
-    "var argv=[];{function argv(){}}const done=()=>{};",
-    ["inherit", "default"],
-  ],
-  ["fixture.js", "const argv=[];const done=()=>{};", ["dynamic", "dynamic"]],
-  [
-    "fixture.cjs",
-    "let argv=[];argv=input;const done=()=>{};",
-    ["dynamic", "default"],
-  ],
-  [
-    "fixture.cts",
-    "const argv=[];const done=()=>{};eval(input);",
-    ["inherit", "default"],
-  ],
-  [
-    "fixture.cts",
-    "namespace N{};const argv=[];const done=()=>{};",
-    ["dynamic", "dynamic"],
-  ],
-  [
-    "fixture.cjs",
-    "var module=[];const argv=module;const done=()=>{};const args=arguments;args[2]={};",
-    ["dynamic", "default"],
-  ],
-  [
-    "fixture.cts",
-    "const argv=[];function exports(){};const args=arguments;args[0]={};const done=exports;",
-    ["inherit", "dynamic"],
+    "var module=[];const argv=module;const args=arguments;args[2]={};",
+    ["dynamic"],
   ],
 ] as const)(
   "distinguishes wrapper-local child identities and uncertain bindings: %s (%s)",
   (path, declarations, expected) => {
     const loader = path.endsWith(".mjs")
-      ? 'import {spawn,exec} from "node:child_process";'
-      : 'const {spawn,exec}=require("node:child_process");';
+      ? 'import {spawn} from "node:child_process";'
+      : 'const {spawn}=require("node:child_process");';
     const file = parseJavaScriptSource(
       `
       ${loader}
       ${declarations}
-      spawn("argv",argv,{stdio:"inherit"}); exec("callback",done);
+      spawn("argv",argv,{stdio:"inherit"});
     `,
       path,
     );

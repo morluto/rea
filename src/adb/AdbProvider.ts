@@ -1,5 +1,14 @@
+import { ADB_PROVIDER_IDENTITY } from "./AdbProviderIdentity.js";
+import {
+  absoluteCallerPath,
+  appendCallerPath,
+} from "../filesystem/callerPath.js";
 import { execFileFailureCapturedOutput } from "../process/ExecFileOutput.js";
 import { collectNumericIssues } from "./AdbNumericIssues.js";
+import {
+  adbFilesystemErrorCode,
+  adbInputFileError,
+} from "./AdbFilesystemAdmission.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 import { createHash } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
@@ -16,17 +25,15 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
-import { basename, dirname, extname, join, resolve } from "node:path";
+import { basename, dirname, extname, join } from "node:path";
 
-import type {
-  ExecutionOptions,
-  ProviderAvailability,
-} from "../application/AnalysisProvider.js";
-import { providerConfigurationRefusal } from "../domain/providerConfigurationRefusal.js";
 import {
+  type ExecutionOptions,
+  type ProviderAvailability,
   createAnalysisExecution,
   type AnalysisExecution,
 } from "../application/AnalysisProvider.js";
+import { providerConfigurationRefusal } from "../domain/providerConfigurationRefusal.js";
 import type {
   AdbDisplayNumericIssues,
   AdbDisplayPartialObservation,
@@ -60,6 +67,7 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { readPngHeaderDimensions } from "../domain/pngHeader.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { jsonObjectSchema } from "../domain/jsonValue.js";
@@ -102,10 +110,9 @@ import {
   type AdbBinarySelection,
   type AdbClientIdentity,
 } from "./AdbConfiguration.js";
+import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import {
   displayDevicePath,
-  parseAdbDevicesOutput,
-  parseGetpropOutput,
   parsePackageListOutput,
   parsePmPathOutput,
 } from "./AdbDeviceOutput.js";
@@ -125,7 +132,6 @@ import {
   parseFeatureListOutput,
   parsePackageChangeOutput,
   parseProcessListOutput,
-  parsePngDimensions,
   parseResolveActivityOutput,
   parseServiceListOutput,
   parseSettingsGetOutput,
@@ -134,19 +140,20 @@ import {
   parseWmDensityOutput,
   parseWmSizeOutput,
 } from "./AdbShellOutput.js";
-import type { AdbUnparsedLines } from "./AdbUnparsedLines.js";
+import {
+  clientIdentityResult,
+  parsedListingExecution,
+  type AdbClientResult,
+  type AdbProviderIdentity,
+} from "./AdbOperationResults.js";
+import {
+  inspectAdbClientOperation,
+  inspectAdbDeviceOperation,
+  listAdbDevicesOperation,
+  type AdbCommandContext,
+} from "./AdbDeviceOperations.js";
 
-/** Stable identity for the ADB device-acquisition provider. */
-export const ADB_PROVIDER_IDENTITY = {
-  id: "adb",
-  name: "Android Debug Bridge",
-  version: null,
-} as const;
-
-const DEVICES_TIMEOUT_MS = 20_000;
-const DEVICES_MAX_OUTPUT_BYTES = 1024 * 1024;
 const SHELL_TIMEOUT_MS = 30_000;
-const GETPROP_MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
 const PACKAGE_LIST_TIMEOUT_MS = 60_000;
 const PACKAGE_LIST_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 const PM_PATH_TIMEOUT_MS = 30_000;
@@ -396,59 +403,28 @@ const syncStagedAdbFile = async (
   if (primary !== undefined) throw primary;
 };
 
-const clientIdentityResult = (
-  selection: AdbBinarySelection,
-  identity: AdbClientIdentity,
-) => ({
-  binary_path: selection.binary,
-  path_source: selection.pathSource,
-  version: identity.version,
-  installed_path: identity.installedPath,
-});
-
-type ClientIdentity = ReturnType<typeof clientIdentityResult>;
-type ProviderIdentity = { id: string; name: string; version: string | null };
-
-/**
- * Build a parsed-listing execution whose `unparsed_lines`, coverage, and
- * truncation limitation all derive from the parser's unrecognized-line facts,
- * so the limitation can never describe a field the result does not carry.
- */
-const parsedListingExecution = (
-  result: Readonly<Record<string, unknown>>,
-  unparsed: AdbUnparsedLines,
-  provider: ProviderIdentity,
-  limitations: readonly string[] = [],
-) =>
-  createAnalysisExecution(
-    {
-      ...result,
-      unparsed_lines: unparsed.sample,
-      coverage: unparsed.total > 0 ? "partial" : "complete",
-    },
-    provider,
-    {
-      limitations: [
-        ...limitations,
-        ...(unparsed.total > unparsed.sample.length
-          ? [
-              `unparsed_lines reports the first ${String(unparsed.sample.length)} of ${String(unparsed.total)} unrecognized lines`,
-            ]
-          : []),
-      ],
-    },
-  );
-
 /** Materialize the caller's output directory, refusing existing files inside. */
 const prepareOutputDirectory = async (
   operation: string,
   directory: string,
 ): Promise<Result<string, AnalysisError>> => {
-  const root = resolve(directory);
+  const root = absoluteCallerPath(directory);
   try {
     await mkdir(root, { recursive: true });
     await access(root, fsConstants.W_OK);
   } catch (cause) {
+    const code = adbFilesystemErrorCode(cause);
+    if (code === "EEXIST" || code === "ENOTDIR")
+      return err(
+        new AnalysisInputError(operation, { cause }, [
+          {
+            path: ["output_directory"],
+            reason: "invalid_value",
+            message: "The selected output path or a parent is not a directory.",
+            observed: { path: directory, code },
+          },
+        ]),
+      );
     return err(
       new AnalysisOutputError(
         operation,
@@ -670,7 +646,7 @@ const publishBugreport = async (
   const stem =
     extension === "" ? fileName : fileName.slice(0, -extension.length);
   for (let suffix = 0; ; suffix += 1) {
-    const destination = join(
+    const destination = appendCallerPath(
       directory,
       suffix === 0 ? fileName : `${stem} (${String(suffix)})${extension}`,
     );
@@ -769,7 +745,7 @@ const reservePackageDestinations = async (
     readonly identity: OutputDirectoryIdentity;
   }[] = [];
   for (const entry of entries) {
-    const path = join(packageDirectory, entry.file_name);
+    const path = appendCallerPath(packageDirectory, entry.file_name);
     try {
       await mkdir(path);
       const created = await lstat(path);
@@ -881,14 +857,14 @@ export class AdbProvider {
   #outputCleanupPromise: Promise<void> | undefined;
 
   constructor(options: AdbProviderOptions = {}) {
-    this.environment = options.environment ?? process.env;
+    this.environment = snapshotEnvironment(options.environment ?? process.env);
     this.#createRuntimeRoot =
       options.createRuntimeRoot ??
       ((rootOptions) => PrivateRuntimeRoot.create(rootOptions));
   }
 
-  private selection(): AdbBinarySelection {
-    return resolveAdbBinary(this.environment);
+  private selection(signal?: AbortSignal): Promise<AdbBinarySelection> {
+    return resolveAdbBinary(this.environment, process.platform, signal);
   }
 
   /** Probe the selected adb binary; never contacts devices or the server. */
@@ -896,7 +872,7 @@ export class AdbProvider {
     signal?: AbortSignal,
   ): Promise<ProviderAvailability> {
     try {
-      const selection = this.selection();
+      const selection = await this.selection(signal);
       await inspectAdbClient(selection, signal);
       return {
         status: "available",
@@ -1329,7 +1305,7 @@ export class AdbProvider {
     let selection: AdbBinarySelection;
     let identity: AdbClientIdentity;
     try {
-      selection = this.selection();
+      selection = await this.selection(signal);
       identity = await inspectAdbClient(selection, signal);
     } catch (cause) {
       if (cause instanceof AnalysisError)
@@ -1357,7 +1333,7 @@ export class AdbProvider {
       );
     }
     const client = clientIdentityResult(selection, identity);
-    const provider: ProviderIdentity = {
+    const provider: AdbProviderIdentity = {
       ...ADB_PROVIDER_IDENTITY,
       version: identity.version,
     };
@@ -1368,7 +1344,7 @@ export class AdbProvider {
         {
           device: "serial" in request.input ? request.input.serial : operation,
         },
-        selection.binary,
+        selection,
         adbArguments(
           "serial" in request.input ? request.input.serial : undefined,
           ["shell", ...arguments_],
@@ -1376,87 +1352,22 @@ export class AdbProvider {
         { ...limits, volatileOutput: true },
         signal,
       );
+    const context: AdbCommandContext = {
+      operation,
+      request,
+      selection,
+      client,
+      provider,
+      signal,
+      shell,
+    };
     switch (operation) {
       case "inspect_adb_client":
-        return ok(
-          createAnalysisExecution(
-            { client, contacted_adb_server: false },
-            provider,
-          ),
-        );
-      case "list_adb_devices": {
-        const ran = await runAdb(
-          operation,
-          { device: "adb-devices" },
-          selection.binary,
-          ["devices", "-l"],
-          {
-            timeoutMs: DEVICES_TIMEOUT_MS,
-            maxOutputBytes: DEVICES_MAX_OUTPUT_BYTES,
-            volatileOutput: true,
-          },
-          signal,
-        );
-        if (!ran.ok) return ran;
-        const { devices, unparsedLines, daemonStarted } = parseAdbDevicesOutput(
-          ran.value.stdout,
-          ran.value.stderr,
-        );
-        if (unparsedLines.total > 0)
-          return err(
-            new AnalysisProtocolError(
-              `adb devices reported an unrecognized line: ${unparsedLines.sample[0]!}`,
-            ),
-          );
-        return ok(
-          createAnalysisExecution(
-            { client, devices, may_have_started_adb_server: daemonStarted },
-            provider,
-            {
-              limitations: [
-                "Device kind is inferred from the emulator serial prefix and USB transport metadata, not from device attestation",
-                "Kind stays unknown for TCP transports unless the serial is an emulator port",
-              ],
-            },
-          ),
-        );
-      }
-      case "inspect_adb_device": {
-        const ran = await runAdb(
-          operation,
-          { device: request.input.serial },
-          selection.binary,
-          adbArguments(request.input.serial, ["shell", "getprop"]),
-          {
-            timeoutMs: SHELL_TIMEOUT_MS,
-            maxOutputBytes: GETPROP_MAX_OUTPUT_BYTES,
-            volatileOutput: true,
-          },
-          signal,
-        );
-        if (!ran.ok) return ran;
-        const { properties, emulatorObserved } = parseGetpropOutput(
-          ran.value.stdout,
-        );
-        return ok(
-          createAnalysisExecution(
-            {
-              client,
-              serial: request.input.serial,
-              properties,
-              property_count: properties.length,
-              emulator_observed: emulatorObserved,
-            },
-            provider,
-            {
-              limitations: [
-                "Properties are a fixed whitelist of build identity facts, not the full getprop dump",
-                "emulator_observed is null when the build does not report ro.kernel.qemu",
-              ],
-            },
-          ),
-        );
-      }
+        return inspectAdbClientOperation(context);
+      case "list_adb_devices":
+        return listAdbDevicesOperation(context);
+      case "inspect_adb_device":
+        return inspectAdbDeviceOperation(context);
       case "list_adb_packages": {
         const scopeFlag =
           request.input.scope === "third_party"
@@ -1660,7 +1571,7 @@ export class AdbProvider {
         const ran = await runAdbCapture(
           operation,
           { device: request.input.serial, path: request.input.device_path },
-          selection.binary,
+          selection,
           adbArguments(request.input.serial, [
             "shell",
             "sh",
@@ -1957,8 +1868,8 @@ export class AdbProvider {
   private async pullPackage(
     operation: "pull_adb_package",
     selection: AdbBinarySelection,
-    client: ClientIdentity,
-    provider: ProviderIdentity,
+    client: AdbClientResult,
+    provider: AdbProviderIdentity,
     input: {
       readonly serial: string;
       readonly package: string;
@@ -1970,7 +1881,7 @@ export class AdbProvider {
     const paths = await runAdb(
       operation,
       { device: serial },
-      selection.binary,
+      selection,
       adbArguments(serial, ["shell", "pm", "path", packageName]),
       {
         timeoutMs: PM_PATH_TIMEOUT_MS,
@@ -2047,7 +1958,7 @@ export class AdbProvider {
       input.output_directory,
     );
     if (!directory.ok) return directory;
-    const packageDirectory = join(directory.value, packageName);
+    const packageDirectory = appendCallerPath(directory.value, packageName);
     let packageDirectoryCreated = false;
     let packageDirectoryIdentity: OutputDirectoryIdentity | undefined;
     try {
@@ -2187,7 +2098,7 @@ export class AdbProvider {
       return err(error);
     };
     for (const entry of parsed.paths) {
-      const localPath = join(packageDirectory, entry.file_name);
+      const localPath = appendCallerPath(packageDirectory, entry.file_name);
       const pulled = await runAdb(
         operation,
         {
@@ -2195,7 +2106,7 @@ export class AdbProvider {
           path: entry.device_path,
           localPath,
         },
-        selection.binary,
+        selection,
         adbArguments(serial, ["pull", entry.device_path, localPath]),
         { timeoutMs: PULL_TIMEOUT_MS, maxOutputBytes: PULL_MAX_OUTPUT_BYTES },
         signal,
@@ -2354,8 +2265,8 @@ export class AdbProvider {
   private async pullFile(
     operation: "pull_adb_file",
     selection: AdbBinarySelection,
-    client: ClientIdentity,
-    provider: ProviderIdentity,
+    client: AdbClientResult,
+    provider: AdbProviderIdentity,
     input: {
       readonly serial: string;
       readonly device_path: string;
@@ -2379,7 +2290,7 @@ export class AdbProvider {
       input.output_directory,
     );
     if (!directory.ok) return directory;
-    const localPath = join(directory.value, derived.fileName);
+    const localPath = appendCallerPath(directory.value, derived.fileName);
     const existing = await refuseExistingTarget(operation, localPath);
     if (existing !== undefined) return err(existing);
     const pulled = await runAdb(
@@ -2389,7 +2300,7 @@ export class AdbProvider {
         path: input.device_path,
         localPath,
       },
-      selection.binary,
+      selection,
       adbArguments(input.serial, ["pull", input.device_path, localPath]),
       { timeoutMs: PULL_TIMEOUT_MS, maxOutputBytes: PULL_MAX_OUTPUT_BYTES },
       signal,
@@ -2451,8 +2362,8 @@ export class AdbProvider {
   private async pushFile(
     operation: "push_adb_file",
     selection: AdbBinarySelection,
-    client: ClientIdentity,
-    provider: ProviderIdentity,
+    client: AdbClientResult,
+    provider: AdbProviderIdentity,
     input: {
       readonly serial: string;
       readonly local_path: string;
@@ -2461,17 +2372,14 @@ export class AdbProvider {
     },
     signal: AbortSignal | undefined,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
-    const localPath = resolve(input.local_path);
-    const info = await stat(localPath).then(
-      (value) => value,
-      () => null,
+    const localPath = absoluteCallerPath(input.local_path);
+    const invalid = await adbInputFileError(
+      operation,
+      "local_path",
+      input.local_path,
+      localPath,
     );
-    if (info === null || !info.isFile())
-      return err(
-        new AnalysisInputError(operation, {
-          cause: new Error(`The local file does not exist: ${localPath}`),
-        }),
-      );
+    if (invalid !== undefined) return err(invalid);
     return this.#withRuntimeRoot(
       operation,
       {
@@ -2494,7 +2402,7 @@ export class AdbProvider {
           operation,
           input.serial,
           input.device_path,
-          selection.binary,
+          selection,
           { timeoutMs: SETTINGS_TIMEOUT_MS, maxOutputBytes: 1024 },
           signal,
         );
@@ -2506,7 +2414,7 @@ export class AdbProvider {
           operation,
           input.serial,
           devicePath,
-          selection.binary,
+          selection,
           { timeoutMs: SETTINGS_TIMEOUT_MS, maxOutputBytes: 1024 },
           signal,
         );
@@ -2526,7 +2434,7 @@ export class AdbProvider {
             path: input.device_path,
             localPath: digest.path,
           },
-          selection.binary,
+          selection,
           adbArguments(input.serial, ["push", digest.path, input.device_path]),
           { timeoutMs: PULL_TIMEOUT_MS, maxOutputBytes: PULL_MAX_OUTPUT_BYTES },
           signal,
@@ -2567,9 +2475,14 @@ export class AdbProvider {
         const deviceDigest = await runAdb(
           operation,
           { device: input.serial, path: devicePath },
-          selection.binary,
+          selection,
           adbArguments(input.serial, ["shell", "sha256sum", devicePath]),
-          { timeoutMs: SHELL_TIMEOUT_MS, maxOutputBytes: 1024 },
+          {
+            timeoutMs: SHELL_TIMEOUT_MS,
+            // sha256sum echoes the path, escaping special characters, so a
+            // long path must not exhaust the budget for the digest line.
+            maxOutputBytes: 1024 + 2 * Buffer.byteLength(devicePath),
+          },
           signal,
         );
         if (!deviceDigest.ok) {
@@ -2658,8 +2571,8 @@ export class AdbProvider {
   private async installPackage(
     operation: "install_adb_package",
     selection: AdbBinarySelection,
-    client: ClientIdentity,
-    provider: ProviderIdentity,
+    client: AdbClientResult,
+    provider: AdbProviderIdentity,
     input: {
       readonly serial: string;
       readonly apk_path: string;
@@ -2667,17 +2580,14 @@ export class AdbProvider {
     },
     signal: AbortSignal | undefined,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
-    const apkPath = resolve(input.apk_path);
-    const info = await stat(apkPath).then(
-      (value) => value,
-      () => null,
+    const apkPath = absoluteCallerPath(input.apk_path);
+    const invalid = await adbInputFileError(
+      operation,
+      "apk_path",
+      input.apk_path,
+      apkPath,
     );
-    if (info === null || !info.isFile())
-      return err(
-        new AnalysisInputError(operation, {
-          cause: new Error(`The local APK does not exist: ${apkPath}`),
-        }),
-      );
+    if (invalid !== undefined) return err(invalid);
     return this.#withRuntimeRoot(
       operation,
       {
@@ -2698,7 +2608,7 @@ export class AdbProvider {
         const installed = await runAdb(
           operation,
           { device: input.serial, path: apkPath, localPath: digest.path },
-          selection.binary,
+          selection,
           adbArguments(input.serial, [
             "install",
             ...(input.replace ? ["-r"] : []),
@@ -2762,15 +2672,15 @@ export class AdbProvider {
   private async uninstallPackage(
     operation: "uninstall_adb_package",
     selection: AdbBinarySelection,
-    client: ClientIdentity,
-    provider: ProviderIdentity,
+    client: AdbClientResult,
+    provider: AdbProviderIdentity,
     input: { readonly serial: string; readonly package: string },
     signal: AbortSignal | undefined,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
     const uninstalled = await runAdb(
       operation,
       { device: input.serial },
-      selection.binary,
+      selection,
       adbArguments(input.serial, [
         "shell",
         "pm",
@@ -2829,15 +2739,15 @@ export class AdbProvider {
   private async startApp(
     operation: "start_adb_app",
     selection: AdbBinarySelection,
-    client: ClientIdentity,
-    provider: ProviderIdentity,
+    client: AdbClientResult,
+    provider: AdbProviderIdentity,
     input: { readonly serial: string; readonly package: string },
     signal: AbortSignal | undefined,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
     const resolved = await runAdb(
       operation,
       { device: input.serial },
-      selection.binary,
+      selection,
       adbArguments(input.serial, [
         "shell",
         "cmd",
@@ -2885,8 +2795,8 @@ export class AdbProvider {
   private async startActivity(
     operation: "start_adb_activity",
     selection: AdbBinarySelection,
-    client: ClientIdentity,
-    provider: ProviderIdentity,
+    client: AdbClientResult,
+    provider: AdbProviderIdentity,
     input: {
       readonly serial: string;
       readonly action: string;
@@ -2947,8 +2857,8 @@ export class AdbProvider {
   private async runAmStart(
     operation: "start_adb_app" | "start_adb_activity",
     selection: AdbBinarySelection,
-    client: ClientIdentity,
-    provider: ProviderIdentity,
+    client: AdbClientResult,
+    provider: AdbProviderIdentity,
     serial: string,
     arguments_: readonly string[],
     resultFields: Record<string, unknown>,
@@ -2957,7 +2867,7 @@ export class AdbProvider {
     const started = await runAdb(
       operation,
       { device: serial },
-      selection.binary,
+      selection,
       adbArguments(serial, ["shell", "am", "start", "-W", ...arguments_]),
       { timeoutMs: SHELL_TIMEOUT_MS, maxOutputBytes: PM_PATH_MAX_OUTPUT_BYTES },
       signal,
@@ -3037,15 +2947,15 @@ export class AdbProvider {
   private async stopApp(
     operation: "stop_adb_app",
     selection: AdbBinarySelection,
-    client: ClientIdentity,
-    provider: ProviderIdentity,
+    client: AdbClientResult,
+    provider: AdbProviderIdentity,
     input: { readonly serial: string; readonly package: string },
     signal: AbortSignal | undefined,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
     const stopped = await runAdb(
       operation,
       { device: input.serial },
-      selection.binary,
+      selection,
       adbArguments(input.serial, ["shell", "am", "force-stop", input.package]),
       { timeoutMs: SHELL_TIMEOUT_MS, maxOutputBytes: PM_PATH_MAX_OUTPUT_BYTES },
       signal,
@@ -3071,8 +2981,8 @@ export class AdbProvider {
   private async captureScreen(
     operation: "capture_adb_screen",
     selection: AdbBinarySelection,
-    client: ClientIdentity,
-    provider: ProviderIdentity,
+    client: AdbClientResult,
+    provider: AdbProviderIdentity,
     input: { readonly serial: string; readonly output_directory: string },
     signal: AbortSignal | undefined,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
@@ -3081,13 +2991,13 @@ export class AdbProvider {
       input.output_directory,
     );
     if (!directory.ok) return directory;
-    const localPath = join(directory.value, "screen.png");
+    const localPath = appendCallerPath(directory.value, "screen.png");
     const existing = await refuseExistingTarget(operation, localPath);
     if (existing !== undefined) return err(existing);
     const captured = await runAdbCapture(
       operation,
       { device: input.serial },
-      selection.binary,
+      selection,
       adbArguments(input.serial, ["exec-out", "screencap", "-p"]),
       {
         timeoutMs: SCREEN_TIMEOUT_MS,
@@ -3101,11 +3011,11 @@ export class AdbProvider {
       return err(
         new AnalysisCancelledError(operation, { cause: signal.reason }),
       );
-    const dimensions = parsePngDimensions(captured.value.stdout);
-    if (dimensions.width === null)
+    const dimensions = readPngHeaderDimensions(captured.value.stdout);
+    if (dimensions === undefined)
       return err(
         new AnalysisProtocolError(
-          "screencap did not return a PNG payload; the device may not expose a display",
+          "screencap returned an invalid PNG header; the device may not expose a display",
         ),
       );
     return this.#withRuntimeRoot(
@@ -3169,6 +3079,7 @@ export class AdbProvider {
           {
             limitations: [
               "The capture is one frame at read time; no recording or interaction occurred",
+              "PNG signature, IHDR framing, checksum, and dimensions are validated; encoding and image contents are not validated",
               ...(usedExclusiveFallback
                 ? [
                     "The exclusive-create fallback makes the output path visible while its bytes are being written",
@@ -3196,8 +3107,8 @@ export class AdbProvider {
   private async collectBugreport(
     operation: "collect_adb_bugreport",
     selection: AdbBinarySelection,
-    client: ClientIdentity,
-    provider: ProviderIdentity,
+    client: AdbClientResult,
+    provider: AdbProviderIdentity,
     input: { readonly serial: string; readonly output_directory: string },
     signal: AbortSignal | undefined,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
@@ -3212,7 +3123,7 @@ export class AdbProvider {
     let publishedPath: string | undefined;
     try {
       stagingDirectory = await mkdtemp(
-        join(directory.value, ".rea-bugreport-"),
+        appendCallerPath(directory.value, ".rea-bugreport-"),
       );
     } catch (cause) {
       return err(
@@ -3241,7 +3152,7 @@ export class AdbProvider {
         const collected = await runAdb(
           operation,
           { device: input.serial },
-          selection.binary,
+          selection,
           adbArguments(input.serial, ["bugreport", stagingDirectory]),
           {
             timeoutMs: BUGREPORT_TIMEOUT_MS,
@@ -3257,7 +3168,14 @@ export class AdbProvider {
               "adb bugreport did not report an archive path; the build may use an unsupported format",
             ),
           );
-        if (dirname(resolve(reportedPath)) !== stagingDirectory)
+        const reportedParent = await stat(
+          dirname(absoluteCallerPath(reportedPath)),
+        );
+        if (
+          !reportedParent.isDirectory() ||
+          reportedParent.dev !== stagingIdentity.dev ||
+          reportedParent.ino !== stagingIdentity.ino
+        )
           return err(
             new AnalysisProtocolError(
               `adb bugreport reported an archive outside its staging directory: ${reportedPath}`,

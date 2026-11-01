@@ -506,6 +506,50 @@ it("normalizes nested paths once using the most specific selected identity", () 
   );
 });
 
+it("normalizes descendants of selected directories spelled with a trailing slash or dot", () => {
+  const declared = processScenarioSchema.parse({
+    executable: "/bin/echo",
+    working_directory: "/work/",
+    filesystem_observation_paths: ["/selected/", "/other/."],
+    normalization: { paths: true, pids: false, ports: false, patterns: [] },
+  });
+  expect(
+    normalizeProcessText(
+      "P=/selected/item.txt /other/item /work/log /selected/",
+      declared,
+      "/tmp",
+      rootPid,
+    ),
+  ).toBe(
+    "P=<filesystem-root-0>/item.txt <filesystem-root-1>/item <working-directory>/log <filesystem-root-0>/",
+  );
+});
+
+it("normalizes filesystem-root descendants without rewriting URL separators or HTML tags", () => {
+  const declared = processScenarioSchema.parse({
+    executable: "/program",
+    working_directory: "/elsewhere",
+    filesystem_observation_paths: ["/"],
+    normalization: { paths: true, pids: false, ports: false, patterns: [] },
+  });
+  const input = "/other/item http://example.test/path </div> /";
+  const expected =
+    "<filesystem-root-0>/other/item http://example.test/path </div> <filesystem-root-0>";
+  expect(normalizeProcessText(input, declared, "/private", rootPid)).toBe(
+    expected,
+  );
+  expect(
+    createBoundedProcessTextNormalizer(
+      declared,
+      "/private",
+      rootPid,
+    )(input, 1024),
+  ).toMatchObject({
+    state: "normalized",
+    value: expected,
+  });
+});
+
 it("treats path metacharacters literally while preferring nested observed roots", () => {
   const declared = processScenarioSchema.parse({
     executable: "/selected/[tool]+",

@@ -15,16 +15,17 @@ additional permission flag or degraded mode is required.
 
 - Windows 10+ x64 with fixed local NTFS target and temporary volumes;
 - Node.js 22.x (>=22.23.4), 24.x (>=24.22.1), or 26.12.1+;
-- an operator-installed Ghidra 12.1.x distribution (verified with 12.1.4);
+- an operator-installed Ghidra 12.x (>=12.1) distribution (verified with 12.1.4);
 - a 64-bit full JDK inside that installation's declared Java range (JDK 21 or newer, with no maximum, for current 12.1 releases);
 - an explicit native, non-managed x86, x86-64, ARMNT (Thumb-2) or ARM64 PE application/DLL, or a
   [raw NMOS 6502 image](raw-binary.md#nmos-6502) with a caller-supplied entry; and
-- the 26 read-only Ghidra inventory, memory, and function-analysis operations.
+- the 27 read-only Ghidra inventory, memory, and function-analysis operations.
 
 Loaded memory reads and file offsets preserve Ghidra's observed source mappings.
 PE load-image inspection returns an explicit unsupported attestation status.
-Independent verification covers admitted DOS MZ, explicit COM, and explicit
-[raw-binary imports](raw-binary.md) on their supported hosts, including the
+Independent verification covers admitted DOS MZ, explicit COM, explicit
+[raw-binary imports](raw-binary.md), and explicit
+[GameCube DOL images](ghidra-dol.md) on their supported hosts, including the
 admitted raw NMOS 6502 mapping on Windows. Windows P0 admission remains limited
 to native PE and raw NMOS 6502 images. For x64 PE
 NativeAOT RTR 9.1, the read-only snapshot parser can report metadata through
@@ -86,7 +87,8 @@ example under Smart App Control or an App Control policy, reports failure stage
 invocation or invalid inspection uses `runtime_unavailable` and doctor
 classification `runtime_failure`; it does not
 mean Windows x64 itself is unsupported. Provider diagnostics retain the failure
-stage under `windows_native_failure`, together with the corresponding remediation.
+stage under `windows_native_failure`; the availability's `remediation` carries
+the corresponding repair.
 Self-test failures preserve the native operation and OS error text. Check the
 process's writable local NTFS temporary directory and the reported filesystem,
 DACL, Job Object or cleanup constraint, then rerun doctor after resolving it.

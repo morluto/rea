@@ -23,7 +23,7 @@ export const registerWebNetworkCaptureTool = (
   evidenceById?: EvidenceLookup,
 ): void => {
   const contract = toolContract("inspect_web_network_capture");
-  const delivery = retainedSummaryDelivery(new Set([contract.name]), {
+  const delivery = retainedSummaryDelivery(contract.name, {
     recordEvidence,
     evidenceById,
   });
@@ -49,11 +49,11 @@ export const registerWebNetworkCaptureTool = (
         );
       const { detail, ...input } = parsed.data;
       const parameters = { detail };
-      const ready = delivery.preflight(contract.name, parameters);
+      const ready = delivery.preflight(parameters);
       if (!ready.ok) return ready;
       const inspected = await service.inspect(input, options);
       return inspected.ok
-        ? delivery.projectEvidence(contract.name, parameters, inspected.value)
+        ? delivery.projectEvidence(parameters, inspected.value)
         : inspected;
     },
     logger,

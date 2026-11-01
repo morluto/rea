@@ -1,5 +1,7 @@
+import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
-import { dirname, join } from "node:path";
+import { appendCallerPath } from "../filesystem/callerPath.js";
+import { dirname } from "node:path";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
@@ -81,10 +83,10 @@ export const ghidraJavaLaunch = async (options: {
       ? options.platform === "win32"
         ? "java.exe"
         : "java"
-      : join(
+      : appendCallerPath(
           selectedJavaHome,
-          "bin",
-          options.platform === "win32" ? "java.exe" : "java",
+          `bin/${options.platform === "win32" ? "java.exe" : "java"}`,
+          options.platform,
         );
   const isolatedProperties = [
     `-Duser.home=${options.homeRoot}`,
@@ -100,7 +102,7 @@ export const ghidraJavaLaunch = async (options: {
       ? ["-Xlog:disable", "-Xlog:all=warning:stderr"]
       : []),
     "-cp",
-    join(supportRoot, "LaunchSupport.jar"),
+    appendCallerPath(supportRoot, "LaunchSupport.jar", options.platform),
     "LaunchSupport",
     installRoot,
   ];
@@ -129,9 +131,11 @@ export const ghidraJavaLaunch = async (options: {
     const key =
       options.platform === "win32" ? sourceKey.toUpperCase() : sourceKey;
     if (separator < 1 || !/^[A-Za-z_][A-Za-z0-9_]*$/u.test(key))
-      throw new Error(
-        `Invalid Ghidra LaunchSupport environment entry: ${line}`,
-      );
+      throw new GhidraAdmissionError("invalid_environment_entry", {
+        check: separator < 1 ? "separator" : "key",
+        line: line.length <= 1024 ? line : line.slice(0, 1024),
+        ...(line.length <= 1024 ? {} : { line_truncated: 1 }),
+      });
     if ((environment[key] ?? "") === "")
       environment[key] = line.slice(separator + 1);
   }
@@ -171,12 +175,13 @@ export const ghidraJavaLaunch = async (options: {
   const vmArguments = configuredArguments.stdout
     .split(/\r?\n/u)
     .filter((line) => line !== "");
-  if (
-    vmArguments.some(
-      (argument) => !argument.startsWith("-") || argument.includes("\0"),
-    )
-  )
-    throw new Error("Invalid Ghidra LaunchSupport JVM argument");
+  const invalidArgument = vmArguments.find(
+    (argument) => !argument.startsWith("-") || argument.includes("\0"),
+  );
+  if (invalidArgument !== undefined)
+    throw new GhidraAdmissionError("invalid_jvm_argument", {
+      check: invalidArgument.includes("\0") ? "nul" : "prefix",
+    });
   rejectJvmPlatformOverrides(vmArguments);
   return {
     command,
@@ -193,7 +198,11 @@ export const ghidraJavaLaunch = async (options: {
       ...isolatedProperties,
       "-showversion",
       "-cp",
-      join(installRoot, "Ghidra", "Framework", "Utility", "lib", "Utility.jar"),
+      appendCallerPath(
+        installRoot,
+        "Ghidra/Framework/Utility/lib/Utility.jar",
+        options.platform,
+      ),
       "ghidra.Ghidra",
       "ghidra.app.util.headless.AnalyzeHeadless",
       ...options.arguments,

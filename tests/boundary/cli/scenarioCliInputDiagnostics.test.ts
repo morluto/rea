@@ -38,6 +38,38 @@ describe("scenario CLI schema diagnostics", () => {
     });
   });
 
+  cliTest(
+    "refuses summary delivery without a complete Evidence bundle before launching",
+    async ({ cli }) => {
+      const scenario = {
+        browser: { mode: "launch", executable_path: "/nonexistent/chromium" },
+        start_url: { url: "https://app.example.test/", query: [] },
+        actions: [
+          { step_id: "wait", action: "wait_for_timeout", duration_ms: 1 },
+        ],
+      };
+      const result = await cli.run({
+        arguments: [
+          "capture-browser-scenario",
+          JSON.stringify(scenario),
+          "--detail",
+          "summary",
+          "--json",
+        ],
+        environment: { REA_LOG_LEVEL: "silent" },
+      });
+
+      expect(result.exitCode).not.toBe(0);
+      expect(result.json).toMatchObject({
+        code: "invalid_request",
+        details: {
+          operation: "capture_browser_scenario",
+          issues: [{ path: ["evidence_output"], reason: "invalid_value" }],
+        },
+      });
+    },
+  );
+
   cliTest("reports Electron scenario schema paths", async ({ cli }) => {
     const result = await cli.run({
       arguments: ["capture-electron-scenario", "{}", "--json"],

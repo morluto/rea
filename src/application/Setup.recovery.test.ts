@@ -118,7 +118,10 @@ describe("setup workflow", () => {
     expect(result.code).toBe("skill_install_failed");
     expect(result.remediation).toContain("REA skill write failed at");
     expect(result.remediation).toContain("injected skill write failure");
-    expect(result.remediation).toContain("Check permissions and rerun setup.");
+    expect(result.remediation).toContain(
+      "Correct the reported skill installation failure and rerun setup.",
+    );
+    expect(result.remediation).not.toContain("Check permissions");
     expect(progress.at(-1)).toMatchObject({
       state: "failed",
       detail: expect.stringContaining("injected skill write failure"),
@@ -683,6 +686,10 @@ describe("setup Hopper install eligibility", () => {
   it.each([
     { version: "", installs: false },
     { version: "14beta", installs: false },
+    { version: "14.garbage", installs: false },
+    { version: "14.", installs: false },
+    { version: "14.0\n", installs: false },
+    { version: "99999999999999999", installs: false },
     { version: "12", installs: true },
     { version: "12.0", installs: true },
   ])(

@@ -7,6 +7,9 @@ export const pcapCaptureHostSupported = (platform: string): boolean =>
   platform === "linux" || platform === "win32";
 export const PCAP_CAPTURE_UNSUPPORTED_HOST_REASON =
   "Packet summaries require an enforceable native memory bound: Linux with util-linux prlimit, or Windows with owned Job Objects. This host's capture boundary remains unsupported.";
+/** Repair for an unsupported capture host; no setting on this host changes it. */
+export const PCAP_CAPTURE_HOST_REMEDIATION =
+  "Run packet-capture summaries on Linux with util-linux prlimit, or on Windows with owned Job Objects.";
 
 /**
  * Caller intent for packet-capture analysis through caller-supplied tshark
@@ -80,6 +83,13 @@ const endpoint = z.strictObject({
 
 const dnsQuery = z.strictObject({
   query: z.string().min(1),
+  query_labels_hex: z
+    .array(z.string().regex(/^(?:[0-9a-f]{2}){1,63}$/u))
+    .nullable()
+    .optional()
+    .describe(
+      "Original DNS wire label bytes in order, as lowercase hex strings; the root terminator is excluded. Null or omission means unknown wire identity; display text alone does not establish identity.",
+    ),
   response_addresses: z.array(z.string().min(1)),
   response_address_count: z.int().nonnegative(),
 });

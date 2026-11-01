@@ -48,7 +48,7 @@ cliTest(
       expect(report.coverage.state).toBe("complete");
       sources.push(evidence);
     }
-    expect(await readFile(path)).toEqual(bytes);
+    expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
     await rm(path);
     const call = await cli.sharedMcpCall!();
     for (const [index, right] of sources.slice(1).entries()) {
@@ -129,7 +129,7 @@ cliTest(
           whole.push(evidence);
         }
       }
-      expect(await readFile(path)).toEqual(content);
+      expect(Buffer.compare(await readFile(path), content)).toBe(0);
       await rm(path);
     }
     const left = managedMemberInspectionSchema.parse(

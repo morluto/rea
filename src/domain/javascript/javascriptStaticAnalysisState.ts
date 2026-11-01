@@ -1,6 +1,6 @@
 import type * as t from "@babel/types";
-import type { JavaScriptFactoryExportBindings } from "./javascriptAstFingerprint.js";
-import type { JavaScriptOpenReceiverFact } from "./javascriptSemanticAnalysis.js";
+import type { JavaScriptBundlerFactoryRoles } from "./javascriptBundlerFactoryRoles.js";
+import type { JavaScriptOpenReceiverFact } from "./javascriptSemanticReceiverFacts.js";
 import type { JavaScriptRpcScan } from "./javascriptRpcEndpoints.js";
 import type { JavaScriptStaticPathIntrinsicQuery } from "./javascriptStaticAnalysisHelpers.js";
 import type { JavaScriptExpressionShapeResolver } from "./javascriptSemanticExpressionShapes.js";
@@ -21,6 +21,7 @@ import type {
   ElectronIpcFinding,
   ElectronNativeAddonBindingFinding,
   ElectronSenderValidationFinding,
+  ElectronProtocolFinding,
   ElectronUtilityProcessFinding,
 } from "./electronStaticAnalysisTypes.js";
 import { JavaScriptModuleRangeIndex } from "./javascriptStaticAnalysisFindings.js";
@@ -44,9 +45,11 @@ export interface LocatedJavaScriptFinding<Value> {
 export interface JavaScriptAnalysisAccumulator {
   readonly pendingBundlerExports: {
     readonly factory: t.Node;
-    readonly roles: JavaScriptFactoryExportBindings;
+    readonly roles: JavaScriptBundlerFactoryRoles;
     readonly exports: string[];
   }[];
+  /** Factory parameter defaults the bundler calling convention never runs. */
+  readonly unusedFactoryDefaults: Set<t.Node>;
   readonly pendingModuleRequireCalls: (
     | t.CallExpression
     | t.OptionalCallExpression
@@ -87,6 +90,7 @@ export interface JavaScriptAnalysisAccumulator {
     | t.VariableDeclarator
     | t.AssignmentExpression
   )[];
+  readonly protocols: LocatedJavaScriptFinding<ElectronProtocolFinding>[];
   readonly moduleRangeIndex: JavaScriptModuleRangeIndex;
   /** Binding identities proven as third-parameter loaders of recovered factories. */
   readonly factoryRequireBindingIds: Set<string>;
@@ -108,6 +112,7 @@ export interface JavaScriptFindingContext {
   ) =>
     | { readonly owner: t.NewExpression; readonly path: readonly string[] }
     | undefined;
+  readonly xhrOpenRequest?: (node: t.Node) => boolean;
   readonly rendererLoad?: (callee: t.Node, site: t.Node) => boolean;
   readonly rpcScan: JavaScriptRpcScan;
   /** Shared bounded argv/nullish argument shapes for optional-slot signatures. */
@@ -160,6 +165,7 @@ export const createJavaScriptAnalysisAccumulator = (
   sourceLength: number,
 ): JavaScriptAnalysisAccumulator => ({
   pendingBundlerExports: [],
+  unusedFactoryDefaults: new Set(),
   pendingModuleRequireCalls: [],
   appPathChanges: [],
   references: [],
@@ -178,6 +184,7 @@ export const createJavaScriptAnalysisAccumulator = (
   utilityProcesses: [],
   nativeAddonBindings: [],
   pendingNativeAddonBindings: [],
+  protocols: [],
   moduleRangeIndex: new JavaScriptModuleRangeIndex(sourceLength),
   factoryRequireBindingIds: new Set(),
   seen: new Set(),
