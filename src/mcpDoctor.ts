@@ -245,9 +245,11 @@ const inspectProductionMcpSession = async (
     client.listPrompts(undefined, request),
   ]);
   const sessionTool = tools.tools.find(({ name }) => name === "binary_session");
+  const sessionInScope =
+    expectation.expectedToolNames.includes("binary_session");
   // A scope without the session family cannot serve request flow at all;
   // every other case still probes the call so the report names the real cause.
-  const requestFlow = expectation.expectedToolNames.includes("binary_session")
+  const requestFlow = sessionInScope
     ? await client
         .callTool(
           { name: "binary_session", arguments: {} },
@@ -301,7 +303,9 @@ const inspectProductionMcpSession = async (
       ok:
         observedIdentity.packageVersion === PRODUCT_IDENTITY.packageVersion &&
         observedIdentity.catalogDigest === catalog.digests.combined_sha256,
-      detail: `package=${observedIdentity.packageVersion ?? "missing"}; catalog=${observedIdentity.catalogDigest ?? "missing"}`,
+      detail: sessionInScope
+        ? `package=${observedIdentity.packageVersion ?? "missing"}; catalog=${observedIdentity.catalogDigest ?? "missing"}`
+        : `Identity not observed: ${MCP_DOCTOR_SESSION_SCOPE_DETAIL}`,
     },
     {
       name: "request-flow",

@@ -315,27 +315,39 @@ describe("production MCP doctor family scopes", () => {
     30_000,
   );
 
-  it("discovers an empty prompt inventory and explains a scope without session", async () => {
-    const result = await runProductionMcpDoctor({
-      command: process.execPath,
-      args: [resolve("scripts/rea.mjs"), "mcp"],
-      cwd: process.cwd(),
-      environment: { ...process.env, REA_MCP_TOOL_FAMILIES: "browser" },
-    });
-    expect(result).toMatchObject({
-      healthy: false,
-      adapter: "production-stdio",
-      inventory: {
-        prompts: { expected: 0, observed: 0, missing: [], unexpected: [] },
-      },
-      request_flow: { tool: "binary_session", ok: false },
-    });
-    expect(result.checks).toContainEqual({
-      name: "request-flow",
-      ok: false,
-      detail: MCP_DOCTOR_SESSION_SCOPE_DETAIL,
-    });
-  });
+  it.each(["browser", "native"])(
+    "explains unobserved identity for a %s scope without session",
+    async (families) => {
+      const result = await runProductionMcpDoctor({
+        command: process.execPath,
+        args: [resolve("scripts/rea.mjs"), "mcp"],
+        cwd: process.cwd(),
+        environment: { ...process.env, REA_MCP_TOOL_FAMILIES: families },
+      });
+      expect(result).toMatchObject({
+        healthy: false,
+        adapter: "production-stdio",
+        inventory: {
+          prompts: { expected: 0, observed: 0, missing: [], unexpected: [] },
+        },
+        request_flow: { tool: "binary_session", ok: false },
+        identity: {
+          observed_package_version: null,
+          observed_catalog_digest: null,
+        },
+      });
+      expect(result.checks).toContainEqual({
+        name: "server-identity",
+        ok: false,
+        detail: `Identity not observed: ${MCP_DOCTOR_SESSION_SCOPE_DETAIL}`,
+      });
+      expect(result.checks).toContainEqual({
+        name: "request-flow",
+        ok: false,
+        detail: MCP_DOCTOR_SESSION_SCOPE_DETAIL,
+      });
+    },
+  );
 
   it("fails startup instead of misreporting inventory for an invalid scope", async () => {
     const result = await runProductionMcpDoctor({
@@ -497,6 +509,14 @@ describe("production MCP doctor probe validation", () => {
         name: "initialize",
         ok: true,
         detail: expect.any(String),
+      });
+      expect(result.checks).toContainEqual({
+        name: "server-identity",
+        ok: mode === "valid",
+        detail:
+          mode === "valid"
+            ? expect.stringMatching(/^package=.+; catalog=.+$/u)
+            : "package=missing; catalog=missing",
       });
       if (mode === "invalid")
         expect(result.checks).toContainEqual({
