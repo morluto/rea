@@ -138,6 +138,7 @@ const harness = (options?: {
     Record<string, "error" | "timeout" | "empty" | "null">
   >;
   readonly info?: "ok" | "unavailable" | "error";
+  readonly listLimitations?: readonly string[];
   readonly subject?: boolean;
   readonly mismatch?: string;
   readonly unprofiled?: string;
@@ -172,6 +173,9 @@ const harness = (options?: {
               {
                 analysisProfile: profile,
                 ...(options?.subject === false ? {} : { subject }),
+                ...(options?.listLimitations === undefined
+                  ? {}
+                  : { limitations: options.listLimitations }),
               },
             ),
           ),
@@ -375,6 +379,70 @@ describe("decompile_all manifest", () => {
     await expect(
       readFile(join(directory(), "functions/0x1000.c"), "utf8"),
     ).resolves.toContain(sentinel);
+  });
+});
+
+describe("decompile_all inventory limitations", () => {
+  const directory = useOutputDirectory();
+
+  const readIndex = async (root: string) =>
+    decompileDirectoryIndexSchema.parse(
+      JSON.parse(
+        await readFile(join(root, DECOMPILE_DIRECTORY_INDEX_NAME), "utf8"),
+      ),
+    );
+
+  it("keeps the latest selection's limitations without attaching them to historical files", async () => {
+    const created = await run(
+      harness({ listLimitations: ["first inventory limitation"] }).tools,
+      directory(),
+      { name: "Foo::", limit: 1 },
+    );
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    expect(created.value).toMatchObject({
+      inventory_limitations: ["first inventory limitation"],
+      counts: { selected: 2, excluded: 1, requested: 1, remaining: 1 },
+    });
+    const firstIndex = await readIndex(directory());
+    expect(firstIndex.latest_run).toEqual({
+      resume: false,
+      selected: 2,
+      excluded: 1,
+      selection: {
+        name: "Foo::",
+        namespace: null,
+        address_start: null,
+        address_end: null,
+        limit: 1,
+      },
+      inventory_limitations: ["first inventory limitation"],
+    });
+    expect(firstIndex.limitations).toEqual([]);
+
+    const resumed = await run(
+      harness({ listLimitations: ["second inventory limitation"] }).tools,
+      directory(),
+      { resume: true, name: "Bar::" },
+    );
+    expect(resumed.ok).toBe(true);
+    if (!resumed.ok) return;
+    expect(resumed.value).toMatchObject({
+      inventory_limitations: ["second inventory limitation"],
+      counts: { selected: 1, excluded: 2, requested: 1, remaining: 0 },
+    });
+    const resumedIndex = await readIndex(directory());
+    expect(resumedIndex.latest_run).toMatchObject({
+      resume: true,
+      selected: 1,
+      excluded: 2,
+      selection: { name: "Bar::" },
+      inventory_limitations: ["second inventory limitation"],
+    });
+    expect(
+      resumedIndex.functions.map((record) => record.address).sort(),
+    ).toEqual(["0x1000", "0x3000"]);
+    expect(resumedIndex.limitations).toEqual([]);
   });
 });
 
