@@ -453,6 +453,13 @@ affected consumer.
   ability to discover it. Run the matching real-provider and agent lanes when
   their respective claims require them.
 
+For prerequisite recovery, include a case where only the wrong alternative is
+configured: Unblob cannot enable Binwalk inspection, and Binwalk cannot enable
+Unblob extraction. Check the final readiness or capability output retains the
+producer's repair instructions, including which launch environment must change.
+When feasible, follow the advice and verify that the same operation now works.
+Report unexecuted recovery steps explicitly.
+
 ### Checking installers and publisher downloads
 
 When changing setup or investigating an install failure, check the stages affected
