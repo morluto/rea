@@ -43,7 +43,8 @@ rea decompile /absolute/path/to/program main --json
 
 If the registration cannot be read or validated, provider diagnostics retain its
 selected `registration_path` and the configuration owner's setting/constraint
-facts in `configuration_details.settings`, plus `configuration_remediation`.
+facts in `configuration_details.settings`. The availability's `remediation`, and
+each operation it makes unavailable, carry the configuration owner's repair.
 `configured` means a path was selected, not that it is valid or an IDA connection
 was established; failed registrations remain unavailable. Correct
 `REA_IDA_MCP_CONFIG` in the next CLI invocation's environment or the MCP server's
