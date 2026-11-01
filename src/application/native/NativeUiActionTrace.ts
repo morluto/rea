@@ -1,5 +1,6 @@
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import { permitsCapabilityFallback } from "../CapabilityFallback.js";
+import { stopsTraversal } from "../CallRelationshipTraversal.js";
 import { z } from "zod";
 
 import type { AnalysisOperationPort } from "../AnalysisProvider.js";
@@ -459,11 +460,7 @@ const expandNativeCalls = async (input: {
     );
     examined += 1;
     sourceLimitations.push(...execution.limitations);
-    if (
-      !execution.outcome.ok &&
-      (execution.outcome.error._tag === "AnalysisCancelledError" ||
-        execution.outcome.error.cleanupIncomplete)
-    )
+    if (!execution.outcome.ok && stopsTraversal(execution.outcome.error))
       return { error: execution.outcome.error };
     const unknowns = execution.unknowns;
     for (const [index, unknown] of unknowns.entries()) {

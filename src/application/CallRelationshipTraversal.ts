@@ -46,6 +46,15 @@ export type CallRelationshipRead =
   | { readonly status: "unreadable"; readonly error: AnalysisOutputError }
   | { readonly status: "stopped"; readonly error: AnalysisError };
 
+/**
+ * Whether a failed child read must end a traversal rather than become one of
+ * its unknowns. A cancelled read ends it; so does a read whose provider cannot
+ * confirm release of resources it owns, because that read has not finished and
+ * dispatching more reads would build on that state.
+ */
+export const stopsTraversal = (error: AnalysisError): boolean =>
+  error._tag === "AnalysisCancelledError" || error.cleanupIncomplete;
+
 /** Read and parse one procedure's direct relationships for a traversal. */
 export const readCallRelationships = async (
   observe: CallRelationshipObserver,
@@ -57,13 +66,7 @@ export const readCallRelationships = async (
   const execution = await observe(operation, { procedure }, signal, "provider");
   if (!execution.ok)
     return {
-      // A provider that cannot confirm release of resources it owns has not
-      // finished this read; dispatching more reads would build on that state.
-      status:
-        execution.error._tag === "AnalysisCancelledError" ||
-        execution.error.cleanupIncomplete
-          ? "stopped"
-          : "unavailable",
+      status: stopsTraversal(execution.error) ? "stopped" : "unavailable",
       error: execution.error,
     };
   const related = parseRelatedAddresses(
