@@ -261,21 +261,24 @@ class PluginSetupHost {
         reason: "plugin",
         detail: selected.remediation,
       };
-    const current = await this.host.inspectClientConfiguration(
-      client,
-      settings,
-      command,
-    );
-    if (
-      current.status === "invalid" ||
-      current.status === "already_current" ||
-      !(await this.directRegistrationMissing(client.name))
-    )
+    const checkDirectRegistration = async (): Promise<string | undefined> => {
+      const current = await this.host.inspectClientConfiguration(
+        client,
+        settings,
+        command,
+      );
+      return current.status === "invalid" ||
+        current.status === "already_current" ||
+        !(await this.directRegistrationMissing(client.name))
+        ? "Client configuration changed after the plugin plan was approved. Rerun setup to avoid adding a duplicate server."
+        : undefined;
+    };
+    const registrationChange = await checkDirectRegistration();
+    if (registrationChange !== undefined)
       return {
         status: "failed",
         reason: "plugin",
-        detail:
-          "Client configuration changed after the plugin plan was approved. Rerun setup to avoid adding a duplicate server.",
+        detail: registrationChange,
       };
     const runtimeFailure = await selected.manager.inspectRuntime();
     if (runtimeFailure !== undefined)
@@ -289,7 +292,12 @@ class PluginSetupHost {
           ? `${state.remediation} Update the client, or explicitly choose direct setup with --skill=false.`
           : state.installed && state.enabled
             ? undefined
-            : await selected.manager.install(state.installed);
+            : selected.manager instanceof CursorLocalPlugin
+              ? await selected.manager.install(
+                  state.installed,
+                  checkDirectRegistration,
+                )
+              : await selected.manager.install(state.installed);
     return failure === undefined
       ? { status: "configured" }
       : { status: "failed", reason: "plugin", detail: failure };

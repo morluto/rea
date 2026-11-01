@@ -1701,11 +1701,14 @@ Cursor MCP registration or skill copy. A matching installation is left in place
 on reruns, including ordinary setup without `--cursor-plugin`, so dropping the
 flag does not create a duplicate direct server. If a local plugin appears or
 becomes unreadable while an ordinary direct setup plan awaits approval, setup
-stops before registration and requires a fresh plan. Existing direct integrations stay direct; foreign, edited, linked,
+stops before registration and requires a fresh plan. If a direct registration
+appears during a plugin download, setup stops before publishing the plugin and
+requires a fresh plan. Existing direct integrations stay direct; foreign, edited, linked,
 incomplete or differently versioned local plugin directories stop with
 remediation and are preserved. Move an old local installation aside deliberately
 before installing a different version. Interrupted downloads retain their owned
-cleanup until the installer process has stopped.
+cleanup until the installer process has stopped. Ctrl-C awaits staging cleanup
+before setup exits; failed cleanup stays owned for retry.
 
 Restart Cursor or use Developer: Reload Window, then check Customize and MCP
 settings. This is a local import, not an account-synced marketplace install.

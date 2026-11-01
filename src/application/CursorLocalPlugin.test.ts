@@ -22,6 +22,42 @@ import { FakeSetupHost, options } from "./Setup.fixture.js";
 import { runSetup } from "./Setup.js";
 import { withPluginSetup } from "./SetupPluginHost.js";
 
+const writeDownloadedPackage = async (
+  prefix: string,
+  wrongVersion: boolean,
+) => {
+  const packageRoot = join(prefix, "node_modules", "rea-agents");
+  for (const directory of [
+    ".claude-plugin",
+    "scripts",
+    "dist",
+    "dist/mcp",
+    "skills/reverse-engineer-anything",
+    "assets",
+  ])
+    await mkdir(join(packageRoot, directory), { recursive: true });
+  await copyFile(
+    new URL("../../.claude-plugin/plugin.json", import.meta.url),
+    join(packageRoot, ".claude-plugin", "plugin.json"),
+  );
+  await writeFile(
+    join(packageRoot, "package.json"),
+    JSON.stringify({
+      name: "rea-agents",
+      version: wrongVersion ? "0.0.0" : PRODUCT_IDENTITY.packageVersion,
+    }),
+  );
+  for (const path of [
+    "scripts/plugin-mcp-launcher.mjs",
+    "dist/cli.js",
+    "dist/mcp/main.js",
+    "scripts/rea.mjs",
+    "skills/reverse-engineer-anything/SKILL.md",
+    "assets/rea-plugin.png",
+  ])
+    await writeFile(join(packageRoot, path), "fixture package content\n");
+};
+
 const fixture = async () => {
   const home = await createTestTempDirectory("rea-cursor-local-");
   const base = new FakeSetupHost(process.platform);
@@ -46,6 +82,7 @@ const fixture = async () => {
   let interrupt = false;
   let allowCleanup = false;
   let foreignDuringDownload = false;
+  let directDuringDownload = false;
   let wrongVersion = false;
   let missingNode = false;
   const launch: SetupPluginCommandLauncher = async (
@@ -79,7 +116,9 @@ const fixture = async () => {
         stderr: "cancelled",
         timedOut: false,
         interruptedSignal: "SIGINT",
-        cleanupFailure: "controlled installer cleanup refusal",
+        ...(allowCleanup
+          ? {}
+          : { cleanupFailure: "controlled installer cleanup refusal" }),
       };
     }
     if (fail)
@@ -92,39 +131,14 @@ const fixture = async () => {
       };
     const prefix = args[args.indexOf("--prefix") + 1];
     if (prefix === undefined) throw new Error("Missing installer prefix");
-    const packageRoot = join(prefix, "node_modules", "rea-agents");
-    for (const directory of [
-      ".claude-plugin",
-      "scripts",
-      "dist",
-      "dist/mcp",
-      "skills/reverse-engineer-anything",
-      "assets",
-    ])
-      await mkdir(join(packageRoot, directory), { recursive: true });
-    await copyFile(
-      new URL("../../.claude-plugin/plugin.json", import.meta.url),
-      join(packageRoot, ".claude-plugin", "plugin.json"),
-    );
-    await writeFile(
-      join(packageRoot, "package.json"),
-      JSON.stringify({
-        name: "rea-agents",
-        version: wrongVersion ? "0.0.0" : PRODUCT_IDENTITY.packageVersion,
-      }),
-    );
-    for (const path of [
-      "scripts/plugin-mcp-launcher.mjs",
-      "dist/cli.js",
-      "dist/mcp/main.js",
-      "scripts/rea.mjs",
-      "skills/reverse-engineer-anything/SKILL.md",
-      "assets/rea-plugin.png",
-    ])
-      await writeFile(join(packageRoot, path), "fixture package content\n");
+    await writeDownloadedPackage(prefix, wrongVersion);
     if (foreignDuringDownload) {
       await mkdir(target);
       await writeFile(join(target, "user-data"), "preserve");
+    }
+    if (directDuringDownload) {
+      base.clientInspections.set("cursor", { status: "already_current" });
+      await writeFile(config, "concurrent direct registration");
     }
     return {
       exitCode: 0,
@@ -152,14 +166,18 @@ const fixture = async () => {
     fail: () => {
       fail = true;
     },
-    interrupt: () => {
+    interrupt: (cleanupSucceeds = false) => {
       interrupt = true;
+      allowCleanup = cleanupSucceeds;
     },
     allowCleanup: () => {
       allowCleanup = true;
     },
     foreignDuringDownload: () => {
       foreignDuringDownload = true;
+    },
+    directDuringDownload: () => {
+      directDuringDownload = true;
     },
     missingNode: () => {
       missingNode = true;
@@ -314,6 +332,20 @@ it("retains staging while installer cleanup fails and removes it on retry", asyn
   expect(await readdir(f.local)).toEqual([]);
 });
 
+it("awaits successful installer and staging cleanup before propagating cancellation", async () => {
+  const f = await fixture();
+  f.interrupt(true);
+  const failure: unknown = await runSetup(f.setupOptions, f.host()).catch(
+    (cause: unknown) => cause,
+  );
+  expect(failure).toBeInstanceOf(AnalysisCancelledError);
+  if (!(failure instanceof AnalysisCancelledError))
+    throw new Error("Expected cancellation");
+  expect(failure.cleanupIncomplete).toBe(false);
+  expect(await readdir(f.local)).toEqual([]);
+  expect(f.base.configurations + f.base.skillInstalls).toBe(0);
+});
+
 it("preserves a setup-owned Cursor integration", async () => {
   const f = await fixture();
   f.base.clientInspections.set("cursor", { status: "already_current" });
@@ -346,6 +378,20 @@ it("rechecks Cursor direct registration after approval before downloading", asyn
   expect(f.downloads).toEqual([]);
   expect(f.base.configurations).toBe(0);
   await expect(access(f.local)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it("preserves a direct registration created during download without publishing a Cursor plugin", async () => {
+  const f = await fixture();
+  f.directDuringDownload();
+  const result = await runSetup(f.setupOptions, f.host());
+  expect(result.status).toBe("needs_human");
+  expect(JSON.stringify(result)).toContain("Rerun setup");
+  expect(f.downloads).toHaveLength(1);
+  expect(await readFile(f.config, "utf8")).toBe(
+    "concurrent direct registration",
+  );
+  expect(await readdir(f.local)).toEqual([]);
+  expect(f.base.configurations + f.base.skillInstalls).toBe(0);
 });
 
 it("keeps ordinary Cursor setup direct without opting in to a plugin", async () => {

@@ -106,11 +106,13 @@ const registerSetupCommand = (
     }),
     alias: { yes: "y" },
     run: ({ options, formatExplicit }) =>
-      logCliCommand(
-        logger,
-        CLI_COMMANDS.setup,
-        () => runSetupCommand({ options, formatExplicit }, environment),
-        isSetupFailure,
+      withCommandCancellation(() =>
+        logCliCommand(
+          logger,
+          CLI_COMMANDS.setup,
+          () => runSetupCommand({ options, formatExplicit }, environment),
+          isSetupFailure,
+        ),
       ),
   });
 };

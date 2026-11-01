@@ -219,7 +219,10 @@ export class CursorLocalPlugin extends SetupPluginCommands {
     ];
   }
 
-  async install(_installed: boolean): Promise<string | undefined> {
+  async install(
+    _installed: boolean,
+    checkDirectRegistration: () => Promise<string | undefined>,
+  ): Promise<string | undefined> {
     try {
       const current = await this.inspect();
       if (current.status !== "available") return current.remediation;
@@ -263,6 +266,8 @@ export class CursorLocalPlugin extends SetupPluginCommands {
       if (beforePublish.status !== "available")
         return beforePublish.remediation;
       if (beforePublish.installed) return undefined;
+      const registrationChange = await checkDirectRegistration();
+      if (registrationChange !== undefined) return registrationChange;
       await rename(staged, join(parent, "rea"));
       const verified = await this.inspect();
       return verified.status === "available" && verified.installed
