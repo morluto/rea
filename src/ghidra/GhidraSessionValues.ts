@@ -40,6 +40,20 @@ const pdbAttributeSchema = z
 
 const capabilitySchema = z.enum(GHIDRA_SESSION_CAPABILITIES);
 
+const hexSchema = z.string().regex(/^0x[0-9a-f]+$/u);
+const preparedBlockSchema = z
+  .object({
+    name: z.string().min(1),
+    address: hexSchema,
+    size: hexSchema,
+    space_before: z.string().min(1),
+    space_after: z.string().min(1),
+  })
+  .strict();
+const preparedCodeSchema = preparedBlockSchema
+  .extend({ file_offset: hexSchema })
+  .strict();
+
 const sessionInfoSchema = z
   .object({
     name: z.literal("REA Ghidra bridge"),
@@ -114,6 +128,8 @@ const sessionInfoSchema = z
           .object({
             policy: z.literal(GHIDRA_RISCV_LOAD_PREPARATION),
             outcome: z.literal("moved"),
+            code: preparedCodeSchema,
+            reservation: preparedBlockSchema,
             functions: z.int().nonnegative(),
             entry_points: z.int().nonnegative(),
             reservation_labels: z.int().nonnegative(),
@@ -123,6 +139,7 @@ const sessionInfoSchema = z
           .object({
             policy: z.literal(GHIDRA_RISCV_LOAD_PREPARATION),
             outcome: z.literal("canonical"),
+            code: preparedCodeSchema,
           })
           .strict(),
         z
@@ -139,7 +156,7 @@ const sessionInfoSchema = z
         name: z.string().min(1),
         language_id: z.string().min(1),
         compiler_spec_id: z.string().min(1),
-        image_base: z.string().regex(/^0x[0-9a-f]+$/u),
+        image_base: hexSchema,
         default_address_space: z.string().min(1),
         sha256: z.string().regex(/^[a-f0-9]{64}$/u),
       })

@@ -842,7 +842,8 @@ export const createGhidraProviderClient = (input: {
         seeds !== undefined ||
         disabledAnalyzers !== undefined ||
         softFloat ||
-        riscvCallingConvention !== undefined
+        riscvCallingConvention !== undefined ||
+        riscvLoadPreparation !== undefined
       ) {
         const started = await startSession(operation, options);
         if (!started.ok) return started;

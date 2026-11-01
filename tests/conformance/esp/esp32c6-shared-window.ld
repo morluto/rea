@@ -17,9 +17,16 @@ SECTIONS
 {
   .iram0.text 0x40800000 : { *(.iram0.text) } :iram
   .dram0.data 0x40810000 : { *(.sdata .sdata.* .data .data.* .sbss .sbss.* .bss .bss.*) } :dram
-  .flash.text 0x42000020 : { *(.flash.text) *(.text .text.*) } :irom
+  /* ESP-IDF's absolute text bounds: Ghidra pins absolute symbols. */
+  .flash.text 0x42000020 :
+  {
+    _text_start = ABSOLUTE(.);
+    *(.flash.text) *(.text .text.*)
+    _text_end = ABSOLUTE(.);
+  } :irom
   .flash_rodata_dummy 0x42000020 (NOLOAD) :
   {
+    _flash_rodata_dummy_start = .;
     . = ALIGN(ALIGNOF(.flash.text)) + SIZEOF(.flash.text);
     . = ALIGN(0x10000) + 0x20;
   } :drom

@@ -1,10 +1,13 @@
 import type {
   ElfSectionExtent,
   ElfSectionOverlap,
+  ElfSectionWitness,
 } from "./binaryTargetTypes.js";
-import type { ElfDeclarationRead } from "./elfDeclaredRanges.js";
+import type {
+  ElfDeclarationRead,
+  ElfTableDeclarations,
+} from "./elfDeclaredRanges.js";
 import type { ElfSectionHeader } from "./elfSectionHeader.js";
-import { visitElfSectionHeaders } from "./elfSectionTable.js";
 
 const SHT_NULL = 0;
 const SHT_PROGBITS = 1;
@@ -14,112 +17,164 @@ const SHF_EXECINSTR = 0x4n;
 /** Names are display only; a larger section-name table is left unread. */
 const SECTION_NAMES_MAX_BYTES = 64 * 1024;
 
+/** One allocated, non-empty section: the only facts the sweep keeps. */
 interface Allocated {
   readonly index: number;
-  readonly section: ElfSectionHeader;
+  readonly type: number;
+  readonly executable: boolean;
+  readonly address: bigint;
   readonly end: bigint;
+  readonly offset: bigint;
+  readonly nameOffset: number;
 }
+
+type Pair = readonly [Allocated, Allocated];
 
 const hex = (value: bigint): string => `0x${value.toString(16)}`;
 
-const executable = ({ section }: Allocated): boolean =>
-  (section.flags & SHF_EXECINSTR) !== 0n;
-
 const overlaps = (first: Allocated, second: Allocated): boolean =>
-  first.section.address < second.end && second.section.address < first.end;
+  first.address < second.end && second.address < first.end;
 
 /** A NOBITS section that starts with executable PROGBITS and covers it. */
-const isReservation = (code: Allocated, reservation: Allocated): boolean =>
-  code.section.type === SHT_PROGBITS &&
-  executable(code) &&
-  reservation.section.type === SHT_NOBITS &&
-  !executable(reservation) &&
-  reservation.section.address === code.section.address &&
-  reservation.section.size >= code.section.size;
+const isReservation = ([code, reservation]: Pair): boolean =>
+  code.type === SHT_PROGBITS &&
+  code.executable &&
+  reservation.type === SHT_NOBITS &&
+  !reservation.executable &&
+  reservation.address === code.address &&
+  reservation.end >= code.end;
 
 /**
- * Find allocated address ranges that more than one section declares. Section
- * addresses are load addresses only in fixed-address (ET_EXEC) images, so
- * callers read this fact for those. Overlaps between two non-executable
- * sections are outside it.
+ * The first two overlaps that involve an executable section, in address order.
+ * Each pair is found once, when its later-starting section is visited, with the
+ * executable section first. The sweep stops at the second pair, so its work
+ * stays O(n log n) on any table.
  */
-export function* readElfSectionOverlap(
-  prefix: Buffer,
-  fileSize: number,
-): Generator<ElfDeclarationRead, ElfSectionOverlap, Buffer> {
+const executableOverlaps = (sorted: readonly Allocated[]): Pair[] => {
+  const pairs: Pair[] = [];
+  // reach[i]: the furthest end of sorted[0..i], which bounds the backward scan.
+  const reach: bigint[] = [];
+  let active: Allocated[] = [];
+  let furthest = -1n;
+  for (const [position, section] of sorted.entries()) {
+    if (section.executable) {
+      for (let earlier = position - 1; earlier >= 0; earlier -= 1) {
+        if (pairs.length >= 2 || (reach[earlier] ?? -1n) <= section.address)
+          break;
+        const other = sorted[earlier];
+        if (other !== undefined && other.end > section.address)
+          pairs.push([section, other]);
+      }
+    } else {
+      active = active.filter((code) => code.end > section.address);
+      for (const code of active.slice(0, 2 - pairs.length))
+        pairs.push([code, section]);
+    }
+    if (pairs.length >= 2) break;
+    if (section.executable) active.push(section);
+    if (section.end > furthest) furthest = section.end;
+    reach.push(furthest);
+  }
+  return pairs;
+};
+
+/**
+ * Collect allocated sections during one section-table pass, then derive the
+ * overlap fact. Section addresses are load addresses only in fixed-address
+ * (`ET_EXEC`) images, so callers collect for those. Overlaps between two
+ * non-executable sections are outside the fact, unless one of them is the
+ * reservation, which then departs from the verified shape.
+ */
+export const elfSectionOverlapCollector = () => {
   const allocated: Allocated[] = [];
-  // Assigned by the visitor; the cast keeps control flow from narrowing it to undefined.
-  let names = undefined as ElfSectionHeader | undefined;
-  const visited = yield* visitElfSectionHeaders(
-    prefix,
-    fileSize,
-    (section, index, tables) => {
+  let names: ElfSectionHeader | undefined;
+  return {
+    visit(
+      section: ElfSectionHeader,
+      index: number,
+      tables: ElfTableDeclarations,
+    ): void {
       if (index === tables.sections.namesIndex && index !== 0) names = section;
       if (
-        section.type !== SHT_NULL &&
-        (section.flags & SHF_ALLOC) !== 0n &&
-        section.size !== 0n
+        section.type === SHT_NULL ||
+        (section.flags & SHF_ALLOC) === 0n ||
+        section.size === 0n
       )
-        allocated.push({ index, section, end: section.address + section.size });
-      return undefined;
+        return;
+      allocated.push({
+        index,
+        type: section.type,
+        executable: (section.flags & SHF_EXECINSTR) !== 0n,
+        address: section.address,
+        end: section.address + section.size,
+        offset: section.offset,
+        nameOffset: section.nameOffset,
+      });
     },
-  );
-  if (!visited.ok) return { status: "unavailable", reason: visited.error };
-  const pairs: [Allocated, Allocated][] = [];
-  for (const code of allocated.filter(executable))
-    for (const other of allocated)
-      if (
-        other.index !== code.index &&
-        overlaps(code, other) &&
-        !(executable(other) && other.index < code.index)
-      )
-        pairs.push([code, other]);
-  const first = pairs[0];
-  if (first === undefined) return { status: "none" };
-  const nameOf = yield* readSectionNames(names, fileSize);
-  const extent = ({ index, section }: Allocated): ElfSectionExtent => ({
-    index,
-    name: nameOf(section),
-    address: hex(section.address),
-    size: hex(section.size),
-  });
-  const [code, reservation] = first;
-  if (
-    pairs.length === 1 &&
-    isReservation(code, reservation) &&
-    !allocated.some(
-      (other) =>
-        other.index !== code.index &&
-        other.index !== reservation.index &&
-        overlaps(reservation, other),
-    )
-  )
-    return {
-      status: "code-reservation",
-      code: { ...extent(code), offset: hex(code.section.offset) },
-      reservation: extent(reservation),
-    };
-  const describe = (item: Allocated): string => {
-    const { index, name, address } = extent(item);
-    return `[${index}]${name === null ? "" : ` ${name}`} (${address}..${hex(item.end)})`;
+    *finish(
+      fileSize: number,
+    ): Generator<ElfDeclarationRead, ElfSectionOverlap, Buffer> {
+      const sorted = allocated.sort((first, second) =>
+        first.address === second.address
+          ? first.index - second.index
+          : first.address < second.address
+            ? -1
+            : 1,
+      );
+      const [first, second] = executableOverlaps(sorted);
+      if (first === undefined) return { status: "none" };
+      const [code, reservation] = first;
+      const shaped = isReservation(first);
+      // Only the reservation can reach a third section: the code overlaps one.
+      const intruder =
+        second === undefined && shaped
+          ? sorted.find(
+              (other) =>
+                other !== code &&
+                other !== reservation &&
+                overlaps(reservation, other),
+            )
+          : undefined;
+      const nameOf = yield* readSectionNames(names, fileSize);
+      const extent = (section: Allocated): ElfSectionExtent => ({
+        index: section.index,
+        name: nameOf(section.nameOffset),
+        address: hex(section.address),
+        size: hex(section.end - section.address),
+      });
+      if (second === undefined && shaped && intruder === undefined)
+        return {
+          status: "code-reservation",
+          code: { ...extent(code), offset: hex(code.offset) },
+          reservation: extent(reservation),
+        };
+      const witness = (section: Allocated): ElfSectionWitness => ({
+        ...extent(section),
+        nobits: section.type === SHT_NOBITS,
+        executable: section.executable,
+      });
+      // Name the sections that cause the refusal, not a pair of the verified shape.
+      const [left, right] =
+        intruder !== undefined
+          ? [reservation, intruder]
+          : second !== undefined && shaped
+            ? second
+            : first;
+      return {
+        status: "unsupported",
+        witnesses: [witness(left), witness(right)],
+      };
+    },
   };
-  return {
-    status: "unsupported",
-    reason: `Sections ${describe(code)} and ${describe(reservation)} declare overlapping addresses${
-      pairs.length > 1
-        ? `, among ${pairs.length} overlaps that involve executable code`
-        : ""
-    }. REA prepares only a NOBITS section that starts with one executable PROGBITS section and covers it, as ESP-IDF's .flash_rodata_dummy reserves .flash.text.`,
-  };
-}
+};
 
-/** Section names for display, or null for each name when the table is not readable. */
+/** Section names for display, or null for each name when the table is unreadable. */
 function* readSectionNames(
   names: ElfSectionHeader | undefined,
   fileSize: number,
 ): Generator<
   ElfDeclarationRead,
-  (section: ElfSectionHeader) => string | null,
+  (nameOffset: number) => string | null,
   Buffer
 > {
   const unknown = (): null => null;
@@ -134,8 +189,7 @@ function* readSectionNames(
   const size = Number(names.size);
   const bytes = yield { offset: Number(names.offset), size };
   if (bytes.length !== size) return unknown;
-  return (section) => {
-    const start = section.nameOffset;
+  return (start) => {
     const end = start < size ? bytes.indexOf(0, start) : -1;
     return end < 0 ? null : bytes.toString("latin1", start, end);
   };

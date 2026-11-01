@@ -2,6 +2,7 @@ import type {
   BinaryTarget,
   ElfSectionExtent,
   ElfSectionOverlap,
+  ElfSectionWitness,
   RiscvElfMetadata,
   RiscvIsaDeclaration,
 } from "../domain/binaryTargetTypes.js";
@@ -89,11 +90,25 @@ export interface GhidraRiscvLoadPreparation {
   readonly reservation: ElfSectionExtent;
 }
 
-/** Outcome the pre-analysis script records for the bridge handshake. */
+/** A memory block as the pre-analysis script left it, and its space before. */
+export interface GhidraPreparedBlock {
+  readonly name: string;
+  readonly address: string;
+  readonly size: string;
+  readonly space_before: string;
+  readonly space_after: string;
+}
+
+/**
+ * Outcome the pre-analysis script records for the bridge handshake. It echoes
+ * the blocks it found, so the client compares them with the committed sections.
+ */
 export type GhidraRiscvLoadPreparationReport =
   | {
       readonly policy: typeof GHIDRA_RISCV_LOAD_PREPARATION;
       readonly outcome: "moved";
+      readonly code: GhidraPreparedBlock & { readonly file_offset: string };
+      readonly reservation: GhidraPreparedBlock;
       readonly functions: number;
       readonly entry_points: number;
       readonly reservation_labels: number;
@@ -101,6 +116,7 @@ export type GhidraRiscvLoadPreparationReport =
   | {
       readonly policy: typeof GHIDRA_RISCV_LOAD_PREPARATION;
       readonly outcome: "canonical";
+      readonly code: GhidraPreparedBlock & { readonly file_offset: string };
     }
   | {
       readonly policy: typeof GHIDRA_RISCV_LOAD_PREPARATION;
@@ -177,6 +193,16 @@ const ghidraRiscvIsaRefusal = (
       ].join(", ")} with p-code; see docs/ghidra-riscv.md.`;
 };
 
+const sectionLabel = (extent: ElfSectionExtent): string =>
+  extent.name === null ? `section [${extent.index}]` : `\`${extent.name}\``;
+
+const witnessLabel = (witness: ElfSectionWitness): string =>
+  `${sectionLabel(witness)} (${[
+    ...(witness.executable ? ["executable"] : []),
+    ...(witness.nobits ? ["NOBITS"] : []),
+    `${witness.address}, ${witness.size} bytes`,
+  ].join(", ")})`;
+
 /**
  * Every lane needs the section table: a section that shares an executable
  * section's addresses decides where Ghidra 12.1.4 loads that code.
@@ -188,9 +214,9 @@ const ghidraRiscvSectionOverlapRefusal = (
     return "This RISC-V lane requires the image's section table, which was not inspected; overlapping sections decide where Ghidra loads code.";
   if (overlap.status === "unavailable")
     return `This RISC-V lane requires a readable section table: ${overlap.reason}.`;
-  return overlap.status === "unsupported"
-    ? `${overlap.reason} See docs/ghidra-riscv.md.`
-    : null;
+  if (overlap.status !== "unsupported") return null;
+  const [first, second] = overlap.witnesses;
+  return `Sections ${witnessLabel(first)} and ${witnessLabel(second)} share addresses, so Ghidra 12.1.4's ELF loader would put one of them in an overlay address space. This lane prepares only one NOBITS section that starts at an executable PROGBITS section's address and covers it, with no other section overlapping either; see docs/ghidra-riscv.md.`;
 };
 
 /**
@@ -407,8 +433,27 @@ export const ghidraRiscvCallingConventionLimitations = (
   ];
 };
 
-const sectionLabel = (extent: ElfSectionExtent): string =>
-  extent.name === null ? `section [${extent.index}]` : `\`${extent.name}\``;
+/** The first echoed coordinate that differs from the committed section. */
+const preparedMismatch = (
+  committed: ElfSectionExtent & { readonly offset?: string },
+  block: GhidraPreparedBlock & { readonly file_offset?: string },
+): string | undefined => {
+  // An unreadable section name leaves the block name unchecked.
+  const differing = (
+    [
+      ["name", committed.name, block.name],
+      ["address", committed.address, block.address],
+      ["size", committed.size, block.size],
+      ["file offset", committed.offset, block.file_offset],
+    ] as const
+  ).find(
+    ([, expected, reported]) =>
+      expected !== null && expected !== undefined && expected !== reported,
+  );
+  return differing === undefined
+    ? undefined
+    : `${sectionLabel(committed)}: Ghidra's block reports ${differing[0]} ${String(differing[2])}, not ${String(differing[1])}`;
+};
 
 /** Fail closed unless the pre-analysis script applied exactly the committed preparation. */
 export const ghidraRiscvLoadPreparationFailure = (
@@ -423,9 +468,16 @@ export const ghidraRiscvLoadPreparationFailure = (
     return `The Ghidra session did not report the committed RISC-V load preparation ${expected.policy}.`;
   if ("refused" in report)
     return `REA could not prepare Ghidra's memory map for ${sectionLabel(expected.code)}: ${report.refused}`;
-  return report.policy === expected.policy
+  if (report.policy !== expected.policy)
+    return `The Ghidra session did not report the committed RISC-V load preparation ${expected.policy}.`;
+  const mismatch =
+    preparedMismatch(expected.code, report.code) ??
+    (report.outcome === "moved"
+      ? preparedMismatch(expected.reservation, report.reservation)
+      : undefined);
+  return mismatch === undefined
     ? undefined
-    : `The Ghidra session did not report the committed RISC-V load preparation ${expected.policy}.`;
+    : `The RISC-V load preparation did not act on the committed sections. ${mismatch}.`;
 };
 
 /** State the preparation REA applies, and its outcome once the bridge reports it. */
@@ -435,16 +487,13 @@ export const ghidraRiscvLoadPreparationLimitations = (
 ): readonly string[] => {
   if (expected === undefined) return [];
   const code = sectionLabel(expected.code);
+  const reservation = sectionLabel(expected.reservation);
   return [
-    `RISC-V ELF load layout: NOBITS section ${sectionLabel(expected.reservation)} reserves the addresses of executable section ${code} (${expected.code.address}, ${expected.code.size} bytes). Ghidra 12.1.4's ELF loader puts such code in an overlay address space, which its DWARF import, call-frame entries and default-space references do not reach. Before analysis REA moves ${code} into the default address space with the same file bytes, and keeps the reservation as an uninitialized overlay; see docs/ghidra-riscv.md.`,
-    ...(report === undefined || "refused" in report
-      ? []
+    `RISC-V ELF load layout: NOBITS section ${reservation} reserves the addresses of executable section ${code} (${expected.code.address}, ${expected.code.size} bytes). When the reservation follows the code in the section table, Ghidra 12.1.4's ELF loader puts the code in an overlay address space, which its DWARF import, call-frame entries and default-space references do not reach; see docs/ghidra-riscv.md.`,
+    report === undefined || "refused" in report
+      ? `Before analysis REA moves ${code} out of such an overlay into the default address space, with the same file bytes and offsets, and keeps ${reservation} as an uninitialized overlay.`
       : report.outcome === "moved"
-        ? [
-            `RISC-V load preparation outcome: ${code} moved into the default address space (functions: ${report.functions}, entry points: ${report.entry_points}); reservation labels moved into its overlay: ${report.reservation_labels}.`,
-          ]
-        : [
-            `RISC-V load preparation outcome: Ghidra already loaded ${code} in the default address space, so REA changed nothing.`,
-          ]),
+        ? `RISC-V load preparation outcome: before analysis REA moved ${code} from overlay space \`${report.code.space_before}\` into default space \`${report.code.space_after}\`, with the same file bytes and offsets, and kept ${reservation} as uninitialized overlay space \`${report.reservation.space_after}\`. Functions in the moved block: ${report.functions}; entry points: ${report.entry_points}; labels in the overlay: ${report.reservation_labels}.`
+        : `RISC-V load preparation outcome: Ghidra loaded ${code} in default space \`${report.code.space_after}\`, so REA changed nothing.`,
   ];
 };

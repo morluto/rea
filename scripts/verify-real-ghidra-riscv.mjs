@@ -547,33 +547,48 @@ try {
   assert.deepEqual(resolvedEsp.value.riscv, esp.riscv);
   const { code, reservation } = esp.riscv.sectionOverlap;
   const plan = { policy: "nobits-reservation-overlay-v1", code, reservation };
-  const espLimitations = new Set();
-  const espCall = async (name, args = {}) => {
-    const reply = await client.callTool(
-      { name, arguments: args },
-      { timeout: 240000 },
-    );
-    const lifecycle = ["open_binary", "close_binary"].includes(name);
-    const admitted = lifecycle
-      ? requireMcpLifecycleResult(reply, name)
-      : parseEvidence(requireMcpOutput(reply, name));
-    const validate = validators.get(name);
-    assert.ok(
-      validate(JSON.parse(mcpTextValue(reply))),
-      `${name}: ${JSON.stringify(validate.errors)}`,
-    );
-    if (lifecycle) return admitted;
-    assert.equal(admitted.subject.digest.sha256, esp.sha256);
-    if (admitted.provider.id === "ghidra") {
-      assert.deepEqual(
-        admitted.analysis_profile.parameters.elf_load_preparation,
-        plan,
+  // ESP-IDF's text bounds are absolute; the reservation's label is not.
+  assert.equal(esp.linkerSymbols._text_start?.section, "ABS");
+  assert.equal(esp.linkerSymbols._text_end?.section, "ABS");
+  assert.equal(
+    esp.linkerSymbols._flash_rodata_dummy_start?.section,
+    reservation.index,
+  );
+  /** MCP calls on an ESP layout, collecting the limitations Ghidra reports. */
+  const layoutCaller =
+    (fixture, limitations) =>
+    async (name, args = {}) => {
+      const reply = await client.callTool(
+        { name, arguments: args },
+        { timeout: 240000 },
       );
-      for (const limitation of admitted.limitations)
-        espLimitations.add(limitation);
-    }
-    return admitted.normalized_result;
-  };
+      const lifecycle = ["open_binary", "close_binary"].includes(name);
+      const admitted = lifecycle
+        ? requireMcpLifecycleResult(reply, name)
+        : parseEvidence(requireMcpOutput(reply, name));
+      const validate = validators.get(name);
+      assert.ok(
+        validate(JSON.parse(mcpTextValue(reply))),
+        `${name}: ${JSON.stringify(validate.errors)}`,
+      );
+      if (lifecycle) return admitted;
+      assert.equal(admitted.subject.digest.sha256, fixture.sha256);
+      if (admitted.provider.id === "ghidra") {
+        assert.deepEqual(
+          admitted.analysis_profile.parameters.elf_load_preparation,
+          {
+            policy: "nobits-reservation-overlay-v1",
+            code: fixture.riscv.sectionOverlap.code,
+            reservation: fixture.riscv.sectionOverlap.reservation,
+          },
+        );
+        for (const limitation of admitted.limitations)
+          limitations.add(limitation);
+      }
+      return admitted.normalized_result;
+    };
+  const espLimitations = new Set();
+  const espCall = layoutCaller(esp, espLimitations);
   await espCall("open_binary", { path: esp.path, provider_id: "ghidra" });
   const espImage = await espCall("inspect_native_load_image");
   const blocks = (name) =>
@@ -595,6 +610,56 @@ try {
     ),
     "Initialized executable code remains in an overlay",
   );
+  // Only the moved block maps the code's file bytes.
+  assert.deepEqual(
+    espImage.observations.mappings
+      .filter(
+        (value) =>
+          value.file_offset !== null &&
+          value.file_offset <= text.file_offset &&
+          text.file_offset < value.file_offset + value.length,
+      )
+      .map((value) => value.block),
+    [code.name],
+  );
+  // Ghidra marks every global ELF symbol as an entry point. None remains in
+  // an overlay: flash entry points move with the code, and the reservation's
+  // label marks none.
+  const entries = espImage.observations.entry_points;
+  assert.ok(
+    entries.every((value) => /^0x[\da-f]+$/u.test(value)),
+    JSON.stringify(entries),
+  );
+  for (const name of [
+    "rea_riscv_esp_main",
+    "rea_riscv_esp_restart",
+    "rea_riscv_esp_sum",
+    "rea_riscv_esp_next",
+  ])
+    assert.ok(
+      entries.includes(esp.symbols[name]),
+      `${name} lost its entry mark`,
+    );
+  assert.ok(entries.includes(esp.linkerSymbols._text_end.address));
+  const codeEnd = BigInt(code.address) + BigInt(code.size);
+  const codeEntries = entries.filter(
+    (value) => BigInt(value) >= BigInt(code.address) && BigInt(value) < codeEnd,
+  ).length;
+  const espNames = await espCall("list_names");
+  const nameAt = (name) =>
+    espNames
+      .filter((value) => value.value === name)
+      .map((value) => value.address);
+  // Pinned absolute symbols keep their default-space addresses.
+  assert.deepEqual(nameAt("_text_start"), [code.address]);
+  assert.deepEqual(nameAt("_text_end"), [esp.linkerSymbols._text_end.address]);
+  assert.equal(
+    esp.linkerSymbols._text_end.address,
+    `0x${codeEnd.toString(16)}`,
+  );
+  assert.deepEqual(nameAt("_flash_rodata_dummy_start"), [
+    `${reservation.name}:${reservation.address}`,
+  ]);
   const espProcedures = await espCall("list_procedures");
   // Every procedure, flash code included, keeps its ELF address in the default space.
   assert.ok(
@@ -638,21 +703,48 @@ try {
   const espMapping = await espCall("address_to_file_offset", {
     address: esp.symbols.rea_riscv_esp_main,
   });
-  assert.equal(
-    BigInt(espMapping.file_offset),
+  const mainOffset =
     BigInt(code.offset) +
-      BigInt(esp.symbols.rea_riscv_esp_main) -
-      BigInt(code.address),
-  );
-  await espCall("close_binary");
-  const outcome = [...espLimitations].find((value) =>
-    value.startsWith("RISC-V load preparation outcome:"),
-  );
+    BigInt(esp.symbols.rea_riscv_esp_main) -
+    BigInt(code.address);
+  assert.equal(BigInt(espMapping.file_offset), mainOffset);
+  // One block maps each file offset, so a file-offset selector is not ambiguous.
   assert.match(
-    outcome ?? "",
-    // The fixture's four flash functions move; its IRAM entry stays.
-    /`\.flash\.text` moved into the default address space \(functions: 4, entry points: \d+\); reservation labels moved into its overlay: \d+\./u,
+    await espCall("procedure_pseudo_code", {
+      procedure: `file-offset:0x${mainOffset.toString(16)}`,
+    }),
+    /\brea_riscv_esp_main\s*\(void\)/u,
   );
+  const espSnapshotPath = join(workspace, "rv32-esp.snapshot.json");
+  const espSaved = await espCall("close_binary", {
+    snapshot_path: espSnapshotPath,
+  });
+  assert.ok(espSaved.evidence_records > 0);
+  const espSnapshot = parseAnalysisSnapshot(
+    JSON.parse(await readFile(espSnapshotPath, "utf8")),
+  );
+  assert.equal(espSnapshot.target.sha256, esp.sha256);
+  assert.deepEqual(
+    espSnapshot.binding.analysis_profile.parameters.elf_load_preparation,
+    plan,
+  );
+  const space = espImage.observations.default_address_space;
+  const outcome = `RISC-V load preparation outcome: before analysis REA moved \`${code.name}\` from overlay space \`${code.name}\` into default space \`${space}\`, with the same file bytes and offsets, and kept \`${reservation.name}\` as uninitialized overlay space \`${reservation.name}\`. Functions in the moved block: 4; entry points: ${codeEntries}; labels in the overlay: 1.`;
+  // The fixture's four flash functions move; its IRAM entry stays.
+  assert.ok(espLimitations.has(outcome), [...espLimitations].join("\n"));
+  assert.ok(
+    espSnapshot.evidence_bundle.records.some((record) =>
+      parseEvidence(record).limitations.includes(outcome),
+    ),
+    "The preparation outcome is missing from retained Evidence",
+  );
+  await espCall("open_binary", {
+    path: esp.path,
+    provider_id: "ghidra",
+    snapshot_path: espSnapshotPath,
+  });
+  assert.deepEqual(await espCall("list_procedures"), espProcedures);
+  await espCall("close_binary");
   assert.ok(
     [...espLimitations].some((value) =>
       value.startsWith(
@@ -696,7 +788,9 @@ try {
     shrunk.readUInt32LE(32) + reservation.index * 40 + 20,
   );
   await writeFile(shrunkPath, shrunk);
-  const refusal = "REA prepares only a NOBITS section";
+  const refusal = `\`${reservation.name}\` (NOBITS, ${reservation.address}, 0x${(
+    BigInt(code.size) - 2n
+  ).toString(16)} bytes) share addresses`;
   const refused = requireMcpToolError(
     await client.callTool(
       {
@@ -726,11 +820,108 @@ try {
       cause.code !== 0 &&
       `${cause.stdout}\n${cause.stderr}`.includes(refusal),
   );
+  // The pre-analysis script refuses a code block whose file mapping is not the
+  // committed one; REA's admission would never commit this plan.
+  const javaRefusal = join(workspace, "java-refusal");
+  await mkdir(join(javaRefusal, "tmp"), { recursive: true });
+  const headless = await execute(
+    join(installation.installDir, "support", "analyzeHeadless"),
+    [
+      javaRefusal,
+      "refusal",
+      "-import",
+      esp.path,
+      "-processor",
+      "RISCV:LE:32:default",
+      "-cspec",
+      "gcc",
+      "-noanalysis",
+      "-scriptPath",
+      fileURLToPath(new URL("../bridge/ghidra/", import.meta.url)),
+      "-preScript",
+      "ReaGhidraPrepareElfLoad.java",
+      plan.policy,
+      code.address,
+      code.size,
+      `0x${(BigInt(code.offset) + 1n).toString(16)}`,
+      reservation.address,
+      reservation.size,
+      "-deleteProject",
+    ],
+    {
+      env: { ...env, TMPDIR: join(javaRefusal, "tmp") },
+      timeout: 300000,
+      maxBuffer: 16 * 1024 * 1024,
+    },
+  );
+  assert.ok(
+    `${headless.stdout}\n${headless.stderr}`.includes(
+      `REA ELF load preparation refused: Ghidra has 0 initialized executable blocks for the committed executable section ${code.address} (${code.size} bytes at file offset 0x${(BigInt(code.offset) + 1n).toString(16)})`,
+    ),
+    headless.stdout,
+  );
   assert.equal(
     createHash("sha256")
       .update(await readFile(esp.path))
       .digest("hex"),
     esp.sha256,
+  );
+
+  // With the reservation first, Ghidra already loads the code in the default
+  // space, and the preparation changes nothing.
+  const first = await buildRiscvFixture(workspace, 32, "esp-reservation-first");
+  assert.equal(first.riscv.sectionOverlap.status, "code-reservation");
+  assert.ok(
+    first.riscv.sectionOverlap.reservation.index <
+      first.riscv.sectionOverlap.code.index,
+  );
+  const firstLimitations = new Set();
+  const firstCall = layoutCaller(first, firstLimitations);
+  await firstCall("open_binary", { path: first.path, provider_id: "ghidra" });
+  const firstImage = await firstCall("inspect_native_load_image");
+  const [firstText] = firstImage.observations.mappings.filter(
+    (value) => value.block === code.name,
+  );
+  assert.equal(firstText?.overlay, false);
+  assert.equal(firstText.start, first.riscv.sectionOverlap.code.address);
+  const firstProcedures = await firstCall("list_procedures");
+  for (const name of ["rea_riscv_esp_main", "rea_riscv_esp_sum"])
+    assert.equal(
+      firstProcedures.find((value) => value.value === name)?.address,
+      first.symbols[name],
+    );
+  await firstCall("close_binary");
+  assert.ok(
+    firstLimitations.has(
+      `RISC-V load preparation outcome: Ghidra loaded \`${code.name}\` in default space \`${firstImage.observations.default_address_space}\`, so REA changed nothing.`,
+    ),
+    [...firstLimitations].join("\n"),
+  );
+  assert.ok(
+    ![...firstLimitations].some((value) => /REA (?:moves|moved)/u.test(value)),
+  );
+
+  // A double-float lane reads no ISA declaration, but REA still refuses an
+  // image whose section table it cannot read.
+  const [double32] = fixtures;
+  const double32Bytes = await readFile(double32.path);
+  const truncatedPath = join(workspace, "rv32-truncated-section-table.elf");
+  await writeFile(
+    truncatedPath,
+    double32Bytes.subarray(0, double32Bytes.readUInt32LE(32) + 2 * 40),
+  );
+  const truncated = requireMcpToolError(
+    await client.callTool(
+      {
+        name: "open_binary",
+        arguments: { path: truncatedPath, provider_id: "ghidra" },
+      },
+      { timeout: 240000 },
+    ),
+  );
+  assert.ok(
+    JSON.stringify(truncated).includes("truncated ELF section header table"),
+    JSON.stringify(truncated),
   );
   reports.push({
     esp_layout: {
@@ -741,7 +932,17 @@ try {
       sources: esp.sources,
       preparation: outcome,
       procedures: espProcedures.length,
+      entry_points: entries.length,
+      snapshot_replay: true,
       refused_short_reservation: true,
+      refused_by_preparation_script: true,
+      reservation_first: {
+        path: first.path,
+        sha256: first.sha256,
+        riscv: first.riscv,
+        procedures: firstProcedures.length,
+      },
+      refused_truncated_section_table: true,
       cli: true,
       stdio_mcp: true,
       original_unchanged: true,

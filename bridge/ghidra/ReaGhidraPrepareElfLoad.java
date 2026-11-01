@@ -6,7 +6,6 @@ import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressIterator;
 import ghidra.program.model.address.AddressSet;
 import ghidra.program.model.address.AddressSpace;
-import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.Program;
 import ghidra.program.model.mem.Memory;
 import ghidra.program.model.mem.MemoryBlock;
@@ -24,14 +23,16 @@ import java.util.List;
  * space before auto-analysis (docs/ghidra-riscv.md). Ghidra 12.1.4's ELF loader resolves the
  * overlap in favour of the later section, so ESP-IDF's .flash_rodata_dummy keeps the default space
  * and .flash.text lands in an overlay, which DWARF import, call-frame entries and default-space
- * references never reach. REA's TypeScript admission commits both sections; any other memory map
- * is refused, and bytes and file mappings stay as imported.
+ * references never reach. REA's TypeScript admission commits both sections, and the script refuses
+ * any other memory map. The file bytes and their offsets do not change.
  */
 public final class ReaGhidraPrepareElfLoad extends GhidraScript {
     static final String POLICY = "nobits-reservation-overlay-v1";
     static final String REPORT_KEY = "REA ELF load preparation";
+    /** The handshake bounds a refusal; this leaves room for the context around a failure. */
+    private static final int FAILURE_DETAIL_MAX = 512;
 
-    private record Label(String name, long offset, Namespace namespace, SourceType source, boolean entry) {}
+    private record Label(String name, long offset, Namespace namespace, SourceType source) {}
 
     @Override
     public void run() throws Exception {
@@ -83,7 +84,9 @@ public final class ReaGhidraPrepareElfLoad extends GhidraScript {
             return;
         }
         if (!code.isOverlay() && reservation == null) {
-            report("canonical", null);
+            JsonObject result = new JsonObject();
+            result.add("code", echoCode(code, code.getStart().getAddressSpace().getName()));
+            report("canonical", result);
             return;
         }
         if (!code.isOverlay() || reservation == null) {
@@ -93,17 +96,26 @@ public final class ReaGhidraPrepareElfLoad extends GhidraScript {
                 : " in the default space beside a reservation block"));
             return;
         }
-        report("moved", swap(code, reservation, file, codeOffset));
+        JsonObject moved;
+        try {
+            moved = swap(code, reservation, file, codeOffset, committed);
+        }
+        catch (Exception failure) {
+            // A failed swap can leave the program half moved: REA must not analyze it.
+            refuse("Ghidra failed while moving the committed " + committed + ": " + detail(failure));
+            throw failure;
+        }
+        if (moved != null) report("moved", moved);
     }
 
     /**
      * Ghidra 12.1.4 constraints: Memory.moveBlock keeps a block in its address space, and the
      * native decompiler stops registering programs once any overlay space is removed. The code
      * therefore moves by re-creating its block and moving program content, and its overlay space
-     * becomes the reservation's.
+     * becomes the reservation's. Returns null after a refusal.
      */
-    private JsonObject swap(MemoryBlock code, MemoryBlock reservation, FileBytes file, long fileOffset)
-            throws Exception {
+    private JsonObject swap(MemoryBlock code, MemoryBlock reservation, FileBytes file, long fileOffset,
+            String committed) throws Exception {
         Memory memory = currentProgram.getMemory();
         SymbolTable symbols = currentProgram.getSymbolTable();
         AddressSpace space = currentProgram.getAddressFactory().getDefaultAddressSpace();
@@ -112,22 +124,21 @@ public final class ReaGhidraPrepareElfLoad extends GhidraScript {
         String codeName = code.getName();
         String reservationName = reservation.getName();
         String overlayName = code.getStart().getAddressSpace().getName();
-        // moveAddressRange moves symbols and functions; entry points are references into the range.
-        List<Long> codeEntries = entryOffsets(code);
+        AddressSet old = range(code);
+        List<Address> codeEntries = entryPoints(code);
         List<Label> labels = new ArrayList<>();
-        List<Long> pinnedEntries = new ArrayList<>();
+        List<Address> pinnedEntries = new ArrayList<>();
         for (Symbol symbol : symbols.getSymbols(range(reservation), SymbolType.LABEL, true)) {
             // Ghidra pins absolute ELF symbols: they keep their default-space address.
             if (symbol.isPinned()) {
-                if (symbol.isExternalEntryPoint()) pinnedEntries.add(symbol.getAddress().getOffset());
+                if (symbol.isExternalEntryPoint()) pinnedEntries.add(symbol.getAddress());
                 continue;
             }
             labels.add(new Label(
                 symbol.getName(),
                 symbol.getAddress().getOffset(),
                 symbol.getParentNamespace(),
-                symbol.getSource(),
-                symbol.isExternalEntryPoint()
+                symbol.getSource()
             ));
         }
         boolean reservationRead = reservation.isRead();
@@ -143,6 +154,15 @@ public final class ReaGhidraPrepareElfLoad extends GhidraScript {
         canonical.setComment(code.getComment());
         canonical.setSourceName(code.getSourceName());
         ((ProgramDB) currentProgram).moveAddressRange(code.getStart(), canonical.getStart(), size, monitor);
+        // The move takes symbols, functions and the references from the range, not the references
+        // into it. Entry points are such references.
+        for (Address entry : codeEntries) symbols.removeExternalEntryPoint(entry);
+        boolean symbolsLeft = symbols.getPrimarySymbolIterator(old, true).hasNext();
+        if (symbolsLeft || currentProgram.getReferenceManager().getReferenceDestinationIterator(old, true).hasNext()) {
+            refuse("Ghidra left " + (symbolsLeft ? "symbols" : "references") + " in overlay space " + overlayName +
+                " after moving the committed " + committed);
+            return null;
+        }
         // The emptied overlay block becomes the reservation: no bytes and no file mapping.
         MemoryBlock displaced = memory.convertToUninitialized(code);
         if (reservationSize > size) {
@@ -157,23 +177,37 @@ public final class ReaGhidraPrepareElfLoad extends GhidraScript {
         if (reservationSource != null) displaced.setSourceName(reservationSource);
         currentProgram.renameOverlaySpace(overlayName, reservationName);
         canonical.setName(codeName);
-        for (long offset : codeEntries) symbols.addExternalEntryPoint(space.getAddress(offset));
-        for (long offset : pinnedEntries) symbols.addExternalEntryPoint(space.getAddress(offset));
+        for (Address entry : codeEntries) symbols.addExternalEntryPoint(space.getAddress(entry.getOffset()));
+        for (Address entry : pinnedEntries) symbols.addExternalEntryPoint(entry);
         AddressSpace overlay = displaced.getStart().getAddressSpace();
+        // The reservation holds no code, so its labels mark no entry points.
         for (Label label : labels) {
-            Address at = overlay.getAddress(label.offset());
-            symbols.createLabel(at, label.name(), label.namespace(), label.source());
-            if (label.entry()) symbols.addExternalEntryPoint(at);
-        }
-        int functions = 0;
-        for (Function ignored : currentProgram.getFunctionManager().getFunctions(range(canonical), true)) {
-            functions++;
+            symbols.createLabel(overlay.getAddress(label.offset()), label.name(), label.namespace(), label.source());
         }
         JsonObject outcome = new JsonObject();
-        outcome.addProperty("functions", functions);
-        outcome.addProperty("entry_points", codeEntries.size());
-        outcome.addProperty("reservation_labels", labels.size());
+        outcome.add("code", echoCode(canonical, overlayName));
+        outcome.add("reservation", echo(displaced, space.getName()));
+        outcome.addProperty("functions", count(currentProgram.getFunctionManager().getFunctions(range(canonical), true)));
+        outcome.addProperty("entry_points", entryPoints(canonical).size());
+        outcome.addProperty("reservation_labels", count(symbols.getSymbols(range(displaced), SymbolType.LABEL, true)));
         return outcome;
+    }
+
+    /** A block as the script left it, for the client to compare with the committed section. */
+    private static JsonObject echo(MemoryBlock block, String spaceBefore) {
+        JsonObject result = new JsonObject();
+        result.addProperty("name", block.getName());
+        result.addProperty("address", hex(block.getStart().getOffset()));
+        result.addProperty("size", hex(block.getSize()));
+        result.addProperty("space_before", spaceBefore);
+        result.addProperty("space_after", block.getStart().getAddressSpace().getName());
+        return result;
+    }
+
+    private static JsonObject echoCode(MemoryBlock block, String spaceBefore) {
+        JsonObject result = echo(block, spaceBefore);
+        result.addProperty("file_offset", hex(block.getSourceInfos().get(0).getFileBytesOffset()));
+        return result;
     }
 
     private void report(String outcome, JsonObject counts) {
@@ -204,17 +238,29 @@ public final class ReaGhidraPrepareElfLoad extends GhidraScript {
             source.getFileBytesOffset() == offset && source.getLength() == block.getSize();
     }
 
-    private List<Long> entryOffsets(MemoryBlock block) {
-        List<Long> offsets = new ArrayList<>();
+    private List<Address> entryPoints(MemoryBlock block) {
+        List<Address> found = new ArrayList<>();
         AddressIterator entries = currentProgram.getSymbolTable().getExternalEntryPointIterator();
         while (entries.hasNext()) {
             Address entry = entries.next();
             // An overlay block also contains its base space's addresses at the same offsets.
             if (entry.getAddressSpace().equals(block.getStart().getAddressSpace()) && block.contains(entry)) {
-                offsets.add(entry.getOffset());
+                found.add(entry);
             }
         }
-        return offsets;
+        return found;
+    }
+
+    private static int count(Iterable<?> values) {
+        int count = 0;
+        for (Object ignored : values) count++;
+        return count;
+    }
+
+    private static String detail(Exception failure) {
+        String text = failure.getClass().getSimpleName() +
+            (failure.getMessage() == null ? "" : ": " + failure.getMessage());
+        return text.length() <= FAILURE_DETAIL_MAX ? text : text.substring(0, FAILURE_DETAIL_MAX);
     }
 
     private static AddressSet range(MemoryBlock block) {

@@ -175,18 +175,36 @@ describe("Ghidra RISC-V calling-convention report", () => {
 });
 
 describe("Ghidra RISC-V load preparation report", () => {
+  const code = {
+    name: ".flash.text",
+    address: "0x42000020",
+    size: "0xfff2",
+    file_offset: "0xc020",
+    space_before: ".flash.text",
+    space_after: "ram",
+  };
   const moved = {
     policy: "nobits-reservation-overlay-v1",
     outcome: "moved",
+    code,
+    reservation: {
+      name: ".flash_rodata_dummy",
+      address: "0x42000020",
+      size: "0x18000",
+      space_before: "ram",
+      space_after: ".flash_rodata_dummy",
+    },
     functions: 549,
     entry_points: 331,
     reservation_labels: 1,
   };
+  const { reservation: _reservation, ...withoutReservation } = moved;
+  const { file_offset: _fileOffset, ...withoutOffset } = code;
   it.each([
     ["a moved outcome", moved],
     [
       "a canonical outcome",
-      { policy: "nobits-reservation-overlay-v1", outcome: "canonical" },
+      { policy: "nobits-reservation-overlay-v1", outcome: "canonical", code },
     ],
     [
       "a refusal",
@@ -207,6 +225,12 @@ describe("Ghidra RISC-V load preparation report", () => {
     ],
     ["an unknown outcome", { ...moved, outcome: "partial" }],
     ["a negative count", { ...moved, entry_points: -1 }],
+    ["a moved outcome without its reservation", withoutReservation],
+    ["a code block without its file offset", { ...moved, code: withoutOffset }],
+    [
+      "a non-hex address",
+      { ...moved, code: { ...code, address: "1107296288" } },
+    ],
     ["counts on a canonical outcome", { ...moved, outcome: "canonical" }],
     ["an empty refusal", { policy: moved.policy, refused: "" }],
     ["an outcome beside a refusal", { ...moved, refused: "no reservation" }],

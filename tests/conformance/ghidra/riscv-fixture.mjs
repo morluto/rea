@@ -37,6 +37,15 @@ const BUILDS = {
     entry: "rea_riscv_esp_entry",
     linkerScript: "../esp/esp32c6-shared-window.ld",
   },
+  // The same image with the reservation first in the section table.
+  "esp-reservation-first": {
+    sources: ["../c/riscv-esp-layout.c"],
+    march: () => "rv32imac_zicsr_zifencei",
+    mabi: () => "ilp32",
+    flags: 1,
+    entry: "rea_riscv_esp_entry",
+    linkerScript: "../esp/esp32c6-reservation-first.ld",
+  },
 };
 
 const readerOptions = {
@@ -209,6 +218,17 @@ export async function buildRiscvFixture(directory, bits, variant = "double") {
     assert.equal(symbols[name], undefined, `Ambiguous readelf symbol ${name}`);
     symbols[name] = `0x${BigInt(`0x${value}`).toString(16)}`;
   }
+  // Linker-script symbols, with the section index or ABS that readelf reports.
+  const linkerSymbols = {};
+  for (const [, value, section, name] of elf.stdout.matchAll(
+    /^\s*\d+:\s+([\da-f]+)\s+0\s+NOTYPE\s+GLOBAL\s+\S+\s+(ABS|\d+)\s+(_\w+)\s*$/gmu,
+  )) {
+    assert.equal(linkerSymbols[name], undefined, `Ambiguous symbol ${name}`);
+    linkerSymbols[name] = {
+      address: `0x${BigInt(`0x${value}`).toString(16)}`,
+      section: section === "ABS" ? section : Number(section),
+    };
+  }
   return {
     path,
     sha256: await sha256(path),
@@ -221,6 +241,7 @@ export async function buildRiscvFixture(directory, bits, variant = "double") {
       sectionOverlap: sectionOverlapOf(elf.sections),
     },
     symbols,
+    linkerSymbols,
     sections: elf.sections,
     toolchain: {
       compiler: { command: compiler, version: compilerVersion.stdout.trim() },

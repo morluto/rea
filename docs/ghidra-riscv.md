@@ -33,21 +33,22 @@ that ISA.
 Provider selection returns the specific unsupported constraint rather than
 guessing a compatible profile:
 
-| Declaration                                                                       | Outcome                                                                                                              |
-| --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| Little-endian ELF64 `ET_EXEC`, double-float ABI                                   | admitted, `RISCV:LE:64:default` + `gcc`, lane `elf64-exec-le-double-float-generic-v1`                                |
-| Little-endian ELF32 `ET_EXEC`, double-float ABI                                   | admitted, `RISCV:LE:32:default` + `gcc`, lane `elf32-exec-le-double-float-generic-v1`                                |
-| Little-endian ELF32 `ET_EXEC`, soft-float ABI, decoded extensions only            | admitted, `RISCV:LE:32:default` + `gcc` with the `__rea_ilp32` prototype, lane `elf32-exec-le-soft-float-generic-v1` |
-| ELF32 soft-float ABI without `Tag_RISCV_arch`, or with any other extension        | refused; the reason names the extensions outside the decoded set                                                     |
-| ELF32 single-float ABI (ilp32f)                                                   | refused until its [written policy](#ilp32f) is implemented and verified                                              |
-| ELF64 soft- or single-float ABI (lp64, lp64f), or the quad-float ABI              | refused; no verified calling-convention policy                                                                       |
-| Big-endian                                                                        | refused; Ghidra 12.1.4 ships no big-endian RISC-V language                                                           |
-| `ET_REL`, `ET_DYN`, other `e_type`                                                | refused with the declared value                                                                                      |
-| `EF_RISCV_RVE`                                                                    | refused; the embedded 16-register profile (x0–x15) needs its own processor specification                             |
-| `EF_RISCV_TSO`                                                                    | refused; the total-store-order memory model is unverified here                                                       |
-| Reserved or newer `e_flags` bits                                                  | refused with the offending bits named                                                                                |
-| A NOBITS section that starts with one executable section and covers it            | admitted in its lane; REA prepares the [memory map](#load-layout) before analysis                                    |
-| Any other section overlap involving executable code, or no readable section table | refused; the reason names both sections                                                                              |
+| Declaration                                                                | Outcome                                                                                                              |
+| -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Little-endian ELF64 `ET_EXEC`, double-float ABI                            | admitted, `RISCV:LE:64:default` + `gcc`, lane `elf64-exec-le-double-float-generic-v1`                                |
+| Little-endian ELF32 `ET_EXEC`, double-float ABI                            | admitted, `RISCV:LE:32:default` + `gcc`, lane `elf32-exec-le-double-float-generic-v1`                                |
+| Little-endian ELF32 `ET_EXEC`, soft-float ABI, decoded extensions only     | admitted, `RISCV:LE:32:default` + `gcc` with the `__rea_ilp32` prototype, lane `elf32-exec-le-soft-float-generic-v1` |
+| ELF32 soft-float ABI without `Tag_RISCV_arch`, or with any other extension | refused; the reason names the extensions outside the decoded set                                                     |
+| ELF32 single-float ABI (ilp32f)                                            | refused until its [written policy](#ilp32f) is implemented and verified                                              |
+| ELF64 soft- or single-float ABI (lp64, lp64f), or the quad-float ABI       | refused; no verified calling-convention policy                                                                       |
+| Big-endian                                                                 | refused; Ghidra 12.1.4 ships no big-endian RISC-V language                                                           |
+| `ET_REL`, `ET_DYN`, other `e_type`                                         | refused with the declared value                                                                                      |
+| `EF_RISCV_RVE`                                                             | refused; the embedded 16-register profile (x0–x15) needs its own processor specification                             |
+| `EF_RISCV_TSO`                                                             | refused; the total-store-order memory model is unverified here                                                       |
+| Reserved or newer `e_flags` bits                                           | refused with the offending bits named                                                                                |
+| One NOBITS section covering a code section from its start                  | admitted if no other section overlaps either; REA prepares the [memory map](#load-layout) before analysis            |
+| Any other section overlap involving executable code                        | refused; the reason names the two sections that cause the refusal, with their ranges                                 |
+| A section table that cannot be read                                        | refused with the read failure; REA rejects most malformed tables when it opens the file                              |
 
 `e_type` and the [section overlaps](#load-layout) are the load-shape
 declarations this lane reads; program headers are not. A fixed-address
@@ -249,18 +250,20 @@ other extension is refused. In particular:
 ESP-IDF builds ESP32-C2 and C3 images as `rv32imc_zicsr_zifencei` and ESP32-C5,
 C6, C61, H2 and H21 images as `rv32imac_zicsr_zifencei_zaamo_zalrsc`, all ilp32.
 Those base strings are admitted. Builds that add `_zba_zbb_zbs`,
-`_zcb_zcmp_zcmt` or an `xesp` extension are refused. The C5, C6, C61, H2 and
-H21 images also reserve their flash text's addresses; see
-[load layout](#load-layout).
+`_zcb_zcmp_zcmt` or an `xesp` extension are refused. These images also reserve
+their flash text's addresses; [load layout](#load-layout) states which layouts
+the lane admits.
 
 ## Load layout
 
 Section addresses are load addresses in a fixed-address image, so the target
 reader also records any allocated range that an executable section shares with
-another section. ESP-IDF builds one such overlap. For ESP32-C5, C6, C61, H2, H21
+another section. ESP-IDF builds such overlaps. For ESP32-C5, C6, C61, H2, H21
 and H4, flash text and rodata share one virtual window from `0x42000020`, and
 the linker script reserves the text's addresses in the rodata segment with the
-NOBITS section `.flash_rodata_dummy`. Ghidra 12.1.4's ELF loader resolves
+NOBITS section `.flash_rodata_dummy`. For C5 and C61, a second NOBITS section,
+`.ext_ram.dummy`, also reserves the text and rodata addresses for external RAM.
+Ghidra 12.1.4's ELF loader resolves
 overlapping sections in favour of the later one: the reservation takes the
 default address space and `.flash.text` goes into an overlay space. Ghidra's
 DWARF importer, its call-frame (FDE) processing and references from other code
@@ -270,22 +273,40 @@ preparation, code in that overlay gets no DWARF signature, local variables or
 the reservation, and pseudocode continues past calls to no-return functions
 such as `esp_restart`.
 
-When a NOBITS section starts with one executable section and covers it, the
-lane commits both sections to the analysis profile as `elf_load_preparation`
-(policy `nobits-reservation-overlay-v1`). Before auto-analysis,
+When one NOBITS section starts at an executable PROGBITS section's address and
+covers it, and no other section overlaps either, the lane commits both sections
+to the analysis profile as `elf_load_preparation` (policy
+`nobits-reservation-overlay-v1`). Before auto-analysis,
 `ReaGhidraPrepareElfLoad.java` gives the code the default address space and the
-reservation an uninitialized overlay instead. Bytes and file offsets stay as
-imported, and the loader's symbols, functions and entry points move with the
-code. Ghidra pins absolute ELF symbols such as `_text_start`; they keep their
-addresses. Flash code therefore has its ELF address, for example `0x42002ab6`
-rather than `.flash.text:0x42002ab6`. The script reports `moved`, or `canonical`
-when Ghidra already loaded the code in the default space. Any other memory map
-is refused with the mismatch it found, and session Evidence states the
-preparation and its outcome.
+reservation an uninitialized overlay instead:
 
-Any other overlap that involves executable code, such as two code sections at
-one address or a reservation that does not cover the code, is refused with both
-sections named. Overlaps between data sections only are outside this check.
+- The file bytes and their offsets do not change. A new default-space block maps
+  the code's file range, and the overlay maps no file bytes, so each file offset
+  keeps one address.
+- The loader's symbols, functions and entry points move with the code. Ghidra
+  pins absolute ELF symbols such as `_text_start`; they keep their addresses.
+- Labels in the reservation, such as `_flash_rodata_dummy_start`, move into its
+  overlay. They mark no entry points, because the reservation holds no code.
+- Flash code therefore has its ELF address, for example `0x42002ab6` rather than
+  `.flash.text:0x42002ab6`.
+
+Before it reports `moved`, the script checks that no symbol or reference
+remains in the code's old overlay range. It reports `canonical` when Ghidra
+already loaded the code in the default space, which happens when the reservation
+comes first in the section table. Both reports echo the blocks the script left:
+names, addresses, sizes, the code's file offset and each block's address space
+before and after. REA closes the session unless those blocks are the committed
+sections. Any other memory map, and any failure during the move, is refused with
+the mismatch or failure. Session Evidence states the preparation and its
+outcome.
+
+The lane refuses any other overlap that involves executable code. Examples are
+two code sections at one address, a reservation that does not cover the code, a
+third section that overlaps the reservation, and a second reservation such as
+`.ext_ram.dummy`. The reason names the two sections that cause the refusal,
+with their ranges. Overlaps between data sections only are outside this check,
+and so are images without a section table, which Ghidra loads from their
+program headers.
 
 ## Evidence
 
@@ -297,9 +318,9 @@ booleans `float_abi_double`, `rvc_declared`, `rve_declared`, and
 report declarations the header and attributes make, and the policy REA applied;
 none of them is evidence of the original compiler or of instruction
 conformance. Session Evidence states the prototype and how many functions and
-definitions use it. An image prepared as [load layout](#load-layout) describes
-also commits `elf_load_preparation`: the policy, each section's index, name,
-address and size, and the code's file offset.
+definitions use it. An image that needs the [load layout](#load-layout)
+preparation also commits `elf_load_preparation`: the policy, each section's
+index, name, address and size, and the code's file offset.
 
 ## Verification and limits
 
@@ -323,7 +344,7 @@ REA_RISCV_OBJDUMP=/path/to/llvm/bin/llvm-objdump \
 npm run verify:ghidra:riscv
 ```
 
-The lane builds five `ET_EXEC` fixtures from committed freestanding C and
+The lane builds six `ET_EXEC` fixtures from committed freestanding C and
 assembly sources:
 
 - RV32 and RV64 double-float builds (`rv{32,64}imafdc`) of `riscv.c`.
@@ -334,7 +355,11 @@ assembly sources:
 - An RV32 soft-float build of `riscv-esp-layout.c` with ESP32-C6's
   `-march=rv32imac_zicsr_zifencei -mabi=ilp32`, linked with
   `tests/conformance/esp/esp32c6-shared-window.ld`. As ESP-IDF does, it places
-  `.flash.text` and the NOBITS `.flash_rodata_dummy` at `0x42000020`.
+  `.flash.text` and the NOBITS `.flash_rodata_dummy` at `0x42000020`, with the
+  absolute `_text_start` and `_text_end` and the reservation's
+  `_flash_rodata_dummy_start`.
+- The same objects linked with `esp32c6-reservation-first.ld`, which puts the
+  reservation before the code in the section table.
 
 Independent LLVM readelf observations establish ELF declarations,
 `Tag_RISCV_arch` and symbol addresses. Public CLI and stdio MCP workflows verify
@@ -360,14 +385,30 @@ For the soft-float builds the lane also checks:
 - Retained Evidence states the prototype outcome; the stripped build has no
   function definitions.
 
-For the ESP layout build the lane checks that the profile commits the two
-sections LLVM readelf reports, and that the load image maps `.flash.text`
-initialized and executable in the default space, with the reservation as an
-uninitialized overlay. Every procedure keeps its ELF address, which selects it.
-The pseudocode of a flash function that ends by calling a `noreturn` function
-stops at that call. A flash function's pseudocode names its DWARF parameters,
-and an IRAM function's call reaches flash code. A copy whose reservation is
-smaller than the code is refused over CLI and MCP.
+For the ESP layout build the lane checks:
+
+- The profile commits the two sections LLVM readelf reports.
+- The load image maps `.flash.text` initialized and executable in the default
+  space, with the reservation as an uninitialized overlay. Only the moved block
+  maps the code's file bytes, and a `file-offset:` selector reaches the flash
+  function at that offset.
+- No entry point has an overlay address, and each flash function keeps its
+  entry mark. `_text_start` and `_text_end` keep their addresses, and
+  `_flash_rodata_dummy_start` is in the reservation's overlay.
+- Every procedure keeps its ELF address, which selects it. The pseudocode of a
+  flash function that ends by calling a `noreturn` function stops at that call.
+  A flash function's pseudocode names its DWARF parameters, and an IRAM
+  function's call reaches flash code.
+- The outcome states the four moved functions, the entry points the load image
+  reports in the code's range and the one overlay label. Retained Evidence
+  keeps it, and the reopened snapshot lists the same procedures.
+- A copy whose reservation is smaller than the code is refused over CLI and
+  MCP, with the reservation named. `analyzeHeadless` with a code file offset one
+  byte off makes the pre-analysis script refuse.
+
+The reservation-first build reports `canonical`: Ghidra loads its code in the
+default space, and REA changes nothing. A copy of the RV32 double-float build
+with a truncated section table is refused when REA opens it.
 
 Header-mutated copies check admission. The RV32 double-float image relabelled as
 soft-float (`e_flags` `0x1`), refused before this lane, is admitted through the

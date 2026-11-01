@@ -104,11 +104,18 @@ export interface ElfSectionExtent {
   readonly size: string;
 }
 
+/** A section that takes part in an overlap of another shape. */
+export interface ElfSectionWitness extends ElfSectionExtent {
+  readonly nobits: boolean;
+  readonly executable: boolean;
+}
+
 /**
- * Allocated address ranges that more than one section of a fixed-address image
- * declares. `code-reservation` is the one verified shape: a NOBITS section that
- * starts with an executable PROGBITS section and covers it, as ESP-IDF's
- * `.flash_rodata_dummy` reserves `.flash.text`.
+ * Allocated address ranges that an executable section of a fixed-address image
+ * shares with another section. `code-reservation` is the one verified shape: a
+ * NOBITS section that starts with an executable PROGBITS section and covers it,
+ * with no other section overlapping either, as ESP-IDF's `.flash_rodata_dummy`
+ * reserves `.flash.text`.
  */
 export type ElfSectionOverlap =
   | { readonly status: "none" }
@@ -117,8 +124,11 @@ export type ElfSectionOverlap =
       readonly code: ElfSectionExtent & { readonly offset: string };
       readonly reservation: ElfSectionExtent;
     }
-  /** Another overlap involves executable code; the reason names both sections. */
-  | { readonly status: "unsupported"; readonly reason: string }
+  /** The two sections whose overlap departs from that shape. */
+  | {
+      readonly status: "unsupported";
+      readonly witnesses: readonly [ElfSectionWitness, ElfSectionWitness];
+    }
   | { readonly status: "unavailable"; readonly reason: string };
 
 /** The ISA an image declares in `.riscv.attributes`; not proof of every instruction. */

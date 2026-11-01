@@ -743,12 +743,33 @@ const uninspected = (value: BinaryTarget): BinaryTarget => {
 };
 const esp = (change: Partial<RiscvElfMetadata> = {}): BinaryTarget =>
   ilp32(C6_ARCH, { sectionOverlap: espOverlap, ...change });
+const movedCode = {
+  name: ".flash.text",
+  address: "0x42000020",
+  size: "0xfff2",
+  file_offset: "0xc020",
+  space_before: ".flash.text",
+  space_after: "ram",
+} as const;
 const moved: GhidraRiscvLoadPreparationReport = {
   policy: "nobits-reservation-overlay-v1",
   outcome: "moved",
+  code: movedCode,
+  reservation: {
+    name: ".flash_rodata_dummy",
+    address: "0x42000020",
+    size: "0x18000",
+    space_before: "ram",
+    space_after: ".flash_rodata_dummy",
+  },
   functions: 549,
   entry_points: 331,
   reservation_labels: 1,
+};
+const canonical: GhidraRiscvLoadPreparationReport = {
+  policy: "nobits-reservation-overlay-v1",
+  outcome: "canonical",
+  code: { ...movedCode, space_before: "ram" },
 };
 
 // Profiles of images without a section overlap, as main 6e9ee97a6 commits them.
@@ -799,7 +820,24 @@ describe("RISC-V load preparation admission", () => {
   } as const;
   const overlapping = {
     status: "unsupported",
-    reason: "Sections [1] and [2] overlap.",
+    witnesses: [
+      {
+        index: 1,
+        name: ".text",
+        address: "0x1000",
+        size: "0x100",
+        nobits: false,
+        executable: true,
+      },
+      {
+        index: 2,
+        name: null,
+        address: "0x1080",
+        size: "0x100",
+        nobits: true,
+        executable: false,
+      },
+    ],
   } as const;
   it.each([
     [
@@ -821,7 +859,7 @@ describe("RISC-V load preparation admission", () => {
         target({ sectionOverlap: overlapping }),
         ilp32(C3_ARCH, { sectionOverlap: overlapping }),
       ],
-      "Sections [1] and [2] overlap. See docs/ghidra-riscv.md.",
+      "Sections `.text` (executable, 0x1000, 0x100 bytes) and section [2] (NOBITS, 0x1080, 0x100 bytes) share addresses, so Ghidra 12.1.4's ELF loader would put one of them in an overlay address space. This lane prepares only one NOBITS section that starts at an executable PROGBITS section's address and covers it, with no other section overlapping either; see docs/ghidra-riscv.md.",
     ],
   ] as const)(
     "refuses a section table that is %s in every lane",
@@ -841,7 +879,29 @@ describe("RISC-V load preparation admission", () => {
 
   it.each([
     ["the committed outcome", true, moved, undefined],
+    ["a canonical outcome", true, canonical, undefined],
     ["no preparation", false, undefined, undefined],
+    [
+      "a block other than the committed code",
+      true,
+      { ...moved, code: { ...movedCode, size: "0xfff0" } },
+      "did not act on the committed sections. `.flash.text`: Ghidra's block reports size 0xfff0, not 0xfff2.",
+    ],
+    [
+      "a code block at another file offset",
+      true,
+      { ...canonical, code: { ...movedCode, file_offset: "0xc021" } },
+      "reports file offset 0xc021, not 0xc020",
+    ],
+    [
+      "a reservation other than the committed one",
+      true,
+      {
+        ...moved,
+        reservation: { ...moved.reservation, name: ".flash.rodata" },
+      },
+      "`.flash_rodata_dummy`: Ghidra's block reports name .flash.rodata, not .flash_rodata_dummy",
+    ],
     [
       "a missing report",
       true,
@@ -882,21 +942,36 @@ describe("RISC-V load preparation handshake", () => {
         expect.stringContaining(
           "NOBITS section `.flash_rodata_dummy` reserves the addresses of executable section `.flash.text` (0x42000020, 0xfff2 bytes)",
         ),
-        "RISC-V load preparation outcome: `.flash.text` moved into the default address space (functions: 549, entry points: 331); reservation labels moved into its overlay: 1.",
+        "RISC-V load preparation outcome: before analysis REA moved `.flash.text` from overlay space `.flash.text` into default space `ram`, with the same file bytes and offsets, and kept `.flash_rodata_dummy` as uninitialized overlay space `.flash_rodata_dummy`. Functions in the moved block: 549; entry points: 331; labels in the overlay: 1.",
       ]),
+    );
+    expect(health.value.limitations).not.toContainEqual(
+      expect.stringContaining("REA moves"),
     );
   });
 
   it("states that Ghidra already loaded the code where it belongs", async () => {
-    const { client } = await session(esp(), report, esp(), {
-      policy: "nobits-reservation-overlay-v1",
-      outcome: "canonical",
-    });
+    const { client } = await session(esp(), report, esp(), canonical);
     const health = await client.execute("health", {});
     if (!health.ok) throw health.error;
     expect(health.value.limitations).toContainEqual(
-      "RISC-V load preparation outcome: Ghidra already loaded `.flash.text` in the default address space, so REA changed nothing.",
+      "RISC-V load preparation outcome: Ghidra loaded `.flash.text` in default space `ram`, so REA changed nothing.",
     );
+    expect(health.value.limitations).not.toContainEqual(
+      expect.stringMatching(/REA (?:moves|moved)/u),
+    );
+  });
+
+  it("checks a double-float preparation before the first analysis call", async () => {
+    const value = target({ elfClass: 32, sectionOverlap: espOverlap });
+    const { counts, client } = await session(value, undefined, value, {
+      policy: "nobits-reservation-overlay-v1",
+      refused: "no reservation",
+    });
+    const failed = await client.execute("list_procedures", {});
+    expect(failed.ok).toBe(false);
+    if (!failed.ok) expect(failed.error._tag).toBe("ProviderAdapterError");
+    expect(counts).toEqual({ starts: 1, calls: 0, closes: 1 });
   });
 
   it.each([
