@@ -6,6 +6,7 @@ import { ConfigurationError } from "../domain/configurationErrors.js";
 import { SUPPORTED_NODE_VERSION_PROSE } from "../domain/runtimeVersion.js";
 import { FakeSetupHost, options } from "./Setup.fixture.js";
 import { runSetup } from "./Setup.js";
+import { discoverSetupState } from "./SetupPlan.js";
 import {
   parseLinuxDistribution,
   type LinuxDistribution,
@@ -690,6 +691,8 @@ describe("setup Hopper install eligibility", () => {
     { version: "14.", installs: false },
     { version: "14.0\n", installs: false },
     { version: "99999999999999999", installs: false },
+    // REA's own floor admits these; the selected release's minimum is
+    // compared by the installer, which this recording host replaces.
     { version: "12", installs: true },
     { version: "12.0", installs: true },
   ])(
@@ -707,6 +710,36 @@ describe("setup Hopper install eligibility", () => {
           status: "needs_human",
           remediation: "Upgrade to macOS 12 or newer.",
         });
+    },
+  );
+
+  it.each(["12.0", "12.3", "12.4", "14.5"])(
+    "leaves Hopper support on macOS %s unknown until the release minimum is read",
+    async (version) => {
+      const host = new FakeSetupHost("darwin");
+      host.version = version;
+
+      const discovery = await discoverSetupState({
+        host,
+        providerConfigured: false,
+        forceHopperInstall: false,
+        proposeHopper: true,
+        initialDoctor: await host.doctor(),
+      });
+      expect(discovery).toMatchObject({
+        hopperInstall: { supported: "unknown" },
+        installHopper: true,
+      });
+      const plan = await runSetup(
+        { ...options(false, true), dryRun: true },
+        host,
+      );
+      expect(
+        plan.plannedActions.find(({ kind }) => kind === "install_hopper")
+          ?.detail,
+      ).toContain(
+        "setup compares the release's minimum macOS version with this Mac's and stops if this Mac is older",
+      );
     },
   );
 });

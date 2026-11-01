@@ -26,9 +26,15 @@ import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
 import { macosMajorVersion } from "../domain/macosVersion.js";
 
-/** Whether automated Hopper installation can run on this host, and why not. */
+/**
+ * Whether automated Hopper installation can run on this host, and why not.
+ * `unknown`: the host meets REA's own prerequisites, but the selected release
+ * declares its minimum macOS version only in metadata the installer reads
+ * after approval, so planning cannot claim the release supports this host.
+ */
 export type HopperInstallEligibility =
   | { readonly supported: true }
+  | { readonly supported: "unknown" }
   | { readonly supported: false; readonly remediation: string };
 
 /** Read-only setup facts shared by client selection and preflight. */
@@ -74,7 +80,7 @@ export const discoverSetupState = async (input: {
   );
   const installHopper =
     input.forceHopperInstall ||
-    (hopperInstall.supported &&
+    (hopperInstall.supported !== false &&
       input.proposeHopper &&
       (!input.providerConfigured || linuxHopperRepairNeeded));
   const [clients, detectedClients] = await Promise.all([
@@ -327,7 +333,7 @@ const setupPlan = (input: {
           detail:
             input.platform === "linux"
               ? `Download the current official Hopper demo, verify its PGP publisher and launcher bytes, and retain archive, public-key.asc and release.json under ${input.hopperCacheDirectory ?? `${input.homeDirectory}/.cache/rea/hopper-releases`}/<launcher-sha256> for offline verification. Preserve replaced damaged evidence beside it as <launcher-sha256>.backup-<id>. Install Hopper plus its Xvfb demo-session dependencies${input.linuxPackageFamily === "deb" ? ", including the shared library matching the distribution Python interpreter" : ""}. REA uses a private display and selects Hopper's offered demo mode for each analysis session.`
-              : "Download the official Hopper package, verify it, and install it. Hopper may show its demo or license prompt when first opened.",
+              : "Download the official Hopper package, verify it, and install it. Before the download, and again from the signed app before copying, setup compares the release's minimum macOS version with this Mac's and stops if this Mac is older. Hopper may show its demo or license prompt when first opened.",
           external: true,
           operation: "install" as const,
           ...(input.platform === "linux"
@@ -393,7 +399,7 @@ const linuxDisclosure = (family: LinuxPackageFamily) => {
 export const hopperInstallRefusal = (
   discovery: Pick<SetupDiscovery, "installHopper" | "hopperInstall">,
 ): string | undefined =>
-  discovery.installHopper && !discovery.hopperInstall.supported
+  discovery.installHopper && discovery.hopperInstall.supported === false
     ? discovery.hopperInstall.remediation
     : undefined;
 
@@ -401,7 +407,8 @@ export const hopperInstallRefusal = (
  * Decide automated Hopper installation once from the host facts read during
  * discovery, so proposals, explicit requests, and recovery advice agree. An
  * unknown or unparseable macOS version and an unidentified Linux distribution
- * are not eligible.
+ * are not eligible. macOS 12 is REA's own floor; the selected Hopper release's
+ * minimum is unknown until the installer reads it.
  */
 const hopperInstallEligibility = (
   platform: NodeJS.Platform,
@@ -411,7 +418,7 @@ const hopperInstallEligibility = (
   if (platform === "darwin") {
     const major = macosMajorVersion(macosVersion);
     return major !== undefined && major >= 12
-      ? { supported: true }
+      ? { supported: "unknown" }
       : { supported: false, remediation: "Upgrade to macOS 12 or newer." };
   }
   if (platform === "linux")
