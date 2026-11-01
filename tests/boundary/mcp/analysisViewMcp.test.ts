@@ -1794,7 +1794,11 @@ it("extracts an environment state identically from retained, portable and file M
     name: "inspect_analysis_view",
     arguments: { source: { kind: "inline", evidence: hidden }, view },
   });
-  expect(parseMcpToolError(refused).error.code).toBe("unsupported_target");
+  const hiddenError = parseMcpToolError(refused).error;
+  expect(hiddenError.code).toBe("unsupported_target");
+  expect(hiddenError.remediation.action).toContain("sensitivity declarations");
+  expect(hiddenError.remediation.action).toContain("capture or summary view");
+  expect(hiddenError.remediation.action).not.toContain("target format");
   expect(JSON.stringify(refused)).not.toContain("probe folder");
   await client.ping();
 });
@@ -2044,7 +2048,11 @@ it("projects an environment manifest identically from retained, portable and fil
     name: "inspect_analysis_view",
     arguments: { source: { kind: "inline", evidence: hidden }, view },
   });
-  expect(parseMcpToolError(refused).error.code).toBe("unsupported_target");
+  const hiddenError = parseMcpToolError(refused).error;
+  expect(hiddenError.code).toBe("unsupported_target");
+  expect(hiddenError.remediation.action).toContain("sensitivity declarations");
+  expect(hiddenError.remediation.action).toContain("capture or summary view");
+  expect(hiddenError.remediation.action).not.toContain("target format");
   expect(JSON.stringify(refused)).toContain("sensitive_values_unretained");
   expect(JSON.stringify(refused)).not.toContain("/api/folders");
   await client.ping();
