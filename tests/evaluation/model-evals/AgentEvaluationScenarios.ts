@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import type { CodexAgentMetrics } from "./CodexAgentEval.js";
+import type { AgentMetrics } from "./AgentEval.js";
 
 const clarificationSchema = z.strictObject({
   status: z.literal("needs_target"),
@@ -26,6 +26,25 @@ export const MISSING_TARGET_SCENARIO = {
   },
 } as const;
 
+/**
+ * Tools a scenario approves by name for clients that refuse them otherwise:
+ * its explicit approvals and every tool its own contract requires. The
+ * general effects policy still governs every other tool.
+ */
+export const scenarioApprovedTools = (scenario: {
+  readonly approvedTools?: readonly string[];
+  readonly expectedFirstTool: string | null;
+  readonly requiredToolSubsequence?: readonly string[];
+}): readonly string[] => [
+  ...new Set([
+    ...(scenario.approvedTools ?? []),
+    ...(scenario.expectedFirstTool === null
+      ? []
+      : [scenario.expectedFirstTool]),
+    ...(scenario.requiredToolSubsequence ?? []),
+  ]),
+];
+
 type NativeSessionOutcome =
   | "provider-unavailable"
   | "opened-and-closed"
@@ -34,7 +53,7 @@ type NativeSessionOutcome =
 /** Expected refusal is distinct from acquisition, which always requires close. */
 const nativeSessionOutcome = ({
   reaCalls,
-}: CodexAgentMetrics): NativeSessionOutcome => {
+}: AgentMetrics): NativeSessionOutcome => {
   if (reaCalls.some(({ tool, error }) => error && tool !== "open_binary"))
     return "failed";
   const lifecycle = reaCalls.filter(
@@ -46,9 +65,14 @@ const nativeSessionOutcome = ({
     return lifecycle.length === 1 && open.errorCode === "provider_unavailable"
       ? "provider-unavailable"
       : "failed";
-  return lifecycle.length === 2 &&
-    lifecycle[1]?.tool === "close_binary" &&
-    !lifecycle[1].error
+  // Acquisition and cleanup count only with the results the client delivered;
+  // an unreported close is not a confirmed close.
+  const close = lifecycle[1];
+  return open.delivered &&
+    lifecycle.length === 2 &&
+    close?.tool === "close_binary" &&
+    close.delivered &&
+    !close.error
     ? "opened-and-closed"
     : "failed";
 };

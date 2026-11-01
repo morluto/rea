@@ -4,7 +4,8 @@ import { describe, expect, it } from "vitest";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { createEvidence, type Evidence } from "../../../src/domain/evidence.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
-import { evaluateCodexEvents } from "./CodexAgentEval.js";
+import { evaluateAgentTranscript } from "./AgentEval.js";
+import { parseCodexEvents } from "./AgentTranscript.js";
 import {
   agentFixtureAnswerInstructions,
   agentFixtureClaims,
@@ -17,6 +18,16 @@ import {
 } from "../../../src/dotnet/ManagedPe.fixture.js";
 import type { FixtureClaimExpectation } from "./KnownAnswerEvaluation.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
+
+const evaluateCodexEvents = (
+  events: readonly unknown[],
+  ...options: Parameters<typeof evaluateAgentTranscript> extends [
+    unknown,
+    ...infer Rest,
+  ]
+    ? Rest
+    : never
+) => evaluateAgentTranscript(parseCodexEvents(events), ...options);
 
 const delivery = createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
 
@@ -697,6 +708,16 @@ describe("successful Evidence grounding", () => {
     expect(
       assess([event], answer([claimFor(evidence)])).factualCorrectness,
     ).toBe("passed");
+  });
+
+  it("rejects Evidence carried by a completed call with a client-side error", () => {
+    const evidence = createObservation();
+    const event = delivered(evidence, {
+      result: { ...resultFor(evidence), error: { code: "client_error" } },
+    });
+    expect(
+      assess([event], answer([claimFor(evidence)])).factualCorrectness,
+    ).toBe("failed");
   });
 
   it("grades a complete text-only production Evidence response", () => {

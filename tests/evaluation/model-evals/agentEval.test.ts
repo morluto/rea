@@ -2,7 +2,18 @@ import { describe, expect, it } from "vitest";
 
 import { createEvidence } from "../../../src/domain/evidence.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
-import { evaluateCodexEvents } from "./CodexAgentEval.js";
+import { evaluateAgentTranscript } from "./AgentEval.js";
+import { parseCodexEvents } from "./AgentTranscript.js";
+
+const evaluateCodexEvents = (
+  events: readonly unknown[],
+  ...options: Parameters<typeof evaluateAgentTranscript> extends [
+    unknown,
+    ...infer Rest,
+  ]
+    ? Rest
+    : never
+) => evaluateAgentTranscript(parseCodexEvents(events), ...options);
 
 const observation = (
   operation = "inspect_managed_artifact",
@@ -244,6 +255,7 @@ describe("Codex completed tool call parsing", () => {
             status: "completed",
             tool: "inspect_managed_artifact",
             arguments: {},
+            result: {},
             ...identity,
           },
         },
@@ -408,6 +420,8 @@ describe("Codex request accounting", () => {
         tool,
         arguments: {},
         status,
+        // A lifecycle step counts only once its result was reported.
+        ...(status === "completed" ? { result: {} } : {}),
       },
     });
     for (const [status, repeats] of [

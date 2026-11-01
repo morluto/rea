@@ -1,21 +1,19 @@
 import { importVerifierSource } from "./lib/verifier-source-loader.mjs";
 
 import { createHash } from "node:crypto";
-import {
-  chmod,
-  copyFile,
-  mkdir,
-  mkdtemp,
-  readFile,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { delimiter, dirname, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tsImport } from "tsx/esm/api";
 
 import { PRODUCT_IDENTITY } from "../dist/identity.js";
+import {
+  agentEvalEnvironment,
+  preflightClientEnvironment,
+  prepareAgentEvalClient,
+  selectAgentEvalClient,
+} from "./lib/agent-eval-clients.mjs";
 import { createAgentEvaluationCommands } from "./lib/agent-evaluation-commands.mjs";
 import { assertAgentEvaluationReportPassed } from "./lib/agent-evaluation-report-gate.mjs";
 import {
@@ -29,12 +27,20 @@ const { parseSkillManifestMetadata } = await importVerifierSource(
   import.meta.url,
 );
 
-const { evaluateCodexEvents } = await tsImport(
-  new URL("../tests/evaluation/model-evals/CodexAgentEval.ts", import.meta.url)
+const { evaluateAgentTranscript } = await tsImport(
+  new URL("../tests/evaluation/model-evals/AgentEval.ts", import.meta.url).href,
+  import.meta.url,
+);
+const { parseAgentTranscript } = await tsImport(
+  new URL("../tests/evaluation/model-evals/AgentTranscript.ts", import.meta.url)
     .href,
   import.meta.url,
 );
-const { MISSING_TARGET_SCENARIO, nativeProviderScenario } = await tsImport(
+const {
+  MISSING_TARGET_SCENARIO,
+  nativeProviderScenario,
+  scenarioApprovedTools,
+} = await tsImport(
   new URL(
     "../tests/evaluation/model-evals/AgentEvaluationScenarios.ts",
     import.meta.url,
@@ -63,7 +69,10 @@ const { summarizeFactualCorrectness } = await tsImport(
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const verifierRun = createVerifierRun();
 const timeoutMs = Number(process.env.REA_AGENT_EVAL_TIMEOUT_MS ?? 480_000);
-const codex = process.env.REA_CODEX_CLI ?? "codex";
+const client = selectAgentEvalClient(
+  process.env.REA_AGENT_EVAL_CLIENT,
+  repositoryRoot,
+);
 const optionalModel = process.env.REA_AGENT_EVAL_MODEL;
 
 if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 10_000)
@@ -78,63 +87,46 @@ await mkdir(evaluationParent, { recursive: true, mode: 0o700 });
 const evaluationRoot = await mkdtemp(join(evaluationParent, "run-"));
 const fixtureRoot = join(evaluationRoot, "targets");
 const account = join(evaluationRoot, "account");
-const codexHome = join(evaluationRoot, "codex");
-const authPath = join(codexHome, "auth.json");
-const skillDestination = join(
-  account,
-  ".agents/skills/reverse-engineer-anything",
-);
-const evaluationEnvironment = {
-  ...Object.fromEntries(
-    Object.entries(process.env).filter(
-      ([name]) => !/^(?:REA_|CODEX_|GHIDRA_|HOPPER_|IDA_)/u.test(name),
-    ),
-  ),
-  HOME: account,
-  USERPROFILE: account,
-  CODEX_HOME: codexHome,
-  XDG_CONFIG_HOME: join(account, ".config"),
-  XDG_DATA_HOME: join(account, ".local/share"),
-  XDG_CACHE_HOME: join(account, ".cache"),
-  REA_PROCESS_RUN_ID: verifierRun.run_id,
-  PATH: `${dirname(process.execPath)}${delimiter}${process.env.PATH ?? ""}`,
-};
+// Copied credentials are registered here before they are written.
+const authPaths = [];
 
 const commands = createAgentEvaluationCommands({
-  codex,
+  launch: client.launch,
   evaluationRoot,
-  evaluationEnvironment,
-  optionalModel,
   timeoutMs,
   repositoryRoot,
 });
-const { runCodex, runProcess, readCommandVersion } = commands;
+const { runClient, runProcess, readCommandVersion } = commands;
 
 await withVerifierCleanup(
   async () => {
-    const codexVersion = await readCommandVersion(codex);
+    // The isolated account exists before any client reads it as HOME. The
+    // version preflight gets the allowlisted base environment and the
+    // client's containment controls, without authentication.
     await Promise.all([
       mkdir(fixtureRoot, { recursive: true }),
-      mkdir(account),
-      mkdir(codexHome, { mode: 0o700 }),
+      mkdir(account, { recursive: true }),
     ]);
+    const clientVersion = await readCommandVersion(
+      agentEvalEnvironment({
+        account,
+        runId: verifierRun.run_id,
+        client: { environment: preflightClientEnvironment(client) },
+      }),
+    );
     // Reuse authentication only. User config, plugins, rules, history and skills
     // must not make a fresh installed-skill trial pass accidentally.
-    try {
-      await copyFile(
-        join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "auth.json"),
-        authPath,
-      );
-      await chmod(authPath, 0o600);
-    } catch (cause) {
-      if (cause?.code !== "ENOENT") throw cause;
-      // Environment/API-key authentication can work without a local auth file.
-    }
-    await writeFile(
-      join(codexHome, "config.toml"),
-      'approval_policy = "never"\nsandbox_mode = "read-only"\nweb_search = "disabled"\n[features]\nmulti_agent = false\nshell_snapshot = false\n[history]\npersistence = "none"\n',
-      { mode: 0o600 },
-    );
+    const prepared = await prepareAgentEvalClient(client, {
+      evaluationRoot,
+      account,
+      model: optionalModel,
+      authPaths,
+    });
+    const evaluationEnvironment = agentEvalEnvironment({
+      account,
+      runId: verifierRun.run_id,
+      client: prepared,
+    });
     for (const approval of ["--dry-run", "--yes"]) {
       await runProcess(
         process.execPath,
@@ -142,7 +134,7 @@ await withVerifierCleanup(
           join(repositoryRoot, "scripts/rea.mjs"),
           "setup",
           "--client",
-          "codex",
+          client.setupClient,
           approval,
           "--json",
         ],
@@ -152,7 +144,7 @@ await withVerifierCleanup(
       );
     }
     const installedSkill = await readFile(
-      join(skillDestination, "SKILL.md"),
+      join(prepared.skillDirectory, "SKILL.md"),
       "utf8",
     );
     const skillMetadata = parseSkillManifestMetadata(installedSkill);
@@ -257,6 +249,7 @@ await withVerifierCleanup(
       },
       {
         id: "browser",
+        approvedTools: ["list_browser_targets"],
         expectedFirstTool: "list_browser_targets",
         requiresEvidence: false,
         requiredAnswerTermGroups: [
@@ -295,15 +288,20 @@ await withVerifierCleanup(
       );
     const results = [];
     for (const scenario of scenarios) {
-      process.stderr.write(`Running Codex agent evaluation: ${scenario.id}\n`);
+      process.stderr.write(
+        `Running ${client.id} agent evaluation: ${scenario.id}\n`,
+      );
       const fixtureId = scenario.fixtureScenarioId ?? scenario.id;
       const fixtureClaims = agentFixtureClaims(fixtureId, targets);
       const answerInstructions = agentFixtureAnswerInstructions(fixtureId);
-      const execution = await runCodex(
-        answerInstructions.length === 0
-          ? scenario.prompt
-          : `${scenario.prompt}\n\nThis closed factual rubric needs complete producer Evidence in the transcript. Request complete detail on each initial inspection or analysis when supported; summary or view records alone are not accepted by this rubric.\n\n${answerInstructions}`,
-        scenario.approvedTools ?? [],
+      const execution = await runClient(
+        await prepared.arguments(
+          answerInstructions.length === 0
+            ? scenario.prompt
+            : `${scenario.prompt}\n\nThis closed factual rubric needs complete producer Evidence in the transcript. Request complete detail on each initial inspection or analysis when supported; summary or view records alone are not accepted by this rubric.\n\n${answerInstructions}`,
+          scenarioApprovedTools(scenario),
+        ),
+        evaluationEnvironment,
       );
       const transcriptDirectory = process.env.REA_AGENT_EVAL_TRANSCRIPT_DIR;
       if (transcriptDirectory !== undefined) {
@@ -317,8 +315,8 @@ await withVerifierCleanup(
           `${execution.events.map((event) => JSON.stringify(event)).join("\n")}\n`,
         );
       }
-      const metrics = evaluateCodexEvents(
-        execution.events,
+      const metrics = evaluateAgentTranscript(
+        parseAgentTranscript(client.id, execution.events),
         scenario.expectedFirstTool,
         {
           requireEvidence: scenario.requiresEvidence,
@@ -357,23 +355,28 @@ await withVerifierCleanup(
       };
       results.push(result);
       process.stderr.write(
-        `${scenario.id}: first=${metrics.firstTool ?? "none"}, calls=${String(metrics.reaCalls.length)}, repeats=${String(metrics.repeatedCallCount)}, validation_failures=${String(metrics.inputValidationFailureCount)}, input_tokens=${String(metrics.inputTokens)}\n`,
+        `${scenario.id}: first=${metrics.firstTool ?? "none"}, calls=${String(metrics.reaCalls.length)}, repeats=${String(metrics.repeatedCallCount)}, validation_failures=${String(metrics.inputValidationFailureCount)}, client_failures=${String(metrics.clientFailures.length)}, input_tokens=${String(metrics.inputTokens)}\n`,
       );
     }
 
     const factualCorrectness = summarizeFactualCorrectness(results);
     const summary = {
-      schemaVersion: 4,
+      schemaVersion: 5,
       evaluationScope: "routing_workflow_and_configured_fixture_claims",
       factualCorrectness,
       verifier_run: await completeVerifierRun(verifierRun),
-      codex,
-      codexVersion,
+      client: client.id,
+      clientCommand: client.command,
+      clientVersion,
+      ...(client.id === "codex"
+        ? { codex: client.command, codexVersion: clientVersion }
+        : {}),
       model: optionalModel ?? null,
       installation: {
-        method: "rea_setup_codex",
+        method: `rea_setup_${client.setupClient}`,
         isolatedHome: true,
-        isolatedCodexHome: true,
+        isolatedClientHome: true,
+        ...(client.id === "codex" ? { isolatedCodexHome: true } : {}),
         skillVersion: PRODUCT_IDENTITY.skillVersion,
         authentication: "caller_auth_only_removed_after_run",
       },
@@ -391,6 +394,10 @@ await withVerifierCleanup(
         inputValidationFailureCount: results.reduce(
           (total, { inputValidationFailureCount }) =>
             total + inputValidationFailureCount,
+          0,
+        ),
+        clientFailureCount: results.reduce(
+          (total, { clientFailures }) => total + clientFailures.length,
           0,
         ),
         requiredToolSubsequence: results.filter(
@@ -430,8 +437,12 @@ await withVerifierCleanup(
     async () => {
       // A failed process cleanup retains both its exact owner and its files.
       await commands.close();
+      // The client's credential destination is removed even when the run failed
+      // before preparation registered it; retained fixtures never keep auth.
       await closeVerifierResources([
-        () => rm(authPath, { force: true }),
+        ...new Set([...client.credentialPaths(evaluationRoot), ...authPaths])
+          .values()
+          .map((path) => () => rm(path, { force: true })),
         ...(process.env.REA_AGENT_EVAL_KEEP_FIXTURES === "true"
           ? []
           : [() => rm(evaluationRoot, { recursive: true, force: true })]),

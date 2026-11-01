@@ -1,11 +1,23 @@
 import { describe, expect, it } from "vitest";
 
-import { evaluateCodexEvents } from "./CodexAgentEval.js";
+import { evaluateAgentTranscript } from "./AgentEval.js";
+import { parseCodexEvents } from "./AgentTranscript.js";
 import { agentEvaluationPassed } from "./AgentEvaluationReport.js";
 import {
   MISSING_TARGET_SCENARIO,
   nativeProviderScenario,
+  scenarioApprovedTools,
 } from "./AgentEvaluationScenarios.js";
+
+const evaluateCodexEvents = (
+  events: readonly unknown[],
+  ...options: Parameters<typeof evaluateAgentTranscript> extends [
+    unknown,
+    ...infer Rest,
+  ]
+    ? Rest
+    : never
+) => evaluateAgentTranscript(parseCodexEvents(events), ...options);
 
 const call = (id: string, tool: string, errorCode?: string) => ({
   type: "item.completed",
@@ -20,6 +32,19 @@ const call = (id: string, tool: string, errorCode?: string) => ({
       errorCode === undefined
         ? { content: [{ type: "text", text: "Operation completed." }] }
         : { isError: true, structuredContent: { error: { code: errorCode } } },
+  },
+});
+
+/** A completed request whose result the client never reported. */
+const unconfirmed = (id: string, tool: string) => ({
+  type: "item.completed",
+  item: {
+    id,
+    type: "mcp_tool_call",
+    server: "rea",
+    tool,
+    arguments: tool === "open_binary" ? { path: "/bin/true" } : {},
+    status: "completed",
   },
 });
 
@@ -60,6 +85,16 @@ describe("native provider scenario", () => {
       [opened, closed, call("reopen", "open_binary")],
       "failed",
     ],
+    [
+      "unconfirmed close",
+      [opened, unconfirmed("close", "close_binary")],
+      "failed",
+    ],
+    [
+      "unconfirmed open",
+      [unconfirmed("open", "open_binary"), closed],
+      "failed",
+    ],
   ] as const)(
     "grades %s through the transcript parser and release gate",
     (_, calls, expected) => {
@@ -84,6 +119,30 @@ describe("native provider scenario", () => {
       ).toBe(expected !== "failed");
     },
   );
+});
+
+describe("scenario approvals", () => {
+  it("approves the tools a scenario's own contract requires, by name, once", () => {
+    expect(
+      scenarioApprovedTools({
+        approvedTools: ["list_browser_targets"],
+        expectedFirstTool: "analyze_javascript_application",
+        requiredToolSubsequence: [
+          "analyze_javascript_application",
+          "trace_application_feature",
+        ],
+      }),
+    ).toEqual([
+      "list_browser_targets",
+      "analyze_javascript_application",
+      "trace_application_feature",
+    ]);
+    expect(scenarioApprovedTools(MISSING_TARGET_SCENARIO)).toEqual([]);
+    expect(scenarioApprovedTools(nativeProviderScenario("/bin/true"))).toEqual([
+      "open_binary",
+      "close_binary",
+    ]);
+  });
 });
 
 describe("missing-target scenario", () => {

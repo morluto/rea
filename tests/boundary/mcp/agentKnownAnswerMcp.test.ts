@@ -5,7 +5,8 @@ import { describe, expect, it } from "vitest";
 import { createPackage } from "@electron/asar";
 
 import { parseEvidence, type Evidence } from "../../../src/domain/evidence.js";
-import { evaluateCodexEvents } from "../../evaluation/model-evals/CodexAgentEval.js";
+import { evaluateAgentTranscript } from "../../evaluation/model-evals/AgentEval.js";
+import { parseCodexEvents } from "../../evaluation/model-evals/AgentTranscript.js";
 import {
   createAgentEvaluationFixtures,
   agentFixtureClaims,
@@ -13,6 +14,16 @@ import {
 import type { FixtureClaimExpectation } from "../../evaluation/model-evals/KnownAnswerEvaluation.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+
+const evaluateCodexEvents = (
+  events: readonly unknown[],
+  ...options: Parameters<typeof evaluateAgentTranscript> extends [
+    unknown,
+    ...infer Rest,
+  ]
+    ? Rest
+    : never
+) => evaluateAgentTranscript(parseCodexEvents(events), ...options);
 
 describe("packaged application known-answer evaluation", () => {
   it("grades real packaged bytes and rejects false values, extra claims, and unrelated citations", async () => {

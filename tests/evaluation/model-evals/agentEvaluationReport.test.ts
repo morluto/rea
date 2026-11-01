@@ -14,6 +14,7 @@ const routingSuccess = {
   repeatedCallCount: 0,
   inputValidationFailureCount: 0,
   requiredToolSubsequenceMet: true,
+  clientFailures: [],
   inputTokens: 100,
   answerHeuristicsMet: true,
   epistemicCuePresent: true,
@@ -78,6 +79,20 @@ describe("scoped factual report", () => {
       expect(agentEvaluationPassed({ ...clarification, ...change })).toBe(
         false,
       );
+  });
+
+  it("rejects a run the client itself reported as failed", () => {
+    for (const failure of [
+      "permission_denied:mcp__rea__open_binary",
+      "result_error:error_max_turns",
+    ])
+      expect(
+        agentEvaluationPassed({
+          ...routingSuccess,
+          clientFailures: [failure],
+          factualCorrectness: "passed",
+        }),
+      ).toBe(false);
   });
 
   it("accepts correct structured facts without superficial prose cues", () => {
