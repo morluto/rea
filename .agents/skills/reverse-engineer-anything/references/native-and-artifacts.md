@@ -1,8 +1,11 @@
 # Native, managed, and packaged artifacts
 
-For release comparisons, export `list_procedures` Evidence from each target before
-closing it. Close clears session records: import both bundles after collecting the
-two targets, or supply portable inline Evidence. `match_native_functions` pairs unique exact names and, when supplied,
+For release comparisons on one MCP connection, retain `list_procedures` Evidence
+from each target and reuse its exact IDs after target switches or `close_binary`.
+For a handoff or new process, export the complete bundle and import it there,
+including its source closure. `reset_investigation` explicitly clears retained
+records; optional `save_path` checkpoints them before clearing.
+`match_native_functions` pairs unique exact names and, when supplied,
 complete observed body bytes. Reuse optional same-context `list_names`,
 `procedure_info`, `read_bytes` and existing `analyze_function` dossiers as
 `left_observations`/`right_observations`; an MCP `analyze_function` summary
@@ -12,6 +15,13 @@ not the summary itself. Avoid decompiling every function merely to match it. Its
 Select columns, batch IDs and page individual facts; aliases remain unresolved.
 Unpaired observations do not prove additions/removals. Existing matched dossier
 pairs include inputs for `compare_functions`; otherwise analyze just chosen pairs.
+
+Aggregate completed comparisons with `find_changed_behavior`, selecting each
+comparison's exact `retained-evidence` ID instead of resending full records.
+Inline comparison Evidence remains accepted. References belong to the current
+server: after handoff, import the original bundle including its source closure.
+Do not substitute dossier IDs or summary views. Static differences remain
+behavior candidates, with runtime behavior unknown unless separately observed.
 
 For a matching representation refusal, inspect `details.limit` and raise
 `native.matching_representation_bytes` with `update_analysis_settings` before
@@ -336,8 +346,9 @@ the complete tool inventory grouped by current status. Expand each group's
 overrides them; availability, reasons, remediation, and modes remain inline.
 Provider candidates keep availability and target-support status, code, and
 reason. `omitted_fields` names what the summary leaves out; `{"detail":
-"complete"}` adds provider diagnostics, candidate capability sets, and tool
-surface, `effects`, and `annotations`. Those arrays name true flags from fixed
+"complete"}` adds each unavailable candidate's `remediation`, provider
+diagnostics, candidate capability sets, and tool surface, `effects`, and
+`annotations`. Those arrays name true flags from fixed
 vocabularies, so an omitted known flag is false. `tools/list` remains the
 canonical source for full tool schemas when target or provider state changes.
 
@@ -578,6 +589,16 @@ REA. Symlinks and encrypted entries are inventory facts, not extractable files.
 The result reports the materialized directory; callers do not choose the
 destination. No separate permission grant is needed.
 
+For classic iNES cartridges, `open_binary` recognizes the byte signature without
+an executable architecture. `inspect_artifact` retains header facts and each
+PRG/CHR file unit's offset, length and SHA-256; its nested inventory's
+`ines.reconstruction` verifies the actual ordered region bytes against the
+whole-file digest. Extraction includes the original header, optional trainer
+and uninterpreted trailing bytes. These file units are not mapper/CPU bank
+maps. NES 2.0, UNIF, dirty legacy headers and truncated payloads are explicitly
+refused. No emulator or 6502 analysis is performed. See the
+[iNES guide](https://github.com/morluto/rea/blob/main/docs/ines-containers.md).
+
 Native DMG traversal automatically uses a read-only mount on supported macOS
 hosts, with an owned temporary mount directory and cleanup. It needs no approval
 flag. Unsupported hosts or mount failures remain explicit limitations; do not
@@ -606,10 +627,27 @@ semantics are unsupported. `m68k` requires an even entry and decodes the 68040
 superset of the 68000 family; Amiga/Atari containers and vector-table entry
 discovery are unsupported. Windows Ghidra P0 admits raw images only for `6502`. See [raw binary guide](https://github.com/morluto/rea/blob/main/docs/raw-binary.md).
 
+Intel HEX, S-record, UF2 and DfuSe files are containers, not raw images:
+`inspect_artifact` lists address regions (UF2 per familyID, DfuSe per element
+with its alternate setting), and `extract_artifact` writes each region. Open an
+extracted region as `raw-binary` with its start address as `entry_point`. UF2
+numbering gaps leave coverage unknown; a DfuSe suffix CRC mismatch follows
+`integrity_policy`. See [UF2 and DfuSe](https://github.com/morluto/rea/blob/main/docs/uf2-dfuse.md).
+
 ### Function annotations in Ghidra
 
 Fresh-import sessions admit annotations; existing-project reuse is read-only.
-Use `annotate_native_function` for one function name and/or entry comments, with at least one explicit change. Review its annotation readback and refreshed dossier inline. Changes are atomic and session-scoped; empty comments clear them, omitted fields preserve them. Later MCP calls observe edits until close. CLI `annotate-native-function` returns the updated analysis before discarding the session. Original executable bytes are unchanged; edits invalidate immutable snapshots. Windows P0 does not admit database mutations. For naming only, `set_address_name` / `set_addresses_names` also work with Ghidra: they name function entries or data addresses (primary labels) and return compact per-address success booleans instead of a dossier.
+Use `annotate_native_function` for one function name and/or entry comments, with at least one explicit change. Review its annotation readback and refreshed dossier inline. Changes are atomic and session-scoped; empty comments clear them, omitted fields preserve them. Later MCP calls observe edits until close. CLI `annotate-native-function` returns the updated analysis before discarding the session. Original executable bytes are unchanged; edits invalidate immutable snapshots. Windows P0 does not admit database mutations. For naming only, `set_address_name` / `set_addresses_names` also work with Ghidra: they name function entries or data addresses (primary labels) and return compact per-address success booleans instead of a dossier. Ghidra rejects batch addresses that request the same name or a name another selected address holds; `raw_result.failures` gives each failure's reason.
+
+For `compare_functions`, obtain `analyze_function` Evidence before and after the
+edit while the MCP session is open; annotation Evidence is not a comparison
+input. Export the needed Evidence before close if comparison will happen later.
+Authenticated same-artifact coordinates preserve renamed entries as
+`matched / same-entry`, with the canonical `entry_address` inline; name and
+exact-text changes remain separate dimensions. This requires compatible
+architecture, provider-owned mapping and selected-image commitments. Equal
+numeric addresses alone cannot establish correspondence; inspect retained
+source Evidence and coverage when the match remains ambiguous.
 
 ## Offline PE resource inventory
 
@@ -637,7 +675,9 @@ For exact core-module import/export differences, use `compare_wasm_interfaces`
 with two complete inspection Evidence records (or current-session retained
 references) and explicit scope. Preserve unknown types/duplicate names; static
 interface equality is not runtime compatibility. CLI accepts complete inline
-Evidence in `rea compare-wasm-interfaces input.json --json`.
+Evidence in `rea compare-wasm-interfaces input.json --json`, or exact references
+with `--evidence-bundle /absolute/path/evidence.json`. Use the complete parent
+ID when the inspection returned a summary.
 
 ## Godot PCK
 
@@ -695,6 +735,32 @@ refusals. ESP8266 images are refused, and flash-encrypted images are not
 recognized. Segments are not disassembled, and RISC-V or Xtensa segments
 cannot be opened as raw-binary. See
 [ESP images](https://github.com/morluto/rea/blob/main/docs/esp-image.md).
+
+## ESP flash images
+
+A whole-flash dump opens as `esp-flash-image`. `root_format_metadata` holds
+`partition_table` (its `method`: `default`, `caller` or a derived
+`scan`), `bootloader` and `apps` ESP image facts, the `otadata` records,
+`partitions_outside_dump` and `boot_selection`. Every table has a
+`boot_selection`: its `basis` names the bootloader's branch (`no-otadata`
+without otadata, `none` when the bootloader rejects the table, `unknown`
+when a record is missing), and it lists its `assumptions`;
+`running_partition` is always `unknown`. Each image names its entry
+`path`. With `detail: "summary"` the root kind is `esp-flash-image-summary`
+and each image is a compact `summary` (chip, entry point, segment count,
+classified load ranges, signature block count, descriptor identity,
+integrity); complete detail keeps every segment. Partition rows
+(`partitions/<label>.bin`) carry the declared `type`, `subtype`, names,
+`flash_address`, `size` and flags; `encrypted` is a storage flag, not
+proof of ciphertext. `written_offset`/`written_end` bound the bytes that
+are not erased: an app slot whose facts say `erased` can still hold an older
+image, and a limitation says so. For a dump read from another flash address, call
+`open_binary` with `format: "esp-flash-image"` and `flash_offset`; an
+`esp-image` whose `flash_dump` is set names that offset in a next probe; a
+relocated table can be named with `partition_table_offset`. No table found
+means unknown, often flash encryption. Extraction writes `nvs_keys` as
+ordinary data. See
+[ESP flash images](https://github.com/morluto/rea/blob/main/docs/esp-flash-image.md).
 
 ## Bun standalone executables
 

@@ -68,7 +68,9 @@ try {
     });
     if (!decompiled.ok) throw new Error(decompiled.error.message);
     const text = decompiled.value.normalized_result.text;
-    if (!text.includes(target.marker))
+    if (text.trim().length === 0)
+      throw new Error("Decompiled pseudo-code was empty");
+    if (target.marker !== undefined && !text.includes(target.marker))
       throw new Error(
         "Decompiled pseudo-code did not contain the fixture marker",
       );
@@ -83,7 +85,7 @@ try {
       open_project_observed: openRefusal === null,
       ...(openRefusal === null ? {} : { open_project_refusal: openRefusal }),
       unit_count: units.value.normalized_result.units.length,
-      decompiled_marker_observed: true,
+      decompiled_marker_observed: target.marker !== undefined,
     };
   }, [
     async () => {
@@ -110,7 +112,7 @@ async function resolveTarget(selected, directory) {
     return {
       path: "/engine-side/target",
       itemAddress: selected.itemAddress,
-      marker: selected.marker ?? "",
+      marker: selected.marker,
     };
   await writeFile(
     join(directory, "Hello.java"),
@@ -153,6 +155,8 @@ function parseArguments(args) {
     values.set(flag, value);
     index += 1;
   }
+  if (values.get("--marker") === "")
+    throw new Error("--marker must not be empty");
   return {
     help: false,
     ...(values.has("--item-address")

@@ -431,9 +431,28 @@ describe("state data plane intake", () => {
     ]);
     expect(batch.json).toMatchObject([
       { id: 1, result: {} },
-      { id: 2, result: { parts: [{ kind: "data" }] } },
+      {
+        id: 2,
+        result: {
+          parts: [
+            {
+              kind: "data",
+              data: {
+                rea_state: {
+                  entities: expect.arrayContaining([
+                    expect.objectContaining({
+                      type: "/api/users",
+                      id: "2",
+                      fields: expect.objectContaining({ login: "renamed" }),
+                    }),
+                  ]),
+                },
+              },
+            },
+          ],
+        },
+      },
     ]);
-    expect(JSON.stringify(batch.json)).toContain('"login":"renamed"');
     const notified = await plane.post({ jsonrpc: "2.0", method: "data/reset" });
     expect(notified.status).toBe(202);
     expect(loginOf(plane.store)).toBe("probe");
@@ -542,10 +561,29 @@ describe("state data plane timing and order", () => {
     const replies = (await batch).json;
     expect(replies).toMatchObject([
       { id: 1, result: {} },
-      { id: 2, result: { parts: [{ kind: "data" }] } },
+      {
+        id: 2,
+        result: {
+          parts: [
+            {
+              kind: "data",
+              data: {
+                rea_state: {
+                  entities: expect.arrayContaining([
+                    expect.objectContaining({
+                      type: "/api/users",
+                      id: "2",
+                      fields: expect.objectContaining({ login: "renamed" }),
+                    }),
+                  ]),
+                },
+              },
+            },
+          ],
+        },
+      },
     ]);
     // The get arrived with the add, before the reset, so it reports the loaded state.
-    expect(JSON.stringify(replies)).toContain('"login":"renamed"');
     await expect(reset).resolves.toMatchObject({ result: {} });
     expect(loginOf(plane.store)).toBe("probe");
   });

@@ -16,7 +16,7 @@ import { expect } from "vitest";
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest } from "../../support/cli/cliFixture.js";
+import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
 
 import {
   analysisViewLayoutEvidence,
@@ -97,7 +97,7 @@ cliTest(
         "evidence_integrity_mismatch",
       ],
     ] as const) {
-      const rejected = await cli.run({
+      const invocation = {
         arguments: [
           "inspect-analysis-view",
           JSON.stringify({ source, view }),
@@ -105,14 +105,18 @@ cliTest(
           path,
           "--json",
         ],
-      });
+      };
+      const rejected =
+        source.kind === "inline"
+          ? await cli.run(invocation)
+          : await runFileCli(cli, invocation);
       expect(rejected.exitCode).toBe(1);
       expect(rejected.json).toMatchObject({ code: expectedCode });
       expect(rejected.json).not.toHaveProperty("evidence_id");
     }
-    for (const [contents, expectedCode] of [
-      [JSON.stringify(parent), "invalid_request"],
-      ["{invalid JSON", "evidence_integrity_mismatch"],
+    for (const [contents, expectedCode, freshProcess] of [
+      [JSON.stringify(parent), "invalid_request", false],
+      ["{invalid JSON", "evidence_integrity_mismatch", false],
       [
         JSON.stringify({
           ...bundle,
@@ -122,10 +126,11 @@ cliTest(
           })),
         }),
         "evidence_integrity_mismatch",
+        true,
       ],
     ] as const) {
       await writeFile(path, contents);
-      const rejected = await cli.run({
+      const invocation = {
         arguments: [
           "inspect-analysis-view",
           JSON.stringify(request),
@@ -133,7 +138,12 @@ cliTest(
           path,
           "--json",
         ],
-      });
+      };
+      // Keep a fresh-process integrity check for the altered bundle while the
+      // worker must reread the same path for the other invalid inputs.
+      const rejected = freshProcess
+        ? await cli.run(invocation)
+        : await runFileCli(cli, invocation);
       expect(rejected.exitCode).toBe(1);
       expect(rejected.json).toMatchObject({ code: expectedCode });
       expect(rejected.json).not.toHaveProperty("evidence_id");
@@ -416,9 +426,15 @@ cliTest(
         };
         const application = await inspectAnalysisView(request);
         await writeFile(path, JSON.stringify(request));
-        const reply = await cli.run({
+        const invocation = {
           arguments: ["inspect-analysis-view", path, "--json"],
-        });
+        };
+        // Exercise a valid and a malformed parent in fresh processes as well
+        // as the shared worker's repeated reads of the rewritten input path.
+        const reply =
+          group === "manifest" && variant !== "missing"
+            ? await cli.run(invocation)
+            : await runFileCli(cli, invocation);
         expect(reply.stderr).toBe("");
         if (variant === "valid") {
           expect(application.ok).toBe(true);
@@ -606,6 +622,24 @@ cliTest(
     const expected = inspectEvidenceBundle(bundle, options);
     if (!expected.ok) throw expected.error;
     expect(result.json).toEqual(expected.value);
+    // The same shared owner selects the complete record from the portable file.
+    const records = await cli.run({
+      arguments: [
+        "inspect-evidence-bundle",
+        JSON.stringify({ path, ...options, detail: "records", limit: 1 }),
+        "--json",
+      ],
+      environment: { HOME: root, XDG_CONFIG_HOME: root, XDG_CACHE_HOME: root },
+    });
+    expect(records.exitCode).toBe(0);
+    expect(records.json).toMatchObject({
+      kind: "evidence-record-selection",
+      matching_records: 1,
+      limit: 1,
+      next_offset: null,
+      records: [parent],
+      missing_evidence_links: [],
+    });
     const complete = await cli.run({
       arguments: [
         "inspect-evidence-bundle",

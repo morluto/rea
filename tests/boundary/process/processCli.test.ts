@@ -15,6 +15,7 @@ import {
   compareProcessEvidenceFiles,
 } from "../../../src/application/process/ProcessCli.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
+import { parseProcessCaptureEvidence } from "../../../src/application/process/ProcessEvidence.js";
 import { PROCESS_PROVIDER } from "../../../src/domain/process/processEvidenceProvider.js";
 import { INVESTIGATION_EXAMPLES } from "../../../src/contracts/investigationExamples.js";
 import { observeProcessStartIdentity } from "../../../src/process/ProcessOwnershipObservation.js";
@@ -370,7 +371,12 @@ describe("process CLI evidence validation", () => {
       predicate_type: "rea.process-capture",
       operation: "capture_process_scenario",
     });
-    expect(JSON.stringify(evidence)).toContain("minimal-capture");
+    const parsed = parseProcessCaptureEvidence(evidence);
+    if (!parsed.ok)
+      throw new Error(`Invalid capture evidence: ${parsed.error.kind}`);
+    expect(
+      parsed.value.capture.frames.map(({ data }) => data).join(""),
+    ).toContain("minimal-capture");
   });
 
   it("rejects unrelated capture evidence", async () => {

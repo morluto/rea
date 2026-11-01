@@ -129,19 +129,6 @@ cliTest(
   },
 );
 
-it.each(archiveNumberMetadataCases)(
-  "filesystem preserves numeric meaning for $name",
-  async (item) => {
-    const fixture = await keyedArchiveNumberMetadataFixture(item);
-    const result = await inspectBundleKeyedArchive({
-      bundlePath: fixture.root,
-      targetSha256: fixture.digest,
-      parameters: { path: "archive.plist" },
-    });
-    expectKeyedArchiveNumberMetadata(result, item, fixture.digest);
-  },
-);
-
 cliTest.for(archiveNumberMetadataCases)(
   "built CLI preserves numeric meaning for $name",
   async (item, { cli }) => {

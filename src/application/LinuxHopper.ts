@@ -11,6 +11,7 @@ import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   downloadHopperPackage,
   type HopperDownload,
+  type HopperRequestFailure,
 } from "./HopperDownload.js";
 import {
   inspectLinuxHopperPythonRuntime,
@@ -244,6 +245,8 @@ export type LinuxHopperInstallResult =
       readonly pythonRuntimeFailure?: LinuxHopperPythonError;
       /** The operation that threw, retained separately from its outcome class. */
       readonly operationFailure?: LinuxHopperOperationFailure;
+      /** The vendor request (feed, package or key) whose transport failure stopped setup. */
+      readonly download?: HopperRequestFailure;
       /** Original caller cancellation, without flattening its value into text. */
       readonly cancellationReason?: unknown;
     } & { readonly cleanupFailure?: LinuxHopperTemporaryCleanupFailure });
@@ -388,14 +391,12 @@ export const installLinuxHopper = async (
         options.signal,
       );
       if (!selected.ok)
-        return {
-          status: "failed",
-          verificationFailure: selected.error,
-          reason:
-            selected.error.reason === "cancelled"
-              ? "cancelled"
-              : "release_metadata",
-        };
+        return publisherFailure(
+          selected.error,
+          selected.error.reason === "cancelled"
+            ? "cancelled"
+            : "release_metadata",
+        );
       const release = selected.value;
       stage = "download";
       const archiveDownload = await host.download(release.filename, options);
@@ -403,14 +404,7 @@ export const installLinuxHopper = async (
         return {
           status: "failed",
           reason: "download",
-          ...(archiveDownload.httpStatus === undefined
-            ? {}
-            : {
-                operationFailure: {
-                  operation: "download",
-                  detail: `Package download returned HTTP ${archiveDownload.httpStatus}.`,
-                },
-              }),
+          download: { request: "package", ...archiveDownload.error },
         };
       stage = "archive_write";
       temporary = await host.createTemporaryDirectory();
@@ -421,7 +415,7 @@ export const installLinuxHopper = async (
         `hopper.${distribution.packageFamily}`,
       );
       operationPath = archive;
-      await host.writeArchive(archive, archiveDownload.bytes);
+      await host.writeArchive(archive, archiveDownload.value);
       stage = "publisher_verification_failed";
       const verified = await host.verifyArchive(
         distribution.packageFamily,
@@ -430,28 +424,24 @@ export const installLinuxHopper = async (
         options.signal,
       );
       if (!verified.ok)
-        return {
-          status: "failed",
-          verificationFailure: verified.error,
-          reason:
-            verified.error.reason === "cache_missing"
-              ? "verification_unavailable"
-              : verified.error.reason,
-        };
+        return publisherFailure(
+          verified.error,
+          verified.error.reason === "cache_missing"
+            ? "verification_unavailable"
+            : verified.error.reason,
+        );
       const retained = await host.retainVerifiedArchive(
         verified.value,
         archive,
         options.signal,
       );
       if (!retained.ok)
-        return {
-          status: "failed",
-          verificationFailure: retained.error,
-          reason:
-            retained.error.reason === "cache_missing"
-              ? "verification_unavailable"
-              : retained.error.reason,
-        };
+        return publisherFailure(
+          retained.error,
+          retained.error.reason === "cache_missing"
+            ? "verification_unavailable"
+            : retained.error.reason,
+        );
       if (isAborted(options.signal))
         return cancelledInstall(options.signal?.reason);
       stage = "authorization_or_package_manager";
@@ -740,6 +730,17 @@ const installSystemPackage = async (
 
 const isAborted = (signal: AbortSignal | undefined): boolean =>
   signal?.aborted === true;
+
+/** Retain the publisher's error and any vendor request facts it observed. */
+const publisherFailure = (
+  error: HopperReleaseError,
+  reason: Exclude<HopperReleaseError["reason"], "cache_missing">,
+): LinuxHopperInstallResult => ({
+  status: "failed",
+  reason,
+  verificationFailure: error,
+  ...(error.download === undefined ? {} : { download: error.download }),
+});
 
 const cancelledInstall = (cause: unknown): LinuxHopperInstallResult => ({
   status: "failed",

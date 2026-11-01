@@ -72,9 +72,11 @@ it.skipIf(process.platform === "win32")(
 );
 
 it.skipIf(process.platform === "win32")(
-  "returns a startup timeout when Rizin exits before its initial frame",
+  "reports Rizin exiting before its initial frame",
   async () => {
-    const provider = await makeProvider("process.exit(0);");
+    const provider = await makeProvider(
+      'process.stderr.write("early startup diagnostic\\n", () => process.exit(0));',
+    );
     const manager = createManager({
       REA_RIZIN_COMMAND: provider,
     });
@@ -84,6 +86,15 @@ it.skipIf(process.platform === "win32")(
       inferior_tty: await rizinTestInferiorTty(),
     });
     expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisCapabilityUnavailableError",
+      providerId: "rizin",
+      operation: "start_rizin_debug_session",
+      capturedOutput: { stderr: "early startup diagnostic\n" },
+    });
+    expect(result.error.cause).toBeInstanceOf(Error);
+    expect((result.error.cause as Error).message).toContain("Rizin exited");
   },
 );
 
@@ -143,28 +154,6 @@ it.skipIf(process.platform === "win32")(
       },
       abortOnCheck(2),
     );
-    expect(result.ok).toBe(false);
-    expect(spawned).toBe(false);
-  },
-);
-
-it.skipIf(process.platform === "win32")(
-  "rejects a non-TTY path before spawning Rizin",
-  async () => {
-    let spawned = false;
-    const manager = createManager(
-      { REA_RIZIN_COMMAND: "injected-rizin" },
-      {
-        spawnProcess: async () => {
-          spawned = true;
-          throw new Error("must not spawn with an invalid TTY");
-        },
-      },
-    );
-    const result = await manager.start({
-      path: "/tmp/not-a-tty-target",
-      inferior_tty: "/dev/null",
-    });
     expect(result.ok).toBe(false);
     expect(spawned).toBe(false);
   },

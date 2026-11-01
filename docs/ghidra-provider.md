@@ -31,7 +31,8 @@ operation-scoped JVM `OutOfMemoryError` observations retain their separate resou
 classification. Automatic kernel or cgroup OOM attribution is not implemented.
 
 After the authenticated startup handshake, rejected inputs (`invalid_request`,
-`not_found`, `ambiguous`, or an invalid function name) use
+`not_found`, `ambiguous`, an invalid function name, or an address without one
+exact file offset) use
 `diagnostics.diagnostic_scope: "request"` when their active output checkpoint is
 available. They preserve the active request's
 `failure_output`, target/profile identity and runtime/log coordinates, while
@@ -170,6 +171,11 @@ and select the procedure from the observed inventory. Uninitialized regions may
 have no file backing. ELF mappings are observed
 without independent format-specific load-image verification, as the result's
 status and limitations state.
+
+Relocation rows retain Ghidra's `symbol` value, including an empty string or
+null when returned by Ghidra. It is a provider observation, not proof of the
+runtime-resolved address. Older Evidence may not have recorded this field;
+a relocation page requesting it reports that uncertainty.
 
 For large relocation inventories, select MCP `inspect_native_load_image` with
 `detail: "summary"`. It returns verification state, observed identity and counts,

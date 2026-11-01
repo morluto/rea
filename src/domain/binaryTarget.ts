@@ -4,6 +4,7 @@ import type {
   HeaderArchitecture,
   MipsElfMetadata,
   PeCodeViewRecord,
+  RiscvElfMetadata,
   UniversalMachOSlice,
   UniversalMachOSliceIdentity,
 } from "./binaryTargetTypes.js";
@@ -47,7 +48,7 @@ export type ExecutableMetadata =
       readonly format: "elf";
       readonly architecture: "riscv";
       readonly availableArchitectures: readonly "riscv"[];
-      readonly riscv: ElfFamilyMetadata;
+      readonly riscv: RiscvElfMetadata;
     }
   | {
       readonly format: "elf";

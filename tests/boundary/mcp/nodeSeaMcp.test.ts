@@ -11,6 +11,7 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { z } from "zod";
 import { artifactExtractionResultSchema } from "../../../src/domain/artifactGraph.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
 
 // The compiled stdio fixture checks advertised schemas against their dialect and
 // validates actual tool responses, avoiding a second source server module graph.
@@ -58,13 +59,22 @@ it.each(["full", "compact"] as const)(
           kind: "inventory",
           collection: "occurrences",
           logical_paths: ["main.js"],
-          fields: ["format_metadata"],
+          fields: ["logical_path", "format_metadata"],
         },
       });
       expect(retained.isError, JSON.stringify(retained)).not.toBe(true);
-      expect(JSON.stringify(retained.structuredContent)).toContain(
-        "main-script",
+      const view = analysisViewResultSchema.parse(
+        parseEvidence(retained.structuredContent).normalized_result,
       );
+      expect(view).toMatchObject({
+        kind: "inventory",
+        items: [
+          {
+            logical_path: "main.js",
+            format_metadata: { kind: "node-sea-entry", role: "main-script" },
+          },
+        ],
+      });
       const extracted = await call("extract_artifact", {});
       expect(extracted.isError, JSON.stringify(extracted)).not.toBe(true);
       const result = artifactExtractionResultSchema.parse(
@@ -74,14 +84,19 @@ it.each(["full", "compact"] as const)(
       expect(await readFile(join(result.output_root, "data.txt"), "utf8")).toBe(
         "data",
       );
-      await call("close_binary", {});
+      expect((await call("close_binary", {})).isError).not.toBe(true);
       await writeFile(path, nodeSeaPe({ blob: Buffer.alloc(16) }));
-      await call("open_binary", { path });
+      expect((await call("open_binary", { path })).isError).not.toBe(true);
       const invalid = await call("inspect_artifact", {});
-      expect(JSON.stringify(parseMcpToolError(invalid))).toContain(
-        "Node SEA blob magic",
-      );
-      await call("close_binary", {});
+      expect(parseMcpToolError(invalid).error).toMatchObject({
+        code: "artifact_operation_failed",
+        details: {
+          operation: "inspect_artifact",
+          reason: "format",
+          detail: expect.stringContaining("magic"),
+        },
+      });
+      expect((await call("close_binary", {})).isError).not.toBe(true);
       await writeFile(
         path,
         nodeSeaPe({
@@ -93,11 +108,17 @@ it.each(["full", "compact"] as const)(
           }),
         }),
       );
-      await call("open_binary", { path });
+      expect((await call("open_binary", { path })).isError).not.toBe(true);
       const overLimit = await call("inspect_artifact", {});
-      expect(JSON.stringify(parseMcpToolError(overLimit))).toContain(
-        "Node SEA asset count exceeds",
-      );
+      expect(parseMcpToolError(overLimit).error).toMatchObject({
+        code: "truncated",
+        details: {
+          operation: "inspect_artifact",
+          reason: "limit",
+          boundary: "capacity",
+          truncated: true,
+        },
+      });
     } finally {
       if (outputRoot !== undefined)
         await rm(outputRoot, { recursive: true, force: true });

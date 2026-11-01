@@ -103,6 +103,7 @@ it("reports malformed headers as unavailable and observes a repaired registratio
   expect(availability).toMatchObject({
     status: "unavailable",
     code: "open_options_invalid",
+    remediation: expect.stringContaining("REA_BINARY_NINJA_MCP_CONFIG"),
   });
   expect(JSON.stringify(availability)).not.toContain("private-token");
   expect(await candidate.resolveAnalysisProfile(pe(false))).toMatchObject({

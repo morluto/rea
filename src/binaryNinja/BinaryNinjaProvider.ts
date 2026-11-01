@@ -115,6 +115,8 @@ export class BinaryNinjaProvider implements AnalysisProviderCandidate {
               ? "not_configured"
               : "open_options_invalid",
           reason: config.error.message,
+          remediation:
+            "Set REA_BINARY_NINJA_MCP_CONFIG to a readable JSON registration with the Binary Ninja GUI MCP URL and optional Authorization header. Correct any reported registration error; see docs/binary-ninja.md.",
           diagnostics: { configured: false, live_connection_probed: false },
         };
   }
