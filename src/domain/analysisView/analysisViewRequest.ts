@@ -11,6 +11,7 @@ import { javaScriptRoutesViewRequestSchema } from "./javascriptRoutesView.js";
 import { webBundleViewRequestSchema } from "./webBundleView.js";
 import { sourceToBundleViewRequestSchema } from "./sourceToBundleView.js";
 import { featureTraceViewRequestSchema } from "./featureTraceView.js";
+import { nativeFeatureTraceViewRequestSchema } from "./nativeFeatureTraceView.js";
 import { gpuCodeObjectsViewRequestSchema } from "./gpuCodeObjectsView.js";
 import { modelArtifactViewRequestSchema } from "../model/modelArtifactQuery.js";
 import { rustBinaryViewRequestSchema } from "../rust/rustBinaryQuery.js";
@@ -68,6 +69,7 @@ export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
   nativeFunctionMatchingViewRequestSchema,
   sourceToBundleViewRequestSchema,
   featureTraceViewRequestSchema,
+  nativeFeatureTraceViewRequestSchema,
   summaryViewSchema,
   goBinaryViewRequestSchema,
   rustBinaryViewRequestSchema,

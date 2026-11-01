@@ -5,7 +5,10 @@ import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
 
 /** Source facts remain available even when a completed observation is cancelled. */
-export type AnalysisResultWithSources<Value> = Result<Value, AnalysisError> & {
+export type AnalysisResultWithSources<Value, Failure = AnalysisError> = Result<
+  Value,
+  Failure
+> & {
   readonly sourceEvidence?: readonly Evidence[];
 };
 

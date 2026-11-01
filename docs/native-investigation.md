@@ -295,6 +295,20 @@ relationships but reports their completeness as unknown. In particular, a resolv
 tail call observed in one direction does not prove that the reverse inventory is
 complete. An empty Hopper inventory cannot establish that no such call exists.
 No whole-binary reverse scan is performed.
+
+For large native traces, `trace_feature` accepts `detail: "summary"`. It retains
+the complete trace and returns counts and its parent Evidence ID. Use
+`inspect_analysis_view` with that ID and `view: {kind: "native-feature-trace",
+collection: "references", offset: 0, limit: 64}` to page the original rows;
+`matches` and `unknowns` are separate collections. Matches accept an exact
+`address`; references accept exact `source_address` and `target_address`
+filters. Row indices refer to the retained collection, and page coverage does not establish provider discovery
+completeness. `list_unknowns` pages the independently managed question heads.
+In the one-shot CLI, `rea trace ... --detail summary --evidence_output PATH`
+stores the trace and its linked source Evidence for later
+`inspect-analysis-view` calls. This bundle does not include the CLI session's
+Unknown registry; its original question texts remain available in the trace's
+`unknowns` pages.
 Regex searches use ECMAScript Unicode syntax in a cancellable worker with a
 matching deadline and a worker old-generation heap. Deadline or cancellation
 stops matching while leaving the Hopper API available. The deadline is
