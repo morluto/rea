@@ -52,6 +52,7 @@ import {
   binarySessionStatus,
   currentRouteCapability,
 } from "./BinarySessionStatus.js";
+import { SessionRuntimeAvailability } from "./SessionRuntimeAvailability.js";
 import { isSourceEvidenceRetainable } from "./AnalysisSnapshotCache.js";
 import type { BinarySessionDetail } from "../../contracts/sessionStatusContract.js";
 import {
@@ -200,10 +201,7 @@ export class BinarySession
   readonly #bundleResourceFactory: BundleResourceClientFactory | undefined;
   #activeBundleResources: ActiveBundleResourceSession | undefined;
   #pendingBundleResourceCleanup: ActiveBundleResourceSession[] = [];
-  readonly #runtimeUnavailability = new Map<
-    string,
-    { readonly reason: string }
-  >();
+  readonly #runtimeAvailability = new SessionRuntimeAvailability();
   readonly #availabilityListeners = new Set<() => void | Promise<void>>();
 
   constructor(
@@ -1255,7 +1253,7 @@ export class BinarySession
           }),
       route: this.#currentRoute(),
       router: this.#providerRouter,
-      runtimeUnavailability: this.#runtimeUnavailability,
+      runtimeUnavailability: this.#runtimeAvailability.entries,
       runId: run?.runId,
       runtimeLineageSnapshots: client?.runtimeLineageSnapshots?.() ?? [],
       requestActivitySnapshots: client?.requestActivitySnapshots?.() ?? [],
@@ -1419,6 +1417,7 @@ export class BinarySession
     // A failed reply cannot prove that a dispatched metadata write rolled back.
     // Stop replay before dispatch, including reads overlapping the write.
     if (capability.effects.mutatesArtifact) this.invalidateSnapshot();
+    const dispatch = this.#runtimeAvailability.dispatch();
     const call = active.client.execute(name, arguments_, options);
     const result = unrecordedExecution(await call);
     const profiled = bindExecutionTarget(
@@ -1447,7 +1446,15 @@ export class BinarySession
       this.#active === active
     )
       this.#active.nativeSourceAdmitted = true;
-    this.#observeRuntimeAvailability(name, execution);
+    if (
+      this.#runtimeAvailability.observe(
+        dispatch,
+        capability,
+        active.route.capabilities.values(),
+        execution,
+      )
+    )
+      this.#emitAvailabilityChanged();
     // Source facts belong to the observation, even when this query cannot be
     // replayed (for example a Ghidra procedure read without a document selector).
     if (execution.ok && execution.value.sourceEvidence !== undefined) {
@@ -1500,61 +1507,13 @@ export class BinarySession
       currentRouteCapability(
         descriptor,
         active?.target,
-        this.#runtimeUnavailability,
+        this.#runtimeAvailability.entries,
       ).available
     );
   }
 
-  #observeRuntimeAvailability(
-    operation: AnalysisOperation,
-    result: Result<AnalysisExecution, AnalysisError>,
-  ): void {
-    if (result.ok) {
-      if (this.#markRuntimeAvailable(operation))
-        this.#emitAvailabilityChanged();
-      return;
-    }
-    if (result.error._tag === "AnalysisCapabilityUnavailableError") {
-      if (this.#markRuntimeUnavailable(operation, result.error.message))
-        this.#emitAvailabilityChanged();
-      return;
-    }
-    if (
-      [
-        "ProviderAdapterError",
-        "HopperProcessError",
-        "HopperStartError",
-      ].includes(result.error._tag)
-    ) {
-      const capabilities = this.#active?.route.capabilities;
-      const providerId = capabilities?.get(operation)?.provider.id;
-      let changed = false;
-      for (const descriptor of capabilities?.values() ?? [])
-        if (providerId !== undefined && descriptor.provider.id === providerId)
-          changed =
-            this.#markRuntimeUnavailable(
-              descriptor.operation,
-              `${result.error._tag}: ${result.error.message}`,
-            ) || changed;
-      if (changed) this.#emitAvailabilityChanged();
-    }
-  }
-
-  #markRuntimeAvailable(operation: string): boolean {
-    return this.#runtimeUnavailability.delete(operation);
-  }
-
-  #markRuntimeUnavailable(operation: string, reason: string): boolean {
-    const current = this.#runtimeUnavailability.get(operation);
-    if (current?.reason === reason) return false;
-    this.#runtimeUnavailability.set(operation, { reason });
-    return true;
-  }
-
   #clearRuntimeAvailability(): void {
-    if (this.#runtimeUnavailability.size === 0) return;
-    this.#runtimeUnavailability.clear();
-    this.#emitAvailabilityChanged();
+    if (this.#runtimeAvailability.clear()) this.#emitAvailabilityChanged();
   }
 
   #emitAvailabilityChanged(): void {

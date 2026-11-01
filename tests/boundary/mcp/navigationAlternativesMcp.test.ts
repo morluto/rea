@@ -167,29 +167,41 @@ describe("address navigation refusal alternatives", () => {
         arguments: { procedure: "0x401000" },
       });
       expect(parseMcpToolError(failed).error.code).toBe("execution_failure");
-      // The failure marks every Ghidra operation unavailable for this run, so
-      // neither discovery nor the refusal may offer one.
+      // The failure marks Ghidra's operations unavailable (assembly observed,
+      // the others inferred), so neither discovery nor the refusal offers one.
       const generic = await navigationRefusal(harness.mcp, "next_address");
       expect(generic.remediation.action).toBe(GENERIC);
       expect(generic.details).not.toHaveProperty("alternatives");
       expect(await offeredInDiscovery()).toEqual([undefined]);
 
-      // A later success restores exactly that operation in both views.
+      // A later Ghidra success clears the inferred entries, while the
+      // observed assembly failure stays until assembly itself succeeds.
       const listing = await harness.mcp.callTool({
         name: "read_function_instructions",
         arguments: { procedure: "0x401000" },
       });
       expect(listing.isError).not.toBe(true);
-      const restored = await navigationRefusal(harness.mcp, "next_address");
-      expect(restored.details?.alternatives).toEqual([
+      const recovered = [
+        "inspect_native_instruction",
         "read_function_instructions",
-      ]);
+      ];
+      const restored = await navigationRefusal(harness.mcp, "next_address");
+      expect(restored.details?.alternatives).toEqual(recovered);
       expect(restored.remediation.action).toBe(
-        remediationFor("next_address", ["read_function_instructions"]),
+        remediationFor("next_address", recovered),
       );
-      expect(await offeredInDiscovery()).toEqual([
-        ["read_function_instructions"],
-      ]);
+      expect(await offeredInDiscovery()).toEqual([recovered]);
+
+      const assembly = await harness.mcp.callTool({
+        name: "procedure_assembly",
+        arguments: { procedure: "0x401000" },
+      });
+      expect(assembly.isError).not.toBe(true);
+      expect(
+        (await navigationRefusal(harness.mcp, "next_address")).details
+          ?.alternatives,
+      ).toEqual(GHIDRA_ALTERNATIVES);
+      expect(await offeredInDiscovery()).toEqual([GHIDRA_ALTERNATIVES]);
     } finally {
       await harness.close();
     }
