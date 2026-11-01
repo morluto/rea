@@ -165,7 +165,7 @@ it("handles cancellation that races with stat listener registration", async () =
     ) => {
       aborted = true;
       if (typeof listener === "function") listener(new Event("abort"));
-      else listener.handleEvent(new Event("abort"));
+      else if (listener !== null) listener.handleEvent(new Event("abort"));
     },
     removeEventListener: () => {},
     dispatchEvent: () => true,
@@ -240,7 +240,7 @@ it("cancels an artifact stream when cancellation races with its listener registr
       if (registrations === 2) {
         aborted = true;
         if (typeof listener === "function") listener(new Event("abort"));
-        else listener.handleEvent(new Event("abort"));
+        else if (listener !== null) listener.handleEvent(new Event("abort"));
       }
     },
     removeEventListener: () => {},

@@ -25,6 +25,7 @@ import {
   Reader,
   registerCodec,
   ZipReader,
+  type CodecDefinition,
   type DecompressionStreamOptions,
   type Entry,
   type FileEntry,
@@ -64,7 +65,12 @@ class ZipZstandardDecompressionStream {
         // Match the existing ELF/GPU Zstandard decoder's 128 MiB window cap.
         params: { [constants.ZSTD_d_windowLogMax]: 27 },
       }),
-    );
+    ) as unknown as InstanceType<
+      NonNullable<CodecDefinition["DecompressionStream"]>
+    >;
+    // Node's stream/web and zip.js's codec declarations model WHATWG streams
+    // through different type libraries. Duplex.toWeb performs the runtime
+    // conversion; this aligns only their declaration boundary.
     this.readable = stream.readable;
     this.writable = stream.writable;
   }
@@ -448,11 +454,8 @@ const extractStream = (
       if (!output.write(Buffer.from(chunk)))
         await once(output, "drain", { signal: controller.signal });
     },
-    close: async () => {
-      await verifySource();
-      assertArtifactReadActive(signal);
-      output.end();
-    },
+    // Sink closure can precede getData's final validation or rejection.
+    // The producer's successful settlement owns consumer-visible EOF below.
     abort: (reason) => {
       output.destroy(toError(typedZipFailure(reason, entry.compressionMethod)));
     },
@@ -466,14 +469,14 @@ const extractStream = (
         onprogress: () => assertArtifactReadActive(signal),
       }),
     )
-    .then(
-      () => undefined,
-      (cause: unknown) => {
-        output.destroy(
-          toError(typedZipFailure(cause, entry.compressionMethod)),
-        );
-      },
-    );
+    .then(async () => {
+      await verifySource();
+      assertArtifactReadActive(signal);
+      output.end();
+    })
+    .catch((cause: unknown) => {
+      output.destroy(toError(typedZipFailure(cause, entry.compressionMethod)));
+    });
   return { output, completion };
 };
 
