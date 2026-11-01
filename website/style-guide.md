@@ -80,37 +80,27 @@ code excerpt with readable logic and a figure that explains the result without
 requiring the reader to understand either language. Show a simple agent prompt
 and the specific facts REA supplies to answer it.
 
-Put compact setup at the beginning of the homepage: a copyable installation
-prompt, with the terminal command and platform options in open native disclosures.
-Keep the setup-guide link visible. Then explain what reverse engineering
-means and what it lets someone do, before the worked examples.
+Put the setup command at the beginning of the homepage and the full setup
+prompt in the closing section, with the setup-guide link visible. Explain how
+an investigation works before the worked examples.
 Begin each example with its goal and the reason to inspect that program.
 Name the actual evidence REA returned and what the agent did with it.
-Give long pages a short table of contents with concrete section names. Preserve
-the reading width: the homepage uses the side gutter when it has room,
-and a collapsible sticky menu after the opening section on smaller screens. Highlight the current
-section, keep fragment links usable without JavaScript, and leave room above
-the destination for the sticky control. Make Get started the primary opening
-action. Give RL environments, Showcases and Blog their own row of links and
-short descriptions below the introduction and setup. Use equal columns for
-the introduction and setup on large screens, then stack them before either
-column becomes cramped.
+Open the homepage with the headline, the setup command and Get started beside
+the teardown photograph. The sticky header leaves room above fragment targets;
+the homepage has no separate table of contents.
 Use a short introduction and one three-step overview before the examples.
 Let introductory prose wrap naturally across the container, independently of
 the narrower heading width. Add a brief transition before the worked examples.
-Present each example in the same reading order: the question, the rule found
-in the program, then a reconstruction to try. Use plain language in that path;
-keep original code, source details and verification in the disclosure below it.
-Prefer ordinary paragraphs to repeated goal, finding and role panels. Reserve
-bold text and blue highlights for a meaningful code selection or action, not
-every takeaway. Keep source, interpretation and new code attributed to their
-respective roles. On mobile, the demo can precede its supporting code once its
-purpose is clear. Show the full Calculator manual/agent comparison by default,
-using an open native disclosure so readers can collapse it. Keep supporting
-verification flows in closed disclosures. Retain the
-authored examples, source excerpts, investigation steps and useful prompts when
-reordering the page. Opening an investigation should reveal its explanation
-and code without another layer of hidden analysis.
+Present each example in the same reading order: the question with a copyable
+prompt, then a visual answer that shows the recovered rule. Keep original code,
+source details, verification and the Calculator manual/agent comparison behind
+"See how it was found". Prefer ordinary paragraphs to repeated goal, finding and
+role panels. Reserve bold text and highlights for a meaningful code selection
+or action, not every takeaway. Keep source, interpretation and new code
+attributed to their respective roles. Retain the authored examples, source
+excerpts and investigation steps when reordering the page. Opening an
+investigation should reveal its explanation and code without another layer of
+hidden analysis.
 Keep FAQ, community help and issue reports on separate lines. Describe what
 each destination is for so readers can choose the right one.
 Show how the reader's task changes using the same question on both sides of a
@@ -236,53 +226,76 @@ display size; scaling small labels down is not a mobile layout.
 
 The shared stylesheet defines the site. Its core colors are:
 
-| Token      | Light     | Dark      | Use                              |
-| ---------- | --------- | --------- | -------------------------------- |
-| `--page`   | `#ffffff` | `#1e1e2e` | Page background                  |
-| `--ink`    | `#20252b` | `#cdd6f4` | Main text                        |
-| `--muted`  | `#5b6570` | `#a6adc8` | Secondary text                   |
-| `--line`   | `#e0e5e9` | `#45475a` | Section and component boundaries |
-| `--soft`   | `#f4f6f8` | `#181825` | Code and supporting surfaces     |
-| `--accent` | `#294f82` | `#89b4fa` | Links and meaningful highlights  |
+| Token        | Light                 | Dark                     | Use                                  |
+| ------------ | --------------------- | ------------------------ | ------------------------------------ |
+| `--page`     | `#f1efeb`             | `#151513`                | Page background                      |
+| `--plate`    | `#fbfaf6`             | `#1d1c19`                | Cards and prompts                    |
+| `--soft`     | `#e8e5df`             | `#1f1e1b`                | Bands, chips and supporting surfaces |
+| `--ink`      | `#1b1a17`             | `#ecebe5`                | Main text, links and actions         |
+| `--muted`    | `#57534b`             | `#a39f95`                | Secondary text                       |
+| `--hairline` | `rgb(27 26 23 / 12%)` | `rgb(236 235 229 / 11%)` | Card borders and section rules       |
+| `--accent`   | `#1b1a17`             | `#ecebe5`                | Links and focus outlines             |
+| `--dark`     | `#1b1a17`             | `#0f0f0e`                | Code blocks, footer and dark bands   |
 
-The header's sun/moon button switches between light and dark. On the first visit,
-the site follows the system preference; a manual choice is saved for later visits
+Neutrals carry a slight warm bias in both themes. Ink is the link and action
+color; a muted lime marks code highlights and the LCD figures. A new fixed color should come from the same warm family.
+
+The header's sun/moon button switches between light and dark. Every first visit
+starts light, whatever the system preference; a manual choice is saved for later visits
 and shared across pages and languages on that host. Without JavaScript, the site
 uses the light palette and hides the switch.
 
 `assets/theme.js` applies the choice before styles load and owns theme changes.
-The stylesheet scopes the dark palette to `data-theme="dark"` on the root,
-using [Catppuccin Mocha](https://github.com/catppuccin/palette) colors (MIT).
+The stylesheet scopes the dark palette to `data-theme="dark"` on the root.
 Any new fixed color needs a dark counterpart in that section. Keep selector
 specificity unchanged with `:where()` when scoping component rules.
 Embedded SVGs inherit the page's `color-scheme`; canvas demos listen for
-`website-theme-change` to redraw. Check both themes, including a manual choice
-that differs from the system preference.
+`website-theme-change` to redraw. Check both themes, including dark chosen with the
+switch on a system set to light, and light on a system set to dark.
 
-Use the system sans-serif stack for prose and the shared monospace stack for
-code. Korean editions use Noto Sans KR from Google Fonts, with local Korean
-fonts as fallbacks; code retains the shared monospace fonts for Latin glyphs.
-The homepage content container is at most 1200px wide. Other pages use 1080px,
-with article text limited to 760px. The header has its own 1320px container.
-Keep its primary navigation to Get started, Showcases, Blog and Guides, with
-FAQ and Contributors in the footer. Utility controls have quiet borders and
-clear hover and keyboard focus states. At 1100px and below, navigation moves
-to a separate row and the homepage introduction and setup stack. Reuse the
+Use Geist for prose and Geist Mono for code. Both are self-hosted variable
+fonts in `assets/fonts/` under the SIL Open Font License; system fonts follow in
+each stack, and the CJK, Thai and right-to-left stacks keep their local faces.
+Korean editions use Noto Sans KR from Google Fonts, with local Korean fonts as
+fallbacks; code retains Geist Mono for Latin glyphs. The content container is
+at most 1200px wide, with article text limited to 760px. The header has its own
+1296px container. Keep its primary navigation to Showcases, Blog, Guides and
+FAQ, with Get started as the header's button and Contributors in the footer. Utility controls have quiet
+borders and clear hover and keyboard focus states. At 900px and below,
+the navigation links are hidden; the footer lists every destination. Reuse the
 existing heading sizes, line heights, section spacing and component classes.
 
+### Logo
+
+`assets/brand/wordmark.svg` is the REA wordmark: three letters on a 40-unit
+grid with an 8-unit stroke. The R's leg is set apart from its bowl, showing a
+program taken apart. `assets/brand/mark.svg` is the R alone, for the favicon and
+small square spaces. Use the wordmark where the name should be read and the
+mark only where the wordmark does not fit; never place them side by side, which
+reads as "R REA". Draw both in `--ink` or `--page`, without effects, outlines or
+other colors. Inline copies in the header and footer templates use
+`currentColor` so they follow the theme.
+
 Whitespace separates ideas. Thin rules identify sections. Headings establish
-hierarchy. The blue accent identifies something useful. Keep these elements
+hierarchy. Ink underlines identify links; the lime highlight marks a meaningful
+code selection. Keep these elements
 consistent rather than adding a new treatment for each page. Decorative
 gradients, large shadows and scroll effects do not help explain the examples.
 
-Agent terminals contain short, copyable prompts. Use the existing continuous
-cursor animation and reduced-motion behavior. Label an example prompt as an
+Motion confirms an action or reveals a section once as it enters the
+viewport; headlines rise word by word and photographs open from their top edge. Controls change color
+in about 150ms and scale to `--press` while pressed. Menus and opened details
+enter in 150 to 200ms with `--ease-out`. Under reduced motion, keep opacity and
+color changes and remove movement. A card that leads to one page makes its whole
+area the link target through its existing text link; keep that link's wording
+specific.
+
+Agent prompts are light cards with a copy button in their header. Label an
+example prompt as an
 example; a real recorded result belongs in an evidence block. Copy buttons
 should copy only the intended text, without the prompt symbol or cursor.
 
-Include the shared `↑ Top` link on reading pages, with `id="top"` on the body.
-Keep its 44px minimum touch height, safe-area spacing and keyboard focus return.
-Use the shared script for visibility and reduced-motion behavior.
+Keep `id="top"` on the body for the skip link and in-page anchors.
 
 Use `minmax(0, 1fr)` for grid tracks that contain long commands or nested panels.
 Allow code blocks to scroll within their own area. Check expanded details as

@@ -325,8 +325,8 @@ respecting reduced-motion preferences. Both the prompt and animation work
 without JavaScript. The homepage and agent setup section share a copyable
 installation prompt; setup still presents its plan for approval.
 
-The header's sun/moon button switches the color theme. A first visit follows the
-system preference, falling back to light when no preference is given. Manual
+The header's sun/moon button switches the color theme. A first visit is always
+light, whatever the system preference. Manual
 choices are saved in browser storage under `rea-theme` and apply across pages,
 language editions and tabs on the same host. If storage is blocked, the button
 still works for the current page. Without JavaScript, the site stays light and
@@ -337,11 +337,6 @@ saved choice applies before the first paint. That script owns the resolved
 `data-theme`, browser `theme-color` and `website-theme-change` event. The CSS
 palette, embedded SVGs and dinosaur canvas follow that choice. Keep the theme
 region in the page scaffold and run `sync` after editing its template.
-
-Reading pages share a small `↑ Top` link at the bottom right. It appears after
-scrolling and returns to the page header, with smooth scrolling when reduced
-motion is disabled. Keyboard activation returns focus to the first navigation
-link. Without JavaScript, the link stays visible and uses its `#top` anchor.
 
 The FAQ uses native `<details>` for its answers. Keep replies short and link to
 on-site guides for the next step. Individual answers have stable fragment IDs;
@@ -360,61 +355,31 @@ Evidence. [evidence/dx-ball-sound-pan.md](evidence/dx-ball-sound-pan.md) records
 their provenance and the scope of the validation claims. The original executable
 and complete private Evidence records are not website assets.
 
-The homepage pairs a short introduction with the installation prompt. Get
-started is the primary action; a second link goes straight to the first
-interactive example. The terminal command and platform options use native
-disclosures that start open, and the setup-guide link stays visible. Platform links go
-directly to the Windows, macOS and Linux steps in Get started; the optional
-curl installer links to its on-site instructions.
-RL environments, Showcases and Blog form a separate row below the introduction
-and setup, with a short description for each destination. The homepage uses a
-1200px content width and equal desktop columns, stacking the introduction and
-setup at 1100px and below. Reading pages retain their narrower content width.
-A full-width definition and three steps explain the
-workflow, followed by a short transition into the dinosaur and Calculator
-cases. The full Calculator manual/agent comparison is visible by default.
-Each example's supporting investigation flow and verification details are folded. Plain
-paragraphs introduce the cases without repeating goal and purpose panels.
-Three case-study previews lead to further investigations. The closing sections
-offer a guided first task and target-specific guides. FAQ, Discord and issue
-links each have their own line explaining their purpose.
-Every content page's header and footer link GitHub, Discord and X. The main
-navigation contains Get started, Showcases, Blog and Guides. FAQ and Contributors
-are in the footer. Utility controls use quiet borders with visible hover and
-keyboard focus states.
-A right-side table of contents stays visible at widths of 1800px and above,
-with a 48px gap from the content. CSS owns this layout choice; the homepage
-script reads the displayed position when opening or closing the menu.
-On narrower screens it becomes a sticky, native disclosure after the opening
-section; selecting a link
-closes the menu and focuses the destination. The homepage script follows
-the reading position and marks the current link. Without JavaScript, the
-menu stays open and its fragment links remain usable.
-The RL environments section pairs its explanation and guide links with a
-copyable agent prompt on a contrasting surface. It follows the case studies
-and stacks into reading order on small screens.
-The comparison uses the same Calculator question on both sides: three
-selectable manual steps pair original instructions with an analyst illustration
-and thought bubbles; the agent side pairs a copyable question with an
-illustrative answer. The outer disclosure starts open, showing the complete comparison with
-the original desktop column proportions and the agent explanation first on
-mobile. Thoughts illustrate the reasoning behind the findings. The
-shared code-step script selects the initial note on load, so all three notes remain
-readable when JavaScript is disabled.
-The original-instruction panel stays expanded when the comparison is opened,
-including on mobile; its native disclosure can still be closed manually.
-Dinosaur is the first example; Calculator follows as the native example.
-Each introduces the goal, then follows three named steps: ask a question,
-find the rule, and try a reconstruction. The question and plain-language finding
-are on the left, with the demo on the right; mobile keeps that reading order.
-Code excerpts and source details join the optional investigation flow and checks
-in each disclosure. Calculator's excerpt
-comes from an installed model DLL; Microsoft's public implementation supplies
-names and a crosscheck. Its controls apply the percentage rule to generic inputs.
-The target guides end with an optional larger-project disclosure, preserving
-the original website-cloning and game-reconstruction prompts.
+The homepage follows a calculator teardown. The hero sets the headline and
+setup command over a photograph of a calculator laid out piece by piece; Get
+started is the primary action. The npm download chart below the command and the
+GitHub star count in the header are fetched in the browser and stay hidden when
+the registry or GitHub does not answer, so the page never shows a stale number.
+Three cards then explain the workflow: ask about one feature, inspect the
+program, explain it and try a change.
 
-The dinosaur example connects an inspected running script to a new playable
+The dinosaur and Calculator examples each pair the question and a copyable
+agent prompt with a visual answer: the recovered speed curve on an LCD, and the
+two % results. "See how it was found" reveals the original code, the checks and,
+for Calculator, the manual/agent comparison. That evidence is a native
+disclosure below each example; the link opens it through the shared fragment
+helper. The playable speed control lives in the dinosaur lab. Case
+studies, RL environments and a closing setup section follow; the setup section
+repeats the install prompt and command once, then links the target guides and
+the guided Notes example.
+
+Photographs in `public/assets/photos/` were generated for this page and show
+generic hardware, not the inspected programs. Agent and platform marks come
+from Simple Icons; interface icons are Hugeicons. The header holds the main
+navigation, language and theme controls, GitHub and Get started. The footer
+groups product, help and project links, Discord, GitHub and X.
+
+The dinosaur lab connects an inspected running script to a new playable
 mini-game. `public/assets/dino-speed.js` owns the recovered speed rule and replay;
 `dino-demo.js` imports it for automatic acceleration. The slider chooses a fixed
 speed instead. Drawing, jumping and collision code are newly authored for this

@@ -99,7 +99,7 @@
     />
     <!-- website:sharing:end -->
     <!-- website:theme:start -->
-    <meta name="theme-color" content="#ffffff" />
+    <meta name="theme-color" content="#f1efeb" />
     <!-- Apply the saved theme before styles load, to avoid a flash on navigation. -->
     <script src="./assets/theme.js"></script>
     <!-- website:theme:end -->
@@ -107,319 +107,720 @@
     <link rel="stylesheet" href="assets/styles.css" />
     <script src="assets/main.js" defer></script>
     <script type="module" src="assets/home.js"></script>
-    <script type="module" src="assets/dino-demo.js"></script>
   </head>
   <body class="home-page" id="top">
     <a class="skip-link" href="#main">Skip to content</a>
     <!-- website:header:start -->
     <!-- prettier-ignore -->
     <header class="site-header">
-      <div class="container header-inner">
+      <div class="header-inner">
         <a class="brand" href="./" aria-label="REA home"
-          ><span class="brand-name">REA</span
-          ><span class="brand-caption" data-i18n-skip>Reverse Engineer Anything</span></a
+          ><svg class="brand-wordmark" viewBox="0 0 104 40" width="104" height="40" aria-hidden="true" focusable="false"><path fill="currentColor" fill-rule="evenodd" d="M0 0H20A12 12 0 0 1 20 24H8V40H0Z M8 8V16H20A4 4 0 0 0 20 8Z" /><path fill="currentColor" d="M19.6 27.5H28.3L34 40H25.3Z" /><path fill="currentColor" d="M40 0H66V8H48V16H63V24H48V32H66V40H40Z" /><path fill="currentColor" fill-rule="evenodd" d="M72 40V14A14 14 0 0 1 86 0H90A14 14 0 0 1 104 14V40H96V30H80V40Z M80 22H96V14A6 6 0 0 0 90 8H86A6 6 0 0 0 80 14Z" /></svg></a
         >
         <nav class="navigation" aria-label="Main navigation">
-          <a href="./get-started/" class="nav-start">Get started</a>
           <a href="./showcase/">Showcases</a>
           <a href="./blog/">Blog</a>
           <a href="./guides/">Guides</a>
+          <a href="./faq/">FAQ</a>
         </nav>
-        <div class="header-social">
+        <div class="header-actions">
           <details class="language-picker" data-i18n-skip><summary><span aria-hidden="true">文 / A</span> <span>English</span></summary><nav aria-label="English"><a href="./" lang="en" dir="ltr" data-language="en" aria-current="true">English</a><a href="./zh-CN/" lang="zh-CN" dir="ltr" data-language="zh-CN">简体中文</a><a href="./zh-TW/" lang="zh-TW" dir="ltr" data-language="zh-TW">繁體中文</a><a href="./ja/" lang="ja" dir="ltr" data-language="ja">日本語</a><a href="./ko/" lang="ko" dir="ltr" data-language="ko">한국어</a><a href="./tr/" lang="tr" dir="ltr" data-language="tr">Türkçe</a><a href="./ru/" lang="ru" dir="ltr" data-language="ru">Русский</a><a href="./vi/" lang="vi" dir="ltr" data-language="vi">Tiếng Việt</a><a href="./th/" lang="th" dir="ltr" data-language="th">ไทย</a><a href="./de/" lang="de" dir="ltr" data-language="de">Deutsch</a><a href="./es/" lang="es" dir="ltr" data-language="es">Español</a><a href="./fr/" lang="fr" dir="ltr" data-language="fr">Français</a><a href="./uk/" lang="uk" dir="ltr" data-language="uk">Українська</a><a href="./pl/" lang="pl" dir="ltr" data-language="pl">Polski</a><a href="./pt-BR/" lang="pt-BR" dir="ltr" data-language="pt-BR">Português (Brasil)</a><a href="./ar/" lang="ar" dir="rtl" data-language="ar">العربية</a><a href="./fa/" lang="fa" dir="rtl" data-language="fa">فارسی</a><a href="./id/" lang="id" dir="ltr" data-language="id">Bahasa Indonesia</a><a href="./it/" lang="it" dir="ltr" data-language="it">Italiano</a><a href="./el/" lang="el" dir="ltr" data-language="el">Ελληνικά</a><a href="./ml/" lang="ml" dir="ltr" data-language="ml">മലയാളം</a><a href="./ur-Latn/" lang="ur-Latn" dir="ltr" data-language="ur-Latn">Roman Urdu</a><a href="./ro/" lang="ro" dir="ltr" data-language="ro">Română</a></nav></details>
           <button class="theme-toggle" type="button" data-theme-toggle hidden>
-            <svg class="theme-moon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
-              <path d="M20.9 13a9 9 0 0 1-9.9-9.9A9 9 0 1 0 20.9 13Z" />
+            <svg class="theme-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+              <path d="M21.5 14.078C20.3 14.719 18.93 15.082 17.475 15.082C12.749 15.082 8.918 11.251 8.918 6.525C8.918 5.07 9.281 3.7 9.922 2.5C5.668 3.497 2.5 7.315 2.5 11.873C2.5 17.19 6.81 21.5 12.127 21.5C16.685 21.5 20.503 18.332 21.5 14.078Z" />
             </svg>
-            <svg class="theme-sun" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true" focusable="false">
-              <circle cx="12" cy="12" r="4" />
-              <path d="M12 2v2m0 16v2M2 12h2m16 0h2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42" />
+            <svg class="theme-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true" focusable="false">
+              <path d="M17 12a5 5 0 1 1-10 0 5 5 0 0 1 10 0Z" />
+              <path d="M12 2V3.5M12 20.5V22M19.071 19.071L18.01 18.011M5.989 5.989L4.929 4.929M22 12H20.5M3.5 12H2M19.071 4.929L18.011 5.989M5.99 18.011L4.929 19.071" />
             </svg>
           </button>
-          <a
-            class="nav-github"
-            href="https://github.com/morluto/rea"
-            aria-label="REA on GitHub"
-            title="REA on GitHub"
-          >
-            <svg
-              width="22"
-              height="22"
-              viewBox="0 0 16 16"
-              aria-hidden="true"
-              focusable="false"
-            >
-              <path
-                fill="currentColor"
-                d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.65 7.65 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"
-              />
-            </svg>
-            <span class="nav-github-count" hidden aria-hidden="true"></span>
-          </a>
-          <a
-            class="nav-discord"
-            href="https://discord.gg/GkcryMnJDM"
-            aria-label="Join REA on Discord"
-            title="Join REA on Discord"
-          >
-            <svg
-              width="22"
-              height="22"
-              viewBox="0 0 24 24"
-              aria-hidden="true"
-              focusable="false"
-            >
-              <path
-                fill="currentColor"
-                d="M20.317 4.3698a19.7913 19.7913 0 0 0-4.8851-1.5152.0741.0741 0 0 0-.0785.0371c-.211.3753-.4447.8648-.6083 1.2495-1.8447-.2762-3.68-.2762-5.4868 0-.1636-.3933-.4058-.8742-.6177-1.2495a.077.077 0 0 0-.0785-.037 19.7363 19.7363 0 0 0-4.8852 1.515.0699.0699 0 0 0-.0321.0277C.5334 9.0458-.319 13.5799.0992 18.0578a.0824.0824 0 0 0 .0312.0561c2.0528 1.5076 4.0413 2.4228 5.9929 3.0294a.0777.0777 0 0 0 .0842-.0276c.4616-.6304.8731-1.2952 1.226-1.9942a.076.076 0 0 0-.0416-.1057c-.6528-.2476-1.2743-.5495-1.8722-.8923a.077.077 0 0 1-.0076-.1277c.1258-.0943.2517-.1923.3718-.2914a.0743.0743 0 0 1 .0776-.0105c3.9278 1.7933 8.18 1.7933 12.0614 0a.0739.0739 0 0 1 .0785.0095c.1202.099.246.1981.3728.2924a.077.077 0 0 1-.0066.1276 12.2986 12.2986 0 0 1-1.873.8914.0766.0766 0 0 0-.0407.1067c.3604.698.7719 1.3628 1.225 1.9932a.076.076 0 0 0 .0842.0286c1.961-.6067 3.9495-1.5219 6.0023-3.0294a.077.077 0 0 0 .0313-.0552c.5004-5.177-.8382-9.6739-3.5485-13.6604a.061.061 0 0 0-.0312-.0286ZM8.02 15.3312c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9555-2.4189 2.157-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.9555 2.4189-2.1569 2.4189Zm7.9748 0c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9554-2.4189 2.1569-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.946 2.4189-2.1568 2.4189Z"
-              />
-            </svg>
-          </a>
-          <a
-            class="nav-x"
-            href="https://x.com/reatools"
-            aria-label="Follow REA on X"
-            title="Follow REA on X"
-          >
-            <svg
-              width="18"
-              height="18"
-              viewBox="0 0 24 24"
-              aria-hidden="true"
-              focusable="false"
-            >
-              <path
-                fill="currentColor"
-                d="M18.901 1.153h3.68l-8.04 9.19L24 22.846h-7.406l-5.8-7.584-6.638 7.584H.474l8.6-9.83L0 1.154h7.594l5.243 6.932ZM17.61 20.644h2.039L6.486 3.24H4.298Z"
-              />
-            </svg>
-          </a>
+          <a class="nav-github" href="https://github.com/morluto/rea" target="_blank" rel="noopener" aria-label="REA on GitHub" title="REA on GitHub"
+            ><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M6.517 17.113C6.912 17.691 8.109 18.923 9.742 19.233M9.864 22C8.836 21.831 2 19.606 2 12.093C2 5.063 8.002 2 12.001 2C16 2 22 5.063 22 12.093C22 19.606 15.164 21.831 14.136 22C14.136 22 13.927 18.583 14.049 17.997C14.171 17.411 13.755 16.469 13.755 16.469C14.726 16.105 16.204 15.585 16.7 14.187C17.085 13.103 17.327 11.529 16.251 10.049C16.251 10.049 16.532 7.658 16 7.565C15.467 7.473 13.9 8.512 13.9 8.512C13.443 8.382 12.424 8.135 12.002 8.179C11.579 8.135 10.557 8.382 10.1 8.512C10.1 8.512 8.532 7.473 8 7.565C7.468 7.658 7.749 10.049 7.749 10.049C6.673 11.529 6.915 13.103 7.3 14.187C7.796 15.585 9.274 16.105 10.245 16.469C10.245 16.469 9.829 17.411 9.951 17.997C10.073 18.583 9.864 22 9.864 22Z" /></svg
+            ><span class="nav-github-label" translate="no">GitHub</span
+            ><span class="nav-github-stars" hidden aria-hidden="true"
+              ><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="M12.797 2.905C13.255 3.57 13.948 4.708 14.651 6.045C15.194 7.077 15.466 7.593 15.855 7.87C16.244 8.146 16.812 8.231 17.947 8.401C19.52 8.637 20.681 8.892 21.347 9.055C21.735 9.15 21.998 9.5 21.998 9.9C21.998 10.126 21.913 10.344 21.761 10.511C21.064 11.278 20.349 12.084 19.47 12.961C18.605 13.825 18.172 14.257 18.025 14.726C17.878 15.195 17.983 15.779 18.194 16.947C18.373 17.943 18.557 19.131 18.692 20.422C18.753 21.002 18.292 21.5 17.709 21.5C17.652 21.5 17.597 21.496 17.542 21.482C17.05 21.358 15.919 20.785 14.125 19.724C13.072 19.102 12.546 18.792 11.999 18.792C11.453 18.792 10.927 19.103 9.874 19.724C8.08 20.785 6.95 21.358 6.458 21.482C6.403 21.496 6.348 21.5 6.291 21.5C5.708 21.5 5.247 21.002 5.308 20.422C5.443 19.131 5.627 17.943 5.806 16.947C6.017 15.779 6.122 15.195 5.975 14.726C5.828 14.257 5.395 13.825 4.53 12.961C3.651 12.084 2.936 11.278 2.239 10.511C2.087 10.344 2.002 10.126 2.002 9.9C2.002 9.5 2.265 9.15 2.653 9.055C3.319 8.892 4.48 8.637 6.053 8.401C7.188 8.231 7.756 8.146 8.145 7.87C8.534 7.593 8.806 7.077 9.349 6.045C10.052 4.708 10.745 3.57 11.203 2.905C11.383 2.644 11.683 2.5 12 2.5C12.317 2.5 12.617 2.644 12.797 2.905Z" /></svg
+              ><span class="nav-github-count"></span></span
+          ></a>
+          <a class="button nav-start" href="./get-started/">Get started</a>
         </div>
       </div>
     </header>
     <!-- website:header:end -->
     <main id="main">
-      <section class="container hero home-hero" id="setup">
-        <div class="home-start-grid">
-          <div>
-            <p class="eyebrow">Reverse engineering, with your coding agent</p>
-            <h1>Find out how<br />software works.</h1>
-            <p class="lede">
-              Ask your coding agent about an app, a game or a website. REA gives
-              it the tools to inspect the code behind the answer.
-            </p>
-            <div class="actions">
-              <a class="button" href="get-started/">Get started</a>
-              <a class="text-link" href="#dinosaur">See an example ↓</a>
+      <svg class="icon-sprite" aria-hidden="true" focusable="false">
+        <symbol id="logo-claude" viewBox="0 0 24 24">
+          <path
+            fill="currentColor"
+            d="m4.7144 15.9555 4.7174-2.6471.079-.2307-.079-.1275h-.2307l-.7893-.0486-2.6956-.0729-2.3375-.0971-2.2646-.1214-.5707-.1215-.5343-.7042.0546-.3522.4797-.3218.686.0608 1.5179.1032 2.2767.1578 1.6514.0972 2.4468.255h.3886l.0546-.1579-.1336-.0971-.1032-.0972L6.973 9.8356l-2.55-1.6879-1.3356-.9714-.7225-.4918-.3643-.4614-.1578-1.0078.6557-.7225.8803.0607.2246.0607.8925.686 1.9064 1.4754 2.4893 1.8336.3643.3035.1457-.1032.0182-.0728-.164-.2733-1.3539-2.4467-1.445-2.4893-.6435-1.032-.17-.6194c-.0607-.255-.1032-.4674-.1032-.7285L6.287.1335 6.6997 0l.9957.1336.419.3642.6192 1.4147 1.0018 2.2282 1.5543 3.0296.4553.8985.2429.8318.091.255h.1579v-.1457l.1275-1.706.2368-2.0947.2307-2.6957.0789-.7589.3764-.9107.7468-.4918.5828.2793.4797.686-.0668.4433-.2853 1.8517-.5586 2.9021-.3643 1.9429h.2125l.2429-.2429.9835-1.3053 1.6514-2.0643.7286-.8196.85-.9046.5464-.4311h1.0321l.759 1.1293-.34 1.1657-1.0625 1.3478-.8804 1.1414-1.2628 1.7-.7893 1.36.0729.1093.1882-.0183 2.8535-.607 1.5421-.2794 1.8396-.3157.8318.3886.091.3946-.3278.8075-1.967.4857-2.3072.4614-3.4364.8136-.0425.0304.0486.0607 1.5482.1457.6618.0364h1.621l3.0175.2247.7892.522.4736.6376-.079.4857-1.2142.6193-1.6393-.3886-3.825-.9107-1.3113-.3279h-.1822v.1093l1.0929 1.0686 2.0035 1.8092 2.5075 2.3314.1275.5768-.3218.4554-.34-.0486-2.2039-1.6575-.85-.7468-1.9246-1.621h-.1275v.17l.4432.6496 2.3436 3.5214.1214 1.0807-.17.3521-.6071.2125-.6679-.1214-1.3721-1.9246L14.38 17.959l-1.1414-1.9428-.1397.079-.674 7.2552-.3156.3703-.7286.2793-.6071-.4614-.3218-.7468.3218-1.4753.3886-1.9246.3157-1.53.2853-1.9004.17-.6314-.0121-.0425-.1397.0182-1.4328 1.9672-2.1796 2.9446-1.7243 1.8456-.4128.164-.7164-.3704.0667-.6618.4008-.5889 2.386-3.0357 1.4389-1.882.929-1.0868-.0062-.1579h-.0546l-6.3385 4.1164-1.1293.1457-.4857-.4554.0608-.7467.2307-.2429 1.9064-1.3114Z"
+          />
+        </symbol>
+        <symbol id="logo-openai" viewBox="0 0 24 24">
+          <path
+            fill="currentColor"
+            d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z"
+          />
+        </symbol>
+        <symbol id="logo-cursor" viewBox="0 0 24 24">
+          <path
+            fill="currentColor"
+            d="M11.503.131 1.891 5.678a.84.84 0 0 0-.42.726v11.188c0 .3.162.575.42.724l9.609 5.55a1 1 0 0 0 .998 0l9.61-5.55a.84.84 0 0 0 .42-.724V6.404a.84.84 0 0 0-.42-.726L12.497.131a1.01 1.01 0 0 0-.996 0M2.657 6.338h18.55c.263 0 .43.287.297.515L12.23 22.918c-.062.107-.229.064-.229-.06V12.335a.59.59 0 0 0-.295-.51l-9.11-5.257c-.109-.063-.064-.23.061-.23"
+          />
+        </symbol>
+        <symbol id="logo-gemini" viewBox="0 0 24 24">
+          <path
+            fill="currentColor"
+            d="M11.04 19.32Q12 21.51 12 24q0-2.49.93-4.68.96-2.19 2.58-3.81t3.81-2.55Q21.51 12 24 12q-2.49 0-4.68-.93a12.3 12.3 0 0 1-3.81-2.58 12.3 12.3 0 0 1-2.58-3.81Q12 2.49 12 0q0 2.49-.96 4.68-.93 2.19-2.55 3.81a12.3 12.3 0 0 1-3.81 2.58Q2.49 12 0 12q2.49 0 4.68.96 2.19.93 3.81 2.55t2.55 3.81"
+          />
+        </symbol>
+        <symbol id="logo-android" viewBox="0 0 24 24">
+          <path
+            fill="currentColor"
+            d="M18.4395 5.5586c-.675 1.1664-1.352 2.3318-2.0274 3.498-.0366-.0155-.0742-.0286-.1113-.043-1.8249-.6957-3.484-.8-4.42-.787-1.8551.0185-3.3544.4643-4.2597.8203-.084-.1494-1.7526-3.021-2.0215-3.4864a1.1451 1.1451 0 0 0-.1406-.1914c-.3312-.364-.9054-.4859-1.379-.203-.475.282-.7136.9361-.3886 1.5019 1.9466 3.3696-.0966-.2158 1.9473 3.3593.0172.031-.4946.2642-1.3926 1.0177C2.8987 12.176.452 14.772 0 18.9902h24c-.119-1.1108-.3686-2.099-.7461-3.0683-.7438-1.9118-1.8435-3.2928-2.7402-4.1836a12.1048 12.1048 0 0 0-2.1309-1.6875c.6594-1.122 1.312-2.2559 1.9649-3.3848.2077-.3615.1886-.7956-.0079-1.1191a1.1001 1.1001 0 0 0-.8515-.5332c-.5225-.0536-.9392.3128-1.0488.5449zm-.0391 8.461c.3944.5926.324 1.3306-.1563 1.6503-.4799.3197-1.188.0985-1.582-.4941-.3944-.5927-.324-1.3307.1563-1.6504.4727-.315 1.1812-.1086 1.582.4941zM7.207 13.5273c.4803.3197.5506 1.0577.1563 1.6504-.394.5926-1.1038.8138-1.584.4941-.48-.3197-.5503-1.0577-.1563-1.6504.4008-.6021 1.1087-.8106 1.584-.4941z"
+          />
+        </symbol>
+        <symbol id="logo-electron" viewBox="0 0 24 24">
+          <path
+            fill="currentColor"
+            d="M12.0111 0c-.85 0-1.5392.6891-1.5392 1.5392 0 .8501.6891 1.5393 1.5392 1.5393.595 0 1.11-.338 1.3662-.832 2.2208 1.2675 3.847 5.4728 3.847 10.3623 0 2.0715-.2891 4.056-.825 5.7685a.3215.3215 0 0 0 .2107.403.322.322 0 0 0 .4033-.2111c.5558-1.7763.8542-3.8251.8542-5.9604 0-5.1927-1.7717-9.686-4.3206-11.0027.001-.0223.0035-.0443.0035-.0669 0-.85-.6891-1.5392-1.5393-1.5392zm0 .6432a.896.896 0 1 1 0 1.792.896.896 0 1 1 0-1.792zm-5.486 4.3052c-2.067.0074-3.6473.6646-4.3885 1.9485-.7375 1.2774-.5267 2.971.5113 4.7813a.3217.3217 0 0 0 .558-.32C2.271 9.7274 2.089 8.266 2.6938 7.2185c.821-1.422 3.033-1.9552 5.9321-1.4271a.3216.3216 0 0 0 .1153-.6329c-.784-.1428-1.5271-.2125-2.216-.21zm11.0522.0176a.3216.3216 0 0 0-.0084.6432c1.8337.0239 3.1556.5956 3.7502 1.6256.8192 1.419.1798 3.5947-1.7182 5.837a.322.322 0 0 0 .0377.4535.3215.3215 0 0 0 .4532-.0377c2.0535-2.426 2.7708-4.8661 1.7845-6.5744-.7257-1.257-2.26-1.9207-4.299-1.9472zm-2.6984.2924a.3225.3225 0 0 0-.0647.0072c-1.8568.3979-3.8333 1.1755-5.7314 2.2714-4.5699 2.6384-7.5924 6.4948-7.3601 9.3717-.4726.2628-.7928.7664-.7928 1.3455 0 .85.6892 1.5392 1.5393 1.5392.85 0 1.5392-.6891 1.5392-1.5392 0-.8501-.6891-1.5393-1.5392-1.5393-.038 0-.0754.003-.1128.0057-.1002-2.5597 2.7434-6.1412 7.048-8.6265 1.8413-1.063 3.7551-1.8163 5.5445-2.1997a.3217.3217 0 0 0-.07-.636zm-2.8787 6.2364a1.1192 1.1192 0 0 0-.2243.0255c-.6012.1301-.983.7225-.8533 1.3238.1302.6012.7226.9832 1.3238.8533.6012-.1302.9832-.7226.8533-1.3238-.1139-.526-.5816-.8844-1.0995-.8788zM4.532 13.341a.321.321 0 0 0-.2318.0835.3214.3214 0 0 0-.0214.4542c1.2682 1.3936 2.9157 2.701 4.7946 3.7857 4.4146 2.5489 9.1056 3.2849 11.5608 1.8392a1.53 1.53 0 0 0 .8966.2899c.8501 0 1.5392-.6891 1.5392-1.5392 0-.8501-.689-1.5393-1.5392-1.5393-.85 0-1.5392.6892-1.5392 1.5393 0 .276.0737.5344.201.7584-2.2448 1.214-6.631.5002-10.7976-1.9054-1.8228-1.0524-3.418-2.3181-4.6404-3.6614a.3206.3206 0 0 0-.2226-.1049zm-2.0628 4.0172a.896.896 0 1 1 0 1.792.896.896 0 1 1 0-1.792zm19.0616 0a.896.896 0 1 1 0 1.792.891.891 0 0 1-.5864-.2194c-.0025-.004-.0039-.0083-.0066-.0123a.3195.3195 0 0 0-.0957-.0914.896.896 0 0 1 .6887-1.4689zm-14.0045 1.368a.3215.3215 0 0 0-.3207.4296C8.2793 22.154 10.036 24 12.0111 24c1.4406 0 2.7735-.9822 3.8128-2.711a.3215.3215 0 0 0-.11-.4413.3219.3219 0 0 0-.4415.11c-.934 1.5537-2.0812 2.399-3.2613 2.399-1.6407 0-3.2075-1.6465-4.2-4.4179a.3216.3216 0 0 0-.2848-.2126z"
+          />
+        </symbol>
+        <symbol id="logo-windows" viewBox="0 0 24 24">
+          <path
+            fill="currentColor"
+            d="M0 0h11.377v11.372H0Zm12.623 0H24v11.372H12.623ZM0 12.623h11.377V24H0Zm12.623 0H24V24H12.623"
+          />
+        </symbol>
+      </svg>
+      <section class="home-hero" aria-labelledby="home-title">
+        <img
+          class="home-hero-image"
+          src="assets/photos/hero-teardown.webp"
+          alt="A calculator taken apart and laid out piece by piece: its case, keypad, circuit board, display, screws and keys."
+          width="1672"
+          height="940"
+          fetchpriority="high"
+        />
+        <img
+          class="home-hero-image home-hero-image-dark"
+          src="assets/photos/hero-teardown-dark.webp"
+          alt="A calculator taken apart and laid out piece by piece: its case, keypad, circuit board, display, screws and keys."
+          width="1672"
+          height="940"
+          loading="lazy"
+        />
+        <div class="home-hero-copy">
+          <h1 id="home-title">Take any program apart.</h1>
+          <p class="home-hero-lede">
+            REA lets your coding agent open an app, a game or a website and lay
+            out the pieces that explain how it works.
+          </p>
+          <div class="home-hero-actions">
+            <a class="button button-large" href="get-started/">Get started</a>
+            <div class="command-pill">
+              <span class="command-prompt" aria-hidden="true">$</span>
+              <code id="hero-command">npx rea-agents@latest setup</code>
+              <button
+                class="copy-button copy-icon"
+                type="button"
+                data-copy="hero-command"
+                aria-label="Copy setup command"
+                title="Copy setup command"
+              ></button>
             </div>
           </div>
-          <div class="home-setup" id="install">
-            <div class="home-setup-agent">
-              <h2>Set up REA</h2>
-              <p>Copy this into your coding agent:</p>
-              <div class="agent-terminal">
-                <div class="terminal-header">
-                  <span class="terminal-title"
-                    ><span class="terminal-dots" aria-hidden="true"
-                      ><i></i><i></i><i></i></span
-                    >Your coding agent</span
-                  >
-                  <button
-                    class="copy-button"
-                    type="button"
-                    data-copy="home-install-prompt"
-                    aria-label="Copy REA installation prompt"
-                  >
-                    Copy
-                  </button>
-                </div>
-                <p class="terminal-prompt">
-                  <span class="prompt-symbol" aria-hidden="true">›</span
-                  ><span id="home-install-prompt"
-                    >Install REA and connect it to this coding agent using
-                    <span translate="no">npx rea-agents@latest setup</span>.
-                    Show me the setup plan for approval, then verify the
-                    installation.</span
-                  ><span class="terminal-cursor" aria-hidden="true"></span>
+          <a
+            class="home-downloads"
+            href="https://www.npmjs.com/package/rea-agents"
+            data-downloads
+            hidden
+          >
+            <svg
+              class="home-downloads-chart"
+              viewBox="0 0 119 28"
+              width="119"
+              height="28"
+              aria-hidden="true"
+              focusable="false"
+              data-downloads-chart
+            ></svg>
+            <span class="home-downloads-text"
+              ><strong data-downloads-total></strong
+              ><span>npm, last 30 days</span></span
+            >
+          </a>
+        </div>
+      </section>
+
+      <section class="home-section" id="how-it-works">
+        <div class="home-container">
+          <div class="home-split-heading home-rule">
+            <h2>Every investigation follows the same three steps.</h2>
+            <p>
+              Your agent asks, REA reads the program, and your agent explains
+              it. The two examples below show it on real programs.
+            </p>
+          </div>
+          <ol class="home-cards">
+            <li class="home-card">
+              <img
+                src="assets/photos/ask-one-key.webp"
+                alt="A calculator keypad with its % key set apart and tagged with a paper label."
+                width="800"
+                height="600"
+                loading="lazy"
+              />
+              <div class="home-card-body">
+                <h3>Ask about one feature</h3>
+                <p>
+                  Give your agent an app, a game or a page, and one question
+                  about how it works.
                 </p>
               </div>
-            </div>
-            <details class="home-setup-command" open>
-              <summary>Or run this in your terminal:</summary>
-              <div class="code-block code-inline">
-                <code id="setup-command">npx rea-agents@latest setup</code>
+            </li>
+            <li class="home-card">
+              <img
+                src="assets/photos/inspect-loupe.webp"
+                alt="A calculator beside its circuit board, with a loupe over the chip."
+                width="800"
+                height="600"
+                loading="lazy"
+              />
+              <div class="home-card-body">
+                <h3>Inspect the program</h3>
+                <p>
+                  REA lets your agent read the code and see what the program
+                  does while it runs.
+                </p>
+              </div>
+            </li>
+            <li class="home-card">
+              <img
+                src="assets/photos/try-a-change.webp"
+                alt="The calculator reassembled with its % key highlighted and a spare % key beside it."
+                width="800"
+                height="600"
+                loading="lazy"
+              />
+              <div class="home-card-body">
+                <h3>Explain it, then try a change</h3>
+                <p>
+                  Your agent uses the findings to explain the feature or rebuild
+                  it with your change.
+                </p>
+              </div>
+            </li>
+          </ol>
+        </div>
+      </section>
+
+      <section class="home-section home-example home-rule-top" id="dinosaur">
+        <div class="home-container home-example-grid">
+          <div class="home-example-question">
+            <h2>Why does the dinosaur get faster?</h2>
+            <p class="home-example-lede">
+              The game speeds up as you run. Ask your agent for the rule, then
+              rebuild it with a speed control.
+            </p>
+            <div class="prompt-card">
+              <div class="prompt-card-header">
+                <span class="agent-logos" aria-hidden="true"
+                  ><svg><use href="#logo-claude" /></svg
+                  ><svg><use href="#logo-openai" /></svg
+                  ><svg><use href="#logo-cursor" /></svg
+                  ><svg><use href="#logo-gemini" /></svg
+                ></span>
+                <span class="prompt-card-agents" translate="no"
+                  >Claude Code, Codex, Cursor, Gemini CLI</span
+                >
                 <button
                   class="copy-button"
                   type="button"
-                  data-copy="setup-command"
-                  aria-label="Copy setup command"
+                  data-copy="dino-analysis-prompt"
+                  aria-label="Copy dinosaur analysis prompt"
                 >
                   Copy
                 </button>
               </div>
+              <p class="prompt-card-text" id="dino-analysis-prompt">
+                Use REA to inspect this dinosaur game. Why does it get faster?
+                Show the speed rule, then build a small version with an
+                adjustable speed.
+              </p>
+            </div>
+          </div>
+          <div class="home-example-answer">
+            <figure class="lcd-device">
+              <div class="lcd-screen">
+                <svg
+                  class="lcd-chart"
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="548"
+                  height="226"
+                  aria-hidden="true"
+                  focusable="false"
+                  viewBox="0 0 548 226"
+                  fill="none"
+                >
+                  <path
+                    d="M36 185.0H540"
+                    stroke="rgba(30,33,27,0.3)"
+                    stroke-width="1.5"
+                    stroke-dasharray="2 4"
+                  />
+                  <path
+                    d="M36 95.0H540"
+                    stroke="rgba(30,33,27,0.3)"
+                    stroke-width="1.5"
+                    stroke-dasharray="2 4"
+                  />
+                  <path
+                    d="M36 23.0H540"
+                    stroke="rgba(30,33,27,0.3)"
+                    stroke-width="1.5"
+                    stroke-dasharray="2 4"
+                  />
+                  <g class="lcd-curve">
+                    <path
+                      d="M36 200V188H42V188H48V182H54V182H60V176H66V176H72V170H78V170H84V170H90V164H96V164H102V158H108V158H114V152H120V152H126V146H132V146H138V140H144V140H150V140H156V134H162V134H168V128H174V128H180V122H186V122H192V116H198V116H204V110H210V110H216V110H222V104H228V104H234V98H240V98H246V92H252V92H258V86H264V86H270V80H276V80H282V80H288V74H294V74H300V68H306V68H312V62H318V62H324V56H330V56H336V50H342V50H348V50H354V44H360V44H366V38H372V38H378V32H384V32H390V26H396V26H402V26H408V26H414V26H420V26H426V26H432V26H438V26H444V26H450V26H456V26H462V26H468V26H474V26H480V26H486V26H492V26H498V26H504V26H510V26H516V26H522V26H528V26H534V26H540V200Z"
+                      fill="rgba(30,33,27,0.08)"
+                    />
+                    <path
+                      d="M36 182h5v5h-5zM42 176h5v5h-5zM42 182h5v5h-5zM48 176h5v5h-5zM54 170h5v5h-5zM54 176h5v5h-5zM60 170h5v5h-5zM66 164h5v5h-5zM66 170h5v5h-5zM72 164h5v5h-5zM78 164h5v5h-5zM84 158h5v5h-5zM84 164h5v5h-5zM90 158h5v5h-5zM96 152h5v5h-5zM96 158h5v5h-5zM102 152h5v5h-5zM108 146h5v5h-5zM108 152h5v5h-5zM114 146h5v5h-5zM120 140h5v5h-5zM120 146h5v5h-5zM126 140h5v5h-5zM132 134h5v5h-5zM132 140h5v5h-5zM138 134h5v5h-5zM144 134h5v5h-5zM150 128h5v5h-5zM150 134h5v5h-5zM156 128h5v5h-5zM162 122h5v5h-5zM162 128h5v5h-5zM168 122h5v5h-5zM174 116h5v5h-5zM174 122h5v5h-5zM180 116h5v5h-5zM186 110h5v5h-5zM186 116h5v5h-5zM192 110h5v5h-5zM198 104h5v5h-5zM198 110h5v5h-5zM204 104h5v5h-5zM210 104h5v5h-5zM216 98h5v5h-5zM216 104h5v5h-5zM222 98h5v5h-5zM228 92h5v5h-5zM228 98h5v5h-5zM234 92h5v5h-5zM240 86h5v5h-5zM240 92h5v5h-5zM246 86h5v5h-5zM252 80h5v5h-5zM252 86h5v5h-5zM258 80h5v5h-5zM264 74h5v5h-5zM264 80h5v5h-5zM270 74h5v5h-5zM276 74h5v5h-5zM282 68h5v5h-5zM282 74h5v5h-5zM288 68h5v5h-5zM294 62h5v5h-5zM294 68h5v5h-5zM300 62h5v5h-5zM306 56h5v5h-5zM306 62h5v5h-5zM312 56h5v5h-5zM318 50h5v5h-5zM318 56h5v5h-5zM324 50h5v5h-5zM330 44h5v5h-5zM330 50h5v5h-5zM336 44h5v5h-5zM342 44h5v5h-5zM348 38h5v5h-5zM348 44h5v5h-5zM354 38h5v5h-5zM360 32h5v5h-5zM360 38h5v5h-5zM366 32h5v5h-5zM372 26h5v5h-5zM372 32h5v5h-5zM378 26h5v5h-5zM384 20h5v5h-5zM384 26h5v5h-5zM390 20h5v5h-5zM396 20h5v5h-5zM402 20h5v5h-5zM408 20h5v5h-5zM414 20h5v5h-5zM420 20h5v5h-5zM426 20h5v5h-5zM432 20h5v5h-5zM438 20h5v5h-5zM444 20h5v5h-5zM450 20h5v5h-5zM456 20h5v5h-5zM462 20h5v5h-5zM468 20h5v5h-5zM474 20h5v5h-5zM480 20h5v5h-5zM486 20h5v5h-5zM492 20h5v5h-5zM498 20h5v5h-5zM504 20h5v5h-5zM510 20h5v5h-5zM516 20h5v5h-5zM522 20h5v5h-5zM528 20h5v5h-5zM534 20h5v5h-5z"
+                      fill="#1e211b"
+                    />
+                    <rect
+                      x="30.5"
+                      y="176.5"
+                      width="16"
+                      height="16"
+                      fill="none"
+                      stroke="#1e211b"
+                      stroke-width="2"
+                    />
+                    <rect
+                      x="78.5"
+                      y="152.5"
+                      width="16"
+                      height="16"
+                      fill="none"
+                      stroke="#1e211b"
+                      stroke-width="2"
+                    />
+                    <rect
+                      x="228.5"
+                      y="86.5"
+                      width="16"
+                      height="16"
+                      fill="none"
+                      stroke="#1e211b"
+                      stroke-width="2"
+                    />
+                    <rect
+                      x="378.5"
+                      y="14.5"
+                      width="16"
+                      height="16"
+                      fill="none"
+                      stroke="#1e211b"
+                      stroke-width="2"
+                    />
+                    <rect
+                      x="528.5"
+                      y="14.5"
+                      width="16"
+                      height="16"
+                      fill="none"
+                      stroke="#1e211b"
+                      stroke-width="2"
+                    />
+                  </g>
+                  <text
+                    x="26"
+                    y="189.0"
+                    text-anchor="end"
+                    font-family="Geist Mono"
+                    font-size="11"
+                    fill="#1e211b"
+                  >
+                    6
+                  </text>
+                  <text
+                    x="26"
+                    y="99.0"
+                    text-anchor="end"
+                    font-family="Geist Mono"
+                    font-size="11"
+                    fill="#1e211b"
+                  >
+                    10
+                  </text>
+                  <text
+                    x="26"
+                    y="27.0"
+                    text-anchor="end"
+                    font-family="Geist Mono"
+                    font-size="11"
+                    fill="#1e211b"
+                  >
+                    13
+                  </text>
+                  <text
+                    x="38"
+                    y="220"
+                    text-anchor="start"
+                    font-family="Geist Mono"
+                    font-size="11"
+                    fill="#1e211b"
+                  >
+                    0
+                  </text>
+                  <text
+                    x="236"
+                    y="220"
+                    text-anchor="middle"
+                    font-family="Geist Mono"
+                    font-size="11"
+                    fill="#1e211b"
+                  >
+                    4,000
+                  </text>
+                  <text
+                    x="386"
+                    y="220"
+                    text-anchor="middle"
+                    font-family="Geist Mono"
+                    font-size="11"
+                    fill="#1e211b"
+                  >
+                    7,000
+                  </text>
+                  <text
+                    x="540"
+                    y="220"
+                    text-anchor="end"
+                    font-family="Geist Mono"
+                    font-size="11"
+                    fill="#1e211b"
+                  >
+                    10,000 updates
+                  </text>
+                </svg>
+              </div>
+              <figcaption class="sr-only">
+                Recovered speed: it starts at 6, reaches 10 after 4,000 updates
+                and stops at 13 after 10,000 updates.
+              </figcaption>
+            </figure>
+            <dl class="home-stats">
+              <div>
+                <dt>Starting speed</dt>
+                <dd translate="no">6</dd>
+              </div>
+              <div>
+                <dt>Added on each update</dt>
+                <dd translate="no">+0.001</dd>
+              </div>
+              <div>
+                <dt>Where it stops</dt>
+                <dd translate="no">13</dd>
+              </div>
+            </dl>
+            <div class="rule-bar">
+              <code>SPEED: 6, ACCELERATION: 0.001, MAX_SPEED: 13</code>
+              <a class="text-link" href="#dino-evidence"
+                >See how it was found</a
+              >
+            </div>
+          </div>
+          <details class="evidence-details home-evidence" id="dino-evidence">
+            <summary>See how it was found</summary>
+            <div class="home-evidence-body">
               <p class="caption">
-                Approve the setup plan, then restart your agent.
+                Inspected target:
+                <a href="https://wayou.github.io/t-rex-runner/"
+                  >wayou’s Chromium-derived browser edition</a
+                >.
               </p>
-            </details>
-            <details class="home-install-options" open>
-              <summary>Setup options</summary>
-              <nav class="home-install-resources" aria-label="Setup options">
-                <span>Setup for your platform:</span>
-                <a href="get-started/#node-windows-help"
-                  ><span translate="no">Windows (PowerShell)</span></a
+              <div class="code-block">
+                <div class="code-header">
+                  <span
+                    >REA · loaded <span translate="no">index.js</span> ·
+                    selected lines</span
+                  >
+                </div>
+                <pre><code>if (this.currentSpeed &lt; this.config.MAX_SPEED) {
+  <span class="code-key">this.currentSpeed += this.config.ACCELERATION;</span>
+}</code></pre>
+              </div>
+              <p class="dino-rule">
+                Start at 6. Add 0.001 each update without a collision, while
+                speed is below 13.
+              </p>
+              <figure class="workflow-figure dino-loop">
+                <p class="figure-title">What each part does</p>
+                <ol class="flow-steps">
+                  <li>
+                    <span class="flow-label">01 · REA</span
+                    ><span class="flow-node"
+                      >Read the running game’s script</span
+                    ><span class="flow-note"
+                      >Return its actual code and settings to the agent.</span
+                    >
+                  </li>
+                  <li>
+                    <span class="flow-label">02 · Your agent</span
+                    ><span class="flow-node"
+                      >Rebuild the rule, add a control</span
+                    ><span class="flow-note"
+                      >Use the recovered acceleration in a small game with a
+                      speed slider.</span
+                    >
+                  </li>
+                  <li>
+                    <span class="flow-label">03 · You</span
+                    ><span class="flow-node">Change the speed and play</span
+                    ><span class="flow-note"
+                      >Try the original acceleration, then choose your own
+                      pace.</span
+                    >
+                  </li>
+                </ol>
+              </figure>
+              <p>
+                REA inspected the HTTP browser edition through a local debugging
+                connection and returned the loaded <code>index.js</code>,
+                including its source and digest.
+              </p>
+              <div class="code-block">
+                <div class="code-header">
+                  <span>Selected settings from the inspected script</span>
+                </div>
+                <pre><code>ACCELERATION: 0.001,
+MAX_SPEED: 13,
+SPEED: 6</code></pre>
+              </div>
+              <p>
+                We called the original game’s update function in a controlled
+                browser check, with obstacles and automatic scheduling disabled.
+                After 4,000 updates, speed was 10.0; after 10,000, it was 13.0,
+                rounded to one decimal.
+              </p>
+              <p>
+                The new mini-game keeps that speed rule. Its drawing, jumping
+                and collision code are a small teaching implementation.
+                <a href="examples/dino-lab/">Open the lab</a> to see the new
+                code and run the same speed check.
+              </p>
+              <p>
+                To inspect the target yourself, follow the
+                <a href="guides/browser/#prepare">browser connection steps</a>
+                using
+                <a href="https://wayou.github.io/t-rex-runner/"
+                  >the dinosaur page</a
+                >. Give your agent that page URL and your local debugging
+                endpoint, then copy the prompt above.
+              </p>
+              <p class="caption">
+                <a
+                  href="https://github.com/wayou/t-rex-runner/blob/5455bfa408ec6b707c7300ff194b7390733a766d/index.js#L565-L571"
+                  >Inspected speed code</a
                 >
-                <a href="get-started/#node-macos-help"
-                  ><span translate="no">macOS</span></a
-                >
-                <a href="get-started/#node-linux-help"
-                  ><span translate="no">Linux</span></a
-                >
-              </nav>
-              <p class="home-other-install-options">
-                Other install options:
-                <a href="get-started/#curl-installation"
-                  ><span translate="no">curl</span> →</a
+                ·
+                <a href="assets/licenses/dinosaur.txt"
+                  >Chromium Authors · BSD license</a
                 >
               </p>
-            </details>
-            <p class="home-expert-shortcut">
-              First time, or missing <span translate="no">Node.js</span> or a
-              coding agent?
-              <a href="get-started/">Follow the step-by-step setup guide →</a>
-            </p>
-          </div>
-        </div>
-        <div class="home-reading-links">
-          <div>
-            <a class="text-link" href="#rl-environments"
-              >Build RL environments →</a
-            >
-            <p>Record a web app for training and testing agents.</p>
-          </div>
-          <div>
-            <a class="text-link" href="showcase/">Showcases →</a>
-            <p>Investigations and interactive demos.</p>
-          </div>
-          <div>
-            <a class="text-link" href="blog/">Blog →</a>
-            <p>Methods and reconstruction notes.</p>
-          </div>
+            </div>
+          </details>
         </div>
       </section>
 
-      <details class="home-page-nav" data-home-nav open>
-        <summary class="container">
-          <span>On this page</span>
-          <span
-            class="home-nav-current"
-            data-home-nav-current
-            aria-hidden="true"
-            >Set up REA</span
-          >
-          <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
-            <path d="m2 4 4 4 4-4" fill="none" stroke="currentColor" />
-          </svg>
-        </summary>
-        <nav class="home-nav-links" aria-label="On this page">
-          <div class="container">
-            <p class="home-nav-title">On this page</p>
-            <ul>
-              <li><a href="#setup" aria-current="location">Set up REA</a></li>
-              <li><a href="#what-is-re">How it works</a></li>
-              <li><a href="#dinosaur">Dinosaur game</a></li>
-              <li><a href="#calculator">Calculator</a></li>
-              <li><a href="#showcases">Showcases</a></li>
-              <li><a href="#rl-environments">RL environments</a></li>
-              <li><a href="#try-rea">Try REA</a></li>
-              <li><a href="#analyze">Go deeper</a></li>
-            </ul>
-          </div>
-        </nav>
-      </details>
-
-      <section class="section" id="what-is-re">
-        <div class="container">
-          <div class="section-heading">
-            <h2>How it works</h2>
-          </div>
-          <p class="lede">
-            Reverse engineering means learning how software works by inspecting
-            the program itself. With REA, your agent can follow the code,
-            explain a feature and help you rebuild it.
-          </p>
-          <ol class="home-workflow" id="how-rea-helps">
-            <li>
-              <h3>Ask about one feature</h3>
-              <p>Give your agent a program or page and a question.</p>
-            </li>
-            <li>
-              <h3>Inspect the program</h3>
-              <p>
-                REA helps your agent read the code and see what the program does
-                while it runs.
-              </p>
-            </li>
-            <li>
-              <h3>Explain it, then try a change</h3>
-              <p>
-                Your agent uses the findings to explain or rebuild the feature.
-              </p>
-            </li>
-          </ol>
-          <details class="home-evidence-details" open>
-            <summary>See the full Calculator investigation</summary>
-            <p class="comparison-question">
-              Why does Calculator give 220 for
-              <span translate="no">200 + 10%</span>?
+      <section class="home-section home-example home-band-dark" id="calculator">
+        <div class="home-container home-example-grid">
+          <div class="home-example-question">
+            <h2>Rebuild Calculator’s % button.</h2>
+            <p class="home-example-lede">
+              The % key does different things after + and after ×. Ask your
+              agent to find both rules.
             </p>
-            <figure class="home-role-comparison">
-              <div
-                class="manual-investigation step-comparison"
-                data-step-comparison
-              >
-                <h3 class="comparison-label">
-                  Follow the instructions step by step
-                </h3>
-                <div
-                  class="step-selector expert-step-selector"
-                  role="group"
-                  aria-label="Follow the manual Calculator analysis"
+            <div class="prompt-card">
+              <div class="prompt-card-header">
+                <span class="agent-logos" aria-hidden="true"
+                  ><svg><use href="#logo-claude" /></svg
+                  ><svg><use href="#logo-openai" /></svg
+                  ><svg><use href="#logo-cursor" /></svg
+                  ><svg><use href="#logo-gemini" /></svg
+                ></span>
+                <span class="prompt-card-agents" translate="no"
+                  >Claude Code, Codex, Cursor, Gemini CLI</span
                 >
-                  <button
-                    type="button"
-                    data-select-step="1"
-                    aria-pressed="true"
-                    aria-controls="expert-assembly expert-reasoning"
+                <button
+                  class="copy-button"
+                  type="button"
+                  data-copy="calculator-analysis-prompt"
+                  aria-label="Copy Calculator analysis prompt"
+                >
+                  Copy
+                </button>
+              </div>
+              <p class="prompt-card-text" id="calculator-analysis-prompt">
+                Use REA to inspect Windows Calculator’s % button. Find the rule
+                after + and the rule after ×, then rebuild both.
+              </p>
+            </div>
+          </div>
+          <div class="home-example-answer">
+            <div class="calculator-results">
+              <figure class="calculator-result">
+                <div class="lcd-screen lcd-small">
+                  <svg
+                    class="lcd-digits"
+                    viewBox="0 0 144 72"
+                    width="180"
+                    height="90"
+                    aria-hidden="true"
+                    focusable="false"
                   >
-                    <span>01</span> Decode branches
-                  </button>
-                  <button
-                    type="button"
-                    data-select-step="2"
-                    aria-pressed="false"
-                    aria-controls="expert-assembly expert-reasoning"
-                  >
-                    <span>02</span> Trace calls
-                  </button>
-                  <button
-                    type="button"
-                    data-select-step="3"
-                    aria-pressed="false"
-                    aria-controls="expert-assembly expert-reasoning"
-                  >
-                    <span>03</span> Recover the rule
-                  </button>
+                    <g fill="#1e211b">
+                      <rect x="8" y="0" width="24" height="7" rx="2" />
+                      <rect x="8" y="65" width="24" height="7" rx="2" />
+                      <rect x="8" y="32.5" width="24" height="7" rx="2" />
+                      <rect x="33" y="8" width="7" height="23.5" rx="2" />
+                      <rect x="0" y="40.5" width="7" height="23.5" rx="2" />
+                      <rect x="60" y="0" width="24" height="7" rx="2" />
+                      <rect x="60" y="65" width="24" height="7" rx="2" />
+                      <rect x="60" y="32.5" width="24" height="7" rx="2" />
+                      <rect x="85" y="8" width="7" height="23.5" rx="2" />
+                      <rect x="52" y="40.5" width="7" height="23.5" rx="2" />
+                      <rect x="112" y="0" width="24" height="7" rx="2" />
+                      <rect x="112" y="65" width="24" height="7" rx="2" />
+                      <rect x="104" y="8" width="7" height="23.5" rx="2" />
+                      <rect x="137" y="8" width="7" height="23.5" rx="2" />
+                      <rect x="104" y="40.5" width="7" height="23.5" rx="2" />
+                      <rect x="137" y="40.5" width="7" height="23.5" rx="2" />
+                    </g>
+                    <g fill="#1e211b" opacity="0.06">
+                      <rect x="0" y="8" width="7" height="23.5" rx="2" />
+                      <rect x="33" y="40.5" width="7" height="23.5" rx="2" />
+                      <rect x="52" y="8" width="7" height="23.5" rx="2" />
+                      <rect x="85" y="40.5" width="7" height="23.5" rx="2" />
+                      <rect x="112" y="32.5" width="24" height="7" rx="2" />
+                    </g>
+                  </svg>
                 </div>
-                <div class="expert-analysis-grid">
-                  <details class="code-block expert-assembly" open>
-                    <summary class="code-header">
-                      <span>Original x64 · selected instructions</span>
-                      <span
-                        class="assembly-disclosure"
-                        aria-hidden="true"
-                      ></span>
-                    </summary>
-                    <pre><code id="expert-assembly"><span class="code-step is-active" data-step="1">0x180124945: MOV EAX, dword ptr [R13 + 0x18]
+                <figcaption>
+                  <span class="calculator-sum" translate="no"
+                    >200 + 10%<span class="sr-only"> = 220</span></span
+                  >
+                  <span>10% of 200 is added: 200 + 20</span>
+                </figcaption>
+              </figure>
+              <figure class="calculator-result">
+                <div class="lcd-screen lcd-small">
+                  <svg
+                    class="lcd-digits"
+                    viewBox="0 0 144 72"
+                    width="180"
+                    height="90"
+                    aria-hidden="true"
+                    focusable="false"
+                  >
+                    <g fill="#1e211b">
+                      <rect x="60" y="0" width="24" height="7" rx="2" />
+                      <rect x="60" y="65" width="24" height="7" rx="2" />
+                      <rect x="60" y="32.5" width="24" height="7" rx="2" />
+                      <rect x="85" y="8" width="7" height="23.5" rx="2" />
+                      <rect x="52" y="40.5" width="7" height="23.5" rx="2" />
+                      <rect x="112" y="0" width="24" height="7" rx="2" />
+                      <rect x="112" y="65" width="24" height="7" rx="2" />
+                      <rect x="104" y="8" width="7" height="23.5" rx="2" />
+                      <rect x="137" y="8" width="7" height="23.5" rx="2" />
+                      <rect x="104" y="40.5" width="7" height="23.5" rx="2" />
+                      <rect x="137" y="40.5" width="7" height="23.5" rx="2" />
+                    </g>
+                    <g fill="#1e211b" opacity="0.06">
+                      <rect x="52" y="8" width="7" height="23.5" rx="2" />
+                      <rect x="85" y="40.5" width="7" height="23.5" rx="2" />
+                      <rect x="112" y="32.5" width="24" height="7" rx="2" />
+                    </g>
+                  </svg>
+                </div>
+                <figcaption>
+                  <span class="calculator-sum" translate="no"
+                    >200 × 10%<span class="sr-only"> = 20</span></span
+                  >
+                  <span>10% becomes 0.1: 200 × 0.1</span>
+                </figcaption>
+              </figure>
+            </div>
+            <div class="rule-bar">
+              <code
+                ><span class="code-keyword">if</span> (op == IDC_MUL || op ==
+                IDC_DIV) x /= 100</code
+              >
+              <a class="text-link" href="#calculator-evidence"
+                >See how it was found</a
+              >
+            </div>
+          </div>
+          <details
+            class="evidence-details home-evidence"
+            id="calculator-evidence"
+          >
+            <summary>See how it was found</summary>
+            <div class="home-evidence-body">
+              <p class="comparison-question">
+                Why does Calculator give 220 for
+                <span translate="no">200 + 10%</span>?
+              </p>
+              <figure class="home-role-comparison">
+                <div
+                  class="manual-investigation step-comparison"
+                  data-step-comparison
+                >
+                  <h3 class="comparison-label">
+                    Follow the instructions step by step
+                  </h3>
+                  <div
+                    class="step-selector expert-step-selector"
+                    role="group"
+                    aria-label="Follow the manual Calculator analysis"
+                  >
+                    <button
+                      type="button"
+                      data-select-step="1"
+                      aria-pressed="true"
+                      aria-controls="expert-assembly expert-reasoning"
+                    >
+                      <span>01</span> Decode branches
+                    </button>
+                    <button
+                      type="button"
+                      data-select-step="2"
+                      aria-pressed="false"
+                      aria-controls="expert-assembly expert-reasoning"
+                    >
+                      <span>02</span> Trace calls
+                    </button>
+                    <button
+                      type="button"
+                      data-select-step="3"
+                      aria-pressed="false"
+                      aria-controls="expert-assembly expert-reasoning"
+                    >
+                      <span>03</span> Recover the rule
+                    </button>
+                  </div>
+                  <div class="expert-analysis-grid">
+                    <details class="code-block expert-assembly" open>
+                      <summary class="code-header">
+                        <span>Original x64 · selected instructions</span>
+                        <span
+                          class="assembly-disclosure"
+                          aria-hidden="true"
+                        ></span>
+                      </summary>
+                      <pre><code id="expert-assembly"><span class="code-step is-active" data-step="1">0x180124945: MOV EAX, dword ptr [R13 + 0x18]
 0x180124949: CMP EAX, 0x5c
 0x18012494c: JZ 0x180124aba
 0x180124952: CMP EAX, 0x5b
@@ -443,875 +844,645 @@
 0x180124a29: MOV RDX, RAX
 0x180124a2c: LEA RCX, [RSP + 0xb8]
 0x180124a34: CALL 0x180123c10</span></code></pre>
-                  </details>
-                  <aside
-                    class="expert-reasoning"
-                    aria-label="Illustrative expert reasoning"
-                  >
-                    <div
-                      id="expert-reasoning"
-                      aria-live="polite"
-                      aria-atomic="true"
+                    </details>
+                    <aside
+                      class="expert-reasoning"
+                      aria-label="Illustrative expert reasoning"
                     >
-                      <div class="expert-thought" data-step-note="1">
-                        <p class="thought-label">01 · Which branch?</p>
-                        <p>
-                          “<strong>0x5b? 0x5c?</strong> Two jumps to the same
-                          place. Which operators are these?”
-                        </p>
-                        <p class="expert-task">
-                          Look up the command IDs, then label the branch.
-                        </p>
-                        <dl class="expert-facts">
-                          <div>
-                            <dt>0x5b</dt>
-                            <dd>Divide ÷</dd>
+                      <div
+                        id="expert-reasoning"
+                        aria-live="polite"
+                        aria-atomic="true"
+                      >
+                        <div class="expert-thought" data-step-note="1">
+                          <p class="thought-label">01 · Which branch?</p>
+                          <p>
+                            “<strong>0x5b? 0x5c?</strong> Two jumps to the same
+                            place. Which operators are these?”
+                          </p>
+                          <p class="expert-task">
+                            Look up the command IDs, then label the branch.
+                          </p>
+                          <dl class="expert-facts">
+                            <div>
+                              <dt>0x5b</dt>
+                              <dd>Divide ÷</dd>
+                            </div>
+                            <div>
+                              <dt>0x5c</dt>
+                              <dd>Multiply ×</dd>
+                            </div>
+                          </dl>
+                        </div>
+                        <div class="expert-thought" data-step-note="2">
+                          <p class="thought-label">
+                            02 · What do the calls do?
+                          </p>
+                          <p>
+                            “100 is clear. The calls are just addresses.
+                            <strong
+                              >Which one divides? Which value goes in?</strong
+                            >”
+                          </p>
+                          <p class="expert-task">
+                            Inspect the helpers and trace the stored values.
+                          </p>
+                          <dl class="expert-facts">
+                            <div>
+                              <dt>0x64</dt>
+                              <dd>100</dd>
+                            </div>
+                            <div>
+                              <dt>…123190</dt>
+                              <dd>Divide</dd>
+                            </div>
+                          </dl>
+                        </div>
+                        <div class="expert-thought" data-step-note="3">
+                          <p class="thought-label">03 · What is the rule?</p>
+                          <p>
+                            “This path multiplies by the other input. So
+                            <strong>10% means 10% of 200</strong> after +.”
+                          </p>
+                          <p class="expert-task">
+                            Name the operands and check both operator paths.
+                          </p>
+                          <div class="expert-rule">
+                            <span>200 × 10 / 100</span>
+                            <strong>20</strong>
                           </div>
-                          <div>
-                            <dt>0x5c</dt>
-                            <dd>Multiply ×</dd>
-                          </div>
-                        </dl>
-                      </div>
-                      <div class="expert-thought" data-step-note="2">
-                        <p class="thought-label">02 · What do the calls do?</p>
-                        <p>
-                          “100 is clear. The calls are just addresses.
-                          <strong
-                            >Which one divides? Which value goes in?</strong
-                          >”
-                        </p>
-                        <p class="expert-task">
-                          Inspect the helpers and trace the stored values.
-                        </p>
-                        <dl class="expert-facts">
-                          <div>
-                            <dt>0x64</dt>
-                            <dd>100</dd>
-                          </div>
-                          <div>
-                            <dt>…123190</dt>
-                            <dd>Divide</dd>
-                          </div>
-                        </dl>
-                      </div>
-                      <div class="expert-thought" data-step-note="3">
-                        <p class="thought-label">03 · What is the rule?</p>
-                        <p>
-                          “This path multiplies by the other input. So
-                          <strong>10% means 10% of 200</strong> after +.”
-                        </p>
-                        <p class="expert-task">
-                          Name the operands and check both operator paths.
-                        </p>
-                        <div class="expert-rule">
-                          <span>200 × 10 / 100</span>
-                          <strong>20</strong>
                         </div>
                       </div>
-                    </div>
-                    <img
-                      class="expert-illustration"
-                      src="assets/figures/analyst-thinking.svg"
-                      alt=""
-                      width="160"
-                      height="120"
-                    />
-                    <p class="expert-caption">Illustrative expert reasoning</p>
-                  </aside>
-                </div>
-                <p class="manual-work-summary">
-                  <strong
-                    >You decode the instructions, follow the calls and
-                    reconstruct the calculation.</strong
-                  >
-                </p>
-              </div>
-              <div class="agent-investigation" id="ask-your-agent">
-                <p class="comparison-label">Ask your agent the same question</p>
-                <div class="agent-terminal home-analysis-terminal">
-                  <div class="terminal-header">
-                    <span class="terminal-title"
-                      ><span class="terminal-dots" aria-hidden="true"
-                        ><i></i><i></i><i></i></span
-                      >Example prompt · Calculator</span
-                    >
-                    <button
-                      class="copy-button"
-                      type="button"
-                      data-copy="home-analysis-prompt"
-                      aria-label="Copy Calculator percentage question"
-                    >
-                      Copy
-                    </button>
+                      <img
+                        class="expert-illustration"
+                        src="assets/figures/analyst-thinking.svg"
+                        alt=""
+                        width="160"
+                        height="120"
+                      />
+                      <p class="expert-caption">
+                        Illustrative expert reasoning
+                      </p>
+                    </aside>
                   </div>
-                  <p class="terminal-prompt">
-                    <span class="prompt-symbol" aria-hidden="true">›</span
-                    ><span id="home-analysis-prompt"
-                      >Use REA to inspect Windows Calculator. Why does
-                      <span translate="no">200 + 10%</span> give 220?</span
-                    ><span class="terminal-cursor" aria-hidden="true"></span>
+                  <p class="manual-work-summary">
+                    <strong
+                      >You decode the instructions, follow the calls and
+                      reconstruct the calculation.</strong
+                    >
                   </p>
-                  <div class="agent-reply">
-                    <p class="reply-label">
-                      Example answer · based on the findings
+                </div>
+                <div class="agent-investigation" id="ask-your-agent">
+                  <p class="comparison-label">
+                    Ask your agent the same question
+                  </p>
+                  <div class="agent-terminal home-analysis-terminal">
+                    <div class="terminal-header">
+                      <span class="terminal-title"
+                        ><span class="terminal-dots" aria-hidden="true"
+                          ><i></i><i></i><i></i></span
+                        >Example prompt · Calculator</span
+                      >
+                      <button
+                        class="copy-button"
+                        type="button"
+                        data-copy="home-analysis-prompt"
+                        aria-label="Copy Calculator percentage question"
+                      >
+                        Copy
+                      </button>
+                    </div>
+                    <p class="terminal-prompt">
+                      <span class="prompt-symbol" aria-hidden="true">›</span
+                      ><span id="home-analysis-prompt"
+                        >Use REA to inspect Windows Calculator. Why does
+                        <span translate="no">200 + 10%</span> give 220?</span
+                      ><span class="terminal-cursor" aria-hidden="true"></span>
                     </p>
-                    <p>
-                      After +, the % button takes
-                      <strong>a percentage of the first number.</strong>
-                    </p>
-                    <div class="agent-percent-rule">
-                      <code>10% of 200 = 20</code
-                      ><span aria-hidden="true">↓</span
-                      ><strong>200 + 20 = 220</strong>
+                    <div class="agent-reply">
+                      <p class="reply-label">
+                        Example answer · based on the findings
+                      </p>
+                      <p>
+                        After +, the % button takes
+                        <strong>a percentage of the first number.</strong>
+                      </p>
+                      <div class="agent-percent-rule">
+                        <code>10% of 200 = 20</code
+                        ><span aria-hidden="true">↓</span
+                        ><strong>200 + 20 = 220</strong>
+                      </div>
                     </div>
                   </div>
+                  <dl class="agent-evidence-roles">
+                    <div>
+                      <dt>REA supplies</dt>
+                      <dd>
+                        The handler’s instructions, decompiled code and calls.
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Your agent explains</dt>
+                      <dd>
+                        Which branch applies, what it calculates and how to
+                        rebuild it.
+                      </dd>
+                    </div>
+                  </dl>
                 </div>
-                <dl class="agent-evidence-roles">
-                  <div>
-                    <dt>REA supplies</dt>
-                    <dd>
-                      The handler’s instructions, decompiled code and calls.
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Your agent explains</dt>
-                    <dd>
-                      Which branch applies, what it calculates and how to
-                      rebuild it.
-                    </dd>
-                  </div>
-                </dl>
-              </div>
-              <figcaption>
-                Selected assembly from the installed Calculator DLL. The
-                thoughts and reply illustrate the findings.
-                <a href="#calculator">Continue with the Calculator example ↓</a>
-              </figcaption>
-            </figure>
-          </details>
-        </div>
-      </section>
-
-      <section class="section" id="dinosaur">
-        <div class="container">
-          <p class="home-examples-intro">
-            Let’s try two examples: change a game’s speed, then rebuild
-            Calculator’s % button.
-          </p>
-          <div class="section-heading">
-            <p class="eyebrow">Example 01 · Chrome’s dinosaur game</p>
-            <h2>Why does the dinosaur get faster?</h2>
-          </div>
-          <p class="lede">
-            The game gets faster as you run. To rebuild it with a speed control,
-            we first need to find out how the speed changes.
-          </p>
-          <div class="home-example-grid dino-example-grid">
-            <div class="home-case-story">
-              <h3>1. Ask about the speed</h3>
-              <div class="agent-terminal home-analysis-terminal">
-                <div class="terminal-header">
-                  <span class="terminal-title"
-                    ><span class="terminal-dots" aria-hidden="true"
-                      ><i></i><i></i><i></i></span
-                    >Example question · Dinosaur game</span
-                  >
-                  <button
-                    class="copy-button"
-                    type="button"
-                    data-copy="dino-analysis-prompt"
-                    aria-label="Copy dinosaur analysis prompt"
-                  >
-                    Copy
-                  </button>
-                </div>
-                <p class="terminal-prompt">
-                  <span class="prompt-symbol" aria-hidden="true">›</span
-                  ><span id="dino-analysis-prompt"
-                    >Use REA to inspect this dinosaur game. Why does it get
-                    faster? Show the speed rule, then build a small version with
-                    an adjustable speed.</span
-                  ><span class="terminal-cursor" aria-hidden="true"></span>
-                </p>
-              </div>
-              <h3>2. Find the speed rule</h3>
-              <p>
-                REA lets the agent read the game’s running code. The speed
-                starts at 6 and increases a little each update while it is below
-                13.
-              </p>
-            </div>
-            <div class="home-case-result">
-              <h3>3. Play the result</h3>
-              <p>
-                We rebuilt that rule in the mini-game below and added a speed
-                slider. Press Play, then choose your own speed.
-              </p>
-              <figure class="dino-demo" data-dino-demo>
-                <div class="dino-stage">
-                  <svg
-                    class="dino-fallback"
-                    viewBox="0 0 600 180"
-                    role="img"
-                    aria-label="A small dinosaur running toward a cactus. Recovered speed: starts at 6, increases by 0.001 per update while below 13."
-                  >
-                    <path
-                      d="M0 150H600 M55 113v-30h17V65h27v24H85v17H72v16H62v13h-7v-22m-5-8v-8h-8v-9h-6v22h19m14 15v15h8v-7h-4v-8 M420 150v-48h10v48m-10-15h-12v-22h7v15h5m10-4h12v-22h-7v15h-5"
-                      fill="currentColor"
-                    />
-                    <text
-                      x="300"
-                      y="65"
-                      text-anchor="middle"
-                      fill="currentColor"
-                      font-size="18"
-                    >
-                      6 → 10 → 13
-                    </text>
-                  </svg>
-                  <canvas
-                    width="600"
-                    height="180"
-                    tabindex="0"
-                    aria-label="Dinosaur mini-game. Use the Jump button or press Space while the game is focused."
-                    hidden
-                  ></canvas>
-                </div>
-                <div class="dino-controls" hidden>
-                  <div class="dino-buttons">
-                    <button class="button" type="button" data-dino-start>
-                      Play
-                    </button>
-                    <button type="button" data-dino-jump>Jump ↑</button>
-                    <button type="button" data-dino-reset>Restart</button>
-                  </div>
-                  <label class="dino-speed-label"
-                    >Speed <output data-dino-speed>6.0</output
-                    ><input
-                      type="range"
-                      min="2"
-                      max="18"
-                      step="0.1"
-                      value="6"
-                      data-dino-slider
-                  /></label>
-                  <label class="dino-auto-label"
-                    ><input type="checkbox" data-dino-auto checked /> Use the
-                    recovered acceleration rule</label
-                  >
-                </div>
-                <p class="dino-status" data-dino-status role="status">
-                  Original rule: start at 6, then increase toward 13.
-                </p>
                 <figcaption>
-                  Move the slider to set your own speed. Space or Jump clears a
-                  cactus.
-                </figcaption>
-                <noscript
-                  ><p class="caption">
-                    Enable JavaScript to play. You can still read the rule and
-                    open the source code below.
-                  </p></noscript
-                >
-              </figure>
-              <a class="text-link" href="examples/dino-lab/"
-                >Open the speed lab →</a
-              >
-            </div>
-          </div>
-          <details class="home-evidence-details">
-            <summary>
-              See the script, checks and how to try the analysis
-            </summary>
-            <p class="caption">
-              Inspected target:
-              <a href="https://wayou.github.io/t-rex-runner/"
-                >wayou’s Chromium-derived browser edition</a
-              >.
-            </p>
-            <div class="code-block">
-              <div class="code-header">
-                <span
-                  >REA · loaded <span translate="no">index.js</span> · selected
-                  lines</span
-                >
-              </div>
-              <pre><code>if (this.currentSpeed &lt; this.config.MAX_SPEED) {
-  <span class="code-key">this.currentSpeed += this.config.ACCELERATION;</span>
-}</code></pre>
-            </div>
-            <p class="dino-rule">
-              Start at 6. Add 0.001 each update without a collision, while speed
-              is below 13.
-            </p>
-            <figure class="workflow-figure dino-loop">
-              <p class="figure-title">What each part does</p>
-              <ol class="flow-steps">
-                <li>
-                  <span class="flow-label">01 · REA</span
-                  ><span class="flow-node">Read the running game’s script</span
-                  ><span class="flow-note"
-                    >Return its actual code and settings to the agent.</span
-                  >
-                </li>
-                <li>
-                  <span class="flow-label">02 · Your agent</span
-                  ><span class="flow-node">Rebuild the rule, add a control</span
-                  ><span class="flow-note"
-                    >Use the recovered acceleration in a small game with a speed
-                    slider.</span
-                  >
-                </li>
-                <li>
-                  <span class="flow-label">03 · You</span
-                  ><span class="flow-node">Change the speed and play</span
-                  ><span class="flow-note"
-                    >Try the original acceleration, then choose your own
-                    pace.</span
-                  >
-                </li>
-              </ol>
-            </figure>
-            <p>
-              REA inspected the HTTP browser edition through a local debugging
-              connection and returned the loaded <code>index.js</code>,
-              including its source and digest.
-            </p>
-            <div class="code-block">
-              <div class="code-header">
-                <span>Selected settings from the inspected script</span>
-              </div>
-              <pre><code>ACCELERATION: 0.001,
-MAX_SPEED: 13,
-SPEED: 6</code></pre>
-            </div>
-            <p>
-              We called the original game’s update function in a controlled
-              browser check, with obstacles and automatic scheduling disabled.
-              After 4,000 updates, speed was 10.0; after 10,000, it was 13.0,
-              rounded to one decimal.
-            </p>
-            <p>
-              The new mini-game keeps that speed rule. Its drawing, jumping and
-              collision code are a small teaching implementation.
-              <a href="examples/dino-lab/">Open the lab</a> to see the new code
-              and run the same speed check.
-            </p>
-            <p>
-              To inspect the target yourself, follow the
-              <a href="guides/browser/#prepare">browser connection steps</a>
-              using
-              <a href="https://wayou.github.io/t-rex-runner/"
-                >the dinosaur page</a
-              >. Give your agent that page URL and your local debugging
-              endpoint, then copy the prompt above.
-            </p>
-            <p class="caption">
-              <a
-                href="https://github.com/wayou/t-rex-runner/blob/5455bfa408ec6b707c7300ff194b7390733a766d/index.js#L565-L571"
-                >Inspected speed code</a
-              >
-              ·
-              <a href="assets/licenses/dinosaur.txt"
-                >Chromium Authors · BSD license</a
-              >
-            </p>
-          </details>
-        </div>
-      </section>
-
-      <section class="section" id="calculator">
-        <div class="container">
-          <div class="section-heading">
-            <p class="eyebrow">Example 02 · Windows Calculator</p>
-            <h2>Rebuild Calculator’s % button.</h2>
-          </div>
-          <p class="lede">
-            The % button does different things after + and ×. Let’s find both
-            rules and try them in a small calculator.
-          </p>
-          <div class="home-example-grid">
-            <div class="home-case-story">
-              <h3>1. Ask about the % button</h3>
-              <div class="agent-terminal">
-                <div class="terminal-header">
-                  <span class="terminal-title"
-                    ><span class="terminal-dots" aria-hidden="true"
-                      ><i></i><i></i><i></i></span
-                    >Example question · Calculator</span
-                  >
-                  <button
-                    class="copy-button"
-                    type="button"
-                    data-copy="calculator-analysis-prompt"
-                    aria-label="Copy Calculator analysis prompt"
-                  >
-                    Copy
-                  </button>
-                </div>
-                <p class="terminal-prompt">
-                  <span class="prompt-symbol" aria-hidden="true">›</span
-                  ><span id="calculator-analysis-prompt"
-                    >Use REA to inspect Windows Calculator’s % button. Recover
-                    the rules after + and ×, then build a small calculator that
-                    uses both.</span
-                  ><span class="terminal-cursor" aria-hidden="true"></span>
-                </p>
-              </div>
-              <h3>2. Find both rules</h3>
-              <p>
-                REA helps the agent read the code behind the % button. It
-                applies two different rules:
-              </p>
-              <dl class="percent-rules">
-                <div>
-                  <dt>With +</dt>
-                  <dd>
-                    <span>Take 10% of the first number.</span
-                    ><code>10% of 200 = 20 → 200 + 20 = 220</code>
-                  </dd>
-                </div>
-                <div>
-                  <dt>With ×</dt>
-                  <dd>
-                    <span>Turn 10% into 0.1.</span><code>200 × 0.1 = 20</code>
-                  </dd>
-                </div>
-              </dl>
-            </div>
-            <div class="home-case-result">
-              <h3>3. Try the % button</h3>
-              <p>
-                We recreated both rules below. Choose + or ×, press %, then
-                press =.
-              </p>
-              <figure class="percent-figure" data-percent-demo>
-                <div
-                  class="percent-operation"
-                  role="group"
-                  aria-label="Choose the calculation"
-                  hidden
-                >
-                  <button
-                    type="button"
-                    data-percent-operation="add"
-                    aria-pressed="true"
-                  >
-                    <span translate="no">200 + 10%</span>
-                  </button>
-                  <button
-                    type="button"
-                    data-percent-operation="multiply"
-                    aria-pressed="false"
-                  >
-                    <span translate="no">200 × 10%</span>
-                  </button>
-                </div>
-                <div class="percent-display">
-                  <span class="percent-expression" data-percent-expression
-                    >200 +</span
-                  >
-                  <strong data-percent-display>20</strong>
-                </div>
-                <div class="percent-controls" hidden>
-                  <button
-                    type="button"
-                    class="percent-key"
-                    data-percent-key="percent"
-                  >
-                    %
-                  </button>
-                  <button
-                    type="button"
-                    class="percent-key"
-                    data-percent-key="equals"
-                    disabled
-                  >
-                    =
-                  </button>
-                  <button
-                    type="button"
-                    class="percent-reset"
-                    data-percent-key="reset"
-                  >
-                    Reset
-                  </button>
-                </div>
-                <p class="percent-status" data-percent-status role="status">
-                  10% of 200 = 20. Then 200 + 20 = 220.
-                </p>
-                <figcaption>
-                  Interactive illustration of the inspected percentage rule.
+                  Selected assembly from the installed Calculator DLL. The
+                  thoughts and reply illustrate the findings.
                 </figcaption>
               </figure>
-            </div>
-          </div>
-          <details class="home-evidence-details">
-            <summary>See the real code and how the answer was checked</summary>
-            <p>
-              For this example, <code>previous = 200</code> and
-              <code>current = 10</code>.
-            </p>
-            <div class="code-block">
-              <div class="code-header">
-                <span>Readable summary of the % handler</span>
-              </div>
-              <pre><code>if (operation == multiply || operation == divide) {
+              <p>
+                For this example, <code>previous = 200</code> and
+                <code>current = 10</code>.
+              </p>
+              <div class="code-block">
+                <div class="code-header">
+                  <span>Readable summary of the % handler</span>
+                </div>
+                <pre><code>if (operation == multiply || operation == divide) {
   percent = current / 100;
 } else {
   <span class="code-key">percent = current * previous / 100;</span>
 }</code></pre>
-            </div>
-            <figure class="workflow-figure calculator-trace">
-              <p class="figure-title">
-                From the installed app to a working % button
-              </p>
-              <ol class="flow-steps">
-                <li>
-                  <span class="flow-label"
-                    >01 · REA reads <span translate="no">calc.exe</span></span
-                  ><span class="flow-node">It launches the Calculator app</span
-                  ><span class="flow-note"
-                    >The code opens <code>ms-calculator:</code>. The agent then
-                    selects the installed app’s library.</span
-                  >
-                </li>
-                <li>
-                  <span class="flow-label">02 · REA reads the library</span
-                  ><span class="flow-node">Return the % handler’s code</span
-                  ><span class="flow-note"
-                    >The function checks the operator and uses the constant
-                    <code>100</code>.</span
-                  >
-                </li>
-                <li>
-                  <span class="flow-label">03 · Your agent interprets it</span
-                  ><span class="flow-node">Explain and reproduce the rules</span
-                  ><span class="flow-note"
-                    >Crosscheck the branch with Microsoft’s source, then try +
-                    and × above.</span
-                  >
-                </li>
-              </ol>
-            </figure>
+              </div>
+              <figure class="workflow-figure calculator-trace">
+                <p class="figure-title">
+                  From the installed app to a working % button
+                </p>
+                <ol class="flow-steps">
+                  <li>
+                    <span class="flow-label"
+                      >01 · REA reads <span translate="no">calc.exe</span></span
+                    ><span class="flow-node"
+                      >It launches the Calculator app</span
+                    ><span class="flow-note"
+                      >The code opens <code>ms-calculator:</code>. The agent
+                      then selects the installed app’s library.</span
+                    >
+                  </li>
+                  <li>
+                    <span class="flow-label">02 · REA reads the library</span
+                    ><span class="flow-node">Return the % handler’s code</span
+                    ><span class="flow-note"
+                      >The function checks the operator and uses the constant
+                      <code>100</code>.</span
+                    >
+                  </li>
+                  <li>
+                    <span class="flow-label">03 · Your agent interprets it</span
+                    ><span class="flow-node"
+                      >Explain and reproduce the rules</span
+                    ><span class="flow-note"
+                      >Crosscheck the branch with Microsoft’s source, then try +
+                      and × above.</span
+                    >
+                  </li>
+                </ol>
+              </figure>
 
-            <div class="code-comparison">
-              <div class="code-block">
-                <div class="code-header">
-                  <span>REA · selected original instructions</span>
-                </div>
-                <pre><code>0x180124945: MOV EAX, dword ptr [R13 + 0x18]
+              <div class="code-comparison">
+                <div class="code-block">
+                  <div class="code-header">
+                    <span>REA · selected original instructions</span>
+                  </div>
+                  <pre><code>0x180124945: MOV EAX, dword ptr [R13 + 0x18]
 0x180124949: <span class="code-key">CMP EAX, 0x5c</span>
 0x18012494c: JZ 0x180124aba
 0x180124952: <span class="code-key">CMP EAX, 0x5b</span>
 0x180124955: JZ 0x180124aba
 0x18012495b: <span class="code-key">MOV EDX, 0x64</span></code></pre>
-              </div>
-              <div class="code-block">
-                <div class="code-header">
-                  <span>Operator IDs · Microsoft’s source</span>
                 </div>
-                <pre><code>#define IDC_MUL 92      // 0x5c
+                <div class="code-block">
+                  <div class="code-header">
+                    <span>Operator IDs · Microsoft’s source</span>
+                  </div>
+                  <pre><code>#define IDC_MUL 92      // 0x5c
 #define IDC_DIV 91      // 0x5b
 #define IDC_PERCENT 118 // 0x76
 
 0x64 = 100</code></pre>
+                </div>
               </div>
-            </div>
 
-            <p class="caption">
-              Inspected with REA 4.1.0: Windows Calculator 11.2508.4.0, x64. The
-              readable summary uses names from Microsoft’s public source to
-              explain the recovered branch.
-            </p>
-            <p class="caption">
-              <a
-                href="https://github.com/microsoft/calculator/blob/d125246a4e19842ce1332e6c7839cf0e110027d8/src/CalcManager/CEngine/scifunc.cpp#L98-L111"
-                >Percentage implementation</a
-              >
-              ·
-              <a
-                href="https://github.com/microsoft/calculator/blob/d125246a4e19842ce1332e6c7839cf0e110027d8/src/CalculatorUnitTests/CalculatorManagerTest.cpp#L350-L370"
-                >Microsoft’s test cases</a
-              >
-              · <a href="guides/native/">Native setup guide</a>
-            </p>
+              <p class="caption">
+                Inspected with REA 4.1.0: Windows Calculator 11.2508.4.0, x64.
+                The readable summary uses names from Microsoft’s public source
+                to explain the recovered branch.
+              </p>
+              <p class="caption">
+                <a
+                  href="https://github.com/microsoft/calculator/blob/d125246a4e19842ce1332e6c7839cf0e110027d8/src/CalcManager/CEngine/scifunc.cpp#L98-L111"
+                  >Percentage implementation</a
+                >
+                ·
+                <a
+                  href="https://github.com/microsoft/calculator/blob/d125246a4e19842ce1332e6c7839cf0e110027d8/src/CalculatorUnitTests/CalculatorManagerTest.cpp#L350-L370"
+                  >Microsoft’s test cases</a
+                >
+                · <a href="guides/native/">Native setup guide</a>
+              </p>
+            </div>
           </details>
         </div>
       </section>
 
-      <section class="section" id="showcases">
-        <div class="container">
-          <div class="home-showcase-heading">
+      <section class="home-section" id="showcases">
+        <div class="home-container">
+          <div class="home-split-heading">
             <div>
-              <h2>REA case studies.</h2>
-              <p class="lede">
-                Explore a feature in a released app or game, with code and
-                checked results.
+              <h2>Real apps, taken apart.</h2>
+              <p>
+                Each case study follows one feature in a released app or game,
+                with the code and the checked results.
               </p>
             </div>
-            <a class="text-link" href="showcase/">Showcases →</a>
+            <a class="text-link" href="showcase/">All showcases</a>
           </div>
-          <div class="home-case-grid">
-            <article class="home-case-card">
-              <p class="eyebrow">Android · APK analysis</p>
-              <h3>How an authenticator generates a login code</h3>
-              <p>
-                Trace Aegis's six-digit login code through its released APK,
-                then move a demo clock to see why it changes every 30 seconds.
-              </p>
-              <a class="text-link" href="showcase/aegis/"
-                >Read the Android case study</a
-              >
-            </article>
-            <article class="home-case-card">
-              <p class="eyebrow">Electron · Feature tracing</p>
-              <h3>How Notion copies text and HTML</h3>
-              <p>
-                Follow Notion's packaged JavaScript to the system clipboard and
-                see how a copy preserves rich block data.
-              </p>
-              <a class="text-link" href="showcase/notion/"
-                >Read the Notion case study</a
-              >
-            </article>
-            <article class="home-case-card">
-              <p class="eyebrow">Native · Reconstruction</p>
-              <h3>DX-Ball's sound-pan calculation</h3>
-              <p>
-                Recover how a ball's position becomes left/right sound in a 1996
-                Windows game.
-              </p>
-              <a class="text-link" href="showcase/dx-ball/"
-                >Read the DX-Ball case study</a
-              >
-            </article>
-          </div>
-        </div>
-      </section>
-
-      <section class="section home-environments" id="rl-environments">
-        <div class="container home-environment-grid">
-          <div>
-            <div class="section-heading">
-              <h2>Build RL environments.</h2>
-              <p class="lede">
-                Turn a recorded web app session into a runnable environment for
-                training and testing AI agents.
-              </p>
-            </div>
-            <p>
-              Your agent records the browser's requests and the app's responses.
-              REA uses them to build a local environment where agents can
-              practice tasks without running the original app.
-            </p>
-            <p>
-              To support folder deletion, the recording must show the folder
-              before deletion and confirm it is gone afterward.
-            </p>
-            <p>
-              <a class="text-link" href="guides/rl-environments/"
-                >Build an RL environment</a
-              >
-              ·
-              <a href="https://x.com/reatools/status/2112574822584918075?s=20"
-                >Watch the demo on X</a
-              >
-            </p>
-          </div>
-          <div>
-            <p>With REA set up in your agent, give it a task like this:</p>
-            <div class="agent-terminal">
-              <div class="terminal-header">
-                <span class="terminal-title"
-                  ><span class="terminal-dots" aria-hidden="true"
-                    ><i></i><i></i><i></i></span
-                  >Your coding agent</span
-                ><button
-                  class="copy-button"
-                  type="button"
-                  data-copy="home-environment-prompt"
-                  aria-label="Copy example prompt"
+          <ul class="home-cards">
+            <li class="home-card home-case">
+              <img
+                src="assets/photos/case-authenticator.webp"
+                alt="A phone taken apart: its screen showing a six-digit code, frame, back, battery, board and screws."
+                width="800"
+                height="600"
+                loading="lazy"
+              />
+              <div class="home-card-body">
+                <p class="home-case-platform">
+                  <svg aria-hidden="true" focusable="false">
+                    <use href="#logo-android" /></svg
+                  >Android app
+                </p>
+                <h3>
+                  <a href="showcase/aegis/"
+                    >How an authenticator generates a login code</a
+                  >
+                </h3>
+                <p>
+                  Trace Aegis’s six-digit code through its released APK, then
+                  see why it changes every 30 seconds.
+                </p>
+                <span class="text-link" aria-hidden="true"
+                  >Read the case study</span
                 >
-                  Copy
-                </button>
               </div>
-              <p class="terminal-prompt">
-                <span class="prompt-symbol" aria-hidden="true">›</span
-                ><span id="home-environment-prompt"
-                  >Use REA to build an RL environment from my test web app at
-                  <code>http://127.0.0.1:3000</code>. Cover listing, creating,
-                  renaming, and deleting folders. You may create and remove test
-                  folders. Leave existing data unchanged. Save it in a folder
-                  named <code>my-env</code>. Check which operations work and
-                  tell me how to run it.</span
-                ><span class="terminal-cursor" aria-hidden="true"></span>
-              </p>
-            </div>
-            <p class="caption">
-              Example prompt. Replace the URL and folder tasks with your own.
-            </p>
-          </div>
+            </li>
+            <li class="home-card home-case">
+              <img
+                src="assets/photos/case-clipboard.webp"
+                alt="Ctrl, C and V keys in a row, followed by a lifted key and three blank keys."
+                width="800"
+                height="600"
+                loading="lazy"
+              />
+              <div class="home-card-body">
+                <p class="home-case-platform">
+                  <svg aria-hidden="true" focusable="false">
+                    <use href="#logo-electron" /></svg
+                  >Electron app
+                </p>
+                <h3>
+                  <a href="showcase/notion/"
+                    >How Notion copies<br />text and HTML</a
+                  >
+                </h3>
+                <p>
+                  Follow Notion’s packaged JavaScript to the system clipboard
+                  and see how a copy keeps its rich block data.
+                </p>
+                <span class="text-link" aria-hidden="true"
+                  >Read the case study</span
+                >
+              </div>
+            </li>
+            <li class="home-card home-case">
+              <img
+                src="assets/photos/case-sound-pan.webp"
+                alt="A sound card wired to a speaker on each side."
+                width="800"
+                height="600"
+                loading="lazy"
+              />
+              <div class="home-card-body">
+                <p class="home-case-platform">
+                  <svg aria-hidden="true" focusable="false">
+                    <use href="#logo-windows" /></svg
+                  >Windows game
+                </p>
+                <h3>
+                  <a href="showcase/dx-ball/"
+                    >DX-Ball’s sound-pan calculation</a
+                  >
+                </h3>
+                <p>
+                  Recover how this 1996 game turns a hit brick’s position into
+                  stereo sound.
+                </p>
+                <span class="text-link" aria-hidden="true"
+                  >Read the case study</span
+                >
+              </div>
+            </li>
+          </ul>
         </div>
       </section>
 
-      <section class="section" id="try-rea">
-        <div class="container start-row">
-          <div>
-            <p class="eyebrow">Your first investigation</p>
-            <h2>Try REA on a small app.</h2>
-            <p>
-              Download our Notes example, trace its CSV export, and check one
-              changed input.
-            </p>
-          </div>
-          <a class="button" href="first-investigation/"
-            >Try the guided example</a
-          >
-        </div>
-      </section>
-
-      <section class="section" id="analyze">
-        <div class="container">
-          <div class="section-heading">
-            <h2>Choose your target.</h2>
-            <p>
-              These guides cover setup and a first investigation for each kind
-              of software.
-            </p>
-          </div>
-          <div class="workflows" id="analysis-guides">
-            <div>
-              <h3>Native binaries</h3>
+      <section class="home-section home-band" id="rl-environments">
+        <div class="home-container">
+          <div class="home-split-heading">
+            <h2>Build RL environments from a web app.</h2>
+            <div class="home-split-aside">
               <p>
-                Inspect functions, strings, references and call relationships in
-                executables and libraries.
+                Turn a recorded session into a local environment where agents
+                practice tasks without the original app.
               </p>
-              <a href="guides/native/">Native analysis guide</a>
-            </div>
-            <div>
-              <h3>JavaScript &amp; Electron</h3>
-              <p>Follow the code inside a JavaScript desktop app.</p>
-              <a href="guides/javascript/">Application workflows</a>
-            </div>
-            <div>
-              <h3>Browser &amp; runtime activity</h3>
-              <p>
-                Capture selected browser or process activity, then compare the
-                results across runs.
+              <p class="home-links">
+                <a class="text-link" href="guides/rl-environments/"
+                  >Read the guide</a
+                >
+                <a
+                  class="text-link"
+                  href="https://x.com/reatools/status/2112574822584918075?s=20"
+                  >Watch the demo on
+                  <svg
+                    class="x-mark"
+                    viewBox="0 0 24 24"
+                    width="16"
+                    height="16"
+                    role="img"
+                    aria-label="X"
+                    focusable="false"
+                  >
+                    <path
+                      d="M3 21L10.548 13.452M21 3L13.452 10.548M13.452 10.548L8 3H3L10.548 13.452M13.452 10.548L21 21H16L10.548 13.452"
+                    /></svg
+                ></a>
               </p>
-              <a href="guides/browser/">Browser observation guide</a>
             </div>
           </div>
-          <details class="home-evidence-details" id="project-prompts">
-            <summary>Try a larger project</summary>
-            <div class="code-comparison home-project-prompts">
-              <div>
-                <div class="agent-terminal">
-                  <div class="terminal-header">
-                    <span class="terminal-title">
-                      <span class="terminal-dots" aria-hidden="true"
-                        ><i></i><i></i><i></i></span
-                      >Example prompt · Website
-                    </span>
-                    <button
-                      class="copy-button"
-                      type="button"
-                      data-copy="website-project-prompt"
-                      aria-label="Copy website project prompt"
-                    >
-                      Copy
-                    </button>
+          <ol class="rl-steps">
+            <li class="home-card rl-step">
+              <div class="rl-stage">
+                <div class="mini-window" aria-hidden="true">
+                  <div class="mini-window-bar">
+                    <span class="mini-dots"><i></i><i></i><i></i></span
+                    ><span translate="no">127.0.0.1:3000</span>
                   </div>
-                  <p class="terminal-prompt">
-                    <span class="prompt-symbol" aria-hidden="true">›</span
-                    ><span id="website-project-prompt"
-                      >Use REA to inspect
-                      <span translate="no">https://rea.tools/</span>. Clone this
-                      website for me.</span
-                    ><span class="terminal-cursor" aria-hidden="true"></span>
-                  </p>
+                  <table class="mini-requests" translate="no">
+                    <tr>
+                      <td>GET</td>
+                      <td>/api/folders</td>
+                      <td>200</td>
+                    </tr>
+                    <tr>
+                      <td>POST</td>
+                      <td>/api/folders</td>
+                      <td>201</td>
+                    </tr>
+                    <tr>
+                      <td>PATCH</td>
+                      <td>/api/folders/7</td>
+                      <td>200</td>
+                    </tr>
+                    <tr>
+                      <td>DELETE</td>
+                      <td>/api/folders/7</td>
+                      <td>204</td>
+                    </tr>
+                  </table>
                 </div>
-                <p class="caption">Yes, this one.</p>
               </div>
-              <div>
-                <div class="agent-terminal">
-                  <div class="terminal-header">
-                    <span class="terminal-title">
-                      <span class="terminal-dots" aria-hidden="true"
-                        ><i></i><i></i><i></i></span
-                      >Example prompt · Game reconstruction
-                    </span>
-                    <button
-                      class="copy-button"
-                      type="button"
-                      data-copy="game-project-prompt"
-                      aria-label="Copy game reconstruction prompt"
-                    >
-                      Copy
-                    </button>
+              <div class="home-card-body">
+                <h3>Record a session</h3>
+                <p>Your agent records a test app’s requests and responses.</p>
+              </div>
+            </li>
+            <li class="home-card rl-step">
+              <div class="rl-stage">
+                <div class="mini-window" aria-hidden="true">
+                  <div class="mini-window-bar">
+                    <svg viewBox="0 0 24 24" width="14" height="14">
+                      <path
+                        d="M13.666 6.494H16C18.828 6.494 20.243 6.494 21.121 7.373C22 8.252 22 9.666 22 12.495V14.5C22 17.328 22 18.743 21.121 19.621C20.243 20.5 18.828 20.5 16 20.5H8C5.172 20.5 3.757 20.5 2.879 19.621C2 18.743 2 17.328 2 14.5V8.992C2 6.654 2 5.485 2.616 4.679C2.778 4.467 2.967 4.278 3.179 4.116C3.985 3.5 5.154 3.5 7.492 3.5C8.166 3.5 8.504 3.5 8.814 3.604C8.898 3.633 8.979 3.666 9.059 3.705C9.352 3.85 9.592 4.087 10.071 4.562L10.848 5.334C11.425 5.907 11.714 6.193 12.08 6.344C12.446 6.494 12.852 6.494 13.666 6.494Z"
+                      /></svg
+                    ><span translate="no">my-env</span>
                   </div>
-                  <p class="terminal-prompt">
-                    <span class="prompt-symbol" aria-hidden="true">›</span
-                    ><span id="game-project-prompt"
-                      >Use REA to reconstruct this game from its executable.
-                      Recover the gameplay logic in C and test it against the
-                      original.</span
-                    ><span class="terminal-cursor" aria-hidden="true"></span>
-                  </p>
+                  <ul class="mini-tools" translate="no">
+                    <li>list folders</li>
+                    <li>create folder</li>
+                    <li>rename folder</li>
+                    <li>delete folder</li>
+                  </ul>
                 </div>
-                <p class="caption">
-                  <a href="showcase/dx-ball/">See the DX-Ball case study →</a>
+              </div>
+              <div class="home-card-body">
+                <h3>Build with REA</h3>
+                <p>
+                  REA turns the recording into tools and reports what it
+                  supports.
                 </p>
               </div>
-            </div>
-          </details>
+            </li>
+            <li class="home-card rl-step">
+              <div class="rl-stage">
+                <div class="mini-window mini-terminal" aria-hidden="true">
+                  <div class="mini-window-bar">
+                    <span class="mini-dots"><i></i><i></i><i></i></span>
+                  </div>
+                  <pre
+                    translate="no"
+                  ><span class="command-prompt">$ </span>agent-env run ./my-env
+<span class="mini-muted">Starting environment my-env
+Tools available: 4</span>
+<span class="mini-pass">Smoke task passed</span></pre>
+                </div>
+              </div>
+              <div class="home-card-body">
+                <h3>Run with AgentEnv</h3>
+                <p>Agents practice tasks in it, without the original app.</p>
+              </div>
+            </li>
+          </ol>
+          <p class="home-caption">
+            Example with a test app that manages folders. The environment only
+            supports changes the recording confirms.
+          </p>
         </div>
       </section>
-      <section class="section" id="community">
-        <div class="container">
-          <div>
-            <h2>Any questions?</h2>
-            <div class="home-help-links">
-              <p>
-                <a href="faq/">Read the FAQ</a> for setup help and common
-                questions.
+
+      <section class="home-section home-rule-top" id="setup">
+        <div class="home-container home-start">
+          <div class="home-start-content">
+            <div>
+              <h2 class="home-start-title">
+                Ask how it works.<br />Then rebuild it.
+              </h2>
+              <p class="home-example-lede">
+                Set up REA in your coding agent. It shows you the plan, waits
+                for your approval, then checks that everything works.
               </p>
-              <p>
-                <a href="https://discord.gg/GkcryMnJDM">Join Discord</a> to get
-                help and discuss your investigations.
+            </div>
+            <div class="home-start-setup">
+              <div class="prompt-card prompt-card-large">
+                <div class="prompt-card-header">
+                  <span class="agent-logos" aria-hidden="true"
+                    ><svg><use href="#logo-claude" /></svg
+                    ><svg><use href="#logo-openai" /></svg
+                    ><svg><use href="#logo-cursor" /></svg
+                    ><svg><use href="#logo-gemini" /></svg
+                  ></span>
+                  <span class="prompt-card-agents" translate="no"
+                    >Claude Code, Codex, Cursor, Gemini CLI</span
+                  >
+                  <button
+                    class="copy-button"
+                    type="button"
+                    data-copy="home-install-prompt"
+                    aria-label="Copy REA installation prompt"
+                  >
+                    Copy
+                  </button>
+                </div>
+                <p class="prompt-card-text" id="home-install-prompt">
+                  Install REA and connect it to this coding agent using
+                  <code translate="no">npx rea-agents@latest setup</code>. Show
+                  me the setup plan for approval, then verify the installation.
+                </p>
+              </div>
+              <div class="command-bar">
+                <span class="command-prompt" aria-hidden="true">$</span>
+                <code id="setup-command">npx rea-agents@latest setup</code>
+                <button
+                  class="copy-button copy-icon"
+                  type="button"
+                  data-copy="setup-command"
+                  aria-label="Copy setup command"
+                  title="Copy setup command"
+                ></button>
+              </div>
+              <p class="home-note">
+                Needs <span translate="no">Node.js</span>. No coding agent yet?
+                <a href="get-started/">Follow the setup guide</a>.
               </p>
-              <p>
-                Report a bug or request a feature in
-                <a href="https://github.com/morluto/rea/issues/new/choose"
-                  >GitHub issues</a
-                >.
+            </div>
+            <div class="home-guides">
+              <p>Then pick a guide for your target.</p>
+              <ul class="home-guide-links">
+                <li>
+                  <a class="text-link" href="guides/native/"
+                    ><svg
+                      viewBox="0 0 24 24"
+                      aria-hidden="true"
+                      focusable="false"
+                    >
+                      <path
+                        d="M4 12C4 8.229 4 6.343 5.172 5.172C6.343 4 8.229 4 12 4C15.771 4 17.657 4 18.828 5.172C20 6.343 20 8.229 20 12C20 15.771 20 17.657 18.828 18.828C17.657 20 15.771 20 12 20C8.229 20 6.343 20 5.172 18.828C4 17.657 4 15.771 4 12Z"
+                      />
+                      <path
+                        d="M9.5 2V4M14.5 2V4M9.5 20V22M14.5 20V22M13 9L9 13M15 13L13 15M22 14.5L20 14.5M4 9.5L2 9.5M4 14.5L2 14.5M22 9.5L20 9.5"
+                      /></svg
+                    >Native programs</a
+                  >
+                </li>
+                <li>
+                  <a class="text-link" href="guides/javascript/"
+                    ><svg
+                      viewBox="0 0 24 24"
+                      aria-hidden="true"
+                      focusable="false"
+                    >
+                      <path
+                        d="M2.5 12C2.5 7.522 2.5 5.282 3.891 3.891C5.282 2.5 7.522 2.5 12 2.5C16.478 2.5 18.718 2.5 20.109 3.891C21.5 5.282 21.5 7.522 21.5 12C21.5 16.478 21.5 18.718 20.109 20.109C18.718 21.5 16.478 21.5 12 21.5C7.522 21.5 5.282 21.5 3.891 20.109C2.5 18.718 2.5 16.478 2.5 12Z"
+                      />
+                      <path
+                        d="M11.732 12V16C11.732 17.105 10.837 18 9.732 18C8.992 18 8.346 17.598 8 17"
+                      />
+                      <path
+                        d="M18.467 13C18.121 12.402 17.475 12 16.734 12H16.234C15.406 12 14.734 12.672 14.734 13.5C14.734 14.328 15.406 15 16.234 15H17.234C18.063 15 18.734 15.672 18.734 16.5C18.734 17.328 18.063 18 17.234 18H16.734C15.994 18 15.348 17.598 15.002 17"
+                      /></svg
+                    >JavaScript and Electron</a
+                  >
+                </li>
+                <li>
+                  <a class="text-link" href="guides/browser/"
+                    ><svg
+                      viewBox="0 0 24 24"
+                      aria-hidden="true"
+                      focusable="false"
+                    >
+                      <path
+                        d="M3 12C3 7.757 3 5.636 4.318 4.318C5.636 3 7.757 3 12 3C16.243 3 18.364 3 19.682 4.318C21 5.636 21 7.757 21 12C21 16.243 21 18.364 19.682 19.682C18.364 21 16.243 21 12 21C7.757 21 5.636 21 4.318 19.682C3 18.364 3 16.243 3 12Z"
+                      />
+                      <path d="M3 9H21" /></svg
+                    >Browser and runtime</a
+                  >
+                </li>
+              </ul>
+              <p class="home-note">
+                New to this?
+                <a href="first-investigation/"
+                  >Try REA on our small Notes app</a
+                >
+                and trace its CSV export.
               </p>
             </div>
           </div>
+          <img
+            class="home-start-image"
+            src="assets/photos/rebuilt-calculator.webp"
+            alt="The rebuilt calculator showing 220 on its display."
+            width="1400"
+            height="788"
+            loading="lazy"
+          />
         </div>
       </section>
     </main>
     <!-- website:footer:start -->
     <!-- prettier-ignore -->
     <footer class="site-footer">
-      <div class="container footer-inner">
-        <p>REA · Reverse Engineer Anything</p>
-        <div class="footer-links">
-          <a href="./faq/">FAQ</a
-          ><a href="./contributors/">Contributors</a
-          ><a href="https://github.com/morluto/rea">Source</a
-          ><a href="https://github.com/morluto/rea/blob/main/LICENSE">MIT license</a
-          ><a href="https://discord.gg/GkcryMnJDM">Join the community</a
-          ><a href="https://x.com/reatools">Follow us on X</a>
+      <div class="footer-inner">
+        <div class="footer-top">
+          <nav class="footer-columns" aria-label="Footer">
+            <div>
+              <p>Product</p>
+              <a href="./get-started/">Get started</a>
+              <a href="./showcase/">Showcases</a>
+              <a href="./blog/">Blog</a>
+              <a href="./guides/">Guides</a>
+            </div>
+            <div>
+              <p>Help</p>
+              <a href="./faq/">FAQ</a>
+              <a href="https://discord.gg/GkcryMnJDM" translate="no">Discord</a>
+              <a href="https://github.com/morluto/rea/issues/new/choose">GitHub issues</a>
+              <a href="./contributors/">Contributors</a>
+            </div>
+            <div>
+              <p>Project</p>
+              <a href="https://github.com/morluto/rea">Source code</a>
+              <a href="https://github.com/morluto/rea/blob/main/LICENSE">MIT license</a>
+              <a href="https://x.com/reatools">Follow us on X</a>
+            </div>
+          </nav>
+          <div class="footer-social">
+            <a href="https://github.com/morluto/rea" aria-label="REA on GitHub" title="REA on GitHub"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M6.517 17.113C6.912 17.691 8.109 18.923 9.742 19.233M9.864 22C8.836 21.831 2 19.606 2 12.093C2 5.063 8.002 2 12.001 2C16 2 22 5.063 22 12.093C22 19.606 15.164 21.831 14.136 22C14.136 22 13.927 18.583 14.049 17.997C14.171 17.411 13.755 16.469 13.755 16.469C14.726 16.105 16.204 15.585 16.7 14.187C17.085 13.103 17.327 11.529 16.251 10.049C16.251 10.049 16.532 7.658 16 7.565C15.467 7.473 13.9 8.512 13.9 8.512C13.443 8.382 12.424 8.135 12.002 8.179C11.579 8.135 10.557 8.382 10.1 8.512C10.1 8.512 8.532 7.473 8 7.565C7.468 7.658 7.749 10.049 7.749 10.049C6.673 11.529 6.915 13.103 7.3 14.187C7.796 15.585 9.274 16.105 10.245 16.469C10.245 16.469 9.829 17.411 9.951 17.997C10.073 18.583 9.864 22 9.864 22Z" /></svg></a>
+            <a href="https://discord.gg/GkcryMnJDM" aria-label="Join REA on Discord" title="Join REA on Discord"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M15.5 17.5C16.5 19 17.333 19.667 18 20C19.333 19.667 22 18.2 22 15C22 11.8 20.667 7.333 20 5.5C18 4.3 15.833 4 15 4L14.198 5.604C13.414 5.287 12.406 5.254 12 5.278C11.594 5.254 10.586 5.287 9.802 5.604L9 4C8.167 4 6 4.3 4 5.5C3.333 7.333 2 11.8 2 15C2 18.2 4.667 19.667 6 20C6.667 19.667 7.5 19 8.5 17.5" /><path d="M17.365 11.5C17.365 12.605 16.582 13.5 15.615 13.5C14.649 13.5 13.865 12.605 13.865 11.5C13.865 10.395 14.649 9.5 15.615 9.5C16.582 9.5 17.365 10.395 17.365 11.5Z" /><path d="M10 11.5C10 12.605 9.217 13.5 8.25 13.5C7.284 13.5 6.5 12.605 6.5 11.5C6.5 10.395 7.284 9.5 8.25 9.5C9.217 9.5 10 10.395 10 11.5Z" /><path d="M17.5 16.5C16.402 17.397 14.35 18 12 18C9.65 18 7.598 17.397 6.5 16.5" /></svg></a>
+            <a href="https://x.com/reatools" aria-label="Follow REA on X" title="Follow REA on X"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 21L10.548 13.452M21 3L13.452 10.548M13.452 10.548L8 3H3L10.548 13.452M13.452 10.548L21 21H16L10.548 13.452" /></svg></a>
+          </div>
+        </div>
+        <svg class="footer-wordmark" viewBox="0 0 104 40" width="104" height="40" aria-hidden="true" focusable="false"><path fill="currentColor" fill-rule="evenodd" d="M0 0H20A12 12 0 0 1 20 24H8V40H0Z M8 8V16H20A4 4 0 0 0 20 8Z" /><path fill="currentColor" d="M19.6 27.5H28.3L34 40H25.3Z" /><path fill="currentColor" d="M40 0H66V8H48V16H63V24H48V32H66V40H40Z" /><path fill="currentColor" fill-rule="evenodd" d="M72 40V14A14 14 0 0 1 86 0H90A14 14 0 0 1 104 14V40H96V30H80V40Z M80 22H96V14A6 6 0 0 0 90 8H86A6 6 0 0 0 80 14Z" /></svg>
+        <div class="footer-bottom">
+          <p>Reverse engineering with your coding agent.</p>
+          <a class="footer-credit" href="https://altair-studio.com"><span>Website by</span> <svg width="14" height="13" viewBox="13 14 38 36" aria-hidden="true" focusable="false"><path fill="currentColor" d="M28.6 14h6.8L51 50h-7.4L32 22.4 20.4 50H13z" /></svg><span translate="no">Altair Studio</span></a>
         </div>
       </div>
     </footer>
     <p class="sr-only" id="copy-status" role="status" aria-live="polite"></p>
-    <a class="back-to-top" href="#top" aria-label="Back to top">
-      <span aria-hidden="true">↑</span> Top
-    </a>
     <!-- website:footer:end -->
   </body>
 </html>
