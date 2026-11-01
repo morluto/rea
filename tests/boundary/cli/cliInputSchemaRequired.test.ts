@@ -697,6 +697,7 @@ const PATTERN_SELECTOR = atLeastOneSelector(
   "the positional pattern or --pattern",
 );
 const EXACTLY_ONE_SCRIPT = "Provide exactly one of --script or --script-file.";
+const EXACTLY_ONE_DATA_TYPE = "Supply exactly one of --type or --address.";
 const TARGET = "target.bin";
 
 interface SelectorRequest {
@@ -947,6 +948,25 @@ const selectorDiscovery: readonly SelectorDiscovery[] = [
       { args: { mode: "debug", target: "71" } },
       { options: { scriptFile: "" } },
     ],
+  },
+  {
+    command: "inspect-native-data-type",
+    guidance: EXACTLY_ONE_DATA_TYPE,
+    choice: "exactly one",
+    fields: [
+      { group: "options", name: "type" },
+      { group: "options", name: "address" },
+    ],
+    representable: [
+      { args: { path: TARGET }, options: { type: "/MyStruct" } },
+      { args: { path: TARGET }, options: { address: "0x1000" } },
+      {
+        args: { path: TARGET },
+        options: { type: "/MyStruct", address: "0x1000" },
+      },
+    ],
+    omitted: { args: { path: TARGET }, options: {} },
+    rejected: [{ options: { type: 1 } }, { options: { address: 1 } }],
   },
 ];
 

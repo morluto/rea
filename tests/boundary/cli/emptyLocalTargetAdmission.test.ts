@@ -56,6 +56,7 @@ const commands: readonly (readonly string[])[] = [
   ["read-bytes", "0x1000"],
   ["address-to-file-offset", "0x1000"],
   ["trace-native-values", "main"],
+  ["inspect-native-data-type", "--type", "/MyStruct"],
   ["inspect-native-instruction", "0x1000"],
   ["resolve-native-call-targets", "0x1000"],
   ["inspect-native-dispatch-metadata"],
