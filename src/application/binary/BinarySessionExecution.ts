@@ -80,7 +80,7 @@ export const prepareSessionExecution = (
           ? {
               userMessage: `The selected provider does not declare ${operation}.`,
               remediationAction:
-                'In MCP, inspect binary_session with detail: "complete" for candidate capabilities then explicitly call open_binary with the same target and a chosen provider_id. In CLI, use rea providers and rea capabilities, then select a provider with --provider. Review session effects before switching; candidate availability does not guarantee support for this target.',
+                'In MCP, inspect binary_session with detail: "complete" for candidate capabilities then explicitly call open_binary with the same target and a chosen provider_id. In CLI, use rea providers and rea capabilities, then select a provider with --provider. Switching may discard provider session edits; preserve needed state first. Candidate availability does not guarantee support for this target.',
             }
           : undefined,
       ),

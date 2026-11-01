@@ -820,7 +820,7 @@ automatically after a runtime failure. When the bound route does not declare an
 operation, its error points to `binary_session` with `detail: "complete"` for
 candidate capabilities and an explicit `open_binary` provider choice. A
 candidate's availability does not guarantee support for the selected target;
-consider session effects before switching.
+switching may discard provider session edits, so preserve needed state first.
 
 `open_binary` resolves an Apple bundle directory (`.app`, `.appex`,
 `.framework`, `.xpc`, `.systemextension`, `.bundle` or `.plugin`, compared
