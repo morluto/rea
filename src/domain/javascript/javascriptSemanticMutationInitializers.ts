@@ -864,6 +864,11 @@ const moduleFunctionFirstRead = (
       } else functions.set(name, node);
     }
     const indexedReads = reads;
+    const firstStatement = body[0];
+    const program =
+      firstStatement === undefined ? undefined : parents.get(firstStatement);
+    const classicScript =
+      t.isProgram(program) && program.sourceType === "script";
     const active = new Set<t.Function>();
     for (let index = 0; index < body.length; index++) {
       const statement = body[index];
@@ -871,13 +876,31 @@ const moduleFunctionFirstRead = (
       traverseJavaScriptAst(statement, {
         enter(node, parent) {
           if (t.isFunction(node)) active.add(node);
+          let name: string | null = null;
           if (
-            !t.isIdentifier(node) ||
-            parent === null ||
-            !t.isReferenced(node, parent)
+            t.isIdentifier(node) &&
+            parent !== null &&
+            t.isReferenced(node, parent)
           )
-            return;
-          const fn = functions.get(node.name);
+            name = node.name;
+          else if (
+            classicScript &&
+            (t.isMemberExpression(node) || t.isOptionalMemberExpression(node))
+          ) {
+            const receiver = unwrapJavaScriptExpression(node.object).node;
+            // Classic scripts expose hoisted functions through the global object.
+            // Property names are not referenced identifiers; keep their read timing too.
+            if (
+              t.isThisExpression(receiver) ||
+              (t.isIdentifier(receiver) &&
+                (receiver.name === "globalThis" ||
+                  receiver.name === "window" ||
+                  receiver.name === "self"))
+            )
+              name = semanticStaticPropertyKey(node.property, node.computed);
+          }
+          if (name === null) return;
+          const fn = functions.get(name);
           if (fn == null || active.has(fn)) return;
           const current = indexedReads.get(fn);
           if (current === null || current === undefined) return;

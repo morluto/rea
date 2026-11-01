@@ -313,7 +313,10 @@ it.each([
     }
     ${early ? "" : "createWindow();"}
   `;
-    const runtime = () => ({ require: () => ({ BrowserWindow: class {} }) });
+    const runtime = () => {
+      const context = { require: () => ({ BrowserWindow: class {} }) };
+      return { ...context, window: undefined, self: undefined };
+    };
     expect(() => runInNewContext(source(false), runtime())).not.toThrow();
     expect(
       analyzeJavaScriptStaticSource(source(false)).electron.browser_windows[0],
@@ -334,6 +337,96 @@ it.each([
     });
   },
 );
+
+describe("Classic-script global function activation", () => {
+  it.each([
+    "globalThis.createWindow();",
+    'globalThis["createWindow"]();',
+    "const early = globalThis.createWindow; early();",
+    "globalThis?.createWindow?.();",
+    "window.createWindow();",
+    'self["createWindow"]();',
+    "this.createWindow();",
+  ])("keeps early global access unresolved: %s", (activation) => {
+    const body = (early: boolean) => `
+      const { BrowserWindow } = require("electron");
+      ${early ? activation : ""}
+      const webPreferences = { nodeIntegration: true };
+      function createWindow() { return new BrowserWindow({ webPreferences }); }
+      ${early ? "" : activation}
+      createWindow();
+    `;
+    const runtime = () => ({ require: () => ({ BrowserWindow: class {} }) });
+    expect(() =>
+      runInNewContext(
+        "globalThis.window = globalThis; globalThis.self = globalThis;" +
+          body(true),
+        runtime(),
+      ),
+    ).toThrow(/before initialization/);
+    expect(() =>
+      runInNewContext(
+        "globalThis.window = globalThis; globalThis.self = globalThis;" +
+          body(false),
+        runtime(),
+      ),
+    ).not.toThrow();
+    expect(
+      analyzeJavaScriptStaticSource(body(true)).electron.browser_windows[0],
+    ).toMatchObject({
+      web_preferences_status: "dynamic",
+      web_preferences: [],
+    });
+    expect(
+      analyzeJavaScriptStaticSource(body(false)).electron.browser_windows[0],
+    ).toMatchObject({
+      web_preferences_status: "object-literal",
+      web_preferences: [
+        { name: "nodeIntegration", value: { status: "literal", value: true } },
+      ],
+    });
+  });
+
+  it("does not treat an ES module function as a global property", () => {
+    const source = `
+      import { BrowserWindow } from "electron";
+      globalThis.createWindow();
+      const webPreferences = { nodeIntegration: true };
+      function createWindow() { return new BrowserWindow({ webPreferences }); }
+      createWindow();
+    `;
+    expect(
+      analyzeJavaScriptStaticSource(source).electron.browser_windows[0],
+    ).toMatchObject({
+      web_preferences_status: "object-literal",
+      web_preferences: [
+        { name: "nodeIntegration", value: { status: "literal", value: true } },
+      ],
+    });
+  });
+
+  it("keeps unrelated same-named member calls independent", () => {
+    const source = `
+      const { BrowserWindow } = require("electron");
+      const other = { createWindow() {} };
+      other.createWindow();
+      const webPreferences = { nodeIntegration: true };
+      function createWindow() { return new BrowserWindow({ webPreferences }); }
+      createWindow();
+    `;
+    expect(() =>
+      runInNewContext(source, { require: () => ({ BrowserWindow: class {} }) }),
+    ).not.toThrow();
+    expect(
+      analyzeJavaScriptStaticSource(source).electron.browser_windows[0],
+    ).toMatchObject({
+      web_preferences_status: "object-literal",
+      web_preferences: [
+        { name: "nodeIntegration", value: { status: "literal", value: true } },
+      ],
+    });
+  });
+});
 
 describe("Electron option evidence", () => {
   it.each([

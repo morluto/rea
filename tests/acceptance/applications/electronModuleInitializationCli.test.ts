@@ -86,3 +86,54 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     }
   },
 );
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "preserves classic global initialization uncertainty through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory(
+      "rea-electron-global-initialization-",
+    );
+    const source = (early: boolean) => `
+      const { BrowserWindow } = require("electron");
+      ${early ? "globalThis.createWindow();" : ""}
+      const webPreferences = { nodeIntegration: true };
+      function createWindow() { return new BrowserWindow({ webPreferences }); }
+      ${early ? "" : "globalThis.createWindow();"}
+      createWindow();
+      throw new Error("must not execute source");
+    `;
+    await writeFixtureFiles(root, {
+      "early.js": source(true),
+      "late.js": source(false),
+      "index.html":
+        '<script src="early.js"></script><script src="late.js"></script>',
+    });
+    const result = await analyzeJavaScriptDirectory(surface, cli, root);
+    expect(result.statistics.parse_failures).toBe(0);
+    const windows = result.graph.nodes.filter(
+      ({ kind }) => kind === "browser-window",
+    );
+    expect(windows).toHaveLength(2);
+    const inSource = (name: string) =>
+      windows
+        .flatMap(({ observations }) => observations)
+        .filter(
+          ({ evidence }) =>
+            evidence.location.available &&
+            evidence.location.value.kind === "source-range" &&
+            evidence.location.value.source === name,
+        );
+    expect(inSource("early.js")).toHaveLength(1);
+    expect(inSource("early.js")[0]?.properties).toMatchObject({
+      web_preferences_status: "dynamic",
+      web_preferences: [],
+    });
+    expect(inSource("late.js")).toHaveLength(1);
+    expect(inSource("late.js")[0]?.properties).toMatchObject({
+      web_preferences_status: "object-literal",
+      web_preferences: [
+        { name: "nodeIntegration", value: { status: "literal", value: true } },
+      ],
+    });
+  },
+);
