@@ -126,6 +126,8 @@ const configurationDetails = (
   const fileMethod = builtinMethod(node.callee, context.state, [
     "fs",
     "node:fs",
+    "fs/promises",
+    "node:fs/promises",
   ]);
   return fileMethod === "readFile" || fileMethod === "readFileSync"
     ? {

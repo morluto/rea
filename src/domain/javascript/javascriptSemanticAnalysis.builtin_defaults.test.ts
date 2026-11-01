@@ -677,3 +677,44 @@ it("retains an earlier captured function after its object method is replaced", (
     { kind: "acquire", method: "open" },
   ]);
 });
+
+it.each([
+  "import { readFile } from 'node:fs/promises'; readFile('config.json');",
+  "import fs from 'node:fs/promises'; fs.readFile('config.json');",
+  "import fs from 'node:fs'; fs.promises.readFile('config.json');",
+  "const { readFile } = require('fs/promises'); readFile('config.json');",
+  "const fsp = require('node:fs/promises'); fsp.readFile('config.json');",
+  "const fs = require('node:fs'); fs.promises.readFile('config.json');",
+])(
+  "recovers configuration file reads from promise-based fs APIs: %s",
+  (source) => {
+    const ir = analyzeCommonJsSemanticFixture(source);
+    expect(ir.configurationOperations).toMatchObject([
+      {
+        kind: "file",
+        key: "config.json",
+        resolution: "complete",
+      },
+    ]);
+  },
+);
+
+it("recovers partial configuration file reads from promise-based fs APIs with dynamic path", () => {
+  const ir = analyzeCommonJsSemanticFixture(
+    "import { readFile } from 'node:fs/promises'; readFile(getConfigPath());",
+  );
+  expect(ir.configurationOperations).toMatchObject([
+    {
+      kind: "file",
+      key: null,
+      resolution: "partial",
+    },
+  ]);
+});
+
+it("invalidates promise-based configuration file reads after mutation", () => {
+  const ir = analyzeCommonJsSemanticFixture(
+    "const fs = require('fs'); fs.promises.readFile = custom; const fsp = require('fs/promises'); fsp.readFile('wrong');",
+  );
+  expect(ir.configurationOperations).toEqual([]);
+});
