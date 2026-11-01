@@ -345,14 +345,8 @@ try {
     overlayBytes.writeBigUInt64LE(16n, at + 40);
     overlayBytes.writeBigUInt64LE(0x1000n, at + 48);
   }
-  Buffer.from("112233445566778899aabbccddeeffc3", "hex").copy(
-    overlayBytes,
-    0x1000,
-  );
-  Buffer.from("ffeeddccbbaa998877665544332211c3", "hex").copy(
-    overlayBytes,
-    0x2000,
-  );
+  Buffer.from("aa".repeat(16), "hex").copy(overlayBytes, 0x1000);
+  Buffer.from("bb".repeat(16), "hex").copy(overlayBytes, 0x2000);
   const overlayPath = join(workspace, "overlap.elf");
   const overlaySnapshot = join(workspace, "overlap-snapshot.json");
   const overlaySha256 = createHash("sha256").update(overlayBytes).digest("hex");
@@ -372,7 +366,7 @@ try {
   assert.equal(overlayBlock.overlay, true);
   const defaultSearch = await call(
     "search_bytes",
-    { pattern: "11 22 33 44" },
+    { pattern: "aa" },
     overlaySha256,
     "elf",
   );
@@ -408,7 +402,7 @@ try {
     ),
   );
   const overlayQuery = {
-    pattern: "11 22 33 44",
+    pattern: "aa",
     start: "segment_0:0x401000",
     end: "segment_0:0x40100f",
   };
@@ -420,9 +414,49 @@ try {
   );
   assert.deepEqual(
     overlaySearch.normalized_result.matches.map((match) => match.address),
-    ["segment_0:0x401000"],
+    Array.from(
+      { length: 16 },
+      (_, index) => `segment_0:0x${(0x401000 + index).toString(16)}`,
+    ),
   );
   assert.equal(overlaySearch.normalized_result.matches[0].file_offset, 0x1000);
+  for (const bound of [
+    { start: overlayQuery.start },
+    { end: overlayQuery.end },
+  ]) {
+    const selected = await call(
+      "search_bytes",
+      { pattern: overlayQuery.pattern, ...bound },
+      overlaySha256,
+      "elf",
+    );
+    assert.deepEqual(
+      selected.normalized_result.matches.map((match) => match.address),
+      overlaySearch.normalized_result.matches.map((match) => match.address),
+    );
+  }
+  const firstOverlayPage = await call(
+    "search_bytes",
+    { ...overlayQuery, limit: 3 },
+    overlaySha256,
+    "elf",
+  );
+  assert.equal(firstOverlayPage.normalized_result.matches.length, 3);
+  assert.ok(firstOverlayPage.normalized_result.next_cursor);
+  const wrongOverlayCursor = await client.callTool({
+    name: "search_bytes",
+    arguments: {
+      ...overlayQuery,
+      pattern: "bb",
+      limit: 3,
+      cursor: firstOverlayPage.normalized_result.next_cursor,
+    },
+  });
+  assert.equal(wrongOverlayCursor.isError, true);
+  assert.equal(
+    JSON.parse(wrongOverlayCursor.content[0].text).error.code,
+    "invalid_request",
+  );
   await call("close_binary", { snapshot_path: overlaySnapshot });
   await call("open_binary", {
     path: overlayPath,
@@ -437,6 +471,33 @@ try {
   );
   assert.deepEqual(reopened.normalized_result, overlaySearch.normalized_result);
   assert.equal(reopened.evidence_id, overlaySearch.evidence_id);
+  const resumedAddresses = firstOverlayPage.normalized_result.matches.map(
+    (match) => match.address,
+  );
+  let cursor = firstOverlayPage.normalized_result.next_cursor;
+  let pageCount = 1;
+  while (cursor !== null) {
+    assert.ok(
+      pageCount < 6,
+      "the 16-match fixture must finish within six pages",
+    );
+    const next = await call(
+      "search_bytes",
+      { ...overlayQuery, limit: 3, cursor },
+      overlaySha256,
+      "elf",
+    );
+    resumedAddresses.push(
+      ...next.normalized_result.matches.map((match) => match.address),
+    );
+    cursor = next.normalized_result.next_cursor;
+    pageCount += 1;
+  }
+  assert.equal(pageCount, 6);
+  assert.deepEqual(
+    resumedAddresses,
+    overlaySearch.normalized_result.matches.map((match) => match.address),
+  );
   await call("close_binary");
   const help = await promisify(execFile)(
     process.execPath,
