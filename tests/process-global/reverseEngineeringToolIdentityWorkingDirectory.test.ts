@@ -1,4 +1,4 @@
-import { delimiter, dirname } from "node:path";
+import { delimiter, dirname, relative } from "node:path";
 
 import { expect, it, vi } from "vitest";
 
@@ -76,6 +76,38 @@ posix.each([
       });
       // A relative entry before the match is reached and skipped.
       expect(cwd).toHaveBeenCalledTimes(relativeFirst ? 1 : 0);
+    } finally {
+      cwd.mockRestore();
+    }
+  },
+);
+
+posix(
+  "runs the command by name, unidentified, when a relative PATH entry before the match still reaches an executable",
+  async () => {
+    const { executable, path } = await rizinExecutableFixture();
+    const earlier = await rizinExecutableFixture();
+    const run = versionProbeRunner(() => "rizin 0.9.1 @ linux-x86-64");
+    const service = new TestReverseEngineeringService({
+      run,
+      lookup: lookupExecutable,
+      environment: {
+        REA_RIZIN_COMMAND: "rizin",
+        // Relative to the working directory, as `../bin` is.
+        PATH: `${relative(process.cwd(), dirname(earlier.executable))}${delimiter}${dirname(executable)}`,
+      },
+    });
+    const cwd = unreadableWorkingDirectory();
+    try {
+      const result = await service.executeRizinCommand({ path, command: "iI" });
+      if (!result.ok) throw result.error;
+      expect(result.value.parameters.provider_identity).toBe("assumed");
+      expect(result.value.parameters).not.toHaveProperty(
+        "provider_executable_path",
+      );
+      // The later match is not selected: the launch by name follows PATH.
+      expect(run.mock.calls.map(([command]) => command)).toEqual(["rizin"]);
+      expect(versionProbeCount(run)).toBe(0);
     } finally {
       cwd.mockRestore();
     }

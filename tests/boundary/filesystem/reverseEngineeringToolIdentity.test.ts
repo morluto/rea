@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { stat, writeFile } from "node:fs/promises";
-import { delimiter, dirname } from "node:path";
+import { delimiter, dirname, relative } from "node:path";
 
 import { expect, expectTypeOf, it, vi } from "vitest";
 
@@ -367,7 +367,7 @@ posix(
 );
 
 posix(
-  "reads the working directory only when the PATH search reaches a relative entry, and skips that entry when the read fails",
+  "reads the working directory only when the PATH search reaches a relative entry, and then checks that entry as written",
   async () => {
     const { executable } = await rizinExecutableFixture();
     const directory = dirname(executable);
@@ -378,13 +378,21 @@ posix(
       lookupExecutable("rizin", workingDirectory, `${directory}${delimiter}.`),
     ).resolves.toEqual({ status: "found", path: executable });
     expect(workingDirectory).not.toHaveBeenCalled();
+    // No rizin under the process's working directory: the search continues.
     await expect(
       lookupExecutable("rizin", workingDirectory, `.${delimiter}${directory}`),
     ).resolves.toEqual({ status: "found", path: executable });
     expect(workingDirectory).toHaveBeenCalledOnce();
-    // Without a later match, the unread entry leaves the command unknown.
+    // An executable that a relative entry still reaches is what a launch by
+    // name runs, so the lookup stops there rather than select a later match.
+    const earlier = await rizinExecutableFixture();
+    const reachable = relative(process.cwd(), dirname(earlier.executable));
     await expect(
-      lookupExecutable("rizin", workingDirectory, "."),
+      lookupExecutable(
+        "rizin",
+        workingDirectory,
+        `${reachable}${delimiter}${directory}`,
+      ),
     ).resolves.toMatchObject({ status: "no-working-directory" });
   },
 );

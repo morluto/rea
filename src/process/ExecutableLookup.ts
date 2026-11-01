@@ -19,7 +19,7 @@ export type ExecutableLookup =
       readonly cause: unknown;
     }
   | { readonly status: "missing"; readonly checked: readonly string[] }
-  /** A relative command, or a relative PATH entry with no later match, needed the working directory, which could not be read. */
+  /** A relative command, or a match under a relative PATH entry, needed the working directory, which could not be read. */
   | { readonly status: "no-working-directory"; readonly cause: unknown }
   /** The caller's signal or deadline ended the lookup before it finished. */
   | {
@@ -43,11 +43,14 @@ export interface ExecutableLookupBounds {
  * denied directories, and an existing file without execute permission is not
  * a match. The working directory is read only when the search reaches a
  * relative command or PATH entry, since it may have been removed. When that
- * read fails, the search skips the relative entry, as a spawned search finds
- * nothing under a removed directory, and reports the unread working directory
- * only if no later entry matches. A file-system call cannot itself be
- * cancelled, so an interrupted lookup stops waiting for it and lets it settle
- * unobserved.
+ * read fails, a relative PATH entry is checked as written, against the
+ * process's working directory, which the kernel still resolves (even `..`
+ * from a removed directory), as a spawned search does: an entry without the
+ * executable lets the search continue, and a match there ends it with
+ * `no-working-directory`, since its absolute path cannot be named. So
+ * `workingDirectory` must name the process's working directory whenever it
+ * can fail. A file-system call cannot itself be cancelled, so an interrupted
+ * lookup stops waiting for it and lets it settle unobserved.
  */
 export const lookupExecutable = async (
   command: string,
@@ -77,13 +80,13 @@ export const lookupExecutable = async (
   const interruption = lookupInterruption(signal, timeoutMs);
   try {
     const checked: string[] = [];
-    // A relative PATH entry skipped because the working directory could not
-    // be read; without a later match, the command is not known to be missing.
-    let skipped: { readonly cause: unknown } | undefined;
     for (const entry of entries) {
       // Resolved only when reached: a match in an earlier entry never needs
       // the working directory that a later relative entry would read.
       let candidate: string;
+      // Set when the working directory could not be read, so the candidate
+      // is the relative path as written.
+      let unnamed: { readonly cause: unknown } | undefined;
       try {
         candidate = explicit
           ? located(entry)
@@ -91,11 +94,8 @@ export const lookupExecutable = async (
       } catch (cause) {
         // An explicit relative command has no other candidate.
         if (explicit) return { status: "no-working-directory", cause };
-        skipped ??= { cause };
-        checked.push(
-          `${appendCallerPath(entry === "" ? "." : entry, command)} (working directory unreadable)`,
-        );
-        continue;
+        candidate = appendCallerPath(entry === "" ? "." : entry, command);
+        unnamed = { cause };
       }
       const metadata = await interruption.race(stat(candidate));
       if (metadata.status === "interrupted") return { ...metadata, candidate };
@@ -120,15 +120,17 @@ export const lookupExecutable = async (
       );
       if (executable.status === "interrupted")
         return { ...executable, candidate };
+      // A launch by name would run a match under an unnamed working
+      // directory, so the search stops there without a path to report.
       if (executable.status === "fulfilled")
-        return { status: "found", path: candidate };
+        return unnamed === undefined
+          ? { status: "found", path: candidate }
+          : { status: "no-working-directory", cause: unnamed.cause };
       checked.push(
         `${candidate}${systemErrorSuffix(systemErrorCode(executable.cause))}`,
       );
     }
-    return skipped === undefined
-      ? { status: "missing", checked }
-      : { status: "no-working-directory", cause: skipped.cause };
+    return { status: "missing", checked };
   } finally {
     interruption.release();
   }
