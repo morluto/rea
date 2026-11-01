@@ -169,7 +169,14 @@ try {
   let computedListingBranches = 0;
   let preservedComputedBranches = 0;
   let originalDispatchInspection;
-  for (const [label, symbol, offset, expectedMnemonic, flowKind, computed] of names) {
+  for (const [
+    label,
+    symbol,
+    offset,
+    expectedMnemonic,
+    flowKind,
+    computed,
+  ] of names) {
     const entry = symbols[symbol];
     assert.ok(
       procedures.some(
@@ -186,7 +193,11 @@ try {
       new RegExp("^" + expectedMnemonic + "$", "iu"),
     );
     assert.equal(listing.flow.kind, flowKind, "Wrong flow kind: " + symbol);
-    assert.equal(listing.flow.computed, computed, "Wrong computed flag: " + symbol);
+    assert.equal(
+      listing.flow.computed,
+      computed,
+      "Wrong computed flag: " + symbol,
+    );
 
     const functionResult = await call("analyze_function", { procedure: entry });
     assert.ok(functionResult.evidence?.evidence_id);
@@ -358,12 +369,16 @@ try {
   completed = await completeVerifierRun(run);
   assertVerifierCleanupComplete(completed.process_lineage);
 } catch (error) {
-  throw new Error(`PSP verifier cleanup unverified; retained workspace: ${workspace}`, {
-    cause: error,
-  });
+  throw new Error(
+    `PSP verifier cleanup unverified; retained workspace: ${workspace}`,
+    { cause: error },
+  );
 }
 if (failures.length > 0)
-  throw new AggregateError(failures, `PSP verifier failed; retained workspace: ${workspace}`);
+  throw new AggregateError(
+    failures,
+    `PSP verifier failed; retained workspace: ${workspace}`,
+  );
 assert.ok(report, "Missing PSP indirect branch report");
 await rm(workspace, { recursive: true, force: true });
 process.stdout.write(
