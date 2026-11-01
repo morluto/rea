@@ -1,9 +1,25 @@
 import { describe, expect, it } from "vitest";
+import { fileURLToPath } from "node:url";
+import ts from "typescript6";
 
 import {
   importSpecifier,
   readImportSpecifiers,
 } from "../../scripts/lib/import-specifiers.mjs";
+
+// Convert only compiler options; this does not discover or compile the project.
+const configuration = ts.readConfigFile(
+  fileURLToPath(new URL("../../tsconfig.json", import.meta.url)),
+  ts.sys.readFile.bind(ts.sys),
+);
+if (configuration.error !== undefined)
+  throw new Error("Could not read repository compiler options");
+const compilerOptions = ts.convertCompilerOptionsFromJson(
+  configuration.config.compilerOptions,
+  fileURLToPath(new URL("../../", import.meta.url)),
+);
+if (compilerOptions.errors.length > 0)
+  throw new Error("Could not convert repository compiler options");
 
 describe("import specifier reader", () => {
   it("reads side-effect imports and ignores import-like text", () => {
@@ -47,13 +63,13 @@ import "node:fs";
   it.each([
     ['import type Default from "./owner.js";', true],
     ['import type * as Namespace from "./owner.js";', true],
-    ['import { type Port, type Other as Alias } from "./owner.js";', true],
+    ['import { type Port, type Other as Alias } from "./owner.js";', false],
     ['import { type Port, Constructor as Alias } from "./owner.js";', false],
     ['import Default, { type Port } from "./owner.js";', false],
     ['import {} from "./owner.js";', false],
     ['import "./owner.js";', false],
     ['export type { Port } from "./owner.js";', true],
-    ['export { type Port, type Other as Alias } from "./owner.js";', true],
+    ['export { type Port, type Other as Alias } from "./owner.js";', false],
     ['export { type Port, Constructor as Alias } from "./owner.js";', false],
     ['export {} from "./owner.js";', false],
     ['export type * from "./owner.js";', true],
@@ -65,10 +81,23 @@ import "node:fs";
     ['type Constructor = typeof import("./owner.js").Constructor;', true],
     ['const Owner = import("./owner.js");', false],
     ["const Owner = import(`./owner.js`);", false],
-  ])("derives runtime ownership from %s", (source, typeOnly) => {
+  ])("matches TypeScript's emitted runtime edge for %s", (source, typeOnly) => {
     expect(readImportSpecifiers(source)).toEqual([
       { specifier: "./owner.js", line: 1, typeOnly },
     ]);
+    expect(compilerOptions.options.verbatimModuleSyntax).toBe(true);
+    const emitted = ts.transpileModule(source, {
+      compilerOptions: compilerOptions.options,
+      // NodeNext emits import-equals through createRequire in an ESM file.
+      fileName: fileURLToPath(new URL("./import-owner.mts", import.meta.url)),
+      reportDiagnostics: true,
+    });
+    expect(
+      emitted.diagnostics?.filter(
+        (diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error,
+      ),
+    ).toEqual([]);
+    expect(emitted.outputText.includes("./owner.js")).toBe(!typeOnly);
   });
 
   it("ignores nodes that are not static imports", () => {

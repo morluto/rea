@@ -2,7 +2,7 @@
 export interface ImportSpecifierFact {
   readonly specifier: string;
   readonly line: number;
-  /** True when this declaration selects only types, without value bindings. */
+  /** True only when TypeScript erases this module edge under verbatimModuleSyntax. */
   readonly typeOnly: boolean;
 }
 

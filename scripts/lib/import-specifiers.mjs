@@ -26,25 +26,15 @@ export const importSpecifier = (node) => {
   }
 };
 
-/** Whether this declaration selects only types, without runtime value bindings. */
+/** Whether TypeScript erases this module edge under verbatimModuleSyntax. */
 const isTypeOnly = (node) => {
   switch (node.type) {
     case "TSImportType":
       return true;
     case "ImportDeclaration":
-      return (
-        node.importKind === "type" ||
-        (node.specifiers.length > 0 &&
-          node.specifiers.every((specifier) => specifier.importKind === "type"))
-      );
     case "TSImportEqualsDeclaration":
       return node.importKind === "type";
     case "ExportNamedDeclaration":
-      return (
-        node.exportKind === "type" ||
-        (node.specifiers.length > 0 &&
-          node.specifiers.every((specifier) => specifier.exportKind === "type"))
-      );
     case "ExportAllDeclaration":
       return node.exportKind === "type";
     default:

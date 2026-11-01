@@ -109,7 +109,7 @@ describe("live capability constructor ownership", () => {
     ],
     [
       'import { type Port as Alias } from "../frida/FridaInstrumentationManager.js";',
-      true,
+      false,
     ],
     ['import "../frida/FridaInstrumentationManager.js";', false],
     [
@@ -118,7 +118,7 @@ describe("live capability constructor ownership", () => {
     ],
     [
       'export { type Port as Alias } from "../frida/FridaInstrumentationManager.js";',
-      true,
+      false,
     ],
     ['export type * from "../frida/FridaInstrumentationManager.js";', true],
     ['export * from "../frida/FridaInstrumentationManager.js";', false],
