@@ -158,7 +158,7 @@ export const SESSION_TOOL_CONTRACTS = [
   ),
   session(
     "record_unknown",
-    "Create one deterministic residual unknown and immutable mutation evidence. Validates all evidence and relationship references, and rejects duplicate stable identity.",
+    "Create one deterministic residual unknown and immutable mutation evidence. Its scope is the active binary analysis target digest, or null without an active target; supporting Evidence does not select the scope. Scope contributes to stable identity. Validates all evidence and relationship references, and rejects duplicate stable identity.",
     recordUnknownInputSchema,
   ),
   session(
