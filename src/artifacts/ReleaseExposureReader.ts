@@ -1,6 +1,6 @@
 import type { Dirent } from "node:fs";
 import { lstat, opendir } from "node:fs/promises";
-import { basename, dirname, isAbsolute } from "node:path";
+import { basename, dirname, isAbsolute, resolve } from "node:path";
 import type { Readable } from "node:stream";
 
 import type {
@@ -140,12 +140,11 @@ interface OpenContainer {
   readonly reader: ArtifactReader;
   entries: readonly ArtifactEntry[] | null;
   /**
-   * Keyed by source spelling, which inventory keeps when it normalizes a
-   * logical path. Same-path entries stay distinct: each occurrence takes the
-   * next one.
+   * Entries by container-relative logical path, in listing order. Inventory
+   * numbers same-path occurrences in that order, so an occurrence's duplicate
+   * ordinal selects its entry no matter which read path reaches it first.
    */
   readonly byPath: Map<string, ArtifactEntry[]>;
-  readonly byOccurrence: Map<string, ArtifactEntry | null>;
 }
 
 /** Read-only inventory and bounded member scan for one shipped artifact. */
@@ -376,6 +375,15 @@ const scanOccurrences = async (
   const byId = new Map(
     occurrences.map((occurrence) => [occurrence.occurrence_id, occurrence]),
   );
+  // Inventory numbers same-path occurrences in listing order; keep that
+  // number as the occurrence's identity within its container.
+  const ordinals = new Map<string, number>();
+  const seenPaths = new Map<string, number>();
+  for (const occurrence of occurrences) {
+    const ordinal = seenPaths.get(occurrence.logical_path) ?? 0;
+    seenPaths.set(occurrence.logical_path, ordinal + 1);
+    ordinals.set(occurrence.occurrence_id, ordinal);
+  }
   const nodeFormat = new Map(
     (input.inventory?.nodes ?? []).map((node) => [
       node.artifact_id,
@@ -485,6 +493,7 @@ const scanOccurrences = async (
         readOccurrence(
           input,
           occurrence,
+          ordinals,
           containers,
           byId,
           formatOf,
@@ -646,6 +655,10 @@ interface ScanState {
   nativeDigests: Map<string, string>;
   limitations: string[];
   mapsRead: number;
+  /** Local targets of source-map declarations, whatever their file name. */
+  mapTargets: Set<string>;
+  /** Members already examined as something other than a source map. */
+  examinedLocations: Set<string>;
   visitText: ReleaseExposureTextVisitor;
 }
 
@@ -680,6 +693,8 @@ const createState = (visitText: ReleaseExposureTextVisitor): ScanState => ({
   nativeDigests: new Map(),
   limitations: [],
   mapsRead: 0,
+  mapTargets: new Set(),
+  examinedLocations: new Set(),
   visitText,
 });
 
@@ -774,9 +789,10 @@ const examineMember = async (
   const { packageFormat } = member;
   if (packageFormat !== null) state.formats.add(packageFormat);
   let readable = false;
+  const map = isDeclaredMap(state, member);
+  if (!map) state.examinedLocations.add(resolve(member.location));
   if (member.encrypted) noteUnreadMember(state, member);
-  else if (isSourceMap(member.logical, member.kind))
-    readable = await examineMapMember(state, member);
+  else if (map) readable = await examineMapMember(state, member);
   else if (isText(member.logical, member.kind))
     readable = await examineTextMember(state, member);
   else if (packageFormat !== null)
@@ -798,7 +814,7 @@ const examineMember = async (
 
 const noteUnreadMember = (state: ScanState, member: MemberView): void => {
   if (isJavaScriptMember(member) || isCssMember(member)) state.skippedMaps += 1;
-  if (isSourceMap(member.logical, member.kind)) {
+  if (isDeclaredMap(state, member)) {
     noteUnreadMap(state, member, null);
     state.skippedText += 1;
   } else if (isText(member.logical, member.kind)) state.skippedText += 1;
@@ -822,7 +838,11 @@ const examineMapMember = async (
   state: ScanState,
   member: MemberView,
 ): Promise<boolean> => {
-  const loaded = await examineMap(state, member);
+  // A member a script names as its map is a JavaScript map whatever it is called.
+  const declared = isSourceMap(member.logical, member.kind)
+    ? member
+    : { ...member, logical: `${member.logical}.js.map` };
+  const loaded = await examineMap(state, declared);
   if (loaded?.kind === "bytes") scanText(state, member, loaded.bytes);
   else state.skippedText += 1;
   return loaded?.kind !== "unread";
@@ -1001,7 +1021,10 @@ const examineInlineMaps = (
   const directives = createJavaScriptAnalysisAccumulator(source.length);
   addSourceMapDirectives(source, parsed.comments ?? [], directives);
   for (const { declared_url: url } of directives.sourceMaps) {
-    if (!url.startsWith("data:")) continue;
+    if (!url.startsWith("data:")) {
+      noteLocalMapReference(state, member, url);
+      continue;
+    }
     const comma = url.indexOf(",");
     if (state.mapsRead >= MAX_RELEASE_EXPOSURE_SOURCE_MAPS || comma < 0) {
       state.skippedMaps += 1;
@@ -1028,6 +1051,36 @@ const examineInlineMaps = (
     }
   }
 };
+
+/**
+ * A declaration names its map by location, not by file name. A map that is
+ * recognized by name is examined as a member; any other local target is
+ * recorded so it is examined as a map when it is reached. A target already
+ * examined as ordinary text was not assessed as a map, so coverage is unknown.
+ */
+const noteLocalMapReference = (
+  state: ScanState,
+  member: MemberView,
+  url: string,
+): void => {
+  if (/^[a-z][a-z0-9+.-]+:/iu.test(url)) return;
+  const path = url.replace(/[?#].*$/su, "");
+  if (path.length === 0 || isSourceMap(path, "file")) return;
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(path);
+  } catch {
+    state.skippedMaps += 1;
+    return;
+  }
+  const target = resolve(dirname(member.location), decoded);
+  if (state.examinedLocations.has(target)) state.skippedMaps += 1;
+  else state.mapTargets.add(target);
+};
+
+const isDeclaredMap = (state: ScanState, member: MemberView): boolean =>
+  isSourceMap(member.logical, member.kind) ||
+  state.mapTargets.has(resolve(member.location));
 
 const scanText = (
   state: ScanState,
@@ -1147,6 +1200,7 @@ const examinePdb = async (
 const readOccurrence = async (
   input: ConsumeInput,
   occurrence: InventoryOccurrence,
+  ordinals: ReadonlyMap<string, number>,
   containers: Map<string, OpenContainer>,
   byId: Map<string, InventoryOccurrence>,
   formatOf: (occurrence: InventoryOccurrence) => string,
@@ -1181,6 +1235,7 @@ const readOccurrence = async (
       containerFormat,
       shaOf(container, nodeSha),
       occurrence,
+      ordinals,
       containers,
       budget,
       state,
@@ -1439,6 +1494,7 @@ const readContainerMember = async (
   parentFormat: string,
   expectedSha256: string | undefined,
   occurrence: InventoryOccurrence,
+  ordinals: ReadonlyMap<string, number>,
   containers: Map<string, OpenContainer>,
   budget: number,
   state: ScanState,
@@ -1457,15 +1513,10 @@ const readContainerMember = async (
     );
     if (container === null) return { kind: "unread" };
     await containerEntries(container, state, input.signal);
-    let entry = container.byOccurrence.get(occurrence.occurrence_id);
-    if (entry === undefined) {
-      entry =
-        container.byPath
-          .get(occurrence.source_path ?? entryPath(occurrence, parent))
-          ?.shift() ?? null;
-      container.byOccurrence.set(occurrence.occurrence_id, entry);
-    }
-    if (entry === null || entry.kind !== "file") return { kind: "unread" };
+    const entry = container.byPath.get(entryPath(occurrence, parent))?.[
+      ordinals.get(occurrence.occurrence_id) ?? 0
+    ];
+    if (entry === undefined || entry.kind !== "file") return { kind: "unread" };
     return await readEntryBytes(container.reader, entry, budget, input.signal);
   } catch (cause) {
     rethrowReadFailure(cause);
@@ -1504,7 +1555,6 @@ const openContainer = async (
     reader,
     entries: null,
     byPath: new Map(),
-    byOccurrence: new Map(),
   };
   containers.set(id, container);
   if (expectedSha256 !== undefined)
@@ -1538,9 +1588,9 @@ const containerEntries = async (
       continue;
     }
     listed.push(entry);
-    const sourceName = entry.sourcePath ?? entry.path;
-    const sameName = container.byPath.get(sourceName);
-    if (sameName === undefined) container.byPath.set(sourceName, [entry]);
+    const key = logicalPathNfc(entry.path).replace(/\/+$/u, "");
+    const sameName = container.byPath.get(key);
+    if (sameName === undefined) container.byPath.set(key, [entry]);
     else sameName.push(entry);
   }
   const coverage = traversal.snapshot();

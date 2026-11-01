@@ -1799,6 +1799,59 @@ describe("ReleaseExposureReader same-name members", () => {
   });
 });
 
+describe("ReleaseExposureReader member identity", () => {
+  it("reads a compressed same-name member after an empty stored one", async () => {
+    const root = await createTestTempDirectory("rea-release-empty-first-");
+    const file = join(root, "app");
+    await writeFile(
+      file,
+      cArchiveExecutable({
+        layout: "2.1",
+        pythonVersion: 310,
+        members: [
+          {
+            name: "config.txt",
+            typeCode: "x",
+            compress: false,
+            payload: Buffer.alloc(0),
+          },
+          {
+            name: "config.txt",
+            typeCode: "x",
+            compress: true,
+            payload: Buffer.from("credential-marker"),
+          },
+        ],
+      }),
+    );
+    const reader = new ReleaseExposureReader();
+    const texts: string[] = [];
+    const result = await reader.inspect({ path: file }, undefined, (text) => {
+      texts.push(text);
+    });
+    await reader.close();
+    if (!result.ok) throw result.error;
+    expect(texts).toContain("credential-marker");
+  });
+
+  it.each([
+    ["app.js", "debug.json", { embedded: 1, skipped: 0 }],
+    ["z.js", "a.json", { embedded: 0, skipped: 1 }],
+  ])(
+    "follows %s to a differently named local map %s",
+    async (script, map, expected) => {
+      const root = await createTestTempDirectory("rea-release-named-map-");
+      await writeFile(
+        join(root, script),
+        `const value = 1;\n//# sourceMappingURL=${map}\n`,
+      );
+      await writeFile(join(root, map), embeddedSourceMap());
+      const scanned = await inspect(root);
+      expect(scanned.source_maps).toMatchObject(expected);
+    },
+  );
+});
+
 const inspect = async (path: string) => {
   const reader = new ReleaseExposureReader();
   try {
