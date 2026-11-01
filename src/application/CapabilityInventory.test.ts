@@ -184,6 +184,7 @@ describe("ADB and Apktool host availability", () => {
       status: "unavailable" as const,
       code: "not_configured" as const,
       reason: "REA_ADB_PATH is invalid",
+      remediation: "Set REA_ADB_PATH to an absolute adb executable path.",
       diagnostics: {},
     };
     const readyInventory = buildCapabilityInventory(status(), {
@@ -205,6 +206,7 @@ describe("ADB and Apktool host availability", () => {
         status: "unavailable",
         code: "unsupported_version",
         reason: "Apktool 2.6.3 is older than 2.7.0",
+        remediation: "Repair the fixture provider.",
         diagnostics: {},
       },
     });
@@ -227,6 +229,7 @@ describe("capability failure reasons", () => {
         status: "unavailable",
         code: "runtime_unavailable",
         reason: "The JADX native self-test failed.",
+        remediation: "Repair the fixture provider.",
         diagnostics: {},
       },
     });

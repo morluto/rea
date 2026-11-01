@@ -7,7 +7,10 @@ import type {
   SetupProviderEnvironment,
 } from "./SetupTypes.js";
 import type { SetupClient } from "./SupportedClients.js";
-import type { SetupHopperInstallResult } from "./SetupInstallFailure.js";
+import type {
+  SetupHopperInstallFailure,
+  SetupHopperInstallResult,
+} from "./SetupInstallFailure.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type {
   DoctorCheck,
@@ -38,6 +41,11 @@ export class FakeSetupHost implements SetupHost {
   ghidra: string | undefined;
   javaHome: string | undefined;
   hopperInstallSucceeds = true;
+  hopperInstallFailure: SetupHopperInstallFailure = {
+    status: "failed",
+    code: "download_failed",
+    remediation: "Download failed.",
+  };
   skill: "installed" | "unchanged" | "failed" = "installed";
   clients: readonly SetupClient[] = [];
   availableClients: readonly SetupClient[] | undefined;
@@ -99,11 +107,7 @@ export class FakeSetupHost implements SetupHost {
         launcherPath: this.hopper,
       });
     }
-    return Promise.resolve({
-      status: "failed",
-      code: "download_failed",
-      remediation: "Download failed.",
-    });
+    return Promise.resolve(this.hopperInstallFailure);
   };
   detectedClients = (): Promise<readonly SetupClient[]> =>
     Promise.resolve(this.clients);

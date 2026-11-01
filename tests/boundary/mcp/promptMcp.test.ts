@@ -1,5 +1,5 @@
 import { ok as resultOk, err, ok } from "../../../src/domain/result.js";
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 
 import {
@@ -45,16 +45,10 @@ import { observed } from "../../fixtures/analysisExecution.js";
 import { serveStreamableHttp } from "../../../src/server/http/serveStreamableHttp.js";
 
 const resources: Array<{ close(): Promise<unknown> }> = [];
-const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
   await Promise.allSettled(
     resources.splice(0).map((resource) => resource.close()),
-  );
-  await Promise.all(
-    temporaryDirectories
-      .splice(0)
-      .map((directory) => rm(directory, { recursive: true, force: true })),
   );
 });
 
@@ -364,7 +358,6 @@ describe("guided prompt family scope", () => {
 
 it("preserves caller-selected paths and verbatim crash signals", async () => {
   const directory = await createTestTempDirectory("rea-prompt-exact-context-");
-  temporaryDirectories.push(directory);
   const targetPath = join(directory, "target with trailing space ");
   await writeFile(targetPath, "owned prompt target", "utf8");
   await expect(readFile(targetPath.trim(), "utf8")).rejects.toThrow();
@@ -493,7 +486,6 @@ describe("guided prompt completion registry", () => {
 
 it("guided prompt completion avoids cold startup and cancels warm lookup on close", async () => {
   const directory = await createTestTempDirectory("rea-prompt-warm-only-");
-  temporaryDirectories.push(directory);
   const target = join(directory, "target.hop");
   await writeFile(target, "fixture target");
   const fixture = await createWarmCompletionFixture(target);
@@ -696,7 +688,6 @@ describe("guided prompt completion lifecycle", () => {
 
   it("refreshes wire completions across open, switch, concurrency, and close", async () => {
     const directory = await createTestTempDirectory("rea-prompt-mcp-");
-    temporaryDirectories.push(directory);
     const first = join(directory, "first.hop");
     const second = join(directory, "second.hop");
     await Promise.all([writeFile(first, "first"), writeFile(second, "second")]);
