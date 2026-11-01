@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 
+import { offeredOperationAlternatives } from "../../../src/application/OperationAlternatives.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
+import { err, ok } from "../../../src/domain/result.js";
+import { GhidraSessionError } from "../../../src/ghidra/GhidraSessionError.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import {
@@ -11,13 +14,32 @@ import {
   createTestBinarySession,
 } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
-import { connectGhidraMcp } from "./ghidraMcpHarness.js";
+import { connectGhidraMcp, ghidraFixtureResult } from "./ghidraMcpHarness.js";
 
 type Client = Awaited<ReturnType<typeof connectGhidraMcp>>["mcp"];
 
 const NAVIGATION = ["next_address", "prev_address"] as const;
+const GHIDRA_ALTERNATIVES = [
+  "inspect_native_instruction",
+  "read_function_instructions",
+  "procedure_assembly",
+];
 const GENERIC =
   "This analysis is unavailable for the current target. Choose another analysis or target.";
+
+/** The owning formatter's remediation for exactly these offered tools. */
+const remediationFor = (operation: string, offered: readonly string[]) =>
+  offeredOperationAlternatives(operation, (alternative) =>
+    offered.includes(alternative),
+  )?.remediation;
+
+const navigationRefusal = async (
+  client: Client,
+  name: (typeof NAVIGATION)[number],
+) =>
+  parseMcpToolError(
+    await client.callTool({ name, arguments: { address: "0x401000" } }),
+  ).error;
 
 const navigationAvailability = async (
   client: Client,
@@ -41,7 +63,11 @@ const navigationAvailability = async (
 
 describe("address navigation refusals", () => {
   it.each([
-    { scope: "every family", environment: {} },
+    // Explicitly unset so a developer's scoped catalog cannot leak in.
+    {
+      scope: "every family",
+      environment: { REA_MCP_TOOL_FAMILIES: undefined },
+    },
     {
       scope: "session and direct families",
       environment: { REA_MCP_TOOL_FAMILIES: "session,direct" },
@@ -55,34 +81,22 @@ describe("address navigation refusals", () => {
         { environment },
       );
       try {
-        const alternatives = [
-          "inspect_native_instruction",
-          "read_function_instructions",
-          "procedure_assembly",
-        ];
-        for (const name of NAVIGATION) {
-          const { error } = parseMcpToolError(
-            await harness.mcp.callTool({
-              name,
-              arguments: { address: "0x401000" },
-            }),
-          );
-          expect(error).toEqual({
+        for (const name of NAVIGATION)
+          expect(await navigationRefusal(harness.mcp, name)).toEqual({
             code: "capability_unavailable",
             category: "unsupported_provider",
             message: GENERIC,
             retryable: false,
             remediation: {
-              action: `For instruction-level questions, the current provider offers inspect_native_instruction (the decoded instruction or data at one exact address, with its length and static flow), read_function_instructions (one analyzed procedure's instruction listing in address order) and procedure_assembly (one analyzed procedure's assembly text). None navigates arbitrary analyzed objects such as data or addresses outside a procedure, and neither listing order nor address plus length proves executed control flow. Running ${name} itself requires a provider that declares it.`,
+              action: remediationFor(name, GHIDRA_ALTERNATIVES),
             },
             details: {
               provider_id: "ghidra",
               operation: name,
               reason: "operation is not declared by this provider",
-              alternatives,
+              alternatives: GHIDRA_ALTERNATIVES,
             },
           });
-        }
 
         // Follow the suggested next step on the same connection.
         const listing = parseEvidence(
@@ -109,10 +123,10 @@ describe("address navigation refusals", () => {
               reason: "provider_missing",
               remediation:
                 "Install or configure a provider that declares this operation.",
-              alternatives,
+              alternatives: GHIDRA_ALTERNATIVES,
             }),
           ]);
-          for (const alternative of alternatives)
+          for (const alternative of GHIDRA_ALTERNATIVES)
             expect(tools).toContainEqual(
               expect.objectContaining({ name: alternative, available: true }),
             );
@@ -123,6 +137,63 @@ describe("address navigation refusals", () => {
     },
     30_000,
   );
+});
+
+describe("address navigation refusal alternatives", () => {
+  it("stop offering tools a provider failure made unavailable", async () => {
+    let failAssembly = true;
+    const harness = await connectGhidraMcp(
+      "navigation-after-provider-failure",
+      (operation, input) => {
+        if (operation === "procedure_assembly" && failAssembly) {
+          failAssembly = false;
+          return Promise.resolve(
+            err(new GhidraSessionError("protocol", "Malformed bridge reply")),
+          );
+        }
+        return Promise.resolve(ok(ghidraFixtureResult(operation, input)));
+      },
+      { environment: { REA_MCP_TOOL_FAMILIES: undefined } },
+    );
+    const offeredInDiscovery = async () =>
+      (await navigationAvailability(harness.mcp, "summary")).tools
+        .filter(({ name }) => name === "next_address")
+        .map((tool) =>
+          "alternatives" in tool ? tool.alternatives : undefined,
+        );
+    try {
+      const failed = await harness.mcp.callTool({
+        name: "procedure_assembly",
+        arguments: { procedure: "0x401000" },
+      });
+      expect(parseMcpToolError(failed).error.code).toBe("execution_failure");
+      // The failure marks every Ghidra operation unavailable for this run, so
+      // neither discovery nor the refusal may offer one.
+      const generic = await navigationRefusal(harness.mcp, "next_address");
+      expect(generic.remediation.action).toBe(GENERIC);
+      expect(generic.details).not.toHaveProperty("alternatives");
+      expect(await offeredInDiscovery()).toEqual([undefined]);
+
+      // A later success restores exactly that operation in both views.
+      const listing = await harness.mcp.callTool({
+        name: "read_function_instructions",
+        arguments: { procedure: "0x401000" },
+      });
+      expect(listing.isError).not.toBe(true);
+      const restored = await navigationRefusal(harness.mcp, "next_address");
+      expect(restored.details?.alternatives).toEqual([
+        "read_function_instructions",
+      ]);
+      expect(restored.remediation.action).toBe(
+        remediationFor("next_address", ["read_function_instructions"]),
+      );
+      expect(await offeredInDiscovery()).toEqual([
+        ["read_function_instructions"],
+      ]);
+    } finally {
+      await harness.close();
+    }
+  }, 30_000);
 
   it("keep generic advice when the provider offers no declared alternative", async () => {
     const [target] = await createBinarySessionTargets();

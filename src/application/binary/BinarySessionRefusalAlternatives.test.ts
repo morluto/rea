@@ -15,6 +15,7 @@ import type {
   ExecutionOptions,
 } from "../AnalysisProvider.js";
 import { buildCapabilityInventory } from "../CapabilityInventory.js";
+import { offeredOperationAlternatives } from "../OperationAlternatives.js";
 
 const IDENTITY = {
   id: "fixture",
@@ -23,8 +24,12 @@ const IDENTITY = {
 } as const;
 const GENERIC =
   "This analysis is unavailable for the current target. Choose another analysis or target.";
-const LIMITATION =
-  "None navigates arbitrary analyzed objects such as data or addresses outside a procedure, and neither listing order nor address plus length proves executed control flow.";
+
+/** The owning formatter's remediation for exactly these offered tools. */
+const remediationFor = (operation: string, offered: readonly string[]) =>
+  offeredOperationAlternatives(operation, (alternative) =>
+    offered.includes(alternative),
+  )?.remediation;
 
 const capability = (
   operation: Exclude<AnalysisOperation, "health">,
@@ -97,6 +102,23 @@ const offeredInDiscovery = async (
     .map((tool) => (tool.available ? undefined : tool.alternatives));
 
 describe("undeclared navigation refusals", () => {
+  it("describe only offered tools, what none establishes and the provider choice", () => {
+    const offered = offeredOperationAlternatives(
+      "prev_address",
+      (alternative) => alternative === "procedure_assembly",
+    );
+    expect(offered?.operations).toEqual(["procedure_assembly"]);
+    expect(offered?.remediation).toContain("procedure_assembly (");
+    expect(offered?.remediation).not.toMatch(
+      /inspect_native_instruction|read_function_instructions/u,
+    );
+    expect(offered?.remediation).toContain("executed control flow");
+    expect(offered?.remediation).toContain("prev_address itself");
+    expect(
+      offeredOperationAlternatives("list_procedures", () => true),
+    ).toBeUndefined();
+  });
+
   it("offer only alternatives the provider makes available", async () => {
     const session = await openSession([
       capability("inspect_native_instruction", false),
@@ -107,7 +129,10 @@ describe("undeclared navigation refusals", () => {
       expect(await refusal(session, operation)).toMatchObject({
         code: "capability_unavailable",
         remediation: {
-          action: `For instruction-level questions, the current provider offers read_function_instructions (one analyzed procedure's instruction listing in address order) and procedure_assembly (one analyzed procedure's assembly text). ${LIMITATION} Running ${operation} itself requires a provider that declares it.`,
+          action: remediationFor(operation, [
+            "read_function_instructions",
+            "procedure_assembly",
+          ]),
         },
         details: {
           provider_id: "fixture",
@@ -133,7 +158,7 @@ describe("undeclared navigation refusals", () => {
     });
     expect(narrowed.details?.alternatives).toEqual(["procedure_assembly"]);
     expect(narrowed.remediation.action).toBe(
-      `For instruction-level questions, the current provider offers procedure_assembly (one analyzed procedure's assembly text). ${LIMITATION} Running next_address itself requires a provider that declares it.`,
+      remediationFor("next_address", ["procedure_assembly"]),
     );
     expect(await offeredInDiscovery(session, withoutListing)).toEqual([
       ["procedure_assembly"],

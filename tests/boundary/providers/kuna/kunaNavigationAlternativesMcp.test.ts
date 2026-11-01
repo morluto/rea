@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { expect } from "vitest";
 
 import { AnalysisProviderRegistry } from "../../../../src/application/binary/AnalysisProviderRegistry.js";
+import { offeredOperationAlternatives } from "../../../../src/application/OperationAlternatives.js";
 import { composeBinarySession } from "../../../../src/application/binary/BinarySessionComposition.js";
 import { toolContract } from "../../../../src/contracts/toolContracts.js";
 import { expandToolAvailability } from "../../../../src/contracts/toolOutputSchemaPrimitives.js";
@@ -59,7 +60,10 @@ test("names only Kuna's assembly text for navigation refusals in a scoped catalo
         category: "unsupported_provider",
         retryable: false,
         remediation: {
-          action: `For instruction-level questions, the current provider offers procedure_assembly (one analyzed procedure's assembly text). None navigates arbitrary analyzed objects such as data or addresses outside a procedure, and neither listing order nor address plus length proves executed control flow. Running ${name} itself requires a provider that declares it.`,
+          action: offeredOperationAlternatives(
+            name,
+            (alternative) => alternative === "procedure_assembly",
+          )?.remediation,
         },
         details: {
           provider_id: "kuna",

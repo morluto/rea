@@ -43,6 +43,8 @@ interface PrepareSessionExecutionInput {
   readonly operation: AnalysisOperation;
   readonly parameters: Readonly<Record<string, JsonValue>>;
   readonly nativeSourceAdmitted: boolean;
+  /** Current availability as binary_session reports it, not the declaration. */
+  readonly isOperationAvailable: (operation: AnalysisOperation) => boolean;
   readonly isOperationAdvertised:
     | ((operation: AnalysisOperation) => boolean)
     | undefined;
@@ -67,6 +69,7 @@ export const prepareSessionExecution = (
     operation,
     parameters,
     nativeSourceAdmitted,
+    isOperationAvailable,
     isOperationAdvertised,
     unboundOperationError,
     lookupSnapshot,
@@ -81,7 +84,9 @@ export const prepareSessionExecution = (
         active.route,
         operation,
         capability,
-        isOperationAdvertised,
+        (alternative) =>
+          isOperationAvailable(alternative) &&
+          (isOperationAdvertised?.(alternative) ?? true),
       ),
     );
   }
@@ -103,25 +108,18 @@ export const prepareSessionExecution = (
 };
 
 /**
- * An undeclared operation names the declared alternatives this route makes
- * available and the caller advertises; otherwise generic advice remains.
+ * An undeclared operation names the declared alternatives the caller can run
+ * now (`isOffered`); otherwise generic advice remains.
  */
 const capabilityUnavailableError = (
   route: SessionProviderRoute,
   operation: AnalysisOperation,
   capability: CapabilityDescriptor | undefined,
-  isOperationAdvertised:
-    | ((operation: AnalysisOperation) => boolean)
-    | undefined,
+  isOffered: (alternative: AnalysisOperation) => boolean,
 ): AnalysisCapabilityUnavailableError => {
   const offered =
     capability === undefined
-      ? offeredOperationAlternatives(
-          operation,
-          (alternative) =>
-            route.capabilities.get(alternative)?.available === true &&
-            (isOperationAdvertised?.(alternative) ?? true),
-        )
+      ? offeredOperationAlternatives(operation, isOffered)
       : undefined;
   return new AnalysisCapabilityUnavailableError(
     route.binding?.identity.id ?? route.identity.id,
