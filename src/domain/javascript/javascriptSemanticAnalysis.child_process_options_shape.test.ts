@@ -64,3 +64,46 @@ it.each([
 ] as const)("emits no child-process fact for %s", (_name, call) => {
   expect(spawnsFor(call)).toEqual([]);
 });
+
+/**
+ * An unshadowed `NaN` or `Infinity` in the options slot is a number, and Node
+ * rejects a number there exactly as it rejects any other primitive:
+ *
+ *   spawn("e", NaN)        -> THREW ERR_INVALID_ARG_TYPE
+ *   spawn("e", Infinity)   -> THREW ERR_INVALID_ARG_TYPE
+ *   execFile("e", NaN)     -> THREW ERR_INVALID_ARG_TYPE
+ *   fork("x.js", NaN)      -> THREW ERR_INVALID_ARG_TYPE
+ *   exec("e", NaN)         -> ok, because exec validates no options
+ *   spawn("e", undefined)  -> ok, the one accepted global
+ */
+it.each([
+  ["a NaN options slot for spawn", `spawn("tool", NaN)`],
+  ["an Infinity options slot for spawn", `spawn("tool", Infinity)`],
+  ["a NaN third-slot options for spawn", `spawn("tool", [], NaN)`],
+  ["a NaN options slot for execFile", `execFile("tool", NaN)`],
+  ["an Infinity options slot for execFile", `execFile("tool", Infinity)`],
+  ["a NaN options slot for fork", `fork("tool.js", NaN)`],
+  ["an Infinity options slot for fork", `fork("tool.js", Infinity)`],
+] as const)("emits no child-process fact for %s", (_name, call) => {
+  expect(spawnsFor(call)).toEqual([]);
+});
+
+it.each([
+  ["exec not validating its NaN options", `exec("tool", NaN)`, "exec"],
+  [
+    "exec not validating its Infinity options",
+    `exec("tool", Infinity)`,
+    "exec",
+  ],
+  ["spawn accepting undefined", `spawn("tool", undefined)`, "spawn"],
+  ["spawn accepting an object first slot", `spawn("tool", {})`, "spawn"],
+  ["spawn accepting an array", `spawn("tool", [])`, "spawn"],
+] as const)("keeps the child-process fact for %s", (_name, call, method) => {
+  expect(spawnsFor(call).map(({ method: actual }) => actual)).toEqual([method]);
+});
+
+it("keeps the fact when a local binding shadows NaN", () => {
+  expect(
+    spawnsFor(`const NaN = {}; spawn("tool", NaN)`).map(({ method }) => method),
+  ).toEqual(["spawn"]);
+});

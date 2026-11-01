@@ -75,7 +75,7 @@ export const collectJavaScriptSemanticChildProcesses = (
   const candidates = collectSpawns(program, state, callables).filter(
     (candidate) =>
       !forkRejectsStdioArray(candidate, context) &&
-      !rejectsOptionsShape(candidate, context),
+      !rejectsOptionsShape(candidate, context, state),
   );
   const childProcessSpawns = candidates.map((candidate) =>
     immutableSpawn(candidate, context),
@@ -495,6 +495,7 @@ const forkRejectsStdioArray = (
 const rejectsOptionsShape = (
   candidate: SpawnCandidate,
   context: ChildSpawnContext,
+  state: JavaScriptSemanticAnalysisState,
 ): boolean => {
   if (candidate.method === "exec") return false;
   const { options } = spawnArguments(candidate, context);
@@ -504,6 +505,15 @@ const rejectsOptionsShape = (
   const literal = readExactJavaScriptLiteral(value);
   if (literal.found)
     return !(candidate.method !== "spawn" && literal.value === null);
+  // An unshadowed `NaN` or `Infinity` is a number, and Node's options check
+  // rejects a number the same way it rejects any other primitive. `undefined`
+  // stays the one accepted global.
+  if (
+    t.isIdentifier(value) &&
+    (value.name === "NaN" || value.name === "Infinity") &&
+    isUnshadowedGlobal(value, state, value.name)
+  )
+    return true;
   return isUnpricedPrimitiveLiteral(value);
 };
 
