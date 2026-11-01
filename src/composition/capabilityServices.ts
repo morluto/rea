@@ -6,7 +6,10 @@ import {
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
 import { CapabilityScope } from "../application/CapabilityScope.js";
 import type { CapabilityAvailabilityFacts } from "../application/CapabilityAvailability.js";
-import { CAPABILITY_DECLARATIONS } from "./capabilityDeclarations.js";
+import {
+  CAPABILITY_DECLARATIONS,
+  type CapabilityDeclarationId,
+} from "./capabilityDeclarations.js";
 import { isAbsolute } from "node:path";
 import { createGpuCodeObjectsService } from "./gpu.js";
 import { createPacketCaptureService, tsharkHostSupported } from "./captures.js";
@@ -581,7 +584,7 @@ const modules = {
   ),
 } satisfies Partial<
   Record<
-    keyof typeof CAPABILITY_DECLARATIONS,
+    CapabilityDeclarationId,
     (context: CapabilityHostContext) => CapabilityInstance<unknown>
   >
 >;
