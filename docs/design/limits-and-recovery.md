@@ -121,9 +121,9 @@ launch environment affects the next REA process.
 is the byte-budget shape: a decimal safe integer with a 10 MiB floor
 (`MINIMUM_RESPONSE_BYTES`), the same shared schema, and no silent fallback. A
 change needs a REA restart and a matching client receive buffer. It does not
-raise REA's reserved string limit or Node's string ceiling. The setup
-allowlist does not copy this setting. A new headroom setting should, following
-the regex deadline.
+raise REA's reserved string limit or Node's string ceiling. Like the regex
+deadline, it is in `SELECTED_REGISTRATION_SETTINGS`, so setup forwards an
+explicit selection into the client registration.
 
 A per-call budget can have a runtime default without having an environment
 setting. JavaScript `max_heap_mb`
