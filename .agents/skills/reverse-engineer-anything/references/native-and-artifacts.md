@@ -404,6 +404,21 @@ Exported C and embedded resources remain useful independent evidence, but a
 timeout does not establish complete analysis or absence of code. See the
 [deadline and client guide](https://github.com/morluto/rea/blob/main/docs/mcp-contracts.md#ghidra-first-query-deadlines-and-recovery).
 
+## Refresh a Kuna cache after launcher changes
+
+If a Kuna launcher depends on an external configuration or executable that
+changed, a previously exported project may be stale even when the selected
+launcher file is unchanged. REA cannot infer arbitrary launcher dependencies;
+matching the reported version does not authenticate them. To refresh the Kuna
+cache for a comparison, start a new REA process with `REA_KUNA_CACHE_DIR` set to
+a separate empty directory, preserve the selected target and launcher, and
+repeat the relevant analysis. A text or assembly request starts a new export
+without deleting the old one; a cold pseudocode request may first use a
+single-function run. Compare the observations and their source; a different cache directory alone
+does not record the external configuration in the analysis profile. See the
+[Kuna provider guide](https://github.com/morluto/rea/blob/main/docs/kuna-provider.md)
+for cache identity and cold-export behavior.
+
 ## Bridge request ceiling
 
 Hopper and Cutter share `REA_BRIDGE_MAX_REQUEST_BYTES`. Unset, both sides use
