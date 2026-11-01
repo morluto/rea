@@ -738,9 +738,10 @@ export async function verifyIndirectBranches(client) {
     "annotate_native_function",
     { procedure: computed.address, comment: verbose },
   );
-  const preserved = afterVerboseComment.dossier.native_api?.unresolved_indirect_branches?.find(
-    (branch) => branch.branch_address === branchAddress,
-  );
+  const preserved =
+    afterVerboseComment.dossier.native_api?.unresolved_indirect_branches?.find(
+      (branch) => branch.branch_address === branchAddress,
+    );
   if (
     afterVerboseComment.annotations.comment !== verbose ||
     preserved?.decompiler_outcome !== "jump_table_recovery_failed" ||
