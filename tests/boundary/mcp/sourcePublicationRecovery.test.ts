@@ -47,6 +47,11 @@ const assertPublication = ({
       ? "evidence_integrity_mismatch"
       : "resource_constraint",
   );
+  if (error.code === "resource_constraint") {
+    expect(error.remediation.action).toContain(
+      "if present in this response, save it separately",
+    );
+  }
   if (sourceKind === "small")
     expect(error.details).toMatchObject({
       partial_observation: {
