@@ -20,6 +20,7 @@ import {
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
+import { semanticOpaqueNameMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import {
   builtinDataEffectMethod,
@@ -298,7 +299,8 @@ const schedulesWithNonFunctionCallback = (
   if (
     t.isIdentifier(value) &&
     ["undefined", "NaN", "Infinity"].includes(value.name) &&
-    isUnmodifiedGlobalReference(value, state, value.name)
+    isUnmodifiedGlobalReference(value, state, value.name) &&
+    !semanticOpaqueNameMayHaveChanged(value, state)
   )
     return true;
   // A class passes Node's own typeof check; invoking it is a separate failure,

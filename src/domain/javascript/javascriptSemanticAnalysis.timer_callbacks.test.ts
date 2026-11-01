@@ -123,3 +123,40 @@ it("keeps the timer when a local binding shadows the global", () => {
     nodeTimersCalls(`const undefined = () => {}; setTimeout(undefined)`),
   ).toEqual([{ kind: "schedule", method: "setTimeout" }]);
 });
+
+/**
+ * Sloppy `eval` can introduce a local binding named `undefined`, `NaN` or
+ * `Infinity`, which then shadows the global the guard would otherwise read. The
+ * opaque-effects owner has to agree before the global reading is conclusive:
+ *
+ *   function g() { eval("var undefined = () => {}"); setTimeout(undefined, 0); }
+ *   -> schedules a timer in Node (sloppy script scope)
+ *
+ * In a module the same `eval` is strict and introduces no outer binding, so the
+ * global reading still holds.
+ */
+const sloppyTimersCalls = (call: string) =>
+  analyzeJavaScriptSemantics(
+    `const { setTimeout } = require("node:timers"); function g() { ${call}; }`,
+  ).timerOperations.map(({ kind, method }) => ({ kind, method }));
+
+it.each([
+  [
+    "an eval-introduced undefined",
+    `eval('var undefined = () => {}'); setTimeout(undefined, 0)`,
+  ],
+  ["an eval-introduced NaN", `eval('var NaN = () => {}'); setTimeout(NaN, 0)`],
+  [
+    "an eval-introduced Infinity",
+    `eval('var Infinity = () => {}'); setTimeout(Infinity, 0)`,
+  ],
+] as const)("keeps the timer after %s", (_name, call) => {
+  expect(sloppyTimersCalls(call)).toEqual([
+    { kind: "schedule", method: "setTimeout" },
+  ]);
+});
+
+it("still drops a global callback when no eval can shadow it", () => {
+  expect(sloppyTimersCalls(`setTimeout(undefined, 0)`)).toEqual([]);
+  expect(sloppyTimersCalls(`setTimeout(NaN, 0)`)).toEqual([]);
+});
