@@ -64,7 +64,7 @@ export const prepareProcessScenarioPlan = async (
       resolved,
       signal,
     );
-    if (!admitted.ok) return admitted;
+    if (!admitted.ok) return aborted() ? cancelled() : admitted;
     if (aborted()) return cancelled();
     return ok(resolved);
   } catch (cause: unknown) {
