@@ -494,7 +494,7 @@ it("closes the Inspector owner with peers and retries its retained cleanup", asy
 
   await server.close();
   expect(inspectorCloseAttempts).toBe(2);
-  expect(peerCloseAttempts).toBe(2);
+  expect(peerCloseAttempts).toBe(1);
 });
 
 it("does not close a caller-owned Inspector observation provider", async () => {

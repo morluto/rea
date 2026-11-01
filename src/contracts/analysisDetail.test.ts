@@ -18,12 +18,14 @@ import { toolContract } from "./toolContracts.js";
 
 const projectSummary = (parent: {
   readonly evidence_id: string;
+  readonly predicate_type: string;
   readonly operation: string;
   readonly normalized_result: unknown;
   readonly limitations: readonly string[];
 }) =>
   projectAnalysisView(
     {
+      predicateType: parent.predicate_type,
       evidenceId: parent.evidence_id,
       operation: parent.operation,
       normalizedResult: parent.normalized_result,
@@ -74,6 +76,7 @@ it("advertises only that operation's summary from analysis detail outputs", () =
   );
   const parent = analysisViewCaptureEvidence(environmentStateCaptureFixture());
   const captureParent = {
+    predicateType: parent.predicate_type,
     evidenceId: parent.evidence_id,
     operation: parent.operation,
     normalizedResult: parent.normalized_result,

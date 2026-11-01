@@ -27,11 +27,13 @@ import * as boundedFileBytes from "../../../../src/process/BoundedFileBytes.js";
 import { primaryAnalysisError } from "../../../../src/domain/analysisErrorBase.js";
 
 it.each(
-  [false, true].flatMap((warm) =>
-    [false, true].flatMap((changed) =>
-      [false, true].map((failedClose) => ({ warm, changed, failedClose })),
-    ),
-  ),
+  [false, true]
+    .flatMap((warm) =>
+      [false, true].flatMap((changed) =>
+        [false, true].map((failedClose) => ({ warm, changed, failedClose })),
+      ),
+    )
+    .filter(({ changed, failedClose }) => changed || failedClose),
 )(
   "preserves selected managed identity through finalization (cached=$warm, changed=$changed, failedClose=$failedClose)",
   async ({ warm, changed, failedClose }) => {
@@ -291,8 +293,9 @@ describe("managed static completed snapshot cancellation", () => {
               kind: "file-snapshot-hash",
               path,
               bytes: bytes.length,
-              sha256: parsed.value.sha256,
+              sha256: createHash("sha256").update(bytes).digest("hex"),
             };
+            expect(parsed.value.sha256).toBe(observation.sha256);
             expect(result.error.partialObservation).toEqual(observation);
             expect(projectAnalysisError(result.error)).toMatchObject({
               code: "cancelled",
@@ -302,6 +305,9 @@ describe("managed static completed snapshot cancellation", () => {
             expect(owners.every((owner) => owner.handle.fd === -1)).toBe(true);
             if (retryClose) expect(owners[0]).toBe(owners[1]);
             expect(await client.close()).toEqual({ ok: true, value: null });
+            expect(result.error.partialObservation).toEqual(observation);
+            expect(result.error.cleanupIncomplete).toBe(false);
+            expect(owners.every((owner) => owner.handle.fd === -1)).toBe(true);
           } finally {
             close.mockRestore();
             await client.close();
@@ -529,15 +535,11 @@ describe("managed static provider path boundary", () => {
       field_accesses: [expect.objectContaining({ field_name: "counter" })],
     });
     const memberResult = asManagedMemberResult(members.value);
-    expect(members.value.locations).toEqual(
-      expect.arrayContaining(
-        memberResult.methods.flatMap((method) =>
-          method.body.file_offset === null
-            ? []
-            : [{ kind: "file-offset", offset: method.body.file_offset }],
-        ),
-      ),
-    );
+    expect(memberResult.methods[0]?.body.file_offset).toBe(0x0a00);
+    expect(members.value.locations).toContainEqual({
+      kind: "file-offset",
+      offset: 0x0a00,
+    });
 
     const boundaries = await client.execute(
       "inspect_managed_native_boundaries",

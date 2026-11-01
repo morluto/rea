@@ -19,6 +19,7 @@ const rows = () => [
   { address: "0x20", value: "last" },
 ];
 const parent = (normalizedResult: unknown): AnalysisViewParent => ({
+  predicateType: "rea.analysis",
   evidenceId: `ev_${"a".repeat(64)}`,
   operation: "search_procedures",
   normalizedResult,

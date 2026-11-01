@@ -6,6 +6,8 @@ export interface FakeKunaFunction {
   readonly name: string;
   readonly addr: string;
   readonly error?: string;
+  /** Inventory aliases, such as versioned-symbol names or generated `sub_` names. */
+  readonly aliases?: readonly string[];
 }
 
 /** One inventory-only row; Kuna reports a size of 0 for an unmeasured entry. */
@@ -13,6 +15,7 @@ export interface FakeKunaInventoryEntry {
   readonly name: string;
   readonly addr: string;
   readonly size?: number;
+  readonly aliases?: readonly string[];
 }
 
 export interface FakeKunaString {
@@ -121,7 +124,7 @@ if (args[0] === "--version") {
   if (mode === "hang") hang();
   else if (mode === "not-json") process.stdout.write("functions: 2\n");
   else {
-    const listed = [...functions, ...(behavior.inventoryEntries ?? []), ...(behavior.inventoryImports === false ? [] : [{ name: "puts", addr: "0x2000" }])].map((fn) => ({ name: fn.name, address: parseInt(fn.addr, 16), address_hex: fn.addr, aliases: [], object_location: null, size: fn.size ?? (fn.name === "puts" ? 0 : 16) }));
+    const listed = [...functions, ...(behavior.inventoryEntries ?? []), ...(behavior.inventoryImports === false ? [] : [{ name: "puts", addr: "0x2000" }])].map((fn) => ({ name: fn.name, address: parseInt(fn.addr, 16), address_hex: fn.addr, aliases: fn.aliases ?? [], object_location: null, size: fn.size ?? (fn.name === "puts" ? 0 : 16) }));
     setTimeout(() => process.stdout.write(JSON.stringify({ binary: args[1], count: listed.length, total: listed.length, error: null, functions: listed }, null, 2) + "\n"), behavior.inventoryDelayMs ?? 0);
   }
 } else if (args[0] === "strings") {

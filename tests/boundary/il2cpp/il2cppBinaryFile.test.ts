@@ -1173,7 +1173,9 @@ it.each([1, 0xff])(
   (padding) => {
     const bytes = createIl2cppBinaryFixture();
     bytes.fill(padding, 0x604, 0x608);
-    expect(link(bytes)).toEqual(link(createIl2cppBinaryFixture()));
+    const linked = link(bytes);
+    expect(linked.method_addresses).toEqual(expectedAddresses);
+    expect(linked).toEqual(link(createIl2cppBinaryFixture()));
     bytes.writeUInt32LE(3, 0x600);
     expect(failure(bytes).reason).toBe("code-registration-not-found");
   },
@@ -1832,12 +1834,6 @@ it("keeps a capacity refusal while naming a generic row a refusal", () => {
   expect(tableChecked).toBe(true);
   expect(failure).toBeInstanceOf(Il2cppBinaryFormatFailure);
   expect((failure as Il2cppBinaryFormatFailure).kind).toBe("capacity");
-});
-
-it("ignores CodeRegistration count alignment padding", () => {
-  const bytes = createIl2cppBinaryFixture();
-  bytes.fill(0xff, 0x604, 0x608);
-  expect(link(bytes).method_addresses).toEqual(expectedAddresses);
 });
 
 it.each([0, 8, 16])(

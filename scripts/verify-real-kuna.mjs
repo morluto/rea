@@ -35,6 +35,7 @@ import {
   verifyKunaStrings,
 } from "./lib/kuna-string-verifier.mjs";
 import { nativeKunaIncomingSites } from "./lib/kuna-native-reference-verifier.mjs";
+import { MULTI_MODE_REMEDIATION } from "../dist/application/CapabilityInventory.js";
 import {
   assertVerifierCleanupComplete,
   completeVerifierRun,
@@ -298,6 +299,36 @@ const verifyKuna = async (
   const answers = [];
   let coldFailure;
   try {
+    const status = await cold.call("binary_session", { detail: "complete" });
+    if (status.value.format === "elf") {
+      const availability = status.value.tool_availability;
+      const dispatch = availability.find(
+        ({ name }) => name === "inspect_native_dispatch_metadata",
+      );
+      const trace = availability.find(
+        ({ name }) => name === "trace_native_ui_action",
+      );
+      assert.equal(dispatch?.available, false);
+      assert.equal(
+        trace?.modes?.find(({ name }) => name === "native_seed_call_trace")
+          ?.available,
+        false,
+      );
+      if (process.platform === "darwin") {
+        const authored = trace?.modes?.find(
+          ({ name }) => name === "authored_ui_dispatch",
+        );
+        const nativeSeed = trace?.modes?.find(
+          ({ name }) => name === "native_seed_call_trace",
+        );
+        assert.equal(trace?.remediation, MULTI_MODE_REMEDIATION);
+        assert.notEqual(authored?.remediation, nativeSeed?.remediation);
+        assert.ok(
+          authored?.missing_operations.includes("decode_interface_builder"),
+        );
+        assert.ok(nativeSeed?.missing_operations.includes("list_names"));
+      }
+    }
     answers.push({
       strings: await verifyKunaStrings({
         call: cold.call,

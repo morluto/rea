@@ -1,3 +1,4 @@
+import { WEB_MODULE_TRACE_PROVIDER } from "../domain/webTraceProviders.js";
 import { closeOwnedWebResources } from "./closeOwnedWebResources.js";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
@@ -273,11 +274,7 @@ export class WebModuleTraceService {
         sha256: data.sourceFile.sha256,
         format: "file",
       },
-      {
-        id: "rea-web-module-trace",
-        name: "REA captured module relationship trace",
-        version: "1",
-      },
+      WEB_MODULE_TRACE_PROVIDER,
       {
         operation: OPERATION,
         parameters: input,
