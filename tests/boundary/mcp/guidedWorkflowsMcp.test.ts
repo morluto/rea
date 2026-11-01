@@ -6,7 +6,8 @@ it.each(["full", "compact"])(
   "preserves workflow contracts through the production %s MCP server",
   async (profile) => {
     const { client, call } = await connectLocalToolsMcp({
-      REA_MCP_TOOL_FAMILIES: "session,electron,direct,application,enhanced",
+      REA_MCP_TOOL_FAMILIES:
+        "session,electron,direct,application,enhanced,artifact,android,managed",
       REA_MCP_INPUT_SCHEMA_PROFILE: profile,
       REA_MCP_OUTPUT_SCHEMA_PROFILE: profile,
     });
