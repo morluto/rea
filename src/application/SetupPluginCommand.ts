@@ -142,9 +142,6 @@ export const launchSetupPluginCommand: SetupPluginCommandLauncher = (
       }
       for (const [signal, handler] of signalHandlers)
         process.removeListener(signal, handler);
-      // Restore default termination only after stopping the owned runner tree.
-      if (interruptedSignal !== undefined && cleanupFailure === undefined)
-        process.kill(process.pid, interruptedSignal);
     }
     const exit = supervisor?.observedExit();
     return {

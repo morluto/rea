@@ -1,4 +1,4 @@
-import { describe, expect, it, onTestFinished } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { spawnOwnedProviderProcess } from "../process/ProviderProcess.js";
 import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
@@ -10,6 +10,41 @@ const scope = () => {
   onTestFinished(() => resources.close());
   return resources;
 };
+
+it("returns interruption after successful child cleanup without terminating the setup owner", async () => {
+  const kill = process.kill.bind(process);
+  const selfSignals: Array<Parameters<typeof process.kill>[1]> = [];
+  const spy = vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
+    if (pid !== process.pid) return kill(pid, signal);
+    selfSignals.push(signal);
+    return true;
+  });
+  onTestFinished(() => spy.mockRestore());
+  const result = await launchSetupPluginCommand(
+    process.execPath,
+    ["--version"],
+    {
+      env: process.env,
+      cwd: process.cwd(),
+      timeoutMs: 5000,
+      platform: process.platform,
+      resources: scope(),
+      launcher: async (options) => {
+        const launched = await spawnOwnedProviderProcess(options);
+        return {
+          ...launched,
+          cleanup: async () => {
+            process.emit("SIGINT");
+            return cleanupOwnedProcessGroup(launched.ownership);
+          },
+        };
+      },
+    },
+  );
+  expect(result.interruptedSignal).toBe("SIGINT");
+  expect(result.cleanupFailure).toBeUndefined();
+  expect(selfSignals).toEqual([]);
+});
 
 describe("launchSetupPluginCommand", () => {
   it("retains bounded head and tail bytes and preserves UTF-8 across writes", async () => {
