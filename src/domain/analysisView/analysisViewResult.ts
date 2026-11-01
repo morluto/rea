@@ -64,6 +64,12 @@ import {
   sourceToBundleViewContextSchema,
 } from "./sourceToBundleView.js";
 import {
+  featureTraceSummarySchema,
+  featureTraceViewContextSchema,
+  featureTraceViewItemsSchema,
+  featureTraceViewRequestSchema,
+} from "./featureTraceView.js";
+import {
   gpuCodeObjectsViewRequestSchema,
   gpuCodeObjectsSummarySchema,
   gpuCodeObjectsItemsSchema,
@@ -946,6 +952,23 @@ export const sourceToBundlePageViewResultSchema = z.strictObject({
   items: sourceToBundleViewItemsSchema,
 });
 
+/** Compact retained feature-trace summary; pages carry the same trace context. */
+export const featureTraceSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  artifact: z.null(),
+  parent_operation: z.literal("trace_application_feature"),
+  summary: featureTraceSummarySchema,
+});
+export const featureTraceViewResultSchema = z.strictObject({
+  ...viewResultBase,
+  ...featureTraceViewContextSchema.shape,
+  kind: z.literal("feature-trace"),
+  artifact: z.null(),
+  parent_operation: z.literal("trace_application_feature"),
+  view: featureTraceViewRequestSchema,
+  items: featureTraceViewItemsSchema,
+});
+
 /** Bind the existing nested facet selection to its producer-owned rows. */
 const machoPage = <Facet extends keyof typeof machoViewRows>(facet: Facet) =>
   z.strictObject({
@@ -984,6 +1007,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
   javaScriptRoutesViewResultSchema,
   webBundlePageViewResultSchema,
   sourceToBundlePageViewResultSchema,
+  featureTraceViewResultSchema,
   z.strictObject({
     ...viewResultBase,
     ...nativeFunctionMatchingContextSchema.shape,
@@ -1073,6 +1097,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     nativeFunctionMatchingSummaryViewResultSchema,
     nativeFunctionSummaryViewResultSchema,
     sourceToBundleSummaryViewResultSchema,
+    featureTraceSummaryViewResultSchema,
     webBundleSummaryViewResultSchema,
   ]),
   z.strictObject({

@@ -318,6 +318,8 @@ offered for completed `analyze_function` results only after session recording is
 acknowledged; the complete result and its retention reference remain intact.
 Oversized native inventories likewise include a ready-to-call first
 `native-inventory` page. Reduce its limit or select fields when a row is large.
+An oversized `trace_application_feature` result includes a first `feature-trace`
+page of its retained terminal `paths`; page `nodes` or `edges` from there.
 
 A broad follow-up or `get_evidence_bundle` can also exceed the response budget; exporting
 preserves the complete session without sending it through a single MCP frame.
@@ -571,6 +573,32 @@ The CLI accepts the same reference-file alternative (relative paths resolve from
 the working directory). Save its complete `--json` Evidence, then use
 `inspect-analysis-view` with an `evidence-file` source and the same view. Neither
 adapter executes the target or repeats analysis for retained queries.
+
+`trace_application_feature` follows the same delivery contract. Omitting `view`
+returns the complete trace. `view: {"kind":"summary"}` or a `feature-trace` page
+retains the complete trace in the session first and returns only the selected
+facts; query further pages with `inspect_analysis_view` and the returned
+`parent_evidence_id`. The summary carries the trace identity (`trace_id`,
+`source_evidence_id`, `source_graph_id`, seed and direction), the producer's
+`summary` counts, `trace_coverage`, the traced subgraph's `graph_coverage`,
+`evidence_links` and any no-match `semantic_discovery`. A `feature-trace` page
+selects one `collection` in retained order and repeats that context:
+
+- `paths`: exact terminal paths; `where.node_ids` selects paths visiting any of
+  those nodes and `where.end_kinds` selects their terminal node kinds.
+- `nodes`: compact rows with identity, `seed`, `observation_count` and distinct
+  authority/state/confidence `basis`; `where.node_ids` and `where.kinds` filter
+  exactly, and `include_observations: true` adds each node's complete retained
+  observations.
+- `edges`: exact relationships; `where.node_ids` matches either endpoint and
+  `where.relations` the relation.
+- `seed_matches` and `native_handoffs`: the producer's exact rows.
+
+Omitted filters select all; empty arrays select none. `offset` and `limit`
+default to 0 and 64. Page `coverage` counts the selected collection only; it
+never upgrades `trace_coverage`, and graph connectivity does not prove runtime
+reachability. The CLI keeps complete trace JSON; save it and use
+`inspect-analysis-view` with an `evidence-file` source.
 
 Completed `inspect_artifact` and atomic `inventory_artifact` Evidence also
 support summary and inventory views. A summary reports the manifest's expected
