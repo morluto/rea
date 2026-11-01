@@ -9,6 +9,7 @@ const configuration = z
   .strictObject({
     name: z.string(),
     "threat-models": z.array(z.string()),
+    paths: z.array(z.string()),
     "paths-ignore": z.array(z.string()),
   })
   .parse(
@@ -54,6 +55,7 @@ it.each([
   "scripts/verify-package-install.mjs",
   "scripts/verify-package-update.mjs",
   "scripts/verify-windows-native-artifact.mjs",
+  "docs/.vitepress/config.ts",
   ".github/workflows/release.yml",
   ".github/actions/publish-mcp/action.yml",
 ])("retains production or release input %s", (path) => {
@@ -73,6 +75,10 @@ it("retains all packaged entrypoints and the existing local-input threat model",
     );
   expect(manifest.files.filter(excluded)).toEqual([]);
   expect(configuration["threat-models"]).toEqual(["local"]);
+  // A narrow allowlist would silently drop new production roots. Explicitly
+  // traverse the hidden configuration directory without excluding the root.
+  expect(configuration.paths).toContain(".");
+  expect(configuration.paths).toContain("docs/.vitepress");
 });
 
 it("uses the scope in a bounded workflow gated on administrator activation", async () => {

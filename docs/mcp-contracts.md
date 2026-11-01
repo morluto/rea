@@ -529,7 +529,11 @@ names, the native API record, and high-pcode facets without starting a provider.
 and limit default to 0 and 64; pseudocode uses UTF-16 code units and never
 splits surrogate pairs, while other pages count rows. Unavailable facts and
 provider limitations remain explicit. Source is
-an exact same-session retained reference or portable inline Evidence. Views are
+an exact same-session retained reference, portable inline Evidence, or an
+Evidence record or bundle file. Native function, inventory, and observation
+views require the `rea.analysis` predicate; function-matching views require
+`rea.native-function-matching`. A mismatched predicate returns an
+`invalid_request` identifying `source.predicate_type`. Views are
 a summary, a layout mitigations or linkage facet, one section/symbol/module, or
 a stable page with a caller-selected positive `limit`. Module pages include
 JavaScript assets, bundled modules, and source modules. Select an exact
